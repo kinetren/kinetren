@@ -9,10 +9,12 @@
 # the value in .github/workflows/ci.yml; src/scripts/dist-check.py (t834)
 # keeps the two equal. Bump both together.
 #
-# Stages (change windows-build): `base` is the Linux build; `windows` adds the
+# Stages (change windows-build): `base` is the Linux build; `windows-cross` adds the
 # cross toolchain for x86_64-pc-windows-gnu (mingw-w64, clang for bindgen with
-# the Windows target, wine for running the Windows tests, zip); the last stage
-# `linux` is what a plain `docker build` produces, so the Linux build is
+# the Windows target, zip, nextest for the archive); `windows` adds wine for
+# running the Windows tests here (the CI job compiles in `windows-cross` and runs
+# the archive on a real Windows runner: wine is most of the image, change ci-speedup);
+# the last stage `linux` is what a plain `docker build` produces, so the Linux build is
 # unchanged. Select the Windows image with `--target windows`.
 FROM ubuntu:22.04 AS base
 ARG RUST_TOOLCHAIN=1.97.1
@@ -32,19 +34,12 @@ RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
     --default-toolchain "$RUST_TOOLCHAIN" --no-modify-path \
     && chmod -R a+w /usr/local/rustup /usr/local/cargo
 
-FROM base AS windows
+FROM base AS windows-cross
 # mingw-w64 links the exe and compiles the bundled SQLite; the PE delivery check
-# uses x86_64-w64-mingw32-objdump. Wine 6.0 of jammy is too old for current std
-# and nextest, so wine comes from WineHQ's repository for jammy.
-RUN dpkg --add-architecture i386 && apt-get update \
+# uses x86_64-w64-mingw32-objdump.
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64 zip unzip p7zip-full gnupg \
-    && mkdir -pm755 /etc/apt/keyrings \
-    && curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
-       | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key \
-    && curl -fsSL -o /etc/apt/sources.list.d/winehq-jammy.sources \
-       https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources \
-    && apt-get update && apt-get install -y --install-recommends winehq-stable \
     && rm -rf /var/lib/apt/lists/*
 # the default toolchain is the pinned one installed by the base stage (an ARG
 # does not cross stages, so it is not named again here)
@@ -56,8 +51,20 @@ RUN curl -fsSL https://github.com/nextest-rs/nextest/releases/download/cargo-nex
     | tar xzf - -C /usr/local/cargo/bin && cargo nextest --version
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
     CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc \
-    AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar \
-    CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine \
+    AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar
+
+FROM windows-cross AS windows
+# Wine 6.0 of jammy is too old for current std and nextest, so wine comes from WineHQ's
+# repository for jammy.
+RUN dpkg --add-architecture i386 \
+    && mkdir -pm755 /etc/apt/keyrings \
+    && curl -fsSL https://dl.winehq.org/wine-builds/winehq.key \
+       | gpg --dearmor -o /etc/apt/keyrings/winehq-archive.key \
+    && curl -fsSL -o /etc/apt/sources.list.d/winehq-jammy.sources \
+       https://dl.winehq.org/wine-builds/ubuntu/dists/jammy/winehq-jammy.sources \
+    && apt-get update && apt-get install -y --install-recommends winehq-stable \
+    && rm -rf /var/lib/apt/lists/*
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine \
     WINEDEBUG=-all
 
 FROM base AS ffmpeg-test

@@ -91,6 +91,8 @@ struct Entry {
     serial: u64,
     recency: u64,
     pinned: bool,
+    /// How many users still need this entry (`hold_video`): not evicted while above zero.
+    holds: u32,
     /// Was there at least one get after the insertion — eviction of an unread entry
     /// is prefetch-thrash (the performance panel: “no-read drops”, port of v1 hadHit).
     had_hit: bool,
@@ -193,6 +195,8 @@ struct Inner {
     coverage: HashMap<(SourceId, BurstKind), IntervalSet>,
     audio_bytes: usize,
     video_bytes: usize,
+    /// The bytes of the entries with at least one hold.
+    held_bytes: usize,
     recency_counter: u64,
     /// The number of the last prefetch pass, one per `refresh` call (video-prefetch-thrash).
     want_pass: u64,
@@ -251,6 +255,7 @@ impl BurstCache {
                 coverage: HashMap::new(),
                 audio_bytes: 0,
                 video_bytes: 0,
+                held_bytes: 0,
                 recency_counter: 0,
                 want_pass: 0,
             }),
@@ -461,12 +466,23 @@ impl BurstCache {
     }
 
     fn insert_spanned(&self, key: BurstKey, payload: Payload, span: i64) {
+        self.insert_with_holds(key, payload, span, 0);
+    }
+
+    /// `holds_added` is taken in the same step as the insert: eviction cannot pass between them.
+    fn insert_with_holds(&self, key: BurstKey, payload: Payload, span: i64, holds_added: u32) {
         let mut inner = self.inner.lock().unwrap();
         let bytes = payload.bytes();
         let is_audio = payload.is_audio();
         debug_assert_eq!(is_audio, key.kind == BurstKind::Audio);
 
+        // an overwrite keeps the holds of the entry it replaces
+        let mut holds = holds_added;
         if let Some(old) = inner.map.remove(&key) {
+            holds += old.holds;
+            if old.holds > 0 {
+                inner.held_bytes -= old.payload.bytes();
+            }
             if !old.had_hit {
                 // overwriting an unread entry is also thrash (v1)
                 self.count_unread_drop(&old, inner.want_pass);
@@ -493,8 +509,11 @@ impl BurstCache {
         let serial = NEXT_SERIAL.fetch_add(1, Ordering::Relaxed);
         inner.map.insert(
             key,
-            Entry { payload, serial, recency, pinned: false, had_hit: false, wanted, span },
+            Entry { payload, serial, recency, pinned: false, holds, had_hit: false, wanted, span },
         );
+        if holds > 0 {
+            inner.held_bytes += bytes;
+        }
         inner.lru.insert(recency, key);
         inner.by_source.entry(key.source).or_default().insert(key);
         if is_audio {
@@ -525,7 +544,7 @@ impl BurstCache {
     }
 
     fn evict_over_budget(&self, inner: &mut Inner) {
-        // Go from the oldest; pinned ones are skipped. If everything is pinned — the budget
+        // Go from the oldest; pinned and held ones are skipped. If everything is — the budget
         // may be exceeded, and this is deliberate (a pin is stronger than the budget).
         let mut cursor = 0u64;
         while inner.audio_bytes > self.config.max_audio_bytes
@@ -536,7 +555,7 @@ impl BurstCache {
             };
             cursor = recency + 1;
             let entry = inner.map.get(&key).expect("lru/map sync");
-            if entry.pinned {
+            if entry.pinned || entry.holds > 0 {
                 continue;
             }
             let over_audio = inner.audio_bytes > self.config.max_audio_bytes;
@@ -597,6 +616,47 @@ impl BurstCache {
         }
     }
 
+    /// Hold a video entry if it is here (export-pipeline-determinism D1): a held entry is never
+    /// evicted, and each hold needs its own `release_video`. The check and the hold are one step.
+    /// For a job that reads ahead of its use: LRU's order is not the order of need, since a read
+    /// refreshes entries that will never be needed again.
+    pub fn hold_video(&self, source: SourceId, quality: Option<Quality>, idx: i64) -> bool {
+        let key = BurstKey { source, kind: BurstKind::video(quality), idx };
+        let mut inner = self.inner.lock().unwrap();
+        let Some(entry) = inner.map.get_mut(&key) else { return false };
+        entry.holds += 1;
+        if entry.holds == 1 {
+            let bytes = entry.payload.bytes();
+            inner.held_bytes += bytes;
+        }
+        true
+    }
+
+    /// `insert_video` that takes a hold in the same step.
+    pub fn insert_video_held(&self, source: SourceId, quality: Option<Quality>, idx: i64, frame: Arc<VideoFrame>) {
+        self.insert_with_holds(BurstKey { source, kind: BurstKind::video(quality), idx }, Payload::Video(frame), 1, 1);
+    }
+
+    /// Give back one hold of each key; the entries go back to the LRU, where they already are.
+    pub fn release_video(&self, keys: impl IntoIterator<Item = BurstKey>) {
+        let mut inner = self.inner.lock().unwrap();
+        for key in keys {
+            let Some(entry) = inner.map.get_mut(&key) else { continue };
+            debug_assert!(entry.holds > 0, "a release without a hold");
+            entry.holds = entry.holds.saturating_sub(1);
+            if entry.holds == 0 {
+                let bytes = entry.payload.bytes();
+                inner.held_bytes -= bytes;
+            }
+        }
+        self.evict_over_budget(&mut inner);
+    }
+
+    /// The bytes of the entries held at least once: each counted once, however many hold it.
+    pub fn held_video_bytes(&self) -> usize {
+        self.inner.lock().unwrap().held_bytes
+    }
+
     /// Drop all entries of the source (the file changed on disk; the parameters
     /// of the generator were reconfigured — R.53, item 411). It goes by the index
     /// `by_source`, and not by the whole cache: it is called on every edit.
@@ -609,6 +669,9 @@ impl BurstCache {
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&entry.recency);
             let b = entry.payload.bytes();
+            if entry.holds > 0 {
+                inner.held_bytes -= b;
+            }
             if entry.payload.is_audio() {
                 inner.audio_bytes -= b;
             } else {
@@ -1003,6 +1066,53 @@ mod perf_counter_tests {
         let (_, second) = cache.get_video_stamped(src, None, 0).expect("frame is stored");
         assert_ne!(first, second, "same address, different bytes — the number must differ");
         assert!(second > first, "numbers are monotonic and not reused");
+    }
+
+    /// t1600 (export-pipeline-determinism): a held entry outlives any pressure, however fresh the
+    /// entries read around it, and goes when the last hold is released.
+    #[test]
+    fn t1600_a_held_entry_outlives_the_pressure_and_goes_when_released() {
+        let bytes = 64usize;
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 3 });
+        let src = SourceId(1);
+        let key = |idx| BurstKey { source: src, kind: BurstKind::video(None), idx };
+        assert!(!cache.hold_video(src, None, 0), "an absent key answers “not present”");
+        assert_eq!(cache.held_video_bytes(), 0, "and holds nothing");
+        cache.release_video([key(0)]);
+
+        cache.insert_video_held(src, None, 0, frame(bytes));
+        assert!(cache.hold_video(src, None, 0), "a second user of the same frame");
+        assert_eq!(cache.held_video_bytes(), bytes, "counted once, however many hold it");
+        // the pressure of an export: fresh inserts, and reads that refresh what is never needed again
+        for idx in 1..20 {
+            cache.insert_video(src, None, idx, frame(bytes));
+            assert!(cache.get_video(src, None, idx).is_some());
+        }
+        assert!(cache.contains_video(src, None, 0), "evicted while held");
+        assert!(!cache.contains_video(src, None, 1), "the budget still governs the rest");
+        assert_eq!(cache.video_bytes(), bytes * 3, "held entries are inside the budget's count");
+
+        cache.insert_video(src, None, 0, frame(bytes));
+        assert_eq!(cache.held_video_bytes(), bytes, "an overwrite keeps the holds");
+        cache.release_video([key(0)]);
+        cache.insert_video(src, None, 30, frame(bytes));
+        assert!(cache.contains_video(src, None, 0), "one hold is left");
+        assert_eq!(cache.held_video_bytes(), bytes);
+        cache.release_video([key(0)]);
+        assert_eq!(cache.held_video_bytes(), 0, "the last hold gone");
+        for idx in 31..34 {
+            cache.insert_video(src, None, idx, frame(bytes));
+        }
+        assert!(!cache.contains_video(src, None, 0), "released, it is an entry like any other");
+
+        // a hold over the budget: the budget gives way, and the release collects it
+        for idx in 40..46 {
+            cache.insert_video_held(src, None, idx, frame(bytes));
+        }
+        assert_eq!(cache.video_bytes(), bytes * 6, "a hold is stronger than the budget");
+        cache.release_video((40..46).map(key));
+        assert_eq!(cache.video_bytes(), bytes * 3, "the release brings it back under the budget");
     }
 
     /// t1535: an empty post-FX memo is no missing frame. Counted as one, the hit rate of the CPU

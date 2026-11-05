@@ -130,8 +130,14 @@ codegen-units = 1
 # Level 1 was chosen: the task is solved, the build stays fast, debugging stays live. Checks
 # for overflow and debug_assert! do NOT depend on the optimization level and remain
 # enabled — the dev profile’s safety net is intact (item 301).
+# debug = 1 (change ci-speedup, D8): line tables and function names, as the release profiles keep,
+# without types and variables. The ~120 test binaries were most of the target directory, and full
+# debug info was most of them: 27 GB against 14 GB, and an edit that relinks them all waited on the
+# disk, not on the compiler. "line-tables-only" is not enough: it loses the module path of a
+# function, and the crash report needs it (t1072).
 [profile.dev]
 opt-level = 1
+debug = 1
 
 [profile.dev.package."*"]
 opt-level = 2

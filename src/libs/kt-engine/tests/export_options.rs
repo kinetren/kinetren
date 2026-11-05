@@ -458,6 +458,151 @@ fn t962_without_a_device_vaapi_falls_through_or_errs_never_crashes() {
     }
 }
 
+/// A source that cannot give the frames of its gaps: no error, the frames just do not come.
+struct GapSource {
+    inner: Box<dyn MediaSource>,
+    gaps: Vec<(Tick, Tick)>,
+    fail_span_at: Option<Tick>,
+}
+
+impl MediaSource for GapSource {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.inner.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.inner.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, pts: Tick, quality: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        if self.gaps.iter().any(|(a, b)| pts >= *a && pts < *b) {
+            return Err(kt_media::MediaError::OutOfRange);
+        }
+        self.inner.read_video_frame(pts, quality)
+    }
+    fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
+        self.inner.keyframe_before(pts)
+    }
+    /// With `fail_span_at`, the first span that reaches this key stops there with an error.
+    fn read_video_span_qualities(
+        &mut self,
+        keys: &[(Tick, Quality)],
+        emit: &mut dyn FnMut(Tick, Quality, kt_media::VideoFrame),
+    ) -> Result<(), kt_media::MediaError> {
+        for &(k, q) in keys {
+            if self.fail_span_at.is_some_and(|at| k >= at) {
+                self.fail_span_at = None;
+                return Err(kt_media::MediaError::OutOfRange);
+            }
+            match self.read_video_frame(k, Some(q)) {
+                Ok(f) => emit(k, q, f),
+                Err(kt_media::MediaError::OutOfRange) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// t1602 (export-pipeline-determinism D4): a frame written without a layer is told where it
+/// happens, in frame order and one line per run, and the serial and the pipelined export say the
+/// same. Until then the only trace was a count at the end, naming no frame and no media.
+#[test]
+fn t1602_frames_without_a_layer_are_named_as_they_happen() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    use kt_engine::export::{ExportEvent, ExportLog};
+    let gaps = vec![(Tick(45_000), Tick(90_000)), (Tick(135_000), Tick(150_000))];
+    let p = two_seconds();
+    let dir = tempfile::tempdir().unwrap();
+    let mut told = Vec::new();
+    for serial in [true, false] {
+        let out = dir.path().join(format!("gap-{serial}.mp4")).to_string_lossy().to_string();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opts = ExportOptions { force_encoder: Some("libx264".into()), serial, ..Default::default() };
+        let video: Vec<(MediaId, Box<dyn MediaSource>)> = sources()
+            .into_iter()
+            .map(|(m, inner)| (m, Box::new(GapSource { inner, gaps: gaps.clone(), fail_span_at: None }) as Box<dyn MediaSource>))
+            .collect();
+        let stats = {
+            let seen = seen.clone();
+            kt_engine::export_mp4_with_backends(
+                &p,
+                sources(),
+                video,
+                &out,
+                None,
+                &opts,
+                &kt_gpu::testkit::backends(),
+                &Arc::new(AtomicBool::new(false)),
+                &Arc::new(AtomicBool::new(false)),
+                move |e| seen.lock().unwrap().push(e),
+            )
+            .unwrap()
+        };
+        assert_eq!(stats.missing_video_layers, 20, "serial {serial}: fifteen and five frames");
+        let lines: Vec<(Tick, Tick, Vec<String>)> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                ExportEvent::Log(ExportLog::IncompleteFrames { from, to, media }) => Some((*from, *to, media.clone())),
+                _ => None,
+            })
+            .collect();
+        told.push(lines);
+    }
+    let want = vec![
+        (Tick(45_000), Tick(87_000), vec!["synth:1".to_string()]),
+        (Tick(135_000), Tick(147_000), vec!["synth:1".to_string()]),
+    ];
+    assert_eq!(told[0], want, "the serial export's lines");
+    assert_eq!(told[1], want, "the pipelined export's lines");
+}
+
+/// t1605 (export-pipeline-determinism D7): a span that fails half way drops its remaining keys, and
+/// the export gets them back before it composes them: the serial one by its pre-roll, the pipelined
+/// one by asking each alone. No frame is written without its layer.
+#[test]
+fn t1605_a_span_that_fails_half_way_loses_no_frame() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    use kt_engine::export::{ExportEvent, ExportLog};
+    let p = two_seconds();
+    let dir = tempfile::tempdir().unwrap();
+    for serial in [true, false] {
+        let out = dir.path().join(format!("span-{serial}.mp4")).to_string_lossy().to_string();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opts = ExportOptions { force_encoder: Some("libx264".into()), serial, ..Default::default() };
+        let video: Vec<(MediaId, Box<dyn MediaSource>)> = sources()
+            .into_iter()
+            .map(|(m, inner)| {
+                let s = GapSource { inner, gaps: Vec::new(), fail_span_at: Some(Tick(45_000)) };
+                (m, Box::new(s) as Box<dyn MediaSource>)
+            })
+            .collect();
+        let stats = {
+            let seen = seen.clone();
+            kt_engine::export_mp4_with_backends(
+                &p,
+                sources(),
+                video,
+                &out,
+                None,
+                &opts,
+                &kt_gpu::testkit::backends(),
+                &Arc::new(AtomicBool::new(false)),
+                &Arc::new(AtomicBool::new(false)),
+                move |e| seen.lock().unwrap().push(e),
+            )
+            .unwrap()
+        };
+        assert_eq!(stats.missing_video_layers, 1, "serial {serial}: the failed span counts once, no frame lacks a layer");
+        let told = seen.lock().unwrap().iter().any(|e| matches!(e, ExportEvent::Log(ExportLog::IncompleteFrames { .. })));
+        assert!(!told, "serial {serial}: a frame went without its layer");
+    }
+}
+
 /// Test 1063 (ci-green-again): an encoder forced from OUTSIDE this system's cascade is an export
 /// error that names it and the cascade — never "last error: " with nothing after it.
 ///

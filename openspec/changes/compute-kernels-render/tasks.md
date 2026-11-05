@@ -25,3 +25,9 @@
 - [x] 4.3 The physics tests of VHS and the camera read test-only models (D7)
 - [x] 4.4 CI installs `mesa-vulkan-drivers` and requires a device on Linux; tests that read the picture
       skip without one
+
+## 5. The merge with export-pipeline-determinism
+
+- [x] 5.1 t1601, t1602, t1605 run on the GPU path; t1601 runs on six devices, the path of a software
+      adapter, red without the hold, green with it
+- [x] 5.2 A stage's own error wins over the "stopped" it caused downstream

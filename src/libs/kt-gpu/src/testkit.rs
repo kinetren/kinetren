@@ -43,6 +43,12 @@ pub fn backends() -> ExportBackends {
     ExportBackends { video_gpu: Some(own as Arc<dyn VideoGpuExec>), ..Default::default() }
 }
 
+/// `backends` with a device per frame worker, the path of a software adapter.
+pub fn backends_many(n: usize) -> ExportBackends {
+    let more = (1..n).map(|_| crate::test_engine().expect("a test that exports starts with `no_gpu`") as Arc<dyn VideoGpuExec>);
+    ExportBackends { video_gpu_more: more.collect(), ..backends() }
+}
+
 pub fn compose(video: &VideoRenderer, cache: &BurstCache, t: Tick, q: Quality) -> (Vec<u8>, bool) {
     let mut out = Vec::new();
     let complete = compose_into(video, cache, t, q, &mut out);

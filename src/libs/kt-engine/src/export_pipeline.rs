@@ -11,12 +11,12 @@
 //! (`render_raw_video_range_with`), the writer takes them in frame order, and the audio is the
 //! same renderer's stream; so the encoder receives exactly the serial export's frames and samples
 //! (t1451). What changes is only WHEN each is computed:
-//! - the cache holds `PIPE_CACHE_BYTES`, and decode starts a chunk only while the frames it
-//!   decoded for the chunks not yet written stay under `LOOKAHEAD_BYTES` — a serial budget below
-//!   the cache, more than any chunk: a chunk being composed is never evicted before its composite
-//!   (the serial export's reason for its chunk bound, R.15 item 1). The look-ahead is counted in
-//!   bytes, not chunks: at 4K decode sizes a chunk is one frame, and a look-ahead of two chunks
-//!   kept two of sixteen CPU workers busy;
+//! - every chunk not yet written HOLDS its frames in the cache (export-pipeline-determinism), and
+//!   decode starts a chunk only while the bytes held stay under the look-ahead: a frame a chunk
+//!   needs is never evicted, whatever the stages' relative speed. LRU cannot promise that: the
+//!   composite's reads refresh frames never needed again, and they outlived frames decoded and not
+//!   yet read. The look-ahead is counted in bytes, not chunks: at 4K decode sizes a chunk is one
+//!   frame, and a look-ahead of two chunks kept two of sixteen CPU workers busy;
 //! - the writer interleaves the audio by a fixed rule (after video frame `i`, the audio up to that
 //!   frame's end), so the call order into the muxer — and the file — does not depend on timing.
 //!
@@ -24,12 +24,12 @@
 //! stops drops its queue ends, and every neighbour blocked on them returns (t1452).
 
 use crate::export::{
-    EXPORT_VIDEO_CACHE_BYTES, ExportBackends, ExportStats, chunk_requests, decode_requests, export_chunk_frames,
-    project_range, render_raw_audio_range,
+    ExportBackends, ExportStats, chunk_requests, decode_requests, export_chunk_frames, project_range,
+    render_raw_audio_range,
 };
 use crate::video::VideoRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
-use kt_cache::{BurstCache, CacheConfig};
+use kt_cache::{BurstCache, BurstKey, BurstKind, CacheConfig};
 use kt_media::{MediaSource, Quality};
 use kt_model::{MediaId, Project};
 use kt_time::{AUDIO_CHANNELS, Tick};
@@ -157,6 +157,12 @@ pub(crate) struct Hooks<'a> {
     /// The last video frame is written; the audio may still be running.
     pub video_finished: &'a (dyn Fn() + Sync),
     pub profile: Option<&'a ExportProfile>,
+    /// The serial export's budget, which the cache and the look-ahead are counted from
+    /// (`EXPORT_VIDEO_CACHE_BYTES`). A test scales it with its frame size: the pressure is the
+    /// ratio of the two.
+    pub budget: usize,
+    /// A frame came out without a layer: its time and the media that lacked, in frame order.
+    pub incomplete: &'a (dyn Fn(Tick, &[MediaId]) + Sync),
 }
 
 /// How many frame workers convert on a single device.
@@ -165,11 +171,14 @@ fn frame_workers() -> usize {
 }
 
 /// The pipelined export's frame cache: five serial budgets.
-const PIPE_CACHE_BYTES: usize = 5 * EXPORT_VIDEO_CACHE_BYTES;
-/// What the unwritten chunks' decoded frames may hold before decode waits: a serial budget below
-/// the cache — the next chunk (at most half a budget, `export_chunk_frames`) and the frames
-/// older chunks share with them (a held frame is decoded once) fit in the rest.
-const LOOKAHEAD_BYTES: u64 = (PIPE_CACHE_BYTES - EXPORT_VIDEO_CACHE_BYTES) as u64;
+fn pipe_cache_bytes(budget: usize) -> usize {
+    5 * budget
+}
+/// What the unwritten chunks may hold before decode waits: a serial budget below the cache, so
+/// the next chunk (at most half a budget, `export_chunk_frames`) fits in the rest.
+fn lookahead_bytes(budget: usize) -> u64 {
+    (pipe_cache_bytes(budget) - budget) as u64
+}
 
 /// The writer's progress, which also gates the decoder's look-ahead.
 #[derive(Default)]
@@ -198,12 +207,13 @@ impl Gate {
 /// A frame for a worker: compose it or only convert the GPU's readback.
 enum Job {
     Compose { t: Tick },
-    Convert { rgba: Vec<u8>, complete: bool },
+    Convert { t: Tick, rgba: Vec<u8>, complete: bool },
 }
 
 struct Done<F> {
     frame: F,
-    complete: bool,
+    /// The frame came out without a layer: its time and the media that lacked.
+    lost: Option<(Tick, Vec<MediaId>)>,
 }
 
 /// A chunk of frames decoded into the cache: frame indices `[first, end)`.
@@ -245,7 +255,7 @@ pub(crate) fn run<S: ExportSink>(
         facts.observe(*m, s.info());
     }
     // the chunks being composed and the ones decoded ahead (see the module doc)
-    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: PIPE_CACHE_BYTES });
+    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: pipe_cache_bytes(hooks.budget) });
     let mut video = VideoRenderer::new_with_facts(project, &facts);
     video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(64 << 20)));
     let video = video;
@@ -256,7 +266,7 @@ pub(crate) fn run<S: ExportSink>(
     let step = video.grid.frame_step();
     let dq_max = video.max_decode_quality(quality);
     let chunk_frames =
-        export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, dq_max.width, dq_max.height, video.max_concurrent_layers());
+        export_chunk_frames(hooks.budget, dq_max.width, dq_max.height, video.max_concurrent_layers());
     // the serial loop's frames and chunks, as indices
     let mut chunks = Vec::new();
     let (mut t, mut idx) = (t_first, 0u64);
@@ -356,15 +366,17 @@ pub(crate) fn run<S: ExportSink>(
         let missing_ref = &decode_missing;
         let chunks_ref = &chunks;
         let decode = scope.spawn(move || -> std::io::Result<()> {
-            // (end frame, bytes decoded) of the chunks decoded and not yet written
-            let mut ledger: std::collections::VecDeque<(u64, u64)> = Default::default();
+            let lookahead = lookahead_bytes(hooks.budget) as usize;
+            // (end frame, keys held) of the chunks decoded and not yet written
+            let mut ledger: std::collections::VecDeque<(u64, Vec<BurstKey>)> = Default::default();
             for ch in chunks_ref.iter() {
                 gate_ref.wait(
                     &mut |written| {
                         while ledger.front().is_some_and(|(end, _)| *end <= written) {
-                            ledger.pop_front();
+                            let (_, held) = ledger.pop_front().expect("just seen");
+                            cache_ref.release_video(held);
                         }
-                        ledger.iter().map(|(_, b)| b).sum::<u64>() <= LOOKAHEAD_BYTES
+                        cache_ref.held_video_bytes() <= lookahead
                     },
                     &halted,
                 );
@@ -372,8 +384,8 @@ pub(crate) fn run<S: ExportSink>(
                     return Err(cancelled());
                 }
                 let mark = Instant::now();
-                let bytes = decode_chunk(video_ref, cache_ref, &mut src, *ch, quality, missing_ref);
-                ledger.push_back((ch.end, bytes));
+                let held = decode_chunk(video_ref, cache_ref, &mut src, *ch, quality, missing_ref);
+                ledger.push_back((ch.end, held));
                 ExportProfile::add(prof.map(|p| &p.decode_ns), mark);
                 if chunk_tx.send(*ch).is_err() {
                     break;
@@ -390,7 +402,7 @@ pub(crate) fn run<S: ExportSink>(
             let engine = engines.get(n).cloned();
             worker_handles.push(scope.spawn(move || -> std::io::Result<()> {
                 while let Ok(job) = jr.recv() {
-                    let (rgba, complete) = match job {
+                    let (t, rgba, complete) = match job {
                         Job::Compose { t } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
@@ -399,16 +411,18 @@ pub(crate) fn run<S: ExportSink>(
                                 .execute_into(&video_ref.frame_plan(cache_ref, t, quality), &mut buf)
                                 .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
-                            (buf, complete)
+                            (t, buf, complete)
                         }
-                        Job::Convert { rgba, complete } => (rgba, complete),
+                        Job::Convert { t, rgba, complete } => (t, rgba, complete),
                     };
+                    // asked here: the chunk still holds what it has, so what is absent never came
+                    let lost = (!complete).then(|| (t, video_ref.absent_layers(cache_ref, t, quality)));
                     let Ok(mut frame) = br.recv() else { break };
                     let mark = Instant::now();
                     conv.convert(&rgba, &mut frame)?;
                     ExportProfile::add(prof.map(|p| &p.convert_ns), mark);
                     let _ = pool_tx.send(rgba);
-                    if dt.send(Done { frame, complete }).is_err() {
+                    if dt.send(Done { frame, lost }).is_err() {
                         break;
                     }
                 }
@@ -429,7 +443,7 @@ pub(crate) fn run<S: ExportSink>(
                 let complete =
                     gpu.collect(ticket, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                 ExportProfile::add(prof.map(|p| &p.readback_ns), mark);
-                Ok(send(i, Job::Convert { rgba: buf, complete }))
+                Ok(send(i, Job::Convert { t: frame_tick(i), rgba: buf, complete }))
             };
             loop {
                 // a submitted frame stays in flight across chunks while the next chunk is ready;
@@ -471,7 +485,7 @@ pub(crate) fn run<S: ExportSink>(
                             .execute_into(&plan, &mut buf)
                             .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                         ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
-                        if !send(i, Job::Convert { rgba: buf, complete }) {
+                        if !send(i, Job::Convert { t, rgba: buf, complete }) {
                             return Ok(());
                         }
                         continue;
@@ -576,8 +590,9 @@ fn write_all<S: ExportSink>(
         let Ok(done) = done_rxs[w].recv() else {
             return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "a frame worker stopped"));
         };
-        if !done.complete {
+        if let Some((t, media)) = &done.lost {
             incomplete += 1;
+            (hooks.incomplete)(*t, media);
         }
         let mark = Instant::now();
         sink.write_video(&done.frame)?;
@@ -612,8 +627,9 @@ fn write_all<S: ExportSink>(
 }
 
 /// Decode one chunk's frames into the cache, a thread per source (the serial export's
-/// `chunk_requests` + `decode_requests`). Each source is used by one thread. Returns the bytes
-/// of the frames it asked for.
+/// `chunk_requests` + `decode_requests`), and HOLD every frame it names: the ones found there at the
+/// moment they are asked for, the decoded ones as they are inserted. Each source is used by one
+/// thread. Returns the keys held, each to be released once.
 fn decode_chunk(
     video: &VideoRenderer,
     cache: &BurstCache,
@@ -621,17 +637,25 @@ fn decode_chunk(
     ch: Chunk,
     quality: Quality,
     missing: &AtomicU64,
-) -> u64 {
+) -> Vec<BurstKey> {
     let mut lost = 0u64;
+    let mut held = Vec::new();
     let mut jobs: HashMap<MediaId, Vec<(Tick, Quality)>> =
-        chunk_requests(video, cache, (ch.t0, ch.t1), quality, |m| src.contains_key(&m), &mut lost).into_iter().collect();
-    let bytes = jobs.values().flatten().map(|(_, q)| q.width as u64 * q.height as u64 * 4).sum();
+        chunk_requests(video, (ch.t0, ch.t1), quality, |m| src.contains_key(&m), &mut lost, |sid, dq, idx| {
+            let found = cache.hold_video(sid, Some(dq), idx);
+            if found {
+                held.push(BurstKey { source: sid, kind: BurstKind::video(Some(dq)), idx });
+            }
+            found
+        })
+        .into_iter()
+        .collect();
     if jobs.len() <= 1 {
         for (media, keys) in jobs {
-            decode_requests(src.get_mut(&media).unwrap(), media, &keys, cache, &mut lost);
+            decode_requests(src.get_mut(&media).unwrap(), media, &keys, cache, &mut lost, Some(&mut held));
         }
         missing.fetch_add(lost, Ordering::Relaxed);
-        return bytes;
+        return held;
     }
     std::thread::scope(|scope| {
         let mut handles = Vec::new();
@@ -640,15 +664,18 @@ fn decode_chunk(
                 let media = *media;
                 handles.push(scope.spawn(move || {
                     let mut lost = 0u64;
-                    decode_requests(s, media, &keys, cache, &mut lost);
-                    lost
+                    let mut held = Vec::new();
+                    decode_requests(s, media, &keys, cache, &mut lost, Some(&mut held));
+                    (lost, held)
                 }));
             }
         }
         for h in handles {
-            lost += h.join().expect("decode thread");
+            let (l, keys) = h.join().expect("decode thread");
+            lost += l;
+            held.extend(keys);
         }
     });
     missing.fetch_add(lost, Ordering::Relaxed);
-    bytes
+    held
 }

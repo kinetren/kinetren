@@ -2576,6 +2576,21 @@ proposal cards, with no list and no verdict.
   renders the demo project in 96 s, llvmpipe in 134 s. Asked again with that number, in the same
   session: "удаляй". The CPU composite goes after every effect has a shader, about 40 % slower here.
 
+## 2026-11-03 — Can CI be faster?
+
+The owner, verbatim: "Ответь на вопрос - можно ли ускорить CI?" (answer the question: can CI be
+sped up?). The answer, from the log archive of run 9e1f1a45: the run takes ~13 min, and the chain
+`windows-build` (8.8 min, of which 6.4 min compile all 308 crates from scratch — no cache) →
+`windows-test` (4.2 min) is the whole critical path; the other jobs end at ~8.5 min. Then, inside
+the jobs, single long tests (t1053 74 s, t943 48 s, t399 59 s; t1171 on Windows) finish last
+while the other cores idle. The owner: "Да, оформи change" (yes, make it a change).
+
+**Taken as (change `ci-speedup`):** the Windows cross-build and the FFmpeg 9 build reuse a
+cache, the Windows build image is cached like the FFmpeg 9 one, every build cache is written only
+by the default branch, the long tests start first and use the idle cores, and the disk clean-up
+of the test job stops blocking it. Not taken without his word: skipping the Flatpak job on
+branches (it changes what is checked, not how fast).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

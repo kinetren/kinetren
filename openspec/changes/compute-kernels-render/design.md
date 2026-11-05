@@ -50,7 +50,16 @@ same day, seconds of the whole export, peak memory on the second):
 | showcase, first pass | 390.7 | 457.8 | 222.5 | |
 | showcase, second pass | 167.4 (7.2 GB) | | 154.7 (17.0 GB) | 187.6 (25.5 GB) |
 
-The load swung between 30 and 190, so the table says "about even at 8 devices", not more. Before
+The load swung between 30 and 190 in these two passes. The pairs below ran one after the other, the
+CPU binary built before the deletion against the final one, and they are the numbers to quote:
+
+| | CPU composite | 8 devices |
+|---|---|---|
+| showcase | 114.7, 115.9 s (7.2 GB) | 144.8, 144.1 s (17.0 GB) |
+| demo | 31.3, 48.8 s (2.4 GB) | 41.4, 41.8 s (6.6 GB) |
+
+The showcase repeats to a second: 25 % slower. The demo is noisier and lands in the same range or
+better. The earlier "about even" did not survive this. Before
 this the owner was told 134 s against 96 s; that figure was the single device. The price is memory:
 each device keeps its own textures. Limiting llvmpipe's threads per device gave no steady gain
 (34 s to 300 s on the demo under load) and stays out.

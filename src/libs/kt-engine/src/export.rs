@@ -59,6 +59,9 @@ pub enum ExportLog {
     Skipped { name: String, reason: String },
     /// A source is rendered as its placeholder (the caller's list).
     Placeholder { label: String },
+    /// Consecutive frames were composed without a layer (export-pipeline-determinism D4): the first
+    /// and the last frame's time, and the media that gave no picture.
+    IncompleteFrames { from: Tick, to: Tick, media: Vec<String> },
     Phase(ExportPhase),
     Finalizing,
     Error(String),
@@ -214,7 +217,7 @@ pub fn render_raw_video_range_with(
     progress: impl FnMut(u64),
     emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
-    render_raw_video_profiled(project, sources, quality, range, backends, cancel, None, progress, emit)
+    render_raw_video_profiled(project, sources, quality, range, backends, cancel, None, &|_, _| {}, progress, emit)
 }
 
 /// The serial video pass with its stage times (export-throughput D6): `profile` only receives
@@ -228,6 +231,7 @@ fn render_raw_video_profiled(
     backends: &ExportBackends,
     cancel: &Arc<AtomicBool>,
     profile: Option<&ExportProfile>,
+    incomplete: &(dyn Fn(Tick, &[MediaId]) + Sync),
     mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
@@ -291,9 +295,14 @@ fn render_raw_video_profiled(
         // group key — (media, DECODE QUALITY): the decoder span does not mix
         // sizes (kt-media), and the request already comes with the quality (R.46)
         let mark = Instant::now();
-        for (media, keys) in chunk_requests(&video, &cache, (t, chunk_end), quality, |m| src.contains_key(&m), &mut stats.missing_video_layers) {
-            decode_requests(src.get_mut(&media).unwrap(), media, &keys, &cache, &mut stats.missing_video_layers);
+        let mut lost = 0;
+        let requests = chunk_requests(&video, (t, chunk_end), quality, |m| src.contains_key(&m), &mut lost, |sid, dq, idx| {
+            cache.get_video(sid, Some(dq), idx).is_some()
+        });
+        for (media, keys) in requests {
+            decode_requests(src.get_mut(&media).unwrap(), media, &keys, &cache, &mut lost, None);
         }
+        stats.missing_video_layers += lost;
         ExportProfile::add(profile.map(|p| &p.decode_ns), mark);
         while t < chunk_end {
             if cancel.load(Ordering::Acquire) {
@@ -309,6 +318,7 @@ fn render_raw_video_profiled(
             ExportProfile::add(profile.map(|p| &p.compose_ns), mark);
             if !complete {
                 stats.missing_video_layers += 1;
+                incomplete(t, &video.absent_layers(&cache, t, quality));
             }
             emit(&frame_buf)?;
             stats.video_frames += 1;
@@ -324,11 +334,11 @@ fn render_raw_video_profiled(
 /// The serial and the pipelined export both decode through this and `decode_requests`.
 pub(crate) fn chunk_requests(
     video: &VideoRenderer,
-    cache: &BurstCache,
     (t0, t1): (Tick, Tick),
     quality: Quality,
     has: impl Fn(MediaId) -> bool,
     missing: &mut u64,
+    mut in_cache: impl FnMut(kt_cache::SourceId, Quality, i64) -> bool,
 ) -> Vec<(MediaId, Vec<(Tick, Quality)>)> {
     let mut per_media: std::collections::BTreeMap<MediaId, Vec<(Tick, Quality)>> = Default::default();
     for (media, src_pts, dq) in video.wanted_frames(kt_time::TickRange::new(t0, t1), quality) {
@@ -343,7 +353,7 @@ pub(crate) fn chunk_requests(
         let sid = source_id(media);
         keys.sort();
         keys.dedup();
-        keys.retain(|(k, dq)| cache.get_video(sid, Some(*dq), video_cache_idx(*k)).is_none());
+        keys.retain(|(k, dq)| !in_cache(sid, *dq, video_cache_idx(*k)));
         if !keys.is_empty() {
             out.push((media, keys));
         }
@@ -351,22 +361,90 @@ pub(crate) fn chunk_requests(
     out
 }
 
-/// Decode one source's requests into the cache; a failed span counts one missing layer.
+/// Decode one source's requests into the cache; a failed span counts one missing layer. With
+/// `held` (the pipelined export) each frame is inserted held and its key noted: only a frame that
+/// really arrived has a hold to give back. And a frame the span did not give is asked again alone,
+/// before anything composes it: a failed span drops every key after the failure, and the serial
+/// export gets those back from its pre-roll (`stream_preroll`), which a pipeline stage cannot run.
 pub(crate) fn decode_requests(
     s: &mut Box<dyn MediaSource>,
     media: MediaId,
     keys: &[(Tick, Quality)],
     cache: &BurstCache,
     missing: &mut u64,
+    mut held: Option<&mut Vec<kt_cache::BurstKey>>,
 ) {
     let sid = source_id(media);
-    let ok = s
-        .read_video_span_qualities(keys, &mut |k, dq, frame| {
-            cache.insert_video(sid, Some(dq), video_cache_idx(k), frame.into());
-        })
-        .is_ok();
+    let retry = held.is_some();
+    let mut arrived = std::collections::HashSet::new();
+    let mut insert = |k: Tick, dq: Quality, frame: kt_media::VideoFrame, arrived: &mut std::collections::HashSet<(Tick, Quality)>| {
+        let idx = video_cache_idx(k);
+        arrived.insert((k, dq));
+        match held.as_mut() {
+            Some(held) => {
+                cache.insert_video_held(sid, Some(dq), idx, frame.into());
+                held.push(kt_cache::BurstKey { source: sid, kind: kt_cache::BurstKind::video(Some(dq)), idx });
+            }
+            None => cache.insert_video(sid, Some(dq), idx, frame.into()),
+        }
+    };
+    let ok = s.read_video_span_qualities(keys, &mut |k, dq, frame| insert(k, dq, frame, &mut arrived)).is_ok();
     if !ok {
         *missing += 1;
+    }
+    if retry {
+        for &(k, dq) in keys.iter().filter(|key| !arrived.contains(key)).collect::<Vec<_>>() {
+            let mut again = std::collections::HashSet::new();
+            let _ = s.read_video_span(&[k], Some(dq), &mut |k, frame| insert(k, dq, frame, &mut again));
+        }
+    }
+}
+
+/// A run of consecutive frames composed without a layer, and what was missing.
+struct IncompleteRun {
+    from: Tick,
+    to: Tick,
+    media: std::collections::BTreeSet<MediaId>,
+}
+
+impl IncompleteRun {
+    fn into_log(self, project: &Project) -> ExportLog {
+        let name = |id: MediaId| match project.media.iter().find(|m| m.id == id) {
+            Some(m) => std::path::Path::new(&m.path)
+                .file_name()
+                .map_or_else(|| m.path.clone(), |f| f.to_string_lossy().into_owned()),
+            None => format!("media {}", id.0),
+        };
+        ExportLog::IncompleteFrames { from: self.from, to: self.to, media: self.media.into_iter().map(name).collect() }
+    }
+}
+
+/// Joins consecutive incomplete frames into runs, in the frame order they are told.
+struct IncompleteRuns {
+    step: Tick,
+    run: std::sync::Mutex<Option<IncompleteRun>>,
+}
+
+impl IncompleteRuns {
+    fn new(step: Tick) -> IncompleteRuns {
+        IncompleteRuns { step, run: std::sync::Mutex::new(None) }
+    }
+
+    /// The run this frame ended, if it does not continue the last one.
+    fn note(&self, t: Tick, media: &[MediaId]) -> Option<IncompleteRun> {
+        let mut run = self.run.lock().unwrap();
+        if let Some(r) = run.as_mut()
+            && t.0 <= r.to.0 + self.step.0
+        {
+            r.to = t;
+            r.media.extend(media);
+            return None;
+        }
+        run.replace(IncompleteRun { from: t, to: t, media: media.iter().copied().collect() })
+    }
+
+    fn finish(&self) -> Option<IncompleteRun> {
+        self.run.lock().unwrap().take()
     }
 }
 
@@ -413,7 +491,8 @@ fn stream_preroll(
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
-    #[error("io: {0}")]
+    // the message alone: a person reads it in the render window, and "io" names a Rust type
+    #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("ffmpeg exited with {0}")]
     FfmpegFailed(std::process::ExitStatus),
@@ -447,6 +526,9 @@ pub struct ExportOptions {
     /// encoder on one thread. The reference the pipelined export is held to (t1451) and the
     /// "before" of `kt-cli export --serial --time`.
     pub serial: bool,
+    /// The video encoder's threads, when not the export's own choice (`auto`, serial `1`): at the
+    /// same count the pipelined and the serial streams can be compared packet by packet.
+    pub encoder_threads: Option<u32>,
     /// Collects the busy time of every stage (`kt-cli export --time`).
     pub profile: Option<Arc<ExportProfile>>,
 }
@@ -461,6 +543,7 @@ impl Default for ExportOptions {
             resolution: None,
             placeholders: Vec::new(),
             serial: false,
+            encoder_threads: None,
             profile: None,
         }
     }
@@ -521,7 +604,7 @@ pub fn export_mp4_with_backends(
         video_bitrate: opts.video_bitrate,
         audio_bitrate: opts.audio_bitrate,
         force_encoder: opts.force_encoder.clone(),
-        threads: if opts.serial { 1 } else { 0 },
+        threads: opts.encoder_threads.unwrap_or(if opts.serial { 1 } else { 0 }),
     });
     let events = Arc::new(events);
     let mut muxer = match muxer {
@@ -587,6 +670,13 @@ pub fn export_mp4_with_backends(
     let profile = opts.profile.as_deref();
     let started = Instant::now();
     events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Video)));
+    // a frame without a layer is told where it happens, in frame order (D4)
+    let incomplete_runs = IncompleteRuns::new(Tick(kt_time::FpsGrid::new(fps).frame_step()));
+    let incomplete = |t: Tick, media: &[MediaId]| {
+        if let Some(run) = incomplete_runs.note(t, media) {
+            events(ExportEvent::Log(run.into_log(project)));
+        }
+    };
     // a stream stage's pre-roll decodes on the compose thread (datamosh-codec-path D6): such a
     // project keeps the serial export (export-throughput D2)
     let serial = opts.serial || VideoRenderer::new(project).has_stream_stages();
@@ -604,6 +694,7 @@ pub fn export_mp4_with_backends(
                 backends,
                 cancel,
                 profile,
+                &incomplete,
                 |done| {
                     wait_paused();
                     v_done.store(done, Ordering::Relaxed);
@@ -694,6 +785,8 @@ pub fn export_mp4_with_backends(
             bytes: &bytes,
             video_finished: &video_finished,
             profile,
+            budget: EXPORT_VIDEO_CACHE_BYTES,
+            incomplete: &incomplete,
         };
         crate::export_pipeline::run(
             project,
@@ -709,6 +802,9 @@ pub fn export_mp4_with_backends(
         .map_err(|e| cleanup_on_err(e.into()))?
     };
     v_done.store(vstats.video_frames, Ordering::Relaxed);
+    if let Some(run) = incomplete_runs.finish() {
+        events(ExportEvent::Log(run.into_log(project)));
+    }
 
     if cancel.load(Ordering::Acquire) {
         drop(muxer);
@@ -752,6 +848,35 @@ pub fn render_pipelined<S: ExportSink>(
     profile: Option<&ExportProfile>,
     sink: &mut S,
 ) -> std::io::Result<ExportStats> {
+    render_pipelined_budget(
+        project,
+        audio_sources,
+        video_sources,
+        quality,
+        range,
+        backends,
+        cancel,
+        profile,
+        EXPORT_VIDEO_CACHE_BYTES,
+        sink,
+    )
+}
+
+/// `render_pipelined` on another serial budget: the cache's pressure is the ratio of the budget to
+/// the frame size, so a test gets the export's pressure with small frames.
+#[allow(clippy::too_many_arguments)]
+pub fn render_pipelined_budget<S: ExportSink>(
+    project: &Project,
+    audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    quality: Quality,
+    range: Option<(Tick, Tick)>,
+    backends: &ExportBackends,
+    cancel: &Arc<AtomicBool>,
+    profile: Option<&ExportProfile>,
+    budget: usize,
+    sink: &mut S,
+) -> std::io::Result<ExportStats> {
     let hooks = crate::export_pipeline::Hooks {
         wait_paused: &|| {},
         video_done: &|_| {},
@@ -759,6 +884,8 @@ pub fn render_pipelined<S: ExportSink>(
         bytes: &|_| {},
         video_finished: &|| {},
         profile,
+        budget,
+        incomplete: &|_, _| {},
     };
     let (v, a) = crate::export_pipeline::run(
         project,

@@ -80,6 +80,14 @@ const FILES: &[&str] = &[
     // the AppStream compose before the build (ci-red-again, t1380, t1381)
     "src/scripts/appstream-compose-check.sh",
     "src/scripts/ui-probe.py",
+    // the test order (ci-speedup, t1422): the profile and a file of each test it names
+    "src/.config/nextest.toml",
+    "src/apps/kt-app/src/util.rs",
+    "src/libs/kt-media/tests/index_db.rs",
+    "src/apps/kt-app/src/layout_tests.rs",
+    "src/apps/kt-cli/tests/cli.rs",
+    "src/plugins/fx-video-tape/tests/physics.rs",
+    "src/libs/kt-engine/tests/pitch_edges.rs",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -193,8 +201,8 @@ fn t860_guard_catches_windows_drift() {
     let cases: [(&str, Break, &str); 11] = [
         (
             "stage",
-            |d| edit(d, "src/packaging/Dockerfile", "FROM base AS windows", "FROM base AS win"),
-            "src/packaging/Dockerfile: no `FROM base AS windows` stage",
+            |d| edit(d, "src/packaging/Dockerfile", "FROM base AS windows-cross", "FROM base AS win"),
+            "src/packaging/Dockerfile: no `FROM base AS windows-cross` stage",
         ),
         (
             "last-stage",
@@ -1011,4 +1019,115 @@ fn t971_flatpak_job_and_release_bundle_keep_their_shape() {
         ("no-make", |d| edit(d, "Makefile", "\nflatpak: ##", "\nflatpak-gone: ##"), "target `flatpak` must run flatpak-build.sh"),
     ];
     expect_red(&cases);
+}
+
+const CI: &str = ".github/workflows/ci.yml";
+const MAIN_ONLY: &str = "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)";
+
+fn assert_each_is_caught(tag: &str, cases: &[(&str, fn(&Path), &str)]) {
+    let dir = copy_tree(tag);
+    let (ok, text) = guard(&dir);
+    assert!(ok, "an unchanged copy must pass:\n{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+    for (name, breaks, says) in cases {
+        let dir = copy_tree(&format!("{tag}-{name}"));
+        breaks(&dir);
+        let (ok, text) = guard(&dir);
+        assert!(!ok, "{name}: the guard must go red");
+        assert!(text.contains(says), "{name}: expected {says:?} in\n{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// t1420 (ci-speedup): only the default branch writes a cache. Side branches compete with master's
+/// entries for the repository's 10 GB.
+#[test]
+fn t1420_only_the_default_branch_writes_a_cache() {
+    if cfg!(windows) {
+        eprintln!("t1420 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [(&str, fn(&Path), &str); 3] = [
+        (
+            "bare-cache",
+            |d| edit(d, CI, "uses: actions/cache/restore@v4\n        with:\n          path: .flatpak-builder", "uses: actions/cache@v4\n        with:\n          path: .flatpak-builder"),
+            "flatpak: `actions/cache` saves from any branch",
+        ),
+        (
+            "save-anywhere",
+            |d| edit(d, CI, &format!("if: {MAIN_ONLY} && steps.builder-cache.outputs.cache-hit != 'true'\n        uses: actions/cache/save@v4"), "uses: actions/cache/save@v4"),
+            "flatpak: an `actions/cache/save` step without a condition",
+        ),
+        (
+            "rust-cache-anywhere",
+            |d| edit(d, CI, "save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}", "save-if: true"),
+            "test: `Swatinem/rust-cache` without a `save-if`",
+        ),
+    ];
+    assert_each_is_caught("t1420", &cases);
+}
+
+/// t1421 (ci-speedup): every compiling job restores a cache keyed by what decides its content.
+#[test]
+fn t1421_every_compiling_job_restores_a_cache_keyed_by_its_inputs() {
+    if cfg!(windows) {
+        eprintln!("t1421 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [(&str, fn(&Path), &str); 6] = [
+        (
+            "flatpak-no-restore",
+            |d| edit(d, CI, "uses: actions/cache/restore@v4\n        with:\n          path: .flatpak-builder", "uses: actions/checkout@v4\n        with:\n          path: .flatpak-keep"),
+            "flatpak: compiles without restoring .flatpak-builder",
+        ),
+        (
+            "windows-no-restore",
+            |d| edit(d, CI, "uses: actions/cache/restore@v4\n        with:\n          path: |\n            src/target/win-container", "uses: actions/checkout@v4\n        with:\n          path: |\n            src/target/win-keep"),
+            "windows-build: compiles without restoring src/target/win-container",
+        ),
+        (
+            "ffmpeg9-no-restore",
+            |d| edit(d, CI, "uses: actions/cache/restore@v4\n        with:\n          path: |\n            src/target/ffmpeg-test-container", "uses: actions/checkout@v4\n        with:\n          path: |\n            src/target/ffmpeg-keep"),
+            "ffmpeg9: compiles without restoring src/target/ffmpeg-test-container",
+        ),
+        (
+            "key-without-lock",
+            |d| edit(d, CI, "key: windows-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/packaging/Dockerfile') }}-${{ hashFiles('src/Cargo.lock') }}", "key: windows-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/packaging/Dockerfile') }}"),
+            "windows-build: the key of `src/target/` lacks hashFiles('src/Cargo.lock')",
+        ),
+        (
+            "key-without-toolchain",
+            |d| edit(d, CI, "key: ffmpeg-test-target-${{ env.RUST_TOOLCHAIN }}-", "key: ffmpeg-test-target-"),
+            "ffmpeg9: the key of `src/target/` lacks env.RUST_TOOLCHAIN",
+        ),
+        (
+            "key-by-run",
+            |d| edit(d, CI, "key: windows-cross-image-${{ hashFiles('src/packaging/Dockerfile') }}", "key: windows-cross-image-${{ hashFiles('src/packaging/Dockerfile') }}-${{ github.run_id }}"),
+            "windows-build: a cache key names a run or a date",
+        ),
+    ];
+    assert_each_is_caught("t1421", &cases);
+}
+
+/// t1422 (ci-speedup): the tests the nextest profile starts first exist; a renamed test would
+/// silently fall out of the order.
+#[test]
+fn t1422_the_ordered_tests_exist() {
+    if cfg!(windows) {
+        eprintln!("t1422 skipped on Windows: a repository guard run by python3; it runs in the Linux job");
+        return;
+    }
+    let cases: [(&str, fn(&Path), &str); 2] = [
+        (
+            "missing-test",
+            |d| edit(d, "src/.config/nextest.toml", "test(t399_)", "test(t9999_)"),
+            "src/.config/nextest.toml: no `#[test]` named t9999_",
+        ),
+        (
+            "no-profile",
+            |d| std::fs::remove_file(d.join("src/.config/nextest.toml")).unwrap(),
+            "src/.config/nextest.toml: missing",
+        ),
+    ];
+    assert_each_is_caught("t1422", &cases);
 }

@@ -11,6 +11,10 @@
 # Not here, on purpose: the live Xvfb scenarios, they stay in finish.sh on a real
 # machine. Nothing is uploaded except the test log of a failed run, kept for 3 days:
 # on GitHub only releases are kept.
+#
+# Caches (change ci-speedup): every job that compiles restores one, and only a run on the
+# default branch writes one, so side branches cannot evict master's from the repository's
+# 10 GB. A key names what decides the content (toolchain, Cargo.lock, Dockerfile, manifest).
 name: CI
 
 on:
@@ -42,12 +46,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          df -h /
-
       - uses: actions/checkout@v4
 
       - name: System packages
@@ -145,13 +143,33 @@ jobs:
           sudo apt-get install -y --no-install-recommends flatpak flatpak-builder appstream elfutils librsvg2-common webp-pixbuf-loader
 
       - name: The flatpak-builder cache
-        uses: actions/cache@v4
+        id: builder-cache
+        uses: actions/cache/restore@v4
         with:
           path: .flatpak-builder
           key: flatpak-builder-${{ hashFiles('src/packaging/flatpak/*.yml', 'src/packaging/flatpak/cargo-sources.json') }}
+          restore-keys: flatpak-builder-
 
       - name: Build, lint and check the Flatpak
+        env:
+          KT_FLATPAK_CCACHE: "1"
         run: src/scripts/flatpak-build.sh
+
+      - name: Keep only the third-party artifacts
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.builder-cache.outputs.cache-hit != 'true'
+        working-directory: src
+        # this job installs no toolchain: cargo is the runner image's; housekeeping must not fail a check
+        continue-on-error: true
+        run: |
+          cargo metadata --no-deps --format-version 1 --offline > "$RUNNER_TEMP/metadata.json"
+          python3 scripts/ci-cache-prune.py ../.flatpak-builder/ccache/target "$RUNNER_TEMP/metadata.json"
+
+      - name: Save the flatpak-builder cache
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.builder-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .flatpak-builder
+          key: ${{ steps.builder-cache.outputs.cache-primary-key }}
 
   ffmpeg9:
     # FFmpeg 9 on Linux (change ffmpeg-9): the FFmpeg tests against shared FFmpeg 9.0.2,
@@ -173,7 +191,8 @@ jobs:
           bash src/fixtures/gen.sh
 
       - name: The ffmpeg-test image from the cache
-        uses: actions/cache@v4
+        id: image-cache
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/ffmpeg-test-image.tar.gz
           key: ffmpeg-test-image-${{ hashFiles('src/packaging/Dockerfile') }}
@@ -188,12 +207,46 @@ jobs:
             docker save kinetren-build:ffmpeg-test | gzip -1 > /tmp/ffmpeg-test-image.tar.gz
           fi
 
+      - name: Save the ffmpeg-test image
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.image-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/ffmpeg-test-image.tar.gz
+          key: ${{ steps.image-cache.outputs.cache-primary-key }}
+
+      - name: The third-party artifacts and the crate registry from the cache
+        id: target-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            src/target/ffmpeg-test-container
+            ~/.cargo/registry
+          key: ffmpeg-test-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/packaging/Dockerfile') }}-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: ffmpeg-test-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/packaging/Dockerfile') }}-
+
       - name: FFmpeg tests against FFmpeg 9
         env:
           KT_FFMPEG_TEST_IMAGE_READY: "1"
         run: |
           set -o pipefail
+          mkdir -p ~/.cargo/registry
           src/scripts/ffmpeg-test.sh 2>&1 | tee nextest-ffmpeg9.log
+
+      - name: Keep only the third-party artifacts
+        if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.target-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm -v "$PWD:/kt" -w /kt/src kinetren-build:ffmpeg-test \
+            cargo metadata --no-deps --format-version 1 --offline > "$RUNNER_TEMP/metadata.json"
+          python3 src/scripts/ci-cache-prune.py src/target/ffmpeg-test-container "$RUNNER_TEMP/metadata.json"
+
+      - name: Save the third-party artifacts and the crate registry
+        if: always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            src/target/ffmpeg-test-container
+            ~/.cargo/registry
+          key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
       - name: Upload the test log of a failed run
         if: failure()
@@ -204,7 +257,7 @@ jobs:
           retention-days: 3
 
   windows-build:
-    # The Windows test binaries are cross-built in the `windows` stage of the build
+    # The Windows test binaries are cross-built in the `windows-cross` stage of the build
     # container (one toolchain: the owner's choice), with the fixtures generated on
     # Linux; both travel to the windows-latest job and expire after a day.
     runs-on: ubuntu-24.04
@@ -218,17 +271,50 @@ jobs:
           sudo apt-get install -y --no-install-recommends ffmpeg
           bash src/fixtures/gen.sh
 
-      - name: Build container (windows stage)
+      - name: The windows-cross image from the cache
+        id: image-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/windows-cross-image.tar.gz
+          key: windows-cross-image-${{ hashFiles('src/packaging/Dockerfile') }}
+
+      - name: Load or build the build container (windows-cross stage)
         working-directory: src
-        run: docker build --network=host --target windows -t kinetren-build:windows -f packaging/Dockerfile packaging
+        # nothing here runs a Windows binary, so the job does not carry wine (most of `windows`)
+        run: |
+          if [ -f /tmp/windows-cross-image.tar.gz ]; then
+            docker load < /tmp/windows-cross-image.tar.gz
+          else
+            docker build --network=host --target windows-cross -t kinetren-build:windows-cross -f packaging/Dockerfile packaging
+            docker save kinetren-build:windows-cross | gzip -1 > /tmp/windows-cross-image.tar.gz
+          fi
+
+      - name: Save the windows-cross image
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.image-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/windows-cross-image.tar.gz
+          key: ${{ steps.image-cache.outputs.cache-primary-key }}
+
+      - name: The third-party artifacts and the crate registry from the cache
+        id: target-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            src/target/win-container
+            ~/.cargo/registry
+          key: windows-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/packaging/Dockerfile') }}-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: windows-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('src/packaging/Dockerfile') }}-
 
       - name: Windows test archive
         # the repository at /kt, the build in /kt/src: the compile-time paths of the tests
         # are /kt/src/…, which the Windows job makes valid with a junction D:\kt
         run: |
+          mkdir -p ~/.cargo/registry
           docker run --rm --network=host -u "$(id -u):$(id -g)" -v "$PWD:/kt" -w /kt/src \
-            -e CARGO_TARGET_DIR=/kt/src/target/win-container -e RUSTFLAGS= -e CARGO_PROFILE_DEV_DEBUG=0 \
-            kinetren-build:windows \
+            -v "$(src/scripts/cargo-registry.sh kinetren-build:windows-cross):/usr/local/cargo/registry" \
+            -e CARGO_TARGET_DIR=/kt/src/target/win-container -e RUSTFLAGS= -e CARGO_PROFILE_DEV_DEBUG=0 -e CARGO_INCREMENTAL=0 \
+            kinetren-build:windows-cross \
             cargo nextest archive --target x86_64-pc-windows-gnu --workspace \
               --archive-file /kt/src/target/windows-tests.tar.zst
 
@@ -240,6 +326,22 @@ jobs:
             src/target/windows-tests.tar.zst
             src/fixtures/out
           retention-days: 1
+
+      - name: Keep only the third-party artifacts
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.target-cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm -v "$PWD:/kt" -w /kt/src kinetren-build:windows-cross \
+            cargo metadata --no-deps --format-version 1 --offline > "$RUNNER_TEMP/metadata.json"
+          python3 src/scripts/ci-cache-prune.py src/target/win-container "$RUNNER_TEMP/metadata.json"
+
+      - name: Save the third-party artifacts and the crate registry
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.target-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            src/target/win-container
+            ~/.cargo/registry
+          key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
   windows-test:
     needs: windows-build

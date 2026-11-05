@@ -1,0 +1,11 @@
+# The long tests start first (change ci-speedup, D5): the run does not end on one long test while
+# the other cores idle. Measured in the CI run of 9e1f1a45, the longest on either runner; every
+# test named here exists (dist-check.py, t1422). The default profile, so finish.sh and CI get it
+# without a flag.
+[[profile.default.overrides]]
+filter = 'test(t399_) | test(t1171_)'
+priority = 20
+
+[[profile.default.overrides]]
+filter = 'test(t918_) | test(t923_) | test(t290_) | test(t1185_) | test(t947_) | test(t1113_)'
+priority = 10

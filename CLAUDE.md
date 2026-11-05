@@ -45,7 +45,7 @@ python3 scripts/subset-fonts.py  # CJK/Arabic font subsets from the translation 
                            # Dockerfile; inside, the PE imports are checked (no av*/sw*,
                            # no mingw runtime DLL); no FFmpeg DLL is ever packed
 ./scripts/target-prune.py  # drop the STALE artifacts of target/debug (cargo names what the
-                           # tree needs; the rest goes). A fresh build is ~22 GB, but every
+                           # tree needs; the rest goes). A fresh build is ~14 GB, but every
                            # core edit leaves new copies of ~96 test binaries: one agent day
                            # grew a worktree's target to 142 GB. finish.sh runs it; a
                            # session runs it after every committed stage too
@@ -145,7 +145,7 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
   branch in its own worktree (`.claude/worktrees/<name>`); `master` receives that branch by a merge
   (fast-forward when it can), and the merge itself is done or ordered by the orchestrating session
   or the owner. A commit made on `master` itself is a process defect.
-- **The disk is short** (owner, 2026-10-30 and 2026-11-01). A worktree's `target` is ~20 GB fresh
+- **The disk is short** (owner, 2026-10-30 and 2026-11-01). A worktree's `target` is ~14 GB fresh
   and grows with every core edit. So:
   - `scripts/target-prune.py` runs after every committed stage;
   - a worktree whose branch is merged is removed (`git worktree remove`);
@@ -183,6 +183,10 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
   "finish.sh надо прогнать после каждой стадии, а не на каждом окончании отдельного запроса"): an
   executor ends with the tests of its specs, `cargo test` of what it touched, clippy, its own live
   scenario and target-prune — not finish.sh. The orchestrator's instructions: `docs/orchestrator.md`.
+- **The dev profile keeps `debug = 1`** (change ci-speedup, D8): line tables and function names,
+  as the release profiles. Full debug info took the target from 14 GB to 27 GB, and an edit that
+  relinks the test binaries waited on the disk. `"line-tables-only"` is not enough: a crash report
+  needs the function's module path (t1072).
 - The program version is `kt-version` (build.rs, commit date + hash). The manifests keep `0.1.0`: semver does not accept `v26.08.27-…`. The debug title shows the full version, release — the short `ktYY.MM`.
 
 ## Editing a crate — which tests are mandatory

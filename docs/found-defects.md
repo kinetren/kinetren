@@ -49,9 +49,10 @@ list may be short of items from them.
 | 54 | one-off composite stalls | 1.7-1.9 s at one cut and once 21.9 s, on the old path only; at most 25 ms since | composite | cause unknown | watch |
 | 55 | RGBA conversion, one thread per file | The next limit for 4K at native size | `kt-ffmpeg` `to_rgba` | not reached in the measurements | С.1 |
 | 56 | a start on a really cold disk | The OS page cache could not be dropped here; if sound misses the 500 ms wait, the silence stays as before | start of playback | not measured | watch |
-| 66 | **random broken frames in a pipeline export** | `kt-cli demo` exported with `libx264`: "missing layers" 5, 7, 8, 10, different every run; some frames differ by up to 5.8 dB between two runs (197, 198, 231, 287, 352...). `--serial` gives 0 and the same md5 twice. Breaks invariant 11, t1451 does not catch it; suspected cache eviction | `src/libs/kt-engine` `export_pipeline.rs` | reported by `hw-encode-context`, new since `export-throughput` | fix now |
-| 67 | render error window | The text starts with "Error: io:" and the Video row stays on "choosing the encoder…" | `kt-app/src/render_dialog.rs` | open | С.3 |
 | 68 | hardware encoding unproven | No real Intel or AMD driver ran; the T16 crash is isolated, its cause not proven; a driver that fails after the three trial frames still ends the render; only FFmpeg 6.1.1 ran | `kt-ffmpeg` `hw_trial.rs` | open | needs a machine with a card |
+| 71 | false lost-layer line | A span that failed and was fully recovered still counts as one lost layer: the window says one video layer was lost when nothing was; t1605 pins it | `kt-engine/src/export.rs` `decode_requests` | open | С.1, follow-up to `export-pipeline-determinism` |
+| 72 | render time on a busy machine | Equal binaries started together on one project differ by up to 51 s, and runs stand idle 30-80 s outside the pipeline, both versions; cause not found | `kt-engine` export | open | С.1 |
+| 73 | event longer than its file | Each frame past the file's end is now asked again on its own, as `--serial` does; the cost was not measured | `kt-engine/src/export_pipeline.rs` | not measured | С.1 |
 | 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
 | 65 | Datamosh not seen on a real device | The compute path ran only on Vulkan through llvmpipe: no real card, DX12, Metal or ARM yet; the panel's message without a device was not looked at in the live program | `fx-video-codec` | open | С.2 CI and the ARM build |
 | 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
@@ -64,24 +65,27 @@ list may be short of items from them.
 | 25 | `formula` live scenario red under load | `src/scripts/live/formula.py` | open | С.2 |
 | 26 | live scenarios red in a batch, green alone; displays collide | `scripts/live-check.sh` | open | С.2 |
 | 27 | sidecar "database is locked" (t640, t1171, t411, t1413) | `kt-media` | fixed by `ece65c8f`, to confirm on the merged tree | confirm in the stage's `finish.sh` |
-| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20 | various | open | С.2 |
+| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20, t815 (a wall-clock bound on writing the restore record: 0.05 s quiet, 2-13 s on a busy disk) | various | open | С.2 |
 | 29 | two parallel fixture generations share one temp name | `src/fixtures/gen.sh` | open | С.2 |
 | 30 | `BadWindow` in ui-probe, the `welcome` scenario | live | open | С.2 |
-| 31 | a plugin edit costs 158 s of test build | workspace | open | С.2 |
-| 32 | CI wall 21 min; `ci-speedup` proposed only | `.github/workflows/ci.yml` | open | С.2 |
+| 31 | a plugin edit rebuilds every test target of the core crates (no early cut-off, ~120 binaries); `debug = 1` halved it, the cascade stays | workspace | reduced by `ci-speedup` | С.2 |
+| 32 | CI wall 13.0 min in the only log (21 min has none); `ci-speedup` estimates ~9, to confirm on a warm master run | `.github/workflows/ci.yml` | applied, awaits the logs | С.2 |
 | 33 | `font_tests::sources()` misses code after the first `#[cfg(test)]` | kt-app `font_tests.rs` | open | С.2 |
 | 34 | `cargo fmt --all` reformats about 60 files | tree | open | С.2, one commit |
 | 35 | old clippy warnings | kt-gpu, kt-cli, kt-app | unknown | С.2 |
 | 36 | a copied `target/` builds another worktree's text | `CARGO_MANIFEST_DIR` in build.rs | open | С.2 |
 | 38 | Flatpak steps after compose never ran on a real runner | CI | unknown | needs the owner's push |
 | 41 | `pkill -f` kills the caller's own shell | agent scripts | trap | goes into the briefs |
-| 57 | t836, t362 red once under load; t1524 has a thin margin (70 % against 64 %) | `telemetry.rs`, `project_lock.rs` | open | С.2 |
+| 57 | t836, t362 red once under load; t951, t952, t476, t411 red in one full run at load 25 on 2026-11-05, green alone; t1524 has a thin margin (70 % against 64 %) | `telemetry.rs`, `project_lock.rs` | open | С.2 |
 | 58 | `harness_still_of` runs `gen.sh` in every test, parallel runs overwrite each other's fixtures: t939 and t796c red in a full run, green alone | `kt-app/src/layout_tests.rs:17719` | open | С.2 |
 | 59 | `loop` live scenario allows one stale dump read | `src/scripts/live/loop.py:54` | open | С.2 |
 | 60 | `docs/features/README.md` drifts from `--table`, `--check` does not see it | docs | open | С.2 |
 | 61 | dead code warnings; two clippy notes | `kt-app/src/reel_preview.rs:188`, `:265`; `kt-cli/src/main.rs` | open | С.2 |
 | 62 | two chains in a window share probe names | `kt-app/src/deck_face.rs` | open | С.2 |
 | 63 | TEST lines point at the wrong file: `automation` t645 names `auto_plan.rs`; the other specs were not checked | `openspec/specs/*/spec.md` | open | С.2 |
+| 74 | `hwencode` live scenario | The second process overwrites the first's `01-step` screenshot, the scenario sets the folder | `src/scripts/live/hwencode.py` | open | С.2 |
+| 69 | Flathub linter depends on our site answering | `https://kinetren.com` slow: the job fails with `appid-url-not-reachable` | `src/scripts/flatpak-build.sh` | open | С.2 |
+| 70 | live scenarios are most of `finish.sh` | 72 scenarios take 3269 s in a row, at least 817 s on 4 workers, `readme_shots` alone 593 s | `src/scripts/live` | open | С.2 |
 | 45 | Color Grade GPU and CPU add in a different order: 140 channels per 1080p frame differ by 1 | `src/plugins/fx-video-color/src/color_grade.wgsl` | reported by `compute-backends` | not a defect once the math moves to compute |
 
 ## Changes left unfinished

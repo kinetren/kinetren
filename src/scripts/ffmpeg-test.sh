@@ -38,7 +38,7 @@ REGISTRY="$(scripts/cargo-registry.sh "$IMAGE")"
 docker run --rm --network=host -u "$UID_GID" -v "$PWD/..:/kt" -w /kt/src \
     -v "$REGISTRY:/usr/local/cargo/registry" \
     -e CARGO_TARGET_DIR=/kt/src/target/ffmpeg-test-container -e RUSTFLAGS= \
-    -e CARGO_PROFILE_DEV_DEBUG=0 -e HOME=/tmp \
+    -e CARGO_PROFILE_DEV_DEBUG=0 -e CARGO_INCREMENTAL -e HOME=/tmp \
     -e KT_EXPECT_FFMPEG_MAJOR="$EXPECT" \
     "$IMAGE" \
     cargo nextest run -p kt-ffmpeg -p kt-media -p kt-engine -p kt-cli --no-fail-fast "$@"
