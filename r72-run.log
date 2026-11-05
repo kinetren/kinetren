@@ -1,0 +1,652 @@
+
+running 534 tests
+test app::repaint_tests::t39_preview_key_is_grid_aligned ... ok
+test app::repaint_tests::t46_rate_slider_mapping ... ok
+test app::repaint_tests::t51_preview_detach_state ... ok
+test app::repaint_tests::t47_dnd_hover_survives_until_drop ... ok
+test app::repaint_tests::t20_idle_repaint_is_slow_playing_is_60fps ... ok
+test app::repaint_tests::t58_transport_toggle_rules ... ok
+test app::repaint_tests::t626_rate_entry_arithmetic ... ok
+test app::repaint_tests::t765_preview_fraction_keeps_the_project_aspect ... ok
+test app::repaint_tests::t77_resize_zones_edge_and_corner ... ok
+test app::repaint_tests::t74_preview_click_machine ... ok
+test app::repaint_tests::t78_status_line_priority ... ok
+test app::repaint_tests::t81_overshoot_rate ... ok
+test app::repaint_tests::t82_stop_points_and_jumps ... ok
+test app::repaint_tests::t92_search_hits ... ok
+test ffmpeg_setup::tests::pinned_archive_extracts_like_7zip ... ok
+test ffmpeg_setup::tests::t867_download_stays_offered_over_an_earlier_download ... ok
+test ffmpeg_setup::tests::t948_speed_and_time_left_from_samples ... ok
+test fx_thumbs::tests::t546_queue_is_lifo_dedup_and_cancels_by_generation ... ok
+test fx_thumbs::tests::t546b_ready_lru_has_a_ceiling ... ok
+test i18n_tests::t126_bidi_reorders_words_not_letters ... ok
+test fx_thumbs::tests::t546f_decode_guard_waits_but_rendering_does_not ... ok
+test i18n_tests::t125_catalog_parser_is_strict ... ok
+test i18n_tests::t126_search_sections_are_not_reordered ... ok
+test i18n_tests::t130_locale_detection ... ok
+test fx_thumbs::tests::t546c_recipe_separates_what_changes_the_picture ... ok
+test gen_audio_tests::t1163_the_sound_kinds_are_menu_rows_in_the_audio_group ... ok
+test i18n_tests::t171_transition_menu_labels_say_what_and_where ... ok
+test i18n_tests::t756c_ducking_is_named_the_way_the_industry_names_it ... ok
+test fx_registry::tests::t1018_the_picker_keeps_its_order_and_the_cells_are_the_manifests ... ok
+test i18n_tests::t861_language_from_the_os_locale_when_no_variable ... ok
+test i18n_tests::t876_update_texts_in_every_language ... ok
+test i18n_tests::t970_flatpak_ffmpeg_hint_in_every_language ... ok
+test fx_registry::tests::t48_registry_complete_and_filter_works ... ok
+test fx_registry::tests::t543_builtin_variants_are_distinct_and_in_range ... ok
+test i18n_tests::t759b_transform_form_labels_are_translated_and_carry_no_units ... ok
+test font_tests::t876_update_texts_have_glyphs ... ok
+test i18n_tests::t953_download_window_speaks_every_language ... ok
+test journal::tests::eframe_settings_file_is_where_eframe_puts_it ... ok
+test journal::tests::t1079_stamp_is_local_time_with_offset ... ok
+test journal::tests::t354b_civil_from_days ... ok
+test analysis::tests::t409_failure_is_remembered_and_not_retried_by_itself ... ok
+test journal::tests::t374_crash_report_is_reported_once ... ok
+test analysis::sidechain_tests::t774_no_ducking_job_in_the_queue ... ok
+test journal::tests::t1078_shown_report_is_taken_but_not_announced ... ok
+test graphs::tests::t1149_graph_draws_from_its_last_sample_build ... ok
+test journal::tests::t1075_journal_is_per_run_with_a_header ... ok
+test journal::tests::t830_former_data_dir_is_moved_once ... ok
+test fx_thumbs::tests::t546e_service_delivers_and_invalidates_by_media ... ok
+test i18n_tests::t930_packaging_speaks_every_catalog_language ... ok
+test fx_thumbs::tests::t546d_render_job_gives_a_cell_and_the_chain_is_visible ... ok
+test audio_out::tests::t857_output_edge_converts_rate_and_channels ... ok
+test analysis::tests::t410_cancel_clears_everything_and_running_means_running ... ok
+test journal::tests::t1310_tests_write_into_their_own_data_dir ... ok
+test analysis::tests::t408_one_job_at_a_time_and_queue_dedups ... ok
+test fx_thumbs::tests::t546g_picker_ctx_requests_then_gets_a_texture ... ok
+test font_tests::t100_ui_chars_have_glyphs ... ok
+test i18n_tests::t933_cyrillic_stays_in_ru_and_in_declared_data ... ok
+test layout_tests::t139_move_plan_crossfade_and_clamp ... ok
+test journal::tests::t1311_only_data_dir_resolves_the_persons_directories ... ok
+test journal::tests::t354_journal_appends_and_rotates ... ok
+test i18n_tests::t131_source_language_is_english ... ok
+test layout_tests::t126_arabic_renders_right_to_left ... ok
+test layout_tests::t129_language_switch_keeps_state ... ok
+test layout_tests::t150_project_io_is_otio ... ok
+test layout_tests::t1076_sandbox_is_never_the_last_project ... ok
+test layout_tests::t119_shift_nav_drags_region ... ok
+test diag_tests::t1147_graphs_grow_with_the_window ... ok
+test diag_tests::t1148_open_diagnostics_does_not_heat_an_idle_program ... ok
+test gen_audio_tests::t1164_edit_creates_a_sound_generator_at_the_cursor ... ok
+test bg::tests::t398b_cancel_releases_a_paused_job ... ok
+test layout_tests::t118_bin_autoscrolls_and_wheel_works ... ok
+test gen_audio_tests::t1165_the_track_menu_creates_at_the_clicked_place ... ok
+test gen_audio_tests::t1166_a_sound_kinds_card_is_named_not_black ... ok
+test layout_tests::t1071_render_window_survives_frames_past_the_total ... ok
+test layout_tests::t139_drag_overlap_creates_crossfade ... ok
+test layout_tests::t142_marker_range_gesture_and_edges ... ok
+test layout_tests::t1414_search_window_shows_its_finds ... ok
+test layout_tests::t142_marker_end_drag ... ok
+test i18n_tests::t125_catalogs_are_complete_and_used ... ok
+test diag_tests::t1146_diagnostics_carries_every_line_and_three_graphs ... ok
+test diag_tests::t1145_left_column_is_the_bins_and_both_doors_open_diagnostics ... ok
+test layout_tests::t160_pulling_apart_restores_trimmed_material ... ok
+test layout_tests::t140_transition_edge_and_body_drags ... ok
+test layout_tests::t157_fade_edge_drag_without_neighbour ... ok
+test layout_tests::t122_insert_lane_after_clicked_row ... ok
+test layout_tests::t169_preview_material_shifts_only_on_trim_start ... ok
+test bg::tests::t398_bg_job_reports_pauses_cancels_and_dies_with_drop ... ok
+test layout_tests::t1626_a_stall_reaches_the_bell_once ... ok
+test layout_tests::t172_blocked_gesture_is_an_error_not_a_pale_hint ... ok
+test layout_tests::t1628_bottom_corner_is_a_trim ... ok
+test layout_tests::t1632_range_marker_end_moves_and_does_not_snap_to_itself ... ok
+test layout_tests::t1630_gain_to_mute_and_the_chip ... ok
+test layout_tests::t1636_empty_rows_carry_no_captions ... ok
+test layout_tests::t102_lane_label_and_playhead_trail ... ok
+test layout_tests::t170_marker_here_matches_the_m_gesture ... ok
+test layout_tests::t1629_low_row_has_no_level_gesture ... ok
+test layout_tests::t176_audio_and_video_share_one_level_line ... ok
+test layout_tests::t185_gpu_loss_notice_once ... ok
+test layout_tests::t1620_short_and_double_press_keep_their_meaning ... ok
+test layout_tests::t1633_vertical_zoom_keeps_the_row_under_the_pointer ... ok
+test layout_tests::t1624_arrows_and_ctrl_click_step_one_frame ... ok
+test layout_tests::t1634_scrollbar_and_left_jump_zone_can_be_taken ... ok
+test layout_tests::t163_overlap_drag_changes_nothing_but_position ... ok
+test layout_tests::t173_corner_fade_and_level_gestures ... ok
+test layout_tests::t1312_real_offgrid_region_render_finishes_and_closes ... ok
+test layout_tests::t221_automation_widget_maps_material_and_keeps_input_stable ... ok
+test layout_tests::t193_fx_editor_automation_coalesces_into_one_undo ... ok
+test layout_tests::t1635_in_a_jump_zone_a_click_jumps_over_an_event ... ok
+test layout_tests::t201_render_file_name_follows_template ... ok
+test layout_tests::t205_operations_run_over_whole_selection ... ok
+test layout_tests::t245_thin_service_rows_geometry ... ok
+test layout_tests::t219_one_window_for_the_whole_link_group ... ok
+test layout_tests::t217_one_chain_widget_for_events_and_morphers ... ok
+test layout_tests::t204_multi_drag_moves_the_whole_block ... ok
+test layout_tests::t207_double_click_on_marked_range_selects_it ... ok
+test layout_tests::t218_morpher_source_field_takes_files_and_reverts ... ok
+test layout_tests::t203_selection_tool_button_switches_drag ... ok
+test layout_tests::t249_previews_follow_the_warp ... ok
+test layout_tests::t127_layout_holds_in_every_language ... ok
+test layout_tests::t258_morph_layer_reuses_lane_and_honours_region ... ok
+test layout_tests::t244_morpher_has_one_chain_with_pinned_head ... ok
+test layout_tests::t128_labels_fit_their_budget ... ok
+test layout_tests::t259_morph_block_edges_resize ... ok
+test layout_tests::t248_video_warp_shows_only_what_matters ... ok
+test layout_tests::t250_paste_prefix_dialog ... ok
+test layout_tests::t231_camera_editor_opens_and_edits ... ok
+test layout_tests::t242_morph_editor_shows_target_mode_and_timing ... ok
+test layout_tests::t248_band_becomes_named_area ... ok
+test layout_tests::t1622_ctrl_space_reverses_while_held_during_playback ... ok
+test layout_tests::t262_per_track_height ... ok
+test layout_tests::t269_morph_strength_and_fades_reach_the_model ... ok
+test layout_tests::t277_rubber_band_catches_service_blocks ... ok
+test layout_tests::t260_camera_and_marker_left_edge_are_reachable ... ok
+test layout_tests::t276_service_blocks_move_between_lanes ... ok
+test layout_tests::t281_typed_key_value_reaches_the_model ... ok
+test layout_tests::t265_automation_axis_and_field_bind ... ok
+test journal::tests::t375_crash_report_names_version_thread_and_flight ... ok
+test layout_tests::t227_transition_editor_opens_and_sets_kind ... FAILED
+test layout_tests::t246_thin_row_is_clickable_and_zoom_anchor_holds ... FAILED
+test layout_tests::t202_ctrl_click_and_rubber_band_select ... FAILED
+test layout_tests::t275_morph_layer_never_hides_a_block_under_another ... FAILED
+test layout_tests::t206_double_click_opens_fx_shift_makes_region ... FAILED
+test layout_tests::t357_recovery_path_appends_to_full_name ... ok
+test layout_tests::t274_row_height_reaches_the_clip ... FAILED
+test layout_tests::t278_opacity_reachable_on_a_short_event ... FAILED
+test layout_tests::t365_recovery_candidates_are_picked_by_time ... ok
+test layout_tests::t286_region_edits_do_not_rebuild_the_engine ... ok
+test layout_tests::t289_underrun_counters_are_labelled_and_silence_is_in_ms ... ok
+test layout_tests::t343_paste_chain_into_morpher_carries_curves ... ok
+test layout_tests::t350_eq_graph_wheel_sets_q ... ok
+test layout_tests::t279_axis_lock_and_keys_that_stay ... ok
+test layout_tests::t345_preset_save_dialog_follows_the_rules ... ok
+test layout_tests::t349_eq_graph_drag_edits_the_model ... ok
+test layout_tests::t346_preset_insert_appends_chain_with_curves ... ok
+test layout_tests::t379_clip_id_arithmetic_lives_in_one_place ... ok
+test layout_tests::t356_repeated_notice_still_marks_unread ... ok
+test layout_tests::t363_second_copy_has_its_own_tmp_and_recovery ... ok
+test layout_tests::t366_unnamed_work_is_offered_even_when_project_opens ... ok
+test ffmpeg_setup::tests::t949_download_progress_tells_the_whole_state ... ok
+test layout_tests::t368_forget_removes_file_and_later_keeps_it ... ok
+test layout_tests::t1623_boost_eases_in_and_decays_faster ... ok
+test layout_tests::t370_save_and_go_does_not_go_when_save_failed ... ok
+test layout_tests::t371_close_request_is_intercepted_and_cancelled ... ok
+test layout_tests::t419_sync_menu_and_timeline_item_are_the_same_body ... ok
+test layout_tests::t376_clip_ids_are_not_reused_within_a_session ... ok
+test layout_tests::t382_app_carries_extras_to_born_clips ... ok
+test ffmpeg_setup::tests::t848_download_verifies_extracts_and_installs_atomically ... ok
+test layout_tests::t418_sync_refusals_are_spoken_and_distinct ... ok
+test layout_tests::t421_stale_analysis_result_is_not_applied ... ok
+test layout_tests::t412_bin_tooltip_shows_loudness_and_does_not_request_it ... ok
+test layout_tests::t394_panel_objects_answer_right_click ... ok
+test layout_tests::t392_double_click_on_level_rail_resets_level ... FAILED
+test layout_tests::t367_restore_puts_work_in_editor_and_repeats ... ok
+test layout_tests::t460_fade_handle_redrag_keeps_kind ... ok
+test layout_tests::t430b_collapse_and_expand_are_reachable_by_hand ... ok
+test layout_tests::t488_missing_glyph_warning ... ok
+test layout_tests::t456_entering_and_leaving_is_identity ... ok
+test layout_tests::t458_nest_looks_like_a_nest ... ok
+test layout_tests::t460b_overlap_redrag_keeps_kind ... ok
+test layout_tests::t393_menu_accelerator_promises_only_what_the_key_does ... ok
+test layout_tests::t504_pseudo_path_never_opens_sqlite ... ok
+test layout_tests::t120_space_hold_boosts_playback ... ok
+test layout_tests::t477_create_generator_from_bin ... ok
+test layout_tests::t489_safe_zones_follow_title_window ... ok
+test layout_tests::t466_overlap_transition_reachable ... FAILED
+test layout_tests::t503_gesture_frame_touches_no_media_paths ... ok
+test layout_tests::t457_four_ways_in_one_way_out ... FAILED
+test layout_tests::t495_title_drag_in_preview_writes_pos ... ok
+test layout_tests::t487_title_editor_routes_and_edits ... ok
+test layout_tests::t478_generator_edit_reaches_model_and_source ... ok
+test layout_tests::t502_generator_edit_does_not_respawn_source ... ok
+test layout_tests::t511_kind_picker_routes_between_windows ... ok
+test layout_tests::t515_card_counts_places_on_the_timeline ... ok
+test layout_tests::t512_new_generator_lands_on_the_timeline ... ok
+test layout_tests::t513_generator_clip_is_labelled_by_its_kind ... ok
+test layout_tests::t1621_hold_from_pause_plays_only_while_held ... ok
+test layout_tests::t516_frame_fractions_are_shown_in_percent ... ok
+test layout_tests::t542_title_window_shows_real_colors ... ok
+test layout_tests::t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line ... ok
+test layout_tests::t514_double_click_on_a_card_gives_one_clip_and_the_window ... ok
+test layout_tests::t540_title_preset_sets_everything_in_one_step ... ok
+test layout_tests::t552_inside_a_reel_the_reel_is_what_plays ... ok
+test layout_tests::t541_param_edit_repaints_the_preview_without_moving_the_playhead ... ok
+test layout_tests::t553_entering_brings_the_view_to_the_cursor ... ok
+test layout_tests::t505_missing_font_warns_once ... ok
+test layout_tests::t570_expanding_in_place_changes_nothing_but_the_view ... ok
+test layout_tests::t517_double_click_on_label_resets_param ... ok
+test layout_tests::t571_editing_inside_a_band_lands_in_the_reel ... ok
+test layout_tests::t572_selection_lives_in_one_reel ... ok
+test layout_tests::t573_escape_collapses_the_band_before_leaving_a_reel ... ok
+test layout_tests::t577_dropping_a_project_can_insert_it_as_a_composition ... ok
+test layout_tests::t630_signed_ratio_axis_is_log_by_modulus ... ok
+test layout_tests::t576_dropping_a_project_asks_and_keeps_the_work ... ok
+test layout_tests::t578_a_reel_is_an_object_of_the_bin ... ok
+test layout_tests::t594_a_lane_added_under_the_ceiling_is_the_top_layer ... ok
+test layout_tests::t596_paste_from_a_band_lands_as_a_pair_at_the_click ... ok
+test layout_tests::t597_enter_cascade_decision_and_selection ... ok
+test layout_tests::t599_reel_preview_service_rules ... ok
+test layout_tests::t601_scrolling_does_not_order_reel_work ... ok
+test layout_tests::t668_preset_writes_curves_and_keeps_the_layout ... ok
+test layout_tests::t600_reel_frames_and_peaks_reach_the_timeline ... ok
+test layout_tests::t101_edge_buttons_are_clickable ... ok
+test layout_tests::t634_a_band_opens_inside_an_entered_reel ... ok
+test layout_tests::t627_speed_typed_value_reaches_player ... ok
+test layout_tests::t636_bands_survive_context_switches ... ok
+test layout_tests::t637_inside_a_reel_an_event_may_cross_zero ... ok
+test layout_tests::t698_segment_shape_is_edited_per_segment ... ok
+test layout_tests::t637b_view_before_zero_only_inside_a_reel_and_the_cursor_never ... ok
+test layout_tests::t680_reel_preview_keys_are_per_instance ... ok
+test layout_tests::t706_a_driven_curve_is_visible_but_not_draggable ... ok
+test layout_tests::t667_apply_to_all_is_one_command_and_one_step ... ok
+test layout_tests::t709_the_formula_field_explains_errors_without_touching_the_model ... ok
+test layout_tests::t684_author_names_are_shown_verbatim ... ok
+test layout_tests::t685_badges_show_overrides_and_publications ... ok
+test layout_tests::t699_clipboard_is_read_on_press_and_explains_refusals ... ok
+test layout_tests::t700b_field_mapping_dialog_never_loses_a_curve_silently ... ok
+test layout_tests::t692b_author_window_shows_the_target_range ... ok
+test layout_tests::t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode ... ok
+test layout_tests::t716b_lead_geometry_in_the_chain_editor ... ok
+test layout_tests::t683_instance_params_window_draws_every_type ... ok
+test layout_tests::t722b_project_rule_change_repaints_the_paused_preview ... ok
+test layout_tests::t722_aspect_mismatch_is_reported_with_an_address ... ok
+test layout_tests::t628_speed_drag_reaches_small_rates ... ok
+test layout_tests::t744_track_chain_is_the_same_strip_and_refuses_curves_aloud ... ok
+test layout_tests::t720b_project_settings_window_validates_and_applies ... ok
+test layout_tests::t742_track_badges_take_a_human_click_and_never_move ... ok
+test layout_tests::t748d_tail_without_material_is_hatched ... ok
+test layout_tests::t745_locked_track_refuses_every_gesture_with_a_reason ... ok
+test layout_tests::t743_track_window_is_one_undo_step_and_gives_focus_back ... ok
+test layout_tests::t666_generator_form_in_the_fx_window_reaches_the_model ... ok
+test layout_tests::t749_formula_is_typed_whole_and_drawn ... ok
+test layout_tests::t740_render_dialog_lists_muted_and_solo_tracks ... ok
+test layout_tests::t750_click_outside_a_field_gives_the_keyboard_back ... ok
+test layout_tests::t751_the_menu_target_is_latched_on_press ... ok
+test layout_tests::t721_first_clip_sets_project_settings ... ok
+test layout_tests::t691_instance_curves_are_visible_and_never_hidden ... ok
+test layout_tests::t759_transform_form_groups_pairs_sliders_and_reset ... ok
+test layout_tests::t760_frame_matches_the_placement_and_drag_writes_the_same_numbers ... ok
+test layout_tests::t629_space_boost_from_small_base ... ok
+test layout_tests::t752c_an_instance_edits_the_published_lead_geometry ... ok
+test layout_tests::t754_instance_params_live_in_the_chain_head ... ok
+test layout_tests::t762b_gesture_over_a_curve_sets_a_key ... ok
+test layout_tests::t762_crop_handles_cut_their_own_side ... ok
+test layout_tests::t753b_confirming_a_publication_keeps_you_where_you_stand ... ok
+test layout_tests::t76_layout_panels_and_preview_share_space ... ok
+test layout_tests::t763_handles_are_hittable_and_the_nearest_wins ... ok
+test layout_tests::t781_small_frame_moves_handles_outside ... ok
+test layout_tests::t764_controls_hide_while_playing_and_cost_nothing_idle ... ok
+test layout_tests::t76_left_panel_separator_is_draggable ... ok
+test layout_tests::t76_top_area_gives_space_to_preview ... ok
+test layout_tests::t76_resize_zones_do_not_steal_widgets ... ok
+test layout_tests::t760b_rotation_handle_turns_the_layer ... ok
+test layout_tests::t784b_graph_draws_the_curve_as_it_sounds ... ok
+test layout_tests::t776_key_list_offers_only_possible_tracks ... ok
+test layout_tests::t775_ducking_is_two_compressors_in_the_track_window ... ok
+test layout_tests::t785b_shape_parameter_handle_on_the_segment ... ok
+test layout_tests::t761b_anchor_gesture_keeps_the_picture_in_place ... ok
+test layout_tests::t785_shape_control_belongs_to_the_visible_curve ... ok
+ok
+test layout_tests::t755b_an_instance_knob_moves_its_preview_key ... ok
+test layout_tests::t787e_layer_formula_over_keys_in_the_widget ... ok
+test layout_tests::t797_added_media_path_becomes_absolute ... ok
+test layout_tests::t793_instance_head_is_short_and_not_accent ... ok
+test layout_tests::t780_dense_forms_have_groups ... ok
+test layout_tests::t790_field_widths_do_not_follow_the_window ... ok
+test layout_tests::t789_formula_help_in_the_block_and_tab_completion ... ok
+test layout_tests::t79_bin_modes_and_layout ... ok
+test layout_tests::t843_geometry_dump_survives_a_multi_line_notice ... ok
+test layout_tests::t786_bound_field_writes_keys_only_from_a_gesture ... ok
+test layout_tests::t862_a_light_system_theme_does_not_reach_the_interface ... ok
+test layout_tests::t76_window_edges_resize ... ok
+test layout_tests::t868_alt_chords_do_not_fire_the_bare_letter ... ok
+test layout_tests::t86_meters_edge_and_min_window ... ok
+test layout_tests::t791_instance_head_has_the_same_curve_block ... ok
+test layout_tests::t83_hints_reach_status_line ... ok
+test layout_tests::t88_jump_reveals_cursor ... ok
+test layout_tests::t870_edit_split_item_is_the_s_key_and_says_so ... ok
+test layout_tests::t863_the_system_frame_hides_our_window_buttons_and_edges ... ok
+test layout_tests::t924_one_selected_event_wins_over_the_region ... FAILED
+test layout_tests::t85_top_drag_is_continuous ... ok
+test layout_tests::t914_speed_curve_shape_menu_offers_every_shape ... ok
+test layout_tests::t925_several_or_none_selected_keep_the_region_first ... ok
+test layout_tests::t927_triple_click_sets_the_region_over_the_event ... FAILED
+test layout_tests::t932b_reel_display_name_rules ... ok
+test layout_tests::t928_triple_click_on_a_reel_and_on_the_level_line ... FAILED
+ok
+test layout_tests::t926_copy_after_a_range_marker_double_click ... ok
+test layout_tests::t932_program_chosen_reel_names_follow_the_language ... ok
+test layout_tests::t94_forward_navigation_advances ... ok
+test layout_tests::t934_every_place_shows_the_reel_name_in_the_language ... ok
+test layout_tests::t956_render_window_rows_come_from_the_run ... ok
+test layout_tests::t957_finished_render_is_frozen_and_opened_from_the_window ... ok
+test layout_tests::t959_render_log_is_bounded_rotated_and_named ... ok
+test layout_tests::t95_clip_drag_snaps_to_neighbour ... ok
+test layout_tests::t96_dirty_split_and_loop_survives_esc ... ok
+test layout_tests::t97_top_meters_and_leds ... ok
+test layout_tests::t98_timecode_mask ... ok
+test layout_tests::t965_encoder_combo_and_progress_row_follow_the_device ... ok
+test layout_tests::t99_bin_groups ... ok
+test mask_tests::t1276_a_rectangle_drawn_from_the_preview_menu_is_one_step ... ok
+test layout_tests::t947_perf_panel_shows_the_compose_cost ... ok
+test mask_tests::t1277_the_pen_draws_a_bezier_path ... ok
+test mask_tests::t1278_a_point_drag_on_an_animated_path_keys_the_whole_path ... ok
+test mask_tests::t1279_an_effect_is_limited_to_a_mask_from_the_effects_window ... ok
+test mask_tests::t1280_the_track_window_has_its_masks_and_refuses_curves ... ok
+test mask_tests::t1283_mask_texts_are_in_every_catalog ... ok
+test meters::repaint_tests::t121_glow_is_steady_and_pause_fades ... ok
+test meters::repaint_tests::t38_meters_settle_and_release_repaint ... ok
+test meters::repaint_tests::t40_glow_layout ... ok
+test meters::repaint_tests::t80_fader_inertia_settles ... ok
+test meters::repaint_tests::t84_fader_never_diverges_on_bad_dt ... ok
+test pitch_tail_tests::t1337_the_pitch_panel_switches_the_echo ... ok
+test mask_tests::t1281_the_picture_masks_live_in_the_geometry_node ... ok
+test project_lock::tests::t362b_lock_file_is_keyed_by_path ... ok
+test project_lock::tests::t852_lock_key_normalized_and_pid_read_while_locked ... ok
+test mask_tests::t1282_the_preview_click_and_playback_around_masks ... ok
+test reach_tests::no_teaching_layer_over_the_ui ... ok
+test layout_tests::t200_coalesced_edits_bump_revision_and_keep_dirty ... ok
+test layout_tests::t369_new_and_open_guard_unsaved_work ... ok
+test layout_tests::t358_autosave_writes_recovery_not_project ... ok
+test layout_tests::t360_viewport_drift_does_not_write ... ok
+test layout_tests::t372_drop_is_the_last_line_of_defence ... ok
+test layout_tests::t391_workspace_falls_back_to_file_and_project_keeps_its_own ... ok
+test layout_tests::t905_preview_follows_the_loop_when_play_starts_outside ... ok
+test reach_tests::t1092_every_lesson_control_is_marked_by_its_widget ... ok
+test layout_tests::t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller ... FAILED
+test project_lock::tests::t362_project_lock_is_per_project_and_survives_atomic_save ... ok
+test layout_tests::t794_frame_is_on_by_default_remembered_and_the_schema_fits ... ok
+test reach_tests::t1627_frame_hold_keeps_the_length_and_goes_on_from_the_frame ... ok
+test reach_tests::t1086_lesson_text_has_lines_lists_and_keycaps ... ok
+test reach_tests::t1637_a_track_is_reordered_by_its_header ... ok
+test reach_tests::t1219_the_camera_window_is_the_pipeline ... ok
+test reach_tests::t254_click_is_a_click ... ok
+test reach_tests::t252_no_orphan_commands ... ok
+test reach_tests::t254b_no_dnd_drag_source_over_clickables ... ok
+test reach_tests::t273_source_in_arithmetic_lives_in_one_place ... ok
+test reach_tests::t395_every_panel_entity_answers_right_click ... ok
+test reach_tests::t396_hinted_objects_have_a_right_click_answer ... ok
+test reach_tests::t255_long_name_is_elided_not_wrapped ... ok
+test reach_tests::t456b_only_the_document_leaves_the_model ... ok
+test reach_tests::t508_every_param_has_a_label ... ok
+test reach_tests::t426b_media_lookup_from_a_clip_lives_in_one_place ... ok
+test reach_tests::t509_every_flag_has_a_control ... ok
+test reach_tests::t547_gallery_click_reaches_the_model ... ok
+test reach_tests::t551_strength_axis_lands_between_variants ... ok
+test reach_tests::t551b_axis_math_clamps_and_snaps ... ok
+test reach_tests::t554_only_one_place_decides_what_plays ... ok
+test layout_tests::t194_autosave_runs_in_background ... ok
+test reach_tests::t548_gallery_layout_is_stable_and_elided ... ok
+test reach_tests::t560_generator_is_reachable_from_the_main_menu ... ok
+test reach_tests::t637c_gesture_time_floor_is_never_a_bare_zero ... ok
+test reach_tests::t602_reel_rendering_lives_in_one_place ... ok
+test layout_tests::t1413_reel_preview_does_not_mark_the_project_edited ... ok
+test layout_tests::t199_background_autosave_never_overwrites_newer_save ... ok
+test layout_tests::t209_missing_source_opens_with_placeholder_and_notices ... ok
+test reach_tests::t720_project_settings_reachable_from_the_file_menu ... ok
+test reach_tests::t669_generator_thumbs_follow_the_event_address ... ok
+test reach_tests::t757_every_window_is_in_the_registry ... ok
+test reach_tests::t699b_no_clipboard_state_lives_inside_the_program ... ok
+test reach_tests::t777_sidechain_is_reachable_and_names_its_refusals ... ok
+test reach_tests::t693_every_carrier_draws_its_curves_with_the_one_widget ... ok
+test reach_tests::t752b_publishing_is_reachable_at_the_lead_geometry ... ok
+test reach_tests::t766_on_screen_controls_are_reachable_and_speak ... ok
+test layout_tests::t359_save_drops_only_own_recovery ... ok
+test layout_tests::t355_save_reports_skipped_and_keeps_dirty ... ok
+test layout_tests::t210_render_with_missing_sources_warns_and_runs ... ok
+test reach_tests::t801_red_scenario_is_rerun_alone ... ok
+test reach_tests::t802_workers_are_isolated ... ok
+test reach_tests::t788_link_door_assigns_a_source ... ok
+test reach_tests::t799_ui_scenarios_describe_the_user_path ... ok
+test reach_tests::t741_track_has_every_verb_and_paired_paths_are_one_body ... ok
+test reach_tests::t806_track_verbs_have_a_live_aim ... ok
+test reach_tests::t805_bench_channel_is_dead_without_env ... ok
+test layout_tests::t211_returned_source_replaces_its_placeholder ... ok
+test reach_tests::t809_a_screen_point_is_read_from_x_with_the_shot_as_reference ... ok
+test reach_tests::t789b_formula_help_reachable_from_every_carrier ... ok
+test reach_tests::t800_finish_stages_name_their_price ... ok
+test reach_tests::t682_publishing_is_reachable_from_inside_a_reel_only ... ok
+test reach_tests::t818_open_accepts_only_the_project_format_and_names_the_import_door ... ok
+test layout_tests::t390_workspace_does_not_travel_in_the_project_file ... ok
+test reach_tests::t821_dropping_three_kinds_of_files_gives_three_named_outcomes ... ok
+test reach_tests::t1085_the_loop_step_closes_while_a_window_stays_open ... ok
+test reach_tests::t850_ffmpeg_window_from_not_found_to_playing ... ok
+test reach_tests::t871_menu_labels_carry_no_keys_and_chords_hold ... ok
+test layout_tests::t199_guarded_write_never_goes_backwards ... ok
+test reach_tests::t1094_the_lessons_panel_leaves_the_toolbar_whole ... ok
+test reach_tests::t253_every_entity_has_its_verbs ... ok
+test reach_tests::t1091_jokes_while_the_render_runs ... ok
+test reach_tests::t878_update_switch_in_preferences_next_to_telemetry ... ok
+test reach_tests::t875_newer_release_in_the_bell_and_the_title_never_a_window ... ok
+test reach_tests::t917_slowed_event_copies_pastes_and_splits ... ok
+test reach_tests::t912_morpher_picker_offers_audio_effects ... ok
+test reach_tests::t920_esc_closes_the_top_window_first ... ok
+test reach_tests::t921_no_window_outside_the_shell ... ok
+test layout_tests::t640_reel_preview_survives_reopen_from_sidecar ... ok
+test reach_tests::t929_three_ways_to_a_region_over_an_event_are_one ... FAILED
+test layout_tests::t796c_a_still_shows_on_the_whole_event_without_loading ... ok
+test layout_tests::t795_reel_frames_reach_the_disk_and_cancel_is_not_a_failure ... ok
+test reach_tests::t950_ffmpeg_window_says_what_download_does ... ok
+test reach_tests::t832_project_of_the_former_name_comes_in_through_the_import_door ... ok
+test reach_tests::t976_a_test_door_plugin_reaches_the_picker_and_no_reference_list ... ok
+test reach_tests::t984b_the_root_crumb_answers_past_the_column_edge ... ok
+test reach_tests::t783_older_project_goes_through_import_and_open_names_the_door ... ok
+test layout_tests::t939_a_still_follows_the_frame_rule_in_the_preview ... ok
+test layout_tests::t796d_a_missing_still_is_a_named_placeholder_not_loading ... ok
+test segfield_tests::t1115_one_segment_shows_and_edits_its_own_parameters ... ok
+test reach_tests::t779_window_form_contract ... ok
+test reach_tests::t989_the_guide_finds_where_and_opens_the_page ... ok
+test segfield_tests::t1117_drag_shifts_by_one_amount_and_a_pick_keeps_same_kind ... ok
+test segfield_tests::t1116_selection_shows_mixed_and_a_typed_number_lands_on_all ... ok
+test segfield_tests::t1120_shape_fields_write_only_from_a_gesture ... ok
+test segfield_tests::t1119_segment_menu_applies_to_its_selection ... ok
+test segfield_tests::t1118_sweep_range_and_plain_click ... ok
+test supervisor::tests::t1072_child_body ... ok
+test segfield_tests::t1121_keyboard_reaches_the_selection_row_and_clear_drops_it ... ok
+test segfield_tests::t1122_segment_selection_is_said ... ok
+test supervisor::tests::t1074_crash_window_shows_and_offers ... ok
+test telemetry::tests::t836_start_and_close_pair ... ok
+test telemetry::tests::t837_payload_is_the_allow_list ... ok
+test reach_tests::t807_a_gesture_waits_for_input_the_program_has_read ... ok
+test reach_tests::t803_live_scenarios_wait_for_the_program ... ok
+test telemetry::tests::t839_consent_resolution ... ok
+test layout_tests::t361_recovery_guard_does_not_block_save ... ok
+test telemetry::tests::t842_key_only_at_release_build ... ok
+test telemetry::tests::t880_start_identifies_the_install ... ok
+test telemetry::tests::t881_instances_are_told_apart ... ok
+test telemetry::tests::t838_install_id_persists_and_heals ... ok
+test telemetry::tests::t883_buckets_and_export ... ok
+test telemetry::tests::t886_environment_probe ... ok
+test reach_tests::t885_seen_list_is_not_told_again ... ok
+test reach_tests::t1089_lesson_three_teaches_transition_with_previous ... ok
+test thumbs::key_tests::t549_material_map_is_one_and_knows_reverse ... ok
+test thumbs::key_tests::t62_thumb_keys_unified_from_file_zero ... ok
+test telemetry::tests::t887_one_door_counted ... ok
+test thumbs::key_tests::t719_thumb_quality_follows_the_view_and_cell_fit_centres ... ok
+test thumbs::key_tests::t71_source_lru ... ok
+test thumbs::key_tests::t87_frame_score_rejects_flat_frames ... ok
+test timeline::geom_tests::t47_tl_geom_mapping ... ok
+test timeline::geom_tests::t50_mixed_rows_bijection_and_nearest ... ok
+test timeline::geom_tests::t59_follow_view_rules ... ok
+test timeline::geom_tests::t60_zoom_out_support ... ok
+test timeline::geom_tests::t61_vertical_layout ... ok
+test timeline::geom_tests::t72_follow_rearm_rules ... ok
+test timeline::geom_tests::t95_snap_move_candidates ... ok
+test update_check::tests::t872_newer_from_asset_names ... ok
+test thumbs::key_tests::t69_negative_caches_stop_retries ... ok
+test layout_tests::t923_owner_morpher_window_does_not_widen ... ok
+test telemetry::tests::t879_heartbeat_only_after_activity ... ok
+test reach_tests::t840_telemetry_notice_once_and_switch_in_preferences ... ok
+test update_check::tests::t877_consent_resolution ... ok
+test telemetry::tests::t882_crash_by_place_only ... ok
+test reach_tests::t808_live_sleep_is_enumerable_everywhere_and_capped ... ok
+test layout_tests::t1077_restore_raises_the_restored_sources ... ok
+test user_store::tests::t344c_factory_presets_are_valid ... ok
+test user_store::tests::t347_preset_compatibility_comes_from_the_registry ... ok
+test reach_tests::t958_render_over_an_existing_file_is_asked_first ... ok
+test reach_tests::t823_the_claims_registry_is_complete_and_honest ... ok
+test util::tests::t23_peaks_build_without_db ... ok
+test user_store::records_tests::t987_templates_tour_and_start_choice_survive_a_restart ... ok
+test reach_tests::t919_esc_closes_every_window ... ok
+test util::tests::t23_thumbs_for_media_added_after_start ... ok
+test util::tests::t63_format_timecode ... ok
+test util::tests::t93_parse_timecode ... ok
+test update_check::tests::t874_anonymous_and_never_waited_for ... ok
+test update_check::tests::t873_once_a_day ... ok
+test vhs_tape_tests::t1193_the_deck_face_sets_a_head_s_condition ... ok
+test welcome::tests::probe_poster_render_time ... ignored
+test welcome::tests::t984_primary_tile_lands_on_the_most_likely_action ... ok
+test welcome::tests::templates_resolve_builtin_and_user ... ok
+test vhs_tape_tests::t1468_the_deck_s_sound_is_on_the_linked_audio ... ok
+test welcome_prefs_tests::t1291_whats_new_is_the_page_drawn_by_the_guide ... ok
+test vhs_tape_tests::t1486_the_stream_and_the_camera_sound_on_the_linked_audio ... ok
+test supervisor::tests::t1072_child_panic_is_detected ... ok
+test welcome_prefs_tests::t1294_one_switch_one_place ... ok
+test util::tests::t400_index_service_dies_with_owner_and_reports_errors ... ok
+test supervisor::tests::t1073_exits_are_classified ... ok
+test welcome_prefs_tests::t1296_view_holds_only_what_is_viewed ... ok
+test window_fill_tests::t1126_a_window_keeps_the_size_it_was_given ... ok
+test window_fill_tests::t1127_a_fixed_size_carries_a_reason ... ok
+test reach_tests::t922_cross_and_esc_are_one_path ... ok
+test window_fill_tests::t1129_index_entries_are_separate_cards ... ok
+test window_fill_tests::t1128_guide_tables_take_column_widths_from_their_content ... ok
+test telemetry::tests::t841_never_blocks_and_posts_json ... ok
+test welcome_prefs_tests::t1295_preferences_survive_new_project_and_restart ... ok
+test welcome_prefs_tests::t1293_preferences_window_holds_every_preference ... ok
+test window_fill_tests::t1125_every_window_grows_and_its_body_fills_it ... ok
+test reach_tests::t1093_a_click_on_a_marker_puts_the_playhead_on_it ... ok
+test window_frame::tests::t863_frame_decision_per_environment ... ok
+test window_fill_tests::t1130_the_guides_sides_grow_with_the_window ... ok
+test window_fill_tests::t1132_the_toolbar_overflows_into_a_menu ... ok
+test window_fill_tests::t1131_the_picker_gallery_follows_its_window ... ok
+test reach_tests::t804_live_coverage_names_untouched_places ... ok
+test reach_tests::t951_ffmpeg_window_tells_the_download_as_it_goes ... ok
+test layout_tests::t364_locked_project_asks_before_first_save ... ok
+test user_store::tests::t756b_workspace_settings_survive_the_roundtrip ... ok
+test reach_tests::t952_ffmpeg_window_after_success_and_failure ... ok
+test user_store::records_tests::t985_recent_list_is_bounded_keeps_missing_and_owns_its_posters ... ok
+test reach_tests::t888_harness_app_speaks_valid_posthog ... ok
+test reach_tests::t884_real_ui_paths_move_the_counters ... ok
+test util::tests::t399_index_service_serves_a_queue ... ok
+test reach_tests::t820_export_otio_is_a_named_menu_action_and_leaves_the_project_alone ... ok
+test user_store::tests::t344b_broken_and_future_files_are_survivable ... ok
+test welcome_prefs_tests::t1292_lessons_and_template_shapes_in_the_start_pane ... ok
+test user_store::records_tests::t985_posters_render_into_the_store_never_into_the_project_folder ... ok
+test thumbs::key_tests::t476_generator_thumbs_without_a_file ... ok
+test util::tests::t411_source_loudness_is_measured_on_the_pyramid_pass ... ok
+test reach_tests::t986_welcome_window_templates_recent_whats_new_and_the_switch ... ok
+test reach_tests::t1095_next_lesson_keeps_the_copy_without_a_question ... ok
+test welcome_prefs_tests::t1290_welcome_panes_scroll_apart_fit_and_grow ... ok
+test user_store::tests::t344_preset_survives_the_file_roundtrip ... ok
+test reach_tests::t988_a_lesson_step_closes_on_the_project_state ... ok
+test reach_tests::t819_the_import_door_takes_legacy_old_and_foreign_and_yields_a_project ... ok
+test reach_tests::t1090_a_result_is_announced_and_the_playhead_goes_there ... ok
+test layout_tests::t918_no_window_grows_by_itself ... ok
+test reach_tests::t1087_every_step_outlines_its_target ... ok
+test reach_tests::t1088_show_points_and_never_performs_the_step ... ok
+
+failures:
+
+---- layout_tests::t227_transition_editor_opens_and_sets_kind stdout ----
+
+thread 'layout_tests::t227_transition_editor_opens_and_sets_kind' (2880107) panicked at apps/kt-app/src/layout_tests.rs:6842:5:
+assertion `left == right` failed: double-click on the transition window must open its properties
+  left: 0
+ right: 1
+
+---- layout_tests::t246_thin_row_is_clickable_and_zoom_anchor_holds stdout ----
+
+thread 'layout_tests::t246_thin_row_is_clickable_and_zoom_anchor_holds' (2880259) panicked at apps/kt-app/src/layout_tests.rs:7294:5:
+a thin morph row cannot be hit with the mouse — it cannot be counted as done
+
+---- layout_tests::t202_ctrl_click_and_rubber_band_select stdout ----
+
+thread 'layout_tests::t202_ctrl_click_and_rubber_band_select' (2879990) panicked at apps/kt-app/src/layout_tests.rs:3885:5:
+assertion `left == right` failed
+  left: []
+ right: [ClipId(1)]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- layout_tests::t275_morph_layer_never_hides_a_block_under_another stdout ----
+
+thread 'layout_tests::t275_morph_layer_never_hides_a_block_under_another' (2880412) panicked at apps/kt-app/src/layout_tests.rs:8283:9:
+block MorphId(1) on track 1 cannot be hit with the mouse — it is hidden under another
+
+---- layout_tests::t206_double_click_opens_fx_shift_makes_region stdout ----
+
+thread 'layout_tests::t206_double_click_opens_fx_shift_makes_region' (2879996) panicked at apps/kt-app/src/layout_tests.rs:4289:5:
+assertion `left == right` failed: double-click did not open the FX editor
+  left: 0
+ right: 1
+
+---- layout_tests::t274_row_height_reaches_the_clip stdout ----
+
+thread 'layout_tests::t274_row_height_reaches_the_clip' (2880401) panicked at apps/kt-app/src/layout_tests.rs:8206:5:
+a click in the lower half of the grown row must hit the event (y = 703, the previous boundary was 661)
+
+---- layout_tests::t278_opacity_reachable_on_a_short_event stdout ----
+
+thread 'layout_tests::t278_opacity_reachable_on_a_short_event' (2880431) panicked at apps/kt-app/src/layout_tests.rs:8495:5:
+the level line was dragged down — the opacity must drop, but it is 1
+
+---- layout_tests::t392_double_click_on_level_rail_resets_level stdout ----
+
+thread 'layout_tests::t392_double_click_on_level_rail_resets_level' (2880859) panicked at apps/kt-app/src/layout_tests.rs:4974:5:
+assertion `left == right` failed: double-click on the video level line did not reset the opacity
+  left: Some(0.35)
+ right: Some(1.0)
+
+---- layout_tests::t466_overlap_transition_reachable stdout ----
+
+thread 'layout_tests::t466_overlap_transition_reachable' (2881064) panicked at apps/kt-app/src/layout_tests.rs:10010:5:
+assertion `left == right` failed: double-click on an overlapping transition must open its properties
+  left: 0
+ right: 1
+
+---- layout_tests::t457_four_ways_in_one_way_out stdout ----
+
+thread 'layout_tests::t457_four_ways_in_one_way_out' (2880968) panicked at apps/kt-app/src/layout_tests.rs:9635:5:
+assertion `left == right` failed: double-click did not expand the composition in place
+  left: []
+ right: [ClipId(4)]
+
+---- layout_tests::t924_one_selected_event_wins_over_the_region stdout ----
+
+thread 'layout_tests::t924_one_selected_event_wins_over_the_region' (2882980) panicked at apps/kt-app/src/layout_tests.rs:18905:5:
+assertion `left == right` failed: the clipboard must hold the clicked event and its partner, not the region
+  left: [1, 2, 3, 4]
+ right: [2, 4]
+
+---- layout_tests::t927_triple_click_sets_the_region_over_the_event stdout ----
+
+thread 'layout_tests::t927_triple_click_sets_the_region_over_the_event' (2883048) panicked at apps/kt-app/src/layout_tests.rs:19002:9:
+the second click opened the FX window (the double click)
+
+---- layout_tests::t928_triple_click_on_a_reel_and_on_the_level_line stdout ----
+
+thread 'layout_tests::t928_triple_click_on_a_reel_and_on_the_level_line' (2883057) panicked at apps/kt-app/src/layout_tests.rs:19062:46:
+the triple click on a reel set no region
+
+---- layout_tests::t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller stdout ----
+t815: restore 8379 bytes versus 1964383 in the interchange format (234×), 3.564636273s
+
+thread 'layout_tests::t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller' (2882697) panicked at apps/kt-app/src/layout_tests.rs:18073:5:
+writing the restore record took 3.564636273s
+
+---- reach_tests::t929_three_ways_to_a_region_over_an_event_are_one stdout ----
+
+thread 'reach_tests::t929_three_ways_to_a_region_over_an_event_are_one' (2887044) panicked at apps/kt-app/src/reach_tests.rs:5870:54:
+the triple click set no region
+
+
+failures:
+    layout_tests::t202_ctrl_click_and_rubber_band_select
+    layout_tests::t206_double_click_opens_fx_shift_makes_region
+    layout_tests::t227_transition_editor_opens_and_sets_kind
+    layout_tests::t246_thin_row_is_clickable_and_zoom_anchor_holds
+    layout_tests::t274_row_height_reaches_the_clip
+    layout_tests::t275_morph_layer_never_hides_a_block_under_another
+    layout_tests::t278_opacity_reachable_on_a_short_event
+    layout_tests::t392_double_click_on_level_rail_resets_level
+    layout_tests::t457_four_ways_in_one_way_out
+    layout_tests::t466_overlap_transition_reachable
+    layout_tests::t815_recovery_of_a_nested_scene_is_orders_of_magnitude_smaller
+    layout_tests::t924_one_selected_event_wins_over_the_region
+    layout_tests::t927_triple_click_sets_the_region_over_the_event
+    layout_tests::t928_triple_click_on_a_reel_and_on_the_level_line
+    reach_tests::t929_three_ways_to_a_region_over_an_event_are_one
+
+test result: FAILED. 518 passed; 15 failed; 1 ignored; 0 measured; 0 filtered out; finished in 50.41s
+

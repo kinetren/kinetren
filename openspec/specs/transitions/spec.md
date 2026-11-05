@@ -165,7 +165,7 @@ non-existent layer.
 The opacity of a video event SHALL be multiplied by the alpha of the layer at the same place as the fade:
 an ordinary layer — by scaling the alpha, a solo fade — by multiplication, and for a dissolve pair the levels SHALL be
 blended with the same weight as the picture. Level 1.0 is the identity. The level line in the UI is one for audio
-(gain in the rail range ±6.02 dB) and for video (opacity); the corner of the fade takes priority over the line.
+(gain from silence to +6.02 dB) and for video (opacity); the corner of the fade takes priority over the line.
 Why: otherwise a crossfade between clips of different transparency would jump, and the fades on audio and video would
 look different (the owner's requirement).
 

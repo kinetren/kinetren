@@ -23,6 +23,7 @@
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Instant;
 
 /// Ring capacity. 512 records — this is tens of seconds of the most turbulent work
@@ -90,6 +91,40 @@ pub struct Rec {
 pub struct FlightRecorder {
     ring: Mutex<VecDeque<Rec>>,
     t0: Instant,
+    /// Stall episodes since the start, and the head of the last one: the interface reads them
+    /// every frame, and the ring would mean a lock and a copy (invariant 12). `clear` keeps them.
+    stalls: AtomicU64,
+    stall_head: AtomicI64,
+}
+
+/// One freeze of the playhead is ONE episode (R.72, M5). The engine asked "stands ≥ 1 s?" every
+/// pass and pushed a record each time, so one freeze flooded the 512-entry ring and the "froze"
+/// counter overstated it. At rate 0 the head stands by request: no stall.
+#[derive(Debug, Default)]
+pub struct StallWatch {
+    head: i64,
+    since_ms: u64,
+    stalled: bool,
+}
+
+impl StallWatch {
+    pub fn new(head: i64) -> StallWatch {
+        StallWatch { head, since_ms: 0, stalled: false }
+    }
+
+    /// `Some(ms)` — the moment the episode starts; nothing more until the head moves.
+    pub fn tick(&mut self, now_ms: u64, playing: bool, rate: f32, head: i64) -> Option<u64> {
+        if !playing || rate == 0.0 || head != self.head {
+            *self = StallWatch { head, since_ms: now_ms, stalled: false };
+            return None;
+        }
+        let idle = now_ms.saturating_sub(self.since_ms);
+        if self.stalled || idle < 1000 {
+            return None;
+        }
+        self.stalled = true;
+        Some(idle)
+    }
 }
 
 impl Default for FlightRecorder {
@@ -100,7 +135,12 @@ impl Default for FlightRecorder {
 
 impl FlightRecorder {
     pub fn new() -> FlightRecorder {
-        FlightRecorder { ring: Mutex::new(VecDeque::with_capacity(CAP)), t0: Instant::now() }
+        FlightRecorder {
+            ring: Mutex::new(VecDeque::with_capacity(CAP)),
+            t0: Instant::now(),
+            stalls: AtomicU64::new(0),
+            stall_head: AtomicI64::new(0),
+        }
     }
 
     pub fn now_ms(&self) -> u64 {
@@ -121,7 +161,16 @@ impl FlightRecorder {
         self.push_at(self.now_ms(), Ev::Snap, 0, 0, s);
     }
 
+    /// Stall episodes since the start and the head of the last one, in audio frames.
+    pub fn stalls(&self) -> (u64, i64) {
+        (self.stalls.load(Ordering::Acquire), self.stall_head.load(Ordering::Acquire))
+    }
+
     pub fn push_at(&self, at_ms: u64, kind: Ev, a: i64, b: i64, snap: Snap) {
+        if kind == Ev::Stall {
+            self.stall_head.store(b, Ordering::Release);
+            self.stalls.fetch_add(1, Ordering::AcqRel);
+        }
         let mut ring = self.lock();
         // consecutive dedup: “×N” instead of N lines (rule 2)
         if let Some(last) = ring.back_mut()

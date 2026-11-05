@@ -18,6 +18,22 @@ month, newest first.
   the render's log says which file and at what time, and opens by itself so you see it.
 - **A failed render explains itself better.** The message no longer starts with a technical "io:", and
   the window says no encoder opened instead of still claiming to choose one.
+- **The timeline stops fighting the hand.** A bottom corner of an event always changes its length.
+  On a low row or a short event a press moves it instead of touching the volume, and the level is in
+  the right-click menu. The sound of an event goes down to mute, and the event now says its level
+  right after the name: `−12 dB`, `40 %`, `mute`.
+- **The space bar does more.** Held from a pause it plays only while held and stops where the picture
+  got to. Ctrl+Space plays backward. The speed builds up smoothly and comes back faster. A short press and
+  two quick presses work as before.
+- **Step one frame** with ← and →, or Ctrl+click on Back and Forward.
+- **Freeze frame.** Right-click an event and choose "Insert frame hold (freeze frame)": the picture stands
+  for 2 seconds at the playhead and goes on from the same frame. The event keeps its length.
+- **Tracks can be dragged again by their header**, which had stopped working long ago. The header also
+  shows a hand now, and a click on its free part is the strongest jump to the left.
+- **Jumps and scrolling.** A click at the timeline's edge jumps even over an event, and no longer opens it.
+  The side scrollbar can be caught without resizing the window. Zooming the rows keeps the track under the
+  mouse. The end of a range marker can be moved. Empty morpher and camera rows carry no captions.
+  When playback freezes, the bell says where.
 - **Datamosh encodes on the graphics card.** The effect's codec now runs as a shader, and even with no
   card, through Vulkan on the processor, a frame takes about a third less time. Existing moshes may
   look slightly different, because the search picks some other vectors.

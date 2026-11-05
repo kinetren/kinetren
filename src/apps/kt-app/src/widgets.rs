@@ -823,6 +823,35 @@ pub fn plain_row(ui: &mut egui::Ui, row: &NumRow<'_>, v: &mut f64) -> egui::Resp
     r
 }
 
+/// An event's gain as a number (R.72): the floor reads `mute` and takes the word back, so the
+/// field says what the event does there, not "−60 dB".
+pub fn event_gain_field(
+    ui: &mut egui::Ui,
+    probe: &str,
+    min: f64,
+    max: f64,
+    mute: &str,
+    v: &mut f64,
+) -> egui::Response {
+    let r = ui.add(
+        egui::DragValue::new(v)
+            .range(min..=max)
+            .speed(0.1)
+            .custom_formatter(|n, _| {
+                if n <= min { mute.to_string() } else { format!("{n:.1} dB") }
+            })
+            .custom_parser(|t| {
+                let t = t.trim();
+                if t.eq_ignore_ascii_case(mute) {
+                    return Some(min);
+                }
+                t.trim_end_matches("dB").trim().replace('−', "-").parse().ok()
+            }),
+    );
+    field_probe::note(probe, r.rect);
+    r
+}
+
 /// A PAIR of values on one line (X/Y, width/height) — the model for
 /// “Transform” (R.64): two numbers of one quantity are read together, and
 /// splitting them across lines wastes space (rule 13).

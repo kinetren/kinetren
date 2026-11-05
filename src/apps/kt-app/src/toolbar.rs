@@ -694,13 +694,20 @@ impl KtApp {
                 }
                 // Shift here is “drag the region” (like Shift+A/D, item 2 round 16); “to
                 // the very start/end” remains on Shift+Home/End
-                if self.tb(ui, crate::icons::SKIP_BACK, tr(k::tb::BACK)) {
-                    let shift = ui.input(|i| i.modifiers.shift);
-                    self.nav_jump(false, false, shift);
-                }
-                if self.tb(ui, crate::icons::SKIP_FWD, tr(k::tb::FORWARD)) {
-                    let shift = ui.input(|i| i.modifiers.shift);
-                    self.nav_jump(true, false, shift);
+                // Ctrl — one frame, as the arrows (T11, the owner's "Ctrl instead of Shift?")
+                for (icon, hint, forward) in [
+                    (crate::icons::SKIP_BACK, k::tb::BACK, false),
+                    (crate::icons::SKIP_FWD, k::tb::FORWARD, true),
+                ] {
+                    if self.tb(ui, icon, tr(hint)) {
+                        let (ctrl, shift) =
+                            ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
+                        if ctrl {
+                            self.frame_step(forward);
+                        } else {
+                            self.nav_jump(forward, false, shift);
+                        }
+                    }
                 }
             }
             1 => {

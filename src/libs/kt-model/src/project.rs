@@ -2394,31 +2394,78 @@ pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
     // R.33 promised that keyframe commands do not touch it at all. The promise held
     // because with a linear map the delta is EXACTLY ZERO — and so it remained:
     // on a clip without a warp this block is not executed.
-    let shift = material - linear;
-    if shift.0 != 0 {
-        for slot in &mut s.fx_auto {
-            for cur in slot {
-                for k in &mut cur.keys {
-                    k.t = k.t + shift;
-                }
-            }
-        }
-        // generator curves live in the same domain (material tick) and
-        // must travel by the same delta — otherwise for a title piece the “typewriter”
-        // starts not where it does for the neighbouring piece
-        for cur in &mut s.gen_auto {
+    shift_curves(&mut s, material - linear);
+    s
+}
+
+/// The curves of an event follow its entry point by `shift`: see `clip_slice`.
+fn shift_curves(s: &mut ClipEvent, shift: Tick) {
+    if shift.0 == 0 {
+        return;
+    }
+    for slot in &mut s.fx_auto {
+        for cur in slot {
             for k in &mut cur.keys {
                 k.t = k.t + shift;
             }
         }
-        // mask curves (shape-masks) — the same domain, the same delta
-        for m in s.masks.picture.iter_mut().chain(s.masks.slots.iter_mut().flatten()) {
-            for cur in &mut m.auto {
-                for k in &mut cur.keys {
-                    k.t = k.t + shift;
-                }
+    }
+    // generator curves live in the same domain (material tick) and
+    // must travel by the same delta — otherwise for a title piece the “typewriter”
+    // starts not where it does for the neighbouring piece
+    for cur in &mut s.gen_auto {
+        for k in &mut cur.keys {
+            k.t = k.t + shift;
+        }
+    }
+    // mask curves (shape-masks) — the same domain, the same delta
+    for m in s.masks.picture.iter_mut().chain(s.masks.slots.iter_mut().flatten()) {
+        for cur in &mut m.auto {
+            for k in &mut cur.keys {
+                k.t = k.t + shift;
             }
         }
+    }
+}
+
+/// The held piece of `Command::FrameHold`: the window `w` of `c`, standing on the frame the event
+/// shows at `w.start`. Rate 0 of the time-warp slot is a freeze (R.57); with no slot the chain gets
+/// one, with its reverb off, so the hold is silent. The piece's entry point is that frame on a
+/// forward and on a mirrored event alike: at rate 0 the map reads the entry point.
+pub fn frame_hold_piece(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
+    let mut s = clip_slice(c, w, id);
+    // a mirrored event reads its window from the END: the frame at `w.start` is the anchor of
+    // the piece that ENDS there
+    let frame = if c.reversed {
+        slice_anchors(c, TickRange::new(c.start, w.start)).1
+    } else {
+        s.source_in
+    };
+    let shift = frame - s.source_in;
+    shift_curves(&mut s, shift);
+    s.source_in = frame;
+    let slot = match s.fx.iter().position(|f| f.warps_time()) {
+        Some(i) => Some(i),
+        None => FxInstance::plugin("slowed_reverb").map(|f| {
+            s.fx.push(f);
+            s.fx.len() - 1
+        }),
+    };
+    if let Some(i) = slot {
+        s.fx[i].set_warp_rate(0.0);
+        if s.fx_auto.len() <= i {
+            s.fx_auto.resize(i + 1, Vec::new());
+        }
+        s.fx_auto[i].retain(|cur| cur.param != "rate");
+        // a switched-off slot would not stop anything: the piece's chain stays off, the slot not
+        if s.fx_bypass.len() < s.fx.len() {
+            s.fx_bypass.resize(s.fx.len(), false);
+        }
+        if s.fx_off {
+            s.fx_off = false;
+            s.fx_bypass.iter_mut().for_each(|b| *b = true);
+        }
+        s.fx_bypass[i] = false;
     }
     s
 }
@@ -2773,6 +2820,15 @@ impl BlendMode {
 
 /// Level limits of an audio track in dB (the track properties passport, R.62).
 pub const TRACK_GAIN_MIN_DB: f64 = -60.0;
+/// The floor of an event's gain (R.72, USABILITY 6: "let the gain go down to mute"). At or below
+/// it the event is exact silence, not −60 dB: the render multiplies by zero.
+pub const EVENT_GAIN_FLOOR_DB: f32 = -60.0;
+
+/// Gains of a nested event and its instance add up, but a mute stays a mute: −60 + 6 dB would
+/// bring back a piece the person silenced.
+pub fn add_event_gain(a: f32, b: f32) -> f32 {
+    if a <= EVENT_GAIN_FLOOR_DB || b <= EVENT_GAIN_FLOOR_DB { EVENT_GAIN_FLOOR_DB } else { a + b }
+}
 pub const TRACK_GAIN_MAX_DB: f64 = 24.0;
 
 fn is_normal_blend(b: &BlendMode) -> bool {
@@ -6819,7 +6875,7 @@ impl Project {
             // an identity.
             piece.lane = inst.lane + child.lane;
             piece.opacity *= inst.opacity;
-            piece.gain_db += inst.gain_db;
+            piece.gain_db = add_event_gain(piece.gain_db, inst.gain_db);
             piece.link_group = inst.link_group;
             self.inline_one(&piece, depth + 1, next, out);
         }

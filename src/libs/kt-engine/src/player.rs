@@ -1126,8 +1126,7 @@ fn audio_render_loop(ctx: RenderCtx) {
     let (mut last_ru, mut last_cu, mut last_warm) = (0u64, 0u64, 0u64);
     let mut warmups = 0u64;
     let mut last_snap_ms = 0u64;
-    let mut last_head_seen = render_head;
-    let mut last_head_ms = 0u64;
+    let mut stall = crate::flight::StallWatch::new(render_head);
 
     while !stop.load(Ordering::Acquire) {
         if dirty.swap(false, Ordering::AcqRel) {
@@ -1242,20 +1241,9 @@ fn audio_render_loop(ctx: RenderCtx) {
             }
             // sticking: playing, but the head stands still (defect 8.3 — “frames
             // are visible, no sound, playback freezes”).
-            if transport.is_playing() {
-                if head != last_head_seen {
-                    last_head_seen = head;
-                    last_head_ms = now;
-                } else if now.saturating_sub(last_head_ms) >= 1000 {
-                    flight.push(
-                        crate::flight::Ev::Stall,
-                        now.saturating_sub(last_head_ms) as i64,
-                        head,
-                    );
-                }
-            } else {
-                last_head_seen = transport.playhead_frames();
-                last_head_ms = now;
+            let rate = f32::from_bits(shared.playback_rate.load(Ordering::Acquire));
+            if let Some(idle) = stall.tick(now, transport.is_playing(), rate, head) {
+                flight.push(crate::flight::Ev::Stall, idle as i64, head);
             }
         }
 

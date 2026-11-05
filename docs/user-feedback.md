@@ -2591,6 +2591,49 @@ by the default branch, the long tests start first and use the idle cores, and th
 of the test job stops blocking it. Not taken without his word: skipping the Flatpak job on
 branches (it changes what is checked, not how fast).
 
+## 2026-11-05 — R.72: the timeline and transport defects, first in the usability stage
+
+The seventeen R.72 rows of `docs/ktprompts/v26.10-index.md`, the owner's words (`docs/ktprompts/v26.10.txt`,
+USABILITY and the unnamed timeline list; his answers to questions 7, 8, 9 and 11 of R.71 stand):
+
+> 2. если я зажимаю Ctrl+пробел - то мы мотаем скорость в обратную скорость(реверс)
+> 3. при отжатии паузы надо не резко переходит в скорости а плавно, но скорость сброса скорости должна быть больше скорости ее набора
+> 4. если я начал зажимать пробел(и ctrl+пробел) вне воспроизведения - то отпускание пробела прекращает воспроизведение. сейчас в любом случае если я отпускаю пробел воспроизведение продолжается, даже если я нажимал пробел стоя на паузе
+> 5.1. у событий нижний угол по ярлычок верхнего угла - должно быть только горизонтальная тяга длинны события, а сейчас там триггерится изменение gain/прозрачности аудио/видео, что неудобно. учитывай масштаб таймлайна
+> 5.2. … если оно мелкое - то почти невозможно попасть в точку растяжки, не особо имеет смысл в маленьком зуме на боковых гранях давать возможность менять прозрачность/gain, надо только fade и растяжку оставить
+> 5.3. в целом при мелком зуме(как по вертикали так и по горизонтали) не надо сразу давать возможность менять прозрачность/gain, вот я столько раз хотел быстро подвигать события, а у меня постоянно триггерится смена громкости звука
+> 6. У звука надо дать возможность gain выкрутить до mute, а не только до -6(или сколько там). Также - надо бы отображать где-то на событии какой стоит gain/opacity/etc, например, отдельным кубиком после названия сурса события.
+> 7. нужно разрешить двигать второй маркер в marked_region. А... оно еще позволяет "marker over the region..", он почему-то меняет уже выделенный регион, это полезно, надо вынести в отдельный пункт
+> 1. Если скейлить таймлайн по вертикали - то почему-то он улетает вниз …
+> 2. Очень сложно нащупать боковой скроллбар таймлайна, либо триггерится изменение размера окна, либо триггерится область быстрого прыжка
+> 3. добавленные кнопки у трэков таймлайна сломали половину зоны быстрого прыжка слева. агенты не думали.
+> 4. если в зоне быстрого прыжка оказывается событие - то оно зачем-то открывается, даже если я у самого "сильного" края прожимаю прыжок - все равно открывает событие
+> 4. бессмысленные очевидные надписи над треками "Add morpher here" и у камерного тоже, прошу запретить агентам делать тупые надписи.
+> 6. кстати - хотелось бы мышкой сбоку перетягивать туда-сюда порядок треков
+> 11. кнопки back/forward надо добавить режим чтобы при shift они просто ходили на один кадр назад/вперед
+> [memory block, 5] что означает "playback froze: 5" … если важно - это должно быть в notices, а не где-то в углах
+> [S1] удобный способ "остановить" событие: я хочу стоп-кадр, а потом продолжить его
+
+**The numbers touched (`git log -S`, task 0.1).** `SPACE_HOLD_MS` = 220 came with round 16 (622de963): the
+agent's number, his were 4× and later 5 s. `LEVEL_GRAB_PX` = 5 came with R.28 (7857eff5), `RAIL_DB_SPAN` with the
+v1 rail port (a305b21c). None was set at his request, so the revisions of design.md §1 and §3 stand: the
+hold threshold is his "~0.3 s", and the level line goes to silence at his request.
+
+**Checked against the code of 2026-11-05 before work** (the proposal is of 2026-10-30): the speed of an event is
+still the `slowed_reverb` slot's `rate` row, zero allowed; the arrows are still free; the jump zones and the
+gutter are as described.
+
+**What the apply found against the proposal** (decided by the executor, to be shown to him):
+
+- the track drag "that exists" was dead since R.38: the height drag's release took it;
+- the left jump zone's rect was whole: what he lost is the hot end under the header, which grew from 34 to
+  62 px in R.62. A click on the header's free part now jumps; a double click there still renames;
+- U5.3 revises R.40 item 12: a 20 px event has no level gesture any more, the menu field reaches it;
+- a jump over an event does not select it; with the project's start on screen the left zone stands down.
+
+**Open, a question for him:** the split of "Marker over the region" (U7) is not made; the item still does
+three things (a new range marker, stretching a point marker at the region start, removing an equal one).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

@@ -380,18 +380,36 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   ```
   Names in ligatures use `hyphen` instead of a hyphen (`lockhyphensimple` = `lock-simple`).
 
+## The jump zones and the header (R.72)
+
+- **In a jump zone a click jumps, whatever lies under it**, unless Ctrl or Shift is held, or the left
+  zone has nowhere to go (the project's start on screen). The jump neither selects nor clears the
+  selection. A drag is never a jump: `clicked()` decides.
+- **The gradient of the left zone runs through the header, so the header's free part is the hot end**;
+  a badge is a button, and a double click renames and gives the view back.
+- **`self.drag.take()` in an `if let` chain consumes the drag whatever the pattern says.** The height
+  drag's release did this for years, and a track reorder died silently with it (t1637). One release, one
+  `match` on `self.drag`.
+- **`edge_heat` ends at `jump_right`**: a shown scrollbar takes `VSCROLL_GRAB_W` from the right zone.
+
 ## Gestures on the event's top strip (R.28, item 12)
 
 - `top_strip_h(lane_h)` (35% of the lane height, at most 12 px) — the Vegas-style gesture zone:
-  the fade handle at each edge and the level line (video). Below the strip everything
-  works as before: the body, trims, transition windows (test 157 holds this).
+  the fade handle at each edge. Below the strip everything works as before: the body, trims,
+  transition windows (test 157 holds this).
+- **`event_zone` is the one order of gestures** (U5, R.72): fades in the strip, trims, level, body. The
+  trims come before the level, so a bottom corner is a length drag. The level gesture exists only from
+  `LEVEL_MIN_ROW_PX` and `LEVEL_MIN_W_PX`, its grab follows the row (`level_grab`), and below them
+  the menu's number field reaches the level. The line is still drawn: it shows a value.
 - **Corner fade** — a `TransitionEvent` with a ZERO external offset (entirely
   inside the event). Its handle is the corner of the clip, not the edge of the transition window: in
   the top strip `transition_at` skips such a fade. The handle snaps to the
   corner within 3 px, so a fade pushed in disappears entirely.
 - **Level line** — ONE for both kinds (item 176): for video it is
-  `ClipEvent.opacity`, for audio `gain_db` in the range of the v1 rail (±6.02 dB,
-  0 dB — the midpoint); conversion — `clip_level`/`gain_to_level`/`level_to_gain`.
+  `ClipEvent.opacity`, for audio `gain_db`: the upper half is the v1 rail (0 dB — the midpoint,
+  +6.02 dB — the top), the lower half a square law down to `EVENT_GAIN_FLOOR_DB`, and the last 2 % of
+  the travel is mute, rendered as exact zero (`event_gain_linear`, R.72); conversion —
+  `clip_level`/`gain_to_level`/`level_to_gain`. A non-default level is the chip after the source name.
   The vertical volume rail is REMOVED: it stood inside the fade zone and made
   the fade on audio look unlike the fade on video. Live preview goes through
   `live_gain`/`live_opacity`, the write to history happens on release.

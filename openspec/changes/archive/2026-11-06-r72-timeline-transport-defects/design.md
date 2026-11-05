@@ -62,6 +62,19 @@ Motivation — proposal.md. The facts below were read from the code on 2026-10-3
   - there is no command; `Command::Split`, `SetFx`, `SetFxAuto` and the split wrappers in `app.rs`
     (`split_selected`) are the parts.
 
+**Checked against the code at apply, 2026-11-05.** The facts above still stand, with four corrections
+the apply found:
+
+- `Drag::LaneRow` did NOT work: the release of `Drag::LaneHeight` took `self.drag` in its own `if let`
+  chain, so since R.38 a reorder ended with nothing to commit. §8 is a repair, not only a cue.
+- The status hints `tl.hint.lane_named`/`lane` already say "drag — reorder", but lived in a branch of
+  the clip area's hover that a gutter position never reached. They are used, no `lane_reorder` key.
+- The left jump zone's rect is intact on badge rows. What the owner lost is the hot end: the gradient
+  has run through the gutter to the panel edge since item 20 of round 6, clicks there did nothing, and
+  R.62 grew the gutter from 34 to 62 px (see §6).
+- The menu items "Add morpher here" / "Add camera at the playhead" use the same catalog keys as the
+  captions, so §7 removes the captions only, and the keys stay for the menu.
+
 ## Goals / Non-Goals
 
 **Goals:** every R.72 row of the registry closed by a test that probes from where the person acts; each
@@ -146,22 +159,29 @@ height" (kt-app CLAUDE.md) is exactly the bug here.
 - The scrollbar's interact rect is 12 px wide (drawing 6 px). It is pushed into `no_resize_rects`, like
   the badges. A click on its track pages by one visible height.
 - The right jump zone ends at the scrollbar's grab rect.
-- The left jump zone is measured from the clip area's left edge. Task 2.4 first checks live where it was
-  lost (a 4-badge gutter added in R.62 vs the zone's pre-R.62 left edge), and the test asserts a jump
-  on a row whose badges are drawn.
-- In a jump zone the jump wins over an event. A click (no movement) jumps; a press + drag on the event
-  still moves it (the drag threshold decides); the double-click there is consumed as a second jump.
+- The left jump zone stays measured from the clip area's left edge, and a click on the header's free
+  part is its hot end (heat 1). The first click of a header double click has already jumped, so the
+  rename gives the view and the cursor back: the triple-click precedent, not a 300 ms delay on every jump.
+- In a jump zone the jump wins over whatever lies under the click, service blocks and transitions too.
+  A click (no movement) jumps; a press + drag on the event still moves it (the drag threshold decides);
+  the double-click there is consumed as a second jump. Ctrl and Shift fall through to the event.
+- The jump does not select. Selecting would make every jump over an event destroy a multi-selection
+  (rule 5); a drag still takes the event, and Ctrl+click still builds the selection.
+- With the project's start on screen (view at the floor, 40 px before it) the left zone has nowhere to
+  go, so events there stay ordinary. Otherwise the first eighth of a fresh project could neither be
+  selected by a click nor opened: found by eleven older tests that double-click the first event.
 
 ### 7. Captions out, guard in
 
-The two catalog keys go away from en/ru/es/zh-Hans/ar. The guard test paints a project with empty
+The captions go. The keys stay: the row's menu uses them. The guard test paints a project with empty
 morph, camera and video rows and fails on any painted text whose rect lies inside a row rect.
 `painted_texts` is the gallery check, as used in t684.
 
-### 8. Track reorder: cue, not a new gesture
+### 8. Track reorder: the release, then the cue
 
-The gesture stays. Hovering the gutter's free area sets `CursorIcon::Grab` and the hint
-`tl.hint.lane_reorder`. The test drags from the name and from above the badges.
+One `match` on the release takes the drag for both header gestures. Hovering the gutter's free area sets
+`CursorIcon::Grab` and the hint `tl.hint.lane_named` (with the full name). The test drags from the name
+and from above the badges.
 
 ### 9. Frame step: one body for keys and buttons
 
@@ -178,15 +198,19 @@ for each new episode. The perf label stays as a counter.
 
 ### 11. Freeze frame: three pieces, one batch
 
-`insert_frame_hold(event, t)`:
-- `Split` at `t` and at `t + D`, where `D = min(2 s, end − t)`;
-- the middle piece gets the warp slot's `rate = 0` with its rate curve cleared (`SetFx` + `SetFxAuto`);
-- the last piece's entry point is set to the material at `t` (`ClipWarp::material_off`, the same map
-  as the render). The material that no longer fits past the end is simply not reached.
+`insert_frame_hold(event)` sends one `Command::FrameHold` per linked partner, in one batch:
 
-All of it goes through `apply_batch_restoring` (one undo step, transition handles restored). Linked
-partners follow through the split's own group handling. The audio of the hold is silent at rate 0
-(R.57). The name follows rule 21: "Insert frame hold (freeze frame)".
+- the left piece and the right one are `clip_slice`, the one rule of pieces. The right piece is the
+  window `[t, end − D]` of the ORIGINAL moved to `t + D`, so on a curved or mirrored event it reads and
+  animates exactly as the event would have from `t`. Patching `source_in` after two `Split`s, as first
+  planned, needs a second copy of the mirror and of the curve shift;
+- the middle piece is `frame_hold_piece`: `rate = 0` of the warp slot (a new default slot with its
+  reverb off when the chain has none), the rate curve cleared, the entry point on the frame at `t`;
+- `D = 2 s`, or up to the end when less than `MIN_CLIP_DURATION` would be left.
+
+A cut's bookkeeping (morpher targets, the outgoing transition) is one `after_cut` for `Split` and
+`FrameHold`. All of it goes through `apply_batch_restoring` (one undo step, transition handles
+restored). The audio of the hold is silent at rate 0 (t1638). The name follows rule 21.
 
 Rejected:
 - a ripple that pushes the following events (Premiere's behaviour): rule 20, "nothing moves by itself";
@@ -201,17 +225,11 @@ Rejected:
   low row says "zoom the row to change the level".
 - [The left jump zone's loss is not yet localised] → task 2.4 reproduces it live before the fix; the
   test asserts the consequence on a badge row.
-- [Freeze on a warped event] → t1037 has a curve case; the last piece is checked by
+- [Freeze on a warped event] → t1627 has a curve case; the last piece is checked by
   `ClipWarp::material_off` on both sides of the hold.
-- [Test numbers collide with parallel branches] → t1030–t1047, free in the code as of 2026-11-01. First
-  proposed as t1000–t1017 and moved on 2026-10-30. The state the range was checked against
-  (`fn tNNN_` in `src/` and the active changes' TEST lines):
-  - taken in the code: t991–t996, t1018, t1019 and t1048–t1050 by plugin-api-stage1; t1051–t1057 by
-    plugin-api-barriers. Both changes are archived. The earlier note here said plugin-api-barriers
-    reserved t997–t1009; it never used them.
-  - reserved by another active change: t1010–t1015 (fx-lens-and-camera).
-  - free: t997–t1009, t1016, t1017 and t1020–t1029.
-  Renumber again at apply if another branch lands first.
+- [Test numbers collide with parallel branches] → t1620–t1637 here (range t1620–t1659 given by the
+  orchestrator, 2026-11-05). Twice renumbered before apply: the range moved from t1000 to t1030 to this
+  one as other changes landed.
 
 ## Migration Plan
 

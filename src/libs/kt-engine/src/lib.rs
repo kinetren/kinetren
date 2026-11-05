@@ -21,7 +21,7 @@ pub mod video_plan;
 
 pub mod worker;
 
-pub use audio::{AudioRenderer, RenderStats, db_to_linear};
+pub use audio::{AudioRenderer, RenderStats, db_to_linear, event_gain_linear};
 pub use export::{
     ExportBackends, ExportOptions, ExportStats,
     export_mp4_with_backends, render_raw_audio,
