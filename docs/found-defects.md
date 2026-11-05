@@ -75,7 +75,7 @@ list may be short of items from them.
 | 36 | a copied `target/` builds another worktree's text | `CARGO_MANIFEST_DIR` in build.rs | open | С.2 |
 | 38 | Flatpak steps after compose never ran on a real runner | CI | unknown | needs the owner's push |
 | 41 | `pkill -f` kills the caller's own shell | agent scripts | trap | goes into the briefs |
-| 57 | t836, t362 red once under load; t1524 has a thin margin (70 % against 64 %) | `telemetry.rs`, `project_lock.rs` | open | С.2 |
+| 57 | t836, t362 red once under load; t951, t952, t476, t411 red in one full run at load 25 on 2026-11-05, green alone; t1524 has a thin margin (70 % against 64 %) | `telemetry.rs`, `project_lock.rs` | open | С.2 |
 | 58 | `harness_still_of` runs `gen.sh` in every test, parallel runs overwrite each other's fixtures: t939 and t796c red in a full run, green alone | `kt-app/src/layout_tests.rs:17719` | open | С.2 |
 | 59 | `loop` live scenario allows one stale dump read | `src/scripts/live/loop.py:54` | open | С.2 |
 | 60 | `docs/features/README.md` drifts from `--table`, `--check` does not see it | docs | open | С.2 |
