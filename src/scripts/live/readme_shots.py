@@ -337,8 +337,9 @@ class Shooter:
         at = clip["start"] + clip["duration"] // 2 if at is None else at
         x, y = self.point(app, step, clip["kind"], clip["lane"], at)
         # the context menu, not a double click: under a heavy decode the
-        # UI frame is slow and two clicks fall apart in egui's frame clock
-        app.click(x, y)
+        # UI frame is slow and two clicks fall apart in egui's frame clock.
+        # The playhead goes by the ruler: on the event near the view's edge a click would be a jump
+        app.click(x, app.ruler_y())
         app.right_click(x, y)
         self.require(step, app.click_probe("tl.fx"), "click on “tl.fx”")
         return self.below_header(app, step, "win.fx", app.has_probe("win.fx"))
