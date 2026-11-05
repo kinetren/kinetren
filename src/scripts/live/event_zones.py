@@ -11,7 +11,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, geometry, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -63,7 +63,9 @@ def main(out):
         app.key("Return")
         app.settle()
         app.step("marker", "a region and a range marker over it")
-        y = geometry()["y"] + int(app.geom()["timeline"]["top"]) + 4
+        # where the range strip is drawn: the time caption row. The very top of the ruler is the
+        # panel separator's grab
+        y = ruler
         end = app.x_at(5 * SEC)
         app.hover(end, y)
         app.step("marker-hover", "the end of the marker named in the status line")

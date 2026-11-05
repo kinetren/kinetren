@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from Xlib import X, XK  # noqa: E402
-from kt_live import Live, pause, probe, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, probe, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -25,15 +25,18 @@ def space(down):
     probe.d.sync()
 
 
-def held(app, ctrl, secs, name, what):
-    """A real hold, with the screenshot taken while the key is down."""
+def held(app, ctrl, name, what):
+    """A real hold, with the screenshot taken while the key is down. The length of the hold is
+    how far the head has run: the program's own clock, not a sleep."""
     app.raise_once()
     if ctrl:
         app._mods(["ctrl"], True)
+    start = app.playhead()
     space(True)
-    pause(secs * 0.6, "the time of the hold itself is the gesture: the key stays down this long")
+    # the head runs forward at first during playback, so a reverse is proven by its way back
+    app.wait_playhead(lambda t: abs(t - start) > SEC // 2, "the head must run under the key")
     first = app.playhead()
-    pause(secs * 0.4, "the second half of the hold shows which way the head runs under the key")
+    app.wait_playhead(lambda t: abs(t - first) > SEC // 3, "the head must keep running under the key")
     playing = app.playing()
     last = app.playhead()
     app.step(name, what)
@@ -53,16 +56,16 @@ def main(out):
         app.step("paused", "paused at 10 s")
 
         start = app.playhead()
-        playing, _ = held(app, False, 1.5, "held", "Space held from pause: the picture plays")
+        playing, _ = held(app, False, "held", "Space held from pause: the picture plays")
         app.expect(playing, "holding Space from pause must play")
         app.expect(not app.playing(), "releasing Space must stop playback")
         reached = app.playhead()
         app.expect(reached > start + SEC, f"the head must run while held: {start} → {reached}")
-        pause(0.4, "time must pass for a stopped head to prove it stays stopped after the release")
+        app.wait_frame(3, what="frames after the release")
         app.expect(app.playhead() == reached, "the head must stay where it got to")
         app.step("released", "released: the picture stands where it got to")
 
-        playing, _ = held(app, True, 1.5, "ctrl-held", "Ctrl+Space held: the picture runs backward")
+        playing, _ = held(app, True, "ctrl-held", "Ctrl+Space held: the picture runs backward")
         app.expect(playing, "holding Ctrl+Space must play")
         app.expect(not app.playing(), "releasing Ctrl+Space from pause must stop playback")
         back = app.playhead()
@@ -72,12 +75,13 @@ def main(out):
         # the short press keeps playing; two quick presses stop at the start
         app.key("space")
         app.expect(app.playing(), "a short press must play")
-        pause(0.5, "time must pass to prove a short press keeps playing with the key already up")
+        began = app.playhead()
+        app.wait_playhead(lambda t: t > began + SEC // 2, "a short press must keep playing")
         app.expect(app.playing(), "a short press must keep playing")
         app.step("short-press", "a short press plays and keeps playing")
 
         # during playback: reverse while held, forward again after it
-        playing, way = held(app, True, 1.5, "ctrl-in-play", "Ctrl+Space during playback: backward")
+        playing, way = held(app, True, "ctrl-in-play", "Ctrl+Space during playback: backward")
         app.expect(playing and way < 0, f"under Ctrl+Space the head must run backward: {way}")
         app.expect(app.playing(), "the release during playback must keep playing")
         after = app.playhead()

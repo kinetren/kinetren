@@ -6192,6 +6192,7 @@ impl KtApp {
         // one new group per piece: the holds of a pair stay a pair, the rests too
         let (hold_group, rest_group) = (groups(group.is_some()), groups(group.is_some()));
         let mut cmds = Vec::new();
+        #[allow(clippy::explicit_counter_loop)]
         for (cid, end) in targets {
             let left = end - at;
             let hold = if left - FRAME_HOLD < kt_model::MIN_CLIP_DURATION { left } else { FRAME_HOLD };
