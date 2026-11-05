@@ -11,9 +11,9 @@ when the section closes.
 
 ## 1. Space bar (transport)
 
-- [ ] 1.1 The press state machine: tap / hold-from-pause / hold-during-play, the Ctrl modifier read at press, `SPACE_HOLD_MS = 300` with its reason comment. Check: t1620 and t1621 (`layout_tests.rs`) green; the existing space tests (`t629_space_boost_from_small_base`, layout_tests 1332–1460) still green.
-- [ ] 1.2 Ctrl+Space reverse while held, and the release back to +base. Check: t1622.
-- [ ] 1.3 The ease-in and the release decay (analytic, a quarter of the rise's time constant), with dt 1/60, 1/30, 0.1. Check: t1623.
+- [x] 1.1 The press state machine: tap / hold-from-pause / hold-during-play, the Ctrl modifier read at press, `SPACE_HOLD_MS = 300` with its reason comment. Check: t1620 and t1621 (`layout_tests.rs`) green; the existing space tests (`t629_space_boost_from_small_base`, layout_tests 1332–1460) still green.
+- [x] 1.2 Ctrl+Space reverse while held, and the release back to +base. Check: t1622.
+- [x] 1.3 The ease-in and the release decay (analytic, a quarter of the rise's time constant), with dt 1/60, 1/30, 0.1. Check: t1623.
 - [ ] 1.4 `docs/guide/shortcuts.md`: hold Space from pause, Ctrl+Space; the live scenario `space_hold.py` with steps. Check: `readme-check.py --check` green, the scenario green with screenshots.
 
 ## 2. Timeline gestures (ui-timeline)

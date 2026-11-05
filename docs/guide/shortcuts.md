@@ -9,7 +9,9 @@ detached preview window too. While you type into a text field, the keys go to th
 |---|---|
 | <kbd>Space</kbd> | play / pause |
 | <kbd>Space</kbd> twice quickly | stop at the region start, or at the project start when there is no region |
-| hold <kbd>Space</kbd> | play faster, ramping up to 4× over five seconds; release to return to the normal speed |
+| hold <kbd>Space</kbd> during playback | play faster, ramping up to 4× over five seconds; release to come back to the normal speed |
+| hold <kbd>Space</kbd> while paused | play only while held, ramping up the same way; release to stop where the picture got to |
+| hold <kbd>Ctrl</kbd>+<kbd>Space</kbd> | play backward while held; release to go on forward at the normal speed, or to stop if it was paused |
 | <kbd>A</kbd> / <kbd>Home</kbd> | back to the previous marker, region edge or event edge |
 | <kbd>D</kbd> / <kbd>End</kbd> | forward to the next marker, region edge or event edge; after the last one, the end of the project |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>Shift</kbd>+<kbd>End</kbd> | the very start / end of the project |

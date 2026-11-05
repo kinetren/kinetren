@@ -1404,7 +1404,7 @@ fn t120_space_hold_boosts_playback() {
     // --- hold: the speed grows, the transport does NOT toggle
     h.key_down(egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(260));
+    std::thread::sleep(std::time::Duration::from_millis(330));
     for _ in 0..60 {
         h.step();
     }
@@ -1422,7 +1422,10 @@ fn t120_space_hold_boosts_playback() {
         "the speed bar shows not the boost: {shown}"
     );
     h.key_up(egui::Key::Space);
-    h.step();
+    // the release decays (USABILITY 3, R.72): the base is reached, not jumped to
+    for _ in 0..20 {
+        h.step();
+    }
     assert!(
         (h.state().player.playback_rate() - 1.0).abs() < 0.01,
         "after release the speed did not return: {}",
@@ -1439,14 +1442,16 @@ fn t120_space_hold_boosts_playback() {
     h.state_mut().player.set_playback_rate(-1.0);
     h.key_down(egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(260));
+    std::thread::sleep(std::time::Duration::from_millis(330));
     for _ in 0..40 {
         h.step();
     }
     let rev = h.state().player.playback_rate();
     assert!(rev < -1.5, "the boost in reverse lost its sign/speed: {rev}");
     h.key_up(egui::Key::Space);
-    h.step();
+    for _ in 0..20 {
+        h.step();
+    }
     h.state_mut().base_rate = 1.0;
     h.state_mut().player.set_playback_rate(1.0);
 
@@ -11689,7 +11694,7 @@ fn t629_space_boost_from_small_base() {
     h.step();
     h.key_down(egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(260));
+    std::thread::sleep(std::time::Duration::from_millis(330));
     // RIGHT after the start of the ramp: what the multiplier shows and what plays
     // must match. The former ABSOLUTE threshold of 0.02 held the player at
     // 0.05 until the multiplier grew to 1.4 — the program played as it stood,
@@ -11723,7 +11728,9 @@ fn t629_space_boost_from_small_base() {
         "speed strip does not show acceleration from a small base: {shown}"
     );
     h.key_up(egui::Key::Space);
-    h.step();
+    for _ in 0..20 {
+        h.step();
+    }
     assert!(
         (h.state().player.playback_rate() - 0.05).abs() < 1e-4,
         "after release, speed did not return to the small base: {}",
@@ -19692,4 +19699,244 @@ fn t1414_search_window_shows_its_finds() {
         rows.iter().any(|r| win.contains_rect(*r)),
         "no find lies inside the search window {win:?}: the finds {rows:?} are clipped below it"
     );
+}
+
+/// A project with one long audio event for the transport tests of R.72: the render thread
+/// runs the head only over something to play, and a test feeds the callback's count itself.
+#[cfg(test)]
+fn r72_transport_scene() -> Harness<'static, KtApp> {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+        let mut c = sample_clip(ClipId(1));
+        c.kind = ClipKind::Audio;
+        c.lane = 0;
+        c.start = Tick(0);
+        c.duration = Tick(90_000 * 60);
+        c.media = MediaId(1);
+        p.clips.push(c);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    h
+}
+
+/// Feeds the head as the output callback would and waits for the render thread to take it.
+#[cfg(test)]
+fn r72_feed_head(h: &mut Harness<'static, KtApp>, frames: u64) {
+    use std::sync::atomic::Ordering;
+    let shared = h.state().player.shared.clone();
+    for _ in 0..4 {
+        let before = h.state().player.transport.playhead_frames();
+        shared.consumed_frames.fetch_add(frames as _, Ordering::AcqRel);
+        let t0 = std::time::Instant::now();
+        while h.state().player.transport.playhead_frames() == before
+            && t0.elapsed() < std::time::Duration::from_secs(2)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        h.step();
+    }
+}
+
+/// USABILITY 2–4 keep R.16: "don't break the functions of the double and single press".
+/// A short press still toggles and stays; a quick second press stops at the region start, at
+/// the project start without a region. Holds below the threshold are taps.
+#[test]
+fn t1620_short_and_double_press_keep_their_meaning() {
+    use kt_model::Region;
+    use kt_time::Tick;
+    let mut h = r72_transport_scene();
+    h.state().player.seek(Tick(900_000));
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "scene: must start paused");
+    h.key_down(egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    h.key_up(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "a short press from pause did not play");
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "a short press must KEEP playing");
+
+    // twice quickly, no region: the project start
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the first of the two did not pause");
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), Tick(0), "double press without a region");
+
+    // with a region: its start
+    h.state_mut().model.set_region(Region::normalized(Tick(90_000), Tick(180_000)));
+    h.state().player.seek(Tick(120_000));
+    h.state_mut().on_transport_toggle();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "scene: must play");
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), Tick(90_000), "double press with a region");
+}
+
+/// USABILITY 4: "if I began holding space (and ctrl+space) outside playback, releasing the
+/// space stops playback. Now playback continues whatever I do, even if I pressed space on a
+/// pause." The picture plays only while held, the head stays where it got to, and Ctrl runs
+/// it backward. The following tap is a plain play, not the double-press stop.
+#[test]
+fn t1621_hold_from_pause_plays_only_while_held() {
+    use kt_time::Tick;
+    let mut h = r72_transport_scene();
+    let start = Tick(900_000);
+    h.state().player.seek(start);
+    h.step();
+
+    h.key_down(egui::Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "nothing may start before the threshold");
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "past the threshold the hold must play");
+    r72_feed_head(&mut h, 4_800);
+    for _ in 0..8 {
+        h.step();
+    }
+    assert!(h.state().player.playback_rate() > 1.0, "the hold from pause must boost");
+    let reached = h.state().player.transport.playhead();
+    assert!(reached > start, "the head did not run: {reached:?}");
+    h.key_up(egui::Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the release must pause");
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the temporary speed stayed");
+    assert!(h.state().space_boost.is_none(), "a pause cannot keep a decay running");
+    let stopped = h.state().player.transport.playhead();
+    assert!(stopped >= reached, "the release must not return to the start: {stopped:?}");
+
+    // the same with Ctrl: backward, and stops likewise
+    h.key_down_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "past the threshold Ctrl+hold must play");
+    assert!(h.state().player.playback_rate() < 0.0, "Ctrl+hold must play in reverse");
+    r72_feed_head(&mut h, 4_800);
+    let back = h.state().player.transport.playhead();
+    assert!(back < stopped, "the head must run BACKWARD: {back:?} after {stopped:?}");
+    h.key_up_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the release of Ctrl+hold must pause");
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the sign must come back to the base");
+
+    // right after the release a tap plays: a hold does not arm the double-press stop
+    let at = h.state().player.transport.playhead();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "the tap after a hold must play");
+    assert_ne!(h.state().player.transport.playhead(), Tick(0), "the tap after a hold must not stop");
+    assert!(h.state().player.transport.playhead() >= at - Tick(100));
+}
+
+/// USABILITY 2: "if I hold Ctrl+space we rewind in reverse". During playback the release
+/// returns straight to the forward base: a smooth way through zero would pass a freeze.
+#[test]
+fn t1622_ctrl_space_reverses_while_held_during_playback() {
+    let mut h = r72_transport_scene();
+    h.state_mut().on_play();
+    h.step();
+    assert_eq!(h.state().player.playback_rate(), 1.0);
+    h.key_down_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    h.step();
+    let first = h.state().player.playback_rate();
+    assert!(first <= -1.0 + 1e-3, "Ctrl+hold during playback must reverse: {first}");
+    for _ in 0..12 {
+        h.step();
+    }
+    let later = h.state().player.playback_rate();
+    assert!(later < first, "the reverse must grow in modulus: {later} after {first}");
+    let shown = h.state().speed_temp_slider().expect("the temporary speed is not shown");
+    assert!(shown < 0.0, "the speed strip must show a negative speed: {shown}");
+    // letting Ctrl go first changes nothing: the modifier is the press's
+    h.key_up_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the release must return to +base at once");
+    assert!(h.state().player.transport.is_playing(), "the release during playback keeps playing");
+    assert!(h.state().speed_temp_slider().is_none(), "the temporary speed stayed on the strip");
+}
+
+/// USABILITY 3: "not abruptly but smoothly, and the reset must be faster than the build-up".
+/// Every bad dt of "Numerical stability" is run: no step passes the ceiling or the base.
+#[test]
+fn t1623_boost_eases_in_and_decays_faster() {
+    use crate::app::{KtApp, SPACE_BOOST_MAX, SPACE_BOOST_SECS};
+    for dt in [1.0f32 / 60.0, 1.0 / 30.0, 0.1] {
+        let n = (SPACE_BOOST_SECS / dt).round() as i32;
+        let (mut b, mut held, mut trace) = (1.0f32, 0.0f32, vec![1.0f32]);
+        for _ in 0..n {
+            held += dt;
+            b = KtApp::space_boost_eased(b, dt, held);
+            assert!((1.0..=SPACE_BOOST_MAX + 1e-4).contains(&b), "dt={dt}: left the bounds: {b}");
+            trace.push(b);
+        }
+        assert!(b > SPACE_BOOST_MAX * 0.9, "dt={dt}: the ceiling of R.17 is not reached: {b}");
+        let steps: Vec<f32> = trace.windows(2).map(|w| w[1] - w[0]).collect();
+        let first = steps.iter().copied().find(|d| *d > 0.0).expect("the speed never rose");
+        let peak = steps.iter().copied().fold(0.0f32, f32::max);
+        assert!(first < peak * 0.5, "dt={dt}: no ease-in: first step {first}, peak {peak}");
+        // the old exponential rose by more in its very first step
+        let old = KtApp::space_boost_step(1.0, dt) - 1.0;
+        assert!(first < old, "dt={dt}: the start is as sharp as before: {first} vs {old}");
+
+        // how long the rise took to get as far from the base as the fall must cover
+        let goal = 1.0 + (b - 1.0) * 0.98;
+        let rise_t = trace.iter().position(|v| *v >= goal).map_or(SPACE_BOOST_SECS, |i| i as f32 * dt);
+        let (mut d, mut t) = (b, 0.0f32);
+        while d - 1.0 > (b - 1.0) * 0.02 {
+            let next = KtApp::space_decay_step(d, dt);
+            assert!(next < d && next >= 1.0, "dt={dt}: the fall jumped: {d} → {next}");
+            d = next;
+            t += dt;
+            assert!(t < 30.0, "dt={dt}: the fall does not converge");
+        }
+        assert!(t < rise_t, "dt={dt}: the fall took {t} s, the rise {rise_t} s");
+        let step_one = b - KtApp::space_decay_step(b, dt);
+        assert!(step_one < b - 1.0, "dt={dt}: the release is a jump");
+    }
+    // a harness release: the speed comes down through values between, not in one frame
+    let mut h = r72_transport_scene();
+    h.state_mut().on_play();
+    h.step();
+    h.key_down(egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    for _ in 0..24 {
+        h.step();
+    }
+    let top = h.state().player.playback_rate();
+    assert!(top > 1.3, "scene: the boost did not build up: {top}");
+    h.key_up(egui::Key::Space);
+    h.step();
+    let after = h.state().player.playback_rate();
+    assert!(after > 1.01 && after < top, "the release must fall, not jump: {after} from {top}");
+    for _ in 0..24 {
+        h.step();
+    }
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the fall must end exactly at the base");
+    assert!(h.state().space_boost.is_none(), "the fall left a repaint running");
+    assert!(h.state().player.transport.is_playing(), "the fall must not stop playback");
 }
