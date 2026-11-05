@@ -14,7 +14,7 @@ when the section closes.
 - [x] 1.1 The press state machine: tap / hold-from-pause / hold-during-play, the Ctrl modifier read at press, `SPACE_HOLD_MS = 300` with its reason comment. Check: t1620 and t1621 (`layout_tests.rs`) green; the existing space tests (`t629_space_boost_from_small_base`, layout_tests 1332–1460) still green.
 - [x] 1.2 Ctrl+Space reverse while held, and the release back to +base. Check: t1622.
 - [x] 1.3 The ease-in and the release decay (analytic, a quarter of the rise's time constant), with dt 1/60, 1/30, 0.1. Check: t1623.
-- [ ] 1.4 `docs/guide/shortcuts.md`: hold Space from pause, Ctrl+Space; the live scenario `space_hold.py` with steps. Check: `readme-check.py --check` green, the scenario green with screenshots.
+- [x] 1.4 `docs/guide/shortcuts.md`: hold Space from pause, Ctrl+Space; the live scenario `space_hold.py` with steps. Check: `readme-check.py --check` green, the scenario green with screenshots.
 
 ## 2. Timeline gestures (ui-timeline)
 
@@ -35,6 +35,6 @@ when the section closes.
 
 ## 4. Registry and finish
 
-- [ ] 4.1 Move the 17 R.72 rows of `docs/ktprompts/v26.10-index.md` to `done R.72, tNNN` (U7 keeps the open item split as `partial` with the screenshots for the owner). Check: `python3 src/scripts/ktprompts-index.py --check` green, every named test exists.
+- [x] 4.1 Move the 17 R.72 rows of `docs/ktprompts/v26.10-index.md` to `done R.72, tNNN` (U7 keeps the open item split as `partial` with the screenshots for the owner). Check: `python3 src/scripts/ktprompts-index.py --check` green, every named test exists.
 - [ ] 4.2 `cargo test --workspace` and `cargo clippy --all-targets` green. Check: both exit 0.
 - [x] 4.3 `finish.sh` runs once per stage by the orchestrator (owner, 2026-11-03), not by an executor; `scripts/target-prune.py` after each commit.
