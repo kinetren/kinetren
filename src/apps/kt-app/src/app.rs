@@ -722,31 +722,27 @@ impl KtApp {
     /// R.29: assemble the GPU video-FX engine on the live eframe device and
     /// inject it into the player. Called from the first frame of ui() — and therefore
     /// repeated for each new KtApp (opening a project recreates both the player and
-    /// the real detection). `KT_VIDEO_GPU=0` — forced CPU (debugging/comparison);
-    /// a creation failure — notice + CPU.
+    /// the real detection). A creation failure: no picture, and the notice says why.
     fn init_video_gpu(&mut self, frame: &eframe::Frame) {
-        if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
+        let Some(rs) = frame.wgpu_render_state() else {
+            self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, "no wgpu render state"));
             return;
-        }
-        let built = match frame.wgpu_render_state() {
-            None => Err("no wgpu render state".to_string()),
-            Some(rs) => kt_gpu::GpuFxEngine::new(kt_gpu::GpuContext::from_parts(
-                std::sync::Arc::new(rs.device.clone()),
-                std::sync::Arc::new(rs.queue.clone()),
-                rs.adapter.get_info(),
-            ))
-            .map_err(|e| e.to_string()),
         };
+        let built = kt_gpu::GpuFxEngine::new(kt_gpu::GpuContext::from_parts(
+            std::sync::Arc::new(rs.device.clone()),
+            std::sync::Arc::new(rs.queue.clone()),
+            rs.adapter.get_info(),
+        ))
+        .map_err(|e| e.to_string());
         match built {
             Ok(engine) => {
                 // KT_PREVIEW_READBACK=1: the bytes path, to compare a picture or its cost
                 let readback = std::env::var_os("KT_PREVIEW_READBACK").is_some();
-                self.preview_display = frame.wgpu_render_state().filter(|_| !readback).map(|rs| {
-                    crate::preview_display::PreviewDisplay::new(engine.clone(), rs.clone())
-                });
+                self.preview_display = (!readback)
+                    .then(|| crate::preview_display::PreviewDisplay::new(engine.clone(), rs.clone()));
                 self.player.set_video_gpu(Some(engine));
             }
-            Err(e) => self.warn(crate::tf!(k::msg::VIDEO_FX_CPU, e)),
+            Err(e) => self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, e)),
         }
     }
 
@@ -786,6 +782,11 @@ impl KtApp {
             sources.push((m.id, src));
         }
         let (player, ring) = Player::new(project.clone(), sources);
+        // the harness has no window device: the offline engine composes its frames
+        if cfg!(test) {
+            crate::plugins::install();
+            player.set_video_gpu(kt_gpu::offline_engine().map(|e| e as _));
+        }
         // “black box” of the panic hook (item 355). Reassigned on every recreation of the application:
         // the dump must be from the LIVE player.
         crate::journal::set_flight(player.flight.clone());
@@ -1586,8 +1587,8 @@ impl KtApp {
             }
         }
         let ctx = ui.ctx().clone();
-        // Loss of the video GPU executor in the middle of a session (DeviceLost) —
-        // the preview is already on the CPU fallback, notice once (item 2 R.29, test 185)
+        // Loss of the video GPU executor in the middle of a session (DeviceLost): no picture
+        // from here on, notice once (item 2 R.29, test 185)
         if !self.gpu_fx_lost_notified
             && let kt_engine::VideoBackendStatus::Poisoned { reason, .. } =
                 self.player.video_backend()
@@ -6497,7 +6498,7 @@ impl KtApp {
                 if new_frame {
                     self.perf.video_frames_shown += 1;
                 }
-            } else if !on_display && (c || !shown_any) {
+            } else if !on_display && (c || !shown_any) && !rgba.is_empty() {
                 self.preview_on_display = false;
                 // glow mip: a coarse box downscale 32×18; during playback — every 4th new frame
                 // (ambient glow flicker will not notice)
@@ -7237,17 +7238,17 @@ impl KtApp {
         if let Some(g) = &self.gpu_info {
             ui.weak(format!("GPU: {g}"));
         }
-        // video FX backend (R.29): GPU by default, CPU — fallback with a notice
+        // the video device (R.29)
         match self.player.video_backend() {
             kt_engine::VideoBackendStatus::Gpu(info) => {
                 ui.weak(crate::tf!(k::perf::VIDEO_FX_GPU, info.name));
             }
-            // the CPU line names WHY (morpher-event-grid-cost): a lost GPU is not "no GPU"
+            // the line names WHY (morpher-event-grid-cost): a lost GPU is not "no GPU"
             kt_engine::VideoBackendStatus::Poisoned { reason, .. } => {
-                ui.weak(crate::tf!(k::perf::VIDEO_FX_CPU_LOST, reason));
+                ui.weak(crate::tf!(k::perf::VIDEO_FX_LOST, reason));
             }
-            kt_engine::VideoBackendStatus::Cpu => {
-                ui.weak(tr(k::perf::VIDEO_FX_CPU));
+            kt_engine::VideoBackendStatus::Missing => {
+                ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
         }
         // what composing the preview costs (morpher-event-grid-cost, D1): the last frame and
@@ -9460,11 +9461,10 @@ impl Drop for KtApp {
     }
 }
 
-/// GPU engine for export (R.29): its own headless device per job — kt-cli
-/// has no window, and the UI queue does not share time with the 4K export. None → CPU
-/// (for a 2D project this is a full-fledged path; `KT_VIDEO_GPU=0` — forced). The error is the
-/// REASON the render window and its log name (render-window-v1-parity D4): a desktop start has no
-/// terminal, so an `eprintln!` here was never seen.
+/// GPU engines for export (R.29): their own headless devices per job — kt-cli has no window, and
+/// the UI queue does not share time with the 4K export. The error is the REASON the render window
+/// and its log name (render-window-v1-parity D4): a desktop start has no terminal, so an
+/// `eprintln!` here was never seen.
 /// The one application ID (change flatpak-flathub, D1; the owner chose it on 2026-10-28): the
 /// window's app_id, and the name of the desktop file, the icons, the MIME package, the Flatpak
 /// manifest and the AppStream metainfo. `dist-check.py` (t966) keeps every copy equal to this one.

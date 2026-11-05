@@ -54,3 +54,27 @@ The load swung between 30 and 190, so the table says "about even at 8 devices", 
 this the owner was told 134 s against 96 s; that figure was the single device. The price is memory:
 each device keeps its own textures. Limiting llvmpipe's threads per device gave no steady gain
 (34 s to 300 s on the demo under load) and stays out.
+
+### D5. What holds the picture once the CPU composite is gone
+
+- The GPU tests compared every frame with the CPU composite. The last output of that composite is
+  stored in `src/libs/kt-gpu/references/` (21 MB, 10 MB packed), and the same tests keep the same
+  `FrameTol`: only the source of the left side changed.
+- Every other test composes through `kt_gpu::testkit`: one engine per test process, skipped with a
+  printout without a device, a failure under `KT_REQUIRE_GPU=1`. An export gets an engine of its own,
+  as in the product: one engine's readback ring does not serve two exports.
+- Byte hashes of video (t11, t485, t946) did not move: llvmpipe gives the CPU's bytes on them. They
+  hold on a software adapter only (`hash_holds`); a card is held to the stored frames.
+- Removed with the code they tested: the CPU post-FX memo and the sub-composite memo (t66, t66b, t66c,
+  t66d, t441, t443, t582), compose-ahead (t1530–t1534, t1536), the SIMD parity of the composite
+  (t198). t1019 keeps the numbers and panels of a transition; its pixels are t224's.
+
+### D6. One engine serves several caches, and a blended frame is not its base frame
+
+Two defects the CPU path had been hiding:
+
+- Serials were per cache, so the offline engine, which serves a fresh cache per job, could take a
+  frame of one project for another's. They are process-wide now (t1574).
+- `UploadCache` is keyed by the serial, and a blended frame carries its base frame's serial, so a
+  slowed event in blending mode showed the texture of another weight on the GPU. The key now takes
+  the pair and the weight (t250 found it the moment it ran on the GPU).

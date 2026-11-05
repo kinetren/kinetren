@@ -149,7 +149,7 @@ fn first_frame(p: &Project) -> Vec<u8> {
         sources,
         Quality { width: W, height: H },
         Some((Tick(0), Tick(3000))),
-        &Default::default(),
+        &kt_gpu::testkit::backends(),
         &cancel,
         |_| {},
         |frame| {
@@ -172,6 +172,9 @@ fn first_frame(p: &Project) -> Vec<u8> {
 /// them on the output one to one.
 #[test]
 fn t315_zoom_beyond_quality_is_sharp() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let zoomed = first_frame(&project(vec![FxInstance::geometry_zoom(2.0)]));
     let c = contrast(&zoomed, W, H);
     println!("t315 contrast: {c:.1}");

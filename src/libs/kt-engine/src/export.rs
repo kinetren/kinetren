@@ -178,35 +178,14 @@ pub fn render_raw_audio_range(
     Ok(stats)
 }
 
-/// Export render backends (R.29). Test/old calls run without them
-/// (CPU — the byte reference, golden tests untouched); the product (kt-app/kt-cli)
-/// passes the GPU executor explicitly.
+/// Export render backends (R.29): the product (kt-app/kt-cli) passes the executor; without one
+/// an export fails with `NO_DEVICE`.
 #[derive(Default, Clone)]
 pub struct ExportBackends {
     pub video_gpu: Option<Arc<dyn VideoGpuExec>>,
     /// More executors on devices of their own: a software adapter runs one frame per queue, so
     /// each frame worker composes on its own (compute-kernels-render, D4). Empty on a real card.
     pub video_gpu_more: Vec<Arc<dyn VideoGpuExec>>,
-}
-
-/// Export video stream: RGBA frames on the project's fps grid. The composite is
-/// THE SAME frame plan (`VideoRenderer::frame_plan`) as in the preview;
-/// the executor is CPU (this variant) or GPU (`_with` with backends).
-pub fn render_raw_video(
-    project: &Project,
-    sources: Vec<(MediaId, Box<dyn MediaSource>)>,
-    quality: Quality,
-    emit: impl FnMut(&[u8]) -> std::io::Result<()>,
-) -> std::io::Result<ExportStats> {
-    render_raw_video_range(
-        project,
-        sources,
-        quality,
-        None,
-        &AtomicBool::new(false).into(),
-        |_| {},
-        emit,
-    )
 }
 
 /// How many frames an export of `[r0, r1)` renders at `fps`: the grid frames from the one that
@@ -222,31 +201,8 @@ pub fn video_frames_in(fps: u32, r0: Tick, r1: Tick) -> u64 {
     ((r1.0 - first + step - 1) / step) as u64
 }
 
-/// The full variant: range, cancel, progress. CPU executor.
-pub fn render_raw_video_range(
-    project: &Project,
-    sources: Vec<(MediaId, Box<dyn MediaSource>)>,
-    quality: Quality,
-    range: Option<(Tick, Tick)>,
-    cancel: &Arc<AtomicBool>,
-    progress: impl FnMut(u64),
-    emit: impl FnMut(&[u8]) -> std::io::Result<()>,
-) -> std::io::Result<ExportStats> {
-    render_raw_video_range_with(
-        project,
-        sources,
-        quality,
-        range,
-        &ExportBackends::default(),
-        cancel,
-        progress,
-        emit,
-    )
-}
-
-/// The variant with backend choice. A GPU error IN THE MIDDLE of export is an export
-/// error, not a silent switch to CPU: a started file must be rendered by
-/// one backend (wording of invariant 7, R.29).
+/// The export's video stream: RGBA frames on the project's fps grid, the composite is THE SAME
+/// frame plan (`VideoRenderer::frame_plan`) as in the preview. A GPU error is an export error.
 #[allow(clippy::too_many_arguments)]
 pub fn render_raw_video_range_with(
     project: &Project,
@@ -275,6 +231,7 @@ fn render_raw_video_profiled(
     mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
+    let gpu = backends.video_gpu.as_ref().ok_or_else(|| std::io::Error::other("no video device"))?;
     let mut stats = ExportStats::default();
     let mut src: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
@@ -345,14 +302,10 @@ fn render_raw_video_profiled(
             progress(stats.video_frames);
             stream_preroll(&video, &cache, &mut src, t, quality);
             let mark = Instant::now();
-            let complete = match &backends.video_gpu {
-                Some(gpu) => {
-                    let plan = video.frame_plan(&cache, t, quality);
-                    gpu.execute_into(&plan, &mut frame_buf)
-                        .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?
-                }
-                None => video.compose_export_into(&cache, t, quality, &mut frame_buf),
-            };
+            let plan = video.frame_plan(&cache, t, quality);
+            let complete = gpu
+                .execute_into(&plan, &mut frame_buf)
+                .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
             ExportProfile::add(profile.map(|p| &p.compose_ns), mark);
             if !complete {
                 stats.missing_video_layers += 1;
@@ -468,31 +421,8 @@ pub enum ExportError {
     AudioThread,
     #[error("export cancelled")]
     Cancelled,
-}
-// The GpuRequired refusal (R.29) was lifted in R.44: Pan3d is also computed on CPU
-// (the inverse homography in the fused geometry pass) — export without GPU is legal,
-// just slower. Test 301.
-
-/// Streaming export to mp4 (h264+aac). `audio_sources`/`video_sources` are
-/// independent sets (written from two streams into two pipes in parallel,
-/// otherwise a deadlock on backpressure).
-pub fn export_mp4(
-    project: &Project,
-    audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
-    video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
-    out_path: &str,
-) -> Result<ExportStats, ExportError> {
-    export_mp4_with(
-        project,
-        audio_sources,
-        video_sources,
-        out_path,
-        None,
-        &ExportOptions::default(),
-        &AtomicBool::new(false).into(),
-        &AtomicBool::new(false).into(),
-        |_| {},
-    )
+    #[error("no video device: {0}")]
+    NoDevice(String),
 }
 
 /// Full export: range (region), cancel (kill ffmpeg + deletion of the
@@ -536,36 +466,6 @@ impl Default for ExportOptions {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn export_mp4_with(
-    project: &Project,
-    audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
-    video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
-    out_path: &str,
-    range: Option<(Tick, Tick)>,
-    opts: &ExportOptions,
-    cancel: &Arc<AtomicBool>,
-    pause: &Arc<AtomicBool>,
-    progress: impl Fn(ExportProgress) + Send + Sync + 'static,
-) -> Result<ExportStats, ExportError> {
-    export_mp4_with_backends(
-        project,
-        audio_sources,
-        video_sources,
-        out_path,
-        range,
-        opts,
-        &ExportBackends::default(),
-        cancel,
-        pause,
-        move |e| {
-            if let ExportEvent::Progress(p) = e {
-                progress(p)
-            }
-        },
-    )
-}
-
 /// Product variant (kt-app/kt-cli): render backends are passed explicitly —
 /// GPU by default, CPU when the engine is absent (R.29).
 #[allow(clippy::too_many_arguments)]
@@ -581,6 +481,9 @@ pub fn export_mp4_with_backends(
     pause: &Arc<AtomicBool>,
     events: impl Fn(ExportEvent) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
+    if backends.video_gpu.is_none() {
+        return Err(ExportError::NoDevice("no Vulkan, DX12 or Metal device".into()));
+    }
     // pause (port of v1 waitWhilePaused): cooperative wait of 40 ms,
     // cancellable; checked on every frame/chunk via the progress wrappers
     let wait_paused = {
@@ -881,7 +784,21 @@ pub fn render_pipelined<S: ExportSink>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::video_plan::{FramePlan, GpuBackendInfo, GpuExecError};
     use kt_model::ProjectSettings;
+
+    /// An executor of blank frames: these tests count frames.
+    struct Blank(GpuBackendInfo);
+    impl VideoGpuExec for Blank {
+        fn execute_into(&self, p: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+            out.clear();
+            out.resize((p.out_w * p.out_h * 4) as usize, 0);
+            Ok(true)
+        }
+        fn info(&self) -> &GpuBackendInfo {
+            &self.0
+        }
+    }
 
     /// Test 1070 (render-crash-and-recovery D1): the frames the raw render delivers equal the
     /// announced total on any region, and the progress never reports more. The owner's render
@@ -910,11 +827,14 @@ mod tests {
             let total = video_frames_in(30, r0, r1);
             let mut emitted = 0u64;
             let mut max_progress = 0u64;
-            let stats = render_raw_video_range(
+            let info = GpuBackendInfo { name: String::new(), backend: String::new(), software: true };
+            let backends = ExportBackends { video_gpu: Some(Arc::new(Blank(info))), ..Default::default() };
+            let stats = render_raw_video_range_with(
                 &p,
                 Vec::new(),
                 Quality { width: 32, height: 18 },
                 Some((r0, r1)),
+                &backends,
                 &AtomicBool::new(false).into(),
                 |done| max_progress = max_progress.max(done),
                 |_| {

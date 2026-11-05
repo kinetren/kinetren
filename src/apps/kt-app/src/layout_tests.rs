@@ -3223,10 +3223,6 @@ fn t185_gpu_loss_notice_once() {
         }
     }
     let mut h = harness();
-    assert!(
-        matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Cpu),
-        "in the harness without wgpu the backend is honestly CPU"
-    );
     h.state_mut().player.set_video_gpu(Some(std::sync::Arc::new(DeadGpu(
         kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true },
     ))));

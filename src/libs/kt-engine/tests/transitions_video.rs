@@ -98,9 +98,12 @@ fn dissolve(a: &[u8], b: &[u8], k: u32) -> Vec<u8> {
 
 #[test]
 fn t137_dissolve_blends_pair_and_is_deterministic() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let p = project_pair();
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
     let (w0, w1) = (81_000i64, 99_000i64);
@@ -108,7 +111,7 @@ fn t137_dissolve_blends_pair_and_is_deterministic() {
     for t in [78_000i64, 81_000, 90_000, 96_000, 99_000] {
         let t = Tick(t);
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "t {t:?}: all layers warmed");
         let a = synth_frame(vr.grid.align_floor(Tick(t.0)), q); // A: src = t (src_in 0)
         let b = synth_frame(vr.grid.align_floor(Tick(30_000 + (t.0 - 90_000))), q);
@@ -121,17 +124,20 @@ fn t137_dissolve_blends_pair_and_is_deterministic() {
         };
         assert_eq!(out, expect, "t {t:?}: dissolve math");
         // determinism: a repeated compose is byte-identical
-        let (again, _) = vr.compose_from_cache(&cache, t, q);
+        let (again, _) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert_eq!(out, again);
     }
 }
 
 #[test]
 fn t137_missing_pair_half_gets_full_weight_and_incomplete() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_media::MediaSource;
     let p = project_pair();
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000);
@@ -144,7 +150,7 @@ fn t137_missing_pair_half_gets_full_weight_and_incomplete() {
         kt_engine::video_cache_idx(vr.grid.align_floor(t)),
         std::sync::Arc::new(frame),
     );
-    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(!complete, "missing half of the pair");
     assert_eq!(out, synth_frame(vr.grid.align_floor(t), q), "present half at full weight");
 }
@@ -166,20 +172,23 @@ fn t137_layers_include_handles_in_window() {
 
 #[test]
 fn t137_dissolve_survives_fx_chain_on_pair() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // FX clip in the pair: post-FX cache + blend; a repeated compose from the cache
     // is byte-identical (inheritance of t66)
     let mut p = project_pair();
     p.clips[0].fx = vec![FxInstance::noise(0.3)];
     p.validate().unwrap();
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000);
     warm(&vr, &cache, t, q);
-    let (first, c1) = vr.compose_from_cache(&cache, t, q);
+    let (first, c1) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(c1);
-    let (second, c2) = vr.compose_from_cache(&cache, t, q);
+    let (second, c2) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(c2);
     assert_eq!(first, second, "postfx-cached dissolve is byte-stable");
 }
@@ -190,6 +199,9 @@ fn t137_dissolve_survives_fx_chain_on_pair() {
 /// the composition's black background), and `complete` is not spoiled: there is nothing to wait for.
 #[test]
 fn t156_solo_fade_scales_alpha_and_stays_complete() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = project_pair();
     p.transitions.clear();
@@ -205,14 +217,14 @@ fn t156_solo_fade_scales_alpha_and_stays_complete() {
         invert: false,
     });
     p.validate().unwrap();
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
 
     for t in [0i64, 9_000, 17_999, 18_000] {
         let t = Tick(t);
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "t {t:?}: the fade is not a starvation of the frame");
         let src = synth_frame(vr.grid.align_floor(t), q);
         let expect = if t.0 < 18_000 {
@@ -229,6 +241,9 @@ fn t156_solo_fade_scales_alpha_and_stays_complete() {
 /// Fade-out — the same, mirrored: toward the end of the clip the picture fades to black.
 #[test]
 fn t156_fade_out_goes_dark_at_the_edge() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = project_pair();
     p.clips.retain(|c| c.id == ClipId(1));
@@ -245,13 +260,13 @@ fn t156_fade_out_goes_dark_at_the_edge() {
         invert: false,
     });
     p.validate().unwrap();
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
 
     let mid = Tick(81_000); // the middle of the window [72000, 90000)
     warm(&vr, &cache, mid, q);
-    let (out, complete) = vr.compose_from_cache(&cache, mid, q);
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, mid, q);
     assert!(complete);
     let src = synth_frame(vr.grid.align_floor(mid), q);
     assert_eq!(out, over_black(&src, 4096 - 2048), "in the middle of a fade out — half brightness");
@@ -259,7 +274,7 @@ fn t156_fade_out_goes_dark_at_the_edge() {
     // right at the edge of the window the frame has almost faded
     let late = Tick(89_999);
     warm(&vr, &cache, late, q);
-    let (out, _) = vr.compose_from_cache(&cache, late, q);
+    let (out, _) = kt_gpu::testkit::compose(&vr, &cache, late, q);
     let mean: f64 = out.chunks_exact(4).map(|p| p[0] as f64).sum::<f64>() / (out.len() / 4) as f64;
     assert!(mean < 1.0, "near the end of the window the fade out goes dark, yet got {mean}");
 }
@@ -293,6 +308,9 @@ fn over_black(src: &[u8], k: u32) -> Vec<u8> {
 /// the v1 rule applied: “on top is the one whose start is smaller”).
 #[test]
 fn t162_overlap_puts_the_later_clip_on_top() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = project_pair();
     p.transitions.clear();
@@ -303,12 +321,12 @@ fn t162_overlap_puts_the_later_clip_on_top() {
         }
     }
     p.validate().expect("overlap is legal (layering is on)");
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(60_000); // inside the zone of overlap
     warm(&vr, &cache, t, q);
-    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(complete);
     // on top — clip 2 (it started later): the frame equals ITS source
     // (source_in 30_000, start 45_000 → pts = 30_000 + (t − 45_000))
@@ -325,6 +343,9 @@ fn t162_overlap_puts_the_later_clip_on_top() {
 /// and when it is absent — black.
 #[test]
 fn t174_clip_opacity_scales_the_layer() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(45_000);
@@ -375,10 +396,10 @@ fn t174_clip_opacity_scales_the_layer() {
     p.validate().unwrap();
 
     let render = |p: &Project| {
-        let mut vr = VideoRenderer::new(p);
+        let vr = VideoRenderer::new(p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "the layers are warm");
         out
     };
@@ -415,6 +436,9 @@ fn t174_clip_opacity_scales_the_layer() {
 /// a crossfade at the same moment gives one mixed color over the whole frame.
 #[test]
 fn t225_transition_kind_reaches_the_picture() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000); // the middle of the window 81_000..99_000
@@ -422,13 +446,13 @@ fn t225_transition_kind_reaches_the_picture() {
         let mut p = project_pair();
         p.transitions[0].kind = kind.clone();
         p.validate().unwrap();
-        let mut vr = VideoRenderer::new(&p);
+        let vr = VideoRenderer::new(&p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "{kind:?}: the layers are warm");
         // determinism: a repeated pass is byte-for-byte
-        let (again, _) = vr.compose_from_cache(&cache, t, q);
+        let (again, _) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert_eq!(out, again, "{kind:?}: a repeated composite must match");
         out
     };
@@ -482,6 +506,9 @@ fn t225_transition_kind_reaches_the_picture() {
 /// not in uniform transparency. The crossfade-fade stays as before.
 #[test]
 fn t225_solo_fade_with_kind_shapes_alpha() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let render = |kind: TransitionKind, t: Tick| {
@@ -501,10 +528,10 @@ fn t225_solo_fade_with_kind_shapes_alpha() {
         });
         p.clips.retain(|c| c.id == ClipId(1));
         p.validate().unwrap();
-        let mut vr = VideoRenderer::new(&p);
+        let vr = VideoRenderer::new(&p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, _) = vr.compose_from_cache(&cache, t, q);
+        let (out, _) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         out
     };
     let alpha = |buf: &[u8], x: usize, y: usize| buf[(y * q.width as usize + x) * 4 + 3];
@@ -526,6 +553,9 @@ fn t225_solo_fade_with_kind_shapes_alpha() {
 /// not only with the transition's progress, but also with the curve.
 #[test]
 fn t232_transition_params_animate() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let render = |auto: Vec<ParamCurve>, t: Tick| {
@@ -534,10 +564,10 @@ fn t232_transition_params_animate() {
         p.transitions[0].kind = kt_model::TransitionKind::plugin_with("wipe", &[0.0, 0.0, 0.0]).unwrap();
         p.transitions[0].auto = auto;
         p.validate().unwrap();
-        let mut vr = VideoRenderer::new(&p);
+        let vr = VideoRenderer::new(&p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "the layers are warm");
         out
     };
@@ -588,8 +618,10 @@ fn t232_transition_params_animate() {
 /// row/column — and both tests stayed green.
 #[test]
 fn t459_push_whip_bring_real_b_content() {
-    kt_plugins_builtin::install();
-    use kt_engine::transitions::{TransMix, mix_into};
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    use kt_engine::transitions::TransMix;
     const W: usize = 64;
     const H: usize = 36;
     let ramp = |marker: u8| -> kt_media::VideoFrame {
@@ -634,7 +666,7 @@ fn t459_push_whip_bring_real_b_content() {
             let (shift_x, shift_y) =
                 ((dx as f32 * kk * W as f32) as i32, (dy as f32 * kk * H as f32) as i32);
             let m = TransMix::of(&TransitionKind::plugin_with("push", &[di as f64]).unwrap());
-            mix_into(&mut dst, Some(&a), Some(&b), k, m, W, H);
+            kt_gpu::testkit::mix(&mut dst, &a, &b, k, m);
             for y in 0..H as i32 {
                 for x in 0..W as i32 {
                     let i = ((y * W as i32 + x) * 4) as usize;
@@ -653,7 +685,7 @@ fn t459_push_whip_bring_real_b_content() {
             // whip with zero smear is exactly push: 7 taps at one point
             let mw = TransMix::of(&TransitionKind::plugin_with("whip", &[di as f64, 0.0]).unwrap());
             let mut dw = Vec::new();
-            mix_into(&mut dw, Some(&a), Some(&b), k, mw, W, H);
+            kt_gpu::testkit::mix(&mut dw, &a, &b, k, mw);
             assert_eq!(dw, dst, "whip ({dx},{dy}) blur=0 k={k} must match push byte for byte");
         }
     }
@@ -664,6 +696,9 @@ fn t459_push_whip_bring_real_b_content() {
 /// incoming half must show the middle of frame B.
 #[test]
 fn t459b_push_through_renderer_shows_real_b() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let ramp_rgba = |marker: u8| -> Vec<u8> {
@@ -683,7 +718,7 @@ fn t459b_push_through_renderer_shows_real_b() {
     let mut p = project_pair();
     p.transitions[0].kind = kt_model::TransitionKind::plugin_with("push", &[3.0]).unwrap();
     p.validate().unwrap();
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(90_000); // the middle of the window: the shift is exactly half a frame
     for (media, src_pts, fq) in vr.layers_at(t, q) {
@@ -703,7 +738,7 @@ fn t459b_push_through_renderer_shows_real_b() {
             std::sync::Arc::new(frame),
         );
     }
-    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(complete, "the layers are warm");
     let px = |x: usize, y: usize| {
         let i = (y * 64 + x) * 4;
@@ -722,6 +757,9 @@ fn t459b_push_through_renderer_shows_real_b() {
 /// the shape is cut from the other side.
 #[test]
 fn t461_transition_invert() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000); // the middle of the window, k = 0.5
@@ -730,10 +768,10 @@ fn t461_transition_invert() {
         p.transitions[0].kind = kind;
         p.transitions[0].invert = invert;
         p.validate().unwrap();
-        let mut vr = VideoRenderer::new(&p);
+        let vr = VideoRenderer::new(&p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "the layers are warm");
         out
     };
@@ -786,11 +824,11 @@ fn t461_transition_invert() {
         });
         p.clips.retain(|c| c.id == ClipId(1));
         p.validate().unwrap();
-        let mut vr = VideoRenderer::new(&p);
+        let vr = VideoRenderer::new(&p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         let t = Tick(81_000); // the middle of the fade window 72_000..90_000
         warm(&vr, &cache, t, q);
-        let (out, _) = vr.compose_from_cache(&cache, t, q);
+        let (out, _) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         out
     };
     let alpha = |buf: &[u8], x: usize| buf[(18 * q.width as usize + x) * 4 + 3];
@@ -814,6 +852,9 @@ fn t461_transition_invert() {
 /// collapses into a Dissolve, and the kind reaches the frame.
 #[test]
 fn t464_overlap_transition_reaches_picture() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let mk = |with: Option<TransitionKind>| {
@@ -877,10 +918,10 @@ fn t464_overlap_transition_reaches_picture() {
         p
     };
     let render = |p: &Project, t: Tick| {
-        let mut vr = VideoRenderer::new(p);
+        let vr = VideoRenderer::new(p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "the layers are warm");
         out
     };
@@ -917,6 +958,9 @@ fn t464_overlap_transition_reaches_picture() {
 /// analytic assertions of zones, not “something changed”.
 #[test]
 fn t467_new_kind_families_reach_picture() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(90_000); // the middle of the window, k = 0.5
@@ -924,10 +968,10 @@ fn t467_new_kind_families_reach_picture() {
         let mut p = project_pair();
         p.transitions[0].kind = kind;
         p.validate().unwrap();
-        let mut vr = VideoRenderer::new(&p);
+        let vr = VideoRenderer::new(&p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "the layers are warm");
         out
     };
@@ -1025,16 +1069,19 @@ fn t467_new_kind_families_reach_picture() {
 /// transparency behind the panels are computed analytically.
 #[test]
 fn t468_volume_kinds_reach_picture() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let render = |kind: TransitionKind, t: Tick| {
         let mut p = project_pair();
         p.transitions[0].kind = kind;
         p.validate().unwrap();
-        let mut vr = VideoRenderer::new(&p);
+        let vr = VideoRenderer::new(&p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "the layers are warm");
         out
     };
@@ -1110,6 +1157,9 @@ fn t468_volume_kinds_reach_picture() {
 /// the COMPOSITE — what the person sees in the preview.
 #[test]
 fn t521_alpha_layer_under_a_chain_shows_through() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(45_000);
@@ -1168,10 +1218,10 @@ fn t521_alpha_layer_under_a_chain_shows_through() {
     p.validate().unwrap();
 
     let render = |p: &Project| {
-        let mut vr = VideoRenderer::new(p);
+        let vr = VideoRenderer::new(p);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         warm(&vr, &cache, t, q);
-        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
         assert!(complete, "the layers are warm");
         out
     };

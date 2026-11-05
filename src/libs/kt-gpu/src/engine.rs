@@ -1978,7 +1978,16 @@ impl Inner {
             return Err(GpuExecError::TooLarge { w: mw, h: mh });
         }
         let has_alpha = if ha_known { ha } else { frame.has_alpha };
-        let view = self.upload.get_or_upload(&self.device, &self.queue, src.content, frame);
+        // a blended frame is not its base frame: the serial alone would show the texture of
+        // another weight (t250)
+        let content = src.blend.as_ref().map_or(src.content, |b| {
+            let mut h = Xxh3::new();
+            h.update(&src.content.to_le_bytes());
+            h.update(&b.content.to_le_bytes());
+            h.update(&b.k.to_le_bytes());
+            h.digest()
+        });
+        let view = self.upload.get_or_upload(&self.device, &self.queue, content, frame);
         let fits = (fw, fh) == (ow, oh);
         Ok(Some((
             ChainSpec {

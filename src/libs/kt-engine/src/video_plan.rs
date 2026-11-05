@@ -246,13 +246,43 @@ pub struct GpuBackendInfo {
     pub software: bool,
 }
 
+/// The plan of one frame through a chain, with no timeline behind it (the effect thumbnails).
+/// `fx_hash` names the chain, as `LayerSrc::fx_hash` does.
+#[allow(clippy::too_many_arguments)]
+pub fn chain_plan<'a>(
+    frame: Arc<VideoFrame>,
+    fx: &'a [FxInstance],
+    fx_hash: u64,
+    u: f64,
+    t: Tick,
+    cam3d: Option<Cam3d>,
+) -> FramePlan<'a> {
+    let (out_w, out_h) = (frame.width, frame.height);
+    let content = xxhash_rust::xxh3::xxh3_64(&frame.rgba);
+    let src = LayerSrc {
+        source: SourceId(0),
+        cache_idx: 0,
+        content,
+        src_scale: 1,
+        input: LayerInput::Frame(Some(frame)),
+        fx: Cow::Borrowed(fx),
+        fx_hash,
+        u,
+        cam3d,
+        blend: None,
+        blend_mode: kt_model::BlendMode::Normal,
+        lead: None,
+        masks: Vec::new(),
+    };
+    let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
+    FramePlan { t, out_w, out_h, layers, memoize_postfx: false }
+}
+
 /// The GPU executor of the plan (implementation — the kt-gpu crate; kt-engine knows
 /// only the trait and receives the executor by injection from above).
 pub trait VideoGpuExec: Send + Sync {
     /// Plan → straight RGBA8 into `out` (readback). Ok(complete) — the same
-    /// “playback does not wait” rules (invariant No. 5) as the CPU executor;
-    /// there is one difference: the GPU does not see the memoized post-FX frame of the CPU path,
-    /// so a layer without a pre-FX frame is always starvation for it.
+    /// “playback does not wait” rule (invariant No. 5): a layer without a pre-FX frame is skipped.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
     fn info(&self) -> &GpuBackendInfo;
     /// How many frames this executor can hold in flight between `submit` and `collect`

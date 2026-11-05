@@ -74,7 +74,7 @@ fn render_with(p: &Project, cache: &kt_cache::BurstCache) -> Vec<u8> {
         let frame = s.read_video_frame(pts, Some(dq)).unwrap();
         cache.insert_video(kt_engine::source_id(media), Some(dq), kt_engine::video::video_cache_idx(pts), frame.into());
     }
-    video.compose_from_cache(cache, Tick(0), Q).0
+    kt_gpu::testkit::compose(&video, cache, Tick(0), Q).0
 }
 
 fn render(p: &Project) -> Vec<u8> {
@@ -93,6 +93,9 @@ fn rect(cx: f64, cy: f64, w: f64, h: f64) -> Mask {
 /// Test 1270: the picture mask cuts the event and follows its Geometry node.
 #[test]
 fn t1270_the_picture_mask_cuts_the_event_and_follows_its_geometry() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let mut p = two_layers();
     p.clips[0].masks.picture.push(rect(0.25, 0.5, 0.5, 1.2));
     let f = render(&p);
@@ -119,6 +122,9 @@ fn t1270_the_picture_mask_cuts_the_event_and_follows_its_geometry() {
 /// Test 1271: a slot mask limits the effect to its region, before and after the Geometry node.
 #[test]
 fn t1271_a_slot_mask_limits_an_effect_to_the_region() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let mut base = two_layers();
     base.clips.truncate(1);
     let plain = render(&base);
@@ -160,6 +166,9 @@ fn t1271_a_slot_mask_limits_an_effect_to_the_region() {
 /// Test 1272: a track mask cuts the track's composite, the level multiplies only inside.
 #[test]
 fn t1272_a_track_mask_cuts_the_tracks_composite() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = two_layers();
     let plain = render(&p);
     let mut q = p.clone();
@@ -182,6 +191,9 @@ fn t1272_a_track_mask_cuts_the_tracks_composite() {
 /// comes from the cache.
 #[test]
 fn t1273_no_masks_earlier_bytes_and_an_edit_is_not_stale() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = two_layers();
     let plain = render(&p);
     let mut q = p.clone();

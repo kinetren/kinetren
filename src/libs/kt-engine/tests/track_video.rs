@@ -83,7 +83,7 @@ fn render(p: &Project) -> (Vec<u8>, bool) {
     for (id, s) in sources() {
         facts.observe(id, s.info());
     }
-    let mut video = VideoRenderer::new_with_facts(p, &facts);
+    let video = VideoRenderer::new_with_facts(p, &facts);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources().into_iter().collect();
@@ -97,7 +97,7 @@ fn render(p: &Project) -> (Vec<u8>, bool) {
             frame.into(),
         );
     }
-    video.compose_from_cache(&cache, Tick(0), Q)
+    kt_gpu::testkit::compose(&video, &cache, Tick(0), Q)
 }
 
 /// What was REQUESTED: the pairs “source, frame” — by them one sees whether the prefetch
@@ -122,6 +122,9 @@ fn lum(f: &[u8]) -> u8 {
 /// Test 735 (R.62): mute and solo of a video track.
 #[test]
 fn t735_video_mute_and_solo_leave_the_prefetch_order() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     // scene: a bright layer on top — it is the one visible
     let base = project();
     let (f, complete) = render(&base);
@@ -168,6 +171,9 @@ fn t735_video_mute_and_solo_leave_the_prefetch_order() {
 /// the already mixed picture.
 #[test]
 fn t736_track_chain_covers_the_whole_composite() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     use kt_model::BlendMode;
     // one track, two events back to back with a transition between them
     let mut p = Project::new(settings());
@@ -199,7 +205,7 @@ fn t736_track_chain_covers_the_whole_composite() {
         for (id, s) in sources() {
             facts.observe(id, s.info());
         }
-        let mut video = VideoRenderer::new_with_facts(p, &facts);
+        let video = VideoRenderer::new_with_facts(p, &facts);
         let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
             sources().into_iter().collect();
@@ -212,7 +218,7 @@ fn t736_track_chain_covers_the_whole_composite() {
                 frame.into(),
             );
         }
-        video.compose_from_cache(&cache, t, Q).0
+        kt_gpu::testkit::compose(&video, &cache, t, Q).0
     };
 
     // the CHAIN ON THE TRACK

@@ -157,12 +157,10 @@ pub struct Player {
     /// GPU executor of the video composite (R.29): injected from above
     /// (kt-app), lives separately from VideoRenderer — recreating the renderer
     /// on model edits does not lose it. DeviceLost “poisons” it until the end of the
-    /// session → CPU fallback + notice.
+    /// session: no picture, and the notice says why.
     video_gpu: Mutex<VideoGpuState>,
     /// The cost of the last preview compose (morpher-event-grid-cost, D1).
     video_cost: Mutex<VideoCost>,
-    /// The CPU path's frames composed ahead of the display (preview-throughput D4).
-    ahead: crate::compose_ahead::ComposeAhead,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
     render_thread: Option<std::thread::JoinHandle<()>>,
@@ -200,7 +198,7 @@ struct VideoGpuState {
 /// Status of the video backend (for the notice and the performance panel row).
 #[derive(Debug, Clone)]
 pub enum VideoBackendStatus {
-    Cpu,
+    Missing,
     Gpu(GpuBackendInfo),
     Poisoned { info: GpuBackendInfo, reason: String },
 }
@@ -296,18 +294,6 @@ impl Player {
                 .expect("spawn audio render")
         };
 
-        let compose_lead = Arc::new(AtomicI64::new(0));
-        let ahead = crate::compose_ahead::ComposeAhead::new(
-            crate::compose_ahead::Sources {
-                cache: cache.clone(),
-                transport: transport.clone(),
-                shared: shared.clone(),
-                project: project.clone(),
-                natives: natives.clone(),
-                loop_region: loop_region.clone(),
-            },
-            compose_lead.clone(),
-        );
         let preview_quality = Arc::new(Mutex::new(Quality { width: 640, height: 360 }));
         let prefetch_thread = {
             let wake_p = wake.clone();
@@ -328,7 +314,7 @@ impl Player {
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, natives_p, project, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p, shared_p, compose_lead,
+                        stats_p, version_p, content_p, region_p, shared_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -351,7 +337,6 @@ impl Player {
             video,
             video_gpu,
             video_cost: Mutex::new(VideoCost::default()),
-            ahead,
             preview_quality,
             stop,
             render_thread: Some(render_thread),
@@ -873,7 +858,7 @@ impl Player {
         self.video.lock().unwrap().grid
     }
 
-    /// Injection of the video GPU executor (R.29). None — forced CPU.
+    /// Injection of the video GPU executor (R.29). None — no picture.
     /// Clears the “poisoning” (a new engine = a new attempt).
     pub fn set_video_gpu(&self, exec: Option<Arc<dyn VideoGpuExec>>) {
         let mut g = self.video_gpu.lock().unwrap();
@@ -889,7 +874,7 @@ impl Player {
             (Some(e), Some(r)) => {
                 VideoBackendStatus::Poisoned { info: e.info().clone(), reason: r.clone() }
             }
-            (None, _) => VideoBackendStatus::Cpu,
+            (None, _) => VideoBackendStatus::Missing,
         }
     }
 
@@ -901,15 +886,15 @@ impl Player {
         let t0 = std::time::Instant::now();
         let (q, complete, gpu, cost, plan_ns, stages) = self
             .compose_preview_measured(t, Target::Bytes(out))
-            .expect("the bytes target always has the CPU executor");
+            .unwrap_or((self.preview_quality(), false, false, Default::default(), 0, Default::default()));
         *self.video_cost.lock().unwrap() =
             VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64, plan_ns, stages };
         (q, complete)
     }
 
     /// Compose the frame at `t` onto the executor's display target, without a readback
-    /// (preview-throughput D2). `None` — this frame needs the bytes path: no executor, a poisoned
-    /// one, or a plan it refused (`TooLarge`).
+    /// (preview-throughput D2). `None` — no executor, a poisoned one, or a plan it refused
+    /// (`TooLarge`).
     pub fn present_preview(&self, t: Tick, o: PresentOptions) -> Option<(Quality, bool)> {
         // the wall clock is legal here: the preview, not an offline path (invariant 11)
         let t0 = std::time::Instant::now();
@@ -948,24 +933,9 @@ impl Player {
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
         let t0 = std::time::Instant::now();
         let q = self.preview_quality();
-        let mut video = self.video.lock().unwrap();
+        let video = self.video.lock().unwrap();
         let aligned = video.grid.align_floor(t);
         let mut target = target;
-        // a frame the workers finished ahead (the CPU path only: a GPU composes in time)
-        let cpu_path = {
-            let g = self.video_gpu.lock().unwrap();
-            g.exec.is_none() || g.poisoned.is_some()
-        };
-        let stamp = crate::compose_ahead::Stamp {
-            project: self.project_version.load(Ordering::Acquire),
-            content: self.content_version.load(Ordering::Acquire),
-            quality: q,
-        };
-        let ahead = cpu_path
-            && match &mut target {
-                Target::Bytes(out) => self.ahead.take(aligned.0, stamp, out),
-                Target::Display(_) => false,
-            };
         let generation = self.transport.generation();
         let step = video.grid.frame_step();
         // the decode quality comes FROM THE REQUEST (R.46, item 318): a clip with a zooming
@@ -982,20 +952,6 @@ impl Player {
                     .any(|(m, p, dq)| m == media && p.0 == pts && wq == Some((dq.width, dq.height)))
             });
         }
-        if ahead {
-            return Some((q, true, false, Default::default(), 0, Default::default()));
-        }
-        // A frame on its way: the picture holds, the UI asks again (an empty buffer: nothing has
-        // been shown yet, and that first frame is composed here). No decode request either: the
-        // look-ahead serves the workers' frontier, and a Playback request for the frame on screen
-        // stood BEHIND it. The decoder seeked back through a 4K GOP for a frame about to be
-        // skipped, and the audio of that file, on the same worker, went silent (t1534).
-        if cpu_path
-            && matches!(&target, Target::Bytes(out) if !out.is_empty())
-            && self.ahead.may_hold(aligned.0, stamp)
-        {
-            return Some((q, false, false, Default::default(), 0, Default::default()));
-        }
         for (media, src_pts, dq) in layers {
             let idx = video_cache_idx(src_pts);
             // contains, not get: the probe must not refresh the LRU (item 19)
@@ -1009,40 +965,29 @@ impl Player {
                 });
             }
         }
-        // GPU executor by default (R.29); TooLarge — CPU only for
-        // this plan, DeviceLost/Validation — “poison” until the end of the session
-        if let Some(exec) = {
+        // TooLarge — no picture for this plan; DeviceLost/Validation — “poison” until the end of
+        // the session
+        let exec = {
             let g = self.video_gpu.lock().unwrap();
             if g.poisoned.is_none() { g.exec.clone() } else { None }
-        } {
-            let gone = {
-                let plan = video.frame_plan(&self.cache, aligned, q);
-                let plan_ns = t0.elapsed().as_nanos() as u64;
-                let done = match &mut target {
-                    Target::Bytes(out) => exec.execute_into(&plan, out),
-                    Target::Display(o) => exec.present(&plan, *o),
-                };
-                match done {
-                    Ok(complete) => {
-                        let stages = exec.last_stages();
-                        return Some((q, complete, true, exec.last_cost(), plan_ns, stages));
-                    }
-                    Err(GpuExecError::TooLarge { .. } | GpuExecError::Unsupported(_)) => None,
-                    Err(e) => Some(format!("{e:?}")),
-                }
-            };
-            if let Some(reason) = gone {
-                self.video_gpu.lock().unwrap().poisoned = Some(reason);
+        }?;
+        let plan = video.frame_plan(&self.cache, aligned, q);
+        let plan_ns = t0.elapsed().as_nanos() as u64;
+        let done = match &mut target {
+            Target::Bytes(out) => exec.execute_into(&plan, out),
+            Target::Display(o) => exec.present(&plan, *o),
+        };
+        match done {
+            Ok(complete) => {
+                let stages = exec.last_stages();
+                Some((q, complete, true, exec.last_cost(), plan_ns, stages))
+            }
+            Err(GpuExecError::TooLarge { .. } | GpuExecError::Unsupported(_)) => None,
+            Err(e) => {
+                self.video_gpu.lock().unwrap().poisoned = Some(format!("{e:?}"));
+                None
             }
         }
-        let Target::Bytes(out) = target else { return None };
-        let complete = video.compose_from_cache_into(&self.cache, aligned, q, out);
-        Some((q, complete, false, video.last_cost(), 0, Default::default()))
-    }
-
-    /// (frames composed ahead on the CPU path, frames the display took from them).
-    pub fn compose_ahead_counts(&self) -> (u64, u64) {
-        self.ahead.counts()
     }
 
     /// The layers of the frame at `t` the cache does not hold (a diagnostic of `preview_bench`).
@@ -1086,7 +1031,6 @@ pub struct VideoCost {
 
 impl Drop for Player {
     fn drop(&mut self) {
-        self.ahead.shutdown();
         self.stop.store(true, Ordering::Release);
         self.wake.notify();
         if let Some(t) = self.render_thread.take() {
@@ -1735,14 +1679,6 @@ pub fn lookahead_windows(
     }
 }
 
-/// `head + lead`, folded into the loop region it stands in.
-fn shifted_head(head: i64, lead: i64, region: Option<(i64, i64)>) -> i64 {
-    match region {
-        Some((s, e)) if e > s && head >= s && head <= e => s + (head + lead - s).rem_euclid(e - s),
-        _ => head + lead,
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn prefetch_loop(
     cache: Arc<BurstCache>,
@@ -1758,7 +1694,6 @@ fn prefetch_loop(
     content_version: Arc<AtomicU64>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
     shared: Arc<AudioShared>,
-    compose_lead: Arc<AtomicI64>,
 ) {
     // renderers are cached until the project version changes: cloning the Project and
     // rebuilding the graphs every 100 ms was expensive even at idle (item 1)
@@ -1832,12 +1767,7 @@ fn prefetch_loop(
         let step = video.grid.frame_step();
         let region_ticks =
             region.map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
-        // the CPU path's workers read the cache ahead of the display: the window starts there
-        let t0 = Tick(shifted_head(
-            Tick::from_audio_frames(shown).0,
-            compose_lead.load(Ordering::Acquire),
-            region_ticks,
-        ));
+        let t0 = Tick::from_audio_frames(shown);
         let missing = video_prefetch_pass(video, &cache, t0, q, region_ticks);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue

@@ -94,12 +94,15 @@ fn render(p: &Project) -> (Vec<u8>, bool) {
             frame.into(),
         );
     }
-    video.compose_from_cache(&cache, Tick(0), Q)
+    kt_gpu::testkit::compose(&video, &cache, Tick(0), Q)
 }
 
 
 #[test]
 fn t973b_a_missing_plugin_is_passed_through_and_named() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let wobble: FxInstance =
         serde_json::from_str(r#"{"kind":"wobble_x","amp":0.25,"freq":3}"#).expect("an unknown kind reads");

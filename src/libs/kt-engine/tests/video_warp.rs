@@ -229,6 +229,9 @@ fn t247_layer_never_slices_a_stretched_clip() {
 /// so both executors receive the same frame (invariant 7).
 #[test]
 fn t250_blend_mode_mixes_neighbouring_frames() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_media::MediaSource;
     use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -237,7 +240,7 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
         vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[0.5, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 1.0, 1.0]).unwrap()]
     };
     let p = project(blend_fx(), vec![], false);
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let q = kt_media::Quality { width: 64, height: 36 };
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
@@ -255,7 +258,7 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
     // at 0.5× the odd output frames sit exactly midway between the source frames:
     // weight 2048/4096
     let t = Tick(STEP); // the second frame of the event
-    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(complete, "both frames of the pair are warm");
     let a = synth.read_video_frame(Tick(SEC), Some(q)).unwrap().rgba.into_vec();
     let b = synth.read_video_frame(Tick(SEC + STEP), Some(q)).unwrap().rgba.into_vec();
@@ -267,16 +270,16 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
     assert_eq!(out, want, "the mix is computed with the same integer kernel as the crossfade");
 
     // even frames sit ON the grid — weight 0, no pair, the old path
-    let (on_grid, _) = vr.compose_from_cache(&cache, Tick(0), q);
+    let (on_grid, _) = kt_gpu::testkit::compose(&vr, &cache, Tick(0), q);
     assert_eq!(on_grid, a, "on the grid there is nothing to mix");
 
     // “nearest” on the same data gives a CLEAN frame, not a mix
-    let mut near = VideoRenderer::new(&project(
+    let near = VideoRenderer::new(&project(
         vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)],
         vec![],
         false,
     ));
-    let (n, _) = near.compose_from_cache(&cache, t, q);
+    let (n, _) = kt_gpu::testkit::compose(&near, &cache, t, q);
     assert_eq!(n, a, "the “nearest” mode holds the frame");
     assert_ne!(n, out, "and it differs from mixing");
 }

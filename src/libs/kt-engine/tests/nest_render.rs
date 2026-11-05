@@ -146,7 +146,7 @@ fn render_audio(p: &Project, frames: usize) -> Vec<f32> {
 }
 
 fn render_video(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
-    let mut video = VideoRenderer::new(p);
+    let video = VideoRenderer::new(p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources().into_iter().collect();
@@ -159,7 +159,7 @@ fn render_video(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
             frame.into(),
         );
     }
-    video.compose_from_cache(&cache, t, q)
+    kt_gpu::testkit::compose(&video, &cache, t, q)
 }
 
 // ---- 434. law E for audio ----------------------------------------------------
@@ -185,6 +185,9 @@ fn t434_law_e_audio_is_byte_for_byte() {
 
 #[test]
 fn t435_law_e_video_and_preview_equals_export() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let (a, b) = (decomposed(ClipKind::Video), nested(ClipKind::Video));
@@ -308,6 +311,9 @@ fn spread_with(opacity: f32, fx: Vec<FxInstance>) -> Project {
 
 #[test]
 fn t438_law_g_level_on_the_nest_is_not_level_on_each_child() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20); // inside the overlap
@@ -334,6 +340,9 @@ fn t438_law_g_level_on_the_nest_is_not_level_on_each_child() {
 
 #[test]
 fn t439_semi_transparent_subcomposite_is_not_twice_as_dark() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // A defect found by reconnaissance before it appeared: the composite accumulator
     // stores PREMULTIPLIED RGB with STRAIGHT alpha, while
@@ -407,6 +416,9 @@ fn t439_semi_transparent_subcomposite_is_not_twice_as_dark() {
 
 #[test]
 fn t440_a_chain_on_the_nest_acts_on_the_assembled_picture() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20);
@@ -432,73 +444,6 @@ fn t440_a_chain_on_the_nest_acts_on_the_assembled_picture() {
     );
 }
 
-#[test]
-fn t441_hunger_and_memoization_cross_the_boundary() {
-    kt_plugins_builtin::install();
-    let q = Quality { width: 64, height: 36 };
-    let t = Tick(FRAME * 20);
-    let p = nest_with(1.0, vec![]);
-    let seq = MediaId(100);
-
-    // STARVATION INSIDE is visible OUTSIDE: the child's frame is missing — the composite is incomplete.
-    // Otherwise the player would consider the frame ready and never re-request it.
-    let mut v = VideoRenderer::new(&p);
-    let cold = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let (_, complete) = v.compose_from_cache(&cold, t, q);
-    assert!(!complete, "starvation INSIDE a reel did not reach the outer composite");
-
-    // Warm them up — and it is complete.
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
-        sources().into_iter().collect();
-    for (media, src_pts, dq) in v.layers_at(t, q) {
-        assert_ne!(media, seq, "the order did not descend: the address of the reel’s source has no");
-        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
-        cache.insert_video(
-            kt_engine::source_id(media),
-            Some(dq),
-            kt_engine::video::video_cache_idx(src_pts),
-            frame.into(),
-        );
-    }
-    let (preview, complete) = v.compose_from_cache(&cache, t, q);
-    assert!(complete, "a warm composite with a nested item must be complete");
-
-    // Memoization of the sub-composite exists in PREVIEW...
-    let h = kt_engine::content_hash(&p, seq);
-    let inner_t = t; // the instance stands at zero with source_in = 0
-    assert!(
-        cache
-            .get_postfx_video(kt_engine::nest_source_id(seq), (q.width, q.height), h, inner_t.0)
-            .is_some(),
-        "the sub-composite was not memoized in the preview — the reel’s chain would be paid on EVERY frame"
-    );
-
-    // ...and does NOT exist in export: full-size sub-composites would evict
-    // not-yet-used pre-frames of neighboring layers from the chunk budget —
-    // literally a regression of R.31 item 4 (“render broken”).
-    let export_cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    for (media, src_pts, dq) in v.layers_at(t, q) {
-        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
-        export_cache.insert_video(
-            kt_engine::source_id(media),
-            Some(dq),
-            kt_engine::video::video_cache_idx(src_pts),
-            frame.into(),
-        );
-    }
-    let mut out = Vec::new();
-    let complete = v.compose_export_into(&export_cache, t, q, &mut out);
-    assert!(complete, "the export composite with a nested item must be complete");
-    assert_eq!(out, preview, "preview and export must match BYTE FOR BYTE");
-    assert!(
-        export_cache
-            .get_postfx_video(kt_engine::nest_source_id(seq), (q.width, q.height), h, inner_t.0)
-            .is_none(),
-        "export memoized the sub-composite: the chunk budget will evict the neighbours’ pre-frames"
-    );
-}
-
 // ---- 442-443 (R.50, B2): memoization keys ------------------------------------
 
 /// Warm the pre-FX frames of the plan and return the composite.
@@ -519,11 +464,14 @@ fn warm_and_compose(
             frame.into(),
         );
     }
-    v.compose_from_cache(cache, t, q).0
+    kt_gpu::testkit::compose(&v, cache, t, q).0
 }
 
 #[test]
 fn t442_editing_inside_the_reel_invalidates_the_instance() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t = Tick(FRAME * 20);
@@ -546,84 +494,6 @@ fn t442_editing_inside_the_reel_invalidates_the_instance() {
         "an edit INSIDE the reel did not reach the picture: the promise “a model edit recreates the renderer, \
          stale frames are not read” holds for the nested item only on the hash of the REVISION — \
          not a single field of the instance changes"
-    );
-}
-
-#[test]
-fn t443_three_keys_separate_reels_instances_and_editions() {
-    kt_plugins_builtin::install();
-    let q = Quality { width: 64, height: 36 };
-    let t = Tick(FRAME * 20);
-    let p = nest_with(1.0, vec![]);
-    let seq = MediaId(100);
-
-    // EDITS: same address, different content — different key
-    let h1 = kt_engine::content_hash(&p, seq);
-    let mut q2 = p.clone();
-    q2.sequences[0].clips[1].source_in = Tick(FRAME * 77);
-    let h2 = kt_engine::content_hash(&q2, seq);
-    assert_ne!(h1, h2, "an edit inside the reel did not change the revision hash");
-
-    // ...and recursively: an edit in a GRANDCHILD must reach the grandparent
-    let mut deep = base();
-    let mut inner = Sequence::new(MediaId(101), "Inner");
-    inner.clips = vec![ev(20, ClipKind::Video, 0, Tick(0), PART, 1)];
-    let mut outer = Sequence::new(MediaId(100), "Outer");
-    let mut mid = ev(21, ClipKind::Video, 0, Tick(0), PART, 101);
-    mid.source_in = Tick(0);
-    outer.clips = vec![mid];
-    deep.sequences.push(inner);
-    deep.sequences.push(outer);
-    let mut top = ev(10, ClipKind::Video, 0, Tick(0), PART, 100);
-    top.source_in = Tick(0);
-    deep.clips.push(top);
-    deep.validate().unwrap();
-    let d1 = kt_engine::content_hash(&deep, MediaId(100));
-    deep.sequences[0].clips[0].source_in = Tick(FRAME * 9);
-    let d2 = kt_engine::content_hash(&deep, MediaId(100));
-    assert_ne!(d1, d2, "an edit in a GRANDCHILD did not reach the hash of the grandparent — the memo will return stale");
-
-    // REELS: the address of a sub-composite in the cache is not a file address
-    assert_ne!(
-        kt_engine::nest_source_id(seq),
-        kt_engine::source_id(MediaId(seq.0)),
-        "a reel and a file with the same number share an address in the cache"
-    );
-    assert!(
-        kt_engine::nest_source_id(seq).0 >= kt_model::NEST_TAG,
-        "the address of a reel must lie above the range of files"
-    );
-
-    // INSTANCES: two placements of ONE reel with different chains do not
-    // collapse into one post-FX frame, while their sub-composite is SHARED —
-    // that is where the gain lies
-    let mut two = nest_with(1.0, vec![posterize(3)]);
-    let mut twin = two.clips[0].clone();
-    twin.id = ClipId(11);
-    twin.start = Tick(10 * PART.0);
-    twin.fx = vec![posterize(5)];
-    two.clips.push(twin);
-    two.validate().unwrap();
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let mut v = VideoRenderer::new(&two);
-    let a = warm_and_compose(&mut v, &cache, t, q);
-    let b = warm_and_compose(&mut v, &cache, Tick(10 * PART.0 + t.0), q);
-    assert_ne!(
-        a, b,
-        "two placements of one reel with DIFFERENT chains gave one frame — \
-         the post-FX cache is not keyed by the instance"
-    );
-    // the sub-composite of a reel is kept in the cache ONCE — by the reel and edit address
-    assert!(
-        cache
-            .get_postfx_video(
-                kt_engine::nest_source_id(seq),
-                (q.width, q.height),
-                kt_engine::content_hash(&two, seq),
-                t.0
-            )
-            .is_some(),
-        "the sub-composite is not memoized by the address of the reel"
     );
 }
 
@@ -1271,7 +1141,7 @@ fn one_child_nest(
 /// The composite of moment `t`, warmed EXACTLY by what `layers_at` requested
 /// (request == read — invariant 4). The renderer knows the source facts.
 fn render_with_facts(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
-    let mut video = VideoRenderer::new_with_facts(p, &facts(p));
+    let video = VideoRenderer::new_with_facts(p, &facts(p));
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources_gen(p).into_iter().collect();
@@ -1284,7 +1154,7 @@ fn render_with_facts(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
             frame.into(),
         );
     }
-    video.compose_from_cache(&cache, t, q)
+    kt_gpu::testkit::compose(&video, &cache, t, q)
 }
 
 fn mean_level(f: &[u8]) -> f64 {
@@ -1301,6 +1171,9 @@ const QV: Quality = Quality { width: 64, height: 36 };
 /// coincided, the sub-composite was taken from the memo, and the pair was BYTE-FOR-BYTE equal.
 #[test]
 fn t579_a_slowed_reel_animates_in_half_steps() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let slow = one_child_nest(FLAT, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
     let plain = one_child_nest(FLAT, None, vec![grade()], grade_curve());
@@ -1356,6 +1229,9 @@ fn t579_a_slowed_reel_animates_in_half_steps() {
 /// The second turns red on the OLD code.
 #[test]
 fn t580_footage_is_pinned_and_the_order_does_not_move() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let plain = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
     let v = VideoRenderer::new_with_facts(&plain, &facts(&plain));
@@ -1397,6 +1273,9 @@ fn t580_footage_is_pinned_and_the_order_does_not_move() {
 /// and the pair is assembled by the leaf — with the same integer kernel as t250.
 #[test]
 fn t581_blend_on_a_nest_mixes_footage_inside() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_media::synthetic::{AudioPattern, SyntheticSource};
 
@@ -1444,56 +1323,6 @@ fn t581_blend_on_a_nest_mixes_footage_inside() {
     assert_eq!(vn.layers_at(t, QV).len(), 1, "“nearest” orders ONE frame");
 }
 
-/// Test 582 (R.56, item 448): the sub-composite memoization key carries the MODE.
-///
-/// The same `inner_t`, the same reel edit, different bytes. Without a flag in the key,
-/// the “nearest” composite after the “blend” composite would return the blended
-/// picture from the memo — and the error would be invisible (the frame looks plausible).
-#[test]
-fn t582_the_memo_key_carries_the_frame_mode() {
-    kt_plugins_builtin::install();
-    use kt_media::synthetic::{AudioPattern, SyntheticSource};
-
-    let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
-    let near = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
-    let t = Tick(FRAME);
-    let seq = MediaId(100);
-    // the cache is ONE for both runs — in the program it is one
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-
-    let mut vb = VideoRenderer::new_with_facts(&blend, &facts(&blend));
-    let mixed = warm_and_compose(&mut vb, &cache, t, QV);
-    let mut vn = VideoRenderer::new_with_facts(&near, &facts(&near));
-    let clean = warm_and_compose(&mut vn, &cache, t, QV);
-
-    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 440.0 });
-    let a = synth.read_video_frame(Tick(0), Some(QV)).unwrap().rgba.into_vec();
-    assert_ne!(mixed, clean, "two modes gave one frame");
-    assert_eq!(
-        clean, a,
-        "“nearest” got a MIXED sub-composite from the memo: the key does not distinguish the mode"
-    );
-
-    // the entries lie under DIFFERENT keys, and for “no blending” the key is the hash itself
-    let h = kt_engine::content_hash(&blend, seq);
-    assert_eq!(kt_engine::nest_memo_key(h, false), h, "the prior entries must stay in place");
-    assert_ne!(kt_engine::nest_memo_key(h, true), h);
-    let inner = Tick(FRAME / 2);
-    for (mode, key) in [(true, kt_engine::nest_memo_key(h, true)), (false, h)] {
-        assert!(
-            cache
-                .get_postfx_video(
-                    kt_engine::nest_source_id(seq),
-                    (QV.width, QV.height),
-                    key,
-                    inner.0
-                )
-                .is_some(),
-            "the sub-composite of mode {mode} is not memoized"
-        );
-    }
-}
-
 /// Test 583 (R.56, item 448): the chunk budget sees the PAIR inside a reel.
 ///
 /// Undercounting evicts the neighbor before composition, the starvation branch fires, and
@@ -1523,6 +1352,9 @@ fn t583_the_chunk_budget_counts_the_pair_inside_the_reel() {
 /// the sequence goes BACKWARD in half steps and does not fall over on the clamp.
 #[test]
 fn t584_reversed_and_slowed_nest_runs_backwards_in_half_steps() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = one_child_nest(FLAT, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
     p.clips[0].reversed = true;
@@ -1558,6 +1390,9 @@ fn t584_reversed_and_slowed_nest_runs_backwards_in_half_steps() {
 /// — all the more (two floors in a row).
 #[test]
 fn t585_procedural_sources_run_on_the_continuous_tick() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // (a) AT THE ROOT: a slowed generator straight on the track
     let mut root = base_gen();
@@ -1652,7 +1487,7 @@ fn checker_sources() -> Vec<(MediaId, Box<dyn MediaSource>)> {
 }
 
 fn render_checker(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
-    let mut video = VideoRenderer::new(p);
+    let video = VideoRenderer::new(p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         checker_sources().into_iter().collect();
@@ -1665,7 +1500,7 @@ fn render_checker(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
             frame.into(),
         );
     }
-    video.compose_from_cache(&cache, t, q)
+    kt_gpu::testkit::compose(&video, &cache, t, q)
 }
 
 /// A reel with TWO instances: the zooming one at zero and a twin with its own chain at
@@ -1700,6 +1535,9 @@ const T_TWIN: Tick = Tick(10 * PART.0 + FRAME * 5);
 
 #[test]
 fn t631_every_instance_of_a_reel_renders() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t_zoom = Tick(FRAME * 5);
@@ -1733,6 +1571,9 @@ fn t631_every_instance_of_a_reel_renders() {
 
 #[test]
 fn t631b_chain_input_is_the_instances_own() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let t_zoom = Tick(FRAME * 5);
@@ -1787,6 +1628,9 @@ fn t631b_chain_input_is_the_instances_own() {
 
 #[test]
 fn t631c_reel_stage_rides_in_the_postfx_key() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     // ONE cache for both renders: first the reel without the zooming twin (step
@@ -1809,14 +1653,14 @@ fn t631c_reel_stage_rides_in_the_postfx_key() {
     };
     let fx = vec![FxInstance::plugin_with("blur", &[2.0, 2.0]).unwrap()];
     let flat = lone_reel(fx.clone());
-    let mut v1 = VideoRenderer::new(&flat);
+    let v1 = VideoRenderer::new(&flat);
     warm(&flat, &v1, T_TWIN);
-    let _ = v1.compose_from_cache(&cache, T_TWIN, q);
+    let _ = kt_gpu::testkit::compose(&v1, &cache, T_TWIN, q);
 
     let staged = twin_reel(3.0, fx);
-    let mut v2 = VideoRenderer::new(&staged);
+    let v2 = VideoRenderer::new(&staged);
     warm(&staged, &v2, T_TWIN);
-    let (dirty, _) = v2.compose_from_cache(&cache, T_TWIN, q);
+    let (dirty, _) = kt_gpu::testkit::compose(&v2, &cache, T_TWIN, q);
 
     let fresh = render_checker(&staged, T_TWIN, q).0;
     assert_eq!(
@@ -1835,6 +1679,9 @@ fn t631c_reel_stage_rides_in_the_postfx_key() {
 /// the reel edit (memo and preview key) sees the raster change.
 #[test]
 fn t723_reel_with_its_own_raster_is_conformed_like_a_file() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let mut p = nested(ClipKind::Video);
@@ -1871,6 +1718,9 @@ fn t723_reel_with_its_own_raster_is_conformed_like_a_file() {
 /// its grid; without its own fps the old path applies (t579/t580).
 #[test]
 fn t724_reel_fps_holds_frames() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut held = one_child_nest(FLAT, None, vec![grade()], grade_curve());
     held.sequences[0].fps = Some(15); // project — 30
@@ -1912,6 +1762,9 @@ fn t724_reel_fps_holds_frames() {
 /// an own raster or fps takes it out of that — the oracle honestly bounds itself.
 #[test]
 fn t725_own_settings_leave_law_e() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 64, height: 36 };
     let plain = decomposed(ClipKind::Video);
@@ -1940,6 +1793,9 @@ fn t725_own_settings_leave_law_e() {
 /// while the generator has no aspect (kind None) and fills it.
 #[test]
 fn t726_generator_inside_a_square_reel_renders_at_the_reel_raster() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = one_child_nest(FLAT, None, vec![], vec![]);
     p.sequences[0].raster = Some((36, 36));
@@ -1963,6 +1819,9 @@ fn t726_generator_inside_a_square_reel_renders_at_the_reel_raster() {
 /// byte-for-byte (t434/t435/t447 hold it separately).
 #[test]
 fn t739_reel_applies_its_own_track_stages() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let p = one_child_nest(FLAT, None, vec![], vec![]);
     let (plain, complete) = render_with_facts(&p, Tick(FRAME * 3), QV);

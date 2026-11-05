@@ -13,9 +13,7 @@
 //! on the integer path `dissolve_into`, byte-for-byte as before
 //! (GOLDEN_VIDEO does not move).
 
-use kt_media::VideoFrame;
 use kt_model::TransitionKind;
-use kt_plugin_api::trans::{Canvas, Img, kf, mix4};
 
 /// The crossfade's mode: the integer dissolve, never a kernel.
 pub const MODE_CROSSFADE: u32 = 0;
@@ -103,55 +101,3 @@ pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
     plugin_kernel(m.mode).map_or([0.0; 16], |kern| kern.ext(&m.p, k))
 }
 
-/// The engine's frame as a sampling side (`trans::Img`): a frame or the empty side of a fade.
-fn img_of(f: Option<&VideoFrame>) -> Img<'_> {
-    match f {
-        Some(f) => Img::Frame {
-            px: &f.rgba,
-            w: f.width as i32,
-            h: f.height as i32,
-            has_alpha: f.has_alpha,
-        },
-        None => Img::Clear,
-    }
-}
-
-/// Transition core: `dst = mix(a, b)` by the kind `m` with progress `k`
-/// (0..4096). Returns “the result has alpha”. The crossfade does not come
-/// here — it is computed by the integer `dissolve_into`.
-pub fn mix_into(
-    dst: &mut Vec<u8>,
-    a: Option<&VideoFrame>,
-    b: Option<&VideoFrame>,
-    k: u32,
-    m: TransMix,
-    w: usize,
-    h: usize,
-) -> bool {
-    let n = w * h * 4;
-    dst.clear();
-    dst.resize(n, 0);
-    let ia = img_of(a);
-    let ib = img_of(b);
-    let ext = trans_ext(&m, k);
-    let kern = plugin_kernel(m.mode);
-    let k = kf(k);
-    let (fw, fh) = (w as f32, h as f32);
-    let cx = Canvas { aspect: fw / fh, w: fw, h: fh };
-    for y in 0..h {
-        let v = (y as f32 + 0.5) / fh;
-        for x in 0..w {
-            let u = (x as f32 + 0.5) / fw;
-            // a mode without a kernel is the plain mix — the composite's `trans()` fallback
-            let px = match kern {
-                Some(kern) => kern.pixel(&ia, &ib, u, v, k, &m.p, &cx, &ext),
-                None => mix4(ia.sample(u, v), ib.sample(u, v), k),
-            };
-            let i = (y * w + x) * 4;
-            for c in 0..4 {
-                dst[i + c] = (px[c] + 0.5).clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-    true
-}

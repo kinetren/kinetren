@@ -628,7 +628,10 @@ fn compose_offline_frame(
             cache.insert_video(sid, Some(dq), kt_engine::video_cache_idx(k), frame.into());
         });
     }
-    video.compose_from_cache_into(cache, t, q, buf);
+    let composed = kt_gpu::offline_engine().map(|e| video.compose_on(&*e, cache, t, q, buf));
+    if !matches!(composed, Some(Ok(_))) {
+        buf.clear();
+    }
 }
 
 /// The size of a project poster in the welcome window's recent list (welcome-window-and-tour D5).

@@ -161,7 +161,7 @@ fn t1146_diagnostics_carries_every_line_and_three_graphs() {
         assert!(has(&head(key)), "the window lacks the line “{}…”", head(key));
     }
     // the FX backend line — one of its three forms
-    let fx = [k::perf::VIDEO_FX_GPU, k::perf::VIDEO_FX_CPU, k::perf::VIDEO_FX_CPU_LOST]
+    let fx = [k::perf::VIDEO_FX_GPU, k::perf::VIDEO_FX_NONE, k::perf::VIDEO_FX_LOST]
         .map(head);
     assert!(fx.iter().any(|p| has(p)), "the window lacks the FX backend line");
     assert!(has("FFmpeg: open"), "the window lacks the FFmpeg totals");

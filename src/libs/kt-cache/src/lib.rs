@@ -77,6 +77,9 @@ impl Default for CacheConfig {
     }
 }
 
+/// The next `Entry::serial`.
+static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
+
 struct Entry {
     payload: Payload,
     /// The serial number of the CONTENT (R.53, item 409): monotonic, never
@@ -484,11 +487,10 @@ impl BurstCache {
         inner.recency_counter += 1;
         let recency = inner.recency_counter;
         let wanted = inner.want_pass;
-        // the serial number of the content is taken from the same monotonic
-        // counter: it is not reused, therefore “the same address — other
-        // bytes” is always distinguishable (item 409)
-        inner.recency_counter += 1;
-        let serial = inner.recency_counter;
+        // the serial number of the content is not reused, therefore “the same address — other
+        // bytes” is always distinguishable (item 409), across the caches of a process too: one
+        // GPU engine serves the jobs of several (t1574)
+        let serial = NEXT_SERIAL.fetch_add(1, Ordering::Relaxed);
         inner.map.insert(
             key,
             Entry { payload, serial, recency, pinned: false, had_hit: false, wanted, span },
@@ -968,6 +970,18 @@ mod perf_counter_tests {
                 "foreign entry {i} was harmed"
             );
         }
+    }
+
+    /// t1574 (compute-kernels-render): the serial numbers of two caches differ, so a frame of one
+    /// cannot pass for a frame of the other in an engine that serves both.
+    #[test]
+    fn t1574_two_caches_share_no_serial() {
+        let (a, b) = (BurstCache::new(CacheConfig::default()), BurstCache::new(CacheConfig::default()));
+        let f = || Arc::new(VideoFrame { pts: kt_time::Tick(0), width: 1, height: 1, rgba: vec![0; 4].into_boxed_slice(), has_alpha: false });
+        let id = SourceId(1);
+        a.insert_video(id, None, 0, f());
+        b.insert_video(id, None, 0, f());
+        assert_ne!(a.get_video_stamped(id, None, 0).unwrap().1, b.get_video_stamped(id, None, 0).unwrap().1);
     }
 
     /// Test 496a (R.53, item 409): the serial number of the content. The SAME ADDRESS

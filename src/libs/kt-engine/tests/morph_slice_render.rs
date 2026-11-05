@@ -121,7 +121,7 @@ fn render_audio(p: &Project, len: Tick) -> Vec<f32> {
 /// layers the plan itself named, and composite with the CPU reference.
 fn render_frame(p: &Project, t: Tick) -> Vec<u8> {
     use kt_media::MediaSource;
-    let mut vr = VideoRenderer::new(p);
+    let vr = VideoRenderer::new(p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
@@ -134,7 +134,7 @@ fn render_frame(p: &Project, t: Tick) -> Vec<u8> {
             std::sync::Arc::new(frame),
         );
     }
-    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(complete, "frame {t:?}: all layers are warm");
     out
 }
@@ -147,6 +147,9 @@ fn render_frame(p: &Project, t: Tick) -> Vec<u8> {
 /// piece No. 0, it stuck out as a handle over the whole window, and the frame diverged.
 #[test]
 fn t237_transition_survives_slicing() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut sliced = base(ClipKind::Video);
     crossfade(&mut sliced);
@@ -293,6 +296,9 @@ fn t238_warped_clip_is_never_sliced() {
 /// 3. an intermediate strength — exactly the linear mix of these two.
 #[test]
 fn t267_layer_strength_blends_only_the_layer() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let t = Tick(45_000); // the middle of the layer's window
     let own = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
@@ -342,6 +348,9 @@ fn t267_layer_strength_blends_only_the_layer() {
 /// fully.
 #[test]
 fn t267b_layer_fades_are_the_strength_curve() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let scene = || {
         let mut p = base(ClipKind::Video);
@@ -433,6 +442,9 @@ fn t268_layer_strength_blends_audio_too() {
 /// for a plain split (S) of such an event, a property of the per-chunk speed, not of the layer.
 #[test]
 fn t916_warped_cut_is_neither_heard_nor_seen_outside_the_window() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let to_frames = |t: Tick| t.to_audio_frames() as usize * CH;
     // the layer of `layer()` covers [30 000, 60 000) of the first clip

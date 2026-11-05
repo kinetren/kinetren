@@ -7,6 +7,7 @@
 
 pub mod compute;
 pub mod reference;
+pub mod testkit;
 mod context;
 mod engine;
 mod pool;
@@ -106,13 +107,18 @@ pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol
     );
 }
 
-/// The export's GPU engine (export-throughput D5). `KT_VIDEO_GPU=0` never asks.
+/// The export's GPU engine (export-throughput D5).
 pub fn export_engine() -> Result<std::sync::Arc<GpuFxEngine>, String> {
-    if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
-        return Err("KT_VIDEO_GPU=0".into());
-    }
     let ctx = GpuContext::new_headless_for_export().map_err(|e| e.to_string())?;
     GpuFxEngine::new(ctx).map_err(|e| e.to_string())
+}
+
+/// The engine of the work that is neither the preview nor an export (effect thumbnails, reel strips,
+/// project posters), on its own device: it stays out of the preview's queue. Opened once, at the
+/// first use. `None` — no device.
+pub fn offline_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
+    static E: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
+    E.get_or_init(|| GpuContext::new_headless().and_then(GpuFxEngine::new).ok()).clone()
 }
 
 /// The engines an export composes on (compute-kernels-render, D4): a software adapter runs one frame

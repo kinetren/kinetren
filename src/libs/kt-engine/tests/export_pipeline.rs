@@ -6,9 +6,7 @@
 //! - t1452: a cancel in the middle and a sink error in the middle stop every stage promptly.
 
 use kt_engine::export::{
-    ExportConverter, ExportSink, render_pipelined, render_raw_audio_range, render_raw_video_range,
-};
-use kt_engine::ExportBackends;
+    ExportConverter, ExportSink, render_pipelined, render_raw_audio_range, };
 use kt_media::{MediaSource, Quality};
 use kt_model::{MediaId, Project};
 use kt_time::Tick;
@@ -98,16 +96,19 @@ impl ExportSink for Recorder {
 }
 
 fn pipelined(p: &Project, rec: &mut Recorder, cancel: &Arc<AtomicBool>) -> std::io::Result<kt_engine::ExportStats> {
-    render_pipelined(p, sources(p), sources(p), Q, Some(range()), &ExportBackends::default(), cancel, None, rec)
+    render_pipelined(p, sources(p), sources(p), Q, Some(range()), &kt_gpu::testkit::backends(), cancel, None, rec)
 }
 
 /// t1451: pipelined == serial, frame for frame and sample for sample; the interleave is fixed.
 #[test]
 fn t1451_the_pipelined_export_writes_the_serial_streams() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = project();
     let never = Arc::new(AtomicBool::new(false));
     let mut serial_frames = Vec::new();
-    let vs = render_raw_video_range(&p, sources(&p), Q, Some(range()), &never, |_| {}, |f| {
+    let vs = kt_gpu::testkit::render_range(&p, sources(&p), Q, Some(range()), &never, |_| {}, |f| {
         serial_frames.push(fnv(f));
         Ok(())
     })
@@ -147,6 +148,9 @@ fn t1451_the_pipelined_export_writes_the_serial_streams() {
 /// (the call returns: all its threads are joined), the error is the cause.
 #[test]
 fn t1452_a_cancel_or_an_error_mid_pipeline_stops_every_stage() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = project();
     let cancel = Arc::new(AtomicBool::new(false));
     let mut rec = Recorder { cancel_after: Some((10, cancel.clone())), ..Default::default() };
