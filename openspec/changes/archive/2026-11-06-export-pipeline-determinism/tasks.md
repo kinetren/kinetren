@@ -32,6 +32,10 @@ message, the first line = the stage and what was done, no attribution lines).
 
 ## 5. Finish
 
-- [ ] 5.1 The "after": the same showcase measurement on release, the pipelined against `--serial`; record both in `openspec/specs/export/design.md`
-- [ ] 5.2 Tests of the specs, `cargo test` of what was touched, clippy, live `render`
-- [ ] 5.3 `docs/found-defects.md` rows 66 and 67, What's new, `kt-cache/CLAUDE.md`; archive; `target-prune.py`
+- [x] 5.1 The "after": the same showcase measurement on release, the pipelined against `--serial`; record both in `openspec/specs/export/design.md`
+  - Six pairs started together: median difference 0.0 s, worst +2.0 s, every md5 equal. The packet
+    streams of the demo and the showcase equal `--serial` at `--encoder-threads 1`.
+- [x] 5.2 Tests of the specs, `cargo test` of what was touched, clippy, live `render`
+  - kt-engine 362, kt-cli 57, kt-cache, kt-app 518 green; no clippy warning on a changed line; live
+    `render` and `hwencode` green.
+- [x] 5.3 `docs/found-defects.md` rows 66 and 67, What's new, `kt-cache/CLAUDE.md`; archive; `target-prune.py`

@@ -267,3 +267,56 @@ decodes to what was uploaded: t1551–t1556 and the live `hwencode` run on any m
 included. `make hw-test` (`KT_EXPECT_HW=vaapi`, t963 made loud) stays for a machine with a real
 render node. Whether Intel's or AMD's driver opens, its quality and its speed have never been
 measured, and t963's bound of 6/255 is the proposal's, not a measurement.
+
+## An export's frames do not depend on LRU (export-pipeline-determinism, 2026-11-05)
+
+**The promise was true only while nothing evicted.** "A frame being composed is never evicted" rested
+on the look-ahead fitting the cache. That decides how much fits, not what LRU drops. The cache stays
+full during an export, and a composite's read refreshes a frame never needed again, so such frames
+outlive frames decoded and not yet read. On `kt-cli demo` each run lost a different set of layers (10,
+2, 6 on release), while `--serial` lost none. Now every chunk not yet written HOLDS the frames it
+names, found or decoded, and the look-ahead is the bytes held. Memory does not grow: the live set
+always had to fit, and dead frames still go first.
+
+**Why neither t1451 nor the showcase saw it.** t1451's 90 frames never fill the cache. The loss needs a
+look-ahead far larger than the frames in flight at the workers, so that frames wait decoded and
+unread, and it is not a plain ratio of budget to frame size: a quarter of the budget at 1080p lost
+nothing, 640×360 at a quarter lost 4–8 layers on every run. t1601's values are proven on the old
+code: red 8 of 8, a change to them has to prove itself red again. A scaled-down version chosen by
+reasoning passed on the broken code 6 of 6.
+
+**A second way to differ from serial.** The serial export runs `stream_preroll` before every frame,
+which re-reads any missing frame, so a span that fails half way heals one frame later. The pipeline had
+no such step: one failed span cost 46 frames (t1605). A key a span did not give is asked again
+alone, before anything composes it. So a layer that can be had is waited for, and only one no decoder
+can give is reported (`ExportLog::IncompleteFrames`, t1602): a render goes on and says where.
+
+**"Equal to serial" means the streams, not the file.** `threads=auto` against the serial's `1` makes a
+different x264 stream (t1456, on purpose), and the serial export writes the audio after the video.
+At the same thread count (`kt-cli export --encoder-threads 1`) the video and the audio packets of the
+two files are identical: t1603, the demo, and the 104 s showcase.
+
+### Measured
+
+Release, the showcase (2600 frames of 1080p25), libx264, 32 cores, no GPU, output in `/dev/shm`, other
+sessions' builds on the machine, nothing to be done about them. **Six pairs started together**, each
+binary on its own copy of the project, so both meet the same load by construction:
+
+| pair | load | before: pipeline wall | after: pipeline wall | after − before |
+|---|---|---|---|---|
+| 1 | 23–98 | 170.5 s | 171.6 s | +1.1 s |
+| 2 | 98–108 | 181.8 s | 181.7 s | −0.1 s |
+| 3 | 108–95 | 182.5 s | 180.0 s | −2.5 s |
+| 4 | 95–174 | 177.1 s | 177.1 s | 0.0 s |
+| 5 | 174–163 | 166.1 s | 168.1 s | +2.0 s |
+| 6 | 163–126 | 204.4 s | 204.4 s | 0.0 s |
+
+Median difference 0.0 s, worst +2.0 s, peak RSS 6.93–7.03 GB on both sides. Every file of both
+binaries has the same md5, zero missing layers. Alone at load 50–70, the best runs were 102.1 s
+before and 105.3 s after. The published 95 s was taken at a lower load; this machine did not offer
+one, and the two binaries are level here, so that figure was neither confirmed nor lost.
+
+Two traps of this measurement. Alternating runs gave a median of 112 s against 140 s for the same two
+binaries: at load up to 267 the spread (102–204 s) is larger than anything being measured. And two
+processes on ONE project file do not run together: the second waits at the start until the first has
+finished, which read as 104 s against 226 s. The serial export of the same showcase took 895 s.
