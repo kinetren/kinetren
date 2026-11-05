@@ -1427,3 +1427,48 @@ fn t1555_a_healthy_driver_gets_every_frame_after_the_trial() {
     assert!(log.contains("frames 3\n"), "the trial's three pictures: {log}");
     assert!(log.contains("frames 30\n"), "every frame in the render's own process: {log}");
 }
+
+/// t1603 (export-pipeline-determinism D5): at the same encoder thread count the pipelined file's
+/// streams are the serial file's, packet by packet. The FILES differ, and rightly: the serial
+/// export writes the audio after the video, so their interleave is not the same.
+#[test]
+fn t1603_the_file_streams_equal_the_serial_export() {
+    kt_plugins_builtin::install();
+    if kt_media::ffmpeg::backend_info().is_none() || Command::new("ffmpeg").arg("-version").output().is_err() {
+        eprintln!("t1603 skipped: needs FFmpeg and its binary");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-cli-t1603-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut p = owner_grid_case();
+    p.morphers.clear();
+    p.clips[0].duration = kt_time::Tick(90_000);
+    p.validate().unwrap();
+    let project = dir.join("short.kt");
+    std::fs::write(&project, kt_model::project_file::to_text(&p, None)).unwrap();
+    let export = |name: &str, how: &str| {
+        let out = dir.join(name);
+        let r = cli()
+            .args(["export", project.to_str().unwrap(), out.to_str().unwrap(), "libx264", "--encoder-threads", "1", how])
+            .env("XDG_DATA_HOME", dir.join("xdg"))
+            .output()
+            .unwrap();
+        let all = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+        assert!(r.status.success(), "{all}");
+        assert!(all.contains("missing layers 0"), "{all}");
+        out
+    };
+    let serial = export("serial.mp4", "--serial");
+    let piped = export("piped.mp4", "--time");
+    let stream = |file: &std::path::Path, map: &str| {
+        let r = Command::new("ffmpeg")
+            .args(["-v", "error", "-i", file.to_str().unwrap(), "-map", map, "-c", "copy", "-f", "md5", "-"])
+            .output()
+            .unwrap();
+        assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+        String::from_utf8_lossy(&r.stdout).into_owned()
+    };
+    assert_eq!(stream(&piped, "0:v"), stream(&serial, "0:v"), "the video packets");
+    assert_eq!(stream(&piped, "0:a"), stream(&serial, "0:a"), "the audio packets");
+    let _ = std::fs::remove_dir_all(&dir);
+}

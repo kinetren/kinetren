@@ -817,6 +817,12 @@ fn export_log_line(l: &kt_engine::export::ExportLog) -> String {
         ExportLog::NotOpened { name, code } => format!("encoder {name} did not open (code {code})"),
         ExportLog::Skipped { name, reason } => format!("encoder {name} skipped: {reason}"),
         ExportLog::Placeholder { label } => format!("placeholder rendered for {label}"),
+        ExportLog::IncompleteFrames { from, to, media } => format!(
+            "no picture from {} at {:.2}–{:.2} s: written without that layer",
+            media.join(", "),
+            from.0 as f64 / 90_000.0,
+            to.0 as f64 / 90_000.0
+        ),
         ExportLog::Phase(ExportPhase::Video) => "phase: video".into(),
         ExportLog::Phase(ExportPhase::Audio) => "phase: audio".into(),
         ExportLog::Phase(ExportPhase::Finalize) | ExportLog::Finalizing => {
@@ -1442,13 +1448,19 @@ fn run(args: &[String]) -> i32 {
         }
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder] [--time] [--serial]");
+                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder] [--time] [--serial] [--encoder-threads N]");
                 return 2;
             };
             // --time: where the export's time went, stage by stage (export-throughput D6);
             // --serial: the former one-thread export, the "before" of every such measurement
             let time = args.iter().any(|a| a == "--time");
             let serial = args.iter().any(|a| a == "--serial");
+            // the same encoder threads on both sides of a comparison (export-pipeline-determinism D5)
+            let encoder_threads = args
+                .iter()
+                .position(|a| a == "--encoder-threads")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|n| n.parse().ok());
             // a third argument can pin the video encoder (otherwise
             // auto-selection: nvenc → vaapi → qsv → libx264). It is needed where
             // the render MUST be reproducible — for example in the cross-render
@@ -1498,6 +1510,7 @@ fn run(args: &[String]) -> i32 {
             let opts = kt_engine::ExportOptions {
                 force_encoder: encoder,
                 serial,
+                encoder_threads,
                 profile: profile.clone(),
                 ..Default::default()
             };

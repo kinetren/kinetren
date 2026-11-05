@@ -5,6 +5,12 @@ month, newest first.
 
 ## kt26.11
 
+- **A render comes out the same every time.** Rendering a busy edit could quietly drop a layer from a
+  few frames, different ones on each run, leaving wrong pictures in the file. Now every frame keeps
+  all its layers, and the speed of the render is unchanged. If a source really cannot give a picture,
+  the render's log says which file and at what time, and opens by itself so you see it.
+- **A failed render explains itself better.** The message no longer starts with a technical "io:", and
+  the window says no encoder opened instead of still claiming to choose one.
 - **Datamosh encodes on the graphics card.** The effect's codec now runs as a shader, and even with no
   card, through Vulkan on the processor, a frame takes about a third less time. Existing moshes may
   look slightly different, because the search picks some other vectors. On a computer with no Vulkan, DX12 or

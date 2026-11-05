@@ -6,7 +6,7 @@
 //! - t1452: a cancel in the middle and a sink error in the middle stop every stage promptly.
 
 use kt_engine::export::{
-    ExportConverter, ExportSink, render_pipelined, render_raw_audio_range, render_raw_video_range,
+    ExportConverter, ExportSink, render_pipelined, render_pipelined_budget, render_raw_audio_range, render_raw_video_range,
 };
 use kt_engine::ExportBackends;
 use kt_media::{MediaSource, Quality};
@@ -55,6 +55,8 @@ struct Recorder {
     cancel_after: Option<(usize, Arc<AtomicBool>)>,
     /// Fail the write of this frame.
     fail_at: Option<usize>,
+    /// A slow disk: every video write takes this long.
+    write_delay: std::time::Duration,
 }
 
 struct CopyConv;
@@ -81,6 +83,7 @@ impl ExportSink for Recorder {
         if self.fail_at == Some(self.frames.len()) {
             return Err(std::io::Error::other("the disk is full"));
         }
+        std::thread::sleep(self.write_delay);
         self.frames.push(fnv(f));
         self.calls.push(('v', f.len()));
         if let Some((n, c)) = &self.cancel_after
@@ -141,6 +144,44 @@ fn t1451_the_pipelined_export_writes_the_serial_streams() {
     assert!(a.calls.iter().skip(1).any(|c| c.0 == 'a') && a.calls.last().map(|c| c.0) == Some('a'));
     let first_audio = a.calls.iter().position(|c| c.0 == 'a').unwrap();
     assert!(first_audio <= 2, "the audio is interleaved from the first frame, not after the video");
+}
+
+/// t1601 (export-pipeline-determinism): the same promise as t1451 at the limit of the look-ahead.
+///
+/// t1451 cannot fail the way the export failed: 90 frames never fill the cache. Here they do, and
+/// the writer is the slowest stage, so decode runs at its limit and frames wait decoded and unread
+/// while the composite's reads refresh frames never needed again. On the old code those outlived
+/// the waiting ones, and a different set of frames lost a layer on every run.
+///
+/// The size and the budget are not free: the loss needs a look-ahead far larger than the frames in
+/// flight at the workers, and the decode-scale step makes the frames larger than `q`. A smaller
+/// budget at these frames, or 270p with this one, loses nothing on the old code (design, Context):
+/// a change here has to prove itself red on that code again.
+#[test]
+fn t1601_under_pressure_the_pipelined_export_is_the_serial_export_every_run() {
+    let p = project();
+    let q = Quality { width: 640, height: 360 };
+    let range = (Tick(90_000 * 6), Tick(90_000 * 12));
+    let never = Arc::new(AtomicBool::new(false));
+    let mut serial = Vec::new();
+    let vs = render_raw_video_range(&p, sources(&p), q, Some(range), &never, |_| {}, |f| {
+        serial.push(fnv(f));
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(vs.missing_video_layers, 0, "the reference itself");
+    assert!(serial.len() >= 180, "the range renders frames: {}", serial.len());
+    for run in 0..3 {
+        let mut rec = Recorder { write_delay: std::time::Duration::from_millis(25), ..Default::default() };
+        let budget = kt_engine::export::EXPORT_VIDEO_CACHE_BYTES / 4;
+        let st = render_pipelined_budget(&p, sources(&p), sources(&p), q, Some(range), &ExportBackends::default(), &never, None, budget, &mut rec)
+            .unwrap();
+        assert_eq!(st.missing_video_layers, 0, "run {run}: layers were lost");
+        assert_eq!(rec.frames.len(), serial.len(), "run {run}: the frame count");
+        for (i, (x, y)) in rec.frames.iter().zip(&serial).enumerate() {
+            assert_eq!(x, y, "run {run}: video frame {i} differs from the serial export");
+        }
+    }
 }
 
 /// t1452: a cancel mid-export and a sink error mid-export end it promptly, every stage stopped

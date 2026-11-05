@@ -128,6 +128,17 @@ in the source's state and arrive through the retune lane.
 
 ## The export is a pipeline inside one file (export-throughput)
 
+- **The chunks hold their frames** (export-pipeline-determinism): every frame a chunk not yet written
+  names is held in the cache, and the look-ahead is the bytes held. Never let the pipeline's
+  correctness rest on LRU or on the budget being large enough: a composite's read refreshes frames
+  never needed again. The same check of a pressure test has to be RED on the broken code (t1601):
+  a size and budget chosen by reasoning passed on it.
+- **The serial pre-roll also heals**: what it re-reads, the pipeline asks again in `decode_requests`.
+  A new thing the serial loop does per frame needs its pipeline twin, or the two differ.
+- **Compare speed with two binaries started together, each on its own copy of the project**, and
+  run a same-binary pair as the control: alternating runs drown in other builds, and two runs on one
+  project file can split by 50 s with identical binaries (cause not found).
+
 - `export_pipeline::run` is the product's export; `ExportOptions.serial` (= the former one-thread
   export, `render_raw_video_range_with` + `render_raw_audio_range`) is its REFERENCE: t1451 holds
   the pipelined frames and samples equal to it. A change to what a frame is goes into the shared

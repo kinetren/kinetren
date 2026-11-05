@@ -47,6 +47,9 @@ impl LogLine {
             }
             LogLine::Engine(ExportLog::Skipped { name, reason }) => format!("encoder {name} skipped: {reason}"),
             LogLine::Engine(ExportLog::Placeholder { label }) => format!("placeholder rendered for {label}"),
+            LogLine::Engine(ExportLog::IncompleteFrames { from, to, media }) => {
+                format!("no picture from {} at {}–{}", media.join(", "), tick_text(*from), tick_text(*to))
+            }
             LogLine::Engine(ExportLog::Phase(ExportPhase::Video)) => "phase: video".into(),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Audio)) => "phase: audio".into(),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Finalize) | ExportLog::Finalizing) => {
@@ -74,6 +77,9 @@ impl LogLine {
             // the reason is the export's own fact, in English like an error text
             LogLine::Engine(ExportLog::Skipped { name, reason }) => crate::tf!(k::render::LOG_SKIPPED, name, reason),
             LogLine::Engine(ExportLog::Placeholder { label }) => crate::tf!(k::render::LOG_PLACEHOLDER, label),
+            LogLine::Engine(ExportLog::IncompleteFrames { from, to, media }) => {
+                crate::tf!(k::render::LOG_INCOMPLETE, media.join(", "), tick_text(*from), tick_text(*to))
+            }
             LogLine::Engine(ExportLog::Phase(ExportPhase::Video)) => tr(k::render::PHASE_VIDEO).into(),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Audio)) => tr(k::render::PHASE_AUDIO).into(),
             LogLine::Engine(ExportLog::Phase(ExportPhase::Finalize) | ExportLog::Finalizing) => {
@@ -105,6 +111,11 @@ pub const LOG_LINES: usize = 800;
 pub fn clock_text(d: std::time::Duration) -> String {
     let s = d.as_secs();
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+}
+
+/// A time on the timeline in the log.
+fn tick_text(t: kt_time::Tick) -> String {
+    clock_text(std::time::Duration::from_secs_f64(t.0.max(0) as f64 / 90_000.0))
 }
 
 /// A size the way a person reads it: KB under a megabyte ("0.0 MB" said nothing about a small file,
@@ -916,6 +927,8 @@ impl KtApp {
                 };
                 format!("{} ({kind}) · {} · {}", r.encoder, r.pix_fmt, quality_text(r, &job.opts))
             }
+            // a run that ended without one is not choosing any more
+            None if matches!(job.result, Some(Err(_))) => tr(k::render::NO_ENCODER).to_string(),
             None => tr(k::render::CHOOSING).to_string(),
         };
         let out_rows: Vec<(&str, String)> = vec![
@@ -1077,7 +1090,11 @@ impl KtApp {
                         None => {}
                     }
                     // THE LOG (D9): closed while healthy, opened by itself after an error
-                    let failed = matches!(job.result, Some(Err(_)));
+                    let failed = match &job.result {
+                        Some(Ok(stats)) => stats.missing_video_layers > 0,
+                        Some(Err(_)) => true,
+                        None => false,
+                    };
                     let r = egui::CollapsingHeader::new(tr(k::render::LOG_TITLE))
                         .id_salt("render_log")
                         .open(failed.then_some(true))
