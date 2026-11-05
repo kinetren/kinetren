@@ -11,7 +11,7 @@ crates: [kt-app]
 invariants: [6]
 ui_rules: [1, 2, 14, 17]
 round: 72
-point: 72
+point: change r72-timeline-transport-defects
 tests: [t1620, t1621, t1622, t1623, t1624]
 depends_on: []
 trackers: []
