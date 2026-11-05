@@ -428,11 +428,11 @@ pub fn clip_attr_type(name: &str) -> Option<ParamType> {
 /// `set_clip_attr` clamps them with: a second set of numbers would diverge from the first (R.60).
 pub fn clip_attr_spec(name: &str) -> Option<ParamSpec> {
     let ty = clip_attr_type(name)?;
-    // ±6.0206 dB — gain factor 2.0, the same scale as the level rail on the
-    // timeline (`RAIL_DB_SPAN` is twice as wide because it is two-sided)
+    // up to +6.0206 dB — gain factor 2.0, the same scale as the level rail on the timeline
+    // (`RAIL_DB_SPAN` is twice as wide because it is two-sided); down to the mute floor (R.72)
     let (min, max, default, step, unit) = match name {
         "opacity" => (0.0, 1.0, 1.0, 0.01, ParamUnit::Norm),
-        "gain_db" => (-6.0206, 6.0206, 0.0, 0.1, ParamUnit::Db),
+        "gain_db" => (crate::EVENT_GAIN_FLOOR_DB as f64, 6.0206, 0.0, 0.1, ParamUnit::Db),
         _ => (0.0, 1.0, 0.0, 1.0, ParamUnit::None),
     };
     Some(ParamSpec {

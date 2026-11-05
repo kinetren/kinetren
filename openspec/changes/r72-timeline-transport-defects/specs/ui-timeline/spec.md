@@ -1,5 +1,31 @@
 # Spec Delta
 
+## MODIFIED Requirements
+
+### Requirement: Gestures on the event's top strip: fades and level
+The upper strip of an event (35 % of the row's height, at most 12 px) SHALL be a gesture zone: the fade handle at each edge, the level line (for video — opacity, for audio — gain from silence at the bottom to +6.02 dB, 0 dB — the middle). The corner fade is a transition with a zero external offset; the handle sticks to the corner within 3 px, a pushed-in fade disappears entirely. Below the strip everything is as before (the body, the trims, the transition windows). The handles SHALL be visible on the selected and on the hovered event; the grab zones of the handles are a third of the width, the middle is always free. A repeated gesture on a configured transition SHALL edit ONLY the offsets of the window. The preview of the material (waveform/filmstrip) during gestures SHALL shift only on a trim of the left edge.
+Why: "in Vegas you can do a fade… by pulling the upper corner"; "fades for audio and video looking the same" (the v1 volume rail stood in the fade zone); a repeated overlap erased the chosen transition kind; "the sound's preview scrolls to the left, although the sound does not change".
+
+#### Scenario: The corner fade and the level
+- **WHEN** the upper corner of an event is dragged, the level line is dragged, the edge of a transition window without a neighbour is dragged
+- **THEN** the fade appears inside the event (the body and `source_in` are untouched), a pushed-in one disappears; the level is written as `SetOpacity`/`SetGain`; a fade window without a neighbour is dragged as usual (test 157 holds)
+- **TEST** t173, t176, t157 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Level is reachable on a narrow event through the menu
+- **WHEN** an event 20 px wide
+- **THEN** the fade handles each take a third of the width, the line is drawn from 6 px, the middle moves the event (U5.3 of R.72 took the level gesture off a narrow event, a later word of the owner than R.40) and the event menu has a number field for the same value
+- **TEST** t278 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A repeated gesture does not erase the transition look
+- **WHEN** the corner of a configured wipe fade is dragged further; with a Move drag, the pair is again overlapped with a configured look
+- **THEN** the look, the parameter curves and the audio curve survive; only the window offsets change
+- **TEST** t460 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: Material preview moves only when the start is trimmed
+- **WHEN** an event is moved deep into its neighbour; the left edge is trimmed
+- **THEN** the waveform and the filmstrip stay in place when moving, and when the start is trimmed they shift by the edge delta (without `.max(0)`)
+- **TEST** t169 (`src/apps/kt-app/src/layout_tests.rs`)
+
 ## ADDED Requirements
 
 ### Requirement: Event gesture zones follow the event's size on screen
@@ -21,7 +47,7 @@ and the volume change keeps triggering". The level line was tested first and at 
 
 ### Requirement: An event's gain goes down to silence, and a non-default level is written on the event
 The event's gain SHALL span from +6.02 dB down to silence. The level line's bottom and the menu's
-number field's floor SHALL give silence. The upper half of the line keeps today's mapping, so 0 dB
+number field's floor SHALL give silence, and the field SHALL read `mute` there. The upper half of the line keeps today's mapping, so 0 dB
 stays at the middle. A gain or opacity other than the default SHALL be written as a small chip after
 the source name in the event's label row (for example `−12 dB`, `40 %`, `mute`). It SHALL use no new
 strip (rule 13), be truncated with the name by the shared rule, and be absent at the default.
@@ -66,19 +92,25 @@ bottom.
 - **TEST** t1633 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: The scrollbar and both jump zones can be taken
-The timeline's vertical scrollbar SHALL be a no-resize rect. Its grab SHALL be wider than its drawing,
-and a click on its track SHALL page. The right jump zone SHALL end before the scrollbar. The left jump
-zone SHALL begin after the track header gutter and keep its full width on every row, badges included.
-In a jump zone a click SHALL jump even over an event. A quick second click there SHALL be a second jump,
-not a double click that opens the event. Dragging an event that starts in the zone SHALL still move it.
+The timeline's vertical scrollbar SHALL be a no-resize rect (the outer 4 px of the window stay the
+window's). Its grab SHALL be wider than its drawing, and a click on its track SHALL page. The right jump
+zone SHALL end before the scrollbar. The left jump zone SHALL keep its full width on every row, badges
+included, and its hot end under the track header SHALL answer: a click on the header's free part is the
+hottest left jump, a badge stays a button, and a double click there stays the rename, giving the view
+and the cursor back. In a jump zone a click SHALL jump even over an event, a morpher, a camera or a
+transition, and SHALL NOT take the selection. A quick second click there SHALL be a second jump, not a
+double click that opens the event. With the project's start on screen the left zone has nowhere to jump,
+so an event there SHALL take its clicks as usual. Dragging an event that starts in the zone SHALL still
+move it, and Ctrl or Shift on a click keep their meaning there.
 Why: the owner, `ktprompts_v26.10` TIMELINE 2–4: the scrollbar "is very hard to find, either the window
 resize or the jump zone triggers"; "the added track buttons broke half of the jump zone on the left";
 "if an event is in the jump zone, it opens for some reason". This is the theme of r.12/r.13 ("resize
-steals clicks", t101) returning on a new element.
+steals clicks", t101) returning on a new element. The zone's gradient has run through the gutter to the
+panel edge since item 20 of round 6, while clicks there did nothing; R.62 grew the gutter from 34 to 62 px.
 
 #### Scenario: The scrollbar at the window edge, the jump over an event
-- **WHEN** the timeline is flush with the window's right edge; the scrollbar is pressed and dragged; separately — the left jump zone is clicked on a row where badges are; separately — an event lying in the right jump zone is clicked twice within 0.2 s
-- **THEN** the scrollbar scrolls and no `BeginResize` is sent; the left click jumps the view; the two clicks give two jumps and no FX window
+- **WHEN** the timeline is flush with the window's right edge; the scrollbar is pressed and dragged; separately — the left jump zone is clicked on a row where badges are, then the header's free part, then a badge; separately — an event lying in the right jump zone is clicked twice within 0.2 s
+- **THEN** the scrollbar scrolls and no `BeginResize` is sent; the left click jumps the view, the header jumps it further, the badge toggles and does not jump; the two clicks give two jumps and no FX window
 - **PATH** maximise the window → grab the timeline's scrollbar at the right edge → the tracks scroll, the window does not resize → click near the left edge on a track with buttons → the view jumps left → click twice near the right edge on an event → the view jumps twice, no window opens
 - **TEST** t1634 (`src/apps/kt-app/src/layout_tests.rs`), t1635 (`src/apps/kt-app/src/layout_tests.rs`)
 
@@ -92,6 +124,6 @@ morpher here' and the camera one too, I ask to forbid agents to make dumb captio
 
 #### Scenario: An empty timeline paints no captions in rows
 - **WHEN** a project with one empty morph row, one empty camera row and one empty video row is drawn
-- **THEN** no painted text lies inside the rows' rectangles; hovering the morph row shows its hint in the status line; its menu has "Add morpher layer"
-- **PATH** add a morph track → the empty row is plain, no caption → hover it → the status line explains it → right-click → "Add morpher layer"
+- **THEN** no painted text lies inside the rows' rectangles; hovering the morph row shows its hint in the status line; its menu has "Add morpher here"
+- **PATH** add a morph track → the empty row is plain, no caption → hover it → the status line explains it → right-click → "Add morpher here"
 - **TEST** t1636 (`src/apps/kt-app/src/layout_tests.rs`)

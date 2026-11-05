@@ -91,4 +91,4 @@ a hand-typed speed.
 - **WHEN** a 10 s event at constant 1×; separately — one with a speed curve; the playhead at 4 s; the command is run, then undone
 - **THEN** three pieces: 0–4 s as before, 4–6 s at rate 0 showing the material of 4 s, 6–10 s starting at the material of 4 s; the neighbour events are where they were; one undo returns the single event byte-equal
 - **PATH** right-click the event under the playhead → "Insert frame hold (freeze frame)" → the event shows a 2 s piece with a frozen frame, play → the picture stops for 2 s and goes on from the same frame
-- **TEST** t1627 (`src/apps/kt-app/src/reach_tests.rs`)
+- **TEST** t1627 (`src/apps/kt-app/src/reach_tests.rs`), t1638 (`src/libs/kt-engine/tests/clip_gain_floor.rs`)

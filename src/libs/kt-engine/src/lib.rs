@@ -126,7 +126,7 @@ pub mod simd_testing {
 }
 pub mod worker;
 
-pub use audio::{AudioRenderer, RenderStats, db_to_linear};
+pub use audio::{AudioRenderer, RenderStats, db_to_linear, event_gain_linear};
 pub use export::{
     ExportBackends, ExportOptions, ExportStats, export_mp4, export_mp4_with,
     export_mp4_with_backends, render_raw_audio, render_raw_video,

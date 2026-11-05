@@ -7947,3 +7947,201 @@ fn t1219_the_camera_window_is_the_pipeline() {
     // the effects window's session is ONE undo step (fx_editor: apply_coalesced): the bypass joins it
     assert_eq!(h.state().model.undo_depth(), depth, "the bypass opened an undo step of its own inside the window's session");
 }
+
+/// S1: "a convenient way to 'stop' an event: I want a freeze frame, and then continue it". The
+/// command is pressed where a person presses it: the event's menu, with the playhead on the event.
+#[test]
+fn t1627_frame_hold_keeps_the_length_and_goes_on_from_the_frame() {
+    use crate::i18n::{Lang, k, tr, set_lang};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::{Tick, TickRange};
+    const SEC: i64 = 90_000;
+    set_lang(Lang::En);
+    let event = |id: u64, start: i64, secs: i64, kind: ClipKind, group: Option<GroupId>| {
+        let mut c = crate::layout_tests::sample_clip(ClipId(id));
+        c.kind = kind;
+        c.lane = 0;
+        c.start = Tick(start * SEC);
+        c.duration = Tick(secs * SEC);
+        c.source_in = Tick(SEC);
+        c.media = MediaId(1);
+        c.link_group = group;
+        c
+    };
+    let mut h = crate::layout_tests::harness_lang_dt(Lang::En, None);
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+        p.clips.push(event(1, 2, 10, ClipKind::Video, Some(GroupId(7))));
+        p.clips.push(event(2, 2, 10, ClipKind::Audio, Some(GroupId(7))));
+        p.clips.push(event(3, 12, 3, ClipKind::Video, None));
+        p.validate().unwrap();
+        app.model = TimelineModel::new(p);
+        app.ticks_per_px = 900.0;
+        app.view_start = 0.0;
+        app.player.seek(Tick(6 * SEC));
+    }
+    h.step();
+    h.step();
+    let before = h.state().model.project().clone();
+    let g = h.state().tl_geom.clone().unwrap();
+    let pos = egui::pos2(g.tick_to_x(9 * SEC), g.lane_top(ClipKind::Video, 0) + 30.0);
+    right_click(&mut h, pos);
+    h.get_by_label(tr(k::tl::menu::FRAME_HOLD)).click();
+    h.step();
+    h.step();
+
+    let p = h.state().model.project();
+    let mut video: Vec<&ClipEvent> = p.clips.iter().filter(|c| c.kind == ClipKind::Video).collect();
+    video.sort_by_key(|c| c.start);
+    assert_eq!(video.len(), 4, "three pieces and the neighbour: {video:#?}");
+    let (l, hold, rest, next) = (video[0], video[1], video[2], video[3]);
+    assert_eq!((l.start, l.duration), (Tick(2 * SEC), Tick(4 * SEC)), "the piece before");
+    assert_eq!((hold.start, hold.duration), (Tick(6 * SEC), Tick(2 * SEC)), "the 2 s hold");
+    assert_eq!((rest.start, rest.duration), (Tick(8 * SEC), Tick(4 * SEC)), "the piece after");
+    assert_eq!((next.start, next.duration), (Tick(12 * SEC), Tick(3 * SEC)), "the neighbour moved");
+    assert_eq!(hold.source_in, Tick(5 * SEC), "the hold must stand on the frame at the playhead");
+    assert_eq!(hold.fx.iter().find_map(|f| f.warp_rate()), Some(0.0), "the hold is rate 0");
+    assert_eq!(rest.source_in, Tick(5 * SEC), "the rest must go on from the frozen frame");
+    let w = clip_warp(hold).expect("the hold has a map");
+    assert_eq!(w.material_off(hold.duration, false, SEC), 0, "the frame must not move in the hold");
+
+    // the partner did the same in the same step, and pieces stay pairs
+    let audio: Vec<&ClipEvent> = p.clips.iter().filter(|c| c.kind == ClipKind::Audio).collect();
+    assert_eq!(audio.len(), 3, "the linked partner follows");
+    let of = |t: i64| audio.iter().find(|c| c.start == Tick(t * SEC)).unwrap();
+    assert_eq!(of(6).link_group, hold.link_group, "the holds must stay a pair");
+    assert_eq!(of(8).link_group, rest.link_group, "the rests must stay a pair");
+    assert_ne!(hold.link_group, rest.link_group, "a hold and a rest are not one group");
+    assert_eq!(of(6).fx.iter().find_map(|f| f.warp_rate()), Some(0.0), "the sound of the hold");
+
+    // one undo returns all of it, byte-equal
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(
+        serde_json::to_string(h.state().model.project()).unwrap(),
+        serde_json::to_string(&before).unwrap(),
+        "one undo must return the event"
+    );
+
+    // a speed curve: the piece after the hold starts at the material of the frozen frame
+    let mut c = event(1, 0, 10, ClipKind::Video, None);
+    c.source_in = Tick(0);
+    c.fx = vec![FxInstance::slowed_reverb(1.0, 0.0, 60.0)];
+    c.fx_auto = vec![vec![ParamCurve {
+        param: "rate".into(),
+        keys: AutoKey::linear(vec![AutoKey::at(Tick(0), 1.0), AutoKey::at(Tick(10 * SEC), 2.0)]),
+        source: Default::default(),
+    }]];
+    let map = clip_warp(&c).unwrap();
+    let at = Tick(4 * SEC);
+    let frozen = c.source_in.0 + map.material_off(c.duration, false, at.0);
+    let held = frame_hold_piece(&c, TickRange::new(at, at + Tick(2 * SEC)), ClipId(5));
+    assert_eq!(held.source_in, Tick(frozen), "the curve case: the hold's frame");
+    assert!(held.fx_auto[0].iter().all(|cu| cu.param != "rate"), "the hold keeps no speed curve");
+    let mut after = clip_slice(&c, TickRange::new(at, Tick(8 * SEC)), ClipId(6));
+    after.start = Tick(6 * SEC);
+    assert_eq!(after.source_in, Tick(frozen), "the curve case: the rest's first frame");
+    let wa = clip_warp(&after).unwrap();
+    let want = map.material_off(c.duration, false, at.0 + SEC);
+    let got = after.source_in.0 + wa.material_off(after.duration, false, SEC) ;
+    assert!((got - want).abs() <= 450, "the rest must run as the event ran: {got} vs {want}");
+
+    // a mirrored event: the same frame, read from the other side
+    let mut r = event(1, 0, 10, ClipKind::Video, None);
+    r.source_in = Tick(0);
+    r.reversed = true;
+    let held = frame_hold_piece(&r, TickRange::new(at, at + Tick(2 * SEC)), ClipId(5));
+    assert_eq!(held.source_in, Tick(6 * SEC), "a reversed event shows material 6 s at 4 s");
+}
+
+/// T6: "I would like to drag the order of tracks with the mouse at the side". The drag is taken
+/// where a person takes it: on the name and above the badges, in three steps.
+#[test]
+fn t1637_a_track_is_reordered_by_its_header() {
+    use crate::i18n::{Lang, k};
+    use kt_model::LaneKind::Video as V;
+    let mut h = crate::layout_tests::harness_lang_dt(Lang::En, None);
+    h.state_mut().insert_lane_at(V, 1);
+    h.state_mut().insert_lane_at(V, 2);
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(kt_model::MediaRef::new(kt_model::MediaId(1), "synth:1"));
+        for i in 0..3u32 {
+            let mut c = crate::layout_tests::sample_clip(kt_model::ClipId(i as u64 + 1));
+            c.kind = kt_model::ClipKind::Video;
+            c.lane = i;
+            c.media = kt_model::MediaId(1);
+            p.clips.push(c);
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    // the order of the rows by the event each one carries
+    let names = |h: &egui_kittest::Harness<'static, crate::app::KtApp>| -> Vec<u64> {
+        let p = h.state().model.project();
+        p.rows()
+            .iter()
+            .filter(|r| r.0 == V)
+            .map(|r| p.clips.iter().find(|c| c.lane == r.1).expect("a clip on each row").id.0)
+            .collect()
+    };
+    let start = names(&h);
+    assert_eq!(start.len(), 3, "scene");
+    let rows = |h: &egui_kittest::Harness<'static, crate::app::KtApp>, id: u64| {
+        let g = h.state().tl_geom.clone().unwrap();
+        let lane = h.state().model.clip(kt_model::ClipId(id)).unwrap().lane;
+        g.rows.iter().position(|r| *r == (V, lane)).unwrap()
+    };
+    let (a, b, c) = (start[0], start[1], start[2]);
+    let g = h.state().tl_geom.clone().unwrap();
+    let x = g.rect.left() - crate::timeline::GUTTER_W * 0.5;
+    let r = rows(&h, b);
+    let name = egui::pos2(x, g.row_top(r) + g.row_h(r) * 0.3);
+    h.hover_at(name);
+    h.step();
+    h.step();
+    assert_eq!(h.output().platform_output.cursor_icon, egui::CursorIcon::Grab, "no hand on the header");
+    let label = h.state().row_label(V, g.rows[r].1);
+    let hint = h.state().hover_hint.clone().unwrap_or_default();
+    assert_eq!(hint, crate::tf!(k::tl::hint::LANE_NAMED, label), "no hint on the header");
+
+    let to = egui::pos2(x, g.row_center_y(rows(&h, c)));
+    h.drag_at(name);
+    h.step();
+    h.hover_at(name + egui::vec2(0.0, 8.0));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+    h.step();
+    assert_eq!(names(&h), [a, c, b], "the drag from the name");
+    h.state_mut().undo();
+    h.step();
+    h.step();
+    assert_eq!(names(&h), [a, b, c], "one undo must restore the order");
+
+    // from above the badges
+    let g = h.state().tl_geom.clone().unwrap();
+    let r = rows(&h, c);
+    let above = egui::pos2(g.rect.left() - crate::timeline::GUTTER_W + 12.0, g.row_top(r) + 7.0);
+    let to = egui::pos2(above.x, g.row_center_y(rows(&h, a)));
+    h.hover_at(above);
+    h.step();
+    h.drag_at(above);
+    h.step();
+    h.hover_at(above + egui::vec2(0.0, -8.0));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+    h.step();
+    assert_eq!(names(&h), [c, a, b], "the drag from above the badges");
+}

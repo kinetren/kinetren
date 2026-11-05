@@ -281,6 +281,13 @@ pub struct KtApp {
     pub update: Option<std::sync::Arc<crate::update_check::Checker>>,
     /// Moment of the last pause (double Space = stop, item 15 round 6).
     pub paused_at: Option<std::time::Instant>,
+    /// Stall episodes already posted to the bell (R.72, M5).
+    pub seen_stalls: u64,
+    /// What a click on a track header's free area jumped from: its double click is a rename,
+    /// and the rename gives the view back (the same way as the triple click on an event).
+    pub gutter_jump_from: Option<(f64, i64)>,
+    /// Where the range-marker edge being dragged stood at the press: its snap leaves it out.
+    pub marker_edge_from: i64,
     /// The Space press being held (item 3 round 16, R.72). None = not held.
     pub space_press: Option<SpacePress>,
     /// Current speed-up multiplier from holding Space (None = not speeding up). After a
@@ -858,6 +865,9 @@ impl KtApp {
             telemetry: crate::telemetry::global(),
             update: crate::update_check::global(),
             paused_at: None,
+            seen_stalls: 0,
+            gutter_jump_from: None,
+            marker_edge_from: 0,
             space_press: None,
             space_boost: None,
             space_held_s: 0.0,
@@ -1139,6 +1149,9 @@ impl KtApp {
             telemetry: crate::telemetry::global(),
             update: crate::update_check::global(),
             paused_at: None,
+            seen_stalls: 0,
+            gutter_jump_from: None,
+            marker_edge_from: 0,
             space_press: None,
             space_boost: None,
             space_held_s: 0.0,
@@ -1647,6 +1660,7 @@ impl KtApp {
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
         // the preview is detached is called twice, item 3 round 16).
         self.tick_space_boost(&ctx);
+        self.post_stalls();
         self.handle_drops(&ctx);
         self.hover_hint = None;
         self.no_resize_rects.clear();
@@ -2656,6 +2670,30 @@ impl KtApp {
         self.pending_reveal = Some(self.player.transport.playhead().0);
     }
 
+    /// One frame back or forward (T11): the arrows and Ctrl+click on Back/Forward. During
+    /// playback the first step pauses, then steps from where the picture stopped. The target
+    /// is a frame of the fps grid: an added length from a tick between frames would give a
+    /// double step, and a tick that truncated on its way through the audio frames would stick
+    /// (the "Forward" of item 7 round 10).
+    pub(crate) fn frame_step(&mut self, forward: bool) {
+        if self.player.transport.is_playing() {
+            self.player.pause();
+            self.paused_at = None;
+        }
+        let grid = self.player.video_grid();
+        let at = self.player.transport.playhead();
+        // a head one audio frame short of a frame IS that frame
+        let n = grid.frame_index(at + Tick(2));
+        let on_grid = (grid.frame_start(n) - at).0.abs() <= 2;
+        let to = match (forward, on_grid) {
+            (true, _) => n + 1,
+            (false, true) => n - 1,
+            (false, false) => n,
+        };
+        self.player.seek(Tick(grid.frame_start(to).0.max(crate::timeline::CURSOR_FLOOR)).align_audio_up());
+        self.pending_reveal = Some(self.player.transport.playhead().0);
+    }
+
     /// Navigation “Back”/“Forward” with Shift = DRAG the region (item 2 round 16).
     ///
     /// Shift is the same “extend selection” modifier as in Premiere,
@@ -2896,6 +2934,19 @@ impl KtApp {
                 self.on_play();
             }
         }
+    }
+
+    /// Every new stall episode goes to the bell with its place (M5: "if it is important it must
+    /// be in notices, not somewhere in the corners"). The performance panel keeps its counter.
+    fn post_stalls(&mut self) {
+        let (n, head) = self.player.flight.stalls();
+        if n == self.seen_stalls {
+            return;
+        }
+        self.seen_stalls = n;
+        let fps = self.model.project().settings.fps;
+        let at = crate::util::format_timecode(Tick::from_audio_frames(head), fps);
+        self.warn(crate::tf!(k::msg::STALL_AT, at));
     }
 
     /// Start playback from the current position (resume semantics, item 15).
@@ -6109,6 +6160,52 @@ impl KtApp {
             + 1
     }
 
+    /// “Insert frame hold (freeze frame)” (S1): the event under the playhead stops on the frame
+    /// at the playhead for 2 s and goes on from it. It keeps its length, nothing else moves (rule
+    /// 20), linked partners do the same in the same step, and one undo takes it all back.
+    pub fn insert_frame_hold(&mut self, id: ClipId) {
+        let at = self.player.video_grid().align_floor(self.player.transport.playhead());
+        let group = self.model.clip(id).and_then(|c| c.link_group);
+        // the event itself, then its partners that the playhead crosses too
+        let targets: Vec<(ClipId, Tick)> = {
+            let p = self.model.project();
+            p.clips
+                .iter()
+                .filter(|c| c.id == id || (group.is_some() && c.link_group == group))
+                .filter(|c| at - c.start >= kt_model::MIN_CLIP_DURATION)
+                .filter(|c| c.start + c.duration - at >= kt_model::MIN_CLIP_DURATION)
+                .map(|c| (c.id, c.start + c.duration))
+                .collect()
+        };
+        if !targets.iter().any(|(c, _)| *c == id) {
+            self.note(tr(k::msg::CURSOR_OUTSIDE));
+            return;
+        }
+        let mut next_id = self.next_clip_id();
+        let mut next_group = self.next_group_id();
+        let mut groups = |had: bool| {
+            had.then(|| {
+                next_group += 1;
+                GroupId(next_group - 1)
+            })
+        };
+        // one new group per piece: the holds of a pair stay a pair, the rests too
+        let (hold_group, rest_group) = (groups(group.is_some()), groups(group.is_some()));
+        let mut cmds = Vec::new();
+        for (cid, end) in targets {
+            let left = end - at;
+            let hold = if left - FRAME_HOLD < kt_model::MIN_CLIP_DURATION { left } else { FRAME_HOLD };
+            let hold_id = ClipId(next_id);
+            next_id += 1;
+            let rest = (hold < left).then(|| {
+                next_id += 1;
+                (ClipId(next_id - 1), rest_group)
+            });
+            cmds.push(Command::FrameHold { id: cid, at, hold, hold_id, hold_group, rest });
+        }
+        self.apply_batch_restoring(cmds);
+    }
+
     pub fn split_selected(&mut self) {
         if self.selected.is_empty() {
             self.note(tr(k::msg::NOTHING_TO_CUT));
@@ -7486,6 +7583,8 @@ impl KtApp {
             paste: bool,
             nav_prev: bool,
             nav_next: bool,
+            frame_prev: bool,
+            frame_next: bool,
             nav_far: bool,
             nav_region: bool,
             goto_tc: bool,
@@ -7560,6 +7659,9 @@ impl KtApp {
             // item 8 of round 10: A/D — the same jumps as the navigation buttons.
             // “To the very end” remains only on Shift+Home/End: Shift+D
             // must not suddenly fly to the end of the project.
+            // `key_pressed`: the autorepeat of a held arrow IS the repeated step
+            frame_prev: i.key_pressed(egui::Key::ArrowLeft) && i.modifiers.is_none(),
+            frame_next: i.key_pressed(egui::Key::ArrowRight) && i.modifiers.is_none(),
             nav_prev: i.key_pressed(egui::Key::Home)
                 || (i.key_pressed(egui::Key::A) && !i.modifiers.ctrl && !i.modifiers.alt),
             nav_next: i.key_pressed(egui::Key::End)
@@ -7585,6 +7687,12 @@ impl KtApp {
         if k.find {
             self.search_open = true;
             self.search_focus = true;
+        }
+        if k.frame_prev {
+            self.frame_step(false);
+        }
+        if k.frame_next {
+            self.frame_step(true);
         }
         if k.nav_prev {
             self.nav_jump(false, k.nav_far, k.nav_region);
@@ -7774,6 +7882,8 @@ pub const SPACE_BOOST_MAX: f32 = 4.0;
 /// the direct request of item 3 of round 17 (“it must be 5, not 2, otherwise it is very fast”) —
 /// do NOT speed it up without a new request.
 pub const SPACE_BOOST_SECS: f32 = 5.0;
+/// How long “Insert frame hold” stands (S1, R.72): the owner gave no number, 2 s is the design's.
+pub const FRAME_HOLD: Tick = Tick(2 * 90_000);
 /// The first second of a hold eases into the rise (USABILITY 3, R.72).
 pub const SPACE_EASE_SECS: f32 = 1.0;
 /// The fall's time constant as a share of the rise's (design of r72): 95 % of the way in 1.25 s.
