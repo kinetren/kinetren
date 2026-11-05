@@ -17,6 +17,17 @@ use egui_kittest::Harness;
 const W: f32 = 1440.0;
 const H: f32 = 860.0;
 
+/// The tests that read the picture skip without a video device, as the GPU tests do.
+pub(crate) fn no_device() -> bool {
+    crate::plugins::install();
+    let none = kt_gpu::offline_engine().is_none();
+    if none {
+        assert!(std::env::var("KT_REQUIRE_GPU").as_deref() != Ok("1"), "KT_REQUIRE_GPU=1, but no video device");
+        eprintln!("skipped: no video device");
+    }
+    none
+}
+
 pub fn harness() -> Harness<'static, KtApp> {
     harness_lang(crate::i18n::Lang::Ru)
 }
@@ -3205,7 +3216,7 @@ fn t176_audio_and_video_share_one_level_line() {
     assert_eq!(p.clips[0].duration, Tick(200_000), "event is untouched");
 }
 
-/// Test 185 (R.29): loss of the video GPU executor — the warning exactly once, after that the CPU fallback works silently;
+/// Test 185 (R.29): loss of the video GPU executor — the warning exactly once, after that the preview stays silent;
 /// the backend status is honest.
 #[test]
 fn t185_gpu_loss_notice_once() {
@@ -3223,10 +3234,6 @@ fn t185_gpu_loss_notice_once() {
         }
     }
     let mut h = harness();
-    assert!(
-        matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Cpu),
-        "in the harness without wgpu the backend is honestly CPU"
-    );
     h.state_mut().player.set_video_gpu(Some(std::sync::Arc::new(DeadGpu(
         kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true },
     ))));
@@ -4163,6 +4170,9 @@ fn t210_render_with_missing_sources_warns_and_runs() {
 /// a placeholder stands — the preview is complete, not hanging in “Loading”.
 #[test]
 fn t209_missing_source_opens_with_placeholder_and_notices() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_model::*;
     use kt_time::Tick;
     let dir = std::env::temp_dir().join(format!("kt-t209-{}", std::process::id()));
@@ -6604,6 +6614,9 @@ fn t489_safe_zones_follow_title_window() {
 /// as the form in the window (rule 17 by construction).
 #[test]
 fn t495_title_drag_in_preview_writes_pos() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
@@ -13963,6 +13976,9 @@ fn t719_vertical_thumb_keeps_its_aspect_and_scroll_orders_no_decode() {
 /// by the edit). The CONSEQUENCE is asserted: the field’s pixel changes.
 #[test]
 fn t722b_project_rule_change_repaints_the_paused_preview() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_model::*;
     use kt_time::Tick;
     let mut h = harness_lang_dt(crate::i18n::Lang::Ru, Some(0.02));
@@ -15542,6 +15558,9 @@ pub(crate) fn harness_geom_ctl() -> (Harness<'static, KtApp>, kt_model::ClipId) 
 /// another.
 #[test]
 fn t760_frame_matches_the_placement_and_drag_writes_the_same_numbers() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_model::*;
     let (mut h, clip) = harness_geom_ctl();
     let q = h.state().player.preview_quality();
@@ -15786,6 +15805,9 @@ fn t759_transform_form_groups_pairs_sliders_and_reset() {
 /// into the base — both halves of the rule in one test.
 #[test]
 fn t762b_gesture_over_a_curve_sets_a_key() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_model::*;
     let (mut h, clip) = harness_geom_ctl();
     // a curve on pos_x: 0 → 0.2 across all the material of the event
@@ -15861,6 +15883,9 @@ fn t762b_gesture_over_a_curve_sets_a_key() {
 /// at a knob the size of a dot.
 #[test]
 fn t763_handles_are_hittable_and_the_nearest_wins() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use crate::geomctl::{GRAB, GeomMode, nearest_handle};
     use kt_fx::geom::Handle;
     let (h, clip) = harness_geom_ctl();
@@ -16140,6 +16165,9 @@ fn tr_for(lang: crate::i18n::Lang) -> &'static str {
 /// while playing and stays put after Stop, composing nothing more (invariant 12).
 #[test]
 fn t947_perf_panel_shows_the_compose_cost() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use egui_kittest::kittest::{NodeT, Queryable};
     let (mut h, _clip) = harness_geom_ctl_file();
     // the panel is a section of the Diagnostics window (diagnostics-three-graphs)
@@ -16199,6 +16227,9 @@ fn t947_perf_panel_shows_the_compose_cost() {
 /// (invariant 12) demands the same from the other side.
 #[test]
 fn t764_controls_hide_while_playing_and_cost_nothing_idle() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, _clip) = harness_geom_ctl();
     assert!(h.state().geom_ctl_drawn, "scene: during pause the controls are drawn");
 
@@ -16299,6 +16330,9 @@ fn handle_pos(
 /// Test 760b (R.64): rotation by the rotate knob, step by Shift.
 #[test]
 fn t760b_rotation_handle_turns_the_layer() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_fx::geom::Handle;
     let (mut h, clip) = harness_geom_ctl();
     assert_eq!(h.state().model.clip(clip).unwrap().geometry.rot, 0.0, "scene: the layer is not rotated");
@@ -16358,6 +16392,9 @@ fn t760b_rotation_handle_turns_the_layer() {
 /// A REAL GESTURE.
 #[test]
 fn t761b_anchor_gesture_keeps_the_picture_in_place() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_fx::geom::Handle;
     for rot in [0.0f64, 30.0] {
         let (mut h, clip) = harness_geom_ctl();
@@ -16434,6 +16471,9 @@ pub(crate) fn harness_geom_ctl_file() -> (Harness<'static, KtApp>, kt_model::Cli
 /// still-image-frame-rule, whose frame the overlay then sized by a view the render did not have.
 #[test]
 fn t762_crop_handles_cut_their_own_side() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_fx::geom::Handle;
     let (mut h, clip) = harness_geom_ctl_file();
     h.state_mut().geom_ctl = crate::geomctl::GeomMode::Crop;
@@ -17370,6 +17410,9 @@ fn t791_instance_head_has_the_same_curve_block() {
 /// rectangle.
 #[test]
 fn t794_frame_is_on_by_default_remembered_and_the_schema_fits() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use kt_model::*;
     // --- default: the display is ON with no action at all ---------------------
     assert_eq!(
@@ -17774,6 +17817,9 @@ fn wait_complete(h: &mut Harness<'_, KtApp>, at_s: f64) -> bool {
 /// nor an end of material.
 #[test]
 fn t796c_a_still_shows_on_the_whole_event_without_loading() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, dir) = harness_still(true);
     for at in [0.0, 9.5, 19.9] {
         assert!(
@@ -17800,6 +17846,9 @@ fn t796c_a_still_shows_on_the_whole_event_without_loading() {
 /// and every rule must give its own picture.
 #[test]
 fn t939_a_still_follows_the_frame_rule_in_the_preview() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, dir) = harness_still_of(Some("still_square.png"), "square", "square.png");
@@ -17889,6 +17938,9 @@ fn t939_a_still_follows_the_frame_rule_in_the_preview() {
 /// eternal “Loading…”; the returned file replaces it on the fly.
 #[test]
 fn t796d_a_missing_still_is_a_named_placeholder_not_loading() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, dir) = harness_still(false);
     assert_eq!(h.state().placeholder_media.len(), 1, "the missing picture did not turn into a placeholder");
     assert!(

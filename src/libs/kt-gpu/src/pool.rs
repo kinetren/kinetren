@@ -187,7 +187,7 @@ impl UploadCache {
 }
 
 /// LRU of ready composition frames: plan hash → (RGBA, complete). Keeps the
-/// warm loop fast (the GPU path has no PostFxVideo memoization of the CPU).
+/// warm loop fast (the GPU path has no post-FX memoization).
 pub(crate) struct ReadbackCache {
     map: HashMap<u64, (Vec<u8>, bool)>,
     order: VecDeque<u64>,

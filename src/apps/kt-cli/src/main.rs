@@ -624,8 +624,7 @@ fn probe_prefetch(project: &Project, facts: &kt_engine::SourceFacts, t0: Tick, t
 }
 
 /// `probe --time`, the VIDEO half (morpher-event-grid-cost, D1): what composing each frame of
-/// the range costs on the backend `render` would use (the GPU by default, `KT_VIDEO_GPU=0` —
-/// the CPU), at the project raster. The frames are decoded into a cache FIRST, so the times
+/// the range costs at the project raster. The frames are decoded into a cache FIRST, so the times
 /// are the compose alone; the counts (passes, sub-samples) come from the executor that ran
 /// (`FrameCost`), the time from the wall clock — a diagnostic, it writes no bytes.
 fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result<(), String> {
@@ -642,7 +641,7 @@ fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result
             facts.observe(*a, s.info());
         }
     }
-    let mut video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
+    let video = kt_engine::VideoRenderer::new_with_facts(project, &facts);
     let q = kt_media::Quality { width: project.settings.width, height: project.settings.height };
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
         max_audio_bytes: 1,
@@ -662,17 +661,10 @@ fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result
             });
         }
     }
-    let gpu = if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
-        None
-    } else {
-        kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).ok()
-    };
-    let backend = match &gpu {
-        Some(e) => {
-            use kt_engine::VideoGpuExec as _;
-            format!("GPU ({})", e.info().name)
-        }
-        None => "CPU".to_string(),
+    let gpu = kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).map_err(|e| format!("no video device: {e}"))?;
+    let backend = {
+        use kt_engine::VideoGpuExec as _;
+        format!("GPU ({})", gpu.info().name)
     };
     let step = video.grid.frame_step();
     let mut ms = Vec::new();
@@ -683,14 +675,11 @@ fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result
     let mut t = start;
     while t < t1 {
         let clock = std::time::Instant::now();
-        let (complete, cost) = match &gpu {
-            Some(e) => {
-                use kt_engine::VideoGpuExec as _;
-                let plan = video.frame_plan(&cache, t, q);
-                let c = e.execute_into(&plan, &mut buf).map_err(|e| format!("gpu: {e:?}"))?;
-                (c, e.last_cost())
-            }
-            None => (video.compose_export_into(&cache, t, q, &mut buf), video.last_cost()),
+        let (complete, cost) = {
+            use kt_engine::VideoGpuExec as _;
+            let plan = video.frame_plan(&cache, t, q);
+            let c = gpu.execute_into(&plan, &mut buf).map_err(|e| format!("gpu: {e:?}"))?;
+            (c, gpu.last_cost())
         };
         ms.push(clock.elapsed().as_secs_f64() * 1e3);
         incomplete += u64::from(!complete);
@@ -853,7 +842,6 @@ fn preview_run(
     from: f64,
     to: f64,
     size: Option<kt_media::Quality>,
-    cpu: bool,
     ui_ms: f64,
     free_running: bool,
     cold: bool,
@@ -877,17 +865,12 @@ fn preview_run(
         height: project.settings.height,
     });
     player.set_preview_quality(q);
-    let gpu = if cpu { None } else { kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).ok() };
-    let backend = match &gpu {
-        Some(e) => {
-            use kt_engine::VideoGpuExec as _;
-            format!("GPU ({})", e.info().name)
-        }
-        None => "CPU".to_string(),
+    let gpu = kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).map_err(|e| format!("no video device: {e}"))?;
+    let backend = {
+        use kt_engine::VideoGpuExec as _;
+        format!("GPU ({})", gpu.info().name)
     };
-    if let Some(e) = gpu {
-        player.set_video_gpu(Some(e));
-    }
+    player.set_video_gpu(Some(gpu));
     let opts = kt_engine::preview_bench::BenchOptions {
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
         to: Tick((to * kt_time::TICK_HZ as f64) as i64),
@@ -975,10 +958,6 @@ fn preview_run(
                 m.iter().map(|(m, (w, h))| format!("{}@{w}x{h}", m.0)).collect();
             println!("  starved {:.2}: {}", t.0 as f64 / kt_time::TICK_HZ as f64, ids.join(" "));
         }
-    }
-    let (ahead, taken) = player.compose_ahead_counts();
-    if ahead > 0 {
-        println!("  composed ahead {ahead}, taken by the display {taken}");
     }
     let lookups = (r.video_hits + r.video_misses).max(1);
     println!(
@@ -1407,7 +1386,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--cpu] [--ui-ms N] [--free-running] [--cold]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold]"
                 );
                 return 2;
             };
@@ -1424,10 +1403,9 @@ fn run(args: &[String]) -> i32 {
                 Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? })
             });
             let ui_ms = opt("--ui-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-            let cpu = args.iter().any(|a| a == "--cpu");
             let free = args.iter().any(|a| a == "--free-running");
             let cold = args.iter().any(|a| a == "--cold");
-            match preview_run(&project, input, from, to, size, cpu, ui_ms, free, cold) {
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
@@ -1514,20 +1492,19 @@ fn run(args: &[String]) -> i32 {
                 profile: profile.clone(),
                 ..Default::default()
             };
-            // R.29: rendering on the GPU by default (headless device, the same
-            // composition code); no adapter → CPU with a note in stderr,
-            // KT_VIDEO_GPU=0 — forced CPU
-            let video_gpu = match kt_gpu::export_engine() {
+            // R.29: headless devices, the same composition code as the preview
+            let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines() {
                 Ok(e) => {
                     use kt_engine::VideoGpuExec as _;
-                    eprintln!("video: GPU ({})", e.info().name);
-                    Some(e as std::sync::Arc<dyn kt_engine::VideoGpuExec>)
+                    eprintln!("video: GPU ({}, {} engines)", e[0].info().name, e.len());
+                    e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect()
                 }
                 Err(err) => {
-                    eprintln!("video: CPU ({err})");
-                    None
+                    eprintln!("no video device: {err}");
+                    return 1;
                 }
             };
+            let video_gpu = (!engines.is_empty()).then(|| engines.remove(0));
             match kt_engine::export_mp4_with_backends(
                 &project,
                 audio_sources,
@@ -1535,7 +1512,7 @@ fn run(args: &[String]) -> i32 {
                 output,
                 None,
                 &opts,
-                &kt_engine::ExportBackends { video_gpu },
+                &kt_engine::ExportBackends { video_gpu, video_gpu_more: engines },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 // the log facts, in English, on stderr (render-window-v1-parity, D1)

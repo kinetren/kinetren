@@ -85,6 +85,9 @@ fn picture(h: &Harness<'_, KtApp>, clip: kt_model::ClipId) -> Vec<Mask> {
 /// Test 1276: Rectangle from the preview menu, drawn by one drag — one history step.
 #[test]
 fn t1276_a_rectangle_drawn_from_the_preview_menu_is_one_step() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let owner = MaskOwner::Picture(clip);
     preview_menu(&mut h, crate::i18n::tr(crate::i18n::k::masks::RECT));
@@ -113,6 +116,9 @@ fn t1276_a_rectangle_drawn_from_the_preview_menu_is_one_step() {
 /// Test 1277: the pen draws a Bézier path; Esc drops an unfinished one, a second Esc leaves.
 #[test]
 fn t1277_the_pen_draws_a_bezier_path() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let owner = MaskOwner::Picture(clip);
     preview_menu(&mut h, crate::i18n::tr(crate::i18n::k::masks::PEN));
@@ -167,6 +173,9 @@ fn with_path(h: &mut Harness<'_, KtApp>, clip: kt_model::ClipId) -> Mask {
 /// Test 1278: dragging a point of an animated path keys the whole path; no key without a gesture.
 #[test]
 fn t1278_a_point_drag_on_an_animated_path_keys_the_whole_path() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let owner = MaskOwner::Picture(clip);
     with_path(&mut h, clip);
@@ -216,6 +225,9 @@ fn t1278_a_point_drag_on_an_animated_path_keys_the_whole_path() {
 /// Test 1282: around a mask the preview still plays and pauses; during playback the handles rest.
 #[test]
 fn t1282_the_preview_click_and_playback_around_masks() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let owner = MaskOwner::Picture(clip);
     with_path(&mut h, clip);
@@ -280,6 +292,9 @@ fn harness_with_slot() -> (Harness<'static, KtApp>, kt_model::ClipId) {
 /// Test 1279: an effect is limited to a mask from the effects window; Cancel rolls it back.
 #[test]
 fn t1279_an_effect_is_limited_to_a_mask_from_the_effects_window() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, clip) = harness_with_slot();
     open_masks(&mut h);
     h.get_by_label(crate::i18n::tr(crate::i18n::k::masks::ELLIPSE)).click();
@@ -305,6 +320,9 @@ fn t1279_an_effect_is_limited_to_a_mask_from_the_effects_window() {
 /// Test 1281: the picture masks in the Geometry node — two masks, a mode, the order.
 #[test]
 fn t1281_the_picture_masks_live_in_the_geometry_node() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let owner = MaskOwner::Picture(clip);
     h.state_mut().open_fx_editor(clip);
@@ -363,6 +381,9 @@ fn t1281_the_picture_masks_live_in_the_geometry_node() {
 /// Test 1280: the track window's Masks section; a track's masks are static and a curve is refused.
 #[test]
 fn t1280_the_track_window_has_its_masks_and_refuses_curves() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     let lane = h.state().model.clip(clip).unwrap().lane;
     let tid = h.state().model.project().track_at(kt_model::LaneKind::Video, lane).unwrap().id;

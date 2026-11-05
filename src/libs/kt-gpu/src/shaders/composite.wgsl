@@ -18,9 +18,8 @@ fn over(dst: vec4<u32>, src: vec4<u32>) -> vec4<u32> {
     return vec4<u32>(rgb, a);
 }
 
-// BLEND MODE of a track (R.62, F-CMP-003): a MIRROR of `blend_ch` from
-// kt-engine/src/video.rs. It is edited in the SAME COMMIT as the CPU kernel
-// (invariant 7): a divergence means the preview and the export show different things.
+// BLEND MODE of a track (R.62, F-CMP-003). The formula is also `blend_ch` in
+// kt-engine/src/video.rs, which the tests read; edit both in the SAME COMMIT.
 fn blend_ch(mode: u32, b: f32, a: f32) -> f32 {
     if (mode == 1u) { return b * a; }                       // multiply
     if (mode == 2u) { return b + a - b * a; }               // screen
@@ -209,7 +208,7 @@ fn hpanel(base: u32, x: f32, y: f32) -> vec3<f32> {
     return vec3<f32>(s, t, 1.0);
 }
 
-// Coordinate along the curl axis (the front toward dir): a mirror of the CPU kernel’s axis_c.
+// Coordinate along the curl axis (the front toward dir).
 fn axis_c(uv: vec2<f32>, d: vec2<f32>) -> f32 {
     if (d.x > 0.5) { return 1.0 - uv.x; }
     if (d.x < -0.5) { return uv.x; }
@@ -217,7 +216,7 @@ fn axis_c(uv: vec2<f32>, d: vec2<f32>) -> f32 {
     return uv.y;
 }
 
-// A sample with the axial coordinate replaced: a mirror of axis_sample.
+// A sample with the axial coordinate replaced.
 fn axis_sample(which: u32, uv: vec2<f32>, d: vec2<f32>, m: f32) -> vec4<f32> {
     if (d.x > 0.5) { return samp(which, vec2<f32>(1.0 - m, uv.y)); }
     if (d.x < -0.5) { return samp(which, vec2<f32>(m, uv.y)); }
@@ -225,7 +224,7 @@ fn axis_sample(which: u32, uv: vec2<f32>, d: vec2<f32>, m: f32) -> vec4<f32> {
     return samp(which, vec2<f32>(uv.x, m)); 
 }
 
-/// Rounding to the nearest integer, the same way the CPU kernel writes bytes.
+/// Rounding to the nearest integer.
 fn to_u8(c: vec4<f32>) -> vec4<u32> {
     return vec4<u32>(clamp(floor(c + vec4<f32>(0.5)), vec4<f32>(0.0), vec4<f32>(255.0)));
 }

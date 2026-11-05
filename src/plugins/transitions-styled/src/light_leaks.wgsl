@@ -1,4 +1,4 @@
-// A glare spot: a mirror of the CPU kernel’s blob().
+// A glare spot.
 fn leak_blob(uv: vec2<f32>, bx: f32, by: f32, aspect: f32) -> f32 {
     let dx = (uv.x - bx) * aspect;
     let dy = uv.y - by;

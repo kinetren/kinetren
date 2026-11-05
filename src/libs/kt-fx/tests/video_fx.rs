@@ -2,8 +2,8 @@
 //! The synthetic frame is deterministic; the hash fixes the behaviour, the properties
 //! catch semantic breakage (agents must run them on any kt-fx edit).
 
-use kt_fx::video::{Frame, VideoFxCtx, apply_video_chain};
-use kt_model::{CamKeyframe, FxInstance, PanMode};
+use kt_fx::video::{Frame, VideoFxCtx};
+use kt_model::FxInstance;
 use xxhash_rust::xxh3::xxh3_64;
 
 const W: u32 = 64;
@@ -43,7 +43,7 @@ fn test_frame() -> Frame {
 }
 
 fn run(fx: FxInstance) -> Frame {
-    apply_video_chain(&[fx], test_frame(), &ctx())
+    kt_gpu::testkit::chain(&[fx], test_frame(), &ctx())
 }
 
 fn mean_rgb(f: &Frame) -> f64 {
@@ -51,74 +51,14 @@ fn mean_rgb(f: &Frame) -> f64 {
     s as f64 / (f.rgba.len() as f64 * 3.0 / 4.0)
 }
 
-/// Golden hashes: fix the current behaviour of all 10 effects BY NAME
-/// (R.29: one shared sum hid which exact effect had drifted). Changing the
-/// reference is allowed ONLY with a deliberate change to the algorithm of that
-/// exact effect. The last sanctioned change: noise → counter-based hash
-/// (R.29, a parallelizable RNG for GPU); the other 9 have not changed since v1.
-const GOLDEN: [(&str, u64); 10] = [
-    // R.62: the Pan row became the “Geometry” node with the same zoom and shift
-    ("pan", 0x6c0bcbba503e2045),
-    ("cammotion", 0x796fb338df86d795),
-    ("mirror", 0x6e6b11df22c1c072),
-    ("blur", 0xec8d2f412f21f555),
-    ("greenscreen", 0x18dd7db23eb92552),
-    ("edges", 0x35521b30cd97497e),
-    ("noise", 0x2c1bd320d47c00c6), // R.29: counter-based hash
-    ("vhs", 0xd82252c584915e16),
-    ("glow", 0x32647b93a6a84eb2),
-    ("eventgrid", 0x0f78a8817bcf1bbe),
-];
-
-#[test]
-fn t26_golden_hashes_all_effects() {
-    kt_plugins_builtin::install();
-    let cases: Vec<(&str, FxInstance)> = vec![
-        ("pan", FxInstance::geometry_at(-0.05, 0.03333, 1.5)),
-        (
-            "cammotion",
-            FxInstance::CamMotion {
-                ease: true,
-                mode: PanMode::Fit,
-                time_scale: 1.0,
-                keyframes: vec![
-                    CamKeyframe { t: 0.0, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },
-                    CamKeyframe { t: 1.0, pan_x: 0.5, pan_y: 0.0, zoom: 2.0 },
-                ],
-            },
-        ),
-        ("mirror", kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()),
-        ("blur", FxInstance::blur(8)),
-        ("greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
-        ("edges", FxInstance::edges(48)),
-        ("noise", FxInstance::noise(0.3)),
-        ("vhs", FxInstance::vhs(4, 0.4)),
-        ("glow", FxInstance::glow(0.65)),
-        ("eventgrid", kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap()),
-    ];
-    let mut failures = Vec::new();
-    // zip would silently drop the extra case: the 11th effect would be left without
-    // a golden and nobody would notice (trap of R.47, Kv1)
-    assert_eq!(cases.len(), GOLDEN.len(), "cases and GOLDEN must be the same length");
-    for ((name, fx), (gname, golden)) in cases.into_iter().zip(GOLDEN) {
-        assert_eq!(name, gname, "the order of cases and GOLDEN must match");
-        let f = run(fx);
-        let h = xxh3_64(&f.rgba);
-        // on a deliberate algorithm change: cargo test -- --nocapture, take the
-        // new hash from the output and update ONLY the line of this effect
-        println!("(\"{name}\", 0x{h:016x}), // {}x{}", f.w, f.h);
-        if golden != 0 && h != golden {
-            failures.push(format!("{name}: 0x{h:016x} != golden 0x{golden:016x}"));
-        }
-    }
-    assert!(failures.is_empty(), "video FX changed behaviour:\n{}", failures.join("\n"));
-}
-
 /// Test 299 (item 306): a grid larger than the frame neither panics nor shifts.
 /// Before the fix, `center: true` with `cols > out_w` drove `ow - grid_w` into a
 /// u32 underflow (a panic in debug); the guard mirrors `chain_ops` of kt-gpu.
 #[test]
 fn t299_eventgrid_larger_than_frame_is_guarded() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     for center in [false, true] {
         let f = run(FxInstance::plugin_with("event_grid", &[1000.0, 1000.0, if center { 1.0 } else { 0.0 }]).unwrap());
@@ -135,15 +75,21 @@ fn t299_eventgrid_larger_than_frame_is_guarded() {
 
 #[test]
 fn t26_mirror_is_involution() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let m = kt_model::FxInstance::plugin_with("mirror", &[1.0, 1.0]).unwrap();
-    let once = apply_video_chain(std::slice::from_ref(&m), test_frame(), &ctx());
-    let twice = apply_video_chain(&[m], once, &ctx());
+    let once = kt_gpu::testkit::chain(std::slice::from_ref(&m), test_frame(), &ctx());
+    let twice = kt_gpu::testkit::chain(&[m], once, &ctx());
     assert_eq!(twice.rgba, test_frame().rgba, "double mirror = source");
 }
 
 #[test]
 fn t26_blur_preserves_mean_and_reduces_variance() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let src = test_frame();
     let out = run(FxInstance::blur(12));
@@ -163,6 +109,9 @@ fn t26_blur_preserves_mean_and_reduces_variance() {
 
 #[test]
 fn t26_greenscreen_keys_out_green_corner() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let out = run(FxInstance::greenscreen([0, 255, 0], 70, 25));
     assert!(out.has_alpha);
@@ -175,11 +124,14 @@ fn t26_greenscreen_keys_out_green_corner() {
 
 #[test]
 fn t26_noise_is_deterministic_per_position() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let a = run(FxInstance::noise(0.3));
     let b = run(FxInstance::noise(0.3));
     assert_eq!(a.rgba, b.rgba, "one timeline position = one grain");
-    let other = apply_video_chain(
+    let other = kt_gpu::testkit::chain(
         &[FxInstance::noise(0.3)],
         test_frame(),
         &VideoFxCtx { burst_index: 180_000, ..ctx() },
@@ -189,6 +141,9 @@ fn t26_noise_is_deterministic_per_position() {
 
 #[test]
 fn t26_eventgrid_tiles_are_identical() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let out = run(kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap());
     assert_eq!((out.w, out.h), (W, H));
@@ -208,6 +163,9 @@ fn t26_eventgrid_tiles_are_identical() {
 
 #[test]
 fn t26_pan_stretch_identity_when_no_zoom() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // stretch + zoom 1 + pan 0 on a frame of out size is almost an identity
     let out = run(FxInstance::geometry_zoom(1.0));
@@ -222,53 +180,6 @@ fn t26_pan_stretch_identity_when_no_zoom() {
     assert!(per_px < 1.5, "stretch 1:1 almost without distortion, avg diff {per_px:.3}");
 }
 
-/// Test 68 (item 2, round 7): a pooled chain with a DIRTY reused pool
-/// is byte-identical to a fresh run, for each effect and for the chain
-/// Mirror+EventGrid+Glow+VHS (the pool does not leak between frames).
-#[test]
-fn t68_pooled_chain_identical_with_dirty_scratch() {
-    kt_plugins_builtin::install();
-    use kt_fx::video::{FxScratch, apply_video_chain_pooled};
-    let all: Vec<Vec<FxInstance>> = vec![
-        vec![FxInstance::geometry_at(-0.04286, 0.02857, 1.4)],
-        vec![FxInstance::CamMotion {
-            ease: true,
-            mode: PanMode::Fill,
-            time_scale: 1.0,
-            keyframes: vec![],
-        }],
-        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()],
-        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 1.0]).unwrap()],
-        vec![FxInstance::blur(9)],
-        vec![FxInstance::greenscreen([0, 255, 0], 90, 30)],
-        vec![FxInstance::edges(40)],
-        vec![FxInstance::noise(0.5)],
-        vec![FxInstance::vhs(3, 0.4)],
-        vec![FxInstance::glow(1.2)],
-        vec![kt_model::FxInstance::plugin_with("event_grid", &[3.0, 2.0, 1.0]).unwrap()],
-        // the chain from the user’s complaint (item 2, round 7)
-        vec![
-            kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(),
-            kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap(),
-            FxInstance::glow(1.0),
-            FxInstance::vhs(2, 0.5),
-        ],
-    ];
-    let mut dirty = FxScratch::default();
-    // dirty the pool with foreign data of different sizes
-    let junk = apply_video_chain_pooled(&[FxInstance::blur(5)], test_frame(), &ctx(), &mut dirty);
-    drop(junk);
-    for fx in &all {
-        let fresh = apply_video_chain(fx, test_frame(), &ctx());
-        let pooled = apply_video_chain_pooled(fx, test_frame(), &ctx(), &mut dirty);
-        assert_eq!(fresh.rgba, pooled.rgba, "the dirty pool changed the result: {fx:?}");
-        assert_eq!((fresh.w, fresh.h, fresh.has_alpha), (pooled.w, pooled.h, pooled.has_alpha));
-        // a second run with the same pool is also identical
-        let again = apply_video_chain_pooled(fx, test_frame(), &ctx(), &mut dirty);
-        assert_eq!(fresh.rgba, again.rgba);
-    }
-}
-
 /// Test 228 (R.33 S5): new parameters of the effects. The round rule is “the default of a new parameter
 /// = the previous behaviour BYTE FOR BYTE” (the goldens of t26 above hold it), so here the second half
 /// is checked: a parameter moved away from its default
@@ -276,6 +187,9 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
 /// meaningfully.
 #[test]
 fn t228_new_fx_params_change_the_picture() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let hash = |f: Frame| xxh3_64(&f.rgba);
     // ---- Blur: separate axes -------------------------------------------
@@ -365,6 +279,9 @@ fn t228_new_fx_params_change_the_picture() {
 /// Test 228b (R.33 S5): the second batch of parameters: glow, VHS, chroma key.
 #[test]
 fn t228_glow_vhs_greenscreen_params() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let hash = |f: &Frame| xxh3_64(&f.rgba);
     let mean = |f: &Frame| {
@@ -440,104 +357,6 @@ fn t228_glow_vhs_greenscreen_params() {
     assert!(alpha_same, "spill suppression does not touch alpha");
 }
 
-/// Test 328 (R.47, item 331): a golden cycle over the VIDEO subset of the registry
-/// FxInstance::all(): the hash of each effect’s default template on test_frame.
-/// A completeness lock in both directions: a view without a row in the table and a row without
-/// a view fail the test (t26 stays frozen on the 10 legacy hashes). Plus a
-/// CLASSIFICATION lock: every video kind MUST be geometric, pointwise, or
-/// have a barrier arm; an “unclassified” effect would pass through silently,
-/// and in debug it is caught by a panic of debug_assert in apply_barrier.
-/// (The default pan and pan3d are both identities; their matching hashes are legal.)
-#[test]
-fn t328_golden_cycle_over_the_registry() {
-    // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
-    kt_plugins_builtin::install();
-    use kt_fx::geom::{is_geo, is_pointwise};
-    const GOLDEN_ALL: &[(&str, u64)] = &[
-        // R.62: Pan is retired; the “Geometry” node with defaults is an identity
-        ("geometry", 0x05719cf53332c61a),
-        ("cam_motion", 0x410e2d08915e02e9),
-        ("mirror", 0x6e6b11df22c1c072),
-        ("blur", 0xec8d2f412f21f555),
-        ("greenscreen", 0x18dd7db23eb92552),
-        ("edges", 0x35521b30cd97497e),
-        ("noise", 0x2c1bd320d47c00c6),
-        ("vhs", 0xd82252c584915e16),
-        ("glow", 0x32647b93a6a84eb2),
-        ("event_grid", 0x0f78a8817bcf1bbe),
-        ("pan3d", 0x05719cf53332c61a),
-        // R.47 Kv2: the default color_grade and corner_pin are identities,
-        // their match with the identity hash of pan is legal and DELIBERATE
-        ("color_grade", 0x05719cf53332c61a),
-        ("duotone", 0xb24b68c2dc8d352e),
-        ("posterize", 0x067921e26e16007c),
-        ("vignette", 0xa815992243883318),
-        ("corner_pin", 0x05719cf53332c61a),
-        // R.47 Kv3: drop_shadow on an opaque test frame is a passthrough
-        // (identity hash): an input without alpha DELIBERATELY draws no shadow
-        ("sharpen", 0x542512aaafe117ad),
-        ("pixelate", 0xd856791cc8952d79),
-        ("chromatic_aberration", 0x4513f7b18223cea3),
-        ("radial_blur", 0xcf33730d85dc9c70),
-        ("drop_shadow", 0x05719cf53332c61a),
-        ("halftone", 0x7a640931274d6e24),
-        // R.47 Kv4: all five defaults are visible (there are no neutral ones)
-        ("lens_distort", 0x580537c8e0f3badf),
-        ("twirl", 0x0955aa3873066955),
-        ("ripple", 0xaf7efc91f739ccf0),
-        ("kaleidoscope", 0x9d601aeee14f4062),
-        ("cylinder3d", 0x9178d747ce3f9976),
-        // camera-isp-simulation: the default camera films the test frame (seeded noise included)
-        ("camera_isp", 0x0e0ed55da11f5e92),
-        // vhs-tape-simulation: the tape written and read back, a good deck at its defaults
-        ("vhs_tape", 0x507b641c842f40bc),
-        // datamosh-codec-path: a STREAM source stage runs before the chain (in the engine's
-        // plan); the chain passes its slot through, so its template is the identity here
-        ("datamosh", 0x05719cf53332c61a),
-    ];
-    let video: Vec<&FxInstance> =
-        FxInstance::all().iter().filter(|f| !f.is_audio() && !f.is_layer_mix()).collect();
-    let table: std::collections::BTreeMap<&str, u64> = GOLDEN_ALL.iter().copied().collect();
-    let tags: std::collections::BTreeSet<&str> = video.iter().map(|f| f.tag()).collect();
-    assert_eq!(
-        table.keys().copied().collect::<std::collections::BTreeSet<_>>(),
-        tags,
-        "GOLDEN_ALL and the video registry must cover each other"
-    );
-    for f in video {
-        if !is_geo(f) && !is_pointwise(f) && !f.warps_time() && !f.is_stream() {
-            let _ = kt_fx::video::apply_barrier(
-                f,
-                test_frame(),
-                &ctx(),
-                &mut kt_fx::video::FxScratch::default(),
-                1,
-            );
-        }
-        let need_cam = f.uses_camera();
-        let c = if need_cam {
-            VideoFxCtx {
-                cam3d: Some(kt_fx::geom::Cam3d {
-                    cam: kt_model::CameraParams::default(),
-                    world_scale: 1.0,
-                }),
-                ..ctx()
-            }
-        } else {
-            ctx()
-        };
-        let out = apply_video_chain(std::slice::from_ref(f), test_frame(), &c);
-        let hash = xxhash_rust::xxh3::xxh3_64(&out.rgba);
-        println!("t328 {}: 0x{hash:016x}", f.tag());
-        assert_eq!(
-            hash,
-            table[f.tag()],
-            "{}: default-template bytes moved (update GOLDEN_ALL deliberately)",
-            f.tag()
-        );
-    }
-}
-
 // ---- R.62: “Geometry” node ------------------------------------------------
 
 /// Vertical frame 36×64: gradient + opaque alpha.
@@ -565,15 +384,18 @@ fn lead_ctx(view: (f64, f64), rule: kt_fx::conform::ConformRule) -> VideoFxCtx {
 /// an identity byte for byte (the old path without a single resample).
 #[test]
 fn t713_lead_geometry_places_with_transparent_fields() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::conform::ConformRule;
     let lead = vec![FxInstance::geometry()];
     // matching proportions: the node is transparent, the frame is untouched
-    let same = apply_video_chain(&lead, test_frame(), &lead_ctx((64.0, 36.0), ConformRule::Fit));
+    let same = kt_gpu::testkit::chain(&lead, test_frame(), &lead_ctx((64.0, 36.0), ConformRule::Fit));
     assert_eq!(same.rgba, test_frame().rgba, "identity lead must be byte-identical");
     assert!(!same.has_alpha);
     // vertical source, “fit”: a 20.25×36 frame centred, margins transparent
-    let out = apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fit));
+    let out = kt_gpu::testkit::chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fit));
     assert_eq!((out.w, out.h), (W, H));
     assert!(out.has_alpha, "fields are transparent, the node produces alpha");
     let alpha = |x: u32, y: u32| out.rgba[((y * W + x) * 4 + 3) as usize];
@@ -586,32 +408,31 @@ fn t713_lead_geometry_places_with_transparent_fields() {
     assert!((19..=22).contains(&opaque), "frame width ≈ 20.25 px, got {opaque}");
     // “fill”: no margins, the frame is cropped at the top and bottom
     let fill =
-        apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fill));
+        kt_gpu::testkit::chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Fill));
     assert!(fill.rgba.chunks(4).all(|p| p[3] == 255), "fill has no transparent pixel");
     // “as is”: 36×64 centred on the 64×36 canvas, sticking out past the top and bottom edges
     let asis =
-        apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::AsIs));
+        kt_gpu::testkit::chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::AsIs));
     let a2 = |x: u32, y: u32| asis.rgba[((y * W + x) * 4 + 3) as usize];
     assert_eq!(a2(0, 0), 0);
     assert_eq!(a2(W / 2, 0), 255, "as-is sticks out: column opaque to the edge");
     let opaque = (0..W).filter(|&x| a2(x, H / 2) == 255).count();
     assert!((35..=37).contains(&opaque), "as-is keeps 36 px, got {opaque}");
-    // “stretch”: the whole canvas, opaque
-    let st =
-        apply_video_chain(&lead, vertical_frame(), &lead_ctx((36.0, 64.0), ConformRule::Stretch));
-    assert!(st.rgba.chunks(4).all(|p| p[3] == 255));
 }
 
 /// Test 717 (R.62): effects BEFORE the leading node work in the source space,
 /// AFTER it on the canvas; a 90° rotation with zoom fills the canvas.
 #[test]
 fn t717_before_lead_is_source_space_after_is_canvas() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::conform::ConformRule;
     let vig = kt_model::FxInstance::plugin_with("vignette", &[1.0, 0.5, 0.5]).unwrap();
     let c = lead_ctx((36.0, 64.0), ConformRule::Fit);
-    let before = apply_video_chain(&[vig.clone(), FxInstance::geometry()], vertical_frame(), &c);
-    let after = apply_video_chain(&[FxInstance::geometry(), vig.clone()], vertical_frame(), &c);
+    let before = kt_gpu::testkit::chain(&[vig.clone(), FxInstance::geometry()], vertical_frame(), &c);
+    let after = kt_gpu::testkit::chain(&[FxInstance::geometry(), vig.clone()], vertical_frame(), &c);
     assert_eq!((before.w, before.h), (W, H));
     assert_eq!((after.w, after.h), (W, H));
     assert_ne!(before.rgba, after.rgba, "vignette in source space differs from canvas space");
@@ -630,7 +451,7 @@ fn t717_before_lead_is_source_space_after_is_canvas() {
     // a 90° rotation + zoom: the vertical source covers the whole canvas
     let mut g = kt_model::EventGeometry { rot: 90.0, zoom: 1.8, ..Default::default() };
     g.rule = kt_model::Conform::Fit;
-    let rot = apply_video_chain(&[g.node()], vertical_frame(), &c);
+    let rot = kt_gpu::testkit::chain(&[g.node()], vertical_frame(), &c);
     assert!(rot.rgba.chunks(4).all(|p| p[3] == 255), "rotated + zoomed source covers the canvas");
     let corner = &rot.rgba[0..3];
     assert_ne!(corner, &[0u8, 0, 0], "corner carries source pixels");

@@ -4,8 +4,8 @@
 
 use std::sync::Arc;
 
-use kt_cache::{BurstCache, CacheConfig, SourceId};
-use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
+use kt_cache::SourceId;
+use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
 use kt_fx::mask::{MaskOp, MaskOpKind};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
@@ -104,9 +104,8 @@ fn t1274_masked_frames_agree_exactly_on_both_backends() {
             layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }],
             memoize_postfx: true,
         };
-        let cache = BurstCache::new(CacheConfig::default());
         let mut cpu = Vec::new();
-        let cc = compose_plan_cpu(&p, &cache, &mut cpu);
+        let cc = kt_gpu::reference::next(&mut cpu);
         let mut gpu = Vec::new();
         let cg = engine.execute_into(&p, &mut gpu).expect("GPU execute");
         assert_eq!(cc, cg, "{name}: complete diverged");
@@ -118,7 +117,7 @@ fn t1274_masked_frames_agree_exactly_on_both_backends() {
             src.fx_hash ^= 1;
         }
         let mut bare = Vec::new();
-        compose_plan_cpu(&none, &cache, &mut bare);
+        kt_gpu::reference::next(&mut bare);
         assert_ne!(bare, cpu, "{name}: the masks changed nothing");
     }
 }

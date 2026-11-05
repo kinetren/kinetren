@@ -176,10 +176,13 @@ fn t311_head_zoom_samples_the_whole_clip() {
 /// axis: if they diverge — a permanent cache miss.
 #[test]
 fn t312_order_equals_read_with_quality() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![zoom(2.0)], vec![]);
-    let mut vr = VideoRenderer::new_with_natives(&p, &natives(512, 288));
+    let vr = VideoRenderer::new_with_natives(&p, &natives(512, 288));
     let range = TickRange::new(Tick(0), Tick(10 * STEP));
     let wanted = vr.wanted_frames(range, q);
     assert!(!wanted.is_empty());
@@ -201,7 +204,7 @@ fn t312_order_equals_read_with_quality() {
         );
     }
     for i in 0..10 {
-        let (_, complete) = vr.compose_from_cache(&cache, Tick(i * STEP), q);
+        let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, Tick(i * STEP), q);
         assert!(complete, "frame {i}: composite reads what prefetch warmed");
     }
 
@@ -216,7 +219,7 @@ fn t312_order_equals_read_with_quality() {
             f.into(),
         );
     }
-    let (_, complete) = vr.compose_from_cache(&cache_q, Tick(0), q);
+    let (_, complete) = kt_gpu::testkit::compose(&vr, &cache_q, Tick(0), q);
     assert!(!complete, "a frame of another quality does not count as warm");
 }
 
@@ -225,6 +228,9 @@ fn t312_order_equals_read_with_quality() {
 /// the scale in the key the cache would return a stale one.
 #[test]
 fn t313_postfx_key_includes_the_stage() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![zoom(2.0)], vec![]);
@@ -233,8 +239,8 @@ fn t313_postfx_key_includes_the_stage() {
     let t = Tick(0);
 
     // frames of both qualities are in the cache at once (the keys differ)
-    let mut vr1 = VideoRenderer::new(&p); // no natives → scale 1
-    let mut vr2 = VideoRenderer::new_with_natives(&p, &natives(512, 288));
+    let vr1 = VideoRenderer::new(&p); // no natives → scale 1
+    let vr2 = VideoRenderer::new_with_natives(&p, &natives(512, 288));
     for vr in [&vr1, &vr2] {
         for (media, pts, dq) in vr.layers_at(t, q) {
             let f = src.read_video_frame(pts, Some(dq)).unwrap();
@@ -246,14 +252,14 @@ fn t313_postfx_key_includes_the_stage() {
             );
         }
     }
-    let (a, ca) = vr1.compose_from_cache(&cache, t, q);
-    let (b, cb) = vr2.compose_from_cache(&cache, t, q);
+    let (a, ca) = kt_gpu::testkit::compose(&vr1, &cache, t, q);
+    let (b, cb) = kt_gpu::testkit::compose(&vr2, &cache, t, q);
     assert!(ca && cb, "both composites full");
     assert_ne!(a, b, "a large input must give a different picture, not a stale one from the cache");
 
     // a repeated compose of each — from memoization, byte for byte its own
-    assert_eq!(vr1.compose_from_cache(&cache, t, q).0, a);
-    assert_eq!(vr2.compose_from_cache(&cache, t, q).0, b);
+    assert_eq!(kt_gpu::testkit::compose(&vr1, &cache, t, q).0, a);
+    assert_eq!(kt_gpu::testkit::compose(&vr2, &cache, t, q).0, b);
 }
 
 /// Test 314 (item 321): the export chunk budget is computed from the DECODE quality.
@@ -262,6 +268,9 @@ fn t313_postfx_key_includes_the_stage() {
 /// it was assembled — exactly the regression of item 15 (“black render”).
 #[test]
 fn t314_export_chunk_respects_the_decode_stage() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // the sizes are chosen so that by Quality the chunk fits the budget, but by the
     // decode quality (×2 per side = ×4 memory) it no longer does
@@ -292,7 +301,7 @@ fn t314_export_chunk_respects_the_decode_stage() {
         sources,
         Quality { width: 128, height: 72 },
         Some((Tick(0), Tick(30 * STEP))),
-        &Default::default(),
+        &kt_gpu::testkit::backends(),
         &cancel,
         |_| {},
         |_| {
@@ -361,10 +370,13 @@ fn t484b_generator_native_feeds_decode_stage() {
 /// and it is re-ordered.
 #[test]
 fn t633_a_layer_of_a_foreign_size_is_never_silent() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let p = project(128, 72, vec![], vec![]);
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     // we put a frame of HALF size under the key of full quality: exactly what
     // the scale mismatch inside the program does
@@ -375,7 +387,7 @@ fn t633_a_layer_of_a_foreign_size_is_never_silent() {
         let f = src.read_video_frame(pts, Some(half)).unwrap();
         cache.insert_video(kt_engine::source_id(media), Some(dq), video_cache_idx(pts), f.into());
     }
-    let (out, complete) = vr.compose_from_cache(&cache, Tick(0), q);
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, Tick(0), q);
     assert!(
         !complete,
         "the composite declared the frame complete by dropping a layer of a foreign size: such a frame \
@@ -392,6 +404,9 @@ fn t633_a_layer_of_a_foreign_size_is_never_silent() {
 /// composite warmed strictly by `wanted_frames` is complete.
 #[test]
 fn t714_order_equals_read_on_every_conform_rule() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 1920, height: 1080 };
     let rules = [Conform::Fit, Conform::Fill, Conform::AsIs, Conform::Stretch];
@@ -431,7 +446,7 @@ fn t714_order_equals_read_on_every_conform_rule() {
         natives: natives(1080, 1920),
         procedural: Default::default(),
         views: std::collections::HashMap::from([(MediaId(1), (1080.0, 1920.0))]), ..Default::default() };
-    let mut vr = kt_engine::VideoRenderer::new_with_facts(&p, &facts);
+    let vr = kt_engine::VideoRenderer::new_with_facts(&p, &facts);
     assert_eq!(vr.layers_at(Tick(STEP), q).len(), 4);
     let want = [(608, 1080), (1920, 3412), (1080, 1920), (1920, 1080)];
     for (id, dq) in vr.video_decode_qualities(q) {
@@ -446,7 +461,7 @@ fn t714_order_equals_read_on_every_conform_rule() {
         assert_eq!((f.width, f.height), (dq.width, dq.height));
         cache.insert_video(kt_engine::source_id(media), Some(dq), video_cache_idx(pts), f.into());
     }
-    let (frame, complete) = vr.compose_from_cache(&cache, Tick(STEP), q);
+    let (frame, complete) = kt_gpu::testkit::compose(&vr, &cache, Tick(STEP), q);
     assert!(complete, "every layer found its own decode size");
     assert_eq!(frame.len(), (q.width * q.height * 4) as usize);
 }

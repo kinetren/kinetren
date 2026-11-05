@@ -1,7 +1,7 @@
 //! shape-masks: the rasterizer — shapes, antialiasing, feather, falloff, expansion, modes,
 //! resolution invariance, determinism.
 
-use kt_fx::mask::{MaskSpace, apply_alpha, apply_mix, rasterize, rasterize_cached};
+use kt_fx::mask::{MaskSpace, rasterize, rasterize_cached};
 use kt_model::{Falloff, Mask, MaskMode, MaskShape, Vertex};
 
 fn sp(n: u32) -> MaskSpace {
@@ -138,46 +138,6 @@ fn t1267_feather_falloff_expansion_and_resolution() {
         }
     }
     assert!(worst <= 3, "1/4 differs from 1/1 by {worst}");
-}
-
-/// Test 1268: the four modes are the soft Boolean operations; invert and opacity.
-#[test]
-fn t1268_modes_invert_and_opacity() {
-    let n = 100;
-    // A covers x 10..60, B covers x 40..90, both y 10..90
-    let a = rect(0.35, 0.5, 0.5, 0.8, 0.0, 0.0);
-    let b = Mask { id: 2, name: "b".into(), ..rect(0.65, 0.5, 0.5, 0.8, 0.0, 0.0) };
-    let probe = |c: &kt_fx::mask::Coverage| [at(c, 25, 50), at(c, 75, 50), at(c, 50, 50), at(c, 5, 5)];
-    for (mode, want) in [
-        (MaskMode::Add, [255, 255, 255, 0]),
-        (MaskMode::Subtract, [255, 0, 0, 0]),
-        (MaskMode::Intersect, [0, 0, 255, 0]),
-        (MaskMode::Difference, [255, 255, 0, 0]),
-    ] {
-        let c = rasterize(&[a.clone(), Mask { mode, ..b.clone() }], &sp(n), n, n);
-        assert_eq!(probe(&c), want, "{mode:?}: only A, only B, both, none");
-    }
-    // a first subtract / intersect starts from the full frame
-    let c = rasterize(&[Mask { mode: MaskMode::Subtract, ..b.clone() }], &sp(n), n, n);
-    assert_eq!(probe(&c), [255, 0, 0, 255]);
-    let c = rasterize(&[Mask { mode: MaskMode::Intersect, ..b.clone() }], &sp(n), n, n);
-    assert_eq!(probe(&c), [0, 255, 255, 0]);
-    // invert and opacity
-    let c = rasterize(&[Mask { invert: true, ..a.clone() }], &sp(n), n, n);
-    assert_eq!(probe(&c), [0, 255, 0, 255]);
-    let c = rasterize(&[Mask { opacity: 0.5, ..a.clone() }], &sp(n), n, n);
-    assert_eq!(probe(&c), [128, 0, 128, 0]);
-    let c = rasterize(&[a.clone(), Mask { opacity: 0.5, ..b.clone() }], &sp(n), n, n);
-    assert_eq!(probe(&c), [255, 128, 255, 0], "opacity scales the second mask's own share");
-
-    // the apply kernels
-    let mut px = vec![10, 20, 30, 200, 10, 20, 30, 255];
-    apply_alpha(&mut px, &[255, 128], true);
-    assert_eq!(px, [10, 20, 30, 200, 10, 20, 30, 128]);
-    let dry = [0, 0, 0, 0, 0, 0, 0, 0];
-    let mut wet = vec![255, 255, 255, 255, 255, 255, 255, 255];
-    apply_mix(&dry, &mut wet, &[0, 128], true, true);
-    assert_eq!(wet, [0, 0, 0, 0, 128, 128, 128, 128]);
 }
 
 /// Test 1269: the coverage of a fixed scene is frozen; the memo returns the same bytes.

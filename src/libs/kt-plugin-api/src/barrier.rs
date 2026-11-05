@@ -1,10 +1,7 @@
 //! The barrier contract (plugin-api-barriers, D1–D3): a video effect that needs the neighbourhood
 //! of a pixel — blur, glow, edges, a mosaic — runs as a pass of its own between geometry series.
 //!
-//! A barrier plugin gives three things, all pure:
-//! - the CPU kernel over a whole frame (`BarrierKernel::frame`): the BYTE REFERENCE. When the host
-//!   says SIMD is allowed (`BarrierCtx::simd` — the ONE switch, `KT_SIMD` and CPU detection, decided
-//!   by the host) the kernel may take its own AVX2 path, which MUST give the same bytes (t1053);
+//! A barrier plugin gives two things, both pure:
 //! - the GPU pass graph (`BarrierKernel::gpu`): the host's nodes (resample, premultiplication,
 //!   save) and the plugin's fragment passes (`BarrierKernel::shaders`, each compiled ONCE per
 //!   executor over the host's `common.wgsl`), with its uniforms computed here in f64 and rounded to
@@ -23,7 +20,7 @@ pub const MAX_RES_SCALE: u32 = 4;
 pub const MAX_INTER_DIM: u32 = 4096;
 
 /// The counter-based hash of the grain (lowbias32; kt-fx `noise_hash` re-exports it): integer and
-/// stateless, so the WGSL copies give the CPU's bytes on any device.
+/// stateless.
 pub use crate::generator::lowbias32 as noise_hash;
 
 /// The frame's grain seed from its burst index (noise, vhs; kt-fx `noise_seed` re-exports it).
@@ -32,48 +29,13 @@ pub fn noise_seed(burst_index: i64) -> u32 {
     noise_hash(burst_index as u32)
 }
 
-/// A frame in progress: straight RGBA8, `w×h`. The host's frame type (kt-fx re-exports it), so a
-/// kernel hands the frame back without a copy.
+/// A frame on the CPU side of the host (a generator's or a stream stage's input): straight RGBA8,
+/// `w×h`. kt-fx re-exports it.
 pub struct Frame {
     pub w: u32,
     pub h: u32,
     pub rgba: Vec<u8>,
     pub has_alpha: bool,
-}
-
-/// The host's buffer pool (kt-fx `FxScratch`): a barrier takes its output buffer here and gives the
-/// input's back, so a frame path does not allocate (invariant 12).
-pub trait Scratch {
-    /// A zeroed buffer of `len` bytes.
-    fn take(&mut self, len: usize) -> Vec<u8>;
-    /// Return a buffer to the pool.
-    fn put(&mut self, b: Vec<u8>);
-}
-
-/// The raster code the host shares with its own paths (D3): ONE text each, with the host's SIMD
-/// twin where it has one. A plugin reaches it through the context and never copies it.
-pub trait RasterHost: Sync {
-    /// The host's bilinear resample of the WHOLE frame to `tw×th` (kt-fx `bilinear_into`, its AVX2
-    /// twin when the host allows it — the mirror of the GPU `Resample` node): the mip of glow,
-    /// sharpen and drop_shadow. The alpha flag travels with the frame.
-    fn resample(&self, src: &Frame, tw: u32, th: u32, scratch: &mut dyn Scratch) -> Frame;
-    /// A bilinear sample of straight RGBA in f64, at the coordinates of kt-fx `sample_bilinear_f64`
-    /// (source pixels, taps clamped to the edges).
-    fn sample(&self, f: &Frame, x: f64, y: f64) -> [f64; 4];
-    /// Premultiplied alpha in place, and its inverse (kt-fx `premultiply`/`unpremultiply`).
-    fn premultiply(&self, rgba: &mut [u8]);
-    fn unpremultiply(&self, rgba: &mut [u8]);
-}
-
-/// What a barrier sees of the host for one frame.
-pub struct BarrierCtx<'a> {
-    /// K: the frame is K× the chain's logical size; the kernel scales its pixel geometry by it.
-    pub res_scale: u32,
-    /// The absolute timeline position in ticks — the grain of noise and vhs is pinned to it.
-    pub burst_index: i64,
-    /// The host allows the kernel's SIMD path (the one switch; R.32).
-    pub simd: bool,
-    pub raster: &'a dyn RasterHost,
 }
 
 /// How a step relates to alpha (R.53, item 417): exactly one, declared.
@@ -150,8 +112,6 @@ pub trait BarrierKernel: Send + Sync {
         k[..n].copy_from_slice(&p[..n]);
         k
     }
-    /// The whole frame on the CPU: the byte reference (its SIMD path only when `cx.simd`).
-    fn frame(&self, k: &Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame;
     /// The plugin's fragment passes (WGSL with `fn fs`, over the host's `common.wgsl`); empty — a
     /// barrier without a GPU kernel (refused for a built-in).
     fn shaders(&self) -> &'static [&'static str] {
@@ -159,12 +119,6 @@ pub trait BarrierKernel: Send + Sync {
     }
     /// The GPU graph for this frame; an empty graph is a passthrough (drop_shadow on an opaque frame).
     fn gpu(&self, _k: &Cooked, _g: &GpuCtx, _out: &mut Vec<Node>) {}
-    /// The whole frame from the passport values (vhs-tape-simulation, D7): a kernel whose
-    /// parameters do not fit the eight cooked numbers overrides it. The host calls this form; the
-    /// default cooks the values, so every other barrier keeps its bytes.
-    fn frame_values(&self, values: &[f64], f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        self.frame(&self.cook(values), f, cx, scratch)
-    }
     /// The GPU graph from the passport values; the default cooks them (as `frame_values`).
     fn gpu_values(&self, values: &[f64], g: &GpuCtx, out: &mut Vec<Node>) {
         self.gpu(&self.cook(values), g, out)

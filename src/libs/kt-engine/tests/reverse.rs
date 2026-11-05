@@ -128,11 +128,14 @@ fn t24_reversed_with_slowed_fx_is_deterministic_and_not_silent() {
 /// (preview == export), the cache holds pre-FX frames.
 #[test]
 fn t26_video_fx_applied_in_compose_and_deterministic() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = clip(false, vec![], ClipKind::Video);
     p.clips[0].fx = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
     p.validate().unwrap();
-    let mut vr = VideoRenderer::new(&p);
+    let vr = VideoRenderer::new(&p);
 
     let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
     let q = kt_media::Quality { width: 64, height: 36 };
@@ -149,9 +152,9 @@ fn t26_video_fx_applied_in_compose_and_deterministic() {
         std::sync::Arc::new(frame),
     );
 
-    let (a, complete) = vr.compose_from_cache(&cache, t, q);
+    let (a, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert!(complete);
-    let (b, _) = vr.compose_from_cache(&cache, t, q);
+    let (b, _) = kt_gpu::testkit::compose(&vr, &cache, t, q);
     assert_eq!(a, b, "the FX composite is deterministic");
     // the cache is not touched by the FX: the frame in the cache stayed pre-FX (solid color),
     // and the output is mirrored, but for a solid color the mirror == the original; we check

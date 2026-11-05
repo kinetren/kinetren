@@ -1,10 +1,7 @@
 //! Frame plan (R.29): the STRUCTURE of the composition at moment t, built before
 //! the choice of backend. The Vegas order, dissolve pairs, solo fades, levels —
-//! are decided once in `VideoRenderer` (video.rs, build_plan); there are
-//! two executors: CPU (`compose_from_cache*` — the byte reference and fallback, invariant No. 11)
-//! and GPU (crate kt-gpu, wgpu f32 — injected from above, kt-engine does not
-//! depend on it). “One rendering path” (invariant No. 7) = one plan builder;
-//! the backend is an execution parameter, not a second path.
+//! are decided once in `VideoRenderer` (video.rs, build_plan); the one executor is the GPU (crate
+//! kt-gpu, injected from above, kt-engine does not depend on it; invariant No. 7).
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -45,7 +42,7 @@ pub struct LayerSrc<'a> {
     /// once when the plan is built — both executors see the ready
     /// parameters. Without curves — a borrow from VideoClip (zero clones).
     pub fx: Cow<'a, [FxInstance]>,
-    /// Post-FX memoization key of the CPU path.
+    /// Names the chain in the executor's keys.
     pub fx_hash: u64,
     /// Clip progress 0..1 (CamMotion).
     pub u: f64,
@@ -60,8 +57,7 @@ pub struct LayerSrc<'a> {
     /// The BLEND itself is done HERE, in the plan's common code, not in the executors:
     /// invariant No. 7 — “the composition code is one, the backend is an execution
     /// parameter”. Otherwise the same arithmetic would have to be kept
-    /// in sync in the CPU kernel and in WGSL, and that is exactly the class of divergence
-    /// on which preview and export show different things.
+    /// in sync in two places.
     ///
     /// The field lives in the layer, NOT as a separate `PlanLayer` branch: blending is a
     /// property of the source of ONE clip, and such a clip may stand under
@@ -69,8 +65,7 @@ pub struct LayerSrc<'a> {
     pub blend: Option<LayerBlend>,
     /// BLEND MODE of this layer onto the layers BELOW (R.62, change B).
     /// `Normal` — the previous `alpha_over` byte for byte, and GOLDEN_VIDEO rests on it;
-    /// the others are computed by the `blend_over` kernel (CPU) and its
-    /// WGSL mirror. The field lives in the layer, not as a separate
+    /// the others are computed by the `blend_over` pass in WGSL. The field lives in the layer, not as a separate
     /// `PlanLayer` branch: overlay is a property of ANY layer, not of a special kind.
     pub blend_mode: kt_model::BlendMode,
     /// Context of the leading “Geometry” node (R.62): the source kind and the
@@ -90,8 +85,7 @@ pub struct LayerSrc<'a> {
 /// BOTH executors — exactly what invariant 7 is against. Only the
 /// SOURCE of the layer's pre-FX frame changes.
 pub enum LayerInput<'a> {
-    /// Pre-FX frame; None — starvation. The executors decide for themselves: the CPU may
-    /// return a memoized post-FX frame even without it, the GPU cannot.
+    /// Pre-FX frame; None — starvation.
     Frame(Option<Arc<VideoFrame>>),
     /// Subtree: the reel's plan, assembled on the instance's INNER time.
     Nest(Box<NestSrc<'a>>),
@@ -150,8 +144,7 @@ impl NestSrc<'_> {
     /// Where to fit the sub-composite BEFORE the layer's chain. `None` — the reel's step
     /// equals the chain input, there is no step and the bytes are as before.
     ///
-    /// The decision is ONE for both backends (invariant 7): the CPU calls `fit_into`,
-    /// the GPU places a `Resample` to the full frame — its mirror.
+    /// The GPU places a `Resample` to the full frame.
     pub fn fit_to(&self, src_scale: u32, out_w: u32, out_h: u32) -> Option<(u32, u32)> {
         if self.nest_scale == src_scale {
             return None;
@@ -220,7 +213,7 @@ pub struct FramePlan<'a> {
 }
 
 /// GPU executor error. `DeviceLost` — the caller “poisons” the GPU until the end
-/// of the session (CPU fallback + notice); `TooLarge` — a fallback only for
+/// of the session (no picture, a notice); `TooLarge` — no picture for
 /// this plan (the source is larger than the device's texture limit).
 #[derive(Debug)]
 pub enum GpuExecError {
@@ -230,8 +223,7 @@ pub enum GpuExecError {
         w: u32,
         h: u32,
     },
-    /// The GPU executor cannot yet handle a plan of this kind — a fallback to the CPU
-    /// ONLY for this plan, like `TooLarge`. Not “poisoning”: the device
+    /// The executor cannot handle a plan of this kind: no picture for this plan, like `TooLarge`. Not “poisoning”: the device
     /// is alive, and the next frame may go to the GPU again.
     Unsupported(&'static str),
 }
@@ -246,13 +238,43 @@ pub struct GpuBackendInfo {
     pub software: bool,
 }
 
+/// The plan of one frame through a chain, with no timeline behind it (the effect thumbnails).
+/// `fx_hash` names the chain, as `LayerSrc::fx_hash` does.
+#[allow(clippy::too_many_arguments)]
+pub fn chain_plan<'a>(
+    frame: Arc<VideoFrame>,
+    fx: &'a [FxInstance],
+    fx_hash: u64,
+    u: f64,
+    t: Tick,
+    cam3d: Option<Cam3d>,
+) -> FramePlan<'a> {
+    let (out_w, out_h) = (frame.width, frame.height);
+    let content = xxhash_rust::xxh3::xxh3_64(&frame.rgba);
+    let src = LayerSrc {
+        source: SourceId(0),
+        cache_idx: 0,
+        content,
+        src_scale: 1,
+        input: LayerInput::Frame(Some(frame)),
+        fx: Cow::Borrowed(fx),
+        fx_hash,
+        u,
+        cam3d,
+        blend: None,
+        blend_mode: kt_model::BlendMode::Normal,
+        lead: None,
+        masks: Vec::new(),
+    };
+    let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
+    FramePlan { t, out_w, out_h, layers, memoize_postfx: false }
+}
+
 /// The GPU executor of the plan (implementation — the kt-gpu crate; kt-engine knows
 /// only the trait and receives the executor by injection from above).
 pub trait VideoGpuExec: Send + Sync {
     /// Plan → straight RGBA8 into `out` (readback). Ok(complete) — the same
-    /// “playback does not wait” rules (invariant No. 5) as the CPU executor;
-    /// there is one difference: the GPU does not see the memoized post-FX frame of the CPU path,
-    /// so a layer without a pre-FX frame is always starvation for it.
+    /// “playback does not wait” rule (invariant No. 5): a layer without a pre-FX frame is skipped.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
     fn info(&self) -> &GpuBackendInfo;
     /// How many frames this executor can hold in flight between `submit` and `collect`

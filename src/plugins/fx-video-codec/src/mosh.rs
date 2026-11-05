@@ -475,7 +475,7 @@ fn transform(r: &Rows, v: (i16, i16)) -> (i16, i16) {
 }
 
 /// One P-frame of the broken decoder.
-fn decode_inter(r: &Rows, k: i64, rf: &Planes, own: &Clean, second: Option<&Clean>) -> Planes {
+fn decode_inter(r: &Rows, k: i64, rf: &Planes, own: &Clean, second: Option<&Clean>) -> Option<Planes> {
     let bs = r.cfg.bs;
     // an intra packet of the second input carries no motion: its vectors are zero
     let zeros = vec![(0, 0); if second.is_some_and(|c| c.pkt.intra) { own.pkt.mv.len() } else { 0 }];
@@ -485,7 +485,6 @@ fn decode_inter(r: &Rows, k: i64, rf: &Planes, own: &Clean, second: Option<&Clea
         None => &own.pkt.mv,
     };
     let mut mv: Vec<(i16, i16)> = src_mv.iter().map(|&v| transform(r, v)).collect();
-    let pred;
     if r.loss > 0.0 {
         let mut res = own.pkt.res.clone();
         let rr = r.cfg.search;
@@ -498,11 +497,9 @@ fn decode_inter(r: &Rows, k: i64, rf: &Planes, own: &Clean, second: Option<&Clea
                 codec::drop_block_residual(&mut res, rf.w, bs, i);
             }
         }
-        pred = codec::predict(rf, &mv, bs);
-        return codec::reconstruct(&pred, &res, r.gain_q8);
+        return codec::decode(rf, &mv, bs, &res, r.gain_q8);
     }
-    pred = codec::predict(rf, &mv, bs);
-    codec::reconstruct(&pred, &own.pkt.res, r.gain_q8)
+    codec::decode(rf, &mv, bs, &own.pkt.res, r.gain_q8)
 }
 
 /// Frame `n` of the broken stream as planes plus its key; `None` — a frame of the history is
@@ -601,7 +598,7 @@ fn broken(s: &Sched, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Opti
                     None
                 };
                 let rf = cur.clone().unwrap_or_else(|| Arc::new(Planes::grey(w, h)));
-                Arc::new(decode_inter(&s.at(k), k, &rf, &own, second.as_deref()))
+                Arc::new(decode_inter(&s.at(k), k, &rf, &own, second.as_deref())?)
             }
         };
         memo.put(dk[i], pic.clone(), pic.bytes());

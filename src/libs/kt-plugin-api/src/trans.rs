@@ -316,8 +316,6 @@ pub fn inv3(m: [f64; 9]) -> Option<[f64; 9]> {
 
 /// The former `TransMix::of` arm: the passport's values → the eight numbers.
 pub type Pack = fn(&[f64]) -> [f32; 8];
-/// The former `kernel()` arm.
-pub type Pixel = fn(&Img<'_>, &Img<'_>, f32, f32, f32, &[f32; 8], &Canvas, &[f32; 16]) -> [f32; 4];
 /// The former `trans_ext` arm: the packed numbers and the progress (0..4096) → the panels.
 pub type Ext = fn(&[f32; 8], u32) -> [f32; 16];
 
@@ -325,7 +323,6 @@ pub type Ext = fn(&[f32; 8], u32) -> [f32; 16];
 pub struct Kind {
     m: crate::Manifest,
     pack: Pack,
-    pixel: Pixel,
     ext: Option<Ext>,
     symmetric: bool,
 }
@@ -350,9 +347,6 @@ impl crate::Plugin for Kind {
 impl crate::TransKernel for Kind {
     fn pack(&self, v: &[f64]) -> [f32; 8] {
         (self.pack)(v)
-    }
-    fn pixel(&self, a: &Img<'_>, b: &Img<'_>, u: f32, v: f32, k: f32, p: &[f32; 8], cx: &Canvas, ext: &[f32; 16]) -> [f32; 4] {
-        (self.pixel)(a, b, u, v, k, p, cx, ext)
     }
     fn ext(&self, p: &[f32; 8], k: u32) -> [f32; 16] {
         self.ext.map_or([0.0; 16], |e| e(p, k))
@@ -401,7 +395,7 @@ pub fn count(n: &'static str, lo: f64, hi: f64, d: f64) -> Row {
 }
 
 /// A kind: its id (the file's tag), English name, name and category catalog keys, whether it is its
-/// own inversion, the rows, its WGSL (`trans_<id>`) and the two arms.
+/// own inversion, the rows, its WGSL (`trans_<id>`) and its packing.
 #[allow(clippy::too_many_arguments)]
 pub fn kind(
     id: &'static str,
@@ -412,7 +406,6 @@ pub fn kind(
     rows: Vec<Row>,
     wgsl: &'static str,
     pack: Pack,
-    pixel: Pixel,
 ) -> Kind {
     use crate::{ParamKind, ParamSpec, ParamUnit, RowDecl, Store};
     let mut passport = Vec::new();
@@ -440,7 +433,6 @@ pub fn kind(
             ui: crate::UiDecl { name, category_key: category, name_key, ..crate::UiDecl::default() },
         },
         pack,
-        pixel,
         ext: None,
         symmetric,
     }

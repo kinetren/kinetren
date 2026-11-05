@@ -5,7 +5,7 @@
 //! and everything that sits on “order == read” (invariant 4) must ask
 //! this address identically: the plan, prefetch, composite, export and bars.
 
-use kt_engine::{VideoRenderer, render_raw_video};
+use kt_engine::{VideoRenderer, };
 use kt_media::{MediaSource, Quality};
 use kt_model::*;
 use kt_time::Tick;
@@ -93,7 +93,7 @@ fn gen_srcs(p: &Project) -> std::collections::HashMap<MediaId, Box<dyn MediaSour
 
 /// The composite of the moment `t`, warmed EXACTLY by what `layers_at` ordered.
 fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
-    let mut video = VideoRenderer::new(p);
+    let video = VideoRenderer::new(p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs = gen_srcs(p);
     for (addr, pts, dq) in video.layers_at(t, Q) {
@@ -109,7 +109,7 @@ fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
             f.into(),
         );
     }
-    video.compose_from_cache(&cache, t, Q)
+    kt_gpu::testkit::compose(&video, &cache, t, Q)
 }
 
 /// Test 658 (R.59, stage 2): ORDER == READ for two titles of ONE kind
@@ -122,6 +122,9 @@ fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
 /// the pictures are different.
 #[test]
 fn t658_order_equals_read_for_two_titles_of_one_kind() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let p = two_titles();
     let video = VideoRenderer::new(&p);
@@ -164,6 +167,9 @@ fn t658_order_equals_read_for_two_titles_of_one_kind() {
 /// “a second run equals the first to the bit” (invariant 11).
 #[test]
 fn t659_a_curve_on_a_generator_parameter_moves_the_bytes() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = base();
     p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&title(""))));
@@ -206,6 +212,9 @@ fn t659_a_curve_on_a_generator_parameter_moves_the_bytes() {
 /// ancestors by the same code (`reel_chain_of_clip`).
 #[test]
 fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_engine::Player;
 
@@ -223,6 +232,7 @@ fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
 
     let (player, _consumer) = Player::new(p, vec![]);
     player.set_preview_quality(Q);
+    player.set_video_gpu(Some(kt_gpu::testkit::engine()));
 
     // warm: the reel's composite moves to memo by its revision
     let mut buf = Vec::new();
@@ -261,6 +271,9 @@ fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
 /// code for the player, export and kt-cli.
 #[test]
 fn t670_export_opens_its_own_generators_and_equals_preview() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let p = two_titles();
     let target = 7usize;
@@ -270,7 +283,7 @@ fn t670_export_opens_its_own_generators_and_equals_preview() {
         let mut n = 0usize;
         // NOT ONE source from outside: the generators are raised by export itself
         let sources: Sources = vec![];
-        render_raw_video(&p, sources, Q, |rgba| {
+        kt_gpu::testkit::render(&p, sources, Q, |rgba| {
             if n == target {
                 captured = Some(rgba.to_vec());
             }

@@ -3,9 +3,8 @@
 //!
 //! Invariant 7 requires ONE composition code for the preview and export, and the backend
 //! counts as execution. Therefore the kind of transition is turned into a `TransMix`
-//! — a flat pair (mode, 8 numbers) — EXACTLY once, here; the kind's CPU kernel and its WGSL
-//! (`trans_<id>`, assembled into `kt-gpu/src/shaders/composite.wgsl`) read the same numbers and
-//! repeat the same formulas. Every kind but the crossfade is a plugin since plugin-api-stage1 (D12):
+//! — a flat pair (mode, 8 numbers) — EXACTLY once, here; the kind's WGSL (`trans_<id>`, assembled
+//! into `kt-gpu/src/shaders/composite.wgsl`) reads them. Every kind but the crossfade is a plugin since plugin-api-stage1 (D12):
 //! its kernel lives in its family crate under `src/plugins/transitions-*`, and an edit of a formula
 //! goes into its Rust and its WGSL in one commit (t224).
 //!
@@ -13,9 +12,7 @@
 //! on the integer path `dissolve_into`, byte-for-byte as before
 //! (GOLDEN_VIDEO does not move).
 
-use kt_media::VideoFrame;
 use kt_model::TransitionKind;
-use kt_plugin_api::trans::{Canvas, Img, kf, mix4};
 
 /// The crossfade's mode: the integer dissolve, never a kernel.
 pub const MODE_CROSSFADE: u32 = 0;
@@ -94,8 +91,8 @@ impl TransMix {
 }
 
 /// Precomputed frame scalars for VOLUMETRIC kinds (R.51, item 401): inverse homographies of the
-/// panels, computed by the kind's `ext` in f64 and rounded ONCE to f32. The CPU kernel and WGSL read
-/// the same bits — parity by construction, a separate f64 reference is not needed. They go into the
+/// panels, computed by the kind's `ext` in f64 and rounded ONCE to f32. The kernel and WGSL read
+/// the same bits, so no separate f64 reference is needed. They go into the
 /// field `m` of the composite's uniform (free since R.44). For the other kinds — zeros; they are not
 /// and must not be in the cache keys: ext is a deterministic function of the already hashed
 /// (kind, p, k) — see the comment at `put_mix` in kt-gpu.
@@ -103,55 +100,3 @@ pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
     plugin_kernel(m.mode).map_or([0.0; 16], |kern| kern.ext(&m.p, k))
 }
 
-/// The engine's frame as a sampling side (`trans::Img`): a frame or the empty side of a fade.
-fn img_of(f: Option<&VideoFrame>) -> Img<'_> {
-    match f {
-        Some(f) => Img::Frame {
-            px: &f.rgba,
-            w: f.width as i32,
-            h: f.height as i32,
-            has_alpha: f.has_alpha,
-        },
-        None => Img::Clear,
-    }
-}
-
-/// Transition core: `dst = mix(a, b)` by the kind `m` with progress `k`
-/// (0..4096). Returns “the result has alpha”. The crossfade does not come
-/// here — it is computed by the integer `dissolve_into`.
-pub fn mix_into(
-    dst: &mut Vec<u8>,
-    a: Option<&VideoFrame>,
-    b: Option<&VideoFrame>,
-    k: u32,
-    m: TransMix,
-    w: usize,
-    h: usize,
-) -> bool {
-    let n = w * h * 4;
-    dst.clear();
-    dst.resize(n, 0);
-    let ia = img_of(a);
-    let ib = img_of(b);
-    let ext = trans_ext(&m, k);
-    let kern = plugin_kernel(m.mode);
-    let k = kf(k);
-    let (fw, fh) = (w as f32, h as f32);
-    let cx = Canvas { aspect: fw / fh, w: fw, h: fh };
-    for y in 0..h {
-        let v = (y as f32 + 0.5) / fh;
-        for x in 0..w {
-            let u = (x as f32 + 0.5) / fw;
-            // a mode without a kernel is the plain mix — the composite's `trans()` fallback
-            let px = match kern {
-                Some(kern) => kern.pixel(&ia, &ib, u, v, k, &m.p, &cx, &ext),
-                None => mix4(ia.sample(u, v), ib.sample(u, v), k),
-            };
-            let i = (y * w + x) * 4;
-            for c in 0..4 {
-                dst[i + c] = (px[c] + 0.5).clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
-    true
-}

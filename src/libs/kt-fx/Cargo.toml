@@ -16,10 +16,8 @@ rubato = { workspace = true }
 kt-plugins-builtin = { workspace = true }
 # t348: the EQ graph function moved with the EQ (plugin-api-stage1; dev only — t975)
 fx-audio-tone = { workspace = true }
-# t198: glow's AVX2 twin moved with glow (plugin-api-barriers; dev only — t975)
-fx-video-blur = { workspace = true }
-# t198: noise's AVX2 twin moved with noise (plugin-api-barriers 4.2; dev only — t975)
-fx-video-stylize = { workspace = true }
+# the effects run on the GPU in the tests (compute-kernels-render; dev only)
+kt-gpu = { workspace = true }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
 # t1051: the barrier kinds are built from their file text (plugin-api-barriers)
 serde_json = { workspace = true }

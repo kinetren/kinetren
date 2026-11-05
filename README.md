@@ -156,7 +156,10 @@ kinetren speaks English, Spanish, Simplified Chinese, Russian and Arabic.
 
 kinetren runs on Linux x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora
 36 and later). It uses the FFmpeg 6, 7, 8 or 9 already installed on your system, ALSA for
-sound, and any GPU driver with Vulkan or OpenGL. Without a GPU it falls back to the CPU.
+sound, and a graphics driver with Vulkan. With no graphics card it composes on the processor
+through Mesa's software Vulkan driver (`mesa-vulkan-drivers` on Debian and Ubuntu): every feature
+works, only more slowly. With no such driver there is no picture and no render, and the program
+says so.
 
 **From a release:** download the archive from
 [Releases](https://github.com/kinetren/kinetren/releases), unpack it and run:

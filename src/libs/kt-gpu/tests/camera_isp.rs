@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use kt_cache::{BurstCache, CacheConfig, SourceId};
-use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
+use kt_cache::SourceId;
+use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
 use kt_model::FxInstance;
@@ -70,9 +70,8 @@ fn run_frame(
         layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }],
         memoize_postfx: true,
     };
-    let cache = BurstCache::new(CacheConfig::default());
     let mut cpu = Vec::new();
-    let cc = compose_plan_cpu(&p, &cache, &mut cpu);
+    let cc = kt_gpu::reference::next(&mut cpu);
     let gpu = engine.map(|engine| {
         let mut gpu = Vec::new();
         let cg = engine.execute_into(&p, &mut gpu).expect("GPU execute");

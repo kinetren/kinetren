@@ -1,5 +1,5 @@
 // vhs_tape stage 3: the DDS phase = the row's start phase + the prefix of the increments, as the
-// blocks of stage 2 every 32 samples (wrapping u32 is associative: the CPU's running sum gives the
+// blocks of stage 2 every 32 samples (wrapping u32 is associative: a running sum gives the
 // same bits). T0 = stage 2; u0 = (W, frame).
 
 @fragment

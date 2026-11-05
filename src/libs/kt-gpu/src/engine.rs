@@ -1,8 +1,8 @@
 //! The GPU executor of FramePlan: fragment passes (NOT compute: the default
 //! egui-wgpu device on the GL backend lives within the downlevel limits, and the live check
 //! runs on llvmpipe), ping-pong composite, readback of the final frame.
-//! The semantics mirror the CPU executor of kt-engine (execute_plan_cpu):
-//! integer kernels byte for byte, bilinear ones within tolerance (t181/t182).
+//! The integer kernels are held to the stored frames of the deleted CPU composite byte for byte,
+//! the bilinear ones within tolerance (t181/t182).
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -203,7 +203,7 @@ enum Pipe {
 
 const PIPE_COUNT: usize = 8;
 
-/// One chain step precomputed on the CPU (common maths: kt-fx:
+/// One chain step precomputed on the host (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
 enum FxOp {
     /// Bilinear frame (Pan/CamMotion/Blur down+up): output tw×th.
@@ -233,7 +233,7 @@ enum FxOp {
         positioned: bool,
     },
     /// Merged geometry series (R.44): the program of inverse mappings is built in
-    /// kt-fx (shared code with the CPU executor), one pass, a 1024 B uniform.
+    /// kt-fx, one pass, a 1024 B uniform.
     /// EventGrid always takes this path (the mosaic of the former 2 passes is removed).
     GeomFused {
         prog: kt_fx::geom::GeomProgram,
@@ -251,8 +251,8 @@ enum FxOp {
     Snapshot { alpha: Option<bool> },
     /// Mix the current result with the snapshot with weight `k` (0..4096).
     /// The sizes could have diverged (Pan/CamMotion resample), in which case the dry side is fitted
-    /// by THE SAME bilinear as on the CPU. `alpha` is the fold here — the wet side's flag. Each
-    /// side keeps its own flag, as the CPU's frames do (vhs-tape-simulation: a step that destroys
+    /// by the `fit_into` bilinear. `alpha` is the fold here — the wet side's flag. Each
+    /// side keeps its own flag, as a frame does (vhs-tape-simulation: a step that destroys
     /// alpha between the two made the end-of-chain flag wrong for the dry side, t1052).
     Mix {
         k: u32,
@@ -266,7 +266,7 @@ enum FxOp {
     MaskMix {
         cov: Arc<kt_media::VideoFrame>,
         key: u64,
-        /// Whether each side carries alpha (without it the byte reads as 255, as on the CPU).
+        /// Whether each side carries alpha (without it the byte reads as 255).
         dry_alpha: bool,
         wet_alpha: bool,
     },
@@ -370,15 +370,14 @@ fn chain_ops(
     u: f64,
     t: Tick,
     cam3d: Option<Cam3d>,
-    // Context of the leading “Geometry” node (R.62): the same as on the CPU.
+    // Context of the leading “Geometry” node (R.62).
     lead: Option<kt_fx::conform::LeadCtx>,
     // The chain INPUT alpha (R.53, item 418). The `has_alpha_known` fold
     // says only whether some step has spoken; until someone has spoken, the frame’s alpha
     // is the source’s alpha, and the premultiplication before the mip must be decided by it,
-    // otherwise the CPU (which has
-    // `Frame.has_alpha`) and the GPU would diverge on titles.
+    // otherwise titles would come out wrong.
     src_has_alpha: bool,
-    // mask application points (shape-masks), at the chain positions of the CPU path
+    // mask application points (shape-masks), at the chain positions
     masks: &[kt_fx::mask::MaskOp],
 ) -> ChainOps {
     let (mut w, mut h) = (src_w, src_h);
@@ -400,9 +399,9 @@ fn chain_ops(
             _ => None,
         })
         .collect();
-    // The chain plan is built by kt-fx (R.45, item 311): the SHARED code of both backends
+    // The chain plan is built by kt-fx (R.45, item 311): the common code
     // (invariant 7); here the ops are only translated into FxOp.
-    // mask points cut the chain too: the same slices as `apply_chain_with_mixes` on the CPU
+    // mask points cut the chain too
     let mut stops = froms.clone();
     stops.extend(kt_fx::mask::mask_stops(masks));
     stops.sort_unstable();
@@ -486,8 +485,7 @@ fn chain_ops(
                     }
                     if k < 4096 {
                         ops.push(FxOp::Mix { k, alpha: has_alpha_known.then_some(has_alpha) });
-                        // the mixed frame has alpha when either side has (the CPU's
-                        // `blend_frames_cpu`): a step that destroyed alpha after the snapshot does
+                        // the mixed frame has alpha when either side has: a step that destroyed alpha after the snapshot does
                         // not make the mix opaque (vhs-tape-simulation, t1052)
                         if snap.is_some() {
                             let wet = if has_alpha_known { has_alpha } else { src_has_alpha };
@@ -653,8 +651,8 @@ enum Job {
         scale: bool,
         fade: Option<SoloFade>,
         /// The blend mode of a layer downward (R.62). `Normal` is the old path
-        /// byte for byte; the rest is computed by the shader’s `blend_over`, a mirror of the
-        /// CPU kernel `kt_engine::video::blend_ch`.
+        /// byte for byte; the rest is computed by the shader’s `blend_over`, the same formula as
+        /// `kt_engine::video::blend_ch`.
         blend_mode: kt_model::BlendMode,
     },
     Dissolve {
@@ -770,7 +768,7 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
 const DISPLAY: &str = include_str!("shaders/display.wgsl");
-/// The ambient glow's target, the size the CPU loop picks.
+/// The ambient glow's target.
 const GLOW_SIZE: (u32, u32) = (32, 18);
 
 /// Where a pass's pipeline comes from.
@@ -781,7 +779,7 @@ enum Which {
 }
 
 /// The transition plugins of the installed registry with their `trans_<id>` WGSL, in registration
-/// order (D12): a kind's mode is `MODE_PLUGIN + its index here`, as on the CPU.
+/// order (D12): a kind's mode is `MODE_PLUGIN + its index here`.
 pub fn plugin_transitions() -> Vec<(&'static str, &'static str)> {
     let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
     reg.transitions()
@@ -945,7 +943,7 @@ pub fn assembled_shaders() -> (String, Vec<String>) {
 
 impl GpuFxEngine {
     /// Builds the pipelines; a shader/device compile error → Err
-    /// (the caller falls back to the CPU with a notice).
+    /// (the caller shows a notice).
     pub fn new(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
         let device = ctx.device;
         let queue = ctx.queue;
@@ -964,9 +962,8 @@ impl GpuFxEngine {
 
         // WARP ("Microsoft Basic Render Driver", Windows' software D3D12 rasterizer) is
         // refused: on the GPU-less Windows CI runner the engine's passes ran for minutes and
-        // then died inside it (access violations, heap corruption — windows-build). The CPU
-        // path is the full fallback and the byte reference (invariant 7), so a machine with
-        // only WARP renders effects on the CPU instead of risking a crash.
+        // then died inside it (access violations, heap corruption — windows-build). A machine
+        // with only WARP gets no engine instead of a crash.
         // KT_GPU_ALLOW_WARP=1 lets it through for experiments.
         if name_l.contains("microsoft basic render")
             && std::env::var("KT_GPU_ALLOW_WARP").as_deref() != Ok("1")
@@ -979,7 +976,7 @@ impl GpuFxEngine {
         // Two scopes: a shader the backend's compiler rejects (FXC on D3D12: "not natively
         // addressable", windows-build) is an INTERNAL error, not a validation one. With only
         // the validation scope it escaped to the default handler, which panics — a crash on
-        // Windows instead of the CPU fallback (invariant 7). Popped in reverse order.
+        // Windows instead of a clean error. Popped in reverse order.
         let internal_scope = device.push_error_scope(wgpu::ErrorFilter::Internal);
         let err_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -989,7 +986,7 @@ impl GpuFxEngine {
                     binding: 0,
                     // The VERTEX stage also reads the uniform (vs3d Pan3d:
                     // MVP/anchor): FRAGMENT-only made create_render_pipeline fail
-                    // on real hardware and dropped the WHOLE engine to the CPU (R.31 item 1)
+                    // on real hardware and refused the WHOLE engine (R.31 item 1)
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -1595,7 +1592,7 @@ impl Inner {
         }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
 
-        // --- resolve: presence/size by the rules of the CPU executor ---
+        // --- resolve: presence/size ---
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1929,7 +1926,7 @@ impl Inner {
             // The REEL tier above the chain input (R.58, item 459): the sub-composite is
             // assembled larger than this instance’s chain can
             // consume. We fit it in BEFORE the chain: `Resample` to the whole
-            // frame is the mirror of the CPU `fit_into` (the same bilinear as the
+            // frame is the `fit_into` bilinear (the same as the
             // dry side of `FxOp::Mix`).
             let fit = n.fit_to(src.src_scale, ow, oh);
             let (cw, ch) = fit.unwrap_or((sw, sh));
@@ -1972,13 +1969,21 @@ impl Inner {
             &src.masks,
         );
         // The K×-gaps of the plan (item 314) MUST fit within the device texture limit;
-        // if they do not, a clean TooLarge (the whole plan goes to the
-        // CPU, which computes THE SAME plan, so the semantics are one)
+        // if they do not, a clean TooLarge (the plan gets no picture)
         if mw > self.max_dim || mh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: mw, h: mh });
         }
         let has_alpha = if ha_known { ha } else { frame.has_alpha };
-        let view = self.upload.get_or_upload(&self.device, &self.queue, src.content, frame);
+        // a blended frame is not its base frame: the serial alone would show the texture of
+        // another weight (t250)
+        let content = src.blend.as_ref().map_or(src.content, |b| {
+            let mut h = Xxh3::new();
+            h.update(&src.content.to_le_bytes());
+            h.update(&b.content.to_le_bytes());
+            h.update(&b.k.to_le_bytes());
+            h.digest()
+        });
+        let view = self.upload.get_or_upload(&self.device, &self.queue, content, frame);
         let fits = (fw, fh) == (ow, oh);
         Ok(Some((
             ChainSpec {
@@ -2100,7 +2105,7 @@ impl Inner {
                     let Some((dry_view, dw, dh, dry_alpha)) = snap.clone() else { continue };
                     let wet_alpha = alpha.unwrap_or(chain.src_has_alpha);
                     // the sizes may have diverged: we fit the dry side in
-                    // THE SAME bilinear as on the CPU (fit_into)
+                    // the `fit_into` bilinear
                     let dry_fit = if (dw, dh) == (w, h) {
                         dry_view
                     } else {

@@ -1,5 +1,5 @@
 // The quad of the sides of the 2.5D exchange: the sample inside the rectangle, outside transparent,
-// the far side slightly darker (a mirror of the CPU kernel’s quad()).
+// the far side slightly darker.
 fn swap_quad(which: u32, uv: vec2<f32>, vert: bool, off: f32, scale: f32, wave: f32) -> vec4<f32> {
     var q = vec2<f32>(0.5 + off, 0.5);
     if (vert) { q = vec2<f32>(0.5, 0.5 + off); }

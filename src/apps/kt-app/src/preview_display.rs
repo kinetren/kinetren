@@ -1,7 +1,7 @@
 //! The preview's picture on the device (preview-throughput D2): the composite goes into a texture
 //! of the GPU engine, and this registers that texture with egui's renderer. Nothing comes back to
 //! the CPU and goes up again; `draw_preview` falls back to the bytes path when there is no engine
-//! (the harness, `KT_VIDEO_GPU=0`) or a frame the executor refused.
+//! (the harness) or a frame the executor refused.
 
 use eframe::egui::TextureId;
 use eframe::egui_wgpu::{RenderState, wgpu};

@@ -65,179 +65,6 @@ fn warm_pre_fx(vr: &VideoRenderer, cache: &kt_cache::BurstCache, t: Tick, q: kt_
     }
 }
 
-#[test]
-fn t66_postfx_cached_and_no_stale() {
-    kt_plugins_builtin::install();
-    // Noise: the amplitude changes the bytes even on a flat synthetic frame
-    // (SyntheticSource encodes pts as a solid color — Mirror/Vhs degenerate
-    // to identity on it, a stale entry cannot be told apart by bytes)
-    let chain =
-        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::noise(0.3)];
-    let p = project_with_fx(chain.clone(), 48_000);
-    let mut vr = VideoRenderer::new(&p);
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let q = kt_media::Quality { width: 64, height: 36 };
-    let t = Tick(90_000 + 3000);
-    warm_pre_fx(&vr, &cache, t, q);
-
-    let (a, complete) = vr.compose_from_cache(&cache, t, q);
-    assert!(complete);
-    let bytes_after_first = cache.video_bytes();
-    let hits_after_first = cache.stats().video_hits;
-
-    // repeated compose: byte-identical, from the cache (the bytes do not grow — no
-    // repeated insertion), the post-FX hit is registered
-    let (b, complete2) = vr.compose_from_cache(&cache, t, q);
-    assert!(complete2);
-    assert_eq!(a, b, "a repeated compose is byte-identical");
-    assert_eq!(cache.video_bytes(), bytes_after_first, "hit: without reinsertion");
-    assert!(cache.stats().video_hits > hits_after_first, "post-FX was read from the cache");
-
-    // a change of a chain PARAMETER → another fx_hash → recomputation (cache bytes
-    // grow: a new key is inserted, not a stale hit) and another result
-    let p2 = project_with_fx(
-        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::noise(0.9)],
-        48_000,
-    );
-    let mut vr2 = VideoRenderer::new(&p2);
-    let (c, _) = vr2.compose_from_cache(&cache, t, q);
-    assert_ne!(a, c, "changed FX parameters must not read stale data");
-    assert!(cache.video_bytes() > bytes_after_first, "a new fx_hash → a new entry");
-
-    // a clip shift with the same chain → another fx_hash (the u/t mapping
-    // changed) → recomputation with insertion, not a stale hit
-    let bytes_before_shift = cache.video_bytes();
-    let p3 = project_with_fx(chain, 48_000 - 4800); // t stays inside the clip
-    let mut vr3 = VideoRenderer::new(&p3);
-    warm_pre_fx(&vr3, &cache, t, q);
-    let bytes_warmed = cache.video_bytes();
-    assert!(bytes_warmed >= bytes_before_shift);
-    let (_, complete3) = vr3.compose_from_cache(&cache, t, q);
-    assert!(complete3);
-    assert!(
-        cache.video_bytes() > bytes_warmed,
-        "a shifted clip must recompute post-FX (a different fx_hash), not take a stale one"
-    );
-}
-
-/// A post-FX hit makes the layer complete even when the pre-FX frame is already evicted:
-/// we warm up, evict the pre-FX by overwriting the budget... simpler: a new cache
-/// with only a post-FX entry cannot be assembled from outside, so we check more weakly —
-/// removing the pre-FX via invalidate_source also removes the post-FX (no orphaned
-/// stale entries when the file on disk changes).
-#[test]
-fn t66b_invalidate_source_drops_postfx() {
-    kt_plugins_builtin::install();
-    let p = project_with_fx(vec![FxInstance::glow(1.0)], 48_000);
-    let mut vr = VideoRenderer::new(&p);
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let q = kt_media::Quality { width: 64, height: 36 };
-    let t = Tick(90_000 + 3000);
-    warm_pre_fx(&vr, &cache, t, q);
-    let (_, complete) = vr.compose_from_cache(&cache, t, q);
-    assert!(complete);
-    assert!(cache.video_bytes() > 0);
-    cache.invalidate_source(kt_engine::source_id(MediaId(1)));
-    assert_eq!(cache.video_bytes(), 0, "invalidate wiped both pre-FX and post-FX");
-    let (_, complete_cold) = vr.compose_from_cache(&cache, t, q);
-    assert!(!complete_cold, "after invalidation there are no layers");
-}
-
-/// R.31 item 4: the export compose does NOT memoize post-FX frames — on
-/// multi-layer edits they evicted pre-frames of neighboring tracks not yet used from the export
-/// cache, and the render lost layers. The frame bytes must still match the preview
-/// compose.
-#[test]
-fn t66c_export_compose_skips_postfx_memoization() {
-    kt_plugins_builtin::install();
-    let p = project_with_fx(
-        vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap(), FxInstance::noise(0.3)],
-        0,
-    );
-    let q = kt_media::Quality { width: 640, height: 360 };
-    let t = Tick(0);
-
-    let cache_a = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let mut vr_a = VideoRenderer::new(&p);
-    warm_pre_fx(&vr_a, &cache_a, t, q);
-    let bytes_before = cache_a.video_bytes();
-    let mut out_a = Vec::new();
-    let complete = vr_a.compose_export_into(&cache_a, t, q, &mut out_a);
-    assert!(complete);
-    assert_eq!(
-        cache_a.video_bytes(),
-        bytes_before,
-        "the export compose has no right to bloat the post-FX cache with frames"
-    );
-
-    // the preview compose on a separate cache — the bytes are the same, but memoization is present
-    let cache_b = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let mut vr_b = VideoRenderer::new(&p);
-    warm_pre_fx(&vr_b, &cache_b, t, q);
-    let mut out_b = Vec::new();
-    vr_b.compose_from_cache_into(&cache_b, t, q, &mut out_b);
-    assert_eq!(out_a, out_b, "the export and preview compose must match byte for byte");
-    assert!(cache_b.video_bytes() > bytes_before, "preview memoizes as before");
-}
-
-/// Test 66d (R.44): the CAMERA — in the post-FX memoization key. The CPU computes
-/// Pan3d, and the camera is resolved per frame (the active-camera rule,
-/// animation) — a static fx_hash does not see it: without the camera in the key, an edit
-/// or a move of the camera would return a stale frame (the GPU is protected from this by
-/// put_cam3d in plan_key since R.29).
-#[test]
-fn t66d_camera_edit_invalidates_postfx() {
-    kt_plugins_builtin::install();
-    // scale 0.5 — transparent margins: the quad's shift is visible on a flat frame too
-    let pan3d = FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.0]).unwrap();
-    let cam_at = |pos_x: f64, start: i64| CameraEvent {
-        ease: true,
-        id: CameraId(1),
-        lane: 0,
-        start: Tick(start),
-        duration: Tick(90_000 * 4),
-        name: String::new(),
-        cam: CameraParams { pos_x, ..CameraParams::default() },
-        keyframes: vec![],
-        auto: vec![],
-    };
-    let with_cam = |cam: CameraEvent| {
-        let mut p = project_with_fx(vec![pan3d.clone()], 48_000);
-        p.ensure_tracks(kt_model::LaneKind::Camera, 1);
-        p.cameras = vec![cam];
-        p.validate().unwrap();
-        p
-    };
-    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
-    let q = kt_media::Quality { width: 64, height: 36 };
-    let t = Tick(90_000 + 3000);
-
-    let p1 = with_cam(cam_at(0.0, 0));
-    let mut vr1 = VideoRenderer::new(&p1);
-    warm_pre_fx(&vr1, &cache, t, q);
-    let (a, c1) = vr1.compose_from_cache(&cache, t, q);
-    assert!(c1);
-
-    // an edit of a camera PARAMETER (the clip's fx_hash does NOT change, the cache survived
-    // the renderer re-creation) → the frame must be recomputed
-    let p2 = with_cam(cam_at(20.0, 0));
-    let mut vr2 = VideoRenderer::new(&p2);
-    let (b, c2) = vr2.compose_from_cache(&cache, t, q);
-    assert!(c2);
-    assert_ne!(a, b, "an edit of the camera must not read stale post-FX");
-
-    // a MOVE of a camera event beyond t: there is no active camera —
-    // the default “50 mm”; the frame is different again (not stale from p2)
-    let p3 = with_cam(cam_at(20.0, 90_000 * 10));
-    let mut vr3 = VideoRenderer::new(&p3);
-    let (c, c3) = vr3.compose_from_cache(&cache, t, q);
-    assert!(c3);
-    assert_ne!(b, c, "moving the camera (switching the active one) must not read stale data");
-    // the default camera == camera p1 (pos_x 0) → the frames are equal, AND this is a memo hit
-    // (same key) — the camera in the key does not hinder reuse
-    assert_eq!(a, c, "the default camera reproduces p1");
-}
-
 /// Test 708 (R.61): an edit of ONLY the formula text recomputes the frame.
 ///
 /// The reason this is a separate test: the formula is resolved into numbers BEFORE
@@ -247,6 +74,9 @@ fn t66d_camera_edit_invalidates_postfx() {
 /// The test's assertion is the observable consequence: the frame is different, no stale.
 #[test]
 fn t708_editing_the_formula_text_invalidates_the_frame() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // the vignette is VISIBLE on a flat frame: it darkens the edges regardless of
     // the content, unlike blur (on a uniform picture it is the identity) and unlike Pan3d
@@ -271,22 +101,22 @@ fn t708_editing_the_formula_text_invalidates_the_frame() {
     let p1 = with_formula("0.1");
     let vr1 = VideoRenderer::new(&p1);
     warm_pre_fx(&vr1, &cache, t, q);
-    let mut vr1 = vr1;
-    let (a, c1) = vr1.compose_from_cache(&cache, t, q);
+    let vr1 = vr1;
+    let (a, c1) = kt_gpu::testkit::compose(&vr1, &cache, t, q);
     assert!(c1, "the first frame did not assemble");
     assert!(a.iter().any(|&b| b != 0), "the frame is empty — the test will prove nothing");
 
     // only the TEXT is edited: the effect parameters are the same
     let p2 = with_formula("0.9");
-    let mut vr2 = VideoRenderer::new(&p2);
-    let (b, c2) = vr2.compose_from_cache(&cache, t, q);
+    let vr2 = VideoRenderer::new(&p2);
+    let (b, c2) = kt_gpu::testkit::compose(&vr2, &cache, t, q);
     assert!(c2, "the second frame did not assemble");
     assert_ne!(a, b, "an edit of the formula text gave STALE data: the values change, but the post-FX key does not");
 
     // the same text — the same frame: the key does not “jitter” for no reason
     let p3 = with_formula("0.1");
-    let mut vr3 = VideoRenderer::new(&p3);
-    let (c, c3) = vr3.compose_from_cache(&cache, t, q);
+    let vr3 = VideoRenderer::new(&p3);
+    let (c, c3) = kt_gpu::testkit::compose(&vr3, &cache, t, q);
     assert!(c3);
     assert_eq!(a, c, "the same formula gave different frames — the key is non-deterministic");
 }

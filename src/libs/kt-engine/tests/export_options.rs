@@ -1,7 +1,7 @@
 //! Test 25 (item 5): encoder choice and mp4 roundtrip.
 //! Requires the system FFmpeg (the kt-ffmpeg muxer) — like conformance test 10.
 
-use kt_engine::export::{ExportOptions, export_mp4_with};
+use kt_engine::export::ExportOptions;
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_media::{MediaSource, Quality};
 use kt_model::*;
@@ -64,6 +64,9 @@ fn sources() -> Vec<(MediaId, Box<dyn MediaSource>)> {
 
 #[test]
 fn t25_force_libx264_and_roundtrip_via_own_source() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("t25.mp4").to_string_lossy().to_string();
     let opts = ExportOptions {
@@ -75,7 +78,7 @@ fn t25_force_libx264_and_roundtrip_via_own_source() {
         placeholders: Vec::new(),
         ..Default::default()
     };
-    let stats = export_mp4_with(
+    let stats = kt_gpu::testkit::export_with(
         &tiny_project(),
         sources(),
         sources(),
@@ -107,11 +110,14 @@ fn t25_force_libx264_and_roundtrip_via_own_source() {
 
 #[test]
 fn t25_force_unknown_encoder_is_explicit_error() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("bad.mp4").to_string_lossy().to_string();
     let opts =
         ExportOptions { force_encoder: Some("no_such_encoder".into()), ..Default::default() };
-    let err = export_mp4_with(
+    let err = kt_gpu::testkit::export_with(
         &tiny_project(),
         sources(),
         sources(),
@@ -127,9 +133,12 @@ fn t25_force_unknown_encoder_is_explicit_error() {
 
 #[test]
 fn t25_auto_encoder_selects_something() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("auto.mp4").to_string_lossy().to_string();
-    let stats = export_mp4_with(
+    let stats = kt_gpu::testkit::export_with(
         &tiny_project(),
         sources(),
         sources(),
@@ -148,6 +157,9 @@ fn t25_auto_encoder_selects_something() {
 /// without a retry in the muxer) is a failure. Count frames with our own decoder.
 #[test]
 fn t33_exported_file_contains_every_frame() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("t33.mp4").to_string_lossy().to_string();
     // 2 seconds = 60 frames at 30 fps
@@ -192,7 +204,7 @@ fn t33_exported_file_contains_every_frame() {
         });
     }
     p.validate().unwrap();
-    let stats = export_mp4_with(
+    let stats = kt_gpu::testkit::export_with(
         &p,
         sources(),
         sources(),
@@ -247,7 +259,7 @@ fn run_events(
             out,
             None,
             &opts,
-            &kt_engine::ExportBackends::default(),
+            &kt_gpu::testkit::backends(),
             &Arc::new(AtomicBool::new(false)),
             &Arc::new(AtomicBool::new(false)),
             move |e| seen.lock().unwrap().push(e),
@@ -266,6 +278,9 @@ fn run_events(
 /// progress window called it "auto encoder" for the whole run (the owner, kkt item 4; F-EXP-004).
 #[test]
 fn t954_encoder_named_before_the_first_frame_and_bytes_add_up() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     use kt_engine::export::{ExportEvent, ExportLog, ExportPhase};
     let dir = tempfile::tempdir().unwrap();
     for (tag, forced) in [("forced", Some("libx264")), ("cascade", None)] {
@@ -331,6 +346,9 @@ fn t954_encoder_named_before_the_first_frame_and_bytes_add_up() {
 /// same project with `libx264` give the same events, element by element.
 #[test]
 fn t955_the_event_stream_holds_no_clock() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let a = dir.path().join("a.mp4").to_string_lossy().to_string();
     let b = dir.path().join("b.mp4").to_string_lossy().to_string();
@@ -361,7 +379,7 @@ fn export_seamed(
             out,
             None,
             &opts,
-            &kt_engine::ExportBackends::default(),
+            &kt_gpu::testkit::backends(),
             &Arc::new(AtomicBool::new(false)),
             &Arc::new(AtomicBool::new(false)),
             move |e| seen.lock().unwrap().push(e),
@@ -380,6 +398,9 @@ fn export_seamed(
 /// candidate is now skipped BEFORE `avcodec_open2` when there is no device or no hardware table.
 #[test]
 fn t962_without_a_device_vaapi_falls_through_or_errs_never_crashes() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     use kt_engine::export::{ExportEvent, ExportLog};
     use kt_media::muxer::hw_seam::Seam;
     let dir = tempfile::tempdir().unwrap();
@@ -486,6 +507,9 @@ impl MediaSource for GapSource {
 /// same. Until then the only trace was a count at the end, naming no frame and no media.
 #[test]
 fn t1602_frames_without_a_layer_are_named_as_they_happen() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     use kt_engine::export::{ExportEvent, ExportLog};
     let gaps = vec![(Tick(45_000), Tick(90_000)), (Tick(135_000), Tick(150_000))];
     let p = two_seconds();
@@ -508,7 +532,7 @@ fn t1602_frames_without_a_layer_are_named_as_they_happen() {
                 &out,
                 None,
                 &opts,
-                &kt_engine::ExportBackends::default(),
+                &kt_gpu::testkit::backends(),
                 &Arc::new(AtomicBool::new(false)),
                 &Arc::new(AtomicBool::new(false)),
                 move |e| seen.lock().unwrap().push(e),
@@ -541,6 +565,9 @@ fn t1602_frames_without_a_layer_are_named_as_they_happen() {
 /// window said "video layers lost: 1" over a whole file (found-defects 71).
 #[test]
 fn t1605_a_span_that_fails_half_way_loses_no_frame() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     use kt_engine::export::{ExportEvent, ExportLog};
     let p = two_seconds();
     let dir = tempfile::tempdir().unwrap();
@@ -564,7 +591,7 @@ fn t1605_a_span_that_fails_half_way_loses_no_frame() {
                 &out,
                 None,
                 &opts,
-                &kt_engine::ExportBackends::default(),
+                &kt_gpu::testkit::backends(),
                 &Arc::new(AtomicBool::new(false)),
                 &Arc::new(AtomicBool::new(false)),
                 move |e| seen.lock().unwrap().push(e),
@@ -612,6 +639,9 @@ fn t1606_a_layer_with_no_source_counts_once() {
 /// system's own encoder, so the Linux job proves the same path the Windows job hit.
 #[test]
 fn t1063_a_forced_encoder_outside_the_cascade_names_itself() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let foreign = if cfg!(windows) { "h264_vaapi" } else { "h264_mf" };
     let cascade = kt_media::muxer::encoder_cascade();
     assert!(!cascade.iter().any(|n| n == foreign), "the scene degenerated: {foreign} is in {cascade:?}");
@@ -630,6 +660,9 @@ fn t1063_a_forced_encoder_outside_the_cascade_names_itself() {
 /// the t865 rule); without the variable it prints why it did not run.
 #[test]
 fn t963_sixty_frames_through_vaapi_decode() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     if std::env::var("KT_EXPECT_HW").as_deref() != Ok("vaapi") {
         eprintln!("t963 skipped: set KT_EXPECT_HW=vaapi on a machine with a VAAPI render node (make hw-test)");
         return;
@@ -658,7 +691,7 @@ fn t963_sixty_frames_through_vaapi_decode() {
     // the raw frames the encoder was fed, and what our decoder reads back
     let q = Quality { width: 1280, height: 720 };
     let mut raw: Vec<Vec<u8>> = Vec::new();
-    kt_engine::export::render_raw_video(&p, sources(), q, |f| {
+    kt_gpu::testkit::render(&p, sources(), q, |f| {
         raw.push(f.to_vec());
         Ok(())
     })
@@ -746,6 +779,9 @@ fn t1556_the_upload_decodes_to_the_frames_it_was_given() {
 /// frame and the same audio length.
 #[test]
 fn t1456_the_encoder_gets_its_threads() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     for (serial, want) in [(false, "auto"), (true, "1")] {
         let out = dir.path().join(format!("t1456-{serial}.mp4")).to_string_lossy().to_string();
@@ -760,7 +796,7 @@ fn t1456_the_encoder_gets_its_threads() {
                 &out,
                 None,
                 &opts,
-                &kt_engine::ExportBackends::default(),
+                &kt_gpu::testkit::backends(),
                 &Arc::new(AtomicBool::new(false)),
                 &Arc::new(AtomicBool::new(false)),
                 move |e| seen.lock().unwrap().push(e),

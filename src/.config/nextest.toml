@@ -3,7 +3,7 @@
 # test named here exists (dist-check.py, t1422). The default profile, so finish.sh and CI get it
 # without a flag.
 [[profile.default.overrides]]
-filter = 'test(t1053_) | test(t943_) | test(t399_) | test(t1171_)'
+filter = 'test(t399_) | test(t1171_)'
 priority = 20
 
 [[profile.default.overrides]]

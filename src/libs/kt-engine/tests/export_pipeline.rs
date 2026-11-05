@@ -6,9 +6,8 @@
 //! - t1452: a cancel in the middle and a sink error in the middle stop every stage promptly.
 
 use kt_engine::export::{
-    ExportConverter, ExportSink, render_pipelined, render_pipelined_budget, render_raw_audio_range, render_raw_video_range,
+    ExportConverter, ExportSink, render_pipelined, render_pipelined_budget, render_raw_audio_range,
 };
-use kt_engine::ExportBackends;
 use kt_media::{MediaSource, Quality};
 use kt_model::{MediaId, Project};
 use kt_time::Tick;
@@ -101,16 +100,19 @@ impl ExportSink for Recorder {
 }
 
 fn pipelined(p: &Project, rec: &mut Recorder, cancel: &Arc<AtomicBool>) -> std::io::Result<kt_engine::ExportStats> {
-    render_pipelined(p, sources(p), sources(p), Q, Some(range()), &ExportBackends::default(), cancel, None, rec)
+    render_pipelined(p, sources(p), sources(p), Q, Some(range()), &kt_gpu::testkit::backends(), cancel, None, rec)
 }
 
 /// t1451: pipelined == serial, frame for frame and sample for sample; the interleave is fixed.
 #[test]
 fn t1451_the_pipelined_export_writes_the_serial_streams() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = project();
     let never = Arc::new(AtomicBool::new(false));
     let mut serial_frames = Vec::new();
-    let vs = render_raw_video_range(&p, sources(&p), Q, Some(range()), &never, |_| {}, |f| {
+    let vs = kt_gpu::testkit::render_range(&p, sources(&p), Q, Some(range()), &never, |_| {}, |f| {
         serial_frames.push(fnv(f));
         Ok(())
     })
@@ -159,12 +161,15 @@ fn t1451_the_pipelined_export_writes_the_serial_streams() {
 /// a change here has to prove itself red on that code again.
 #[test]
 fn t1601_under_pressure_the_pipelined_export_is_the_serial_export_every_run() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = project();
     let q = Quality { width: 640, height: 360 };
     let range = (Tick(90_000 * 6), Tick(90_000 * 12));
     let never = Arc::new(AtomicBool::new(false));
     let mut serial = Vec::new();
-    let vs = render_raw_video_range(&p, sources(&p), q, Some(range), &never, |_| {}, |f| {
+    let vs = kt_gpu::testkit::render_range(&p, sources(&p), q, Some(range), &never, |_| {}, |f| {
         serial.push(fnv(f));
         Ok(())
     })
@@ -174,7 +179,7 @@ fn t1601_under_pressure_the_pipelined_export_is_the_serial_export_every_run() {
     for run in 0..3 {
         let mut rec = Recorder { write_delay: std::time::Duration::from_millis(25), ..Default::default() };
         let budget = kt_engine::export::EXPORT_VIDEO_CACHE_BYTES / 4;
-        let st = render_pipelined_budget(&p, sources(&p), sources(&p), q, Some(range), &ExportBackends::default(), &never, None, budget, &mut rec)
+        let st = render_pipelined_budget(&p, sources(&p), sources(&p), q, Some(range), &kt_gpu::testkit::backends_many(6), &never, None, budget, &mut rec)
             .unwrap();
         assert_eq!(st.missing_video_layers, 0, "run {run}: layers were lost");
         assert_eq!(rec.frames.len(), serial.len(), "run {run}: the frame count");
@@ -188,6 +193,9 @@ fn t1601_under_pressure_the_pipelined_export_is_the_serial_export_every_run() {
 /// (the call returns: all its threads are joined), the error is the cause.
 #[test]
 fn t1452_a_cancel_or_an_error_mid_pipeline_stops_every_stage() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = project();
     let cancel = Arc::new(AtomicBool::new(false));
     let mut rec = Recorder { cancel_after: Some((10, cancel.clone())), ..Default::default() };

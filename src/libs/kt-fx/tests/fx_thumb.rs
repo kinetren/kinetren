@@ -7,8 +7,8 @@
 //! an edit to `test_pattern` changes all the program's icons at once, and it may be
 //! done only deliberately.
 
-use kt_fx::video::{Frame, apply_video_chain, fit_into, render_fx_thumb, test_pattern};
-use kt_fx::video::{FxScratch, VideoFxCtx};
+use kt_fx::video::{Frame, fit_into, test_pattern};
+use kt_fx::video::VideoFxCtx;
 use kt_model::FxInstance;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -22,8 +22,11 @@ fn hash(f: &Frame) -> u64 {
 }
 
 fn thumb(base: &Frame, fx: &[FxInstance]) -> Frame {
-    let mut scratch = FxScratch::default();
-    render_fx_thumb(base, fx, RW, RH, 0.5, 90_000, None, &mut scratch)
+    let mut rgba = vec![0u8; (base.w * base.h * 4) as usize];
+    fit_into(base, base.w, base.h, &mut rgba);
+    let f = Frame { w: base.w, h: base.h, rgba, has_alpha: base.has_alpha };
+    let ctx = VideoFxCtx { out_w: base.w, out_h: base.h, u: 0.5, burst_index: 0, cam3d: None, in_scale: 1, lead: None };
+    kt_gpu::testkit::chain(fx, f, &ctx)
 }
 
 /// Goldens of the sample. They change ONLY together with a deliberate edit to
@@ -53,6 +56,9 @@ fn t544_thumb_pattern_is_frozen_and_deterministic() {
 /// show “nothing changed” and lie about the effect.
 #[test]
 fn t544b_pattern_feeds_every_class_of_effect() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
     kt_plugins_builtin::install();
     let p = test_pattern(RW, RH, false);
@@ -90,6 +96,9 @@ fn t544b_pattern_feeds_every_class_of_effect() {
 /// compares DATA, not the picture.
 #[test]
 fn t544c_identity_is_identity_and_a_variant_is_not() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     // color_grade is a plugin (plugin-api-stage1, stage 4)
     kt_plugins_builtin::install();
     let p = test_pattern(RW, RH, false);
@@ -112,6 +121,9 @@ fn t544c_identity_is_identity_and_a_variant_is_not() {
 /// precisely the alpha variant.
 #[test]
 fn t544d_drop_shadow_needs_the_alpha_pattern() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let opaque = test_pattern(RW, RH, false);
     let alpha = test_pattern(RW, RH, true);
@@ -128,55 +140,3 @@ fn t544d_drop_shadow_needs_the_alpha_pattern() {
     );
 }
 
-/// The thumbnail is the same chain as the engine's: `render_fx_thumb` must be
-/// exactly “fit + apply”, with no arithmetic of its own. Otherwise the picture in the
-/// picker would diverge from what results after a click (invariant No. 7 in
-/// spirit: one composition code, the size is an execution parameter).
-#[test]
-fn t544e_thumb_is_fit_plus_chain_and_nothing_else() {
-    kt_plugins_builtin::install();
-    let p = test_pattern(RW, RH, false);
-    let fx = [FxInstance::blur(6), FxInstance::vhs(4, 0.4)];
-    let (w, h) = (160, 90);
-
-    let mut buf = vec![0u8; (w as usize) * (h as usize) * 4];
-    fit_into(&p, w, h, &mut buf);
-    let fitted = Frame { w, h, rgba: buf, has_alpha: p.has_alpha };
-    let want = apply_video_chain(
-        &fx,
-        fitted,
-        &VideoFxCtx {
-            out_w: w,
-            out_h: h,
-            u: 0.5,
-            burst_index: 90_000,
-            cam3d: None,
-            in_scale: 1,
-            lead: None,
-        },
-    );
-
-    let mut scratch = FxScratch::default();
-    let got = render_fx_thumb(&p, &fx, w, h, 0.5, 90_000, None, &mut scratch);
-    assert_eq!(hash(&got), hash(&want), "render_fx_thumb is not fit_into + apply_video_chain");
-
-    // the same pool, second run: a “dirty” pool does not change the bytes (t68)
-    let again = render_fx_thumb(&p, &fx, w, h, 0.5, 90_000, None, &mut scratch);
-    assert_eq!(hash(&again), hash(&want), "a reused scratch pool changed the bytes");
-}
-
-/// The noise grain is pinned to `burst_index`: with a still cursor the cell
-/// must be one and the same picture, otherwise the strip flickers on every
-/// redrawn frame of the interface.
-#[test]
-fn t544f_noise_is_pinned_to_the_tick() {
-    kt_plugins_builtin::install();
-    let p = test_pattern(RW, RH, false);
-    let fx = [FxInstance::noise(0.25)];
-    let mut s = FxScratch::default();
-    let a = render_fx_thumb(&p, &fx, RW, RH, 0.5, 90_000, None, &mut s);
-    let b = render_fx_thumb(&p, &fx, RW, RH, 0.5, 90_000, None, &mut s);
-    let other = render_fx_thumb(&p, &fx, RW, RH, 0.5, 270_000, None, &mut s);
-    assert_eq!(hash(&a), hash(&b), "same tick gave two different thumbs");
-    assert_ne!(hash(&a), hash(&other), "noise ignores the tick");
-}

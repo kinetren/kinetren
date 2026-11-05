@@ -1,22 +1,13 @@
 //! camera_isp's consequences (camera-isp-simulation; capability `video-fx`): the CPU kernel, the byte
 //! reference, checked against what the physics and the ISP predict — not against its own output.
 
-use fx_video_camera::cpu::{plane_after, srgb_lin};
+#[path = "model/cpu.rs"]
+#[allow(dead_code)]
+mod cpu;
+use cpu::{Scratch, plane_after, srgb_lin};
 use fx_video_camera::{CameraIsp, Plan, cfa, ix, pass};
-use kt_plugin_api::barrier::{BarrierCtx, BarrierKernel, Frame, RasterHost, Scratch};
+use kt_plugin_api::barrier::Frame;
 use kt_plugin_api::{ParamValues, Plugin};
-
-struct NoRaster;
-impl RasterHost for NoRaster {
-    fn resample(&self, _: &Frame, _: u32, _: u32, _: &mut dyn Scratch) -> Frame {
-        unreachable!("camera_isp uses no host raster")
-    }
-    fn sample(&self, _: &Frame, _: f64, _: f64) -> [f64; 4] {
-        unreachable!()
-    }
-    fn premultiply(&self, _: &mut [u8]) {}
-    fn unpremultiply(&self, _: &mut [u8]) {}
-}
 
 #[derive(Default)]
 struct Pool;
@@ -39,10 +30,8 @@ fn values(sets: &[(&str, f64)]) -> Vec<f64> {
 }
 
 fn run_with(vals: &[f64], f: &Frame, k: u32, burst: i64, simd: bool) -> Vec<u8> {
-    let cam = CameraIsp::new();
-    let cx = BarrierCtx { res_scale: k, burst_index: burst, simd, raster: &NoRaster };
     let f = Frame { w: f.w, h: f.h, rgba: f.rgba.clone(), has_alpha: f.has_alpha };
-    cam.frame_values(vals, f, &cx, &mut Pool).rgba
+    cpu::run(&Plan::new(vals, k, burst), f, simd, &mut Pool).rgba
 }
 
 fn run(vals: &[f64], f: &Frame) -> Vec<u8> {
@@ -511,8 +500,8 @@ fn t1220_every_defect_has_its_correcting_block() {
     let field = |defect: &[(&str, f64)], corrected: bool| -> f64 {
         let get = |n: &str| defect.iter().find(|(k, _)| *k == n).map_or(0.0, |d| d.1) as f32;
         let (k, ca) = (get("distortion"), get("lateral_ca") / hd2.sqrt());
-        let fit = fx_video_camera::cpu::lens_fit(k, ca, m2);
-        let crop = if corrected { fx_video_camera::cpu::isp_crop(k, ca, m2) } else { 1.0 };
+        let fit = cpu::lens_fit(k, ca, m2);
+        let crop = if corrected { cpu::isp_crop(k, ca, m2) } else { 1.0 };
         (crop / fit) as f64
     };
     // (what, the defect, the block switched off)
@@ -611,7 +600,7 @@ fn t1222_the_frame_is_unprocessed_into_the_scene() {
     let (s, wr, wb) = (1.4f32, 1.2f32, 0.85f32);
     let wl = [0.2126f32, 0.7152, 0.0722];
     let enc =
-        |v: f32| (fx_video_camera::cpu::oetf(v, 1) * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u8;
+        |v: f32| (cpu::oetf(v, 1) * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u8;
     // develop: linear → white balance → saturation s → sRGB
     let developed = frame_of(w, h, |x, y| {
         let i = ((y * w + x) * 4) as usize;

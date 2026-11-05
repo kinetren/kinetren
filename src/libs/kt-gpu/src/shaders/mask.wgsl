@@ -1,4 +1,4 @@
-// Mask alpha (shape-masks): a mirror of `kt_fx::mask::apply_alpha`, INTEGER and byte for byte.
+// Mask alpha (shape-masks): INTEGER arithmetic.
 // The coverage is the CPU rasterizer's bytes, uploaded as a texture — the GPU never rasterizes.
 //
 // T0 = the frame, T1 = the coverage (in .r). u0 = (frame_has_alpha, 0, 0, 0).

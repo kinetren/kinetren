@@ -16,7 +16,6 @@ pub mod generator;
 pub mod geo;
 pub mod math;
 pub mod pixfont;
-pub mod shade;
 pub mod stream;
 pub mod trans;
 
@@ -1127,7 +1126,7 @@ impl ParamValues {
     }
 }
 
-/// A video effect's CPU kernel — the byte reference (invariant 7).
+/// A video effect's kernel: the numbers its WGSL reads.
 ///
 /// A POINT-WISE kernel (D5) gives one function of one pixel, `tap`, used by the CPU in both of its
 /// positions (inside the fused geometry pass and as its own barrier), and its GPU twin as the WGSL
@@ -1152,22 +1151,6 @@ pub trait VideoKernel: Send + Sync {
     /// `cook`.
     fn cook_at(&self, p: &[f64], _cx: &TapCtx) -> Cooked {
         self.cook(p)
-    }
-    /// The function of one pixel over the cooked parameters (straight RGBA in 0..255).
-    fn tap(&self, _k: &Cooked, _rgba: &mut [f64; 4]) {}
-    /// `tap` with the sample's coordinate in its stage (pixel units, the pixel's corner at the
-    /// integer, as the fused pass's sub-sample record and the barrier's pixel index give it);
-    /// the default ignores it.
-    #[inline(always)]
-    fn tap_at(&self, k: &Cooked, rgba: &mut [f64; 4], _x: f64, _y: f64) {
-        self.tap(k, rgba)
-    }
-    /// A whole frame at the barrier position (straight RGBA8, `w` pixels wide): each pixel through
-    /// `tap_at` at its coordinate, rounded and clamped per channel. The provided body is compiled
-    /// per kernel type, so the tap is a static, inlinable call inside the loop and the host makes
-    /// ONE dynamic call per frame; a kernel overrides it only with the same bytes.
-    fn frame(&self, k: &Cooked, rgba: &mut [u8], w: u32) {
-        frame_with_at(rgba, w, |v, x, y| self.tap_at(k, v, x, y));
     }
     /// The parameters as the GPU reads them: `a.yzw`, then `b.xyzw` (rounded to f32 ONCE here).
     fn gpu_params(&self, _p: &[f64]) -> [f32; 7] {
@@ -1243,8 +1226,9 @@ pub trait GeoKernel: Send + Sync {
     /// The steps of this slot at these values; EMPTY when the values are neutral (the step is
     /// skipped, as the identity steps of the core kinds are, so the identity stays byte for byte).
     fn steps(&self, p: &[f64], cx: &GeoCtx) -> Vec<GeoStep>;
-    /// The inverse map of a `Warp` step: output → input, in the normalized centered space. The ONE
-    /// f64 text of it; `warp_<id>` is its WGSL mirror, held to the geometry tolerance (t329, t993).
+    /// The inverse map of a `Warp` step: output → input, in the normalized centered space. The
+    /// planner measures a program's zoom through it (kt-fx `probe_program_lens`); `warp_<id>` is the
+    /// same map in WGSL.
     fn warp(&self, _k: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
         (x, y)
     }
@@ -1254,25 +1238,11 @@ pub trait GeoKernel: Send + Sync {
     }
 }
 
-/// A transition kind's kernel (D12): the eight numbers both executors read, the ONE CPU pixel, the
-/// volumetric panels. Its WGSL `trans_<id>(uv, k)` (in `Gpu::Wgsl`) is the pixel's mirror.
+/// A transition kind's kernel (D12): the eight numbers its WGSL `trans_<id>(uv, k)` (in `Gpu::Wgsl`)
+/// reads, and the volumetric panels.
 pub trait TransKernel: Send + Sync {
-    /// The former `TransMix::of` arm: the passport's values → the eight numbers (f32, rounded once).
+    /// The passport's values → the eight numbers (f32, rounded once).
     fn pack(&self, p: &[f64]) -> [f32; 8];
-    /// The former `kernel()` arm: the output pixel at `(u, v)` (pixel centres in 0..1) with progress
-    /// `k` (0..1); `a`/`b` the outgoing and incoming sides, `ext` the panels of `ext()`.
-    #[allow(clippy::too_many_arguments)]
-    fn pixel(
-        &self,
-        a: &trans::Img<'_>,
-        b: &trans::Img<'_>,
-        u: f32,
-        v: f32,
-        k: f32,
-        p: &[f32; 8],
-        cx: &trans::Canvas,
-        ext: &[f32; 16],
-    ) -> [f32; 4];
     /// The volumetric kinds' panels at progress `k` (0..4096): the f64 homographies rounded once.
     fn ext(&self, _p: &[f32; 8], _k: u32) -> [f32; 16] {
         [0.0; 16]
@@ -1294,35 +1264,6 @@ pub struct TapCtx {
     /// The absolute timeline position in ticks (plugin-api-barriers 4.2): a positioned tap whose
     /// pattern moves with time (noise's grain) seeds itself from it, as the barrier kernel does.
     pub burst_index: i64,
-}
-
-/// `frame_with` with each pixel's coordinate (`x = i % w`, `y = i / w`, as f64) — the bytes of
-/// kt-fx's point-wise barrier for a positioned tap.
-#[inline(always)]
-pub fn frame_with_at(rgba: &mut [u8], w: u32, mut op: impl FnMut(&mut [f64; 4], f64, f64)) {
-    let w = w.max(1) as usize;
-    for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
-        let (x, y) = ((i % w) as f64, (i / w) as f64);
-        let mut v = [px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64];
-        op(&mut v, x, y);
-        for (c, out) in v.iter().zip(px.iter_mut()) {
-            *out = c.round().clamp(0.0, 255.0) as u8;
-        }
-    }
-}
-
-/// The barrier position's loop, the ONE text of it: each straight-RGBA8 pixel to f64, through `op`,
-/// rounded and clamped per channel — the bytes of kt-fx's point-wise barrier. A kernel that
-/// overrides `VideoKernel::frame` (to hoist a per-frame value) calls this, not a loop of its own.
-#[inline(always)]
-pub fn frame_with(rgba: &mut [u8], mut op: impl FnMut(&mut [f64; 4])) {
-    for px in rgba.chunks_exact_mut(4) {
-        let mut v = [px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64];
-        op(&mut v);
-        for (c, out) in v.iter().zip(px.iter_mut()) {
-            *out = c.round().clamp(0.0, 255.0) as u8;
-        }
-    }
 }
 
 /// The curves of ONE chain slot as the host gives them to an audio kernel (D2a). The domain is the
@@ -1598,7 +1539,7 @@ impl Registry {
                     _ => {}
                 }
                 if m.decl.video_class == Some(VideoClass::Barrier) && p.barrier().is_none() {
-                    return refuse("a barrier without a CPU kernel");
+                    return refuse("a barrier without a kernel");
                 }
                 // a barrier, or a point-wise plugin whose barrier position is a kernel of its own
                 // (noise, greenscreen): the graph is checked whenever a GPU side is declared
@@ -1782,7 +1723,7 @@ impl Registry {
 
     /// The ids in registration order.
     /// The transition plugins in registration order (D12): a plugin kind's mode is
-    /// `MODE_PLUGIN + its index here`, for the CPU kernel and the GPU arm alike.
+    /// `MODE_PLUGIN + its index here`, for the GPU arm.
     pub fn transitions(&self) -> Vec<&std::sync::Arc<dyn Plugin>> {
         self.plugins.iter().filter(|p| p.manifest().media == Media::Transition).collect()
     }

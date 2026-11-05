@@ -1,5 +1,5 @@
 //! The colour filter arrays (design step 6): one table per layout, the codes below, and the packing
-//! into four u32 that both the CPU passes and the WGSL read (D3), so the shaders carry no layout code.
+//! into four u32 that the WGSL reads (D3), so the shaders carry no layout code.
 
 /// The colour of a sensor pixel.
 pub const R: u32 = 0;

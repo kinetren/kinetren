@@ -195,34 +195,37 @@ fn big_cache() -> BurstCache {
 /// t1241: a frame inside the mosh is the same bytes after playing up to it and after a cold seek.
 #[test]
 fn t1241_seek_equals_play() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     if no_device() {
         return;
     }
     let n = Tick(38 * STEP);
     let p = project(true);
-    let (mut played, cache) = (renderer(&p), big_cache());
+    let (played, cache) = (renderer(&p), big_cache());
     let mut last = (vec![], false);
     for k in 0..=38 {
         let t = Tick(k * STEP);
         warm(&played, &cache, t);
-        last = played.compose_from_cache(&cache, t, Q);
+        last = kt_gpu::testkit::compose(&played, &cache, t, Q);
     }
     assert!(last.1, "the played frame is complete");
-    let (mut seek, cold) = (renderer(&p), big_cache());
+    let (seek, cold) = (renderer(&p), big_cache());
     warm(&seek, &cold, n);
-    let sought = seek.compose_from_cache(&cold, n, Q);
+    let sought = kt_gpu::testkit::compose(&seek, &cold, n, Q);
     assert!(sought.1, "one warm-up of what the order names completes the frame");
     assert_eq!(sought.0, last.0, "a seek gives the bytes of playing");
     // and the slot does something: without it the frame is B itself
     let plain = project(false);
-    let (mut vr, c) = (renderer(&plain), big_cache());
+    let (vr, c) = (renderer(&plain), big_cache());
     warm(&vr, &c, n);
-    assert_ne!(vr.compose_from_cache(&c, n, Q).0, last.0);
+    assert_ne!(kt_gpu::testkit::compose(&vr, &c, n, Q).0, last.0);
 }
 
 fn export(p: &Project, range: (i64, i64)) -> Vec<u8> {
     let mut out = vec![];
-    kt_engine::export::render_raw_video_range(
+    kt_gpu::testkit::render_range(
         p,
         sources(),
         Q,
@@ -242,6 +245,9 @@ fn export(p: &Project, range: (i64, i64)) -> Vec<u8> {
 /// boundary, which keeps the memo) equals one in one go; a piece starting inside the mosh pre-rolls.
 #[test]
 fn t1242_export_in_pieces_equals_one_go() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     if no_device() {
         return;
     }
@@ -258,11 +264,14 @@ fn t1242_export_in_pieces_equals_one_go() {
 /// included) with an empty memo, then only the next frame's own source.
 #[test]
 fn t1248_the_order_asks_what_the_stage_reads() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     if no_device() {
         return;
     }
     let p = project(true);
-    let (mut vr, cache) = (renderer(&p), big_cache());
+    let (vr, cache) = (renderer(&p), big_cache());
     let t = Tick(36 * STEP);
     let order = vr.layers_at(t, Q);
     let cq = order.iter().find(|(m, ..)| *m == MediaId(2)).expect("the mosh orders its source").2;
@@ -271,7 +280,7 @@ fn t1248_the_order_asks_what_the_stage_reads() {
     assert!(order.iter().any(|(m, ..)| *m == MediaId(1)), "the history reaches into the event before");
     assert!(order.iter().filter(|(m, ..)| *m == MediaId(2)).count() >= 7, "the history from the cut");
     warm(&vr, &cache, t);
-    assert!(vr.compose_from_cache(&cache, t, Q).1);
+    assert!(kt_gpu::testkit::compose(&vr, &cache, t, Q).1);
     let next = Tick(37 * STEP);
     // the source pts is the material position: the clip starts at 1 s with `source_in` 0
     let pts = Tick(next.0 - 30 * STEP);
@@ -289,6 +298,9 @@ fn mad(a: &[u8], b: &[u8]) -> f64 {
 /// curves; a seek still equals playing.
 #[test]
 fn t1246_a_reset_key_ends_the_mosh_on_the_beat() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     if no_device() {
         return;
     }
@@ -298,9 +310,9 @@ fn t1246_a_reset_key_ends_the_mosh_on_the_beat() {
     // pixels, so a frame at another size is another picture — compare at the same stream size)
     let plain = project_with(true, None, 0.0);
     let frame = |proj: &Project, k: i64| {
-        let (mut vr, c) = (renderer(proj), big_cache());
+        let (vr, c) = (renderer(proj), big_cache());
         warm(&vr, &c, Tick(k * STEP));
-        let (f, complete) = vr.compose_from_cache(&c, Tick(k * STEP), Q);
+        let (f, complete) = kt_gpu::testkit::compose(&vr, &c, Tick(k * STEP), Q);
         assert!(complete, "frame {k} is complete after one warm-up");
         f
     };
@@ -310,11 +322,11 @@ fn t1246_a_reset_key_ends_the_mosh_on_the_beat() {
     assert!(before > 3.0 * on.max(1.0), "before the beat the mosh ({before:.1}), on it shot B ({on:.1})");
     assert!(after < 12.0, "after the beat the stream is shot B again ({after:.1})");
     // seek == play with the curve
-    let (mut played, cache) = (renderer(&p), big_cache());
+    let (played, cache) = (renderer(&p), big_cache());
     let mut last = vec![];
     for k in 28..=beat + 2 {
         warm(&played, &cache, Tick(k * STEP));
-        last = played.compose_from_cache(&cache, Tick(k * STEP), Q).0;
+        last = kt_gpu::testkit::compose(&played, &cache, Tick(k * STEP), Q).0;
     }
     assert_eq!(frame(&p, beat + 2), last);
 }

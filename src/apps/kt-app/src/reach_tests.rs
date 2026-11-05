@@ -2804,6 +2804,9 @@ fn t757_every_window_is_in_the_registry() {
 /// the same: there is no copy of the preview drawing in the program.
 #[test]
 fn t766_on_screen_controls_are_reachable_and_speak() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use egui_kittest::kittest::Queryable;
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     // the scene starts with DISABLED controls — and those are what must be found
@@ -3713,11 +3716,10 @@ fn t800_finish_stages_name_their_price() {
 
     // 4) the script really calls the accounting and holds the stages named by the spec:
     //    the workshop run is a stage of THIS script, a separate kt-gpu stage
-    //    was removed as a duplicate (R.68), SIMD stays with its own environment
+    //    was removed as a duplicate (R.68)
     for (need, why) in [
         ("finish-budget.py --report", "the script does not print the table of stage costs"),
         ("workshop tests", "the workshop run did not become a script stage"),
-        ("SIMD conformance", "SIMD stage disappeared"),
         ("live scenarios", "live scenario stage disappeared"),
     ] {
         assert!(finish.contains(need), "{why} (no “{need}”)");

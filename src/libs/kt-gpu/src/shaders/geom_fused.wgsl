@@ -1,9 +1,9 @@
-// Fused geometry pass (R.44, concatenation of transforms): a mirror of
-// kt_fx::geom (map_pos + sample_at + ss_taps). The primitive program arrives as a
-// 1024 B uniform (its own bind group layout: the shared Params of 128 B is too small);
-// the coefficients are MULTIPLIED on the CPU in f64, here a
-// one-time rounding to f32. If you edit the semantics, edit kt-fx/src/geom.rs
-// in the SAME COMMIT (t181).
+// Fused geometry pass (R.44, concatenation of transforms): it follows the program
+// kt_fx::geom builds (the inverse mappings, the sample and the `ss_taps` count). The primitive
+// program arrives as a 1024 B uniform (its own bind group layout: the shared Params of 128 B is
+// too small); the coefficients are MULTIPLIED on the CPU in f64, here a
+// one-time rounding to f32. If you edit the semantics, edit the program builder in
+// kt-fx/src/geom.rs in the SAME COMMIT (t181).
 //
 // Primitives (kind in 4 bits in h.y|h.z, data are vec4 slots one after another):
 //   0 Affine: (ax, bx, ay, by)                          — 1 slot
@@ -19,7 +19,7 @@
 // Tap table (R.45, item 312): absorbed pointwise ops (Greenscreen/
 // Noise) — slots 46+2i (meta|params, params2), the counter in the h.w bits 24..31;
 // they are applied to the subtap value in chain order, the stage coordinate is
-// written by the reverse pass (a mirror of kt_fx::geom::map_pos_rec).
+// written by the reverse pass.
 //
 // Supersampling (item 309): h.w = mode | nx<<8 | ny<<16. Mode 0: the taps are
 // computed on the CPU (affine program, the Jacobian is constant); mode 1 —

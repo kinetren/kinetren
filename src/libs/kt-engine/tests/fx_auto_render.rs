@@ -77,7 +77,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
 }
 
 fn compose(p: &Project, t: Tick, cache: &kt_cache::BurstCache) -> (Vec<u8>, bool) {
-    let mut vr = VideoRenderer::new(p);
+    let vr = VideoRenderer::new(p);
     let q = kt_media::Quality { width: W, height: H };
     for (media, src_pts, q) in vr.layers_at(t, q) {
         cache.insert_video(
@@ -87,11 +87,14 @@ fn compose(p: &Project, t: Tick, cache: &kt_cache::BurstCache) -> (Vec<u8>, bool
             frame(),
         );
     }
-    vr.compose_from_cache(cache, t, q)
+    kt_gpu::testkit::compose(&vr, cache, t, q)
 }
 
 #[test]
 fn t191_animated_equals_static_at_each_moment() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let base = vec![FxInstance::blur(8), FxInstance::glow(0.5)];
     let auto = vec![
@@ -131,6 +134,9 @@ fn t191_animated_equals_static_at_each_moment() {
 
 #[test]
 fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let base = vec![FxInstance::blur(8)];
     let curve = |v1: f64| {
@@ -167,6 +173,9 @@ fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
 /// touches the key domain, the storage form and `time_scale`.
 #[test]
 fn t230_cammotion_migrates_to_pan_curves() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let keys = vec![
         CamKeyframe { t: 0.0, pan_x: -0.2, pan_y: 0.1, zoom: 1.0 },

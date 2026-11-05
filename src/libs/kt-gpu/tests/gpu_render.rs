@@ -1,5 +1,5 @@
 //! Test 184 (R.29): the GPU twin of test 67: “preview == export” on the GPU path.
-//! A frame of the export stream (render_raw_video_range_with + GPU backend)
+//! A frame of the export stream (render_raw_video_range_with)
 //! is byte for byte equal to the preview composite of the same moment: both the “cold”
 //! (a fresh engine: a second GpuFxEngine on the same adapter) and the “warm”
 //! (the same engine, ReadbackCache). Plus: determinism of the export between
@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use kt_engine::{ExportBackends, VideoRenderer, render_raw_video};
+use kt_engine::{ExportBackends, VideoRenderer};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_media::{MediaSource, Quality};
@@ -115,7 +115,7 @@ fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
     let Some(e2) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let target = 17usize;
-    let backends = ExportBackends { video_gpu: Some(e1.clone()) };
+    let backends = ExportBackends { video_gpu: Some(e1.clone()), ..Default::default() };
     let export_frame = gpu_export_frames(&backends, q, &[target]).remove(0);
 
     // “preview”: an independent cache, direct decoding of the layers, the same frame plan
@@ -148,40 +148,23 @@ fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
 }
 
 #[test]
-fn t184b_gpu_export_deterministic_and_close_to_cpu() {
+fn t184b_gpu_export_deterministic() {
     kt_plugins_builtin::install();
     let Some(e1) = test_engine() else { return };
     let q = Quality { width: 128, height: 72 };
     let grab = [0usize, 17, 40];
-    let backends = ExportBackends { video_gpu: Some(e1) };
+    let backends = ExportBackends { video_gpu: Some(e1), ..Default::default() };
     let a = gpu_export_frames(&backends, q, &grab);
     let b = gpu_export_frames(&backends, q, &grab);
     assert_eq!(a, b, "GPU export must be deterministic on the device");
-
-    // the CPU reference of the same frames, within the tolerance of bilinear arithmetic
-    let p = project();
-    let mut cpu: Vec<Vec<u8>> = Vec::new();
-    let mut n = 0usize;
-    render_raw_video(&p, sources(), q, |rgba| {
-        if grab.contains(&n) {
-            cpu.push(rgba.to_vec());
-        }
-        n += 1;
-        Ok(())
-    })
-    .unwrap();
-    for ((g, c), idx) in a.iter().zip(&cpu).zip(grab) {
-        assert_frames_close(c, g, q.width, q.height, FrameTol::BILINEAR, &format!("frame {idx}"));
-    }
 }
 
-/// Test 301 (R.44; formerly t187c, the opposite): export rendering WITHOUT the GPU no longer
-/// refuses: Pan3d is computed on the CPU (the inverse homography in the merged
-/// geometry pass), and the GpuRequired refusal is removed. The frames really carry the effect, and
-/// with a live adapter the CPU and GPU agree within the GEOM tolerance.
+/// Test 301 (R.44): an export renders 3D, the frames really carry the effect. t1575 (
+/// compute-kernels-render): with no device an export refuses and says why.
 #[test]
-fn t301_export_without_gpu_renders_3d() {
+fn t301_export_renders_3d_and_t1575_no_device_is_a_refusal() {
     kt_plugins_builtin::install();
+    let Some(e) = test_engine() else { return };
     let with_fx = |fx: Vec<FxInstance>| {
         let mut p = project();
         p.clips[0].fx = fx;
@@ -210,18 +193,16 @@ fn t301_export_without_gpu_renders_3d() {
                 Ok(())
             },
         )
-        .expect("export render without GPU must work with 3D");
+        .expect("export render must work with 3D");
         got
     };
-    let cpu_only = ExportBackends::default();
-    let cpu3d = render(&with_fx(vec![pan3d.clone()]), &cpu_only);
-    let cpu_plain = render(&with_fx(vec![]), &cpu_only);
-    assert_ne!(cpu3d, cpu_plain, "Pan3d on CPU must change the picture");
-    if let Some(e) = test_engine() {
-        let gpu = ExportBackends { video_gpu: Some(e) };
-        let gpu3d = render(&with_fx(vec![pan3d]), &gpu);
-        assert_frames_close(&cpu3d, &gpu3d, q.width, q.height, FrameTol::GEOM, "t301-cpu-vs-gpu");
-    }
+    let gpu = ExportBackends { video_gpu: Some(e), ..Default::default() };
+    let with3d = render(&with_fx(vec![pan3d.clone()]), &gpu);
+    let plain = render(&with_fx(vec![]), &gpu);
+    assert_ne!(with3d, plain, "Pan3d must change the picture");
+    let never = Arc::new(AtomicBool::new(false));
+    let refused = kt_engine::export::render_raw_video_range_with(&project(), sources(), q, None, &ExportBackends::default(), &never, |_| {}, |_| Ok(()));
+    assert_eq!(refused.unwrap_err().to_string(), "no video device");
 }
 
 // ---- 444-446 (R.50, B3): the subtree of an embedding on the GPU ----------------------------
@@ -311,13 +292,13 @@ fn t444_nested_reel_conforms_gpu_to_cpu() {
     // sub-composite, not the frame, that crosses the boundary), and both MUST converge
     for fx in [vec![], vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()]] {
         let p = nested_project(fx.clone(), 0.5);
-        let (mut video, cache) = warm_cache(&p, q, t);
+        let (video, cache) = warm_cache(&p, q, t);
         let plan = video.frame_plan(&cache, t, q);
         let mut gpu = Vec::new();
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "a warm composite with a nested item must be complete");
         drop(plan);
-        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
+        let (cpu, cpu_complete) = kt_gpu::reference::take();
         assert!(cpu_complete);
         assert_frames_close(
             &cpu,
@@ -344,12 +325,12 @@ fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
     // boundary gives “twice as dark”. The WGSL mirror of `unpremultiply` MUST
     // match the CPU to the last digit: all the engine’s textures are Rgba8Uint.
     let p = nested_project(vec![], 1.0);
-    let (mut video, cache) = warm_cache(&p, q, t);
+    let (video, cache) = warm_cache(&p, q, t);
     let plan = video.frame_plan(&cache, t, q);
     let mut gpu = Vec::new();
     e.execute_into(&plan, &mut gpu).unwrap();
     drop(plan);
-    let (cpu, _) = video.compose_from_cache(&cache, t, q);
+    let (cpu, _) = kt_gpu::reference::take();
     assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::EXACT, "boundary of the nested item");
 }
 
@@ -549,7 +530,7 @@ fn cpu_and_gpu(
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "a warm composite with a nested item must be complete");
     }
-    let (cpu, complete) = video.compose_from_cache(cache, t, q);
+    let (cpu, complete) = kt_gpu::reference::take();
     assert!(complete, "the CPU composite with a nested item must be complete");
     (cpu, gpu)
 }
@@ -662,13 +643,13 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
     ];
     for (name, fx) in cases {
         let p = twin_nest_project(fx);
-        let (mut video, cache) = warm_cache(&p, q, t_twin);
+        let (video, cache) = warm_cache(&p, q, t_twin);
         let plan = video.frame_plan(&cache, t_twin, q);
         let mut gpu = Vec::new();
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "{name}: the warm composite is declared incomplete");
         drop(plan);
-        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t_twin, q);
+        let (cpu, cpu_complete) = kt_gpu::reference::take();
         assert!(cpu_complete, "{name}: the CPU composite is declared incomplete");
         // BILINEAR tolerance: fitting is a resample, and `resample.wgsl` computes
         // in f32 and rounds to even, while `fit_into` works in f64 and rounds away from zero
@@ -717,13 +698,13 @@ fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
     let at = |k: i64| Tick(k + 20 * 3000);
     let mut frames = Vec::new();
     for t in [at(0), at(4 * sec)] {
-        let (mut video, cache) = warm_cache(&p, q, t);
+        let (video, cache) = warm_cache(&p, q, t);
         let plan = video.frame_plan(&cache, t, q);
         let mut gpu = Vec::new();
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "a warm composite with a nested item must be complete");
         drop(plan);
-        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
+        let (cpu, cpu_complete) = kt_gpu::reference::take();
         assert!(cpu_complete);
         assert_frames_close(
             &cpu,

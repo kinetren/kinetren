@@ -6,9 +6,8 @@
 // the blend expects straight alpha. Without the conversion the sub-composite lands twice as dark
 // exactly in the semi-transparent places.
 //
-// The arithmetic is INTEGER and matches the CPU to the last digit: all the engine’s
-// textures are `Rgba8Uint`, division with rounding to the nearest (`+ a/2`).
-// Edited in the SAME commit as the function in kt-engine.
+// The arithmetic is INTEGER: all the engine’s textures are `Rgba8Uint`, division with rounding
+// to the nearest (`+ a/2`).
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let p = vec2<i32>(pos.xy);

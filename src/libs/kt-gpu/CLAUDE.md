@@ -5,7 +5,8 @@
 The GPU backend of video FX and of the composite (R.29): wgpu, fragment WGSL passes.
 It implements `kt_engine::VideoGpuExec`; kt-engine does NOT depend on the crate —
 the executor is injected from above (kt-app: the eframe device, kt-cli/export:
-headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fallback.
+headless). It is the ONE executor of the frame plan (compute-kernels-render): with no device there
+is no picture, and an export refuses.
 
 ## Invariants
 
@@ -23,14 +24,14 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   Vulkan through llvmpipe has run it so far; DX12 and Metal are untested.
 - **All textures are Rgba8Uint** — textureLoad returns raw bytes without
   unorm losses; integer kernels (composite, noise, mirror, tiling) are
-  byte-for-byte equal to the CPU, bilinear ones — within tolerance (f32 against f64).
+  byte-for-byte equal to the stored frames, bilinear ones — within tolerance.
   There are no samplers at all: the sub-texel filtering grid wanders between drivers —
-  bilinear done by hand (4 texelLoad, a mirror of `bilinear_into`).
+  bilinear done by hand (4 texelLoad).
 - **No atomics and no variable blending order**: the composite is a ping-pong of
-  two accumulators by the shader (the CPU formula `alpha_over` is not expressible
+  two accumulators by the shader (the formula `alpha_over` is not expressible
   by fixed-function blending). This is the condition of determinism on the device (t183).
-- **Transitions (R.33; plugins since plugin-api-stage1, D12): a kind's `trans_<id>` WGSL is a
-  mirror of its kernel in its family crate.** `assembled_composite` pastes every kind's function
+- **Transitions (R.33; plugins since plugin-api-stage1, D12): a kind's `trans_<id>` WGSL lives
+  in its family crate.** `assembled_composite` pastes every kind's function
   and its `if (mode == 64+i)` arm at `// @PLUGIN_TRANS_ARMS`; `trans()` itself keeps only the
   fallback mix. Helpers more than one kind reads (`samp`, `front_mask`, `hpanel`, `axis_*`, …) stay
   in composite.wgsl; a helper of one kind travels with it. The mode and 8 numbers arrive in
@@ -40,17 +41,16 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   runs each mode over several phases — and its list of cases MUST contain both axes of
   direction and both states of the flags: on the defaults
   (`Dir::Left` = (−1,0)) an error in the Y term of the formula is not visible.
-- **Shared parametrics with the CPU** — from kt-fx: `pan_frame`/`cam_at`/`noise_seed`.
-  The formula may be changed only as a pair with the CPU implementation.
-- **The merged geo pass (R.44): `geom_fused.wgsl` is a mirror of `kt_fx::geom`.**
+- **Shared parametrics** — from kt-fx: `pan_frame`/`cam_at`/`noise_seed`. The plan computes them;
+  the shaders read the result.
+- **The merged geo pass (R.44): `geom_fused.wgsl` executes the program of `kt_fx::geom`.**
   The program of primitives (Affine/Clamp/Fold/Proj) is built in kt-fx:
-  the coefficients are multiplied in f64 on the CPU, and the f32 values rounded ONCE arrive here
+  the coefficients are multiplied in f64 by the plan, and the f32 values rounded ONCE arrive here
   in a 1024 B uniform (its own bind group layout; `FxOp::slot_units()` = 4
   arena slots — the sum MUST predict the consumption exactly, as
   passes() does). The number of supersampling taps of affine series is also computed
-  on the CPU and arrives in the uniform; Proj series measure the Jacobian per pixel by the SAME
-  formula `ss_taps` (otherwise at the threshold the backends would choose different tap grids,
-  and no FrameTol would cover that). The tap table of the absorbed pointwise effects
+  by the plan and arrives in the uniform; Proj series measure the Jacobian per pixel by the SAME
+  formula `ss_taps`. The tap table of the absorbed pointwise effects
   (R.45 item 312) — slots 46+2i of the same uniform, the counter in the h.w bits
   24..31; the `res_scale` of the K×-barriers (item 314) goes into the free slots of the uniforms
   vhs (u[6]) and noise (u[4]), Edges.d and the Blur steps/Glow divisor arrive
@@ -60,28 +60,28 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   with validation). The decode scale step (R.46) arrives as `LayerSrc.src_scale` in
   `chain_ops` and in `plan_key` (a frame of the same key at another size is another
   picture); WGSL does not touch it — the scale lives in the primitives of the program,
-  which the CPU builds (t309). For a NESTED reel (R.58, item 459) the scale step of the REEL
+  which the plan builds (t309). For a NESTED reel (R.58, item 459) the scale step of the REEL
   (`NestSrc.nest_scale`) and the input of the instance chain (`src_scale`) are different
-  numbers: when the step is higher than the input, a `FxOp::Resample` covering the whole frame is placed before `chain_ops` — a mirror of the CPU `fit_into`, tolerance
+  numbers: when the step is higher than the input, a `FxOp::Resample` covering the whole frame is placed before `chain_ops`, tolerance
   `FrameTol::BILINEAR` (t632). `nest_scale` goes into `plan_key`; a chain that ended with a foreign
   size is no longer skipped silently
   (`complete = false`, t182). Edits — only as a pair with
   kt-fx/src/{geom,plan}.rs, in the same commit (t181 geo/tap/k2 cases,
   t309 s2 cases, FrameTol::GEOM).
-- **ReadbackCache is its own memoization** (hash of the plan → frame): the post-FX cache of
-  kt-cache (`PostFxVideo`) is a mechanism ONLY of the CPU path; the GPU does not touch it
-  (a per-layer readback would eat up the whole gain).
-- Errors: `TooLarge` → the caller falls back to the CPU only for this plan;
-  `DeviceLost`/`Validation` → "poisoning" until the end of the session + a notice
-  (preview) or an export error (a file does not mix backends — invariant 7).
+- **ReadbackCache is the composite's memoization** (hash of the plan → frame): the post-FX cache
+  of kt-cache (`PostFxVideo`) is not used by any executor (a per-layer readback would eat up the
+  whole gain).
+- Errors: `TooLarge` → no picture for this plan in the preview, an error in an export;
+  `DeviceLost`/`Validation` → "poisoning" until the end of the session: no picture and a notice once
+  (preview), or an export error.
 - Pan3d (t187, ed. R.44): the world — project px × world_scale, X to the right, Y
   down, Z into the depth; rotations in degrees Rz·Rx·Ry ("ZXY", like the orientation
   in AE); a "50 mm" camera at the automatic distance (−(H/2)·cot(fov/2)) renders
   the layer at z=0 1:1. The semantics are frozen by the file format — they MUST NOT be changed.
   The EXECUTION since R.44 — the inverse homography by the Proj primitive of the merged
   geo pass (the vertex quad vs3d is removed); the mathematics lives in f64 in
-  `kt_fx::geom::pan3d_forward`, there is no GPU-only path any more — the CPU computes the same
-  (t187 checks every run, t301 — export without GPU).
+  `pan3d_forward` (`fx-video-distort/src/pan3d.rs`), and the shader reads the result
+  (t187 checks every run, t301 — an export carries it).
 
 ## The export's readback ring (export-throughput D5)
 
@@ -93,17 +93,27 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   readback memo (an export composes every moment once). t1457 holds the ring to `execute_into`.
 - `UploadCache` keeps up to four evicted textures per size for reuse.
 - `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI stays
-  LowPower, invariant 12), and a software rasterizer (llvmpipe/lavapipe) is refused in favour of the
-  CPU frame workers unless `KT_VIDEO_GPU=1` — 133.9 s against 95.6 s on the showcase, 32 cores.
+  LowPower, invariant 12). A software rasterizer (llvmpipe/lavapipe) is a device like any other.
+- `export_engines()` (compute-kernels-render, D4): llvmpipe runs one frame per queue, so a software
+  adapter gets a device per frame worker, a quarter of the cores, 2 to 8; a card gets one.
+  `KT_VIDEO_ENGINES` overrides it. The file does not depend on their number (t1573). The price is
+  memory: each device keeps its own textures.
+- `offline_engine()`: a headless device for effect thumbnails, reel strips and project posters, out
+  of the preview's queue. Serials of frames are process-wide because it serves a fresh cache per job
+  (t1574). A blended frame's upload key takes the pair and the weight (t250): it carries its base
+  frame's serial.
 
 ## Tests
 
+- **The picture is held by stored frames** (compute-kernels-render, D5): `references/` keeps the last
+  output of the deleted CPU composite, one file per test, read through `reference.rs` with the same
+  `FrameTol`. The tests of other crates compose through `testkit.rs`: one engine per test process.
+  Byte hashes of video (t11, t485, t946) hold on a software adapter only (`hash_holds`).
 - `tests/parity.rs` — t181 (each effect and the chains, tolerances by the kind
   of arithmetic), t182 (the composite byte-for-byte), t183 (determinism on the
   device + a "dirty" pool of textures).
 - `tests/gpu_render.rs` — t184 (GPU preview == GPU export, cold via
-  a second engine and warm via ReadbackCache; GPU export is deterministic and
-  within tolerance of the CPU).
+  a second engine and warm via ReadbackCache), t184b (GPU export is deterministic on the device).
 - `tests/pan3d.rs` — t187 (identity, marker shift, transparent fields at
   scale<1, determinism).
 - Without an adapter the tests are SKIPPED with a printed message; `KT_REQUIRE_GPU=1` turns the skip into a failure (CI with mesa/lavapipe, finish.sh on the user's machine).
@@ -134,32 +144,30 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
 - `geom_fused.wgsl`: primitive kind 4 — Warp (2 uniform slots, [mode,p0..p2]
   [p3..p6]); `mode` is the plugin's index in `plugin_warps()` (plugin-api-stage1, D11.2) and its
   arm is assembled at `// @PLUGIN_WARP_ARMS` in BOTH loops (`assembled_shaders`, t993); the
-  formula is the plugin's `warp_<id>` WGSL, a mirror of its f64 `warp`, edited IN THE SAME COMMIT.
-- **Premultiplication before the mip (R.53, item 418).** `premul.wgsl` is a
-  mirror of `kt_fx::video::premultiply`, `unpremul.wgsl` is a mirror of
-  `kt_fx::video::unpremultiply` (the home of both functions is in kt-fx, from where
-  kt-engine takes them too). Blur places a pair around two Resamples, Glow mips
+  formula is the plugin's `warp_<id>` WGSL. Its f64 `warp` stays as plan math (`probe_program_lens`
+  reads it): edit both IN THE SAME COMMIT.
+- **Premultiplication before the mip (R.53, item 418).** `premul.wgsl` and
+  `unpremul.wgsl` do the conversions. Blur places a pair around two Resamples, Glow mips
   a premultiplied COPY and adds it as is; the decision is
   "is there alpha IN THE FRAME AT THIS POINT", i.e. the fold, and when the fold is silent —
-  `src_has_alpha` (a new parameter of `chain_ops`: without it the GPU would
-  judge by the fold, and the CPU by `Frame.has_alpha`, and the titles would diverge).
+  `src_has_alpha` (a parameter of `chain_ops`: without it a title's alpha would be judged by the
+  fold alone).
   At `a == 255` both conversions are identities, so on opaque frames NOTHING is emitted and the goldens stay intact. Guard —
   the alpha cases of t181 (verified: without Premul on the GPU t181 turns red).
-- **Edges SKIPS the alpha** (R.53, item 418): `a_out = max(a_in, line strength)` in both executors;
+- **Edges SKIPS the alpha** (R.53, item 418): `a_out = max(a_in, line strength)`;
   it no longer touches `has_alpha` of the fold.
 - DropShadow in chain_ops: when `has_alpha_known && !has_alpha` the op is NOT
-  emitted (CPU passthrough); with unknown alpha it is emitted — the formula
+  emitted (a passthrough); with unknown alpha it is emitted — the formula
   on an opaque input is identical in bytes (a_src=1 ⇒ out=src).
-- Conformance of the new kinds — t329 (a loop over the registry + tuned instances for
+- The new kinds — t329 (a loop over the registry + tuned instances for
   identical defaults + warp-hard cases). FrameTol::WARP is NOT introduced:
-  the hard warps keep GEOM on both backends (item 335); a failure of
+  the hard warps keep GEOM (item 335); a failure of
   warp-hard — an investigation and the introduction of WARP at ×2 from the measurement, not a tweak of GEOM.
 
 ## R.51 (items 396-401): transitions
 
 - The `P.m` uniforms of the composite are OCCUPIED: the ext scalars of volumetric transitions
-  (the homographies of the panels from `kt_engine::transitions::trans_ext`, f64→f32 on the
-  CPU — both backends read the same bits). `ext` is not and MUST NOT be part of `put_mix`/`plan_key` — it is a deterministic function of what is already hashed.
+  (the homographies of the panels from `kt_engine::transitions::trans_ext`, f64→f32 once). `ext` is not and MUST NOT be part of `put_mix`/`plan_key` — it is a deterministic function of what is already hashed.
 - t224: 32 kinds; the volumetric ones (flip/cube/door/peel/roll) — a separate loop
   with `FrameTol::GEOM` (the panel edges and the perspective division). The mode numbers are a
   function of the registry (`MODE_PLUGIN + index`), they get neither into the project files (the
@@ -172,7 +180,7 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   its per-frame parameters uploaded by three 16-word passes. `FrameTol::SIGNAL` is its class (an
   FM discriminator flips a click on one ULP at a carrier drowned in noise) — t1186.
 - `FxOp::Snapshot`/`Mix` carry the alpha fold AT their points, and a mix sets the fold to
-  dry ∨ wet, as the CPU's two frames do. The end-of-chain flag for both sides was wrong as soon as
+  dry ∨ wet. The end-of-chain flag for both sides was wrong as soon as
   a step destroying alpha stood between them (t1052).
 
 ## Windows / D3D12 (windows-build)
@@ -180,16 +188,16 @@ headless). The CPU path of kt-fx/kt-engine remains the byte reference and the fa
   (`v[i] = …`) when it cannot unroll the loop: write vectors with `select` or whole-vector
   arithmetic. Arrays (`var a: array<…>`) with dynamic indices are fine. A shader the backend
   rejects is an INTERNAL wgpu error: `GpuFxEngine::new` pushes an internal scope next to the
-  validation one, so the engine falls back to the CPU instead of panicking.
+  validation one, so opening the engine fails with an error instead of panicking.
 - WARP ("Microsoft Basic Render Driver") is refused with `GpuInitError::Unsupported`: on the
-  GPU-less Windows CI runner the passes ran for minutes and died inside it. The CPU path is the
-  full fallback; `KT_GPU_ALLOW_WARP=1` lets it through for experiments, and the GPU tests skip
+  GPU-less Windows CI runner the passes ran for minutes and died inside it. A machine with only
+  WARP has no picture; `KT_GPU_ALLOW_WARP=1` lets it through for experiments, and the GPU tests skip
   on it as they do without an adapter.
 
 ## Shape masks (shape-masks)
 
-- The GPU never rasterizes a mask: `chain_ops` asks the kt-fx rasterizer at the same chain positions
-  as the CPU (`mask_stops` join the plan's stops) and uploads the coverage (`coverage_frame`, the
+- The GPU never rasterizes a mask: `chain_ops` asks the kt-fx rasterizer at the plan's chain positions
+  (`mask_stops` join the plan's stops) and uploads the coverage (`coverage_frame`, the
   byte in `.r`, keyed by its hash with the top bit set) into `FxOp::MaskAlpha` (`mask.wgsl`,
   PIPE_COUNT 8) or `FxOp::MaskMix` (the coverage branch of `layer_mix.wgsl`, T2). A mask adds no
   divergence: masks alone agree EXACT (t1274).

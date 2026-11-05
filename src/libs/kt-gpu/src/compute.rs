@@ -13,14 +13,29 @@ struct Pipe {
     layout: wgpu::BindGroupLayout,
 }
 
+/// What the pool keeps at most: a job of a 4K frame fits many times over.
+const POOL_BYTES: u64 = 1 << 30;
+
+/// The buffers of finished jobs by size and usage: a kernel asks for the same set every frame.
+#[derive(Default)]
+struct Pool {
+    free: HashMap<(u64, u32), Vec<wgpu::Buffer>>,
+    bytes: u64,
+}
+
 pub struct ComputeDevice {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pipes: Mutex<HashMap<(String, usize, usize), Arc<Pipe>>>,
+    pool: Mutex<Pool>,
 }
 
 /// Open the device: what `kt_plugin_api::compute::install` takes.
 pub fn open() -> Result<Arc<dyn ComputeHost>, String> {
+    Ok(open_device()?)
+}
+
+pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
     desc.backends = wgpu::Backends::PRIMARY;
     let instance = wgpu::Instance::new(desc);
@@ -38,10 +53,37 @@ pub fn open() -> Result<Arc<dyn ComputeHost>, String> {
         ..Default::default()
     }))
     .map_err(|e| e.to_string())?;
-    Ok(Arc::new(ComputeDevice { device, queue, pipes: Mutex::new(HashMap::new()) }))
+    Ok(Arc::new(ComputeDevice { device, queue, pipes: Mutex::new(HashMap::new()), pool: Mutex::default() }))
 }
 
 impl ComputeDevice {
+    /// A buffer of at least `size` bytes; true when it comes from the pool and holds a past job.
+    fn take(&self, size: u64, usage: wgpu::BufferUsages) -> (wgpu::Buffer, bool) {
+        let size = size.max(16).next_multiple_of(16);
+        let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(b) = pool.free.get_mut(&(size, usage.bits())).and_then(Vec::pop) {
+            pool.bytes -= size;
+            return (b, true);
+        }
+        drop(pool);
+        (self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size, usage, mapped_at_creation: false }), false)
+    }
+
+    fn give(&self, buffers: impl IntoIterator<Item = wgpu::Buffer>) {
+        let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
+        for b in buffers {
+            if pool.bytes + b.size() <= POOL_BYTES {
+                pool.bytes += b.size();
+                pool.free.entry((b.size(), b.usage().bits())).or_default().push(b);
+            }
+        }
+    }
+
+    /// What the pool holds now.
+    pub fn pooled_bytes(&self) -> u64 {
+        self.pool.lock().unwrap_or_else(|e| e.into_inner()).bytes
+    }
+
     fn pipe(&self, text: &str, reads: usize, writes: usize) -> Result<Arc<Pipe>, String> {
         let mut pipes = self.pipes.lock().unwrap_or_else(|e| e.into_inner());
         let key = (text.to_string(), reads, writes);
@@ -99,24 +141,28 @@ impl ComputeHost for ComputeDevice {
             .collect::<Result<Vec<_>, _>>()?;
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
-        let buffer = |size: u64, usage| {
-            d.create_buffer(&wgpu::BufferDescriptor { label: None, size: size.max(16).next_multiple_of(16), usage, mapped_at_creation: false })
-        };
+        let mut enc = d.create_command_encoder(&Default::default());
         let bufs: Vec<wgpu::Buffer> = job
             .buffers
             .iter()
             .map(|init| match init {
                 Init::Bytes(b) => {
-                    let buf = buffer(b.len() as u64, usage);
+                    let (buf, _) = self.take(b.len() as u64, usage);
                     self.queue.write_buffer(&buf, 0, b);
                     buf
                 }
-                Init::Zero(n) => buffer(*n, usage),
+                Init::Zero(n) => {
+                    let (buf, used) = self.take(*n, usage);
+                    if used {
+                        enc.clear_buffer(&buf, 0, None);
+                    }
+                    buf
+                }
             })
             .collect();
-        let mut enc = d.create_command_encoder(&Default::default());
+        let mut uniforms = Vec::with_capacity(job.steps.len());
         for (s, p) in job.steps.iter().zip(&pipes) {
-            let uniform = buffer(s.uniform.len() as u64, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
+            let (uniform, _) = self.take(s.uniform.len() as u64, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
             self.queue.write_buffer(&uniform, 0, s.uniform);
             let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }];
             for (i, b) in s.read.iter().chain(s.write).enumerate() {
@@ -127,13 +173,15 @@ impl ComputeHost for ComputeDevice {
             cp.set_pipeline(&p.pipe);
             cp.set_bind_group(0, &bind, &[]);
             cp.dispatch_workgroups(s.groups[0], s.groups[1], s.groups[2]);
+            drop(cp);
+            uniforms.push(uniform);
         }
         let staging: Vec<wgpu::Buffer> = job
             .reads
             .iter()
             .map(|b| {
                 let size = bufs[b.0].size();
-                let st = buffer(size, wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ);
+                let (st, _) = self.take(size, wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ);
                 enc.copy_buffer_to_buffer(&bufs[b.0], 0, &st, 0, size);
                 st
             })
@@ -157,6 +205,7 @@ impl ComputeHost for ComputeDevice {
             out.push(st.slice(..len).get_mapped_range().map_err(|e| e.to_string())?.to_vec());
             st.unmap();
         }
+        self.give(bufs.into_iter().chain(uniforms).chain(staging));
         Ok(out)
     }
 }

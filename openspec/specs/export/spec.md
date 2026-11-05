@@ -163,9 +163,9 @@ of the old engine: the preview showed one thing, and the file contained another.
 - **TEST** t11_preview_equals_export_frame (`src/libs/kt-engine/tests/golden_export.rs`)
 
 #### Scenario: With FX chain, cold and warm
-- **WHEN** on video clips the chain is Mirror → Glow → VHS; the preview is composited twice (the second time from the post-FX memoization)
+- **WHEN** on video clips the chain is Mirror → Glow → VHS; the preview is composited twice (the second time from the readback memo)
 - **THEN** both composites are byte-for-byte equal to the export frame
-- **TEST** t67 (`src/libs/kt-engine/tests/golden_export.rs`), t66c (`src/libs/kt-engine/tests/postfx_cache.rs`) — the export composite does NOT memoize post-FX, but the bytes are the same
+- **TEST** t67 (`src/libs/kt-engine/tests/golden_export.rs`) — the export composite does NOT memoize, but the bytes are the same
 
 #### Scenario: Generator and title in the render path
 - **WHEN** the scene contains a solid generator / a title (capability `generators`)
@@ -177,18 +177,17 @@ of the old engine: the preview showed one thing, and the file contained another.
 - **THEN** frames are equal byte-for-byte (without an adapter — skip; `KT_REQUIRE_GPU=1` requires it)
 - **TEST** t184 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
-### Requirement: A started export completes on the backend it began with; without GPU everything renders
-The export backend (GPU executor or CPU) SHALL be passed explicitly by the product (kt-app/kt-cli);
-test constructors use CPU. A GPU error IN THE MIDDLE of an export MUST be an export error, not a
-silent fallback to CPU: one file does not mix backends. The CPU path SHALL be complete —
-3D effects (Pan3d, cameras) are computed on CPU too; there is no "needs GPU" refusal; export without an adapter
-is legal and merely slower. In kt-cli, `KT_VIDEO_GPU=0` forces CPU.
-Why: mixing backends inside one file would produce a visible seam within the GPU↔CPU tolerances, and a
-"3D only on GPU" refusal turned a missing driver into the impossibility of rendering the project.
+### Requirement: An export needs a device; a device's error stops it
+The GPU executor SHALL be passed explicitly by the product (kt-app/kt-cli). With no executor an
+export SHALL fail at its start with `ExportError::NoDevice` ("no video device"), and the render
+window SHALL say so (`BackendLine::None`). A GPU error in the middle of an export, `TooLarge`
+included, MUST be an export error.
+Why: the CPU composite is deleted (compute-kernels-render, owner, 2026-11-04), so no second way to
+compose a frame exists, and an export that writes no picture must not look like one that did.
 
-#### Scenario: Export without GPU carries 3D
-- **WHEN** a project with Pan3d is rendered with `ExportBackends::default()` (CPU)
-- **THEN** the export passes, the frame differs from the frame without the effect, and with a live adapter the CPU and GPU agree within the tolerance `FrameTol::GEOM`
+#### Scenario: An export carries 3D, and with no device it refuses
+- **WHEN** a project with Pan3d is rendered on a device; then a project is rendered with `ExportBackends::default()` (no executor)
+- **THEN** the export passes and the frame differs from the frame without the effect; the second render fails with "no video device"
 - **TEST** t301 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 ### Requirement: Golden references for raw streams
@@ -200,13 +199,14 @@ scene — to its own `GOLDEN_TITLE_VIDEO` from the same table. Hash checks that 
 limited by platform and differ between OSes only through libm (video FX, FX thumbnails, merging of
 geometry series) SHALL use the same table. On a platform that is not in the table,
 the comparison with the constant is skipped with a named reason, while the check between runs
-remains. The reference changes ONLY by a conscious decision with a record of the reason and the previous value
+remains. A video hash SHALL be compared on a software adapter only (`hash_holds`): a card is held to
+the stored frames within tolerances (capability `video-plan`). The reference changes ONLY by a conscious decision with a record of the reason and the previous value
 next to the constant (for the title — also in `FONT-MANIFEST.txt`); in the reference projects there is no net
 zoom and the native synthetic size is less than Quality, so the decode scale step there is ≡ 1, and new
 mechanisms MUST leave the reference in place. The constant of a new platform is entered after the
 first green run on it, with a record of which machine and which run it was taken on.
 Why: the reference is the single guard of determinism (invariant 11) at once for the audio mix,
-warp, transitions, composite and SIMD kernels; the bytes of the output .mp4 will never be
+warp, transitions and the composite; the bytes of the output .mp4 will never be
 identical for two users (the encoder is a property of the machine), so the stream is hashed BEFORE the
 encoder. Transcendental functions (`sin`, `exp`, `powf`) are taken from the platform's libm
 (glibc on Linux, the mingw CRT on Windows) and may diverge in the last bit: one constant
@@ -489,7 +489,7 @@ on about 2⁻²⁸ of inputs — and every function stays within one ulp of glib
 table and dot product are ours as well (`kt-fx/src/audio/sinc.rs`): rubato's table on our math
 and its AVX+FMA product as the one rounding, the portable path bit-equal. Exact functions
 (`sqrt`, `floor`, `rem_euclid`, `powi`…) are not concerned. This is invariant 11 across platforms:
-the same project gives the same audio bytes and CPU pixels on Linux and Windows and on any CPU.
+the same project gives the same audio bytes on Linux and Windows and on any CPU.
 Why: on 94e36e9e windows-latest failed t973c (slowed_reverb, phaser, pitch_shift), t1019 (flip)
 and t1048 (smpte, leader) — the references were printed with glibc, and mingw/msvcrt round some
 inputs differently. The owner (01.11): "own math, close to Linux, where Linux is the more
@@ -579,8 +579,8 @@ render-crash-and-recovery after his build; this requirement holds the whole path
 ### Requirement: An export runs its stages concurrently and writes the serial export's bytes
 An export to a file SHALL run its stages concurrently inside the one output file: decode a
 memory budget ahead of the composite with a thread per source, the composite on its own thread
-(GPU, with frames in flight between submit and readback) or on frame-parallel workers (CPU, each
-with its own scratch), the RGBA→encoder conversion on frame workers, the encoder and the muxer on
+(one device, with frames in flight between submit and readback) or on frame workers (several
+devices of a software adapter, one per worker), the RGBA→encoder conversion on frame workers, the encoder and the muxer on
 one writer, and the audio on its own thread. The stages SHALL be joined by bounded queues that
 keep frame order, and the encoder SHALL receive exactly the frames and samples, in exactly the
 order, of the serial export (`ExportOptions.serial`, the former one-thread export kept as the
@@ -589,15 +589,13 @@ audio up to that frame's end), so the call order into the muxer and the progress
 depend on timing. A frame being composed SHALL never be evicted before its composite (decode
 waits while the unwritten chunks' frames fill the look-ahead budget). A cancel or an error in
 any stage SHALL stop every stage promptly and return the cause. The video encoder SHALL be opened
-with its own threads (`threads=auto`; the serial reference `1`), named in the open report. On a
-software rasterizer (llvmpipe, lavapipe) the export SHALL compose on the CPU (`KT_VIDEO_GPU=1`
-takes the adapter anyway). `kt-cli export --time` SHALL print the busy time of every stage and
+with its own threads (`threads=auto`; the serial reference `1`), named in the open report. `kt-cli export --time` SHALL print the busy time of every stage and
 the wall time; `--serial` runs the reference.
 Why: the owner (2026-11-03, kkt-26.11.03 C1): "our final render is VERY slow, slower even than the
 preview; it seems not parallel but strongly sequential". It was: one thread did decode →
 composite → readback (a full wait per frame) → conversion → encode, libx264 encoded on one
-thread, and the audio pass started after the last video frame. The showcase export took 324 s (llvmpipe)
-and 861 s (CPU) for 104 s of 1080p25, and now takes 96 s.
+thread, and the audio pass started after the last video frame. The showcase export took 324 s on llvmpipe
+and 861 s on the since-deleted CPU composite, for 104 s of 1080p25.
 
 #### Scenario: The pipelined export writes the serial streams
 - **WHEN** the demo project (layers, transitions, FX, automation, audio FX) is rendered over a
@@ -672,8 +670,8 @@ While a render runs, the progress window SHALL show two labelled forms side by s
 other when the window is narrower than both): **Output** — resolution, frame rate, video (the name
 of the encoder that opened, its pixel format and its quality setting under the name that encoder
 uses — CRF, CQ, QP or global quality — or the target bitrate), audio (codec, sample rate, channels,
-bitrate), mux (container and `+faststart`), backend (GPU with the adapter name, or CPU with the
-reason a GPU was not used) and the output file path; **Run** — phase, progress as done/total
+bitrate), mux (container and `+faststart`), backend (GPU with the adapter name, or "no device" with
+the reason) and the output file path; **Run** — phase, progress as done/total
 frames, elapsed, remaining, output length rendered/total, file size so far, the estimated final
 size and the current video bitrate. Until the encoder report arrives the video row SHALL say that
 the encoder is being chosen, never a guessed name. Below the forms: the speed line (min, avg, cur,
@@ -911,3 +909,25 @@ the program is still working on it.
 - **PATH** File → Render… → Render… → the window: the Video row "no encoder opened", the red line
   with the reason, the log open, Open log and Close
 - **TEST** t1604 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: A software adapter composes an export on several devices
+An export on a software adapter SHALL compose on a device per frame worker, a quarter of the cores and
+2 to 8 of them, and one device SHALL serve a real card. The frames written SHALL NOT depend on how many
+devices composed them.
+Why: llvmpipe runs one frame per queue; the owner's machine has no card, and the render there must
+not pay for the CPU composite's deletion.
+
+#### Scenario: Several devices write the frames of one
+- **WHEN** one project is exported through one engine and through three, on the same adapter
+- **THEN** the frames written are byte for byte equal
+- **TEST** t1573 (`src/libs/kt-gpu/tests/export_ring.rs`)
+
+### Requirement: An export with no device refuses and says why
+An export with no video device SHALL stop before it writes anything, with `ExportError::NoDevice`.
+There SHALL be no other way to compose its frames.
+Why: the owner deleted the CPU composite ("удаляй", 2026-11-04).
+
+#### Scenario: No device is a refusal
+- **WHEN** a project is rendered with no executor among its backends
+- **THEN** the render fails, and the error reads "no video device"
+- **TEST** t1575 (`src/libs/kt-gpu/tests/gpu_render.rs`, `t301_export_renders_3d_and_t1575_no_device_is_a_refusal`)

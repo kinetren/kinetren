@@ -28,11 +28,11 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 
 - The wgpu default `PowerPreference::HighPerformance` picks the discrete card → on hybrid graphics the PRIME copy of every frame slows down the WHOLE system. The default is LowPower, `WGPU_POWER_PREF` overrides it; `WGPU_BACKEND=gl` — a bypass of Vulkan. The active adapter is shown in the performance panel ("GPU: …").
 - The software renderer is detected by adapter info; heavy glow is disabled with it.
-- **Video FX and composite — on the GPU by default (R.29)**: the kt-gpu engine is created on the first frame of `ui()` from the eframe device (and again when a project is opened — KtApp is recreated, sw_render is reset) and is injected via `player.set_video_gpu`. If it was not created → a warn-notice + CPU; DeviceLost → "poisoning" until the end of the session, a notice once (t185). With R.44 the CPU fallback is FULL (Pan3d also computes — item 308): the notice about the CPU is about the backend's speed, not about losing 3D.
-  The performance panel line "FX: GPU (…)" / "FX: CPU" must be honest.
+- **Video FX and composite — on the GPU, the one executor (R.29, compute-kernels-render)**: the kt-gpu engine is created on the first frame of `ui()` from the eframe device (and again when a project is opened — KtApp is recreated, sw_render is reset) and is injected via `player.set_video_gpu`. If it was not created → no picture, and the panel says so; DeviceLost → "poisoning" until the end of the session: no picture, a notice once (t185). A plan the executor refuses (`TooLarge`) has no picture either.
+  The performance panel line "FX: GPU (…)" / "FX: GPU lost: …" / "FX: no device" must be honest. The render window shows `BackendLine::None` with the reason, and the export fails.
   Export (render_dialog) builds ITS OWN headless engine via `app::export_video_gpu()` — the UI queue does not share time with the 4K export.
   llvmpipe = "a GPU is present". The live scenario `gpufx` runs this path.
-- **The GPU preview's picture stays on the device** (preview-throughput D2). `draw_preview` asks `Player::present_preview`; the frame goes from the composite into `GpuFxEngine`'s display texture, which `preview_display.rs` registers with egui's renderer once per texture. The bytes path (`compose_preview_into`, `ColorImage`, `tex.set`) stays for no engine (the harness), a plan the executor refused and `KT_VIDEO_GPU=0`: reading the frame back, premultiplying it and uploading it again cost the UI thread its whole frame. `preview_texture_id()`/`preview_glow_id()` are the only way to the picture's texture. The display pass reproduces `Color32::from_rgba_unmultiplied` byte for byte (t1525). The geometry dump's `compose.on_display` says which path drew; `gpufx` asserts it, or a silent fallback would look green.
+- **The GPU preview's picture stays on the device** (preview-throughput D2). `draw_preview` asks `Player::present_preview`; the frame goes from the composite into `GpuFxEngine`'s display texture, which `preview_display.rs` registers with egui's renderer once per texture. The bytes path (`compose_preview_into`, `ColorImage`, `tex.set`) stays for an executor with no display target (the harness): reading the frame back, premultiplying it and uploading it again cost the UI thread its whole frame. `preview_texture_id()`/`preview_glow_id()` are the only way to the picture's texture. The display pass reproduces `Color32::from_rgba_unmultiplied` byte for byte (t1525). The geometry dump's `compose.on_display` says which path drew; `gpufx` asserts it, or a silent fallback would look green.
 
 ## File DnD (items 47, 52)
 
@@ -105,11 +105,10 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 ## Debug env
 
 - `KT_AUTOPLAY=1` — play right after opening (performance measurements without input).
-- `KT_VIDEO_GPU=0` — a forced CPU path of video FX (comparison/debugging);
   `=1` — require the GPU (a failure to create it is visible as a notice).
 - `KT_PREVIEW_SIZE=WxH` — the preview's size at the start, without the menu (measuring full quality).
 - `KT_PREVIEW_READBACK=1` — the preview's bytes path on the GPU (compare a picture or its cost with the display path, preview-throughput D2).
-- `KT_SIMD=0` — a forced scalar in the CPU kernels (R.32): the AVX2 path is byte-for-byte equal to the scalar one, so the switch is visible only by speed.
+- `KT_SIMD=0` — a forced scalar in the audio kernels (R.32): the AVX2 path is byte-for-byte equal to the scalar one, so the switch is visible only by speed.
 - `KT_DETACH_PREVIEW=1` — start with a detached preview.
 - `KT_GEOM_DUMP=<file>` — write the timeline geometry for live scenarios (R.27): the zone of tracks, zoom, row centers in window coordinates.
 - `KT_FILE_PICK=<path>` — the answer of the system file-picker dialog (R.67): on Linux rfd goes through xdg-portal, which is absent in Xvfb, and silently returns "nothing"; the menu item in a live scenario is pressed for real, only the choice itself is substituted.

@@ -1,4 +1,6 @@
-//! The CPU kernel: the byte reference (invariant 7). Up to twelve passes over u32 texels (RGBA8
+//! The chain's f32 model for the consequence tests (compute-kernels-render, D7): the shaders give no
+//! intermediate plane to read. It never ships; t1212 and its neighbours read it, t1217 holds the
+//! shaders to the frames it made. Up to twelve passes over u32 texels (RGBA8
 //! packed little-endian, the GPU's Rgba8Uint), quantized at exactly the points the GPU textures
 //! quantize (design D1). Each pass is a row function over a pure per-pixel text in f32; the
 //! `sNN_*.wgsl` passes mirror them line by line — an edit here is an edit there, in the same commit
@@ -11,11 +13,17 @@
 use std::cell::RefCell;
 use std::f32::consts::FRAC_1_SQRT_2;
 
-use kt_plugin_api::barrier::{Frame, Scratch, noise_hash as h};
+use kt_plugin_api::barrier::{Frame, noise_hash as h};
 use kt_plugin_api::math::FrozenMath;
 
-use crate::cfa::{self, IR};
-use crate::{DYE_NIR, IR_FROM_RGB, IR_VIS_LEAK, Plan, fmt, pass};
+use fx_video_camera::cfa::{self, IR};
+use fx_video_camera::{DYE_NIR, IR_FROM_RGB, IR_VIS_LEAK, Plan, fmt, pass};
+
+/// The buffers of a run.
+pub trait Scratch {
+    fn take(&mut self, len: usize) -> Vec<u8>;
+    fn put(&mut self, b: Vec<u8>);
+}
 
 /// 1/σ of Irwin–Hall(4) over 16-bit fields: σ = 65536·√(1/3) (design D4). The WGSL literal is the same.
 pub const IH_INV_SD: f32 = 2.642_896_6e-5;
@@ -1107,12 +1115,7 @@ fn run_pass(cx: &Ctx, out: &mut [u32], f: Row) {
     });
 }
 
-fn row_fn(p: usize, simd: bool) -> Row {
-    #[cfg(target_arch = "x86_64")]
-    if simd {
-        return crate::simd::TWINS[p];
-    }
-    let _ = simd;
+fn row_fn(p: usize, _simd: bool) -> Row {
     ROWS[p]
 }
 

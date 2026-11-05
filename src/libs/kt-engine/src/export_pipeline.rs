@@ -2,7 +2,7 @@
 //! joined by bounded, order-preserving queues.
 //!
 //! ```text
-//! decode (a chunk ahead, a thread per source) ─► compose (GPU thread | CPU workers)
+//! decode (a chunk ahead, a thread per source) ─► compose (one device | a device per worker)
 //!     ─► convert (frame workers, round robin) ─► writer (encoder + muxer, frame order)
 //! audio (its own thread) ─────────────────────────────────────────► writer (fixed interleave)
 //! ```
@@ -27,7 +27,7 @@ use crate::export::{
     ExportBackends, ExportStats, chunk_requests, decode_requests, export_chunk_frames, project_range,
     render_raw_audio_range,
 };
-use crate::video::{ExportScratch, VideoRenderer};
+use crate::video::VideoRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use kt_cache::{BurstCache, BurstKey, BurstKind, CacheConfig};
 use kt_media::{MediaSource, Quality};
@@ -165,19 +165,9 @@ pub(crate) struct Hooks<'a> {
     pub incomplete: &'a (dyn Fn(Tick, &[MediaId]) + Sync),
 }
 
-/// How many frame workers: the CPU composite is the heavy stage, so it gets the cores but two
-/// (decode and the writer), bounded by memory — each worker holds a composite's scratch, about
-/// eight output frames, and the workers together stay under `WORKER_MEMORY`. The GPU path's
-/// workers only convert.
-fn frame_workers(cpu_compose: bool, quality: Quality) -> usize {
-    const WORKER_MEMORY: usize = 1 << 30;
-    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
-    if !cpu_compose {
-        return (cores / 4).clamp(2, 4);
-    }
-    let per_worker = quality.width as usize * quality.height as usize * 4 * 8;
-    let by_memory = (WORKER_MEMORY / per_worker.max(1)).max(2);
-    cores.saturating_sub(2).clamp(2, 16).min(by_memory)
+/// How many frame workers convert on a single device.
+fn frame_workers() -> usize {
+    (std::thread::available_parallelism().map_or(4, |n| n.get()) / 4).clamp(2, 4)
 }
 
 /// The pipelined export's frame cache: five serial budgets.
@@ -214,7 +204,7 @@ impl Gate {
     }
 }
 
-/// A frame for a worker: compose it (CPU) or only convert the GPU's readback.
+/// A frame for a worker: compose it or only convert the GPU's readback.
 enum Job {
     Compose { t: Tick },
     Convert { t: Tick, rgba: Vec<u8>, complete: bool },
@@ -306,8 +296,17 @@ pub(crate) fn run<S: ExportSink>(
         halt.load(Ordering::Acquire)
     };
     let gate = Gate::default();
-    let gpu = backends.video_gpu.clone();
-    let workers = frame_workers(gpu.is_none(), quality);
+    // several devices: each worker composes on its own engine
+    let engines: Vec<Arc<dyn crate::VideoGpuExec>> = if backends.video_gpu_more.is_empty() {
+        Vec::new()
+    } else {
+        backends.video_gpu.iter().chain(&backends.video_gpu_more).cloned().collect()
+    };
+    let gpu = backends.video_gpu.clone().filter(|_| engines.is_empty());
+    if gpu.is_none() && engines.is_empty() {
+        return Err(std::io::Error::other("no video device"));
+    }
+    let workers = if engines.is_empty() { frame_workers() } else { engines.len() };
     if let Some(p) = prof {
         p.frame_workers.store(workers as u64, Ordering::Relaxed);
     }
@@ -393,19 +392,22 @@ pub(crate) fn run<S: ExportSink>(
             Ok(())
         });
 
-        // --- frame workers: compose (CPU) and convert ---
+        // --- frame workers: compose (a device per worker) and convert ---
         let mut worker_handles = Vec::new();
-        for (jr, dt, br, mut conv) in worker_parts {
+        for (n, (jr, dt, br, mut conv)) in worker_parts.into_iter().enumerate() {
             let pool_tx = rgba_pool_tx.clone();
             let pool_rx = rgba_pool_rx.clone();
+            let engine = engines.get(n).cloned();
             worker_handles.push(scope.spawn(move || -> std::io::Result<()> {
-                let mut scratch = ExportScratch::default();
                 while let Ok(job) = jr.recv() {
                     let (t, rgba, complete) = match job {
                         Job::Compose { t } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
-                            let complete = video_ref.compose_export_with(cache_ref, t, quality, &mut scratch, &mut buf);
+                            let e = engine.as_ref().expect("only a worker with an engine composes");
+                            let complete = e
+                                .execute_into(&video_ref.frame_plan(cache_ref, t, quality), &mut buf)
+                                .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                             (t, buf, complete)
                         }
@@ -427,8 +429,8 @@ pub(crate) fn run<S: ExportSink>(
         }
         drop(rgba_pool_tx);
 
-        // --- compose: the GPU on one thread (submit ahead, collect in order), or the CPU
-        //     dispatcher handing frames to the workers round robin ---
+        // --- compose: one device on one thread (submit ahead, collect in order), or the
+        //     dispatcher handing frames to the workers' devices round robin ---
         let compose = scope.spawn(move || -> std::io::Result<()> {
             let mut pending: std::collections::VecDeque<(u64, u64)> = Default::default();
             let depth = gpu.as_ref().map_or(0, |g| g.readback_depth());
@@ -525,11 +527,14 @@ pub(crate) fn run<S: ExportSink>(
             }
         }
         let audio = audio.join().expect("audio thread");
-        // the first cause wins: a stage's own error over the "the writer stopped" it caused
-        let incomplete = written?;
-        compose?;
-        decode?;
-        worker_err?;
+        // the first cause wins: a stage's own error over the "stopped" it caused on either side
+        let derived = written.as_ref().is_err_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe);
+        let stages = compose.and(decode).and(worker_err);
+        let incomplete = match (written, stages) {
+            (Ok(n), Ok(())) => n,
+            (Err(_), Err(s)) if derived => return Err(s),
+            (Err(e), _) | (Ok(_), Err(e)) => return Err(e),
+        };
         let astats = audio?;
         Ok::<_, std::io::Error>((incomplete, astats))
     });
@@ -581,7 +586,7 @@ fn write_all<S: ExportSink>(
         }
         let w = (i % workers) as usize;
         let Ok(done) = done_rxs[w].recv() else {
-            return Err(std::io::Error::other("a frame worker stopped"));
+            return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "a frame worker stopped"));
         };
         if let Some((t, media)) = &done.lost {
             incomplete += media.len().max(1) as u64;

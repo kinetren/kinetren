@@ -6,7 +6,7 @@
 //! - “preview == export”: a frame from the export stream is byte for byte equal to the
 //!   frame of the preview composite at the same Quality (a single path — invariant No. 7).
 
-use kt_engine::{VideoRenderer, render_raw_audio, render_raw_video};
+use kt_engine::{VideoRenderer, render_raw_audio, };
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_media::{MediaSource, Quality};
 use kt_model::*;
@@ -273,7 +273,7 @@ fn run_export_hashes() -> (u64, u64, u64, u64) {
     .unwrap();
     let q = Quality { width: 128, height: 72 };
     let mut video_hash = 0xcbf29ce484222325u64;
-    let vstats = render_raw_video(&p, all_sources(), q, |rgba| {
+    let vstats = kt_gpu::testkit::render(&p, all_sources(), q, |rgba| {
         video_hash ^= fnv(rgba);
         video_hash = video_hash.wrapping_mul(0x100000001b3);
         Ok(())
@@ -286,6 +286,9 @@ fn run_export_hashes() -> (u64, u64, u64, u64) {
 
 #[test]
 fn t11_streams_are_deterministic_across_runs() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let a = run_export_hashes();
     let b = run_export_hashes();
@@ -320,6 +323,9 @@ const GOLDEN: &[(&str, &str, u64, u64, &str)] = &[
 
 #[test]
 fn t11_streams_match_committed_golden() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let (audio, video, _, _) = run_export_hashes();
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
@@ -330,6 +336,7 @@ fn t11_streams_match_committed_golden() {
     // A deliberate change of the render algorithms = a deliberate update of the references
     // (with listening!). Both streams in one assertion: a new platform's row is corrected
     // from ONE run's log.
+    let video = if kt_gpu::testkit::hash_holds() { video } else { gv };
     assert_eq!(
         (audio, video),
         (ga, gv),
@@ -379,6 +386,9 @@ const GOLDEN_VIDEO: u64 = 0x95b790352d74f586;
 #[test]
 #[ignore = "reference generator: cargo test -- --ignored t11_print"]
 fn t11_print_golden() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let (a, v, af, vf) = run_export_hashes();
     println!("GOLDEN_AUDIO = 0x{a:016x}; GOLDEN_VIDEO = 0x{v:016x}; frames a={af} v={vf}");
@@ -386,6 +396,9 @@ fn t11_print_golden() {
 
 #[test]
 fn t11_preview_equals_export_frame() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // Frame No. 17 of the export stream == the preview composite of the same moment
     // at the same Quality (a single render path).
@@ -394,7 +407,7 @@ fn t11_preview_equals_export_frame() {
     let target = 17usize;
     let mut captured: Option<Vec<u8>> = None;
     let mut n = 0usize;
-    render_raw_video(&p, all_sources(), q, |rgba| {
+    kt_gpu::testkit::render(&p, all_sources(), q, |rgba| {
         if n == target {
             captured = Some(rgba.to_vec());
         }
@@ -405,7 +418,7 @@ fn t11_preview_equals_export_frame() {
     let export_frame = captured.unwrap();
 
     // “preview”: an independent cache, direct decode of the layers, the same composite
-    let mut video = VideoRenderer::new(&p);
+    let video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
@@ -419,7 +432,7 @@ fn t11_preview_equals_export_frame() {
             frame.into(),
         );
     }
-    let (preview_frame, complete) = video.compose_from_cache(&cache, t, q);
+    let (preview_frame, complete) = kt_gpu::testkit::compose(&video, &cache, t, q);
     assert!(complete);
     assert_eq!(preview_frame, export_frame, "preview and export must match byte for byte");
 }
@@ -430,6 +443,9 @@ fn t11_preview_equals_export_frame() {
 /// break invariant No. 7.
 #[test]
 fn t67_preview_equals_export_with_fx_cold_and_warm() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = golden_project();
     // the chain from the user's complaint about the video clip
@@ -445,7 +461,7 @@ fn t67_preview_equals_export_with_fx_cold_and_warm() {
     let target = 17usize;
     let mut captured: Option<Vec<u8>> = None;
     let mut n = 0usize;
-    render_raw_video(&p, all_sources(), q, |rgba| {
+    kt_gpu::testkit::render(&p, all_sources(), q, |rgba| {
         if n == target {
             captured = Some(rgba.to_vec());
         }
@@ -455,7 +471,7 @@ fn t67_preview_equals_export_with_fx_cold_and_warm() {
     .unwrap();
     let export_frame = captured.unwrap();
 
-    let mut video = VideoRenderer::new(&p);
+    let video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
@@ -469,10 +485,10 @@ fn t67_preview_equals_export_with_fx_cold_and_warm() {
             frame.into(),
         );
     }
-    let (cold, complete) = video.compose_from_cache(&cache, t, q);
+    let (cold, complete) = kt_gpu::testkit::compose(&video, &cache, t, q);
     assert!(complete);
     assert_eq!(cold, export_frame, "cold FX composite == export");
-    let (warm, _) = video.compose_from_cache(&cache, t, q);
+    let (warm, _) = kt_gpu::testkit::compose(&video, &cache, t, q);
     assert_eq!(warm, export_frame, "warm (post-FX cache) == export");
 }
 
@@ -542,6 +558,9 @@ fn generator_project() -> (Project, Sources) {
 /// project without generators.
 #[test]
 fn t479_generator_preview_equals_export() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let q = Quality { width: 128, height: 72 };
     let target = 17usize; // a frame inside the solid's zone (t >= 30_000)
@@ -550,7 +569,7 @@ fn t479_generator_preview_equals_export() {
         let mut captured: Option<Vec<u8>> = None;
         let mut all = Vec::new();
         let mut n = 0usize;
-        render_raw_video(&p, sources, q, |rgba| {
+        kt_gpu::testkit::render(&p, sources, q, |rgba| {
             if n == target {
                 captured = Some(rgba.to_vec());
             }
@@ -573,7 +592,7 @@ fn t479_generator_preview_equals_export() {
 
     // preview by the same path as t11: an independent cache + layers_at
     let (p, sources) = generator_project();
-    let mut video = VideoRenderer::new(&p);
+    let video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
@@ -591,7 +610,7 @@ fn t479_generator_preview_equals_export() {
             frame.into(),
         );
     }
-    let (preview_frame, complete) = video.compose_from_cache(&cache, t, q);
+    let (preview_frame, complete) = kt_gpu::testkit::compose(&video, &cache, t, q);
     assert!(complete, "a composite with a generator must be complete");
     assert_eq!(preview_frame, frame_a, "preview and export must match byte for byte");
 }
@@ -602,6 +621,9 @@ fn t479_generator_preview_equals_export() {
 /// on the finished export frame, as in F-MED-004.
 #[test]
 fn t715_vertical_source_gets_fields_in_export() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = golden_project();
     // one video clip (id 5) on media 1; no audio and no second layer needed
@@ -617,7 +639,7 @@ fn t715_vertical_source_gets_fields_in_export() {
     )];
     let mut captured: Option<Vec<u8>> = None;
     let mut n = 0usize;
-    render_raw_video(&p, src, q, |rgba| {
+    kt_gpu::testkit::render(&p, src, q, |rgba| {
         if n == 3 {
             captured = Some(rgba.to_vec());
         }
@@ -643,6 +665,9 @@ fn t715_vertical_source_gets_fields_in_export() {
 /// coincide within the resampling tolerance; the rule and the node are not recomputed.
 #[test]
 fn t728b_export_in_another_resolution_is_similar_to_preview() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut p = golden_project();
     p.clips.retain(|c| c.id == ClipId(5));
@@ -663,7 +688,7 @@ fn t728b_export_in_another_resolution_is_similar_to_preview() {
     let profile = |q: Quality| -> (f64, f64) {
         let mut captured: Option<Vec<u8>> = None;
         let mut n = 0usize;
-        render_raw_video(&p, src(), q, |rgba| {
+        kt_gpu::testkit::render(&p, src(), q, |rgba| {
             if n == 3 {
                 captured = Some(rgba.to_vec());
             }

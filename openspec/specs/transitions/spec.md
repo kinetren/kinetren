@@ -18,7 +18,7 @@ The sound SHALL crossfade under any picture kind (there are no stylised audio tr
 owner's decision), and the audio curve is chosen from four (equal-power by default, linear, S-curve,
 exponential). A new kind that is not in the registry, or that has not declared whether it is
 symmetric, MUST NOT build or register. A transition plugin SHALL carry its translation into the
-kernel numbers, its CPU kernel and its WGSL piece in one family crate; the GPU composite SHALL be
+kernel numbers and its WGSL piece in one family crate; the GPU composite SHALL be
 assembled from the registry, and what goes into a cache key SHALL name the kind by id, not by the
 executor's dispatch number.
 Why: a single registry makes it impossible for "what can be applied" and "what is drawn" to drift
@@ -37,23 +37,23 @@ an assembled composite the number is an executor detail, and the contract become
 - **TEST** t222 (`src/libs/kt-otio/tests/convert.rs`)
 
 #### Scenario: A moved transition keeps its file text and its frames
-- **WHEN** the transition families have moved into plugin crates (stage 4); a project with every kind is written by the frozen pre-move serializer and by the new build, and the conformance list runs
-- **THEN** the texts are byte-identical, the CPU references of every kind are unchanged, the GPU results stay within the existing tolerances (t224), and the assembled composite text is identical between two executor creations
+- **WHEN** the transition families have moved into plugin crates (stage 4); a project with every kind is written by the frozen pre-move serializer and by the new build, and the list of cases runs
+- **THEN** the texts are byte-identical, the results stay within the existing tolerances of the stored frames (t224), and the assembled composite text is identical between two executor creations
 - **TEST** t973 (`src/libs/kt-model/tests/plugin_format.rs`), t224 (`src/libs/kt-gpu/tests/parity.rs`)
 
-### Requirement: Transition kernels — one translation to numbers; CPU reference and WGSL mirror are edited as a pair
-A kind from the model SHALL be turned into a flat set "mode + 8 numbers" exactly once, and the CPU kernel
-and the WGSL mirror of the composite SHALL read the same numbers and repeat the same formulas;
+### Requirement: Transition kernels — one translation to numbers, read by WGSL
+A kind from the model SHALL be turned into a flat set "mode + 8 numbers" exactly once, and the WGSL of the
+composite SHALL read those numbers;
 `kt-engine/transitions.rs` and `composite.wgsl` MUST be edited in one commit. The mode numbers are a
 contract only between these two files (the tag goes into the file, the ready set of numbers goes into the
 cache keys), a new mode SHALL be added only at the end. The crossfade MUST NOT enter the kernels: it stays
 the integer dissolve path, byte-for-byte as before. The parameters of a kind SHALL be included in the GPU plan key.
-Why: a divergence of the mirrors means that preview and export show different things (invariant 7), and
+Why: a second translation to numbers could make preview and export show different things (invariant 7), and
 without the parameters in the key a readback cache would return the transition frame of another kind.
 
-#### Scenario: Conformance of each mode on both axes and at non-default phases
-- **WHEN** each of the 32 non-crossfade modes runs on the CPU and the GPU at several phases
-- **THEN** the frames converge within the tolerance of the conformance helper (volumetric — `FrameTol::GEOM`); the case list MUST contain both axes and both flags of the directional kinds, shifted centres for the kinds with a centre, the phase between a quarter and the middle, and the solo fades — at the defaults (`Dir::Left`, centre 0.5/0.5, k=0.5) a broken mirror is invisible
+#### Scenario: Each mode on both axes and at non-default phases
+- **WHEN** each of the 32 non-crossfade modes runs at several phases
+- **THEN** the frames are within the tolerance of the helper of their stored frames (volumetric — `FrameTol::GEOM`); the case list MUST contain both axes and both flags of the directional kinds, shifted centres for the kinds with a centre, the phase between a quarter and the middle, and the solo fades — at the defaults (`Dir::Left`, centre 0.5/0.5, k=0.5) a broken kernel is invisible
 - **TEST** t224 (`src/libs/kt-gpu/tests/parity.rs`)
 
 #### Scenario: The kind reaches the picture and to the alpha of a solo fade
@@ -66,12 +66,12 @@ without the parameters in the key a readback cache would return the transition f
 - **THEN** the pair is blended linearly (k/4096, a frame without alpha — A=255) into one layer before alpha_over, preview and export by one code; the missing half gets the full weight and `complete = false`; an FX chain on the members of the pair does not break the dissolve
 - **TEST** t137 (`src/libs/kt-engine/tests/transitions_video.rs`), t182 (`src/libs/kt-gpu/tests/parity.rs`)
 
-### Requirement: Directional kernels are guarded by a closed-form test, not by a mirror
+### Requirement: Directional kernels are guarded by a closed-form test
 Every directional kernel (push, whip, split, squeeze, stretch, swap, patterns, volumetric)
 SHALL have a test where the expectation is computed by an independent formula on ramp frames or
 analytic zones, and not by a second instance of the same formula. The incoming frame of push/whip SHALL
 show its real content (it is sampled further along the direction of motion, `uv + dir·k`), not a smeared edge.
-Why: CPU↔GPU conformance is blind to "both mirrors are broken in the same way", and a render test on solid
+Why: a comparison with stored frames is blind to a defect the stored frames already hold, and a render test on solid
 colours is blind to coordinates — so a broken push lived for four rounds.
 
 #### Scenario: Push and whip bring in the real frame B
@@ -91,15 +91,15 @@ colours is blind to coordinates — so a broken push lived for four rounds.
 
 ### Requirement: Volumetric kinds — via one ext function, with no new pass and no new bytes in the keys
 The homographies of the panels of volumetric kinds SHALL be computed by one function (`trans_ext`) in f64 with
-a single rounding to f32, and both backends SHALL read the same bits through the free field of the composite
-uniform; a separate f64 reference for the GPU MUST NOT be created. Ext MUST NOT enter the cache keys
+a single rounding to f32, and the kernel SHALL read those bits through the free field of the composite
+uniform. Ext MUST NOT enter the cache keys
 (it is a function of the already hashed mode, numbers and progress). Occlusion is the analytic validity of a
 coordinate in the kernel; a depth buffer MUST NOT be added.
-Why: parity by construction is cheaper than a tolerance, and a systematic divergence from the GPU would have to be hidden.
+Why: one rounding in one place keeps the panels a function of what is already hashed.
 
-#### Scenario: Volumetric modes on the GPU converge with the CPU within the geometric tolerance
-- **WHEN** flip/cube/door/peel/roll run on both backends with both axes and both signs
-- **THEN** the frames converge within `FrameTol::GEOM`; the plan key and the hash function of the set of numbers do not change
+#### Scenario: Volumetric modes stay within the geometric tolerance of the stored frames
+- **WHEN** flip/cube/door/peel/roll run with both axes and both signs
+- **THEN** the frames are within `FrameTol::GEOM`; the plan key and the hash function of the set of numbers do not change
 - **TEST** t224 (`src/libs/kt-gpu/tests/parity.rs`), t468 (`src/libs/kt-engine/tests/transitions_video.rs`)
 
 ### Requirement: Inversion — a property of the event, executed by the plan before the kernel
@@ -294,8 +294,8 @@ Why: a transition should have no form of its own — exactly the mismatch of fie
 ### Requirement: The transition vocabulary grows only through the ranked catch-up waves
 New transition kinds SHALL arrive only through a wave of the F-FX-007 list (today W5, "transitions
 catch-up": a luma wipe with a user image, more iris shapes, warp transitions, motion-blurred
-push/slide), each wave its own change built as transition plugin crates whose CPU reference and
-WGSL piece live in one crate (capability `plugins`). The note SHALL list all built-in transition
+push/slide), each wave its own change built as transition plugin crates that hold their WGSL
+piece (capability `plugins`). The note SHALL list all built-in transition
 ids, and the waves SHALL be ordered so that no wave depends on a wave ranked after it. A wave
 that reaches for an idea the owner did not choose earlier (a transition progress curve, stylised
 audio transitions, a gallery of live previews) SHALL carry an explicit `Revision:` line naming a

@@ -9,7 +9,6 @@
 //! encodes the source frame NUMBER, so the finished RGBA shows exactly
 //! which frame reached the output.
 
-use kt_engine::export::render_raw_video;
 use kt_media::MediaSource;
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::*;
@@ -73,7 +72,7 @@ fn rendered_indices(project_fps: u32, src_fps: u32, reversed: bool) -> Vec<i64> 
     let p = project(project_fps, reversed);
     let q = kt_media::Quality { width: 64, height: 36 };
     let mut out = Vec::new();
-    render_raw_video(&p, sources(src_fps), q, |rgba| {
+    kt_gpu::testkit::render(&p, sources(src_fps), q, |rgba| {
         let idx = rgba[0] as i64 | (rgba[1] as i64) << 8 | (rgba[2] as i64) << 16;
         out.push(idx);
         Ok(())
@@ -84,6 +83,9 @@ fn rendered_indices(project_fps: u32, src_fps: u32, reversed: bool) -> Vec<i64> 
 
 #[test]
 fn t113_export_frames_are_monotonic_and_uniform() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     // --- grids do NOT match: project 60, source 25
     let idx = rendered_indices(60, 25, false);
     assert_eq!(idx.len(), 180, "3 s at 60 fps = 180 frames, got {}", idx.len());
@@ -198,6 +200,9 @@ fn t115_preview_keys_are_monotonic_at_quarter_rate() {
 /// did not see the defect.
 #[test]
 fn t116_export_has_no_black_frames_at_large_quality() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     use kt_engine::export::{EXPORT_VIDEO_CACHE_BYTES, export_chunk_frames};
 
     // a pure function: a batch must not exceed half the budget —
@@ -222,7 +227,7 @@ fn t116_export_has_no_black_frames_at_large_quality() {
     let p = project(30, false);
     let q = kt_media::Quality { width: 640, height: 360 };
     let mut idx: Vec<i64> = Vec::new();
-    let stats = kt_engine::export::render_raw_video(&p, sources(25), q, |rgba| {
+    let stats = kt_gpu::testkit::render(&p, sources(25), q, |rgba| {
         idx.push(rgba[0] as i64 | (rgba[1] as i64) << 8 | (rgba[2] as i64) << 16);
         Ok(())
     })

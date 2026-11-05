@@ -326,7 +326,7 @@ Why: `cargo test` builds a separate binary and does not rebuild `target/debug/kt
 #### Scenario: Stage verdict from cargo
 - **WHEN** the test stage of `finish.sh` fails
 - **THEN** "WARNING: … red" is printed, along with the names of the failed tests and the path to the full log; replacing `cargo` with a failing one makes the stage red
-- **TEST** `src/scripts/finish.sh` (workshop/SIMD stages, log `target/finish-*-fail.log`)
+- **TEST** `src/scripts/finish.sh` (workshop stage, log `target/finish-*-fail.log`)
 
 #### Scenario: Live data-safety scenarios
 - **WHEN** `src/scripts/live-check.sh` starts Xvfb with a separate `XDG_DATA_HOME` and `KT_AUTOSAVE_SECS`

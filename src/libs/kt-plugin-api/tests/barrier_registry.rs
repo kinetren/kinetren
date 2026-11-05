@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::barrier::{BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
+use kt_plugin_api::barrier::{BarrierKernel, GpuCtx, Node, Slot};
 use kt_plugin_api::{Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, Registry, VideoClass};
 
 /// What the test barrier's GPU graph looks like.
@@ -48,9 +48,6 @@ impl Plugin for B {
 const PASS: &str = "@fragment\nfn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> { return textureLoad(T0, vec2<i32>(pos.xy), 0); }";
 
 impl BarrierKernel for B {
-    fn frame(&self, _k: &Cooked, f: Frame, _cx: &BarrierCtx, _s: &mut dyn Scratch) -> Frame {
-        f
-    }
     fn shaders(&self) -> &'static [&'static str] {
         &[PASS]
     }
@@ -99,7 +96,7 @@ fn t1054_an_inconsistent_barrier_is_refused_before_any_frame() {
         .expect("a graph of host nodes alone (blur) is legal");
 
     let cases: &[(&str, VideoClass, Gpu, bool, Graph, &str)] = &[
-        ("no_kernel", VideoClass::Barrier, Gpu::Barrier, false, Graph::Good, "a barrier without a CPU kernel"),
+        ("no_kernel", VideoClass::Barrier, Gpu::Barrier, false, Graph::Good, "a barrier without a kernel"),
         ("no_gpu", VideoClass::Barrier, Gpu::None, true, Graph::Good, "without a GPU kernel"),
         ("tap_text", VideoClass::Barrier, Gpu::Wgsl(PASS), true, Graph::Good, "a tap's WGSL instead of its pass graph"),
         ("on_pointwise", VideoClass::PointWise, Gpu::Barrier, true, Graph::Good, "on a plugin that is not a barrier"),

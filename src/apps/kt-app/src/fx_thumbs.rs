@@ -421,11 +421,8 @@ fn frame_from(img: &egui::ColorImage) -> kt_fx::video::Frame {
 }
 
 /// Rendering of one request. Taken out of the worker so that a test can call it directly —
-/// without a thread and without waiting.
-pub(crate) fn render_job(
-    job: &FxThumbJob,
-    scratch: &mut kt_fx::video::FxScratch,
-) -> egui::ColorImage {
+/// without a thread and without waiting. With no video device the cell shows the base.
+pub(crate) fn render_job(job: &FxThumbJob) -> egui::ColorImage {
     let base = match (&job.base_img, job.key.base) {
         (Some(img), _) => frame_from(img),
         (None, FxThumbBase::PatternAlpha) => kt_fx::video::test_pattern(REF_W, REF_H, true),
@@ -435,26 +432,31 @@ pub(crate) fn render_job(
         (None, _) => kt_fx::video::test_pattern(REF_W, REF_H, false),
     };
     // computation at the REFERENCE size, storage at the cell size (item 428)
-    let full = kt_fx::video::render_fx_thumb(
-        &base,
-        &job.chain,
-        REF_W,
-        REF_H,
-        job.u,
-        job.burst_index,
-        job.cam3d,
-        scratch,
-    );
-    let mut cell = scratch.take((CELL_W as usize) * (CELL_H as usize) * 4);
+    let mut rgba = vec![0u8; (REF_W * REF_H * 4) as usize];
+    kt_fx::video::fit_into(&base, REF_W, REF_H, &mut rgba);
+    let frame = kt_media::VideoFrame {
+        pts: kt_time::Tick::ZERO,
+        width: REF_W,
+        height: REF_H,
+        rgba: rgba.clone().into_boxed_slice(),
+        has_alpha: base.has_alpha,
+    };
+    if let Some(engine) = kt_gpu::offline_engine() {
+        use kt_engine::VideoGpuExec as _;
+        let hash = recipe_hash(&job.chain, job.u, job.burst_index, job.cam3d);
+        let t = kt_time::Tick(job.burst_index);
+        let plan = kt_engine::chain_plan(Arc::new(frame), &job.chain, hash, job.u, t, job.cam3d);
+        if engine.execute_into(&plan, &mut rgba).is_err() {
+            rgba.resize((REF_W * REF_H * 4) as usize, 0);
+        }
+    }
+    let full = kt_fx::video::Frame { w: REF_W, h: REF_H, rgba, has_alpha: base.has_alpha };
+    let mut cell = vec![0u8; (CELL_W as usize) * (CELL_H as usize) * 4];
     kt_fx::video::fit_into(&full, CELL_W, CELL_H, &mut cell);
-    let img = egui::ColorImage::from_rgba_unmultiplied([CELL_W as usize, CELL_H as usize], &cell);
-    scratch.put(cell);
-    scratch.put(full.rgba);
-    img
+    egui::ColorImage::from_rgba_unmultiplied([CELL_W as usize, CELL_H as usize], &cell)
 }
 
 fn worker(shared: Arc<Shared>) {
-    let mut scratch = kt_fx::video::FxScratch::default();
     loop {
         if shared.stop.load(Ordering::Relaxed) {
             return;
@@ -477,7 +479,7 @@ fn worker(shared: Arc<Shared>) {
         if shared.ready.lock().unwrap().contains_key(&job.key) {
             continue;
         }
-        let img = render_job(&job, &mut scratch);
+        let img = render_job(&job);
         // the generation could change WHILE we were computing: publishing is still possible
         // (the key addresses exactly this picture), but computing
         // the next stale requests is not — pop() will drop them
@@ -580,30 +582,34 @@ mod tests {
     #[test]
     fn t546d_render_job_gives_a_cell_and_the_chain_is_visible() {
         crate::plugins::install();
-        let mut s = kt_fx::video::FxScratch::default();
-        let plain = render_job(&job(0, 0), &mut s);
+        if kt_gpu::offline_engine().is_none() {
+            return;
+        }
+        let plain = render_job(&job(0, 0));
         assert_eq!(plain.size, [CELL_W as usize, CELL_H as usize]);
         let mut with_fx = job(1, 0);
         with_fx.chain = vec![kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap()];
-        let mirrored = render_job(&with_fx, &mut s);
+        let mirrored = render_job(&with_fx);
         assert_ne!(plain.as_raw(), mirrored.as_raw(), "the chain changed nothing");
-        // a second run on the SAME pool is byte-for-byte (a dirty pool, t68)
-        let again = render_job(&with_fx, &mut s);
-        assert_eq!(mirrored.as_raw(), again.as_raw(), "a reused pool changed the bytes");
+        // a second run is byte-for-byte
+        let again = render_job(&with_fx);
+        assert_eq!(mirrored.as_raw(), again.as_raw(), "a second run changed the bytes");
         // the alpha sample differs from the opaque one
         let mut alpha = job(2, 0);
         alpha.key.base = FxThumbBase::PatternAlpha;
-        assert_ne!(plain.as_raw(), render_job(&alpha, &mut s).as_raw());
+        assert_ne!(plain.as_raw(), render_job(&alpha).as_raw());
     }
 
     /// The service as a whole: a request reaches `get()`, and `invalidate_media` drops the cells
     /// of EXACTLY this media (a generator edit, item 412).
     #[test]
     fn t546e_service_delivers_and_invalidates_by_media() {
+        crate::plugins::install();
         let svc = FxThumbService::start();
         let k = key(77);
         svc.request(job(77, svc.generation()));
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // the first request opens the offline device
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let img = loop {
             if let Some(img) = svc.get(&k) {
                 break img;
@@ -645,7 +651,7 @@ mod tests {
         let mut pv = PickerCtx::new(&svc, FxThumbBase::Pattern, None, vec![], 0.5, 90_000, None);
         let fx = [FxInstance::blur(8)];
         assert!(pv.texture(&ctx, &fx).is_none(), "the texture was found before any render");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         loop {
             if pv.texture(&ctx, &fx).is_some() {
                 break;

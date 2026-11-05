@@ -857,7 +857,7 @@ fn core_kind(f: &FxInstance) -> Option<&'static str> {
 /// t1056 (plugin-api-barriers 5.1; capability `plugins`): the core keeps no effect a person picks —
 /// the enum holds the Geometry lead node, the read-only CamMotion form, the LayerMix strength marker
 /// and the plugin and missing slots; every registry kind but those three is a plugin; and the
-/// barrier positions of both executors name no effect kind.
+/// barrier position names no effect kind.
 #[test]
 fn t1056_the_core_keeps_no_barrier() {
     kt_plugins_builtin::install();
@@ -870,23 +870,20 @@ fn t1056_the_core_keeps_no_barrier() {
         let f = FxInstance::all().iter().find(|f| f.tag() == id).unwrap_or_else(|| panic!("{id} left the registry"));
         assert!(matches!(f, FxInstance::Plugin(_)), "{id} is not a plugin slot");
     }
-    // the barrier positions: the CPU's `apply_barrier` and the GPU's barrier arm of `chain_ops`
+    // the barrier position: the barrier arm of `chain_ops`
     let src = |rel: &str| std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)).expect(rel);
     let between = |text: &str, from: &str, to: &str| -> String {
         let i = text.find(from).unwrap_or_else(|| panic!("{from} is gone"));
         let j = i + text[i..].find(to).unwrap_or_else(|| panic!("{to} is gone after {from}"));
         text[i..j].to_string()
     };
-    let cpu = between(&src("../kt-fx/src/video.rs"), "pub fn apply_barrier(", "\n}\n");
     let gpu = between(
         &src("../kt-gpu/src/engine.rs"),
         "kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match",
         "_ => debug_assert!(false, \"barrier op on non-barrier fx\")",
     );
-    for (side, body) in [("kt-fx apply_barrier", cpu), ("kt-gpu chain_ops", gpu)] {
-        for line in body.lines().filter(|l| l.contains("FxInstance::")) {
-            assert!(line.contains("FxInstance::Plugin("), "{side} names an effect kind: {}", line.trim());
-        }
+    for line in gpu.lines().filter(|l| l.contains("FxInstance::")) {
+        assert!(line.contains("FxInstance::Plugin("), "kt-gpu chain_ops names an effect kind: {}", line.trim());
     }
 }
 

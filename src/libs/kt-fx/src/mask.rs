@@ -1,5 +1,5 @@
 //! The mask rasterizer (shape-masks): ONE CPU function turns an ordered mask list into an 8-bit
-//! coverage; the CPU applies it, the GPU uploads THE SAME bytes and applies them in one integer
+//! coverage; the GPU uploads the bytes and applies them in one integer
 //! pass (`kt-gpu/src/shaders/mask.wgsl`) — so the conformance class is EXACT.
 //!
 //! Per mask: the cubic outline (`kt_model::Mask::cubics`, the shape's one geometry) is mapped by
@@ -322,29 +322,6 @@ pub fn rasterize_cached(masks: &[Mask], sp: &MaskSpace, w: u32, h: u32) -> Arc<C
         memo.push((key, c.clone()));
     }
     c
-}
-
-/// Alpha form: `a' = (a·m + 127) / 255`; a frame without alpha reads its alpha as 255. The
-/// frame gains alpha. Mirrored by `mask.wgsl`.
-pub fn apply_alpha(rgba: &mut [u8], cov: &[u8], has_alpha: bool) {
-    for (px, &m) in rgba.chunks_exact_mut(4).zip(cov) {
-        let a = if has_alpha { px[3] as u32 } else { 255 };
-        px[3] = ((a * m as u32 + 127) / 255) as u8;
-    }
-}
-
-/// Mix form: per channel `(dry·(255 − m) + wet·m + 127) / 255` into `wet`; a side without alpha
-/// reads its alpha as 255. Mirrored by the coverage branch of `layer_mix.wgsl`.
-pub fn apply_mix(dry: &[u8], wet: &mut [u8], cov: &[u8], dry_alpha: bool, wet_alpha: bool) {
-    for ((w4, d4), &m) in wet.chunks_exact_mut(4).zip(dry.chunks_exact(4)).zip(cov) {
-        let (m, n) = (m as u32, 255 - m as u32);
-        let da = if dry_alpha { d4[3] } else { 255 };
-        let wa = if wet_alpha { w4[3] } else { 255 };
-        for c in 0..3 {
-            w4[c] = ((d4[c] as u32 * n + w4[c] as u32 * m + 127) / 255) as u8;
-        }
-        w4[3] = ((da as u32 * n + wa as u32 * m + 127) / 255) as u8;
-    }
 }
 
 /// What a mask application point does.

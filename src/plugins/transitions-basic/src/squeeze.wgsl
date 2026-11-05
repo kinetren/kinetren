@@ -1,4 +1,4 @@
-// The axial “back to uv” of squeeze: a mirror of the CPU kernel’s back() (R.51).
+// The axial “back to uv” of squeeze: (R.51).
 fn sq_back(uv: vec2<f32>, c2: f32, d: vec2<f32>) -> vec2<f32> {
     if (d.x > 0.5) { return vec2<f32>(c2, uv.y); }
     if (d.x < -0.5) { return vec2<f32>(1.0 - c2, uv.y); }

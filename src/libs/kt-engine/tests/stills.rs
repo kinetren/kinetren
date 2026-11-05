@@ -85,7 +85,7 @@ fn clip(id: u64, media: u64, lane: u32, dur_s: f64) -> ClipEvent {
 
 /// The composite of moment `t`, warmed exactly by what the plan requested.
 fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
-    let mut video = kt_engine::VideoRenderer::new(p);
+    let video = kt_engine::VideoRenderer::new(p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         std::collections::HashMap::new();
@@ -107,11 +107,14 @@ fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
             f.into(),
         );
     }
-    video.compose_from_cache(&cache, t, Q)
+    kt_gpu::testkit::compose(&video, &cache, t, Q)
 }
 
 #[test]
 fn t796b_a_still_is_planned_composed_and_exported() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     // --- an event of 10 s on a PICTURE: a frame exists on any tick -------------
     let mut p = Project::new(settings());
     p.media.push(MediaRef::new(MediaId(1), fixture("still.jpg")));
@@ -180,7 +183,9 @@ fn t796b_a_still_is_planned_composed_and_exported() {
     };
     // audio and video — THEIR OWN sources: sharing one between the passes means
     // sharing the read position too (invariant 5)
-    kt_engine::export::export_mp4(&short, sources(), sources(), out.to_str().unwrap())
+    let never = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let opts = kt_engine::ExportOptions::default();
+    kt_gpu::testkit::export_with(&short, sources(), sources(), out.to_str().unwrap(), None, &opts, &never, &never, |_| {})
         .expect("export of an event on an image");
     let size = std::fs::metadata(&out).expect("there is no export file").len();
     assert!(size > 1000, "the export file is suspiciously small: {size} bytes");
@@ -202,13 +207,13 @@ fn compose_facts(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
         facts.observe(m.id, s.info());
         srcs.insert(m.id, s);
     }
-    let mut video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
+    let video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     for (addr, pts, dq) in video.layers_at(t, q) {
         let f = srcs.get_mut(&addr).expect("source").read_video_frame(pts, Some(dq)).expect("frame");
         cache.insert_video(kt_engine::source_id(addr), Some(dq), kt_engine::video::video_cache_idx(pts), f.into());
     }
-    video.compose_from_cache(&cache, t, q)
+    kt_gpu::testkit::compose(&video, &cache, t, q)
 }
 
 /// The columns of the frame where the picture lies — by ALPHA: the margins of fit are
@@ -227,6 +232,9 @@ fn picture_columns(bytes: &[u8], q: Quality) -> (usize, usize) {
 /// not for stills?"): under every rule a square still is placed exactly like a square video.
 #[test]
 fn t937_four_rules_a_square_still_equals_a_square_video() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let one = |path: String, rule: Conform, project_rule: ConformRule| -> Vec<u8> {
         let mut s = settings();
         s.conform = project_rule;
@@ -274,6 +282,9 @@ fn t937_four_rules_a_square_still_equals_a_square_video() {
 /// canvas" — the missing-file placeholder fills a 4:3 canvas with no margins under fit.
 #[test]
 fn t941_the_placeholder_still_fills_the_canvas() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let mut s = settings();
     s.width = 240;
     s.height = 180;

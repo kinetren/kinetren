@@ -1,7 +1,7 @@
 // The preview's display pass (preview-throughput D2): the integer composite into the Rgba8Unorm
 // texture egui draws, premultiplied in gamma space as `Color32::from_rgba_unmultiplied` does, so
 // the picture is the one the readback path shows. Nearest sampling at the target's size: 1:1 for
-// the frame, the same 32×18 picks as the CPU loop for the ambient glow.
+// the frame, the 32×18 picks for the ambient glow.
 // u0 = (source w, source h, target w, target h)
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {

@@ -4,7 +4,9 @@
 //! frame's business, not the tape's.
 
 use fx_video_tape::deck::{lt, Deck, LT_W};
-use fx_video_tape::sim::{self, Sim};
+#[path = "model/sim.rs"]
+mod sim;
+use sim::Sim;
 use fx_video_tape::standard::{Standard, Std, KN, KR};
 use kt_plugin_api::math::FrozenMath;
 use kt_plugin_api::Plugin;

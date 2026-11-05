@@ -1,10 +1,9 @@
 //! Video path: selection of active clips, frame keys, building the frame plan
-//! (video_plan) and the CPU composition executor.
+//! (video_plan). The pictures are composed by the GPU executor in kt-gpu.
 //!
 //! Invariant No. 7 (rev. R.29): composition code is ONE — build_plan decides layers,
 //! order, transition weights and levels for both preview and export;
-//! the backend (CPU here / GPU in kt-gpu) is an execution parameter, not a second path.
-//! The CPU executor is the byte reference (invariant 11) and the fallback. Layers
+//! the executor (kt-gpu) is an execution parameter, not a second path. Layers
 //! are requested at ONE quality and composited alpha-over by z
 //! (lane: lower = higher, as in the old engine, where a smaller track index
 //! was the foreground).
@@ -16,7 +15,7 @@ use kt_media::{Quality, VideoFrame};
 use kt_model::{ClipKind, MediaId, Project};
 use kt_time::{FpsGrid, Tick};
 
-use crate::video_plan::{Cam3d, FramePlan, LayerSrc, PlanLayer};
+use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, VideoGpuExec};
 
 #[path = "video_stream.rs"]
 mod stream;
@@ -459,12 +458,6 @@ fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
 pub struct VideoRenderer {
     clips: Vec<VideoClip>,
     pub grid: FpsGrid,
-    /// Pool of RGBA buffers for FX chains (item 2 of round 7): without it every compose
-    /// paid ~6 full-size allocations.
-    fx_scratch: kt_fx::video::FxScratch,
-    /// Reusable blend buffer for a transition pair (item 137): allocated
-    /// once, not per frame.
-    blend: Vec<u8>,
     /// Snapshot of the project cameras (R.29): the active/pinned Pan3d camera
     /// is resolved when the plan is built, by the same rule as in the model.
     cameras: Vec<kt_model::CameraEvent>,
@@ -1257,8 +1250,6 @@ impl VideoRenderer {
         VideoRenderer {
             clips,
             grid,
-            fx_scratch: Default::default(),
-            blend: Vec::new(),
             // cameras are OWN to each reel: cameras may be placed inside a nesting,
             // and the active-camera rule is computed from its own reel
             cameras: resolved.cameras.to_vec(),
@@ -1537,100 +1528,17 @@ impl VideoRenderer {
         warm
     }
 
-    /// Composite of moment `t` from the cache into an RGBA buffer of `quality` size.
-    /// Returns (buffer, whether all layers were in the cache). A missing layer
-    /// is skipped (playback does not wait — invariant No. 5).
-    pub fn compose_from_cache(
-        &mut self,
-        cache: &BurstCache,
-        t: Tick,
-        quality: Quality,
-    ) -> (Vec<u8>, bool) {
-        let mut out = Vec::new();
-        let complete = self.compose_from_cache_into(cache, t, quality, &mut out);
-        (out, complete)
-    }
-
-    /// A variant with a reusable buffer (preview 60 times/s: allocating a
-    /// full RGBA frame for every frame was noticeable, item 1 of round 5).
-    /// Builds the frame plan and executes it with the CPU executor (R.29).
-    pub fn compose_from_cache_into(
-        &mut self,
-        cache: &BurstCache,
-        t: Tick,
-        quality: Quality,
-        out: &mut Vec<u8>,
-    ) -> bool {
-        let ctx = PlanCtx {
-            grid: &self.grid,
-            cameras: &self.cameras,
-            project_size: self.project_size,
-            nests: &self.nests,
-            stages: &self.stages,
-            stream_memo: &self.stream_memo,
-            memoize: true,
-            blend_footage: false,
-        };
-        let plan = build_plan(&self.clips, &ctx, cache, t, quality, true);
-        self.fx_scratch.cost = Default::default();
-        execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
-    }
-
-    /// What the last CPU compose of THIS renderer ran (morpher-event-grid-cost, D1). The
-    /// sub-composites of nested reels count in their own renderers.
-    pub fn last_cost(&self) -> kt_fx::video::FrameCost {
-        self.fx_scratch.cost
-    }
-
-    /// Export variant: without post-FX memoization (R.31 item 4 — see
-    /// FramePlan::memoize_postfx). The frame bytes are identical to compose_from_cache.
-    pub fn compose_export_into(
-        &mut self,
-        cache: &BurstCache,
-        t: Tick,
-        quality: Quality,
-        out: &mut Vec<u8>,
-    ) -> bool {
-        let ctx = PlanCtx {
-            grid: &self.grid,
-            cameras: &self.cameras,
-            project_size: self.project_size,
-            nests: &self.nests,
-            stages: &self.stages,
-            stream_memo: &self.stream_memo,
-            memoize: false,
-            blend_footage: false,
-        };
-        let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
-        self.fx_scratch.cost = Default::default();
-        execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
-    }
-
-    /// `compose_export_into` with the scratch owned by the caller (export-throughput D2): the
-    /// pipelined export composes several frames at once, one `ExportScratch` per worker, over a
-    /// SHARED renderer. The plan and the executor are the same calls — a frame is a function of
-    /// (cache, t, quality), so which worker composed it does not show in its bytes.
-    pub fn compose_export_with(
+    /// The frame at `t` from the cache through `exec`: complete, or a layer was missing and skipped
+    /// (playback does not wait, invariant No. 5).
+    pub fn compose_on(
         &self,
+        exec: &dyn VideoGpuExec,
         cache: &BurstCache,
         t: Tick,
         quality: Quality,
-        scratch: &mut ExportScratch,
         out: &mut Vec<u8>,
-    ) -> bool {
-        let ctx = PlanCtx {
-            grid: &self.grid,
-            cameras: &self.cameras,
-            project_size: self.project_size,
-            nests: &self.nests,
-            stages: &self.stages,
-            stream_memo: &self.stream_memo,
-            memoize: false,
-            blend_footage: false,
-        };
-        let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
-        scratch.fx.cost = Default::default();
-        execute_plan_cpu(&plan, cache, &mut scratch.fx, &mut scratch.blend, out)
+    ) -> Result<bool, GpuExecError> {
+        exec.execute_into(&self.frame_plan(cache, t, quality), out)
     }
 
     /// The media whose frames the composite at `t` names and the cache does not have: what a frame
@@ -1722,13 +1630,6 @@ impl VideoRenderer {
     }
 }
 
-/// A CPU composite's working buffers, one per export worker (export-throughput D2).
-#[derive(Default)]
-pub struct ExportScratch {
-    fx: kt_fx::video::FxScratch,
-    blend: Vec<u8>,
-}
-
 /// Plan-building context: the grid, cameras and the project's world size.
 struct PlanCtx<'a> {
     grid: &'a FpsGrid,
@@ -1745,8 +1646,7 @@ struct PlanCtx<'a> {
     memoize: bool,
     /// Frame blending, inherited from the nesting ABOVE (R.56, item 448).
     /// The mode sits on the reel instance, and its LEAVES execute it: this way one
-    /// sub-composite remains per frame (two would cost double, on both CPU and
-    /// GPU), and procedural content inside does not land on the grid instead of
+    /// sub-composite remains per frame (two would cost double on the GPU), and procedural content inside does not land on the grid instead of
     /// continuous time. At the root it is always `false` — the bytes of GOLDEN_VIDEO
     /// rest on this.
     blend_footage: bool,
@@ -1853,13 +1753,12 @@ fn layer_src<'a>(
             None => (None, 0),
         }
     };
-    // BLENDING (R.37 C5) is done HERE, in the plan's common code: both
-    // executors receive an already blended pre-FX frame, and the same
-    // arithmetic does not have to be kept in sync in the CPU kernel and in WGSL
-    // (invariant No. 7). The kernel is the ready `dissolve_into`: byte-frozen,
-    // with an AVX2 twin.
+    // BLENDING (R.37 C5) is done HERE, in the plan's common code: the executor
+    // receives an already blended pre-FX frame, and the same
+    // arithmetic does not have to be kept in WGSL as well
+    // (invariant No. 7). The kernel is the ready `dissolve_into`: byte-frozen.
     // FRAME BLENDING ON THE NESTING ITSELF is not done (R.56, item 448): two
-    // sub-composites per frame cost double on both backends and add nothing —
+    // sub-composites per frame cost double and add nothing —
     // the reel's inner time is already continuous. The mode travels
     // DOWN, to the leaves, and `clip_frame_keys` already hands out the pair there.
     debug_assert!(
@@ -1885,7 +1784,7 @@ fn layer_src<'a>(
     let span = (clip.end.0 - clip.start.0).max(1);
     let u = (t.0 - clip.start.0) as f64 / span as f64;
     // automation (R.30): curves are resolved HERE, once per frame —
-    // the CPU and GPU receive already computed parameters (the chain is cloned
+    // the executor receives already computed parameters (the chain is cloned
     // only with live curves)
     let fx: std::borrow::Cow<'_, [kt_model::FxInstance]> = match &clip.auto_plan {
         Some(plan) => {
@@ -2145,235 +2044,12 @@ fn build_plan<'a>(
     FramePlan { t, out_w: quality.width, out_h: quality.height, layers, memoize_postfx }
 }
 
-/// CPU execution of the plan without a pool holder (parity tests of kt-gpu:
-/// the GPU output is checked against this reference; the pools are one-shot).
-pub fn compose_plan_cpu(plan: &FramePlan<'_>, cache: &BurstCache, out: &mut Vec<u8>) -> bool {
-    let mut scratch = kt_fx::video::FxScratch::default();
-    let mut blend = Vec::new();
-    execute_plan_cpu(plan, cache, &mut scratch, &mut blend, out)
-}
-
-/// CPU executor of the plan: a missing half of the pair → the present one at full
-/// weight + complete=false (playback does not wait, invariant No. 5); a layer
-/// of a foreign size is silently skipped (contract “the decoder delivers Quality”).
-fn execute_plan_cpu(
-    plan: &FramePlan<'_>,
-    cache: &BurstCache,
-    scratch: &mut kt_fx::video::FxScratch,
-    blend: &mut Vec<u8>,
-    out: &mut Vec<u8>,
-) -> bool {
-    let w = plan.out_w as usize;
-    let h = plan.out_h as usize;
-    out.clear();
-    out.resize(w * h * 4, 0);
-    let mut complete = true;
-    let q_key = (plan.out_w, plan.out_h);
-    let fits = |f: &Arc<VideoFrame>| (f.width as usize, f.height as usize) == (w, h);
-    for layer in &plan.layers {
-        match layer {
-            PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
-                match layer_frame_cpu(
-                    src,
-                    cache,
-                    q_key,
-                    scratch,
-                    blend,
-                    plan.t,
-                    plan.memoize_postfx,
-                    &mut complete,
-                ) {
-                    Some(f) if fits(&f) => {
-                        // TRACK BLEND MODE (R.62): level and mode are
-                        // different axes, both after alpha, so the level
-                        // goes to the kernel, not smeared into alpha.
-                        // Normal does not enter here: it has the previous path
-                        // byte for byte (GOLDEN_VIDEO).
-                        if src.blend_mode != kt_model::BlendMode::Normal {
-                            blend_over(out, &f.rgba, f.has_alpha, w * h, src.blend_mode, *alpha_k);
-                        } else if let Some(sf) = fade {
-                            // solo fade with a kind: the other side is emptiness
-                            let (fa, fb) =
-                                if sf.incoming { (None, Some(&*f)) } else { (Some(&*f), None) };
-                            crate::transitions::mix_into(blend, fa, fb, sf.k, sf.mix, w, h);
-                            if *alpha_k < 4096 {
-                                scale_alpha_inplace(blend, *alpha_k, w * h);
-                            }
-                            alpha_over(out, blend, true, w * h);
-                        } else if *scale_alpha {
-                            scale_alpha_into(blend, &f, *alpha_k, w * h);
-                            alpha_over(out, blend, true, w * h);
-                        } else {
-                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
-                        }
-                    }
-                    Some(f) => {
-                        // The size of the reel's sub-composite is OUR arithmetic
-                        // (`NestSrc::fit_to`): if it diverged from the plan,
-                        // the layer would silently vanish from the frame — before R.58 that was
-                        // the case (item 459). For a file, a foreign size is a message
-                        // from the decoder, and the answer to it is one: the frame is not complete.
-                        debug_assert!(
-                            src.input.nest().is_none(),
-                            "nest sub-composite {}x{} does not fit the plan {w}x{h}",
-                            f.width,
-                            f.height
-                        );
-                        complete = false;
-                    }
-                    None => complete = false,
-                }
-            }
-            PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
-                let fa = layer_frame_cpu(
-                    a,
-                    cache,
-                    q_key,
-                    scratch,
-                    blend,
-                    plan.t,
-                    plan.memoize_postfx,
-                    &mut complete,
-                );
-                let fb = layer_frame_cpu(
-                    b,
-                    cache,
-                    q_key,
-                    scratch,
-                    blend,
-                    plan.t,
-                    plan.memoize_postfx,
-                    &mut complete,
-                );
-                match (fa, fb) {
-                    (Some(fa), Some(fb)) if fits(&fa) && fits(&fb) => {
-                        let mut has_alpha = if mix.is_crossfade() {
-                            dissolve_into(blend, &fa, &fb, *k, w * h)
-                        } else {
-                            crate::transitions::mix_into(
-                                blend,
-                                Some(&fa),
-                                Some(&fb),
-                                *k,
-                                *mix,
-                                w,
-                                h,
-                            )
-                        };
-                        if *alpha_k < 4096 {
-                            scale_alpha_inplace(blend, *alpha_k, w * h);
-                            has_alpha = true;
-                        }
-                        alpha_over(out, blend, has_alpha, w * h);
-                    }
-                    (Some(f), None) | (None, Some(f)) if fits(&f) => {
-                        if *alpha_k < 4096 {
-                            scale_alpha_into(blend, &f, *alpha_k, w * h);
-                            alpha_over(out, blend, true, w * h);
-                        } else {
-                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
-                        }
-                        complete = false;
-                    }
-                    (fa, fb) => {
-                        for (side, f) in [(a, &fa), (b, &fb)] {
-                            if let Some(f) = f {
-                                debug_assert!(
-                                    side.input.nest().is_none() || fits(f),
-                                    "nest sub-composite {}x{} does not fit the plan {w}x{h}",
-                                    f.width,
-                                    f.height
-                                );
-                            }
-                        }
-                        complete = false;
-                    }
-                }
-            }
-        }
-    }
-    complete
-}
-
 /// The transition partner: a clip of the same track with the SAME window on the opposite
 /// side (incoming looks for outgoing and vice versa). There are few clips, a linear scan.
 fn find_pair(clips: &[VideoClip], lane: u32, win: (Tick, Tick), incoming: bool) -> Option<usize> {
     clips.iter().position(|c| {
         c.lane == lane && (if incoming { c.fade_in } else { c.fade_out }) == Some(win)
     })
-}
-
-/// Sub-composite of a nested reel (R.50, wave B).
-///
-/// **The trap this function exists separately for.**
-/// `execute_plan_cpu` starts from transparent black and overlays the layers with
-/// `alpha_over`; with `da == 0` it yields `dst.rgb = s·sa/255`, `dst.a = sa`
-/// — that is, the composite result stores PREMULTIPLIED RGB with
-/// a STRAIGHT alpha, while `alpha_over` expects straight input. Feeding such a buffer
-/// back into a composite — the picture is half as dark EXACTLY in semi-transparent
-/// places, which is easy to write off as “by design”.
-///
-/// The cure is exactly ONE conversion here, at the boundary of the nesting. We do not
-/// touch `alpha_over` itself: GOLDEN_VIDEO and the AVX2 twin rest on its bytes
-/// (t198).
-fn nest_frame_cpu(
-    n: &crate::video_plan::NestSrc<'_>,
-    cache: &BurstCache,
-    scratch: &mut kt_fx::video::FxScratch,
-    blend: &mut Vec<u8>,
-    memoize: bool,
-    complete: &mut bool,
-) -> Option<Arc<VideoFrame>> {
-    let (w, h) = (n.plan.out_w, n.plan.out_h);
-    let q_key = (w, h);
-    let source = nest_source_id(n.seq);
-    let key = nest_memo_key(n.content_hash, n.blend);
-    if memoize && let Some(f) = cache.get_postfx_video(source, q_key, key, n.inner_t.0) {
-        return Some(f);
-    }
-    let mut buf = scratch.take(w as usize * h as usize * 4);
-    let whole = execute_plan_cpu(&n.plan, cache, scratch, blend, &mut buf);
-    if !whole {
-        *complete = false;
-    }
-    unpremultiply(&mut buf);
-    let rgba: Box<[u8]> = buf[..].into();
-    scratch.put(buf);
-    let frame = Arc::new(VideoFrame { pts: n.inner_t, width: w, height: h, rgba, has_alpha: true });
-    // ONLY a COMPLETE sub-composite is MEMOIZED (R.59, stage 2).
-    //
-    // A starved frame is NOT a function of the reel's revision, but of what the
-    // cache worker managed to put in. Recording it under the revision key, we got
-    // a black reel FOREVER: the key from warming does not move, there is nothing to
-    // re-request, and from outside the composite was declared complete (the starvation
-    // is visible only in the one pass where it happened). A live
-    // player fell into this on every cold start.
-    if memoize && whole {
-        cache.insert_postfx_video(source, q_key, key, n.inner_t.0, frame.clone());
-    }
-    Some(frame)
-}
-
-/// Fit the reel's sub-composite into the chain input (R.58, item 459).
-///
-/// There is ONE bilinear filter per program — `kt_fx::video::fit_into` (which also has
-/// the AVX2 twin and the WGSL mirror); we do not start a separate arithmetic here:
-/// if it diverged from the GPU, preview and export would show different things.
-fn fit_frame_cpu(
-    f: &Arc<VideoFrame>,
-    ow: u32,
-    oh: u32,
-    scratch: &mut kt_fx::video::FxScratch,
-) -> Arc<VideoFrame> {
-    let mut src = scratch.take(f.rgba.len());
-    src.copy_from_slice(&f.rgba);
-    let src = kt_fx::video::Frame { w: f.width, h: f.height, rgba: src, has_alpha: f.has_alpha };
-    let mut out = scratch.take(ow as usize * oh as usize * 4);
-    kt_fx::video::fit_into(&src, ow, oh, &mut out);
-    scratch.put(src.rgba);
-    let rgba: Box<[u8]> = out[..].into();
-    scratch.put(out);
-    Arc::new(VideoFrame { pts: f.pts, width: ow, height: oh, rgba, has_alpha: f.has_alpha })
 }
 
 /// Memoization key of the sub-composite (R.56, item 448): the reel's revision + the frame
@@ -2560,369 +2236,6 @@ pub fn nest_source_id(seq: MediaId) -> SourceId {
     SourceId(kt_model::NEST_TAG | seq.0)
 }
 
-/// Straight alpha from premultiplied — ONE for the project, home in kt-fx
-/// (the premul gate of the kernels also calls it, R.53 item 418). Only a
-/// re-export under the old name remains here.
-use kt_fx::video::unpremultiply;
-
-#[allow(clippy::too_many_arguments)]
-/// The layer frame for the CPU executor: the pre-FX frame from the plan or the result of
-/// the FX chain (memoized by the post-FX cache). None — no frame (starvation).
-/// A fresh post-FX frame is returned THROUGH the cache (one extra fetch on a
-/// cold chain — cheaper than cloning the frame).
-fn layer_frame_cpu(
-    src: &LayerSrc<'_>,
-    cache: &BurstCache,
-    q_key: (u32, u32),
-    scratch: &mut kt_fx::video::FxScratch,
-    blend: &mut Vec<u8>,
-    t: Tick,
-    memoize: bool,
-    complete: &mut bool,
-) -> Option<Arc<VideoFrame>> {
-    // video FX chain (item 25): the cache stores PRE-FX frames (the truth about
-    // coverage), the post-FX frame is memoized under a separate kind
-    // (item 2 of round 7 — otherwise the chain would be paid on EVERY compose and the loop
-    // would play at 6.8 fps even when warm); effects are deterministic by
-    // (t, fx_hash) → byte identity is kept. The GPU executor does not touch this
-    // memoization (it has its own ReadbackCache in kt-gpu).
-    let has_fx = kt_fx::video::has_video_fx_in(&src.fx, src.lead, q_key.0, q_key.1)
-        || !src.masks.is_empty();
-    // LAYER STRENGTH (R.38 item 12): the `LayerMix` slot mixes the state BEFORE the
-    // layer's contribution with the state after it. The value is already resolved by
-    // automation during plan building, and `fx_hash` hashes the whole chain —
-    // 60% and 100% would not collapse into one post-FX cache frame.
-    let mixes = layer_mixes(&src.fx);
-    // The camera — INTO the memoization key (R.44): the CPU computes Pan3d, and the camera
-    // is resolved PER FRAME (animation, the active-camera rule) — the static
-    // fx_hash does not see it, and an edit/move of the camera would return stale frames.
-    // A mirror of put_cam3d in the plan_key of the GPU path.
-    // The decode scale step — also INTO the key (R.46, item 318): the same clip at the same Quality
-    // gives DIFFERENT post-FX bytes for different input sizes (the native appeared/disappeared,
-    // the zoom curve changed) — without it the cache would return a stale
-    // frame (t313).
-    let nest_scale = src.input.nest().map_or(0, |n| n.nest_scale);
-    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale, nest_scale, &src.lead);
-    if has_fx && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0) {
-        return Some(f);
-    }
-    // Layer input: a frame from the cache or the SUB-COMPOSITE of a nested reel.
-    let resolved;
-    let frame = match &src.input {
-        crate::video_plan::LayerInput::Frame(f) => f.as_ref(),
-        crate::video_plan::LayerInput::Nest(n) => {
-            let sub = nest_frame_cpu(n, cache, scratch, blend, memoize, complete);
-            // The reel's step above the chain input (R.58, item 459): the sub-composite is
-            // assembled LARGER than this chain can consume — we fit it in
-            // with THE SAME bilinear filter as the dry side of the blend
-            // (`fit_into`, mirrored on GPU — `Resample` to the full frame).
-            resolved = match (sub, n.fit_to(src.src_scale, q_key.0, q_key.1)) {
-                (Some(f), Some((fw, fh))) => Some(fit_frame_cpu(&f, fw, fh, scratch)),
-                (f, _) => f,
-            };
-            resolved.as_ref()
-        }
-    };
-    if !has_fx {
-        // a chain of a single pixel strength does not touch: there is nothing to blend the input
-        // with itself
-        return frame.cloned();
-    }
-    let frame = frame?;
-    let ctx = kt_fx::video::VideoFxCtx {
-        out_w: q_key.0,
-        out_h: q_key.1,
-        u: src.u,
-        burst_index: t.0,
-        cam3d: src.cam3d,
-        in_scale: src.src_scale,
-        lead: src.lead,
-    };
-    let mut rgba = scratch.take(frame.rgba.len());
-    rgba.copy_from_slice(&frame.rgba);
-    let start =
-        kt_fx::video::Frame { w: frame.width, h: frame.height, rgba, has_alpha: frame.has_alpha };
-    let f = if mixes.is_empty() && src.masks.is_empty() {
-        // the PREVIOUS path, byte for byte: GOLDEN_VIDEO rests on it
-        kt_fx::video::apply_video_chain_pooled(&src.fx, start, &ctx, scratch)
-    } else {
-        apply_chain_with_mixes(&src.fx, &mixes, &src.masks, start, &ctx, scratch)
-    };
-    let frame = Arc::new(VideoFrame {
-        pts: t,
-        width: f.w,
-        height: f.h,
-        rgba: f.rgba.into_boxed_slice(),
-        has_alpha: f.has_alpha,
-    });
-    if !memoize {
-        // export (R.31 item 4): the frame will not survive this t — do not consume the cache
-        return Some(frame);
-    }
-    cache.insert_postfx_video(src.source, q_key, key_hash, t.0, frame);
-    cache.get_postfx_video(src.source, q_key, key_hash, t.0)
-}
-
-/// Post-FX memoization key: the static hash of the chain + the layer's resolved camera
-/// at the moment (R.44, t66d). None — a constant addend: 2D chains
-/// still differ only by fx_hash.
-fn postfx_key_hash(
-    fx_hash: u64,
-    cam3d: &Option<Cam3d>,
-    src_scale: u32,
-    nest_scale: u32,
-    lead: &Option<kt_fx::conform::LeadCtx>,
-) -> u64 {
-    use xxhash_rust::xxh3::Xxh3;
-    let mut h = Xxh3::new();
-    h.update(&fx_hash.to_le_bytes());
-    h.update(&src_scale.to_le_bytes());
-    // the context of the leading node (R.62): the same chain on the same frame with a
-    // different conform rule — a different picture, a different key
-    match lead {
-        None => h.update(&[0u8]),
-        Some(l) => {
-            h.update(&[1u8, l.rule as u8]);
-            if let Some((vw, vh)) = l.view {
-                h.update(&vw.to_bits().to_le_bytes());
-                h.update(&vh.to_bits().to_le_bytes());
-            }
-        }
-    }
-    // The reel's step — also into the key (R.58, item 459). For an instance without zoom the
-    // chain input equals 1 both at step 1 and at step 3 (raised by a zooming
-    // TWIN), while the bytes differ: in the second case the chain gets
-    // the fitted sub-composite. Without this addend the cache would return a stale
-    // result — the same class as t313 along the size axis.
-    h.update(&nest_scale.to_le_bytes());
-    match cam3d {
-        None => h.update(&[0u8]),
-        Some(c) => {
-            h.update(&[1u8, c.cam.ortho as u8]);
-            for v in [
-                c.cam.pos_x,
-                c.cam.pos_y,
-                c.cam.pos_z,
-                c.cam.rot_x,
-                c.cam.rot_y,
-                c.cam.rot_z,
-                c.cam.fov_deg,
-                c.world_scale,
-            ] {
-                h.update(&v.to_bits().to_le_bytes());
-            }
-            if let Some((x, y, z)) = c.cam.target {
-                for v in [x, y, z] {
-                    h.update(&v.to_bits().to_le_bytes());
-                }
-            }
-        }
-    }
-    h.digest()
-}
-
-/// Chain mix slots: (slot index, index of the start of the layer contribution,
-/// weight 0..4096). Empty — the previous path, BYTE-FOR-BYTE.
-fn layer_mixes(fx: &[kt_model::FxInstance]) -> Vec<(usize, usize, u32)> {
-    fx.iter()
-        .enumerate()
-        .filter_map(|(i, f)| match f {
-            kt_model::FxInstance::LayerMix { amount, from } => {
-                Some((i, (*from as usize).min(i), (amount.clamp(0.0, 1.0) * 4096.0).round() as u32))
-            }
-            _ => None,
-        })
-        .collect()
-}
-
-/// A chain with LAYER STRENGTH slots (R.38 item 12): computed segment by segment.
-///
-/// The layer appends its effects to the tail of the target chain, so the “dry”
-/// side of the mix is the state BEFORE its first slot, not the input of the whole
-/// chain: otherwise the layer's strength would roll back the event's own effects too.
-/// The snapshot is taken exactly at the boundary of `from`, and for each strength slot it is
-/// exactly one.
-fn apply_chain_with_mixes(
-    fx: &[kt_model::FxInstance],
-    mixes: &[(usize, usize, u32)],
-    masks: &[kt_fx::mask::MaskOp],
-    start: kt_fx::video::Frame,
-    ctx: &kt_fx::video::VideoFxCtx,
-    scratch: &mut kt_fx::video::FxScratch,
-) -> kt_fx::video::Frame {
-    let mut frame = start;
-    // the chain INPUT's logical size — the masks' reference frame (shape-masks)
-    let s = ctx.in_scale.max(1);
-    let in_logical = (frame.w / s, frame.h / s);
-    let mut mask_snaps: Vec<Option<kt_fx::video::Frame>> = (0..masks.len()).map(|_| None).collect();
-    // The step is a property of the INPUT frame, not of the chain (R.46, item 318):
-    // the first slice gets the large frame, all later ones work with the raster already
-    // brought to Quality (strength stops are always at 1×).
-    let entry_dims = (frame.w, frame.h);
-    let mut snaps: std::collections::HashMap<usize, kt_fx::video::Frame> =
-        std::collections::HashMap::new();
-    // The boundaries (snapshots of the dry side and strength slots) cut the chain; BETWEEN them
-    // it is fed in WHOLE slices — otherwise the fusion of geometry series (R.44) would
-    // not happen for clips with a layer strength. The GPU mirror cuts at the same place
-    // (Snapshot points in chain_ops).
-    let mut stops: Vec<usize> = mixes.iter().flat_map(|(at, from, _)| [*at, *from]).collect();
-    stops.extend(kt_fx::mask::mask_stops(masks));
-    stops.sort_unstable();
-    stops.dedup();
-    let mut i = 0usize;
-    loop {
-        // MASK POINTS at position i (shape-masks): the slot mixes that end here, the alpha
-        // points, then the dry snapshots of the slots that start here
-        if !masks.is_empty() {
-            apply_mask_points(fx, masks, i, &mut frame, &mut mask_snaps, in_logical, ctx, scratch);
-        }
-        if i >= fx.len() {
-            break;
-        }
-        if mixes.iter().any(|(_, from, _)| *from == i) {
-            scratch.cost.snapshots += 1;
-            snaps.insert(
-                i,
-                kt_fx::video::Frame {
-                    w: frame.w,
-                    h: frame.h,
-                    rgba: frame.rgba.clone(),
-                    has_alpha: frame.has_alpha,
-                },
-            );
-        }
-        match mixes.iter().find(|(at, _, _)| *at == i) {
-            Some((_, from, k)) if *k < 4096 => {
-                if let Some(dry) = snaps.remove(from) {
-                    scratch.cost.mixes += 1;
-                    frame = blend_frames_cpu(dry, frame, *k);
-                }
-                i += 1;
-            }
-            // strength 100% — nothing to blend, the snapshot is simply discarded
-            Some((_, from, _)) => {
-                snaps.remove(from);
-                i += 1;
-            }
-            // STRENGTH EXACTLY 0 (morpher-event-grid-cost, D3): the slice up to its mix is not run.
-            // The mix still runs, on (dry, dry): at k = 0 `dissolve_into` takes nothing from the
-            // wet side, so the bytes are those of (dry, wet). Only where the wet frame could not
-            // have another size (the dry one is already at the output raster — strength stops are
-            // at 1×) and no other stop lies inside the slice.
-            None if zero_slice(mixes, &stops, i).is_some()
-                && (frame.w, frame.h) == (ctx.out_w, ctx.out_h) =>
-            {
-                i = zero_slice(mixes, &stops, i).unwrap_or(i + 1);
-            }
-            None => {
-                let j = stops.iter().copied().find(|s| *s > i).unwrap_or(fx.len());
-                let sctx = kt_fx::video::VideoFxCtx {
-                    in_scale: if (frame.w, frame.h) == entry_dims { ctx.in_scale } else { 1 },
-                    ..*ctx
-                };
-                frame = kt_fx::video::apply_video_chain_pooled(&fx[i..j], frame, &sctx, scratch);
-                i = j;
-            }
-        }
-    }
-    frame
-}
-
-/// The mask actions at chain position `i` (shape-masks), CPU side. The coverage is the one
-/// kt-fx rasterizer's; the GPU executor uploads the same bytes (`chain_ops`).
-#[allow(clippy::too_many_arguments)]
-fn apply_mask_points(
-    fx: &[kt_model::FxInstance],
-    masks: &[kt_fx::mask::MaskOp],
-    i: usize,
-    frame: &mut kt_fx::video::Frame,
-    snaps: &mut [Option<kt_fx::video::Frame>],
-    in_logical: (u32, u32),
-    ctx: &kt_fx::video::VideoFxCtx,
-    scratch: &mut kt_fx::video::FxScratch,
-) {
-    use kt_fx::mask::MaskOpKind;
-    let space = |op: &kt_fx::mask::MaskOp, f: &kt_fx::video::Frame| {
-        kt_fx::mask::mask_space(op, fx, in_logical, (ctx.out_w, ctx.out_h), (f.w, f.h), ctx.lead)
-    };
-    for (k, op) in masks.iter().enumerate() {
-        if op.at == i
-            && let MaskOpKind::Mix { .. } = op.kind
-            && let Some(dry) = snaps[k].take()
-        {
-            scratch.cost.mixes += 1;
-            let dry = if (dry.w, dry.h) == (frame.w, frame.h) {
-                dry
-            } else {
-                let mut out = vec![0u8; frame.w as usize * frame.h as usize * 4];
-                kt_fx::video::fit_into(&dry, frame.w, frame.h, &mut out);
-                kt_fx::video::Frame { w: frame.w, h: frame.h, rgba: out, has_alpha: dry.has_alpha }
-            };
-            let cov = kt_fx::mask::rasterize_cached(&op.masks, &space(op, frame), frame.w, frame.h);
-            kt_fx::mask::apply_mix(&dry.rgba, &mut frame.rgba, &cov.cov, dry.has_alpha, frame.has_alpha);
-            frame.has_alpha |= dry.has_alpha;
-        }
-    }
-    for op in masks.iter().filter(|o| o.at == i && o.kind == MaskOpKind::Alpha) {
-        let cov = kt_fx::mask::rasterize_cached(&op.masks, &space(op, frame), frame.w, frame.h);
-        kt_fx::mask::apply_alpha(&mut frame.rgba, &cov.cov, frame.has_alpha);
-        frame.has_alpha = true;
-    }
-    for (k, op) in masks.iter().enumerate() {
-        if let MaskOpKind::Mix { from } = op.kind
-            && from == i
-        {
-            scratch.cost.snapshots += 1;
-            snaps[k] = Some(kt_fx::video::Frame {
-                w: frame.w,
-                h: frame.h,
-                rgba: frame.rgba.clone(),
-                has_alpha: frame.has_alpha,
-            });
-        }
-    }
-}
-
-/// The strength slot a slice starting at `i` ends in, when that strength is exactly 0 and the
-/// slice is whole (no other stop inside it): the slice need not run (D3).
-fn zero_slice(mixes: &[(usize, usize, u32)], stops: &[usize], i: usize) -> Option<usize> {
-    let (at, _, _) = mixes.iter().find(|(_, from, k)| *from == i && *k == 0)?;
-    let next = stops.iter().copied().find(|s| *s > i)?;
-    (next == *at).then_some(*at)
-}
-
-/// Blend the “dry” frame with the “wet” one with weight `k` (0..4096).
-///
-/// Sizes may not match: Pan/CamMotion resample the frame
-/// to the output size. Then the dry side is fitted by THE SAME bilinear filter
-/// (`kt_fx::video::fit_into`) as all other resamples —
-/// its mirror in kt-gpu computes the same thing, so the backends converge within tolerance.
-fn blend_frames_cpu(
-    dry: kt_fx::video::Frame,
-    wet: kt_fx::video::Frame,
-    k: u32,
-) -> kt_fx::video::Frame {
-    let pixels = (wet.w as usize) * (wet.h as usize);
-    let dry = if (dry.w, dry.h) == (wet.w, wet.h) {
-        dry
-    } else {
-        let mut out = vec![0u8; pixels * 4];
-        kt_fx::video::fit_into(&dry, wet.w, wet.h, &mut out);
-        kt_fx::video::Frame { w: wet.w, h: wet.h, rgba: out, has_alpha: dry.has_alpha }
-    };
-    let as_vf = |f: &kt_fx::video::Frame| VideoFrame {
-        pts: Tick::ZERO,
-        width: f.w,
-        height: f.h,
-        rgba: f.rgba.clone().into_boxed_slice(),
-        has_alpha: f.has_alpha,
-    };
-    let (a, b) = (as_vf(&dry), as_vf(&wet));
-    let mut buf = Vec::new();
-    dissolve_into(&mut buf, &a, &b, k, pixels);
-    kt_fx::video::Frame { w: wet.w, h: wet.h, rgba: buf, has_alpha: wet.has_alpha || dry.has_alpha }
-}
-
 /// Solo fade (R.25) at moment t: (weight 0..4096, the clip APPEARS, kind).
 /// fade_in ramps 0→1, fade_out decays 1→0. None — the moment is outside the
 /// solo window (an ordinary layer or a half of a real pair).
@@ -2978,40 +2291,6 @@ fn apply_invert<'a>(
     }
 }
 
-/// The buffer's alpha multiplied by k/4096 IN PLACE (a level over the finished
-/// blend of the pair — see compose_from_cache_into).
-fn scale_alpha_inplace(buf: &mut [u8], k: u32, pixels: usize) {
-    for p in 0..pixels {
-        let a = buf[p * 4 + 3] as u32;
-        buf[p * 4 + 3] = ((a * k) / 4096) as u8;
-    }
-}
-
-/// A copy of the frame with alpha multiplied by k/4096 (a frame without alpha is
-/// considered opaque). Next comes the ordinary alpha_over — under the fade the track
-/// below shows through, and if there is none — the composite's black background.
-fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels: usize) {
-    let n = pixels * 4;
-    dst.clear();
-    dst.resize(n, 0);
-    let pixels_avail = pixels.min(f.rgba.len() / 4);
-    let mut start = 0usize;
-    #[cfg(target_arch = "x86_64")]
-    if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 8 {
-        // SAFETY: the level is checked by the detector; both lengths >= pixels_avail*4
-        unsafe {
-            crate::video_simd::scale_alpha_avx2(dst, &f.rgba, f.has_alpha, k, pixels_avail);
-        }
-        start = pixels_avail & !7; // tail — a scalar below
-    }
-    for p in start..pixels_avail {
-        let i = p * 4;
-        dst[i..i + 3].copy_from_slice(&f.rgba[i..i + 3]);
-        let a = if f.has_alpha { f.rgba[i + 3] as u32 } else { 255 };
-        dst[i + 3] = ((a * k + 2048) >> 12) as u8;
-    }
-}
-
 /// Linear dissolve of the pair (item 137): dst = a·(1−k) + b·k, in integers
 /// (k out of 4096 parts, rounding to nearest). A frame without alpha is treated
 /// as opaque (A=255). Returns has_alpha of the result.
@@ -3050,24 +2329,7 @@ fn dissolve_into(
     dst.resize(n, 0);
     let ik = 4096 - k;
     let pixels_avail = pixels.min(a.rgba.len() / 4).min(b.rgba.len() / 4);
-    let mut start = 0usize;
-    #[cfg(target_arch = "x86_64")]
-    if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 4 {
-        // SAFETY: the level is checked by the detector; lengths >= pixels_avail*4
-        unsafe {
-            crate::video_simd::dissolve_avx2(
-                dst,
-                &a.rgba,
-                &b.rgba,
-                a.has_alpha,
-                b.has_alpha,
-                k,
-                pixels_avail,
-            );
-        }
-        start = pixels_avail & !3;
-    }
-    for p in start..pixels_avail {
+    for p in 0..pixels_avail {
         let i = p * 4;
         for ch in 0..4 {
             let av = if ch == 3 && !a.has_alpha { 255 } else { a.rgba[i + ch] } as u32;
@@ -3078,7 +2340,6 @@ fn dissolve_into(
     a.has_alpha || b.has_alpha
 }
 
-/// dst = src OVER dst (straight alpha). An opaque src is simply a copy.
 /// BLEND MODE FORMULA (R.62, F-CMP-003) for ONE channel, in
 /// fractions 0..1. The mirror is `blend_ch` in `kt-gpu/src/shaders/composite.wgsl`;
 /// the files are edited in ONE commit (invariant 7, guard — conformance).
@@ -3104,78 +2365,3 @@ pub fn blend_ch(mode: kt_model::BlendMode, b: f64, a: f64) -> f64 {
     }
 }
 
-/// TRACK COMPOSITE BLENDING onto the layers below (R.62):
-/// `out = lerp(below, blend(below, above), α_above × level)`.
-///
-/// The two axes are SEPARATE and both come AFTER alpha: a level of 0.5 gives half the
-/// path to the MODE result, not the mode over a semi-transparent layer. A hole in the
-/// track's composite (α = 0) is transparency, not an operand: there the layer below
-/// remains untouched (the Vegas trap bypass, F-CMP-003).
-///
-/// `Normal` does not enter here at all — it stays the previous `alpha_over`
-/// byte for byte (GOLDEN_VIDEO rests on it).
-fn blend_over(
-    dst: &mut [u8],
-    src: &[u8],
-    has_alpha: bool,
-    pixels: usize,
-    mode: kt_model::BlendMode,
-    level_k: u32,
-) {
-    let pixels_avail = pixels.min(src.len() / 4).min(dst.len() / 4);
-    for p in 0..pixels_avail {
-        let i = p * 4;
-        let sa = if has_alpha { src[i + 3] as f64 / 255.0 } else { 1.0 };
-        let k = sa * (level_k as f64 / 4096.0);
-        if k <= 0.0 {
-            continue;
-        }
-        for ch in 0..3 {
-            let b = dst[i + ch] as f64 / 255.0;
-            let a = src[i + ch] as f64 / 255.0;
-            let m = blend_ch(mode, b, a).clamp(0.0, 1.0);
-            let v = b + (m - b) * k;
-            dst[i + ch] = (v * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-        }
-        // result alpha — as for “over”: a hole on top does not touch the layer below
-        let da = dst[i + 3] as f64 / 255.0;
-        let out_a = k + da * (1.0 - k);
-        dst[i + 3] = (out_a * 255.0 + 0.5).clamp(0.0, 255.0) as u8;
-    }
-}
-
-fn alpha_over(dst: &mut [u8], src: &[u8], has_alpha: bool, pixels: usize) {
-    let n = pixels * 4;
-    if !has_alpha {
-        let n = n.min(src.len()).min(dst.len());
-        dst[..n].copy_from_slice(&src[..n]);
-        return;
-    }
-    let pixels_avail = pixels.min(src.len() / 4).min(dst.len() / 4);
-    let mut start = 0usize;
-    #[cfg(target_arch = "x86_64")]
-    if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 8 {
-        // SAFETY: the level is checked by the detector; lengths >= pixels_avail*4
-        unsafe { crate::video_simd::alpha_over_avx2(dst, src, pixels_avail) };
-        start = pixels_avail & !7;
-    }
-    for p in start..pixels_avail {
-        let i = p * 4;
-        let sa = src[i + 3] as u32;
-        if sa == 255 {
-            dst[i..i + 4].copy_from_slice(&src[i..i + 4]);
-            continue;
-        }
-        if sa == 0 {
-            continue;
-        }
-        let da = dst[i + 3] as u32;
-        let inv = 255 - sa;
-        for ch in 0..3 {
-            let s = src[i + ch] as u32;
-            let d = dst[i + ch] as u32;
-            dst[i + ch] = ((s * sa + d * inv * da / 255) / 255).min(255) as u8;
-        }
-        dst[i + 3] = (sa + da * inv / 255).min(255) as u8;
-    }
-}

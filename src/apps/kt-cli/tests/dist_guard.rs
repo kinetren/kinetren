@@ -82,8 +82,6 @@ const FILES: &[&str] = &[
     "src/scripts/ui-probe.py",
     // the test order (ci-speedup, t1422): the profile and a file of each test it names
     "src/.config/nextest.toml",
-    "src/libs/kt-fx/tests/barrier_plugin.rs",
-    "src/libs/kt-fx/tests/grid_cost.rs",
     "src/apps/kt-app/src/util.rs",
     "src/libs/kt-media/tests/index_db.rs",
     "src/apps/kt-app/src/layout_tests.rs",
@@ -1122,7 +1120,7 @@ fn t1422_the_ordered_tests_exist() {
     let cases: [(&str, fn(&Path), &str); 2] = [
         (
             "missing-test",
-            |d| edit(d, "src/.config/nextest.toml", "test(t1053_)", "test(t9999_)"),
+            |d| edit(d, "src/.config/nextest.toml", "test(t399_)", "test(t9999_)"),
             "src/.config/nextest.toml: no `#[test]` named t9999_",
         ),
         (

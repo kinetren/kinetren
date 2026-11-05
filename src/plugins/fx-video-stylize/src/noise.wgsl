@@ -1,5 +1,4 @@
-// Grain: a counter-based hash (R.29): the same integer formula as
-// noise/noise_hash in kt-fx/src/video.rs, so byte for byte with the CPU on any
+// Grain: a counter-based hash (R.29): an integer formula, so the same bytes on any
 // hardware. u0 = (seed, k, size, color); u1 = (res_scale, 0, 0, 0).
 // R.45 (item 313): at K× the cell is size·K and the coordinates of the special formula
 // are divided by K, so the grain pattern matches the 1× one bit for bit; the branch of the formula is
@@ -7,8 +6,7 @@
 //
 // size is the grain size in pixels, color is its own offset per channel
 // (R.33 S5). IMPORTANT: with size == 1 and color == 0 the FORMER formula is computed
-// (without the extra grain hash), exactly how the CPU branches too, and the goldens of both
-// paths do not move.
+// (without the extra grain hash), so the former pictures do not move.
 
 fn nh(v: u32) -> u32 {
     var x = v;

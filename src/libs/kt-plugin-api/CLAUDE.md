@@ -13,7 +13,7 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
 - **Refusals happen in `Registry::register`, before any frame** (t972): video state, tail or
   look-ahead; a kernel not callable from several threads; an audio look-ahead reaching
   `MIN_PREROLL_FRAMES`; a built-in point-wise kernel without WGSL; a geometry kernel offering WGSL;
-  a generator decl naming a row its passport lacks. For a barrier (t1054): no CPU kernel, no GPU
+  a generator decl naming a row its passport lacks. For a barrier (t1054): no kernel, no GPU
   side as a built-in, a tap's WGSL instead of a graph, a graph reading an unsaved slot, ending off the
   frame size or on a `Save`, a resample above `MAX_INTER_DIM`, a pass naming a missing shader, or an
   empty graph on a frame with alpha. The graph is checked on the defaults and the top, at K 1 and 4.
@@ -24,8 +24,7 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   class without a stream kernel, a stream kernel on another class, any GPU side on a stream plugin.
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
-  `pixfont` (moved from kt-media). A helper the host has its own SIMD twin of stays in the host and
-  is reached through a context (`barrier::RasterHost`, plugin-api-barriers).
+  `pixfont` (moved from kt-media).
 - **`math` is the ONE math of the frozen paths** (ci-green-again, invariant 11): a kernel, a
   curve, a generator or the engine calls `x.fsin()`/`10f32.fpowf(…)` (`math::FrozenMath`), never
   `x.sin()`/`powf` — those are the PLATFORM's libm, and glibc and the Windows one round
@@ -34,9 +33,9 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   glibc, t1066 refuses a direct std call in the frozen crates and every family.
 - **A barrier may own a grid and many numbers** (vhs-tape-simulation): `Node::PassAt` renders a
   pass at its own size (checked like a resample, the graph still ends at the frame size), and
-  `frame_values`/`gpu_values` give a kernel its passport values when eight cooked numbers do not
-  fit. The hosts call ONLY the value forms; their defaults cook, so a kind with ≤ 8 rows keeps its
-  bytes (t1187). A kernel overriding them keeps `frame`/`gpu` as the cooked shim.
+  `gpu_values` gives a kernel its passport values when eight cooked numbers do not fit. The host
+  calls ONLY the value form; its default cooks, so a kind with ≤ 8 rows keeps its graph. A kernel
+  overriding it keeps `gpu` as the cooked shim.
 - **An audio state forks** (pitch-tail-choice D4): `AudioState::fork` gives a copy that continues
   exactly as the state would on the same input — the host splits the chain up to a pitch at the
   event's out-point to let the echo before it ring on. Default `None` (the host then keeps that
@@ -47,13 +46,6 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   shaders and buffers as one `Job`, and bindings are fixed (0 the uniform, then reads, then writes).
   `host()` is `None` with no device or after `fail`, and a kernel then has a no-device path of its
   own (Datamosh passes the frame through); a job's error is never a panic. t1502, t1503.
-- **`shade` is a PROTOTYPE nothing shipped calls** (compute-backends, F-EXT-004): one kernel text
-  in the common subset of Rust and WGSL → `cpu` (the text's `f32` is f64, the byte reference),
-  `cpu_f32` and the `WGSL` string; `run_pointwise` = row bands on scoped threads × one loop compiled
-  for SSE2/SSE4.1/AVX2/AVX-512. The copies are byte-equal only because rustc never contracts FMA nor
-  reassociates — never add a `fast-math`-style flag or an `fma` intrinsic to it. The subset has no
-  `var`/`if`/loops and no splat constructors; a helper carries its kernel's prefix (every plugin's
-  WGSL lands in one fused module). t1500/t1501; the migration is the owner's decision.
 - **A simulated device's two halves are one passport** (sim-audio-pairs): a video kind declares
   its audio pair (`Decl.pair`), the audio kind is built from the SAME passport function; the
   registry refuses a mismatch in either order (t1484) and the assembler refuses a missing half

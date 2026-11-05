@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use kt_cache::{BurstCache, CacheConfig, SourceId};
-use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
+use kt_cache::SourceId;
+use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
 use kt_model::FxInstance;
@@ -72,9 +72,8 @@ fn run(engine: &dyn VideoGpuExec, src: &Src, t: i64) -> (Vec<u8>, Vec<u8>) {
         layers: vec![PlanLayer::One { src: src.layer(), alpha_k: 4096, scale_alpha: false, fade: None }],
         memoize_postfx: false,
     };
-    let cache = BurstCache::new(CacheConfig::default());
     let mut cpu = Vec::new();
-    assert!(compose_plan_cpu(&p, &cache, &mut cpu), "CPU incomplete");
+    assert!(kt_gpu::reference::next(&mut cpu), "CPU incomplete");
     let mut gpu = Vec::new();
     assert!(engine.execute_into(&p, &mut gpu).expect("GPU execute"), "GPU incomplete");
     (cpu, gpu)

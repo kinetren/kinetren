@@ -18,11 +18,11 @@ pub enum RenderMsg {
     Backend(BackendLine),
 }
 
-/// The video backend of the run: the GPU with the adapter's name, or the CPU with the reason.
+/// The video backend of the run: the GPU with the adapter's name, or why there is none.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BackendLine {
     Gpu(String),
-    Cpu(String),
+    None(String),
 }
 
 /// One line of the render log (D9): a fact, written in English to the file and shown translated.
@@ -59,7 +59,7 @@ impl LogLine {
             LogLine::Engine(ExportLog::Error(e)) => format!("error: {e}"),
             LogLine::Opened(n) => format!("encoder {n} opened"),
             LogLine::Backend(BackendLine::Gpu(a)) => format!("video on the GPU: {a}"),
-            LogLine::Backend(BackendLine::Cpu(r)) => format!("video on the CPU: {r}"),
+            LogLine::Backend(BackendLine::None(r)) => format!("no video device: {r}"),
             LogLine::Pause => "paused".into(),
             LogLine::Resume => "resumed".into(),
             LogLine::Cancel => "cancel requested".into(),
@@ -100,7 +100,7 @@ impl LogLine {
 fn backend_text(b: &BackendLine) -> String {
     match b {
         BackendLine::Gpu(a) => crate::tf!(k::render::BACKEND_GPU, a),
-        BackendLine::Cpu(r) => crate::tf!(k::render::BACKEND_CPU, r),
+        BackendLine::None(r) => crate::tf!(k::render::BACKEND_NONE, r),
     }
 }
 
@@ -606,20 +606,20 @@ impl KtApp {
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
             let (a, _) = open_all(&project, base.as_deref());
             let (v, _) = open_all(&project, base.as_deref());
-            // R.29: GPU render by default — its own headless device per
-            // job (the UI queue does not share time with the export); if there is no engine
-            // → CPU (for 2D this is a full-fledged path), and the window says why (D4)
-            let video_gpu = match crate::app::export_video_gpu() {
+            // R.29: its own headless devices per job (the UI queue does not share time with the
+            // export); with no engine the export fails, and the window says why (D4)
+            let mut engines = match crate::app::export_video_gpu() {
                 Ok(e) => {
-                    send.send(RenderMsg::Backend(BackendLine::Gpu(e.info().name.clone())));
-                    Some(e)
+                    send.send(RenderMsg::Backend(BackendLine::Gpu(e[0].info().name.clone())));
+                    e
                 }
                 Err(reason) => {
-                    send.send(RenderMsg::Backend(BackendLine::Cpu(reason)));
-                    None
+                    send.send(RenderMsg::Backend(BackendLine::None(reason)));
+                    Vec::new()
                 }
             };
-            let backends = kt_engine::ExportBackends { video_gpu };
+            let video_gpu = (!engines.is_empty()).then(|| engines.remove(0));
+            let backends = kt_engine::ExportBackends { video_gpu, video_gpu_more: engines };
             kt_engine::export::export_mp4_with_backends(
                 &project,
                 a,
@@ -1037,7 +1037,7 @@ impl KtApp {
                             let secs = elapsed.as_secs_f64().max(1e-3);
                             let backend = match &job.backend {
                                 Some(BackendLine::Gpu(_)) => "GPU",
-                                Some(BackendLine::Cpu(_)) => "CPU",
+                                Some(BackendLine::None(_)) => "—",
                                 None => "—",
                             };
                             let avg_bitrate = p.video_bytes as f64 * 8.0 / done_s.max(1e-3);

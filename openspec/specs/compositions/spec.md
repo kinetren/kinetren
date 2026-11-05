@@ -169,9 +169,9 @@ is a permanent cache miss (invariant 4); the reel's own raster is the owner's de
 ### Requirement: Law G — the processing boundary, premultiplication at the boundary
 The level, chain, reversal and speed of an instance SHALL act on the ASSEMBLED picture and the
 shared sub-mix, not on each piece. At the boundary of an attachment there SHALL be exactly one
-conversion of premultiplied RGB to straight alpha, integer, mirrored in WGSL;
+conversion of premultiplied RGB to straight alpha, integer, in WGSL;
 the tolerance of the E-law on semi-transparent content is one rounding of the 8-bit step (1 LSB).
-The GPU on a sub-tree SHALL converge with the CPU; the boundary exactly (`FrameTol::EXACT`).
+A sub-tree SHALL stay within tolerance of its stored frames; the boundary exactly (`FrameTol::EXACT`).
 Why: the composite accumulator stores premultiplied colour with straight alpha, and an assembled frame fed back without conversion is twice as dark exactly in the semi-transparent places.
 
 #### Scenario: The level and the chain on the assembled picture
@@ -186,7 +186,7 @@ Why: the composite accumulator stores premultiplied colour with straight alpha, 
 
 #### Scenario: The GPU on a sub-tree
 - **WHEN** an attachment with a chain and without is executed on the GPU
-- **THEN** conformance with the CPU; the attachment boundary byte for byte; determinism on one device
+- **THEN** within tolerance of the stored frames; the attachment boundary byte for byte; determinism on one device
 - **TEST** t444 (`src/libs/kt-gpu/tests/gpu_render.rs`), t445 (`src/libs/kt-gpu/tests/gpu_render.rs`), t446 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 #### Scenario: The speed of an attachment ≠ the speed of each piece
@@ -194,32 +194,26 @@ Why: the composite accumulator stores premultiplied colour with straight alpha, 
 - **THEN** the result differs from slowing down each piece
 - **TEST** t562 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-### Requirement: Three keys — reel, instance, revision; memo only for a full sub-composition
+### Requirement: Three keys — reel, instance, revision; the plan key covers the sub-tree
 The address of a reel in the plan SHALL carry the high-bit tag (a file with such an address is rejected);
 `fx_hash` SHALL distinguish instances; the revision SHALL be a recursive hash of the content,
 woven into the key of the instance; with overrides the revision is a function of the PAIR (reel, set),
-equal to the hash of the reel when the set is empty. Starvation SHALL be propagated upward, and the memoization of post-FX
-SHALL be inherited downward; ONLY the full sub-composite is memoized. The memo key SHALL carry
-the frame blending mode and the level of the reel; the key of the GPU plan SHALL be recursive over the plan of the
-sub-tree. A regeneration of a generator inside a reel SHALL invalidate the memo of the ancestor reels in the
+equal to the hash of the reel when the set is empty. Starvation SHALL be propagated upward. The key of the GPU plan
+SHALL be recursive over the plan of the sub-tree and SHALL carry the frame blending mode, the reel's step and its
+revision. A regeneration of a generator inside a reel SHALL invalidate the memo of the ancestor reels in the
 same thread that applies it.
 Why: an edit inside a reel does not touch the fields of the instance; a starved frame under the reel's edit key
 gave a black reel forever; without the sub-tree plan in the GPU key it returned a full frame over an incomplete sub-tree.
 
-#### Scenario: Starvation and memoization cross the boundary
-- **WHEN** a child's frame is absent; export with memoization
-- **THEN** the outer composite is incomplete; full-size sub-composites are not memoized in the export
-- **TEST** t441 (`src/libs/kt-engine/tests/nest_render.rs`)
-
 #### Scenario: An edit inside reaches the instance and the grandfather
-- **WHEN** an event inside a reel or inside a grandchild is edited
-- **THEN** the picture of the instance changes; the keys of the reels, instances and revisions differ
-- **TEST** t442 (`src/libs/kt-engine/tests/nest_render.rs`), t443 (`src/libs/kt-engine/tests/nest_render.rs`)
+- **WHEN** an event inside a reel is edited, with one cache across the edit
+- **THEN** the picture of the instance changes
+- **TEST** t442 (`src/libs/kt-engine/tests/nest_render.rs`)
 
-#### Scenario: The memo key carries the mode and the level
-- **WHEN** the frame blending mode or the reel's level has changed with the same content
-- **THEN** the memo does not return the old entry; with `blend == false` the key equals the hash of the revision
-- **TEST** t582 (`src/libs/kt-engine/tests/nest_render.rs`), t631c (`src/libs/kt-engine/tests/nest_render.rs`)
+#### Scenario: The plan key carries the reel's step
+- **WHEN** one cache serves a reel at step 1 and then at step 3, with the same `fx_hash` on the instance
+- **THEN** the key tells the two frames apart
+- **TEST** t631c (`src/libs/kt-engine/tests/nest_render.rs`)
 
 #### Scenario: A reel does not return a stale result after a generator is reconfigured
 - **WHEN** a generator inside a reel is reconfigured through the retune strip
@@ -228,7 +222,7 @@ gave a black reel forever; without the sub-tree plan in the GPU key it returned 
 
 ### Requirement: The REEL's tier ≠ the instance chain input; a layer of another size is not silent
 The decode scale of a reel SHALL be one per reel — the maximum over all instances in the tree; this is the ORDER (the strips are warmed, read and drawn by it), and the order goes inward already increased.
-The entry of an instance's chain SHALL be `min(the reel's scale, what this instance's chain consumes)`; when they diverge — the sub-composite is fitted before the chain by one decision for both backends; when equal — there is no step and the bytes are the former ones. A layer of a foreign size SHALL give `complete = false` on both backends, and is never skipped silently.
+The entry of an instance's chain SHALL be `min(the reel's scale, what this instance's chain consumes)`; when they diverge — the sub-composite is fitted before the chain by one decision; when equal — there is no step and the bytes are the former ones. A layer of a foreign size SHALL give `complete = false`, and is never skipped silently.
 Why: different scales would give the inner sheet two cache keys and two orders; an empty chain, the strength of a layer, and barriers without a resample do not consume the scale, and the S×-frame silently dropped out of the composite, while the export wrote the frame as good.
 
 #### Scenario: The scale is a property of the reel
@@ -243,7 +237,7 @@ Why: different scales would give the inner sheet two cache keys and two orders; 
 
 #### Scenario: A layer of a foreign size
 - **WHEN** a layer of the wrong size arrives in the composite
-- **THEN** `complete == false` on the CPU and the GPU, the byte equality of the backends is preserved
+- **THEN** `complete == false`, and the frame equals its stored frame
 - **TEST** t633 (`src/libs/kt-engine/tests/decode_scale.rs`), t182 (`src/libs/kt-gpu/tests/parity.rs`)
 
 ### Requirement: Nested warmth is the intersection; the chunk budget is computed by the tree
@@ -318,12 +312,12 @@ Why: at rate 0.5 two neighbouring frames received one internal tick, so titles, 
 
 #### Scenario: The same on GPU
 - **WHEN** the slowed reel and blending run on the GPU
-- **THEN** conformance is EXACT with the CPU, half step ≠ frame, blending ≠ nearest, determinism
+- **THEN** EXACT against the stored frames, half step ≠ frame, blending ≠ nearest, determinism
 - **TEST** t586 (`src/libs/kt-gpu/tests/gpu_render.rs`), t587 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 #### Scenario: The reel's own fps holds a frame
 - **WHEN** a 12 fps reel with an animated title sits in a 24 fps project; the same reel without its own fps
-- **THEN** with fps the frames go in pairs (odd equals even), and automation and cameras inside are quantized; without fps, t579/t580 keep their previous bytes; on GPU conformance is EXACT
+- **THEN** with fps the frames go in pairs (odd equals even), and automation and cameras inside are quantized; without fps, t579/t580 keep their previous bytes; EXACT against the stored frames
 - **TEST** t724 (`src/libs/kt-engine/tests/nest_render.rs`), t724b (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 ### Requirement: Edit context — swap of content; the document goes outward; the reel plays
@@ -585,7 +579,7 @@ Why: a shared generator address across different titles formally kept "order == 
 
 #### Scenario: GPU and format
 - **WHEN** two differently overridden instances run on GPU; a file with publications
-- **THEN** conformance with CPU; the format round trip keeps the version by content, and a file without publications has not changed
+- **THEN** within tolerance of the stored frames; the format round trip keeps the version by content, and a file without publications has not changed
 - **TEST** t687 (`src/libs/kt-gpu/tests/gpu_render.rs`), t681 (`src/libs/kt-otio/tests/convert.rs`)
 
 ### Requirement: Publishing interface — one door, the author's name verbatim, two badges

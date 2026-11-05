@@ -7,7 +7,7 @@ Status: a high-level overview map of the engine. Contracts and the reasons behin
 | [`time-model`](../openspec/specs/time-model/spec.md) · [why](../openspec/specs/time-model/design.md) | 90 kHz ticks, bursts, grids |
 | [`transport`](../openspec/specs/transport/spec.md) · [why](../openspec/specs/transport/design.md) | clock, signed speed, loop |
 | [`audio-render`](../openspec/specs/audio-render/spec.md) · [why](../openspec/specs/audio-render/design.md) | audio engine, FX state, mix, PDC, LUFS |
-| [`video-plan`](../openspec/specs/video-plan/spec.md) · [why](../openspec/specs/video-plan/design.md) | one composition code, decode scale step, CPU reference/GPU |
+| [`video-plan`](../openspec/specs/video-plan/spec.md) · [why](../openspec/specs/video-plan/design.md) | one composition code, decode scale step, one GPU executor |
 | [`video-fx`](../openspec/specs/video-fx/spec.md) · [why](../openspec/specs/video-fx/design.md) | video effects registry, chain plan, picker |
 | [`audio-fx`](../openspec/specs/audio-fx/spec.md) · [why](../openspec/specs/audio-fx/design.md) | audio node registry |
 | [`transitions`](../openspec/specs/transitions/spec.md) · [why](../openspec/specs/transitions/design.md) | 33 kinds, overlap, inversion |
@@ -47,11 +47,9 @@ Status: a high-level overview map of the engine. Contracts and the reasons behin
   `scripts/plugin-rebuild-check.py check`, `finish.sh --rebuild-check`).
 - **Still core:** the Geometry node, CamMotion, LayerMix, the crossfade and the title (its rows
   are text, a font family and a layer order; its presets and R.53–R.58 migration live in kt-model).
-- **A barrier plugin** (`plugin-api-barriers`) gives a CPU kernel over the frame, with its AVX2
-  twin behind `BarrierCtx::simd`, and a GPU pass graph. The graph is built from the host's nodes
-  (`Resample`, `Premul`, `Save`) and its own fragment passes. The shared raster code — the
-  resample, the bilinear sample, premultiplication — is reached through `RasterHost`, so it keeps
-  one text with the core's own paths. The K× rule stays the planner's.
+- **A barrier plugin** (`plugin-api-barriers`) gives a kernel and a GPU pass graph. The graph is
+  built from the host's nodes (`Resample`, `Premul`, `Save`) and its own fragment passes. The K×
+  rule stays the planner's.
 
 ## Flows and ownership
 
@@ -98,7 +96,7 @@ Keyed by media_id (identity key: path + size + mtime + xxhash + index_version): 
 | 90 kHz ticks | divisible by 24/25/30/60 fps and by the step of 1920 ticks of an audio burst; a legacy of the old engine, which worked well |
 | f32 48k/2ch everywhere | one coordinate system for FX/mix; sources are converted at the decode boundary (swr) |
 | Cache pre-FX; video post-FX — a memoization kind | audio FX ≪ 1 ms/burst — not cached; a video chain is tens of ms/frame, so it is cached under a key with fx_hash (invalidation is structural: a different hash = a different key), coverage is still computed ONLY from pre-FX |
-| wgpu GPU compositing + CPU reference (R.29, concatenation R.44; before that — CPU in v1) | One composition code up to the backend: `VideoRenderer::frame_plan` decides layers/weights, there are two executors. CPU — the executable specification (byte goldens t11/t26/t67 untouched) and a FULL fallback with a notice; GPU (kt-gpu: fragment WGSL passes over Rgba8Uint, integer compositing byte-for-byte equal to CPU, bilinear within the t181 tolerance) — default in the preview (eframe device, readback into the old texture path) and in export (headless device per job; a GPU error = an export error, not a mix of backends). Consecutive geometric FX (Pan/CamMotion/Mirror/EventGrid/Pan3d) are fused into ONE pass of inverse mappings (transform concatenation, `kt-fx::geom`, items 307–309): no intermediate rasterizations and no 8-bit quantizations, supersampling by the Jacobian at minification; non-local FX and LayerMix are barriers. Pan3d — an inverse 3×3 homography, computed on both backends (R.44 removed "3D only on GPU" and the GpuRequired refusal). llvmpipe/lavapipe = "GPU is present". `KT_VIDEO_GPU=0/1` — forced choice |
+| wgpu GPU compositing (R.29, concatenation R.44, the CPU composite deleted by compute-kernels-render; before that — CPU in v1) | One composition code: `VideoRenderer::frame_plan` decides layers/weights, and one executor runs it. GPU (kt-gpu: fragment WGSL passes over Rgba8Uint, integer compositing, bilinear by hand), held to stored frames of the last CPU composite (`src/libs/kt-gpu/references/`, within the `FrameTol` tolerances): in the preview on the eframe device, with the picture staying on the device, and in export on headless devices per job, several on a software adapter (a GPU error = an export error). No device: the preview has no picture and says so, an export refuses. Consecutive geometric FX (Pan/CamMotion/Mirror/EventGrid/Pan3d) are fused into ONE pass of inverse mappings (transform concatenation, `kt-fx::geom`, items 307–309): no intermediate rasterizations and no 8-bit quantizations, supersampling by the Jacobian at minification; non-local FX and LayerMix are barriers. Pan3d — an inverse 3×3 homography of the fused pass. llvmpipe/lavapipe = "GPU is present" |
 | Export in-process via libav* of the system FFmpeg | no dependence on an external binary; the system's hardware encoders are available (nvenc/vaapi/qsv); zero temp files |
 | No tokio | a pull engine on dedicated threads with queues; async gives nothing |
 | kt-ffmpeg is locked behind the MediaSource trait | changing the FFmpeg major or the backend does not touch the rest of the code |

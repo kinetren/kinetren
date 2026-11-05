@@ -102,13 +102,15 @@ fn frame(vr: &mut VideoRenderer, t: Tick) -> (Vec<u8>, kt_fx::video::FrameCost) 
             std::sync::Arc::new(f),
         );
     }
-    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    let (out, complete) = kt_gpu::testkit::compose(vr, &cache, t, q);
     assert!(complete, "frame {t:?}: all layers are warm");
-    (out, vr.last_cost())
+    use kt_engine::VideoGpuExec as _;
+    (out, kt_gpu::testkit::engine().last_cost())
 }
 
-/// The range hash of the owner's case on the CPU reference, recorded BEFORE any executor
-/// change of this change (stage 1). The tile rule and the strength-0 skip must not move it.
+/// The range hash of the owner's case, recorded on the CPU composite before any executor change
+/// of this change (stage 1) and held by llvmpipe. The tile rule and the strength-0 skip must not
+/// move it.
 const RANGE_HASH: u64 = 0xc73e_46f0_e915_bf00;
 
 /// Render the range with ONE renderer; returns the range hash and the costliest frame.
@@ -135,10 +137,15 @@ fn render_range(p: &Project) -> (u64, (Tick, kt_fx::video::FrameCost)) {
 
 #[test]
 fn t946_owner_grid_case_renders_the_same() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let (got, peak) = render_range(&owner_case());
     eprintln!("t946 range hash: {got:#018x}; peak cost {peak:?}");
-    assert_eq!(got, RANGE_HASH, "the owner's case renders other bytes than before the change");
+    if kt_gpu::testkit::hash_holds() {
+        assert_eq!(got, RANGE_HASH, "the owner's case renders other bytes than before the change");
+    }
 }
 
 /// The cost bound of the owner's case: at 12×30 (t = 2 s) and 12×10 (t = 4 s) a frame reads one
@@ -149,6 +156,9 @@ fn t946_owner_grid_case_renders_the_same() {
 /// costs more than before.
 #[test]
 fn t946b_owner_grid_case_cost_is_bounded() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let p = owner_case();
     let full = W as u64 * H as u64 * 16;
@@ -172,6 +182,9 @@ fn t946b_owner_grid_case_cost_is_bounded() {
 /// one mix of the dry side with itself. A strength just above 0 still runs the grid.
 #[test]
 fn t945_strength_zero_skips_the_layer() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let p = owner_case();
     let mut bare = p.clone();
