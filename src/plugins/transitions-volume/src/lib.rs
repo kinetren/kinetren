@@ -3,7 +3,7 @@
 //! `kernel()` arm (its `pixel`) and `trans_ext` arm (its `ext`: the panels' inverse homographies in
 //! f64, rounded once to f32, so both backends read the same bits) of kt-engine's `transitions.rs`,
 //! verbatim; its WGSL is the former `trans()` arm of composite.wgsl. t1019 holds the pixels against
-//! the enum, t224 the GPU against the CPU (FrameTol::GEOM for the panels), t973 the file text.
+//! the enum, t224 the GPU against the stored frames (FrameTol::GEOM for the panels), t973 the file text.
 
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;

@@ -467,7 +467,7 @@ impl Default for ExportOptions {
 }
 
 /// Product variant (kt-app/kt-cli): render backends are passed explicitly —
-/// GPU by default, CPU when the engine is absent (R.29).
+/// the GPU engine composes (R.29).
 #[allow(clippy::too_many_arguments)]
 pub fn export_mp4_with_backends(
     project: &Project,

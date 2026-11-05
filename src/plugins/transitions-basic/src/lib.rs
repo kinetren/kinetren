@@ -1,7 +1,7 @@
 //! The basic transition kinds as plugins (plugin-api-stage1, stage 5, D12): the wipes, the motions
 //! and the patterns. Each kernel is the former `TransMix::of` arm (its `pack`) and `kernel()` arm
 //! (its `pixel`) of kt-engine's `transitions.rs`, verbatim; its WGSL is the former `trans()` arm of
-//! composite.wgsl. t1019 holds the pixels against the enum, t224 the GPU against the CPU, t973 the
+//! composite.wgsl. t1019 holds the pixels against the enum, t224 the GPU against the stored frames, t973 the
 //! file text.
 //!
 //! The passport lists the rows in the former variant's FIELD order (the file writes them in that

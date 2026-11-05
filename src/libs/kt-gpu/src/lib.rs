@@ -2,8 +2,8 @@
 //! fragment passes on top of the eframe device (preview) or headless
 //! (export/kt-cli). Implements kt_engine::VideoGpuExec; kt-engine does NOT depend on
 //! this crate: the executor is injected from above (kt-app,
-//! kt-cli). The CPU path of kt-fx/kt-engine remains the byte reference;
-//! GPU-vs-CPU conformance is tests/parity.rs (tolerances, t181/t182/t183).
+//! kt-cli). The CPU composite is deleted (compute-kernels-render); the stored frames of its last
+//! output are the reference, and the conformance is tests/parity.rs (tolerances, t181/t182/t183).
 
 pub mod compute;
 pub mod reference;
@@ -15,7 +15,7 @@ mod pool;
 pub use context::{GpuContext, GpuInitError};
 pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
-/// A single method of comparing GPU-vs-CPU frames (R.29): ad-hoc epsilons in
+/// A single method of comparing GPU frames with the stored ones (R.29): ad-hoc epsilons in
 /// tests are forbidden; only this helper is used.
 #[derive(Clone, Copy)]
 pub struct FrameTol {

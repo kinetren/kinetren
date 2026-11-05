@@ -7,8 +7,7 @@
 // u0 = (k, dry_has_alpha, wet_has_alpha, by_coverage).
 //
 // A SLOT MASK (shape-masks) is the same wet/dry mix with a per-pixel weight: `by_coverage`
-// = 1 reads the weight from T2 (the CPU rasterizer's coverage in .r, 0..255), a mirror of
-// `kt_fx::mask::apply_mix`.
+// = 1 reads the weight from T2 (the CPU rasterizer's coverage in .r, 0..255).
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {

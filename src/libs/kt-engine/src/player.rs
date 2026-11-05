@@ -191,7 +191,7 @@ pub struct Player {
 struct VideoGpuState {
     exec: Option<Arc<dyn VideoGpuExec>>,
     /// Some(reason) — DeviceLost/Validation: the GPU is poisoned until the end of the
-    /// session, the preview goes via the CPU fallback, the UI shows a notice.
+    /// session, the preview shows no picture, the UI shows a notice.
     poisoned: Option<String>,
 }
 
@@ -1019,12 +1019,12 @@ enum Target<'a> {
 /// The cost of one preview compose (morpher-event-grid-cost, D1).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct VideoCost {
-    /// The GPU executor composed it (false: the CPU, by fallback or by choice).
+    /// The GPU executor composed it (false: no picture was composed).
     pub gpu: bool,
     pub cost: kt_fx::video::FrameCost,
     pub compose_ns: u64,
     /// The part of `compose_ns` before the executor: the order, the requests, `frame_plan`
-    /// (preview-throughput; GPU path only, the CPU's plan is its composite).
+    /// (preview-throughput).
     pub plan_ns: u64,
     pub stages: crate::video_plan::GpuStages,
 }

@@ -506,7 +506,7 @@ pub enum GeomPrim {
     /// Nonlinear warp (R.47 Kv4, a plugin's map since plugin-api-stage1 D11.2): input and output
     /// are the NORMALIZED centered space of the stage (pre/post-affines built by the builder; the
     /// unit is the plugin's `WarpNorm`); precomputable values (radians, 2π·freq, sin a, 1/a) — f64
-    /// on CPU, into the uniform — once.
+    /// on the host, into the uniform — once.
     Warp { warp: WarpRef, p: [f64; 7] },
 }
 
@@ -663,10 +663,10 @@ pub const SS_MAX: u32 = 4;
 pub enum SsSpec {
     /// Affine program (incl. with Fold): the Jacobian is CONSTANT over the frame —
     /// the tap count is computed once in f64 at build time and goes into the
-    /// uniform. The CPU/GPU parity risk is zero by construction.
+    /// uniform. No per-pixel divergence is possible.
     Const { nx: u32, ny: u32 },
-    /// The program has Proj (perspective): the Jacobian changes over the frame — both
-    /// executors measure it by finite differences (two coordinate probes per pixel) and
+    /// The program has Proj (perspective): the Jacobian changes over the frame — the
+    /// shader measures it by finite differences (two coordinate probes per pixel) and
     /// compute the taps with ONE formula `ss_taps`.
     PerPixel,
 }
@@ -804,11 +804,11 @@ impl GeomProgram {
     }
 }
 
-/// Execution decision of the geo run. Made HERE and only here — both backends must
-/// ask this function rather than decide themselves.
+/// Execution decision of the geo run. Made HERE and only here — the executor must
+/// ask this function rather than decide itself.
 pub enum GeomExec {
-    /// Series of length 1 of Pan/CamMotion/Mirror: the old kernels (CPU: pan_zoom /
-    /// mirror; GPU: Resample / Mirror) — bytes as before R.44.
+    /// Series of length 1 of Pan/CamMotion/Mirror: the old passes (GPU: Resample /
+    /// Mirror) — bytes as before R.44.
     Legacy,
     /// Fused pass of the inverse mappings.
     Fused(GeomProgram),

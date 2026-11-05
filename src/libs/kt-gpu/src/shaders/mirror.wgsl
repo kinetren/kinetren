@@ -1,5 +1,4 @@
-// A mirror is a pure permutation of indices, byte for byte with the CPU (mirror in
-// kt-fx/src/video.rs). u0 = (w, h, horizontal, vertical).
+// A mirror is a pure permutation of indices. u0 = (w, h, horizontal, vertical).
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {

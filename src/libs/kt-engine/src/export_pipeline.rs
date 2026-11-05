@@ -195,7 +195,7 @@ impl Gate {
     }
 }
 
-/// A frame for a worker: compose it (CPU) or only convert the GPU's readback.
+/// A frame for a worker: compose it or only convert the GPU's readback.
 enum Job {
     Compose { t: Tick },
     Convert { rgba: Vec<u8>, complete: bool },
@@ -286,7 +286,7 @@ pub(crate) fn run<S: ExportSink>(
         halt.load(Ordering::Acquire)
     };
     let gate = Gate::default();
-    // several devices: the workers compose as the CPU's do, each on its own engine
+    // several devices: each worker composes on its own engine
     let engines: Vec<Arc<dyn crate::VideoGpuExec>> = if backends.video_gpu_more.is_empty() {
         Vec::new()
     } else {

@@ -1003,7 +1003,7 @@ fn bits(x: f32) -> u32 {
 
 impl Plan {
     /// One pass's uniforms (`u`, `f`), the mirror of what its WGSL reads — the ONE text of the
-    /// packing; the CPU passes read the plan directly.
+    /// packing; the model in the tests reads the plan directly.
     pub fn uniforms(&self, pass_ix: usize) -> ([u32; 8], [f32; 8]) {
         let fl = self.flags();
         let t = self.sensor_tab;

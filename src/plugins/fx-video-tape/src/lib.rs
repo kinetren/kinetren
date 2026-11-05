@@ -5,8 +5,8 @@
 //! It is a SIMULATION: the look comes out of the process; the imitation `vhs` stays in
 //! fx-video-stylize.
 //!
-//! The CPU text (`sim`, `deck`, `sig`) is the reference; every WGSL pass under `wgsl/` mirrors one
-//! function of it and is edited in the same commit (t1186).
+//! The CPU text (`sim`, `deck`, `sig`) is the model the tests read; every WGSL pass under `wgsl/`
+//! mirrors one function of it and is edited in the same commit (t1186).
 
 use std::sync::{Arc, OnceLock};
 

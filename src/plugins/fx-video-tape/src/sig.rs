@@ -1,4 +1,4 @@
-//! The per-sample arithmetic shared by the CPU stages and their WGSL mirrors (design D5): our own
+//! The per-sample arithmetic shared by the CPU model's stages and their WGSL mirrors (design D5): our own
 //! f32 sine/cosine in CYCLES and atan2 in cycles, the counter hash, uniform and Gaussian grain, and
 //! the u16 fixed-point packing of two values into one texel. Each function is a fixed sequence of
 //! f32 operations, written again verbatim in `wgsl/common.wgsl`; edit both in the same commit.

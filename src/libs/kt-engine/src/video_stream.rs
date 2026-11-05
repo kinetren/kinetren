@@ -3,7 +3,7 @@
 //! A clip whose chain holds a `VideoClass::Stream` slot takes as its pre-FX frame what the stage's
 //! kernel produces from a stream of the event's source frames (the event before included, the
 //! event on another track as a second input). The stage runs here, in the plan's common code, on
-//! the CPU — both executors receive the same decoded bytes (invariant 7). The order asks exactly
+//! the CPU — the executor receives the stage's bytes as decoded ones (invariant 7). The order asks exactly
 //! what the kernel says it still needs (invariant 4); the bytes do not depend on the memo
 //! (invariant 11).
 

@@ -224,7 +224,7 @@ impl Kernels {
 }
 
 /// The WGSL tables of both standards' kernels: `var<private> K_REC_P: array<f32, N> = …` etc. The f32
-/// values are printed with `{:?}`, which round-trips exactly — the GPU convolves with the CPU's bits.
+/// values are printed with `{:?}`, which round-trips exactly — the GPU convolves with the same bits.
 pub fn wgsl_consts() -> String {
     let mut s = String::new();
     for (tag, st) in [("P", Standard::get(Std::Pal)), ("N", Standard::get(Std::Ntsc))] {

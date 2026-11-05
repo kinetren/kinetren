@@ -40,7 +40,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let mag = min(i32(sqrt(f32(gx * gx + gy * gy))), 255);
     var v = 0u;
     if (mag >= i32(P.u0.z)) { v = u32(mag); }
-    // line colour (integer, as CPU: v*color/255)
+    // line colour (integer: v*color/255)
     let col = vec3<u32>(P.u1.x, P.u1.y, P.u1.z);
     return vec4<u32>((vec3<u32>(v) * col) / 255u, max(a_in, v));
 }

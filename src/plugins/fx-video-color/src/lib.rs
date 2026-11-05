@@ -1,6 +1,6 @@
 //! Colour video effects as plugins (plugin-api-stage1): color_grade, duotone, posterize, vignette.
 //! Posterize is the pilot (D9): the smallest kernel that crosses all four executor positions — the
-//! CPU barrier, the CPU tap of the fused pass, its own GPU pass and the GPU tap arm.
+//! barrier's GPU pass graph, the tap arm of the fused pass and its own GPU pass.
 
 
 use kt_plugin_api::math::FrozenMath;

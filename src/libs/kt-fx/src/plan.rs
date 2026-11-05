@@ -1,9 +1,7 @@
 //! Execution plan of the FX chain (R.45, items 311-314): the decisions on segmentation,
 //! legacy/fused, absorption of per-pixel ops and K× barrier resolution are taken HERE,
-//! exactly once — the CPU (`apply_video_chain_pooled` in video.rs) and the GPU
-//! (`chain_ops` in kt-gpu) execute the READY plan. This is
-//! invariant No. 7 at the chain level: a divergence of segmentation = a divergence of
-//! pictures.
+//! exactly once — the GPU (`chain_ops` in kt-gpu) executes the READY plan. This is
+//! invariant No. 7 at the chain level: one place decides the segmentation.
 //!
 //! K× barriers (item 314): a non-local effect between a compressing geo series and
 //! a zooming tail is executed at K× resolution — detail squeezed by the grid
@@ -16,8 +14,7 @@
 //! there are no resamples between segments at all.
 //!
 //! Layer strength: the GPU passes the snapshot points (`from` indices of LayerMix) into
-//! `stops` and gets back Snapshot/Mix markers; the CPU cuts the chain at the stops
-//! one level up (`apply_chain_with_mixes`) and plans the slices — the plan of a slice
+//! `stops` and gets back Snapshot/Mix markers; the plan of a slice between stops
 //! must match the piece of the whole plan (t306). The stops zero both K accumulators
 //! (the mixing is always at 1×).
 
@@ -30,8 +27,8 @@ use kt_model::FxInstance;
 
 /// Ceiling of the side of the K× buffer, px. PROJECT constant (item 314): the preview
 /// 640×360 gets full K=4, export 1080p — up to K=2, 4K — no K×.
-/// It is raised with one constant; devices with a weak max_dim divert such
-/// plans to the CPU entirely (guard in kt-gpu resolve_chain).
+/// It is raised with one constant; devices with a weak max_dim refuse such
+/// plans as TooLarge (guard in kt-gpu resolve_chain).
 pub const MAX_INTER_DIM: u32 = kt_plugin_api::barrier::MAX_INTER_DIM;
 // the largest K the planner hands a barrier is the supersampling ceiling; the plugin API checks
 // barrier graphs at that K (plugin-api-barriers)
@@ -48,7 +45,7 @@ pub enum PlanOp {
     /// Snapshot of the dry side of the layer strength (position from `stops`).
     Snapshot,
     /// Strength slot `fx[idx]` (LayerMix): the executor mixes the snapshot with the
-    /// current state (GPU) or skips it (CPU — strength is one level up).
+    /// current state.
     Mix { idx: usize },
 }
 

@@ -91,8 +91,8 @@ impl TransMix {
 }
 
 /// Precomputed frame scalars for VOLUMETRIC kinds (R.51, item 401): inverse homographies of the
-/// panels, computed by the kind's `ext` in f64 and rounded ONCE to f32. The CPU kernel and WGSL read
-/// the same bits — parity by construction, a separate f64 reference is not needed. They go into the
+/// panels, computed by the kind's `ext` in f64 and rounded ONCE to f32. The kernel and WGSL read
+/// the same bits, so no separate f64 reference is needed. They go into the
 /// field `m` of the composite's uniform (free since R.44). For the other kinds — zeros; they are not
 /// and must not be in the cache keys: ext is a deterministic function of the already hashed
 /// (kind, p, k) — see the comment at `put_mix` in kt-gpu.

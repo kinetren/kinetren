@@ -57,8 +57,7 @@ pub struct LayerSrc<'a> {
     /// The BLEND itself is done HERE, in the plan's common code, not in the executors:
     /// invariant No. 7 — “the composition code is one, the backend is an execution
     /// parameter”. Otherwise the same arithmetic would have to be kept
-    /// in sync in the CPU kernel and in WGSL, and that is exactly the class of divergence
-    /// on which preview and export show different things.
+    /// in sync in two places.
     ///
     /// The field lives in the layer, NOT as a separate `PlanLayer` branch: blending is a
     /// property of the source of ONE clip, and such a clip may stand under
@@ -66,8 +65,7 @@ pub struct LayerSrc<'a> {
     pub blend: Option<LayerBlend>,
     /// BLEND MODE of this layer onto the layers BELOW (R.62, change B).
     /// `Normal` — the previous `alpha_over` byte for byte, and GOLDEN_VIDEO rests on it;
-    /// the others are computed by the `blend_over` kernel (CPU) and its
-    /// WGSL mirror. The field lives in the layer, not as a separate
+    /// the others are computed by the `blend_over` pass in WGSL. The field lives in the layer, not as a separate
     /// `PlanLayer` branch: overlay is a property of ANY layer, not of a special kind.
     pub blend_mode: kt_model::BlendMode,
     /// Context of the leading “Geometry” node (R.62): the source kind and the

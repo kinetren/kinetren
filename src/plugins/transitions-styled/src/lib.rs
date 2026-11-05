@@ -2,7 +2,7 @@
 //! digital ones and the light. Each kernel is the former `TransMix::of` arm (its `pack`) and
 //! `kernel()` arm (its `pixel`) of kt-engine's `transitions.rs`, verbatim; its WGSL is the former
 //! `trans()` arm of composite.wgsl. t1019 holds the pixels against the enum, t224 the GPU against
-//! the CPU, t973 the file text.
+//! the stored frames, t973 the file text.
 
 use std::sync::Arc;
 

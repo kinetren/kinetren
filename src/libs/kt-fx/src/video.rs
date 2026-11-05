@@ -1,4 +1,5 @@
-//! Video FX (port of bc_fx.cpp, item 25): 10 v1 effects, RGBA8 in/out, CPU.
+//! Video FX context and the CPU-side helpers (port of bc_fx.cpp, item 25): RGBA8 in/out. The effects
+//! themselves run on the GPU.
 //! The order of application = the order in the fx array (the first — the nearest to the
 //! decoder). One code for preview and export (invariant No. 7).
 //! Determinism: noise/vhs depend only on timeline_burst_index.
@@ -15,7 +16,7 @@ pub struct VideoFxCtx {
     pub u: f64,
     /// Absolute timeline position in ticks (for noise/vhs).
     pub burst_index: i64,
-    /// The resolved 3D camera of the layer (R.44: Pan3d is also computed on the CPU).
+    /// The resolved 3D camera of the layer (R.44).
     /// None — Pan3d in the chain is skipped, as before without a camera.
     pub cam3d: Option<crate::geom::Cam3d>,
     /// Decode step of the frame (R.46, item 318): the input frame is in_scale times
@@ -221,8 +222,7 @@ pub fn cam_at(keys: &[CamKeyframe], u: f64, ease: bool, time_scale: f64) -> (f64
 }
 
 /// Crop frame of Pan/CamMotion in the source coordinates: (x0, y0, cw, ch).
-/// Pub (R.29): the COMMON math of the CPU and GPU paths — the GPU computes the frame with
-/// the same function and passes it to the shader as uniforms.
+/// Pub (R.29): the host computes the frame with this function and the GPU gets it as uniforms.
 #[allow(clippy::too_many_arguments)]
 pub fn pan_frame(
     src_w: u32,

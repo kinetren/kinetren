@@ -1,9 +1,9 @@
 // Common header of all kt-gpu passes (prepended to the start of each .wgsl).
 //
 // All textures are Rgba8Uint: textureLoad returns RAW bytes 0..255 without
-// unorm normalization (u8/255.0 in f32 loses precision and breaks the mirrors of
-// the integer CPU arithmetic). There is no filtering or sampler: bilinear is
-// computed by hand, as in bilinear_into (kt-fx/src/video.rs).
+// unorm normalization (u8/255.0 in f32 loses precision and breaks the integer
+// arithmetic of the passes). There is no filtering or sampler: bilinear is
+// computed by hand (the CPU-side twin is bilinear_into in kt-fx/src/video.rs).
 //
 // One uniform for all passes (64 bytes, generic slots): one bind group
 // layout for the whole engine; unused textures are bound to a 1×1 stub.

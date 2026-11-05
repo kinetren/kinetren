@@ -1,5 +1,5 @@
-// The final stage of bloom: a mirror of the tail of glow (kt-fx/src/video.rs): o + up·s·tint with
-// a cap of 255 and TRUNCATION (CPU `as u8` after .min(255.0)).
+// The final stage of bloom: o + up·s·tint with
+// a cap of 255 and TRUNCATION (not rounding).
 // T0 = original, T1 = upscaled small mip.
 // u0 = (threshold, 0, 0, 0); f0 = (s, tint_r, tint_g, tint_b).
 // threshold = 0 and a white tint give the former formula, byte for byte.

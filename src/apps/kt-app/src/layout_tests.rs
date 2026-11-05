@@ -3216,7 +3216,7 @@ fn t176_audio_and_video_share_one_level_line() {
     assert_eq!(p.clips[0].duration, Tick(200_000), "event is untouched");
 }
 
-/// Test 185 (R.29): loss of the video GPU executor — the warning exactly once, after that the CPU fallback works silently;
+/// Test 185 (R.29): loss of the video GPU executor — the warning exactly once, after that the preview stays silent;
 /// the backend status is honest.
 #[test]
 fn t185_gpu_loss_notice_once() {

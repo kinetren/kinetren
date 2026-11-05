@@ -1,10 +1,9 @@
 //! Video path: selection of active clips, frame keys, building the frame plan
-//! (video_plan) and the CPU composition executor.
+//! (video_plan). The pictures are composed by the GPU executor in kt-gpu.
 //!
 //! Invariant No. 7 (rev. R.29): composition code is ONE — build_plan decides layers,
 //! order, transition weights and levels for both preview and export;
-//! the backend (CPU here / GPU in kt-gpu) is an execution parameter, not a second path.
-//! The CPU executor is the byte reference (invariant 11) and the fallback. Layers
+//! the executor (kt-gpu) is an execution parameter, not a second path. Layers
 //! are requested at ONE quality and composited alpha-over by z
 //! (lane: lower = higher, as in the old engine, where a smaller track index
 //! was the foreground).
@@ -1633,8 +1632,7 @@ struct PlanCtx<'a> {
     memoize: bool,
     /// Frame blending, inherited from the nesting ABOVE (R.56, item 448).
     /// The mode sits on the reel instance, and its LEAVES execute it: this way one
-    /// sub-composite remains per frame (two would cost double, on both CPU and
-    /// GPU), and procedural content inside does not land on the grid instead of
+    /// sub-composite remains per frame (two would cost double on the GPU), and procedural content inside does not land on the grid instead of
     /// continuous time. At the root it is always `false` — the bytes of GOLDEN_VIDEO
     /// rest on this.
     blend_footage: bool,
@@ -1741,13 +1739,12 @@ fn layer_src<'a>(
             None => (None, 0),
         }
     };
-    // BLENDING (R.37 C5) is done HERE, in the plan's common code: both
-    // executors receive an already blended pre-FX frame, and the same
-    // arithmetic does not have to be kept in sync in the CPU kernel and in WGSL
-    // (invariant No. 7). The kernel is the ready `dissolve_into`: byte-frozen,
-    // with an AVX2 twin.
+    // BLENDING (R.37 C5) is done HERE, in the plan's common code: the executor
+    // receives an already blended pre-FX frame, and the same
+    // arithmetic does not have to be kept in WGSL as well
+    // (invariant No. 7). The kernel is the ready `dissolve_into`: byte-frozen.
     // FRAME BLENDING ON THE NESTING ITSELF is not done (R.56, item 448): two
-    // sub-composites per frame cost double on both backends and add nothing —
+    // sub-composites per frame cost double and add nothing —
     // the reel's inner time is already continuous. The mode travels
     // DOWN, to the leaves, and `clip_frame_keys` already hands out the pair there.
     debug_assert!(
@@ -1773,7 +1770,7 @@ fn layer_src<'a>(
     let span = (clip.end.0 - clip.start.0).max(1);
     let u = (t.0 - clip.start.0) as f64 / span as f64;
     // automation (R.30): curves are resolved HERE, once per frame —
-    // the CPU and GPU receive already computed parameters (the chain is cloned
+    // the executor receives already computed parameters (the chain is cloned
     // only with live curves)
     let fx: std::borrow::Cow<'_, [kt_model::FxInstance]> = match &clip.auto_plan {
         Some(plan) => {

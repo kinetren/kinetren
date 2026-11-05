@@ -1,7 +1,6 @@
 //! Blurring and glowing video effects as barrier plugins (plugin-api-barriers, stage 3): blur, glow,
 //! sharpen, radial_blur, drop_shadow. The mip of blur, glow, sharpen and drop_shadow is the host's
-//! resample (`RasterHost::resample` on the CPU, the `Resample` node on the GPU) — one text with the
-//! core's own resample and its AVX2 twin; each kernel below is the former kt-fx kernel verbatim.
+//! resample (the `Resample` node on the GPU); each kernel below is the former kt-fx kernel verbatim.
 
 use std::sync::Arc;
 
@@ -235,7 +234,7 @@ const SHARPEN_VARIANTS: &[UiVariant] = &[
 plugin!(Sharpen);
 
 impl BarrierKernel for Sharpen {
-    /// `[amount, radius]`: the amount clamped in f64 (the CPU's), the radius to its 2..16.
+    /// `[amount, radius]`: the amount clamped in f64, the radius to its 2..16.
     fn cook(&self, p: &[f64]) -> Cooked {
         [p[0].clamp(0.0, 4.0), (p[1] as u32).clamp(2, 16) as f64, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
@@ -395,7 +394,7 @@ impl BarrierKernel for DropShadow {
         &[include_str!("shadow_under.wgsl")]
     }
 
-    /// Opaque input (the fold KNOWS it): no passes — the CPU's passthrough. With unknown alpha the
+    /// Opaque input (the fold KNOWS it): no passes — a passthrough. With unknown alpha the
     /// graph is set up: the formula on an opaque input is identical in bytes.
     fn gpu(&self, k: &Cooked, g: &GpuCtx, out: &mut Vec<Node>) {
         if g.alpha == Some(false) {

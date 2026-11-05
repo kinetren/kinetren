@@ -1,5 +1,5 @@
 //! The mask rasterizer (shape-masks): ONE CPU function turns an ordered mask list into an 8-bit
-//! coverage; the CPU applies it, the GPU uploads THE SAME bytes and applies them in one integer
+//! coverage; the GPU uploads the bytes and applies them in one integer
 //! pass (`kt-gpu/src/shaders/mask.wgsl`) — so the conformance class is EXACT.
 //!
 //! Per mask: the cubic outline (`kt_model::Mask::cubics`, the shape's one geometry) is mapped by
