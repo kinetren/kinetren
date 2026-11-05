@@ -15,6 +15,7 @@ detached preview window too. While you type into a text field, the keys go to th
 | <kbd>A</kbd> / <kbd>Home</kbd> | back to the previous marker, region edge or event edge |
 | <kbd>D</kbd> / <kbd>End</kbd> | forward to the next marker, region edge or event edge; after the last one, the end of the project |
 | <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>Shift</kbd>+<kbd>End</kbd> | the very start / end of the project |
+| <kbd>←</kbd> / <kbd>→</kbd> | one frame back / forward; during playback the first press pauses; hold to repeat |
 | <kbd>Ctrl</kbd>+<kbd>L</kbd> | type a timecode to jump to |
 
 When the region has been played to its end, <kbd>Space</kbd> plays it again from its start.
@@ -80,7 +81,8 @@ in the menu of a track's empty space.
 | <kbd>Ctrl</kbd>+wheel / pinch | zoom around the mouse |
 | <kbd>Shift</kbd>+wheel | scroll tracks |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+wheel | change all track heights, keeping the track under the mouse in place |
-| click near the left / right edge of the tracks | place the playhead there and jump the view that way |
+| click near the left / right edge of the tracks | place the playhead there and jump the view that way, also over an event; on the left, not while the project's start is on screen |
+| click a track header's free part | the strongest jump to the left |
 | drag past the edge of the tracks | the view scrolls along |
 
 ## Mouse on the timeline
@@ -98,7 +100,7 @@ in the menu of a track's empty space.
 | <kbd>Ctrl</kbd> while dragging | switch the magnet off |
 | drag an event's edge | trim |
 | drag a top corner of an event | fade at that edge |
-| drag the level line | opacity (video) / gain (audio) |
+| drag the level line | opacity (video) / gain (audio), down to mute at the bottom; on a low row or a short event the same press moves the event, and the level is in the right-click menu |
 | double-click the level line | full opacity / 0 dB |
 | double-click an event | effects window |
 | drag a transition's edge / its cut | resize / roll the edit |
@@ -146,6 +148,7 @@ The mask keys work only while nothing else has the keyboard focus.
 | double-click the timecode | type a position |
 | digits, <kbd>Backspace</kbd>, <kbd>Enter</kbd>, <kbd>Esc</kbd> in the timecode | digits fill from the right, a pasted timecode is laid in whole; <kbd>Enter</kbd> jumps, <kbd>Esc</kbd> cancels |
 | <kbd>Shift</kbd>+click the Back / Forward buttons | jump and drag the region edge along |
+| <kbd>Ctrl</kbd>+click the Back / Forward buttons | one frame back / forward, like the arrows |
 | drag the top / bottom half of the speed strip | constant speed / shuttle (release to return) |
 | <kbd>Shift</kbd> while dragging the speed strip | fine adjustment |
 | double-click the speed strip | back to 1× |

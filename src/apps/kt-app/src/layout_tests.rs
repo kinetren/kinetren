@@ -20250,6 +20250,13 @@ fn t1630_gain_to_mute_and_the_chip() {
     let gain = h.state().model.clip(kt_model::ClipId(1)).unwrap().gain_db;
     assert_eq!(gain, EVENT_GAIN_FLOOR_DB, "the bottom of the line is mute");
     assert!(chips(&h, "mute"), "the event does not say mute");
+    // the menu's number field says the same word, not "−60 dB"
+    right_click_at(&mut h, egui::pos2(x, top + lh * 0.5));
+    let n = crate::reach_tests::painted_texts(&h).iter().filter(|p| p.src == "mute").count();
+    assert_eq!(n, 2, "the chip and the field must both read mute");
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
 
     h.state_mut().apply(Command::SetOpacity { id: kt_model::ClipId(2), opacity: 0.4 });
     h.step();
