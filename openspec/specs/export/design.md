@@ -316,7 +316,16 @@ binaries has the same md5, zero missing layers. Alone at load 50–70, the best 
 before and 105.3 s after. The published 95 s was taken at a lower load; this machine did not offer
 one, and the two binaries are level here, so that figure was neither confirmed nor lost.
 
-Two traps of this measurement. Alternating runs gave a median of 112 s against 140 s for the same two
-binaries: at load up to 267 the spread (102–204 s) is larger than anything being measured. And two
-processes on ONE project file do not run together: the second waits at the start until the first has
-finished, which read as 104 s against 226 s. The serial export of the same showcase took 895 s.
+The serial export of the same showcase took 895 s.
+
+What this measurement cannot say. Alternating runs gave a median of 112 s against 140 s for the same two
+binaries: at load up to 267 the spread (102–204 s) is larger than anything being measured. Two
+processes started at the same instant on ONE project file can split widely, and that is not the
+code: identical binaries gave 204 against 153 s and 257 against 275 s, and old against new 130
+against 180 s, 248 against 250 s, 220 against 219 s. An earlier series of four such pairs gave
+old against new 194/194, 104/226, 107/276 and 137/185 s; its stage logs were overwritten, the two
+widest gaps exceed the 51 s seen between identical binaries, and they remain unexplained. In none of
+the 13 same-instant pairs was the old binary the slower by more than 3 s, though the process started
+first was the slow one in most of the wide gaps, and the new binary had been started first in
+several. The cause of the split was not found (the two exports do not wait for each other: both run
+from the first seconds). The six pairs on separate project copies did not split.

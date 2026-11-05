@@ -135,8 +135,9 @@ in the source's state and arrive through the retune lane.
   a size and budget chosen by reasoning passed on it.
 - **The serial pre-roll also heals**: what it re-reads, the pipeline asks again in `decode_requests`.
   A new thing the serial loop does per frame needs its pipeline twin, or the two differ.
-- **Compare speed with two binaries started together, each on its own copy of the project**: one
-  project file makes the second wait for the first, and alternating runs drown in other builds.
+- **Compare speed with two binaries started together, each on its own copy of the project**, and
+  run a same-binary pair as the control: alternating runs drown in other builds, and two runs on one
+  project file can split by 50 s with identical binaries (cause not found).
 
 - `export_pipeline::run` is the product's export; `ExportOptions.serial` (= the former one-thread
   export, `render_raw_video_range_with` + `render_raw_audio_range`) is its REFERENCE: t1451 holds
