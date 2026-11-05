@@ -4,17 +4,17 @@
 
 Audio FX: slowed (rubato varispeed) + reverb (freeverb) + gain. Without FFmpeg/audio hardware.
 
-Video FX (`video.rs` + `geom.rs`): the v1 effects, RGBA8, CPU. Since R.29 these are the
-**byte reference and the fallback** — the product computes video on the GPU (the kt-gpu crate,
-WGSL mirrors of these kernels, conformance t181). If you edit a formula here, edit the
-SHADER in kt-gpu in the same commit; the common parametrics
-(`pan_frame`/`cam_at`/`noise_seed`) are `pub` for exactly this reason. Noise is a
-counter-based hash (R.29, parallelisable: CPU and GPU byte for byte).
+Video (`video.rs` + `geom.rs` + `plan.rs`): no kernel lives here any more
+(compute-kernels-render). The GPU is the one executor (kt-gpu and the plugins' WGSL); this crate
+keeps the planner, the geometry program, the mask rasterizer, `fit_into` (a bilinear for a stream
+stage's output and thumbnail bases), the frozen `test_pattern` and the common parametrics
+(`pan_frame`/`cam_at`/`noise_seed`). If you edit the program or the planner, edit the
+SHADER in kt-gpu in the same commit. Noise is a counter-based hash (R.29).
 
 **The chain plan (R.45, `plan.rs`, items 311–314)**: `plan_chain` is
 the SINGLE place of chain decisions (segmentation of windows, legacy/fused,
-absorption of point-wise effects, K× barriers); the CPU (video.rs) and the GPU (chain_ops)
-EXECUTE the ready plan. The internal Greenscreen/Noise are absorbed into runs by
+absorption of point-wise effects, K× barriers); the GPU (chain_ops)
+EXECUTES the ready plan. The internal Greenscreen/Noise are absorbed into runs by
 tap ops (item 312, applied to the value of the sub-tap; the grain is nailed to the grid of
 its own step); the barriers Blur/Glow/Edges/VHS are executed at K× when
 "compression above + zoom below" (item 314: K = ss_taps(min(zoom of the tail, compression)),
@@ -38,36 +38,33 @@ a change of scale (t308b — before R.46 this was a latent debug crash).
 **Merging of geometry series (R.44, `geom.rs`, items 307–309)**: consecutive
 Pan/CamMotion/Mirror/EventGrid/Pan3d — ONE pass of the inverse mappings;
 `geom.rs` is the single place of decisions (segmentation `geo_run_end`,
-`build_geom_exec`, the supersampling taps `ss_taps`); both backends MUST ask it, and not decide
-for themselves. If you edit `geom.rs`, edit
+`build_geom_exec`, the supersampling taps `ss_taps`); the executor MUST ask it, and not decide
+for itself. If you edit `geom.rs`, edit
 `kt-gpu/src/shaders/geom_fused.wgsl` IN THE SAME COMMIT (t181, the geo cases).
 The byte rules: a series of length 1 Pan/CamMotion/Mirror WITHOUT minification —
 the old kernels byte for byte (t297); a lone EventGrid — in a merged pass,
 but the tile-local phase reproduces the old kernel literally (the golden t26
 stands without regeneration — at ×2 box-2 supersampling is arithmetically
-equal to the old bilinear at the half phase). **Pan3d from R.44 is computed HERE**
-(the inverse f64 homography `pan3d_forward`, the semantics of the world are frozen
-by the format, identity at the defaults byte for byte — t298); the camera arrives
+equal to the old bilinear at the half phase). **Pan3d is a `Proj` of this program**
+(the inverse f64 homography `pan3d_forward` in `fx-video-distort/src/pan3d.rs`, the semantics of the
+world are frozen by the format, identity at the defaults — t298); the camera arrives
 through `VideoFxCtx.cam3d`, without it Pan3d is a passthrough. Audio FX inside
 a geo series are transparent; barriers (Blur/Glow/Edges/VHS/Noise/Greenscreen) and
-the snapshot points of LayerMix break the series. The merged pass is SCALAR f64
-(AVX2 is separate work under the 1.3× rule); `bilinear_into` + AVX2
-remain behind the barriers (blur/glow/fit_into) and the legacy series.
+the snapshot points of LayerMix break the series.
 
 **One tile, copied (morpher-event-grid-cost)**: `GeomProgram::tile` is decided by `grid_tile` in
-`geom.rs` and ONLY there; `exec_geom_cpu` copies the cell, kt-gpu runs `tile_program()` + its
-`grid_tile.wgsl`. The gate is exactness (the grid last in the series, k_out = 1, 1/2/4 taps per
-axis) — widening it (3 taps, a step after the grid) moves bytes, and t943/t944 catch it. A change to
-how the fused pass computes sub-sample positions or the Fold must be checked against the tile on
-BOTH backends in the same commit (t943 CPU sweep, t944 GPU tile == GPU full pass).
+`geom.rs` and ONLY there; kt-gpu runs `tile_program()` + its `grid_tile.wgsl`. The gate is exactness
+(the grid last in the series, k_out = 1, 1/2/4 taps per axis) — widening it (3 taps, a step after
+the grid) moves bytes, and t944 catches it. A change to how the fused pass computes sub-sample
+positions or the Fold must be checked against the tile in the same commit (t944: the GPU tile and
+the GPU full pass).
 
 ## Effect thumbnails (R.54, item 428)
 
-- **`render_fx_thumb` is the single entry for thumbnails** (the kind's icon, the variant cell,
-  a library preset): "fit `fit_into` + `apply_video_chain_pooled`"
+- **One entry for thumbnails** (the kind's icon, the variant cell, a library preset): `render_job` in
+  kt-app's `fx_thumbs.rs`, "`fit_into` + the chain on `kt_gpu::offline_engine`",
   and not a line of one's own arithmetic. Introducing a second path into the UI is not allowed —
-  the picture in the picker MUST coincide with what comes out after a click (invariant No. 7 in spirit: one code, the size is a parameter of execution). Guard —
-  t544e.
+  the picture in the picker MUST coincide with what comes out after a click (invariant No. 7 in spirit: one code, the size is a parameter of execution).
 - **`in_scale` of a thumbnail is always 1.** The decode scale step (R.46) says "the frame arrived LARGER than the logical size", while for a thumbnail it is the reverse; confusing these two things means asking the chain plan for a non-existent margin of detail.
 - **"A preview of the kind, not of the strength".** Some parameters are set in PIXELS
   (`Pixelate.size` up to 128, `Halftone.size`, the radii of blurs,
@@ -79,23 +76,21 @@ BOTH backends in the same commit (t943 CPU sweep, t944 GPU tile == GPU full pass
   (`Mirror`), a green plate (`Greenscreen`), bands and a ramp (colour), a fine grid and hard edges (`Blur`/`Sharpen`/`Edges`/`Pixelate`/
   `Halftone`). There are two variants — an opaque one and one with TRANSPARENT margins: on an opaque frame `DropShadow` is identical by construction (the shadow falls from under the alpha), and the icon of shadow effects needs an alpha variant (t544d).
 - **Identical templates.** For `Pan`/`Pan 3D`/`Color Grade`/`Corner Pin`/
-  `Drop Shadow` the defaults are identity (one identity hash in `GOLDEN_ALL`),
+  `Drop Shadow` the defaults are identity,
   therefore the icon of such a kind is the FIRST variant from the kt-app registry, and
   not the template. t544c holds both halves of the rule: the identity remained
   an identity, and the variant with zoom shows something.
 - The grain of `noise`/`vhs` is nailed to `burst_index`: with a motionless cursor
   the cell MUST be one and the same picture, otherwise the strip flickers on
-  every frame of the interface (t544f).
+  every frame of the interface.
 
-## SIMD (R.32) — read before editing any kernel in video.rs
+## SIMD (R.32): audio only
 
-- **A SIMD kernel MUST be BYTE-FOR-BYTE equal to the scalar one on any CPU.**
-  The CPU path is the determinism reference (invariant 11); the golden files t26/t11/t67 are not regenerated; a divergence is a render regression, not "a different implementation". The scalar code is NOT refactored together with the kernel: it is the very definition of the bytes (`*_scalar` in video.rs).
-- **Forbidden**: FMA (`fmadd` rounds differently), reassociation of sums/taps, rcp/rsqrt approximations, f32 instead of f64, changing MXCSR, and `_mm256_round_pd(NEAREST)` instead of the emulation of half-away (it is half-to-EVEN: 2.5 → 2, whereas `f64::round` gives 3). Lanes are only independent pixels/channels; the order of operations INSIDE a pixel is exactly the scalar one.
-- Integer divisions: `/255` is the magic `(x*0x8080_8081)>>39` (the common `(t+(t>>8))>>8` is wrong at 255³!), `/32767` with sign — see noise. Any new division/rounding trick is closed by an EXHAUSTIVE micro-test.
-- A new kernel — only as a pair with the scalar one plus a case in t198 (`tests/simd_parity.rs`), necessarily with NON-MULTIPLE sizes (tails) and extreme values. Usefulness threshold — 1.3×: below it we keep the scalar code (so it was decided for greenscreen/mirror; figures in item 198).
-- If you change an effect formula, you change the scalar code, the AVX2 kernel AND the WGSL shader of kt-gpu in one commit (t181 guards the third pair).
-- All `unsafe` code is only in `video_simd.rs` and, for a plugin family's twins, in that crate's `simd.rs` (plugin-api-barriers: the barriers' twins moved with them, behind `BarrierCtx::simd` — the host's ONE switch); each kernel is called only after `simd::simd_level() == Avx2`. `KT_SIMD=0` — forced scalar, `KT_REQUIRE_SIMD=1` — forbids a vacuous skip in tests.
+- The video kernels left for the GPU (compute-kernels-render); `simd.rs` picks the level of the audio
+  kernels. `KT_SIMD=0` — forced scalar.
+- **A SIMD kernel MUST be BYTE-FOR-BYTE equal to the scalar one on any CPU** (invariant 11).
+- Any new division/rounding trick is closed by an EXHAUSTIVE micro-test: `/255` is the magic
+  `(x*0x8080_8081)>>39` (the common `(t+(t>>8))>>8` is wrong at 255³!).
 
 ## API
 - `ClipProcessor` — a stateful processor of one clip: warp (rubato `SincFixedOut`) + freeverb + the static gain of the chain. It is read strictly sequentially (`read(local, out, pull)`). There are TWO discontinuities, and they must not be confused (item 166): after `reset()` (a real seek — the player performs it) — `hard_seek` with pre-roll `max(tail, 100 ms)`; a position break during CONTINUOUS output (the loop region wrapping around, a clip shifted with the mouse during playback) — `seam`: the source is repositioned, the reverb and sinc live on. The pre-roll on every lap of the loop warmed the processor and grew into underruns — now it is not there.
@@ -164,23 +159,21 @@ Tests: t519 (the fold), t520 (pixels), t521 (the composite, independently of kt-
   without FMA. `FrozenSinc` is rubato's `make_sincs` on `kt_plugin_api::math` and its AVX+FMA
   product as THE rounding: the portable path does the same eight lanes with `fmaf`, the AVX path
   is taken only behind `simd_level()`; t1067 holds them bit-equal. FMA is the DEFINITION here, not
-  an optimisation — the "no FMA" rule of the video SIMD section is about a SIMD twin rounding
-  differently from its scalar text, which cannot happen when both fuse. rubato itself still does
+  an optimisation. rubato itself still does
   the ratio, the buffering and the linear blend of two sincs.
 
 ## New effect parameters (R.33 C5, item 228)
 
 - **The default of a new parameter = the previous behaviour BYTE-FOR-BYTE.** All
   golden files (t26, GOLDEN_VIDEO, GOLDEN_AUDIO) rest exactly on it, and none of them
-  was regenerated in C5. Practice: the kernel has an explicit `plain` branch (the defaults) — it repeats the previous code verbatim, including the
-  AVX2 path; everything else is computed separately.
-- **Integers instead of round() where there is a GPU mirror.** `round()` in
+  was regenerated in C5. Practice: the kernel has an explicit `plain` branch (the defaults) — it repeats the previous code verbatim; everything else is computed separately.
+- **Integers instead of round() in a number that crosses into WGSL.** `round()` in
   WGSL rounds halves to EVEN, in Rust — AWAY FROM ZERO. The jitter of VHS
   lines drifted by a pixel because of this. The parameter is quantized once (×1024) and
-  from then on is computed in integers on both paths.
+  from then on is computed in integers.
 - **A kernel that edits the frame IN PLACE does not touch all channels.** VHS does not write
   green outside the scan line — on a line shift it stayed from the old
-  pixel, and the mirrors diverged. A new parameter MUST be checked on
+  pixel. A new parameter MUST be checked on
   ALL channels, not only on those the kernel wrote before.
 - The constructors `FxInstance::blur/edges/noise/vhs/glow/greenscreen/gain`
   set the defaults of the added fields — literals in the tests and in the calling
@@ -310,58 +303,52 @@ Three classes of video effect; the class determines ALL the placement of the cod
   non-linear (R.47) — `GeomPrim::Warp` (lens/twirl/ripple/kaleidoscope/
   cylinder): the input and the output of the primitive are the NORMALIZED centred
   space (the pre/post-affines are built by the builder; magnitudes ~1 — this
-  holds the f32 parity of the GPU); the precomputable part — f64 on the CPU into the uniform
+  holds the GPU's f32 precision); the precomputable part — f64 in the plan into the uniform
   once; neutral parameters — a SKIP of the step (identity bytes);
   PerPixel supersampling (the condition `Proj|Warp`). Since plugin-api-stage1 (D11.2) every
   warp is a GEOMETRY PLUGIN (`src/plugins/fx-video-distort`): its `GeoKernel::steps` gives the
-  cooked numbers and the unit (`WarpNorm`), its `warp` is the ONE f64 map both CPU loops call
-  through `WarpRef`, and its `warp_<id>` WGSL function is the mirror kt-gpu pastes into both
+  cooked numbers and the unit (`WarpNorm`), its `warp` is the f64 map the plan reads (`probe_program_lens`),
+  and its `warp_<id>` WGSL function is what kt-gpu pastes into both
   loops — edited in THE SAME COMMIT as the f64 text (t993, t329). corner_pin (`GeoStep::Proj`),
   mirror (`GeoStep::Mirror`, the exact lone path through `GeoKernel::lone` → `plugin_lone`, t994)
   and event_grid (`GeoStep::Grid`, the host keeps `grid_tile`) are geometry plugins too, and so is
   pan3d (a `Proj` from the camera the engine resolves, `GeoCtx::camera`; its `pan3d_forward` lives in
   `fx-video-distort/src/pan3d.rs`); the core keeps the Geometry node and CamMotion.
 - **Pointwise** (`geom::is_pointwise`): the colour of a pixel without neighbours.
-  The formula is ONE tap function (`tap_grade`/`tap_duo`/`tap_poster`/
-  `tap_vig`, f64): it is called by the CPU barrier (`pointwise_barrier`) and the CPU tap
-  of the merged pass; there are TWO WGSL mirrors — its own pass (the barrier position) and
-  the tap arm of geom_fused (kind 2..5, meta 4 bits). In total one f64 text and
-  its two WGSL mirrors; a divergence is caught by the t329 cycles. Vignette measures the coordinate of ITS OWN STAGE
+  The formula is ONE WGSL tap function `tap_<id>`, placed in two spots — its own pass (the barrier
+  position) and the tap arm of geom_fused; the t329 cycles catch a broken one. Vignette measures the coordinate of ITS OWN STAGE
   (rec[ti]/stage_w/h — a precedent from Noise).
 - **Barriers** (the remainder; PLUGINS since plugin-api-barriers, `src/plugins/fx-video-{blur,stylize}`
-  and greenscreen in `fx-video-color`): a `BarrierKernel` — the CPU `frame` over the host's
-  `RasterHost` (the resample, the bilinear sample and premultiplication keep ONE text here, with their
-  twins), the GPU pass graph, `Decl.alpha`. `apply_barrier` makes one dynamic call into it. Noise and
+  and greenscreen in `fx-video-color`): a `BarrierKernel` — the GPU pass graph and `Decl.alpha`. Noise and
   greenscreen are POINT-WISE plugins with a barrier kernel: their tap inside a series, the kernel at a
   series edge. They break the geo series; the K×-rule of item 313 applies to each on its own
   (Sharpen/DropShadow — mip ×K and 3 GPU passes; Pixelate — cell ×K,
   EXACT; Halftone — the pattern in LOGICAL coordinates l=p/K; RadialBlur —
   fractions of the frame + EXACTLY 16 taps as a constant; ChromaAb — fractions of the frame).
-  DropShadow: an input without alpha — passthrough on both paths; the formula at
+  DropShadow: an input without alpha — passthrough; the formula at
   alpha 255 degenerates into an identity (the early exit is an optimization).
 
 Checklist "add a video effect" (plugin-api-stage1 and plugin-api-barriers: a picked effect is a
 PLUGIN, the barriers included): in its family crate under `src/plugins/fx-video-*` —
 a `Manifest` (id = the file's `kind`, `Media::VideoFx`, the passport in FILE order with a `RowDecl`
 per row, `omit_default` where the file leaves the row out) with its `Decl.video_class`:
-- **point-wise** — a `VideoKernel` (`cook`/`tap`, or `cook_at`/`tap_at` with `Decl.positioned`)
+- **point-wise** — a `VideoKernel` (`cook`, or `cook_at` with `Decl.positioned`, and `gpu_params`)
   and its WGSL `tap_<id>` in `Gpu::Wgsl` (kt-gpu pastes it into the fused arms and builds its own
   pass; t974 holds the assembled text);
 - **geometry** — a `GeoKernel` whose `steps` give the host's vocabulary (`Warp` with a
   `warp_<id>` WGSL in `Gpu::Warp`, `Proj`, `Mirror`, `Grid`; an exact lone path through `lone`),
   neutral values give no steps;
-- **barrier** — a `BarrierKernel`: `cook` (clamps once per frame), `frame` (the byte reference;
-  its AVX2 branch only when `cx.simd`, byte-equal — t1053 runs every barrier both ways), `shaders`
+- **barrier** — a `BarrierKernel`: `cook` (clamps once per frame), `shaders`
   and `gpu` (the pass graph; the registry checks it on the defaults and the top at K 1 and 4,
   t1054), with `Gpu::Barrier` and `Decl.alpha`. The kernel scales its pixel geometry by
-  `cx.res_scale` and never decides K (t1055). A test plugin that names no host code runs on both
-  executors (t1052);
+  the `res_scale` of `GpuCtx` and never decides K. A test plugin that names no host code runs on the
+  executor (t1052);
 then `UiDecl` (the display name, the category and keyword key paths, the picker `variants` and,
 when the useful first click differs from the file's default, a `template`), its id in
 `BUILTIN_IDS` (kt-plugins-builtin, in family order), its place in kt-app's `VIDEO_ORDER`, a
 constructor in kt-model if callers build it, `param_label` + catalogues ×5 (+ subset-fonts for new
-glyphs). t328's GOLDEN_ALL line (the completeness lock), a tolerance class in t329 and t973's
-frozen form follow from `FxInstance::all()` (a barrier: a row in t1051 too); the semantic test — in geo_fuse (t330/t332/t333).
+glyphs). A tolerance class in t329 (the completeness lock) and t973's
+frozen form follow from `FxInstance::all()`; the semantic test — in geo_fuse (t330/t333).
 
 ## Shape masks (shape-masks)
 
@@ -372,6 +359,5 @@ frozen form follow from `FxInstance::all()` (a barrier: a row in t1051 too); the
 - **One mask px** is a project pixel of the reference frame's height on the raster (`px_of`) — not a
   raster or a native pixel: the interface and the engine use different reference sizes and must
   feather alike.
-- `apply_alpha`/`apply_mix` are integer and mirrored by `kt-gpu` (`mask.wgsl`, the coverage branch of
-  `layer_mix.wgsl`): edit them as a pair. `MaskOp`/`mask_space`/`mask_stops` are the plan's door: both
-  executors call them. The memo is keyed by the full Debug text, bounded to 16.
+- The coverage is uploaded; `kt-gpu` applies it in integers (`mask.wgsl`, the coverage branch of
+  `layer_mix.wgsl`). `MaskOp`/`mask_space`/`mask_stops` are the plan's door. The memo is keyed by the full Debug text, bounded to 16.

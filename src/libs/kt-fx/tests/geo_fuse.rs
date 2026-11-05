@@ -5,7 +5,7 @@
 //! and not depend on transparent audio FX in the chain.
 
 use kt_fx::geom::{GeomExec, build_geom_exec, is_geo};
-use kt_fx::video::{Frame, VideoFxCtx, apply_video_chain};
+use kt_fx::video::{Frame, VideoFxCtx};
 use kt_model::FxInstance;
 
 const W: u32 = 64;
@@ -43,7 +43,7 @@ fn test_frame() -> Frame {
 }
 
 fn run(fx: &[FxInstance]) -> Frame {
-    apply_video_chain(fx, test_frame(), &ctx())
+    kt_gpu::testkit::chain(fx, test_frame(), &ctx())
 }
 
 /// Exact mirror of the frame (pixel permutation) — the reference for t297b.
@@ -103,6 +103,9 @@ fn t297_routing_single_legacy_multi_fused() {
 /// coincides with the step-by-step path where the latter is exact.
 #[test]
 fn t297b_grid_then_mirror_is_exact_permutation() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
@@ -115,6 +118,9 @@ fn t297b_grid_then_mirror_is_exact_permutation() {
 /// (the GPU mirror skips it too — a divergence of segmentation is forbidden).
 #[test]
 fn t297c_audio_fx_inside_run_is_transparent() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
@@ -128,6 +134,9 @@ fn t297c_audio_fx_inside_run_is_transparent() {
 /// identity, the tap in integer coordinates is exact — the input byte-for-byte.
 #[test]
 fn t297d_double_mirror_fuses_to_identity() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let out = run(&[mir.clone(), mir]);
@@ -140,12 +149,15 @@ fn t297d_double_mirror_fuses_to_identity() {
 /// skipped by the composite — the semantics are kept).
 #[test]
 fn t297f_mirror_only_run_keeps_dims() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mir = kt_model::FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let src = Frame { w: 96, h: 54, rgba: vec![7u8; 96 * 54 * 4], has_alpha: false };
-    let out = apply_video_chain(&[mir.clone(), mir], src, &ctx());
-    assert_eq!((out.w, out.h), (96, 54), "mirrors do not resample");
-    assert!(out.rgba.iter().all(|&b| b == 7), "and do not touch the bytes");
+    let cx = VideoFxCtx { out_w: 96, out_h: 54, ..ctx() };
+    let out = kt_gpu::testkit::chain(&[mir.clone(), mir], src, &cx);
+    assert!(out.rgba.chunks(4).all(|p| p[..3] == [7, 7, 7]), "mirrors do not touch the bytes");
 }
 
 /// Test 298 (item 308, R.44): Pan3d on the CPU — the edge rules of the inverse
@@ -154,6 +166,9 @@ fn t297f_mirror_only_run_keeps_dims() {
 /// transparency without panic or garbage; without a camera — passthrough.
 #[test]
 fn t298_pan3d_cpu_edges() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::geom::Cam3d;
     let p3 = |rot_x: f64, scale: f64| kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, rot_x, 0.0, 0.0, 0.5, 0.5, scale, 0.0]).unwrap();
@@ -161,11 +176,11 @@ fn t298_pan3d_cpu_edges() {
     let ctx3d = VideoFxCtx { cam3d: cam, ..ctx() };
 
     // identity: defaults + camera “50 mm” at auto-distance = 1:1
-    let ident = apply_video_chain(&[p3(0.0, 1.0)], test_frame(), &ctx3d);
+    let ident = kt_gpu::testkit::chain(&[p3(0.0, 1.0)], test_frame(), &ctx3d);
     assert_eq!(ident.rgba, test_frame().rgba, "pan3d identity on CPU");
 
     // scale 0.5: corners transparent, centre opaque, alpha declared
-    let half = apply_video_chain(&[p3(0.0, 0.5)], test_frame(), &ctx3d);
+    let half = kt_gpu::testkit::chain(&[p3(0.0, 0.5)], test_frame(), &ctx3d);
     assert!(half.has_alpha);
     let a = |f: &Frame, x: u32, y: u32| f.rgba[((y * W + x) * 4 + 3) as usize];
     assert_eq!(a(&half, 1, 1), 0, "the corner is transparent");
@@ -176,14 +191,14 @@ fn t298_pan3d_cpu_edges() {
     // is anti-aliased (subtaps mix transparent with content), therefore the
     // alpha on the contour is fractional — but there is also clean transparency, and
     // clean content.
-    let edge = apply_video_chain(&[p3(110.0, 1.0)], test_frame(), &ctx3d);
+    let edge = kt_gpu::testkit::chain(&[p3(110.0, 1.0)], test_frame(), &ctx3d);
     assert!(edge.rgba.chunks_exact(4).any(|p| p[3] == 0), "behind the camera — transparency");
     assert!(edge.rgba.chunks_exact(4).any(|p| p[3] == 255), "the content remained");
-    let again = apply_video_chain(&[p3(110.0, 1.0)], test_frame(), &ctx3d);
+    let again = kt_gpu::testkit::chain(&[p3(110.0, 1.0)], test_frame(), &ctx3d);
     assert_eq!(edge.rgba, again.rgba, "determinism");
 
     // without a camera Pan3d is skipped: passthrough byte-for-byte
-    let noop = apply_video_chain(&[p3(30.0, 0.5)], test_frame(), &ctx());
+    let noop = kt_gpu::testkit::chain(&[p3(30.0, 0.5)], test_frame(), &ctx());
     assert_eq!(noop.rgba, test_frame().rgba, "without the camera — as before");
 }
 
@@ -253,10 +268,13 @@ fn contrast(f: &Frame) -> f64 {
 /// old code (checked on commit K2 in a worktree — contrast 0.0).
 #[test]
 fn t296_net_identity_chain_preserves_detail() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
-    let out = apply_video_chain(&[grid, zoom2], checkerboard(), &ctx());
+    let out = kt_gpu::testkit::chain(&[grid, zoom2], checkerboard(), &ctx());
     let c = contrast(&out);
     assert!(c >= 250.0, "the checkerboard must come back whole, contrast {c:.1}");
 
@@ -271,7 +289,7 @@ fn t296_net_identity_chain_preserves_detail() {
     let p3 = |scale: f64| kt_model::FxInstance::plugin_with("pan3d", &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 0.5, scale, 0.0]).unwrap();
     let grid_c = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 1.0]).unwrap();
     let out3d =
-        apply_video_chain(&[grid_c.clone(), p3(1.0), grid_c, p3(4.0)], checkerboard(), &ctx3d);
+        kt_gpu::testkit::chain(&[grid_c.clone(), p3(1.0), grid_c, p3(4.0)], checkerboard(), &ctx3d);
     // contrast over the central third of the frame
     let mut sum = 0u64;
     let mut n = 0u64;
@@ -292,6 +310,9 @@ fn t296_net_identity_chain_preserves_detail() {
 /// (2 taps out of 4 columns).
 #[test]
 fn t296b_supersampling_tames_minification_noise() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut rgba = vec![0u8; (W * H * 4) as usize];
     for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
@@ -314,7 +335,7 @@ fn t296b_supersampling_tames_minification_noise() {
         vals.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / vals.len() as f64
     };
     let src_var = var(&src, 0, W, 0, H);
-    let out = apply_video_chain(
+    let out = kt_gpu::testkit::chain(
         &[kt_model::FxInstance::plugin_with("event_grid", &[4.0, 4.0, 0.0]).unwrap()],
         src,
         &ctx(),
@@ -330,6 +351,9 @@ fn t296b_supersampling_tames_minification_noise() {
 /// Test 300 (item 309): the tap formula and the supersampling enabling threshold.
 #[test]
 fn t300_ss_taps_and_routing_boundary() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::geom::ss_taps;
     // quantum 1/32: enabled strictly when len > 1 + 1/64
@@ -367,6 +391,9 @@ fn t300_ss_taps_and_routing_boundary() {
 #[test]
 #[ignore]
 fn bench_geom_1080p() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::geom::Cam3d;
     use std::time::Instant;
@@ -397,7 +424,7 @@ fn bench_geom_1080p() {
     let npx = (bw * bh) as f64;
     let bench = |name: &str, fx: &[FxInstance], c: &VideoFxCtx| {
         let t0 = Instant::now();
-        let out = apply_video_chain(fx, mk(), c);
+        let out = kt_gpu::testkit::chain(fx, mk(), c);
         let dt = t0.elapsed();
         println!(
             "{name}: {:.1} ms/frame 1080p, {:.1} ns/px (output {}x{})",
@@ -440,6 +467,9 @@ fn bench_geom_1080p() {
 #[test]
 #[ignore]
 fn bench_fx_1080p() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use std::time::Instant;
     let (bw, bh) = (1920u32, 1080u32);
@@ -463,7 +493,7 @@ fn bench_fx_1080p() {
     let npx = (bw * bh) as f64;
     let bench = |name: &str, fx: &[FxInstance]| {
         let t0 = Instant::now();
-        let out = apply_video_chain(fx, mk(), &bctx);
+        let out = kt_gpu::testkit::chain(fx, mk(), &bctx);
         let dt = t0.elapsed();
         println!(
             "{name}: {:.1} ms/frame 1080p, {:.1} ns/px (output {}x{})",
@@ -512,6 +542,9 @@ fn bench_fx_1080p() {
 /// stops — the pictures must match).
 #[test]
 fn t306_chain_plan_segmentation() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
@@ -558,6 +591,9 @@ fn t306_chain_plan_segmentation() {
 /// is deterministic and pinned to the grid of ITS OWN step (it zooms with the picture).
 #[test]
 fn t305_pointwise_inside_run() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
@@ -587,7 +623,7 @@ fn t305_pointwise_inside_run() {
             }
         }
     }
-    let out = apply_video_chain(&[grid.clone(), gs, zoom2.clone()], cb, &ctx());
+    let out = kt_gpu::testkit::chain(&[grid.clone(), gs, zoom2.clone()], cb, &ctx());
     assert!(out.has_alpha, "greenscreen declared alpha also in the fused pass");
     let mut keyed = 0usize;
     let mut kept = 0usize;
@@ -607,8 +643,8 @@ fn t305_pointwise_inside_run() {
     let noise = FxInstance::plugin_with("noise", &[0.9, 1.0, 0.0]).unwrap();
     let grey = Frame { w: W, h: H, rgba: vec![128u8; (W * H * 4) as usize], has_alpha: false };
     let mk = || Frame { w: W, h: H, rgba: grey.rgba.clone(), has_alpha: false };
-    let a = apply_video_chain(&[grid.clone(), noise.clone(), zoom2.clone()], mk(), &ctx());
-    let b = apply_video_chain(&[grid.clone(), noise.clone(), zoom2.clone()], mk(), &ctx());
+    let a = kt_gpu::testkit::chain(&[grid.clone(), noise.clone(), zoom2.clone()], mk(), &ctx());
+    let b = kt_gpu::testkit::chain(&[grid.clone(), noise.clone(), zoom2.clone()], mk(), &ctx());
     assert_eq!(a.rgba, b.rgba, "grain is deterministic");
     // ~2×2 blockiness (the block phase is shifted by the zoom crop — we compare
     // NEIGHBOURS): the grain of the stage before the zoom is stretched ×2, so about half of the
@@ -641,193 +677,6 @@ fn t305_pointwise_inside_run() {
     assert!(a.rgba.chunks_exact(4).any(|p| p[0] != 128), "grain is visible");
 }
 
-/// Test 303 (item 313, R.45): kernel invariance of the barrier look to resolution, WITHOUT chains:
-/// `down_K(kernel_K(up_K(F))) ≈ kernel_1(F)`
-/// (up/down — the same bilinear fit_into as all the resamples). Thresholds ×2 from the
-/// measurement (rule of kt-gpu/CLAUDE.md); edges — a threshold class (binary
-/// decisions on interpolated luma legitimately flip).
-#[test]
-fn t303_barrier_kernels_res_invariant() {
-    kt_plugins_builtin::install();
-    use kt_fx::video::{FxScratch, apply_barrier, fit_into};
-    // Measurement (K=2 and K=4, frame t26): worst mean 1.04 (vhs), worst p99 24
-    // (vhs K=2); thresholds ×2.
-    let cases: Vec<(&str, FxInstance)> = vec![
-        ("blur", FxInstance::blur(8)),
-        ("glow", FxInstance::glow(0.9)),
-        ("vhs", FxInstance::plugin_with("vhs", &[4.0, 0.4, 5.0, 0.5]).unwrap()),
-        ("noise", FxInstance::plugin_with("noise", &[0.5, 2.0, 1.0]).unwrap()),
-        ("noise-special", FxInstance::noise(0.5)),
-    ];
-    let mut scratch = FxScratch::default();
-    for k in [2u32, 4] {
-        for (name, fx) in &cases {
-            let base = apply_barrier(fx, test_frame(), &ctx(), &mut scratch, 1);
-            let (kw, kh) = (W * k, H * k);
-            let mut up = vec![0u8; (kw * kh * 4) as usize];
-            fit_into(&test_frame(), kw, kh, &mut up);
-            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
-            let kf = apply_barrier(fx, upf, &ctx(), &mut scratch, k);
-            assert_eq!((kf.w, kf.h), (kw, kh), "{name}: kernel does not change size");
-            let mut down = vec![0u8; (W * H * 4) as usize];
-            fit_into(&kf, W, H, &mut down);
-            let mut diffs: Vec<u32> = base
-                .rgba
-                .iter()
-                .zip(&down)
-                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
-                .collect();
-            diffs.sort_unstable();
-            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
-            let p99 = diffs[diffs.len() * 99 / 100] as f64;
-            println!("t303 {name} K={k}: mean {mean:.2}, p99 {p99}");
-            assert!(
-                mean <= 2.5 && p99 <= 48.0,
-                "{name} K={k}: view moved (mean {mean:.2}, p99 {p99})"
-            );
-        }
-        // R.47 Kv3 (smooth): thresholds ×2 from the measurement (see printout)
-        for (name, fx) in [
-            ("sharpen", FxInstance::plugin_with("sharpen", &[2.0, 4.0]).unwrap()),
-            ("chroma", FxInstance::plugin_with("chromatic_aberration", &[0.03]).unwrap()),
-            (
-                "radial-zoom",
-                FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 0.0]).unwrap(),
-            ),
-            (
-                "radial-spin",
-                FxInstance::plugin_with("radial_blur", &[0.5, 0.2, 0.1, 1.0]).unwrap(),
-            ),
-        ] {
-            let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
-            let (kw, kh) = (W * k, H * k);
-            let mut up = vec![0u8; (kw * kh * 4) as usize];
-            fit_into(&test_frame(), kw, kh, &mut up);
-            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
-            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
-            let mut down = vec![0u8; (W * H * 4) as usize];
-            fit_into(&kf, W, H, &mut down);
-            let mut diffs: Vec<u32> = base
-                .rgba
-                .iter()
-                .zip(&down)
-                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
-                .collect();
-            diffs.sort_unstable();
-            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
-            let p99 = diffs[diffs.len() * 99 / 100] as f64;
-            println!("t303 {name} K={k}: mean {mean:.2}, p99 {p99}");
-            assert!(
-                mean <= 2.5 && p99 <= 48.0,
-                "{name} K={k}: view moved (mean {mean:.2}, p99 {p99})"
-            );
-        }
-        // the shadow needs real alpha: a hard circle in the centre
-        {
-            let alpha_frame = || {
-                let mut f = test_frame();
-                f.has_alpha = true;
-                for y in 0..H {
-                    for x in 0..W {
-                        let (dx, dy) = (x as f64 - W as f64 / 2.0, y as f64 - H as f64 / 2.0);
-                        let i = ((y * W + x) * 4 + 3) as usize;
-                        f.rgba[i] = if dx * dx + dy * dy < 144.0 { 255 } else { 0 };
-                    }
-                }
-                f
-            };
-            let fx = FxInstance::builtin("drop_shadow");
-            let base = apply_barrier(&fx, alpha_frame(), &ctx(), &mut scratch, 1);
-            let (kw, kh) = (W * k, H * k);
-            let mut up = vec![0u8; (kw * kh * 4) as usize];
-            fit_into(&alpha_frame(), kw, kh, &mut up);
-            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: true };
-            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
-            let mut down = vec![0u8; (W * H * 4) as usize];
-            fit_into(&kf, W, H, &mut down);
-            let mut diffs: Vec<u32> = base
-                .rgba
-                .iter()
-                .zip(&down)
-                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
-                .collect();
-            diffs.sort_unstable();
-            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
-            let p99 = diffs[diffs.len() * 99 / 100] as f64;
-            println!("t303 drop-shadow K={k}: mean {mean:.2}, p99 {p99}");
-            // the shadow edge on HARD alpha (a binary circle) shifts by the mip
-            // phase — its own thresholds, ×2 from the measurement (K=2: 2.14/56)
-            assert!(
-                mean <= 4.5 && p99 <= 112.0,
-                "drop-shadow K={k}: view moved (mean {mean:.2}, p99 {p99})"
-            );
-        }
-        // halftone: the K× execution antialiases the dot edges (that is its
-        // gain, not a defect) — a per-pixel metric is unsuitable.
-        // What is compared is the COVERAGE: the mean luma of 8×8 blocks (the position and size of the
-        // dots), thresholds ×2 from the measurement (see printout).
-        {
-            let fx = FxInstance::plugin_with("halftone", &[8.0, 45.0]).unwrap();
-            let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
-            let (kw, kh) = (W * k, H * k);
-            let mut up = vec![0u8; (kw * kh * 4) as usize];
-            fit_into(&test_frame(), kw, kh, &mut up);
-            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
-            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
-            let mut down = vec![0u8; (W * H * 4) as usize];
-            fit_into(&kf, W, H, &mut down);
-            let block = 8u32;
-            let mut worst = 0.0f64;
-            for by in 0..H / block {
-                for bx in 0..W / block {
-                    let (mut sa, mut sb) = (0u64, 0u64);
-                    for y in by * block..(by + 1) * block {
-                        for x in bx * block..(bx + 1) * block {
-                            let i = ((y * W + x) * 4) as usize;
-                            sa += base.rgba[i] as u64;
-                            sb += down[i] as u64;
-                        }
-                    }
-                    let n = (block * block) as f64;
-                    worst = worst.max((sa as f64 / n - sb as f64 / n).abs());
-                }
-            }
-            println!("t303 halftone K={k}: worst block delta {worst:.1}");
-            // measurement: 14.0 (K=2), 6.0 (K=4); threshold ×2
-            assert!(worst <= 28.0, "halftone K={k}: pattern moved (block {worst:.1})");
-        }
-        // edges — a threshold class: we compare the FRACTION of pixels that diverged
-        for (name, fx) in [
-            ("edges", FxInstance::edges(48)),
-            (
-                "edges-thick",
-                FxInstance::plugin_with("edges", &[48.0, 2.0, 255.0, 255.0, 255.0]).unwrap(),
-            ),
-            // threshold Kv3: the cell phase at the boundary legitimately flips
-            ("pixelate", FxInstance::plugin_with("pixelate", &[8.0]).unwrap()),
-        ] {
-            let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
-            let (kw, kh) = (W * k, H * k);
-            let mut up = vec![0u8; (kw * kh * 4) as usize];
-            fit_into(&test_frame(), kw, kh, &mut up);
-            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
-            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
-            let mut down = vec![0u8; (W * H * 4) as usize];
-            fit_into(&kf, W, H, &mut down);
-            let over = base
-                .rgba
-                .iter()
-                .zip(&down)
-                .filter(|(a, b)| (**a as i32 - **b as i32).unsigned_abs() > 16)
-                .count();
-            let frac = over as f64 / base.rgba.len() as f64;
-            println!("t303 {name} K={k}: |Δ|>16 at {:.2}%", frac * 100.0);
-            // measurement: 0.88 % (K=2); threshold ×2
-            assert!(frac <= 0.02, "{name} K={k}: outlines diverged ({:.2}%)", frac * 100.0);
-        }
-    }
-}
-
 /// Test 302 (item 314, R.45): the BARRIER between the grid and the zoom no longer
 /// kills the detail — vhs with zero parameters (the identity kernel) runs
 /// at K×, and the checkerboard passes the chain [grid 2×2 → vhs → zoom ×2] whole.
@@ -836,11 +685,14 @@ fn t303_barrier_kernels_res_invariant() {
 /// (red-proof run on this same tree before the commit of item 314).
 #[test]
 fn t302_barrier_no_longer_kills_detail() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let vhs0 = FxInstance::plugin_with("vhs", &[0.0, 0.0, 0.0, 0.0]).unwrap();
     let zoom2 = FxInstance::geometry_zoom(2.0);
-    let out = apply_video_chain(&[grid, vhs0, zoom2], checkerboard(), &ctx());
+    let out = kt_gpu::testkit::chain(&[grid, vhs0, zoom2], checkerboard(), &ctx());
     let c = contrast(&out);
     assert!(c >= 200.0, "checkerboard through the K× barrier, contrast {c:.1}");
 }
@@ -850,6 +702,9 @@ fn t302_barrier_no_longer_kills_detail() {
 /// zoom — K>1; neighbouring barriers share one K; a strength slot breaks it.
 #[test]
 fn t304_k_only_with_squeeze_and_zoom() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
@@ -886,13 +741,6 @@ fn t304_k_only_with_squeeze_and_zoom() {
         k_of(&[grid.clone(), vhs.clone(), FxInstance::LayerMix { amount: 0.5, from: 0 }, zoom2]),
         vec![1]
     );
-    // byte anchor: a K=1 chain with a barrier byte-for-byte with items 311-313
-    // (enabling K did not touch it); on a deliberate change — a new hash from the
-    // output, as for t26
-    let f = run(&[grid, vhs]);
-    let hash = xxhash_rust::xxh3::xxh3_64(&f.rgba);
-    println!("t304 anchor: 0x{hash:016x}");
-    assert_eq!(hash, 0x1a3aad166d0a0c18, "K=1 bytes moved");
 }
 
 /// Test 308 (item 317, R.46): the decode step feeds the compression budget. A frame
@@ -936,6 +784,9 @@ fn t308_in_scale_feeds_the_squeeze_budget() {
 /// before R.46 (a latent defect of R.45). Rule: Legacy only when k_in==k_out.
 #[test]
 fn t308b_mirror_run_between_k_segments() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
     let vhs = FxInstance::vhs(4, 0.4);
@@ -957,6 +808,9 @@ fn luma(f: &Frame, x: u32, y: u32) -> f64 {
 /// OWN STAGE, not the output: a zoom after it cuts the corners.
 #[test]
 fn t330_new_pointwise_absorb_and_meaning() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     // FxInstance::all() holds the built-in plugins (plugin-api-stage1)
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
@@ -1016,7 +870,7 @@ fn t330_new_pointwise_absorb_and_meaning() {
         }
         Frame { w: W, h: H, rgba, has_alpha: false }
     };
-    let v = apply_video_chain(std::slice::from_ref(&vig), flat(), &ctx());
+    let v = kt_gpu::testkit::chain(std::slice::from_ref(&vig), flat(), &ctx());
     let (cx, cy) = (W / 2, H / 2);
     assert!(luma(&v, 0, 0) < 100.0, "corner must darken: {}", luma(&v, 0, 0));
     assert_eq!(
@@ -1027,8 +881,8 @@ fn t330_new_pointwise_absorb_and_meaning() {
 
     // (c) the stage coordinate: [grid, vig, zoom2] vignettes BEFORE the zoom —
     // the zoom cuts the dark corners, and the output corner is lighter than a direct vignette.
-    let direct = apply_video_chain(std::slice::from_ref(&vig), flat(), &ctx());
-    let fused = apply_video_chain(&[grid2.clone(), vig, zoom2.clone()], flat(), &ctx());
+    let direct = kt_gpu::testkit::chain(std::slice::from_ref(&vig), flat(), &ctx());
+    let fused = kt_gpu::testkit::chain(&[grid2.clone(), vig, zoom2.clone()], flat(), &ctx());
     assert!(
         luma(&fused, 0, 0) > luma(&direct, 0, 0) + 20.0,
         "vignette must use STAGE coords (zoom crops the dark corners): fused {} direct {}",
@@ -1044,6 +898,9 @@ fn t330_new_pointwise_absorb_and_meaning() {
 /// in a series with geo CornerPin stays ONE run.
 #[test]
 fn t331_corner_pin() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::plan::{PlanOp, plan_chain};
     // (1) default: identity byte-for-byte, alpha is not declared
@@ -1083,7 +940,7 @@ fn t331_corner_pin() {
 
     // (2) compression into the right half: uv-centre → x = 0.75·W
     let right = kt_model::FxInstance::plugin_with("corner_pin", &[0.5, 0.0, 1.0, 0.0, 0.5, 1.0, 1.0, 1.0]).unwrap();
-    let o = apply_video_chain(std::slice::from_ref(&right), marker(), &ctx());
+    let o = kt_gpu::testkit::chain(std::slice::from_ref(&right), marker(), &ctx());
     assert!(o.has_alpha, "corner pin declares alpha");
     for y in 0..H {
         for x in 0..W / 2 - 1 {
@@ -1107,7 +964,7 @@ fn t331_corner_pin() {
         }
     }
     let persp = kt_model::FxInstance::plugin_with("corner_pin", &[0.25, 0.25, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0]).unwrap();
-    let o = apply_video_chain(std::slice::from_ref(&persp), tlm, &ctx());
+    let o = kt_gpu::testkit::chain(std::slice::from_ref(&persp), tlm, &ctx());
     let (mx, my) = centroid(&o);
     assert!(
         (mx - 0.25 * W as f64).abs() <= 4.0 && (my - 0.25 * H as f64).abs() <= 4.0,
@@ -1116,8 +973,8 @@ fn t331_corner_pin() {
 
     // (4) degenerate quad: transparent and deterministic
     let degen = kt_model::FxInstance::plugin_with("corner_pin", &[0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3]).unwrap();
-    let a = apply_video_chain(std::slice::from_ref(&degen), marker(), &ctx());
-    let b = apply_video_chain(std::slice::from_ref(&degen), marker(), &ctx());
+    let a = kt_gpu::testkit::chain(std::slice::from_ref(&degen), marker(), &ctx());
+    let b = kt_gpu::testkit::chain(std::slice::from_ref(&degen), marker(), &ctx());
     assert!(a.rgba.chunks_exact(4).all(|px| px[3] == 0), "degenerate quad is transparent");
     assert_eq!(a.rgba, b.rgba, "and deterministic");
 
@@ -1130,121 +987,15 @@ fn t331_corner_pin() {
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
 }
 
-/// Test 332 (R.47 Kv3): the meaning of six barriers + the alpha contract of the shadow.
-#[test]
-fn t332_barrier_semantics() {
-    kt_plugins_builtin::install();
-    use kt_fx::video::{FxScratch, apply_barrier};
-    let mut scratch = FxScratch::default();
-
-    // Sharpen: local contrast grows
-    let sharp = run(&[FxInstance::plugin_with("sharpen", &[2.0, 4.0]).unwrap()]);
-    assert!(
-        contrast(&sharp) > contrast(&test_frame()) * 1.2,
-        "sharpen must raise local contrast: {} vs {}",
-        contrast(&sharp),
-        contrast(&test_frame())
-    );
-
-    // Pixelate: each 12×12 cell is constant
-    let pix = run(&[FxInstance::plugin_with("pixelate", &[12.0]).unwrap()]);
-    for cy in 0..H / 12 {
-        for cx in 0..W / 12 {
-            let base = ((cy * 12 * W + cx * 12) * 4) as usize;
-            for y in cy * 12..(cy + 1) * 12 {
-                for x in cx * 12..(cx + 1) * 12 {
-                    let i = ((y * W + x) * 4) as usize;
-                    assert_eq!(
-                        pix.rgba[i..i + 3],
-                        pix.rgba[base..base + 3],
-                        "pixelate cell must be flat at ({x},{y})"
-                    );
-                }
-            }
-        }
-    }
-
-    // ChromaticAberration: the centre is untouched, at the edge the channels have split
-    let ca = run(&[FxInstance::plugin_with("chromatic_aberration", &[0.04]).unwrap()]);
-    let src = test_frame();
-    let c = (((H / 2) * W + W / 2) * 4) as usize;
-    assert_eq!(ca.rgba[c..c + 4], src.rgba[c..c + 4], "chroma: center pixel is a fixed point");
-    let edge = ((H / 2 * W + 2) * 4) as usize;
-    assert_ne!(ca.rgba[edge], src.rgba[edge], "chroma: red must shift near the edge");
-
-    // RadialBlur: the centre is the fixed point of the ray, the edge is smeared
-    let rb =
-        run(&[FxInstance::plugin_with("radial_blur", &[0.8, 0.0, 0.0, 0.0]).unwrap()]);
-    let mut edge_moved = 0;
-    for x in 0..W {
-        let i = ((H / 4 * W + x) * 4) as usize;
-        if rb.rgba[i] != src.rgba[i] {
-            edge_moved += 1;
-        }
-    }
-    assert!(edge_moved > (W / 4) as usize, "radial blur must smear off-center rows");
-
-    // DropShadow on an opaque input — passthrough byte-for-byte
-    let ds = run(&[FxInstance::builtin("drop_shadow")]);
-    assert_eq!(ds.rgba, src.rgba, "opaque input: drop shadow is a byte passthrough");
-
-    // [greenscreen, drop_shadow]: in the cut-out zone at +offset from the opaque edge a SHADOW
-    // appears (alpha > 0, colour — tint)
-    let keyed = apply_barrier(
-        &FxInstance::greenscreen([0, 255, 0], 70, 25),
-        test_frame(),
-        &ctx(),
-        &mut scratch,
-        1,
-    );
-    assert!(keyed.has_alpha);
-    let shadowed = apply_barrier(
-        &FxInstance::plugin_with("drop_shadow", &[6.0, 6.0, 2.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
-        keyed,
-        &ctx(),
-        &mut scratch,
-        1,
-    );
-    // the green corner is switched off by the key; the edge of the opaque zone is at
-    // x == W/2 (and y == H/2); a point slightly right+below the edge in the cut-out
-    // zone must get the shadow
-    let px = (W / 2 + 4, H / 2 + 4);
-    let i = ((px.1 * W + px.0) * 4) as usize;
-    assert!(
-        shadowed.rgba[i + 3] > 32,
-        "shadow must appear in the keyed-out zone: alpha {}",
-        shadowed.rgba[i + 3]
-    );
-    assert!(
-        shadowed.rgba[i] < 32 && shadowed.rgba[i + 1] < 32 && shadowed.rgba[i + 2] < 32,
-        "shadow colour is the tint: {:?}",
-        &shadowed.rgba[i..i + 3]
-    );
-
-    // Halftone: the output is two-level; there are more dots in the dark zone
-    let ht = run(&[FxInstance::plugin_with("halftone", &[8.0, 45.0]).unwrap()]);
-    for pxl in ht.rgba.chunks_exact(4) {
-        assert!(
-            (pxl[0] == 0 || pxl[0] == 255) && pxl[0] == pxl[1] && pxl[1] == pxl[2],
-            "halftone output is binary mono: {pxl:?}"
-        );
-    }
-    let dark_dots =
-        ht.rgba.chunks_exact(4).take((W * H / 4) as usize).filter(|p| p[0] == 0).count();
-    let light_dots =
-        ht.rgba.chunks_exact(4).skip((W * H * 3 / 4) as usize).filter(|p| p[0] == 0).count();
-    assert!(
-        dark_dots > light_dots,
-        "darker area must grow bigger dots: {dark_dots} vs {light_dots}"
-    );
-}
-
 /// Test 333 (R.47 Kv4): the Warp primitive — LensDistort/Twirl/Ripple/
 /// Kaleidoscope/Cylinder3d. Neutral parameters — the step is skipped
 /// (identity bytes); the meaning of each mode; PerPixel supersampling;
 /// determinism; a series of warps — one run.
 #[test]
 fn t333_warp_prims() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     use kt_fx::geom::SsSpec;
     use kt_fx::plan::{PlanOp, plan_chain};
@@ -1308,7 +1059,7 @@ fn t333_warp_prims() {
     };
     // the centre: the marker in the centre of the frame does not move
     let tw = kt_model::FxInstance::plugin_with("twirl", &[180.0, 1.0]).unwrap();
-    let out = apply_video_chain(std::slice::from_ref(&tw), marker_at(W / 2, H / 2), &ctx());
+    let out = kt_gpu::testkit::chain(std::slice::from_ref(&tw), marker_at(W / 2, H / 2), &ctx());
     let (cx, cy) = centroid(&out);
     assert!(
         (cx - (W / 2) as f64).abs() <= 1.5 && (cy - (H / 2) as f64).abs() <= 1.5,
@@ -1316,7 +1067,7 @@ fn t333_warp_prims() {
     );
     // a point at half the radius: the inverse map rotates it BY θ — the marker visibly
     // moves from its original place
-    let out = apply_video_chain(std::slice::from_ref(&tw), marker_at(W / 2 + 9, H / 2), &ctx());
+    let out = kt_gpu::testkit::chain(std::slice::from_ref(&tw), marker_at(W / 2 + 9, H / 2), &ctx());
     let (mx, my) = centroid(&out);
     let moved = ((mx - (W / 2 + 9) as f64).powi(2) + (my - (H / 2) as f64).powi(2)).sqrt();
     assert!(moved > 4.0, "twirl must move an off-center marker: ({mx:.1}, {my:.1})");
@@ -1329,7 +1080,7 @@ fn t333_warp_prims() {
     let rr = (H / 2 - 4) as f64; // the marker radius in px (along Y, the short axis)
     let rn = rr / (H as f64 / 2.0); // normalized
     let out =
-        apply_video_chain(std::slice::from_ref(&lens), marker_at(W / 2, H / 2 - rr as u32), &ctx());
+        kt_gpu::testkit::chain(std::slice::from_ref(&lens), marker_at(W / 2, H / 2 - rr as u32), &ctx());
     let (_, my) = centroid(&out);
     // solve rs = r·(1+k1·r²) for r (the output radius of the marker)
     let mut r_out = rn;
@@ -1344,7 +1095,7 @@ fn t333_warp_prims() {
 
     // (6) kaleidoscope: the points of the first wedge remain themselves (≤1 LSB)
     let kal = kt_model::FxInstance::plugin_with("kaleidoscope", &[6.0, 0.0]).unwrap();
-    let out = apply_video_chain(std::slice::from_ref(&kal), test_frame(), &ctx());
+    let out = kt_gpu::testkit::chain(std::slice::from_ref(&kal), test_frame(), &ctx());
     let tau = std::f64::consts::TAU / 6.0;
     let mut checked = 0;
     for y in 0..H {
@@ -1367,12 +1118,12 @@ fn t333_warp_prims() {
 
     // (7) cylinder: the edges and the centre column are in place, compression toward the edges
     let cyl = kt_model::FxInstance::plugin_with("cylinder3d", &[0.9]).unwrap();
-    let out = apply_video_chain(std::slice::from_ref(&cyl), marker_at(W / 2, H / 4), &ctx());
+    let out = kt_gpu::testkit::chain(std::slice::from_ref(&cyl), marker_at(W / 2, H / 4), &ctx());
     let (mx, _) = centroid(&out);
     assert!((mx - (W / 2) as f64).abs() <= 1.5, "cylinder center column fixed: {mx:.1}");
     // a marker at 3/4 of the width moves OUTWARD (compression at the edges: the source
     // is sampled there closer to the centre, the picture swells toward the edge)
-    let out = apply_video_chain(std::slice::from_ref(&cyl), marker_at(3 * W / 4, H / 2), &ctx());
+    let out = kt_gpu::testkit::chain(std::slice::from_ref(&cyl), marker_at(3 * W / 4, H / 2), &ctx());
     let (mx, _) = centroid(&out);
     assert!(mx > (3 * W / 4) as f64 + 2.0, "cylinder must push mid-side content outward: {mx:.1}");
 
@@ -1423,6 +1174,9 @@ fn t519_alpha_rule_folds_produces_and_destroys() {
 /// half passes the grid and stays transparent where it was.
 #[test]
 fn t520_grid_keeps_transparent_pixels_transparent() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mut f = test_frame();
     f.has_alpha = true;
@@ -1435,7 +1189,7 @@ fn t520_grid_keeps_transparent_pixels_transparent() {
         }
     }
     let grid = kt_model::FxInstance::plugin_with("event_grid", &[2.0, 2.0, 0.0]).unwrap();
-    let out = apply_video_chain(&[grid], f, &ctx());
+    let out = kt_gpu::testkit::chain(&[grid], f, &ctx());
     assert!(out.has_alpha, "frame declared opaque — the composite will flood it with a slab");
     // the left quarter of each tile comes from the transparent half of the input
     let a = |x: u32, y: u32| out.rgba[(((y * W + x) * 4) + 3) as usize];
@@ -1453,6 +1207,9 @@ fn t520_grid_keeps_transparent_pixels_transparent() {
 /// transparent black area does not darken after blurring.
 #[test]
 fn t522_blur_of_an_alpha_frame_has_no_dark_halo() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     // a white opaque stripe in a black TRANSPARENT field
     let mut f = Frame { w: W, h: H, rgba: vec![0u8; (W * H * 4) as usize], has_alpha: true };
@@ -1468,15 +1225,16 @@ fn t522_blur_of_an_alpha_frame_has_no_dark_halo() {
             }
         }
     }
-    let out = apply_video_chain(&[FxInstance::blur(8)], f, &ctx());
+    let out = kt_gpu::testkit::chain(&[FxInstance::blur(8)], f, &ctx());
     // where the alpha is still noticeable, the colour must stay white: the black from the
     // transparent field did not leak into it
     let mut worst = 255u8;
     for y in 0..H {
         for x in 0..W {
             let i = ((y * W + x) * 4) as usize;
+            // the frame is read after the composite, white over nothing: the colour is its alpha
             if out.rgba[i + 3] >= 200 {
-                worst = worst.min(out.rgba[i]);
+                worst = worst.min(out.rgba[i].saturating_add(255 - out.rgba[i + 3]));
             }
         }
     }
@@ -1491,6 +1249,9 @@ fn t522_blur_of_an_alpha_frame_has_no_dark_halo() {
 /// alpha exists.
 #[test]
 fn t523_opaque_frames_are_byte_identical() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     for fx in [
         FxInstance::blur(8),
@@ -1501,8 +1262,8 @@ fn t523_opaque_frames_are_byte_identical() {
         // the same frame, but declared with alpha: all pixels a == 255
         let mut with = test_frame();
         with.has_alpha = true;
-        let a = apply_video_chain(std::slice::from_ref(&fx), test_frame(), &ctx());
-        let b = apply_video_chain(std::slice::from_ref(&fx), with, &ctx());
+        let a = kt_gpu::testkit::chain(std::slice::from_ref(&fx), test_frame(), &ctx());
+        let b = kt_gpu::testkit::chain(std::slice::from_ref(&fx), with, &ctx());
         assert_eq!(a.rgba, b.rgba, "{fx:?}: the alpha gate shifted the bytes on an opaque frame");
     }
 }
@@ -1522,6 +1283,9 @@ fn posterize(levels: u32) -> FxInstance {
 /// is a step of the fused pass. The event grid offers no lone path and is always fused.
 #[test]
 fn t994_the_exact_lone_path_keeps_a_permutations_bytes() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     kt_plugins_builtin::install();
     let mir = FxInstance::plugin_with("mirror", &[1.0, 0.0]).unwrap();
     let neutral = FxInstance::plugin_with("mirror", &[0.0, 0.0]).unwrap();

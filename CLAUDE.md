@@ -27,7 +27,7 @@ cargo run -p kt-cli -- probe <project.kt> <from_s> <to_s> [--time]
                            # --time: does the audio render keep up with real time
                            # (judge SPEED only on a RELEASE build — debug
                            # is 9 times slower, item 301)
-cargo run -p kt-cli -- preview <project.kt> <from_s> <to_s> [--size WxH] [--cpu]
+cargo run -p kt-cli -- preview <project.kt> <from_s> <to_s> [--size WxH]
                            # plays a range through the real player against a wall-clock
                            # output device: V-fps and V-skipped as the performance panel
                            # counts them, and a frame's time stage by stage. On a RELEASE
@@ -82,8 +82,7 @@ src/plugins/*       the effects a person picks, one crate per family: fx-audio-{
 
 The core keeps what is not an effect a person picks: the Geometry node, CamMotion, LayerMix, the
 crossfade and the title. Every picked effect is a plugin. Since `plugin-api-barriers` this includes
-the barriers: each declares a CPU kernel, its SIMD twin behind the host's one switch, and a GPU
-pass graph.
+the barriers: each declares its kernel and a GPU pass graph.
 
 Every libs/ crate and apps/kt-app has its own `CLAUDE.md` with invariants and non-obvious decisions. Read it before editing the crate.
 
@@ -107,11 +106,11 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
 4. **The cache is the only truth about coverage.** Coverage bars = `BurstCache::coverage()`; quality and the decode scale step are part of the key and part of the ORDER (prefetch, composite, export and the bars all ask the same thing) — `video-plan`, `media-index`.
 5. **A decoder instance is owned by exactly one thread.** **Live playback** owns no sources: playback, prefetch and thumbnails go through the MediaWorker priority queue with generation cancellation, and playback never blocks. **The offline path** opens its OWN short-lived source under three conditions: it **does not share** it with anyone, it **promises no tempo** and its job is **finite and cancellable**. Breaking any of them — back to the queue — `media-index`.
 6. **The cpal callback is the master clock.** The playhead advances by the frames the callback HANDED OUT; starvation gives silence but does not stop time (except before the first frame); no allocations and no locks in the callback — `transport`.
-7. **There is one composition code path.** `frame_plan` is shared by preview and export; the CPU is the byte reference and the full fallback, the GPU is the default and is held to the `FrameTol` tolerances; geometry series are fused in one pass, the chain plan is built by `plan_chain`; an export in progress does not switch backends — `video-plan`, `video-fx`.
+7. **There is one composition code path.** `frame_plan` is shared by preview and export; the GPU (`dyn VideoGpuExec`) is its one executor, held to stored frames by the `FrameTol` tolerances; with no device the preview has no picture and says so, and an export refuses; geometry series are fused in one pass, the chain plan is built by `plan_chain` — `video-plan`, `video-fx`.
 8. **Timeline scroll/zoom produces no decode requests.** Waveforms come from the peak pyramid, thumbnails from the sidecar, reel previews from the cache keyed by `content_hash` with a disk tier — `media-index`, `compositions`.
 9. **Export is fully in-process.** libavformat/libavcodec of the system FFmpeg, an encoder cascade with a real open check; no temporary files, no external binary. The one exception: our own binary, started once, meets a libva driver first, so a driver that faults cannot end the render — `export`.
 10. **The binary does not link against libav*.** FFmpeg loaded at run time, the major version from `avcodec_version()`, one binary for FFmpeg 6/7/8/9: Linux by SONAME (`ldd … | grep -c libav` == 0), Windows from ONE folder found by the search plan or downloaded on a click (the PE imports name no av*/sw* DLL and no mingw runtime) — `media-index`.
-11. **Determinism.** Audio — byte for byte, always; video on the CPU — against the committed reference; on the GPU — byte for byte between runs on one device, across machines — within tolerances of the CPU; no wall clock in offline paths; no platform libm on a frozen path — `kt_plugin_api::math` (t1066) — `video-plan`, `export`.
+11. **Determinism.** Audio — byte for byte, always; video — byte for byte between runs on one device, across machines — within tolerances of the stored frames; no wall clock in offline paths; no platform libm on a frozen path — `kt_plugin_api::math` (t1066) — `video-plan`, `export`.
 12. **Video display is not quantized by the audio callback, the UI does not heat the system.** The display position is interpolated (`video_playhead()`), repaint only while something moves, no allocations in draw paths — `transport`, `ui-timeline`.
 
 ## Rules for agents

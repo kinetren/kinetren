@@ -102,7 +102,7 @@ fn frame(vr: &mut VideoRenderer, t: Tick) -> (Vec<u8>, kt_fx::video::FrameCost) 
             std::sync::Arc::new(f),
         );
     }
-    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
+    let (out, complete) = kt_gpu::testkit::compose(vr, &cache, t, q);
     assert!(complete, "frame {t:?}: all layers are warm");
     use kt_engine::VideoGpuExec as _;
     (out, kt_gpu::testkit::engine().last_cost())

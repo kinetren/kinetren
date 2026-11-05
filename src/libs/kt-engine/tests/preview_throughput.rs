@@ -352,14 +352,24 @@ fn sharp_over_backdrop() -> Project {
     p
 }
 
+/// An executor of blank frames: t1524 measures the decoder, not the machine's composite.
+struct Blank(kt_engine::GpuBackendInfo);
+impl kt_engine::VideoGpuExec for Blank {
+    fn execute_into(&self, p: &kt_engine::FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        out.clear();
+        out.resize((p.out_w * p.out_h * 4) as usize, 0);
+        Ok(true)
+    }
+    fn info(&self) -> &kt_engine::GpuBackendInfo {
+        &self.0
+    }
+}
+
 /// t1524: the consequence, in the performance panel's terms. A file that takes 12 ms a picture
 /// keeps up with 25 fps at one pass; the two passes of the sharp layer and its backdrop, the second
 /// seeking back a GOP, do not.
 #[test]
 fn t1524_a_layer_over_its_backdrop_plays_in_time() {
-    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
-        return;
-    }
     let p = sharp_over_backdrop();
     let counts = Arc::new(Mutex::new(Counts::default()));
     let src = GopSource::new((3840, 1608), Duration::from_millis(12), counts.clone());
@@ -372,7 +382,11 @@ fn t1524_a_layer_over_its_backdrop_plays_in_time() {
 
     let (player, ring) = Player::new(p, vec![(MediaId(1), Box::new(src) as Box<dyn MediaSource>)]);
     player.set_preview_quality(q);
-    player.set_video_gpu(Some(kt_gpu::testkit::engine()));
+    player.set_video_gpu(Some(Arc::new(Blank(kt_engine::GpuBackendInfo {
+        name: String::new(),
+        backend: String::new(),
+        software: true,
+    }))));
     let r = play_range(
         &player,
         ring,

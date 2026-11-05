@@ -24,16 +24,13 @@
 //! | demosaic false colour | false-colour suppression |
 //! | the near-infrared leak | the IR-cut filter, RGB-IR subtraction |
 //!
-//! A barrier plugin with all three sides of the contract: the CPU kernel (`cpu`, the byte
-//! reference, f32), its AVX2 twin (the same row loops compiled for AVX2, `simd`), and a GPU graph of
-//! up to twelve passes whose WGSL mirrors the CPU pass by pass at the same quantization points
+//! A barrier plugin: a GPU graph of up to twelve passes (the f32 model of the same passes for the
+//! consequence tests lives in `tests/model/cpu.rs`)
 //! (design D1). `view` shows the picture after any stage.
 
 use std::sync::Arc;
 
-use kt_plugin_api::barrier::{
-    AlphaRel, BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot,
-};
+use kt_plugin_api::barrier::{AlphaRel, BarrierKernel, GpuCtx, Node, Slot};
 use kt_plugin_api::math::FrozenMath;
 use kt_plugin_api::{
     Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, ParamValues, Plugin,
@@ -41,10 +38,7 @@ use kt_plugin_api::{
 };
 
 pub mod cfa;
-pub mod cpu;
 pub mod mic;
-#[cfg(target_arch = "x86_64")]
-mod simd;
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
@@ -1155,24 +1149,9 @@ impl Plan {
 }
 
 impl BarrierKernel for CameraIsp {
-    /// The host never calls the cooked forms (D2): they answer the defaults.
-    fn frame(&self, _k: &Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        self.frame_values(&self.defaults(), f, cx, scratch)
-    }
 
     fn gpu(&self, _k: &Cooked, g: &GpuCtx, out: &mut Vec<Node>) {
         self.gpu_values(&self.defaults(), g, out)
-    }
-
-    fn frame_values(
-        &self,
-        p: &[f64],
-        f: Frame,
-        cx: &BarrierCtx,
-        scratch: &mut dyn Scratch,
-    ) -> Frame {
-        let plan = Plan::new(p, cx.res_scale, cx.burst_index);
-        cpu::run(&plan, f, cx.simd, scratch)
     }
 
     fn shaders(&self) -> &'static [&'static str] {

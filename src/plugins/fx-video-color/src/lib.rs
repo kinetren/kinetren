@@ -2,12 +2,11 @@
 //! Posterize is the pilot (D9): the smallest kernel that crosses all four executor positions — the
 //! CPU barrier, the CPU tap of the fused pass, its own GPU pass and the GPU tap arm.
 
-pub mod single_source;
 
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
-use kt_plugin_api::barrier::{AlphaRel, BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
+use kt_plugin_api::barrier::{AlphaRel, BarrierKernel, GpuCtx, Node, Slot};
 use kt_plugin_api::{UiVariant, 
     Cooked, Decl, Gpu, Manifest, TapCtx, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store,
     UiDecl, VideoClass, VideoKernel,
@@ -54,15 +53,6 @@ impl Posterize {
     }
 }
 
-/// `n` levels per channel, RGB only.
-#[inline(always)]
-fn quantize(n: f64, v: &mut [f64; 4]) {
-    for c in v.iter_mut().take(3) {
-        let i = (*c * n / 256.0).floor().clamp(0.0, n - 1.0);
-        *c = i * 255.0 / (n - 1.0);
-    }
-}
-
 impl Default for Posterize {
     fn default() -> Posterize {
         Posterize::new()
@@ -83,18 +73,6 @@ impl VideoKernel for Posterize {
     fn cook(&self, p: &[f64]) -> Cooked {
         [Posterize::levels(p) as f64, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
-    /// Quantization PER CHANNEL (the standard — AE Posterize); alpha untouched.
-    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
-        quantize(k[0], v);
-    }
-    /// The barrier loop with `n` taken through its `u32` range once per frame: the same value,
-    /// and the compiler knows `n - 1 >= 1` (the variant's `u32` field gave it that; without it the
-    /// loop was 6 % slower than the variant's, plugin-api-stage1 2.6). Inside the fused pass the
-    /// cooked value is read as is — there the per-sample cast cost 8 %.
-    fn frame(&self, k: &Cooked, rgba: &mut [u8], _w: u32) {
-        let n = (k[0] as u32).clamp(2, 32) as f64;
-        kt_plugin_api::frame_with(rgba, |v| quantize(n, v));
-    }
     fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
         [Posterize::levels(p) as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
@@ -103,40 +81,6 @@ impl VideoKernel for Posterize {
 // ---------------------------------------------------------------------------
 // color_grade, duotone (stage 4: moved from kt-fx `geom.rs` / kt-gpu, verbatim)
 // ---------------------------------------------------------------------------
-
-/// Color grading on the subtap: luma (Rec.601 8-bit), saturation, hue, then
-/// contrast around 128 and brightness (the order is fixed — it is what keeps it from clipping
-/// hues). Hue — a rotation around the gray axis (Rodrigues, k = (1,1,1)/√3).
-/// The values are an f64 continuum; the final clamp+round — once, at the output.
-#[inline(always)]
-fn grade(v: &mut [f64; 4], br: f64, con: f64, sat: f64, hc: f64, hs: f64) {
-    let l = (77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0;
-    for c in v.iter_mut().take(3) {
-        *c = l + (*c - l) * sat;
-    }
-    if hc != 1.0 || hs != 0.0 {
-        let k = 1.0 / 3f64.sqrt();
-        let (x, y, z) = (v[0], v[1], v[2]);
-        let dot = k * (x + y + z);
-        let (cx, cy, cz) = (k * (y - z), k * (z - x), k * (x - y));
-        v[0] = x * hc + cx * hs + k * dot * (1.0 - hc);
-        v[1] = y * hc + cy * hs + k * dot * (1.0 - hc);
-        v[2] = z * hc + cz * hs + k * dot * (1.0 - hc);
-    }
-    for c in v.iter_mut().take(3) {
-        *c = (*c - 128.0) * (1.0 + con) + 128.0 + br * 255.0;
-    }
-}
-
-/// Duotone on the subtap: lerp of two colors by luma; alpha untouched.
-#[inline(always)]
-fn duo(v: &mut [f64; 4], shadow: &[f64], high: &[f64], amount: f64) {
-    let l = ((77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0 / 255.0).clamp(0.0, 1.0);
-    for (c, (sh, hi)) in v.iter_mut().take(3).zip(shadow.iter().zip(high.iter())) {
-        let out = sh + (hi - sh) * l;
-        *c += (out - *c) * amount;
-    }
-}
 
 /// Color grading (R.47): brightness, contrast, saturation, hue — point-wise.
 pub struct ColorGrade {
@@ -197,9 +141,6 @@ impl VideoKernel for ColorGrade {
         let n = ColorGrade::numbers(p);
         [n[0], n[1], n[2], n[3], n[4], 0.0, 0.0, 0.0]
     }
-    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
-        grade(v, k[0], k[1], k[2], k[3], k[4]);
-    }
     fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
         let n = ColorGrade::numbers(p);
         [n[0] as f32, n[1] as f32, n[2] as f32, n[3] as f32, n[4] as f32, 0.0, 0.0]
@@ -259,9 +200,6 @@ impl VideoKernel for Duotone {
     fn cook(&self, p: &[f64]) -> Cooked {
         let g = |i: usize| p.get(i).copied().unwrap_or(0.0);
         [g(0), g(1), g(2), g(3), g(4), g(5), g(6).clamp(0.0, 1.0), 0.0]
-    }
-    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
-        duo(v, &k[0..3], &k[3..6], k[6]);
     }
     fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
         let g = |i: usize| p.get(i).copied().unwrap_or(0.0) as f32;
@@ -330,19 +268,6 @@ impl VideoKernel for Vignette {
     fn cook_at(&self, p: &[f64], cx: &TapCtx) -> Cooked {
         let n = Vignette::numbers(p);
         [n[0], n[1], n[2], cx.stage_w.max(1) as f64, cx.stage_h.max(1) as f64, 0.0, 0.0, 0.0]
-    }
-    #[inline(always)]
-    fn tap_at(&self, k: &Cooked, v: &mut [f64; 4], x: f64, y: f64) {
-        let (strength, radius, softness) = (k[0], k[1], k[2]);
-        let dx = (x + 0.5) / k[3] - 0.5;
-        let dy = (y + 0.5) / k[4] - 0.5;
-        let r = ((2.0 * dx) * (2.0 * dx) + (2.0 * dy) * (2.0 * dy)).sqrt() / std::f64::consts::SQRT_2;
-        let t = ((r - radius) / softness.max(1e-6)).clamp(0.0, 1.0);
-        let w = t * t * (3.0 - 2.0 * t);
-        let g = 1.0 - strength * w;
-        for c in v.iter_mut().take(3) {
-            *c *= g;
-        }
     }
     fn gpu_params(&self, p: &[f64]) -> [f32; 7] {
         let n = Vignette::numbers(p);
@@ -471,23 +396,6 @@ impl VideoKernel for Greenscreen {
     fn cook(&self, p: &[f64]) -> Cooked {
         Greenscreen::keyed(p)
     }
-    /// The f64 continuum of the kernel's formula on the sub-tap value.
-    #[inline(always)]
-    fn tap(&self, k: &Cooked, v: &mut [f64; 4]) {
-        let (key, tol, hard, spill, kc) = ([k[0], k[1], k[2]], k[3], k[4], k[5], k[6] as usize);
-        let d = ((v[0] - key[0]).powi(2) + (v[1] - key[1]).powi(2) + (v[2] - key[2]).powi(2)).sqrt();
-        if d <= hard {
-            v[3] = 0.0;
-        } else if d < tol {
-            v[3] *= (d - hard) / (tol - hard).max(1e-9);
-        }
-        if spill > 0.0 && v[3] > 0.0 {
-            let other = v[(kc + 1) % 3].max(v[(kc + 2) % 3]);
-            if v[kc] > other {
-                v[kc] -= (v[kc] - other) * spill;
-            }
-        }
-    }
     /// a.yzw = the key, b = (tolerance, hard, spill, kc).
     fn gpu_cooked(&self, k: &Cooked, _p: &[f64]) -> [f32; 7] {
         [k[0] as f32, k[1] as f32, k[2] as f32, k[3] as f32, k[4] as f32, k[5] as f32, k[6] as f32]
@@ -497,30 +405,6 @@ impl VideoKernel for Greenscreen {
 impl BarrierKernel for Greenscreen {
     fn cook(&self, p: &[f64]) -> Cooked {
         Greenscreen::keyed(p)
-    }
-
-    fn frame(&self, k: &Cooked, mut f: Frame, _cx: &BarrierCtx, _scratch: &mut dyn Scratch) -> Frame {
-        let (key, tol, hard, spill, kc) = ([k[0], k[1], k[2]], k[3], k[4], k[5], k[6] as usize);
-        for px in f.rgba.chunks_exact_mut(4) {
-            let d = ((px[0] as f64 - key[0]).powi(2) + (px[1] as f64 - key[1]).powi(2) + (px[2] as f64 - key[2]).powi(2)).sqrt();
-            if d <= hard {
-                px[3] = 0;
-            } else if d < tol {
-                let a = (d - hard) / (tol - hard).max(1e-9);
-                px[3] = (px[3] as f64 * a).round() as u8;
-            }
-            // spill suppression (R.33 C5): the key's dominant channel is pulled toward the larger
-            // of the neighbours; spill = 0 — the former path byte-for-byte
-            if spill > 0.0 && px[3] > 0 {
-                let other = px[(kc + 1) % 3].max(px[(kc + 2) % 3]) as f64;
-                let v = px[kc] as f64;
-                if v > other {
-                    px[kc] = (v - (v - other) * spill).round() as u8;
-                }
-            }
-        }
-        f.has_alpha = true;
-        f
     }
 
     fn shaders(&self) -> &'static [&'static str] {

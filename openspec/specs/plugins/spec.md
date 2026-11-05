@@ -155,14 +155,14 @@ Why: the owner (2026-10-30): "take ALL the effects out — a mechanism as flexib
 possible". A kind kept core for a reason is a reason a third-party effect could never have.
 
 #### Scenario: A positioned tap measures its own stage
-- **WHEN** vignette, moved into a plugin, runs alone, inside a fused geometry series that zooms before it, and as a barrier between two blurs, on both executors
-- **THEN** the CPU bytes equal the pre-move goldens (its radius measured on its own stage), the GPU is within the point-wise tolerance, the series stays one pass, and the assembled text passes the sub-sample's coordinate to the tap and the stage size in `b.zw`. Noise and greenscreen, whose barrier position is a kernel of its own (integer, K×, an AVX2 twin), move with the barrier pass graph
+- **WHEN** vignette, moved into a plugin, runs alone, inside a fused geometry series that zooms before it, and as a barrier between two blurs
+- **THEN** the frames are within the point-wise tolerance of their stored frames (its radius measured on its own stage), the series stays one pass, and the assembled text passes the sub-sample's coordinate to the tap and the stage size in `b.zw`. Noise and greenscreen, whose barrier position is a kernel of its own (integer, K×), move with the barrier pass graph
 - **TEST** t992 (`src/libs/kt-gpu/tests/parity.rs`)
 
 #### Scenario: A geometry program fuses and keeps its rules
-- **WHEN** the five warp kinds, corner_pin, event_grid and pan3d, moved into plugins, run in series of any length on both executors
-- **THEN** the CPU bytes equal the pre-move goldens, a series of geometry plugins is one pass, the GPU is within the geometry tolerance, event_grid's exact tile program still decides from the primitives, and pan3d's points behind the camera and outside the quad stay transparent
-- **TEST** t993 (`src/libs/kt-gpu/tests/parity.rs`), t943, t944, t298
+- **WHEN** the five warp kinds, corner_pin, event_grid and pan3d, moved into plugins, run in series of any length
+- **THEN** the frames are within the geometry tolerance of their stored frames, a series of geometry plugins is one pass, event_grid's exact tile program still decides from the primitives, and pan3d's points behind the camera and outside the quad stay transparent
+- **TEST** t993 (`src/libs/kt-gpu/tests/parity.rs`), t944, t298
 
 #### Scenario: The exact lone path keeps a permutation's bytes
 - **WHEN** a moved mirror runs alone without a scale change, and then in a series and with a change of scale
@@ -184,37 +184,34 @@ A built-in video plugin's GPU kernel SHALL be assembled into the GPU executor fr
 when the executor is created: a point-wise plugin supplies one WGSL tap function that is placed
 both into its own pass and into the tap arm of the fused geometry pass; a barrier plugin
 supplies a fragment pass over the shared prelude; a geometry plugin supplies no WGSL and is
-mapped to the closed primitive set. The chain plan SHALL be built by the single planner for both
-executors from the manifests' classes. Anything that is hashed into a cache key SHALL use the
-plugin id, never the executor's dispatch number. The CPU kernel SHALL remain the byte
-reference and the GPU kernel SHALL be held to the existing tolerance classes.
-Why: invariant 7 — one composition path, CPU the byte reference, geometry series in one pass;
+mapped to the closed primitive set. The chain plan SHALL be built by the single planner from the
+manifests' classes. Anything that is hashed into a cache key SHALL use the
+plugin id, never the executor's dispatch number. The GPU kernel SHALL be held to the existing
+tolerance classes of the stored frames.
+Why: invariant 7 — one composition path, geometry series in one pass;
 an assembled shader is a pure function of the registry, so GPU determinism between runs on one
 device (invariant 11) holds; a dispatch number depends on what is registered and would silently
 shift keys.
 
-#### Scenario: The pilot plugin produces the former bytes on both executors
-- **WHEN** Posterize, moved into its family crate, runs on the CPU alone, inside a fused series
-  (`Mirror, Posterize, Vignette`), as a barrier between two blurs, and the same three chains run
-  on the GPU executor assembled from the registry; separately a geometry plugin offering a WGSL
+#### Scenario: The pilot plugin stays within its class of the stored frames
+- **WHEN** Posterize, moved into its family crate, runs alone, inside a fused series
+  (`Mirror, Posterize, Vignette`) and as a barrier between two blurs, on the GPU executor assembled
+  from the registry; separately a geometry plugin offering a WGSL
   string is registered
-- **THEN** the CPU bytes equal the pre-move goldens (t328 does not move), the GPU frames are
-  within the existing point-wise tolerance of the CPU, the fused series is still one pass, the
+- **THEN** the frames are within the existing point-wise tolerance of their stored frames, the fused series is still one pass, the
   assembled shader text is identical between two executor creations, and the geometry plugin is
   refused (t972)
 - **TEST** t974 (`src/libs/kt-gpu/tests/parity.rs`)
 
-### Requirement: A barrier kind is a plugin with a CPU kernel, an optional SIMD twin and a GPU pass graph
+### Requirement: A barrier kind is a plugin with a GPU pass graph
 A video kind of the barrier class SHALL be a plugin that declares:
-- its scalar CPU kernel over the frame, which is the byte reference;
-- optionally, a SIMD twin that is byte-equal to the scalar kernel on every frame it accepts;
+- its kernel (`BarrierKernel`), which cooks the values and builds the graph;
 - its relation to alpha (produces, preserves or consumes);
 - for a built-in, a GPU pass graph made of the host's resample and premultiplication nodes and of
   its own fragment passes, which read the source, the previous output or a saved output.
 
-The host SHALL decide when the twin runs: one runtime switch for the whole program, with no
-reading of the environment by a plugin. The host SHALL refuse at registration:
-- a barrier without a CPU kernel;
+The host SHALL refuse at registration:
+- a barrier without a kernel;
 - a built-in barrier without a pass graph;
 - a graph that reads a saved output before saving it, ends on a save, or whose output is not at
   the frame size;
@@ -231,33 +228,27 @@ The core SHALL keep no barrier kind. The effect enum holds only the Geometry lea
 read-only CamMotion form, the LayerMix strength marker, the plugin slot and the missing slot.
 
 Why: the owner (2026-10-30): "take ALL the effects out — a mechanism as flexible and extensible
-as possible". The barriers were the last kinds kept for a reason (multi-pass GPU, AVX2 twins, K×),
-and each reason becomes a contract. The SIMD switch stays one, so that `KT_SIMD=0` still names the
-whole scalar reference (R.32).
+as possible". The barriers were the last kinds kept for a reason (multi-pass GPU, K×), and each
+reason becomes a contract.
 
-#### Scenario: The moved barriers keep their bytes
-- **WHEN** each of the twelve barrier kinds runs on the CPU at its default and at each built-in variant, at K=1 and K=2, on a frame with and without alpha — first as the core variant, then as the moved plugin
-- **THEN** the hashes are those frozen before the move, row for row, and the file text of every kind is unchanged
-- **TEST** t1051 (`src/libs/kt-fx/tests/barrier_plugin.rs`), t973
+#### Scenario: The moved barriers keep their file text
+- **WHEN** a project with each of the twelve barrier kinds is written, first as the core variant, then as the moved plugin
+- **THEN** the file text of every kind is unchanged
+- **TEST** t973 (`src/libs/kt-model/tests/plugin_format.rs`)
 
 #### Scenario: A pass graph runs on the GPU within the tolerance class
 - **WHEN** every registered barrier runs on the GPU executor assembled from the registry: alone, between two geometry series and under a layer strength below one; and a test barrier plugin with a two-pass graph (a saved source, a half-size resample, a final pass reading both) that the host names nowhere runs the same chains
-- **THEN** each result is within its kind's existing tolerance class of the CPU, the uniform arena is consumed exactly as predicted from the graph, and the test plugin needs no host code
+- **THEN** each result is within its kind's existing tolerance class of the stored frames, the uniform arena is consumed exactly as predicted from the graph, and the test plugin needs no host code
 - **TEST** t1052 (`src/libs/kt-gpu/tests/barrier_graph.rs`), t181, t329
 
-#### Scenario: The SIMD twin is checked over the registry
-- **WHEN** every registered barrier that declares a twin runs on the parity frames with the twin and with the twin switched off
-- **THEN** the bytes are equal for every kind, the scalar goldens hold with the switch off, and a kind added with a twin is checked without editing the test
-- **TEST** t1053 (`src/libs/kt-fx/tests/barrier_plugin.rs`), t198
-
 #### Scenario: An inconsistent barrier is refused before any frame
-- **WHEN** test plugins are registered with: no CPU kernel; no pass graph as a built-in; a graph reading a saved output before saving it; a graph ending at a half-size resample or on a save; a size beyond the buffer ceiling at the largest K; a pass naming a shader the kernel lacks; an empty graph on a frame with alpha
+- **WHEN** test plugins are registered with: no kernel; no pass graph as a built-in; a graph reading a saved output before saving it; a graph ending at a half-size resample or on a save; a size beyond the buffer ceiling at the largest K; a pass naming a shader the kernel lacks; an empty graph on a frame with alpha
 - **THEN** each registration is refused with the reason named, and the registry is unchanged
 - **TEST** t1054 (`src/libs/kt-plugin-api/tests/barrier_registry.rs`), t972
 
 #### Scenario: The core keeps no barrier
-- **WHEN** the effect enum's variants and the barrier position of the CPU executor are listed after the move
-- **THEN** the enum holds exactly the Geometry node, CamMotion, LayerMix, the plugin slot and the missing slot, and the executor names no effect kind; an edit of a barrier kernel recompiles no core library
+- **WHEN** the effect enum's variants are listed after the move
+- **THEN** the enum holds exactly the Geometry node, CamMotion, LayerMix, the plugin slot and the missing slot, and an edit of a barrier kernel recompiles no core library
 - **TEST** t1056 (`src/libs/kt-model/tests/plugin_format.rs`), t977
 
 ### Requirement: A generator kind may synthesize its sound; there is one sine text
@@ -289,10 +280,9 @@ A barrier's GPU graph MAY contain a pass rendered at its own size (`Node::PassAt
 registry SHALL refuse a pass-at-size of zero or above the ceiling as it refuses such a resample. The
 host SHALL count such a pass in the uniform arena and in the intermediate-size check like any pass.
 
-A barrier kernel MAY read its passport values directly (`frame_values`, `gpu_values`) when its
-parameters do not fit the eight cooked numbers. The default forms SHALL cook the values and call the
-eight-number kernel, and the host SHALL call the value forms, so every existing barrier keeps its
-bytes and its graph.
+A barrier kernel MAY read its passport values directly (`gpu_values`) when its parameters do not
+fit the eight cooked numbers. The default form SHALL cook the values and call the eight-number
+kernel, and the host SHALL call the value form, so every existing barrier keeps its graph.
 Why: the VHS tape simulation (kkt-26.11.01 V1) runs on a signal grid of the standard, independent of
 the frame size (a 640-wide preview has fewer texels than the grid), and has a deck's worth of physical
 quantities (~30).
@@ -304,26 +294,20 @@ quantities (~30).
   refused for ending off the frame size
 - **TEST** t1187 (`src/libs/kt-plugin-api/tests/barrier_registry.rs`)
 
-#### Scenario: The value forms keep every barrier's bytes
-- **WHEN** every registered barrier with at most eight passport rows runs through the host's value form and through its cooked form at
-  its defaults and its top
-- **THEN** the frames are byte-equal and the graphs equal
-- **TEST** t1187 (`src/libs/kt-fx/tests/barrier_plugin.rs`), t1051, t1052
-
-### Requirement: A layer strength over a step that destroys alpha keeps each side's alpha on both executors
+### Requirement: A layer strength over a step that destroys alpha keeps each side's alpha
 When a layer strength (a mix of the chain before a step with the chain after it) stands over a step
 whose relation to alpha is "destroys", the GPU executor SHALL mix the dry side with its OWN alpha
 (the chain's fold at the snapshot) and the wet side with its own, and the mixed frame SHALL have
-alpha when either side has it — as the CPU's frames do. The end-of-chain flag SHALL NOT stand for
+alpha when either side has it. The end-of-chain flag SHALL NOT stand for
 the dry side.
 Why: found by the VHS tape simulation (vhs-tape-simulation), the first barrier that declares
 "destroys": t1052 ran it under a strength of 0.5 on a frame with alpha, and the GPU forced the dry
 side opaque (it passed the chain's final flag for both sides) and then declared the mixed layer
-opaque, so the composite skipped the alpha-over — 86 % of the samples differed from the CPU.
+opaque, so the composite skipped the alpha-over — 86 % of the samples differed.
 
 #### Scenario: A destroying barrier under a strength on a frame with alpha
-- **WHEN** every registered barrier runs under a layer strength of 0.5 on a frame with gradient alpha, on both executors
-- **THEN** the GPU result is within the kind's tolerance class of the CPU, the alpha channel included
+- **WHEN** every registered barrier runs under a layer strength of 0.5 on a frame with gradient alpha
+- **THEN** the result is within the kind's tolerance class of the stored frames, the alpha channel included
 - **TEST** t1052 (`src/libs/kt-gpu/tests/barrier_graph.rs`)
 
 ### Requirement: A stream kind is a source stage with a declared history, not video state
@@ -337,7 +321,7 @@ SHALL own the memo the kernel keeps results in (`StreamMemo`, bounded, keyed by 
 the result) and SHALL hand it to the kernel; the bytes MUST NOT depend on what the memo holds.
 The registry SHALL refuse: a `Stream` class without a stream kernel, a stream kernel on another
 class, and a stream plugin offering any GPU side. A built-in stream plugin is exempt from the GPU
-default (the codec is a serial loop; its output reaches both executors as a pre-FX frame).
+default (its output reaches the executor as a pre-FX frame).
 
 Why: F-FX-007 named the temporal family's way through the purity rule — read the PAST SOURCE,
 do not keep state; `datamosh-codec-path` design D2–D4.
@@ -349,56 +333,22 @@ do not keep state; `datamosh-codec-path` design D2–D4.
 
 #### Scenario: The datamosh keeps its file text
 - **WHEN** a slot `datamosh` with default rows and with every row moved is written and read again
-- **THEN** the text is the frozen one, the rows at their defaults are omitted where declared, and the golden table holds its row
-- **TEST** t1247 (`src/libs/kt-model/tests/plugin_format.rs`), t328 (`src/libs/kt-fx/tests/video_fx.rs`)
+- **THEN** the text is the frozen one, the rows at their defaults are omitted where declared
+- **TEST** t1247 (`src/libs/kt-model/tests/plugin_format.rs`)
 
 ### Requirement: A barrier sees all its rows through the values door
-`BarrierKernel` SHALL offer `frame_values` and `gpu_values`, which receive the slot's values in
-passport order; their defaults SHALL be `frame`/`gpu` over `cook`, so a barrier that implements only
-the cooked forms keeps its bytes. The host SHALL call the values forms everywhere it runs or
-plans a barrier: the CPU executor's barrier position, the GPU barrier op and the registry's graph
-check on the defaults and the top of the passport.
+`BarrierKernel` SHALL offer `gpu_values`, which receives the slot's values in passport order; its
+default SHALL be `gpu` over `cook`, so a barrier that implements only the cooked form keeps its
+graph. The host SHALL call the values form everywhere it plans a barrier: the GPU barrier op and the
+registry's graph check on the defaults and the top of the passport.
 Why: `Cooked` is eight numbers. A simulation (camera_isp, ~50 rows) cannot pack its passport into
 them without quantizing every automated row into bit-fields; the values door keeps the rows as
 the passport declares them.
 
-#### Scenario: A row past the eighth reaches the kernel on both executors
-- **WHEN** a test barrier with twelve rows, whose output depends only on row 11, is registered and
-  run through the CPU executor and its GPU graph is built, with row 11 at two values; and a
-  built-in barrier (blur) runs through the same doors
-- **THEN** the two values of row 11 give two different outputs on the CPU and two different graphs,
-  the registry checked the graph on row 11's top, and blur's bytes are its frozen golden
-- **TEST** t1210 (`src/libs/kt-fx/tests/barrier_values.rs`), t1051
-
-### Requirement: One kernel text gives the CPU byte reference and the GPU kernel
-A kernel written once in the common subset of Rust and WGSL (`kt_plugin_api::shade`,
-`shared_kernel!`) SHALL give its CPU form with the text's `f32` computed as f64 and its WGSL form as
-the same tokens. The CPU form SHALL be byte for byte the kind's CPU reference at every SIMD level the
-host compiles its loop for (baseline, SSE4.1, AVX2, AVX-512) and at every number of row bands; the
-WGSL form SHALL compile in the own-pass frame of a point-wise plugin and stay within the kind's
-existing tolerance class of the CPU reference. Until the owner orders the migration the shipped
-plugins SHALL keep their own kernels; the single text is a prototype no shipped path calls.
-Why: today one effect is up to three texts (scalar, AVX2 twin, WGSL) on one core (C2 of
-kkt-26.11.03). Rust neither contracts `a·b + c` into an FMA nor reassociates, and the subset's
-builtins are exact, so one text compiled for any SIMD level is the same bytes; a pixel of a point-wise
-kernel is a pure function of itself and its position, so bands of rows on scoped threads are the
-same bytes (invariant 11). The WGSL form is f32, as the hand-written mirror is, so the tolerance
-class does not move (invariant 7).
-
-#### Scenario: The single-text Color Grade is the shipped kernel byte for byte
-- **WHEN** Color Grade written once runs on a 257×67 frame crossing every byte value, at six
-  parameter sets (identity, hue ±180, saturation 0 and 2, brightness ±1), compiled for the baseline,
-  SSE4.1, AVX2 and AVX-512 (a level the CPU lacks falls back), on 1, 3 and 8 bands
-- **THEN** every frame equals the shipped `grade` through the barrier loop byte for byte, and the
-  WGSL form holds both functions and no Rust-only syntax
-- **TEST** t1500 (`src/plugins/fx-video-color/tests/single_source.rs`)
-
-#### Scenario: The single text's WGSL runs on the GPU within the kind's tolerance
-- **WHEN** the WGSL form and the hand-written `color_grade.wgsl` are compiled in the own-pass frame
-  `assembled_shaders` gives a point-wise plugin and run at four parameter sets on a 192×108 frame
-- **THEN** the single text compiles, and both GPU frames are within `FrameTol::BILINEAR` (Color
-  Grade's class in t181) of the CPU reference
-- **TEST** t1501 (`src/libs/kt-gpu/tests/single_source.rs`)
+#### Scenario: Rows past the eighth reach the graph
+- **WHEN** camera_isp, whose passport is far longer than eight rows, runs its defaults and every preset on the GPU executor
+- **THEN** each frame is within `FrameTol::THRESHOLD` of its stored frame
+- **TEST** t1217 (`src/libs/kt-gpu/tests/camera_isp.rs`)
 
 ### Requirement: A simulated device's two halves are one passport
 A video kind MAY declare the audio kind that records the same device's sound (`Decl.pair`). The
@@ -424,7 +374,7 @@ The host SHALL tell every audio state the timeline frame of its clip's frame 0 a
 rate (`AudioState::place`), when the state is built and whenever the clip is synced, without a reset
 (a moved clip keeps its state). An audio half of a simulated device SHALL read the device state at the
 TIMELINE position its picture reads, derived from the rows and that position alone — no state is
-shared with the picture's executors.
+shared with the picture's executor.
 Why: the picture of a tape or a stream reads the absolute timeline tick; an audio state saw only its
 clip-local frame, so the sound could not lose the field the picture loses.
 

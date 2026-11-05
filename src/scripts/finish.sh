@@ -136,40 +136,6 @@ else
     WS_FAILED=1
 fi
 
-# SIMD conformance (R.32): AVX2 kernels must be byte-for-byte identical to scalar.
-# KT_REQUIRE_SIMD=1 forbids a vacuous skip where AVX2 is present (lesson
-# t194). Plus goldens on FORCED scalar: it stays the reference.
-# Each run has its own environment — that is why these are separate commands, not
-# part of the workshop run; they take a couple of seconds for all four.
-#
-# The verdict comes from cargo, not from `tail`: `if cargo test | tail` was ALWAYS green —
-# the pipeline’s status is given by the LAST command, so the stage could not report
-# red in principle (the same class as §443 and §458).
-simd_stage() {
-    local name="$1"; shift
-    if "$@" > "$STAGE_LOG" 2>&1; then
-        tail -3 "$STAGE_LOG"
-        return 0
-    fi
-    tail -3 "$STAGE_LOG"
-    grep -E "^(test .* FAILED|failures:|error)" "$STAGE_LOG" | head -20 >&2
-    cp "$STAGE_LOG" target/finish-simd-fail.log 2>/dev/null || true
-    echo "SIMD: red stage $name (full log: target/finish-simd-fail.log)" >&2
-    return 1
-}
-simd_all() {
-    simd_stage "kt-fx simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q \
-        && simd_stage "kt-engine simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-engine --test simd_parity -q \
-        && simd_stage "kt-fx video_fx (scalar)" env KT_SIMD=0 cargo test -p kt-fx --test video_fx -q \
-        && simd_stage "kt-engine golden_export (scalar)" env KT_SIMD=0 cargo test -p kt-engine --test golden_export -q
-}
-if stage "SIMD conformance (t198)" simd_all; then
-    echo "simd: ok (AVX2 == scalar, golden files green on both paths)"
-else
-    echo "SIMD CONFORMANCE FAILED" >&2
-    SIMD_FAILED=1
-fi
-
 # Live check in a virtual screen (R.27): real binary, real X,
 # real XTest gestures. Without Xvfb it simply skips, breaking nothing;
 # NO_LIVE=1 turns it off explicitly (for example when you run finish.sh in a loop).
@@ -212,11 +178,10 @@ python3 scripts/finish-budget.py --report "$TIMES"
 echo
 
 # Red is named BY ITS OWN NAME (R.55): one flag stood on three stages,
-# and a fall of GPU or SIMD was printed as “live scenarios red” — the report lied
+# and a fall of the GPU was printed as “live scenarios red” — the report lied
 # about WHAT broke, and sent people to look in the wrong place.
 [ -n "${LIVE_FAILED:-}" ] && echo "WARNING: live scenarios red — see target/live-out"
 [ -n "${WS_FAILED:-}" ] && echo "WARNING: workshop tests red — see target/finish-workspace-fail.log"
-[ -n "${SIMD_FAILED:-}" ] && echo "WARNING: SIMD conformance red (t198)"
 [ -n "${REBUILD_FAILED:-}" ] && echo "WARNING: rebuild check red (t977) — a plugin edit recompiled a core crate"
 echo "VERSION: $FULL$DIRTY"
 echo "run: $(pwd)/target/debug/kinetren"

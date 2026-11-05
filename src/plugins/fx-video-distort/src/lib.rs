@@ -147,6 +147,50 @@ impl Plugin for Warp {
 }
 
 impl GeoKernel for Warp {
+    fn warp(&self, p: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
+        match self.map {
+            Map::Lens => {
+                // lens: polynomial s = 1 + k1·r² + k2·r⁴ (no trigonometry)
+                let r2 = x * x + y * y;
+                let s = 1.0 + p[0] * r2 + p[1] * r2 * r2;
+                (x * s, y * s)
+            }
+            Map::Twirl => {
+                // twirl: rotation by a·(1 − r/rad)² inside the radius
+                let r = (x * x + y * y).sqrt();
+                if r >= p[1] {
+                    return (x, y);
+                }
+                let t = 1.0 - r / p[1];
+                let (sn, cs) = (p[0] * t * t).fsin_cos();
+                (x * cs - y * sn, x * sn + y * cs)
+            }
+            Map::Ripple => {
+                // ripple: r' = r + amp·sin(k·r − φ)
+                let r = (x * x + y * y).sqrt();
+                if r <= 1e-9 {
+                    return (x, y);
+                }
+                let k = (r + p[0] * (p[1] * r - p[2]).fsin()) / r;
+                (x * k, y * k)
+            }
+            Map::Kaleidoscope => {
+                // kaleidoscope: triangle wave over the sector (mirror
+                // repetition without int modulo — floor is the same in both texts)
+                let r = (x * x + y * y).sqrt();
+                let q = (y.fatan2(x) - p[1]) / p[0];
+                let h = q / 2.0 - (q / 2.0).floor();
+                let m = 1.0 - (2.0 * h - 1.0).abs();
+                let (sn, cs) = (p[1] + m * p[0]).fsin_cos();
+                (r * cs, r * sn)
+            }
+            Map::Cylinder => {
+                // cylinder: u' = asin(u·sin a)/a along X, edges → edges
+                let u = (x * p[0]).clamp(-1.0, 1.0).fasin() * p[1];
+                (u, y)
+            }
+        }
+    }
     /// The former builder's arm, verbatim: the clamps, the cooked numbers and the neutral skip.
     fn steps(&self, p: &[f64], _cx: &GeoCtx) -> Vec<GeoStep> {
         let g = |i: usize| p.get(i).copied().unwrap_or(0.0);
@@ -192,53 +236,6 @@ impl GeoKernel for Warp {
         Vec::new()
     }
 
-    /// Inverse map of the nonlinear warp (R.47): ONE f64 text per kind, read by both CPU loops;
-    /// the WGSL mirror is the kind's `warp_<id>`. Input/output — the normalized centered space.
-    #[inline]
-    fn warp(&self, p: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
-        match self.map {
-            Map::Lens => {
-                // lens: polynomial s = 1 + k1·r² + k2·r⁴ (no trigonometry)
-                let r2 = x * x + y * y;
-                let s = 1.0 + p[0] * r2 + p[1] * r2 * r2;
-                (x * s, y * s)
-            }
-            Map::Twirl => {
-                // twirl: rotation by a·(1 − r/rad)² inside the radius
-                let r = (x * x + y * y).sqrt();
-                if r >= p[1] {
-                    return (x, y);
-                }
-                let t = 1.0 - r / p[1];
-                let (sn, cs) = (p[0] * t * t).fsin_cos();
-                (x * cs - y * sn, x * sn + y * cs)
-            }
-            Map::Ripple => {
-                // ripple: r' = r + amp·sin(k·r − φ)
-                let r = (x * x + y * y).sqrt();
-                if r <= 1e-9 {
-                    return (x, y);
-                }
-                let k = (r + p[0] * (p[1] * r - p[2]).fsin()) / r;
-                (x * k, y * k)
-            }
-            Map::Kaleidoscope => {
-                // kaleidoscope: triangle wave over the sector (mirror
-                // repetition without int modulo — floor is the same in both texts)
-                let r = (x * x + y * y).sqrt();
-                let q = (y.fatan2(x) - p[1]) / p[0];
-                let h = q / 2.0 - (q / 2.0).floor();
-                let m = 1.0 - (2.0 * h - 1.0).abs();
-                let (sn, cs) = (p[1] + m * p[0]).fsin_cos();
-                (r * cs, r * sn)
-            }
-            Map::Cylinder => {
-                // cylinder: u' = asin(u·sin a)/a along X, edges → edges
-                let u = (x * p[0]).clamp(-1.0, 1.0).fasin() * p[1];
-                (u, y)
-            }
-        }
-    }
 }
 
 /// Four-corner fit (R.47, F-FX-004): the homography quad → quad, the main tool of "the screen in

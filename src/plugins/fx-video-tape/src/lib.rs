@@ -10,7 +10,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use kt_plugin_api::barrier::{AlphaRel, BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
+use kt_plugin_api::barrier::{AlphaRel, BarrierKernel, GpuCtx, Node, Slot};
 use kt_plugin_api::{
     Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store, UiDecl, UiVariant,
     VideoClass,
@@ -309,24 +309,6 @@ fn values_of(k: &Cooked) -> Vec<f64> {
 }
 
 impl BarrierKernel for VhsTape {
-    fn frame(&self, k: &Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        self.frame_values(&values_of(k), f, cx, scratch)
-    }
-
-    fn frame_values(&self, values: &[f64], mut f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        let d = Deck::new(values);
-        let st = d.st;
-        if f.has_alpha {
-            cx.raster.premultiply(&mut f.rgba);
-        }
-        let small = cx.raster.resample(&f, st.a, st.h, scratch);
-        let s = sim::simulate(&d, small.rgba, cx.burst_index);
-        let mut out = scratch.take(f.rgba.len());
-        sim::read_out(&s, f.w, f.h, &mut out);
-        scratch.put(s.rgb);
-        scratch.put(f.rgba);
-        Frame { w: f.w, h: f.h, rgba: out, has_alpha: false }
-    }
 
     fn shaders(&self) -> &'static [&'static str] {
         shader_texts()

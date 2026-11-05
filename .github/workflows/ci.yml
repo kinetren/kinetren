@@ -4,10 +4,13 @@
 # real windows-latest runner — nothing is compiled there; and the FFmpeg tests
 # against FFmpeg 9 built from source in Docker (change ffmpeg-9).
 #
-# Not here, on purpose: GPU conformance (no adapter on the runner — those tests
-# skip themselves) and the live Xvfb scenarios; both stay in finish.sh on a
-# real machine. Nothing is uploaded except the test log of a failed run, kept
-# for 3 days: on GitHub only releases are kept.
+# The picture has one executor, the GPU (compute-kernels-render): the Linux job installs llvmpipe's
+# Vulkan driver and requires it, so a composite test cannot skip itself green there. The Windows
+# runner has only WARP, which the engine refuses: its composite tests skip themselves.
+#
+# Not here, on purpose: the live Xvfb scenarios, they stay in finish.sh on a real
+# machine. Nothing is uploaded except the test log of a failed run, kept for 3 days:
+# on GitHub only releases are kept.
 name: CI
 
 on:
@@ -63,7 +66,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang libclang-dev pkg-config libasound2-dev ffmpeg \
+            clang libclang-dev pkg-config libasound2-dev ffmpeg mesa-vulkan-drivers \
             xvfb openbox python3-xlib x11-utils x11-apps imagemagick \
             shared-mime-info libglib2.0-bin xdg-utils libfile-mimeinfo-perl
 
@@ -95,6 +98,8 @@ jobs:
 
       - name: Tests
         working-directory: src
+        env:
+          KT_REQUIRE_GPU: "1"
         # nextest, as finish.sh: under `cargo test` t663 times out (R.68)
         run: |
           set -o pipefail

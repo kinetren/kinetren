@@ -18,7 +18,7 @@ use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
 use kt_model::FxInstance;
-use kt_plugin_api::barrier::{BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
+use kt_plugin_api::barrier::{BarrierKernel, GpuCtx, Node, Slot};
 use kt_time::Tick;
 
 const W: u32 = 64;
@@ -69,19 +69,6 @@ impl kt_plugin_api::Plugin for TwoPass {
 }
 
 impl BarrierKernel for TwoPass {
-    fn frame(&self, _k: &kt_plugin_api::Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        let small = cx.raster.resample(&f, (f.w / 2).max(1), (f.h / 2).max(1), scratch);
-        let up = cx.raster.resample(&small, f.w, f.h, scratch);
-        scratch.put(small.rgba);
-        let mut out = f;
-        for (o, u) in out.rgba.chunks_exact_mut(4).zip(up.rgba.chunks_exact(4)) {
-            for c in 0..3 {
-                o[c] = ((o[c] as u32 + u[c] as u32 + 1) / 2) as u8;
-            }
-        }
-        scratch.put(up.rgba);
-        out
-    }
     fn shaders(&self) -> &'static [&'static str] {
         &[TWO_PASS_WGSL]
     }

@@ -785,8 +785,8 @@ reach an event's first frame: 52 incomplete composites at that one cut, however 
 ### Requirement: Only a frame counts as a video miss
 A lookup of an empty post-FX memo SHALL NOT count as a video miss; a hit of the memo SHALL still count
 as a hit.
-Why: the panel warns of a low hit rate below 80 %, and on the CPU path it read 41–57 % with every
-decoded frame in the cache (preview-throughput, 2026-11-04).
+Why: the panel warns of a low hit rate below 80 %, and on the since-deleted CPU composite it read 41–57 %
+with every decoded frame in the cache (preview-throughput, 2026-11-04).
 
 #### Scenario: An empty memo
 - **WHEN** an empty post-FX memo is looked up, and then a frame that is not in the cache

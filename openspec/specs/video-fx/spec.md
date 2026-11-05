@@ -3,39 +3,37 @@
 ## Purpose
 
 A registry of 27 kinds of video effects (point-wise, barriers, geometry, 3D), a single
-chain planner with a CPU reference and a GPU mirror, and the picker gallery with
+chain planner with WGSL kernels on the GPU, and the picker gallery with
 thumbnails, variants and the strength axis — the picture in a cell equals the result of a click.
 
 ## Requirements
 
-### Requirement: The video effect registry is closed by a golden cycle
+### Requirement: The video effect registry is closed by a reference cycle
 Every video kind of the CLOSED built-in set — the core-owned kinds (`Geometry`, `CamMotion` as a
 legacy reading) plus the built-in video plugins listed by the assembler (capability `plugins`) —
-SHALL have a row in the golden table of default templates, and the table SHALL cover that set in
-both directions: a new built-in kind does not build (or does not pass the completeness lock)
-until its row is added. Every kind MUST declare its class to the planner (point-wise / barrier /
-geo): a core kind by its arm, a plugin by its manifest — an undeclared kind is refused at
-registration, and a core kind with a forgotten arm is caught by a panic when run through the
-barrier path. The default of any new parameter MUST give the former behaviour byte for byte: the
-goldens are not regenerated when parameters are added, and they are not regenerated when a kind
-moves from the enum into a plugin crate. The defaults of "identity" kinds (Geometry, Pan 3D,
-Color Grade, Corner Pin, Drop Shadow on an opaque frame) legitimately share one identity hash;
-the kind `Pan` was removed from the registry, and it has no row in the table. A video plugin
-registered outside the built-in set MUST NOT have a row and MUST NOT be required to have one.
+SHALL have a row in the tolerance table of the registry cycle, and the table SHALL cover that set in
+both directions: a new built-in kind does not pass the completeness lock until its row is added.
+Every kind MUST declare its class to the planner (point-wise / barrier / geo): a core kind by its
+arm, a plugin by its manifest — an undeclared kind is refused at registration. The default of any
+new parameter MUST give the former behaviour: the stored frames are not regenerated when parameters
+are added. The defaults of "identity" kinds (Geometry, Pan 3D, Color Grade, Corner Pin, Drop Shadow
+on an opaque frame) legitimately give one identity picture; the kind `Pan` was removed from the
+registry, and it has no row in the table. A video plugin registered outside the built-in set MUST
+NOT have a row and MUST NOT be required to have one.
 Why: "a new variant compiles and silently does nothing" — a forgotten arm of the
 classification became a barrier and broke geo series; the completeness lock makes this
-a build error, not a discovery of the user. With plugins the class moves into the manifest, and
+a failed check, not a discovery of the user. With plugins the class moves into the manifest, and
 the lock moves to registration; the references stay a property of the product (F-EXT-003).
 
-#### Scenario: A new kind will not build without a row
-- **WHEN** a video kind is added to the built-in set without a row in the golden table or with a forgotten class
-- **THEN** the golden loop fails on the completeness lock (or the registry refuses the manifest, or the debug panic of the barrier path fires for a core kind), and the hashes of all former defaults stand
-- **TEST** t328 (`src/libs/kt-fx/tests/video_fx.rs`), t972 (`src/libs/kt-plugin-api/tests/registry.rs`)
+#### Scenario: A new kind does not pass without a row
+- **WHEN** a video kind is added to the built-in set without a row in the table or with a forgotten class
+- **THEN** the cycle fails on the completeness lock, or the registry refuses the manifest
+- **TEST** t329 (`src/libs/kt-gpu/tests/parity.rs`), t972 (`src/libs/kt-plugin-api/tests/registry.rs`)
 
-#### Scenario: A moved kind keeps its golden hash
-- **WHEN** a video kind has moved from the enum into its family crate (the pilot Posterize first, then each family stage)
-- **THEN** its row in the golden table is unchanged and green, the table is still complete over the assembler's closed list, and a plugin from the test door is not in the table
-- **TEST** t328 (`src/libs/kt-fx/tests/video_fx.rs`), t976 (`src/apps/kt-app/src/reach_tests.rs`)
+#### Scenario: A plugin from the test door is in no reference list
+- **WHEN** a plugin is registered through the test door beside the built-in set
+- **THEN** it reaches the picker, and no reference list holds it
+- **TEST** t976 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: The ten original kernels and their properties
 - **WHEN** each of the kernels of the first ten is applied to a test frame
@@ -49,69 +47,56 @@ the lock moves to registration; the references stay a property of the product (F
 
 #### Scenario: A grid larger than the frame does not overflow
 - **WHEN** EventGrid is asked for more columns/rows than the frame has pixels
-- **THEN** the grid is drawn from zero without centring, the frame size is integral, the result is deterministic and mirrors the GPU guard
+- **THEN** the grid is drawn from zero without centring, the frame size is integral, the result is deterministic
 - **TEST** t299 (`src/libs/kt-fx/tests/video_fx.rs`)
 
-#### Scenario: The buffer pool does not change the bytes
-- **WHEN** the chain is executed with a "dirty" reused buffer pool
-- **THEN** the result is byte-identical to a fresh run for each kind and for the chain Mirror+Grid+Glow+VHS
-- **TEST** t68 (`src/libs/kt-fx/tests/video_fx.rs`)
+### Requirement: The kernels are WGSL, held to stored frames within tolerances
+A video kernel SHALL be its WGSL: the point-wise and barrier kernels of each video plugin, and
+`geom_fused.wgsl`, which executes the program `geom.rs`/`plan.rs` build. There is no CPU or SIMD
+copy of a kernel. The frames SHALL be checked against the stored frames (capability `video-plan`)
+only through the shared tolerance helper with tolerance classes (EXACT / BILINEAR / THRESHOLD /
+GEOM / SIGNAL); an ad-hoc epsilon MUST NOT appear. An edit of the planner or of a geo primitive
+MUST be accompanied by an edit of `geom_fused.wgsl` in the same commit. A plugin's WGSL SHALL live in
+its family crate. The fused geometry pass and the per-kind passes SHALL be assembled from the
+registry's WGSL pieces when the GPU executor is created, and the assembled text SHALL be a pure
+function of the registry.
+Why: the owner deleted the copies (compute-kernels-render, 2026-11-04); the stored frames and the
+loop over the registry are what keeps the picture from moving unnoticed.
 
-### Requirement: CPU is the byte reference, GPU is a mirror within tolerances, edited as a pair
-The CPU kernels (`video.rs`, `geom.rs`, `plan.rs`, and the CPU kernel of each video plugin) SHALL
-be the reference of determinism and the full fallback, including 3D. The GPU mirrors SHALL be
-checked against the CPU only through the shared tolerance helper with tolerance classes (EXACT /
-BILINEAR / THRESHOLD / GEOM); an ad-hoc epsilon MUST NOT appear. An edit of the formula of a
-kernel, of the planner or of a geo primitive MUST be accompanied by an edit of the WGSL mirror
-(including `geom_fused.wgsl`) in the same commit; for a plugin the CPU kernel and its WGSL piece
-SHALL live in the same family crate, so the pair is one crate and one commit. The fused geometry
-pass and the per-kind passes SHALL be assembled from the registry's WGSL pieces when the GPU
-executor is created, and the assembled text SHALL be a pure function of the registry. The SIMD
-kernel MUST be byte-for-byte equal to the scalar one; the scalar is the definition of the bytes
-and is not refactored together with the kernel.
-Why: two executors of one formula silently diverge; the conformance loop over
-the registry and the paired edit are the only way to keep them together. Keeping both halves in
-one plugin crate turns the "same commit" rule into a property of the crate layout.
-
-#### Scenario: Conformance per effect and per chain
-- **WHEN** each kind, geo series, pan3d chains, tap ops and K× barriers are computed on GPU and CPU
-- **THEN** the divergence fits within the tolerance class of the kind; geo series and Pan3d — within GEOM
+#### Scenario: Each effect and each chain within its class
+- **WHEN** each kind, geo series, pan3d chains, tap ops and K× barriers are computed
+- **THEN** the divergence from the stored frames fits within the tolerance class of the kind; geo series and Pan3d — within GEOM
 - **TEST** t181 (`src/libs/kt-gpu/tests/parity.rs`)
 
-#### Scenario: The conformance loop over the whole registry
+#### Scenario: The loop over the whole registry
 - **WHEN** each video kind of the built-in set is run alone and "sandwiched" [grid, effect, zoom ×2], plus configured instances of identity defaults and warp-hard cases
 - **THEN** the tolerance class is set by a table with a completeness lock over the built-in set; a failure of warp-hard — investigation and introduction of WARP from a measurement, not tuning GEOM
 - **TEST** t329 (`src/libs/kt-gpu/tests/parity.rs`)
 
 #### Scenario: The assembled shader joins the one path
 - **WHEN** the GPU executor is created twice from the same registry, and the pilot point-wise plugin runs alone, inside a fused series and as a barrier position
-- **THEN** the two assembled shader texts are identical, the fused series is one pass, and every frame is within the point-wise tolerance of the CPU reference
+- **THEN** the two assembled shader texts are identical, the fused series is one pass, and every frame is within the point-wise tolerance of its stored frame
 - **TEST** t974 (`src/libs/kt-gpu/tests/parity.rs`)
-
-#### Scenario: The AVX2 kernel equals the scalar one
-- **WHEN** bilinear, noise, glow, edges, VHS and round-half-away are executed by the AVX2 path on non-multiple sizes and extreme values
-- **THEN** the bytes match the scalar implementation
-- **TEST** t198 (`src/libs/kt-fx/tests/simd_parity.rs`)
 
 ### Requirement: The chain plan is built by one code
 All decisions about the chain — segmentation into geo runs and barriers, routing of a
 single step to the old kernel or to the fused pass, absorption of point-wise ops into runs,
 the multiplicity K of barriers, the snapshot points of the layer's strength — SHALL be made by one
-planning function in kt-fx; the CPU and GPU executors MUST execute the finished
-plan and decide nothing themselves. The plan of a slice between the strength stops of a layer SHALL be a
+planning function in kt-fx; the executor MUST execute the finished
+plan and decide nothing itself. The plan of a slice between the strength stops of a layer SHALL be a
 piece of the plan of the whole chain. Audio effects do not get into the plan and do not
 break a geo series.
-Why: before the single planner, the chain traversal lived in two copies (CPU and GPU) and
-diverged; now a divergence of segmentation is impossible by construction.
+Why: before the single planner, the chain traversal lived in two copies and diverged; a
+divergence of segmentation must stay impossible by construction.
 
 #### Scenario: Segmentation and budgets
 - **WHEN** a chain contains geo steps, barriers, layer strength markers and exceeds the budget of primitives
 - **THEN** the plan consists of runs/barriers/snapshots/mixes, the window is squeezed along the geo boundary, and the plan of a slice equals a piece of the plan of the whole
 - **TEST** t306 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-#### Scenario: A series of length 1 — the old kernel, byte for byte
+#### Scenario: A series of length 1 — the Legacy route
 - **WHEN** a single Pan/CamMotion/Mirror without minification; a series of several geo steps; an audio effect inside a series; mirror∘mirror
-- **THEN** the single one goes through the old kernel (the goldens stand), the series goes through one fused pass, audio is transparent, the double mirror fuses into identity, the frame size of the series without resampling is integral
+- **THEN** the single one takes the Legacy route, the series goes through one fused pass, audio is transparent, the double mirror fuses into identity, the frame size of the series without resampling is integral
 - **TEST** t297 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
 #### Scenario: The supersampling boundary is exactly 1 + 1/64
@@ -132,8 +117,8 @@ diverged; now a divergence of segmentation is impossible by construction.
 ### Requirement: Geometry series — one pass of inverse mappings
 Consecutive Pan/CamMotion/Mirror/EventGrid/Pan3d/CornerPin/Warp primitives SHALL
 be executed in one pass of concatenated inverse maps with supersampling
-over the Jacobian under minification. Pan3d SHALL also be computed on CPU (the inverse
-f64 homography); without a camera Pan3d is passthrough. CornerPin and Warp primitives
+over the Jacobian under minification. The plan SHALL compute Pan3d's inverse homography in f64
+and hand it over in f32 rounded once; without a camera Pan3d is passthrough. CornerPin and Warp primitives
 do not require a camera. Neutral parameters of a geo step SHALL be skipped
 by the builder — the chain remains identity byte for byte.
 Why: the owner's complaint — "a 2×2 grid → a ×2 zoom turned a checkerboard into grey":
@@ -144,8 +129,8 @@ each step resampled again; the net unit must return the detail.
 - **THEN** the contrast returns whole (255) and ≥ 150 for the perspective one; supersampling suppresses the noise variance under minification
 - **TEST** t296 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-#### Scenario: Pan3d on CPU — edges, behind the camera, without a camera
-- **WHEN** Pan3d is computed scalar with defaults, with rotation, with a point behind the camera, without a camera in the context
+#### Scenario: Pan3d — edges, behind the camera, without a camera
+- **WHEN** Pan3d is computed with defaults, with rotation, with a point behind the camera, without a camera in the context
 - **THEN** the defaults are identity byte for byte; behind the camera and outside the quad — transparency; the contour is anti-aliased by a fractional alpha; without a camera — passthrough
 - **TEST** t298 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
@@ -186,25 +171,10 @@ that a barrier plugin unknown to the host is held to it by construction (plugin-
 - **THEN** K = 1 / 1 / 1 / 1 / 2 / equal / broken; a K=1 chain with a barrier gives a fixed byte hash
 - **TEST** t304 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-#### Scenario: Barrier kernels are invariant to K
-- **WHEN** down_K(kernel_K(up_K(F))) is compared with kernel_1(F) at K=2 and K=4 for every barrier kind the registry holds
-- **THEN** the metric per kernel class is within a threshold ×2 of the measurement: smooth ones — mean/p99, a shadow on a hard alpha — its own thresholds, pixelate — the share of |Δ|>16, halftone — the coverage of 8×8 blocks (pixel-by-pixel comparison is impossible)
-- **TEST** t303 (`src/libs/kt-fx/tests/geo_fuse.rs`)
-
 #### Scenario: The decode scale step feeds the compression budget
 - **WHEN** the frame arrives at S× the logical size
 - **THEN** [vhs, zoom2] at S=2 gets K=2 (at S=1 — 1); the leading barrier is executed at S× by the physics of the frame; the former plans at S=1 stay intact
 - **TEST** t308 (`src/libs/kt-fx/tests/geo_fuse.rs`)
-
-#### Scenario: The meaning of the second-wave barriers
-- **WHEN** Sharpen, Pixelate, ChromaticAberration, RadialBlur, DropShadow, Halftone are applied to a test frame
-- **THEN** the contrast grows; cells are constant; the centre is the fixed point of the aberration and of the ray; the shadow in the cut-out zone is shifted and tinted, and an input without alpha is passthrough; the pattern is two-level, the density of the dots follows the luma
-- **TEST** t332 (`src/libs/kt-fx/tests/geo_fuse.rs`)
-
-#### Scenario: A barrier plugin unknown to the host is held to the K rule
-- **WHEN** a test barrier plugin, registered beside the built-ins and named nowhere in the host, stands between a 2×2 grid and a ×2 zoom, and then alone after a decode scale step S=2
-- **THEN** the planner gives it K=2 in both cases, the same K a built-in barrier gets at that place, and its kernel receives that K; the series around it is broken exactly as for a built-in
-- **TEST** t1055 (`src/libs/kt-fx/tests/barrier_plugin.rs`)
 
 ### Requirement: The alpha rule applies to each step of the chain
 Each video step SHALL relate to alpha in exactly one way: Produces
@@ -220,24 +190,24 @@ a title or the output of a greenscreen landed in the composite as an opaque rect
 - **THEN** the folding is correct, transparent pixels stay transparent, the blur has no dark halo, opaque frames are byte-identical to the former ones
 - **TEST** t519, t520, t522, t523 (`src/libs/kt-fx/tests/geo_fuse.rs`); the composite — t521 (`src/libs/kt-engine/tests/transitions_video.rs`, capability `video-plan`)
 
-### Requirement: Memoization of the post-FX frame does not break "preview == export"
-A video post-FX frame SHALL be memoised in the cache under a key including the hash of the
-chain, the geometry of the clip and the resolved camera; a stale value MUST NOT be read after a
-change of parameters, a shift of the clip, an edit or a move of the camera. Export MUST NOT
-use memoisation. The cold and the warm compose SHALL be byte-for-byte equal to the
-export frame.
-Why: a chain of four effects is tens of ms per frame, without memoisation a warm loop does not play;
+### Requirement: Memoization of the composite does not break "preview == export"
+A composed frame SHALL be memoized under the plan key (capability `video-plan`), which carries the
+hash of the chain, the geometry of the clip and the resolved camera; a stale value MUST NOT be read
+after a change of parameters, a shift of the clip, an edit or a move of the camera. Export MUST NOT
+use memoization. The cold and the warm compose SHALL be byte-for-byte equal to the export frame.
+Why: a chain of four effects is tens of ms per frame, without memoization a warm loop does not play;
 but a cache that sees a static hash and is blind to the per-frame camera gave out stale results.
 
-#### Scenario: Cache, invalidation and export
-- **WHEN** a repeated compose of an FX clip; a change of the chain or a shift of the clip; an edit of the camera; the compose of the export
-- **THEN** a byte-identical frame from the cache; recalculation without staleness; the camera in the key — a stale value is not read; export skips memoisation
-- **TEST** t66, t66c, t66d (`src/libs/kt-engine/tests/postfx_cache.rs`), t67 (`src/libs/kt-engine/tests/golden_export.rs`) — the frame-plan side is in capability `video-plan`
+#### Scenario: Cold, warm, after an edit, and export
+- **WHEN** a repeated compose of an FX clip; a curve edit of the chain; the frame of the export
+- **THEN** the repeat is byte-identical; the edit gives another frame, not a stale one; the cold and the warm compose equal the export frame
+- **TEST** t191 (`src/libs/kt-engine/tests/fx_auto_render.rs`), t67 (`src/libs/kt-engine/tests/golden_export.rs`) — the frame-plan side is in capability `video-plan`
 
 ### Requirement: The effect thumbnail is "fit and apply", and no more
 The single entry for thumbnails (the kind's icon, a variant cell, a library preset)
-SHALL be `fit_into` + execution of the chain with `in_scale = 1` at the REFERENCE size
-of the source thumbnail (320×180), followed by shrinking into the cell. A second path in the UI
+SHALL be `fit_into` + execution of the chain on the offline engine (`kt_gpu::offline_engine`)
+with `in_scale = 1` at the REFERENCE size of the source thumbnail (320×180), followed by shrinking
+into the cell. With no video device the cell SHALL show the base. A second path in the UI
 MUST NOT be introduced. The built-in sample for icons SHALL be frozen
 by a golden and give material to each class of effects; the sample SHALL have
 a variant with transparent margins. The icon of a kind with an identity default SHALL
@@ -265,16 +235,6 @@ strength — the calculation must be done at the reference size.
 - **WHEN** DropShadow is computed on an opaque sample and on an alpha sample
 - **THEN** on the opaque one — passthrough, on the alpha sample — not
 - **TEST** t544d (`src/libs/kt-fx/tests/fx_thumb.rs`)
-
-#### Scenario: The thumbnail equals the manual pair "fit + chain"
-- **WHEN** the thumbnail is compared with `fit_into` and with direct execution of the chain at the reference size
-- **THEN** the bytes match
-- **TEST** t544e (`src/libs/kt-fx/tests/fx_thumb.rs`)
-
-#### Scenario: The grain is pinned to the tick
-- **WHEN** a thumbnail with noise/VHS is computed again at the same tick and at a different one
-- **THEN** the same tick — the same bytes; a different tick — different ones
-- **TEST** t544f (`src/libs/kt-fx/tests/fx_thumb.rs`)
 
 ### Requirement: Built-in variants — a named configured state
 Each video kind in the picker registry SHALL have 2–3 built-in variants —
@@ -381,14 +341,14 @@ or after any event panning and cropping"), and the owner asked for "not worse, b
 combo of three Pan modes is exactly the extra widget of rule 9.
 
 #### Scenario: The leading node cannot be deleted, is moved, is added again
-- **WHEN** the user deletes the leading node, moves it after Blur, adds a second "Geometry" node, and `FxInstance::all()` is checked against the golden table
-- **THEN** the deletion is refused with a reason; the move and the second node succeed; the second node has no rule; `Pan` is absent from the registry; the node with defaults gives the identity hash
-- **TEST** t716 (`src/libs/kt-model/tests/fx_chain.rs`), t328 (`src/libs/kt-fx/tests/video_fx.rs`)
+- **WHEN** the user deletes the leading node, moves it after Blur, adds a second "Geometry" node, and `FxInstance::all()` is read
+- **THEN** the deletion is refused with a reason; the move and the second node succeed; the second node has no rule; `Pan` is absent from the registry; the node with defaults is the identity
+- **TEST** t716 (`src/libs/kt-model/tests/fx_chain.rs`)
 
 #### Scenario: Before the node — source space, after — canvas
 - **WHEN** on a vertical source the chain is Blur → Geometry and Geometry → Blur; the vertical source is rotated 90° into 16:9
-- **THEN** the frames differ (blurring the field versus blurring the material), both backends are within tolerance; the rotated source fills the canvas without margins
-- **TEST** t717 (`src/libs/kt-fx/tests/video_fx.rs`, `src/libs/kt-gpu/tests/parity.rs`)
+- **THEN** the frames differ (blurring the field versus blurring the material); the rotated source fills the canvas without margins
+- **TEST** t717 (`src/libs/kt-fx/tests/video_fx.rs`)
 
 ### Requirement: The effect catalogue is measured against the market and grows in ranked waves
 The video effect catalogue SHALL have one reconnaissance note (F-FX-007,
@@ -523,11 +483,11 @@ physical mechanics". The root rule: an imitation is not a simulation.
   reverse order gives the same bytes per position; the kernel calls no platform transcendental
 - **TEST** t1185 (`src/plugins/fx-video-tape/tests/physics.rs`), t1066
 
-#### Scenario: The GPU graph is within its tolerance of the CPU
+#### Scenario: The GPU graph is within its tolerance of the stored frames
 - **WHEN** the kind runs on the GPU executor at its defaults and at each preset, PAL and NTSC, at K=1
   and K=2, on a frame with alpha
-- **THEN** the result is within `FrameTol::SIGNAL` of the CPU, and the graph is deterministic on the
-  device
+- **THEN** the result is within `FrameTol::SIGNAL` of the stored frames, and the graph is deterministic on
+  the device
 - **TEST** t1186 (`src/libs/kt-gpu/tests/vhs_tape.rs`)
 
 #### Scenario: Still on two heads shows a bar, on four heads it does not
@@ -631,8 +591,8 @@ the GOP is limited to 60 for some reason, and probably the other parameters too"
 
 ### Requirement: The engine runs a stream stage in the plan's common code with random access
 A layer whose chain holds a `Stream` slot SHALL take as its pre-FX frame the stage's output,
-computed in the plan's common code before either executor runs, fitted to the layer's decode size
-and opaque; the slot SHALL be removed from the chain the executors see. The order SHALL ask the
+computed in the plan's common code before the executor runs, fitted to the layer's decode size
+and opaque; the slot SHALL be removed from the chain the executor sees. The order SHALL ask the
 stream's frames at the codec's size — the frame at N, and the history the memo does not cover —
 and no frame at the ordinary decode quality. The layer's content key SHALL carry the decoded
 frame's key. Export SHALL pre-roll the codec before a frame whose history the memo lacks, in
@@ -693,11 +653,6 @@ coordinates are normalized; determinism is invariant 11.
 - **WHEN** a disc is rasterized with feather 0/20/80 px, both falloffs, expansion −10/+10 px, and the same mask at 1/4 and at 1/1 of the raster
 - **THEN** the profile across the edge is monotonic, the 50 % level stays on the contour (moved by the expansion exactly), a wider feather is wider, smooth is steeper in the middle than linear; the 1/4 raster equals the 1/1 raster box-downsampled within 3 LSB
 - **TEST** t1267 (`src/libs/kt-fx/tests/masks.rs`)
-
-#### Scenario: Modes, invert and opacity
-- **WHEN** two overlapping hard rectangles are combined in each mode, in both orders, with the first one inverted, and at 50 % opacity
-- **THEN** the four regions (A only, B only, both, none) take the truth-table values of OR, AND NOT, AND, XOR; a first subtract/intersect starts from the full frame; invert swaps 0 and 255; opacity scales the mask's own contribution
-- **TEST** t1268 (`src/libs/kt-fx/tests/masks.rs`)
 
 #### Scenario: The coverage is deterministic and the memo is invisible
 - **WHEN** a fixed scene of masks is rasterized twice, with and without the memo
@@ -781,16 +736,15 @@ dewarp read past the sensor, and a barrel lens past the frame (camera-isp-edges)
 - **TEST** t1215 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
 #### Scenario: The noise is deterministic, the fixed pattern is fixed
-- **WHEN** a preset is rendered twice at the same timeline position, once at another, with and
-  without the SIMD twin, and once at K=2
-- **THEN** the same position gives the same bytes on every path; another position changes the
+- **WHEN** a preset is rendered twice at the same timeline position, once at another, and once at
+  K=2
+- **THEN** the same position gives the same bytes; another position changes the
   temporal noise but not the hot pixels; the K=2 frame is the K=1 frame magnified by 2
-- **TEST** t1216 (`src/plugins/fx-video-camera/tests/consequences.rs`), t1053
+- **TEST** t1216 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
-#### Scenario: The GPU graph agrees with the CPU kernel
-- **WHEN** every preset and the defaults run on the GPU executor and on the CPU, on a frame with
-  and without alpha
-- **THEN** each pair is within `FrameTol::THRESHOLD` and the alpha is the source's
+#### Scenario: The GPU graph agrees with the stored frames
+- **WHEN** every preset and the defaults run on the GPU executor, on a frame with and without alpha
+- **THEN** each frame is within `FrameTol::THRESHOLD` of its stored frame and the alpha is the source's
 - **TEST** t1217 (`src/libs/kt-gpu/tests/camera_isp.rs`), t1052
 
 #### Scenario: Each layout is the camera's mosaic
@@ -845,11 +799,11 @@ dewarp read past the sensor, and a barrel lens past the frame (camera-isp-edges)
 #### Scenario: The frame's edges are picture, not smears
 - **WHEN** a frame whose brightness is a sawtooth along each axis (rising from every edge inward)
   is filmed by every preset, the defaults and strong distortion and lateral CA with corrections
-  off, weak, calibrated and doubled, on the CPU and on the GPU
+  off, weak, calibrated and doubled
 - **THEN** the mean along the middle third of each edge changes by at least 1.5 LSB within every
   4 px of depth from 1 to 28 px — no band repeats the edge texel; with distortion and CA 0 the
   bytes are the old ones
-- **TEST** t1430 (`src/libs/kt-gpu/tests/camera_isp.rs`), t328
+- **TEST** t1430 (`src/libs/kt-gpu/tests/camera_isp.rs`)
 
 ### Requirement: A simulation of a device that records sound names its audio half
 Every simulation video kind whose device records sound (`vhs_tape`, `datamosh`, `camera_isp`) SHALL
@@ -870,8 +824,8 @@ takes its coordinate after the grid is absorbed into it, the series SHALL comput
 The tile is computed with the same inverse map and the same supersampling rule (`ss_taps`,
 cap 4×4). The pass then SHALL replicate the tile into every cell and compute fully only the pixels
 whose sub-samples cross the grid's outer edge. The field outside the grid stays as before.
-The replicated frame SHALL be byte-for-byte the frame of the full pass on the CPU. The GPU
-executes the same tile rule and SHALL stay within the existing tolerance class against the CPU. Any series that
+The replicated frame SHALL stay within the existing tolerance class of the stored frames, which
+the full pass gave. Any series that
 does not meet the condition (a geo step after the grid, a tap whose stage follows the grid, a
 perspective program) SHALL keep the full pass. There is no switch and no quality mode.
 The sample cost of a series SHALL be a pure function of the program: the number of
@@ -882,17 +836,7 @@ per-cell REPETITION. Every output pixel of a 12×30 grid at 960×540 averaged 16
 so 8.3 M sub-samples were taken per frame for 360 copies of one tile of 80×18 pixels. The owner's rule
 "no switches" (R.44) holds because the bytes do not change.
 
-#### Scenario: The cost of a grid is the cost of one cell
-- **WHEN** the sample cost is computed for a 960×540 frame through a grid of 1×1, 2×2, 12×10 and 12×30 cells, before and after the tile rule
-- **THEN** before: 1×, 4× and 16× the frame's pixel count (518 400, 2 073 600, 8 294 400, 8 294 400 sub-samples); after: for 12×10 and 12×30 no more than one cell's pixels × 16 plus the pixels of the outer ring × 16 plus one copy per frame pixel, at least 8× below the full pass; 1×1 and 2×2 are unchanged
-- **TEST** t942 (`src/libs/kt-fx/tests/grid_cost.rs`)
-
-#### Scenario: The copied cells are the computed cells, byte for byte
-- **WHEN** a sweep of grids (cols 1–16 × rows 1–32, centred and not, on 960×540, 320×180 and an odd 333×187 frame), with a pan, a lead Geometry node and an absorbed point-wise effect BEFORE the grid, is executed by the tile rule and by the full pass on the CPU; and series with a zoom or a mirror AFTER the grid
-- **THEN** every frame of the tile rule equals the full pass byte for byte (taps 1, 2, 3 and 4 per axis are covered); the series with a step after the grid take the full pass; `src/libs/kt-fx/src/geom.rs` and `src/libs/kt-gpu/src/shaders/geom_fused.wgsl` carry the same condition
-- **TEST** t943 (`src/libs/kt-fx/tests/grid_cost.rs`, `src/libs/kt-fx/src/geom.rs`, `src/libs/kt-gpu/src/shaders/geom_fused.wgsl`)
-
 #### Scenario: The GPU replicates the same tile
-- **WHEN** the sweep's grids 2×2, 3×3, 12×10 and 12×30 are executed on the GPU and on the CPU
-- **THEN** the GPU frames are within the tolerance class of t296 against the CPU frames, and the GPU runs one tile pass plus one replicate pass for the series instead of one full pass
+- **WHEN** the grids 2×2, 3×3, 12×10 and 12×30 are executed
+- **THEN** the frames are within the tolerance class of t296 of their stored frames, and the GPU runs one tile pass plus one replicate pass for the series instead of one full pass
 - **TEST** t944 (`src/libs/kt-gpu/tests/parity.rs`, `src/libs/kt-fx/src/geom.rs`, `src/libs/kt-gpu/src/shaders/geom_fused.wgsl`)

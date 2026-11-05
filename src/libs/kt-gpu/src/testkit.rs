@@ -9,6 +9,8 @@ use kt_cache::BurstCache;
 use kt_cache::SourceId;
 use kt_engine::export::{ExportError, ExportEvent, ExportOptions, ExportProgress, ExportStats, render_raw_video_range_with};
 use kt_engine::video_plan::LayerInput;
+use kt_fx::video::{Frame, VideoFxCtx};
+use kt_model::FxInstance;
 use kt_engine::{ExportBackends, FramePlan, LayerSrc, PlanLayer, TransMix, VideoGpuExec, VideoRenderer};
 use kt_media::{MediaSource, Quality, VideoFrame};
 use kt_model::{MediaId, Project};
@@ -113,4 +115,37 @@ pub fn mix(dst: &mut Vec<u8>, a: &VideoFrame, b: &VideoFrame, k: u32, m: TransMi
     let layers = vec![PlanLayer::Dissolve { a: side(a, 1), b: side(b, 2), k, alpha_k: 4096, mix: m }];
     let plan = FramePlan { t: Tick(0), out_w: a.width, out_h: a.height, layers, memoize_postfx: false };
     engine().execute_into(&plan, dst).expect("GPU execute");
+}
+
+/// A chain over one frame, through the composite.
+pub fn chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame {
+    let hash = xxhash_rust::xxh3::xxh3_64(format!("{fx:?}").as_bytes());
+    let content = xxhash_rust::xxh3::xxh3_64(&frame.rgba);
+    let src = LayerSrc {
+        source: SourceId(3),
+        cache_idx: 0,
+        content,
+        src_scale: ctx.in_scale,
+        input: LayerInput::Frame(Some(Arc::new(VideoFrame {
+            pts: Tick(0),
+            width: frame.w,
+            height: frame.h,
+            rgba: frame.rgba.into_boxed_slice(),
+            has_alpha: frame.has_alpha,
+        }))),
+        fx: std::borrow::Cow::Borrowed(fx),
+        fx_hash: hash,
+        u: ctx.u,
+        cam3d: ctx.cam3d,
+        blend: None,
+        blend_mode: kt_model::BlendMode::Normal,
+        lead: ctx.lead,
+        masks: Vec::new(),
+    };
+    let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
+    let plan = FramePlan { t: Tick(ctx.burst_index), out_w: ctx.out_w, out_h: ctx.out_h, layers, memoize_postfx: false };
+    let mut rgba = Vec::new();
+    engine().execute_into(&plan, &mut rgba).expect("GPU execute");
+    let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
+    Frame { w: ctx.out_w, h: ctx.out_h, rgba, has_alpha }
 }

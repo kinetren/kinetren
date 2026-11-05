@@ -30,19 +30,6 @@ pub struct VideoFxCtx {
 /// and hands back the host's frame without a copy.
 pub use kt_plugin_api::barrier::Frame;
 
-/// Pool of RGBA buffers of the chain (item 2 of round 7): previously each effect allocated
-/// a full-size buffer for EACH frame (Mirror+Grid+Glow+VHS ≈ 6 allocations
-/// and 5 full passes per compose). take() returns a zeroed buffer, because
-/// edges/event_grid/pan_zoom rely on zero initialization.
-/// The effects' arithmetic is unchanged: golden test 26 byte-for-byte.
-#[derive(Default)]
-pub struct FxScratch {
-    bufs: Vec<Vec<u8>>,
-    /// What the executor RAN since the caller last reset it (morpher-event-grid-cost, D1).
-    /// Plain integers: the frame path neither allocates nor locks for it (invariant 12).
-    pub cost: FrameCost,
-}
-
 /// The work of composing a frame, counted by the plan executor that did it — the same struct on
 /// both backends (morpher-event-grid-cost, D1). A memoized layer costs nothing, honestly.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -76,51 +63,6 @@ impl FrameCost {
             subsamples_unknown: sc.is_none(),
             ..FrameCost::default()
         }
-    }
-}
-
-impl FxScratch {
-    pub fn take(&mut self, len: usize) -> Vec<u8> {
-        let mut b = self.bufs.pop().unwrap_or_default();
-        b.clear();
-        b.resize(len, 0);
-        b
-    }
-    pub fn put(&mut self, b: Vec<u8>) {
-        if self.bufs.len() < 8 {
-            self.bufs.push(b);
-        }
-    }
-}
-
-/// A barrier plugin draws its buffers from the same pool (invariant 12).
-impl kt_plugin_api::barrier::Scratch for FxScratch {
-    fn take(&mut self, len: usize) -> Vec<u8> {
-        FxScratch::take(self, len)
-    }
-    fn put(&mut self, b: Vec<u8>) {
-        FxScratch::put(self, b)
-    }
-}
-
-/// The raster code barrier plugins share with the host (plugin-api-barriers, D3): the same
-/// functions the core's own paths call, so each keeps ONE text and its SIMD twin.
-pub struct Raster;
-
-impl kt_plugin_api::barrier::RasterHost for Raster {
-    fn resample(&self, src: &Frame, tw: u32, th: u32, scratch: &mut dyn kt_plugin_api::barrier::Scratch) -> Frame {
-        let mut out = scratch.take((tw * th * 4) as usize);
-        bilinear_into(src, 0.0, 0.0, src.w as f64, src.h as f64, tw, th, &mut out);
-        Frame { w: tw, h: th, rgba: out, has_alpha: src.has_alpha }
-    }
-    fn sample(&self, f: &Frame, x: f64, y: f64) -> [f64; 4] {
-        crate::geom::sample_bilinear_f64(f, x, y)
-    }
-    fn premultiply(&self, rgba: &mut [u8]) {
-        premultiply(rgba)
-    }
-    fn unpremultiply(&self, rgba: &mut [u8]) {
-        unpremultiply(rgba)
     }
 }
 
@@ -206,190 +148,8 @@ pub fn test_pattern(w: u32, h: u32, alpha_margin: bool) -> Frame {
     Frame { w, h, rgba, has_alpha: alpha_margin }
 }
 
-/// Thumbnail of the chain on a finished frame (R.54): fit `base` into w×h and
-/// run the chain. The ONLY entry point for thumbnails — for the effect icons, the
-/// variants strip and the library presets alike.
-///
-/// The context semantics are the engine's semantics, so that the picture does not diverge
-/// from what results after a click: `u` — the clip progress at the point of the
-/// cursor, `burst_index` — the absolute timeline tick (noise/vhs grain),
-/// `cam3d` — the layer's resolved camera (without it Pan3d is a passthrough).
-/// `in_scale` is always 1 here: the decode step (R.46) says “the frame came
-/// LARGER than the logical size”, and for a thumbnail it is the opposite.
-///
-/// ABOUT SIZE. Some parameters are set in PIXELS (`Pixelate.size` up to 128,
-/// `Halftone.size`, blur radii, `Vhs.rgb_shift`), so the same chain at 96×54 and
-/// at 1080p shows a different STRENGTH. A thumbnail is about the look, not the strength;
-/// call it meaningfully at the reference size (for us this is the thumb size,
-/// 320×180) and shrink the result with `fit_into`, rather than computing it at the
-/// size of the cell directly.
-#[allow(clippy::too_many_arguments)] // these are the parameters of VideoFxCtx, not “a lot of stuff”
-pub fn render_fx_thumb(
-    base: &Frame,
-    fx: &[FxInstance],
-    w: u32,
-    h: u32,
-    u: f64,
-    burst_index: i64,
-    cam3d: Option<crate::geom::Cam3d>,
-    scratch: &mut FxScratch,
-) -> Frame {
-    let (w, h) = (w.max(1), h.max(1));
-    let src = if base.w == w && base.h == h {
-        Frame { w, h, rgba: base.rgba.clone(), has_alpha: base.has_alpha }
-    } else {
-        let mut buf = scratch.take((w as usize) * (h as usize) * 4);
-        fit_into(base, w, h, &mut buf);
-        Frame { w, h, rgba: buf, has_alpha: base.has_alpha }
-    };
-    let ctx = VideoFxCtx { out_w: w, out_h: h, u, burst_index, cam3d, in_scale: 1, lead: None };
-    apply_video_chain_pooled(fx, src, &ctx, scratch)
-}
-
-/// Apply the video FX chain of the clip. Audio variants are ignored.
-/// A wrapper with a local pool — the result is identical to the pooled variant.
-pub fn apply_video_chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame {
-    let mut scratch = FxScratch::default();
-    apply_video_chain_pooled(fx, frame, ctx, &mut scratch)
-}
-
-/// Variant with a reusable buffer pool (the preview calls the chain for each
-/// new frame — the pool holder lives in VideoRenderer).
-///
-/// Since R.44, consecutive GEOMETRIC effects (Pan/CamMotion/Mirror/
-/// EventGrid) run as one fused pass of inverse mappings
-/// (`crate::geom`, concatenation of transforms) — without intermediate rasters.
-/// A series of length 1 goes through the old kernels byte-for-byte (t297); barriers
-/// (Blur/Glow/Edges/VHS/Noise/Greenscreen) — as before.
-pub fn apply_video_chain_pooled(
-    fx: &[FxInstance],
-    mut frame: Frame,
-    ctx: &VideoFxCtx,
-    scratch: &mut FxScratch,
-) -> Frame {
-    // The plan is built by the COMMON code (crate::plan, item 311) — the same one that the
-    // GPU path calls; here only the execution of the ops.
-    let plan = crate::plan::plan_chain_in(
-        fx,
-        frame.w,
-        frame.h,
-        ctx.in_scale,
-        ctx.out_w,
-        ctx.out_h,
-        ctx.u,
-        ctx.cam3d,
-        ctx.burst_index,
-        &[],
-        ctx.lead,
-    );
-    for op in plan.ops {
-        frame = match op {
-            crate::plan::PlanOp::Run { i, j, exec } => match exec {
-                crate::geom::GeomExec::Legacy => {
-                    let step = fx[i..j]
-                        .iter()
-                        .find(|f| crate::geom::is_geo_active(f, ctx.lead, ctx.out_w, ctx.out_h))
-                        .expect("legacy run has a geo step");
-                    scratch.cost.passes += 1;
-                    apply_legacy_geo(step, frame, ctx, scratch)
-                }
-                crate::geom::GeomExec::Fused(prog) => {
-                    let c = FrameCost::geom(&prog);
-                    scratch.cost.add(c);
-                    let nf = crate::geom::exec_geom_cpu(&prog, &frame, scratch);
-                    scratch.put(frame.rgba);
-                    nf
-                }
-            },
-            crate::plan::PlanOp::Barrier { idx, res_scale } => {
-                scratch.cost.passes += 1;
-                apply_barrier(&fx[idx], frame, ctx, scratch, res_scale)
-            }
-            // The layer strength is applied one level up (apply_chain_with_mixes in
-            // kt-engine); in a flat chain the slot is a passthrough, as before
-            crate::plan::PlanOp::Snapshot | crate::plan::PlanOp::Mix { .. } => frame,
-        };
-    }
-    frame
-}
-
-/// One barrier effect (non-local/per-pixel outside the series) — the former
-/// kernels; `res_scale` — K× execution (R.45 item 313: the kernel's pixel geometry
-/// ×K, the look is invariant; K=1 — verbatim the former code). Pub — for
-/// t303 (kernel invariance of the look without chains); the product call is
-/// only the plan executor.
-pub fn apply_barrier(
-    f: &FxInstance,
-    frame: Frame,
-    ctx: &VideoFxCtx,
-    scratch: &mut FxScratch,
-    res_scale: u32,
-) -> Frame {
-    let rs = res_scale.max(1);
-    // a barrier plugin (plugin-api-barriers): one dynamic call per frame, the loop inside the kernel;
-    // SIMD is the host's ONE switch (R.32)
-    if let Some((b, values)) = plugin_barrier(f) {
-        let cx = kt_plugin_api::barrier::BarrierCtx {
-            res_scale: rs,
-            burst_index: ctx.burst_index,
-            simd: crate::simd::simd_level() == crate::simd::SimdLevel::Avx2,
-            raster: &Raster,
-        };
-        return b.frame_values(values, frame, &cx, scratch);
-    }
-    match f {
-        // per-pixel R.47 effects in a BARRIER position (leading/trailing slot):
-        // the same f64 text of the formula as the tap of the fused pass — one home
-        // a point-wise plugin at the barrier position: the same tap as inside the fused pass
-        f @ FxInstance::Plugin(_) if crate::geom::PluginTap::of(f).is_some() => {
-            // the barrier's stage is the frame itself (D11.1)
-            let stage = kt_plugin_api::TapCtx { stage_w: frame.w, stage_h: frame.h, burst_index: ctx.burst_index };
-            let t = crate::geom::PluginTap::of_at(f, stage).expect("checked");
-            let mut frame = frame;
-            let w = frame.w;
-            t.apply_frame(&mut frame.rgba, w);
-            frame
-        }
-        // R.47 barriers Kv3
-        _ => {
-            debug_assert!(false, "barrier op on non-barrier fx");
-            frame
-        }
-    }
-}
-
 // a per-pixel effect as a barrier is the plugin's `frame` (`kt_plugin_api::frame_with_at`, the one
 // text of that loop since plugin-api-stage1: the f64 tap per pixel, clamp+round ONCE at the output)
-
-/// A single geo effect with the OLD kernels (`GeomExec::Legacy`): bytes as before
-/// R.44 — the goldens pan/cammotion/mirror t26 and the rule “a series of length 1 —
-/// the former pass” rest on this. Called only from `geom::apply_geo_run`.
-pub(crate) fn apply_legacy_geo(
-    f: &FxInstance,
-    frame: Frame,
-    ctx: &VideoFxCtx,
-    scratch: &mut FxScratch,
-) -> Frame {
-    match f {
-        FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
-            let (px, py, z) = cam_at(keyframes, ctx.u, *ease, *time_scale);
-            let nf = pan_zoom(&frame, ctx, *mode, px, py, z, scratch);
-            scratch.put(frame.rgba);
-            nf
-        }
-        f @ FxInstance::Plugin(_) => match crate::geom::plugin_lone(f) {
-            Some(kt_plugin_api::Lone::Mirror { h, v }) => mirror(frame, h, v),
-            None => {
-                debug_assert!(false, "apply_legacy_geo: a plugin without a lone path");
-                frame
-            }
-        },
-        _ => {
-            debug_assert!(false, "apply_legacy_geo: not a legacy geo fx");
-            frame
-        }
-    }
-}
 
 /// Whether the chain has video effects (otherwise the composite runs without copies).
 pub fn has_video_fx(fx: &[FxInstance]) -> bool {
@@ -503,58 +263,9 @@ pub fn pan_frame(
     (x0, y0, cw, ch)
 }
 
-/// Crop frame + bilinear resample into out (v1 composePanZoomOutput).
-fn pan_zoom(
-    src: &Frame,
-    ctx: &VideoFxCtx,
-    mode: PanMode,
-    pan_x: f64,
-    pan_y: f64,
-    zoom: f64,
-    scratch: &mut FxScratch,
-) -> Frame {
-    let (ow, oh) = (ctx.out_w.max(2), ctx.out_h.max(2));
-    let (x0, y0, cw, ch) = pan_frame(src.w, src.h, ctx.out_w, ctx.out_h, mode, pan_x, pan_y, zoom);
-    let mut out = scratch.take((ow * oh * 4) as usize);
-    bilinear_into(src, x0, y0, cw, ch, ow, oh, &mut out);
-    Frame { w: ow, h: oh, rgba: out, has_alpha: src.has_alpha }
-}
-
-/// Bilinear sampling of the frame [x0,y0,cw,ch] of the source into a ow×oh buffer.
-///
-/// The SIMD level dispatcher (R.32): the AVX2 kernel must be byte-for-byte
-/// equal to the scalar one, so the choice of path does not affect any golden.
-/// The branch costs per CALL (frame/layer), not per pixel.
+/// The bilinear of a CPU-side resample (a stream stage's output, an effect thumbnail's base).
 #[allow(clippy::too_many_arguments)]
-fn bilinear_into(
-    src: &Frame,
-    x0: f64,
-    y0: f64,
-    cw: f64,
-    ch: f64,
-    ow: u32,
-    oh: u32,
-    out: &mut [u8],
-) {
-    #[cfg(target_arch = "x86_64")]
-    if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2
-        // contract safeguard of the unsafe kernel: the buffers must be complete
-        && src.rgba.len() >= (src.w as usize) * (src.h as usize) * 4
-        && out.len() >= (ow as usize) * (oh as usize) * 4
-    {
-        // SAFETY: the level is checked by the runtime detector, the buffer lengths — above
-        unsafe {
-            crate::video_simd::bilinear_into_avx2(src, x0, y0, cw, ch, ow, oh, out);
-        }
-        return;
-    }
-    bilinear_into_scalar(src, x0, y0, cw, ch, ow, oh, out);
-}
-
-/// Scalar reference of the bilinear. NOT refactored together with the SIMD kernel:
-/// it IS the definition of the bytes of the CPU path (invariant No. 11).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn bilinear_into_scalar(
+pub(crate) fn bilinear_into(
     src: &Frame,
     x0: f64,
     y0: f64,
@@ -594,43 +305,6 @@ pub(crate) fn bilinear_into_scalar(
 }
 
 // ---- simple ---------------------------------------------------------------
-
-fn mirror(mut f: Frame, h: bool, v: bool) -> Frame {
-    if !h && !v {
-        return f;
-    }
-    // in-place swaps instead of a second buffer (item 2 of round 7); the result is byte-for-byte
-    // equal to the former out[y][x] = src[sy][sx]
-    let (w, hh) = (f.w as usize, f.h as usize);
-    let px = |x: usize, y: usize| (y * w + x) * 4;
-    if h && v {
-        // rotation by 180°: pixel p ↔ total-1-p, the middle is fixed
-        let total = w * hh;
-        for p in 0..total / 2 {
-            let (i, j) = (p * 4, (total - 1 - p) * 4);
-            for c in 0..4 {
-                f.rgba.swap(i + c, j + c);
-            }
-        }
-    } else if h {
-        for y in 0..hh {
-            for x in 0..w / 2 {
-                let (i, j) = (px(x, y), px(w - 1 - x, y));
-                for c in 0..4 {
-                    f.rgba.swap(i + c, j + c);
-                }
-            }
-        }
-    } else {
-        for y in 0..hh / 2 {
-            let (i, j) = (px(0, y), px(0, hh - 1 - y));
-            for c in 0..w * 4 {
-                f.rgba.swap(i + c, j + c);
-            }
-        }
-    }
-    f
-}
 
 /// “Cheap” blur v1: downscale by step times and back (bilinear).
 /// Blur by downscaling. `radius_y == 0` — “as horizontally”: exactly the

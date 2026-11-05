@@ -68,7 +68,7 @@ fn render_with(p: &Project, cache: &kt_cache::BurstCache) -> Vec<u8> {
     let src = || SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
     let mut facts = kt_engine::SourceFacts::default();
     facts.observe(MediaId(1), src().info());
-    let mut video = VideoRenderer::new_with_facts(p, &facts);
+    let video = VideoRenderer::new_with_facts(p, &facts);
     let mut s = src();
     for (media, pts, dq) in video.layers_at(Tick(0), Q) {
         let frame = s.read_video_frame(pts, Some(dq)).unwrap();

@@ -78,3 +78,19 @@ Two defects the CPU path had been hiding:
 - `UploadCache` is keyed by the serial, and a blended frame carries its base frame's serial, so a
   slowed event in blending mode showed the texture of another weight on the GPU. The key now takes
   the pair and the weight (t250 found it the moment it ran on the GPU).
+
+### D7. What stays on the CPU, and what lives on only in tests
+
+- The planner reads `GeoKernel::warp`: `probe_program_lens` measures a program's zoom through it, so
+  the K of the plan is a function of the map. It is plan math, one text beside its WGSL form.
+- Audio, generators, titles, a stream stage's history and frame blending of footage are not the
+  composite and stay. Generators are the next math to move.
+- The VHS physics tests and the camera's consequence tests assert what the signal does BETWEEN
+  stages: the luma on the tape's grid against the input, a raw plane after readout. A shader gives no
+  such grid. Rather than lose them, the f32 models moved to `tests/model/` of their crates: nothing
+  ships them. The price is written down: they test the model, and t1186 and t1217 tie the shaders to
+  frames the model made on the last day it was the product. An edit of a stage's shader must edit
+  the model or these tests stop meaning anything.
+
+Rejected: reading each stage back from the GPU for the tests alone (a test-only path through the
+graph, slower and with nothing to compare a physical expectation against at f32 precision).

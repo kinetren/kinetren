@@ -3,16 +3,14 @@
 //! resample (`RasterHost::resample` on the CPU, the `Resample` node on the GPU) — one text with the
 //! core's own resample and its AVX2 twin; each kernel below is the former kt-fx kernel verbatim.
 
-use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
-use kt_plugin_api::barrier::{BarrierCtx, BarrierKernel, Frame, GpuCtx, Node, Scratch, Slot};
+use kt_plugin_api::barrier::{BarrierKernel, GpuCtx, Node, Slot};
 use kt_plugin_api::{
     Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, RowDecl, Store, UiDecl, UiVariant,
     VideoClass,
 };
 
-mod simd;
 
 /// The plugins of this family, in the assembler's order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
@@ -107,23 +105,6 @@ impl BarrierKernel for Blur {
         [(p[0] as u32).clamp(1, 48) as f64, p[1], 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     }
 
-    fn frame(&self, k: &Cooked, mut f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        let (step, step_y) = Blur::steps(k, cx.res_scale);
-        let (dw, dh) = ((f.w / step).max(1), (f.h / step_y).max(1));
-        let pm = f.has_alpha;
-        if pm {
-            cx.raster.premultiply(&mut f.rgba);
-        }
-        let small = cx.raster.resample(&f, dw, dh, scratch);
-        let mut out = cx.raster.resample(&small, f.w, f.h, scratch);
-        if pm {
-            cx.raster.unpremultiply(&mut out.rgba);
-        }
-        scratch.put(small.rgba);
-        scratch.put(f.rgba);
-        Frame { w: f.w, h: f.h, rgba: out.rgba, has_alpha: f.has_alpha }
-    }
-
     /// The mip down and up, wrapped in premultiplication when the frame here has alpha (a mirror
     /// of the gate above: on an opaque frame the passes are not set up at all).
     fn gpu(&self, k: &Cooked, g: &GpuCtx, out: &mut Vec<Node>) {
@@ -198,57 +179,6 @@ impl BarrierKernel for Glow {
         [s, (p[1] as u32).clamp(1, 32) as f64, (p[2] as u32).min(255) as f64, p[3], p[4], p[5], 0.0, 0.0]
     }
 
-    fn frame(&self, k: &Cooked, mut f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        let s = k[0];
-        if s <= 0.0 {
-            return f;
-        }
-        // radius 4, threshold 0 and white tint — the former path byte-for-byte
-        // R.45 (item 313): the mip divisor ×K — the mip is the same, the look is invariant
-        let r = k[1] as u32 * cx.res_scale;
-        let th = k[2] as i32;
-        let tint = [k[3] as u8, k[4] as u8, k[5] as u8];
-        let plain = th == 0 && tint == [255, 255, 255];
-        let (dw, dh) = ((f.w / r).max(1), (f.h / r).max(1));
-        let pmbuf = f.has_alpha.then(|| {
-            let mut b = scratch.take(f.rgba.len());
-            b.copy_from_slice(&f.rgba);
-            cx.raster.premultiply(&mut b);
-            Frame { w: f.w, h: f.h, rgba: b, has_alpha: true }
-        });
-        let small = cx.raster.resample(pmbuf.as_ref().unwrap_or(&f), dw, dh, scratch);
-        if let Some(fr) = pmbuf {
-            scratch.put(fr.rgba);
-        }
-        let up = cx.raster.resample(&small, f.w, f.h, scratch);
-        // in-place addition: only the pixel itself + up is read (item 2 of round 7)
-        let pixels = f.rgba.len().min(up.rgba.len()) / 4;
-        let mut done = 0usize;
-        #[cfg(target_arch = "x86_64")]
-        if plain && cx.simd {
-            // SAFETY: the host allows SIMD only when the CPU has AVX2; pixels do not go past
-            // either buffer
-            unsafe { simd::glow_add_avx2(&mut f.rgba, &up.rgba, s, pixels) };
-            done = pixels;
-        }
-        for (o, u) in f.rgba.chunks_exact_mut(4).zip(up.rgba.chunks_exact(4)).skip(done) {
-            // threshold by luma of the BLURRED frame: a soft knee of width th
-            let w = if th == 0 {
-                1.0
-            } else {
-                let luma = (77 * u[0] as i32 + 150 * u[1] as i32 + 29 * u[2] as i32) >> 8;
-                (((luma - th) as f64) / th as f64).clamp(0.0, 1.0)
-            };
-            for c in 0..3 {
-                let k = s * w * tint[c] as f64 / 255.0;
-                o[c] = (o[c] as f64 + u[c] as f64 * k).min(255.0) as u8;
-            }
-        }
-        scratch.put(small.rgba);
-        scratch.put(up.rgba);
-        f
-    }
-
     fn shaders(&self) -> &'static [&'static str] {
         &[include_str!("glow_add.wgsl")]
     }
@@ -308,24 +238,6 @@ impl BarrierKernel for Sharpen {
     /// `[amount, radius]`: the amount clamped in f64 (the CPU's), the radius to its 2..16.
     fn cook(&self, p: &[f64]) -> Cooked {
         [p[0].clamp(0.0, 4.0), (p[1] as u32).clamp(2, 16) as f64, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    }
-
-    fn frame(&self, k: &Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        let amount = k[0];
-        let step = k[1] as u32 * cx.res_scale;
-        let (dw, dh) = ((f.w / step).max(1), (f.h / step).max(1));
-        let small = cx.raster.resample(&f, dw, dh, scratch);
-        let base = cx.raster.resample(&small, f.w, f.h, scratch);
-        scratch.put(small.rgba);
-        let mut out = f;
-        for (px, bp) in out.rgba.chunks_exact_mut(4).zip(base.rgba.chunks_exact(4)) {
-            for c in 0..3 {
-                let s = px[c] as f64;
-                px[c] = (s + (s - bp[c] as f64) * amount).round().clamp(0.0, 255.0) as u8;
-            }
-        }
-        scratch.put(base.rgba);
-        out
     }
 
     fn shaders(&self) -> &'static [&'static str] {
@@ -388,41 +300,6 @@ impl BarrierKernel for RadialBlur {
     /// `[amount, center_x, center_y, spin]` as the rows hold them (f32 values in f64).
     fn cook(&self, p: &[f64]) -> Cooked {
         [p[0], p[1], p[2], p[3], 0.0, 0.0, 0.0, 0.0]
-    }
-
-    fn frame(&self, k: &Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        const N: usize = 16;
-        let (amount, spin) = (k[0].clamp(0.0, 1.0), k[3] != 0.0);
-        let (ccx, ccy) = ((0.5 + k[1].clamp(-1.0, 1.0) * 0.5) * f.w as f64, (0.5 + k[2].clamp(-1.0, 1.0) * 0.5) * f.h as f64);
-        let mut out = scratch.take(f.rgba.len());
-        for y in 0..f.h {
-            for x in 0..f.w {
-                let d = ((y * f.w + x) * 4) as usize;
-                let (px, py) = (x as f64 + 0.5 - ccx, y as f64 + 0.5 - ccy);
-                let mut acc = [0f64; 4];
-                for i in 0..N {
-                    let t = i as f64 / (N - 1) as f64;
-                    let (sx, sy) = if spin {
-                        let a = 0.6 * amount * (t - 0.5);
-                        let (sa, ca) = a.fsin_cos();
-                        (px * ca - py * sa, px * sa + py * ca)
-                    } else {
-                        let k = 1.0 - 0.5 * amount * t;
-                        (px * k, py * k)
-                    };
-                    let s = cx.raster.sample(&f, ccx + sx - 0.5, ccy + sy - 0.5);
-                    for (a, v) in acc.iter_mut().zip(s) {
-                        *a += v;
-                    }
-                }
-                for (c, a) in acc.iter().enumerate() {
-                    out[d + c] = (a / N as f64).round().clamp(0.0, 255.0) as u8;
-                }
-            }
-        }
-        let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
-        scratch.put(f.rgba);
-        res
     }
 
     fn shaders(&self) -> &'static [&'static str] {
@@ -514,48 +391,6 @@ impl BarrierKernel for DropShadow {
         ]
     }
 
-    fn frame(&self, k: &Cooked, f: Frame, cx: &BarrierCtx, scratch: &mut dyn Scratch) -> Frame {
-        if !f.has_alpha {
-            return f;
-        }
-        let rs = cx.res_scale;
-        let step = k[2] as u32 * rs;
-        let (dw, dh) = ((f.w / step).max(1), (f.h / step).max(1));
-        let small = cx.raster.resample(&f, dw, dh, scratch);
-        let blurred = cx.raster.resample(&small, f.w, f.h, scratch);
-        scratch.put(small.rgba);
-        let (ox, oy) = (k[0] as i32 * rs as i32, k[1] as i32 * rs as i32);
-        let (opacity, tint) = (k[3], [k[4] as u8, k[5] as u8, k[6] as u8]);
-        let mut out = scratch.take(f.rgba.len());
-        for y in 0..f.h as i64 {
-            for x in 0..f.w as i64 {
-                let d = ((y * f.w as i64 + x) * 4) as usize;
-                let (bx, by) = (x - ox as i64, y - oy as i64);
-                let ba = if bx >= 0 && by >= 0 && bx < f.w as i64 && by < f.h as i64 {
-                    blurred.rgba[((by * f.w as i64 + bx) * 4 + 3) as usize] as f64 / 255.0
-                } else {
-                    0.0
-                };
-                let ash = ba * opacity;
-                let asrc = f.rgba[d + 3] as f64 / 255.0;
-                let oa = asrc + ash * (1.0 - asrc);
-                if oa <= 0.0 {
-                    out[d..d + 4].copy_from_slice(&[0, 0, 0, 0]);
-                } else {
-                    for c in 0..3 {
-                        let v = (f.rgba[d + c] as f64 * asrc + tint[c] as f64 * ash * (1.0 - asrc)) / oa;
-                        out[d + c] = v.round().clamp(0.0, 255.0) as u8;
-                    }
-                    out[d + 3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
-                }
-            }
-        }
-        scratch.put(blurred.rgba);
-        let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: true };
-        scratch.put(f.rgba);
-        res
-    }
-
     fn shaders(&self) -> &'static [&'static str] {
         &[include_str!("shadow_under.wgsl")]
     }
@@ -576,25 +411,5 @@ impl BarrierKernel for DropShadow {
             [g.w, g.h, ox as u32, oy as u32, 0, 0, 0, 0],
             [(k[3] as f32).clamp(0.0, 1.0), k[4] as f32, k[5] as f32, k[6] as f32, 0.0, 0.0, 0.0, 0.0],
         ));
-    }
-}
-
-/// The scalar and AVX2 forms of glow's additive finish, for t198 (kt-fx `tests/simd_parity.rs`).
-pub mod simd_testing {
-    /// The scalar loop of glow's finish at threshold 0 and a white tint.
-    pub fn glow_add_scalar(dst: &mut [u8], up: &[u8], s: f64) {
-        for (o, u) in dst.chunks_exact_mut(4).zip(up.chunks_exact(4)) {
-            for c in 0..3 {
-                o[c] = (o[c] as f64 + u[c] as f64 * s).min(255.0) as u8;
-            }
-        }
-    }
-
-    /// The AVX2 twin; panics without AVX2 (the calling test checks first).
-    #[cfg(target_arch = "x86_64")]
-    pub fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: usize) {
-        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
-        // SAFETY: the feature is checked
-        unsafe { crate::simd::glow_add_avx2(dst, up, s, pixels) };
     }
 }

@@ -624,8 +624,7 @@ fn probe_prefetch(project: &Project, facts: &kt_engine::SourceFacts, t0: Tick, t
 }
 
 /// `probe --time`, the VIDEO half (morpher-event-grid-cost, D1): what composing each frame of
-/// the range costs on the backend `render` would use (the GPU by default, `KT_VIDEO_GPU=0` —
-/// the CPU), at the project raster. The frames are decoded into a cache FIRST, so the times
+/// the range costs at the project raster. The frames are decoded into a cache FIRST, so the times
 /// are the compose alone; the counts (passes, sub-samples) come from the executor that ran
 /// (`FrameCost`), the time from the wall clock — a diagnostic, it writes no bytes.
 fn probe_video_cost(project: &Project, path: &str, t0: Tick, t1: Tick) -> Result<(), String> {

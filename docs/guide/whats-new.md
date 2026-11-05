@@ -5,10 +5,16 @@ month, newest first.
 
 ## kt26.11
 
+- **Every picture is now made by one engine, on the graphics card.** The separate processor path is
+  gone, so the preview and the render can no longer disagree, and effects no longer exist twice. With
+  no graphics card the program runs the same engine through Vulkan on the processor, and a render
+  there uses several devices at once. A computer with no Vulkan, DX12 or Metal driver has no picture
+  and no render, and the program says so: on Linux install `mesa-vulkan-drivers`, on Windows a
+  graphics driver.
+- **Slowed footage in blending mode no longer shows a frame of the wrong weight.**
 - **Datamosh encodes on the graphics card.** The effect's codec now runs as a shader, and even with no
   card, through Vulkan on the processor, a frame takes about a third less time. Existing moshes may
-  look slightly different, because the search picks some other vectors. On a computer with no Vulkan, DX12 or
-  Metal the effect leaves the frame intact and its panel says why.
+  look slightly different, because the search picks some other vectors.
 - **Hardware encoding on Linux no longer risks the render.** Choosing `h264_vaapi` used to end the
   program. Now the render tries a hardware encoder on the side first: if the graphics driver fails
   or crashes there, a render left on Auto goes on with the next encoder, and one you chose by hand

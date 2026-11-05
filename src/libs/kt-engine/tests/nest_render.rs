@@ -464,7 +464,7 @@ fn warm_and_compose(
             frame.into(),
         );
     }
-    kt_gpu::testkit::compose(&v, cache, t, q).0
+    kt_gpu::testkit::compose(v, cache, t, q).0
 }
 
 #[test]

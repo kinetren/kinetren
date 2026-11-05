@@ -1,10 +1,7 @@
 //! Frame plan (R.29): the STRUCTURE of the composition at moment t, built before
 //! the choice of backend. The Vegas order, dissolve pairs, solo fades, levels —
-//! are decided once in `VideoRenderer` (video.rs, build_plan); there are
-//! two executors: CPU (`compose_from_cache*` — the byte reference and fallback, invariant No. 11)
-//! and GPU (crate kt-gpu, wgpu f32 — injected from above, kt-engine does not
-//! depend on it). “One rendering path” (invariant No. 7) = one plan builder;
-//! the backend is an execution parameter, not a second path.
+//! are decided once in `VideoRenderer` (video.rs, build_plan); the one executor is the GPU (crate
+//! kt-gpu, injected from above, kt-engine does not depend on it; invariant No. 7).
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -45,7 +42,7 @@ pub struct LayerSrc<'a> {
     /// once when the plan is built — both executors see the ready
     /// parameters. Without curves — a borrow from VideoClip (zero clones).
     pub fx: Cow<'a, [FxInstance]>,
-    /// Post-FX memoization key of the CPU path.
+    /// Names the chain in the executor's keys.
     pub fx_hash: u64,
     /// Clip progress 0..1 (CamMotion).
     pub u: f64,
@@ -90,8 +87,7 @@ pub struct LayerSrc<'a> {
 /// BOTH executors — exactly what invariant 7 is against. Only the
 /// SOURCE of the layer's pre-FX frame changes.
 pub enum LayerInput<'a> {
-    /// Pre-FX frame; None — starvation. The executors decide for themselves: the CPU may
-    /// return a memoized post-FX frame even without it, the GPU cannot.
+    /// Pre-FX frame; None — starvation.
     Frame(Option<Arc<VideoFrame>>),
     /// Subtree: the reel's plan, assembled on the instance's INNER time.
     Nest(Box<NestSrc<'a>>),
@@ -150,8 +146,7 @@ impl NestSrc<'_> {
     /// Where to fit the sub-composite BEFORE the layer's chain. `None` — the reel's step
     /// equals the chain input, there is no step and the bytes are as before.
     ///
-    /// The decision is ONE for both backends (invariant 7): the CPU calls `fit_into`,
-    /// the GPU places a `Resample` to the full frame — its mirror.
+    /// The GPU places a `Resample` to the full frame.
     pub fn fit_to(&self, src_scale: u32, out_w: u32, out_h: u32) -> Option<(u32, u32)> {
         if self.nest_scale == src_scale {
             return None;
@@ -220,7 +215,7 @@ pub struct FramePlan<'a> {
 }
 
 /// GPU executor error. `DeviceLost` — the caller “poisons” the GPU until the end
-/// of the session (CPU fallback + notice); `TooLarge` — a fallback only for
+/// of the session (no picture, a notice); `TooLarge` — no picture for
 /// this plan (the source is larger than the device's texture limit).
 #[derive(Debug)]
 pub enum GpuExecError {
@@ -230,8 +225,7 @@ pub enum GpuExecError {
         w: u32,
         h: u32,
     },
-    /// The GPU executor cannot yet handle a plan of this kind — a fallback to the CPU
-    /// ONLY for this plan, like `TooLarge`. Not “poisoning”: the device
+    /// The executor cannot handle a plan of this kind: no picture for this plan, like `TooLarge`. Not “poisoning”: the device
     /// is alive, and the next frame may go to the GPU again.
     Unsupported(&'static str),
 }

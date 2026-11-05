@@ -6,11 +6,10 @@
 //! the enum, t224 the GPU against the CPU (FrameTol::GEOM for the panels), t973 the file text.
 
 use kt_plugin_api::math::FrozenMath;
-use std::f32::consts::PI;
 use std::sync::Arc;
 
 use kt_plugin_api::trans::{
-    Img, Kind, Row, axis_c, axis_sample, dir_vec, face_h_inv, flag, hpanel, kind, over_straight, shade3, smooth,
+    Kind, Row, dir_vec, face_h_inv, flag, kind, smooth,
 };
 use kt_plugin_api::{ParamUnit, Plugin, Store};
 
@@ -76,38 +75,7 @@ pub fn swap() -> Kind {
             p[0] = flag(v[0]);
             p[1] = v[1] as f32;
             p
-        },
-        |a, b, u, v, k, p, _, _| {
-            // 2.5D exchange: the sides travel along an arc, compressing inward; the order
-            // switches at the midpoint — occlusion is analytic, without
-            // depth (there is no depth buffer in the pipeline and none is needed)
-            let vert = p[0] > 0.5;
-            let wave = (PI * k).fsin();
-            let off = 0.3 * wave;
-            let scale = (1.0 - p[1] * wave).max(0.05);
-            let quad = |img: &Img<'_>, side: f32| -> [f32; 4] {
-                let (qx, qy) = if vert { (0.5, 0.5 + side * off) } else { (0.5 + side * off, 0.5) };
-                let su = (u - qx) / scale + 0.5;
-                let sv = (v - qy) / scale + 0.5;
-                if (0.0..1.0).contains(&su) && (0.0..1.0).contains(&sv) {
-                    let mut c = img.sample(su, sv);
-                    // the far side is slightly darker — the depth is read
-                    let shade = 1.0 - 0.25 * wave;
-                    c[0] *= shade;
-                    c[1] *= shade;
-                    c[2] *= shade;
-                    c
-                } else {
-                    [0.0; 4]
-                }
-            };
-            let sa = quad(a, 1.0);
-            let sb = quad(b, -1.0);
-            // k < 0.5 — the outgoing one is still ON TOP, further on — the incoming one
-            let (top, bot) = if k < 0.5 { (sa, sb) } else { (sb, sa) };
-            over_straight(top, bot)
-        },
-    )
+        })
 }
 
 /// Flip: the panel turns around its middle, on the back the reverse side is visible with the
@@ -121,24 +89,7 @@ pub fn flip() -> Kind {
         false,
         vec![Row::Flag("vertical"), norm("persp", 0.5), norm("shade", 0.5)],
         include_str!("flip.wgsl"),
-        flag_two,
-        |a, b, u, v, _, p, _, ext| {
-            // panel by the inverse homography from ext; on the back — the reverse side
-            // with the incoming one (mirrored along the movement axis)
-            let vert = p[0] > 0.5;
-            let (sx, sy) = if vert { (v, u) } else { (u, v) };
-            match hpanel(&ext[0..8], sx, sy) {
-                Some((sp, t)) if (0.0..=1.0).contains(&sp) && (0.0..=1.0).contains(&t) => {
-                    let front = ext[8] >= 0.0;
-                    let ms = if front { sp } else { 1.0 - sp };
-                    let (mu, mv) = if vert { (t, ms) } else { (ms, t) };
-                    let img = if front { a } else { b };
-                    shade3(img.sample(mu, mv), ext[9])
-                }
-                _ => [0.0; 4],
-            }
-        },
-    )
+        flag_two)
     .with_ext(|p, k| {
         let mut e = [0.0f32; 16];
         let kf = k as f64 / 4096.0;
@@ -169,24 +120,7 @@ pub fn cube() -> Kind {
         false,
         vec![Row::Dir, norm("persp", 0.5), norm("shade", 0.5)],
         include_str!("cube.wgsl"),
-        dir_two,
-        |a, b, u, v, k, p, _, ext| {
-            let vert = p[1].abs() > 0.5;
-            let (sx, sy) = if vert { (v, u) } else { (u, v) };
-            let sh = 1.0 - p[3] * (PI * k).fsin() * 0.5;
-            let pick = |h: &[f32], img: &Img<'_>| -> Option<[f32; 4]> {
-                match hpanel(h, sx, sy) {
-                    Some((sp, t)) if (0.0..=1.0).contains(&sp) && (0.0..=1.0).contains(&t) => {
-                        let (mu, mv) = if vert { (t, sp) } else { (sp, t) };
-                        Some(shade3(img.sample(mu, mv), sh))
-                    }
-                    _ => None,
-                }
-            };
-            // the faces of the cube do not intersect the interior — the order is fixed
-            pick(&ext[8..16], b).or_else(|| pick(&ext[0..8], a)).unwrap_or([0.0; 4])
-        },
-    )
+        dir_two)
     .with_ext(|p, k| {
         let mut e = [0.0f32; 16];
         let kf = k as f64 / 4096.0;
@@ -219,24 +153,7 @@ pub fn door() -> Kind {
         false,
         vec![Row::Flag("vertical"), norm("persp", 0.5), norm("shade", 0.5)],
         include_str!("door.wgsl"),
-        flag_two,
-        |a, b, u, v, _, p, _, ext| {
-            let vert = p[0] > 0.5;
-            let (sx, sy) = if vert { (v, u) } else { (u, v) };
-            let sh = ext[8];
-            let door = |x: f32, mirror: bool| -> Option<[f32; 4]> {
-                match hpanel(&ext[0..8], x, sy) {
-                    Some((sp, t)) if (0.0..=0.5).contains(&sp) && (0.0..=1.0).contains(&t) => {
-                        let ms = if mirror { 1.0 - sp } else { sp };
-                        let (mu, mv) = if vert { (t, ms) } else { (ms, t) };
-                        Some(shade3(a.sample(mu, mv), sh))
-                    }
-                    _ => None,
-                }
-            };
-            door(sx, false).or_else(|| door(1.0 - sx, true)).unwrap_or_else(|| b.sample(u, v))
-        },
-    )
+        flag_two)
     .with_ext(|p, k| {
         let mut e = [0.0f32; 16];
         let kf = k as f64 / 4096.0;
@@ -264,45 +181,7 @@ pub fn page_peel() -> Kind {
         false,
         vec![Row::Dir, curl(), norm("shadow", 0.5)],
         include_str!("page_peel.wgsl"),
-        dir_two,
-        |a, b, u, v, k, p, _, _| {
-            // the sheet curls back around a cylinder of radius r: the reverse-side tail
-            // flies over the part still lying, under the lifted one — the incoming
-            let (dx, dy) = (p[0], p[1]);
-            let r = p[2].max(0.01);
-            let shadow = p[3];
-            let c = axis_c(u, v, dx, dy);
-            let f = 1.0 - k * (1.0 + PI * r);
-            let back = 1.0 - shadow * 0.35;
-            // 1. flat tail of the reverse side (θ > π): x = 2f + πr − c
-            let m_tail = 2.0 * f + PI * r - c;
-            if c <= f && m_tail >= f + PI * r && m_tail <= 1.0 {
-                return shade3(axis_sample(a, u, v, dx, dy, m_tail), back);
-            }
-            // 2. the cylinder over [f, f+r]
-            let dc = c - f;
-            if (0.0..=r).contains(&dc) {
-                let th1 = dc.fatan2((r * r - dc * dc).max(0.0).sqrt());
-                let th2 = PI - th1;
-                let m2 = f + r * th2;
-                if m2 <= 1.0 {
-                    return shade3(axis_sample(a, u, v, dx, dy, m2), back);
-                }
-                let m1 = f + r * th1;
-                if m1 <= 1.0 {
-                    let sh = 1.0 - shadow * 0.3 * th1.fsin();
-                    return shade3(axis_sample(a, u, v, dx, dy, m1), sh);
-                }
-            }
-            // 3. base: the lying sheet or an open incoming with a shadow at the front
-            if c <= f {
-                a.sample(u, v)
-            } else {
-                let sh = 1.0 - shadow * 0.5 * (1.0 - (dc / r.max(1e-4)).min(1.0)).max(0.0);
-                shade3(b.sample(u, v), sh)
-            }
-        },
-    )
+        dir_two)
 }
 
 /// Scroll: the sheet winds onto a roll, the top coil is visible.
@@ -315,38 +194,5 @@ pub fn page_roll() -> Kind {
         false,
         vec![Row::Dir, curl(), norm("shadow", 0.5)],
         include_str!("page_roll.wgsl"),
-        dir_two,
-        |a, b, u, v, k, p, _, _| {
-            // a roll of radius r rolls, the upper turn of the reverse side is visible outside
-            let (dx, dy) = (p[0], p[1]);
-            let r = p[2].max(0.01);
-            let shadow = p[3];
-            let c = axis_c(u, v, dx, dy);
-            let f = 1.0 - k * (1.0 + 2.0 * r);
-            let back = 1.0 - shadow * 0.35;
-            let dc = f - c;
-            if dc.abs() <= r {
-                // front (c < f): the top point of the turn θ₂ = π − asin;
-                // back (c > f): continuation of the turn θ₃ = π + asin
-                let ad = dc.abs();
-                let th1 = ad.fatan2((r * r - ad * ad).max(0.0).sqrt());
-                let th = if dc >= 0.0 { PI - th1 } else { PI + th1 };
-                let mw = f + r * th;
-                if mw <= 1.0 {
-                    let sh = back * (1.0 - 0.2 * (1.0 - th.fsin().abs()));
-                    return shade3(axis_sample(a, u, v, dx, dy, mw), sh);
-                }
-                let m1 = f + r * th1;
-                if dc >= 0.0 && m1 <= 1.0 {
-                    return shade3(axis_sample(a, u, v, dx, dy, m1), back);
-                }
-            }
-            if c <= f {
-                a.sample(u, v)
-            } else {
-                let sh = 1.0 - shadow * 0.5 * (1.0 - ((c - f) / r.max(1e-4)).min(1.0)).max(0.0);
-                shade3(b.sample(u, v), sh)
-            }
-        },
-    )
+        dir_two)
 }

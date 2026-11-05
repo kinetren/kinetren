@@ -22,6 +22,7 @@ of `encode`, the math that has no shader yet, and the one-frame limit of a softw
 
 - `plugins`: the job's buffers, the Datamosh decoder, kernels without a CPU side.
 - `video-plan`, `export`, `transport`: one executor.
+- `media-index`: serials of frames are unique across caches.
 
 ## Impact
 

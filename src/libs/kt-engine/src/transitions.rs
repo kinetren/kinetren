@@ -3,9 +3,8 @@
 //!
 //! Invariant 7 requires ONE composition code for the preview and export, and the backend
 //! counts as execution. Therefore the kind of transition is turned into a `TransMix`
-//! — a flat pair (mode, 8 numbers) — EXACTLY once, here; the kind's CPU kernel and its WGSL
-//! (`trans_<id>`, assembled into `kt-gpu/src/shaders/composite.wgsl`) read the same numbers and
-//! repeat the same formulas. Every kind but the crossfade is a plugin since plugin-api-stage1 (D12):
+//! — a flat pair (mode, 8 numbers) — EXACTLY once, here; the kind's WGSL (`trans_<id>`, assembled
+//! into `kt-gpu/src/shaders/composite.wgsl`) reads them. Every kind but the crossfade is a plugin since plugin-api-stage1 (D12):
 //! its kernel lives in its family crate under `src/plugins/transitions-*`, and an edit of a formula
 //! goes into its Rust and its WGSL in one commit (t224).
 //!

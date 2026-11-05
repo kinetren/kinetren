@@ -1,17 +1,14 @@
-//! Runtime selection of the SIMD level of the CPU video-render kernels (R.32).
+//! Runtime selection of the SIMD level of the audio kernels (R.32; the video ones left for the GPU).
 //!
 //! User requirement: “we need to do it carefully somehow, what if there are no
 //! super-modern instructions” — therefore the build stays baseline
 //! x86-64 (SSE2), and the AVX2 kernels are enabled ONLY after a runtime check.
 //! A CPU without AVX2 gets exactly the same scalar code as before.
 //!
-//! The MAIN invariant (see kt-fx/CLAUDE.md, invariant No. 11 of the root):
-//! the SIMD kernel must be BYTE-FOR-BYTE equal to the scalar one on any CPU —
-//! the CPU path stays the determinism reference, the goldens t26/t11/t67 are
-//! not regenerated.
+//! The MAIN invariant (invariant No. 11 of the root): the SIMD kernel must be BYTE-FOR-BYTE equal to
+//! the scalar one on any CPU.
 //!
-//! `KT_SIMD=0` — forced scalar (debugging/comparison, in the series of
-//! KT_VIDEO_GPU/KT_AUTOPLAY).
+//! `KT_SIMD=0` — forced scalar (debugging/comparison).
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SimdLevel {
@@ -22,7 +19,7 @@ pub enum SimdLevel {
     Avx2,
 }
 
-/// The level is computed ONCE per process (like KT_VIDEO_GPU): the branch costs
+/// The level is computed ONCE per process : the branch costs
 /// per kernel call (frame/layer), not per pixel.
 pub fn simd_level() -> SimdLevel {
     static LEVEL: std::sync::OnceLock<SimdLevel> = std::sync::OnceLock::new();

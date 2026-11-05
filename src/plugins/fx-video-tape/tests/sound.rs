@@ -3,7 +3,8 @@
 //! it — the same field of the same tape frame.
 
 use fx_video_tape::deck::Deck;
-use fx_video_tape::sim;
+#[path = "model/sim.rs"]
+mod sim;
 use fx_video_tape::sound::{self, tape_pos, TapeSound, LA};
 use kt_plugin_api::math::FrozenMath;
 use kt_plugin_api::{AudioState, Placement, Plugin};

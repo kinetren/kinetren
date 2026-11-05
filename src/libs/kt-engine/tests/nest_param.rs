@@ -121,7 +121,7 @@ fn sources(p: &Project) -> std::collections::HashMap<MediaId, Box<dyn MediaSourc
 /// Returns (bytes, completeness): completeness false means that the order and the read
 /// diverged — and that is exactly the permanent cache miss.
 fn compose(p: &Project, t: Tick) -> (Vec<u8>, bool) {
-    let mut video = VideoRenderer::new(p);
+    let video = VideoRenderer::new(p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs = sources(p);
     for (addr, pts, dq) in video.layers_at(t, Q) {

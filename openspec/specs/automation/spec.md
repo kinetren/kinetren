@@ -470,9 +470,9 @@ capability `compositions`).
 - **THEN** the override is resolved recursively by the same code; the nested item equals the expanded content with the values baked in
 - **TEST** t686, t688 (`src/libs/kt-engine/tests/nest_param.rs`)
 
-#### Scenario: CPU and GPU converge for overridden instances
-- **WHEN** two differently overridden instances are rendered on both backends
-- **THEN** the plans differ, and the GPU is conformant to the CPU
+#### Scenario: Overridden instances stay within tolerance
+- **WHEN** two differently overridden instances are rendered
+- **THEN** the plans differ, and each frame is within tolerance of its stored frame
 - **TEST** t687 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 ### Requirement: Composition public parameters — format and interface

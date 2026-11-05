@@ -16,3 +16,12 @@
 - [x] 3.3 Preview, export, reel strips, posters and effect thumbnails compose on the GPU; the CPU
       composite, `compose_ahead`, `video_simd` and `mix_into` deleted (t1575)
 - [x] 3.4 kt-engine's tests compose through `kt_gpu::testkit`
+
+## 4. The kernels
+
+- [x] 4.1 `tap`, `frame`, `pixel`, the barrier context and the SIMD twins leave the plugin contract and
+      every plugin; `warp` stays, the planner measures zoom through it (D7)
+- [x] 4.2 kt-fx keeps the planner, `fit_into`, the mask rasterizer and the audio; its CPU executors go
+- [x] 4.3 The physics tests of VHS and the camera read test-only models (D7)
+- [x] 4.4 CI installs `mesa-vulkan-drivers` and requires a device on Linux; tests that read the picture
+      skip without one

@@ -80,7 +80,7 @@ fn render(p: &Project) -> (Vec<u8>, bool) {
     for (id, s) in sources() {
         facts.observe(id, s.info());
     }
-    let mut video = VideoRenderer::new_with_facts(p, &facts);
+    let video = VideoRenderer::new_with_facts(p, &facts);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources().into_iter().collect();

@@ -4,21 +4,18 @@
 //! 8-bit quantizations between steps. Non-local FX are barriers.
 //!
 //! ALL decisions live here (segmentation, program, legacy-vs-fused):
-//! kt-engine (CPU) and kt-gpu are executors of one and the same program
-//! (invariant 7; precedent — the shared parametrization `pan_frame`/`cam_at`).
-//! When you edit the construction or the CPU executor — edit the WGSL mirror
-//! `geom_fused.wgsl` in kt-gpu IN THE SAME COMMIT (t181).
+//! kt-gpu's `geom_fused.wgsl` executes the program (invariant 7). When you edit the construction,
+//! edit it IN THE SAME COMMIT (t181).
 //!
 //! Byte guarantee (R.44): a series of length 1 of Pan/CamMotion/Mirror goes
 //! through the OLD kernels (`GeomExec::Legacy`) — byte-for-byte as before the fusion (t297);
-//! a single EventGrid goes through the fused pass, but the arithmetic of the tile-local
-//! phase reproduces the old formula verbatim — the golden t26 stands on this.
+//! a single EventGrid goes through the fused pass, and the arithmetic of the tile-local
+//! phase reproduces the old formula verbatim.
 //! Multi-step series give NEW bytes (better: no losses) — this is
 //! sanctioned by the owner (docs/user-feedback.md R.44).
 
 use kt_plugin_api::math::FrozenMath;
 use crate::conform::{ConformRule, LeadCtx};
-use crate::video::{Frame, FxScratch};
 use kt_model::FxInstance;
 
 /// The ceiling of geo steps in one fused pass: a longer series is cut into
@@ -633,15 +630,6 @@ impl PluginTap {
         self.kernel.gpu_cooked(&self.cooked, self.values())
     }
 
-    /// The function of one sample inside the fused pass (the CPU), at its stage coordinate.
-    pub fn apply(&self, v: &mut [f64; 4], at: (f64, f64)) {
-        self.kernel.tap_at(&self.cooked, v, at.0, at.1);
-    }
-
-    /// The whole frame at the barrier position: one dynamic call, the loop inside the kernel.
-    pub fn apply_frame(&self, rgba: &mut [u8], w: u32) {
-        self.kernel.frame(&self.cooked, rgba, w);
-    }
 }
 
 impl std::fmt::Debug for PluginTap {
@@ -1416,235 +1404,8 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
     Mapped::At(x, y)
 }
 
-/// Final tap WITHOUT rounding: the same arithmetic as the inner loop of
-/// `bilinear_into_scalar` (f64 accumulator, tap clamp to the edges).
-/// The duplication is deliberate: the scalar bilinear is NOT refactored
-/// (kt-fx/CLAUDE.md) — both texts are the definition of the bytes.
-#[inline]
-pub(crate) fn sample_bilinear_f64(src: &Frame, sx: f64, sy: f64) -> [f64; 4] {
-    let (sw, sh) = (src.w as i64, src.h as i64);
-    let y = sy.floor() as i64;
-    let fy = sy - y as f64;
-    let x = sx.floor() as i64;
-    let fx = sx - x as f64;
-    let mut px = [0f64; 4];
-    for (dy, wy) in [(0i64, 1.0 - fy), (1, fy)] {
-        for (dx, wx) in [(0i64, 1.0 - fx), (1, fx)] {
-            let xi = (x + dx).clamp(0, sw - 1);
-            let yi = (y + dy).clamp(0, sh - 1);
-            let si = ((yi * sw + xi) * 4) as usize;
-            let w = wy * wx;
-            for (c, acc) in px.iter_mut().enumerate() {
-                *acc += src.rgba[si + c] as f64 * w;
-            }
-        }
-    }
-    px
-}
-
-/// Backward pass WITH RECORDING of the coordinates of the tap stages (R.45, item 312).
-/// Returns the result and the number of APPLIED prims: with a short circuit
-/// at prim d the op with after_prim ≤ d stays alive (“noise over the black
-/// canvas of the grid” works, “noise before the grid in the cut zone” does not).
-#[inline]
-fn map_pos_rec(
-    prims: &[GeomPrim],
-    taps: &[TapOp],
-    ox: f64,
-    oy: f64,
-    rec: &mut [(f64, f64); MAX_TAP_OPS],
-) -> (Mapped, usize) {
-    let (mut x, mut y) = (ox, oy);
-    // the taps are in chain order with DECREASING after_prim — the cursor walks
-    // from the end of the list (increasing after_prim) together with the pass
-    let mut cursor = taps.len();
-    while cursor > 0 && taps[cursor - 1].after_prim == 0 {
-        rec[cursor - 1] = (x, y);
-        cursor -= 1;
-    }
-    for (pi, p) in prims.iter().enumerate() {
-        match p {
-            GeomPrim::Affine(a) => {
-                x = a.ax * x + a.bx;
-                y = a.ay * y + a.by;
-            }
-            GeomPrim::Clamp { x0, x1, y0, y1 } => {
-                x = x.clamp(*x0, *x1);
-                y = y.clamp(*y0, *y1);
-            }
-            GeomPrim::Bounds { x0, x1, y0, y1 } => {
-                if x < *x0 || x > *x1 || y < *y0 || y > *y1 {
-                    return (Mapped::Transparent, pi);
-                }
-            }
-            GeomPrim::Fold { gw, gh, cw, ch, in_w, in_h } => {
-                if x < 0.0 || y < 0.0 || x >= *gw || y >= *gh {
-                    return (Mapped::Black, pi);
-                }
-                let kx = (x / cw).floor();
-                x = (x - kx * cw) / cw * in_w - 0.5;
-                let ky = (y / ch).floor();
-                y = (y - ky * ch) / ch * in_h - 0.5;
-            }
-            GeomPrim::Proj { m } => {
-                let tx = m[0][0] * x + m[0][1] * y + m[0][2];
-                let ty = m[1][0] * x + m[1][1] * y + m[1][2];
-                let tz = m[2][0] * x + m[2][1] * y + m[2][2];
-                if tz <= 0.0 {
-                    return (Mapped::Transparent, pi);
-                }
-                let qx = tx / tz;
-                let qy = ty / tz;
-                if !(0.0..=1.0).contains(&qx) || !(0.0..=1.0).contains(&qy) {
-                    return (Mapped::Transparent, pi);
-                }
-                x = qx;
-                y = qy;
-            }
-            GeomPrim::Warp { warp, p } => {
-                let (nx, ny) = warp.kernel.warp(p, x, y);
-                x = nx;
-                y = ny;
-            }
-        }
-        while cursor > 0 && taps[cursor - 1].after_prim == pi + 1 {
-            rec[cursor - 1] = (x, y);
-            cursor -= 1;
-        }
-    }
-    (Mapped::At(x, y), prims.len())
-}
 
 
 
-
-/// One subtap: the whole inverse chain + the tap (the Fold border and the Proj silhouette
-/// are anti-aliased honestly — each subtap decides the short circuits itself);
-/// then the absorbed per-pixel ops in chain order (R.45, item 312).
-#[inline]
-fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
-    if p.tap_ops.is_empty() {
-        // fast path — exactly R.44
-        return match map_pos(&p.prims, x, y) {
-            Mapped::At(sx, sy) => sample_bilinear_f64(src, sx, sy),
-            Mapped::Black => [0.0, 0.0, 0.0, 255.0],
-            Mapped::Transparent => [0.0, 0.0, 0.0, 0.0],
-        };
-    }
-    let mut rec = [(0.0f64, 0.0f64); MAX_TAP_OPS];
-    let (mapped, applied) = map_pos_rec(&p.prims, &p.tap_ops, x, y, &mut rec);
-    let mut v = match mapped {
-        Mapped::At(sx, sy) => sample_bilinear_f64(src, sx, sy),
-        Mapped::Black => [0.0, 0.0, 0.0, 255.0],
-        Mapped::Transparent => [0.0, 0.0, 0.0, 0.0],
-    };
-    for (ti, op) in p.tap_ops.iter().enumerate() {
-        if op.after_prim > applied {
-            continue; // the op's stage is cut by a short circuit
-        }
-        match op.kind {
-            TapKind::Plugin(t) => t.apply(&mut v, rec[ti]),
-        }
-    }
-    v
-}
-
-/// Coordinate probe (no tap) for the per-pixel Jacobian of Proj series.
-#[inline]
-fn coords_at(p: &GeomProgram, x: f64, y: f64) -> Option<(f64, f64)> {
-    match map_pos(&p.prims, x, y) {
-        Mapped::At(sx, sy) => Some((sx, sy)),
-        _ => None,
-    }
-}
-
-/// Per-pixel taps: finite differences (coordinate probes). A dead forward probe
-/// (a neighbour beyond the silhouette/edge) is replaced by a BACKWARD one — otherwise
-/// the last live column of the identity map would get extra taps and
-/// lose byte-exactness (t298). If both probes are dead, or the centre is dead — one
-/// tap: the colour there is decided by the subtap short circuits anyway.
-#[inline]
-fn probe_taps(p: &GeomProgram, ox: f64, oy: f64) -> (u32, u32) {
-    let c0 = coords_at(p, ox, oy);
-    let axis = |dx: f64, dy: f64| -> f64 {
-        let Some(a) = c0 else { return 1.0 };
-        let dist = |b: (f64, f64)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
-        if let Some(b) = coords_at(p, ox + dx, oy + dy) {
-            return dist(b);
-        }
-        if let Some(b) = coords_at(p, ox - dx, oy - dy) {
-            return dist(b);
-        }
-        1.0
-    };
-    (ss_taps(axis(1.0, 0.0)), ss_taps(axis(0.0, 1.0)))
-}
-
-/// CPU executor of the fused program: scalar f64 reference (invariant No. 11).
-/// The fused pass has NO SIMD in this round (measurement and the 1.3× threshold are separate
-/// work, kt-fx/CLAUDE.md). One tap (no minification) — the former bytes;
-/// supersampling — box average of the subtaps without intermediate roundings,
-/// round once (item 309).
-pub fn exec_geom_cpu(p: &GeomProgram, src: &Frame, scratch: &mut FxScratch) -> Frame {
-    let (ow, oh) = (p.out_w, p.out_h);
-    let mut out = scratch.take((ow * oh * 4) as usize);
-    // ONE TILE, COPIED (D2): the cell at the grid's origin is computed once — by the same
-    // per-pixel code at the same output coordinates — and every other cell copies its bytes
-    let tile = p.tile.map(|t| {
-        let mut buf = vec![0u8; (t.cw * t.ch * 4) as usize];
-        for ly in 0..t.ch {
-            for lx in 0..t.cw {
-                let px = geom_pixel(p, src, t.offx + lx, t.offy + ly);
-                buf[((ly * t.cw + lx) * 4) as usize..][..4].copy_from_slice(&px);
-            }
-        }
-        (t, buf)
-    });
-    for oy in 0..oh {
-        for ox in 0..ow {
-            let px = match &tile {
-                Some((t, buf)) if t.covers(ox, oy) => {
-                    let (lx, ly) = ((ox - t.offx) % t.cw, (oy - t.offy) % t.ch);
-                    let i = ((ly * t.cw + lx) * 4) as usize;
-                    [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
-                }
-                _ => geom_pixel(p, src, ox, oy),
-            };
-            let oi = ((oy * ow + ox) * 4) as usize;
-            out[oi..oi + 4].copy_from_slice(&px);
-        }
-    }
-    let has_alpha = if p.has_alpha_known { p.has_alpha } else { src.has_alpha };
-    Frame { w: ow, h: oh, rgba: out, has_alpha }
-}
-
-/// One output pixel of the fused program: the taps of `p.ss`, the box average of the subtaps
-/// without intermediate roundings, rounded once (item 309). One tap — the former bytes.
-#[inline]
-fn geom_pixel(p: &GeomProgram, src: &Frame, ox: u32, oy: u32) -> [u8; 4] {
-    let (nx, ny) = match p.ss {
-        SsSpec::Const { nx, ny } => (nx, ny),
-        SsSpec::PerPixel => probe_taps(p, ox as f64, oy as f64),
-    };
-    let px = if nx == 1 && ny == 1 {
-        sample_at(p, src, ox as f64, oy as f64)
-    } else {
-        let mut acc = [0f64; 4];
-        for j in 0..ny {
-            let sy = oy as f64 - 0.5 + (j as f64 + 0.5) / ny as f64;
-            for i in 0..nx {
-                let sx = ox as f64 - 0.5 + (i as f64 + 0.5) / nx as f64;
-                let s = sample_at(p, src, sx, sy);
-                for (c, a) in acc.iter_mut().enumerate() {
-                    *a += s[c];
-                }
-            }
-        }
-        let n = (nx * ny) as f64;
-        [acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n]
-    };
-    px.map(|v| v.round().clamp(0.0, 255.0) as u8)
-}
-
-// Execution of the geo run lives in the plan executors (video.rs / kt-gpu):
-// the legacy/fused decision is already made by `plan_chain` (R.45, item 311).
+// Execution of the geo run lives in kt-gpu: the legacy/fused decision is already made by
+// `plan_chain` (R.45, item 311).

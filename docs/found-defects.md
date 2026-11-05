@@ -35,9 +35,9 @@ list may be short of items from them.
 | 21 | Datamosh placement | CPU only, cannot sit on a reel or a track | `datamosh-codec-path/design.md` | by design | not a defect |
 | 22 | Windows supervisor | If the crash supervisor is killed, the editor keeps running | `render-crash-and-recovery/design.md` | open | later |
 | 23 | frame toggle glyph | The toggle's glyph sits in every preview crop | kt-app preview | unknown | С.3, check first |
-| 37 | VHS speed | The VHS CPU path runs at about 10 fps, no SIMD twin | `fx-video-tape` | open | С.1, follows the `compute-backends` decision |
-| 42 | VHS thread cap | VHS Tape uses at most 16 threads, so half of a 32-thread machine idles | `src/plugins/fx-video-tape/src/sim.rs:126` | reported by `compute-backends` | С.1 |
-| 43 | Datamosh motion search | Fixed for the encoder by `compute-kernels`: 46 ms instead of 67 at 1080p on llvmpipe, one buffer set per frame keeps it from the probe's 34 ms; `predict` and `reconstruct` stay on one CPU thread, so a clean decode is not faster | `src/plugins/fx-video-codec/src/codec.rs` `encode`, `predict`, `reconstruct` | partly fixed | С.1 |
+| 37 | VHS speed | The VHS has no CPU path any more: 108 ms per 1080p frame on llvmpipe, 95 on the deleted one | `fx-video-tape` | closed by `compute-kernels-render` | — |
+| 42 | VHS thread cap | Gone with the CPU path; the cap survives only in the test model | `src/plugins/fx-video-tape/tests/model/sim.rs` | closed by `compute-kernels-render` | — |
+| 43 | Datamosh motion search | Encoder, `predict` and `reconstruct` run as compute shaders, buffers pooled | `src/plugins/fx-video-codec/src/codec.rs` | closed by `compute-kernels-render` | — |
 | 46 | sound of a device effect on a track chain | VHS and Datamosh sound on a track's chain may count fields and frames from the wrong time: `TrackProcessor` never calls `place` | `src/libs/kt-fx/src/audio/mod.rs` | not checked | С.3, check first |
 | 47 | `vhs_tape` red 2 of 5, once a Ctrl+S that did not save | If the Ctrl+S is the program's, a person loses edits | `src/scripts/live/kt_live.py:1407` | cause unknown | current stage, read `finish.sh`'s result first |
 | 48 | Datamosh sound at a cut | The audio half assumes a long previous event, so after a short one the break may miss the picture's | `src/plugins/fx-video-codec/src/sound.rs` | open | С.3 |

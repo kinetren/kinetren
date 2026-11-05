@@ -2804,6 +2804,9 @@ fn t757_every_window_is_in_the_registry() {
 /// the same: there is no copy of the preview drawing in the program.
 #[test]
 fn t766_on_screen_controls_are_reachable_and_speak() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
     use egui_kittest::kittest::Queryable;
     let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
     // the scene starts with DISABLED controls — and those are what must be found
