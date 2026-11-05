@@ -608,6 +608,9 @@ fn t1605_a_span_that_fails_half_way_loses_no_frame() {
 /// request and again per frame at the composite, so the window said twice what was lost.
 #[test]
 fn t1606_a_layer_with_no_source_counts_once() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
     let p = two_seconds();
     let dir = tempfile::tempdir().unwrap();
     for serial in [true, false] {
@@ -620,7 +623,7 @@ fn t1606_a_layer_with_no_source_counts_once() {
             &out,
             None,
             &opts,
-            &kt_engine::ExportBackends::default(),
+            &kt_gpu::testkit::backends(),
             &Arc::new(AtomicBool::new(false)),
             &Arc::new(AtomicBool::new(false)),
             |_| {},
