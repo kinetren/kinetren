@@ -19,6 +19,8 @@ The window also words a failed render badly (row 67): "Error: io: …", and the 
 - **The chunks not yet written HOLD their frames in the cache.** A held entry is never evicted; a
   chunk's holds end when its last frame is written. Decode's look-ahead is bounded by the bytes held,
   not by an estimate. The eviction order (LRU) stops being what keeps an export correct.
+- **A frame a span dropped is asked again alone before it is composed**, as the serial export's
+  pre-roll does: one span that failed half way cost the pipeline 46 frames.
 - **A frame composed without a layer is reported where it happens**: one log line per run of such
   frames, naming the time and the media, in both the serial and the pipelined export, in frame order.
   The window opens its log for it.

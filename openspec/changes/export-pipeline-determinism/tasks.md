@@ -21,13 +21,14 @@ message, the first line = the stage and what was done, no attribution lines).
 
 ## 3. A frame without a layer (D4)
 
-- [ ] 3.1 `IncompleteFrames` in both exports, the log, kt-cli; t1602
-- [ ] 3.2 Commit the stage
+- [x] 3.1 `IncompleteFrames` in both exports, the log, kt-cli; t1602
+- [x] 3.2 A frame a span dropped is asked again (D7); t1605, 46 frames lost with the retry switched off
+- [x] 3.3 Commit the stage
 
 ## 4. The window (D6)
 
-- [ ] 4.1 `ExportError::Io` without "io:", the Video row, the catalogs, the log opening; t1604 with its PATH. `reach_tests.rs`, `layout_tests.rs`, `font_tests.rs`, `i18n_tests.rs` green
-- [ ] 4.2 Commit the stage
+- [x] 4.1 `ExportError::Io` without "io:", the Video row, the catalogs, the log opening; t1604 with its PATH. `reach_tests.rs`, `layout_tests.rs`, `font_tests.rs`, `i18n_tests.rs` green
+- [x] 4.2 Commit the stage
 
 ## 5. Finish
 

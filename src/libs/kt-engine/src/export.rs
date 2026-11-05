@@ -59,6 +59,9 @@ pub enum ExportLog {
     Skipped { name: String, reason: String },
     /// A source is rendered as its placeholder (the caller's list).
     Placeholder { label: String },
+    /// Consecutive frames were composed without a layer (export-pipeline-determinism D4): the first
+    /// and the last frame's time, and the media that gave no picture.
+    IncompleteFrames { from: Tick, to: Tick, media: Vec<String> },
     Phase(ExportPhase),
     Finalizing,
     Error(String),
@@ -255,7 +258,7 @@ pub fn render_raw_video_range_with(
     progress: impl FnMut(u64),
     emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
-    render_raw_video_profiled(project, sources, quality, range, backends, cancel, None, progress, emit)
+    render_raw_video_profiled(project, sources, quality, range, backends, cancel, None, &|_, _| {}, progress, emit)
 }
 
 /// The serial video pass with its stage times (export-throughput D6): `profile` only receives
@@ -269,6 +272,7 @@ fn render_raw_video_profiled(
     backends: &ExportBackends,
     cancel: &Arc<AtomicBool>,
     profile: Option<&ExportProfile>,
+    incomplete: &(dyn Fn(Tick, &[MediaId]) + Sync),
     mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
@@ -358,6 +362,7 @@ fn render_raw_video_profiled(
             ExportProfile::add(profile.map(|p| &p.compose_ns), mark);
             if !complete {
                 stats.missing_video_layers += 1;
+                incomplete(t, &video.absent_layers(&cache, t, quality));
             }
             emit(&frame_buf)?;
             stats.video_frames += 1;
@@ -401,8 +406,10 @@ pub(crate) fn chunk_requests(
 }
 
 /// Decode one source's requests into the cache; a failed span counts one missing layer. With
-/// `held`, each frame is inserted held and its key noted (the pipelined export): only a frame that
-/// really arrived has a hold to give back.
+/// `held` (the pipelined export) each frame is inserted held and its key noted: only a frame that
+/// really arrived has a hold to give back. And a frame the span did not give is asked again alone,
+/// before anything composes it: a failed span drops every key after the failure, and the serial
+/// export gets those back from its pre-roll (`stream_preroll`), which a pipeline stage cannot run.
 pub(crate) fn decode_requests(
     s: &mut Box<dyn MediaSource>,
     media: MediaId,
@@ -412,20 +419,76 @@ pub(crate) fn decode_requests(
     mut held: Option<&mut Vec<kt_cache::BurstKey>>,
 ) {
     let sid = source_id(media);
-    let ok = s
-        .read_video_span_qualities(keys, &mut |k, dq, frame| {
-            let idx = video_cache_idx(k);
-            match held.as_mut() {
-                Some(held) => {
-                    cache.insert_video_held(sid, Some(dq), idx, frame.into());
-                    held.push(kt_cache::BurstKey { source: sid, kind: kt_cache::BurstKind::video(Some(dq)), idx });
-                }
-                None => cache.insert_video(sid, Some(dq), idx, frame.into()),
+    let retry = held.is_some();
+    let mut arrived = std::collections::HashSet::new();
+    let mut insert = |k: Tick, dq: Quality, frame: kt_media::VideoFrame, arrived: &mut std::collections::HashSet<(Tick, Quality)>| {
+        let idx = video_cache_idx(k);
+        arrived.insert((k, dq));
+        match held.as_mut() {
+            Some(held) => {
+                cache.insert_video_held(sid, Some(dq), idx, frame.into());
+                held.push(kt_cache::BurstKey { source: sid, kind: kt_cache::BurstKind::video(Some(dq)), idx });
             }
-        })
-        .is_ok();
+            None => cache.insert_video(sid, Some(dq), idx, frame.into()),
+        }
+    };
+    let ok = s.read_video_span_qualities(keys, &mut |k, dq, frame| insert(k, dq, frame, &mut arrived)).is_ok();
     if !ok {
         *missing += 1;
+    }
+    if retry {
+        for &(k, dq) in keys.iter().filter(|key| !arrived.contains(key)).collect::<Vec<_>>() {
+            let mut again = std::collections::HashSet::new();
+            let _ = s.read_video_span(&[k], Some(dq), &mut |k, frame| insert(k, dq, frame, &mut again));
+        }
+    }
+}
+
+/// A run of consecutive frames composed without a layer, and what was missing.
+struct IncompleteRun {
+    from: Tick,
+    to: Tick,
+    media: std::collections::BTreeSet<MediaId>,
+}
+
+impl IncompleteRun {
+    fn into_log(self, project: &Project) -> ExportLog {
+        let name = |id: MediaId| match project.media.iter().find(|m| m.id == id) {
+            Some(m) => std::path::Path::new(&m.path)
+                .file_name()
+                .map_or_else(|| m.path.clone(), |f| f.to_string_lossy().into_owned()),
+            None => format!("media {}", id.0),
+        };
+        ExportLog::IncompleteFrames { from: self.from, to: self.to, media: self.media.into_iter().map(name).collect() }
+    }
+}
+
+/// Joins consecutive incomplete frames into runs, in the frame order they are told.
+struct IncompleteRuns {
+    step: Tick,
+    run: std::sync::Mutex<Option<IncompleteRun>>,
+}
+
+impl IncompleteRuns {
+    fn new(step: Tick) -> IncompleteRuns {
+        IncompleteRuns { step, run: std::sync::Mutex::new(None) }
+    }
+
+    /// The run this frame ended, if it does not continue the last one.
+    fn note(&self, t: Tick, media: &[MediaId]) -> Option<IncompleteRun> {
+        let mut run = self.run.lock().unwrap();
+        if let Some(r) = run.as_mut()
+            && t.0 <= r.to.0 + self.step.0
+        {
+            r.to = t;
+            r.media.extend(media);
+            return None;
+        }
+        run.replace(IncompleteRun { from: t, to: t, media: media.iter().copied().collect() })
+    }
+
+    fn finish(&self) -> Option<IncompleteRun> {
+        self.run.lock().unwrap().take()
     }
 }
 
@@ -472,7 +535,8 @@ fn stream_preroll(
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExportError {
-    #[error("io: {0}")]
+    // the message alone: a person reads it in the render window, and "io" names a Rust type
+    #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("ffmpeg exited with {0}")]
     FfmpegFailed(std::process::ExitStatus),
@@ -700,6 +764,13 @@ pub fn export_mp4_with_backends(
     let profile = opts.profile.as_deref();
     let started = Instant::now();
     events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Video)));
+    // a frame without a layer is told where it happens, in frame order (D4)
+    let incomplete_runs = IncompleteRuns::new(Tick(kt_time::FpsGrid::new(fps).frame_step()));
+    let incomplete = |t: Tick, media: &[MediaId]| {
+        if let Some(run) = incomplete_runs.note(t, media) {
+            events(ExportEvent::Log(run.into_log(project)));
+        }
+    };
     // a stream stage's pre-roll decodes on the compose thread (datamosh-codec-path D6): such a
     // project keeps the serial export (export-throughput D2)
     let serial = opts.serial || VideoRenderer::new(project).has_stream_stages();
@@ -717,6 +788,7 @@ pub fn export_mp4_with_backends(
                 backends,
                 cancel,
                 profile,
+                &incomplete,
                 |done| {
                     wait_paused();
                     v_done.store(done, Ordering::Relaxed);
@@ -808,6 +880,7 @@ pub fn export_mp4_with_backends(
             video_finished: &video_finished,
             profile,
             budget: EXPORT_VIDEO_CACHE_BYTES,
+            incomplete: &incomplete,
         };
         crate::export_pipeline::run(
             project,
@@ -823,6 +896,9 @@ pub fn export_mp4_with_backends(
         .map_err(|e| cleanup_on_err(e.into()))?
     };
     v_done.store(vstats.video_frames, Ordering::Relaxed);
+    if let Some(run) = incomplete_runs.finish() {
+        events(ExportEvent::Log(run.into_log(project)));
+    }
 
     if cancel.load(Ordering::Acquire) {
         drop(muxer);
@@ -903,6 +979,7 @@ pub fn render_pipelined_budget<S: ExportSink>(
         video_finished: &|| {},
         profile,
         budget,
+        incomplete: &|_, _| {},
     };
     let (v, a) = crate::export_pipeline::run(
         project,

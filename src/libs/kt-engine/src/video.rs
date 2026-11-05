@@ -1633,6 +1633,20 @@ impl VideoRenderer {
         execute_plan_cpu(&plan, cache, &mut scratch.fx, &mut scratch.blend, out)
     }
 
+    /// The media whose frames the composite at `t` names and the cache does not have: what a frame
+    /// that came out incomplete lacked (export-pipeline-determinism D4). Sorted, each once.
+    pub fn absent_layers(&self, cache: &BurstCache, t: Tick, quality: Quality) -> Vec<MediaId> {
+        let mut media: Vec<MediaId> = self
+            .layers_at(t, quality)
+            .into_iter()
+            .filter(|(m, pts, q)| !cache.contains_video(crate::fetch::source_id(*m), Some(*q), video_cache_idx(*pts)))
+            .map(|(m, _, _)| m)
+            .collect();
+        media.sort();
+        media.dedup();
+        media
+    }
+
     /// Whether a stream stage (datamosh-codec-path) runs anywhere in this renderer's tree: its
     /// export pre-roll decodes on the compose thread, so the pipelined export keeps the serial
     /// composite for such a project (export-throughput D2).

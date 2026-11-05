@@ -58,11 +58,19 @@ under them before, and dead frames still go first.
 lock). A check then a hold would leave the same window the defect lived in.
 
 ### D4. A frame without a layer is reported where it happens
-With holds a key can be absent only because the decoder could not give it, so waiting would wait for
-nothing. Each stage knows `complete`; the writer (the pipeline) and the loop (serial) pass the frame's
+With holds, and the retry of D7, a key is absent only because the decoder cannot give it, so waiting
+would wait for nothing. Each stage knows `complete`; the writer (the pipeline) and the loop (serial) pass the frame's
 time in frame order, and consecutive frames become one `ExportLog::IncompleteFrames { from, to, media }`.
 The media names come from `VideoRenderer::absent_layers`, asked when the frame is composed, when the
 cache still shows what was missing. The summary line stays, and the log opens by itself.
+
+### D7. A frame a span dropped is asked again before it is composed
+Found while writing t1602: the serial export runs `stream_preroll` before every frame, and besides
+its stream stages that re-reads any frame missing from the cache. So a span that fails half way, which
+drops every key after the failure, heals there one frame later, and the pipeline has no such step:
+one failed span cost 46 frames in t1605. `decode_requests` now asks each key the span did not give
+again, alone, as the pre-roll does per frame, inserted held. This is the "export waits for the layer"
+half of the rule; D4 is what is left for a frame no decoder can give.
 
 ### D5. "Equal to serial" is the streams, at the same thread count
 The two FILES cannot be equal. `threads=auto` against the serial's `1` makes a different x264 stream

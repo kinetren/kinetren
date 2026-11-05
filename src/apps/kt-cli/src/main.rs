@@ -817,6 +817,12 @@ fn export_log_line(l: &kt_engine::export::ExportLog) -> String {
         ExportLog::NotOpened { name, code } => format!("encoder {name} did not open (code {code})"),
         ExportLog::Skipped { name, reason } => format!("encoder {name} skipped: {reason}"),
         ExportLog::Placeholder { label } => format!("placeholder rendered for {label}"),
+        ExportLog::IncompleteFrames { from, to, media } => format!(
+            "no picture from {} at {:.2}–{:.2} s: written without that layer",
+            media.join(", "),
+            from.0 as f64 / 90_000.0,
+            to.0 as f64 / 90_000.0
+        ),
         ExportLog::Phase(ExportPhase::Video) => "phase: video".into(),
         ExportLog::Phase(ExportPhase::Audio) => "phase: audio".into(),
         ExportLog::Phase(ExportPhase::Finalize) | ExportLog::Finalizing => {

@@ -4,7 +4,8 @@
 Every frame named by a chunk of the pipelined export SHALL be held in the cache (capability
 `media-index`) from the moment that chunk's decode requests are made until its last frame is written,
 whether it was decoded for that chunk or found there. Decode SHALL wait while the bytes held exceed the
-look-ahead budget. The frames, the samples and `missing_video_layers` of the pipelined export SHALL
+look-ahead budget. A frame a span did not give SHALL be asked again alone before it is composed, as the
+serial export's pre-roll does. The frames, the samples and `missing_video_layers` of the pipelined export SHALL
 equal the serial export's and be the same on every run, at any relative speed of the stages.
 Why: the cache stays full during an export, a composite's reads refresh frames never needed again,
 and these outlived frames decoded and not yet read. A different set of frames lost a layer on
@@ -18,6 +19,12 @@ never fills the cache.
   look-ahead limit
 - **THEN** every run equals the serial export frame by frame, with zero missing layers
 - **TEST** t1601 (`src/libs/kt-engine/tests/export_pipeline.rs`)
+
+#### Scenario: A span that fails half way loses no frame
+- **WHEN** a source's span stops with an error half way through a chunk, once, while each frame can
+  still be read alone, and the range is exported serially and pipelined
+- **THEN** both count the one failed span and no frame is written without its layer
+- **TEST** t1605 (`src/libs/kt-engine/tests/export_options.rs`)
 
 #### Scenario: The file's streams equal the serial export's
 - **WHEN** `kt-cli export` writes a project pipelined with `--encoder-threads 1`, and with `--serial`
@@ -36,11 +43,11 @@ Why: the only trace was a count at the end ("missing layers 5"), which says neit
 which media, so a damaged file could pass for a finished one.
 
 #### Scenario: A source that fails for a stretch is named with its frames
-- **WHEN** a source fails to give its frames for part of a range and the range is rendered serially
-  and pipelined
+- **WHEN** a source cannot give its frames for two stretches of a range, and the range is rendered
+  serially and pipelined
 - **THEN** both give the same `IncompleteFrames` events, in frame order, one per run of frames, naming
   that media and those times; the frames and the missing count are equal
-- **TEST** t1602 (`src/libs/kt-engine/tests/export_pipeline.rs`)
+- **TEST** t1602 (`src/libs/kt-engine/tests/export_options.rs`)
 
 ### Requirement: A failed render's window says what failed in the person's words
 The error of a failed render SHALL be the export's own message, without the name of an internal error

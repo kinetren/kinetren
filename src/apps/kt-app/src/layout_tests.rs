@@ -19544,6 +19544,48 @@ pub(crate) fn render_progress_scene(h: &mut Harness<'static, KtApp>) {
     render_step(h.state_mut(), 1.0, 30, 120, kt_engine::export::ExportPhase::Video);
 }
 
+/// t1604 (export-pipeline-determinism D6): a run that ended without an encoder says so, and its
+/// error is the export's own message. "Error: io: …" named a Rust type, and "choosing the encoder…"
+/// under a finished failure said the program was still at it. A finished run that lost a layer
+/// opens its log by itself, where the frames are named.
+#[test]
+fn t1604_a_failed_render_says_what_failed() {
+    let dir = render_scratch("t1604");
+    let mut h = harness_lang(Lang::En);
+    scripted_render(h.state_mut(), &dir);
+    let error = kt_engine::export::ExportError::Io(std::io::Error::other(
+        "no video encoder could be opened (last error: h264_vaapi: no VAAPI device)",
+    ));
+    h.state_mut().render_job.as_mut().unwrap().on_result(Err(error.to_string()));
+    for _ in 0..3 {
+        h.step();
+    }
+    let texts = shown_texts(&h);
+    assert!(texts.iter().any(|t| t == tr(k::render::NO_ENCODER)), "the Video row: {texts:?}");
+    assert!(!texts.iter().any(|t| t == tr(k::render::CHOOSING)), "still choosing: {texts:?}");
+    let line = "Error: no video encoder could be opened (last error: h264_vaapi: no VAAPI device)";
+    assert!(texts.iter().any(|t| t.contains(line)), "the error line: {texts:?}");
+    assert!(!texts.iter().any(|t| t.contains("io:")), "a Rust type in the window: {texts:?}");
+
+    let mut h = harness_lang(Lang::En);
+    scripted_render(h.state_mut(), &dir);
+    let job = h.state_mut().render_job.as_mut().unwrap();
+    job.on_msg(crate::render_dialog::RenderMsg::Engine(kt_engine::export::ExportEvent::Log(
+        kt_engine::export::ExportLog::IncompleteFrames {
+            from: kt_time::Tick(90_000),
+            to: kt_time::Tick(180_000),
+            media: vec!["clip.mp4".into()],
+        },
+    )));
+    job.on_result(Ok(kt_engine::export::ExportStats { missing_video_layers: 31, ..Default::default() }));
+    for _ in 0..3 {
+        h.step();
+    }
+    let texts = shown_texts(&h);
+    assert!(texts.iter().any(|t| t.contains("no picture from clip.mp4 at 0:01–0:02")), "the log stayed shut: {texts:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test 965 (hw-encode-context D6): the encoder list offers a device encoder only with its device,
 /// and the progress row names the device.
 ///

@@ -161,6 +161,8 @@ pub(crate) struct Hooks<'a> {
     /// (`EXPORT_VIDEO_CACHE_BYTES`). A test scales it with its frame size: the pressure is the
     /// ratio of the two.
     pub budget: usize,
+    /// A frame came out without a layer: its time and the media that lacked, in frame order.
+    pub incomplete: &'a (dyn Fn(Tick, &[MediaId]) + Sync),
 }
 
 /// How many frame workers: the CPU composite is the heavy stage, so it gets the cores but two
@@ -215,12 +217,13 @@ impl Gate {
 /// A frame for a worker: compose it (CPU) or only convert the GPU's readback.
 enum Job {
     Compose { t: Tick },
-    Convert { rgba: Vec<u8>, complete: bool },
+    Convert { t: Tick, rgba: Vec<u8>, complete: bool },
 }
 
 struct Done<F> {
     frame: F,
-    complete: bool,
+    /// The frame came out without a layer: its time and the media that lacked.
+    lost: Option<(Tick, Vec<MediaId>)>,
 }
 
 /// A chunk of frames decoded into the cache: frame indices `[first, end)`.
@@ -400,22 +403,24 @@ pub(crate) fn run<S: ExportSink>(
             worker_handles.push(scope.spawn(move || -> std::io::Result<()> {
                 let mut scratch = ExportScratch::default();
                 while let Ok(job) = jr.recv() {
-                    let (rgba, complete) = match job {
+                    let (t, rgba, complete) = match job {
                         Job::Compose { t } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
                             let complete = video_ref.compose_export_with(cache_ref, t, quality, &mut scratch, &mut buf);
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
-                            (buf, complete)
+                            (t, buf, complete)
                         }
-                        Job::Convert { rgba, complete } => (rgba, complete),
+                        Job::Convert { t, rgba, complete } => (t, rgba, complete),
                     };
+                    // asked here: the chunk still holds what it has, so what is absent never came
+                    let lost = (!complete).then(|| (t, video_ref.absent_layers(cache_ref, t, quality)));
                     let Ok(mut frame) = br.recv() else { break };
                     let mark = Instant::now();
                     conv.convert(&rgba, &mut frame)?;
                     ExportProfile::add(prof.map(|p| &p.convert_ns), mark);
                     let _ = pool_tx.send(rgba);
-                    if dt.send(Done { frame, complete }).is_err() {
+                    if dt.send(Done { frame, lost }).is_err() {
                         break;
                     }
                 }
@@ -436,7 +441,7 @@ pub(crate) fn run<S: ExportSink>(
                 let complete =
                     gpu.collect(ticket, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                 ExportProfile::add(prof.map(|p| &p.readback_ns), mark);
-                Ok(send(i, Job::Convert { rgba: buf, complete }))
+                Ok(send(i, Job::Convert { t: frame_tick(i), rgba: buf, complete }))
             };
             loop {
                 // a submitted frame stays in flight across chunks while the next chunk is ready;
@@ -478,7 +483,7 @@ pub(crate) fn run<S: ExportSink>(
                             .execute_into(&plan, &mut buf)
                             .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                         ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
-                        if !send(i, Job::Convert { rgba: buf, complete }) {
+                        if !send(i, Job::Convert { t, rgba: buf, complete }) {
                             return Ok(());
                         }
                         continue;
@@ -580,8 +585,9 @@ fn write_all<S: ExportSink>(
         let Ok(done) = done_rxs[w].recv() else {
             return Err(std::io::Error::other("a frame worker stopped"));
         };
-        if !done.complete {
+        if let Some((t, media)) = &done.lost {
             incomplete += 1;
+            (hooks.incomplete)(*t, media);
         }
         let mark = Instant::now();
         sink.write_video(&done.frame)?;
