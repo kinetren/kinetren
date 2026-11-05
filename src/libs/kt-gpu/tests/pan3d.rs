@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use kt_cache::{BurstCache, CacheConfig, SourceId};
-use kt_engine::{Cam3d, FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
+use kt_cache::SourceId;
+use kt_engine::{Cam3d, FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
 use kt_model::{CameraParams, FxInstance};
@@ -74,9 +74,8 @@ fn run(engine: &dyn VideoGpuExec, layers: Vec<PlanLayer<'_>>) -> Vec<u8> {
     assert!(complete);
     // R.44: the CPU reference computes THE SAME plan (Pan3d is the inverse homography);
     // checked on every run, so the GPU frames of pan3d are no longer orphaned
-    let cache = BurstCache::new(CacheConfig::default());
     let mut cpu = Vec::new();
-    let complete_cpu = compose_plan_cpu(&plan, &cache, &mut cpu);
+    let complete_cpu = kt_gpu::reference::next(&mut cpu);
     assert_eq!(complete_cpu, complete, "complete CPU vs GPU");
     assert_frames_close(&cpu, &out, W, H, FrameTol::GEOM, "pan3d-cpu-vs-gpu");
     out

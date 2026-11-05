@@ -11,8 +11,8 @@
 
 use std::sync::Arc;
 
-use kt_cache::{BurstCache, CacheConfig, SourceId};
-use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
+use kt_cache::SourceId;
+use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
 use kt_model::{CamKeyframe, FxInstance, PanMode, TransitionKind};
@@ -112,9 +112,8 @@ fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
 /// CPU against GPU on one plan; returns (cpu, gpu, complete_cpu,
 /// complete_gpu).
 fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, bool, bool) {
-    let cache = BurstCache::new(CacheConfig::default());
     let mut cpu = Vec::new();
-    let c_cpu = compose_plan_cpu(p, &cache, &mut cpu);
+    let c_cpu = kt_gpu::reference::next(&mut cpu);
     let mut gpu = Vec::new();
     let c_gpu = engine.execute_into(p, &mut gpu).expect("GPU execute");
     (cpu, gpu, c_cpu, c_gpu)

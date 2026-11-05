@@ -317,7 +317,7 @@ fn t444_nested_reel_conforms_gpu_to_cpu() {
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "a warm composite with a nested item must be complete");
         drop(plan);
-        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
+        let (cpu, cpu_complete) = kt_gpu::reference::take();
         assert!(cpu_complete);
         assert_frames_close(
             &cpu,
@@ -349,7 +349,7 @@ fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
     let mut gpu = Vec::new();
     e.execute_into(&plan, &mut gpu).unwrap();
     drop(plan);
-    let (cpu, _) = video.compose_from_cache(&cache, t, q);
+    let (cpu, _) = kt_gpu::reference::take();
     assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::EXACT, "boundary of the nested item");
 }
 
@@ -549,7 +549,7 @@ fn cpu_and_gpu(
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "a warm composite with a nested item must be complete");
     }
-    let (cpu, complete) = video.compose_from_cache(cache, t, q);
+    let (cpu, complete) = kt_gpu::reference::take();
     assert!(complete, "the CPU composite with a nested item must be complete");
     (cpu, gpu)
 }
@@ -668,7 +668,7 @@ fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "{name}: the warm composite is declared incomplete");
         drop(plan);
-        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t_twin, q);
+        let (cpu, cpu_complete) = kt_gpu::reference::take();
         assert!(cpu_complete, "{name}: the CPU composite is declared incomplete");
         // BILINEAR tolerance: fitting is a resample, and `resample.wgsl` computes
         // in f32 and rounds to even, while `fit_into` works in f64 and rounds away from zero
@@ -723,7 +723,7 @@ fn t687_two_differently_overridden_instances_conform_gpu_to_cpu() {
         let complete = e.execute_into(&plan, &mut gpu).expect("the GPU must be ABLE to handle the subtree");
         assert!(complete, "a warm composite with a nested item must be complete");
         drop(plan);
-        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
+        let (cpu, cpu_complete) = kt_gpu::reference::take();
         assert!(cpu_complete);
         assert_frames_close(
             &cpu,

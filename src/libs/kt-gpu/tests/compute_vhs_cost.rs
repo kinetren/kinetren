@@ -1,11 +1,11 @@
 //! The VHS Tape's cost through the real engine (F-EXT-004, `--ignored`, a measurement): one 1080p
-//! frame on the CPU kernel and on the GPU graph, on the same frame plan.
+//! frame on the GPU graph.
 //! `cargo test --release -p kt-gpu --test compute_vhs_cost -- --ignored --nocapture`.
 
 use std::sync::Arc;
 
-use kt_cache::{BurstCache, CacheConfig, SourceId};
-use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
+use kt_cache::SourceId;
+use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
 use kt_gpu::test_engine;
 use kt_media::VideoFrame;
 use kt_model::FxInstance;
@@ -13,7 +13,7 @@ use kt_time::Tick;
 
 #[test]
 #[ignore]
-fn bench_vhs_tape_cpu_and_gpu() {
+fn bench_vhs_tape() {
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let (w, h) = (1920u32, 1080u32);
@@ -55,7 +55,6 @@ fn bench_vhs_tape_cpu_and_gpu() {
         }],
         memoize_postfx: false,
     };
-    let cache = BurstCache::new(CacheConfig::default());
     let mut out = Vec::new();
     let mut best = |name: &str, f: &mut dyn FnMut(i64, &mut Vec<u8>)| {
         let mut b = f64::MAX;
@@ -66,7 +65,6 @@ fn bench_vhs_tape_cpu_and_gpu() {
         }
         println!("VHS Tape 1080p, {name}: {b:.1} ms");
     };
-    best("CPU kernel (row bands, no SIMD)", &mut |t, o| assert!(compose_plan_cpu(&plan(t), &cache, o)));
     best("GPU graph with readback", &mut |t, o| assert!(engine.execute_into(&plan(t), o).unwrap()));
 }
 

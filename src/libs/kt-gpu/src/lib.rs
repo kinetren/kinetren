@@ -6,6 +6,7 @@
 //! GPU-vs-CPU conformance is tests/parity.rs (tolerances, t181/t182/t183).
 
 pub mod compute;
+pub mod reference;
 mod context;
 mod engine;
 mod pool;
