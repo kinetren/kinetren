@@ -331,9 +331,14 @@ fn render_raw_video_profiled(
         // group key — (media, DECODE QUALITY): the decoder span does not mix
         // sizes (kt-media), and the request already comes with the quality (R.46)
         let mark = Instant::now();
-        for (media, keys) in chunk_requests(&video, &cache, (t, chunk_end), quality, |m| src.contains_key(&m), &mut stats.missing_video_layers) {
-            decode_requests(src.get_mut(&media).unwrap(), media, &keys, &cache, &mut stats.missing_video_layers);
+        let mut lost = 0;
+        let requests = chunk_requests(&video, (t, chunk_end), quality, |m| src.contains_key(&m), &mut lost, |sid, dq, idx| {
+            cache.get_video(sid, Some(dq), idx).is_some()
+        });
+        for (media, keys) in requests {
+            decode_requests(src.get_mut(&media).unwrap(), media, &keys, &cache, &mut lost, None);
         }
+        stats.missing_video_layers += lost;
         ExportProfile::add(profile.map(|p| &p.decode_ns), mark);
         while t < chunk_end {
             if cancel.load(Ordering::Acquire) {
@@ -368,11 +373,11 @@ fn render_raw_video_profiled(
 /// The serial and the pipelined export both decode through this and `decode_requests`.
 pub(crate) fn chunk_requests(
     video: &VideoRenderer,
-    cache: &BurstCache,
     (t0, t1): (Tick, Tick),
     quality: Quality,
     has: impl Fn(MediaId) -> bool,
     missing: &mut u64,
+    mut in_cache: impl FnMut(kt_cache::SourceId, Quality, i64) -> bool,
 ) -> Vec<(MediaId, Vec<(Tick, Quality)>)> {
     let mut per_media: std::collections::BTreeMap<MediaId, Vec<(Tick, Quality)>> = Default::default();
     for (media, src_pts, dq) in video.wanted_frames(kt_time::TickRange::new(t0, t1), quality) {
@@ -387,7 +392,7 @@ pub(crate) fn chunk_requests(
         let sid = source_id(media);
         keys.sort();
         keys.dedup();
-        keys.retain(|(k, dq)| cache.get_video(sid, Some(*dq), video_cache_idx(*k)).is_none());
+        keys.retain(|(k, dq)| !in_cache(sid, *dq, video_cache_idx(*k)));
         if !keys.is_empty() {
             out.push((media, keys));
         }
@@ -395,18 +400,28 @@ pub(crate) fn chunk_requests(
     out
 }
 
-/// Decode one source's requests into the cache; a failed span counts one missing layer.
+/// Decode one source's requests into the cache; a failed span counts one missing layer. With
+/// `held`, each frame is inserted held and its key noted (the pipelined export): only a frame that
+/// really arrived has a hold to give back.
 pub(crate) fn decode_requests(
     s: &mut Box<dyn MediaSource>,
     media: MediaId,
     keys: &[(Tick, Quality)],
     cache: &BurstCache,
     missing: &mut u64,
+    mut held: Option<&mut Vec<kt_cache::BurstKey>>,
 ) {
     let sid = source_id(media);
     let ok = s
         .read_video_span_qualities(keys, &mut |k, dq, frame| {
-            cache.insert_video(sid, Some(dq), video_cache_idx(k), frame.into());
+            let idx = video_cache_idx(k);
+            match held.as_mut() {
+                Some(held) => {
+                    cache.insert_video_held(sid, Some(dq), idx, frame.into());
+                    held.push(kt_cache::BurstKey { source: sid, kind: kt_cache::BurstKind::video(Some(dq)), idx });
+                }
+                None => cache.insert_video(sid, Some(dq), idx, frame.into()),
+            }
         })
         .is_ok();
     if !ok {
@@ -514,6 +529,9 @@ pub struct ExportOptions {
     /// encoder on one thread. The reference the pipelined export is held to (t1451) and the
     /// "before" of `kt-cli export --serial --time`.
     pub serial: bool,
+    /// The video encoder's threads, when not the export's own choice (`auto`, serial `1`): at the
+    /// same count the pipelined and the serial streams can be compared packet by packet.
+    pub encoder_threads: Option<u32>,
     /// Collects the busy time of every stage (`kt-cli export --time`).
     pub profile: Option<Arc<ExportProfile>>,
 }
@@ -528,6 +546,7 @@ impl Default for ExportOptions {
             resolution: None,
             placeholders: Vec::new(),
             serial: false,
+            encoder_threads: None,
             profile: None,
         }
     }
@@ -615,7 +634,7 @@ pub fn export_mp4_with_backends(
         video_bitrate: opts.video_bitrate,
         audio_bitrate: opts.audio_bitrate,
         force_encoder: opts.force_encoder.clone(),
-        threads: if opts.serial { 1 } else { 0 },
+        threads: opts.encoder_threads.unwrap_or(if opts.serial { 1 } else { 0 }),
     });
     let events = Arc::new(events);
     let mut muxer = match muxer {
@@ -788,6 +807,7 @@ pub fn export_mp4_with_backends(
             bytes: &bytes,
             video_finished: &video_finished,
             profile,
+            budget: EXPORT_VIDEO_CACHE_BYTES,
         };
         crate::export_pipeline::run(
             project,
@@ -846,6 +866,35 @@ pub fn render_pipelined<S: ExportSink>(
     profile: Option<&ExportProfile>,
     sink: &mut S,
 ) -> std::io::Result<ExportStats> {
+    render_pipelined_budget(
+        project,
+        audio_sources,
+        video_sources,
+        quality,
+        range,
+        backends,
+        cancel,
+        profile,
+        EXPORT_VIDEO_CACHE_BYTES,
+        sink,
+    )
+}
+
+/// `render_pipelined` on another serial budget: the cache's pressure is the ratio of the budget to
+/// the frame size, so a test gets the export's pressure with small frames.
+#[allow(clippy::too_many_arguments)]
+pub fn render_pipelined_budget<S: ExportSink>(
+    project: &Project,
+    audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    quality: Quality,
+    range: Option<(Tick, Tick)>,
+    backends: &ExportBackends,
+    cancel: &Arc<AtomicBool>,
+    profile: Option<&ExportProfile>,
+    budget: usize,
+    sink: &mut S,
+) -> std::io::Result<ExportStats> {
     let hooks = crate::export_pipeline::Hooks {
         wait_paused: &|| {},
         video_done: &|_| {},
@@ -853,6 +902,7 @@ pub fn render_pipelined<S: ExportSink>(
         bytes: &|_| {},
         video_finished: &|| {},
         profile,
+        budget,
     };
     let (v, a) = crate::export_pipeline::run(
         project,
