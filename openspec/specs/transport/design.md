@@ -173,3 +173,27 @@ and silence elsewhere; the playhead still counts engine frames (invariant 6), th
 delay joins the latency compensation (t857). The resampler does one pass on silence while being
 built: an FFT that allocates its scratch lazily must not do it in the callback. Rejected:
 `AUTOCONVERTPCM` (cpal does not expose it; it hands quality to the system), exclusive mode.
+
+## The space bar, the frame step, the stall, the frame hold (r72-timeline-transport-defects, archived 2026-11-06)
+
+- **One press machine (`SpacePress`).** The press records its time, whether it began paused, and Ctrl.
+  Before 300 ms nothing happens; past it the hold runs. 300 ms is the owner's (question 7 of R.71); the
+  former 220 was an agent's. One threshold serves "is it a hold" and "start the boost": two would leave a
+  window where the boost starts and the release still counts as a tap.
+- **The ease-in scales dt by a smoothstep, the fall is the same exponential at four times the rate.** Both
+  stay analytic: a step cannot pass the ceiling or the base at any dt. `space_boost_step` itself is
+  unchanged, so R.17's "5 s" is held by the same assertions.
+- **A release from a reverse goes straight to +base.** A way through zero would freeze the picture and
+  mini-seek twice in the middle of the gesture.
+- **A hold from pause leaves `paused_at` empty**, or the next tap would count as the second of a double
+  press and stop at the region start.
+- **The frame step lands on the fps grid with a tolerance of one audio frame:** the head truncates on its
+  way through audio frames, and a head one frame short of a video frame IS that frame.
+- **One freeze is one episode (`StallWatch`).** The check ran every pass, so one freeze flooded the
+  ring. Rate 0 is a request, not a stall. The count lives in atomics, because the interface reads it each
+  frame, and `clear` keeps it, because the bell compares with it.
+- **`Command::FrameHold`, not two `Split`s and a patch.** The piece after the hold is the window
+  `[t, end − D]` of the ORIGINAL, so on a curved or mirrored event it reads and animates exactly as the event
+  would have from `t`; patching `source_in` afterwards needed a second copy of the mirror and of the curve
+  shift. No ripple (rule 20): the material past the end is cut. A chain with no warp slot gets a
+  `slowed_reverb` at rate 0 with its reverb off.

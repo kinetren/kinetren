@@ -36,5 +36,5 @@ when the section closes.
 ## 4. Registry and finish
 
 - [x] 4.1 Move the 17 R.72 rows of `docs/ktprompts/v26.10-index.md` to `done R.72, tNNN` (U7 keeps the open item split as `partial` with the screenshots for the owner). Check: `python3 src/scripts/ktprompts-index.py --check` green, every named test exists.
-- [ ] 4.2 `cargo test --workspace` and `cargo clippy --all-targets` green. Check: both exit 0.
+- [x] 4.2 `cargo test --workspace` and `cargo clippy --all-targets` green. Check: both exit 0.
 - [x] 4.3 `finish.sh` runs once per stage by the orchestrator (owner, 2026-11-03), not by an executor; `scripts/target-prune.py` after each commit.

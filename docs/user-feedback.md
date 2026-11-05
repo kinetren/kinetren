@@ -2608,6 +2608,17 @@ hold threshold is his "~0.3 s", and the level line goes to silence at his reques
 still the `slowed_reverb` slot's `rate` row, zero allowed; the arrows are still free; the jump zones and the
 gutter are as described.
 
+**What the apply found against the proposal** (decided by the executor, to be shown to him):
+
+- the track drag "that exists" was dead since R.38: the height drag's release took it;
+- the left jump zone's rect was whole: what he lost is the hot end under the header, which grew from 34 to
+  62 px in R.62. A click on the header's free part now jumps; a double click there still renames;
+- U5.3 revises R.40 item 12: a 20 px event has no level gesture any more, the menu field reaches it;
+- a jump over an event does not select it; with the project's start on screen the left zone stands down.
+
+**Open, a question for him:** the split of "Marker over the region" (U7) is not made; the item still does
+three things (a new range marker, stretching a point marker at the region start, removing an equal one).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

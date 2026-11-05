@@ -1,18 +1,18 @@
 ---
 id: F-TL-014
 title: Frame step and playing only while a key is held
-status: in-progress
+status: done
 priority: A
 cost: S
 category: timeline/navigation
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-app]
 invariants: [6]
 ui_rules: [1, 2, 14, 17]
 round: 72
 point: null
-tests: [t1621, t1622, t1624]
+tests: [t1620, t1621, t1622, t1623, t1624]
 depends_on: []
 trackers: []
 services: []
@@ -61,23 +61,7 @@ NO QUOTES: the research was done from the vendors' official documentation and he
 
 CAPABILITY: openspec/specs/transport/
 
-### What already exists
-
-The hold boost in `src/apps/kt-app/src/app.rs` (`tick_space_boost`), the aligned stops of `nav_jump`, signed speed in
-the transport (R.57). F-TL-003 stays the note for the JKL shuttle.
-
-### What is missing
-
-Any frame step, a reverse hold, a release that stops.
-
-### What hinders
-
-The playhead lives in audio frames: an unaligned tick truncates on the way through the transport (the "Forward" stick
-of R.10), so the step has to go through the fps grid.
-
-### Which invariants it touches
-
-Invariant 6: the speed change goes through `set_playback_rate`, nothing touches the callback.
+Done: the arrows and Ctrl+click on Back/Forward step on the fps grid; Space held from pause plays while held, Ctrl reverses it.
 
 ## Estimate
 

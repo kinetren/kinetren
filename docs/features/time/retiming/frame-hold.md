@@ -1,18 +1,18 @@
 ---
 id: F-SPD-006
 title: Frame hold — stop an event on a frame and go on from it
-status: in-progress
+status: done
 priority: B
 cost: S
 category: time/retiming
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-model, kt-app]
 invariants: []
 ui_rules: [17, 20, 21]
 round: 72
 point: null
-tests: [t1627]
+tests: [t1627, t1638]
 depends_on: [F-SPD-002]
 trackers: []
 services: []
@@ -63,23 +63,7 @@ NO QUOTES: the research was done from the vendors' official documentation and he
 
 CAPABILITY: openspec/specs/transport/
 
-### What already exists
-
-`rate = 0` of a time-warp slot is a freeze since R.57 (`src/libs/kt-model/src/warp.rs`), `clip_slice` in
-`src/libs/kt-model/src/project.rs` is the one rule of pieces.
-
-### What is missing
-
-The command: a split, a second split and a hand-typed speed were needed.
-
-### What hinders
-
-The piece after the hold must read material from the frozen frame, and on an event with a speed curve its curves
-must travel with that anchor.
-
-### Which invariants it touches
-
-None. Checklist rules 17 (one body), 20 (no neighbour moves), 21 (the industry name).
+Done as `Command::FrameHold` and the menu item "Insert frame hold (freeze frame)", without a ripple (rule 20).
 
 ## Estimate
 
