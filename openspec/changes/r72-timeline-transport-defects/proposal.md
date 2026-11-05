@@ -103,7 +103,7 @@ and "no obvious labels" (item 17 of R.7). Each is cheap alone; together they are
 - `src/libs/kt-model` — the event gain range constant.
 - Catalogs `i18n/*.toml`: the new hints and the command name; the two row captions go.
 - `docs/guide/shortcuts.md`: Space hold, Ctrl+Space, ← / →, Ctrl+click Back/Forward.
-- Tests t1030–t1047: `layout_tests.rs`, `reach_tests.rs`, `kt-engine` tests; live scenarios for the
+- Tests t1620–t1637: `layout_tests.rs`, `reach_tests.rs`, `kt-engine` tests; live scenarios for the
   gestures.
 - No format change: the gain range is a value range of an existing field, and a freeze is an existing
   rate 0.
