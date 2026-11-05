@@ -85,6 +85,8 @@ pub struct ExportStats {
     pub encoder: String,
     /// Video layers not decoded by the frame's time (in export this is an error
     /// of the source, not of timing — the decode is blocking).
+    /// Layers frames were written without: counted at the frame, so a span that failed and healed
+    /// is not a loss, and one loss is counted once.
     pub missing_video_layers: u64,
     /// Loudness of the MIXED material (R.49, item 371). `None` — audio was not
     /// measured (video pass) or the material is entirely below the absolute gate.
@@ -335,14 +337,12 @@ fn render_raw_video_profiled(
         // group key — (media, DECODE QUALITY): the decoder span does not mix
         // sizes (kt-media), and the request already comes with the quality (R.46)
         let mark = Instant::now();
-        let mut lost = 0;
-        let requests = chunk_requests(&video, (t, chunk_end), quality, |m| src.contains_key(&m), &mut lost, |sid, dq, idx| {
+        let requests = chunk_requests(&video, (t, chunk_end), quality, |m| src.contains_key(&m), |sid, dq, idx| {
             cache.get_video(sid, Some(dq), idx).is_some()
         });
         for (media, keys) in requests {
-            decode_requests(src.get_mut(&media).unwrap(), media, &keys, &cache, &mut lost, None);
+            decode_requests(src.get_mut(&media).unwrap(), media, &keys, &cache, None);
         }
-        stats.missing_video_layers += lost;
         ExportProfile::add(profile.map(|p| &p.decode_ns), mark);
         while t < chunk_end {
             if cancel.load(Ordering::Acquire) {
@@ -361,8 +361,9 @@ fn render_raw_video_profiled(
             };
             ExportProfile::add(profile.map(|p| &p.compose_ns), mark);
             if !complete {
-                stats.missing_video_layers += 1;
-                incomplete(t, &video.absent_layers(&cache, t, quality));
+                let absent = video.absent_layers(&cache, t, quality);
+                stats.missing_video_layers += absent.len().max(1) as u64;
+                incomplete(t, &absent);
             }
             emit(&frame_buf)?;
             stats.video_frames += 1;
@@ -381,7 +382,6 @@ pub(crate) fn chunk_requests(
     (t0, t1): (Tick, Tick),
     quality: Quality,
     has: impl Fn(MediaId) -> bool,
-    missing: &mut u64,
     mut in_cache: impl FnMut(kt_cache::SourceId, Quality, i64) -> bool,
 ) -> Vec<(MediaId, Vec<(Tick, Quality)>)> {
     let mut per_media: std::collections::BTreeMap<MediaId, Vec<(Tick, Quality)>> = Default::default();
@@ -391,7 +391,6 @@ pub(crate) fn chunk_requests(
     let mut out = Vec::new();
     for (media, mut keys) in per_media {
         if !has(media) {
-            *missing += keys.len() as u64;
             continue;
         }
         let sid = source_id(media);
@@ -405,8 +404,8 @@ pub(crate) fn chunk_requests(
     out
 }
 
-/// Decode one source's requests into the cache; a failed span counts one missing layer. With
-/// `held` (the pipelined export) each frame is inserted held and its key noted: only a frame that
+/// Decode one source's requests into the cache. What counts as lost is decided at the frame, by what
+/// it lacked: a span that failed may still give all its frames. With `held` (the pipelined export) each frame is inserted held and its key noted: only a frame that
 /// really arrived has a hold to give back. And a frame the span did not give is asked again alone,
 /// before anything composes it: a failed span drops every key after the failure, and the serial
 /// export gets those back from its pre-roll (`stream_preroll`), which a pipeline stage cannot run.
@@ -415,7 +414,6 @@ pub(crate) fn decode_requests(
     media: MediaId,
     keys: &[(Tick, Quality)],
     cache: &BurstCache,
-    missing: &mut u64,
     mut held: Option<&mut Vec<kt_cache::BurstKey>>,
 ) {
     let sid = source_id(media);
@@ -432,10 +430,7 @@ pub(crate) fn decode_requests(
             None => cache.insert_video(sid, Some(dq), idx, frame.into()),
         }
     };
-    let ok = s.read_video_span_qualities(keys, &mut |k, dq, frame| insert(k, dq, frame, &mut arrived)).is_ok();
-    if !ok {
-        *missing += 1;
-    }
+    let _ = s.read_video_span_qualities(keys, &mut |k, dq, frame| insert(k, dq, frame, &mut arrived));
     if retry {
         for &(k, dq) in keys.iter().filter(|key| !arrived.contains(key)).collect::<Vec<_>>() {
             let mut again = std::collections::HashSet::new();

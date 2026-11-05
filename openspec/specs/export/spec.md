@@ -863,7 +863,7 @@ never fills the cache.
 #### Scenario: A span that fails half way loses no frame
 - **WHEN** a source's span stops with an error half way through a chunk, once, while each frame can
   still be read alone, and the range is exported serially and pipelined
-- **THEN** both count the one failed span and no frame is written without its layer
+- **THEN** no frame is written without its layer, and nothing counts as lost
 - **TEST** t1605 (`src/libs/kt-engine/tests/export_options.rs`)
 
 #### Scenario: The file's streams equal the serial export's
@@ -882,12 +882,20 @@ where to look.
 Why: the only trace was a count at the end ("missing layers 5"), which says neither which frames nor
 which media, so a damaged file could pass for a finished one.
 
+`missing_video_layers` SHALL count the layers frames were written without, at the frame: a span that
+failed and gave its frames back is no loss, and one loss counts once.
+
 #### Scenario: A source that fails for a stretch is named with its frames
 - **WHEN** a source cannot give its frames for two stretches of a range, and the range is rendered
   serially and pipelined
 - **THEN** both give the same `IncompleteFrames` events, in frame order, one per run of frames, naming
   that media and those times; the frames and the missing count are equal
 - **TEST** t1602 (`src/libs/kt-engine/tests/export_options.rs`)
+
+#### Scenario: A layer with no source counts once
+- **WHEN** a 60-frame project whose video has no source at all is exported, serially and pipelined
+- **THEN** both report 60 missing layers, one for each frame
+- **TEST** t1606 (`src/libs/kt-engine/tests/export_options.rs`)
 
 ### Requirement: A failed render's window says what failed in the person's words
 The error of a failed render SHALL be the export's own message, without the name of an internal error

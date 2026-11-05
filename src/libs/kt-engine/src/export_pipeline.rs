@@ -311,7 +311,6 @@ pub(crate) fn run<S: ExportSink>(
     if let Some(p) = prof {
         p.frame_workers.store(workers as u64, Ordering::Relaxed);
     }
-    let decode_missing = AtomicU64::new(0);
 
     let result = std::thread::scope(|scope| {
         // --- the queues ---
@@ -364,7 +363,6 @@ pub(crate) fn run<S: ExportSink>(
         let video_ref = &video;
         let cache_ref = &cache;
         let gate_ref = &gate;
-        let missing_ref = &decode_missing;
         let chunks_ref = &chunks;
         let decode = scope.spawn(move || -> std::io::Result<()> {
             let lookahead = lookahead_bytes(hooks.budget) as usize;
@@ -385,7 +383,7 @@ pub(crate) fn run<S: ExportSink>(
                     return Err(cancelled());
                 }
                 let mark = Instant::now();
-                let held = decode_chunk(video_ref, cache_ref, &mut src, *ch, quality, missing_ref);
+                let held = decode_chunk(video_ref, cache_ref, &mut src, *ch, quality);
                 ledger.push_back((ch.end, held));
                 ExportProfile::add(prof.map(|p| &p.decode_ns), mark);
                 if chunk_tx.send(*ch).is_err() {
@@ -546,14 +544,14 @@ pub(crate) fn run<S: ExportSink>(
     }
     let vstats = ExportStats {
         video_frames: total,
-        missing_video_layers: incomplete + decode_missing.load(Ordering::Relaxed),
+        missing_video_layers: incomplete,
         ..Default::default()
     };
     Ok((vstats, astats))
 }
 
 /// The writer: video frame `i` from worker `i % W`, then the audio up to the end of that frame.
-/// Returns how many frames were composed incomplete.
+/// Returns how many layers frames were composed without.
 #[allow(clippy::too_many_arguments)]
 fn write_all<S: ExportSink>(
     sink: &mut S,
@@ -586,7 +584,7 @@ fn write_all<S: ExportSink>(
             return Err(std::io::Error::other("a frame worker stopped"));
         };
         if let Some((t, media)) = &done.lost {
-            incomplete += 1;
+            incomplete += media.len().max(1) as u64;
             (hooks.incomplete)(*t, media);
         }
         let mark = Instant::now();
@@ -631,12 +629,10 @@ fn decode_chunk(
     src: &mut HashMap<MediaId, Box<dyn MediaSource>>,
     ch: Chunk,
     quality: Quality,
-    missing: &AtomicU64,
 ) -> Vec<BurstKey> {
-    let mut lost = 0u64;
     let mut held = Vec::new();
     let mut jobs: HashMap<MediaId, Vec<(Tick, Quality)>> =
-        chunk_requests(video, (ch.t0, ch.t1), quality, |m| src.contains_key(&m), &mut lost, |sid, dq, idx| {
+        chunk_requests(video, (ch.t0, ch.t1), quality, |m| src.contains_key(&m), |sid, dq, idx| {
             let found = cache.hold_video(sid, Some(dq), idx);
             if found {
                 held.push(BurstKey { source: sid, kind: BurstKind::video(Some(dq)), idx });
@@ -647,9 +643,8 @@ fn decode_chunk(
         .collect();
     if jobs.len() <= 1 {
         for (media, keys) in jobs {
-            decode_requests(src.get_mut(&media).unwrap(), media, &keys, cache, &mut lost, Some(&mut held));
+            decode_requests(src.get_mut(&media).unwrap(), media, &keys, cache, Some(&mut held));
         }
-        missing.fetch_add(lost, Ordering::Relaxed);
         return held;
     }
     std::thread::scope(|scope| {
@@ -658,19 +653,15 @@ fn decode_chunk(
             if let Some(keys) = jobs.remove(media) {
                 let media = *media;
                 handles.push(scope.spawn(move || {
-                    let mut lost = 0u64;
                     let mut held = Vec::new();
-                    decode_requests(s, media, &keys, cache, &mut lost, Some(&mut held));
-                    (lost, held)
+                    decode_requests(s, media, &keys, cache, Some(&mut held));
+                    held
                 }));
             }
         }
         for h in handles {
-            let (l, keys) = h.join().expect("decode thread");
-            lost += l;
-            held.extend(keys);
+            held.extend(h.join().expect("decode thread"));
         }
     });
-    missing.fetch_add(lost, Ordering::Relaxed);
     held
 }

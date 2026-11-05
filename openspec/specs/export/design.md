@@ -329,3 +329,16 @@ the 13 same-instant pairs was the old binary the slower by more than 3 s, though
 first was the slow one in most of the wide gaps, and the new binary had been started first in
 several. The cause of the split was not found (the two exports do not wait for each other: both run
 from the first seconds). The six pairs on separate project copies did not split.
+
+### What a lost layer is (2026-11-06)
+
+`missing_video_layers` was added up from decode events: one for a failed span, one per key of a media
+with no source, and one per incomplete frame on top. So a span that healed said "video layers lost: 1"
+over a whole file, and a media with no source counted twice (120 for 60 frames). It is now counted
+at the frame, by what the frame lacked.
+
+The retry of a dropped frame costs nothing on an event longer than its file. Measured on release with
+counters, not wall time: 60 s of a 12 s H.264 file (360 pictures, 1 reopen), 30 s past the end of a 4K VP9
+file (943, 1), and a VP9 file cut in half with its header still promising the whole length (1431, 27),
+each the same on the binary with no retry, the one with it and `--serial`, 0 layers lost: a key past
+the end is answered with the last frame, so nothing is asked again.

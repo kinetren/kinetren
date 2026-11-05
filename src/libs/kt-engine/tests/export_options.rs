@@ -537,7 +537,8 @@ fn t1602_frames_without_a_layer_are_named_as_they_happen() {
 
 /// t1605 (export-pipeline-determinism D7): a span that fails half way drops its remaining keys, and
 /// the export gets them back before it composes them: the serial one by its pre-roll, the pipelined
-/// one by asking each alone. No frame is written without its layer.
+/// one by asking each alone. No frame is written without its layer, so nothing counts as lost: the
+/// window said "video layers lost: 1" over a whole file (found-defects 71).
 #[test]
 fn t1605_a_span_that_fails_half_way_loses_no_frame() {
     use kt_engine::export::{ExportEvent, ExportLog};
@@ -570,9 +571,36 @@ fn t1605_a_span_that_fails_half_way_loses_no_frame() {
             )
             .unwrap()
         };
-        assert_eq!(stats.missing_video_layers, 1, "serial {serial}: the failed span counts once, no frame lacks a layer");
+        assert_eq!(stats.missing_video_layers, 0, "serial {serial}: every frame has its layer, nothing was lost");
         let told = seen.lock().unwrap().iter().any(|e| matches!(e, ExportEvent::Log(ExportLog::IncompleteFrames { .. })));
         assert!(!told, "serial {serial}: a frame went without its layer");
+    }
+}
+
+/// t1606: one lost layer counts once. A media with no source at all was counted per key at the
+/// request and again per frame at the composite, so the window said twice what was lost.
+#[test]
+fn t1606_a_layer_with_no_source_counts_once() {
+    let p = two_seconds();
+    let dir = tempfile::tempdir().unwrap();
+    for serial in [true, false] {
+        let out = dir.path().join(format!("none-{serial}.mp4")).to_string_lossy().to_string();
+        let opts = ExportOptions { force_encoder: Some("libx264".into()), serial, ..Default::default() };
+        let stats = kt_engine::export_mp4_with_backends(
+            &p,
+            sources(),
+            Vec::new(),
+            &out,
+            None,
+            &opts,
+            &kt_engine::ExportBackends::default(),
+            &Arc::new(AtomicBool::new(false)),
+            &Arc::new(AtomicBool::new(false)),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(stats.video_frames, 60);
+        assert_eq!(stats.missing_video_layers, 60, "serial {serial}: one layer of each of the 60 frames");
     }
 }
 
