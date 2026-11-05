@@ -839,6 +839,20 @@ more required name would turn a working machine into "FFmpeg not found".
   types, and the enum values equal those of its vendored `hwcontext.h`/`pixfmt.h`
 - **TEST** t961 (`src/libs/kt-ffmpeg/tests/encoders.rs`)
 
+### Requirement: A content serial names one content in the whole process
+The serial number of a cache entry's content SHALL never be reused in the process, across every cache:
+it is the only thing that tells two contents at one address apart, and a GPU engine keys its textures
+and its frames by it alone.
+Why: the serial was a count per cache, and an engine outlives a cache. A new cache on a used engine got
+the old cache's pictures. No shipped path pairs them today (a render builds its own engine, the preview
+has one cache), so no file was wrong, but only because of how the program is arranged: t1457, which
+pairs them, went red when the numbering of the export's cache changed.
+
+#### Scenario: Two caches never share a serial
+- **WHEN** fifty frames are inserted into each of two caches at the same addresses
+- **THEN** all hundred serials differ
+- **TEST** t1607 (`src/libs/kt-cache/src/lib.rs`)
+
 ### Requirement: An offline job can hold cache entries it still needs
 The burst cache SHALL offer a per-key hold: taking one on a present entry or at its insertion, in one
 step under the cache's lock; releasing it; and the bytes of the entries held at least once. A held

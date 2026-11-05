@@ -9,6 +9,8 @@ Cache of bursts + coverage. Without FFmpeg/audio hardware.
 - Quality is part of the key; the audio key has no quality. The decode scale step (R.46) changes NOTHING here: it enters through the quality itself (a clip frame at step 2 lies under the key 2×Quality). The consequence for the UI: the bars MUST ask for coverage by the clip's DECODE QUALITY, otherwise a warmed clip looks cold (t317).
 - Coverage is an interval set, updated on insert/evict; a query is O(log n), without sampling.
 - Pin (a loop region) excludes records from eviction, but not from coverage.
+- **The content serial is unique in the process, not per cache** (t1607): a GPU engine outlives a
+  cache and keys its textures and its frames by the serial alone. Never take it from a per-cache count.
 - **A hold is a counted pin for a job that reads ahead of its use** (export-pipeline-determinism):
   `hold_video` answers "present" and holds in one step, `insert_video_held` holds with the insert, each
   hold needs its `release_video`. LRU's order is not the order of need: a read refreshes an entry that

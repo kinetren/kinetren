@@ -77,6 +77,9 @@ impl Default for CacheConfig {
     }
 }
 
+/// The next content serial number of the process (`Entry::serial`).
+static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
+
 struct Entry {
     payload: Payload,
     /// The serial number of the CONTENT (R.53, item 409): monotonic, never
@@ -84,7 +87,7 @@ struct Entry {
     /// the composite memo) tell apart “the same address, other bytes” — the addresses
     /// `(source, time, size)` are too few for this: a generator with new
     /// parameters and a file that came back in place of a placeholder give the SAME address
-    /// and a different picture (t496, t211).
+    /// and a different picture (t496, t211). Unique across every cache of the process.
     serial: u64,
     recency: u64,
     pinned: bool,
@@ -500,11 +503,11 @@ impl BurstCache {
         inner.recency_counter += 1;
         let recency = inner.recency_counter;
         let wanted = inner.want_pass;
-        // the serial number of the content is taken from the same monotonic
-        // counter: it is not reused, therefore “the same address — other
-        // bytes” is always distinguishable (item 409)
-        inner.recency_counter += 1;
-        let serial = inner.recency_counter;
+        // the serial number of the content: never reused, IN THE WHOLE PROCESS, therefore “the
+        // same address — other bytes” is always distinguishable (item 409). A GPU engine keys its
+        // textures and frames by it alone and outlives any one cache, so a per-cache count gave a
+        // new cache the old one's pictures (t1457, t1607).
+        let serial = NEXT_SERIAL.fetch_add(1, Ordering::Relaxed);
         inner.map.insert(
             key,
             Entry { payload, serial, recency, pinned: false, holds, had_hit: false, wanted, span },
@@ -1052,6 +1055,25 @@ mod perf_counter_tests {
         let (_, second) = cache.get_video_stamped(src, None, 0).expect("frame is stored");
         assert_ne!(first, second, "same address, different bytes — the number must differ");
         assert!(second > first, "numbers are monotonic and not reused");
+    }
+
+    /// t1607: a content serial means one content in the whole process, not in one cache. A GPU
+    /// engine keys its textures by the serial alone: with a count per cache, a new cache on a used
+    /// engine got the old cache's pictures (t1457 in kt-gpu).
+    #[test]
+    fn t1607_two_caches_never_share_a_content_serial() {
+        let config = CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 };
+        let (a, b) = (BurstCache::new(config), BurstCache::new(config));
+        let src = SourceId(1);
+        let mut seen = HashSet::new();
+        for idx in 0..50 {
+            a.insert_video(src, None, idx, frame(8));
+            b.insert_video(src, None, idx, frame(8));
+            for cache in [&a, &b] {
+                let (_, serial) = cache.get_video_stamped(src, None, idx).expect("just stored");
+                assert!(seen.insert(serial), "the serial {serial} names two contents");
+            }
+        }
     }
 
     /// t1600 (export-pipeline-determinism): a held entry outlives any pressure, however fresh the

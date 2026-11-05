@@ -428,3 +428,13 @@ second table: a trimmed FFmpeg still opens media and only loses the device candi
 and the render window's list open each render node through `hw_trial`, in a throwaway process: the
 tool that diagnoses a driver that faults must not fault with it, and the editor must not die because
 a window was opened. Why, and what it does not cover: `openspec/specs/export/design.md`.
+
+## A content serial is unique in the process (2026-11-06)
+
+t1457 went red on the merged tree, 7 runs of 7, in a crate the change had not touched. On a clean third
+engine the ring gave all six frames right; the engine that had already done an export gave five wrong,
+and the first right. The ring was innocent. `UploadCache` keys a texture by the serial and the size,
+and `plan_key` hashes the serial, while the serial restarted with every `BurstCache`. `hold_video` had
+replaced a `get_video` whose misses advanced the shared counter, so the export's cache numbered
+its frames exactly as the test's second cache did, and serial 2 named two pictures; before, the
+numbers only happened to differ. Frame 0 stayed right because it is the same picture in both.
