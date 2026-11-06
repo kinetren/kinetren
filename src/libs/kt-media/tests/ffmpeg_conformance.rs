@@ -299,7 +299,7 @@ fn t1760_the_end_of_a_cut_file_is_met_once() {
     use kt_time::{TICK_HZ, Tick};
     let dir = tempfile::tempdir().unwrap();
     let path = cut_in_half("testsrc_12s.webm", dir.path());
-    let q = Some(Quality { width: 160, height: 90 });
+    let q = Quality { width: 160, height: 90 };
     let step = TICK_HZ / 30;
     let mut src = FfmpegSource::open(&path).unwrap();
     assert_eq!(src.info().duration.0 / TICK_HZ, 12, "the header must keep its promise for the test to mean anything");
@@ -307,7 +307,7 @@ fn t1760_the_end_of_a_cut_file_is_met_once() {
     let mut got = Vec::new();
     for span in keys.chunks(40) {
         src.read_video_span_qualities(
-            &span.iter().map(|k| (*k, q.unwrap())).collect::<Vec<_>>(),
+            &span.iter().map(|k| (*k, q)).collect::<Vec<_>>(),
             &mut |k, _, f| got.push((k, f)),
         )
         .unwrap();
