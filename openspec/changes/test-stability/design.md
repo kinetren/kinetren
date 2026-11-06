@@ -27,8 +27,18 @@ the disk, or the processes starting behind it, not the tests.
 | t1524 | A real-time count read as an absolute number | Counted against a control (D4) |
 | t1538 | A 3 s clock against a 1.5 s path | A source that never answers |
 | t939, t796c | `gen.sh`: a shared temp name (row 29, row 58) | Unique temp names and a lock, t1670 |
-| `vhs_tape`, row 47 | **Not a lost save.** Ctrl+S writes on the UI thread and syncs twice; on a busy disk that passed the framework's silent 10 s, and it read the old file | `saved_project` is `save_now`, which fails aloud |
-| `read_bell`, row 79 | The dump is written ten times a second, two frames can still show the window. No stall was involved: nothing plays at that step | Waits for a fresh dump |
+| `vhs_tape`, row 47 | Ctrl+S writes on the UI thread and syncs twice (6.7 s measured at load 76). The framework's silent 10 s ran out and read the old file | `saved_project` is `save_now`, which waits and fails aloud |
+| `envclip`, `corner`, `audiofx`: "did not write after Ctrl+S" | **A program defect.** `i.modifiers` is the state at the frame's end. A stalled frame that read Ctrl down, S down and Ctrl up together saw a bare S: the event was split and nothing saved. 1 run in 6 at load 50, none of 12 after that; the mechanism is held by t1672, red on the old code | The chord is read from `Event::Key`; the framework holds the modifier until the key is read |
+| `read_bell`, row 79 | Esc closes the window on top of the LAST frame: pressed before the new window was drawn once, it went down the cascade. No stall was involved: nothing plays at that step | Waits for the window, then for a fresh dump. The behaviour itself is row 86 |
+| `conform`, `nestshare`, `camera_mic`, `loop` (the click before the region) | **A click lost with no trace.** A move and a press in one slow frame press what the pointer was over before | `Live._arrive`: the move is read first |
+| `formula`, `forms`, `nestparam`, `winshell` | Two causes of one symptom. An idle program starts a frame on the first event, so with any gap the second click lands one render later, past 0.3 s two single clicks; all four events in one frame are no gesture on an event either. And a click within 0.6 s of the click before last is egui's triple, which is no double click: a click just before the gesture lost it every time (`winshell`, 2 of 2) | The press is read alone, the rest goes in one write; the gesture waits the triple window out |
+| `jump_zone` | A double click read in one frame is one jump, and the scene needed two to stand clear of the project's start | The scene jumps once more itself |
+| `loop` (the folds), `space_hold` | The condition was a place the head passes, and at a frame a second the dump passes over it. The way back was measured before the head had turned | The fold is the event: "the head went back" |
+| `winshell` | 50 frames in a fixed 15 s | 60 frames, however long they take |
+| `ffmpeg_download` | The mirror answered after 3 s, before a busy machine reached the bar | The scenario releases the answer |
+| `analysis` | Compared the screen before the thumbnails had landed | `wait_still` first |
+| display collisions, row 26 | Two runs on `:99` clicked into each other's windows | `live-check.sh` takes a free block of displays and holds a lock |
+| t905 (found by the new guard) | A wait for the head to move: a lap brings it back to the frame it left, so the condition could never hold. It stood 633 s, then passed | Waits for the render thread to take the count |
 | ui-probe `BadWindow`, row 30 | A window closed during the tree walk | The walk skips it |
 
 Not a cause: sidecar `database is locked` (row 27). `ece65c8f` fixed it, and none of the runs of this
@@ -77,15 +87,19 @@ one, and the defect it holds (the second pass seeks back a GOP) costs the scene 
 ### D5: live scenarios run on the program's clock
 
 `poll_step` is the step of some fifty loops that count attempts: each is a clock limit in disguise. It
-now stretches with the observed frame time (`stretched`), and so do `wait_playhead`'s limits. On a free
-machine nothing changes. `winshell` counted frames in a fixed 15 s; the growth it holds was per frame,
+now stretches with the observed frame time (`stretched`), and so do `wait_playhead`'s limits and the
+scenarios' own deadlines. On a free machine nothing changes. A consequence is read with `Live.until`,
+not from the dump right after the gesture. `winshell` counted frames in a fixed 15 s; the growth it holds was per frame,
 so it now moves the mouse for 60 frames, more than the 50 it asked for, and takes a third of the time.
 A window that closes is waited out with `wait_gone`, not looked at once.
 
 ### D6: the cost of the live run
 
-See "Measurements". `still` and `screen_diff` compare directly from X with PIL at `compare -fuzz 3%`'s
-threshold, in place of an `xwd`, a `convert` and a `compare` per look.
+`still` and `screen_diff` compare directly from X with PIL at `compare -fuzz 3%`'s threshold, in place of
+an `xwd`, a `convert` and a `compare` per look. `settle()` ends on a still picture too: an idle
+program ticks four times a second, so at a frame step past 0.1 s frames never stop, and the wait burned
+its whole deadline, 10 s and more, on a screen that stood still. `readme_shots` paid that twice per
+step. A blinking caret is 100 pixels of allowance (`CARET_PIXELS`), or a text field never settles.
 
 ## Measurements
 

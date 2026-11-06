@@ -102,7 +102,7 @@ def main(out):
         app.click_probe("gen.params", "“Generator parameters…” item")
         app.expect(app.has_probe("titlew.text"), "title window opened from the event menu")
         app.key("space")
-        app.expect(app.geom().get("playing") is True, "transport plays")
+        app.expect(app.until(lambda: app.geom().get("playing") is True), "transport plays")
         app.click_probe("titlew.text", "text field during playback")
         app.key("9")
         app.expect(

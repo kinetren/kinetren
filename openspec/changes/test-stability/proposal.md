@@ -41,3 +41,5 @@ Reading the reds found three causes, none of them random:
 - `distribution`: how a test waits, and what the full run promises under load.
 - `durability`: the t815 scenario names the program's own work, not the wall clock.
 - `media-index`: the t1524 scenario counts against its control.
+- `transport`: t1538 holds the dead source without a clock.
+- `ui-timeline`: a chord is what was held when its key went down (t1672).

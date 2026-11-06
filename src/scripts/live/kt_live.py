@@ -143,6 +143,8 @@ _SLEPT = [0.0]
 _STARTED = time.time()
 
 
+# egui's triple click: twice its double-click window.
+TRIPLE_WINDOW = 0.6
 # What a blinking text caret changes on screen: a screen is still with this many pixels moving.
 CARET_PIXELS = 100
 
@@ -268,6 +270,7 @@ class Live:
         self._shot_no = 0
         self._raised = False
         self._at = None
+        self._clicked_at = 0.0
         # a direct read of a point is accepted only after reconciliation with the reference
         self._direct_px = None
         # OBSERVED frame step: under four workers the software render goes
@@ -488,7 +491,7 @@ class Live:
             )
         return False
 
-    def _wait_window(self, timeout=40.0):
+    def _wait_window(self, timeout=180.0):
         """Wait for the window and the DRAWN frames.
 
         Before R.68 “frame drawn” was checked by a screenshot: xwd plus
@@ -841,6 +844,7 @@ class Live:
         mark = self.seen()
         probe.button(True, pause=0.0)
         probe.button(False, pause=0.0)
+        self._clicked_at = time.time()
         self._after_gesture(mark, "click")
         if mods:
             self._mods(mods, False)
@@ -865,29 +869,36 @@ class Live:
         so between them one must neither raise the window nor sleep 0.35 s —
         two plain click() calls in a row add up to two single clicks.
 
-        The gap between the clicks is SMALL and this is not a typo (R.34): in
-        software rendering a frame takes ~0.2 s, and egui takes the time of a click from the frame
-        in which it fell. A pause of 0.1 s becomes 0.3+ s for egui —
-        and the double click falls apart into two single ones. Verified: 0.04 s
-        opens the window in 5 runs out of 5, 0.10 s — in 0 of 5."""
+        In software rendering a frame takes ~0.2 s, and egui takes the time of a click from the
+        frame in which it fell (R.34: a pause of 0.1 s becomes 0.3+ s for egui)."""
+        from Xlib import X
+
         self.raise_once()
+        # egui counts a click within 0.6 s of the click before last as the third of a triple, and
+        # a triple is no double click: a click just before this gesture took it away, every time
+        while time.time() - self._clicked_at < TRIPLE_WINDOW + self._dt:
+            _poll()
         # a frame AFTER the hover: the first click at the fresh position is otherwise lost
         # together with the input frame
         mark = self.seen()
         self._move(x, y, pause=0.0)
         self._after_gesture(mark, "hover before the double click")
-        for i in range(n):
-            # THE EVENTS GO TOGETHER, with a hair between them so that the X server does not
-            # coalesce them. egui stamps a click with its FRAME, so two clicks that land in
-            # neighbouring frames of a slow render are as far apart as the frames, and past
-            # 0.3 s they are two single clicks. Measured at a frame of 0.55 s (test-stability):
-            # 12 of 12 with 0.01 s between the events, 8 of 12 with the former 0.09 s and 0.04 s.
-            probe.button(True, pause=0.0)
-            pause(0.01, "egui stamps a click with its frame: the four events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
-            probe.button(False, pause=0.0)
-            pause(0.01, "egui stamps a click with its frame: the four events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
+        # THE PRESS IS READ ALONE, THE REST GOES IN ONE WRITE. egui stamps a click with its FRAME,
+        # and an idle program starts a frame on the first event it gets. Four events with any gap
+        # between them land in two frames, one render apart: past 0.3 s of render they are two
+        # single clicks (with the FX window open, every time). All four in one frame are no
+        # better: a press and its release in one frame are not a gesture on an event. So the
+        # frame that reads the press ends first, and the next one reads two releases at once.
         mark = self.seen()
+        seen = self._input_now()
+        probe.button(True, pause=0.0)
+        self.until(lambda: self._input_now() > seen, timeout=2.0)
+        probe.xtest.fake_input(probe.d, X.ButtonRelease, 1)
+        for _ in range(n - 1):
+            probe.xtest.fake_input(probe.d, X.ButtonPress, 1)
+            probe.xtest.fake_input(probe.d, X.ButtonRelease, 1)
         probe.d.sync()
+        self._clicked_at = time.time()
         self._after_gesture(mark, "triple click" if n == 3 else "double click")
 
     def drag(self, x0, y0, x1, y1, steps=6, mods=()):
@@ -1136,7 +1147,7 @@ class Live:
         We wait until a FRESH dump stops containing the name, rather than asking
         just once at random.
         """
-        timeout = timeout if timeout is not None else max(5.0, 25.0 * self._dt)
+        timeout = timeout if timeout is not None else max(30.0, 25.0 * self._dt)
         deadline = time.time() + timeout
         while time.time() < deadline:
             self.wait_frame(2, what=f"fresh dump without {name}", soft=True)

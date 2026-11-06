@@ -13,22 +13,22 @@
 
 ## 2. Live scenarios
 
-- [ ] 2.1 `poll_step` and `wait_playhead` follow the frame time; `wait_gone` for what closes
-- [ ] 2.2 `saved_project` is `save_now`, and the save waits on a fresh dump
-- [ ] 2.3 `winshell` counts frames; the read of the notices window waits for a fresh dump
-- [ ] 2.4 ui-probe's walk survives a window that closes
-- [ ] 2.5 `live-check.sh` finds a free display and holds it, the workers' output streams
-- [ ] 2.6 Every scenario red under load: cause, then fix
+- [x] 2.1 `poll_step` and `wait_playhead` follow the frame time; `wait_gone` for what closes
+- [x] 2.2 `saved_project` is `save_now`, and the save waits on a fresh dump
+- [x] 2.3 `winshell` counts frames; the read of the notices window waits for a fresh dump
+- [x] 2.4 ui-probe's walk survives a window that closes
+- [x] 2.5 `live-check.sh` finds a free display and holds it, the workers' output streams
+- [x] 2.6 Every scenario red under load: cause, then fix
 
 ## 3. Cost of the live run
 
-- [ ] 3.1 `still` and `screen_diff` compare from X
-- [ ] 3.2 Measure `readme_shots` and the whole run
+- [x] 3.1 `still` and `screen_diff` compare from X
+- [x] 3.2 Measure `readme_shots` and the whole run
 
 ## 4. Proof and hand-over
 
 - [ ] 4.1 Full run green twice in a row under a parallel build (nextest, as `finish.sh`)
-- [ ] 4.2 `cargo test --workspace` green twice in a row under the same load
+- [x] 4.2 `cargo test --workspace` green twice in a row under the same load
 - [ ] 4.3 `live-check.sh` under load, every scenario green with no rerun
 - [ ] 4.4 Rows of `docs/found-defects.md`, the measurements in design.md, CLAUDE.md notes
 - [ ] 4.5 Archive the change into the specs

@@ -65,10 +65,10 @@ def main(out):
         for i in range(2):
             app.right_click(mid, y)
             app.click_probe("nest.rename", f"rename item (entry {i + 1})")
-            poll_step(0.5)
+            app.wait_still()
             before = app.shot(f"rename-{i}")
             app.key("Escape")
-            poll_step(0.4)
+            app.wait_still()
             after = app.shot(f"rename-{i}-closed")
             d = app.screen_diff(before)
             app.expect(

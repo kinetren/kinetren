@@ -65,7 +65,12 @@ def main(out):
         app.expect(v3 < v2, f"the left zone must jump on a row with badges: {v2} → {v3}")
         app.step("left-jump", "a click by the track header: the view jumped left")
 
-        # the hot end under the header
+        # the hot end under the header: the view must stand away from the project's start, or the
+        # zone has nowhere to go (a double click read in one frame is one jump, not two)
+        app.click(right - 30, y)
+        app.until(lambda: app.geom()["view_start"] > v3)
+        app.settle()
+        v3 = app.geom()["view_start"]
         row = next(r for r in g["rows"] if r["kind"] == "video" and r["lane"] == 0)
         app.click(left - 20, win["y"] + int(row["top"]) + 4)
         app.until(lambda: app.geom()["view_start"] < v3)

@@ -120,7 +120,9 @@ def main(out):
         app.settle()
         zero = app.ink_box(preview, half=150)
         app.click(app.x_at(int(t_start + int(1.8 * SEC))), app.ruler_y())
-        app.settle()
+        # the frame of the new moment comes after the cursor: the picture standing still between
+        # the two is not the answer
+        app.until(lambda: app.ink_box(preview, half=150) > zero + 40)
         later = app.ink_box(preview, half=150)
         app.expect(
             later > zero + 40,
