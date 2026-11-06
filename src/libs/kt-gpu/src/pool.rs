@@ -10,22 +10,29 @@ use kt_media::VideoFrame;
 
 /// All engine textures are Rgba8Uint (raw bytes 0..255, without unorm loss).
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
+/// The target of a pass that keeps one 32-bit word per texel (`BarrierKernel::word_passes`).
+pub(crate) const WORD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
 pub(crate) struct Tex {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub w: u32,
     pub h: u32,
+    pub format: wgpu::TextureFormat,
 }
 
 pub(crate) fn create_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> Tex {
+    create_tex_as(device, w, h, FORMAT, label)
+}
+
+fn create_tex_as(device: &wgpu::Device, w: u32, h: u32, format: wgpu::TextureFormat, label: &str) -> Tex {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: FORMAT,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::COPY_SRC
@@ -33,7 +40,7 @@ pub(crate) fn create_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> 
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    Tex { texture, view, w, h }
+    Tex { texture, view, w, h, format }
 }
 
 /// The format egui samples a registered texture in.
@@ -54,7 +61,7 @@ pub(crate) fn create_display_tex(device: &wgpu::Device, w: u32, h: u32, label: &
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    Tex { texture, view, w, h }
+    Tex { texture, view, w, h, format: DISPLAY_FORMAT }
 }
 
 fn tex_bytes(w: u32, h: u32) -> u64 {
@@ -64,7 +71,7 @@ fn tex_bytes(w: u32, h: u32) -> u64 {
 /// Transients by size. Within a single execute a texture is returned to the
 /// pool ONLY when its content is no longer read by any future pass.
 pub(crate) struct TexturePool {
-    free: HashMap<(u32, u32), Vec<Tex>>,
+    free: HashMap<(u32, u32, wgpu::TextureFormat), Vec<Tex>>,
     bytes: u64,
     budget: u64,
 }
@@ -75,13 +82,17 @@ impl TexturePool {
     }
 
     pub fn acquire(&mut self, device: &wgpu::Device, w: u32, h: u32) -> Tex {
-        if let Some(v) = self.free.get_mut(&(w, h))
+        self.acquire_as(device, w, h, FORMAT)
+    }
+
+    pub fn acquire_as(&mut self, device: &wgpu::Device, w: u32, h: u32, format: wgpu::TextureFormat) -> Tex {
+        if let Some(v) = self.free.get_mut(&(w, h, format))
             && let Some(t) = v.pop()
         {
             self.bytes -= tex_bytes(w, h);
             return t;
         }
-        create_tex(device, w, h, "kt-gpu transient")
+        create_tex_as(device, w, h, format, "kt-gpu transient")
     }
 
     pub fn release(&mut self, t: Tex) {
@@ -90,7 +101,7 @@ impl TexturePool {
             return; // we drop them: VRAM costs more than a repeated create
         }
         self.bytes += b;
-        self.free.entry((t.w, t.h)).or_default().push(t);
+        self.free.entry((t.w, t.h, t.format)).or_default().push(t);
     }
 }
 

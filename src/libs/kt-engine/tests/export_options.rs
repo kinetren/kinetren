@@ -604,6 +604,99 @@ fn t1605_a_span_that_fails_half_way_loses_no_frame() {
     }
 }
 
+/// A file's decoder that reports its counts when the export lets it go.
+struct Counted {
+    inner: kt_media::ffmpeg::FfmpegSource,
+    told: Arc<std::sync::Mutex<(u64, u64)>>,
+}
+
+impl Drop for Counted {
+    fn drop(&mut self) {
+        *self.told.lock().unwrap() = self.inner.decode_debug_stats();
+    }
+}
+
+impl MediaSource for Counted {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.inner.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.inner.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, pts: Tick, q: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        self.inner.read_video_frame(pts, q)
+    }
+    fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
+        self.inner.keyframe_before(pts)
+    }
+    fn read_video_span(
+        &mut self,
+        keys: &[Tick],
+        q: Option<Quality>,
+        emit: &mut dyn FnMut(Tick, kt_media::VideoFrame),
+    ) -> Result<(), kt_media::MediaError> {
+        self.inner.read_video_span(keys, q, emit)
+    }
+    fn read_video_span_qualities(
+        &mut self,
+        keys: &[(Tick, Quality)],
+        emit: &mut dyn FnMut(Tick, Quality, kt_media::VideoFrame),
+    ) -> Result<(), kt_media::MediaError> {
+        self.inner.read_video_span_qualities(keys, emit)
+    }
+}
+
+/// t1763 (render-speed-no-card D1): an export of an event longer than a cut file holds. The header
+/// promises 12 s, the file holds about 6, and the event asks 20: every frame comes, none lost, and
+/// the decoder met the end once. Red before the fix: a seek and a GOP per chunk past the end.
+#[test]
+fn t1763_an_export_past_the_cut_goes_on() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    static GEN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    GEN.get_or_init(|| {
+        if !(cfg!(windows) && root.join("out").is_dir()) {
+            let st = std::process::Command::new("bash").arg(root.join("gen.sh")).status().expect("run fixtures/gen.sh");
+            assert!(st.success(), "gen.sh failed");
+        }
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let cut = dir.path().join("cut.webm").to_string_lossy().to_string();
+    let bytes = std::fs::read(root.join("out/testsrc_12s.webm")).unwrap();
+    std::fs::write(&cut, &bytes[..bytes.len() / 2]).unwrap();
+    let mut p = tiny_project();
+    for c in &mut p.clips {
+        c.duration = Tick(20 * 90_000);
+    }
+    p.media[0].duration = Some(Tick(20 * 90_000));
+    p.validate().unwrap();
+    let told = Arc::new(std::sync::Mutex::new((0, 0)));
+    let open = |told: &Arc<std::sync::Mutex<(u64, u64)>>| -> Vec<(MediaId, Box<dyn MediaSource>)> {
+        let inner = kt_media::ffmpeg::FfmpegSource::open(&cut).unwrap();
+        vec![(MediaId(1), Box::new(Counted { inner, told: told.clone() }) as Box<dyn MediaSource>)]
+    };
+    let out = dir.path().join("out.mp4").to_string_lossy().to_string();
+    let stats = kt_gpu::testkit::export_with(
+        &p,
+        open(&Arc::new(Default::default())),
+        open(&told),
+        &out,
+        None,
+        &ExportOptions { force_encoder: Some("libx264".into()), ..Default::default() },
+        &Arc::new(AtomicBool::new(false)),
+        &Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .expect("export");
+    assert_eq!(stats.video_frames, 600);
+    assert_eq!(stats.missing_video_layers, 0, "past the end stands the last picture");
+    let (reopens, decoded) = *told.lock().unwrap();
+    assert!(reopens <= 1, "reopens={reopens}");
+    assert!(decoded < 300, "the file holds under 300 pictures, decoded={decoded}");
+}
+
 /// t1606: one lost layer counts once. A media with no source at all was counted per key at the
 /// request and again per frame at the composite, so the window said twice what was lost.
 #[test]

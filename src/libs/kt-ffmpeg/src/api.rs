@@ -43,6 +43,7 @@ macro_rules! ffmpeg_api {
             // --- avutil ---
             avutil::av_frame_alloc: unsafe extern "C" fn() -> *mut ffi::AVFrame,
             avutil::av_frame_free: unsafe extern "C" fn(*mut *mut ffi::AVFrame),
+            avutil::av_frame_clone: unsafe extern "C" fn(*const ffi::AVFrame) -> *mut ffi::AVFrame,
             avutil::av_frame_unref: unsafe extern "C" fn(*mut ffi::AVFrame),
             avutil::av_frame_get_buffer: unsafe extern "C" fn(*mut ffi::AVFrame, c_int) -> c_int,
             avutil::av_frame_make_writable: unsafe extern "C" fn(*mut ffi::AVFrame) -> c_int,

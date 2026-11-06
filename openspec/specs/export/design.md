@@ -189,7 +189,7 @@ no longer ends the process a scenario started, so "the process is alive" alone w
 - **Nothing written depends on timing**: the audio interleave is a fixed rule, the progress counts
   are the writer's (t955 compares two exports' events element by element; the first version
   reported the audio thread's own count and broke it).
-- **The look-ahead is a byte budget** (`LOOKAHEAD_BYTES` = 4 serial budgets under a cache of 5): a
+- **The look-ahead is a byte budget** (2 serial budgets under a cache of 3, render-speed-no-card D5): a
   chunk being composed is never evicted (R.15 item 1), and at 4K decode sizes a chunk is ONE frame
   — the first version, two chunks ahead, kept 2 of 16 CPU workers busy (337 s).
 - **The encoder's threads** (`threads=auto`, in the open report, t1456). A machine writes the same
@@ -342,3 +342,15 @@ counters, not wall time: 60 s of a 12 s H.264 file (360 pictures, 1 reopen), 30 
 file (943, 1), and a VP9 file cut in half with its header still promising the whole length (1431, 27),
 each the same on the binary with no retry, the one with it and `--serial`, 0 layers lost: a key past
 the end is answered with the last frame, so nothing is asked again.
+
+## A render with no card, stage by stage (render-speed-no-card, 2026-11-06)
+
+`kt-cli export --time` now reads inside the composite and every wait. Reading it found five things, none
+of them the decoder threads the row suspected: the tape's convolutions ran as masked loops on llvmpipe, the
+fused pass as an interpreter, the RGBA conversion on one thread, a chunk was one frame on any project
+with a 4K moment, and `SyntheticSource` built frames byte by byte. The showcase went from 139 s to 90-96 s
+against 110 s on the deleted CPU build, at less CPU than that build; the peak is 8.5 GB. **The chunk
+queue had been the look-ahead's real limit**: when chunks grew, the byte limit filled for the first
+time and the 3 GB render died in the second run of three. The cache is three budgets now. Details and
+pairs: `openspec/changes/archive/2026-11-06-render-speed-no-card/design.md`.
+

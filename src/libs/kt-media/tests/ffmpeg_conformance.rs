@@ -254,6 +254,110 @@ fn t1453_a_far_forward_span_seeks() {
     }
 }
 
+/// t1765 (render-speed-no-card D2): a span converted on threads gives the frames of one converted
+/// on the decoder's thread, in the same order, at both sizes, across a cut of the keys.
+#[test]
+fn t1765_threaded_conversion_changes_no_frame() {
+    use kt_time::{TICK_HZ, Tick};
+    let path = fixture("testsrc_12s.mp4");
+    let (a, b) = (Quality { width: 320, height: 180 }, Quality { width: 138, height: 78 });
+    let step = TICK_HZ / 30;
+    let mut keys = Vec::new();
+    for i in (0..40).chain(240..270) {
+        keys.push((Tick(i * step), a));
+        if i % 3 == 0 {
+            keys.push((Tick(i * step), b));
+        }
+    }
+    let read = |threads: u32| {
+        kt_ffmpeg::set_rgba_threads(threads);
+        let mut src = FfmpegSource::open(&path).unwrap();
+        kt_ffmpeg::set_rgba_threads(1);
+        let mut got = Vec::new();
+        src.read_video_span_qualities(&keys, &mut |k, q, f| got.push((k, q, f.width, f.rgba))).unwrap();
+        got
+    };
+    let one = read(1);
+    let four = read(4);
+    assert_eq!(one.len(), keys.len());
+    assert!(one == four, "the frames moved or came out of order");
+}
+
+/// A copy of a fixture cut to half its bytes: the header still promises the whole length.
+fn cut_in_half(name: &str, dir: &std::path::Path) -> String {
+    let bytes = std::fs::read(fixture(name)).unwrap();
+    let out = dir.join(name);
+    std::fs::write(&out, &bytes[..bytes.len() / 2]).unwrap();
+    out.to_string_lossy().to_string()
+}
+
+/// t1760 (render-speed-no-card D1): the end of a file cut short is met once. Keys past it were
+/// sought and reopened one by one, a GOP each: a 40 s event did not finish in 280 s. Every key is
+/// answered, past the end with the last picture the file holds.
+#[test]
+fn t1760_the_end_of_a_cut_file_is_met_once() {
+    use kt_time::{TICK_HZ, Tick};
+    let dir = tempfile::tempdir().unwrap();
+    let path = cut_in_half("testsrc_12s.webm", dir.path());
+    let q = Quality { width: 160, height: 90 };
+    let step = TICK_HZ / 30;
+    let mut src = FfmpegSource::open(&path).unwrap();
+    assert_eq!(src.info().duration.0 / TICK_HZ, 12, "the header must keep its promise for the test to mean anything");
+    let keys: Vec<Tick> = (0..600).map(|i| Tick(i * step)).collect();
+    let mut got = Vec::new();
+    for span in keys.chunks(40) {
+        src.read_video_span_qualities(
+            &span.iter().map(|k| (*k, q)).collect::<Vec<_>>(),
+            &mut |k, _, f| got.push((k, f)),
+        )
+        .unwrap();
+    }
+    assert_eq!(got.len(), keys.len(), "every key is answered");
+    let (reopens, decoded) = src.decode_debug_stats();
+    assert!(reopens <= 1, "reopens={reopens}");
+    assert!(decoded < 300, "the file holds under 300 pictures, decoded={decoded}");
+    assert_eq!(got[599].1.rgba, got[500].1.rgba, "past the end: the last picture");
+}
+
+/// t1761 (D1): an MP4's index names samples past the cut. A seek to one finds no packet, and the
+/// read refused; a read far past the end lands on the last keyframe the scan found.
+#[test]
+fn t1761_a_seek_past_the_cut_lands_on_what_the_file_holds() {
+    use kt_time::{TICK_HZ, Tick};
+    let dir = tempfile::tempdir().unwrap();
+    let path = cut_in_half("testsrc_12s_head.mp4", dir.path());
+    let q = Some(Quality { width: 160, height: 90 });
+    let mut src = FfmpegSource::open(&path).unwrap();
+    assert_eq!(src.info().duration.0 / TICK_HZ, 12, "the header must keep its promise for the test to mean anything");
+    let first = src.read_video_frame(Tick(11 * TICK_HZ), q).expect("far past the cut");
+    for i in 0..20 {
+        let f = src.read_video_frame(Tick(11 * TICK_HZ + i * TICK_HZ / 30), q).expect("past the cut");
+        assert_eq!(f.rgba, first.rgba, "past the end: the last picture");
+    }
+    let (reopens, decoded) = src.decode_debug_stats();
+    assert!(reopens <= 1, "reopens={reopens}");
+    assert!(decoded <= 31, "a GOP at most, decoded={decoded}");
+}
+
+/// t1762 (D1): the audio past the end of a cut file answers without a seek. Each one walked the
+/// file, once per burst, whether or not the picture had stopped asking.
+#[test]
+fn t1762_the_audio_meets_the_end_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = cut_in_half("testsrc_12s.webm", dir.path());
+    let mut src = FfmpegSource::open(&path).unwrap();
+    let per_s = AUDIO_SAMPLE_RATE as i64 / AUDIO_BURST_FRAMES as i64;
+    let (mut read, mut past) = (0, 0);
+    for idx in 0..12 * per_s {
+        match src.read_audio_burst(idx) {
+            Ok(_) => read += 1,
+            Err(_) => past += 1,
+        }
+    }
+    assert!(read > per_s && past > per_s, "the stream ends inside the range: read {read}, past {past}");
+    assert!(src.audio_debug_seeks() <= 2, "seeks={}", src.audio_debug_seeks());
+}
+
 /// t1454 (export-throughput D7): a span at two decode qualities decodes each picture once and
 /// gives at each quality the frames a span at that quality alone gives.
 #[test]

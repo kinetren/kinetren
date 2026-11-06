@@ -61,15 +61,15 @@ fn q16(v: f32, off: f32, scale: f32) -> f32 {
     return q / scale - off;
 }
 
-// a u32 in the four bytes of a texel, and back
+// a u32 in a texel of the word target, and back (`BarrierKernel::word_passes`)
 fn put(v: u32) -> vec4<u32> {
-    return vec4<u32>(v & 255u, (v >> 8u) & 255u, (v >> 16u) & 255u, v >> 24u);
+    return vec4<u32>(v, 0u, 0u, 0u);
 }
 fn putf(v: f32) -> vec4<u32> {
     return put(bitcast<u32>(v));
 }
 fn word(t: vec4<u32>) -> u32 {
-    return t.x | (t.y << 8u) | (t.z << 16u) | (t.w << 24u);
+    return t.x;
 }
 // two u16 halves: off/scale of the lower one, then the upper one
 fn put2(a: f32, ao: f32, as_: f32, b: f32, bo: f32, bs: f32) -> vec4<u32> {

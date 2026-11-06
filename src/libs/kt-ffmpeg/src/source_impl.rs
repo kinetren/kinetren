@@ -18,6 +18,8 @@ const AVERROR_EOF_: c_int = -0x20464F45; // FFERRTAG('E','O','F',' ')
 /// bindgen does not pick up these #defines (complex expressions / casts);
 /// the values are stable across all FFmpeg majors.
 const AV_NOPTS_VALUE: i64 = i64::MIN;
+/// A packet the file ended inside of (a cut MP4's last sample): it decodes to an error, no picture.
+const PKT_FLAG_CORRUPT: c_int = 2;
 const AVSEEK_FLAG_BACKWARD: c_int = 1;
 
 fn tb(num: i32, den: i32) -> ffi::AVRational {
@@ -82,6 +84,8 @@ struct AudioPath {
     /// Absolute number of the first frame in the fifo (48k). None before the anchor.
     fifo_start: Option<i64>,
     eof: bool,
+    /// Seeks of this path (t1762).
+    seeks: u64,
 }
 
 struct VideoPath {
@@ -109,16 +113,33 @@ struct VideoPath {
     /// stream without a single frame (“out of range” at any tick, that very
     /// eternal “Loading…”).
     still: bool,
-    sws: *mut ffi::SwsContext,
-    sws_key: (c_int, c_int, c_int, c_int, c_int),
-    /// Contexts of the other sizes a multi-size span converts to (export-throughput D7): the
-    /// same picture to two sizes must not rebuild a context per picture.
-    sws_spare: Vec<((c_int, c_int, c_int, c_int, c_int), *mut ffi::SwsContext)>,
+    rgba: Rgba,
+    /// The converters of a span's worker threads (render-speed-no-card D2), and how many.
+    span_rgba: Vec<Rgba>,
+    rgba_threads: usize,
     eof: bool,
     /// Diagnostics: decoder recreations (backward) and decoded frames.
     backward_reopens: u64,
     frames_decoded: u64,
 }
+
+/// One thread's conversion to RGBA: a context per size.
+struct Rgba {
+    sws: *mut ffi::SwsContext,
+    sws_key: (c_int, c_int, c_int, c_int, c_int),
+    /// Contexts of the other sizes a multi-size span converts to (export-throughput D7): the
+    /// same picture to two sizes must not rebuild a context per picture.
+    sws_spare: Vec<((c_int, c_int, c_int, c_int, c_int), *mut ffi::SwsContext)>,
+}
+
+// SAFETY: a context is used by one thread at a time, as a decoder is
+unsafe impl Send for Rgba {}
+
+/// A reference to a decoded picture on its way to a converter thread.
+struct FrameRef(*mut ffi::AVFrame);
+
+// SAFETY: the reference is the converter's alone, and a decoded picture is not written again
+unsafe impl Send for FrameRef {}
 
 pub struct Source {
     api: &'static Api,
@@ -223,6 +244,7 @@ impl Source {
                             idx.audio_pts.push(p.pts);
                         } else if p.stream_index == video_idx
                             && (p.flags & ffi::AV_PKT_FLAG_KEY as c_int) != 0
+                            && (p.flags & PKT_FLAG_CORRUPT) == 0
                         {
                             idx.video_keyframes.push(p.pts);
                         }
@@ -350,6 +372,13 @@ impl Source {
         let t0 = idx * frames;
         let t1 = t0 + frames;
 
+        // The end of the stream is met once (render-speed-no-card D1): a file whose header promises
+        // more than it holds is asked past its end burst after burst, and a seek there costs a walk
+        // through the file for nothing.
+        if a.eof && a.fifo_start.is_some_and(|fs| t0 >= fs + (a.fifo.len() / AUDIO_CHANNELS) as i64) {
+            return Err(FfError::OutOfRange);
+        }
+
         let need_seek = match a.fifo_start {
             Some(fs) => {
                 let fe = fs + (a.fifo.len() / AUDIO_CHANNELS) as i64;
@@ -371,6 +400,7 @@ impl Source {
                 return Err(averr(api, "audio seek", r));
             }
             a.reopen_decoder(api)?;
+            a.seeks += 1;
         }
         a.decode_until(api, t1)?;
 
@@ -411,7 +441,7 @@ impl Source {
         let api = self.api;
         let v = self.video.as_mut().ok_or(FfError::OutOfRange)?;
         let target_ts = v.target_ts(api, pts);
-        v.prepare_for(api, target_ts)?;
+        v.prepare_for(api, target_ts, &self.index.video_keyframes)?;
         let frame = v.frame_for(api, target_ts)?;
         v.to_rgba(api, frame, width, height)
     }
@@ -435,7 +465,7 @@ impl Source {
         }
         debug_assert!(keys.windows(2).all(|w| w[0] < w[1]), "span keys must be increasing");
         let first = v.target_ts(api, keys[0]);
-        v.prepare_for(api, first)?;
+        v.prepare_for(api, first, &self.index.video_keyframes)?;
         for k in keys {
             let target = v.target_ts(api, *k);
             let frame = v.frame_for(api, target)?;
@@ -461,13 +491,17 @@ impl Source {
             return Ok(());
         }
         debug_assert!(keys.windows(2).all(|w| w[0].0 <= w[1].0), "span keys must be ordered");
+        let threads = v.rgba_threads;
+        if threads > 1 && keys.len() > 1 {
+            return v.span_sizes_threaded(api, keys, &self.index.video_keyframes, threads, emit);
+        }
         let mut i = 0;
         while i < keys.len() {
             let k = keys[i].0;
             let target = v.target_ts(api, k);
             // every key decides between decoding on and seeking (D8): the keys of two events of
             // one file can stand minutes apart in one span
-            v.prepare_for(api, target)?;
+            v.prepare_for(api, target, &self.index.video_keyframes)?;
             let frame = v.frame_for(api, target)?;
             while i < keys.len() && keys[i].0 == k {
                 let (_, w, h) = keys[i];
@@ -491,6 +525,26 @@ impl Source {
         Some(Tick(unsafe { (self.api.av_rescale_q)(rel, v.time_base, tb(1, TICK_HZ as i32)) }))
     }
 
+    /// How far this decoder stands behind `start` when it reaches it by decoding on: within the
+    /// forward bound, or with no keyframe between (`no_keyframe_ahead`). An export choosing one of
+    /// several decoders of a file asks it, by the same rule as a read.
+    pub fn video_reach(&self, start: Tick) -> Option<i64> {
+        let v = self.video.as_ref()?;
+        let at = self.video_cursor()?;
+        if at.0 > start.0 {
+            return None;
+        }
+        let ahead = start.0 - at.0;
+        (ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
+            || VideoPath::no_keyframe_ahead(v.held_pts, v.target_ts(self.api, start), &self.index.video_keyframes))
+        .then_some(ahead)
+    }
+
+    /// Diagnostics of t1762: how many times the audio sought.
+    pub fn audio_debug_seeks(&self) -> u64 {
+        self.audio.as_ref().map_or(0, |a| a.seeks)
+    }
+
     /// Diagnostics for performance tests (item 14/15): how many times the decoder
     /// was recreated (backward seek) and how many frames were decoded.
     pub fn video_debug_stats(&self) -> (u64, u64) {
@@ -510,11 +564,9 @@ impl Drop for Source {
         }
         if let Some(v) = &mut self.video {
             unsafe {
-                if !v.sws.is_null() {
-                    (api.sws_freeContext)(v.sws);
-                }
-                for (_, c) in v.sws_spare.drain(..) {
-                    (api.sws_freeContext)(c);
+                v.rgba.free(api);
+                for r in &mut v.span_rgba {
+                    r.free(api);
                 }
                 (api.avcodec_free_context)(&mut v.dec);
                 (api.avformat_close_input)(&mut v.fmt);
@@ -554,6 +606,7 @@ impl AudioPath {
             fifo: VecDeque::new(),
             fifo_start: None,
             eof: false,
+            seeks: 0,
         })
     }
 
@@ -755,9 +808,9 @@ impl VideoPath {
             pending: core::ptr::null_mut(),
             pending_pts: i64::MIN,
             still,
-            sws: core::ptr::null_mut(),
-            sws_key: (0, 0, 0, 0, 0),
-            sws_spare: Vec::new(),
+            rgba: Rgba::new(),
+            span_rgba: Vec::new(),
+            rgba_threads: crate::rgba_threads(),
             eof: false,
             backward_reopens: 0,
             frames_decoded: 0,
@@ -884,8 +937,8 @@ impl VideoPath {
                     continue;
                 }
                 crate::iostats::PACKET_READS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                let si = unsafe { (*pkt).stream_index };
-                if si != self.stream_index {
+                let (si, flags) = unsafe { ((*pkt).stream_index, (*pkt).flags) };
+                if si != self.stream_index || flags & PKT_FLAG_CORRUPT != 0 {
                     unsafe { (api.av_packet_unref)(pkt) };
                     continue;
                 }
@@ -934,8 +987,17 @@ impl VideoPath {
         ts + self.start_time
     }
 
-    /// Is a seek needed before the target request: backward or too far forward.
-    fn prepare_for(&mut self, api: &Api, target_ts: i64) -> Result<(), FfError> {
+    /// Decoding on from `last` meets no keyframe up to `target_ts`, so a seek would land behind
+    /// the cursor (render-speed-no-card D1). Past the last keyframe of a file this holds for every
+    /// target, and the end of a file is met once: a file cut short, whose header promises more
+    /// than it holds, was sought and reopened for every frame past its end, a GOP each time.
+    fn no_keyframe_ahead(last: i64, target_ts: i64, keys: &[i64]) -> bool {
+        !keys.is_empty() && keys.get(keys.partition_point(|&k| k <= last)).is_none_or(|&k| k > target_ts)
+    }
+
+    /// Is a seek needed before the target request: backward or too far forward. `keys`: the
+    /// file's keyframes as the packet scan found them, the ones it really holds.
+    fn prepare_for(&mut self, api: &Api, target_ts: i64, keys: &[i64]) -> Result<(), FfError> {
         // the image has one frame: no seek, no reopening (R.67)
         if self.still {
             return Ok(());
@@ -954,12 +1016,14 @@ impl VideoPath {
                 let ahead = unsafe {
                     (api.av_rescale_q)(target_ts - last, self.time_base, tb(1, TICK_HZ as i32))
                 };
-                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
+                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS || Self::no_keyframe_ahead(last, target_ts, keys)
             }
             _ => self.held_pts != i64::MIN && target_ts >= self.held_pts,
         };
         if !forward_ok {
-            self.seek_and_reopen(api, target_ts)?;
+            // an MP4 index names samples past the end of a cut file: a seek there finds no packet
+            let to = keys.last().map_or(target_ts, |&k| target_ts.min(k));
+            self.seek_and_reopen(api, to)?;
         }
         Ok(())
     }
@@ -1031,6 +1095,133 @@ impl VideoPath {
         width: u32,
         height: u32,
     ) -> Result<RgbaFrame, FfError> {
+        self.rgba.convert(api, frame, width, height, self.start_time, self.time_base)
+    }
+
+    /// `read_video_span_sizes` with the conversions on `threads` threads (render-speed-no-card
+    /// D2). A picture is chosen by the same steps, on this thread; a converter takes a reference
+    /// to it, and `emit` gets the frames here, in the order of `keys`. The bounded queue keeps the
+    /// pictures in flight to a few. Not by swscale's own slices: the block overrun of
+    /// `sws_to_rgba` lands on the next row, which another slice's thread writes.
+    fn span_sizes_threaded(
+        &mut self,
+        api: &'static Api,
+        keys: &[(Tick, u32, u32)],
+        index: &[i64],
+        threads: usize,
+        emit: &mut dyn FnMut(Tick, (u32, u32), RgbaFrame),
+    ) -> Result<(), FfError> {
+        struct Job {
+            seq: usize,
+            frame: FrameRef,
+            size: (u32, u32),
+        }
+        while self.span_rgba.len() < threads {
+            self.span_rgba.push(Rgba::new());
+        }
+        let mut converters = std::mem::take(&mut self.span_rgba);
+        let (start_time, time_base) = (self.start_time, self.time_base);
+        let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<Job>(threads);
+        let job_rx = std::sync::Mutex::new(job_rx);
+        let result = std::thread::scope(|scope| {
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            for rgba in converters.iter_mut() {
+                let (job_rx, done_tx) = (&job_rx, done_tx.clone());
+                scope.spawn(move || {
+                    loop {
+                        let next = job_rx.lock().unwrap().recv();
+                        let Ok(Job { seq, frame, size }) = next else { break };
+                        let mut f = frame.0;
+                        let r = rgba.convert(api, f, size.0, size.1, start_time, time_base);
+                        unsafe { (api.av_frame_free)(&mut f) };
+                        if done_tx.send((seq, r)).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(done_tx);
+            let mut parked = std::collections::BTreeMap::new();
+            let mut next = 0usize;
+            let mut failed = Ok(());
+            let mut land = |parked: &mut std::collections::BTreeMap<usize, Result<RgbaFrame, FfError>>,
+                            next: &mut usize,
+                            failed: &mut Result<(), FfError>| {
+                while failed.is_ok() {
+                    let Some(r) = parked.remove(next) else { break };
+                    match r {
+                        Ok(rgba) => {
+                            let (k, w, h) = keys[*next];
+                            emit(k, (w, h), rgba);
+                        }
+                        Err(e) => *failed = Err(e),
+                    }
+                    *next += 1;
+                }
+            };
+            let mut i = 0;
+            while i < keys.len() && failed.is_ok() {
+                let k = keys[i].0;
+                let target = self.target_ts(api, k);
+                let frame = match self.prepare_for(api, target, index).and_then(|_| self.frame_for(api, target)) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        // what was converted before the failure still arrives
+                        failed = Err(e);
+                        break;
+                    }
+                };
+                while i < keys.len() && keys[i].0 == k {
+                    let (_, w, h) = keys[i];
+                    let frame = FrameRef(unsafe { (api.av_frame_clone)(frame) });
+                    if job_tx.send(Job { seq: i, frame, size: (w, h) }).is_err() {
+                        break;
+                    }
+                    i += 1;
+                    parked.extend(done_rx.try_iter());
+                    land(&mut parked, &mut next, &mut failed);
+                }
+            }
+            let asked = i;
+            drop(job_tx);
+            let late = std::mem::replace(&mut failed, Ok(()));
+            for (seq, r) in done_rx.iter() {
+                parked.insert(seq, r);
+            }
+            land(&mut parked, &mut next, &mut failed);
+            debug_assert!(failed.is_err() || next == asked, "every conversion asked has landed");
+            failed.and(late)
+        });
+        self.span_rgba = converters;
+        result
+    }
+}
+
+impl Rgba {
+    fn new() -> Rgba {
+        Rgba { sws: core::ptr::null_mut(), sws_key: (0, 0, 0, 0, 0), sws_spare: Vec::new() }
+    }
+
+    fn free(&mut self, api: &Api) {
+        unsafe {
+            if !self.sws.is_null() {
+                (api.sws_freeContext)(self.sws);
+            }
+            for (_, c) in self.sws_spare.drain(..) {
+                (api.sws_freeContext)(c);
+            }
+        }
+    }
+
+    fn convert(
+        &mut self,
+        api: &Api,
+        frame: *mut ffi::AVFrame,
+        width: u32,
+        height: u32,
+        start_time: i64,
+        time_base: ffi::AVRational,
+    ) -> Result<RgbaFrame, FfError> {
         let f = unsafe { &*frame };
         let (dst_w, dst_h) = (
             (width.max(2) as c_int) & !1,
@@ -1094,9 +1285,9 @@ impl VideoPath {
         } else {
             f.pts
         };
-        let rel = pts - self.start_time;
+        let rel = pts - start_time;
         let pts_tick =
-            Tick(unsafe { (api.av_rescale_q)(rel, self.time_base, tb(1, TICK_HZ as i32)) });
+            Tick(unsafe { (api.av_rescale_q)(rel, time_base, tb(1, TICK_HZ as i32)) });
         Ok(RgbaFrame { pts: pts_tick, width: dst_w as u32, height: dst_h as u32, rgba })
     }
 }

@@ -36,6 +36,14 @@ gen testsrc_25fps.mp4 -f lavfi -i "testsrc=size=320x180:rate=25:duration=2" \
 gen testsrc_12s.mp4 -f lavfi -i "testsrc=size=320x180:rate=30:duration=12" \
     -c:v libx264 -preset veryfast -g 30 -pix_fmt yuv420p -f mp4
 
+# render-speed-no-card (t1760-t1762): the same 12 s as VP9 with sound and as an MP4 with its index
+# at the head. A test cuts a copy in half, so the header promises more than the file holds.
+gen testsrc_12s.webm -f lavfi -i "testsrc=size=320x180:rate=30:duration=12" \
+    -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=12" \
+    -c:v libvpx-vp9 -cpu-used 8 -g 30 -c:a libopus -b:a 64k -f webm
+gen testsrc_12s_head.mp4 -f lavfi -i "testsrc=size=320x180:rate=30:duration=12" \
+    -c:v libx264 -preset veryfast -g 30 -pix_fmt yuv420p -movflags +faststart -f mp4
+
 # 2 s testsrc VP9 (threads=1 path)
 gen testsrc_vp9.webm -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \
     -c:v libvpx-vp9 -cpu-used 8 -g 15 -f webm
