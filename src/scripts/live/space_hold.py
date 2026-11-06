@@ -85,7 +85,7 @@ def main(out):
 
         # the short press keeps playing; two quick presses stop at the start
         app.key("space")
-        app.expect(app.playing(), "a short press must play")
+        app.expect(app.until(lambda: app.playing()), "a short press must play")
         began = app.playhead()
         app.wait_playhead(lambda t: t > began + SEC // 2, "a short press must keep playing")
         app.expect(app.playing(), "a short press must keep playing")

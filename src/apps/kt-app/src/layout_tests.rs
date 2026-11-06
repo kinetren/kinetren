@@ -16255,18 +16255,18 @@ fn t947_perf_panel_shows_the_compose_cost() {
     }
     // after Stop the last values stay and nothing composes again (no cost while idle)
     h.state_mut().player.pause();
-    // the frame on screen is recomposed until its layers have all landed (under load, finish.sh):
-    // it has to be complete and the value settled, then it must not move again
+    // the frame on screen is recomposed until its layers have all landed and the display clock has
+    // come to rest after the output's latency (under load, finish.sh): it has to be complete and
+    // the value settled for a quarter of a second, then it must not move again
     let deadline = kt_time::test_deadline();
     let mut last = h.state().player.video_cost();
-    loop {
+    let mut still = 0;
+    while still < 5 {
         h.step();
         h.step();
         let now = h.state().player.video_cost();
-        if now == last && h.state().preview_key.is_some_and(|k| k.2) {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "the frame after Stop never completed");
+        still = if now == last && h.state().preview_key.is_some_and(|k| k.2) { still + 1 } else { 0 };
+        assert!(std::time::Instant::now() < deadline, "the frame after Stop never came to rest");
         last = now;
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
