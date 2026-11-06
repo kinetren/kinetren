@@ -305,7 +305,8 @@ The rules above were written down — and did not work: the R.38 mechanism turne
 - **Double click in a live scenario: the gap between clicks is SMALL** (item 232).
   egui takes the click time from the FRAME in which it landed; in software rendering a frame
   takes ~0.2 s, so a "generous" pause of 0.1 s becomes 0.3+ s for egui
-  and the double click falls apart into two single ones. Measured: 0.04 s — 5 of 5,
+  and the double click falls apart into two single ones. test-stability: at a frame of 0.55 s,
+  0.01 s between the four events gave 12 of 12, the former 0.09 s and 0.04 s gave 8 of 12. Earlier: 0.04 s — 5 of 5,
   0.10 s — 0 of 5.
 - **A quoted dotted string in a kt-app source IS a published place for the coverage guard**
   (`scripts/live-coverage.py`, t804): its `SHAPE` pass reads every `"word.word"` literal outside
@@ -325,6 +326,16 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   copy) and check the thumbnails in the bin.
 - **The screenshot of a live scenario is taken with `xwd`, not `import -window root`**
   (item 227): ImageMagick on the GL window of eframe returns a BLACK frame (a 32-bit visual against the root window of depth 24), and the scenario compares black with black, printing "ok". The harness also waits for the FIRST drawn frame (the brightness spread has stopped being zero), instead of sleeping a fixed 2 s.
+- **A click arrives before it presses, and a chord holds until its key is read** (test-stability).
+  egui decides what is under a press from the frame before: a move and a press in one slow frame
+  press what the pointer was over before (`Live._arrive`). A modifier released before its key is
+  read lands in that frame with it (`Live.key`).
+- **`settle()` also ends on a still picture** (test-stability): an idle program ticks four times a
+  second, so at a frame step past 0.1 s frames never stop, and the wait burned its deadline.
+  `poll_step` and `wait_playhead` stretch with the frame time (`stretched`), so a loop that counts
+  attempts is not a clock limit in disguise.
+- **A hotkey chord is what was held when its key went down**, read from `Event::Key`, not from
+  `i.modifiers`, the state at the frame's end: a stalled frame made Ctrl+S a bare S, a split (t1672).
 - **A gesture in a live scenario is released WITH A PAUSE** (item 216): between the last pointer movement and the button release — 0.35 s, otherwise in software rendering the application does not manage to process the last position and the gesture runs PARTIALLY. This is exactly what for years looked like "live scenarios are flaky".
 - **The pixel after a gesture is read with `Live.pixel_settled`, not `pixel`** (R.37).
   The cursor moves before the decoded frame arrives, and the preview normally HOLDS the last frame — a bare read returns the picture of the PREVIOUS

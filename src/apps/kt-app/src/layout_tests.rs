@@ -18379,13 +18379,11 @@ fn t905_preview_follows_the_loop_when_play_starts_outside() {
     // three laps of 2 s plus the latency, at 60 UI frames per second
     let frames = (3 * (re_f - rs_f) + 2 * latency) / 800 + 30;
     for _ in 0..frames {
-        let before = h.state().player.transport.playhead_frames();
         shared.consumed_frames.fetch_add(800, Ordering::AcqRel);
-        // the render thread advances the head: wait for it, not for a fixed time
+        // the render thread takes the count: wait for that, not for the head to move. A lap can
+        // bring the head back to the very frame it left, and a start holds it still
         let t0 = std::time::Instant::now();
-        while h.state().player.transport.playhead_frames() == before
-            && t0.elapsed() < kt_time::TEST_WAIT
-        {
+        while shared.consumed_frames.load(Ordering::Acquire) != 0 && t0.elapsed() < kt_time::TEST_WAIT {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         h.step();
@@ -19888,12 +19886,9 @@ fn r72_feed_head(h: &mut Harness<'static, KtApp>, frames: u64) {
     use std::sync::atomic::Ordering;
     let shared = h.state().player.shared.clone();
     for _ in 0..4 {
-        let before = h.state().player.transport.playhead_frames();
         shared.consumed_frames.fetch_add(frames as _, Ordering::AcqRel);
         let t0 = std::time::Instant::now();
-        while h.state().player.transport.playhead_frames() == before
-            && t0.elapsed() < kt_time::TEST_WAIT
-        {
+        while shared.consumed_frames.load(Ordering::Acquire) != 0 && t0.elapsed() < kt_time::TEST_WAIT {
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
         h.step();

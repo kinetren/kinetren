@@ -39,7 +39,6 @@ list may be short of items from them.
 | 42 | VHS thread cap | Gone with the CPU path; the cap survives only in the test model | `src/plugins/fx-video-tape/tests/model/sim.rs` | closed by `compute-kernels-render` | — |
 | 43 | Datamosh motion search | Encoder, `predict` and `reconstruct` run as compute shaders, buffers pooled | `src/plugins/fx-video-codec/src/codec.rs` | closed by `compute-kernels-render` | — |
 | 46 | sound of a device effect on a track chain | VHS and Datamosh sound on a track's chain may count fields and frames from the wrong time: `TrackProcessor` never calls `place` | `src/libs/kt-fx/src/audio/mod.rs` | not checked | С.3, check first |
-| 47 | `vhs_tape` red 2 of 5, once a Ctrl+S that did not save | If the Ctrl+S is the program's, a person loses edits | `src/scripts/live/kt_live.py:1407` | cause unknown | current stage, read `finish.sh`'s result first |
 | 48 | Datamosh sound at a cut | The audio half assumes a long previous event, so after a short one the break may miss the picture's | `src/plugins/fx-video-codec/src/sound.rs` | open | С.3 |
 | 49 | unknown rows dropped silently | An older build drops rows it does not know and loses their settings on saving | `src/libs/kt-model/src/plugin_slot.rs` | open | С.3 |
 | 50 | morpher hides the sound half | The sound half follows the layer, is not visible in its strip and cannot be switched off there | morpher | deliberate, reported | owner informed |
@@ -52,7 +51,6 @@ list may be short of items from them.
 | 68 | hardware encoding unproven | No real Intel or AMD driver ran; the T16 crash is isolated, its cause not proven; a driver that fails after the three trial frames still ends the render; only FFmpeg 6.1.1 ran | `kt-ffmpeg` `hw_trial.rs` | open | needs a machine with a card |
 | 72 | render time on a busy machine | Equal binaries started together on one project differ by up to 51 s, and runs stand idle 30-80 s outside the pipeline, both versions; cause not found | `kt-engine` export | open | С.1 |
 | 78 | the top of the ruler takes the panel divider | A drag on the top pixels moves the panel, not the marker's end; visible live, t142 passes in the harness | `kt-app` timeline | open | С.3 |
-| 79 | stall bell may be noisy | With no audio device or a cold start over 1 s, one notice per start of play; `readme_shots` red twice in `finish.sh` at kt26.11.06-318aaf8b, "expected the notices window closed" at the step `timeline`, so the notice appears where nothing stalled for a person | `kt-app` stall notices, `src/scripts/live/readme_shots.py` | open | С.3, `test-stability` reads the cause |
 | 80 | a cut does not move `geometry_auto` curves | `clip_slice` leaves them in place; read in the code, to check on an event with speed | `kt-model` | not checked | С.3, check first |
 | 81 | a long name runs over the event's edge | Clipped only when a level chip is drawn; read in the code | `kt-app` timeline | not checked | С.3 |
 | 75 | truncated file renders very slowly | The header promises more than the file holds: a 6 s event decodes 1431 frames instead of 180 with 27 reopenings; a 40 s event did not finish in 280 s. The render looks stalled and nothing names the cause | `kt-ffmpeg`, `kt-engine` export | open, old | С.1 |
@@ -60,18 +58,14 @@ list may be short of items from them.
 | 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
 | 65 | Datamosh not seen on a real device | The compute path ran only on Vulkan through llvmpipe: no real card, DX12, Metal or ARM yet; the panel's message without a device was not looked at in the live program | `fx-video-codec` | open | С.2 CI and the ARM build |
 | 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
+| 84 | Ctrl+S stands on the disk | The save is written on the UI thread and synced twice: on a busy disk the whole interface stands for seconds (6.7 s measured at load 76, 44 s for the same write in t815's old bound) | `kt-app/src/app.rs` `save`, `write_project_guarded` | open, measured | С.3: the autosave's thread is there to reuse |
+| 85 | Two quick Space presses in one slow frame | `handle_keys` keeps one press per frame, so two presses read together are one toggle; the hold threshold and the double press run on the frame's clock too | `kt-app/src/app.rs` `handle_keys` | open, read in the code | С.3 |
+| 86 | Esc right after a window opens | Esc closes the window on top of the LAST frame: pressed before the new window was drawn once, it goes down the cascade and clears the region or the selection instead | `kt-app` `window_shell::escape_action` | open, seen live on the bell | С.3 |
 
 ## Internal
 
 | # | Item | Where | State | Verdict |
 |---|---|---|---|---|
-| 24 | t815 measures the disk: 8 KB took 7.1 s in `finish.sh`, a false red; that write runs only on exit, autosave has its own thread | `kt-app/src/layout_tests.rs:18065` | open, verified | С.2 |
-| 25 | `formula` live scenario red under load | `src/scripts/live/formula.py` | open | С.2 |
-| 26 | live scenarios red in a batch, green alone; displays collide | `scripts/live-check.sh` | open | С.2 |
-| 27 | sidecar "database is locked" (t640, t1171, t411, t1413) | `kt-media` | fixed by `ece65c8f`, to confirm on the merged tree | confirm in the stage's `finish.sh` |
-| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20, t815 (a wall-clock bound on writing the restore record: 0.05 s quiet, 2-13 s on a busy disk) | various | open | С.2 |
-| 29 | two parallel fixture generations share one temp name | `src/fixtures/gen.sh` | open | С.2 |
-| 30 | `BadWindow` in ui-probe, the `welcome` scenario | live | open | С.2 |
 | 31 | a plugin edit rebuilds every test target of the core crates (no early cut-off, ~120 binaries); `debug = 1` halved it, the cascade stays | workspace | reduced by `ci-speedup` | С.2 |
 | 32 | CI wall 13.0 min in the only log (21 min has none); `ci-speedup` estimates ~9, to confirm on a warm master run | `.github/workflows/ci.yml` | applied, awaits the logs | С.2 |
 | 33 | `font_tests::sources()` misses code after the first `#[cfg(test)]` | kt-app `font_tests.rs` | open | С.2 |
@@ -80,19 +74,16 @@ list may be short of items from them.
 | 36 | a copied `target/` builds another worktree's text | `CARGO_MANIFEST_DIR` in build.rs | open | С.2 |
 | 38 | Flatpak steps after compose never ran on a real runner | CI | unknown | needs the owner's push |
 | 41 | `pkill -f` kills the caller's own shell | agent scripts | trap | goes into the briefs |
-| 57 | t836, t362 red once under load; t951, t952, t476, t411 red in one full run at load 25 on 2026-11-05, green alone; t1524 has a thin margin (70 % against 64 %) | `telemetry.rs`, `project_lock.rs` | open | С.2 |
-| 58 | `harness_still_of` runs `gen.sh` in every test, parallel runs overwrite each other's fixtures: t939 and t796c red in a full run, green alone | `kt-app/src/layout_tests.rs:17719` | open | С.2 |
-| 59 | `loop` live scenario allows one stale dump read | `src/scripts/live/loop.py:54` | open | С.2 |
 | 60 | `docs/features/README.md` drifts from `--table`, `--check` does not see it | docs | open | С.2 |
 | 61 | dead code warnings; two clippy notes | `kt-app/src/reel_preview.rs:188`, `:265`; `kt-cli/src/main.rs` | open | С.2 |
 | 62 | two chains in a window share probe names | `kt-app/src/deck_face.rs` | open | С.2 |
 | 63 | TEST lines point at the wrong file: `automation` t645 names `auto_plan.rs`; the other specs were not checked | `openspec/specs/*/spec.md` | open | С.2 |
 | 74 | `hwencode` live scenario | The second process overwrites the first's `01-step` screenshot, the scenario sets the folder | `src/scripts/live/hwencode.py` | open | С.2 |
-| 82 | live scenarios red under load | `winshell`, `loop`, `conform`, `generator`, the bell step of `readme_shots`, early `nestparam` steps go red then green with no code change | `src/scripts/live` | open | С.2 |
 | 83 | `openspec validate --specs` did not finish in 60 s | cause not read | tooling | open | С.2 |
+| 87 | tmpfs for the tests' temp files | Would cut a loaded run's fsyncs at once. `sidecar-fsync-stall` rejected it as hiding a stall a person's disk has; t1460 now holds that stall with a shim, so the reason is weaker, but the disk would leave every other test too | test run | question | the owner, see `test-stability` design D1 |
 | 77 | a recovered span leaves no trace | After row 71 the decoder failure of a recovered span is written nowhere: right for a person, but a decoder fault cannot be traced later | `kt-engine/src/export.rs` | open | С.2 |
 | 69 | Flathub linter depends on our site answering | `https://kinetren.com` slow: the job fails with `appid-url-not-reachable` | `src/scripts/flatpak-build.sh` | open | С.2 |
-| 70 | live scenarios are most of `finish.sh` | 72 scenarios take 3269 s in a row, at least 817 s on 4 workers, `readme_shots` alone 593 s | `src/scripts/live` | open | С.2 |
+| 70 | live scenarios are most of `finish.sh` | `readme_shots` fell from 593 s to about 380 s on a busy machine; the whole run on 4 workers, under a parallel build, is the longest stage still | `src/scripts/live` | reduced by `test-stability` | С.2 |
 | 45 | Color Grade GPU and CPU add in a different order: 140 channels per 1080p frame differ by 1 | `src/plugins/fx-video-color/src/color_grade.wgsl` | reported by `compute-backends` | not a defect once the math moves to compute |
 | 75 | windows has no picture tests | On windows-latest the only adapter is WARP, which the engine refuses, so every composite test skips: no shader of ours has run on DX12 or FXC in CI, and a Windows-only shader break reaches people | `.github/workflows/ci.yml`, `src/libs/kt-gpu/src/engine.rs` | open | С.1, try Mesa lavapipe for Windows on the runner |
 | 76 | dead CPU memo fields | `memoize_postfx`, `nest_memo_key` and kt-cache `PostFxVideo` have no reader since the CPU composite went; t65, t65b, t1535 guard a dead memo | `src/libs/kt-engine/src/video_plan.rs`, `src/libs/kt-cache/src/lib.rs` | open, harmless | С.3 |
