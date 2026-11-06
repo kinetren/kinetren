@@ -314,6 +314,16 @@ decode and a bloated DB.
 - **THEN** the pyramid is built anyway; the thumbnail of the new media appears
 - **TEST** t23 (`src/apps/kt-app/src/util.rs`)
 
+#### Scenario: A source with no sound or no end has no envelope, and holds nothing up
+- **WHEN** a still stands in the index queue before a sound file; separately — a placeholder is measured
+- **THEN** the file behind it gets its peaks, the still gets an empty envelope, and neither is read: both say "practically infinite", 1000 hours, and answer every read at once
+- **TEST** t1740 (`src/apps/kt-app/src/util.rs`), t1742 (`src/libs/kt-media/tests/index_db.rs`)
+
+#### Scenario: A peak pass stops when it is told to
+- **WHEN** the stop is asked before each burst and says yes after ten
+- **THEN** ten bursts are read, and nothing of the pass reaches the sidecar
+- **TEST** t1741 (`src/libs/kt-media/tests/index_db.rs`)
+
 #### Scenario: Negative thumbnail caches
 - **WHEN** the duration or the thumbnail of unknown media cannot be obtained
 - **THEN** the failure is published once, repeated `request` calls are no-ops; `invalidate_media` resets both caches

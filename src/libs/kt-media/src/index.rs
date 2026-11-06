@@ -413,19 +413,22 @@ impl MediaIndexDb {
         media_id: i64,
         source: &mut dyn MediaSource,
     ) -> Result<(), IndexError> {
-        self.build_audio_peaks_observed(media_id, source, &mut |_| {})
+        self.build_audio_peaks_until(media_id, source, &mut |_| {}, &|| false).map(|_| ())
     }
 
     /// The same with an observer of bursts (R.49, item 373): the material's loudness
     /// is computed on the pass that runs ANYWAY — a second full decode for the sake of
     /// LUFS on an hour-long source is minutes.
-    pub fn build_audio_peaks_observed(
+    pub fn build_audio_peaks_until(
         &mut self,
         media_id: i64,
         source: &mut dyn MediaSource,
         observe: &mut dyn FnMut(&crate::AudioBurst),
-    ) -> Result<(), IndexError> {
-        let pyramid = PeakPyramid::build_observed(source, observe);
+        stop: &dyn Fn() -> bool,
+    ) -> Result<bool, IndexError> {
+        let Some(pyramid) = PeakPyramid::build_until(source, observe, stop) else {
+            return Ok(false);
+        };
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM audio_peaks WHERE media_id=?1", params![media_id])?;
         for (level, channels) in pyramid.levels.iter().enumerate() {
@@ -437,7 +440,7 @@ impl MediaIndexDb {
             }
         }
         tx.commit()?;
-        Ok(())
+        Ok(true)
     }
 
     // ---- reel PREVIEW on disk (R.58, item 463) --------------------------------
@@ -806,15 +809,38 @@ impl PeakPyramid {
         source: &mut dyn MediaSource,
         observe: &mut dyn FnMut(&crate::AudioBurst),
     ) -> PeakPyramid {
-        let duration_frames = source.info().duration.to_audio_frames().max(0);
-        let total_bursts = duration_frames.div_euclid(AUDIO_BURST_FRAMES as i64).max(0);
+        Self::build_until(source, observe, &|| false).unwrap_or_else(|| PeakAcc::default().finish())
+    }
+
+    /// The same, asking `stop` before every burst: `None` when it said so, and nothing of the
+    /// pass is kept. A pass is as long as the file says, and a program closing or a test ending
+    /// has no reason to wait for it.
+    ///
+    /// A source with no sound, or one with no end (a still or a placeholder: "practically
+    /// infinite", 1000 hours, every read an instant silence) has no envelope to measure. Read to
+    /// its end it held a core for hours, grew without bound and starved every file queued
+    /// behind it: one picture in a project and no waveform came any more (t1740).
+    pub fn build_until(
+        source: &mut dyn MediaSource,
+        observe: &mut dyn FnMut(&crate::AudioBurst),
+        stop: &dyn Fn() -> bool,
+    ) -> Option<PeakPyramid> {
+        let info = source.info();
         let mut acc = PeakAcc::default();
+        if !info.has_audio || info.duration >= crate::placeholder::NO_END {
+            return Some(acc.finish());
+        }
+        let duration_frames = info.duration.to_audio_frames().max(0);
+        let total_bursts = duration_frames.div_euclid(AUDIO_BURST_FRAMES as i64).max(0);
         for bidx in 0..total_bursts {
+            if stop() {
+                return None;
+            }
             let Ok(burst) = source.read_audio_burst(bidx) else { break };
             observe(&burst);
             acc.push(burst.data.as_slice());
         }
-        acc.finish()
+        Some(acc.finish())
     }
 }
 

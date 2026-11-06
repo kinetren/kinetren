@@ -86,6 +86,7 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
   cache missed (t1171/t640/t411 red only in the whole-workspace run). The `-wal`/`-shm` files stay
   after the last close; the passive auto-checkpoint folds the WAL in. A new setting or statement that
   syncs under a lock brings the stall back — t1460 stalls every fsync to catch it.
+- **A peak pass reads what has an end and stops when told** (t1740–t1742): a still and a placeholder say `placeholder::NO_END`, 1000 hours, and answer every read at once. A new "practically infinite" source uses that constant, or the pass spins for hours on it and starves the queue.
 - The pixel font 3×5 and `Canvas` — the common module `pixfont` (a placeholder + a future timecode generator). This is NOT the rasterization of the user's title text: that lives in kt-text with its own determinism discipline.
 
 ## FfmpegSource (src/ffmpeg.rs) — how it is built

@@ -196,15 +196,20 @@ fn build_peaks(
     db: Option<&mut kt_media::index::MediaIndexDb>,
     stop: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<Option<PeaksAndLoudness>, String> {
+    let stopped = || stop.load(std::sync::atomic::Ordering::Acquire);
     let from_source = |path: &str, measure: bool| -> Result<Option<PeaksAndLoudness>, String> {
         let mut s = open_source(path).map_err(|e| e.to_string())?;
         let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
-        let pyr = if measure {
-            kt_media::index::PeakPyramid::build_observed(s.as_mut(), &mut |b| {
-                meter.feed(b.data.as_slice())
-            })
-        } else {
-            kt_media::index::PeakPyramid::build(s.as_mut())
+        let Some(pyr) = kt_media::index::PeakPyramid::build_until(
+            s.as_mut(),
+            &mut |b| {
+                if measure {
+                    meter.feed(b.data.as_slice())
+                }
+            },
+            &stopped,
+        ) else {
+            return Ok(None);
         };
         let l = meter.finish();
         let loud = measure.then(|| l.lufs.map(|lufs| (lufs, l.dbtp, l.lra))).flatten();
@@ -233,8 +238,12 @@ fn build_peaks(
         let mut src = kt_media::ffmpeg::FfmpegSource::open_indexed(path, Some(db))
             .map_err(|e| e.to_string())?;
         let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
-        db.build_audio_peaks_observed(mid, &mut src, &mut |b| meter.feed(b.data.as_slice()))
+        let built = db
+            .build_audio_peaks_until(mid, &mut src, &mut |b| meter.feed(b.data.as_slice()), &stopped)
             .map_err(|e| e.to_string())?;
+        if !built {
+            return Ok(None);
+        }
         let l = meter.finish();
         // silence — not “−70”: a number that does not exist is not written to the DB
         if let Some(lufs) = l.lufs {
@@ -622,6 +631,37 @@ pub(crate) mod tests {
         }
         let second = *loud2.lock().unwrap().get(&MediaId(5)).expect("loudness not read from the DB");
         assert_eq!(first, second, "the round trip through the DB changed the number");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Test 1740 (test-stability, row 88): a picture has no sound and no end. Its source says 1000
+    /// hours and answers every read at once with silence, so the pass held a core for hours and
+    /// nothing queued behind it ever got its waveform: a sound file next to one still, on the
+    /// index service of the program, is what this asserts. Both with the sidecar and without.
+    #[test]
+    fn t1740_a_still_does_not_stop_the_waveforms_behind_it() {
+        let dir = std::env::temp_dir().join(format!("kt-t1740-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for db in [None, Some(dir.join("p.ktindex.db"))] {
+            let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+            let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
+            let svc = IndexService::start(out.clone(), loud);
+            let media = vec![
+                (MediaId(1), fixture("still.jpg")),
+                (MediaId(2), fixture("sine48k_stereo.flac")),
+            ];
+            svc.enqueue(db.clone(), media);
+            let deadline = kt_time::test_deadline();
+            while !out.lock().unwrap().contains_key(&MediaId(2)) {
+                assert!(std::time::Instant::now() < deadline, "the file behind the still got no peaks");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            assert!(svc.take_errors().is_empty());
+            let peaks = out.lock().unwrap();
+            let still = peaks.get(&MediaId(1)).expect("the still is answered too");
+            assert!(still.iter().all(|(l, r)| l.is_empty() && r.is_empty()), "a still has no envelope");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

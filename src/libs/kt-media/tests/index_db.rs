@@ -2,6 +2,7 @@
 
 use kt_media::index::{MediaEntryStatus, MediaIndexDb, PeakPyramid};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
+use kt_media::placeholder::PlaceholderSource;
 use kt_media::{MediaSource, PEAK_BLOCK_FRAMES};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 
@@ -509,4 +510,62 @@ fn t1171_concurrent_openings_never_get_busy() {
             assert!(errs.is_empty(), "round {round} phase {phase}: {} openings failed: {errs:?}", errs.len());
         }
     }
+}
+
+/// t1741 (test-stability, row 88): a pass over a file stops when it is told to, and keeps nothing.
+/// The file is as long as it says, whatever it holds: a damaged header can promise hours, and the
+/// program closing has no reason to wait for them. `stop` is asked before every burst.
+#[test]
+fn t1741_a_peak_pass_stops_when_told_and_stores_nothing() {
+    let mut src = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 440.0 });
+    let asked = std::cell::Cell::new(0);
+    let stop = || {
+        asked.set(asked.get() + 1);
+        asked.get() > 10
+    };
+    let mut seen = 0;
+    assert!(PeakPyramid::build_until(&mut src, &mut |_| seen += 1, &stop).is_none(), "the pass ran on");
+    assert_eq!(seen, 10, "a burst was read after the stop");
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = MediaIndexDb::open(&dir.path().join("p.ktindex.db")).unwrap();
+    let file = dir.path().join("a.bin");
+    std::fs::write(&file, b"payload").unwrap();
+    let (id, _) = db.ensure_media(&file).unwrap();
+    let built = db.build_audio_peaks_until(id, &mut src, &mut |_| {}, &|| true).unwrap();
+    assert!(!built, "a stopped pass reports it");
+    assert_eq!(db.audio_peaks(id, 0, 0).unwrap(), None, "a stopped pass left peaks");
+}
+
+/// t1742 (test-stability, row 88): a source with no end has no envelope, and nothing is read: a
+/// placeholder, which also stands for a generator kind this build does not have, answers every
+/// read at once with silence for 1000 hours.
+#[test]
+fn t1742_a_source_with_no_end_is_not_read() {
+    struct Endless(PlaceholderSource, std::sync::Arc<std::sync::atomic::AtomicU32>);
+    use std::sync::atomic::Ordering::Relaxed;
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    impl MediaSource for Endless {
+        fn info(&self) -> &kt_media::MediaInfo {
+            self.0.info()
+        }
+        fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+            self.1.fetch_add(1, Relaxed);
+            self.0.read_audio_burst(idx)
+        }
+        fn read_video_frame(
+            &mut self,
+            p: Tick,
+            q: Option<kt_media::Quality>,
+        ) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+            self.0.read_video_frame(p, q)
+        }
+        fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+            self.0.keyframe_before(p)
+        }
+    }
+    let mut src = Endless(PlaceholderSource::new("gone.mp4"), reads.clone());
+    let pyr = PeakPyramid::build_until(&mut src, &mut |_| {}, &|| false).expect("nothing stopped it");
+    assert!(pyr.levels.iter().flatten().all(|c| c.is_empty()), "an envelope of a source with no end");
+    assert_eq!(reads.load(Relaxed), 0, "the source was read");
 }

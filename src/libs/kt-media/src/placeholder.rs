@@ -18,8 +18,8 @@ use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame}
 use kt_time::Tick;
 
 /// “Practically infinite” duration: 1000 hours. The placeholder does not
-/// know how long the missing file lasted, and it must not trim the edit.
-const PLACEHOLDER_DURATION: Tick = Tick(90_000 * 3600 * 1000);
+/// know how long the missing file lasted, and it must not trim the edit. A still says the same.
+pub const NO_END: Tick = Tick(90_000 * 3600 * 1000);
 const DEFAULT_W: u32 = 640;
 const DEFAULT_H: u32 = 360;
 
@@ -42,7 +42,7 @@ impl PlaceholderSource {
     pub fn new(label: impl Into<String>) -> PlaceholderSource {
         PlaceholderSource {
             info: MediaInfo {
-                duration: PLACEHOLDER_DURATION,
+                duration: NO_END,
                 has_video: true,
                 has_audio: true,
                 // it has no frame grid of its own: the engine plans on the PROJECT's grid

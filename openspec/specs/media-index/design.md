@@ -438,3 +438,18 @@ and `plan_key` hashes the serial, while the serial restarted with every `BurstCa
 replaced a `get_video` whose misses advanced the shared counter, so the export's cache numbered
 its frames exactly as the test's second cache did, and serial 2 named two pictures; before, the
 numbers only happened to differ. Frame 0 stayed right because it is the same picture in both.
+
+## A source with no end in the peak queue (test-stability, 2026-11-06)
+
+A hung `cargo test` showed two `index-service` threads at 100 % of a core for 1 h 49 min, long after
+their tests had ended.
+
+- **Cause, proved by t1740 hanging on the old code.** A still says 1000 hours (R.67: an event of any
+  length shows it) and answers every read at once with silence, and the pass reads as long as the source
+  says: 168 million bursts. The tests of stills (t796c, t939) left it running. A person met the same:
+  **one picture in a project held a core for hours, grew memory, and every file queued behind it never
+  got its waveform.** A placeholder says the same, and a generator kind this build lacks is one.
+- **The rule.** `kt_media::placeholder::NO_END` names that length. A source with no sound or with no end
+  has an empty envelope, unread. The pass asks `stop` before every burst, and a stopped pass stores
+  nothing, because a damaged header can promise hours of what is not there.
+

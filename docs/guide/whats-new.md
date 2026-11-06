@@ -26,6 +26,8 @@ month, newest first.
   few frames, different ones on each run, leaving wrong pictures in the file. Now every frame keeps
   all its layers, and the speed of the render is unchanged. If a source really cannot give a picture,
   the render's log says which file and at what time, and opens by itself so you see it.
+- **A picture in the project no longer holds up the waveforms.** One still kept a processor core busy for
+  hours and grew the memory, and the waveforms of the files after it never came.
 - **Ctrl+S during a freeze no longer cuts the event.** If the interface stalled for a moment and Ctrl was
   already released when it woke, the program saw a plain S and split the event under the playhead.
 - **A failed render explains itself better.** The message no longer starts with a technical "io:", and
