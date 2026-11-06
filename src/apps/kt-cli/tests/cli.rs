@@ -1396,7 +1396,7 @@ fn t1553_a_driver_that_hangs_is_left_behind() {
     assert!(r.status.success(), "{all}");
     assert!(all.contains("encoder h264_vaapi skipped: the driver did not answer in 1 s"), "{all}");
     assert!(std::path::Path::new(&out).exists(), "no file: {all}");
-    assert!(started.elapsed().as_secs() < 60, "{:?}", started.elapsed());
+    assert!(started.elapsed() < kt_time::TEST_WAIT, "{:?}", started.elapsed());
 }
 
 /// t1554 (the export spec's cancel-and-error scenario on a hardware encoder): a driver that passes

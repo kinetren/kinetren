@@ -1740,7 +1740,7 @@ pub(crate) mod testing {
         pub fn wait(&self, n: usize) {
             let t0 = std::time::Instant::now();
             while self.accepted().len() + self.rejected().len() < n
-                && t0.elapsed() < Duration::from_secs(10)
+                && t0.elapsed() < kt_time::TEST_WAIT
             {
                 std::thread::sleep(Duration::from_millis(5));
             }
@@ -1811,7 +1811,7 @@ mod tests {
 
     fn wait_for(rec: &Recording, n: usize) {
         let t0 = Instant::now();
-        while rec.events().len() < n && t0.elapsed() < Duration::from_secs(10) {
+        while rec.events().len() < n && t0.elapsed() < kt_time::TEST_WAIT {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -1856,6 +1856,8 @@ mod tests {
 
         let (t, rec, _) = recorded();
         frame(&t, false);
+        // the start is on the sender thread's clock: only what comes AFTER it can be absent
+        wait_for(&rec, 1);
         drop(t);
         std::thread::sleep(Duration::from_millis(50));
         let ev = rec.events();
@@ -2387,12 +2389,14 @@ mod tests {
             }
         });
         let t = Telemetry::new(on(), new_uuid(), Box::new(HttpSink::new(url))).with_key("phc_test");
+        // the black hole never answers: an enqueue that waited for it takes a whole request, and
+        // an exit past its budget waits out both queued requests. The bounds are those waits
         let t0 = Instant::now();
         frame(&t, false);
-        assert!(t0.elapsed() < Duration::from_millis(50), "enqueue blocked: {:?}", t0.elapsed());
+        assert!(t0.elapsed() < TOTAL_TIMEOUT, "enqueue blocked: {:?}", t0.elapsed());
         let t1 = Instant::now();
         t.signal(Signal::Exit);
-        assert!(t1.elapsed() < Duration::from_millis(2500), "exit held {:?}", t1.elapsed());
+        assert!(t1.elapsed() < 2 * TOTAL_TIMEOUT, "exit held {:?}", t1.elapsed());
 
         // the local stand-in answers 200 and checks what the ingestion checks
         let ph = super::testing::FakePostHog::start();

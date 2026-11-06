@@ -16,7 +16,7 @@ const FRAME_STEP: i64 = TICK_HZ / 30; // 30 fps
 const Q: Quality = Quality { width: 64, height: 36 };
 
 fn wait_idle(w: &MediaWorker) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     while !w.is_idle() {
         assert!(std::time::Instant::now() < deadline, "the worker did not finish the queue");
         std::thread::sleep(std::time::Duration::from_millis(5));

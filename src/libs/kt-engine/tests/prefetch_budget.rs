@@ -212,7 +212,7 @@ fn t1418b_preview_withdraws_the_frames_it_left() {
         let _ = player.compose_preview_into(at(i), &mut buf);
         std::thread::sleep(Duration::from_millis(5));
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let deadline = kt_time::test_deadline();
     while !player.cache.contains_video(sid, Some(q), at(9).0) {
         assert!(std::time::Instant::now() < deadline, "the frame on screen never arrived");
         std::thread::sleep(Duration::from_millis(10));

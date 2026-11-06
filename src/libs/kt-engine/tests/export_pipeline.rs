@@ -203,7 +203,7 @@ fn t1452_a_cancel_or_an_error_mid_pipeline_stops_every_stage() {
     let err = pipelined(&p, &mut rec, &cancel).expect_err("a cancelled export is an error");
     assert_eq!(err.to_string(), "cancelled");
     assert!(rec.frames.len() <= 11, "no frame after the cancel is written: {}", rec.frames.len());
-    assert!(t0.elapsed() < std::time::Duration::from_secs(60), "the export stopped promptly");
+    assert!(t0.elapsed() < kt_time::TEST_WAIT, "the export stopped promptly");
 
     let never = Arc::new(AtomicBool::new(false));
     let mut rec = Recorder { fail_at: Some(5), ..Default::default() };

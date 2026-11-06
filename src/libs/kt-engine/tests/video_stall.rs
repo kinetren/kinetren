@@ -99,7 +99,7 @@ fn t27_failed_keys_are_not_redecoded() {
             prio: Priority::NearPrefetch,
             generation: 0,
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let deadline = kt_time::test_deadline();
         while !worker.is_idle() {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -128,7 +128,7 @@ fn t28_worker_inserts_grid_span_coverage() {
             generation: 0,
         });
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     while !worker.is_idle() {
         assert!(std::time::Instant::now() < deadline);
         std::thread::sleep(std::time::Duration::from_millis(5));

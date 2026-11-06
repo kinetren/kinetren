@@ -60,7 +60,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
     let (player, _consumer) = Player::new(project.clone(), vec![(MediaId(1), synth())]);
 
     // warm-up: the prefetch thread fills the cache around the playhead
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     loop {
         let cov = player.cache.coverage(
             kt_engine::source_id(MediaId(1)),
@@ -139,7 +139,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
     assert!(player.cache.audio_bytes() >= bytes_before, "the cache must not shrink");
 
     // the new worker is alive: prefetch fills media 2
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     loop {
         let cov = player.cache.coverage(
             kt_engine::source_id(MediaId(2)),
@@ -192,7 +192,7 @@ fn t20_pause_resume_still_streams() {
     let project = base_project();
     let (player, mut consumer) = Player::new(project, vec![(MediaId(1), synth())]);
     // wait for the cache warm-up, so that the render is not silent due to misses
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     while player
         .cache
         .coverage(kt_engine::source_id(MediaId(1)), kt_cache::BurstKind::Audio, 0..40)
@@ -210,17 +210,23 @@ fn t20_pause_resume_still_streams() {
         n
     };
 
+    let until_samples = |c: &mut rtrb::Consumer<f32>, what: &str| {
+        let deadline = kt_time::test_deadline();
+        while drain(c) == 0 {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+
     player.play();
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(drain(&mut consumer) > 0, "after play the ring must fill");
+    until_samples(&mut consumer, "after play the ring must fill");
 
     player.pause();
     std::thread::sleep(std::time::Duration::from_millis(200));
     drain(&mut consumer);
 
     player.play();
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(drain(&mut consumer) > 0, "after resume the render must wake up (condvar)");
+    until_samples(&mut consumer, "after resume the render must wake up (condvar)");
 }
 
 /// Test 211 (R.33 item 10): a source returned to disk swaps its
@@ -235,7 +241,7 @@ fn t211_replace_media_swaps_source_and_drops_its_cache() {
     let (player, _consumer) = Player::new(project, vec![(MediaId(1), dc(1.0))]);
 
     // warming the cache of the first source
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     loop {
         let cov = player.cache.coverage(
             kt_engine::source_id(MediaId(1)),
@@ -263,7 +269,7 @@ fn t211_replace_media_swaps_source_and_drops_its_cache() {
     );
 
     // the new source fills the cache with its own values
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     loop {
         if let Some(b) = player.cache.get_audio(kt_engine::source_id(MediaId(1)), 0) {
             assert!((b.data[0] - 0.25).abs() < 1e-6, "the cache holds values of the old source");
@@ -335,7 +341,7 @@ fn t316_replace_media_updates_the_decode_stage() {
         Box::new(kt_media::synthetic::CheckerSource::new(Tick(90_000 * 60), 512, 288)),
     );
     // the renderer rebuild follows the project version (bumped by replace_media)
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     loop {
         if player.video_decode_qualities()
             == vec![(ClipId(1), kt_media::Quality { width: 256, height: 144 })]
@@ -440,7 +446,7 @@ fn t500_retune_keeps_worker_and_renderer() {
     // The deadline is generous: the claim is “the reconfiguration arrives”, not “it is
     // fast”, and under a parallel run of the whole workspace the worker thread waits its turn
     // for the CPU (the same lesson as t399/t476).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = kt_time::test_deadline();
     let got = loop {
         // “Seen empty” cannot be caught: the worker manages both to discard and
         // to fill between two polls, and under load the test turned red on correct

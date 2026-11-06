@@ -609,7 +609,7 @@ mod tests {
         let k = key(77);
         svc.request(job(77, svc.generation()));
         // the first request opens the offline device
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = kt_time::test_deadline();
         let img = loop {
             if let Some(img) = svc.get(&k) {
                 break img;
@@ -651,7 +651,7 @@ mod tests {
         let mut pv = PickerCtx::new(&svc, FxThumbBase::Pattern, None, vec![], 0.5, 90_000, None);
         let fx = [FxInstance::blur(8)];
         assert!(pv.texture(&ctx, &fx).is_none(), "the texture was found before any render");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = kt_time::test_deadline();
         loop {
             if pv.texture(&ctx, &fx).is_some() {
                 break;

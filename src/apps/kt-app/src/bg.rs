@@ -194,7 +194,7 @@ mod tests {
             }
             42
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = kt_time::test_deadline();
         while job.done.is_none() && std::time::Instant::now() < deadline {
             job.poll();
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -219,7 +219,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(40));
         job2.cancel();
         let mut job2 = job2;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = kt_time::test_deadline();
         while job2.done.is_none() && std::time::Instant::now() < deadline {
             job2.poll();
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(ticks.load(Ordering::Acquire), held, "the pause does not hold");
 
         job.cancel();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = kt_time::test_deadline();
         while job.done.is_none() && std::time::Instant::now() < deadline {
             job.poll();
             std::thread::sleep(std::time::Duration::from_millis(10));

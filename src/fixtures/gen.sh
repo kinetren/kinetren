@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # Generation of test fixtures (conformance test 10, golden test 11).
 # Deterministic: fixed ffmpeg generators, no time/randomness.
-# The write is atomic (tmp + mv) — a parallel reader will not see an unfinished file.
+# The write is atomic (tmp + mv) — a parallel reader will not see an unfinished file. Runs meet: a
+# full test run starts one per test process, and on a fresh tree each finds the fixtures missing.
+# So one generates and the rest wait, and a temp name is its run's own (t1670): on a shared one a
+# run moved another's half-written file into place, then failed on its own `mv`.
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p out
 
+if [ -z "${KT_GEN_LOCKED:-}" ] && command -v flock > /dev/null; then
+    exec env KT_GEN_LOCKED=1 flock out/.gen.lock bash "$(basename "$0")" "$@"
+fi
+
 gen() { # gen <target> <ffmpeg args...>
     local target="$1"; shift
     [ -f "out/$target" ] && return 0
-    ffmpeg -v error -y "$@" "out/.tmp.$target"
-    mv "out/.tmp.$target" "out/$target"
+    ffmpeg -v error -y "$@" "out/.tmp.$$.$target"
+    mv "out/.tmp.$$.$target" "out/$target"
 }
 
 # 2 s of a 440 Hz sine, 44.1k mono AAC (a check of resampling and the lossy anchor)
@@ -79,12 +86,13 @@ gen muxed_av.mp4 \
 # ogg demuxer hit av_assert0 (stream_index < ogg->nstreams) → abort.
 if [ ! -f out/cover_art.ogg ]; then
     ffmpeg -v error -y -f lavfi -i "testsrc=size=64x64:rate=1:duration=1" \
-        -frames:v 1 -q:v 5 out/.tmp.cover.jpg
+        -frames:v 1 -q:v 5 out/.tmp.$$.cover.jpg
     ffmpeg -v error -y -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" \
-        -c:a libvorbis -f ogg out/.tmp.plain.ogg
-    python3 - <<'PY'
-import base64, struct
-jpg = open('out/.tmp.cover.jpg','rb').read()
+        -c:a libvorbis -f ogg out/.tmp.$$.plain.ogg
+    python3 - "out/.tmp.$$" <<'PY'
+import base64, struct, sys
+tmp = sys.argv[1]
+jpg = open(tmp + '.cover.jpg','rb').read()
 mime = b'image/jpeg'
 # FLAC METADATA_BLOCK_PICTURE: type=3 (front cover), BE fields
 blk = struct.pack('>I', 3)
@@ -92,13 +100,13 @@ blk += struct.pack('>I', len(mime)) + mime
 blk += struct.pack('>I', 0)                     # the description is empty
 blk += struct.pack('>IIII', 64, 64, 24, 0)      # w, h, depth, colors
 blk += struct.pack('>I', len(jpg)) + jpg
-open('out/.tmp.mbp.txt','w').write(base64.b64encode(blk).decode())
+open(tmp + '.mbp.txt','w').write(base64.b64encode(blk).decode())
 PY
-    ffmpeg -v error -y -i out/.tmp.plain.ogg -c copy \
-        -metadata METADATA_BLOCK_PICTURE="$(cat out/.tmp.mbp.txt)" \
-        -f ogg out/.tmp.cover_art.ogg
-    rm -f out/.tmp.cover.jpg out/.tmp.plain.ogg out/.tmp.mbp.txt
-    mv out/.tmp.cover_art.ogg out/cover_art.ogg
+    ffmpeg -v error -y -i out/.tmp.$$.plain.ogg -c copy \
+        -metadata METADATA_BLOCK_PICTURE="$(cat out/.tmp.$$.mbp.txt)" \
+        -f ogg out/.tmp.$$.cover_art.ogg
+    rm -f out/.tmp.$$.cover.jpg out/.tmp.$$.plain.ogg out/.tmp.$$.mbp.txt
+    mv out/.tmp.$$.cover_art.ogg out/cover_art.ogg
 fi
 
 echo ok

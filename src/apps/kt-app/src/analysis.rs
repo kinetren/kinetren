@@ -207,7 +207,7 @@ mod tests {
         a: &mut Analysis,
         out: Result<AnalysisOut, String>,
     ) -> Option<(AnalysisKind, u64, Result<AnalysisOut, String>)> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = kt_time::test_deadline();
         loop {
             if let Some(r) = a.poll(|_| done(out.clone())) {
                 return Some(r);
@@ -303,7 +303,7 @@ mod tests {
 
         a.cancel_all();
         assert_eq!(a.queued(), 0, "the queue survived the cancellation");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = kt_time::test_deadline();
         while a.is_running() && std::time::Instant::now() < deadline {
             a.poll(|_| done(Err("unused".into())));
             std::thread::sleep(std::time::Duration::from_millis(5));

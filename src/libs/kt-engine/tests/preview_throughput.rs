@@ -136,7 +136,7 @@ impl MediaSource for GopSource {
 }
 
 fn wait_idle(w: &MediaWorker) {
-    let until = Instant::now() + Duration::from_secs(20);
+    let until = kt_time::test_deadline();
     while !w.is_idle() {
         assert!(Instant::now() < until, "the worker did not finish");
         std::thread::sleep(Duration::from_millis(2));
@@ -365,9 +365,26 @@ impl kt_engine::VideoGpuExec for Blank {
     }
 }
 
+/// The scene played through the real player against the wall clock, on the model decoder.
+fn played(p: Project, src: GopSource) -> kt_engine::preview_bench::BenchReport {
+    let (player, ring) = Player::new(p, vec![(MediaId(1), Box::new(src) as Box<dyn MediaSource>)]);
+    player.set_preview_quality(Quality { width: 640, height: 360 });
+    player.set_video_gpu(Some(Arc::new(Blank(kt_engine::GpuBackendInfo {
+        name: String::new(),
+        backend: String::new(),
+        software: true,
+    }))));
+    play_range(&player, ring, BenchOptions { from: Tick(0), to: Tick(4 * SEC), ..Default::default() })
+}
+
 /// t1524: the consequence, in the performance panel's terms. A file that takes 12 ms a picture
 /// keeps up with 25 fps at one pass; the two passes of the sharp layer and its backdrop, the second
 /// seeking back a GOP, do not.
+///
+/// A control of one pass plays beside it, at the same time, and the frames are counted against
+/// what the control got. A real-time run takes what the machine leaves it: at load 25 the scene
+/// showed 64 of 100 frames with nothing wrong in the code. The control shows all of them on a
+/// quiet machine, so the bound there is the 70 % it always was.
 #[test]
 fn t1524_a_layer_over_its_backdrop_plays_in_time() {
     let p = sharp_over_backdrop();
@@ -380,28 +397,26 @@ fn t1524_a_layer_over_its_backdrop_plays_in_time() {
     let sizes: BTreeSet<_> = vr.layers_at(Tick(SEC), q).iter().map(|l| l.2).collect();
     assert_eq!(sizes.len(), 2, "scene guard: one file at two decode sizes: {sizes:?}");
 
-    let (player, ring) = Player::new(p, vec![(MediaId(1), Box::new(src) as Box<dyn MediaSource>)]);
-    player.set_preview_quality(q);
-    player.set_video_gpu(Some(Arc::new(Blank(kt_engine::GpuBackendInfo {
-        name: String::new(),
-        backend: String::new(),
-        software: true,
-    }))));
-    let r = play_range(
-        &player,
-        ring,
-        BenchOptions { from: Tick(0), to: Tick(4 * SEC), ..Default::default() },
-    );
-    let c = counts.lock().unwrap();
+    let mut one_pass = p.clone();
+    one_pass.clips.retain(|c| c.id == ClipId(1));
+    let control = GopSource::new((3840, 1608), Duration::from_millis(12), Arc::default());
+    let (r, c) = std::thread::scope(|s| {
+        let scene = s.spawn(|| played(p, src));
+        let control = s.spawn(|| played(one_pass, control));
+        (scene.join().unwrap(), control.join().unwrap())
+    });
+    assert_eq!(c.grid_frames, r.grid_frames, "scene guard: the control plays the same range");
+    let n = counts.lock().unwrap();
     assert!(
-        r.shown * 10 >= r.grid_frames * 7,
-        "{} of {} frames, skipped {}, incomplete {}, {} pictures, {} reopens",
+        r.shown * 10 >= c.shown * 7,
+        "{} of {} frames against {} of the one pass, skipped {}, incomplete {}, {} pictures, {} reopens",
         r.shown,
         r.grid_frames,
+        c.shown,
         r.skipped,
         r.incomplete,
-        c.pictures,
-        c.reopens,
+        n.pictures,
+        n.reopens,
     );
 }
 
@@ -409,6 +424,8 @@ fn t1524_a_layer_over_its_backdrop_plays_in_time() {
 struct SlowAudio {
     info: MediaInfo,
     burst: Duration,
+    /// Set: the source does not answer until this is released.
+    dead: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
 }
 
 impl MediaSource for SlowAudio {
@@ -417,6 +434,12 @@ impl MediaSource for SlowAudio {
     }
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
         std::thread::sleep(self.burst);
+        if let Some(dead) = &self.dead {
+            let mut released = dead.0.lock().unwrap();
+            while !*released {
+                released = dead.1.wait(released).unwrap();
+            }
+        }
         Ok(AudioBurst::silence(idx))
     }
     fn read_video_frame(&mut self, p: Tick, q: Option<Quality>) -> Result<VideoFrame, MediaError> {
@@ -427,7 +450,10 @@ impl MediaSource for SlowAudio {
     }
 }
 
-fn cold_player(burst: Duration) -> (Player, rtrb::Consumer<f32>) {
+fn cold_player(
+    burst: Duration,
+    dead: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
+) -> (Player, rtrb::Consumer<f32>) {
     let mut p = sharp_over_backdrop();
     p.clips.truncate(1);
     p.clips[0].kind = ClipKind::Audio;
@@ -443,7 +469,7 @@ fn cold_player(burst: Duration) -> (Player, rtrb::Consumer<f32>) {
         sar: (1, 1),
         still: false,
     };
-    let src = SlowAudio { info, burst };
+    let src = SlowAudio { info, burst, dead };
     Player::new(p, vec![(MediaId(1), Box::new(src) as Box<dyn MediaSource>)])
 }
 
@@ -453,7 +479,7 @@ fn cold_player(burst: Duration) -> (Player, rtrb::Consumer<f32>) {
 /// stands meanwhile, so nothing goes out of sync.
 #[test]
 fn t1537_a_cold_start_begins_with_its_sound() {
-    let (player, ring) = cold_player(Duration::from_millis(4));
+    let (player, ring) = cold_player(Duration::from_millis(4), None);
     let o =
         BenchOptions { from: Tick(0), to: Tick(SEC), settle: Duration::ZERO, ..Default::default() };
     let r = play_range(&player, ring, o);
@@ -464,11 +490,13 @@ fn t1537_a_cold_start_begins_with_its_sound() {
 /// t1538: the wait has a limit: a source that does not answer delays the start and stops nothing.
 #[test]
 fn t1538_a_dead_source_does_not_stop_the_start() {
-    let (player, ring) = cold_player(Duration::from_secs(3));
+    // it answers only after the play ends: a start that waited for it would never end
+    let dead = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let (player, ring) = cold_player(Duration::ZERO, Some(dead.clone()));
     let o =
         BenchOptions { from: Tick(0), to: Tick(SEC), settle: Duration::ZERO, ..Default::default() };
-    let began = Instant::now();
     let r = play_range(&player, ring, o);
-    assert!(began.elapsed() < Duration::from_secs(3), "the start waited for the source");
+    *dead.0.lock().unwrap() = true;
+    dead.1.notify_all();
     assert!(r.underruns > 0, "scene guard: the source really gave nothing");
 }

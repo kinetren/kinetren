@@ -488,7 +488,7 @@ pub(crate) mod testing {
     /// Wait for the thread's answer.
     pub fn wait(c: &super::Checker, done: impl Fn(&super::Checker) -> bool) {
         let t0 = std::time::Instant::now();
-        while !done(c) && t0.elapsed() < std::time::Duration::from_secs(10) {
+        while !done(c) && t0.elapsed() < kt_time::TEST_WAIT {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
@@ -610,15 +610,16 @@ mod tests {
         let c = Checker::new(on_at(&url), OWN, dir.clone(), Box::new(HttpFetch));
         let t0 = Instant::now();
         c.start("2026-10-27", Box::new(|| {}));
-        assert!(t0.elapsed() < Duration::from_millis(50), "start blocked: {:?}", t0.elapsed());
         assert!(c.thread_spawned());
         std::thread::sleep(Duration::from_millis(100));
         assert!(c.take_notice().is_none() && c.outdated().is_none());
         assert!(!dir.join(STATE_FILE).exists(), "the day is not recorded while unanswered");
         // what `on_exit` leaves behind: dropping the checker does not join its thread
-        let t1 = Instant::now();
         drop(c);
-        assert!(t1.elapsed() < Duration::from_millis(50), "exit held {:?}", t1.elapsed());
+        // the black hole never answers: a `start` or a drop that waited for it takes the whole
+        // request timeout. The bound is that wait, not a quiet machine's milliseconds: `start`
+        // reads the day's file, and on a busy disk that alone took over 50 ms
+        assert!(t0.elapsed() < TOTAL_TIMEOUT, "start or exit held {:?}", t0.elapsed());
 
         // a server that answers 200 with a newer release
         let ok = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

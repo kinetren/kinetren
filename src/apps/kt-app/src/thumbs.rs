@@ -835,7 +835,7 @@ mod key_tests {
         });
         let svc = ThumbService::start(&project, None);
         let id = MediaId(99); // media is NOT in the service's map
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = kt_time::test_deadline();
         // duration: request is queued, the worker publishes None
         assert_eq!(svc.duration_or_probe(id), None);
         loop {
@@ -896,8 +896,7 @@ mod key_tests {
         for project_path in [None, Some(db_project.clone())] {
             let with_db = project_path.is_some();
             let svc = ThumbService::start(&project, project_path);
-            // a generous deadline: under a full parallel run the disk is busy
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+            let deadline = kt_time::test_deadline();
             assert_eq!(svc.duration_or_probe(id), None, "the first call is a request");
             while !svc.shared.durations.lock().unwrap().contains_key(&id) {
                 assert!(

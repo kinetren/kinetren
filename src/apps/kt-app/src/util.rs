@@ -527,7 +527,7 @@ pub(crate) mod tests {
         // the work”, not “the service is fast”: SPEED is judged on the release build
         // (item 301), and mixing these two claims in one expectation is
         // exactly the flake caught before on t411/t476 (R.52).
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        let deadline = kt_time::test_deadline();
         loop {
             if out.lock().unwrap().len() == 2 {
                 break;
@@ -559,7 +559,7 @@ pub(crate) mod tests {
         let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc = IndexService::start(out.clone(), loud.clone());
         svc.enqueue(None, vec![(MediaId(9), "/proc/self/no-such-file.wav".into())]);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let deadline = kt_time::test_deadline();
         let mut errs = Vec::new();
         while errs.is_empty() && std::time::Instant::now() < deadline {
             errs = svc.take_errors();
@@ -601,7 +601,7 @@ pub(crate) mod tests {
         let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc = IndexService::start(peaks.clone(), loud.clone());
         svc.enqueue(Some(db_path.clone()), vec![(MediaId(5), file.clone())]);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = kt_time::test_deadline();
         while loud.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -616,7 +616,7 @@ pub(crate) mod tests {
         let loud2: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc2 = IndexService::start(peaks2, loud2.clone());
         svc2.enqueue(Some(db_path), vec![(MediaId(5), file)]);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let deadline = kt_time::test_deadline();
         while loud2.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -633,7 +633,7 @@ pub(crate) mod tests {
         let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
         let svc = IndexService::start(out.clone(), loud.clone());
         svc.enqueue(None, vec![(MediaId(7), fixture("sine48k_stereo.flac"))]); // unnamed project
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = kt_time::test_deadline();
         loop {
             if let Some(p) = out.lock().unwrap().get(&MediaId(7)) {
                 assert!(!p.is_empty(), "the pyramid must have levels");
@@ -670,7 +670,7 @@ pub(crate) mod tests {
         let svc = crate::thumbs::ThumbService::start(&project, None);
         svc.add_media(MediaId(3), fixture("testsrc_h264.mp4"));
         let key = crate::thumbs::ThumbKey { media: MediaId(3), t: 0 };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let deadline = kt_time::test_deadline();
         loop {
             svc.request(key);
             if svc.get(&key).is_some() {

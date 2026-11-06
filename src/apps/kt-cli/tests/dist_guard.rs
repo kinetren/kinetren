@@ -1131,3 +1131,104 @@ fn t1422_the_ordered_tests_exist() {
     ];
     assert_each_is_caught("t1422", &cases);
 }
+
+/// t1670 (test-stability): fixture generation runs meet. A full run starts one per test process,
+/// and on a fresh tree all of them find the fixtures missing; on a shared temp name one moved
+/// another's half-written file into place and then failed on its own `mv` (t939, t796c red, green
+/// alone). A stand-in `ffmpeg` writes its output in two steps: a file that reached `out/` before
+/// its writer ended says so.
+#[test]
+fn t1670_fixture_runs_that_meet_do_not_spoil_each_other() {
+    if cfg!(windows) {
+        eprintln!("t1670 skipped on Windows: the fixtures come generated with the test archive");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-t1670-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::copy(repo().join("src/fixtures/gen.sh"), dir.join("gen.sh")).unwrap();
+    let stand_in = "#!/usr/bin/env bash\nfor out; do :; done\nprintf half > \"$out\"\nsleep 0.05\nprintf whole > \"$out\"\n";
+    std::fs::write(bin.join("ffmpeg"), stand_in).unwrap();
+    std::fs::write(bin.join("python3"), "#!/usr/bin/env bash\nexit 0\n").unwrap();
+    for f in ["ffmpeg", "python3"] {
+        assert!(Command::new("chmod").arg("+x").arg(bin.join(f)).status().unwrap().success());
+    }
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let runs: Vec<_> = (0..6)
+        .map(|_| {
+            Command::new("bash")
+                .arg(dir.join("gen.sh"))
+                .env("PATH", &path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("bash for gen.sh")
+        })
+        .collect();
+    for run in runs {
+        let out = run.wait_with_output().unwrap();
+        assert!(out.status.success(), "a run failed: {}", String::from_utf8_lossy(&out.stderr));
+    }
+    let mut made = 0;
+    for f in std::fs::read_dir(dir.join("out")).unwrap().flatten() {
+        let name = f.file_name().to_string_lossy().into_owned();
+        if !name.starts_with('.') {
+            made += 1;
+            assert_eq!(std::fs::read_to_string(f.path()).unwrap(), "whole", "{name}: half-written");
+        }
+    }
+    assert!(made >= 10, "scene guard: the script made its fixtures: {made}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t1671 (test-stability): a test waits for what must happen with `kt_time::test_deadline()`. A
+/// bound of its own measures the machine: "the download did not end" in 20 s, "probe not
+/// published" in 45 s, "writing the restore record took 44 s", all on correct code. What is left
+/// is a limit that IS the check, and each of those says so here.
+#[test]
+fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
+    const LIMIT_IS_THE_CHECK: &[(&str, &str)] = &[
+        // inside the 5 s busy timeout: a thread still running here sits behind a lock across an fsync
+        ("libs/kt-media/tests/sidecar_stall.rs", "from_secs(3)"),
+        // the output ring is the yardstick of audio after a jump, and the video must follow it
+        ("libs/kt-engine/tests/video_stall.rs", "from_millis(250)"),
+        ("libs/kt-engine/tests/video_stall.rs", "from_millis(900)"),
+    ];
+    fn walk(d: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(d).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let src = repo().join("src");
+    let mut files = Vec::new();
+    for d in ["apps", "libs", "plugins"] {
+        walk(&src.join(d), &mut files);
+    }
+    let (bound, elapsed) = ("Instant::now() + ", ".elapsed() < ");
+    let clock = |l: &str| {
+        let at = l.find(bound).map(|i| i + bound.len()).or(l.find(elapsed).map(|i| i + elapsed.len()));
+        at.is_some_and(|i| l[i..].trim_start_matches("std::time::").starts_with("Duration::from_"))
+    };
+    let mut seen = Vec::new();
+    let mut bad = Vec::new();
+    for f in files {
+        let rel = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
+        let text = std::fs::read_to_string(&f).unwrap();
+        for (n, l) in text.lines().enumerate().filter(|(_, l)| clock(l)) {
+            match LIMIT_IS_THE_CHECK.iter().find(|(p, w)| *p == rel && l.contains(w)) {
+                Some(e) => seen.push(*e),
+                None => bad.push(format!("{rel}:{}: {}", n + 1, l.trim())),
+            }
+        }
+    }
+    assert!(bad.is_empty(), "a wait bounded by the clock, use kt_time::test_deadline():\n{}", bad.join("\n"));
+    for e in LIMIT_IS_THE_CHECK {
+        assert!(seen.contains(e), "the list names a limit that is gone: {e:?}");
+    }
+}

@@ -240,7 +240,10 @@ fn t1282_the_preview_click_and_playback_around_masks() {
         "a click away from the mask did not reach play/pause"
     );
     h.state_mut().preview_click_at = None;
-    h.state_mut().on_transport_toggle();
+    // on a slow frame the deferred click has already fired: the second toggle would stop it
+    if !h.state().player.transport.is_playing() {
+        h.state_mut().on_transport_toggle();
+    }
     h.step();
     h.state_mut().mask_ctl_drawn = false;
     h.step();

@@ -2074,7 +2074,7 @@ fn t669_generator_thumbs_follow_the_event_address() {
     let addr = kt_engine::gen_source_addr(clip);
     assert_ne!(addr, media, "event source address must differ from the media address");
     let _ = h.state().thumbs.duration_or_probe(addr);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     loop {
         if let Some((v, a)) = h.state().thumbs.kinds(addr) {
             assert!(v && !a, "generator event source is video without audio");
@@ -5085,7 +5085,7 @@ fn t850_ffmpeg_window_from_not_found_to_playing() {
     // Locate… with a complete folder: saved, loaded, the clip recovers without a restart
     h.state_mut().ffmpeg_ui.test_pick = Some(full.clone());
     h.get_by_label(tr(k::ffmpeg::LOCATE)).click();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = kt_time::test_deadline();
     while !h.state().placeholder_media.is_empty() && std::time::Instant::now() < deadline {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -5949,7 +5949,7 @@ fn folder_without_install(root: &std::path::Path) -> std::path::PathBuf {
 /// showed on the way.
 fn run_download(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) -> Vec<String> {
     let mut seen = Vec::new();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = kt_time::test_deadline();
     loop {
         h.step();
         seen.extend(crate::layout_tests::shown_texts(h));
@@ -6024,7 +6024,7 @@ fn t951_ffmpeg_window_tells_the_download_as_it_goes() {
     h.step();
     let mut saw_cancel = false;
     let mut seen = Vec::new();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = kt_time::test_deadline();
     while h.state().ffmpeg_ui.job.is_some() {
         assert!(std::time::Instant::now() < deadline, "the download did not end");
         h.step();
@@ -6217,7 +6217,7 @@ fn t958_render_over_an_existing_file_is_asked_first() {
 fn stop_render(h: &mut egui_kittest::Harness<'static, crate::app::KtApp>) {
     let Some(job) = h.state_mut().render_job.as_mut() else { return };
     job.job.cancel();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = kt_time::test_deadline();
     while job.result.is_none() && std::time::Instant::now() < deadline {
         job.poll();
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -6393,7 +6393,7 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
         at: kt_time::Tick(90_000),
     });
     drop(app);
-    assert!(crate::welcome::wait_posters(std::time::Duration::from_secs(60)), "the poster job hung");
+    assert!(crate::welcome::wait_posters(kt_time::TEST_WAIT), "the poster job hung");
     assert!(job_out.exists(), "the poster was not written");
 
     let mut h = crate::layout_tests::harness_sized(1440.0, 860.0);
@@ -6401,7 +6401,7 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
     let ctx = h.ctx.clone();
     h.state_mut().open_welcome(&ctx, None, false);
     // the posters arrive from a helper thread; a frame each
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let deadline = kt_time::test_deadline();
     while h.state().start.welcome.posters.count() < 1 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();

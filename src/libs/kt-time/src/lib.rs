@@ -11,6 +11,17 @@ mod libm_fix;
 
 use serde::{Deserialize, Serialize};
 
+/// How long a TEST waits for what must happen: the hang guard of every such wait in the workspace
+/// (test-stability). It says nothing about speed. A loaded disk took 137 s over one fsync, so a bound
+/// meant to catch a slow program only caught the machine; only a program that never gets there
+/// reaches this one. A wait whose limit IS the check (a budget the program promises) keeps its limit.
+pub const TEST_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The deadline of a test's wait that starts now: [`TEST_WAIT`] from this moment.
+pub fn test_deadline() -> std::time::Instant {
+    std::time::Instant::now() + TEST_WAIT
+}
+
 /// Tick frequency, Hz.
 pub const TICK_HZ: i64 = 90_000;
 

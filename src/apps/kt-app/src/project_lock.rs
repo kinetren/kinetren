@@ -142,7 +142,13 @@ mod tests {
         assert!(matches!(acquire(&a), LockState::Busy { .. }), "Ctrl+S cleared the lock");
 
         drop(first);
-        assert!(matches!(acquire(&a), LockState::Owned(_)), "the lock was not released");
+        // a lock lives on the open file: a child another test forks at this moment holds a copy
+        // of the descriptor until its exec. Released means free once that child has gone
+        let deadline = kt_time::test_deadline();
+        while !matches!(acquire(&a), LockState::Owned(_)) {
+            assert!(std::time::Instant::now() < deadline, "the lock was not released");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

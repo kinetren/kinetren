@@ -303,7 +303,7 @@ fn t117_loop_wrap_unfreezes_video() {
     let mut anchor = (player.transport.generation(), player.transport.wraps());
     let mut keys: Vec<i64> = Vec::new();
     let start = std::time::Instant::now();
-    while start.elapsed().as_millis() < 2500 && player.transport.wraps() < 2 {
+    while start.elapsed() < kt_time::TEST_WAIT && player.transport.wraps() < 2 {
         for _ in 0..1024 {
             if ring.pop().is_err() {
                 break;
@@ -648,7 +648,7 @@ fn t904_live_player_loops_under_a_large_latency() {
     let start = std::time::Instant::now();
     // after the third fold play on a little: the last lap must be seen moving too
     let done = |folds: &Vec<usize>, n: usize| folds.len() >= 3 && n >= folds[2] + 20;
-    while start.elapsed().as_millis() < 6_000 && !done(&folds, keys.len()) {
+    while start.elapsed() < kt_time::TEST_WAIT && !done(&folds, keys.len()) {
         for _ in 0..1024 {
             if ring.pop().is_err() {
                 break;

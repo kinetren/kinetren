@@ -236,7 +236,7 @@ fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
 
     // warm: the reel's composite moves to memo by its revision
     let mut buf = Vec::new();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = kt_time::test_deadline();
     loop {
         let _ = player.compose_preview_into(Tick(0), &mut buf);
         if buf.first().is_some_and(|&x| x == 16) {
@@ -248,7 +248,7 @@ fn t663_a_reel_does_not_serve_a_stale_frame_after_a_retune() {
 
     assert!(player.update_gen(ClipId(1), bright, Vec::new()), "reconfiguration must be applied");
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let deadline = kt_time::test_deadline();
     loop {
         let _ = player.compose_preview_into(Tick(0), &mut buf);
         if buf.first().is_some_and(|&x| x == 220) {

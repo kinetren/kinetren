@@ -1205,7 +1205,7 @@ mod records_tests {
         app.start.store = StartStore::at(Some(store.clone()));
         let before = crate::welcome::posters_done();
         app.queue_poster(); // what Ctrl+S and the close of a named project do
-        assert!(crate::welcome::wait_posters(std::time::Duration::from_secs(60)), "the poster job hung");
+        assert!(crate::welcome::wait_posters(kt_time::TEST_WAIT), "the poster job hung");
         assert!(crate::welcome::posters_done() > before, "the job did not run");
         let poster = app.start.store.poster_path(&path).unwrap();
         assert!(poster.starts_with(store.join("posters")), "the poster lives in the store: {poster:?}");

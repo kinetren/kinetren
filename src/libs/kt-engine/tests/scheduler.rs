@@ -371,7 +371,7 @@ fn t501_retune_is_not_cancelled_and_not_raced() {
             generation: 1,
         });
     }
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     while !w.is_idle() {
         assert!(std::time::Instant::now() < deadline, "the warm-up did not finish");
         std::thread::sleep(Duration::from_millis(10));
@@ -384,7 +384,7 @@ fn t501_retune_is_not_cancelled_and_not_raced() {
     w.cancel_generations_below(u64::MAX / 2);
 
     // we wait until the reconfiguration arrives: frames of the new parameters come
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = kt_time::test_deadline();
     loop {
         w.submit(DecodeRequest {
             kind: RequestKind::video_on_grid(Tick(0), Some(q), step),

@@ -442,7 +442,7 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
         if cov.len() == 1 && cov[0] == (b0..b1) {
             break;
         }
-        assert!(warm_start.elapsed().as_secs() < 20, "prefetch did not warm the region: {cov:?}");
+        assert!(warm_start.elapsed() < kt_time::TEST_WAIT, "prefetch did not warm the region: {cov:?}");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     player.play();
@@ -464,7 +464,7 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
             }
             Err(_) => std::thread::sleep(std::time::Duration::from_millis(1)),
         }
-        assert!(start.elapsed().as_secs() < 30, "ring does not fill");
+        assert!(start.elapsed() < kt_time::TEST_WAIT, "ring does not fill");
     }
     player.pause();
 

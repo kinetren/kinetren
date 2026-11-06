@@ -134,7 +134,7 @@ fn bump_consumed(player: &Player, frames: i64) {
     let start = std::time::Instant::now();
     while player.shared.consumed_frames.load(Ordering::Acquire) != 0 {
         std::thread::sleep(std::time::Duration::from_millis(1));
-        assert!(start.elapsed().as_secs() < 10, "the render stream does not apply consumed");
+        assert!(start.elapsed() < kt_time::TEST_WAIT, "the render stream does not apply consumed");
     }
 }
 
@@ -160,7 +160,7 @@ fn collect_frames(
             }
             None => std::thread::sleep(std::time::Duration::from_millis(1)),
         }
-        assert!(start.elapsed().as_secs() < 60, "ring does not fill");
+        assert!(start.elapsed() < kt_time::TEST_WAIT, "ring does not fill");
     }
     let rest = frames as i64 - bumped;
     if rest > 0 {
