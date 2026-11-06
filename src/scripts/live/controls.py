@@ -120,7 +120,9 @@ def main(out):
         app.click_probe("controls.layout", "the panels list")
         app.settle()
         app.step("layouts", "the four arrangements by name")
-        app.key("Escape")
+        # a second press closes the list (Esc here closes the whole window: `escape_action` does
+        # not see an open combo; the same in every window, written down in the round's report)
+        app.click_probe("controls.layout", "the panels list closes")
         app.settle()
         for row in ("plain", "ctrl", "shift", "alt"):
             app.hover_probe(f"controls.wheel.{row}", f"the {row} wheel row")

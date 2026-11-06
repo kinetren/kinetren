@@ -574,12 +574,6 @@ const KEYS: &[Key] = &[
     Key::OpenBracket, Key::CloseBracket, Key::Quote, Key::Backtick,
 ];
 
-/// Every key's printed name, for the font guard (t1718).
-#[cfg(test)]
-pub fn key_labels() -> Vec<String> {
-    KEYS.iter().map(|k| p(*k).label()).collect()
-}
-
 /// Whether a key can be given to a command at all (what the code can carry, and not Esc, Enter).
 pub fn assignable(key: Key) -> bool {
     KEYS.contains(&key)
@@ -929,4 +923,10 @@ impl Controls {
         }
         set
     }
+}
+
+/// Every key's printed name, for the font guard (t1718).
+#[cfg(test)]
+pub fn key_labels() -> Vec<String> {
+    KEYS.iter().map(|k| p(*k).label()).collect()
 }
