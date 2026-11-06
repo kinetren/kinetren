@@ -23,6 +23,38 @@ struct SlowSource {
     inner: SyntheticSource,
     delay: Duration,
     served: Arc<ServeLog>,
+    gate: Arc<Gate>,
+}
+
+/// Holds the decoder inside its first read until the test has set the queue up. A sleep "long
+/// enough for the worker to be busy" was the scene of three tests here: on a loaded machine the
+/// worker had not started, the queue took another order, and t9 went red on correct code.
+#[derive(Default)]
+struct Gate {
+    open: std::sync::Mutex<bool>,
+    opened: std::sync::Condvar,
+    entered: AtomicU64,
+}
+
+impl Gate {
+    fn pass(&self) {
+        self.entered.fetch_add(1, Ordering::SeqCst);
+        let mut open = self.open.lock().unwrap();
+        while !*open {
+            open = self.opened.wait(open).unwrap();
+        }
+    }
+    fn wait_busy(&self) {
+        let deadline = kt_time::test_deadline();
+        while self.entered.load(Ordering::SeqCst) == 0 {
+            assert!(std::time::Instant::now() < deadline, "the worker took no request");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    fn open(&self) {
+        *self.open.lock().unwrap() = true;
+        self.opened.notify_all();
+    }
 }
 
 #[derive(Default)]
@@ -36,6 +68,7 @@ impl MediaSource for SlowSource {
         self.inner.info()
     }
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
+        self.gate.pass();
         std::thread::sleep(self.delay);
         self.served.order.lock().unwrap().push(idx);
         self.served.total.fetch_add(1, Ordering::SeqCst);
@@ -50,29 +83,36 @@ impl MediaSource for SlowSource {
 }
 
 fn slow_worker(media: u64, delay_ms: u64, cache: &Arc<BurstCache>) -> (MediaWorker, Arc<ServeLog>) {
+    let (worker, served, gate) = gated_worker(media, delay_ms, cache);
+    gate.open();
+    (worker, served)
+}
+
+/// The same, with the first read held until `Gate::open`.
+fn gated_worker(media: u64, delay_ms: u64, cache: &Arc<BurstCache>) -> (MediaWorker, Arc<ServeLog>, Arc<Gate>) {
     let served = Arc::new(ServeLog::default());
+    let gate = Arc::new(Gate::default());
     let source = SlowSource {
         inner: SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Ramp),
         delay: Duration::from_millis(delay_ms),
         served: served.clone(),
+        gate: gate.clone(),
     };
-    (MediaWorker::spawn(MediaId(media), Box::new(source), cache.clone()), served)
+    (MediaWorker::spawn(MediaId(media), Box::new(source), cache.clone()), served, gate)
 }
 
 fn wait_idle(w: &MediaWorker) {
-    for _ in 0..2000 {
-        if w.is_idle() {
-            return;
-        }
+    let deadline = kt_time::test_deadline();
+    while !w.is_idle() {
+        assert!(std::time::Instant::now() < deadline, "worker did not drain in time");
         std::thread::sleep(Duration::from_millis(1));
     }
-    panic!("worker did not drain in time");
 }
 
 #[test]
 fn t9_playback_preempts_prefetch() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
-    let (worker, served) = slow_worker(1, 5, &cache);
+    let (worker, served, gate) = gated_worker(1, 5, &cache);
 
     // We fill the queue with a far prefetch...
     for idx in 100..120 {
@@ -83,12 +123,13 @@ fn t9_playback_preempts_prefetch() {
         });
     }
     // ...and when the worker is already busy, playback arrives.
-    std::thread::sleep(Duration::from_millis(2));
+    gate.wait_busy();
     worker.submit(DecodeRequest {
         kind: RequestKind::Audio { idx: 7 },
         prio: Priority::Playback,
         generation: 0,
     });
+    gate.open();
     wait_idle(&worker);
     let order = served.order.lock().unwrap().clone();
     let pos_playback = order.iter().position(|&i| i == 7).expect("playback served");
@@ -102,7 +143,7 @@ fn t9_playback_preempts_prefetch() {
 #[test]
 fn t9_generation_cancellation_drops_stale_work() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
-    let (worker, served) = slow_worker(1, 5, &cache);
+    let (worker, served, gate) = gated_worker(1, 5, &cache);
 
     for idx in 0..30 {
         worker.submit(DecodeRequest {
@@ -111,7 +152,7 @@ fn t9_generation_cancellation_drops_stale_work() {
             generation: 0,
         });
     }
-    std::thread::sleep(Duration::from_millis(12)); // a pair of requests manages to run
+    gate.wait_busy(); // the first request is on the decoder
     worker.cancel_generations_below(1); // seek: the whole generation 0 is stale
     for idx in 500..503 {
         worker.submit(DecodeRequest {
@@ -120,6 +161,7 @@ fn t9_generation_cancellation_drops_stale_work() {
             generation: 1,
         });
     }
+    gate.open();
     wait_idle(&worker);
     let order = served.order.lock().unwrap().clone();
     let old_served = order.iter().filter(|&&i| i < 30).count();
@@ -166,7 +208,7 @@ fn t9_no_key_is_served_twice() {
 #[test]
 fn t9_equal_priority_prefers_forward_of_cursor() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
-    let (worker, served) = slow_worker(1, 3, &cache);
+    let (worker, served, gate) = gated_worker(1, 3, &cache);
 
     // The first request puts the cursor at 50; then we add behind and ahead.
     worker.submit(DecodeRequest {
@@ -174,7 +216,7 @@ fn t9_equal_priority_prefers_forward_of_cursor() {
         prio: Priority::NearPrefetch,
         generation: 0,
     });
-    std::thread::sleep(Duration::from_millis(1));
+    gate.wait_busy();
     for idx in [10, 51, 11, 52, 12, 53] {
         worker.submit(DecodeRequest {
             kind: RequestKind::Audio { idx },
@@ -182,6 +224,7 @@ fn t9_equal_priority_prefers_forward_of_cursor() {
             generation: 0,
         });
     }
+    gate.open();
     wait_idle(&worker);
     let order = served.order.lock().unwrap().clone();
     let fwd: Vec<i64> = order.iter().copied().filter(|&i| i > 50).collect();

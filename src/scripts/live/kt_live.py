@@ -1525,6 +1525,8 @@ class Live:
                 return False
             _poll(0.05)
         g = self.geom()
+        # what stood on screen is the next step of found-defects row 47
+        self.shot("no-save")
         asks = [f["param"] for f in g.get("fields", []) if f["param"].startswith("ask.")]
         raise Failure(
             "the program did not write the project after Ctrl+S, although there are edits; "
