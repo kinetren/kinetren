@@ -61,6 +61,9 @@ def main(out):
                 f"the {name} tile reached the store",
             )
             code_own = stored(store).get("controls")
+            # the store is written in the click's frame, which drew the tiles before it knew the
+            # answer: the shot waits for the frame after it
+            app.wait_frame(2, what="the frame after the tile's click", soft=True)
             app.step(f"tile-{name}", f"the {name} tile chosen: the panels moved behind the window, the line says what is not here")
         # ---- Premiere's hands ----
         app.click_probe("controls.tile.1", "back to Premiere")
