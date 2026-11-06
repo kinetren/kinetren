@@ -59,6 +59,9 @@ list may be short of items from them.
 | 76 | event longer than its file holds the last frame silently | Zero lost layers, nothing in the log; a person who did not mean a freeze is not told | `kt-engine` export | question | ask the owner at the stage's end |
 | 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
 | 65 | Datamosh not seen on a real device | The compute path ran only on Vulkan through llvmpipe: no real card, DX12, Metal or ARM yet; the panel's message without a device was not looked at in the live program | `fx-video-codec` | open | С.2 CI and the ARM build |
+| 84 | render with no real card slower than the deleted CPU build | Showcase 99-101 → 129-130 s (29 %), demo 30 → 34 s (14 %), memory 7.2 → 8.7 and 2.4 → 4.3 GB, pairs in a row. The old build decoded on `threads=auto`, the new on 4 threads; no other cause was read | `kt-engine` export, `kt-gpu` | open | С.1 |
+| 85 | render memory unproven at 4K | The memory formula is extrapolated from 1080p; the Windows branch of reading memory was compiled alone, not run; real card, DX12, Metal, ARM not run either | `kt-engine` export | not measured | С.1, on the first 4K render |
+| 86 | frame blending on a stretch and `fit_into` still on the CPU | Not moved, no measurement whether it pays | `kt-engine` | not measured | С.1 |
 | 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
 
 ## Internal
@@ -96,11 +99,14 @@ list may be short of items from them.
 | 45 | Color Grade GPU and CPU add in a different order: 140 channels per 1080p frame differ by 1 | `src/plugins/fx-video-color/src/color_grade.wgsl` | reported by `compute-backends` | not a defect once the math moves to compute |
 | 75 | windows has no picture tests | FXC compiles every shader in `windows-test` (t1650, t1651); the picture itself runs only in `windows-picture` on lavapipe, which has not had its first run: `continue-on-error` until it has | `.github/workflows/ci.yml` | open, needs a push | С.1 |
 | 79 | physics tests read models | VHS and camera physics tests read `tests/model/`; t1640 and t1641 hold the models to the shaders live, so a pass edited alone is red | `src/plugins/fx-video-tape/tests/model/sim.rs`, `src/plugins/fx-video-camera/tests/model/cpu.rs` | by design | — |
+| 87 | rules with no test after the CPU paths went | t1055 (an unknown barrier holds rule K) lives only in the spec text; t68 (equal bytes on a dirty pool, by kind) is only `t183` on the GPU now. t328, t1051, t1053, t1187, t1210, t443, t582, t66-t66d, t198, t1530-t1536 went with the code they checked | `openspec/specs` | t1055 and t68 open, the rest closed with their code | С.1 |
+| 88 | two peak builds spin for good in a full test run | Two `index-service` threads held a core each for the 1 h 49 min of a hung `cargo test`, state R, while their tests were long over. `build_peaks` does not look at the stop flag inside `PeakPyramid::build`, so a source whose read never ends takes a core until the process exits. Which media it was is not found: ptrace is closed here. If a person's damaged file does it, one core burns until the program closes | `kt-app/src/util.rs`, `kt-media` `PeakPyramid::build` | open, cause unknown | С.2, `test-stability` |
+| 89 | `nextest` hides what a shared process would show | `park_offline_engine` hung `cargo test` for good and `nextest` stayed green, because each test had its own process. The rule says `cargo test`, `finish.sh` and CI run `nextest`, so a process-wide lock is seen only by a person's manual `cargo test` | `scripts/finish.sh`, `CLAUDE.md` | fixed for this lock, the gap stays | С.2 |
 
 ## Changes left unfinished
 
-- **`r72-timeline-transport-defects`: 19 tasks, none done.** Seventeen timeline defects the owner
-  meets every day, ordered by him on 2026-10-30. Verdict: first in С.3.
+- `r72-timeline-transport-defects`: archived 2026-11-06, only the split of "Marker over the region"
+  waits for the owner.
 - `loop-play-latency-hold`: row 16.
 - `fx-lens-and-camera` (2 of 14 done), `flatpak-flathub` (11 tasks open): after С.3.
 - Every task done, or only the archive steps left: ARCHIVED 2026-11-04 (specs and design records merged,
