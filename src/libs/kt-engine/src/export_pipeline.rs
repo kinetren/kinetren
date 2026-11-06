@@ -24,8 +24,7 @@
 //! stops drops its queue ends, and every neighbour blocked on them returns (t1452).
 
 use crate::export::{
-    ExportBackends, ExportStats, chunk_requests, decode_requests, export_chunk_frames, project_range,
-    render_raw_audio_range,
+    ExportBackends, ExportStats, chunk_requests, decode_requests, project_range, render_raw_audio_range,
 };
 use crate::video::VideoRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
@@ -207,8 +206,14 @@ fn frame_workers() -> usize {
 fn pipe_cache_bytes(budget: usize) -> usize {
     5 * budget
 }
+/// A chunk's bytes at most, unless its one frame asks more.
+fn chunk_bytes(budget: usize) -> usize {
+    budget / 2
+}
+/// A chunk's frames at most, the serial loop's limit.
+const MAX_CHUNK_FRAMES: u64 = 120;
 /// What the unwritten chunks may hold before decode waits: a serial budget below the cache, so
-/// the next chunk (at most half a budget, `export_chunk_frames`) fits in the rest.
+/// the next chunk (at most half a budget, `chunk_bytes`) fits in the rest.
 fn lookahead_bytes(budget: usize) -> u64 {
     (pipe_cache_bytes(budget) - budget) as u64
 }
@@ -297,21 +302,29 @@ pub(crate) fn run<S: ExportSink>(
         None => (Tick(0), project_range(project)),
     };
     let step = video.grid.frame_step();
-    let dq_max = video.max_decode_quality(quality);
-    let chunk_frames =
-        export_chunk_frames(hooks.budget, dq_max.width, dq_max.height, video.max_concurrent_layers());
-    // the serial loop's frames and chunks, as indices
+    // the chunks, as indices: frames in a row up to `chunk_bytes` of what they really ask. The
+    // largest decode size of the project, the serial loop's measure, made a chunk of one frame on
+    // the showcase: the sources advanced in step and no span had two pictures to convert at once.
+    let limit = chunk_bytes(hooks.budget);
     let mut chunks = Vec::new();
     let (mut t, mut idx) = (t_first, 0u64);
     while t < end {
-        let t1 = Tick((t.0 + chunk_frames * step).min(end.0));
-        let first = idx;
-        let mut u = t;
-        while u < t1 {
+        let (first, mut bytes, mut u) = (idx, 0usize, t);
+        while u < end {
+            let next = Tick((u.0 + step).min(end.0));
+            let asked: usize = video
+                .wanted_frames(kt_time::TickRange::new(u, next), quality)
+                .iter()
+                .map(|(_, _, dq)| dq.width as usize * dq.height as usize * 4)
+                .sum();
+            if idx > first && (bytes + asked > limit || idx - first >= MAX_CHUNK_FRAMES) {
+                break;
+            }
+            bytes += asked;
             idx += 1;
             u = Tick(u.0 + step);
         }
-        chunks.push(Chunk { first, end: idx, t0: t, t1 });
+        chunks.push(Chunk { first, end: idx, t0: t, t1: Tick(u.0.min(end.0)) });
         t = u;
     }
     let total = idx;
