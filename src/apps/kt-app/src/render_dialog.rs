@@ -611,9 +611,11 @@ impl KtApp {
             // the render's sources decode with the threads of a render; the preview's stay on auto
             let (rw, rh) = opts_thread.resolution.unwrap_or(proj_res);
             kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(kt_gpu::memory::available(), rw, rh));
+            kt_ffmpeg::set_rgba_threads(kt_gpu::memory::rgba_threads(kt_gpu::memory::available(), rw, rh));
             let (a, _) = open_all(&project, base.as_deref());
             let (v, _) = open_all(&project, base.as_deref());
             kt_ffmpeg::set_decode_threads(0);
+            kt_ffmpeg::set_rgba_threads(1);
             // R.29: its own headless devices per job (the UI queue does not share time with the
             // export); with no engine the export fails, and the window says why (D4)
             let mut engines = match crate::app::export_video_gpu(rw, rh) {

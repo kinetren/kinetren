@@ -16,6 +16,12 @@ pub fn decode_threads(available: Option<u64>, w: u32, h: u32) -> u32 {
     if tight(available, w, h) { 2 } else { 4 }
 }
 
+/// The threads that convert a render's decoded pictures to RGBA (render-speed-no-card D2): the
+/// conversion took four times the decoding on the showcase. A tight render keeps its footprint.
+pub fn rgba_threads(available: Option<u64>, w: u32, h: u32) -> u32 {
+    if tight(available, w, h) { 1 } else { 4 }
+}
+
 /// The memory does not hold one device and the render's base: the render runs on its smallest
 /// footprint (`ExportOptions::tight`).
 pub fn tight(available: Option<u64>, w: u32, h: u32) -> bool {

@@ -113,16 +113,33 @@ struct VideoPath {
     /// stream without a single frame (“out of range” at any tick, that very
     /// eternal “Loading…”).
     still: bool,
-    sws: *mut ffi::SwsContext,
-    sws_key: (c_int, c_int, c_int, c_int, c_int),
-    /// Contexts of the other sizes a multi-size span converts to (export-throughput D7): the
-    /// same picture to two sizes must not rebuild a context per picture.
-    sws_spare: Vec<((c_int, c_int, c_int, c_int, c_int), *mut ffi::SwsContext)>,
+    rgba: Rgba,
+    /// The converters of a span's worker threads (render-speed-no-card D2), and how many.
+    span_rgba: Vec<Rgba>,
+    rgba_threads: usize,
     eof: bool,
     /// Diagnostics: decoder recreations (backward) and decoded frames.
     backward_reopens: u64,
     frames_decoded: u64,
 }
+
+/// One thread's conversion to RGBA: a context per size.
+struct Rgba {
+    sws: *mut ffi::SwsContext,
+    sws_key: (c_int, c_int, c_int, c_int, c_int),
+    /// Contexts of the other sizes a multi-size span converts to (export-throughput D7): the
+    /// same picture to two sizes must not rebuild a context per picture.
+    sws_spare: Vec<((c_int, c_int, c_int, c_int, c_int), *mut ffi::SwsContext)>,
+}
+
+// SAFETY: a context is used by one thread at a time, as a decoder is
+unsafe impl Send for Rgba {}
+
+/// A reference to a decoded picture on its way to a converter thread.
+struct FrameRef(*mut ffi::AVFrame);
+
+// SAFETY: the reference is the converter's alone, and a decoded picture is not written again
+unsafe impl Send for FrameRef {}
 
 pub struct Source {
     api: &'static Api,
@@ -474,6 +491,10 @@ impl Source {
             return Ok(());
         }
         debug_assert!(keys.windows(2).all(|w| w[0].0 <= w[1].0), "span keys must be ordered");
+        let threads = v.rgba_threads;
+        if threads > 1 && keys.len() > 1 {
+            return v.span_sizes_threaded(api, keys, &self.index.video_keyframes, threads, emit);
+        }
         let mut i = 0;
         while i < keys.len() {
             let k = keys[i].0;
@@ -543,11 +564,9 @@ impl Drop for Source {
         }
         if let Some(v) = &mut self.video {
             unsafe {
-                if !v.sws.is_null() {
-                    (api.sws_freeContext)(v.sws);
-                }
-                for (_, c) in v.sws_spare.drain(..) {
-                    (api.sws_freeContext)(c);
+                v.rgba.free(api);
+                for r in &mut v.span_rgba {
+                    r.free(api);
                 }
                 (api.avcodec_free_context)(&mut v.dec);
                 (api.avformat_close_input)(&mut v.fmt);
@@ -789,9 +808,9 @@ impl VideoPath {
             pending: core::ptr::null_mut(),
             pending_pts: i64::MIN,
             still,
-            sws: core::ptr::null_mut(),
-            sws_key: (0, 0, 0, 0, 0),
-            sws_spare: Vec::new(),
+            rgba: Rgba::new(),
+            span_rgba: Vec::new(),
+            rgba_threads: crate::rgba_threads(),
             eof: false,
             backward_reopens: 0,
             frames_decoded: 0,
@@ -1076,6 +1095,134 @@ impl VideoPath {
         width: u32,
         height: u32,
     ) -> Result<RgbaFrame, FfError> {
+        self.rgba.convert(api, frame, width, height, self.start_time, self.time_base)
+    }
+
+    /// `read_video_span_sizes` with the conversions on `threads` threads (render-speed-no-card
+    /// D2). A picture is chosen by the same steps, on this thread; a converter takes a reference
+    /// to it, and `emit` gets the frames here, in the order of `keys`. The bounded queue keeps the
+    /// pictures in flight to a few. Not by swscale's own slices: the block overrun of
+    /// `sws_to_rgba` lands on the next row, which another slice's thread writes.
+    fn span_sizes_threaded(
+        &mut self,
+        api: &'static Api,
+        keys: &[(Tick, u32, u32)],
+        index: &[i64],
+        threads: usize,
+        emit: &mut dyn FnMut(Tick, (u32, u32), RgbaFrame),
+    ) -> Result<(), FfError> {
+        struct Job {
+            seq: usize,
+            frame: FrameRef,
+            size: (u32, u32),
+        }
+        while self.span_rgba.len() < threads {
+            self.span_rgba.push(Rgba::new());
+        }
+        let mut converters = std::mem::take(&mut self.span_rgba);
+        let (start_time, time_base) = (self.start_time, self.time_base);
+        let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<Job>(threads);
+        let job_rx = std::sync::Mutex::new(job_rx);
+        let result = std::thread::scope(|scope| {
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            for rgba in converters.iter_mut() {
+                let (job_rx, done_tx) = (&job_rx, done_tx.clone());
+                scope.spawn(move || {
+                    while let Ok(Job { seq, frame, size }) = {
+                        let next = job_rx.lock().unwrap().recv();
+                        next
+                    } {
+                        let mut f = frame.0;
+                        let r = rgba.convert(api, f, size.0, size.1, start_time, time_base);
+                        unsafe { (api.av_frame_free)(&mut f) };
+                        if done_tx.send((seq, r)).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(done_tx);
+            let mut parked = std::collections::BTreeMap::new();
+            let mut next = 0usize;
+            let mut failed = Ok(());
+            let mut land = |parked: &mut std::collections::BTreeMap<usize, Result<RgbaFrame, FfError>>,
+                            next: &mut usize,
+                            failed: &mut Result<(), FfError>| {
+                while failed.is_ok() {
+                    let Some(r) = parked.remove(next) else { break };
+                    match r {
+                        Ok(rgba) => {
+                            let (k, w, h) = keys[*next];
+                            emit(k, (w, h), rgba);
+                        }
+                        Err(e) => *failed = Err(e),
+                    }
+                    *next += 1;
+                }
+            };
+            let mut i = 0;
+            while i < keys.len() && failed.is_ok() {
+                let k = keys[i].0;
+                let target = self.target_ts(api, k);
+                let frame = match self.prepare_for(api, target, index).and_then(|_| self.frame_for(api, target)) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        // what was converted before the failure still arrives
+                        failed = Err(e);
+                        break;
+                    }
+                };
+                while i < keys.len() && keys[i].0 == k {
+                    let (_, w, h) = keys[i];
+                    let frame = FrameRef(unsafe { (api.av_frame_clone)(frame) });
+                    if job_tx.send(Job { seq: i, frame, size: (w, h) }).is_err() {
+                        break;
+                    }
+                    i += 1;
+                    parked.extend(done_rx.try_iter());
+                    land(&mut parked, &mut next, &mut failed);
+                }
+            }
+            let asked = i;
+            drop(job_tx);
+            let late = std::mem::replace(&mut failed, Ok(()));
+            for (seq, r) in done_rx.iter() {
+                parked.insert(seq, r);
+            }
+            land(&mut parked, &mut next, &mut failed);
+            debug_assert!(failed.is_err() || next == asked, "every conversion asked has landed");
+            failed.and(late)
+        });
+        self.span_rgba = converters;
+        result
+    }
+}
+
+impl Rgba {
+    fn new() -> Rgba {
+        Rgba { sws: core::ptr::null_mut(), sws_key: (0, 0, 0, 0, 0), sws_spare: Vec::new() }
+    }
+
+    fn free(&mut self, api: &Api) {
+        unsafe {
+            if !self.sws.is_null() {
+                (api.sws_freeContext)(self.sws);
+            }
+            for (_, c) in self.sws_spare.drain(..) {
+                (api.sws_freeContext)(c);
+            }
+        }
+    }
+
+    fn convert(
+        &mut self,
+        api: &Api,
+        frame: *mut ffi::AVFrame,
+        width: u32,
+        height: u32,
+        start_time: i64,
+        time_base: ffi::AVRational,
+    ) -> Result<RgbaFrame, FfError> {
         let f = unsafe { &*frame };
         let (dst_w, dst_h) = (
             (width.max(2) as c_int) & !1,
@@ -1139,9 +1286,9 @@ impl VideoPath {
         } else {
             f.pts
         };
-        let rel = pts - self.start_time;
+        let rel = pts - start_time;
         let pts_tick =
-            Tick(unsafe { (api.av_rescale_q)(rel, self.time_base, tb(1, TICK_HZ as i32)) });
+            Tick(unsafe { (api.av_rescale_q)(rel, time_base, tb(1, TICK_HZ as i32)) });
         Ok(RgbaFrame { pts: pts_tick, width: dst_w as u32, height: dst_h as u32, rgba })
     }
 }

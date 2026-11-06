@@ -23,6 +23,20 @@ pub fn set_decode_threads(n: u32) {
 
 static DECODE_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// The threads that convert the pictures of a multi-size span to RGBA (render-speed-no-card D2): 1
+/// converts on the decoder's own thread. A render sets it; the conversion took four times the
+/// decoding on the showcase, and it held the render back wherever the composite was cheap.
+pub fn set_rgba_threads(n: u32) {
+    RGBA_THREADS.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+static RGBA_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
+pub(crate) fn rgba_threads() -> usize {
+    RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed).max(1) as usize
+}
+
 /// What the `threads` option of a video decoder says.
 #[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn decode_threads() -> String {
