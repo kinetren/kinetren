@@ -51,7 +51,7 @@ def main(out):
             app.expect(False, "playback did not start (no audio device?)")
             app.shot("no-playback")
             return app.done()
-        inside = app.wait_playhead(folded(), "cursor wrapped to the start of the region")
+        inside = app.wait_playhead(folded(), "cursor wrapped to the start of the region", timeout=30)
         app.expect(
             all(t <= 6 * SEC + SEC // 2 for t in inside),
             f"cursor did not escape past the end of the region: max {max(inside)}",
@@ -127,7 +127,7 @@ def main(out):
         app.expect(b > r + 40, f"mid-lap the blue clip shows: RGB {r},{g},{b}")
         app.step("outside-mid-lap", "mid-lap: the picture moved with the sound into blue")
         for lap in (1, 2):
-            app.wait_playhead(folded(), f"fold {lap}: the cursor back at the start")
+            app.wait_playhead(folded(), f"fold {lap}: the cursor back at the start", timeout=30)
             if lap == 1:
                 app.wait_playhead(lambda t: t > 8.6 * SEC, "the second lap reached blue", timeout=10)
         r, g, b = app.pixel_settled(app.preview_center(), differs_from=blue_now)

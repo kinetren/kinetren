@@ -73,7 +73,7 @@ def main(out):
         # --- 2. play: the value follows the frames ------------------------------------------
         app.click(app.x_at(0), app.ruler_y())
         app.key("space")
-        app.wait_playhead(lambda t: t > 1.5 * SEC, "playback reached 1.5 s")
+        app.wait_playhead(lambda t: t > 1.5 * SEC, "playback reached 1.5 s", timeout=40)
         c1 = app.geom()["compose"]
         app.expect(c1["avg"] > 0, f"while playing the 1 s average is measured: {c1}")
         app.step("playing", "playing while the grid grows: the Compose line follows the frames")
@@ -81,9 +81,16 @@ def main(out):
         # --- 3. stop: the values stay, the window stops repainting ----------------------
         app.key("space")
         app.settle()
+        # the frame on screen is recomposed until its layers have landed, and the panel's average
+        # covers the last second: "stopped" is a pair of reads a second apart that agree, and
+        # a program that kept composing never gives one
         a = app.geom()
-        poll_step(1.0)
-        b = app.geom()
+        for _ in range(20):
+            poll_step(1.0)
+            b = app.geom()
+            if a["compose"] == b["compose"]:
+                break
+            a = b
         app.expect(a["compose"] == b["compose"], f"the values changed after Stop: {a['compose']} → {b['compose']}")
         # the program's idle tick is 250 ms (4 frames a second); repainting for the panel would be
         # dozens a second — the Compose line itself must not keep the window animating

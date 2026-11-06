@@ -90,6 +90,7 @@ def main(out):
         app.click_probe("file.preferences", "File → Preferences…")
         before = app.geom().get("status", "")
         app.hover_probe("prefs.economy", "Preferences → Economy UI")
+        app.until(lambda: app.geom().get("status", "") != before)
         said = app.geom().get("status", "")
         app.expect(bool(said) and said != before, f"hovering Economy UI says what it does: {said!r}")
         app.step("economy-hint", "Preferences → Economy UI: the status line says what the switch does")
