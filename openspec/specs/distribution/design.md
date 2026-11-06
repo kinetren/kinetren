@@ -334,7 +334,7 @@ and its cause is in `openspec/changes/archive/2026-11-06-test-stability/design.m
 - **A real-time test is judged against what the machine gave at that moment**: t1524 against a control
   of one pass played beside it. On a free machine the bound is the old one.
 - **Rejected:** retrying a test; raising each number by hand. tmpfs for the temp files stays a question
-  (`docs/found-defects.md` row 94): `sidecar-fsync-stall` refused it, t1460 weakens that reason, and it
+  (`docs/found-defects.md` row 102): `sidecar-fsync-stall` refused it, t1460 weakens that reason, and it
   would take the disk out of every test.
 - **Live scenarios run on the program's clock.** `stretched` for fixed steps, `Live.until` for a
   consequence, `_arrive` before a press, a held chord until its key is read, `wait_still` before a
