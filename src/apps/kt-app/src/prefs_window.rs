@@ -362,8 +362,11 @@ impl crate::app::KtApp {
         let keys = self.start.controls.choice.keys_of(cmd).to_vec();
         let capture = self.start.controls_ui.capture.filter(|c| c.cmd == cmd);
         ui.horizontal(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(250.0, 20.0), egui::Sense::hover());
-            ui.painter().text(rect.left_center(), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(13.0), ui.visuals().text_color());
+            // half the row, cut by an ellipsis: the caps stand in one column, a long name does not
+            // run under them (rule 7), and the whole name is the status line's
+            let w = (ui.available_width() * 0.5).clamp(200.0, 420.0);
+            let r = ui.add_sized([w, 20.0], egui::Label::new(name).truncate().halign(egui::Align::Min));
+            self.hint(r, name);
             for (slot, chord) in keys.iter().enumerate() {
                 let listening = capture.is_some_and(|c| c.slot == Some(slot));
                 let text = if listening { tr(k::controls::PRESS).to_string() } else { chord.label() };

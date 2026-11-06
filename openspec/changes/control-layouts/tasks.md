@@ -16,7 +16,7 @@
 
 ## 4. Checks
 
-- [x] 4.1 t1700–t1714, reach, layout, i18n, font guards
+- [x] 4.1 t1700–t1718, reach, layout, i18n, font guards
 - [x] 4.2 Live scenario `controls` with a screenshot per step
 - [x] 4.3 shortcuts.md, What's new, registry rows, user-feedback, kt-app CLAUDE.md
 - [x] 4.4 Archive

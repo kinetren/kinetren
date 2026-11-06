@@ -1661,6 +1661,10 @@ impl KtApp {
         self.surrender_focus_on_outside_click(&ctx);
         // the windows of the previous frame, top last: Esc picks from them (shared-window-shell)
         self.shell_seen = crate::window_shell::begin_frame(&ctx);
+        let ui_zoom = self.start.controls.ui_zoom_keys_free();
+        if ctx.options(|o| o.zoom_with_keyboard) != ui_zoom {
+            ctx.options_mut(|o| o.zoom_with_keyboard = ui_zoom);
+        }
         self.handle_keys(&ctx);
         crate::window_shell::arm_esc(&ctx, self.shell_esc.take());
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when

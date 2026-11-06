@@ -50,6 +50,12 @@ Why: the owner, L1: "как в самых известных коммерчес�
 - **PATH** pick the Premiere tile → the preview takes the top, the bin and the meters stand beside the timeline, a thin row carries the menu and the window buttons → press File → the menu opens
 - **TEST** t1709 (`src/apps/kt-app/src/controls_tests.rs`)
 
+#### Scenario: A style with Ctrl+= takes it from the interface zoom
+- **WHEN** the Resolve style is chosen and Ctrl+= is pressed; our style is chosen again
+- **THEN** the timeline zooms, the interface scale does not move; our style gives the interface zoom back
+- **PATH** pick the Resolve tile → press Ctrl+= → the timeline zooms in, the buttons stay their size → pick our tile → Ctrl+= scales the interface as before
+- **TEST** t1717 (`src/apps/kt-app/src/controls_tests.rs`)
+
 ### Requirement: The style window, ours first, the marks credited
 The window `kt_controls` SHALL show five tiles with a schema of the panels and no product's mark, ours first with its name over "like Vegas". The trademarks SHALL be credited to their owners, the program SHALL say it is not connected with them. The window SHALL say where the choice changes later. Preferences SHALL have one row with a door to it. Writers of the choice SHALL stay in `prefs_window.rs`.
 Why: the owner, L1: "Первой плиточкой идет наша и подпись "like Vegas". Про трейдмарки и права не забудь подписать что они принадлежат тем кому пренадлежат."
@@ -85,6 +91,12 @@ Why: the owner, L2: "можно кастомизировать всё". Rules 14
 - **THEN** each press assigns and does not act; Esc lets go, the window stays; both refusals show their reason; S no longer splits, W does
 - **PATH** Customize → type "split" in the search → press the cap → it says "press a key…" → press Q → the cap says Q, the reset arrow appears → press the cap → press W → the cap says W
 - **TEST** t1711 (`src/apps/kt-app/src/controls_tests.rs`)
+
+#### Scenario: Every key name has its glyphs
+- **WHEN** the printed name of every key a code can carry is checked against our fonts
+- **THEN** none draws a square: the arrows print as words, their symbols are not in the fonts
+- **PATH** Customize → press a cap → press the left arrow → the cap says Left
+- **TEST** t1718 (`src/apps/kt-app/src/font_tests.rs`)
 
 #### Scenario: A taken key is asked
 - **WHEN** Split asks for M, the answer is Leave it; again, the answer is Take it; the command, then the style, are reset

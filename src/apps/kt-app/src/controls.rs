@@ -177,6 +177,8 @@ impl Chord {
     pub fn label(self) -> String {
         let key = match self.key {
             Key::Delete => "Del",
+            // egui's arrow symbols are not in our fonts (rule 11), and neither are ← and →
+            Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown => self.key.name(),
             other => other.symbol_or_name(),
         };
         let mut out = String::new();
@@ -572,6 +574,12 @@ const KEYS: &[Key] = &[
     Key::OpenBracket, Key::CloseBracket, Key::Quote, Key::Backtick,
 ];
 
+/// Every key's printed name, for the font guard (t1718).
+#[cfg(test)]
+pub fn key_labels() -> Vec<String> {
+    KEYS.iter().map(|k| p(*k).label()).collect()
+}
+
 /// Whether a key can be given to a command at all (what the code can carry, and not Esc, Enter).
 pub fn assignable(key: Key) -> bool {
     KEYS.contains(&key)
@@ -865,6 +873,12 @@ impl Controls {
     /// The key of the transport machine: tap, double tap, hold, Ctrl+hold.
     pub fn play_key(&self) -> Option<Key> {
         self.play_key
+    }
+
+    /// egui's own interface zoom holds Ctrl+=, Ctrl+- and Ctrl+0 and consumes them before the
+    /// frame: a style that binds one of them takes all three.
+    pub fn ui_zoom_keys_free(&self) -> bool {
+        [Key::Equals, Key::Plus, Key::Minus, Key::Num0].into_iter().all(|k| !self.map.contains_key(&c(k)))
     }
 
     /// Who owns exactly this chord. The transport machine owns Ctrl+its key too (reverse hold).

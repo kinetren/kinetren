@@ -30,6 +30,10 @@ Flat table, one chord, one command: no panel scopes, because `handle_keys` has n
 
 Plain, Ctrl, Shift, Alt each map to time, tracks or zoom. Sources disagree on the rarer cells (F-UI-007): Alt zoom is confirmed in all four; Premiere's plain wheel along time, After Effects' plain wheel through layers and Shift along time are confirmed; Resolve's and Final Cut's plain wheel are from forum reports. These are the style's starting values and stay editable in Customize.
 
+### D5a. Ctrl+= and egui's interface zoom
+
+egui consumes Ctrl+=, Ctrl+-, Ctrl+0 before the frame while `zoom_with_keyboard` is on, and the owner works at zoom 1.1. A style that binds one of them turns that option off and takes all three; ours keeps it. A person in the Resolve or Final Cut style changes the interface scale only with View's items, if any: said in the report.
+
 ### D6. Four arrangements; the header row is theirs alone
 
 The menu lives in the bin column and the window buttons in the meters column, both at the window's top in Classic. Any other arrangement has neither there, so it adds one 22 px row. Classic's panel order, ids and sizes do not change: rule 13 stands on the owner's default, and the three layouts pay the row. Final Cut and After Effects use Classic: their main window has the same shape. `TimelineOnTop` is offered in Customize only: real VEGAS sources conflict on where its timeline stands today, and the "like Vegas" tile is the owner's arrangement.

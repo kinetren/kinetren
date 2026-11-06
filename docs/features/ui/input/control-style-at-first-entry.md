@@ -12,7 +12,7 @@ invariants: []
 ui_rules: [13, 14, 16, 17, 19, 20, 22, 23]
 round: null
 point: change control-layouts
-tests: [t1700, t1701, t1702, t1703, t1704, t1705, t1706, t1707, t1708, t1709, t1710, t1711, t1712, t1713, t1714]
+tests: [t1700, t1701, t1702, t1703, t1704, t1705, t1706, t1707, t1708, t1709, t1710, t1711, t1712, t1713, t1714, t1715, t1716, t1717, t1718]
 depends_on: [F-UI-002, F-UI-003]
 checked: 2026-11-06
 ---

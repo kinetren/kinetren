@@ -679,3 +679,23 @@ fn t1716_a_new_project_keeps_the_style() {
     assert_eq!(h.state().start.controls.choice.style, Style::Resolve, "File → New dropped the style");
     assert_eq!(h.state().start.controls.label(Cmd::Split), "Ctrl+\\");
 }
+
+#[test]
+fn t1717_a_style_with_ctrl_equals_takes_it_from_the_interface_zoom() {
+    let mut h = clips_scene();
+    for _ in 0..3 {
+        h.step();
+    }
+    // ours leaves egui's interface zoom alone: the owner works at zoom 1.1
+    assert!(h.ctx.options(|o| o.zoom_with_keyboard));
+    style(&mut h, Style::Resolve);
+    assert!(!h.ctx.options(|o| o.zoom_with_keyboard), "egui would eat the style's zoom keys");
+    let (tpp, ppp) = (h.state().ticks_per_px, h.ctx.pixels_per_point());
+    h.key_press_modifiers(Modifiers::CTRL, Key::Equals);
+    h.step();
+    h.step();
+    assert_ne!(h.state().ticks_per_px, tpp, "Ctrl+= did not zoom the timeline");
+    assert_eq!(h.ctx.pixels_per_point(), ppp, "Ctrl+= zoomed the whole interface");
+    style(&mut h, Style::Own);
+    assert!(h.ctx.options(|o| o.zoom_with_keyboard), "our style must give it back");
+}
