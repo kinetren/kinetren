@@ -62,6 +62,9 @@ list may be short of items from them.
 | 84 | render with no real card slower than the deleted CPU build | Showcase 99-101 → 129-130 s (29 %), demo 30 → 34 s (14 %), memory 7.2 → 8.7 and 2.4 → 4.3 GB, pairs in a row. The old build decoded on `threads=auto`, the new on 4 threads; no other cause was read | `kt-engine` export, `kt-gpu` | open | С.1 |
 | 85 | render memory unproven at 4K | The memory formula is extrapolated from 1080p; the Windows branch of reading memory was compiled alone, not run; real card, DX12, Metal, ARM not run either | `kt-engine` export | not measured | С.1, on the first 4K render |
 | 86 | frame blending on a stretch and `fit_into` still on the CPU | Not moved, no measurement whether it pays | `kt-engine` | not measured | С.1 |
+| 90 | Esc in an open drop-down closes the whole window | Not only the list; a shared behaviour of windows, worked around in the `controls` scenario | `kt-app` window shell | open | С.3 |
+| 91 | Guide speaks our style's keys only | Guide, lessons, `zoom_how` and the recovery messages name the Kinetren keys whatever style is chosen; only `shortcuts.md` says which style it describes | `docs/guide`, `kt-app` | open | С.3 |
+| 92 | keys of other programs from secondary sources | Adobe's help pages answered 403, so the Premiere and After Effects tables are from secondary sources; the wheel of Resolve and Final Cut is from forums and stays editable. Translations of the new window into Spanish, Chinese and Arabic were not read by a native speaker | `kt-app` controls | open, reported | С.3 |
 | 44 | no ARM build | The program cannot run on ARM at all; the owner wants it | `.github`, `scripts` | open | С.2 |
 
 ## Internal
@@ -72,7 +75,7 @@ list may be short of items from them.
 | 25 | `formula` live scenario red under load | `src/scripts/live/formula.py` | open | С.2 |
 | 26 | live scenarios red in a batch, green alone; displays collide | `scripts/live-check.sh` | open | С.2 |
 | 27 | sidecar "database is locked" (t640, t1171, t411, t1413) | `kt-media` | fixed by `ece65c8f`, to confirm on the merged tree | confirm in the stage's `finish.sh` |
-| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20, t815 (a wall-clock bound on writing the restore record: 0.05 s quiet, 2-13 s on a busy disk) | various | open | С.2 |
+| 28 | load-flaky tests: t663, t888, t947, t951, t952, t476, t795, t986, t939, t20, t599, t815 (a wall-clock bound on writing the restore record: 0.05 s quiet, 2-13 s on a busy disk) | various | open | С.2 |
 | 29 | two parallel fixture generations share one temp name | `src/fixtures/gen.sh` | open | С.2 |
 | 30 | `BadWindow` in ui-probe, the `welcome` scenario | live | open | С.2 |
 | 31 | a plugin edit rebuilds every test target of the core crates (no early cut-off, ~120 binaries); `debug = 1` halved it, the cascade stays | workspace | reduced by `ci-speedup` | С.2 |
