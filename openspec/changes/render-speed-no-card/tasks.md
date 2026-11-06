@@ -24,4 +24,4 @@
 ## 5. Exit
 
 - [x] 5.1 Pairs on both projects, the 3 GB run, the preview
-- [ ] 5.2 Archive
+- [x] 5.2 Archive

@@ -202,9 +202,11 @@ fn frame_workers() -> usize {
     (std::thread::available_parallelism().map_or(4, |n| n.get()) / 4).clamp(2, 4)
 }
 
-/// The pipelined export's frame cache: five serial budgets.
+/// The pipelined export's frame cache: three serial budgets. Five were never reached while a chunk
+/// was one frame, because the chunk queue stopped decode first; with chunks of several frames they
+/// were, and the 3 GB render died of it (render-speed-no-card D5).
 fn pipe_cache_bytes(budget: usize) -> usize {
-    5 * budget
+    3 * budget
 }
 /// A chunk's bytes at most, unless its one frame asks more.
 fn chunk_bytes(budget: usize) -> usize {

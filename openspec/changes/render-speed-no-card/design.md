@@ -80,6 +80,12 @@ chunk waited for its slowest source. The threads of D2 had no span to work on. `
 frames and cuts at half a budget of what they really ask. Workers with no frame fell from 130 s to 44 s,
 pictures decoded from 9072 to 7448, reopens from 84 to 51.
 
+The one-frame chunks had also been the real limit of the look-ahead: four chunks in the queue, about
+150 MB. The byte limit of four budgets (768 MB) was never reached: `look-ahead` waited 0.01 s in a whole
+render. With real chunks it filled, the peak rose to 8.9 GB, and under `MemoryMax=3G` the second run of
+this build was killed by the OOM killer. So the cache went from five budgets to three, the look-ahead
+from four to two: the peak is 8.5 GB, and the 3 GB run passed three of three at 2.9 to 3.1 GB, base 3.07 GB.
+
 ### D6. What did not help
 
 - `LP_NUM_THREADS` at 8 per device against the default: 6 % less CPU on the demo, nothing on the showcase's
@@ -90,3 +96,24 @@ pictures decoded from 9072 to 7448, reopens from 84 to 51.
 - The readback memo on a render's devices: 64 MB each and an 8 MB copy per frame. Removed from a render.
 - `SyntheticSource` built a frame byte by byte through `.cycle()`, 10 ms at 1080p. That was the demo's
   "decode", 95 % of its wall.
+
+## The result
+
+Release, footage in `/dev/shm`, 32 cores, 4 devices on a software adapter, libx264. Runs one after the
+other at the machine's lowest load of the day (8 to 70, most of it these runs themselves):
+
+| | showcase | demo |
+|---|---|---|
+| this change | 89.8, 96.5 s | 28.4 s (75.8 s in a load spike to 100) |
+| deleted CPU build | 110.0 s | 31.2 s |
+| before this change | 139.3 s | 45.0 s |
+| CPU, user seconds: this, CPU build, before | 1927, 1938, 2911 | 536, 390, 658 |
+| peak: this, CPU build, before | 8.5, 7.3, 8.7 GB | 3.8, 2.5, 4.3 GB |
+
+The file: audio identical; 2446 of 2600 video frames bit-equal to the build before, the 154 others all in
+the VHS stretch, at 41 dB or better after the encoder. That is the rounding of written-out arithmetic,
+not measured at the composite: t1640 and t1641 and the stored frames did not move. Two runs of this build
+give the same file (`e15d6cce`).
+
+Under `MemoryMax=3G`, one device, tight: 144.6 to 204.4 s and a peak of 2.9 to 3.1 GB, three of three, at
+load 48 to 78; before this change 221 s and 3.07 GB.

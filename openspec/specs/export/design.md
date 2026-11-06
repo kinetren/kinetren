@@ -189,7 +189,7 @@ no longer ends the process a scenario started, so "the process is alive" alone w
 - **Nothing written depends on timing**: the audio interleave is a fixed rule, the progress counts
   are the writer's (t955 compares two exports' events element by element; the first version
   reported the audio thread's own count and broke it).
-- **The look-ahead is a byte budget** (`LOOKAHEAD_BYTES` = 4 serial budgets under a cache of 5): a
+- **The look-ahead is a byte budget** (2 serial budgets under a cache of 3, render-speed-no-card D5): a
   chunk being composed is never evicted (R.15 item 1), and at 4K decode sizes a chunk is ONE frame
   — the first version, two chunks ahead, kept 2 of 16 CPU workers busy (337 s).
 - **The encoder's threads** (`threads=auto`, in the open report, t1456). A machine writes the same

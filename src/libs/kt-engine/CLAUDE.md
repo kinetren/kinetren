@@ -149,8 +149,11 @@ in the source's state and arrive through the retune lane.
 - **A pipelined chunk is counted by what its frames ask** (`pipe_chunks`, render-speed-no-card D5): the
   serial measure, the project's largest size times its most layers, is one frame on a project with a
   4K moment, and nothing then runs in parallel within a source.
-- **The look-ahead is bytes, not chunks** (`LOOKAHEAD_BYTES` under `PIPE_CACHE_BYTES`): a chunk
+- **The look-ahead is bytes, not chunks** (`lookahead_bytes` under `pipe_cache_bytes`): a chunk
   being composed must never be evicted (R.15 item 1), and at 4K decode sizes a chunk is one frame.
+  Its bytes are real memory: moving them moves the render's peak, and a 3 GB render has no margin. A
+  change of chunks or of the look-ahead is checked under `MemoryMax=3G` more than once: one such run
+  passed and the next was killed.
 - A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.
 - The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer.
 

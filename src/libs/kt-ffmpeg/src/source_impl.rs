@@ -1128,10 +1128,9 @@ impl VideoPath {
             for rgba in converters.iter_mut() {
                 let (job_rx, done_tx) = (&job_rx, done_tx.clone());
                 scope.spawn(move || {
-                    while let Ok(Job { seq, frame, size }) = {
+                    loop {
                         let next = job_rx.lock().unwrap().recv();
-                        next
-                    } {
+                        let Ok(Job { seq, frame, size }) = next else { break };
                         let mut f = frame.0;
                         let r = rgba.convert(api, f, size.0, size.1, start_time, time_base);
                         unsafe { (api.av_frame_free)(&mut f) };

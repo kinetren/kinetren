@@ -9,7 +9,10 @@ whose header promises more than it holds stalls a render: a 40 s event did not f
 - `kt-cli export --time` reads where the time goes inside the composite and what each stage waits for.
 - The end of a file is met once: video and audio stop seeking past what the file holds, and a
   half-written last packet is not sent to the decoder.
-- What the measurement finds in the render path (see `design.md`).
+- A render's pictures convert to RGBA on threads, and a pipelined chunk is counted by what its frames ask.
+- The VHS passes are written out tap by tap, per standard, with words in one channel.
+- A fused geometry pass runs as written for its program shape.
+- The render's frame cache goes from five budgets to three.
 
 ## Capabilities
 
