@@ -127,22 +127,19 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   `finish.sh`; for UI work the live screenshots.
 - Name what is not done and why; never a session's note as proof — check the diff and the images.
 
-## Current plan (2026-11-04)
+## Current plan (2026-11-06)
 
-The stage of `export-throughput`, `loop-pitch-tail-dip`, the sidecar fix and `sim-audio-pairs` is
-closed: `finish.sh` at kt26.11.04-02fb2ddd, master there. Next, in the owner's order:
+Stage closed: `finish.sh` at kt26.11.06-318aaf8b, master there. In it: `hw-encode-context`, `ci-speedup`,
+`export-pipeline-determinism`, `compute-kernels-render` (every CPU and SIMD copy of a video kernel
+deleted on the owner's "удаляй"), `r72-timeline-transport-defects`. Next, in the owner's order:
 
-1. **Performance**: the preview and the final render, and "the math" (AVX, Vulkan…):
-   the move of the heavy math to Vulkan compute in plain WGSL (`compute-kernels` in the
-   `compute-backends` session; the owner decided "да, удаляем", then "удаляй" with the number for the
-   CPU composite, about 40 % slower with no card; references of video and audio may be updated), `hw-encode-context` (Intel and AMD encode in hardware).
-2. **Build and CI speed** ("все что больше 10мин+ это ужас"): the local build/test loop, the
-   cost of a plugin edit, an ARM build (owner, 2026-11-04), CI wall time (21 min on 2026-11-02: windows-build 13 min → windows-test
-   7 min in series); the proposed-only change `ci-speedup` is the starting point.
-3. **Usability**: first `r72-timeline-transport-defects` (19 tasks, none done), then control layouts like other editors (v26.10 L1/L2 — "Layout & Controls style",
-   a customize button and a settings code), `preview-canvas-and-gizmos`, the small defects
+1. **Performance**: `compute-backends` is on render memory (7 to 17 GB with the devices per thread), the
+   rules left without a test, the Windows CI GPU check, then generators; row 75 (a truncated file).
+2. **Build and CI speed**: `test-stability` (card), logs of a real master run (the ~9 min estimate is
+   unproven), the plugin test-build cost, an ARM build (owner, 2026-11-04).
+3. **Usability**: `control-layouts` (card, v26.10 L1/L2), `preview-canvas-and-gizmos`, the small defects
    (`region-copy-of-selected`, `fader-wheel-and-region-edges`, the transparent tail at widths not
-   divisible by 8, the vocoder level at start phase).
+   divisible by 8, the vocoder level at start phase), the marker-over-region split on his answer.
 
 After them: the effects (`temporal-barrier-3dnr`, `chroma-key-upgrade`, `geometry-fx-flex`,
 `pro-keyer`) and the big features to discuss (subtitles and text editing, ripple, scopes, several
