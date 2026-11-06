@@ -11,6 +11,8 @@ month, newest first.
   there uses several devices at once, as many as the memory allows. A computer with no Vulkan, DX12 or Metal driver has no picture
   and no render, and the program says so: on Linux install `mesa-vulkan-drivers`, on Windows a
   graphics driver.
+- **Shapes, gradients and the countdown generate up to fifty times faster.** Rectangles, ellipses, lines,
+  gradients, corners, noise and the leader now draw as shaders.
 - **Slowed footage in blending mode no longer shows a frame of the wrong weight.**
 - **A render takes much less memory.** A dense 1080p edit went from 17 GB to under 9 and got faster, and
   on a machine short of memory the render gives up speed instead of being killed: the same edit finished

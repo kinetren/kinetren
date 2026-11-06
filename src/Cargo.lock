@@ -2276,6 +2276,8 @@ name = "kt-gpu"
 version = "0.1.0"
 dependencies = [
  "fx-video-color",
+ "generators-basic",
+ "generators-test",
  "kt-cache",
  "kt-engine",
  "kt-fx",
@@ -2295,6 +2297,7 @@ name = "kt-media"
 version = "0.1.0"
 dependencies = [
  "kt-ffmpeg",
+ "kt-gpu",
  "kt-model",
  "kt-plugin-api",
  "kt-plugins-builtin",

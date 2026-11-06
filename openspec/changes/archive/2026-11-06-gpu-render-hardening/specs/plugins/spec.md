@@ -29,3 +29,8 @@ Why: FXC refuses what naga and Vulkan pass, and no other job reaches it.
 - **WHEN** the codec's shaders compile on a D3D12 adapter
 - **THEN** none is refused; with no D3D12 the test skips
 - **TEST** t1651 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: The generators' shaders
+- **WHEN** the generators' shaders compile on a D3D12 adapter
+- **THEN** none is refused; with no D3D12 the test skips
+- **TEST** t1652 (`src/libs/kt-gpu/tests/compute_host.rs`)

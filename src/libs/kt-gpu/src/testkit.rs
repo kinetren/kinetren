@@ -20,9 +20,11 @@ use crate::GpuFxEngine;
 
 static ENGINE: OnceLock<Option<Arc<GpuFxEngine>>> = OnceLock::new();
 
-/// Install the plugins (the engine assembles their shaders when it is built) and open the engine.
+/// Install the plugins (the engine assembles their shaders when it is built) and the compute door
+/// (generators, Datamosh), and open the engine.
 pub fn no_gpu<R>(install: impl FnOnce() -> R) -> bool {
     install();
+    kt_plugin_api::compute::install(crate::compute::open);
     ENGINE.get_or_init(crate::test_engine).is_none()
 }
 

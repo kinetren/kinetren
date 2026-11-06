@@ -447,7 +447,7 @@ jobs:
         run: |
           set -o pipefail
           cargo nextest run --archive-file target/windows-tests.tar.zst --workspace-remap /d/kt/src \
-            --no-fail-fast -E 'package(kt-gpu) | package(kt-fx) | package(fx-video-tape) | package(fx-video-camera)' \
+            --no-fail-fast -E 'package(kt-gpu) | package(kt-fx) | package(kt-media) | package(fx-video-tape) | package(fx-video-camera)' \
             2>&1 | tee ../nextest-picture.log
 
       - name: Upload the log

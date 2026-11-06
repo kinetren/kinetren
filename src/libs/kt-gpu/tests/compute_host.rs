@@ -116,3 +116,15 @@ fn t1650_every_shader_compiles_on_d3d12() {
     let name = ctx.adapter_info.name.clone();
     kt_gpu::GpuFxEngine::compile_check(ctx).unwrap_or_else(|e| panic!("{name}: {e}"));
 }
+
+/// t1652: the generators' shaders compile on D3D12 through FXC, and run on the compute device here.
+#[test]
+fn t1652_the_generator_shaders_compile_on_d3d12() {
+    let Some(ctx) = kt_gpu::GpuContext::new_d3d12() else {
+        eprintln!("skipped: no D3D12 adapter");
+        return;
+    };
+    for pixel in generators_basic::SHADERS.iter().chain([&generators_test::LEADER_SHADER]) {
+        kt_gpu::compute::compile(&ctx, &kt_plugin_api::generator::shader_text(pixel)).unwrap_or_else(|e| panic!("{e}"));
+    }
+}

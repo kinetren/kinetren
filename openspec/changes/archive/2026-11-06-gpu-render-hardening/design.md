@@ -72,3 +72,26 @@ libLLVM's destructors under llvmpipe's threads, and LLVM segfaults. t547 went re
 three after passing. In the program this is a crash on close, and the supervisor would show it. The
 thumbnail service now joins its worker on drop, and `on_exit` parks the offline engine: it waits for
 the device and keeps the engine's lock, so a reel strip's next frame waits for the process to end.
+
+### D7. Generators move where it pays
+
+A compute frame with its readback costs 1.1 to 1.4 ms at 1080p on llvmpipe, so a kind moves only if it
+costs more:
+
+| kind | CPU | shader |
+|---|---|---|
+| line | 92.4 ms | 1.7 ms |
+| ellipse | 90.5 ms | 1.8 ms |
+| rect | 35.5 ms | 2.3 ms |
+| leader | 32.0 ms | 2.3 ms |
+| gradient | 13.8 ms | 2.2 ms |
+| corners | 13.1 ms | 1.9 ms |
+| noise | 7.3 ms | 2.2 ms |
+
+Solid, transparent, timecode, window, checker, smpte and table stay: 0.2 to 3 ms, nothing to win, and
+text is CPU work anyway (the leader's digit is drawn over its shader frame). Titles stay in kt-text.
+
+The rule "float only in the preamble, the pixel loop is integer" cannot hold here: the distances are
+i64 of 1/256 px squared, and WGSL has no i64. The shaders work in f32 pixels, and the bytes of the
+moved kinds change by the rounding (t1048's digests were reprinted, and hold on a software adapter). The
+noise stays integer and keeps its grain. With no device a shader kind gives a transparent frame.

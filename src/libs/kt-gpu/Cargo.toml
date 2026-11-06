@@ -22,6 +22,9 @@ xxhash-rust.workspace = true
 windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
+# t1652: the generators' shaders on D3D12 (gpu-render-hardening; dev only)
+generators-basic = { workspace = true }
+generators-test = { workspace = true }
 # the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
 kt-plugins-builtin = { workspace = true }
 # the single-text Color Grade prototype (compute-backends, t1501)

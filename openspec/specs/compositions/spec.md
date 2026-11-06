@@ -631,3 +631,12 @@ Why: R.67, the owner: "in the curve automation of composition parameters you can
 - **PATH** FX window of the instance → head "Reel" → curve "Amount" → field "Formula": `t*2`, Enter → the dashed line grows, the frame blurs more toward the end → "Shape of all segments": "Zigzag" → it wobbles
 - **TEST** t791 (`src/apps/kt-app/src/layout_tests.rs`), t792 (`src/libs/kt-model/tests/pubparam.rs`), live scenario `src/scripts/live/curves.py`
 
+### Requirement: Starvation crosses a reel's boundary
+A missing frame inside a reel SHALL make the outer composite incomplete, and the warm composite SHALL
+be complete and equal to the export's.
+Why: otherwise the player takes the frame for ready and never asks again.
+
+#### Scenario: A child's frame is missing
+- **WHEN** a reel's composite runs on a cold cache, then on a warm one and on an export's own cache
+- **THEN** the first is incomplete, the others complete and byte-equal
+- **TEST** t441 (`src/libs/kt-engine/tests/nest_render.rs`)

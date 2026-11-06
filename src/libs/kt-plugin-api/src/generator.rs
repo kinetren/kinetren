@@ -310,3 +310,53 @@ pub fn lowbias32(mut x: u32) -> u32 {
     x ^= x >> 16;
     x
 }
+
+/// What every generator shader starts with: the uniform, the buffer of the frame, `pack` (rounds and
+/// clamps 0..255 to a straight RGBA8 word) and `shape` (`p0`'s colour under the ramp of a signed
+/// distance, as `coverage`). A kind's text adds `fn pixel(x: u32, y: u32) -> u32`.
+const SHADER_PRELUDE: &str = "struct U { w: u32, h: u32, a: u32, b: u32, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32> };
+@group(0) @binding(0) var<uniform> u: U;
+@group(0) @binding(1) var<storage, read_write> frame: array<u32>;
+fn pack(c: vec4<f32>) -> u32 {
+    let v = vec4<u32>(clamp(floor(c + 0.5), vec4<f32>(0.0), vec4<f32>(255.0)));
+    return v.x | (v.y << 8u) | (v.z << 16u) | (v.w << 24u);
+}
+fn shape(d: f32, fe: f32) -> u32 {
+    let cov = clamp(0.5 - d / fe, 0.0, 1.0);
+    return pack(vec4<f32>(u.p0.xyz, floor(u.p0.w * floor(cov * 255.0) / 255.0)));
+}
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x < u.w && id.y < u.h { frame[id.y * u.w + id.x] = pixel(id.x, id.y); }
+}
+";
+
+/// The whole compute shader of a kind's `pixel` text.
+pub fn shader_text(pixel: &str) -> String {
+    format!("{SHADER_PRELUDE}{pixel}")
+}
+
+/// A frame from a kind's shader on the compute device (generators round). No device: a transparent
+/// frame, as a project with no picture has.
+pub fn shader_frame(pixel: &str, w: u32, h: u32, ints: [u32; 2], p: [[f32; 4]; 4]) -> Box<[u8]> {
+    use crate::compute::{self, Buf, Init, Job, Step};
+    let bytes = w as u64 * h as u64 * 4;
+    let blank = || vec![0u8; bytes as usize].into_boxed_slice();
+    let Some(host) = compute::host() else { return blank() };
+    let mut uniform = Vec::with_capacity(80);
+    for v in [w, h, ints[0], ints[1]] {
+        uniform.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in p.iter().flatten() {
+        uniform.extend_from_slice(&v.to_le_bytes());
+    }
+    let shader = shader_text(pixel);
+    let step = Step { shader: &shader, uniform: &uniform, read: &[], write: &[Buf(0)], groups: [w.div_ceil(16), h.div_ceil(16), 1] };
+    match host.run(&Job { buffers: &[Init::Zero(bytes)], steps: &[step], reads: &[Buf(0)] }) {
+        Ok(mut out) => out.remove(0).into_boxed_slice(),
+        Err(e) => {
+            compute::fail(e);
+            blank()
+        }
+    }
+}

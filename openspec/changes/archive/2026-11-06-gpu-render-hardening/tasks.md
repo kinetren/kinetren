@@ -22,3 +22,8 @@
 ## 5. Exit
 
 - [x] 5.1 The thumbnail worker joins, the offline engine parks (t1644)
+
+## 6. Generators
+
+- [x] 6.1 Measure every kind against a compute frame (D7)
+- [x] 6.2 line, ellipse, rect, leader, gradient, corners, noise run as shaders (t1645)
