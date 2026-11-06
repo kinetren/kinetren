@@ -5,6 +5,8 @@ month, newest first.
 
 ## kt26.11
 
+- **A render no longer stalls on a file cut short.** A file whose header promises more than it holds
+  is now read to its real end once, and the render goes on with the last picture.
 - **Every picture is now made by one engine, on the graphics card.** The separate processor path is
   gone, so the preview and the render can no longer disagree, and effects no longer exist twice. With
   no graphics card the program runs the same engine through Vulkan on the processor, and a render

@@ -786,6 +786,16 @@ impl Source {
         }
     }
 
+    /// How far this decoder stands behind `start` when it reaches it by decoding on (D9).
+    pub fn video_reach(&self, start: Tick) -> Option<i64> {
+        match self {
+            Source::V6(s) => s.video_reach(start),
+            Source::V7(s) => s.video_reach(start),
+            Source::V8(s) => s.video_reach(start),
+            Source::V9(s) => s.video_reach(start),
+        }
+    }
+
     /// A span at several sizes in one forward pass (export-throughput D7).
     pub fn read_video_span_sizes(
         &mut self,
@@ -797,6 +807,16 @@ impl Source {
             Source::V7(s) => s.read_video_span_sizes(keys, emit),
             Source::V8(s) => s.read_video_span_sizes(keys, emit),
             Source::V9(s) => s.read_video_span_sizes(keys, emit),
+        }
+    }
+
+    /// How many times the audio sought — performance diagnostics.
+    pub fn audio_debug_seeks(&self) -> u64 {
+        match self {
+            Source::V6(s) => s.audio_debug_seeks(),
+            Source::V7(s) => s.audio_debug_seeks(),
+            Source::V8(s) => s.audio_debug_seeks(),
+            Source::V9(s) => s.audio_debug_seeks(),
         }
     }
 

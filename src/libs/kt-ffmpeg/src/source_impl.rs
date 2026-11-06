@@ -18,6 +18,8 @@ const AVERROR_EOF_: c_int = -0x20464F45; // FFERRTAG('E','O','F',' ')
 /// bindgen does not pick up these #defines (complex expressions / casts);
 /// the values are stable across all FFmpeg majors.
 const AV_NOPTS_VALUE: i64 = i64::MIN;
+/// A packet the file ended inside of (a cut MP4's last sample): it decodes to an error, no picture.
+const PKT_FLAG_CORRUPT: c_int = 2;
 const AVSEEK_FLAG_BACKWARD: c_int = 1;
 
 fn tb(num: i32, den: i32) -> ffi::AVRational {
@@ -82,6 +84,8 @@ struct AudioPath {
     /// Absolute number of the first frame in the fifo (48k). None before the anchor.
     fifo_start: Option<i64>,
     eof: bool,
+    /// Seeks of this path (t1762).
+    seeks: u64,
 }
 
 struct VideoPath {
@@ -223,6 +227,7 @@ impl Source {
                             idx.audio_pts.push(p.pts);
                         } else if p.stream_index == video_idx
                             && (p.flags & ffi::AV_PKT_FLAG_KEY as c_int) != 0
+                            && (p.flags & PKT_FLAG_CORRUPT) == 0
                         {
                             idx.video_keyframes.push(p.pts);
                         }
@@ -350,6 +355,13 @@ impl Source {
         let t0 = idx * frames;
         let t1 = t0 + frames;
 
+        // The end of the stream is met once (render-speed-no-card D1): a file whose header promises
+        // more than it holds is asked past its end burst after burst, and a seek there costs a walk
+        // through the file for nothing.
+        if a.eof && a.fifo_start.is_some_and(|fs| t0 >= fs + (a.fifo.len() / AUDIO_CHANNELS) as i64) {
+            return Err(FfError::OutOfRange);
+        }
+
         let need_seek = match a.fifo_start {
             Some(fs) => {
                 let fe = fs + (a.fifo.len() / AUDIO_CHANNELS) as i64;
@@ -371,6 +383,7 @@ impl Source {
                 return Err(averr(api, "audio seek", r));
             }
             a.reopen_decoder(api)?;
+            a.seeks += 1;
         }
         a.decode_until(api, t1)?;
 
@@ -411,7 +424,7 @@ impl Source {
         let api = self.api;
         let v = self.video.as_mut().ok_or(FfError::OutOfRange)?;
         let target_ts = v.target_ts(api, pts);
-        v.prepare_for(api, target_ts)?;
+        v.prepare_for(api, target_ts, &self.index.video_keyframes)?;
         let frame = v.frame_for(api, target_ts)?;
         v.to_rgba(api, frame, width, height)
     }
@@ -435,7 +448,7 @@ impl Source {
         }
         debug_assert!(keys.windows(2).all(|w| w[0] < w[1]), "span keys must be increasing");
         let first = v.target_ts(api, keys[0]);
-        v.prepare_for(api, first)?;
+        v.prepare_for(api, first, &self.index.video_keyframes)?;
         for k in keys {
             let target = v.target_ts(api, *k);
             let frame = v.frame_for(api, target)?;
@@ -467,7 +480,7 @@ impl Source {
             let target = v.target_ts(api, k);
             // every key decides between decoding on and seeking (D8): the keys of two events of
             // one file can stand minutes apart in one span
-            v.prepare_for(api, target)?;
+            v.prepare_for(api, target, &self.index.video_keyframes)?;
             let frame = v.frame_for(api, target)?;
             while i < keys.len() && keys[i].0 == k {
                 let (_, w, h) = keys[i];
@@ -489,6 +502,26 @@ impl Source {
         }
         let rel = v.held_pts - v.start_time;
         Some(Tick(unsafe { (self.api.av_rescale_q)(rel, v.time_base, tb(1, TICK_HZ as i32)) }))
+    }
+
+    /// How far this decoder stands behind `start` when it reaches it by decoding on: within the
+    /// forward bound, or with no keyframe between (`no_keyframe_ahead`). An export choosing one of
+    /// several decoders of a file asks it, by the same rule as a read.
+    pub fn video_reach(&self, start: Tick) -> Option<i64> {
+        let v = self.video.as_ref()?;
+        let at = self.video_cursor()?;
+        if at.0 > start.0 {
+            return None;
+        }
+        let ahead = start.0 - at.0;
+        (ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
+            || VideoPath::no_keyframe_ahead(v.held_pts, v.target_ts(self.api, start), &self.index.video_keyframes))
+        .then_some(ahead)
+    }
+
+    /// Diagnostics of t1762: how many times the audio sought.
+    pub fn audio_debug_seeks(&self) -> u64 {
+        self.audio.as_ref().map_or(0, |a| a.seeks)
     }
 
     /// Diagnostics for performance tests (item 14/15): how many times the decoder
@@ -554,6 +587,7 @@ impl AudioPath {
             fifo: VecDeque::new(),
             fifo_start: None,
             eof: false,
+            seeks: 0,
         })
     }
 
@@ -884,8 +918,8 @@ impl VideoPath {
                     continue;
                 }
                 crate::iostats::PACKET_READS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                let si = unsafe { (*pkt).stream_index };
-                if si != self.stream_index {
+                let (si, flags) = unsafe { ((*pkt).stream_index, (*pkt).flags) };
+                if si != self.stream_index || flags & PKT_FLAG_CORRUPT != 0 {
                     unsafe { (api.av_packet_unref)(pkt) };
                     continue;
                 }
@@ -934,8 +968,17 @@ impl VideoPath {
         ts + self.start_time
     }
 
-    /// Is a seek needed before the target request: backward or too far forward.
-    fn prepare_for(&mut self, api: &Api, target_ts: i64) -> Result<(), FfError> {
+    /// Decoding on from `last` meets no keyframe up to `target_ts`, so a seek would land behind
+    /// the cursor (render-speed-no-card D1). Past the last keyframe of a file this holds for every
+    /// target, and the end of a file is met once: a file cut short, whose header promises more
+    /// than it holds, was sought and reopened for every frame past its end, a GOP each time.
+    fn no_keyframe_ahead(last: i64, target_ts: i64, keys: &[i64]) -> bool {
+        !keys.is_empty() && keys.get(keys.partition_point(|&k| k <= last)).is_none_or(|&k| k > target_ts)
+    }
+
+    /// Is a seek needed before the target request: backward or too far forward. `keys`: the
+    /// file's keyframes as the packet scan found them, the ones it really holds.
+    fn prepare_for(&mut self, api: &Api, target_ts: i64, keys: &[i64]) -> Result<(), FfError> {
         // the image has one frame: no seek, no reopening (R.67)
         if self.still {
             return Ok(());
@@ -954,12 +997,14 @@ impl VideoPath {
                 let ahead = unsafe {
                     (api.av_rescale_q)(target_ts - last, self.time_base, tb(1, TICK_HZ as i32))
                 };
-                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
+                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS || Self::no_keyframe_ahead(last, target_ts, keys)
             }
             _ => self.held_pts != i64::MIN && target_ts >= self.held_pts,
         };
         if !forward_ok {
-            self.seek_and_reopen(api, target_ts)?;
+            // an MP4 index names samples past the end of a cut file: a seek there finds no packet
+            let to = keys.last().map_or(target_ts, |&k| target_ts.min(k));
+            self.seek_and_reopen(api, to)?;
         }
         Ok(())
     }

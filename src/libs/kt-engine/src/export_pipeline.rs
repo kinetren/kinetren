@@ -58,6 +58,18 @@ pub struct ExportProfile {
     pub wall_ns: AtomicU64,
     /// How many threads each concurrent stage had (0 — the serial export).
     pub frame_workers: AtomicU64,
+    /// Inside `compose_ns`: building the plan, and the executor's own stages (a device per worker).
+    pub plan_ns: AtomicU64,
+    pub upload_ns: AtomicU64,
+    pub encode_passes_ns: AtomicU64,
+    pub gpu_wait_ns: AtomicU64,
+    pub copy_ns: AtomicU64,
+    /// Waits (render-speed-no-card): the decoder held back by the look-ahead, the frame workers
+    /// with no frame to take, and the writer waiting for a frame and for the audio.
+    pub wait_lookahead_ns: AtomicU64,
+    pub wait_workers_ns: AtomicU64,
+    pub wait_frame_ns: AtomicU64,
+    pub wait_audio_ns: AtomicU64,
 }
 
 impl ExportProfile {
@@ -82,6 +94,27 @@ impl ExportProfile {
         ] {
             let ns = v.load(Ordering::Relaxed) as f64;
             out.push_str(&format!("  {name:<13}{:>9.2} s busy  {:>6.1} % of wall\n", ns / 1e9, ns / wall * 100.0));
+        }
+        out.push_str("  of compose:\n");
+        for (name, v) in [
+            ("plan", &self.plan_ns),
+            ("upload", &self.upload_ns),
+            ("passes", &self.encode_passes_ns),
+            ("gpu wait", &self.gpu_wait_ns),
+            ("copy out", &self.copy_ns),
+        ] {
+            let ns = v.load(Ordering::Relaxed) as f64;
+            out.push_str(&format!("    {name:<11}{:>9.2} s\n", ns / 1e9));
+        }
+        out.push_str("  waits:\n");
+        for (name, v) in [
+            ("look-ahead", &self.wait_lookahead_ns),
+            ("no frame", &self.wait_workers_ns),
+            ("writer/frame", &self.wait_frame_ns),
+            ("writer/audio", &self.wait_audio_ns),
+        ] {
+            let ns = v.load(Ordering::Relaxed) as f64;
+            out.push_str(&format!("    {name:<13}{:>7.2} s\n", ns / 1e9));
         }
         let w = self.frame_workers.load(Ordering::Relaxed);
         out.push_str(&format!(
@@ -368,6 +401,7 @@ pub(crate) fn run<S: ExportSink>(
             // (end frame, keys held) of the chunks decoded and not yet written
             let mut ledger: std::collections::VecDeque<(u64, Vec<BurstKey>)> = Default::default();
             for ch in chunks_ref.iter() {
+                let waited = Instant::now();
                 gate_ref.wait(
                     &mut |written| {
                         while ledger.front().is_some_and(|(end, _)| *end <= written) {
@@ -378,6 +412,7 @@ pub(crate) fn run<S: ExportSink>(
                     },
                     &halted,
                 );
+                ExportProfile::add(prof.map(|p| &p.wait_lookahead_ns), waited);
                 if halted() {
                     return Err(cancelled());
                 }
@@ -399,16 +434,28 @@ pub(crate) fn run<S: ExportSink>(
             let pool_rx = rgba_pool_rx.clone();
             let engine = engines.get(n).cloned();
             worker_handles.push(scope.spawn(move || -> std::io::Result<()> {
-                while let Ok(job) = jr.recv() {
+                loop {
+                    let idle = Instant::now();
+                    let Ok(job) = jr.recv() else { break };
+                    ExportProfile::add(prof.map(|p| &p.wait_workers_ns), idle);
                     let (t, rgba, complete) = match job {
                         Job::Compose { t } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
                             let e = engine.as_ref().expect("only a worker with an engine composes");
+                            let plan = video_ref.frame_plan(cache_ref, t, quality);
+                            ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
                             let complete = e
-                                .execute_into(&video_ref.frame_plan(cache_ref, t, quality), &mut buf)
+                                .execute_into(&plan, &mut buf)
                                 .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
+                            if let Some(p) = prof {
+                                let s = e.last_stages();
+                                p.upload_ns.fetch_add(s.upload_ns, Ordering::Relaxed);
+                                p.encode_passes_ns.fetch_add(s.encode_ns, Ordering::Relaxed);
+                                p.gpu_wait_ns.fetch_add(s.wait_ns, Ordering::Relaxed);
+                                p.copy_ns.fetch_add(s.copy_ns, Ordering::Relaxed);
+                            }
                             (t, buf, complete)
                         }
                         Job::Convert { t, rgba, complete } => (t, rgba, complete),
@@ -585,9 +632,11 @@ fn write_all<S: ExportSink>(
             return Err(cancelled());
         }
         let w = (i % workers) as usize;
+        let waited = Instant::now();
         let Ok(done) = done_rxs[w].recv() else {
             return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "a frame worker stopped"));
         };
+        ExportProfile::add(prof.map(|p| &p.wait_frame_ns), waited);
         if let Some((t, media)) = &done.lost {
             incomplete += media.len().max(1) as u64;
             (hooks.incomplete)(*t, media);
@@ -600,7 +649,10 @@ fn write_all<S: ExportSink>(
         (hooks.video_done)(i + 1);
         let want = audio_until(i);
         while audio_open && audio_written < want {
-            match audio_rx.recv() {
+            let waited = Instant::now();
+            let next = audio_rx.recv();
+            ExportProfile::add(prof.map(|p| &p.wait_audio_ns), waited);
+            match next {
                 Ok(chunk) => {
                     write_audio(sink, &chunk)?;
                     audio_written += (chunk.len() / AUDIO_CHANNELS) as u64;
