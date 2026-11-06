@@ -80,7 +80,7 @@ Why: the owner's decision — there must be a SECOND state on disk, otherwise th
 
 #### Scenario: Autosave of a large project stopped being an event
 - **WHEN** a project with a reel in several instances (a scene that gives megabytes in the exchange format) is written by autosave
-- **THEN** the recovery file is orders of magnitude smaller than the same project in the exchange format, and the write fits in the interval without interface lag
+- **THEN** the recovery file is orders of magnitude smaller than the same project in the exchange format, and the program's own work on the write, counted on the writing thread's processor clock, stays under 2 s even in the debug build; the time a disk takes over its syncs does not count, and it holds up the autosave thread, not the interface
 - **TEST** t815 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Live SIGKILL

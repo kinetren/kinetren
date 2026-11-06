@@ -81,7 +81,7 @@ def main(out):
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "collapse item")
         app.expect(
-            len(app.live_clips()) == 2,
+            app.until(lambda: len(app.live_clips()) == 2),
             f"collapsed not into one (plus a third event): {app.live_clips()}",
         )
         inst = min(app.live_clips())

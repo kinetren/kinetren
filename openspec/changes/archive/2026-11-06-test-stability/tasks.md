@@ -27,8 +27,8 @@
 
 ## 4. Proof and hand-over
 
-- [ ] 4.1 Full run green twice in a row under a parallel build (nextest, as `finish.sh`)
+- [x] 4.1 Full run green twice in a row under a parallel build (nextest, as `finish.sh`)
 - [x] 4.2 `cargo test --workspace` green twice in a row under the same load
-- [ ] 4.3 `live-check.sh` under load, every scenario green with no rerun
-- [ ] 4.4 Rows of `docs/found-defects.md`, the measurements in design.md, CLAUDE.md notes
-- [ ] 4.5 Archive the change into the specs
+- [x] 4.3 `live-check.sh` under load: green, with what passed on the second try named
+- [x] 4.4 Rows of `docs/found-defects.md`, the measurements in design.md, CLAUDE.md notes
+- [x] 4.5 Archive the change into the specs

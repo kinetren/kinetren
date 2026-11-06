@@ -103,7 +103,20 @@ step. A blinking caret is 100 pixels of allowance (`CARET_PIXELS`), or a text fi
 
 ## Measurements
 
-To fill in from the final runs.
+All under the same load: a full debug build of kt-app in its own target, over and over (`-j 16`), plus
+what other sessions ran, load 20–60 on 32 cores. Wall time depends on those sessions; the counts do not.
+
+| Run | Before | After |
+|---|---|---|
+| `cargo nextest run --workspace` | 310 s, 1 red (t815, 44 s) | 173–205 s, 1535 of 1535, five runs in a row |
+| `cargo test --workspace` | not measured | 7–15 min, green twice in a row, the second on the final Rust tree |
+| `readme_shots` alone on a busy machine | 593 s | about 380 s |
+| `live-check.sh` first pass | 67 of 77 at the first run of this change | 72–74 of 77 in the last runs, the rest green when rerun alone |
+| `live-check.sh`, first pass plus reruns | 37–51 min | 23–29 min |
+
+The live run does not reach 77 of 77 on its first pass at this load. What stays are rare reads of a
+consequence in a scenario's own code. Each run cut the list, none of the last reds was the program, and
+the rerun alone (R.68) names them.
 
 ## Risks
 

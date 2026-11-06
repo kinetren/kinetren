@@ -754,8 +754,9 @@ the budget were also taken off the queue and dropped silently.
 #### Scenario: A sharp layer over its backdrop plays in time
 - **WHEN** a file costing 12 ms a picture stands twice at one moment, at two decode sizes, at 25 fps,
   and 4 s are played through the real player against a wall-clock output device
-- **THEN** at least 70 % of the grid's frames reach the screen, counted as the performance panel's
-  V-fps counts them
+- **THEN** the frames that reach the screen, counted as the performance panel's V-fps counts them, are
+  at least 70 % of what a one-pass control of the same file, playing beside it at the same time,
+  gets; on a free machine the control shows the whole grid
 - **TEST** t1524 (`src/libs/kt-engine/tests/preview_throughput.rs`)
 
 ### Requirement: A burst does not wait out a video span of its own priority

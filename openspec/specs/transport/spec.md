@@ -310,8 +310,8 @@ on the first play, on 1 start of 4 of the showcase (`docs/found-defects.md` row 
 - **TEST** t1537 (`src/libs/kt-engine/tests/preview_throughput.rs`)
 
 #### Scenario: A source that does not answer
-- **WHEN** a source takes 3 s a burst
-- **THEN** the start goes on within the grace, with its underruns counted
+- **WHEN** a source does not answer until the play has ended
+- **THEN** the start goes on after the grace, and the play ends with its underruns counted
 - **TEST** t1538 (`src/libs/kt-engine/tests/preview_throughput.rs`)
 
 ### Requirement: The space bar plays while held from pause, reverses with Ctrl, and releases smoothly

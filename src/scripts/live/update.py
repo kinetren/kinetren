@@ -101,7 +101,7 @@ def main(out):
 
             # hovering the word says which version is out and where, in the status line
             app.hover_probe("title.outdated", "the word in the title row")
-            g = wait_for(app, lambda g: NEW in g.get("status", ""), timeout=5.0)
+            g = wait_for(app, lambda g: NEW in g.get("status", ""), timeout=30.0)
             app.expect(NEW in g.get("status", ""), f"the hint names {NEW}: {g.get('status')}")
             app.step("hover-word", "the status line says which version is out and where")
 
@@ -123,17 +123,17 @@ def main(out):
             app.click_probe("file.preferences", "File → Preferences…")
             app.settle()
             app.hover_probe("prefs.update_check", "“Check for new versions daily”")
-            g = wait_for(app, lambda g: "GitHub" in g.get("status", ""), timeout=5.0)
+            g = wait_for(app, lambda g: "GitHub" in g.get("status", ""), timeout=30.0)
             app.expect("GitHub" in g.get("status", ""), f"the switch says what it asks: {g.get('status')}")
             app.step("view-menu", "Preferences: “Check for new versions daily” is checked")
             app.click_probe("prefs.update_check", "uncheck “Check for new versions daily”")
             app.key("Escape")
-            g = wait_for(app, lambda g: "title.outdated" not in probes(g), timeout=5.0)
+            g = wait_for(app, lambda g: "title.outdated" not in probes(g), timeout=30.0)
             app.expect("title.outdated" not in probes(g), "the word left the title")
             app.step("unchecked", "the title is plain again")
             # the bell opens the notices: the person's click, the only window here
             app.click_probe("bell", "the bell")
-            g = wait_for(app, lambda g: int(g.get("windows", 0)) == 1, timeout=5.0)
+            g = wait_for(app, lambda g: int(g.get("windows", 0)) == 1, timeout=30.0)
             app.expect(int(g.get("windows", 0)) == 1, "the bell opens the notices")
             app.step("notices", "the notice: the new version, ours, the address, the View item (the word is gone, the notice stays)")
 

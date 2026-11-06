@@ -74,7 +74,7 @@ def main(out):
         app.click(app.x_at(2 * SEC), app.lane_y("video", 0))
         app.click_probe("menu.edit", "“Edit” menu button")
         app.click_probe("edit.copy", "“Copy” item")
-        app.expect(app.geom().get("clipboard", 0) >= 1, "Copy took the slowed event")
+        app.expect(app.until(lambda: app.geom().get("clipboard", 0) >= 1), "Copy took the slowed event")
         app.click(app.x_at(7 * SEC), app.ruler_y())
         app.click_probe("menu.edit", "“Edit” menu button")
         app.click_probe("edit.paste", "“Paste” item")

@@ -95,7 +95,7 @@ def main(out):
         # an overlap on one track is a crossfade
         app.click(app.x_at(int(10 * SEC)), app.lane_y("video", 0, 0.6))
         app.key("Delete")
-        app.expect(len(app.live_clips()) == 1, f"shape deleted: {app.live_clips()}")
+        app.expect(app.until(lambda: len(app.live_clips()) == 1), f"shape deleted: {app.live_clips()}")
 
         # 4. the title with the “Typewriter” preset: it is printed by clusters
         app.click(app.x_at(int(8 * SEC)), app.ruler_y())

@@ -320,3 +320,25 @@ logs of a warm master run.
   Flatpak job (it is CI's only build of the `dist` profile, so it would stop checking what ships);
   skipping jobs on branches (changes what a push proves: the owner's call).
 
+
+## A full run under load tells a defect from a busy machine (test-stability, 2026-11-06)
+
+Every full run under load gave random reds, and each merge was rechecked by hand. The causes, read one
+by one, were not random: a clock bound that was not the check (one fsync took 44 s while a build ran),
+a race in a test's own scene, and a real-time count read as an absolute number. The table of each red
+and its cause is in `openspec/changes/archive/2026-11-06-test-stability/design.md`.
+
+- **`kt_time::test_deadline()`, ten minutes, is the one bound of a test's wait.** It catches a hang
+  and says nothing about speed; t1671 refuses any other and lists the limits that ARE the check.
+  A wait that can never be met now shows up as a test that stands ten minutes and passes: t905 did.
+- **A real-time test is judged against what the machine gave at that moment**: t1524 against a control
+  of one pass played beside it. On a free machine the bound is the old one.
+- **Rejected:** retrying a test; raising each number by hand. tmpfs for the temp files stays a question
+  (`docs/found-defects.md` row 87): `sidecar-fsync-stall` refused it, t1460 weakens that reason, and it
+  would take the disk out of every test.
+- **Live scenarios run on the program's clock.** `stretched` for fixed steps, `Live.until` for a
+  consequence, `_arrive` before a press, a held chord until its key is read, `wait_still` before a
+  screen comparison. A double click keeps 0.01 s between its events and waits out egui's triple
+  window; one write to the server and a press read alone both lost clicks.
+- **The program's own defect this found:** a chord was read from the frame's final modifiers, so a
+  stalled frame split the event on Ctrl+S (t1672).

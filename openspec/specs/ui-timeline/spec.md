@@ -1211,6 +1211,12 @@ the split went unnoticed. Found while building the full shortcuts reference (202
 - **PATH** a clip is selected, the playhead stands inside it → Alt+S → the S badge in the track header lights up, the clip stays whole (no cut line at the playhead) → Alt+M → the M badge lights up, the clip is still whole → S → the clip is cut in two at the playhead
 - **TEST** t868 (`src/apps/kt-app/src/layout_tests.rs`)
 
+#### Scenario: A chord read on a stalled frame stays a chord
+- **WHEN** one frame reads Ctrl down, S down and Ctrl up together, so the frame's own modifiers no longer hold Ctrl, with the playhead inside the selected event
+- **THEN** the project is saved and the event is not split: a chord is what was held when its key went down
+- **PATH** the playhead inside a selected event → the interface stalls for a moment → Ctrl+S pressed and released meanwhile → the picture comes back → the status line says the project was saved, the event is whole
+- **TEST** t1672 (`src/apps/kt-app/src/layout_tests.rs`)
+
 ### Requirement: A fixed dark theme and one decision about the window frame
 
 The interface SHALL be drawn with our dark visuals whatever theme the system reports: the theme

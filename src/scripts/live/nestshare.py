@@ -50,7 +50,7 @@ def main(out):
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "collapse item")
         app.until(lambda: len(app.live_clips()) == 1)
-        app.expect(len(app.live_clips()) == 1, f"collapsed not into one: {app.live_clips()}")
+        app.expect(app.until(lambda: len(app.live_clips()) == 1), f"collapsed not into one: {app.live_clips()}")
         app.shot("one")
 
         # --- put the same reel in twice more -------------------------
@@ -61,7 +61,7 @@ def main(out):
         app.click(app.x_at(inst[0] + inst[1] // 2), y)
         app.click_probe("menu.edit", "“Edit” menu button")
         app.click_probe("edit.copy", "“Copy” item")
-        app.expect(app.geom().get("clipboard") == 1, "copy did not fill the buffer")
+        app.expect(app.until(lambda: app.geom().get("clipboard") == 1), "copy did not fill the buffer")
         for at in (5.0, 9.0):
             app.click(app.x_at(int(at * SEC)), app.ruler_y())
             poll_step(0.3)
@@ -70,7 +70,7 @@ def main(out):
             poll_step(0.6)
         app.shot("three")
         app.expect(
-            len(app.live_clips()) == 3,
+            app.until(lambda: len(app.live_clips()) == 3),
             f"the reel must stand in THREE places, but it stands in {len(app.live_clips())}",
         )
 

@@ -182,7 +182,7 @@ def main(out):
         app.right_click(app.x_at(gens[1][0] + gens[1][1] // 2), y)
         app.click_probe("nest.collapse", "collapse-into-composition item")
         app.expect(
-            len(app.live_clips()) == 2,
+            app.until(lambda: len(app.live_clips()) == 2),
             f"the template did not collapse into one composition: {app.live_clips()}",
         )
 

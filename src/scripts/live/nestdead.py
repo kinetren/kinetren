@@ -115,7 +115,7 @@ def main(out):
         app.right_click(mid, y)
         app.click_probe("nest.expand", "expand item")
         app.expect(
-            len(app.live_clips()) == 2,
+            app.until(lambda: len(app.live_clips()) == 2),
             f"expanding did not return the content: {app.live_clips()}",
         )
         app.shot("expanded")

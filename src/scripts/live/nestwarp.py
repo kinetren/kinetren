@@ -38,7 +38,7 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "collapse item")
-        app.expect(len(app.live_clips()) == 1, f"collapsed not into one: {app.live_clips()}")
+        app.expect(app.until(lambda: len(app.live_clips()) == 1), f"collapsed not into one: {app.live_clips()}")
         app.shot("collapsed")
 
         # --- REVERSE OF NESTING by hand, via the event menu ------------------
