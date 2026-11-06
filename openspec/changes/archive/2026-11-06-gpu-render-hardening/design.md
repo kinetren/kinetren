@@ -33,6 +33,10 @@ Before this, a 6 GB limit was killed by the OOM killer. Pairs one after the othe
 130.1 s at four devices, 136.7 and 144.0 s at one; demo 34.4 to 34.8 s and 35.6 s. The times in the table
 differ by load, not by limit. A machine with 3 GB is also a machine with few cores, which only helps.
 
+Against the deleted CPU composite, final code, pairs one after the other: showcase 128.8 and 129.8 s
+against 99.1 and 101.4 s, 29 % slower; demo 34.2 to 34.7 s against 29.6 to 30.2 s, 14 % slower. Peak
+8.7 GB against 7.2 GB and 4.3 GB against 2.4 GB.
+
 ### D2. Rules come back on the GPU path, under their numbers
 
 t303 runs a true K: the frame physically K× the logical size with a zoom after the barrier, and the
