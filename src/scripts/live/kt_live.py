@@ -143,6 +143,10 @@ _SLEPT = [0.0]
 _STARTED = time.time()
 
 
+# What a blinking text caret changes on screen: a screen is still with this many pixels moving.
+CARET_PIXELS = 100
+
+
 def screen_image():
     """The whole screen as an image, by the direct X read of `Live.pixel` (R.69): the look of a
     wait that compares frames, with no process and no file."""
@@ -575,18 +579,26 @@ class Live:
         timeout = timeout if timeout is not None else max(10.0, 40.0 * self._dt)
         deadline = time.time() + timeout
         last, since = self._frame_now(), time.time()
+        shown, shown_at = None, 0.0
         while time.time() < deadline:
             f = self._frame_now()
+            # “quiet” means SEVERAL frame steps, not 0.12 s: under
+            # load a frame takes a second, and a fixed threshold would
+            # declare the program calm in the middle of a redraw
+            need = quiet if quiet is not None else max(0.12, 2.5 * self._dt)
             if f != last:
                 self._note_frame_gap(time.time() - since)
                 last, since = f, time.time()
-            else:
-                # “quiet” means SEVERAL frame steps, not 0.12 s: under
-                # load a frame takes a second, and a fixed threshold would
-                # declare the program calm in the middle of a redraw
-                need = quiet if quiet is not None else max(0.12, 2.5 * self._dt)
-                if time.time() - since >= need:
+            elif time.time() - since >= need:
+                return True
+            # THE PICTURE STOPPED, TOO (test-stability). An idle program still ticks four times a
+            # second, so at a frame step past 0.1 s frames never stop, and this wait burned its
+            # whole deadline, ten seconds and more, on a screen that stood still
+            if time.time() - shown_at >= need:
+                now = screen_image()
+                if shown is not None and images_differ(shown, now) <= CARET_PIXELS:
                     return True
+                shown, shown_at = now, time.time()
             _poll()
         return False
 
@@ -1430,7 +1442,7 @@ class Live:
         while time.time() < deadline:
             poll_step(0.25)
             now = screen_image()
-            if images_differ(prev, now) == 0:
+            if images_differ(prev, now) <= CARET_PIXELS:
                 calm += 0.25
                 if calm >= quiet:
                     return True

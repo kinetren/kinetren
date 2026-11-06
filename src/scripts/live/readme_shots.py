@@ -211,6 +211,7 @@ class Shooter:
     # ---- the app -------------------------------------------------------
 
     def fresh(self, step):
+        print(f"   step “{step}” at {time.time() - self.kt._STARTED:.0f} s", flush=True)
         out = os.path.join(self.raw, step)
         shutil.rmtree(out, ignore_errors=True)
         # a previous shot may have left a recovery file next to the project
