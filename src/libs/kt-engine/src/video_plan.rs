@@ -269,6 +269,10 @@ pub trait VideoGpuExec: Send + Sync {
     /// Plan → straight RGBA8 into `out` (readback). Ok(complete) — the same
     /// “playback does not wait” rule (invariant No. 5): a layer without a pre-FX frame is skipped.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
+    /// `execute_into` for a caller that asks each moment once (an export): no memo of the frame.
+    fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        self.execute_into(plan, out)
+    }
     fn info(&self) -> &GpuBackendInfo;
     /// How many frames this executor can hold in flight between `submit` and `collect`
     /// (export-throughput D5): 0 — it cannot, and the caller uses `execute_into`. An export

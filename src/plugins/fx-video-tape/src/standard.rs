@@ -223,19 +223,42 @@ impl Kernels {
     }
 }
 
-/// The WGSL tables of both standards' kernels: `var<private> K_REC_P: array<f32, N> = …` etc. The f32
-/// values are printed with `{:?}`, which round-trips exactly — the GPU convolves with the same bits.
+/// The constants every pass shares: `KR`, `KN` and the centres of the kernels.
 pub fn wgsl_consts() -> String {
-    let mut s = String::new();
-    for (tag, st) in [("P", Standard::get(Std::Pal)), ("N", Standard::get(Std::Ntsc))] {
-        let k = st.kernels();
-        for (name, v) in [("REC", &k.rec), ("PLAY", &k.play), ("CHROMA", &k.chroma), ("HILB", &k.hilb)] {
-            let list: Vec<String> = v.iter().map(|x| format!("{x:?}")).collect();
-            s += &format!("var<private> K_{name}_{tag}: array<f32, {}> = array<f32, {}>({});\n", v.len(), v.len(), list.join(", "));
-            s += &format!("const K_{name}_{tag}_LEN: i32 = {};\n", v.len());
+    format!(
+        "const K_REC_C: i32 = {LUMA_LPF_R};\nconst K_PLAY_C: i32 = {LUMA_LPF_R};\nconst K_CHROMA_C: i32 = {CHROMA_LPF_R};\nconst KR: i32 = {KR};\nconst KN: i32 = {KN};\n"
+    )
+}
+
+/// A pass's text with its taps written out, one statement per tap (render-speed-no-card D3):
+/// `// @TAPS REC <statement>` repeats the statement for the kernel of `std` with `{i}` the index and
+/// `{c}` the coefficient, `// @TAPS KN <statement>` for the row kernel's `KN` taps. The f32 values
+/// are printed with `{:?}`, which round-trips exactly: the GPU convolves with the same bits. A loop
+/// over a table costs a software rasterizer ten times this: unrolled, the index is a constant and
+/// the taps are plain arithmetic; a bound the compiler cannot see, or one past its limit of 32,
+/// stays a masked loop with a per-lane table read.
+pub fn wgsl_taps(pass: &str, std: Std) -> String {
+    let k = Standard::get(std).kernels();
+    let mut out = String::new();
+    for line in pass.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("// @TAPS ") else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let (name, body) = rest.split_once(' ').expect("a tap line names its kernel");
+        let taps: Vec<f32> = match name {
+            "REC" => k.rec.clone(),
+            "PLAY" => k.play.clone(),
+            "CHROMA" => k.chroma.clone(),
+            "HILB" => k.hilb.clone(),
+            "KN" => vec![0.0; KN],
+            other => panic!("no kernel {other}"),
+        };
+        for (i, c) in taps.iter().enumerate() {
+            out.push_str(&body.replace("{i}", &i.to_string()).replace("{c}", &format!("{c:?}")));
+            out.push('\n');
         }
     }
-    s += &format!("const K_REC_C: i32 = {LUMA_LPF_R};\nconst K_PLAY_C: i32 = {LUMA_LPF_R};\nconst K_CHROMA_C: i32 = {CHROMA_LPF_R};\n");
-    s += &format!("const KR: i32 = {KR};\nconst KN: i32 = {KN};\n");
-    s
+    out
 }

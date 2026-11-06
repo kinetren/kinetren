@@ -17,7 +17,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::context::{GpuContext, GpuInitError};
 use crate::pool::{
-    DISPLAY_FORMAT, FORMAT, ReadbackCache, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
+    DISPLAY_FORMAT, FORMAT, ReadbackCache, WORD_FORMAT, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
 };
 
 const SLOT: u64 = 256; // dynamic offset alignment (the maximum per the spec)
@@ -720,6 +720,8 @@ struct Inner {
     pipes: [wgpu::RenderPipeline; PIPE_COUNT],
     /// The own passes of the point-wise plugins, in `plugin_taps()` order (D5).
     plugin_pipes: Vec<wgpu::RenderPipeline>,
+    /// The plugin pipes that target `WORD_FORMAT`, by the same index.
+    plugin_word: Vec<bool>,
     /// The merged geometry pass (R.44): its own 1024 B uniform → its own layout/pipe.
     geom_layout: wgpu::BindGroupLayout,
     geom_pipe: wgpu::RenderPipeline,
@@ -837,7 +839,7 @@ pub fn plugin_taps() -> Vec<(&'static str, &'static str)> {
 /// (plugin-api-barriers, D2). Their pipelines follow the point-wise plugins' own passes in
 /// `Inner::plugin_pipes`; `barrier_pipe_base` finds a plugin's first one. A function of the registry
 /// only, never hashed into a key (the chain's key carries the plugin id).
-pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str])> {
+pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str], u32)> {
     let Some(reg) = kt_plugin_api::installed() else { return Vec::new() };
     reg.plugins()
         .filter_map(|p| {
@@ -846,7 +848,7 @@ pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str])> {
             match (m.media, m.decl.gpu, p.barrier()) {
                 (kt_plugin_api::Media::VideoFx, g, Some(b)) if g != kt_plugin_api::Gpu::None => {
                     let id: &'static str = &m.id;
-                    Some((id, b.shaders()))
+                    Some((id, b.shaders(), b.word_passes()))
                 }
                 _ => None,
             }
@@ -857,7 +859,7 @@ pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str])> {
 /// The index of a barrier plugin's first pass in `Inner::plugin_pipes`.
 fn barrier_pipe_base(id: &str) -> usize {
     let mut base = plugin_taps().len();
-    for (p, shaders) in plugin_barriers() {
+    for (p, shaders, _) in plugin_barriers() {
         if p == id {
             return base;
         }
@@ -1032,17 +1034,22 @@ impl GpuFxEngine {
             .collect();
         let mut plugins: Vec<(String, String)> =
             plugin_taps().iter().zip(&plugin_srcs).map(|((id, _), body)| (format!("plugin {id}"), body.clone())).collect();
+        let mut plugin_word = vec![false; plugins.len()];
         // the barrier plugins' passes follow, in `plugin_barriers` order (`barrier_pipe_base`)
-        for (id, shaders) in plugin_barriers() {
+        for (id, shaders, words) in plugin_barriers() {
             for (i, body) in shaders.iter().enumerate() {
                 plugins.push((format!("barrier {id} {i}"), body.to_string()));
+                plugin_word.push(words >> i & 1 == 1);
             }
         }
+        let fixed_count = fixed.len();
         let mut pipes: Vec<wgpu::RenderPipeline> = fixed
             .iter()
             .chain(plugins.iter())
-            .map(|(name, body)| {
+            .enumerate()
+            .map(|(i, (name, body))| {
                 let name = name.as_str();
+                let format = if i >= fixed_count && plugin_word[i - fixed_count] { WORD_FORMAT } else { FORMAT };
                 let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(name),
                     source: wgpu::ShaderSource::Wgsl(format!("{COMMON}\n{body}").into()),
@@ -1061,7 +1068,7 @@ impl GpuFxEngine {
                         entry_point: Some("fs"),
                         compilation_options: Default::default(),
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: FORMAT,
+                            format,
                             blend: None,
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
@@ -1181,6 +1188,7 @@ impl GpuFxEngine {
                 layout,
                 pipes,
                 plugin_pipes,
+                plugin_word,
                 geom_layout,
                 geom_pipe,
                 arena,
@@ -1298,7 +1306,11 @@ impl GpuFxEngine {
 
 impl VideoGpuExec for GpuFxEngine {
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
-        self.inner.lock().unwrap().execute(plan, out)
+        self.inner.lock().unwrap().execute(plan, out, true)
+    }
+
+    fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        self.inner.lock().unwrap().execute(plan, out, false)
     }
 
     fn info(&self) -> &GpuBackendInfo {
@@ -1594,16 +1606,18 @@ impl Inner {
         rp.draw(0..3, 0..1);
     }
 
-    fn execute(&mut self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+    /// `memo`: ask and fill the readback memo. An export composes every moment once, and the
+    /// memo's copy of each frame is pure cost.
+    fn execute(&mut self, plan: &FramePlan<'_>, out: &mut Vec<u8>, memo: bool) -> Result<bool, GpuExecError> {
         let (ow, oh) = (plan.out_w, plan.out_h);
         if ow > self.max_dim || oh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: ow, h: oh });
         }
-        let key = plan_key(plan);
+        let key = memo.then(|| plan_key(plan));
         self.last_cost = Default::default();
         self.last_stages = Default::default();
         let mark = Instant::now();
-        if let Some((data, complete)) = self.readback.get(key) {
+        if let Some((data, complete)) = key.and_then(|k| self.readback.get(k)) {
             out.clear();
             out.extend_from_slice(data);
             self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
@@ -1715,7 +1729,9 @@ impl Inner {
         staging.unmap();
 
         self.pool.release(result);
-        self.readback.insert(key, out.clone(), complete);
+        if let Some(key) = key {
+            self.readback.insert(key, out.clone(), complete);
+        }
         self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
         Ok(complete)
     }
@@ -2243,7 +2259,8 @@ impl Inner {
                                 UniformData { u: *u, f: *f, ..Default::default() },
                             ),
                         };
-                        let dst = self.pool.acquire(&self.device, tw, th);
+                        let word = matches!(which, Which::Plugin(i) if self.plugin_word[i]);
+                        let dst = self.pool.acquire_as(&self.device, tw, th, if word { WORD_FORMAT } else { FORMAT });
                         self.pass_which(enc, which, &dst.view, &t0, &t1, &t2, u);
                         if let Some(t) = prev_tex.take() {
                             self.pool.release(t);
@@ -2443,7 +2460,8 @@ impl Inner {
                 depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    // SAFETY: the fullscreen triangle of `vs` writes every pixel of the target
+                    load: wgpu::LoadOp::DontCare(unsafe { wgpu::LoadOpDontCare::enabled() }),
                     store: wgpu::StoreOp::Store,
                 },
             })],

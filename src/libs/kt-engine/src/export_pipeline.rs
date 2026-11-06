@@ -446,7 +446,7 @@ pub(crate) fn run<S: ExportSink>(
                             let plan = video_ref.frame_plan(cache_ref, t, quality);
                             ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
                             let complete = e
-                                .execute_into(&plan, &mut buf)
+                                .execute_once(&plan, &mut buf)
                                 .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                             if let Some(p) = prof {
@@ -527,7 +527,7 @@ pub(crate) fn run<S: ExportSink>(
                     if depth == 0 {
                         let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                         let complete = gpu
-                            .execute_into(&plan, &mut buf)
+                            .execute_once(&plan, &mut buf)
                             .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                         ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                         if !send(i, Job::Convert { t, rgba: buf, complete }) {

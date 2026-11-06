@@ -12,11 +12,8 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let adj = min(i32(lt(1, y)), i32(P.u0.y) - 1);
     var own = 0.0;
     var xt = 0.0;
-    for (var k = 0; k < KN; k = k + 1) {
-        let j = n + KR - k;
-        own = own + lt(16 + k, y) * ld0f(j, cr);
-        xt = xt + lt(16 + KN + k, y) * ld0f(j, adj);
-    }
+    var j = 0;
+    // @TAPS KN j = n + KR - {i}; own = own + lt(16 + {i}, y) * ld0f(j, cr); xt = xt + lt(16 + KN + {i}, y) * ld0f(j, adj);
     let sig = lt(2, y) * own + lt(3, y) * xt;
     let nf = f32(n);
     let ds = lt(5, y);

@@ -275,6 +275,19 @@ mod sh {
     pub const S7: u8 = 8;
     pub const S8: u8 = 9;
     pub const FIN: u8 = 10;
+    pub const S7A: u8 = 11;
+    /// The passes that convolve with a kernel of the standard come once per standard: PAL at
+    /// their index above, NTSC here.
+    pub const NTSC: [u8; 5] = [S1, S4, S6, S7, S8];
+    pub const NTSC_BASE: u8 = 12;
+}
+
+/// The pass of `shader` for this standard.
+fn of_std(shader: u8, st: standard::Std) -> u8 {
+    match sh::NTSC.iter().position(|s| *s == shader) {
+        Some(i) if st == standard::Std::Ntsc => sh::NTSC_BASE + i as u8,
+        _ => shader,
+    }
 }
 
 /// The plugin's WGSL: the shared helpers and the kernels' constants prepended to each pass.
@@ -282,7 +295,7 @@ fn shader_texts() -> &'static [&'static str] {
     static S: OnceLock<Vec<&'static str>> = OnceLock::new();
     S.get_or_init(|| {
         let head = format!("{}\n{}\n", standard::wgsl_consts(), include_str!("wgsl/common.wgsl"));
-        [
+        let passes = [
             include_str!("wgsl/up.wgsl"),
             include_str!("wgsl/lt.wgsl"),
             include_str!("wgsl/s1.wgsl"),
@@ -294,10 +307,11 @@ fn shader_texts() -> &'static [&'static str] {
             include_str!("wgsl/s7.wgsl"),
             include_str!("wgsl/s8.wgsl"),
             include_str!("wgsl/fin.wgsl"),
-        ]
-        .iter()
-        .map(|p| &*Box::leak(format!("{head}{p}").into_boxed_str()))
-        .collect()
+            include_str!("wgsl/s7a.wgsl"),
+        ];
+        let pal = passes.iter().map(|p| standard::wgsl_taps(p, standard::Std::Pal));
+        let ntsc = sh::NTSC.iter().map(|s| standard::wgsl_taps(passes[*s as usize], standard::Std::Ntsc));
+        pal.chain(ntsc).map(|p| &*Box::leak(format!("{head}{p}").into_boxed_str())).collect()
     })
 }
 
@@ -312,6 +326,11 @@ impl BarrierKernel for VhsTape {
 
     fn shaders(&self) -> &'static [&'static str] {
         shader_texts()
+    }
+
+    /// Every pass but the frame's holds words, not pixels.
+    fn word_passes(&self) -> u32 {
+        !(1 << sh::FIN)
     }
 
     fn gpu(&self, k: &Cooked, g: &GpuCtx, out: &mut Vec<Node>) {
@@ -351,11 +370,10 @@ impl BarrierKernel for VhsTape {
         }
         out.push(at(sh::LT, [Slot::Prev, n, n], [0; 8], [0.0; 8], LT_W as u32, h));
         out.push(Node::Save(1));
-        let std = (st.std == standard::Std::Ntsc) as u32;
         out.push(at(
-            sh::S1,
+            of_std(sh::S1, st.std),
             [Slot::Saved(0), n, n],
-            [std, w, u.m, u.a, 0, 0, 0, 0],
+            [0, w, u.m, u.a, 0, 0, 0, 0],
             [u.dark, u.white, u.fsync_n, u.dev_n, u.l_sync, 0.0, 0.0, 0.0],
             w,
             h,
@@ -363,9 +381,9 @@ impl BarrierKernel for VhsTape {
         out.push(at(sh::S2, [Slot::Prev, n, n], [w, 0, 0, 0, 0, 0, 0, 0], [0.0; 8], w, h));
         out.push(at(sh::S3, [Slot::Prev, n, n], [w, u.frame, 0, 0, 0, 0, 0, 0], [0.0; 8], w, h));
         out.push(at(
-            sh::S4,
+            of_std(sh::S4, st.std),
             [Slot::Prev, Slot::Saved(0), n],
-            [std, w, u.m, u.a, u.v_switch as u32, 0, 0, 0],
+            [0, w, u.m, u.a, u.v_switch as u32, 0, 0, 0],
             [u.a_c, u.sat, u.fcu_n, u.cu_line, u.rot[0], u.rot[1], u.sat_fm, u.sat_c],
             w,
             h,
@@ -380,17 +398,18 @@ impl BarrierKernel for VhsTape {
             h,
         ));
         out.push(Node::Save(3));
-        out.push(at(sh::S6, [Slot::Prev, n, n], [std, w, 0, 0, 0, 0, 0, 0], [u.fsync_n, u.dev_n, u.l_sync, 0.0, 0.0, 0.0, 0.0, 0.0], w, h));
+        out.push(at(of_std(sh::S6, st.std), [Slot::Prev, n, n], [0, w, 0, 0, 0, 0, 0, 0], [u.fsync_n, u.dev_n, u.l_sync, 0.0, 0.0, 0.0, 0.0, 0.0], w, h));
         out.push(at(
-            sh::S7,
+            sh::S7A,
             [Slot::Prev, n, n],
-            [std, w, u.doc as u32, 0, 0, 0, 0, 0],
+            [0, w, u.doc as u32, 0, 0, 0, 0, 0],
             [sim::DOC_THRESHOLD, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
             w,
             h,
         ));
+        out.push(at(of_std(sh::S7, st.std), [Slot::Prev, n, n], [0, w, 0, 0, 0, 0, 0, 0], [0.0; 8], w, h));
         out.push(Node::Save(4));
-        out.push(at(sh::S8, [Slot::Saved(3), Slot::Saved(1), n], [std, w, 0, 0, 0, 0, 0, 0], [u.fcu_n, u.cu_line, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], w, h));
+        out.push(at(of_std(sh::S8, st.std), [Slot::Saved(3), Slot::Saved(1), n], [0, w, 0, 0, 0, 0, 0, 0], [u.fcu_n, u.cu_line, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], w, h));
         out.push(Node::Pass {
             shader: sh::FIN,
             inputs: [Slot::Saved(4), Slot::Prev, Slot::Saved(1)],
