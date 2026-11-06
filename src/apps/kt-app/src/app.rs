@@ -9573,7 +9573,9 @@ impl eframe::App for KtApp {
         // closing a named project renders its poster (D5): one frame, within a budget
         self.queue_poster();
         crate::welcome::wait_posters(std::time::Duration::from_secs(3));
-        // a reel strip may be on the device: the process must not exit under it
+        // a reel strip may be on the device: the process must not exit under it. A test's process
+        // goes on after this close, and every later render would wait on the parked engine for good
+        #[cfg(not(test))]
         kt_gpu::park_offline_engine();
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
