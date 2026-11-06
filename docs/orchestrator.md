@@ -129,17 +129,18 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 
 ## Current plan (2026-11-06)
 
-Stage closed: `finish.sh` at kt26.11.06-318aaf8b, master there. In it: `hw-encode-context`, `ci-speedup`,
-`export-pipeline-determinism`, `compute-kernels-render` (every CPU and SIMD copy of a video kernel
-deleted on the owner's "удаляй"), `r72-timeline-transport-defects`. Next, in the owner's order:
+Stage closed: `finish.sh` at kt26.11.06-b42cbff4, master there: 1579 of 1579, 78 of 78 live at the
+first pass, 938 s. In it: `gpu-render-hardening`, `render-speed-no-card` (a render with no card beats
+the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner's order:
 
-1. **Performance**: `compute-backends` is on render memory (7 to 17 GB with the devices per thread), the
-   rules left without a test, the Windows CI GPU check, then generators; row 75 (a truncated file).
-2. **Build and CI speed**: `test-stability` (card), logs of a real master run (the ~9 min estimate is
-   unproven), the plugin test-build cost, an ARM build (owner, 2026-11-04).
-3. **Usability**: `control-layouts` (card, v26.10 L1/L2), `preview-canvas-and-gizmos`, the small defects
-   (`region-copy-of-selected`, `fader-wheel-and-region-edges`, the transparent tail at widths not
-   divisible by 8, the vocoder level at start phase), the marker-over-region split on his answer.
+1. **Data**: row 47, a Ctrl+S that writes nothing with the FX window open. If it is the program's, a
+   person loses edits, so it goes before everything else.
+2. **Performance**: rows 93 (preview on the VHS span), 94, 96, and the older 10, 37, 42, 52, 53, 55, 72.
+3. **Build and CI speed**: logs of a real master run and the first `windows-picture` and FXC result,
+   both need the owner's push; the plugin test-build cost (card); an ARM build (owner, 2026-11-04).
+4. **Usability**: `preview-canvas-and-gizmos` (card, B9), the three answers `control-layouts` waits for,
+   the small defects (`region-copy-of-selected`, `fader-wheel-and-region-edges` cards, the transparent
+   tail at widths not divisible by 8, the vocoder level at start phase), the marker-over-region split.
 
 After them: the effects (`temporal-barrier-3dnr`, `chroma-key-upgrade`, `geometry-fx-flex`,
 `pro-keyer`) and the big features to discuss (subtitles and text editing, ripple, scopes, several
