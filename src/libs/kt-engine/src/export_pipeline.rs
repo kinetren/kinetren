@@ -263,6 +263,35 @@ struct Chunk {
     t1: Tick,
 }
 
+/// The chunks of a range, as frame indices: frames in a row up to `limit` bytes of what they really
+/// ask. The largest decode size of the project, the serial loop's measure, made a chunk of one frame
+/// on the showcase: the sources advanced in step and no span had two pictures to convert at once.
+fn pipe_chunks(video: &VideoRenderer, (start, end): (Tick, Tick), quality: Quality, limit: usize) -> Vec<Chunk> {
+    let step = video.grid.frame_step();
+    let mut chunks = Vec::new();
+    let (mut t, mut idx) = (start, 0u64);
+    while t < end {
+        let (first, mut bytes, mut u) = (idx, 0usize, t);
+        while u < end {
+            let next = Tick((u.0 + step).min(end.0));
+            let asked: usize = video
+                .wanted_frames(kt_time::TickRange::new(u, next), quality)
+                .iter()
+                .map(|(_, _, dq)| dq.width as usize * dq.height as usize * 4)
+                .sum();
+            if idx > first && (bytes + asked > limit || idx - first >= MAX_CHUNK_FRAMES) {
+                break;
+            }
+            bytes += asked;
+            idx += 1;
+            u = Tick(u.0 + step);
+        }
+        chunks.push(Chunk { first, end: idx, t0: t, t1: Tick(u.0.min(end.0)) });
+        t = u;
+    }
+    chunks
+}
+
 fn cancelled() -> std::io::Error {
     std::io::Error::other("cancelled")
 }
@@ -302,32 +331,8 @@ pub(crate) fn run<S: ExportSink>(
         None => (Tick(0), project_range(project)),
     };
     let step = video.grid.frame_step();
-    // the chunks, as indices: frames in a row up to `chunk_bytes` of what they really ask. The
-    // largest decode size of the project, the serial loop's measure, made a chunk of one frame on
-    // the showcase: the sources advanced in step and no span had two pictures to convert at once.
-    let limit = chunk_bytes(hooks.budget);
-    let mut chunks = Vec::new();
-    let (mut t, mut idx) = (t_first, 0u64);
-    while t < end {
-        let (first, mut bytes, mut u) = (idx, 0usize, t);
-        while u < end {
-            let next = Tick((u.0 + step).min(end.0));
-            let asked: usize = video
-                .wanted_frames(kt_time::TickRange::new(u, next), quality)
-                .iter()
-                .map(|(_, _, dq)| dq.width as usize * dq.height as usize * 4)
-                .sum();
-            if idx > first && (bytes + asked > limit || idx - first >= MAX_CHUNK_FRAMES) {
-                break;
-            }
-            bytes += asked;
-            idx += 1;
-            u = Tick(u.0 + step);
-        }
-        chunks.push(Chunk { first, end: idx, t0: t, t1: Tick(u.0.min(end.0)) });
-        t = u;
-    }
-    let total = idx;
+    let chunks = pipe_chunks(&video, (t_first, end), quality, chunk_bytes(hooks.budget));
+    let total = chunks.last().map_or(0, |c| c.end);
     let frame_tick = |i: u64| Tick(t_first.0 + i as i64 * step);
     let audio_start = match range {
         Some((a, _)) => a.to_audio_frames(),
@@ -734,4 +739,46 @@ fn decode_chunk(
         }
     });
     held
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// t1767 (render-speed-no-card D5): a chunk is counted by what its frames ask. The demo has a
+    /// stretch of many layers and stretches of few, so the measure of the worst moment gives a
+    /// chunk of one frame where the bytes hold several; every frame still lands in one chunk, and
+    /// no chunk of several frames passes the limit.
+    #[test]
+    fn t1767_a_chunk_is_counted_by_what_its_frames_ask() {
+        kt_plugins_builtin::install();
+        let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+        let video = VideoRenderer::new(&p);
+        let q = Quality { width: 320, height: 180 };
+        let frame = 320 * 180 * 4;
+        // the budget of one frame of the worst moment
+        let limit = (video.max_concurrent_layers() + 1) * frame;
+        let worst = crate::export::export_chunk_frames(2 * limit, 320, 180, video.max_concurrent_layers() + 1);
+        assert_eq!(worst, 1, "the serial measure gives one frame here");
+        let end = project_range(&p);
+        let chunks = pipe_chunks(&video, (Tick(0), end), q, limit);
+        let mut next = 0;
+        let mut at = Tick(0);
+        for c in &chunks {
+            assert_eq!((c.first, c.t0), (next, at), "the chunks follow each other");
+            next = c.end;
+            at = c.t1;
+            if c.end - c.first > 1 {
+                let asked: usize = video
+                    .wanted_frames(kt_time::TickRange::new(c.t0, c.t1), q)
+                    .iter()
+                    .map(|(_, _, dq)| dq.width as usize * dq.height as usize * 4)
+                    .sum();
+                assert!(asked <= limit, "a chunk of several frames passed the limit");
+            }
+        }
+        assert_eq!(at, end);
+        assert_eq!(next, crate::export::video_frames_in(p.settings.fps, Tick(0), end));
+        assert!(chunks.iter().any(|c| c.end - c.first > 1), "every chunk is one frame: {} chunks", chunks.len());
+    }
 }

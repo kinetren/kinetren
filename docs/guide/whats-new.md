@@ -5,6 +5,8 @@ month, newest first.
 
 ## kt26.11
 
+- **Renders with no graphics card are faster**, most of all under the VHS simulation and on events
+  with a camera, and the preview gains the same in those places.
 - **A render no longer stalls on a file cut short.** A file whose header promises more than it holds
   is now read to its real end once, and the render goes on with the last picture.
 - **Every picture is now made by one engine, on the graphics card.** The separate processor path is

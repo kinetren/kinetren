@@ -13,6 +13,11 @@ is no picture, and an export refuses.
 - **wgpu is STRICTLY the same major version as the one inside eframe** (the workspace pin
   in src/Cargo.toml): the preview shares an `Arc<wgpu::Device>` with egui-wgpu — another
   major = incompatible types. Upgrading eframe = upgrading wgpu HERE TOO.
+- **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
+  sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
+  with table reads lane by lane, ten times the cost. Write taps out, or specialize the text
+  (`wgsl_taps`, `geom_specialized`), before reaching for a smaller kernel. Measure a pass with minima
+  of repeats: a single reading on a loaded machine moves by 2×.
 - **Fragment passes, NOT compute**: the default device of egui-wgpu on the
   GL backend is created with downlevel_webgl2 limits (compute is unavailable),
   and the live check runs llvmpipe via `WGPU_BACKEND=gl`. Everything here
@@ -22,7 +27,8 @@ is no picture, and an export refuses.
 - **The compute host (`compute.rs`) is a device of its own** (compute-kernels): Vulkan, DX12 or Metal
   whatever `WGPU_BACKEND` says, because the interface may be on GL. WARP is refused here too. Only
   Vulkan through llvmpipe has run it so far; DX12 and Metal are untested.
-- **All textures are Rgba8Uint** — textureLoad returns raw bytes without
+- **All textures are Rgba8Uint, but a word pass's** (`BarrierKernel::word_passes`: `R32Uint`, a
+  32-bit word per texel in `.x`, render-speed-no-card D3) — textureLoad returns raw bytes without
   unorm losses; integer kernels (composite, noise, mirror, tiling) are
   byte-for-byte equal to the stored frames, bilinear ones — within tolerance.
   There are no samplers at all: the sub-texel filtering grid wanders between drivers —
@@ -43,6 +49,9 @@ is no picture, and an export refuses.
   (`Dir::Left` = (−1,0)) an error in the Y term of the formula is not visible.
 - **Shared parametrics** — from kt-fx: `pan_frame`/`cam_at`/`noise_seed`. The plan computes them;
   the shaders read the result.
+- **A fused pass runs as written for its program shape where it can** (`geom_specialized`,
+  render-speed-no-card D4): the text is built from `geom_fused.wgsl`'s sections, so an edit of an arm
+  there is an edit of the shape's arm in `engine.rs` in the SAME COMMIT; t1766 holds the two equal.
 - **The merged geo pass (R.44): `geom_fused.wgsl` executes the program of `kt_fx::geom`.**
   The program of primitives (Affine/Clamp/Fold/Proj) is built in kt-fx:
   the coefficients are multiplied in f64 by the plan, and the f32 values rounded ONCE arrive here

@@ -146,6 +146,9 @@ in the source's state and arrive through the retune lane.
 - **Nothing the writer emits may depend on timing**: the audio is interleaved by the fixed rule
   (after frame `i`, the audio up to its end), and the progress counts are the WRITER's (frames and
   audio frames written) — t955 compares two exports' event streams element by element.
+- **A pipelined chunk is counted by what its frames ask** (`pipe_chunks`, render-speed-no-card D5): the
+  serial measure, the project's largest size times its most layers, is one frame on a project with a
+  4K moment, and nothing then runs in parallel within a source.
 - **The look-ahead is bytes, not chunks** (`LOOKAHEAD_BYTES` under `PIPE_CACHE_BYTES`): a chunk
   being composed must never be evicted (R.15 item 1), and at 4K decode sizes a chunk is one frame.
 - A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.

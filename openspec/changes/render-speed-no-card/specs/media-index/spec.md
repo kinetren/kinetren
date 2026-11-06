@@ -23,3 +23,14 @@ sought per burst: a 40 s event did not finish in 280 s.
 - **WHEN** the bursts of a cut file are read through its end
 - **THEN** the bursts past the end answer with at most two seeks in all
 - **TEST** t1762 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+### Requirement: A render converts a span's pictures on threads
+A render's source SHALL convert the pictures of a multi-size span to RGBA on several threads and emit
+them in key order, and the frames SHALL NOT differ from a conversion on the decoder's thread. A tight
+render and a preview's source SHALL convert on one.
+Why: the conversion took four times the decoding on the showcase.
+
+#### Scenario: Threads change no frame
+- **WHEN** a span of keys at two sizes with a jump in it is read with one thread and with four
+- **THEN** the frames are byte for byte equal and in the same order
+- **TEST** t1765 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
