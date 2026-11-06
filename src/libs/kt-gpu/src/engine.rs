@@ -4,6 +4,7 @@
 //! The integer kernels are held to the stored frames of the deleted CPU composite byte for byte,
 //! the bilinear ones within tolerance (t181/t182).
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -725,6 +726,11 @@ struct Inner {
     /// The merged geometry pass (R.44): its own 1024 B uniform → its own layout/pipe.
     geom_layout: wgpu::BindGroupLayout,
     geom_pipe: wgpu::RenderPipeline,
+    geom_pipe_layout: wgpu::PipelineLayout,
+    /// The specialized fused passes by program shape, built when a shape first runs.
+    geom_shapes: HashMap<[u32; 4], Option<wgpu::RenderPipeline>>,
+    /// t1766: the interpreter for every shape.
+    geom_interpret: bool,
     arena: wgpu::Buffer,
     arena_slots: u32,
     slot: u32,
@@ -941,6 +947,92 @@ pub fn assembled_shaders() -> (String, Vec<String>) {
         + "\n"
         + &fns;
     (fused, own)
+}
+
+/// The fused pass written out for one program shape (render-speed-no-card D4): `h` is the uniform's
+/// header, the shape of the program. `None` — a shape the interpreter keeps: a Fold or absorbed
+/// taps. The text is the interpreter's arms in the same order with their slots known, the
+/// coefficients still in the uniform, so the bytes are the same (t1766). The interpreter's loop
+/// over a run-time count and its table of varying slots cost a software rasterizer up to half this
+/// pass, and a camera puts this pass on nearly every frame of a project.
+fn geom_specialized(h: [u32; 4]) -> Option<String> {
+    let [n, kinds_lo, kinds_hi, ss] = h;
+    let (mode, nx, ny, taps) = (ss & 0xff, (ss >> 8) & 0xff, (ss >> 16) & 0xff, ss >> 24);
+    if taps != 0 || (mode == 0 && (nx == 0 || ny == 0)) {
+        return None;
+    }
+    let base = include_str!("shaders/geom_fused.wgsl");
+    let section = |from: &str, to: &str| Some(&base[base.find(from)?..base.find(to)?]);
+    let head = &base[..base.find("// The reverse chain of primitives")?];
+    let tap = section("// The final bilinear WITHOUT rounding", "// meta of the i-th tap op")?;
+    let probes = section("// The number of subtaps per axis", "@fragment")?;
+    let mut warp_fns = String::new();
+    let mut warp_arms = String::new();
+    for (i, (id, wgsl)) in plugin_warps().iter().enumerate() {
+        warp_arms.push_str(&format!("if (mode == {i}u) {{ let q = warp_{id}(vec2<f32>(x, y), a, b); x = q.x; y = q.y; }}\n"));
+        warp_fns.push_str(wgsl);
+        warp_fns.push('\n');
+    }
+    let mut map = String::from("fn geo_map(px: f32, py: f32) -> vec3<f32> {\n    var x = px;\n    var y = py;\n    var dead = 0.0;\n");
+    let mut slot = 0;
+    for i in 0..n {
+        let kind = (if i < 8 { kinds_lo } else { kinds_hi } >> ((i % 8) * 4)) & 0xf;
+        let (slots, arm) = match kind {
+            0 => (1, format!("let a = G.p[{slot}]; x = a.x * x + a.y; y = a.z * y + a.w;")),
+            1 => (1, format!("let c = G.p[{slot}]; x = clamp(x, c.x, c.y); y = clamp(y, c.z, c.w);")),
+            3 => (
+                3,
+                format!(
+                    "let tx = G.p[{slot}].x * x + G.p[{slot}].y * y + G.p[{slot}].z;
+                     let ty = G.p[{}].x * x + G.p[{}].y * y + G.p[{}].z;
+                     let tz = G.p[{}].x * x + G.p[{}].y * y + G.p[{}].z;
+                     if (tz <= 0.0) {{ dead = 2.0; }} else {{
+                         let qx = tx / tz;
+                         let qy = ty / tz;
+                         if (qx < 0.0 || qx > 1.0 || qy < 0.0 || qy > 1.0) {{ dead = 2.0; }} else {{ x = qx; y = qy; }}
+                     }}",
+                    slot + 1,
+                    slot + 1,
+                    slot + 1,
+                    slot + 2,
+                    slot + 2,
+                    slot + 2
+                ),
+            ),
+            4 => (2, format!("let a = G.p[{slot}]; let b = G.p[{}]; let mode = u32(a.x);\n{warp_arms}", slot + 1)),
+            5 => (1, format!("let b = G.p[{slot}]; if (x < b.x || x > b.y || y < b.z || y > b.w) {{ dead = 2.0; }}")),
+            _ => return None,
+        };
+        map += &format!("    if (dead == 0.0) {{ {arm} }}\n");
+        slot += slots;
+    }
+    map += "    return vec3<f32>(x, y, dead);\n}\n";
+    let mut fs = String::from(
+        "@fragment\nfn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {\n    let o = floor(pos.xy);\n    var acc = vec4<f32>(0.0);\n",
+    );
+    if mode == 0 {
+        for j in 0..ny {
+            for i in 0..nx {
+                fs += &format!("    acc = acc + geo_tap(geo_map(o.x - 0.5 + {i}.5 / {nx}.0, o.y - 0.5 + {j}.5 / {ny}.0));\n");
+            }
+        }
+        fs += &format!("    acc = acc / {}.0;\n", nx * ny);
+    } else {
+        fs += "    let c0 = geo_map(o.x, o.y);
+    let nx = ss_taps(probe_axis(c0, o.x, o.y, 1.0, 0.0));
+    let ny = ss_taps(probe_axis(c0, o.x, o.y, 0.0, 1.0));
+    for (var j = 0u; j < ny; j = j + 1u) {
+        let sy = o.y - 0.5 + (f32(j) + 0.5) / f32(ny);
+        for (var i = 0u; i < nx; i = i + 1u) {
+            let sx = o.x - 0.5 + (f32(i) + 0.5) / f32(nx);
+            acc = acc + geo_tap(geo_map(sx, sy));
+        }
+    }
+    acc = acc / f32(nx * ny);
+";
+    }
+    fs += "    return vec4<u32>(clamp(round(acc), vec4<f32>(0.0), vec4<f32>(255.0)));\n}\n";
+    Some(format!("{head}{warp_fns}{tap}{probes}{map}{fs}"))
 }
 
 impl GpuFxEngine {
@@ -1191,6 +1283,9 @@ impl GpuFxEngine {
                 plugin_word,
                 geom_layout,
                 geom_pipe,
+                geom_pipe_layout,
+                geom_shapes: HashMap::new(),
+                geom_interpret: false,
                 arena,
                 arena_slots,
                 slot: 0,
@@ -1301,6 +1396,18 @@ impl GpuFxEngine {
             out.extend_from_slice(&data[s..s + t.w as usize * 4]);
         }
         Some(out)
+    }
+}
+
+impl GpuFxEngine {
+    /// t1766: run every fused pass through the interpreter.
+    pub fn interpret_geometry(&self, on: bool) {
+        self.inner.lock().unwrap().geom_interpret = on;
+    }
+
+    /// t1766: how many program shapes have a pass of their own so far.
+    pub fn geometry_shapes(&self) -> usize {
+        self.inner.lock().unwrap().geom_shapes.values().flatten().count()
     }
 }
 
@@ -2344,6 +2451,34 @@ impl Inner {
 
     /// The merged geometry-series pass: GEOM_UNIFORM_BYTES uniform (4 arena slots),
     /// its own layout; the rest of the mechanics is as in `pass`.
+    fn geom_pipeline(&self, text: &str) -> wgpu::RenderPipeline {
+        let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("geom_shape"),
+            source: wgpu::ShaderSource::Wgsl(text.into()),
+        });
+        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("geom_shape"),
+            layout: Some(&self.geom_pipe_layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState { format: FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        })
+    }
+
     fn pass_geom(
         &mut self,
         enc: &mut wgpu::CommandEncoder,
@@ -2358,6 +2493,12 @@ impl Inner {
         );
         self.slot += GEOM_SLOT_UNITS;
         self.queue.write_buffer(&self.arena, offset, &u.bytes());
+        if !self.geom_interpret && !self.geom_shapes.contains_key(&u.h) {
+            let pipe = geom_specialized(u.h).map(|text| self.geom_pipeline(&text));
+            self.geom_shapes.insert(u.h, pipe);
+        }
+        let shaped = if self.geom_interpret { None } else { self.geom_shapes.get(&u.h).and_then(|p| p.as_ref()) };
+        let pipe = shaped.unwrap_or(&self.geom_pipe);
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &self.geom_layout,
@@ -2392,7 +2533,7 @@ impl Inner {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        rp.set_pipeline(&self.geom_pipe);
+        rp.set_pipeline(pipe);
         rp.set_bind_group(0, &bg, &[offset as u32]);
         rp.draw(0..3, 0..1);
     }

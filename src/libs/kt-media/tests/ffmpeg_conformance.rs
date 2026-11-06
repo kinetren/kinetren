@@ -254,6 +254,35 @@ fn t1453_a_far_forward_span_seeks() {
     }
 }
 
+/// t1765 (render-speed-no-card D2): a span converted on threads gives the frames of one converted
+/// on the decoder's thread, in the same order, at both sizes, across a cut of the keys.
+#[test]
+fn t1765_threaded_conversion_changes_no_frame() {
+    use kt_time::{TICK_HZ, Tick};
+    let path = fixture("testsrc_12s.mp4");
+    let (a, b) = (Quality { width: 320, height: 180 }, Quality { width: 138, height: 78 });
+    let step = TICK_HZ / 30;
+    let mut keys = Vec::new();
+    for i in (0..40).chain(240..270) {
+        keys.push((Tick(i * step), a));
+        if i % 3 == 0 {
+            keys.push((Tick(i * step), b));
+        }
+    }
+    let read = |threads: u32| {
+        kt_ffmpeg::set_rgba_threads(threads);
+        let mut src = FfmpegSource::open(&path).unwrap();
+        kt_ffmpeg::set_rgba_threads(1);
+        let mut got = Vec::new();
+        src.read_video_span_qualities(&keys, &mut |k, q, f| got.push((k, q, f.width, f.rgba))).unwrap();
+        got
+    };
+    let one = read(1);
+    let four = read(4);
+    assert_eq!(one.len(), keys.len());
+    assert!(one == four, "the frames moved or came out of order");
+}
+
 /// A copy of a fixture cut to half its bytes: the header still promises the whole length.
 fn cut_in_half(name: &str, dir: &std::path::Path) -> String {
     let bytes = std::fs::read(fixture(name)).unwrap();

@@ -418,3 +418,27 @@ impl BarrierKernel for VhsTape {
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// t1764 (render-speed-no-card D3): a pass that convolves has no loop left, and each standard
+    /// has its own. A loop over a table or past the compiler's unroll limit cost a software
+    /// rasterizer twice the pass.
+    #[test]
+    fn t1764_the_convolving_passes_write_their_taps_out() {
+        let texts = shader_texts();
+        for shader in [sh::S1, sh::S4, sh::S5, sh::S6, sh::S7, sh::S8].into_iter().chain(sh::NTSC_BASE..sh::NTSC_BASE + 5) {
+            let t = texts[shader as usize];
+            assert!(!t.contains("for ("), "pass {shader} kept a loop");
+            assert!(!t.contains("@TAPS"), "pass {shader} kept a tap line");
+        }
+        for (i, s) in sh::NTSC.iter().enumerate() {
+            let (pal, ntsc) = (of_std(*s, standard::Std::Pal), of_std(*s, standard::Std::Ntsc));
+            assert_eq!(pal, *s);
+            assert_eq!(ntsc, sh::NTSC_BASE + i as u8);
+        }
+        assert_ne!(texts[sh::S1 as usize], texts[sh::NTSC_BASE as usize], "the kernels of the two standards");
+    }
+}
