@@ -713,7 +713,7 @@ impl AudioRenderer {
                     ext_end: end + tail,
                     source_in: c.source_in.to_audio_frames(),
                     lane: c.lane,
-                    gain: db_to_linear(c.gain_db) * track_gain(c.lane),
+                    gain: event_gain_linear(c.gain_db) * track_gain(c.lane),
                     // the address of the SOURCE, not the media (R.59, stage 2): for a
                     // sounding generator (SMPTE with a tone, a count with a
                     // beep) the values are on the event, so the stream is its own
@@ -1828,6 +1828,12 @@ fn merge_burst_ranges(
         }
     }
     out
+}
+
+/// An event's gain as a factor: the floor is exact silence (R.72), everything above it is
+/// `db_to_linear`, bit for bit.
+pub fn event_gain_linear(db: f32) -> f32 {
+    if db <= kt_model::EVENT_GAIN_FLOOR_DB { 0.0 } else { db_to_linear(db) }
 }
 
 pub fn db_to_linear(db: f32) -> f32 {

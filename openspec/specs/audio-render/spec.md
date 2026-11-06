@@ -507,3 +507,15 @@ will sound; the previous lap's echo rings on as two copies of the event one afte
 - **THEN** a screenshot per step; the cursor wraps three times to the event's start and stays in the region, the program still plays; the engine's four looped laps have no miss
 - **PATH** open the project → drag on the ruler 1.0 s → 2.0 s: the region → L: the loop button lights → Space: the cursor runs to the region end and back to the event's start, three times → Space stops
 - **TEST** t1442 (`src/scripts/live/looptail.py`)
+
+### Requirement: An event gain at the floor is exact silence
+An event's gain at the floor of its range SHALL multiply the event's samples by exactly zero. "Almost
+silence" is not allowed. Every gain above the floor SHALL keep today's dB-to-linear mapping, byte for
+byte (invariant 11).
+Why: the owner asked for "gain down to mute" (`ktprompts_v26.10` USABILITY 6). A floor at −60 dB is
+audible on loud material and is not what "mute" means.
+
+#### Scenario: The floor renders zeros, the rest is unchanged
+- **WHEN** an event with a 0 dBFS sine is rendered at the gain floor, at −6 dB and at 0 dB
+- **THEN** the floor gives all-zero samples; −6 dB and 0 dB are byte-equal to the render before this change
+- **TEST** t1631 (`src/libs/kt-engine/tests/clip_gain_floor.rs`)

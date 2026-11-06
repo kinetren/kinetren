@@ -319,7 +319,12 @@ def main(out):
         app.right_click(fx, y)
         app.click_probe("nest.enter", "entry into the composition via the FIRST broadcast")
         inner = sorted(app.live_clips())
-        app.double_click(app.x_at(inner[0][0] + inner[0][1] // 2), y)
+        # the view stayed where the broadcast was, so the middle of the event may lie in the left
+        # jump zone, where a click jumps (TIMELINE 4a): the double click goes past the zone
+        g = app.geom()
+        width = g["timeline"]["right"] - g["timeline"]["left"]
+        past = geometry()["x"] + int(g["timeline"]["left"] + max(width / 8.0, 40.0)) + 8
+        app.double_click(max(app.x_at(inner[0][0] + inner[0][1] // 2), past), y)
         app.click_probe("titlew.text", "template title text field")
         for ch in ["z", "z"]:
             app.key(ch)

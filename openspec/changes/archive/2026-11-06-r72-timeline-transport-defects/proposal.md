@@ -43,9 +43,10 @@ and "no obvious labels" (item 17 of R.7). Each is cheap alone; together they are
   - "Add morpher here" / "Add camera at the playhead" leave the rows; the actions stay in the row's
     menu and its status-line hint;
   - a guard test keeps captions out of empty rows — `ui-timeline`.
-- **Track reorder by the mouse is findable (T6)**. The drag exists in the header gutter but has no
-  test, and the R.62 badges crowd it. It gets a grab cursor, a hint and a test that drags from where
-  a person grabs — `ui-reach`.
+- **Track reorder by the mouse works and is findable (T6)**. The drag in the header gutter was dead
+  since R.38 (found at apply: the height drag's release took it), had no test, and the R.62 badges crowd
+  it. It is repaired and gets a grab cursor, a hint and a test that drags from where a person grabs
+  — `ui-reach`.
 - **Frame step (T11)** — `transport`:
   - **← / →** step one frame (as in Premiere, Resolve, FCP), and pause first when playing;
   - **Ctrl+click** on Back/Forward does the same with the mouse;
@@ -103,7 +104,7 @@ and "no obvious labels" (item 17 of R.7). Each is cheap alone; together they are
 - `src/libs/kt-model` — the event gain range constant.
 - Catalogs `i18n/*.toml`: the new hints and the command name; the two row captions go.
 - `docs/guide/shortcuts.md`: Space hold, Ctrl+Space, ← / →, Ctrl+click Back/Forward.
-- Tests t1030–t1047: `layout_tests.rs`, `reach_tests.rs`, `kt-engine` tests; live scenarios for the
+- Tests t1620–t1637: `layout_tests.rs`, `reach_tests.rs`, `kt-engine` tests; live scenarios for the
   gestures.
 - No format change: the gain range is a value range of an existing field, and a freeze is an existing
   rate 0.

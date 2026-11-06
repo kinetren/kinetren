@@ -367,6 +367,34 @@ ceiling; it now uses the shared body.
   by value (the `[lang]` endonym excepted), and committed fixtures as text with a declared list of Cyrillic
   test data and a reason per entry. The `.desktop`/MIME files are checked against `ru.toml` by t930.
 
+## The timeline stops fighting the hand (r72-timeline-transport-defects, archived 2026-11-06)
+
+- **One order of gestures, `event_zone`:** fades in the top strip, trims, level, body. The level used to
+  be tested before the trims at a fixed ±5 px, which on a low row covered a third of it, corners
+  included. Its grab now follows the row, and below 40 px of row or 61 px of width there is no level
+  gesture, only the menu's number field. That takes back what R.40 item 12 asked of a 20 px event; the
+  owner's later word (U5.3) decides, and t278 and the live `level` say so.
+- **Gain to silence:** the upper half of the line stays the v1 rail, the lower half is a square law to
+  −60 dB, and the last 2 % of the travel is mute. The square, not linear dB: linear gave the audible first
+  12 dB a fifth of the travel. The floor is ×0, not −60 dB, and a nested piece adds up with
+  `add_event_gain`, or a muted instance would come back by 6 dB.
+- **The chip takes its room from the name**, which is elided only when a chip is shown: a chip that
+  falls off a long name would say nothing.
+- **A marker's end leaves its own old place out of the magnet BY VALUE**: a marker made over the region
+  lies on the region's end, so leaving out "the marker's edges" still snapped it back.
+- **Vertical zoom rebuilds the row tops at the new height.** The product of row index and height is
+  the "single division" this file forbids, and `scroll_max` now comes from the real heights too.
+- **A click in a jump zone jumps over anything** without touching the selection (rule 5: a jump
+  must not destroy a multi-selection), unless Ctrl or Shift is held. With the project's start on screen
+  the left zone stands down: otherwise the first eighth of a fresh project could not be clicked.
+- **The left zone was not lost by rect:** a click beside the header always jumped. Its gradient has run
+  under the header since item 20 of round 6 while clicks there did nothing, and R.62 grew the header
+  from 34 to 62 px. So the header's free part became the hot end. A double click there stays the rename
+  and gives the view back: the same undo as the triple click on an event, not a delay on every jump.
+- **`if … && let Some(X) = self.drag.take()` consumes the drag whatever X is.** The height drag's release
+  did that since R.38, so a track reorder died with no symptom but "nothing happens". The proposal
+  called the gesture working: nothing had ever tested it. One release, one `match` (t1637).
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry

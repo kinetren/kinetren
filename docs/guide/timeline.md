@@ -26,7 +26,7 @@ change its height, right-click the edge to reset it. **Shift+wheel** scrolls tra
 | triple-click | region over this event and its linked partners (also **Shift+double-click**) |
 | right-click | the event menu: split, reverse, fades, transitions, sync, link/unlink… |
 | drag a top corner | fade in or out at that edge |
-| drag the level line | video opacity or audio gain (double-click resets it) |
+| drag the level line | video opacity or audio gain down to mute (double-click resets it); a level other than the default is written after the event's name |
 
 Linked audio and video move together. The filmstrip and the waveform always show the
 material that actually plays — slowed, reversed or warped.

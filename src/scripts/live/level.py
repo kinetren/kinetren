@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
-"""Live scenario R.40 item 12: opacity on a SMALL event.
+"""Live scenario R.40 item 12 and U5.3 of R.72: the level line and the size of an event.
 
-Complaint verbatim: “item 12, it feels not done - on a small event I
-try to catch the opacity there but it does not work”.
+R.40, verbatim: “on a small event I try to catch the opacity there but it does not work”.
+R.72 U5.3, a later word: “at a small zoom do not offer changing opacity/gain at once, I wanted
+to move events so many times, and the volume change keeps triggering”.
 
-There were two locks, and both are visible only in the window: the level zone required a width
-greater than 24 px, and the fade handles were caught within ±12 px of each corner — on
-an event of 20 px they covered all of it, and the middle, where the level line lives,
-was left without a single pixel.
-
-Here a real mouse drags the line on an event ~20 px wide, and the consequence
-is checked by what reached the project file.
+So on an event ~20 px wide the middle moves the event and the opacity stays, and the
+menu's number field reaches it; on a wide event the real mouse drags the line. The
+consequence is checked by what reached the project file.
 """
 import os
 import sys
@@ -57,21 +54,25 @@ def main(out):
         ly = top + 3.0
         mid_x = (x0 + x1) * 0.5
 
-        app.drag(mid_x, ly, mid_x, ly + lane_h * 0.45)
+        # the narrow event: a press on the line is not the level
+        app.drag(mid_x, ly + 6.0, mid_x + 40.0, ly + 6.0)
         saved = app.saved_project()
-        # the opacity lies in metadata.kt of the clip ITSELF in the .otio, not in the
-        # root kt section
         op = clip_kt(saved, 0).get("opacity", 1.0)
-        app.expect(
-            op < 0.95,
-            f"the level line of a short event must stretch, and the opacity {op}",
-        )
+        app.expect(op == 1.0, f"a narrow event has no level gesture, and the opacity {op}")
+        app.shot("narrow-moved")
+
+        # the wide neighbour: the line is the level
+        wide = app.project_now().clips[1]
+        x = (app.x_at(wide.start) + app.x_at(wide.end)) * 0.5
+        app.drag(x, ly, x, ly + lane_h * 0.45)
+        saved = app.saved_project()
+        op2 = clip_kt(saved, 1).get("opacity", 1.0)
+        app.expect(op2 < 0.95, f"the level line of a wide event must stretch, and the opacity {op2}")
         app.shot("level-dragged")
 
-        # the neighbouring LONG event is untouched: the gesture adjusts exactly what was
-        # dragged (rule 20 “nothing grows or switches off by itself”)
-        op2 = clip_kt(saved, 1).get("opacity", 1.0)
-        app.expect(op2 == 1.0, f"the neighboring event is untouched, and its {op2}")
+        # rule 20 “nothing grows or switches off by itself”: the other event is untouched
+        op = clip_kt(saved, 0).get("opacity", 1.0)
+        app.expect(op == 1.0, f"the neighboring event is untouched, and its {op}")
         return app.done()
 
 

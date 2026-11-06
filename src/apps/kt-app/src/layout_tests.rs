@@ -1415,7 +1415,7 @@ fn t120_space_hold_boosts_playback() {
     // --- hold: the speed grows, the transport does NOT toggle
     h.key_down(egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(260));
+    std::thread::sleep(std::time::Duration::from_millis(330));
     for _ in 0..60 {
         h.step();
     }
@@ -1433,7 +1433,10 @@ fn t120_space_hold_boosts_playback() {
         "the speed bar shows not the boost: {shown}"
     );
     h.key_up(egui::Key::Space);
-    h.step();
+    // the release decays (USABILITY 3, R.72): the base is reached, not jumped to
+    for _ in 0..20 {
+        h.step();
+    }
     assert!(
         (h.state().player.playback_rate() - 1.0).abs() < 0.01,
         "after release the speed did not return: {}",
@@ -1450,14 +1453,16 @@ fn t120_space_hold_boosts_playback() {
     h.state_mut().player.set_playback_rate(-1.0);
     h.key_down(egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(260));
+    std::thread::sleep(std::time::Duration::from_millis(330));
     for _ in 0..40 {
         h.step();
     }
     let rev = h.state().player.playback_rate();
     assert!(rev < -1.5, "the boost in reverse lost its sign/speed: {rev}");
     h.key_up(egui::Key::Space);
-    h.step();
+    for _ in 0..20 {
+        h.step();
+    }
     h.state_mut().base_rate = 1.0;
     h.state_mut().player.set_playback_rate(1.0);
 
@@ -3139,7 +3144,8 @@ fn t176_audio_and_video_share_one_level_line() {
     // the rail range of v1 is kept exactly
     assert!((gain_to_level(0.0) - 0.5).abs() < 1e-6, "0 dB — the middle");
     assert!((level_to_gain(1.0) - RAIL_DB_SPAN / 2.0).abs() < 1e-4, "top — +6.02 dB");
-    assert!((level_to_gain(0.0) + RAIL_DB_SPAN / 2.0).abs() < 1e-4, "bottom — −6.02 dB");
+    // the owner's revision of the v1 rail (USABILITY 6, R.72): the bottom is silence
+    assert_eq!(level_to_gain(0.0), kt_model::EVENT_GAIN_FLOOR_DB, "bottom — mute");
     for db in [-6.0f32, -3.0, 0.0, 2.5, 6.0] {
         assert!((level_to_gain(gain_to_level(db)) - db).abs() < 1e-3, "circle over {db} dB");
     }
@@ -4960,6 +4966,10 @@ fn t392_double_click_on_level_rail_resets_level() {
         p.clips[0].opacity = 0.35;
         app.model = kt_model::TimelineModel::new(p);
     }
+    h.step();
+    // wide enough for three zones (U5.3): at 1000 ticks per pixel the event is 50 px
+    h.state_mut().ticks_per_px = 300.0;
+    h.step();
     h.step();
     let g = h.state().tl_geom.clone().unwrap_or(g);
 
@@ -8486,22 +8496,30 @@ fn t278_opacity_reachable_on_a_short_event() {
          that is exactly why the first grab did not succeed"
     );
 
-    // and the gesture carries it through to the model
-    let from = egui::pos2(mid_x, ly);
+    // Since U5.3 (R.72, "at a small zoom do not offer gain/opacity at once") an event this
+    // narrow has no level GESTURE: the press in its middle is a move, and the opacity stays. The
+    // reach of the first version of this test now lives in the menu's number field, which
+    // R.40 added as the second path.
+    let from = egui::pos2(mid_x, ly + 4.0);
     h.hover_at(from);
     h.step();
     h.drag_at(from);
     h.step();
-    h.hover_at(egui::pos2(mid_x, ly + 8.0));
+    h.hover_at(egui::pos2(mid_x + 8.0, ly + 4.0));
     h.step();
-    h.hover_at(egui::pos2(mid_x, ly + lane_h * 0.4));
+    h.hover_at(egui::pos2(mid_x + 40.0, ly + 4.0));
     h.step();
-    h.drop_at(egui::pos2(mid_x, ly + lane_h * 0.4));
+    h.drop_at(egui::pos2(mid_x + 40.0, ly + 4.0));
     h.step();
-    let after = h.state().model.project().clips.iter().find(|z| z.id == id).unwrap().opacity;
+    let moved = h.state().model.project().clips.iter().find(|z| z.id == id).unwrap().clone();
+    assert_eq!(moved.opacity, 1.0, "a move on a narrow event changed its opacity");
+    assert!(moved.start.0 > c.start.0, "the middle of a narrow event must move it");
+    let g = h.state().tl_geom.clone().unwrap();
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(moved.start.0 + moved.duration.0 / 2), top + lane_h * 0.5));
+    let level = crate::i18n::tr(crate::i18n::k::tl::menu::LEVEL);
     assert!(
-        after < 0.95,
-        "the level line was dragged down — the opacity must drop, but it is {after}"
+        crate::reach_tests::painted_texts(&h).iter().any(|t| t.src == level),
+        "the menu's number field must still reach the opacity of a narrow event"
     );
 }
 
@@ -11702,7 +11720,7 @@ fn t629_space_boost_from_small_base() {
     h.step();
     h.key_down(egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(260));
+    std::thread::sleep(std::time::Duration::from_millis(330));
     // RIGHT after the start of the ramp: what the multiplier shows and what plays
     // must match. The former ABSOLUTE threshold of 0.02 held the player at
     // 0.05 until the multiplier grew to 1.4 — the program played as it stood,
@@ -11736,7 +11754,9 @@ fn t629_space_boost_from_small_base() {
         "speed strip does not show acceleration from a small base: {shown}"
     );
     h.key_up(egui::Key::Space);
-    h.step();
+    for _ in 0..20 {
+        h.step();
+    }
     assert!(
         (h.state().player.playback_rate() - 0.05).abs() < 1e-4,
         "after release, speed did not return to the small base: {}",
@@ -19116,6 +19136,10 @@ fn t928_triple_click_on_a_reel_and_on_the_level_line() {
     h.step();
     set_region(&mut h, 0, 40_000);
     let region = h.state().model.project().region;
+    // wide enough for three zones (U5.3)
+    h.state_mut().ticks_per_px = 300.0;
+    h.step();
+    h.step();
     let g = h.state().tl_geom.clone().expect("geometry");
     let line_y = crate::timeline::level_y(
         crate::timeline::gain_to_level(-6.0),
@@ -19786,4 +19810,861 @@ fn t1414_search_window_shows_its_finds() {
         rows.iter().any(|r| win.contains_rect(*r)),
         "no find lies inside the search window {win:?}: the finds {rows:?} are clipped below it"
     );
+}
+
+/// A project with one long audio event for the transport tests of R.72: the render thread
+/// runs the head only over something to play, and a test feeds the callback's count itself.
+#[cfg(test)]
+fn r72_transport_scene() -> Harness<'static, KtApp> {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+        let mut c = sample_clip(ClipId(1));
+        c.kind = ClipKind::Audio;
+        c.lane = 0;
+        c.start = Tick(0);
+        c.duration = Tick(90_000 * 60);
+        c.media = MediaId(1);
+        p.clips.push(c);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    h
+}
+
+/// Feeds the head as the output callback would and waits for the render thread to take it.
+#[cfg(test)]
+fn r72_feed_head(h: &mut Harness<'static, KtApp>, frames: u64) {
+    use std::sync::atomic::Ordering;
+    let shared = h.state().player.shared.clone();
+    for _ in 0..4 {
+        let before = h.state().player.transport.playhead_frames();
+        shared.consumed_frames.fetch_add(frames as _, Ordering::AcqRel);
+        let t0 = std::time::Instant::now();
+        while h.state().player.transport.playhead_frames() == before
+            && t0.elapsed() < std::time::Duration::from_secs(2)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        h.step();
+    }
+}
+
+/// USABILITY 2–4 keep R.16: "don't break the functions of the double and single press".
+/// A short press still toggles and stays; a quick second press stops at the region start, at
+/// the project start without a region. Holds below the threshold are taps.
+#[test]
+fn t1620_short_and_double_press_keep_their_meaning() {
+    use kt_model::Region;
+    use kt_time::Tick;
+    let mut h = r72_transport_scene();
+    h.state().player.seek(Tick(900_000));
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "scene: must start paused");
+    h.key_down(egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    h.key_up(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "a short press from pause did not play");
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "a short press must KEEP playing");
+
+    // twice quickly, no region: the project start
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the first of the two did not pause");
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), Tick(0), "double press without a region");
+
+    // with a region: its start
+    h.state_mut().model.set_region(Region::normalized(Tick(90_000), Tick(180_000)));
+    h.state().player.seek(Tick(120_000));
+    h.state_mut().on_transport_toggle();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "scene: must play");
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), Tick(90_000), "double press with a region");
+}
+
+/// USABILITY 4: "if I began holding space (and ctrl+space) outside playback, releasing the
+/// space stops playback. Now playback continues whatever I do, even if I pressed space on a
+/// pause." The picture plays only while held, the head stays where it got to, and Ctrl runs
+/// it backward. The following tap is a plain play, not the double-press stop.
+#[test]
+fn t1621_hold_from_pause_plays_only_while_held() {
+    use kt_time::Tick;
+    let mut h = r72_transport_scene();
+    let start = Tick(900_000);
+    h.state().player.seek(start);
+    h.step();
+
+    h.key_down(egui::Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "nothing may start before the threshold");
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "past the threshold the hold must play");
+    r72_feed_head(&mut h, 4_800);
+    for _ in 0..8 {
+        h.step();
+    }
+    assert!(h.state().player.playback_rate() > 1.0, "the hold from pause must boost");
+    let reached = h.state().player.transport.playhead();
+    assert!(reached > start, "the head did not run: {reached:?}");
+    h.key_up(egui::Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the release must pause");
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the temporary speed stayed");
+    assert!(h.state().space_boost.is_none(), "a pause cannot keep a decay running");
+    let stopped = h.state().player.transport.playhead();
+    assert!(stopped >= reached, "the release must not return to the start: {stopped:?}");
+
+    // the same with Ctrl: backward, and stops likewise
+    h.key_down_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "past the threshold Ctrl+hold must play");
+    assert!(h.state().player.playback_rate() < 0.0, "Ctrl+hold must play in reverse");
+    r72_feed_head(&mut h, 4_800);
+    let back = h.state().player.transport.playhead();
+    assert!(back < stopped, "the head must run BACKWARD: {back:?} after {stopped:?}");
+    h.key_up_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the release of Ctrl+hold must pause");
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the sign must come back to the base");
+
+    // right after the release a tap plays: a hold does not arm the double-press stop
+    let at = h.state().player.transport.playhead();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "the tap after a hold must play");
+    assert_ne!(h.state().player.transport.playhead(), Tick(0), "the tap after a hold must not stop");
+    assert!(h.state().player.transport.playhead() >= at - Tick(100));
+}
+
+/// USABILITY 2: "if I hold Ctrl+space we rewind in reverse". During playback the release
+/// returns straight to the forward base: a smooth way through zero would pass a freeze.
+#[test]
+fn t1622_ctrl_space_reverses_while_held_during_playback() {
+    let mut h = r72_transport_scene();
+    h.state_mut().on_play();
+    h.step();
+    assert_eq!(h.state().player.playback_rate(), 1.0);
+    h.key_down_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    h.step();
+    let first = h.state().player.playback_rate();
+    assert!(first <= -1.0 + 1e-3, "Ctrl+hold during playback must reverse: {first}");
+    for _ in 0..12 {
+        h.step();
+    }
+    let later = h.state().player.playback_rate();
+    assert!(later < first, "the reverse must grow in modulus: {later} after {first}");
+    let shown = h.state().speed_temp_slider().expect("the temporary speed is not shown");
+    assert!(shown < 0.0, "the speed strip must show a negative speed: {shown}");
+    // letting Ctrl go first changes nothing: the modifier is the press's
+    h.key_up_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
+    h.step();
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the release must return to +base at once");
+    assert!(h.state().player.transport.is_playing(), "the release during playback keeps playing");
+    assert!(h.state().speed_temp_slider().is_none(), "the temporary speed stayed on the strip");
+}
+
+/// USABILITY 3: "not abruptly but smoothly, and the reset must be faster than the build-up".
+/// Every bad dt of "Numerical stability" is run: no step passes the ceiling or the base.
+#[test]
+fn t1623_boost_eases_in_and_decays_faster() {
+    use crate::app::{KtApp, SPACE_BOOST_MAX, SPACE_BOOST_SECS};
+    for dt in [1.0f32 / 60.0, 1.0 / 30.0, 0.1] {
+        let n = (SPACE_BOOST_SECS / dt).round() as i32;
+        let (mut b, mut held, mut trace) = (1.0f32, 0.0f32, vec![1.0f32]);
+        for _ in 0..n {
+            held += dt;
+            b = KtApp::space_boost_eased(b, dt, held);
+            assert!((1.0..=SPACE_BOOST_MAX + 1e-4).contains(&b), "dt={dt}: left the bounds: {b}");
+            trace.push(b);
+        }
+        assert!(b > SPACE_BOOST_MAX * 0.9, "dt={dt}: the ceiling of R.17 is not reached: {b}");
+        let steps: Vec<f32> = trace.windows(2).map(|w| w[1] - w[0]).collect();
+        let first = steps.iter().copied().find(|d| *d > 0.0).expect("the speed never rose");
+        let peak = steps.iter().copied().fold(0.0f32, f32::max);
+        assert!(first < peak * 0.5, "dt={dt}: no ease-in: first step {first}, peak {peak}");
+        // the old exponential rose by more in its very first step
+        let old = KtApp::space_boost_step(1.0, dt) - 1.0;
+        assert!(first < old, "dt={dt}: the start is as sharp as before: {first} vs {old}");
+
+        // how long the rise took to get as far from the base as the fall must cover
+        let goal = 1.0 + (b - 1.0) * 0.98;
+        let rise_t = trace.iter().position(|v| *v >= goal).map_or(SPACE_BOOST_SECS, |i| i as f32 * dt);
+        let (mut d, mut t) = (b, 0.0f32);
+        while d - 1.0 > (b - 1.0) * 0.02 {
+            let next = KtApp::space_decay_step(d, dt);
+            assert!(next < d && next >= 1.0, "dt={dt}: the fall jumped: {d} → {next}");
+            d = next;
+            t += dt;
+            assert!(t < 30.0, "dt={dt}: the fall does not converge");
+        }
+        assert!(t < rise_t, "dt={dt}: the fall took {t} s, the rise {rise_t} s");
+        let step_one = b - KtApp::space_decay_step(b, dt);
+        assert!(step_one < b - 1.0, "dt={dt}: the release is a jump");
+    }
+    // a harness release: the speed comes down through values between, not in one frame
+    let mut h = r72_transport_scene();
+    h.state_mut().on_play();
+    h.step();
+    h.key_down(egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(330));
+    for _ in 0..24 {
+        h.step();
+    }
+    let top = h.state().player.playback_rate();
+    assert!(top > 1.3, "scene: the boost did not build up: {top}");
+    h.key_up(egui::Key::Space);
+    h.step();
+    let after = h.state().player.playback_rate();
+    assert!(after > 1.01 && after < top, "the release must fall, not jump: {after} from {top}");
+    for _ in 0..24 {
+        h.step();
+    }
+    assert_eq!(h.state().player.playback_rate(), 1.0, "the fall must end exactly at the base");
+    assert!(h.state().space_boost.is_none(), "the fall left a repaint running");
+    assert!(h.state().player.transport.is_playing(), "the fall must not stop playback");
+}
+
+/// A view for the timeline tests of R.72: 100 px per second, starting at `start_s`.
+#[cfg(test)]
+fn r72_view(h: &mut Harness<'static, KtApp>, start_s: f64) {
+    let app = h.state_mut();
+    app.ticks_per_px = 900.0;
+    app.view_start = start_s * 90_000.0;
+    app.follow_playhead = false;
+    h.step();
+    h.step();
+}
+
+#[cfg(test)]
+fn r72_event(id: u64, kind: kt_model::ClipKind, lane: u32, start_s: i64, secs: i64) -> kt_model::ClipEvent {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut c = sample_clip(ClipId(id));
+    c.kind = kind;
+    c.lane = lane;
+    c.start = Tick(90_000 * start_s);
+    c.duration = Tick(90_000 * secs);
+    c.media = MediaId(1);
+    c
+}
+
+#[cfg(test)]
+fn r72_scene(lang: crate::i18n::Lang, dt: Option<f32>, clips: Vec<kt_model::ClipEvent>) -> Harness<'static, KtApp> {
+    use kt_model::*;
+    let mut h = harness_lang_dt(lang, dt);
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+        p.clips.extend(clips);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    h
+}
+
+/// T11: "Ctrl instead of Shift? Or just arrows, if that is how other editors do it?". One body
+/// for the arrows and for Ctrl+click on Back/Forward, on aligned frames, and from playback.
+#[test]
+fn t1624_arrows_and_ctrl_click_step_one_frame() {
+    use egui_kittest::kittest::Queryable;
+    use kt_time::Tick;
+    let mut h = r72_scene(crate::i18n::Lang::En, None, vec![r72_event(1, kt_model::ClipKind::Video, 0, 0, 60)]);
+    let step = h.state().player.video_grid().frame_step();
+    let frame = |n: i64| Tick(n * step);
+    h.state().player.seek(frame(100));
+    h.step();
+    for _ in 0..3 {
+        h.key_press(egui::Key::ArrowRight);
+        h.step();
+    }
+    h.key_press(egui::Key::ArrowLeft);
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), frame(102), "→ → → ← is not +2 frames");
+
+    // a head between two frames: back lands on the frame it is in, forward on the next
+    h.state().player.seek(Tick(frame(50).0 + step / 2 + (step / 2) % 15));
+    h.step();
+    h.key_press(egui::Key::ArrowLeft);
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), frame(50), "← from between frames");
+    h.state().player.seek(frame(102));
+    h.step();
+
+    // Ctrl+click on the toolbar button: the same step, not a jump to a stop point
+    let fwd = h.get_by_label(crate::icons::SKIP_FWD).rect().center();
+    h.hover_at(fwd);
+    h.step();
+    for pressed in [true, false] {
+        h.event_modifiers(
+            egui::Event::PointerButton {
+                pos: fwd,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::CTRL,
+            },
+            egui::Modifiers::CTRL,
+        );
+        h.step();
+    }
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), frame(103), "Ctrl+click on Forward");
+
+    // during playback the first press pauses, then steps
+    h.state_mut().on_play();
+    h.step();
+    h.key_press(egui::Key::ArrowRight);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "→ during playback must pause");
+    assert_eq!(h.state().player.transport.playhead(), frame(104), "and step from where it stopped");
+
+    // a text field keeps its arrows, and the step works again after it closes (rule 14)
+    h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::L);
+    h.step();
+    h.step();
+    h.key_press(egui::Key::ArrowRight);
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), frame(104), "the arrow left the text field");
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    h.key_press(egui::Key::ArrowRight);
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), frame(105), "the arrow died after the field");
+}
+
+/// M5: one episode, one line in the bell, with its place; the counter of the panel stays.
+#[test]
+fn t1626_a_stall_reaches_the_bell_once() {
+    use crate::app::Severity;
+    use kt_engine::flight::Ev;
+    let mut h = r72_transport_scene();
+    let lines = |h: &Harness<'static, KtApp>| -> Vec<String> {
+        h.state()
+            .notices
+            .iter()
+            .filter(|n| n.severity == Severity::Warn)
+            .map(|n| n.text.clone())
+            .collect()
+    };
+    let before = lines(&h).len();
+    h.state().player.flight.push(Ev::Stall, 1_200, 48_000 * 62);
+    for _ in 0..4 {
+        h.step();
+    }
+    let after = lines(&h);
+    assert_eq!(after.len(), before + 1, "one episode must give one notice: {after:?}");
+    assert!(after.last().unwrap().contains("01:02"), "the notice must say where: {after:?}");
+    h.state().player.flight.push(Ev::Stall, 1_200, 48_000 * 90);
+    h.step();
+    assert_eq!(lines(&h).len(), before + 2, "the next episode is the next notice");
+}
+
+/// USABILITY 5.1: "the lower corner … must be only a horizontal length drag". The pure order.
+#[test]
+fn t1628_bottom_corner_is_a_trim() {
+    use crate::timeline::{ClipZone, EventBox, event_zone, gain_to_level, level_y};
+    use kt_model::ClipKind;
+    let e = |row_h: f32, w: f32, level: f32| EventBox {
+        x0: 100.0,
+        x1: 100.0 + w,
+        top: 50.0,
+        row_h,
+        level,
+        hx_l: 100.0,
+        hx_r: 100.0 + w,
+    };
+    // the line lies low: it ran through the corner, and the corner was the level
+    let b = e(84.0, 300.0, gain_to_level(-40.0));
+    let y = level_y(b.level, b.top, b.row_h);
+    assert_eq!(event_zone(&b, egui::pos2(b.x1 - 2.0, y)), ClipZone::TrimEnd);
+    assert_eq!(event_zone(&b, egui::pos2(b.x0 + 2.0, y)), ClipZone::TrimStart);
+    assert_eq!(event_zone(&b, egui::pos2(250.0, y)), ClipZone::Level, "the middle stays the level");
+    assert_eq!(event_zone(&b, egui::pos2(b.x1 - 1.0, b.top + 1.0)), ClipZone::FadeRight);
+
+    // gesture: pressed 2 px inside the right bottom corner of a −6 dB event
+    let mut c = r72_event(1, ClipKind::Audio, 0, 5, 10);
+    c.gain_db = -6.0;
+    let mut h = r72_scene(crate::i18n::Lang::En, None, vec![c]);
+    h.state_mut().tl_v_zoom = Some(84.0);
+    r72_view(&mut h, 3.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let (top, lh) = (g.lane_top(ClipKind::Audio, 0), g.lane_h_of(ClipKind::Audio, 0));
+    let x1 = g.tick_to_x(15 * 90_000);
+    let from = egui::pos2(x1 - 2.0, top + lh - 6.0);
+    drag_clip(&mut h, from, from + egui::vec2(-120.0, 0.0));
+    let c = h.state().model.clip(kt_model::ClipId(1)).unwrap().clone();
+    assert!(c.duration.0 < 10 * 90_000, "the bottom corner did not change the length");
+    assert_eq!(c.gain_db, -6.0, "the bottom corner changed the gain");
+}
+
+/// USABILITY 5.2–5.3: "at a small zoom do not offer changing opacity/gain at once". On a low
+/// row the line moves the event; on a big event it is still the level.
+#[test]
+fn t1629_low_row_has_no_level_gesture() {
+    use crate::timeline::{ClipZone, EventBox, LEVEL_MIN_ROW_PX, LEVEL_MIN_W_PX, event_zone, gain_to_level, level_grab, level_y};
+    use kt_model::ClipKind;
+    assert!(level_grab(84.0) > level_grab(40.0), "the grab must follow the row");
+    assert!(level_grab(84.0) <= 6.0 && level_grab(16.0) >= 3.0);
+    let probe = |row_h: f32, w: f32| {
+        let b = EventBox { x0: 0.0, x1: w, top: 0.0, row_h, level: 0.5, hx_l: 0.0, hx_r: w };
+        event_zone(&b, egui::pos2(w / 2.0, level_y(0.5, 0.0, row_h)))
+    };
+    assert_eq!(probe(LEVEL_MIN_ROW_PX, LEVEL_MIN_W_PX), ClipZone::Level);
+    assert_eq!(probe(LEVEL_MIN_ROW_PX - 1.0, 300.0), ClipZone::Body, "a low row has no level");
+    assert_eq!(probe(84.0, LEVEL_MIN_W_PX - 1.0), ClipZone::Body, "a narrow event has no level");
+
+    let mut c = r72_event(1, ClipKind::Audio, 0, 5, 10);
+    c.gain_db = -6.0;
+    let mut h = r72_scene(crate::i18n::Lang::En, None, vec![c]);
+    h.state_mut().tl_v_zoom = Some(24.0);
+    r72_view(&mut h, 0.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let (top, lh) = (g.lane_top(ClipKind::Audio, 0), g.lane_h_of(ClipKind::Audio, 0));
+    assert!(lh < LEVEL_MIN_ROW_PX, "scene: the row is {lh} px");
+    let x = g.tick_to_x(10 * 90_000);
+    let from = egui::pos2(x, level_y(gain_to_level(-6.0), top, lh));
+    h.hover_at(from);
+    h.step();
+    h.step();
+    assert_eq!(cursor(&h), egui::CursorIcon::Grab, "the hover must name the move");
+    assert_eq!(
+        h.state().hover_hint.as_deref(),
+        Some(crate::i18n::tr(crate::i18n::k::tl::hint::CLIP_NO_LEVEL)),
+        "the hint must say where the level went"
+    );
+    drag_clip(&mut h, from, from + egui::vec2(120.0, 0.0));
+    let c = h.state().model.clip(kt_model::ClipId(1)).unwrap().clone();
+    assert!(c.start.0 > 5 * 90_000, "the low row did not move the event");
+    assert_eq!(c.gain_db, -6.0, "moving an event changed its gain");
+
+    // zoomed in the line is the level again
+    h.state_mut().tl_v_zoom = Some(84.0);
+    r72_view(&mut h, 0.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let (top, lh) = (g.lane_top(ClipKind::Audio, 0), g.lane_h_of(ClipKind::Audio, 0));
+    let x = g.tick_to_x(c.start.0 + 5 * 90_000);
+    let from = egui::pos2(x, level_y(gain_to_level(-6.0), top, lh));
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(from + egui::vec2(0.0, -8.0));
+    h.step();
+    h.hover_at(from + egui::vec2(0.0, -14.0));
+    h.step();
+    h.drop_at(from + egui::vec2(0.0, -14.0));
+    h.step();
+    let after = h.state().model.clip(kt_model::ClipId(1)).unwrap().clone();
+    assert!(after.gain_db > -6.0, "the level line did not change the gain: {}", after.gain_db);
+    assert_eq!(after.start, c.start, "the level drag moved the event");
+}
+
+/// USABILITY 6: "let the gain go down to mute … show on the event what gain/opacity is set, as
+/// a separate cube after the source name".
+#[test]
+fn t1630_gain_to_mute_and_the_chip() {
+    use crate::i18n::Lang;
+    use crate::timeline::{RAIL_DB_SPAN, gain_to_level, level_chip, level_to_gain, level_y};
+    use kt_model::{ClipKind, Command, EVENT_GAIN_FLOOR_DB};
+    // the upper half is the v1 rail, bit for bit; the lower half round-trips
+    for db in [0.0f32, 1.5, 3.0, 6.0] {
+        assert_eq!(gain_to_level(db), 0.5 + db / RAIL_DB_SPAN, "the upper half moved at {db}");
+    }
+    for db in [-0.5f32, -6.0, -12.0, -24.0, -59.0] {
+        assert!((level_to_gain(gain_to_level(db)) - db).abs() < 1e-2, "round trip at {db}");
+    }
+    assert_eq!(level_to_gain(0.02), EVENT_GAIN_FLOOR_DB, "the last 2 % of the travel is mute");
+    assert_eq!(gain_to_level(EVENT_GAIN_FLOOR_DB), 0.0);
+    assert!(gain_to_level(-6.0) > 0.25, "the audible decibels must keep most of the travel");
+
+    crate::i18n::set_lang(Lang::En);
+    assert_eq!(level_chip(ClipKind::Audio, 0.0, 1.0), None, "zero is not written");
+    assert_eq!(level_chip(ClipKind::Audio, -12.0, 1.0).as_deref(), Some("−12 dB"));
+    assert_eq!(level_chip(ClipKind::Audio, 3.5, 1.0).as_deref(), Some("+3.5 dB"));
+    assert_eq!(level_chip(ClipKind::Audio, EVENT_GAIN_FLOOR_DB, 1.0).as_deref(), Some("mute"));
+    assert_eq!(level_chip(ClipKind::Video, 0.0, 0.4).as_deref(), Some("40 %"));
+    assert_eq!(level_chip(ClipKind::Video, 0.0, 1.0), None);
+
+    // the gesture: all the way down
+    let a = r72_event(1, ClipKind::Audio, 0, 5, 10);
+    let v = r72_event(2, ClipKind::Video, 0, 5, 10);
+    let mut h = r72_scene(Lang::En, Some(0.02), vec![a, v]);
+    h.state_mut().tl_v_zoom = Some(84.0);
+    r72_view(&mut h, 0.0);
+    let chips = |h: &Harness<'static, KtApp>, t: &str| {
+        crate::reach_tests::painted_texts(h).iter().any(|p| p.src == t)
+    };
+    assert!(!chips(&h, "mute"), "a chip at the default");
+    let g = h.state().tl_geom.clone().unwrap();
+    let (top, lh) = (g.lane_top(ClipKind::Audio, 0), g.lane_h_of(ClipKind::Audio, 0));
+    let x = g.tick_to_x(10 * 90_000);
+    let from = egui::pos2(x, level_y(0.5, top, lh));
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(from + egui::vec2(0.0, 8.0));
+    h.step();
+    let bottom = egui::pos2(x, top + lh - 3.0);
+    h.hover_at(bottom);
+    h.step();
+    h.drop_at(bottom);
+    h.step();
+    h.step();
+    let gain = h.state().model.clip(kt_model::ClipId(1)).unwrap().gain_db;
+    assert_eq!(gain, EVENT_GAIN_FLOOR_DB, "the bottom of the line is mute");
+    assert!(chips(&h, "mute"), "the event does not say mute");
+    // the menu's number field says the same word, not "−60 dB"
+    right_click_at(&mut h, egui::pos2(x, top + lh * 0.5));
+    let n = crate::reach_tests::painted_texts(&h).iter().filter(|p| p.src == "mute").count();
+    assert_eq!(n, 2, "the chip and the field must both read mute");
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+
+    h.state_mut().apply(Command::SetOpacity { id: kt_model::ClipId(2), opacity: 0.4 });
+    h.step();
+    h.step();
+    assert!(chips(&h, "40 %"), "the video event does not say its opacity");
+
+    // the reset: both chips go
+    h.state_mut().apply(Command::SetGain { id: kt_model::ClipId(1), gain_db: 0.0 });
+    h.state_mut().apply(Command::SetOpacity { id: kt_model::ClipId(2), opacity: 1.0 });
+    h.step();
+    h.step();
+    assert!(!chips(&h, "mute") && !chips(&h, "40 %"), "the chip stayed after the reset");
+}
+
+/// U7: "something is wrong with the second marker … the end of the range marker". A marker over
+/// the region lies on the region's end: its end snapped back there.
+#[test]
+fn t1632_range_marker_end_moves_and_does_not_snap_to_itself() {
+    use crate::i18n::{Lang, k, tr};
+    use kt_model::*;
+    use kt_time::Tick;
+    const SEC: i64 = 90_000;
+    let mut h = r72_scene(Lang::En, None, vec![]);
+    h.state_mut().model.set_region(Region::normalized(Tick(2 * SEC), Tick(6 * SEC)));
+    h.state_mut().apply(Command::AddMarker { at: Tick(2 * SEC), duration: Tick(4 * SEC) });
+    h.state().player.seek(Tick(0));
+    r72_view(&mut h, 0.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let y = g.rect.top() + 4.0;
+    let end = egui::pos2(g.tick_to_x(6 * SEC), y);
+    h.hover_at(end);
+    h.step();
+    h.step();
+    assert_eq!(cursor(&h), egui::CursorIcon::ResizeHorizontal);
+    assert_eq!(h.state().hover_hint.as_deref(), Some(tr(k::tl::hint::MARKER_END)), "the hover names it");
+
+    // a short way: 6 px is inside the magnet, and it held the end on its own old place
+    let near = end + egui::vec2(6.0, 0.0);
+    h.drag_at(end);
+    h.step();
+    h.hover_at(end + egui::vec2(9.0, 0.0));
+    h.step();
+    h.hover_at(near);
+    h.step();
+    h.hover_at(near);
+    h.step();
+    h.drop_at(near);
+    h.step();
+    let m = h.state().model.project().markers[0].clone();
+    assert!(m.end().0 > 6 * SEC, "the end snapped back to its own place: {:?}", m.end());
+
+    let from = egui::pos2(g.tick_to_x(m.end().0), y);
+    let to = egui::pos2(g.tick_to_x(7 * SEC), y);
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(from + egui::vec2(8.0, 0.0));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+    let m = h.state().model.project().markers[0].clone();
+    assert!((m.end().0 - 7 * SEC).abs() <= 1_000, "the range must reach 7 s: {:?}", m.end());
+    assert_eq!(m.t, Tick(2 * SEC), "the start moved");
+    let r = h.state().model.project().region.unwrap();
+    assert_eq!((r.start, r.end), (Tick(2 * SEC), Tick(6 * SEC)), "the region must not change");
+}
+
+/// A timeline taller than its window: morph, camera and clip rows of different heights.
+#[cfg(test)]
+fn r72_many_rows() -> Harness<'static, KtApp> {
+    use kt_model::LaneKind;
+    let mut h = r72_scene(crate::i18n::Lang::En, None, vec![r72_event(1, kt_model::ClipKind::Video, 0, 5, 10)]);
+    for _ in 0..2 {
+        h.state_mut().insert_lane_at(LaneKind::Morph, 0);
+    }
+    h.state_mut().insert_lane_at(LaneKind::Camera, 0);
+    for i in 1..9 {
+        h.state_mut().insert_lane_at(LaneKind::Video, i);
+    }
+    h.state_mut().set_row_height((LaneKind::Video, 1), Some(70.0));
+    h.state_mut().tl_v_zoom = Some(60.0);
+    h.step();
+    h
+}
+
+/// T1: "when you scale vertically the vertical position flies down to the lowest track".
+#[test]
+fn t1633_vertical_zoom_keeps_the_row_under_the_pointer() {
+    use kt_model::LaneKind;
+    let mut h = r72_many_rows();
+    r72_view(&mut h, 0.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let row = g.rows.iter().position(|k| *k == (LaneKind::Video, 2)).expect("scene: the row");
+    assert!(g.rows.iter().any(|k| k.0 == LaneKind::Morph) && g.rows.iter().any(|k| k.0 == LaneKind::Camera));
+    let y = g.row_top(row) + g.row_h(row) * 0.4;
+    assert!(y > g.rect.top() + 60.0 && y < g.rect.bottom(), "scene: the row is off screen");
+    let pos = egui::pos2(g.rect.center().x, y);
+    h.hover_at(pos);
+    h.step();
+    let mods = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+    let wheel = |h: &mut Harness<'static, KtApp>, dy: f32| {
+        h.event_modifiers(
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, dy),
+                modifiers: mods,
+                phase: egui::TouchPhase::Move,
+            },
+            mods,
+        );
+        h.step();
+        h.step();
+    };
+    for dy in [60.0, 60.0, 60.0, 60.0, 60.0, -60.0, -60.0, -60.0, -60.0, -60.0] {
+        let before = h.state().tl_v_zoom;
+        wheel(&mut h, dy);
+        assert_ne!(h.state().tl_v_zoom, before, "scene: the wheel did not zoom");
+        let g = h.state().tl_geom.clone().unwrap();
+        assert_eq!(g.row_at_y(y), Some(row), "the row left the pointer after {dy}");
+        let frac = (y - g.row_top(row)) / g.row_h(row);
+        assert!((frac - 0.4).abs() * g.row_h(row) <= 1.0, "the place in the row moved: {frac}");
+    }
+}
+
+/// T2: "either the window resize or the jump zone triggers". The bar flush with the window
+/// edge is taken at its very edge, a click beside the handle pages, the zone stops before it.
+#[test]
+fn t1634_scrollbar_and_left_jump_zone_can_be_taken() {
+    use egui::ViewportCommand as V;
+    use kt_model::LaneKind;
+    let mut h = r72_many_rows();
+    h.state_mut().meters_w = 0.0;
+    h.step();
+    r72_view(&mut h, 30.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    assert!((W - g.rect.right()).abs() <= 8.0, "scene: the timeline is not flush: {:?}", g.rect);
+    // inside the 8 px resize zone, past the 4 px edge that stays the window's (item 9 round 12)
+    let at = egui::pos2(g.rect.right() - 5.0, g.rect.top() + 60.0);
+    assert!(
+        h.state().no_resize_rects.iter().any(|r| r.contains(at)),
+        "the scrollbar is not a no-resize rect"
+    );
+    assert!(h.state().tl_scroll == 0.0, "scene: starts at the top");
+    h.hover_at(at);
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().hover_hint.as_deref(),
+        Some(crate::i18n::tr(crate::i18n::k::tl::hint::SCROLLBAR)),
+        "the bar must say what it is"
+    );
+    let mut sent = Vec::new();
+    let collect = |h: &Harness<'static, KtApp>, sent: &mut Vec<V>| {
+        sent.extend(h.output().viewport_output.values().flat_map(|v| v.commands.iter().cloned()));
+    };
+    h.drag_at(at);
+    h.step();
+    collect(&h, &mut sent);
+    h.hover_at(at + egui::vec2(0.0, 12.0));
+    h.step();
+    collect(&h, &mut sent);
+    let low = at + egui::vec2(0.0, 80.0);
+    h.hover_at(low);
+    h.step();
+    h.drop_at(low);
+    h.step();
+    collect(&h, &mut sent);
+    assert!(h.state().tl_scroll > 0.0, "the scrollbar did not scroll");
+    assert!(!sent.iter().any(|c| matches!(c, V::BeginResize(_))), "the window took the press");
+    assert_eq!(h.state().view_start, 30.0 * 90_000.0, "the jump zone took the press");
+
+    // a click below the handle pages down by what is visible
+    h.state_mut().tl_scroll = 0.0;
+    h.step();
+    let page = g.rect.height() - crate::timeline::RULER_H - 6.0;
+    let track = egui::pos2(at.x, g.rect.bottom() - 6.0);
+    h.hover_at(track);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: track,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    let paged = h.state().tl_scroll;
+    assert!((paged - page).abs() < 2.0, "a click beside the handle must page: {paged} vs {page}");
+
+    // the right zone ends before the bar and is hot right up to it
+    let v0 = h.state().view_start;
+    click_plain(&mut h, egui::pos2(g.rect.right() - crate::timeline::VSCROLL_GRAB_W - 3.0, g.rect.center().y));
+    assert!(h.state().view_start > v0, "the right jump zone must work beside the bar");
+
+    // the left zone on a row with badges, at the seam with the header
+    let row = g.rows.iter().position(|k| *k == (LaneKind::Video, 0)).unwrap();
+    h.state_mut().tl_scroll = 0.0;
+    r72_view(&mut h, 30.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let y = g.row_top(row) + g.row_h(row) - 8.0;
+    click_plain(&mut h, egui::pos2(g.rect.left() + 3.0, y));
+    let jumped = h.state().view_start;
+    assert!(jumped < 30.0 * 90_000.0, "the left zone did not jump on a row with badges");
+
+    // the header's free part is the zone's hot end: above the badges and on the name
+    r72_view(&mut h, 30.0);
+    click_plain(&mut h, egui::pos2(g.rect.left() - 20.0, g.row_top(row) + 4.0));
+    let hot = h.state().view_start;
+    assert!(hot < jumped, "the header's free part must be the hottest jump: {hot} vs {jumped}");
+    // and a badge stays a button
+    r72_view(&mut h, 30.0);
+    let (_, badge) = crate::timeline::TrackBadge::row_rects(LaneKind::Video, g.rect.left() - crate::timeline::GUTTER_W, g.row_top(row), g.row_h(row))[0];
+    click_plain(&mut h, badge.center());
+    assert_eq!(h.state().view_start, 30.0 * 90_000.0, "a badge press jumped the view");
+    assert!(h.state().model.project().track_at(LaneKind::Video, 0).unwrap().mute, "the badge died");
+}
+
+#[cfg(test)]
+fn click_plain(h: &mut Harness<'static, KtApp>, pos: egui::Pos2) {
+    h.hover_at(pos);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+}
+
+/// T4a: "if an event is in the jump zone, it opens for some reason, even at the strongest edge".
+#[test]
+fn t1635_in_a_jump_zone_a_click_jumps_over_an_event() {
+    use kt_model::{ClipId, ClipKind};
+    let mut h = r72_scene(crate::i18n::Lang::En, Some(0.02), vec![r72_event(1, ClipKind::Video, 0, 0, 300)]);
+    r72_view(&mut h, 100.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let pos = egui::pos2(g.rect.right() - 10.0, g.lane_top(ClipKind::Video, 0) + 30.0);
+    h.hover_at(pos);
+    h.step();
+    let view0 = h.state().view_start;
+    click_quick(&mut h, pos);
+    let view1 = h.state().view_start;
+    assert!(view1 > view0, "the first click must jump");
+    click_quick(&mut h, pos);
+    let view2 = h.state().view_start;
+    assert!(view2 > view1, "a quick second click must be a second jump");
+    assert!(h.state().fx_editors.iter().all(|e| !e.open), "the double click opened the event");
+    assert!(h.state().selected.is_empty(), "the jump took the selection");
+
+    // a drag from the zone still moves the event
+    let mut h = r72_scene(crate::i18n::Lang::En, None, vec![r72_event(1, ClipKind::Video, 0, 8, 6)]);
+    r72_view(&mut h, 0.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    let x = g.rect.right() - 40.0;
+    assert!(g.x_to_tick(x) < 14 * 90_000, "scene: the event is not under the zone");
+    let from = egui::pos2(x, g.lane_top(ClipKind::Video, 0) + 30.0);
+    drag_clip(&mut h, from, from + egui::vec2(-100.0, 0.0));
+    assert!(h.state().model.clip(ClipId(1)).unwrap().start.0 < 8 * 90_000, "the drag from the zone");
+}
+
+#[cfg(test)]
+fn click_quick(h: &mut Harness<'static, KtApp>, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.step();
+}
+
+/// T4b: "meaningless obvious captions over the tracks 'Add morpher here' and the camera one too,
+/// I ask to forbid agents to make dumb captions". Item 17 of R.7 was prose and it broke, so
+/// here it is a test: NOTHING is painted inside an empty row.
+#[test]
+fn t1636_empty_rows_carry_no_captions() {
+    use crate::i18n::{Lang, k, tr};
+    use kt_model::LaneKind;
+    let mut h = r72_scene(Lang::En, None, vec![]);
+    h.state_mut().insert_lane_at(LaneKind::Morph, 0);
+    h.state_mut().insert_lane_at(LaneKind::Camera, 0);
+    h.state_mut().tl_v_zoom = Some(60.0);
+    r72_view(&mut h, 0.0);
+    let g = h.state().tl_geom.clone().unwrap();
+    assert!(g.rows.len() >= 3, "scene: {:?}", g.rows);
+    let texts = crate::reach_tests::painted_texts(&h);
+    for (row, key) in g.rows.iter().enumerate() {
+        let r = egui::Rect::from_min_size(
+            egui::pos2(g.rect.left(), g.row_top(row)),
+            egui::vec2(g.rect.width(), g.row_h(row)),
+        );
+        let inside: Vec<&str> =
+            texts.iter().filter(|t| r.intersects(t.rect)).map(|t| t.src.as_str()).collect();
+        assert!(inside.is_empty(), "text inside the empty row {key:?}: {inside:?}");
+    }
+    let row = g.rows.iter().position(|k| k.0 == LaneKind::Morph).unwrap();
+    let pos = egui::pos2(g.rect.center().x, g.row_center_y(row));
+    h.hover_at(pos);
+    h.step();
+    h.step();
+    assert_eq!(h.state().hover_hint.as_deref(), Some(tr(k::tl::hint::MORPH_LANE)), "the hint explains it");
+    right_click_at(&mut h, pos);
+    let items = menu_labels(&mut h);
+    assert!(items.iter().any(|l| l == tr(k::tl::lane::ADD_MORPHER_HERE)), "the action left the menu: {items:?}");
 }

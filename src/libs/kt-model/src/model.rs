@@ -311,6 +311,18 @@ pub enum Command {
         new_id: ClipId,
         new_group: Option<GroupId>,
     },
+    /// “Insert frame hold (freeze frame)” (R.72, S1): the event is cut at `at`, the frame there
+    /// stands for `hold` ticks, and the rest goes on from that same frame. The event keeps its
+    /// length: the material that no longer fits is cut at the end. `rest` is `None` when the
+    /// hold reaches the event's end. New pieces get the ids and link groups named here.
+    FrameHold {
+        id: ClipId,
+        at: Tick,
+        hold: Tick,
+        hold_id: ClipId,
+        hold_group: Option<GroupId>,
+        rest: Option<(ClipId, Option<GroupId>)>,
+    },
     /// The option “trim stretches the animation together with the event” (R.40).
     /// Off by default: the key stays on its frame of the material,
     /// wherever the event's edge goes.
@@ -618,6 +630,7 @@ impl Command {
             | Command::TrimStart { id, .. }
             | Command::TrimEnd { id, .. }
             | Command::Split { id, .. }
+            | Command::FrameHold { id, .. }
             | Command::SetGain { id, .. }
             | Command::SetOpacity { id, .. }
             | Command::SetGeometry { id, .. }
@@ -670,6 +683,7 @@ impl Command {
             | Command::TrimStart { id, .. }
             | Command::TrimEnd { id, .. }
             | Command::Split { id, .. }
+            | Command::FrameHold { id, .. }
             | Command::SetGain { id, .. }
             | Command::SetOpacity { id, .. }
             | Command::SetGeometry { id, .. }
@@ -770,6 +784,7 @@ impl Command {
             | Command::TrimStart { .. }
             | Command::TrimEnd { .. }
             | Command::Split { .. }
+            | Command::FrameHold { .. }
             | Command::SetTrimStretchesAuto { .. }
             | Command::SetGain { .. }
             | Command::SetOpacity { .. }
@@ -1012,6 +1027,7 @@ impl Band {
                 | Command::TrimStart { .. }
                 | Command::TrimEnd { .. }
                 | Command::Split { .. }
+                | Command::FrameHold { .. }
                 | Command::SetTrimStretchesAuto { .. }
                 | Command::SetGain { .. }
                 | Command::SetOpacity { .. }
@@ -1102,6 +1118,12 @@ impl Births {
         for c in cmds {
             match c {
                 Command::Split { id, new_id, .. } => pairs.push((*new_id, *id)),
+                Command::FrameHold { id, hold_id, rest, .. } => {
+                    pairs.push((*hold_id, *id));
+                    if let Some((r, _)) = rest {
+                        pairs.push((*r, *id));
+                    }
+                }
                 Command::NoteBirth { child, parent } => pairs.push((*child, *parent)),
                 _ => {}
             }
@@ -1682,6 +1704,26 @@ impl TimelineModel {
                 if !(r.contains(*at)
                     && (*at - r.start) >= MIN_CLIP_DURATION
                     && (r.end - *at) >= MIN_CLIP_DURATION)
+                {
+                    return Err(CommandError::SplitOutside);
+                }
+            }
+            Command::FrameHold { id, at, hold, hold_id, rest, .. } => {
+                let c = find(*id)?;
+                for new in std::iter::once(*hold_id).chain(rest.iter().map(|r| r.0)) {
+                    if p.clips.iter().any(|x| x.id == new) {
+                        return Err(CommandError::IdInUse(new.0));
+                    }
+                }
+                let r = Self::clip_range(c);
+                let left = *at - r.start;
+                let tail = r.end - *at - *hold;
+                if !r.contains(*at)
+                    || left < MIN_CLIP_DURATION
+                    || *hold < MIN_CLIP_DURATION
+                    || tail.0 < 0
+                    || (rest.is_some() && tail < MIN_CLIP_DURATION)
+                    || (rest.is_none() && tail.0 != 0)
                 {
                     return Err(CommandError::SplitOutside);
                 }
@@ -2276,22 +2318,25 @@ impl TimelineModel {
                 let mut right = clip_slice(&c, TickRange::new(at, body.end), new_id);
                 right.link_group = new_group;
                 p.clips.push(right);
-                // D5 (v1): the right half inherits the targeting of the morphers
-                for m in &mut p.morphers {
-                    if let Some(ids) = m.targets.clip_ids_mut()
-                        && ids.contains(&id)
-                    {
-                        ids.push(new_id);
-                    }
+                Self::after_cut(p, id, &[new_id], new_id);
+            }
+            Command::FrameHold { id, at, hold, hold_id, hold_group, rest } => {
+                let c = Self::clip_mut_on(p, id).clone();
+                let body = TickRange::new(c.start, c.start + c.duration);
+                *Self::clip_mut_on(p, id) = clip_slice(&c, TickRange::new(body.start, at), id);
+                let mut held = crate::frame_hold_piece(&c, TickRange::new(at, at + hold), hold_id);
+                held.link_group = hold_group;
+                p.clips.push(held);
+                let mut born = vec![hold_id];
+                if let Some((rest_id, group)) = rest {
+                    // the same material as if nothing stood in between, the place after the hold
+                    let mut after = clip_slice(&c, TickRange::new(at, body.end - hold), rest_id);
+                    after.start = at + hold;
+                    after.link_group = group;
+                    p.clips.push(after);
+                    born.push(rest_id);
                 }
-                // the transition where the clip was OUTGOING (the joint at the former END) moves
-                // to the right half; the incoming joint (the start) stays
-                // with the left one — it kept the id
-                for t in &mut p.transitions {
-                    if t.a == Some(id) {
-                        t.a = Some(new_id);
-                    }
-                }
+                Self::after_cut(p, id, &born, *born.last().unwrap_or(&hold_id));
             }
             Command::SetTrimStretchesAuto { on } => p.trim_stretches_auto = on,
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
@@ -2723,6 +2768,25 @@ impl TimelineModel {
             }
         }
         removed
+    }
+
+    /// What a cut changes around the event: the new pieces inherit the targeting of the
+    /// morphers (D5, v1), and the transition where the clip was OUTGOING (the joint at the
+    /// former END) moves to the last piece; the incoming joint (the start) stays with the left
+    /// one — it kept the id.
+    fn after_cut(p: &mut Project, id: ClipId, born: &[ClipId], last: ClipId) {
+        for m in &mut p.morphers {
+            if let Some(ids) = m.targets.clip_ids_mut()
+                && ids.contains(&id)
+            {
+                ids.extend_from_slice(born);
+            }
+        }
+        for t in &mut p.transitions {
+            if t.a == Some(id) {
+                t.a = Some(last);
+            }
+        }
     }
 
     fn clip_mut_on(p: &mut Project, id: ClipId) -> &mut ClipEvent {

@@ -51,6 +51,10 @@ list may be short of items from them.
 | 56 | a start on a really cold disk | The OS page cache could not be dropped here; if sound misses the 500 ms wait, the silence stays as before | start of playback | not measured | watch |
 | 68 | hardware encoding unproven | No real Intel or AMD driver ran; the T16 crash is isolated, its cause not proven; a driver that fails after the three trial frames still ends the render; only FFmpeg 6.1.1 ran | `kt-ffmpeg` `hw_trial.rs` | open | needs a machine with a card |
 | 72 | render time on a busy machine | Equal binaries started together on one project differ by up to 51 s, and runs stand idle 30-80 s outside the pipeline, both versions; cause not found | `kt-engine` export | open | С.1 |
+| 78 | the top of the ruler takes the panel divider | A drag on the top pixels moves the panel, not the marker's end; visible live, t142 passes in the harness | `kt-app` timeline | open | С.3 |
+| 79 | stall bell may be noisy | With no audio device or a cold start over 1 s, one notice per start of play; `readme_shots` red twice in `finish.sh` at kt26.11.06-318aaf8b, "expected the notices window closed" at the step `timeline`, so the notice appears where nothing stalled for a person | `kt-app` stall notices, `src/scripts/live/readme_shots.py` | open | С.3, `test-stability` reads the cause |
+| 80 | a cut does not move `geometry_auto` curves | `clip_slice` leaves them in place; read in the code, to check on an event with speed | `kt-model` | not checked | С.3, check first |
+| 81 | a long name runs over the event's edge | Clipped only when a level chip is drawn; read in the code | `kt-app` timeline | not checked | С.3 |
 | 75 | truncated file renders very slowly | The header promises more than the file holds: a 6 s event decodes 1431 frames instead of 180 with 27 reopenings; a 40 s event did not finish in 280 s. The render looks stalled and nothing names the cause | `kt-ffmpeg`, `kt-engine` export | open, old | С.1 |
 | 76 | event longer than its file holds the last frame silently | Zero lost layers, nothing in the log; a person who did not mean a freeze is not told | `kt-engine` export | question | ask the owner at the stage's end |
 | 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
@@ -84,6 +88,8 @@ list may be short of items from them.
 | 62 | two chains in a window share probe names | `kt-app/src/deck_face.rs` | open | С.2 |
 | 63 | TEST lines point at the wrong file: `automation` t645 names `auto_plan.rs`; the other specs were not checked | `openspec/specs/*/spec.md` | open | С.2 |
 | 74 | `hwencode` live scenario | The second process overwrites the first's `01-step` screenshot, the scenario sets the folder | `src/scripts/live/hwencode.py` | open | С.2 |
+| 82 | live scenarios red under load | `winshell`, `loop`, `conform`, `generator`, the bell step of `readme_shots`, early `nestparam` steps go red then green with no code change | `src/scripts/live` | open | С.2 |
+| 83 | `openspec validate --specs` did not finish in 60 s | cause not read | tooling | open | С.2 |
 | 77 | a recovered span leaves no trace | After row 71 the decoder failure of a recovered span is written nowhere: right for a person, but a decoder fault cannot be traced later | `kt-engine/src/export.rs` | open | С.2 |
 | 69 | Flathub linter depends on our site answering | `https://kinetren.com` slow: the job fails with `appid-url-not-reachable` | `src/scripts/flatpak-build.sh` | open | С.2 |
 | 70 | live scenarios are most of `finish.sh` | 72 scenarios take 3269 s in a row, at least 817 s on 4 workers, `readme_shots` alone 593 s | `src/scripts/live` | open | С.2 |

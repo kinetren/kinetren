@@ -281,10 +281,20 @@ pub struct KtApp {
     pub update: Option<std::sync::Arc<crate::update_check::Checker>>,
     /// Moment of the last pause (double Space = stop, item 15 round 6).
     pub paused_at: Option<std::time::Instant>,
-    /// Space held down since this moment (item 3 round 16). None = not held.
-    pub space_down_at: Option<std::time::Instant>,
-    /// Current speed-up multiplier from holding Space (None = not speeding up).
+    /// Stall episodes already posted to the bell (R.72, M5).
+    pub seen_stalls: u64,
+    /// What a click on a track header's free area jumped from: its double click is a rename,
+    /// and the rename gives the view back (the same way as the triple click on an event).
+    pub gutter_jump_from: Option<(f64, i64)>,
+    /// Where the range-marker edge being dragged stood at the press: its snap leaves it out.
+    pub marker_edge_from: i64,
+    /// The Space press being held (item 3 round 16, R.72). None = not held.
+    pub space_press: Option<SpacePress>,
+    /// Current speed-up multiplier from holding Space (None = not speeding up). After a
+    /// release during playback it stays set while it decays to 1× (USABILITY 3).
     pub space_boost: Option<f32>,
+    /// Seconds the current hold has been boosting: the ease-in reads it.
+    pub space_held_s: f32,
     /// The window follows the cursor during play; fades on manual pan/zoom
     /// (item 14 round 6) — used in L2, set in on_play.
     pub follow_playhead: bool,
@@ -856,8 +866,12 @@ impl KtApp {
             telemetry: crate::telemetry::global(),
             update: crate::update_check::global(),
             paused_at: None,
-            space_down_at: None,
+            seen_stalls: 0,
+            gutter_jump_from: None,
+            marker_edge_from: 0,
+            space_press: None,
             space_boost: None,
+            space_held_s: 0.0,
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
@@ -1136,8 +1150,12 @@ impl KtApp {
             telemetry: crate::telemetry::global(),
             update: crate::update_check::global(),
             paused_at: None,
-            space_down_at: None,
+            seen_stalls: 0,
+            gutter_jump_from: None,
+            marker_edge_from: 0,
+            space_press: None,
             space_boost: None,
+            space_held_s: 0.0,
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
@@ -1643,6 +1661,7 @@ impl KtApp {
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
         // the preview is detached is called twice, item 3 round 16).
         self.tick_space_boost(&ctx);
+        self.post_stalls();
         self.handle_drops(&ctx);
         self.hover_hint = None;
         self.no_resize_rects.clear();
@@ -2406,7 +2425,8 @@ impl KtApp {
         // texture every frame heated the system even with an empty project; egui
         // already redraws instantly on any input).
         let animating = self.player.transport.is_playing()
-            || self.space_down_at.is_some()
+            || self.space_press.is_some()
+            || self.space_boost.is_some()
             || self.drag.is_some()
             || self.render_job.is_some()
             || self.meter.is_active();
@@ -2651,6 +2671,30 @@ impl KtApp {
         self.pending_reveal = Some(self.player.transport.playhead().0);
     }
 
+    /// One frame back or forward (T11): the arrows and Ctrl+click on Back/Forward. During
+    /// playback the first step pauses, then steps from where the picture stopped. The target
+    /// is a frame of the fps grid: an added length from a tick between frames would give a
+    /// double step, and a tick that truncated on its way through the audio frames would stick
+    /// (the "Forward" of item 7 round 10).
+    pub(crate) fn frame_step(&mut self, forward: bool) {
+        if self.player.transport.is_playing() {
+            self.player.pause();
+            self.paused_at = None;
+        }
+        let grid = self.player.video_grid();
+        let at = self.player.transport.playhead();
+        // a head one audio frame short of a frame IS that frame
+        let n = grid.frame_index(at + Tick(2));
+        let on_grid = (grid.frame_start(n) - at).0.abs() <= 2;
+        let to = match (forward, on_grid) {
+            (true, _) => n + 1,
+            (false, true) => n - 1,
+            (false, false) => n,
+        };
+        self.player.seek(Tick(grid.frame_start(to).0.max(crate::timeline::CURSOR_FLOOR)).align_audio_up());
+        self.pending_reveal = Some(self.player.transport.playhead().0);
+    }
+
     /// Navigation “Back”/“Forward” with Shift = DRAG the region (item 2 round 16).
     ///
     /// Shift is the same “extend selection” modifier as in Premiere,
@@ -2753,37 +2797,82 @@ impl KtApp {
         next.clamp(1.0, SPACE_BOOST_MAX)
     }
 
+    /// The rise as the hold really runs it (USABILITY 3): the same exponential, whose clock
+    /// starts with a smoothstep over the first second, so the speed leaves the base without
+    /// a jump. Scaling dt keeps the scheme analytic: no step passes the ceiling at any dt.
+    pub fn space_boost_eased(cur: f32, dt: f32, held_s: f32) -> f32 {
+        let t = (held_s / SPACE_EASE_SECS).clamp(0.0, 1.0);
+        Self::space_boost_step(cur, dt.clamp(0.0, 0.25) * t * t * (3.0 - 2.0 * t))
+    }
+
+    /// The fall after a release during playback: the same exponential toward the base, four
+    /// times as fast as the rise ("the reset must be faster than the build-up", USABILITY 3).
+    pub fn space_decay_step(cur: f32, dt: f32) -> f32 {
+        let k = -(0.05f32.ln()) / (SPACE_BOOST_SECS * SPACE_DECAY_SHARE);
+        let a = (-k * dt.clamp(0.0, 0.25)).exp();
+        (1.0 + (cur - 1.0) * a).clamp(1.0, SPACE_BOOST_MAX)
+    }
+
+    /// The speed the held multiplier asks for: Ctrl turns the same gesture around (USABILITY 2).
+    fn space_rate(&self, b: f32, reverse: bool) -> f32 {
+        if reverse { -self.base_rate * b } else { self.base_rate * b }
+    }
+
+    /// Hands the multiplier to the player. Hysteresis: each set_playback_rate resets the
+    /// extrapolation window of the display clock (item 14 round 14) — it must not be jerked
+    /// on every hundredth.
+    fn space_push_rate(&self, want: f32) {
+        if boost_needs_update(want, self.player.playback_rate(), self.base_rate) {
+            self.player.set_playback_rate(want);
+        }
+    }
+
     /// The speed-up frame: while space is held longer than the threshold — the speed creeps
-    /// up. Called EXACTLY once per frame (not from handle_keys: that one
-    /// is called twice with a detached preview and would speed up twice as fast).
+    /// up; after a release during playback it comes back down. Called EXACTLY once per frame
+    /// (not from handle_keys: that one is called twice with a detached preview and would
+    /// speed up twice as fast).
     fn tick_space_boost(&mut self, ctx: &egui::Context) {
-        let Some(t0) = self.space_down_at else { return };
         // shuttle — a more explicit intent of the user, we do not hinder it
         if self.shuttle_override.is_some() {
             return;
         }
-        if t0.elapsed().as_millis() < SPACE_HOLD_MS {
-            return;
-        }
-        if self.space_boost.is_none() {
-            self.space_boost = Some(1.0);
-            // stood still — holding starts playback at once (otherwise “speeding up”
-            // has nothing to do), but on release we no longer toggle play/pause
-            if !self.player.transport.is_playing() {
-                self.on_play();
-            }
-        }
         let dt = ctx.input(|i| i.stable_dt);
-        let b = Self::space_boost_step(self.space_boost.unwrap_or(1.0), dt);
-        self.space_boost = Some(b);
-        // hysteresis: each set_playback_rate resets the extrapolation window
-        // of the display clock (item 14 round 14) — it must not be jerked on every
-        // hundredth
-        let want = self.base_rate * b;
-        if boost_needs_update(want, self.player.playback_rate(), self.base_rate) {
-            self.player.set_playback_rate(want);
+        let past = self.space_press.is_some_and(|p| p.at.elapsed().as_millis() >= SPACE_HOLD_MS);
+        if let Some(press) = self.space_press.as_mut().filter(|_| past) {
+            let reverse = press.reverse;
+            if !press.held {
+                press.held = true;
+                self.space_held_s = 0.0;
+                self.space_boost = Some(self.space_boost.unwrap_or(1.0));
+                if !self.player.transport.is_playing() {
+                    // "stood still" playback runs only while held, and the double-press
+                    // window of an older pause must not catch the release's next tap
+                    self.paused_at = None;
+                    self.player.set_playback_rate(self.space_rate(1.0, reverse));
+                    self.on_play();
+                }
+            }
+            self.space_held_s += dt;
+            let b = Self::space_boost_eased(self.space_boost.unwrap_or(1.0), dt, self.space_held_s);
+            self.space_boost = Some(b);
+            self.space_push_rate(self.space_rate(b, reverse));
+            ctx.request_repaint();
+        } else if let Some(b) = self.space_boost {
+            if !self.player.transport.is_playing() {
+                self.space_boost = None;
+                self.player.set_playback_rate(self.base_rate);
+                return;
+            }
+            let b = Self::space_decay_step(b, dt);
+            if b - 1.0 < SPACE_DECAY_DONE {
+                self.space_boost = None;
+                self.player.set_playback_rate(self.base_rate);
+            } else {
+                self.space_boost = Some(b);
+                self.space_push_rate(self.space_rate(b, false));
+            }
+            ctx.request_repaint();
         }
-        ctx.request_repaint();
     }
 
     /// What to show on the LOWER (time) strip of the speed control:
@@ -2796,15 +2885,23 @@ impl KtApp {
         self.space_boost.map(|_| rate_to_slider(self.player.playback_rate()))
     }
 
-    /// Space released: a short press = play/pause, a long one = the end of
-    /// the speed-up (transport is NOT toggled in this case).
+    /// Space released (R.72). A short press = play/pause. A hold that started from pause =
+    /// pause where it got to. A hold during playback = back to the base: by a decay forward,
+    /// at once out of a reverse (a smooth way through zero would freeze the picture and
+    /// mini-seek twice in the middle of the gesture).
     fn on_space_released(&mut self) {
-        let held = self.space_down_at.take().map(|t| t.elapsed().as_millis()).unwrap_or(0);
-        if self.space_boost.take().is_some() {
-            self.player.set_playback_rate(self.base_rate);
+        let Some(press) = self.space_press.take() else { return };
+        if press.held {
+            if press.from_pause {
+                self.player.pause();
+            }
+            if press.from_pause || press.reverse {
+                self.space_boost = None;
+                self.player.set_playback_rate(self.base_rate);
+            }
             return;
         }
-        if held < SPACE_HOLD_MS {
+        if press.at.elapsed().as_millis() < SPACE_HOLD_MS {
             self.on_transport_toggle();
         }
     }
@@ -2838,6 +2935,19 @@ impl KtApp {
                 self.on_play();
             }
         }
+    }
+
+    /// Every new stall episode goes to the bell with its place (M5: "if it is important it must
+    /// be in notices, not somewhere in the corners"). The performance panel keeps its counter.
+    fn post_stalls(&mut self) {
+        let (n, head) = self.player.flight.stalls();
+        if n == self.seen_stalls {
+            return;
+        }
+        self.seen_stalls = n;
+        let fps = self.model.project().settings.fps;
+        let at = crate::util::format_timecode(Tick::from_audio_frames(head), fps);
+        self.warn(crate::tf!(k::msg::STALL_AT, at));
     }
 
     /// Start playback from the current position (resume semantics, item 15).
@@ -6051,6 +6161,53 @@ impl KtApp {
             + 1
     }
 
+    /// “Insert frame hold (freeze frame)” (S1): the event under the playhead stops on the frame
+    /// at the playhead for 2 s and goes on from it. It keeps its length, nothing else moves (rule
+    /// 20), linked partners do the same in the same step, and one undo takes it all back.
+    pub fn insert_frame_hold(&mut self, id: ClipId) {
+        let at = self.player.video_grid().align_floor(self.player.transport.playhead());
+        let group = self.model.clip(id).and_then(|c| c.link_group);
+        // the event itself, then its partners that the playhead crosses too
+        let targets: Vec<(ClipId, Tick)> = {
+            let p = self.model.project();
+            p.clips
+                .iter()
+                .filter(|c| c.id == id || (group.is_some() && c.link_group == group))
+                .filter(|c| at - c.start >= kt_model::MIN_CLIP_DURATION)
+                .filter(|c| c.start + c.duration - at >= kt_model::MIN_CLIP_DURATION)
+                .map(|c| (c.id, c.start + c.duration))
+                .collect()
+        };
+        if !targets.iter().any(|(c, _)| *c == id) {
+            self.note(tr(k::msg::CURSOR_OUTSIDE));
+            return;
+        }
+        let mut next_id = self.next_clip_id();
+        let mut next_group = self.next_group_id();
+        let mut groups = |had: bool| {
+            had.then(|| {
+                next_group += 1;
+                GroupId(next_group - 1)
+            })
+        };
+        // one new group per piece: the holds of a pair stay a pair, the rests too
+        let (hold_group, rest_group) = (groups(group.is_some()), groups(group.is_some()));
+        let mut cmds = Vec::new();
+        #[allow(clippy::explicit_counter_loop)]
+        for (cid, end) in targets {
+            let left = end - at;
+            let hold = if left - FRAME_HOLD < kt_model::MIN_CLIP_DURATION { left } else { FRAME_HOLD };
+            let hold_id = ClipId(next_id);
+            next_id += 1;
+            let rest = (hold < left).then(|| {
+                next_id += 1;
+                (ClipId(next_id - 1), rest_group)
+            });
+            cmds.push(Command::FrameHold { id: cid, at, hold, hold_id, hold_group, rest });
+        }
+        self.apply_batch_restoring(cmds);
+    }
+
     pub fn split_selected(&mut self) {
         if self.selected.is_empty() {
             self.note(tr(k::msg::NOTHING_TO_CUT));
@@ -7428,6 +7585,8 @@ impl KtApp {
             paste: bool,
             nav_prev: bool,
             nav_next: bool,
+            frame_prev: bool,
+            frame_next: bool,
             nav_far: bool,
             nav_region: bool,
             goto_tc: bool,
@@ -7438,12 +7597,14 @@ impl KtApp {
         // (item 3 of round 16). We only remember the press — the decision is made on
         // RELEASE: a short press = play/pause, a long one = acceleration.
         let (space_down, space_up) = ctx.input(|i| {
-            let mut down = false;
+            let mut down = None;
             let mut up = false;
             for e in &i.events {
-                if let egui::Event::Key { key: egui::Key::Space, pressed, repeat, .. } = e {
+                if let egui::Event::Key { key: egui::Key::Space, pressed, repeat, modifiers, .. } = e {
                     if *pressed {
-                        down |= !*repeat;
+                        if !*repeat {
+                            down = Some(modifiers.ctrl || modifiers.command);
+                        }
                     } else {
                         up = true;
                     }
@@ -7451,8 +7612,15 @@ impl KtApp {
             }
             (down, up)
         });
-        if space_down && self.space_down_at.is_none() {
-            self.space_down_at = Some(std::time::Instant::now());
+        if let Some(ctrl) = space_down
+            && self.space_press.is_none()
+        {
+            self.space_press = Some(SpacePress {
+                at: std::time::Instant::now(),
+                from_pause: !self.player.transport.is_playing(),
+                reverse: ctrl,
+                held: false,
+            });
         }
         if space_up {
             self.on_space_released();
@@ -7493,6 +7661,9 @@ impl KtApp {
             // item 8 of round 10: A/D — the same jumps as the navigation buttons.
             // “To the very end” remains only on Shift+Home/End: Shift+D
             // must not suddenly fly to the end of the project.
+            // `key_pressed`: the autorepeat of a held arrow IS the repeated step
+            frame_prev: i.key_pressed(egui::Key::ArrowLeft) && i.modifiers.is_none(),
+            frame_next: i.key_pressed(egui::Key::ArrowRight) && i.modifiers.is_none(),
             nav_prev: i.key_pressed(egui::Key::Home)
                 || (i.key_pressed(egui::Key::A) && !i.modifiers.ctrl && !i.modifiers.alt),
             nav_next: i.key_pressed(egui::Key::End)
@@ -7518,6 +7689,12 @@ impl KtApp {
         if k.find {
             self.search_open = true;
             self.search_focus = true;
+        }
+        if k.frame_prev {
+            self.frame_step(false);
+        }
+        if k.frame_next {
+            self.frame_step(true);
         }
         if k.nav_prev {
             self.nav_jump(false, k.nav_far, k.nav_region);
@@ -7698,14 +7875,36 @@ pub const STATUS_TTL_MS: u64 = 6000;
 pub const DOUBLE_PAUSE_MS: u128 = 400;
 /// How long to hold space before it becomes “acceleration”, not
 /// play/pause (item 3 of round 16). Noticeably less than the double-press window, so
-/// “stop at the region start” with two quick presses does not suffer.
-pub const SPACE_HOLD_MS: u128 = 220;
+/// “stop at the region start” with two quick presses does not suffer. 300 ms is the owner's
+/// choice ("a threshold ~0.3 s", question 7 of R.71); the former 220 was not his number.
+pub const SPACE_HOLD_MS: u128 = 300;
 /// The acceleration ceiling by holding (the user’s answer of round 16: “up to 4×”).
 pub const SPACE_BOOST_MAX: f32 = 4.0;
 /// How many seconds of holding it takes acceleration to reach the ceiling. 5 s by
 /// the direct request of item 3 of round 17 (“it must be 5, not 2, otherwise it is very fast”) —
 /// do NOT speed it up without a new request.
 pub const SPACE_BOOST_SECS: f32 = 5.0;
+/// How long “Insert frame hold” stands (S1, R.72): the owner gave no number, 2 s is the design's.
+pub const FRAME_HOLD: Tick = Tick(2 * 90_000);
+/// The first second of a hold eases into the rise (USABILITY 3, R.72).
+pub const SPACE_EASE_SECS: f32 = 1.0;
+/// The fall's time constant as a share of the rise's (design of r72): 95 % of the way in 1.25 s.
+pub const SPACE_DECAY_SHARE: f32 = 0.25;
+/// Below this distance from the base the fall hands the exact base back to the player.
+pub const SPACE_DECAY_DONE: f32 = 0.005;
+
+/// A Space press in progress (R.72). Read at the press and held for the whole gesture, so
+/// letting Ctrl go early does not turn the picture around.
+#[derive(Clone, Copy, Debug)]
+pub struct SpacePress {
+    pub at: std::time::Instant,
+    /// Started while paused: the release pauses again.
+    pub from_pause: bool,
+    /// Ctrl was down at the press: the hold plays backward.
+    pub reverse: bool,
+    /// Past the threshold: no more a tap.
+    pub held: bool,
+}
 
 /// State of the perf panel: rolling graphs, counter deltas, the problem log.
 /// The coverage-poll cache of the timeline (item 1).

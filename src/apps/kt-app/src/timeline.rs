@@ -145,11 +145,19 @@ pub const AREA_GRAB_PX: f32 = 5.0;
 /// gesture: “fades can be made at the edges of events without yet more events —
 /// just by dragging the top corner”).
 pub const FADE_HANDLE_PX: f32 = 12.0;
-/// Half-height of the level line's grab (video opacity).
-pub const LEVEL_GRAB_PX: f32 = 5.0;
-/// ±6.02 dB over the full travel of the level line for audio: gain = 2^((0.5−t)·2) (port
-/// of the v1 rail — the range is kept, only the element's place changed).
+/// The lowest row and the narrowest event with a level gesture: set per ktprompts_v26.10 U5
+/// (R.72, "at a small zoom do not offer gain/opacity at once"). On a smaller event a press
+/// moves, trims or fades it, and the menu's number field still reaches the level.
+pub const LEVEL_MIN_ROW_PX: f32 = 40.0;
+pub const LEVEL_MIN_SPAN: f32 = 20.0;
+pub const LEVEL_MIN_W_PX: f32 = 3.0 * EDGE_GRAB_PX + 2.0 * LEVEL_MIN_SPAN;
+/// Upper half of the level line for audio: 0 dB at the middle, +6.02 dB at the top, linear in
+/// dB (port of the v1 rail). The lower half goes to silence (`level_to_gain`).
 pub const RAIL_DB_SPAN: f32 = 12.0412;
+/// The bottom of the line that is mute: a hand reaches it without aiming at one pixel.
+pub const LEVEL_FLOOR_TRAVEL: f32 = 0.02;
+/// The scrollbar's grab: wider than its 6 px drawing (rule 1), and it reaches the rect's edge.
+pub const VSCROLL_GRAB_W: f32 = 13.0;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum DragMode {
@@ -172,6 +180,69 @@ pub(crate) enum MovePlan {
     /// Partial overlap with ONE neighbor: the crossfade gesture — clips butt against
     /// `joint` (the middle of the overlap with the body clamps), the transition window = the overlap.
     Crossfade { outgoing: ClipId, incoming: ClipId, joint: i64, in_off: i64, out_off: i64 },
+}
+
+/// What a press on an event takes. One answer for the press, the hover and the hints (rule 17).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ClipZone {
+    Body,
+    TrimStart,
+    TrimEnd,
+    /// Fade handle at the start/end of an event (item 12).
+    FadeLeft,
+    FadeRight,
+    /// Level line of the event: opacity for video, volume for
+    /// audio (R.28, item 12 + requirement “fades for audio and video
+    /// are the same” — the vertical v1 rail sat inside the fade zone).
+    Level,
+}
+
+/// An event as `event_zone` sees it on screen.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EventBox {
+    pub x0: f32,
+    pub x1: f32,
+    pub top: f32,
+    pub row_h: f32,
+    /// Level 0..1 of the line.
+    pub level: f32,
+    /// X of the fade handles (the corners without a fade).
+    pub hx_l: f32,
+    pub hx_r: f32,
+}
+
+/// Half-height of the level line's grab: it follows the row (U5, R.72). A fixed 5 px was a
+/// third of a low row.
+pub(crate) fn level_grab(row_h: f32) -> f32 {
+    (row_h * 0.08).clamp(3.0, 6.0)
+}
+
+/// Does the event have room for three separate zones on screen.
+pub(crate) fn has_level_gesture(row_h: f32, w: f32) -> bool {
+    row_h >= LEVEL_MIN_ROW_PX && w >= LEVEL_MIN_W_PX
+}
+
+/// The order of gestures on an event: fades in the top strip, then the trims, so a bottom
+/// corner is always a length drag (U5.1), then the level, if the size allows it, then the body.
+pub(crate) fn event_zone(e: &EventBox, pos: egui::Pos2) -> ClipZone {
+    let w = e.x1 - e.x0;
+    let grab = edge_grab_for_width(w);
+    let fgrab = fade_grab_for_width(w);
+    let in_strip = pos.y <= e.top + top_strip_h(e.row_h);
+    let ly = level_y(e.level, e.top, e.row_h);
+    if in_strip && (pos.x - e.hx_l).abs() <= fgrab {
+        ClipZone::FadeLeft
+    } else if in_strip && (pos.x - e.hx_r).abs() <= fgrab {
+        ClipZone::FadeRight
+    } else if (pos.x - e.x0).abs() <= grab {
+        ClipZone::TrimStart
+    } else if (pos.x - e.x1).abs() <= grab {
+        ClipZone::TrimEnd
+    } else if has_level_gesture(e.row_h, w) && (pos.y - ly).abs() <= level_grab(e.row_h) {
+        ClipZone::Level
+    } else {
+        ClipZone::Body
+    }
 }
 
 /// Height of the event's top strip where Vegas gestures live (fade handles and the
@@ -213,19 +284,58 @@ pub(crate) fn level_from_y(y: f32, top: f32, lane_h: f32) -> f32 {
 }
 
 /// Event level 0..1 for the line: for video it is opacity, for audio —
-/// loudness in the range of the v1 rail (±6.02 dB; 0 dB — the middle). One
+/// loudness from silence at the bottom to +6.02 dB (0 dB — the middle). One
 /// element for both kinds (the requirement “fades for audio and video look alike”:
 /// the vertical rail used to stand inside the fade zone).
 pub(crate) fn clip_level(c: &kt_model::ClipEvent) -> f32 {
     if c.kind == ClipKind::Audio { gain_to_level(c.gain_db) } else { c.opacity }
 }
 
+/// The upper half is the v1 rail, unchanged. The lower half is a fader law (R.72, USABILITY 6):
+/// the square gives the audible first decibels most of the travel, and the last
+/// `LEVEL_FLOOR_TRAVEL` is mute.
 pub(crate) fn gain_to_level(gain_db: f32) -> f32 {
-    (0.5 + gain_db / RAIL_DB_SPAN).clamp(0.0, 1.0)
+    if gain_db >= 0.0 {
+        (0.5 + gain_db / RAIL_DB_SPAN).min(1.0)
+    } else if gain_db <= kt_model::EVENT_GAIN_FLOOR_DB {
+        0.0
+    } else {
+        0.5 - (gain_db / kt_model::EVENT_GAIN_FLOOR_DB).sqrt() * (0.5 - LEVEL_FLOOR_TRAVEL)
+    }
 }
 
 pub(crate) fn level_to_gain(level: f32) -> f32 {
-    (level.clamp(0.0, 1.0) - 0.5) * RAIL_DB_SPAN
+    let level = level.clamp(0.0, 1.0);
+    if level >= 0.5 {
+        (level - 0.5) * RAIL_DB_SPAN
+    } else if level <= LEVEL_FLOOR_TRAVEL {
+        kt_model::EVENT_GAIN_FLOOR_DB
+    } else {
+        let u = (0.5 - level) / (0.5 - LEVEL_FLOOR_TRAVEL);
+        kt_model::EVENT_GAIN_FLOOR_DB * u * u
+    }
+}
+
+/// The chip after the source name (USABILITY 6): what the line's height alone says badly.
+/// `None` at the default: zero is not written, as with ×N.
+pub(crate) fn level_chip(kind: ClipKind, gain_db: f32, opacity: f32) -> Option<String> {
+    match kind {
+        ClipKind::Audio if gain_db <= kt_model::EVENT_GAIN_FLOOR_DB => {
+            Some(tr(k::tl::menu::LEVEL_MUTE).to_string())
+        }
+        ClipKind::Audio if gain_db.abs() < 0.05 => None,
+        ClipKind::Audio => {
+            let sign = if gain_db < 0.0 { '−' } else { '+' };
+            let v = gain_db.abs();
+            Some(if v >= 10.0 || (v - v.round()).abs() < 0.05 {
+                format!("{sign}{v:.0} dB")
+            } else {
+                format!("{sign}{v:.1} dB")
+            })
+        }
+        ClipKind::Video if opacity < 0.995 => Some(format!("{:.0} %", opacity * 100.0)),
+        ClipKind::Video => None,
+    }
 }
 
 /// Inverse transform: y of the level line.
@@ -859,6 +969,14 @@ pub fn vertical_layout(
         + morph_lanes as f32 * (base_h / MORPH_ROW_DIV).max(THIN_ROW_MIN)
         + camera_lanes as f32 * (base_h / THIN_ROW_DIV).max(THIN_ROW_MIN);
     VLayout { base_h, content_h, scroll_max: (content_h - usable).max(0.0) }
+}
+
+/// The scroll range from the REAL height of the rows (R.72, TIMELINE 1): service rows and
+/// per-row overrides are not a share of the base, and the range that assumed so clamped
+/// the view away from the row the zoom had just anchored.
+pub fn with_content_h(vl: VLayout, avail_h: f32, content_h: f32) -> VLayout {
+    let usable = (avail_h - RULER_H - 6.0).max(0.0);
+    VLayout { content_h, scroll_max: (content_h - usable).max(0.0), ..vl }
 }
 
 /// Ruler steps for zoom (item 17 round 6, test 60): minor ticks — the minimum ladder
@@ -1634,6 +1752,23 @@ impl KtApp {
         }
     }
 
+    /// `snap` with the places a gesture must not stick to.
+    pub fn snap_without(&mut self, tick: i64, own: &[i64]) -> i64 {
+        if self.snap_off {
+            return tick;
+        }
+        let threshold = snap_threshold(self.ticks_per_px);
+        let mut targets = self.snap_targets(None);
+        targets.retain(|t| !own.contains(t));
+        match snap_point(tick, &targets, threshold) {
+            Some(t) => {
+                self.snap_line = Some(t);
+                t
+            }
+            None => tick,
+        }
+    }
+
     pub fn lane_counts(&self) -> (u32, u32) {
         let p = self.model.project();
         (p.lanes(kt_model::LaneKind::Video).max(1), p.lanes(kt_model::LaneKind::Audio).max(1))
@@ -1812,6 +1947,31 @@ impl KtApp {
     /// was covered by a test — but a person pressing RMB on a track got the empty-space
     /// menu. Splitting this into two copies would mean creating a
     /// second source of truth exactly where one had already been burned.
+    /// The frame's vertical layout: one body for the wheel, the jump zones and the drawing.
+    fn v_layout(&self, avail_h: f32) -> VLayout {
+        let (v, a) = self.lane_counts();
+        let p = self.model.project();
+        let vl = vertical_layout(
+            avail_h,
+            (v + a).max(1) as usize,
+            p.lanes(LaneKind::Morph) as usize,
+            p.lanes(LaneKind::Camera) as usize,
+            self.tl_v_zoom,
+        );
+        let offs = row_offsets(&p.rows(), vl.base_h, &self.row_heights());
+        with_content_h(vl, avail_h, offs.last().copied().unwrap_or(0.0))
+    }
+
+    /// A click in a jump zone: the cursor is PLACED (by position before the shift), and the
+    /// view jumps — “both at once” (the owner’s decision, item 10).
+    fn jump_click(&mut self, at: i64, heat: f32, vis: f64, tpp: f64) {
+        let t = self.snap(at.max(CURSOR_FLOOR), None);
+        self.player.seek(Tick(t.max(CURSOR_FLOOR)));
+        self.view_start = (self.view_start
+            + heat.signum() as f64 * (heat.abs() as f64).powi(2) * vis * 0.6)
+            .max(self.view_floor(tpp));
+    }
+
     fn service_lane_menu(&mut self, ui: &mut egui::Ui) {
         if let Some(CtxTarget::MorphLane(lane)) = self.ctx_target {
             let n = self.model.project().morphers.iter().filter(|m| m.lane == lane).count();
@@ -1994,7 +2154,18 @@ impl KtApp {
                     })
                     .max(0.0);
                 self.tl_v_zoom = Some(new_h);
-                self.tl_scroll = (row * new_h - (pos.y - (rect.top() + RULER_H + 3.0))).max(0.0);
+                // the row tops at the NEW height: not one division or product by a single
+                // height (rows differ), or the view flies down to the last track (TIMELINE 1)
+                let offs = row_offsets(
+                    &self.model.project().rows(),
+                    new_h,
+                    &self.row_heights(),
+                );
+                let i = (row.floor() as usize).min(offs.len().saturating_sub(2));
+                let frac = row - i as f32;
+                let h = offs.get(i + 1).zip(offs.get(i)).map_or(new_h, |(b, a)| b - a);
+                let top = offs.get(i).copied().unwrap_or(0.0);
+                self.tl_scroll = (top + frac * h - (pos.y - (rect.top() + RULER_H + 3.0))).max(0.0);
             } else if shift && raw_y != 0.0 {
                 // Shift+wheel = vertical scroll (clamp below, by layout)
                 self.tl_scroll = (self.tl_scroll - raw_y).max(0.0);
@@ -2017,12 +2188,16 @@ impl KtApp {
             }
         }
         // “Jump” zones at the edges (port): heat = proximity to the edge [-1..1].
+        // The right zone ends at the scrollbar's grab (TIMELINE 2): its hot end used to lie
+        // under the bar, so a press beside it jumped the view instead of taking the bar.
         let edge_margin = (rect.width() / 8.0).max(40.0);
+        let jump_right = rect.right()
+            - if self.v_layout(rect.height()).scroll_max > 0.0 { VSCROLL_GRAB_W } else { 0.0 };
         let edge_heat = |x: f32| -> f32 {
             if x < rect.left() + edge_margin {
                 -((rect.left() + edge_margin - x) / edge_margin).clamp(0.0, 1.0)
-            } else if x > rect.right() - edge_margin {
-                ((x - (rect.right() - edge_margin)) / edge_margin).clamp(0.0, 1.0)
+            } else if x > jump_right - edge_margin {
+                ((x - (jump_right - edge_margin)) / edge_margin).clamp(0.0, 1.0)
             } else {
                 0.0
             }
@@ -2249,15 +2424,7 @@ impl KtApp {
 
         // ---- tracks ---------------------------------------------------------
         let (video_lanes, audio_lanes) = self.lane_counts();
-        let morph_lanes = self.model.project().lanes(kt_model::LaneKind::Morph);
-        let camera_lanes = self.model.project().lanes(kt_model::LaneKind::Camera);
-        let vl = vertical_layout(
-            rect.height(),
-            (video_lanes + audio_lanes).max(1) as usize,
-            morph_lanes as usize,
-            camera_lanes as usize,
-            self.tl_v_zoom,
-        );
+        let vl = self.v_layout(rect.height());
         // HEIGHT — PER ROW (R.40 item 11). Until this round this held
         // `let lane_h = vl.base_h;` — one variable for all rows, with 36
         // uses: the event rectangle, zones, the top strip, the
@@ -2341,33 +2508,6 @@ impl KtApp {
             // must be distinguishable, otherwise a person edits not what he thinks
             if band.is_some() {
                 painter.rect_filled(lane_rect, 0.0, crate::theme::BAND_TINT);
-            }
-            // An EMPTY service row itself says what may be placed on it
-            // (R.40 item 5). We do not create a strip of its own for this — the inscription lives
-            // INSIDE the empty row, which takes up space anyway
-            // (rule 13 of the checklist); once an event appears — the inscription is gone.
-            let empty_svc = match kind {
-                LaneKind::Morph
-                    if !self.model.project().morphers.iter().any(|m| m.lane == lane) =>
-                {
-                    Some(k::tl::lane::ADD_MORPHER_HERE)
-                }
-                LaneKind::Camera
-                    if !self.model.project().cameras.iter().any(|c| c.lane == lane) =>
-                {
-                    Some(k::tl::lane::ADD_CAMERA_HERE)
-                }
-                _ => None,
-            };
-            if let Some(key) = empty_svc {
-                let fs = (rh * 0.55).clamp(8.0, 12.0);
-                painter.text(
-                    egui::pos2(rect.left() + 6.0, y + rh * 0.5),
-                    egui::Align2::LEFT_CENTER,
-                    tr(key),
-                    egui::FontId::proportional(fs),
-                    egui::Color32::from_rgb(112, 118, 132),
-                );
             }
             gutter_labels.push((label, y + rh * 0.5, y, rh));
         }
@@ -2482,10 +2622,29 @@ impl KtApp {
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
                 && let Some((kind, lane)) = geom.key_at_y(pos.y)
             {
+                // its first click jumped: the rename gives the view and the cursor back
+                if let Some((view, head)) = self.gutter_jump_from.take() {
+                    self.view_start = view;
+                    self.player.seek(Tick(head));
+                }
                 let cur = self.row_label(kind, lane);
                 self.lane_edit = Some(crate::app::LaneEdit { kind, lane, buf: cur });
                 self.lane_edit_focus = true;
                 self.drag = None;
+            }
+            // THE HOT END OF THE LEFT JUMP ZONE lies under the header (TIMELINE 3): the heat
+            // gradient has run through the gutter to the panel edge since item 20 of round 6,
+            // and the R.62 badges nearly doubled the gutter, so half of what the zone
+            // shows answered nothing. A click on the header's free part is that hot end.
+            else if gutter_resp.clicked()
+                && self.lane_edit.is_none()
+                && gutter_resp.interact_pointer_pos().is_some()
+            {
+                self.gutter_jump_from =
+                    Some((self.view_start, self.player.transport.playhead().0));
+                let at = geom.x_to_tick(rect.left());
+                let tpp = self.ticks_per_px;
+                self.jump_click(at, -1.0, rect.width() as f64 * tpp, tpp);
             }
             // while a name is being typed — the drag-reorder is off, otherwise “clicked
             // in the field — the track moved away”
@@ -2501,6 +2660,17 @@ impl KtApp {
             {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
                 self.hover_hint = Some(tr(k::tl::hint::ROW_HEIGHT).to_string());
+            } else if self.lane_edit.is_none()
+                && let Some(pos) = gutter_resp.hover_pos()
+                && badge_at(&geom, self, pos).is_none()
+            {
+                // the header's free part drags the track: the hand and the hint say so (T6);
+                // the full name is here too, a label may be truncated
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                self.hover_hint = Some(match geom.key_at_y(pos.y) {
+                    Some((k, l)) => crate::tf!(k::tl::hint::LANE_NAMED, self.row_label(k, l)),
+                    None => tr(k::tl::hint::LANE).to_string(),
+                });
             }
             // The zone is taken by the POINT OF PRESS, not by the current pointer:
             // `drag_started` arrives only after a shift past the threshold, and the pointer
@@ -2527,12 +2697,6 @@ impl KtApp {
                 let cur = (pos.y - geom.row_top(row)).clamp(THIN_ROW_MIN, ROW_H_MAX);
                 self.drag = Some(Drag::LaneHeight { row, cur });
             }
-            if gutter_resp.drag_stopped()
-                && let Some(Drag::LaneHeight { row, cur }) = self.drag.take()
-                && let Some(key) = geom.rows.get(row).copied()
-            {
-                self.set_row_height(key, Some(cur));
-            }
             if gutter_resp.dragged()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
                 && let Some(Drag::LaneRow { from, .. }) = self.drag
@@ -2540,11 +2704,25 @@ impl KtApp {
             {
                 self.drag = Some(Drag::LaneRow { from, cur });
             }
-            if gutter_resp.drag_stopped()
-                && let Some(Drag::LaneRow { from, cur }) = self.drag.take()
-                && from != cur
-            {
-                self.reorder_rows(from, cur);
+            // One release, one match. Each gesture used to `take()` the drag in its own `if let`
+            // chain: the height's took a reorder too and threw it away, so since R.38 a track
+            // dragged by its header landed nowhere (T6).
+            if gutter_resp.drag_stopped() {
+                match self.drag {
+                    Some(Drag::LaneHeight { row, cur }) => {
+                        self.drag = None;
+                        if let Some(key) = geom.rows.get(row).copied() {
+                            self.set_row_height(key, Some(cur));
+                        }
+                    }
+                    Some(Drag::LaneRow { from, cur }) => {
+                        self.drag = None;
+                        if from != cur {
+                            self.reorder_rows(from, cur);
+                        }
+                    }
+                    _ => {}
+                }
             }
             // indicator of the row being dragged
             if let Some(Drag::LaneRow { cur, .. }) = self.drag {
@@ -2678,7 +2856,10 @@ impl KtApp {
         // the LEFT edge of a range marker (R.38, sweep). `Drag::MarkerEdge`
         // with `left: true` was described in a comment as working, but was never
         // constructed: the gesture went to `_ => {}` and vanished silently.
-        let marker_start_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
+        // Both edges answer by the NEAREST within the grab radius: `.find` gave the first in
+        // the list, so of two close markers the wrong one came, and a short range lost its
+        // end to its own start (U7, R.72).
+        let marker_edge_at = |app: &KtApp, pos: egui::Pos2| -> Option<(i64, bool)> {
             if pos.y > rect.top() + RULER_H {
                 return None;
             }
@@ -2687,27 +2868,11 @@ impl KtApp {
                 .markers
                 .iter()
                 .filter(|m| m.is_range())
-                .map(|m| m.t.0)
-                .find(|start| (tick_to_x(*start) - pos.x).abs() <= EDGE_GRAB_PX)
-        };
-        let marker_end_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
-            if pos.y > rect.top() + RULER_H {
-                return None;
-            }
-            app.model.project().markers.iter().filter(|m| m.is_range()).map(|m| m.t.0).find(
-                |start| {
-                    let end = start
-                        + app
-                            .model
-                            .project()
-                            .markers
-                            .iter()
-                            .find(|m| m.t.0 == *start)
-                            .map(|m| m.duration.0)
-                            .unwrap_or(0);
-                    (tick_to_x(end) - pos.x).abs() <= EDGE_GRAB_PX
-                },
-            )
+                .flat_map(|m| [(m.t.0, true, m.t.0), (m.t.0, false, m.end().0)])
+                .map(|(start, left, at)| (start, left, (tick_to_x(at) - pos.x).abs()))
+                .filter(|(_, _, d)| *d <= EDGE_GRAB_PX)
+                .min_by(|a, b| a.2.total_cmp(&b.2).then(a.1.cmp(&b.1)))
+                .map(|(start, left, _)| (start, left))
         };
         // A named area (R.38 item 1: “I don't understand how to delete a saved
         // area region… RMB gives nothing”). The OUTLINE is grabbed — the body
@@ -2737,19 +2902,6 @@ impl KtApp {
                 None
             }
         };
-        #[derive(PartialEq)]
-        enum ClipZone {
-            Body,
-            TrimStart,
-            TrimEnd,
-            /// Fade handle at the start/end of an event (item 12).
-            FadeLeft,
-            FadeRight,
-            /// Level line of the event: opacity for video, volume for
-            /// audio (R.28, item 12 + requirement “fades for audio and video
-            /// are the same” — the vertical v1 rail sat inside the fade zone).
-            Level,
-        }
         #[derive(PartialEq)]
         enum TransZone {
             EdgeLeft,
@@ -2839,34 +2991,22 @@ impl KtApp {
                 }
                 // on narrow clips the trim zones shrink — the middle is always
                 // Body (item 17 round 6, test 60: a clip <14px could not be moved)
-                let grab = edge_grab_for_width(x1 - x0);
-                // The top strip of an event — Vegas gestures (item 12): fade handles
-                // at the corners and the level line. They overlap the trim zones, but
-                // only in the top pixels — the body and the edges below are free.
-                let strip = top_strip_h(lane_h);
                 let p = app.model.project();
                 let fade_l = corner_fade_len(p, c.id, true).unwrap_or(0);
                 let fade_r = corner_fade_len(p, c.id, false).unwrap_or(0);
-                let hx_l =
-                    tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_l, true));
-                let hx_r =
-                    tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_r, false));
-                let in_strip = pos.y <= top + strip;
-                let ly = level_y(clip_level(c), top, lane_h);
-                let fgrab = fade_grab_for_width(x1 - x0);
-                let zone = if in_strip && (pos.x - hx_l).abs() <= fgrab {
-                    ClipZone::FadeLeft
-                } else if in_strip && (pos.x - hx_r).abs() <= fgrab {
-                    ClipZone::FadeRight
-                } else if (pos.y - ly).abs() <= LEVEL_GRAB_PX {
-                    ClipZone::Level
-                } else if (pos.x - x0).abs() <= grab {
-                    ClipZone::TrimStart
-                } else if (pos.x - x1).abs() <= grab {
-                    ClipZone::TrimEnd
-                } else {
-                    ClipZone::Body
-                };
+                let end = c.start.0 + c.duration.0;
+                let zone = event_zone(
+                    &EventBox {
+                        x0,
+                        x1,
+                        top,
+                        row_h: lane_h,
+                        level: clip_level(c),
+                        hx_l: tick_to_x(fade_handle_tick(c.start.0, end, fade_l, true)),
+                        hx_r: tick_to_x(fade_handle_tick(c.start.0, end, fade_r, false)),
+                    },
+                    pos,
+                );
                 return Some((c.id, zone));
             }
             None
@@ -2880,7 +3020,11 @@ impl KtApp {
         {
             let mut zone_hint: Option<&str> = None;
             let mut hint_owned: Option<String> = None;
-            if marker_at(self, pos).is_some() {
+            if let Some((_, false)) = marker_edge_at(self, pos) {
+                // it comes first as at the press: over a region edge the ruler gives the end
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                zone_hint = Some(tr(k::tl::hint::MARKER_END));
+            } else if marker_at(self, pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 zone_hint = Some(tr(k::tl::hint::MARKER));
             } else if region_edge_at(self, pos).is_some() {
@@ -2888,14 +3032,6 @@ impl KtApp {
                 zone_hint = Some(tr(k::tl::hint::REGION_EDGE));
             } else if pos.y <= rect.top() + RULER_H {
                 zone_hint = Some(tr(k::tl::hint::RULER));
-            } else if pos.x < rect.left() {
-                // full track name — in the hint (the label may be truncated)
-                if let Some((k, l)) = geom.key_at_y(pos.y) {
-                    let name = self.row_label(k, l);
-                    hint_owned = Some(crate::tf!(k::tl::hint::LANE_NAMED, name));
-                } else {
-                    zone_hint = Some(tr(k::tl::hint::LANE));
-                }
             } else if let Some((_, tz)) = transition_at(self, pos) {
                 ui.ctx().set_cursor_icon(match tz {
                     TransZone::Joint => egui::CursorIcon::Grab,
@@ -2943,7 +3079,18 @@ impl KtApp {
                             Some((n, total)) => {
                                 hint_owned = Some(crate::tf!(k::pubp::OVERRIDDEN, n, total));
                             }
-                            None => zone_hint = Some(tr(k::tl::hint::CLIP)),
+                            None => {
+                                // no level gesture here: the hint says where it went (U5.3)
+                                let low = self.model.clip(id).is_some_and(|c| {
+                                    let w = (c.duration.0 as f64 / tpp) as f32;
+                                    !has_level_gesture(lane_h_at(c.kind, c.lane), w)
+                                });
+                                zone_hint = Some(tr(if low {
+                                    k::tl::hint::CLIP_NO_LEVEL
+                                } else {
+                                    k::tl::hint::CLIP
+                                }));
+                            }
                         }
                     }
                     None => {
@@ -3089,21 +3236,21 @@ impl KtApp {
         if (response.drag_started() || response.clicked())
             && let Some(pos) = press_pos.or(pointer)
         {
-            if let Some(start) = marker_end_at(self, pos) {
+            if let Some((start, left)) = marker_edge_at(self, pos) {
                 if response.drag_started() {
-                    let end = self
-                        .model
-                        .project()
-                        .markers
-                        .iter()
-                        .find(|m| m.t.0 == start)
-                        .map(|m| m.end().0)
-                        .unwrap_or(start);
-                    self.drag = Some(Drag::MarkerEdge { start, left: false, cur: end });
-                }
-            } else if let Some(start) = marker_start_at(self, pos) {
-                if response.drag_started() {
-                    self.drag = Some(Drag::MarkerEdge { start, left: true, cur: start });
+                    let cur = if left {
+                        start
+                    } else {
+                        self.model
+                            .project()
+                            .markers
+                            .iter()
+                            .find(|m| m.t.0 == start)
+                            .map(|m| m.end().0)
+                            .unwrap_or(start)
+                    };
+                    self.drag = Some(Drag::MarkerEdge { start, left, cur });
+                    self.marker_edge_from = cur;
                 }
             } else if let Some(m) = marker_at(self, pos) {
                 if response.clicked() {
@@ -3147,6 +3294,19 @@ impl KtApp {
                     let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
                     self.player.seek(Tick(t.max(CURSOR_FLOOR)));
                 }
+            } else if response.clicked()
+                && !ctrl_held
+                && !shift_held
+                && edge_heat(pos.x) != 0.0
+                && (edge_heat(pos.x) > 0.0 || self.view_start > self.view_floor(tpp) + 41.0 * tpp)
+            {
+                // In a jump zone a click JUMPS, whatever lies under it (TIMELINE 4a): an event
+                // there took the click and a quick second one opened its FX window, even at the
+                // hottest edge. Both clicks land here, so a double click is two jumps; a drag
+                // and the modifiers (selecting, a region from the event) go on as before.
+                // With the start of the project on screen there is nowhere to jump to the left
+                // (the floor is 40 px before it), and the first events stay ordinary events.
+                self.jump_click(x_to_tick(pos.x), edge_heat(pos.x), rect.width() as f64 * tpp, tpp);
             } else if let Some((inst, left)) =
                 band_edge_at(self, pos).filter(|_| !response.double_clicked())
                 && response.drag_started()
@@ -3391,15 +3551,8 @@ impl KtApp {
                     }
                 }
             } else if response.clicked() && edge_heat(pos.x) != 0.0 {
-                // a click in the jump zone: the cursor is PLACED (by position before the shift),
-                // and the view jumps — “both at once” (the owner’s decision, item 10)
-                let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
-                self.player.seek(Tick(t.max(CURSOR_FLOOR)));
-                let heat = edge_heat(pos.x);
-                let vis = rect.width() as f64 * tpp;
-                self.view_start = (self.view_start
-                    + heat.signum() as f64 * (heat.abs() as f64).powi(2) * vis * 0.6)
-                    .max(self.view_floor(tpp));
+                // with a modifier on empty space: the same jump
+                self.jump_click(x_to_tick(pos.x), edge_heat(pos.x), rect.width() as f64 * tpp, tpp);
             } else if response.drag_started() {
                 if ctrl_held || self.sel_tool {
                     // selection frame (R.33 item 7): Ctrl+drag always, and in
@@ -3582,7 +3735,11 @@ impl KtApp {
                 }
                 Some(Drag::MarkerEdge { start, left, .. }) => {
                     let raw = x_to_tick(pos.x).max(CURSOR_FLOOR);
-                    let cur = self.snap(raw, None).max(if left { 0 } else { start });
+                    // not to itself (U7): a marker made over the region lies on the region's
+                    // end, so its own old place is left out BY VALUE, whoever else stands there
+                    let cur = self
+                        .snap_without(raw, &[start, self.marker_edge_from])
+                        .max(if left { 0 } else { start });
                     self.drag = Some(Drag::MarkerEdge { start, left, cur });
                 }
                 Some(Drag::TransitionEdge { id, left, gesture }) => {
@@ -4411,7 +4568,7 @@ impl KtApp {
                 let op = lv;
                 let ly = level_y(lv, top, lane_h);
                 // “not default” is brighter: for video it is op<1, for audio 0 dB
-                // sits in the middle (the v1 rail range ±6 dB)
+                // sits in the middle
                 let dim =
                     if c.kind == ClipKind::Audio { (op - 0.5).abs() > 1e-3 } else { op < 1.0 };
                 painter.line_segment(
@@ -4457,22 +4614,57 @@ impl KtApp {
                 if c.reversed {
                     label.push_str(" ◀");
                 }
-                let galley = painter.layout_no_wrap(
-                    label,
-                    egui::FontId::proportional(10.5),
-                    egui::Color32::WHITE,
+                let (gain, opacity) = (
+                    match self.live_gain {
+                        Some((id, g)) if id == c.id => g,
+                        _ => c.gain_db,
+                    },
+                    match self.live_opacity {
+                        Some((id, o)) if id == c.id => o,
+                        _ => c.opacity,
+                    },
                 );
+                // THE LEVEL CHIP (USABILITY 6): the cube after the name, no strip of its own
+                // (rule 13). The room it takes is the name's: the name is elided, the chip stays.
+                let font = egui::FontId::proportional(10.5);
+                let amber = egui::Color32::from_rgb(255, 220, 120);
+                let left = clip_rect.left().max(rect.left()) + 4.0;
+                let room = clip_rect.right().min(rect.right()) - left - 2.0;
+                let chip = level_chip(c.kind, gain, opacity)
+                    .map(|t| painter.layout_no_wrap(t, font.clone(), amber))
+                    .filter(|g| g.size().x + 16.0 <= room);
+                let mut job = egui::text::LayoutJob::single_section(
+                    label,
+                    egui::TextFormat {
+                        font_id: font,
+                        color: egui::Color32::WHITE,
+                        ..Default::default()
+                    },
+                );
+                if let Some(g) = &chip {
+                    job.wrap = egui::text::TextWrapping {
+                        max_width: (room - g.size().x - 16.0).max(8.0),
+                        max_rows: 1,
+                        break_anywhere: true,
+                        overflow_character: Some('…'),
+                    };
+                }
+                let galley = painter.layout_job(job);
                 let plate = egui::Rect::from_min_size(
-                    egui::pos2(clip_rect.left().max(rect.left()), clip_rect.top())
-                        + egui::vec2(4.0, 2.0),
+                    egui::pos2(left, clip_rect.top() + 2.0),
                     galley.size() + egui::vec2(8.0, 3.0),
                 );
-                painter.rect_filled(
-                    plate.intersect(clip_rect),
-                    3.0,
-                    egui::Color32::from_rgba_unmultiplied(0, 0, 0, 140),
-                );
+                let plate_bg = egui::Color32::from_rgba_unmultiplied(0, 0, 0, 140);
+                painter.rect_filled(plate.intersect(clip_rect), 3.0, plate_bg);
                 painter.galley(plate.min + egui::vec2(4.0, 1.5), galley, egui::Color32::WHITE);
+                if let Some(g) = chip {
+                    let cube = egui::Rect::from_min_size(
+                        plate.right_top() + egui::vec2(2.0, 0.0),
+                        egui::vec2(g.size().x + 6.0, plate.height()),
+                    );
+                    painter.rect_filled(cube, 3.0, plate_bg);
+                    painter.galley(cube.min + egui::vec2(3.0, 1.5), g, amber);
+                }
             }
 
             // trim handles on the selection
@@ -4898,14 +5090,34 @@ impl KtApp {
                 egui::pos2(track.left(), knob_y),
                 egui::vec2(track.width(), knob_h),
             );
-            let resp =
-                ui.interact(track, ui.id().with("tl-vscroll"), egui::Sense::click_and_drag());
+            // The grab is wider than the drawing and runs to the very edge: flush with the
+            // window this strip is the East resize zone, and the record below takes it back
+            // (TIMELINE 2: "either the window resize or the jump zone triggers").
+            let grab = egui::Rect::from_min_max(
+                egui::pos2(rect.right() - VSCROLL_GRAB_W, track.top()),
+                egui::pos2(rect.right(), track.bottom()),
+            );
+            self.no_resize_rects.push(grab);
+            crate::widgets::field_probe::note("tl.vscroll", grab);
+            let resp = ui.interact(grab, ui.id().with("tl-vscroll"), egui::Sense::click_and_drag());
+            if resp.hovered() || resp.dragged() {
+                self.hover_hint = Some(tr(k::tl::hint::SCROLLBAR).to_string());
+            }
             if resp.dragged()
                 && let Some(p) = resp.interact_pointer_pos()
             {
                 let f = ((p.y - track.top() - knob_h / 2.0) / (usable - knob_h).max(1.0))
                     .clamp(0.0, 1.0);
                 self.tl_scroll = f * vl.scroll_max;
+            }
+            // a click beside the handle pages by what is visible, like any scrollbar
+            if resp.clicked()
+                && let Some(p) = resp.interact_pointer_pos()
+                && !(knob.top()..=knob.bottom()).contains(&p.y)
+            {
+                let page = (rect.height() - RULER_H - 6.0).max(1.0);
+                let dir = if p.y < knob.top() { -1.0 } else { 1.0 };
+                self.tl_scroll = (self.tl_scroll + dir * page).clamp(0.0, vl.scroll_max);
             }
             painter.rect_filled(track, 3.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 90));
             painter.rect_filled(
@@ -5415,7 +5627,8 @@ impl KtApp {
         }
 
         // ---- jump/edge-scroll heat zones: gradient on hover ------------------
-        if let Some(pos) = hover {
+        // over the header too: its free part is the zone's hot end (TIMELINE 3)
+        if let Some(pos) = hover.or_else(|| gutter_resp.hover_pos()) {
             let boost = if self.drag.is_some() { 1.0f32 } else { 0.6 };
             let margin = edge_margin;
             let warm = |heat: f32, zone: egui::Rect, from_left: bool| {
@@ -5450,7 +5663,7 @@ impl KtApp {
                 }
             };
             let lh = ((rect.left() + margin - pos.x) / margin).clamp(0.0, 1.0);
-            let rh = ((pos.x - (rect.right() - margin)) / margin).clamp(0.0, 1.0);
+            let rh = ((pos.x - (jump_right - margin)) / margin).clamp(0.0, 1.0);
             // the left zone starts from the EDGE of the panel (through the gutter): the hot
             // end of the gradient runs into the physical edge of the window, and does not
             // stop at the gutter seam (item 20 round 6)
@@ -5465,8 +5678,8 @@ impl KtApp {
             warm(
                 rh,
                 egui::Rect::from_min_max(
-                    egui::pos2(rect.right() - margin * 0.6, rect.top() + RULER_H),
-                    egui::pos2(rect.right(), rect.bottom()),
+                    egui::pos2(jump_right - margin * 0.6, rect.top() + RULER_H),
+                    egui::pos2(jump_right, rect.bottom()),
                 ),
                 false,
             );
@@ -5750,19 +5963,13 @@ impl KtApp {
                         if is_audio {
                             let mut db = c.gain_db as f64;
                             ui.label(tr(k::tl::menu::LEVEL));
-                            // the limit is the v1 volume rail (RAIL_DB_SPAN), declared once
-                            // and only used here
-                            if crate::widgets::plain_row(
+                            // the same range as the line: silence .. +6.02 dB (R.72)
+                            if crate::widgets::event_gain_field(
                                 ui,
-                                &crate::widgets::NumRow {
-                                    label: "",
-                                    probe: "clip.gain",
-                                    unit: kt_model::ParamUnit::Db,
-                                    min: -(RAIL_DB_SPAN as f64) / 2.0,
-                                    max: RAIL_DB_SPAN as f64 / 2.0,
-                                    step: 0.1,
-                                    slider: None,
-                                },
+                                "clip.gain",
+                                kt_model::EVENT_GAIN_FLOOR_DB as f64,
+                                RAIL_DB_SPAN as f64 / 2.0,
+                                tr(k::tl::menu::LEVEL_MUTE),
                                 &mut db,
                             )
                             .changed()
@@ -5976,6 +6183,15 @@ impl KtApp {
                     }
                     self.cut_action();
                     ui.close();
+                }
+                // a composition has no frame of its own to stand on
+                if !self.is_nest(id) {
+                    let r = ui.button(tr(k::tl::menu::FRAME_HOLD));
+                    crate::widgets::field_probe::note("clip.frame_hold", r.rect);
+                    if r.clicked() {
+                        self.insert_frame_hold(id);
+                        ui.close();
+                    }
                 }
                 {
                     let r = ui.button(tr(k::tl::menu::FX));
