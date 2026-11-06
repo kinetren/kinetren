@@ -1040,11 +1040,13 @@ pub fn menu_item(ui: &mut egui::Ui, label: &str, accel: Option<&str>) -> bool {
 /// The same PLUS the item’s RECTANGLE: live scenarios have no way to find an
 /// egui menu item (it is absent from the accessibility tree), and they must not guess offsets.
 pub fn menu_item_probed(ui: &mut egui::Ui, label: &str, accel: Option<&str>) -> (bool, egui::Rect) {
-    let r = match accel {
-        Some(a) => ui.button(format!("{label}\t{a}")),
-        None => ui.button(label),
-    };
+    let r = menu_button(ui, label, accel.unwrap_or(""));
     (r.clicked(), r.rect)
+}
+
+/// A menu item's button; an empty accelerator (the command has no key in this style) prints none.
+pub fn menu_button(ui: &mut egui::Ui, label: &str, accel: &str) -> egui::Response {
+    if accel.is_empty() { ui.button(label) } else { ui.button(format!("{label}\t{accel}")) }
 }
 
 /// Rectangles of the parameter fields of the last frame — ONLY for live scenarios
@@ -1062,12 +1064,22 @@ pub(crate) mod field_probe {
         static RECTS: RefCell<Vec<(String, egui::Rect)>> = const { RefCell::new(Vec::new()) };
     }
 
+    #[cfg(test)]
+    thread_local! {
+        static SEEN: RefCell<std::collections::HashMap<String, egui::Rect>> = RefCell::new(Default::default());
+    }
+
     pub(crate) fn on() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| std::env::var("KT_GEOM_DUMP").is_ok())
     }
 
     pub(crate) fn note(name: &str, r: egui::Rect) {
+        // a harness test presses what a live scenario presses, by the same name
+        #[cfg(test)]
+        SEEN.with(|v| {
+            v.borrow_mut().insert(name.to_string(), r);
+        });
         if !on() {
             return;
         }
@@ -1076,6 +1088,12 @@ pub(crate) mod field_probe {
             v.retain(|(n, _)| n != name);
             v.push((name.to_string(), r));
         });
+    }
+
+    /// The rectangle of a place, last noted (the harness has no dump).
+    #[cfg(test)]
+    pub(crate) fn rect_of(name: &str) -> Option<egui::Rect> {
+        SEEN.with(|v| v.borrow().get(name).copied())
     }
 
     /// Take the accumulated data (the geometry dump is written every 100 ms).

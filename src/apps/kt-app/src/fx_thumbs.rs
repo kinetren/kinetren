@@ -213,17 +213,18 @@ struct TexCache {
 pub struct FxThumbService {
     shared: Arc<Shared>,
     tex: std::cell::RefCell<TexCache>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl FxThumbService {
     pub fn start() -> FxThumbService {
         let shared = Shared::new();
         let sh = shared.clone();
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("fxthumbs".into())
             .spawn(move || worker(sh))
             .expect("spawn fxthumbs");
-        FxThumbService { shared, tex: std::cell::RefCell::new(TexCache::default()) }
+        FxThumbService { shared, tex: std::cell::RefCell::new(TexCache::default()), worker: Some(worker) }
     }
 
     /// Enqueue a request (dedup). Drawing is never blocked.
@@ -398,6 +399,11 @@ impl Drop for FxThumbService {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
         self.shared.cond.notify_all();
+        // a frame on the device when the process exits kills it: LLVM goes down under llvmpipe's
+        // threads (gpu-render-hardening, D6, t1644)
+        if let Some(w) = self.worker.take() {
+            let _ = w.join();
+        }
     }
 }
 
@@ -598,6 +604,63 @@ mod tests {
         let mut alpha = job(2, 0);
         alpha.key.base = FxThumbBase::PatternAlpha;
         assert_ne!(plain.as_raw(), render_job(&alpha).as_raw());
+    }
+
+    /// t544e: a thumbnail is the fit to the reference size plus the chain, then the fit to the cell,
+    /// and nothing else; a second run gives the same bytes.
+    #[test]
+    fn t544e_thumb_is_fit_plus_chain_and_nothing_else() {
+        if kt_gpu::testkit::no_gpu(crate::plugins::install) {
+            return;
+        }
+        let mut j = job(1, 0);
+        j.chain = vec![FxInstance::blur(6), FxInstance::vhs(4, 0.4)];
+        let got = render_job(&j);
+        let base = kt_fx::video::test_pattern(REF_W, REF_H, false);
+        let ctx = kt_fx::video::VideoFxCtx {
+            out_w: REF_W,
+            out_h: REF_H,
+            u: j.u,
+            burst_index: j.burst_index,
+            cam3d: None,
+            in_scale: 1,
+            lead: None,
+        };
+        let full = kt_gpu::testkit::chain(&j.chain, base, &ctx);
+        let mut cell = vec![0u8; (CELL_W * CELL_H * 4) as usize];
+        kt_fx::video::fit_into(&full, CELL_W, CELL_H, &mut cell);
+        let want = egui::ColorImage::from_rgba_unmultiplied([CELL_W as usize, CELL_H as usize], &cell);
+        assert_eq!(got.as_raw(), want.as_raw(), "render_job is not fit + chain + fit");
+        assert_eq!(render_job(&j).as_raw(), want.as_raw(), "a second run changed the bytes");
+    }
+
+    /// t544f: a thumbnail's grain is pinned to the tick: the same tick gives the same cell, another
+    /// tick another one.
+    #[test]
+    fn t544f_noise_is_pinned_to_the_tick() {
+        if kt_gpu::testkit::no_gpu(crate::plugins::install) {
+            return;
+        }
+        let at = |t: i64| {
+            let mut j = job(1, 0);
+            j.chain = vec![FxInstance::noise(0.25)];
+            j.burst_index = t;
+            render_job(&j)
+        };
+        assert_eq!(at(90_000).as_raw(), at(90_000).as_raw(), "one tick gave two different thumbs");
+        assert_ne!(at(90_000).as_raw(), at(270_000).as_raw(), "noise ignores the tick");
+    }
+
+    /// t1644 (gpu-render-hardening, D6): dropping the service waits for its worker. A frame left on
+    /// the device at exit killed the process: t547 ended in SIGSEGV one run in three.
+    #[test]
+    fn t1644_dropping_the_service_waits_for_its_worker() {
+        crate::plugins::install();
+        let svc = FxThumbService::start();
+        let shared = svc.shared.clone();
+        svc.request(job(5, svc.generation()));
+        drop(svc);
+        assert_eq!(Arc::strong_count(&shared), 1, "the worker outlived its service");
     }
 
     /// The service as a whole: a request reaches `get()`, and `invalidate_media` drops the cells

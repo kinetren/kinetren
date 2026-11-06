@@ -346,7 +346,7 @@ fn pref_labels() -> Vec<&'static str> {
 fn t1294_one_switch_one_place() {
     // the writers, by their call (the two start checkboxes had DIFFERENT labels for one value)
     let dir = crate::reach_tests::workspace_root().join("apps/kt-app/src");
-    let writers = [".set_show_at_start(", ".set_economy_ui(", "store.set_lang(", ".set_choice("];
+    let writers = [".set_show_at_start(", ".set_economy_ui(", "store.set_lang(", ".set_choice(", "store.set_controls("];
     let mut sites: Vec<(&str, String)> = Vec::new();
     for e in std::fs::read_dir(&dir).unwrap() {
         let path = e.unwrap().path();

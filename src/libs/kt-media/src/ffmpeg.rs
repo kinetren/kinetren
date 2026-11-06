@@ -30,8 +30,6 @@ pub struct FfmpegSource {
 const MAX_CURSORS: usize = 2;
 /// Keys of one span further apart than this are separate runs, each given the nearest decoder.
 const RUN_GAP: i64 = 2 * kt_time::TICK_HZ;
-/// How far ahead a decoder decodes on instead of seeking (kt-ffmpeg's own forward bound).
-const FORWARD: i64 = 4 * kt_time::TICK_HZ;
 
 impl From<kt_ffmpeg::FfError> for MediaError {
     fn from(e: kt_ffmpeg::FfError) -> MediaError {
@@ -107,10 +105,9 @@ impl FfmpegSource {
     /// lower index — the choice is a function of the requests, never of timing.
     fn cursor_for(&mut self, start: Tick) -> usize {
         let all = 1 + self.cursors.len();
-        let at = |i: usize| if i == 0 { self.inner.video_cursor() } else { self.cursors[i - 1].video_cursor() };
-        let near = (0..all)
-            .filter_map(|i| at(i).filter(|p| p.0 <= start.0 && start.0 - p.0 < FORWARD).map(|p| (start.0 - p.0, i)))
-            .min();
+        let src = |i: usize| if i == 0 { &self.inner } else { &self.cursors[i - 1] };
+        let at = |i: usize| src(i).video_cursor();
+        let near = (0..all).filter_map(|i| src(i).video_reach(start).map(|d| (d, i))).min();
         if let Some((_, i)) = near {
             return i;
         }
@@ -130,6 +127,11 @@ impl FfmpegSource {
 }
 
 impl FfmpegSource {
+    /// How many times the audio sought (t1762).
+    pub fn audio_debug_seeks(&self) -> u64 {
+        self.inner.audio_debug_seeks()
+    }
+
     /// (backward_reopens, frames_decoded): diagnostics of test 21.
     /// All decoders of the file together (export-throughput D9).
     pub fn decode_debug_stats(&self) -> (u64, u64) {

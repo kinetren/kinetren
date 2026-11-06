@@ -148,6 +148,11 @@ fn residual_shader() -> &'static str {
     })
 }
 
+/// Every compute shader of the codec, as the device receives it.
+pub fn shaders() -> [&'static str; 3] {
+    [include_str!("wgsl/search.wgsl"), residual_shader(), include_str!("wgsl/decode.wgsl")]
+}
+
 fn words(v: &[u8]) -> Vec<u8> {
     v.iter().flat_map(|b| (*b as u32).to_le_bytes()).collect()
 }

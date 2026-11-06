@@ -128,7 +128,6 @@ fn run(engine: &dyn VideoGpuExec, id: u64, fx: Vec<FxInstance>, alpha: bool) -> 
         out_w: W,
         out_h: H,
         layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }],
-        memoize_postfx: true,
     };
     let (mut cpu, mut gpu) = (Vec::new(), Vec::new());
     let cc = kt_gpu::reference::next(&mut cpu);

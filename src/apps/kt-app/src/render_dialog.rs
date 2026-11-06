@@ -599,16 +599,26 @@ impl KtApp {
             force_encoder: self.render_setup.encoder.clone(),
             resolution: self.render_setup.resolution,
             placeholders: self.render_setup.missing.clone(),
+            tight: {
+                let (w, h) = self.render_setup.resolution.unwrap_or(proj_res);
+                kt_gpu::memory::tight(kt_gpu::memory::available(), w, h)
+            },
             ..Default::default()
         };
         let opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
+            // the render's sources decode with the threads of a render; the preview's stay on auto
+            let (rw, rh) = opts_thread.resolution.unwrap_or(proj_res);
+            kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(kt_gpu::memory::available(), rw, rh));
+            kt_ffmpeg::set_rgba_threads(kt_gpu::memory::rgba_threads(kt_gpu::memory::available(), rw, rh));
             let (a, _) = open_all(&project, base.as_deref());
             let (v, _) = open_all(&project, base.as_deref());
+            kt_ffmpeg::set_decode_threads(0);
+            kt_ffmpeg::set_rgba_threads(1);
             // R.29: its own headless devices per job (the UI queue does not share time with the
             // export); with no engine the export fails, and the window says why (D4)
-            let mut engines = match crate::app::export_video_gpu() {
+            let mut engines = match crate::app::export_video_gpu(rw, rh) {
                 Ok(e) => {
                     send.send(RenderMsg::Backend(BackendLine::Gpu(e[0].info().name.clone())));
                     e

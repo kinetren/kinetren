@@ -1,7 +1,7 @@
 ---
 id: F-UI-003
 title: Window layouts — presets by task and where the layout lives
-status: candidate
+status: in-progress
 priority: B
 cost: M
 category: ui/input
@@ -11,8 +11,8 @@ crates: [kt-app, kt-model, kt-otio]
 invariants: []
 ui_rules: [4, 5, 6, 13, 19, 20]
 round: null
-point: null
-tests: []
+point: change control-layouts
+tests: [t1709, t1710]
 depends_on: [F-UI-002]
 trackers: [kde-bugzilla, kde-invent, olive, pitivi, shotcut]
 checked: 2026-09-08
@@ -239,6 +239,8 @@ row, not a new strip; Kdenlive keeps its own in the corner of the same row), **1
 must say where to return — this concerns exactly the reset), **20** (nothing grows by itself:
 presets are a closed list plus explicitly saved ones, without "automatically remembered and
 substituted").
+
+DONE IN `control-layouts`: four named arrangements by style (`openspec/specs/ui-controls/`). STILL OPEN: a reset of panel sizes, memory of `preview_detached`, the ownership of `meters_w`.
 
 ADDRESS: `src/apps/kt-app/src/app.rs:759` (`meters_w` in `UiState`) against `src/apps/kt-app/src/app.rs:5174` (`eframe::App::save` writes only `lang` and `last_project`) — the class "an interface setting travelled with someone else's project" is POSSIBLE with us on exactly one field, and nothing catches it: the width of the meters panel travels in the `.otio` and, on opening, overrides mine (`app.rs:709`), whereas the width of the left column and the height of the timeline lie in `~/.local/share/kinotrain/app.ron` and do not travel with the project; t101 checks the strip and the clamp, t129 checks the permanence of window ids, but WHICH file owns which panel is checked by no test.
 

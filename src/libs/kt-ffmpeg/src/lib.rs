@@ -14,6 +14,38 @@ pub mod hw_trial;
 pub mod loader;
 pub mod search;
 
+/// The threads of a video decoder opened from now on: 0 asks libavcodec's auto (gpu-render-hardening,
+/// D1). Auto is 16 on a big machine, and a VP9 file in 4K then holds gigabytes of frames: a render
+/// short of memory opens its sources with less.
+pub fn set_decode_threads(n: u32) {
+    DECODE_THREADS.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+static DECODE_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// The threads that convert the pictures of a multi-size span to RGBA (render-speed-no-card D2): 1
+/// converts on the decoder's own thread. A render sets it; the conversion took four times the
+/// decoding on the showcase, and it held the render back wherever the composite was cheap.
+pub fn set_rgba_threads(n: u32) {
+    RGBA_THREADS.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+static RGBA_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
+pub(crate) fn rgba_threads() -> usize {
+    RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed).max(1) as usize
+}
+
+/// What the `threads` option of a video decoder says.
+#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
+pub(crate) fn decode_threads() -> String {
+    match DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => "auto".to_string(),
+        n => n.to_string(),
+    }
+}
+
 /// Cumulative activity counters of the FFmpeg layer (performance panel; port of the
 /// avcpp metrics of v1: gAvcppOpenCalls/gAvcppPacketReads). Global per process, monotonic;
 /// the UI differentiates them over time.
@@ -768,6 +800,16 @@ impl Source {
         }
     }
 
+    /// How far this decoder stands behind `start` when it reaches it by decoding on (D9).
+    pub fn video_reach(&self, start: Tick) -> Option<i64> {
+        match self {
+            Source::V6(s) => s.video_reach(start),
+            Source::V7(s) => s.video_reach(start),
+            Source::V8(s) => s.video_reach(start),
+            Source::V9(s) => s.video_reach(start),
+        }
+    }
+
     /// A span at several sizes in one forward pass (export-throughput D7).
     pub fn read_video_span_sizes(
         &mut self,
@@ -779,6 +821,16 @@ impl Source {
             Source::V7(s) => s.read_video_span_sizes(keys, emit),
             Source::V8(s) => s.read_video_span_sizes(keys, emit),
             Source::V9(s) => s.read_video_span_sizes(keys, emit),
+        }
+    }
+
+    /// How many times the audio sought — performance diagnostics.
+    pub fn audio_debug_seeks(&self) -> u64 {
+        match self {
+            Source::V6(s) => s.audio_debug_seeks(),
+            Source::V7(s) => s.audio_debug_seeks(),
+            Source::V8(s) => s.audio_debug_seeks(),
+            Source::V9(s) => s.audio_debug_seeks(),
         }
     }
 

@@ -604,3 +604,16 @@ fn t1572_the_decoder_copies_by_the_vector_clamps_and_scales() {
     assert_eq!(got.cb[3 * w / 2 + 2], cb(3, 2));
     assert_eq!(got.cb[3 * w / 2 + 8 + 2], cb(8 + 2 - 3, 3 + 1));
 }
+
+/// t1651 (gpu-render-hardening, D4): the codec's compute shaders compile on D3D12 through FXC, as
+/// the engine's do (t1650). Elsewhere: no D3D12, a skip.
+#[test]
+fn t1651_the_compute_shaders_compile_on_d3d12() {
+    let Some(ctx) = kt_gpu::GpuContext::new_d3d12() else {
+        eprintln!("skipped: no D3D12 adapter");
+        return;
+    };
+    for text in codec::shaders() {
+        kt_gpu::compute::compile(&ctx, text).unwrap_or_else(|e| panic!("{e}"));
+    }
+}

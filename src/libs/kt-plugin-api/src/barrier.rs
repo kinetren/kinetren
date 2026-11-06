@@ -117,6 +117,12 @@ pub trait BarrierKernel: Send + Sync {
     fn shaders(&self) -> &'static [&'static str] {
         &[]
     }
+    /// The passes of `shaders()` that keep one 32-bit word per texel, as a bit per index: their
+    /// target is `R32Uint`, not `Rgba8Uint`, and they write and read the word in `.x`: no four
+    /// channels unpacked and packed back per load.
+    fn word_passes(&self) -> u32 {
+        0
+    }
     /// The GPU graph for this frame; an empty graph is a passthrough (drop_shadow on an opaque frame).
     fn gpu(&self, _k: &Cooked, _g: &GpuCtx, _out: &mut Vec<Node>) {}
     /// The GPU graph from the passport values; the default cooks them (as `frame_values`).

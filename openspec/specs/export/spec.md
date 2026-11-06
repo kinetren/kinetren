@@ -911,16 +911,30 @@ the program is still working on it.
 - **TEST** t1604 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: A software adapter composes an export on several devices
-An export on a software adapter SHALL compose on a device per frame worker, a quarter of the cores and
-2 to 8 of them, and one device SHALL serve a real card. The frames written SHALL NOT depend on how many
-devices composed them.
-Why: llvmpipe runs one frame per queue; the owner's machine has no card, and the render there must
-not pay for the CPU composite's deletion.
+An export on a software adapter SHALL compose on a device per frame worker: an eighth of the cores, 2
+to 4 of them, as many as the available memory holds for the frame size, and at least one. One device
+SHALL serve a real card. The frames written SHALL NOT depend on how many devices composed them. The
+video decoders of a render SHALL open with four threads, and a render short of memory SHALL run tight:
+two decoder threads, half the frame cache, four encoder threads. A render SHALL NOT die of memory;
+speed is secondary.
+Why: each device keeps its own textures and shaders and adds 1.3 GB at 1080p, and seven decoders at
+auto held 2.7 GB of frames for nothing: the showcase went from 17 GB to 8.7 GB and from 144 s to 130 s.
 
 #### Scenario: Several devices write the frames of one
 - **WHEN** one project is exported through one engine and through three, on the same adapter
 - **THEN** the frames written are byte for byte equal
 - **TEST** t1573 (`src/libs/kt-gpu/tests/export_ring.rs`)
+
+#### Scenario: The device count follows the memory and the frame
+- **WHEN** the count is asked with plenty of memory, 7 GB, 4 GB, 1 GB at 4K, or memory unknown
+- **THEN** it is the ceiling, less than the ceiling, one, one (never none), and two; a bigger frame gets
+  no more devices than a smaller one; little memory gets two decoder threads, any other four
+- **TEST** t1642 (`src/libs/kt-gpu/tests/compute_host.rs`)
+
+#### Scenario: The memory is read
+- **WHEN** the program asks what it may take on Linux or Windows
+- **THEN** it gets a number; on Linux a control group's limit counts
+- **TEST** t1643 (`src/libs/kt-gpu/tests/compute_host.rs`)
 
 ### Requirement: An export with no device refuses and says why
 An export with no video device SHALL stop before it writes anything, with `ExportError::NoDevice`.
@@ -931,3 +945,26 @@ Why: the owner deleted the CPU composite ("удаляй", 2026-11-04).
 - **WHEN** a project is rendered with no executor among its backends
 - **THEN** the render fails, and the error reads "no video device"
 - **TEST** t1575 (`src/libs/kt-gpu/tests/gpu_render.rs`, `t301_export_renders_3d_and_t1575_no_device_is_a_refusal`)
+
+### Requirement: A render goes on past the end of a cut file
+A render of an event longer than its file holds SHALL give every frame, the frames past the end with
+the file's last picture, and lose no layer.
+Why: the render looked stalled and nothing named the cause.
+
+#### Scenario: An event over the cut
+- **WHEN** a 20 s event reads a 12 s file cut to about 6 s
+- **THEN** 600 frames are written, no layer is lost, the decoder reopens at most once and decodes
+  under 300 pictures
+- **TEST** t1763 (`src/libs/kt-engine/tests/export_options.rs`)
+
+### Requirement: A pipelined chunk is counted by what its frames ask
+The chunks of the pipelined export SHALL be frames in a row up to half a budget of what those frames
+ask, and one frame when it alone asks more. The serial loop keeps its measure.
+Why: the project's largest size made a chunk of one frame on the showcase: the sources advanced in step
+and nothing ran in parallel within a source.
+
+#### Scenario: A stretch of few layers in a project of many
+- **WHEN** the serial measure gives one frame per chunk
+- **THEN** the chunks follow each other over every frame, some hold several, and none of several frames
+  passes the limit
+- **TEST** t1767 (`src/libs/kt-engine/src/export_pipeline.rs`)

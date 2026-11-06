@@ -24,8 +24,7 @@
 //! stops drops its queue ends, and every neighbour blocked on them returns (t1452).
 
 use crate::export::{
-    ExportBackends, ExportStats, chunk_requests, decode_requests, export_chunk_frames, project_range,
-    render_raw_audio_range,
+    ExportBackends, ExportStats, chunk_requests, decode_requests, project_range, render_raw_audio_range,
 };
 use crate::video::VideoRenderer;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
@@ -58,6 +57,18 @@ pub struct ExportProfile {
     pub wall_ns: AtomicU64,
     /// How many threads each concurrent stage had (0 — the serial export).
     pub frame_workers: AtomicU64,
+    /// Inside `compose_ns`: building the plan, and the executor's own stages (a device per worker).
+    pub plan_ns: AtomicU64,
+    pub upload_ns: AtomicU64,
+    pub encode_passes_ns: AtomicU64,
+    pub gpu_wait_ns: AtomicU64,
+    pub copy_ns: AtomicU64,
+    /// Waits (render-speed-no-card): the decoder held back by the look-ahead, the frame workers
+    /// with no frame to take, and the writer waiting for a frame and for the audio.
+    pub wait_lookahead_ns: AtomicU64,
+    pub wait_workers_ns: AtomicU64,
+    pub wait_frame_ns: AtomicU64,
+    pub wait_audio_ns: AtomicU64,
 }
 
 impl ExportProfile {
@@ -82,6 +93,27 @@ impl ExportProfile {
         ] {
             let ns = v.load(Ordering::Relaxed) as f64;
             out.push_str(&format!("  {name:<13}{:>9.2} s busy  {:>6.1} % of wall\n", ns / 1e9, ns / wall * 100.0));
+        }
+        out.push_str("  of compose:\n");
+        for (name, v) in [
+            ("plan", &self.plan_ns),
+            ("upload", &self.upload_ns),
+            ("passes", &self.encode_passes_ns),
+            ("gpu wait", &self.gpu_wait_ns),
+            ("copy out", &self.copy_ns),
+        ] {
+            let ns = v.load(Ordering::Relaxed) as f64;
+            out.push_str(&format!("    {name:<11}{:>9.2} s\n", ns / 1e9));
+        }
+        out.push_str("  waits:\n");
+        for (name, v) in [
+            ("look-ahead", &self.wait_lookahead_ns),
+            ("no frame", &self.wait_workers_ns),
+            ("writer/frame", &self.wait_frame_ns),
+            ("writer/audio", &self.wait_audio_ns),
+        ] {
+            let ns = v.load(Ordering::Relaxed) as f64;
+            out.push_str(&format!("    {name:<13}{:>7.2} s\n", ns / 1e9));
         }
         let w = self.frame_workers.load(Ordering::Relaxed);
         out.push_str(&format!(
@@ -170,12 +202,20 @@ fn frame_workers() -> usize {
     (std::thread::available_parallelism().map_or(4, |n| n.get()) / 4).clamp(2, 4)
 }
 
-/// The pipelined export's frame cache: five serial budgets.
+/// The pipelined export's frame cache: three serial budgets. Five were never reached while a chunk
+/// was one frame, because the chunk queue stopped decode first; with chunks of several frames they
+/// were, and the 3 GB render died of it (render-speed-no-card D5).
 fn pipe_cache_bytes(budget: usize) -> usize {
-    5 * budget
+    3 * budget
 }
+/// A chunk's bytes at most, unless its one frame asks more.
+fn chunk_bytes(budget: usize) -> usize {
+    budget / 2
+}
+/// A chunk's frames at most, the serial loop's limit.
+const MAX_CHUNK_FRAMES: u64 = 120;
 /// What the unwritten chunks may hold before decode waits: a serial budget below the cache, so
-/// the next chunk (at most half a budget, `export_chunk_frames`) fits in the rest.
+/// the next chunk (at most half a budget, `chunk_bytes`) fits in the rest.
 fn lookahead_bytes(budget: usize) -> u64 {
     (pipe_cache_bytes(budget) - budget) as u64
 }
@@ -225,6 +265,35 @@ struct Chunk {
     t1: Tick,
 }
 
+/// The chunks of a range, as frame indices: frames in a row up to `limit` bytes of what they really
+/// ask. The largest decode size of the project, the serial loop's measure, made a chunk of one frame
+/// on the showcase: the sources advanced in step and no span had two pictures to convert at once.
+fn pipe_chunks(video: &VideoRenderer, (start, end): (Tick, Tick), quality: Quality, limit: usize) -> Vec<Chunk> {
+    let step = video.grid.frame_step();
+    let mut chunks = Vec::new();
+    let (mut t, mut idx) = (start, 0u64);
+    while t < end {
+        let (first, mut bytes, mut u) = (idx, 0usize, t);
+        while u < end {
+            let next = Tick((u.0 + step).min(end.0));
+            let asked: usize = video
+                .wanted_frames(kt_time::TickRange::new(u, next), quality)
+                .iter()
+                .map(|(_, _, dq)| dq.width as usize * dq.height as usize * 4)
+                .sum();
+            if idx > first && (bytes + asked > limit || idx - first >= MAX_CHUNK_FRAMES) {
+                break;
+            }
+            bytes += asked;
+            idx += 1;
+            u = Tick(u.0 + step);
+        }
+        chunks.push(Chunk { first, end: idx, t0: t, t1: Tick(u.0.min(end.0)) });
+        t = u;
+    }
+    chunks
+}
+
 fn cancelled() -> std::io::Error {
     std::io::Error::other("cancelled")
 }
@@ -264,24 +333,8 @@ pub(crate) fn run<S: ExportSink>(
         None => (Tick(0), project_range(project)),
     };
     let step = video.grid.frame_step();
-    let dq_max = video.max_decode_quality(quality);
-    let chunk_frames =
-        export_chunk_frames(hooks.budget, dq_max.width, dq_max.height, video.max_concurrent_layers());
-    // the serial loop's frames and chunks, as indices
-    let mut chunks = Vec::new();
-    let (mut t, mut idx) = (t_first, 0u64);
-    while t < end {
-        let t1 = Tick((t.0 + chunk_frames * step).min(end.0));
-        let first = idx;
-        let mut u = t;
-        while u < t1 {
-            idx += 1;
-            u = Tick(u.0 + step);
-        }
-        chunks.push(Chunk { first, end: idx, t0: t, t1 });
-        t = u;
-    }
-    let total = idx;
+    let chunks = pipe_chunks(&video, (t_first, end), quality, chunk_bytes(hooks.budget));
+    let total = chunks.last().map_or(0, |c| c.end);
     let frame_tick = |i: u64| Tick(t_first.0 + i as i64 * step);
     let audio_start = match range {
         Some((a, _)) => a.to_audio_frames(),
@@ -368,6 +421,7 @@ pub(crate) fn run<S: ExportSink>(
             // (end frame, keys held) of the chunks decoded and not yet written
             let mut ledger: std::collections::VecDeque<(u64, Vec<BurstKey>)> = Default::default();
             for ch in chunks_ref.iter() {
+                let waited = Instant::now();
                 gate_ref.wait(
                     &mut |written| {
                         while ledger.front().is_some_and(|(end, _)| *end <= written) {
@@ -378,6 +432,7 @@ pub(crate) fn run<S: ExportSink>(
                     },
                     &halted,
                 );
+                ExportProfile::add(prof.map(|p| &p.wait_lookahead_ns), waited);
                 if halted() {
                     return Err(cancelled());
                 }
@@ -399,16 +454,28 @@ pub(crate) fn run<S: ExportSink>(
             let pool_rx = rgba_pool_rx.clone();
             let engine = engines.get(n).cloned();
             worker_handles.push(scope.spawn(move || -> std::io::Result<()> {
-                while let Ok(job) = jr.recv() {
+                loop {
+                    let idle = Instant::now();
+                    let Ok(job) = jr.recv() else { break };
+                    ExportProfile::add(prof.map(|p| &p.wait_workers_ns), idle);
                     let (t, rgba, complete) = match job {
                         Job::Compose { t } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
                             let e = engine.as_ref().expect("only a worker with an engine composes");
+                            let plan = video_ref.frame_plan(cache_ref, t, quality);
+                            ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
                             let complete = e
-                                .execute_into(&video_ref.frame_plan(cache_ref, t, quality), &mut buf)
+                                .execute_once(&plan, &mut buf)
                                 .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
+                            if let Some(p) = prof {
+                                let s = e.last_stages();
+                                p.upload_ns.fetch_add(s.upload_ns, Ordering::Relaxed);
+                                p.encode_passes_ns.fetch_add(s.encode_ns, Ordering::Relaxed);
+                                p.gpu_wait_ns.fetch_add(s.wait_ns, Ordering::Relaxed);
+                                p.copy_ns.fetch_add(s.copy_ns, Ordering::Relaxed);
+                            }
                             (t, buf, complete)
                         }
                         Job::Convert { t, rgba, complete } => (t, rgba, complete),
@@ -480,7 +547,7 @@ pub(crate) fn run<S: ExportSink>(
                     if depth == 0 {
                         let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                         let complete = gpu
-                            .execute_into(&plan, &mut buf)
+                            .execute_once(&plan, &mut buf)
                             .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                         ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                         if !send(i, Job::Convert { t, rgba: buf, complete }) {
@@ -585,9 +652,11 @@ fn write_all<S: ExportSink>(
             return Err(cancelled());
         }
         let w = (i % workers) as usize;
+        let waited = Instant::now();
         let Ok(done) = done_rxs[w].recv() else {
             return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "a frame worker stopped"));
         };
+        ExportProfile::add(prof.map(|p| &p.wait_frame_ns), waited);
         if let Some((t, media)) = &done.lost {
             incomplete += media.len().max(1) as u64;
             (hooks.incomplete)(*t, media);
@@ -600,7 +669,10 @@ fn write_all<S: ExportSink>(
         (hooks.video_done)(i + 1);
         let want = audio_until(i);
         while audio_open && audio_written < want {
-            match audio_rx.recv() {
+            let waited = Instant::now();
+            let next = audio_rx.recv();
+            ExportProfile::add(prof.map(|p| &p.wait_audio_ns), waited);
+            match next {
                 Ok(chunk) => {
                     write_audio(sink, &chunk)?;
                     audio_written += (chunk.len() / AUDIO_CHANNELS) as u64;
@@ -669,4 +741,46 @@ fn decode_chunk(
         }
     });
     held
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// t1767 (render-speed-no-card D5): a chunk is counted by what its frames ask. The demo has a
+    /// stretch of many layers and stretches of few, so the measure of the worst moment gives a
+    /// chunk of one frame where the bytes hold several; every frame still lands in one chunk, and
+    /// no chunk of several frames passes the limit.
+    #[test]
+    fn t1767_a_chunk_is_counted_by_what_its_frames_ask() {
+        kt_plugins_builtin::install();
+        let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+        let video = VideoRenderer::new(&p);
+        let q = Quality { width: 320, height: 180 };
+        let frame = 320 * 180 * 4;
+        // the budget of one frame of the worst moment
+        let limit = (video.max_concurrent_layers() + 1) * frame;
+        let worst = crate::export::export_chunk_frames(2 * limit, 320, 180, video.max_concurrent_layers() + 1);
+        assert_eq!(worst, 1, "the serial measure gives one frame here");
+        let end = project_range(&p);
+        let chunks = pipe_chunks(&video, (Tick(0), end), q, limit);
+        let mut next = 0;
+        let mut at = Tick(0);
+        for c in &chunks {
+            assert_eq!((c.first, c.t0), (next, at), "the chunks follow each other");
+            next = c.end;
+            at = c.t1;
+            if c.end - c.first > 1 {
+                let asked: usize = video
+                    .wanted_frames(kt_time::TickRange::new(c.t0, c.t1), q)
+                    .iter()
+                    .map(|(_, _, dq)| dq.width as usize * dq.height as usize * 4)
+                    .sum();
+                assert!(asked <= limit, "a chunk of several frames passed the limit");
+            }
+        }
+        assert_eq!(at, end);
+        assert_eq!(next, crate::export::video_frames_in(p.settings.fps, Tick(0), end));
+        assert!(chunks.iter().any(|c| c.end - c.first > 1), "every chunk is one frame: {} chunks", chunks.len());
+    }
 }

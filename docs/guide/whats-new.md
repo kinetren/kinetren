@@ -5,13 +5,23 @@ month, newest first.
 
 ## kt26.11
 
+- **Work the way your hands already know.** At the first start, or in File › Preferences…, choose a Layout & Controls style: ours, like Vegas, or like Premiere Pro, DaVinci Resolve, Final Cut Pro or After Effects. The keys, the wheel and the panels change at once, and each tile says what that program has and we do not. **Customize** changes any key, and the **settings code** under the tiles brings it all back after a reinstall.
+- **Renders with no graphics card are faster**, most of all under the VHS simulation and on events
+  with a camera, and the preview gains the same in those places.
+- **A render no longer stalls on a file cut short.** A file whose header promises more than it holds
+  is now read to its real end once, and the render goes on with the last picture.
 - **Every picture is now made by one engine, on the graphics card.** The separate processor path is
   gone, so the preview and the render can no longer disagree, and effects no longer exist twice. With
   no graphics card the program runs the same engine through Vulkan on the processor, and a render
-  there uses several devices at once. A computer with no Vulkan, DX12 or Metal driver has no picture
+  there uses several devices at once, as many as the memory allows. A computer with no Vulkan, DX12 or Metal driver has no picture
   and no render, and the program says so: on Linux install `mesa-vulkan-drivers`, on Windows a
   graphics driver.
+- **Shapes, gradients and the countdown generate up to fifty times faster.** Rectangles, ellipses, lines,
+  gradients, corners, noise and the leader now draw as shaders.
 - **Slowed footage in blending mode no longer shows a frame of the wrong weight.**
+- **A render takes much less memory.** A dense 1080p edit went from 17 GB to under 9 and got faster, and
+  on a machine short of memory the render gives up speed instead of being killed: the same edit finished
+  under a limit of 3 GB.
 - **A render comes out the same every time.** Rendering a busy edit could quietly drop a layer from a
   few frames, different ones on each run, leaving wrong pictures in the file. Now every frame keeps
   all its layers, and the speed of the render is unchanged. If a source really cannot give a picture,

@@ -273,8 +273,10 @@ impl MediaSource for SyntheticSource {
         let g = ((code >> 8) & 0xff) as u8;
         let b = ((code >> 16) & 0xff) as u8;
         let px = [r, g, b, 255u8];
-        let rgba: Vec<u8> =
-            px.iter().copied().cycle().take((q.width * q.height * 4) as usize).collect();
+        let mut rgba = vec![0u8; (q.width * q.height * 4) as usize];
+        for c in rgba.chunks_exact_mut(4) {
+            c.copy_from_slice(&px);
+        }
         Ok(VideoFrame {
             pts: out_pts,
             width: q.width,

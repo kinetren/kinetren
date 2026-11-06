@@ -680,6 +680,14 @@ pub struct StartChoice {
     /// The language choice code (`auto`, `ru`, …); `None` — never chosen through this record (the
     /// start then takes the former eframe value once, D8).
     pub lang: Option<String>,
+    /// The Layout & Controls style as its settings code (control-layouts): one format, so what a
+    /// code does not carry does not survive here either. `None` — the factory default.
+    pub controls: Option<String>,
+    /// The last code of each style (`[style number, code]`): back on a tile, its keys are back
+    /// (rule 23); the factory state of a tile is its own code, so nothing special.
+    pub controls_by_style: Vec<(u8, String)>,
+    /// The style question was asked once (L1: on the first entry).
+    pub controls_offered: bool,
 }
 
 impl Default for StartChoice {
@@ -691,6 +699,9 @@ impl Default for StartChoice {
             started_before: false,
             economy_ui: false,
             lang: None,
+            controls: None,
+            controls_by_style: Vec::new(),
+            controls_offered: false,
         }
     }
 }
@@ -833,6 +844,19 @@ impl StartStore {
                 started_before: v.get("started_before").and_then(|x| x.as_bool()).unwrap_or(true),
                 economy_ui: v.get("economy_ui").and_then(|x| x.as_bool()).unwrap_or(false),
                 lang: v.get("lang").and_then(|x| x.as_str()).map(str::to_string),
+                controls: v.get("controls").and_then(|x| x.as_str()).map(str::to_string),
+                controls_by_style: v
+                    .get("controls_by_style")
+                    .and_then(|x| x.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|r| Some((r.get(0)?.as_u64()? as u8, r.get(1)?.as_str()?.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                // a record without the key was written by an older build: that person has
+                // entered the program long ago, the first entry is behind them
+                controls_offered: v.get("controls_offered").and_then(|x| x.as_bool()).unwrap_or(true),
             };
         }
         s
@@ -939,6 +963,13 @@ impl StartStore {
         if let Some(t) = &self.start.last_template {
             v["last_template"] = serde_json::json!(t);
         }
+        if let Some(c) = &self.start.controls {
+            v["controls"] = serde_json::json!(c);
+        }
+        if !self.start.controls_by_style.is_empty() {
+            v["controls_by_style"] = serde_json::json!(self.start.controls_by_style);
+        }
+        v["controls_offered"] = serde_json::json!(self.start.controls_offered);
         self.write(F_START, v);
     }
 
@@ -1038,6 +1069,30 @@ impl StartStore {
     pub fn set_economy_ui(&mut self, on: bool) {
         if self.start.economy_ui != on {
             self.start.economy_ui = on;
+            self.save_start();
+        }
+    }
+
+    /// The Layout & Controls style as its code, also remembered for its tile (rule 23).
+    pub fn set_controls(&mut self, style: u8, code: &str) {
+        if self.start.controls.as_deref() == Some(code) {
+            return;
+        }
+        self.start.controls = Some(code.to_string());
+        self.start.controls_by_style.retain(|r| r.0 != style);
+        self.start.controls_by_style.push((style, code.to_string()));
+        self.save_start();
+    }
+
+    /// The code a tile had when the person left it.
+    pub fn controls_of(&self, style: u8) -> Option<&str> {
+        self.start.controls_by_style.iter().find(|r| r.0 == style).map(|r| r.1.as_str())
+    }
+
+    /// The style question has been asked (it is asked once).
+    pub fn mark_controls_offered(&mut self) {
+        if !self.start.controls_offered {
+            self.start.controls_offered = true;
             self.save_start();
         }
     }

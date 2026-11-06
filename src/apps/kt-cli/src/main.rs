@@ -1477,6 +1477,11 @@ fn run(args: &[String]) -> i32 {
                 Ok(out)
             };
             report_silenced(&project);
+            let free = kt_gpu::memory::available();
+            kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(free, project.settings.width, project.settings.height));
+            kt_ffmpeg::set_rgba_threads(
+                kt_gpu::memory::rgba_threads(free, project.settings.width, project.settings.height),
+            );
             let (audio_sources, video_sources) = match (open_all(), open_all()) {
                 (Ok(a), Ok(v)) => (a, v),
                 (Err(e), _) | (_, Err(e)) => {
@@ -1490,10 +1495,11 @@ fn run(args: &[String]) -> i32 {
                 serial,
                 encoder_threads,
                 profile: profile.clone(),
+                tight: kt_gpu::memory::tight(free, project.settings.width, project.settings.height),
                 ..Default::default()
             };
             // R.29: headless devices, the same composition code as the preview
-            let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines() {
+            let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines(project.settings.width, project.settings.height) {
                 Ok(e) => {
                     use kt_engine::VideoGpuExec as _;
                     eprintln!("video: GPU ({}, {} engines)", e[0].info().name, e.len());

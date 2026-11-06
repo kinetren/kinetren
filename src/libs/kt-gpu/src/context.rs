@@ -50,6 +50,21 @@ impl GpuContext {
         Self::headless_with(wgpu::PowerPreference::LowPower)
     }
 
+    /// The device of the D3D12 backend, whatever adapter it is; `None` where there is none.
+    pub fn new_d3d12() -> Option<GpuContext> {
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        desc.backends = wgpu::Backends::DX12;
+        let instance = wgpu::Instance::new(desc);
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+        let info = adapter.get_info();
+        let limits = wgpu::Limits { max_texture_dimension_2d: 8192, ..wgpu::Limits::default() };
+        let (device, queue) = pollster::block_on(
+            adapter.request_device(&wgpu::DeviceDescriptor { required_limits: limits, ..Default::default() }),
+        )
+        .ok()?;
+        Some(GpuContext { device: Arc::new(device), queue: Arc::new(queue), adapter_info: info })
+    }
+
     /// The EXPORT's headless device (export-throughput D5): WGPU_POWER_PREF or HighPerformance.
     /// LowPower keeps the UI from heating the machine (invariant 12, PRIME item 39) — a cost paid
     /// every frame a person looks at. An export is a finite job the person WAITS for, on its own

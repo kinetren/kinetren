@@ -1522,7 +1522,11 @@ dependencies = [
 name = "fx-video-camera"
 version = "0.1.0"
 dependencies = [
+ "kt-fx",
+ "kt-gpu",
+ "kt-model",
  "kt-plugin-api",
+ "kt-plugins-builtin",
 ]
 
 [[package]]
@@ -1558,7 +1562,11 @@ dependencies = [
 name = "fx-video-tape"
 version = "0.1.0"
 dependencies = [
+ "kt-fx",
+ "kt-gpu",
+ "kt-model",
  "kt-plugin-api",
+ "kt-plugins-builtin",
 ]
 
 [[package]]
@@ -2268,6 +2276,8 @@ name = "kt-gpu"
 version = "0.1.0"
 dependencies = [
  "fx-video-color",
+ "generators-basic",
+ "generators-test",
  "kt-cache",
  "kt-engine",
  "kt-fx",
@@ -2278,6 +2288,7 @@ dependencies = [
  "kt-time",
  "pollster 0.4.0",
  "wgpu",
+ "windows-sys 0.61.2",
  "xxhash-rust",
 ]
 
@@ -2286,6 +2297,7 @@ name = "kt-media"
 version = "0.1.0"
 dependencies = [
  "kt-ffmpeg",
+ "kt-gpu",
  "kt-model",
  "kt-plugin-api",
  "kt-plugins-builtin",

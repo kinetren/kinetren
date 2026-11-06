@@ -29,7 +29,7 @@ the disk, or the processes starting behind it, not the tests.
 | t939, t796c | `gen.sh`: a shared temp name (row 29, row 58) | Unique temp names and a lock, t1670 |
 | `vhs_tape`, row 47 | Ctrl+S writes on the UI thread and syncs twice (6.7 s measured at load 76). The framework's silent 10 s ran out and read the old file | `saved_project` is `save_now`, which waits and fails aloud |
 | `envclip`, `corner`, `audiofx`: "did not write after Ctrl+S" | **A program defect.** `i.modifiers` is the state at the frame's end. A stalled frame that read Ctrl down, S down and Ctrl up together saw a bare S: the event was split and nothing saved. 1 run in 6 at load 50, none of 12 after that; the mechanism is held by t1672, red on the old code. The same symptom came back in `fxpreset` after this fix, so it has a second cause, not found (row 47) | The chord is read from `Event::Key`; the framework holds the modifier until the key is read |
-| `read_bell`, row 79 | Esc closes the window on top of the LAST frame: pressed before the new window was drawn once, it went down the cascade. No stall was involved: nothing plays at that step | Waits for the window, then for a fresh dump. The behaviour itself is row 86 |
+| `read_bell`, row 79 | Esc closes the window on top of the LAST frame: pressed before the new window was drawn once, it went down the cascade. No stall was involved: nothing plays at that step | Waits for the window, then for a fresh dump. The behaviour itself is row 92 |
 | `conform`, `nestshare`, `camera_mic`, `loop` (the click before the region) | **A click lost with no trace.** A move and a press in one slow frame press what the pointer was over before | `Live._arrive`: the move is read first |
 | `formula`, `forms`, `nestparam`, `winshell` | Two causes of one symptom. Spread over 0.22 s, the four events crossed frames of a slow render, past 0.3 s two single clicks. And a click within 0.6 s of the click before last is egui's triple, which is no double click: a click just before the gesture lost it every time (`winshell`, 2 of 2) | 0.01 s between the events (12 of 12 at a frame of 0.55 s, against 8 of 12); the gesture waits the triple window out. Tried and refused: the press read alone (a frame past 0.8 s loses the click, `vhs_tape`) and all four in one write (`formula`, `forms`, `fxwin` lost it) |
 | `jump_zone` | A double click read in one frame is one jump, and the scene needed two to stand clear of the project's start | The scene jumps once more itself |
@@ -115,7 +115,7 @@ what other sessions ran, load 20–60 on 32 cores. Wall time depends on those se
 | `live-check.sh`, first pass plus reruns | 37–51 min | 23–29 min |
 
 The live run does not reach 77 of 77 on its first pass at this load: the last run had 73, and `fxpreset`
-stayed red on its rerun too (`docs/found-defects.md` rows 47 and 88). A Ctrl+S that writes nothing with
+stayed red on its rerun too (`docs/found-defects.md` rows 47 and 93). A Ctrl+S that writes nothing with
 the FX window open is not explained; the chord fix (t1672) closed one cause, not this one.
 
 ## Risks

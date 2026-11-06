@@ -1,6 +1,7 @@
 //! KtApp: application state, panels, keys, drops, lifecycle.
 
 use crate::audio_out;
+use crate::controls::Arrangement;
 use crate::i18n::{k, tr};
 use crate::telemetry::OpenHow;
 use crate::timeline::{CtxTarget, Drag};
@@ -233,6 +234,8 @@ pub struct KtApp {
     pub drag: Option<Drag>,
     /// Main (fixed) playback speed (items 4-5 v1.4).
     pub base_rate: f32,
+    /// The J/L run's signed speed; `None` — no run. Temporary: the base stays (rule of item 120).
+    pub shuttle_rate: Option<f32>,
     /// Position of the shuttle slider while it is held (None = not held).
     pub shuttle_override: Option<f32>,
     /// Which speed-control band is grabbed by a drag: Some(true) = upper
@@ -848,6 +851,7 @@ impl KtApp {
             selected_camera: BTreeSet::new(),
             drag: None,
             base_rate: 1.0,
+            shuttle_rate: None,
             shuttle_override: None,
             speed_drag_upper: None,
             speed_drag_vx: 0.0,
@@ -1132,6 +1136,7 @@ impl KtApp {
             selected_camera: BTreeSet::new(),
             drag: None,
             base_rate: 1.0,
+            shuttle_rate: None,
             shuttle_override: None,
             speed_drag_upper: None,
             speed_drag_vx: 0.0,
@@ -1656,6 +1661,10 @@ impl KtApp {
         self.surrender_focus_on_outside_click(&ctx);
         // the windows of the previous frame, top last: Esc picks from them (shared-window-shell)
         self.shell_seen = crate::window_shell::begin_frame(&ctx);
+        let ui_zoom = self.start.controls.ui_zoom_keys_free();
+        if ctx.options(|o| o.zoom_with_keyboard) != ui_zoom {
+            ctx.options_mut(|o| o.zoom_with_keyboard = ui_zoom);
+        }
         self.handle_keys(&ctx);
         crate::window_shell::arm_esc(&ctx, self.shell_esc.take());
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
@@ -1690,38 +1699,52 @@ impl KtApp {
             .show(ui, |ui| {
                 self.draw_statusbar(ui);
             });
+        // The panels stand where the Layout & Controls style puts them (control-layouts). The
+        // style's other arrangements add the header row: the menu and the window buttons live in
+        // the bin column and the meters column, which are not at the window's top there.
+        let arrangement = self.start.controls.choice.layout;
+        if arrangement != Arrangement::Classic {
+            self.draw_header_row(ui);
+        }
         // Timeline (bottom, full width) + floating toolbar on top
         // Item 10 round 9: the timeline needs a CEILING, otherwise at small height it
         // takes everything and pushes out the header with the logo/menu and the window buttons (they
         // live inside the side columns). The smart shrinking of egui panels does not
         // break from this — only an upper limit is added.
         let tl_max = (ui.available_height() - 140.0).max(80.0);
-        egui::Panel::bottom("timeline")
-            .frame(egui::Frame::new().fill(crate::theme::PANEL))
-            .resizable(true)
-            .default_size(300.0)
-            .max_size(tl_max)
-            .show(ui, |ui| {
-                let full = ui.available_rect_before_wrap();
-                self.timeline_rect = full;
-                let strip_h = 34.0;
-                let tl_rect = egui::Rect::from_min_max(
-                    full.min,
-                    egui::pos2(full.right(), full.bottom() - strip_h),
-                );
-                ui.scope_builder(egui::UiBuilder::new().max_rect(tl_rect), |ui| {
-                    self.draw_timeline(ui);
-                });
-                ui.scope_builder(
-                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
-                        egui::pos2(full.left(), full.bottom() - strip_h),
-                        full.max,
-                    )),
-                    |ui| {
-                        self.draw_toolbar_strip(ui);
-                    },
-                );
-            });
+        let timeline_frame = egui::Frame::new().fill(crate::theme::PANEL);
+        match arrangement {
+            Arrangement::Classic => {
+                egui::Panel::bottom("timeline")
+                    .frame(timeline_frame)
+                    .resizable(true)
+                    .default_size(300.0)
+                    .max_size(tl_max)
+                    .show(ui, |ui| self.draw_timeline_area(ui));
+            }
+            Arrangement::TimelineOnTop => {
+                egui::Panel::top("timeline_top")
+                    .frame(timeline_frame)
+                    .resizable(true)
+                    .default_size(340.0)
+                    .max_size(tl_max)
+                    .show(ui, |ui| self.draw_timeline_area(ui));
+            }
+            Arrangement::MetersBesideTimeline | Arrangement::BinBesideTimeline => {
+                egui::Panel::bottom("timeline_row")
+                    .frame(timeline_frame)
+                    .resizable(true)
+                    .default_size(340.0)
+                    .max_size(tl_max)
+                    .show(ui, |ui| {
+                        if arrangement == Arrangement::BinBesideTimeline {
+                            self.draw_bin_column(ui, false);
+                        }
+                        self.draw_meters_column(ui, false);
+                        egui::CentralPanel::default().frame(timeline_frame).show(ui, |ui| self.draw_timeline_area(ui));
+                    });
+            }
+        }
         // The tour's lessons (welcome-window-and-tour D2): a docked panel on the right, drawn
         // AFTER the timeline (tour-lessons-fixes D8): drawn before it, the panel narrowed the
         // timeline's toolbar row, which clipped at the panel's edge — the Loop button lesson 1
@@ -1729,145 +1752,15 @@ impl KtApp {
         self.draw_lessons_panel(ui);
         // Time strip above the timeline (port of the Timeline time strip)
         // left column: media bin + performance box (port of widget_3)
-        // LIMIT SET ON COMPLAINT of item 4 round 13 — do not squeeze without a new
-        // request from the user: 420 px were insurance of round 7.1, in round 9 raised to
-        // half the window by his direct request, and in round 11 I cut them
-        // back “by analogy” with the meters and broke the work for the third time.
-        egui::Panel::left("left_col")
-            .frame(crate::theme::panel_frame())
-            .resizable(true)
-            .default_size(232.0)
-            .min_size(72.0)
-            .max_size((ui.max_rect().width() * 0.7).max(420.0))
-            .show(ui, |ui| {
-                // header: logo + menu + project name (items 15, 6, 7 round 8)
-                self.draw_column_header(ui);
-                ui.add_space(2.0);
-                // Round 7 item 27: content in a ScrollArea — the panel frame no longer outgrows its
-                // height, and the egui separator no longer climbs onto the timeline
-                // (panel.rs takes the ACTUAL rect of the frame); the column also
-                // scrolls at a small window height.
-                // auto_shrink by WIDTH is mandatory: [false] made the content
-                // demand the whole available width, the panel swelled to the content
-                // and ate the preview (regression of item 3 round 7.1). For height
-                // false — for the sake of item 27 (the frame does not outgrow the panel).
-                egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
-                    // the bin keeps the whole column (diagnostics-three-graphs): its frame reaches
-                    // the column's bottom, so the space under the cards is the bin's background
-                    // (drop, right click); `clip_rect` is the column's viewport (R.16)
-                    let frame = egui::Frame::group(ui.style());
-                    let margins = frame.total_margin().sum().y;
-                    let fill = (ui.clip_rect().bottom() - ui.cursor().top() - margins).max(0.0);
-                    frame
-                        .fill(crate::theme::WINDOW)
-                        .corner_radius(1.0)
-                        .show(ui, |ui| {
-                            ui.set_min_height(fill);
-                            self.draw_bin(ui);
-                        });
-                    // the perf box that stood here lives in the Diagnostics window
-                    // (diagnostics-three-graphs, kkt-26.11.01 item 14): the column is the bin's
-                });
-            });
+        if arrangement != Arrangement::BinBesideTimeline {
+            self.draw_bin_column(ui, arrangement == Arrangement::Classic);
+        }
         // centre: preview + meters on the right, controls below them.
         // Frame without air: the default 8 px around the perimeter ate the space and
         // pushed the window buttons away from the corner (item 15 round 8).
         egui::CentralPanel::default().frame(egui::Frame::new().fill(crate::theme::PANEL)).show(
             ui,
-            |ui| {
-                let p = self.model.project();
-                if let Some(r) = p.region
-                    && !p.loop_enabled
-                    && self.player.transport.is_playing()
-                    && self.player.transport.playhead() >= r.end
-                    && self.player.transport.playhead() < r.end + Tick(9000)
-                {
-                    self.player.pause();
-                    // like a manual pause: double Space after an auto-pause = stop
-                    // to the start of the region (item 29 round 7)
-                    self.paused_at = Some(std::time::Instant::now());
-                }
-                egui::Panel::bottom("prev_controls").show(ui, |ui| {
-                    ui.add_space(3.0);
-                    self.draw_preview_controls(ui);
-                    ui.add_space(3.0);
-                });
-                // We hold the WIDTH ourselves, the standard resizable is off (item 6 round 13):
-                // the egui grip is ±8 px over the WHOLE height of the panel and is registered
-                // AFTER its content (as designed in egui), so it won over
-                // the window buttons, and “minimize” was pressed halfway. Our own strip
-                // lies to the LEFT of the panel and does not go inside it.
-                let mw = self.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
-                egui::Panel::right("meters_col")
-                    .resizable(false)
-                    .exact_size(mw)
-                    .frame(egui::Frame::new().fill(crate::theme::PANEL))
-                    .show(ui, |ui| {
-                        // window buttons — here, in the layout (item 15 round 8)
-                        self.draw_window_buttons(ui);
-                        self.draw_meters(ui);
-                    });
-                // the drag strip — already OUTSIDE the panel: the panel itself took the space for it,
-                // so the right edge of the remaining space is its left edge.
-                // Below the window drag strip, so as not to contend with it.
-                {
-                    // the panel’s edge is computed from the window (ui.max_rect(): the panel
-                    // does not shrink it), the strip lies to the LEFT of it and does not go into the panel
-                    let win = ui.ctx().content_rect();
-                    let edge = win.right() - mw;
-                    let sep = egui::Rect::from_min_max(
-                        egui::pos2(edge - METERS_SEP_W, win.top() + TOP_DRAG_H),
-                        egui::pos2(edge, win.bottom()),
-                    );
-                    let r = ui.interact(sep, egui::Id::new("meters-sep"), egui::Sense::drag());
-                    if r.hovered() || r.dragged() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                    }
-                    if r.dragged()
-                        && let Some(pos) = r.interact_pointer_pos()
-                    {
-                        self.meters_w = (win.right() - pos.x).clamp(METERS_W_MIN, METERS_W_MAX);
-                        self.dirty_ui = true;
-                    }
-                }
-                egui::CentralPanel::default().frame(egui::Frame::new()).show(ui, |ui| {
-                    // Item 2 round 9: a CONTINUOUS window-drag zone across the full width.
-                    // The strip is invisible and lies between the resize edge (WIN_EDGE)
-                    // and the bottom of the column headers, so it takes no space and
-                    // joins the header on the left and the window buttons on the right.
-                    if self.window_frame == crate::window_frame::Frame::Borderless {
-                        let full = ui.available_rect_before_wrap();
-                        // In the maximized window there is NO resize (the block below is disabled
-                        // by the maximized guard), so the top WIN_EDGE pixels
-                        // remained DEAD: you drag at the very edge — nothing, a little lower — it works
-                        // (item 11 round 13). We hand them over to the drag.
-                        let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-                        let top = if maximized { full.top() } else { full.top() + WIN_EDGE };
-                        let strip = egui::Rect::from_min_max(
-                            egui::pos2(full.left() - 8.0, top),
-                            egui::pos2(full.right() + 8.0, full.top() + TOP_DRAG_H),
-                        );
-                        let bg = ui.interact(
-                            strip,
-                            ui.id().with("top-drag"),
-                            egui::Sense::click_and_drag(),
-                        );
-                        self.window_drag_from(&bg, ui.ctx());
-                        // The strip takes NO SPACE (item 1 round 11): previously here stood
-                        // advance_cursor_after_rect, and the preview lost 20 px of height for nothing.
-                        // The strip does not steal clicks — egui looks up the click target and
-                        // the drag target independently, and the preview itself does not accept
-                        // clicks above TOP_DRAG_H.
-                    }
-                    if self.preview_detached {
-                        ui.centered_and_justified(|ui| {
-                            ui.weak(tr(k::hint::PREVIEW_DETACHED));
-                        });
-                    } else {
-                        self.draw_preview(ui);
-                    }
-                });
-            },
+            |ui| self.draw_centre(ui, arrangement),
         );
 
         // ---- detached preview window (item 7 v1.4): second monitor ------------
@@ -1915,6 +1808,7 @@ impl KtApp {
         self.draw_preset_save(&ctx);
         self.draw_settings_window(&ctx);
         self.draw_prefs_window(&ctx);
+        self.draw_controls_window(&ctx);
         self.draw_track_window(&ctx);
         self.draw_seq_name(&ctx);
         // Public parameters of the composition (R.59, stage 3): name dialog,
@@ -2733,6 +2627,42 @@ impl KtApp {
         self.ticks_per_px = new_tpp;
     }
 
+    /// The whole project in the view (the style's "zoom to fit"), the same limits as the wheel.
+    pub(crate) fn zoom_fit(&mut self) {
+        self.follow_playhead = false;
+        self.last_user_scroll = Some(std::time::Instant::now());
+        let end = self.model.project().clips.iter().map(|c| (c.start + c.duration).0).max().unwrap_or(0);
+        let w = (self.timeline_rect.width() as f64 - crate::timeline::GUTTER_W as f64).max(1.0);
+        self.ticks_per_px = (end.max(1) as f64 / w).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+        self.view_start = 0.0;
+    }
+
+    /// J, K, L (control-layouts): `dir` −1 back, 0 stop, +1 forward. A repeat in one direction
+    /// doubles the speed up to the Space hold's ceiling, the other direction starts at 1×; the
+    /// signed rate is the engine's own (R.57), and K gives the person's base speed back.
+    fn shuttle_key(&mut self, dir: i8) {
+        self.space_boost = None;
+        if dir == 0 {
+            self.shuttle_rate = None;
+            if self.player.transport.is_playing() {
+                self.player.pause();
+                self.paused_at = Some(std::time::Instant::now());
+            }
+            self.player.set_playback_rate(self.base_rate);
+            return;
+        }
+        let playing = self.player.transport.is_playing();
+        let sign = dir as f32;
+        let now = self.shuttle_rate.filter(|_| playing).unwrap_or(0.0);
+        let next = if now * sign > 0.0 { (now.abs() * 2.0).min(SPACE_BOOST_MAX) * sign } else { sign };
+        self.shuttle_rate = Some(next);
+        self.player.set_playback_rate(next);
+        if !playing {
+            self.paused_at = None;
+            self.on_play();
+        }
+    }
+
     /// Hint: a popup + a line in the bottom right of the status bar (item 16 round 7 —
     /// hover_hint is read by draw_statusbar). All on_hover_text calls go here.
     pub(crate) fn hint(&mut self, r: egui::Response, text: &str) -> egui::Response {
@@ -2741,6 +2671,15 @@ impl KtApp {
         }
         // item 14 round 8: NO popups at all — the hint lives in exactly
         // one place, at the bottom right of the status line
+        r
+    }
+
+    /// The hint of a control that names its key: the text is built only while hovered, the key
+    /// comes from the style (rule 17: the hint says what the key really does).
+    pub(crate) fn hint_key(&mut self, r: egui::Response, text: crate::i18n::Key, cmd: crate::controls::Cmd) -> egui::Response {
+        if r.hovered() {
+            self.hover_hint = Some(crate::tf!(text, self.start.controls.label_all(cmd)));
+        }
         r
     }
 
@@ -2836,6 +2775,11 @@ impl KtApp {
         if self.shuttle_override.is_some() {
             return;
         }
+        // a pause by any door ends a J/L run: the next play is at the person's base speed
+        if self.shuttle_rate.is_some() && (!self.player.transport.is_playing() || self.space_press.is_some()) {
+            self.shuttle_rate = None;
+            self.player.set_playback_rate(self.base_rate);
+        }
         let dt = ctx.input(|i| i.stable_dt);
         let past = self.space_press.is_some_and(|p| p.at.elapsed().as_millis() >= SPACE_HOLD_MS);
         if let Some(press) = self.space_press.as_mut().filter(|_| past) {
@@ -2881,6 +2825,9 @@ impl KtApp {
     pub fn speed_temp_slider(&self) -> Option<f32> {
         if self.shuttle_override.is_some() {
             return self.shuttle_override;
+        }
+        if let Some(r) = self.shuttle_rate {
+            return Some(rate_to_slider(r));
         }
         self.space_boost.map(|_| rate_to_slider(self.player.playback_rate()))
     }
@@ -7564,43 +7511,27 @@ impl KtApp {
         // nothing about them — we name them one by one. A new text field must appear
         // in this list;
         // the guards are t98 and t627.
-        if ctx.text_edit_focused() || self.tc_edit.is_some() || self.speed_entry.is_some() {
+        if ctx.text_edit_focused()
+            || self.tc_edit.is_some()
+            || self.speed_entry.is_some()
+            // the key list is listening: the press is the key being assigned (control-layouts)
+            || self.start.controls_ui.capture.is_some()
+        {
             return;
-        }
-        struct Keys {
-            cut: bool,
-            del: bool,
-            undo: bool,
-            redo: bool,
-            save: bool,
-            marker: bool,
-            track_mute: bool,
-            track_solo: bool,
-            region_in: bool,
-            region_out: bool,
-            loop_toggle: bool,
-            esc: bool,
-            enter_nest: bool,
-            copy: bool,
-            paste: bool,
-            nav_prev: bool,
-            nav_next: bool,
-            frame_prev: bool,
-            frame_next: bool,
-            nav_far: bool,
-            nav_region: bool,
-            goto_tc: bool,
-            find: bool,
         }
         // We read SPACE from EVENTS, not key_pressed: the latter turns on
         // keyboard auto-repeat, and a held space sent a series of play/pause
         // (item 3 of round 16). We only remember the press — the decision is made on
         // RELEASE: a short press = play/pause, a long one = acceleration.
+        // The key is the style's (control-layouts): the machine itself stays one in every style.
+        let play_key = self.start.controls.play_key();
         let (space_down, space_up) = ctx.input(|i| {
             let mut down = None;
             let mut up = false;
             for e in &i.events {
-                if let egui::Event::Key { key: egui::Key::Space, pressed, repeat, modifiers, .. } = e {
+                if let egui::Event::Key { key, pressed, repeat, modifiers, .. } = e
+                    && Some(*key) == play_key
+                {
                     if *pressed {
                         if !*repeat {
                             down = Some(modifiers.ctrl || modifiers.command);
@@ -7627,138 +7558,103 @@ impl KtApp {
         }
         // MASK EDITING takes Enter, Backspace and Delete on the preview first (shape-masks)
         let (mask_del, mask_enter) = self.mask_keys(ctx);
-        let mut k = ctx.input(|i| {
-            // A chord is what was held when ITS KEY went down. `i.modifiers` is the state at the
-            // end of the frame's input: a stalled frame that read Ctrl down, S down and Ctrl up
-            // together saw a bare S and split the event instead of saving (test-stability, t1672)
-            let m = i
-                .events
-                .iter()
-                .find_map(|e| match e {
-                    egui::Event::Key { pressed: true, modifiers, .. } => Some(*modifiers),
-                    _ => None,
-                })
-                .unwrap_or(i.modifiers);
-            Keys {
-            // not on Alt either: Alt+S is solo, and it used to split the event
-            // under the playhead in the same frame (t868)
-            cut: i.key_pressed(egui::Key::S) && !m.ctrl && !m.alt,
-            del: i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
-            undo: m.ctrl && !m.shift && i.key_pressed(egui::Key::Z),
-            redo: m.ctrl
-                && (m.shift && i.key_pressed(egui::Key::Z)
-                    || i.key_pressed(egui::Key::Y)),
-            save: m.ctrl && i.key_pressed(egui::Key::S),
-            marker: i.key_pressed(egui::Key::M) && !m.ctrl && !m.alt,
-            // TRACK (R.62): the bare M and S are already taken by the marker and the cut —
-            // both were set by the owner’s direct request and do not move.
-            // Mute and solo take ALT, and act on the track
-            // of the SELECTED event (otherwise we have no “selected track”).
-            track_mute: m.alt && i.key_pressed(egui::Key::M),
-            track_solo: m.alt && i.key_pressed(egui::Key::S),
-            region_in: i.key_pressed(egui::Key::I) && !m.ctrl && !m.alt,
-            region_out: i.key_pressed(egui::Key::O) && !m.ctrl && !m.alt,
-            loop_toggle: i.key_pressed(egui::Key::L) && !m.ctrl && !m.alt,
-            // Ctrl+C/Ctrl+V do NOT arrive as key_pressed: egui-winit
-            // intercepts them and sends Event::Copy / Event::Paste(..)
-            // (regression of item 21 — “Ctrl+V does not work”)
-            esc: i.key_pressed(egui::Key::Escape),
-            enter_nest: i.key_pressed(egui::Key::Enter) && !m.any(),
-            copy: i.events.iter().any(|e| matches!(e, egui::Event::Copy))
-                || (m.ctrl && i.key_pressed(egui::Key::C)),
-            paste: i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
-                || (m.ctrl && i.key_pressed(egui::Key::V)),
-            // item 16 of round 8: Home/End — to the stop points; with Shift — to the
-            // very start/end of the project
-            // item 8 of round 10: A/D — the same jumps as the navigation buttons.
-            // “To the very end” remains only on Shift+Home/End: Shift+D
-            // must not suddenly fly to the end of the project.
-            // `key_pressed`: the autorepeat of a held arrow IS the repeated step
-            frame_prev: i.key_pressed(egui::Key::ArrowLeft) && m.is_none(),
-            frame_next: i.key_pressed(egui::Key::ArrowRight) && m.is_none(),
-            nav_prev: i.key_pressed(egui::Key::Home)
-                || (i.key_pressed(egui::Key::A) && !m.ctrl && !m.alt),
-            nav_next: i.key_pressed(egui::Key::End)
-                || (i.key_pressed(egui::Key::D) && !m.ctrl && !m.alt),
-            goto_tc: m.ctrl && i.key_pressed(egui::Key::L),
-            find: m.ctrl && i.key_pressed(egui::Key::F),
-            nav_far: m.shift
-                && (i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::End)),
-            // item 2 of round 16: Shift+A/D — the jump DRAGS the region edge (Shift as
-            // “extend the selection” in pro programs). Home/End has Shift
-            // taken for “to the very start/end”, so we look at A/D.
-            nav_region: m.shift
-                && !m.ctrl
-                && !m.alt
-                && (i.key_pressed(egui::Key::A) || i.key_pressed(egui::Key::D)),
-        }
-        });
+        // WHICH key means what is the table of `controls.rs` (control-layouts): each binding of
+        // the old literals stands there, with the reasons that set it. Esc and Enter are not in
+        // it: they answer in every window and field. Ctrl+C/Ctrl+V do NOT arrive as key_pressed
+        // (regression of item 21): `Controls::pressed` reads their events.
+        use crate::controls::Cmd;
+        let mut k = ctx.input(|i| self.start.controls.pressed(i));
+        let (esc, mut enter_nest) =
+            ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter) && !i.modifiers.any()));
         // item 9 of round 11: it also works during playback (seek on the fly
         // the player can do; the “only on pause” gate was over-caution)
-        if k.goto_tc {
+        if k.has(Cmd::GotoTimecode) {
             self.tc_edit = Some(String::new());
             self.tc_edit_focus = true;
         }
-        if k.find {
+        if k.has(Cmd::Find) {
             self.search_open = true;
             self.search_focus = true;
         }
-        if k.frame_prev {
+        if k.has(Cmd::FramePrev) {
             self.frame_step(false);
         }
-        if k.frame_next {
+        if k.has(Cmd::FrameNext) {
             self.frame_step(true);
         }
-        if k.nav_prev {
-            self.nav_jump(false, k.nav_far, k.nav_region);
+        // item 16 of round 8: to the stop points; item 2 of round 16: the jump that DRAGS the region
+        // edge. Three commands of one function: `nav_jump` is one body for the buttons too.
+        if k.has(Cmd::NavPrev) {
+            self.nav_jump(false, false, false);
         }
-        if k.nav_next {
-            self.nav_jump(true, k.nav_far, k.nav_region);
+        if k.has(Cmd::NavNext) {
+            self.nav_jump(true, false, false);
         }
-        if k.cut {
+        if k.has(Cmd::ProjectStart) {
+            self.nav_jump(false, true, false);
+        }
+        if k.has(Cmd::ProjectEnd) {
+            self.nav_jump(true, true, false);
+        }
+        if k.has(Cmd::RegionPrev) {
+            self.nav_jump(false, false, true);
+        }
+        if k.has(Cmd::RegionNext) {
+            self.nav_jump(true, false, true);
+        }
+        if k.has(Cmd::ShuttleBack) {
+            self.shuttle_key(-1);
+        }
+        if k.has(Cmd::ShuttleStop) {
+            self.shuttle_key(0);
+        }
+        if k.has(Cmd::ShuttleForward) {
+            self.shuttle_key(1);
+        }
+        if k.has(Cmd::Split) {
             self.cut_action();
         }
         if mask_del {
-            k.del = false;
+            k.remove(Cmd::Delete);
         }
         if mask_enter {
-            k.enter_nest = false;
+            enter_nest = false;
         }
-        if k.del {
+        if k.has(Cmd::Delete) {
             self.delete_action();
         }
-        if k.undo {
+        if k.has(Cmd::Undo) {
             self.undo();
         }
-        if k.redo {
+        if k.has(Cmd::Redo) {
             self.redo();
         }
-        if k.save {
+        if k.has(Cmd::Save) {
             self.save();
         }
-        if k.marker {
+        if k.has(Cmd::Marker) {
             self.marker_toggle_at_cursor();
         }
-        if k.track_mute
+        if k.has(Cmd::TrackMute)
             && let Some(id) = self.key_target_track()
         {
             self.toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
         }
-        if k.track_solo
+        if k.has(Cmd::TrackSolo)
             && let Some(id) = self.key_target_track()
         {
             self.toggle_track_badge(id, crate::timeline::TrackBadge::Solo);
         }
-        if k.region_in {
+        if k.has(Cmd::RegionIn) {
             self.set_region_edge_from_cursor(true);
         }
-        if k.region_out {
+        if k.has(Cmd::RegionOut) {
             self.set_region_edge_from_cursor(false);
         }
-        if k.loop_toggle {
+        if k.has(Cmd::Loop) {
             self.toggle_loop();
         }
-        if k.esc && !self.mask_escape() {
+        if esc && !self.mask_escape() {
             self.escape_action();
         }
         // Enter — a CASCADE on the selected nested item (R.56, item 451): the first
@@ -7766,7 +7662,7 @@ impl KtApp {
         // of a double click), the second on an already unfolded one — FULL ENTRY.
         // The quick gesture leads DEEPER, not a toggle: back — Esc,
         // which already cascades in the reverse direction anyway.
-        if k.enter_nest
+        if enter_nest
             && let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id))
         {
             match self.enter_pressed_on_nest(id) {
@@ -7775,11 +7671,38 @@ impl KtApp {
                 EnterOnNest::NotANest => {}
             }
         }
-        if k.copy {
+        if k.has(Cmd::Copy) {
             self.copy_selection();
         }
-        if k.paste {
+        if k.has(Cmd::Paste) {
             self.paste_at_cursor();
+        }
+        if k.has(Cmd::RegionClear) {
+            self.clear_region();
+        }
+        if k.has(Cmd::ZoomIn) {
+            self.zoom_at_playhead(0.8);
+        }
+        if k.has(Cmd::ZoomOut) {
+            self.zoom_at_playhead(1.25);
+        }
+        if k.has(Cmd::ZoomFit) {
+            self.zoom_fit();
+        }
+        if k.has(Cmd::SelectTool) {
+            self.sel_tool = !self.sel_tool;
+        }
+        if k.has(Cmd::SaveAs) {
+            self.save_as();
+        }
+        if k.has(Cmd::NewProject) {
+            self.new_project();
+        }
+        if k.has(Cmd::OpenProject) {
+            self.open_project_dialog();
+        }
+        if k.has(Cmd::Render) {
+            self.start_render();
         }
     }
 
@@ -8389,6 +8312,8 @@ pub fn resize_cursor(dir: egui::ResizeDirection) -> egui::CursorIcon {
 /// Height of the invisible window-drag strip along the top edge
 /// (item 2 of round 9). It takes no space — simply the first pixels of the central zone.
 pub const TOP_DRAG_H: f32 = 20.0;
+/// The window buttons' share of the header row: three buttons of the row of `draw_window_buttons`.
+const WINDOW_BUTTONS_W: f32 = 3.0 * crate::toolbar::WINDOW_BUTTON_W;
 /// The very edge of the window: here resize wins even over buttons, so that the corner
 /// of the window stays “pullable” (item 9 of round 12).
 /// The meter panel: width limits and its own drag strip to the LEFT of the
@@ -9648,6 +9573,10 @@ impl eframe::App for KtApp {
         // closing a named project renders its poster (D5): one frame, within a budget
         self.queue_poster();
         crate::welcome::wait_posters(std::time::Duration::from_secs(3));
+        // a reel strip may be on the device: the process must not exit under it. A test's process
+        // goes on after this close, and every later render would wait on the parked engine for good
+        #[cfg(not(test))]
+        kt_gpu::park_offline_engine();
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
         crate::telemetry::signal(crate::telemetry::Signal::Exit);
@@ -9682,8 +9611,8 @@ impl Drop for KtApp {
 /// manifest and the AppStream metainfo. `dist-check.py` (t966) keeps every copy equal to this one.
 pub const APP_ID: &str = "com.kinetren.Kinetren";
 
-pub(crate) fn export_video_gpu() -> Result<Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>>, String> {
-    kt_gpu::export_engines().map(|e| e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect())
+pub(crate) fn export_video_gpu(w: u32, h: u32) -> Result<Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>>, String> {
+    kt_gpu::export_engines(w, h).map(|e| e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect())
 }
 
 pub fn run() -> eframe::Result {
@@ -9765,6 +9694,7 @@ pub fn run() -> eframe::Result {
                 kt_ffmpeg::backend_info().is_none(),
                 |p| !recovery_candidates(p).is_empty(),
             );
+            let offer_controls = plan.offer_controls;
             let (window, after_ffmpeg, restored) = (plan.window, plan.after_ffmpeg, plan.open);
             let mut app = match restored {
                 Some(path) => {
@@ -9778,6 +9708,7 @@ pub fn run() -> eframe::Result {
                 None => KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT).to_string())),
             };
             app.start.store = store;
+            app.load_controls(offer_controls);
             app.note_recent();
             // R.49 item 353: unsaved work no longer “replaces the project if
             // last_project was not found”, but is OFFERED — with the path and
@@ -9812,6 +9743,210 @@ pub fn run() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+impl KtApp {
+    /// The header of the arrangements whose columns are not at the window's top: the logo, the
+    /// menu and the project title on the left, the window buttons on the right, on one row that
+    /// the Classic arrangement splits between its two columns.
+    fn draw_header_row(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("header_row")
+            .resizable(false)
+            .exact_size(22.0)
+            .frame(egui::Frame::new().fill(crate::theme::WINDOW))
+            .show(ui, |ui| {
+                let row = ui.max_rect();
+                let buttons = if self.window_frame == crate::window_frame::Frame::System { 0.0 } else { WINDOW_BUTTONS_W };
+                let split = row.right() - buttons;
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(row.min, egui::pos2(split, row.bottom()))),
+                    |ui| self.draw_column_header(ui),
+                );
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(egui::pos2(split, row.top()), row.max)),
+                    |ui| self.draw_window_buttons(ui),
+                );
+            });
+    }
+
+    /// The timeline with its button row under it.
+    fn draw_timeline_area(&mut self, ui: &mut egui::Ui) {
+        let full = ui.available_rect_before_wrap();
+        self.timeline_rect = full;
+        let strip_h = 34.0;
+        let tl_rect = egui::Rect::from_min_max(
+            full.min,
+            egui::pos2(full.right(), full.bottom() - strip_h),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(tl_rect), |ui| {
+            self.draw_timeline(ui);
+        });
+        ui.scope_builder(
+            egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                egui::pos2(full.left(), full.bottom() - strip_h),
+                full.max,
+            )),
+            |ui| {
+                self.draw_toolbar_strip(ui);
+            },
+        );
+    }
+
+    /// The left column: the media bin, under the header when the column stands at the window's top.
+    fn draw_bin_column(&mut self, ui: &mut egui::Ui, header: bool) {
+        // LIMIT SET ON COMPLAINT of item 4 round 13 — do not squeeze without a new
+        // request from the user: 420 px were insurance of round 7.1, in round 9 raised to
+        // half the window by his direct request, and in round 11 I cut them
+        // back “by analogy” with the meters and broke the work for the third time.
+        egui::Panel::left("left_col")
+            .frame(crate::theme::panel_frame())
+            .resizable(true)
+            .default_size(232.0)
+            .min_size(72.0)
+            .max_size((ui.max_rect().width() * 0.7).max(420.0))
+            .show(ui, |ui| {
+                // header: logo + menu + project name (items 15, 6, 7 round 8)
+                if header {
+                    self.draw_column_header(ui);
+                    ui.add_space(2.0);
+                }
+                // Round 7 item 27: content in a ScrollArea — the panel frame no longer outgrows its
+                // height, and the egui separator no longer climbs onto the timeline
+                // (panel.rs takes the ACTUAL rect of the frame); the column also
+                // scrolls at a small window height.
+                // auto_shrink by WIDTH is mandatory: [false] made the content
+                // demand the whole available width, the panel swelled to the content
+                // and ate the preview (regression of item 3 round 7.1). For height
+                // false — for the sake of item 27 (the frame does not outgrow the panel).
+                egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
+                    // the bin keeps the whole column (diagnostics-three-graphs): its frame reaches
+                    // the column's bottom, so the space under the cards is the bin's background
+                    // (drop, right click); `clip_rect` is the column's viewport (R.16)
+                    let frame = egui::Frame::group(ui.style());
+                    let margins = frame.total_margin().sum().y;
+                    let fill = (ui.clip_rect().bottom() - ui.cursor().top() - margins).max(0.0);
+                    frame
+                        .fill(crate::theme::WINDOW)
+                        .corner_radius(1.0)
+                        .show(ui, |ui| {
+                            ui.set_min_height(fill);
+                            self.draw_bin(ui);
+                        });
+                    // the perf box that stood here lives in the Diagnostics window
+                    // (diagnostics-three-graphs, kkt-26.11.01 item 14): the column is the bin's
+                });
+            });
+    }
+
+    /// The meters column and its drag strip; the window buttons stand on it in the arrangement
+    /// that has it at the window's top right.
+    fn draw_meters_column(&mut self, ui: &mut egui::Ui, window_buttons: bool) {
+        let host = ui.max_rect();
+        // We hold the WIDTH ourselves, the standard resizable is off (item 6 round 13):
+        // the egui grip is ±8 px over the WHOLE height of the panel and is registered
+        // AFTER its content (as designed in egui), so it won over
+        // the window buttons, and “minimize” was pressed halfway. Our own strip
+        // lies to the LEFT of the panel and does not go inside it.
+        let mw = self.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
+        egui::Panel::right("meters_col")
+            .resizable(false)
+            .exact_size(mw)
+            .frame(egui::Frame::new().fill(crate::theme::PANEL))
+            .show(ui, |ui| {
+                // window buttons — here, in the layout (item 15 round 8)
+                if window_buttons {
+                    self.draw_window_buttons(ui);
+                }
+                self.draw_meters(ui);
+            });
+        // the drag strip — already OUTSIDE the panel: the panel itself took the space for it,
+        // so the right edge of the remaining space is its left edge.
+        // Below the window drag strip, so as not to contend with it.
+        {
+            // the panel’s edge is computed from the window (ui.max_rect(): the panel
+            // does not shrink it), the strip lies to the LEFT of it and does not go into the panel
+            // (in the row of the timeline — from the row itself)
+            let win = if window_buttons { ui.ctx().content_rect() } else { host };
+            let edge = win.right() - mw;
+            let top = if window_buttons { win.top() + TOP_DRAG_H } else { win.top() };
+            let sep = egui::Rect::from_min_max(
+                egui::pos2(edge - METERS_SEP_W, top),
+                egui::pos2(edge, win.bottom()),
+            );
+            let r = ui.interact(sep, egui::Id::new("meters-sep"), egui::Sense::drag());
+            if r.hovered() || r.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
+            if r.dragged()
+                && let Some(pos) = r.interact_pointer_pos()
+            {
+                self.meters_w = (win.right() - pos.x).clamp(METERS_W_MIN, METERS_W_MAX);
+                self.dirty_ui = true;
+            }
+        }
+    }
+
+    /// The centre: the preview with its controls under it, the meters beside it where they stand.
+    fn draw_centre(&mut self, ui: &mut egui::Ui, arrangement: Arrangement) {
+        let p = self.model.project();
+        if let Some(r) = p.region
+            && !p.loop_enabled
+            && self.player.transport.is_playing()
+            && self.player.transport.playhead() >= r.end
+            && self.player.transport.playhead() < r.end + Tick(9000)
+        {
+            self.player.pause();
+            // like a manual pause: double Space after an auto-pause = stop
+            // to the start of the region (item 29 round 7)
+            self.paused_at = Some(std::time::Instant::now());
+        }
+        egui::Panel::bottom("prev_controls").show(ui, |ui| {
+            ui.add_space(3.0);
+            self.draw_preview_controls(ui);
+            ui.add_space(3.0);
+        });
+        if matches!(arrangement, Arrangement::Classic | Arrangement::TimelineOnTop) {
+            self.draw_meters_column(ui, arrangement == Arrangement::Classic);
+        }
+        egui::CentralPanel::default().frame(egui::Frame::new()).show(ui, |ui| {
+            // Item 2 round 9: a CONTINUOUS window-drag zone across the full width.
+            // The strip is invisible and lies between the resize edge (WIN_EDGE)
+            // and the bottom of the column headers, so it takes no space and
+            // joins the header on the left and the window buttons on the right.
+            // The other arrangements have the header row for this.
+            if arrangement == Arrangement::Classic && self.window_frame == crate::window_frame::Frame::Borderless {
+                let full = ui.available_rect_before_wrap();
+                // In the maximized window there is NO resize (the block below is disabled
+                // by the maximized guard), so the top WIN_EDGE pixels
+                // remained DEAD: you drag at the very edge — nothing, a little lower — it works
+                // (item 11 round 13). We hand them over to the drag.
+                let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+                let top = if maximized { full.top() } else { full.top() + WIN_EDGE };
+                let strip = egui::Rect::from_min_max(
+                    egui::pos2(full.left() - 8.0, top),
+                    egui::pos2(full.right() + 8.0, full.top() + TOP_DRAG_H),
+                );
+                let bg = ui.interact(
+                    strip,
+                    ui.id().with("top-drag"),
+                    egui::Sense::click_and_drag(),
+                );
+                self.window_drag_from(&bg, ui.ctx());
+                // The strip takes NO SPACE (item 1 round 11): previously here stood
+                // advance_cursor_after_rect, and the preview lost 20 px of height for nothing.
+                // The strip does not steal clicks — egui looks up the click target and
+                // the drag target independently, and the preview itself does not accept
+                // clicks above TOP_DRAG_H.
+            }
+            if self.preview_detached {
+                ui.centered_and_justified(|ui| {
+                    ui.weak(tr(k::hint::PREVIEW_DETACHED));
+                });
+            } else {
+                self.draw_preview(ui);
+            }
+        });
+    }
 }
 
 impl KtApp {

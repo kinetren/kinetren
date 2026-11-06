@@ -212,3 +212,12 @@ fn t1240_stream_declarations_are_refused_by_name() {
     reg.register(stream_plugin("s_ok", video(VideoClass::Stream, Gpu::None), true)).expect("a well-formed stream plugin");
     assert!(reg.get(Family::Fx, "s_ok").is_some());
 }
+
+/// t1645 (gpu-render-hardening, D7): a shader kind with no compute device gives a transparent frame
+/// of its size, and no panic. No device is installed in this test.
+#[test]
+fn t1645_a_shader_generator_with_no_device_is_transparent() {
+    let f = kt_plugin_api::generator::shader_frame("fn pixel(x: u32, y: u32) -> u32 { return 0xffffffffu; }", 4, 3, [0, 0], [[0.0; 4]; 4]);
+    assert_eq!(f.len(), 48);
+    assert!(f.iter().all(|&b| b == 0), "no device, no picture");
+}

@@ -1,18 +1,18 @@
 ---
 id: F-UI-002
 title: Customizable keys and other editors' keyboard layouts
-status: candidate
+status: done
 priority: B
 cost: L
 category: ui/input
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: no
+we_have: yes
 crates: [kt-app]
 invariants: []
 ui_rules: [13, 14, 16, 17, 19, 20]
 round: null
-point: null
-tests: []
+point: change control-layouts
+tests: [t1700, t1701, t1705, t1706, t1711, t1712, t1715]
 depends_on: [F-TL-003]
 checked: 2026-09-07
 ---
@@ -94,134 +94,10 @@ And a characteristic question about a CONTEXTUAL key, which a person searches fo
 
 ## How it fits Kinotrain
 
-### What already exists
+CAPABILITY: openspec/specs/ui-controls/
 
-**One global key dispatch** — `KtApp::handle_keys`
-(`src/apps/kt-app/src/app.rs:3750`). Inside is a local struct `Keys` of 18
-fields, and each field is a literal:
-`i.key_pressed(egui::Key::S) && !i.modifiers.ctrl`.
-The gate on input is `ctx.egui_wants_keyboard_input()`. The full list of what is hard-wired today:
-
-- **Space** — is read by EVENTS (`Event::Key{pressed, repeat}`), not by `key_pressed`: autorepeat sent a series of play/pause (item 3 of R.16). The decision is made on RELEASE: a short press — play/pause
-  (`on_transport_toggle`, app.rs:1576), a repeated press shortly after a pause — a return to the start (`DOUBLE_PAUSE_MS`), holding — ramp up to 4× over 5 s
-  (`on_space_released`, app.rs:1565; items 120/124, test 120).
-- **S** — cut (`cut_action`, app.rs:2460); **Delete/Backspace** — delete.
-- **Ctrl+Z**, **Ctrl+Shift+Z**, **Ctrl+Y** — undo/redo; **Ctrl+S** — save.
-- **M** — marker at the cursor, CONTEXTUALLY: if the region and the cursor are inside it → a range marker, otherwise a point one (item 142).
-- **I** / **O** — left/right edge of the region; **L** — loop.
-- **Esc** — the `escape_action` cascade (app.rs:1665): search → the insert-prefix window → the topmost of our windows → cancel of a drag → clearing of the region and the selection.
-- **Ctrl+C / Ctrl+V** — plus `Event::Copy`/`Event::Paste`, because egui-winit intercepts them and does not pass them as `key_pressed` (item 21).
-- **Home/End** and **A/D** — stop points (item 82); **Shift+Home/End** — to the start/end of the project; **Shift+A/D** — a jump DRAGS the edge of the region (item 119, test 119).
-- **Ctrl+L** — the timecode input mask (item 98); **Ctrl+F** — project search (item 92).
-
-**Keys outside `handle_keys`** (their reassignment is a separate conversation):
-arrows/Enter/Esc in the search palette (app.rs:1319), Esc in the insert-prefix window
-(app.rs:2369), Esc in the detached preview window — deliberately local, does not trigger the common cascade (app.rs:964), Enter/Esc in inline renaming
-(`src/apps/kt-app/src/timeline.rs:3521` and `:3572`,
-`src/apps/kt-app/src/bin_panel.rs:577`), digits/Backspace/Enter/Esc that the timecode mask CONSUMES from the event queue
-(`src/apps/kt-app/src/toolbar.rs:489`).
-
-**Modifiers belong to GESTURES, not to commands**: Ctrl releases the magnet, and the same Ctrl, pressed before grabbing empty space, starts the selection frame
-(`src/apps/kt-app/src/timeline.rs:1715`); Shift — vertical scroll, which does not cancel follow (timeline.rs:1114).
-
-**Labels in the menu are a second, independent source of truth.** `Toolbar::menu_btn`
-(`src/apps/kt-app/src/toolbar.rs:239`) glues the caption to the literal:
-`"Ctrl+S"`, `"Ctrl+Z"`, `"Ctrl+Shift+Z"`, `"Ctrl+C"`, `"Ctrl+V"`, `"Del"`,
-`"S"`. The handler in `handle_keys` and the caption in the menu are connected by nothing except attentiveness; the comment on the function honestly explains why the label is not in the translation catalog (a translator must not break the accelerator, and Latin inside an Arabic string would move during reordering).
-
-**A ready sample of a registry** — `fx_registry::registry()`
-(`src/apps/kt-app/src/fx_registry.rs:47`): `&'static [FxEntry]` behind a `OnceLock`; each entry has a name, a category and keywords for search, and next to it a comment "Full paths deliberately: test 125 looks up the catalog key by the path `k::…`". A registry of COMMANDS MUST look exactly the same. Ranked search also exists — `search_hits` (app.rs:4414).
-
-**Application-level storage** — almost empty: eframe Storage holds two lines, `lang` and `last_project` (app.rs:5044), and the program's only file is `autosave_path()` = `$XDG_DATA_HOME/kinotrain/autosave-project.otio` (app.rs:4770).
-
-### What is missing
-
-A list of commands as an OBJECT (id + translatable name + default chord +
-invocation); parsing and printing a chord; the notion of scope; a layout file
-and its version; the editor window; presets "like in Vegas/Premiere/Resolve/FCP".
-
-### What gets in the way
-
-**1. The main issue: rule 17 ("paired ways of doing one action behave the same")
-turns into a project requirement.** A key must have a counterpart in the menu, and
-a menu item must be able to be a key; therefore the key editor must be built FROM
-THE SAME command list as the menus and buttons, not from its own. Today such a
-list does not exist: commands are scattered across three places — `handle_keys`
-(app.rs:3750), `Toolbar::menu_items` (toolbar.rs:245) and the timeline context
-menus (the `[tl.menu]` section of the catalog, 34 items). A key editor built on top
-of this would create a FOURTH source of truth and would violate rule 17 by
-construction. The order of work follows directly: first the command registry, from
-which menus, hints and accelerators are drawn, and only then the assignment window.
-This is the main cost of the feature — not the window, but merging three places
-into one.
-
-**2. i18n — a large and easily overlooked layer.** Test 125
-(`src/apps/kt-app/src/i18n_tests.rs:27`) requires that EVERY catalog key is
-non-empty in all five languages AND is mentioned in the sources by its literal
-path ("catalog keys nobody uses"). Command names partly exist already — the
-`menu.*`, `tb`, `tl.menu`, `bin.menu` sections give about a hundred strings — but
-everything that is today reachable only by a key or a gesture (cut, mark, region
-edges, loop, jumps between points, speed-up while holding, releasing magnet, the
-Esc-cascade steps) has no name at all: that is several dozen more keys × 5
-languages. Plus the NAMES OF KEYS (Escape, Home, End, Delete, Backspace, Space,
-arrows, modifiers) — these must either be translated or deliberately left in
-Latin. Further, test 100 (`font_tests.rs:265`) will require glyphs for all new
-non-ASCII text, that is, rebuilding the subsets with
-`python3 src/scripts/subset-fonts.py`. And Arabic: the accelerator is today
-deliberately glued together in code so that it does not move when items are
-reordered, while in the key editor a Latin chord would stand on every line of the
-Arabic list — this is `i18n::bidi`, and test 126 already checks `"Ctrl+S"` as an
-atom (i18n_tests.rs:99).
-
-**3. Storage outside the project — the fourth time in the database, and this is
-already a system.** The same question is noted in **F-AUT-004** (the FX preset
-library), **F-TXT-002** (title styles) and **F-EXP-001** (export presets): a project
-for us is ONE `.otio` file (`src/libs/kt-otio/`), while at the application level
-there is only a directory with the autosave. Four independent notes run into the
-same thing — so it must be decided once and systematically (directory, schema
-version, behaviour on an unknown command id, transfer to another machine), rather
-than inventing a fourth format on the fly. The layout is, at the same time, the
-most harmless of the candidates: a lost layout does not spoil a project.
-
-**4. Focus and the Esc-cascade — the most likely place for a defect.** Rule 14 of the
-checklist grew out of item 8 of R.12: "Ctrl+L fired exactly once — the mask widget
-is redrawn every frame with the same id, after Enter it stayed in egui focus, and
-`handle_keys` is gated by `egui_wants_keyboard_input()`; until a mouse click
-elsewhere all hot keys were dead". The key-editor window must CATCH arbitrary
-chords, that is, deliberately live on the other side of this gate and swallow its
-own events, and on closing it must hand focus back (`surrender_focus`); a mistake
-here kills all keys at once right after the first assignment. Separately:
-`escape_action` is a FIXED order in the code; if Esc becomes reassignable, the
-cascade would have to be described by data, not by the position of a line in the
-function.
-
-**5. A flat table does not express what we already have.** Space is FOUR behaviours
-on one key (a short press, a repeated press soon after a pause, holding, releasing),
-M depends on the region, Ctrl is a modifier of a GESTURE (magnet/frame), not of a
-command. Therefore a registry entry is not "key → function", but at least
-"chord → command, with a phase (press/hold/release)", and gesture modifiers are not
-taken into the first version at all, which must be stated out loud (rule 19: the
-dialog must say where the decision switches).
-
-**6. Live scenarios depend on the layout.** `src/scripts/live/*.py` send XTest keys
-by name: `app.key("space")`, `app.key("Home")`, `app.key("ctrl+s")`
-(`src/scripts/ui-probe.py:72`). As soon as the layout becomes a user file in
-`$XDG_DATA_HOME`, the scenarios will start depending on someone else's state — they
-need a forced default (an env variable such as `KT_KEYMAP=0`, like
-`KT_SIMD=0`/`KT_VIDEO_GPU=0`).
-
-### Which invariants it touches
-
-Of engine invariants 1–12 — **none**: the feature lives entirely in `kt-app` and
-touches neither the model, nor the project format, nor rendering, nor determinism.
-This is a strong argument: "risk is low, the cost is volume".
-
-UI checklist rules: **17** (paired ways — the source of the requirement for a single
-command registry), **14** (repetition and return of focus), **16** (a conflict is shown
-as an ERROR naming WHO took the key, not as a faded hint — Resolve's policy "saved, but
-does not work" is forbidden for us by this rule), **13** (the window must not create a
-new strip in the main interface), **19** (say where the layout switches back), **20**
-(reassigning one key must not "fix up" its neighbours: if taken, say from whom).
+Done in `control-layouts`: the command table `controls.rs` is the one source for keys, menus and hints; the editor is the Customize part of `kt_controls`; a conflict is asked (FCP's policy, rule 16).
+Not taken: panel scopes, gesture modifiers, Esc and Enter as commands; the reasons are in that capability's design.
 
 ## Estimate
 

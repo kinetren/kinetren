@@ -313,6 +313,20 @@ fn t100_ui_chars_have_glyphs() {
 /// drawn by the program's fonts — the title word rides in the title row on the CJK and Arabic
 /// subsets, which are cut from the catalogs (`scripts/subset-fonts.py`).
 #[test]
+fn t1718_key_names_have_glyphs() {
+    // egui's own arrow symbols are not in our fonts: a cap of the key list drew a square
+    let fonts: Vec<(String, ab_glyph::FontVec)> = loaded_fonts()
+        .into_iter()
+        .map(|(n, d)| (n, ab_glyph::FontVec::try_from_vec(d).expect("the font does not parse")))
+        .collect();
+    for label in crate::controls::key_labels() {
+        for ch in label.chars().filter(|c| needs_glyph(*c)) {
+            assert!(covered(&fonts, ch), "the key name “{label}” has no glyph for {ch:?}");
+        }
+    }
+}
+
+#[test]
 fn t876_update_texts_have_glyphs() {
     use crate::i18n::{Lang, k, set_lang, tr};
     let fonts: Vec<(String, ab_glyph::FontVec)> = loaded_fonts()

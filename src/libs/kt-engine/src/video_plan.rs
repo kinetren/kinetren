@@ -122,8 +122,7 @@ pub struct NestSrc<'a> {
     /// composition into two-frame steps.
     pub inner_t: Tick,
     /// Frame blending is inherited onto the content (R.56, item 448): the leaves
-    /// inside read the PAIR. The flag is part of the memoization key (`nest_memo_key`)
-    /// and of the GPU plan key: the same reel and time in two modes give different
+    /// inside read the PAIR. The flag is part of the GPU plan key: the same reel and time in two modes give different
     /// bytes.
     pub blend: bool,
     /// The reel's STEP (R.50 B5): `plan.out_w == nest_scale × Quality`
@@ -204,12 +203,6 @@ pub struct FramePlan<'a> {
     pub out_w: u32,
     pub out_h: u32,
     pub layers: Vec<PlanLayer<'a>>,
-    /// Memoize post-FX frames in kt-cache (preview only). In export
-    /// each t is composited EXACTLY once — memoization gives no hits there,
-    /// but full-size post-FX frames were evicting the not-yet-used
-    /// pre-frames of neighbouring layers from the export cache (R.31 item 4: “the render
-    /// is broken” — missing layers on a multi-layer edit with FX).
-    pub memoize_postfx: bool,
 }
 
 /// GPU executor error. `DeviceLost` — the caller “poisons” the GPU until the end
@@ -267,7 +260,7 @@ pub fn chain_plan<'a>(
         masks: Vec::new(),
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
-    FramePlan { t, out_w, out_h, layers, memoize_postfx: false }
+    FramePlan { t, out_w, out_h, layers }
 }
 
 /// The GPU executor of the plan (implementation — the kt-gpu crate; kt-engine knows
@@ -276,6 +269,10 @@ pub trait VideoGpuExec: Send + Sync {
     /// Plan → straight RGBA8 into `out` (readback). Ok(complete) — the same
     /// “playback does not wait” rule (invariant No. 5): a layer without a pre-FX frame is skipped.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
+    /// `execute_into` for a caller that asks each moment once (an export): no memo of the frame.
+    fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        self.execute_into(plan, out)
+    }
     fn info(&self) -> &GpuBackendInfo;
     /// How many frames this executor can hold in flight between `submit` and `collect`
     /// (export-throughput D5): 0 — it cannot, and the caller uses `execute_into`. An export

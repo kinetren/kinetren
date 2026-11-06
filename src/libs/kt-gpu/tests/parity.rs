@@ -106,7 +106,7 @@ fn one(src: &Src, alpha_k: u32, scale_alpha: bool) -> PlanLayer<'_> {
 }
 
 fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
-    FramePlan { t: Tick(t), out_w: W, out_h: H, layers, memoize_postfx: true }
+    FramePlan { t: Tick(t), out_w: W, out_h: H, layers }
 }
 
 /// CPU against GPU on one plan; returns (cpu, gpu, complete_cpu,
@@ -117,6 +117,40 @@ fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, 
     let mut gpu = Vec::new();
     let c_gpu = engine.execute_into(p, &mut gpu).expect("GPU execute");
     (cpu, gpu, c_cpu, c_gpu)
+}
+
+/// t1766 (render-speed-no-card D4): a fused pass written out for its program shape gives the
+/// interpreter's bytes, on every kind of step it takes: affine, supersampled, clamped, bounded,
+/// perspective with its per-pixel taps, and a warp.
+#[test]
+fn t1766_a_shape_of_its_own_gives_the_interpreters_bytes() {
+    kt_plugins_builtin::install();
+    let Some(engine) = test_engine() else { return };
+    let pan3d = |x: f64, s: f64| FxInstance::plugin_with("pan3d", &[x, 0.0, 0.0, 15.0, 20.0, 5.0, 0.5, 0.5, s, 0.0]).unwrap();
+    let cases: Vec<Vec<FxInstance>> = vec![
+        vec![FxInstance::geometry_at(-0.05, 0.03333, 1.5)],
+        vec![FxInstance::geometry_at(0.1, -0.2, 0.4)],
+        vec![FxInstance::geometry_at(0.0, 0.0, 0.2)],
+        vec![pan3d(0.1, 1.0)],
+        vec![pan3d(-0.2, 0.3)],
+        vec![FxInstance::geometry_at(0.05, 0.0, 1.2), pan3d(0.1, 0.6)],
+        vec![FxInstance::plugin_with("lens_distort", &[0.4, 0.0, 1.0]).unwrap()],
+        vec![FxInstance::geometry_at(0.05, 0.0, 0.7), FxInstance::plugin_with("lens_distort", &[-0.3, 0.1, 1.0]).unwrap()],
+    ];
+    for (i, fx) in cases.iter().enumerate() {
+        for alpha in [false, true] {
+            let f = frame(320, 180, alpha, i as u8 * 17);
+            let src = Src::new(1766, Some(f), fx.clone());
+            let plan = FramePlan { t: Tick(i as i64), out_w: 320, out_h: 180, layers: vec![one(&src, 4096, false)] };
+            let (mut shaped, mut read) = (Vec::new(), Vec::new());
+            engine.interpret_geometry(false);
+            engine.execute_once(&plan, &mut shaped).expect("the shape");
+            engine.interpret_geometry(true);
+            engine.execute_once(&plan, &mut read).expect("the interpreter");
+            assert!(shaped == read, "case {i}, alpha {alpha}: the shape's bytes moved");
+        }
+    }
+    assert!(engine.geometry_shapes() >= 4, "the cases ran the interpreter both times");
 }
 
 #[test]
@@ -1128,7 +1162,6 @@ fn t944_one_tile_on_the_gpu_is_the_full_pass() {
                 out_w: w,
                 out_h: h,
                 layers: vec![one(s, 4096, false)],
-                memoize_postfx: true,
             }
         }
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &at(&tiled, w, h));

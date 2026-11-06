@@ -1859,3 +1859,53 @@ fn posterize(levels: u32) -> FxInstance {
     kt_plugins_builtin::install();
     FxInstance::plugin_with("posterize", &[levels as f64]).expect("posterize is a built-in plugin")
 }
+
+#[test]
+fn t441_hunger_crosses_the_boundary() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 20);
+    let p = nest_with(1.0, vec![]);
+    let seq = MediaId(100);
+
+    // STARVATION INSIDE is visible OUTSIDE: the child's frame is missing — the composite is incomplete.
+    // Otherwise the player would consider the frame ready and never re-request it.
+    let v = VideoRenderer::new(&p);
+    let cold = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let (_, complete) = kt_gpu::testkit::compose(&v, &cold, t, q);
+    assert!(!complete, "starvation INSIDE a reel did not reach the outer composite");
+
+    // Warm them up — and it is complete.
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources().into_iter().collect();
+    for (media, src_pts, dq) in v.layers_at(t, q) {
+        assert_ne!(media, seq, "the order did not descend: the address of the reel’s source has no");
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    let (preview, complete) = kt_gpu::testkit::compose(&v, &cache, t, q);
+    assert!(complete, "a warm composite with a nested item must be complete");
+
+    // the export asks the same frame, from a cache of its own
+    let export_cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    for (media, src_pts, dq) in v.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        export_cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    let (out, complete) = kt_gpu::testkit::compose(&v, &export_cache, t, q);
+    assert!(complete, "the export composite with a nested item must be complete");
+    assert_eq!(out, preview, "preview and export must match BYTE FOR BYTE");
+}

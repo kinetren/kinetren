@@ -253,8 +253,11 @@ class Live:
     the scenario, not a setting of the run.
     """
 
-    def __init__(self, name, out_dir, project=None, autoplay=False, own_process=False, raw=False):
+    def __init__(self, name, out_dir, project=None, autoplay=False, own_process=False, raw=False, first_entry=False):
         self.name = name
+        # the style question of the first entry (control-layouts) opens over the welcome window:
+        # only the scenario about it meets it, the others have their own first start
+        self.first_entry = first_entry
         self.out = out_dir
         # R.70: the scenario builds an EXCHANGE FILE (it has ready helpers
         # and the kt envelope), while the program opens a PROJECT FILE `.kt` — which
@@ -307,6 +310,10 @@ class Live:
         store = os.path.join(self.out, "store")
         os.makedirs(store, exist_ok=True)
         env["KT_USER_STORE_DIR"] = store
+        start = os.path.join(store, "start.json")
+        if not self.first_entry and not os.path.exists(start):
+            with open(start, "w") as f:
+                f.write('{"version":1,"started_before":false,"controls_offered":true}')
         # and its OWN XDG_DATA_HOME: the unnamed recovery, the journal and the project locks live
         # by it — without it the scenario finds someone else’s
         # unsaved work in the developer’s home directory

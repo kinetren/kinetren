@@ -13,6 +13,11 @@ is no picture, and an export refuses.
 - **wgpu is STRICTLY the same major version as the one inside eframe** (the workspace pin
   in src/Cargo.toml): the preview shares an `Arc<wgpu::Device>` with egui-wgpu — another
   major = incompatible types. Upgrading eframe = upgrading wgpu HERE TOO.
+- **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
+  sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
+  with table reads lane by lane, ten times the cost. Write taps out, or specialize the text
+  (`wgsl_taps`, `geom_specialized`), before reaching for a smaller kernel. Measure a pass with minima
+  of repeats: a single reading on a loaded machine moves by 2×.
 - **Fragment passes, NOT compute**: the default device of egui-wgpu on the
   GL backend is created with downlevel_webgl2 limits (compute is unavailable),
   and the live check runs llvmpipe via `WGPU_BACKEND=gl`. Everything here
@@ -22,7 +27,8 @@ is no picture, and an export refuses.
 - **The compute host (`compute.rs`) is a device of its own** (compute-kernels): Vulkan, DX12 or Metal
   whatever `WGPU_BACKEND` says, because the interface may be on GL. WARP is refused here too. Only
   Vulkan through llvmpipe has run it so far; DX12 and Metal are untested.
-- **All textures are Rgba8Uint** — textureLoad returns raw bytes without
+- **All textures are Rgba8Uint, but a word pass's** (`BarrierKernel::word_passes`: `R32Uint`, a
+  32-bit word per texel in `.x`, render-speed-no-card D3) — textureLoad returns raw bytes without
   unorm losses; integer kernels (composite, noise, mirror, tiling) are
   byte-for-byte equal to the stored frames, bilinear ones — within tolerance.
   There are no samplers at all: the sub-texel filtering grid wanders between drivers —
@@ -43,6 +49,9 @@ is no picture, and an export refuses.
   (`Dir::Left` = (−1,0)) an error in the Y term of the formula is not visible.
 - **Shared parametrics** — from kt-fx: `pan_frame`/`cam_at`/`noise_seed`. The plan computes them;
   the shaders read the result.
+- **A fused pass runs as written for its program shape where it can** (`geom_specialized`,
+  render-speed-no-card D4): the text is built from `geom_fused.wgsl`'s sections, so an edit of an arm
+  there is an edit of the shape's arm in `engine.rs` in the SAME COMMIT; t1766 holds the two equal.
 - **The merged geo pass (R.44): `geom_fused.wgsl` executes the program of `kt_fx::geom`.**
   The program of primitives (Affine/Clamp/Fold/Proj) is built in kt-fx:
   the coefficients are multiplied in f64 by the plan, and the f32 values rounded ONCE arrive here
@@ -95,9 +104,9 @@ is no picture, and an export refuses.
 - `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI stays
   LowPower, invariant 12). A software rasterizer (llvmpipe/lavapipe) is a device like any other.
 - `export_engines()` (compute-kernels-render, D4): llvmpipe runs one frame per queue, so a software
-  adapter gets a device per frame worker, a quarter of the cores, 2 to 8; a card gets one.
-  `KT_VIDEO_ENGINES` overrides it. The file does not depend on their number (t1573). The price is
-  memory: each device keeps its own textures.
+  adapter gets a device per frame worker, an eighth of the cores, 2 to 4, as many as the memory
+  holds (`memory.rs`, gpu-render-hardening D1); a card gets one. `KT_VIDEO_ENGINES` overrides it.
+  The file does not depend on their number (t1573). Each device adds 1.3 GB at 1080p.
 - `offline_engine()`: a headless device for effect thumbnails, reel strips and project posters, out
   of the preview's queue. Serials of frames are process-wide because it serves a fresh cache per job
   (t1574). A blended frame's upload key takes the pair and the weight (t250): it carries its base
@@ -192,7 +201,8 @@ is no picture, and an export refuses.
 - WARP ("Microsoft Basic Render Driver") is refused with `GpuInitError::Unsupported`: on the
   GPU-less Windows CI runner the passes ran for minutes and died inside it. A machine with only
   WARP has no picture; `KT_GPU_ALLOW_WARP=1` lets it through for experiments, and the GPU tests skip
-  on it as they do without an adapter.
+  on it as they do without an adapter. `compile_check` builds every pipeline and runs no frame: t1650
+  gets FXC, the compiler of every D3D12 machine, from WARP in CI.
 
 ## Shape masks (shape-masks)
 

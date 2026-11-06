@@ -22,16 +22,6 @@ pub enum BurstKind {
     Video {
         quality: Option<(u32, u32)>,
     },
-    /// Post-FX composite layer of the clip (memoization, item 2 round 7): the idx of the key is
-    /// a TIMELINE tick on the frame grid (vhs/noise depend on t, pan/cam — on the
-    /// position in the clip; both are functions of (idx, fx_hash)). fx_hash
-    /// includes the parameters of the chain and the geometry of the clip. It does NOT get into the coverage bars,
-    /// prefetch and pin: all these queries are kind-exact (invariant
-    /// 4 remains about PRE-FX data; see kt-cache/CLAUDE.md).
-    PostFxVideo {
-        quality: (u32, u32),
-        fx_hash: u64,
-    },
 }
 
 impl BurstKind {
@@ -370,12 +360,8 @@ impl BurstCache {
         let counter = inner.recency_counter;
         let is_audio = key.kind == BurstKind::Audio;
         let Some(entry) = inner.map.get_mut(&key) else {
-            // A post-FX memo that holds nothing yet is no missing frame: counted as one, the first
-            // composite of every frame with an effect read as a decode that could not keep up, and
-            // the panel warned of a low hit rate on the CPU path (preview-throughput).
             match key.kind {
                 BurstKind::Audio => self.stats.audio_misses.fetch_add(1, Ordering::Relaxed),
-                BurstKind::PostFxVideo { .. } => 0,
                 _ => self.stats.video_misses.fetch_add(1, Ordering::Relaxed),
             };
             return None;
@@ -392,24 +378,6 @@ impl BurstCache {
         inner.lru.remove(&old);
         inner.lru.insert(counter, key);
         Some((payload, serial))
-    }
-
-    /// A post-FX frame of the clip (item 2 round 7): idx = the timeline tick on the grid.
-    pub fn get_postfx_video(
-        &self,
-        source: SourceId,
-        quality: (u32, u32),
-        fx_hash: u64,
-        idx: i64,
-    ) -> Option<Arc<VideoFrame>> {
-        match self.get(BurstKey {
-            source,
-            kind: BurstKind::PostFxVideo { quality, fx_hash },
-            idx,
-        })? {
-            Payload::Video(f) => Some(f),
-            Payload::Audio(_) => unreachable!("postfx key holds audio payload"),
-        }
     }
 
     pub fn insert_audio(&self, source: SourceId, burst: Arc<AudioBurst>) {
@@ -444,20 +412,6 @@ impl BurstCache {
             BurstKey { source, kind: BurstKind::video(quality), idx },
             Payload::Video(frame),
             span.max(1),
-        );
-    }
-
-    pub fn insert_postfx_video(
-        &self,
-        source: SourceId,
-        quality: (u32, u32),
-        fx_hash: u64,
-        idx: i64,
-        frame: Arc<VideoFrame>,
-    ) {
-        self.insert(
-            BurstKey { source, kind: BurstKind::PostFxVideo { quality, fx_hash }, idx },
-            Payload::Video(frame),
         );
     }
 
@@ -815,57 +769,6 @@ mod postfx_tests {
         })
     }
 
-    /// Test 65 (item 2 round 7): the post-FX kind is invisible to coverage (invariant 4 —
-    /// the warmth bars are built ONLY from pre-FX entries), but it takes part
-    /// in the video budget/LRU and is knocked out by invalidate_source.
-    #[test]
-    fn t65_postfx_kind_invisible_to_coverage() {
-        let cache = BurstCache::new(CacheConfig::default());
-        let src = SourceId(1);
-        let q = Quality { width: 2, height: 2 };
-        cache.insert_video_span(src, Some(q), 0, 3000, vframe(16));
-        let before = cache.coverage(src, BurstKind::video(Some(q)), 0..10_000);
-        let bytes_before = cache.video_bytes();
-
-        cache.insert_postfx_video(src, (2, 2), 0xDEAD, 0, vframe(16));
-        cache.insert_postfx_video(src, (2, 2), 0xDEAD, 3000, vframe(16));
-        // the pre-FX coverage did not change
-        assert_eq!(cache.coverage(src, BurstKind::video(Some(q)), 0..10_000), before);
-        assert!(cache.coverage(src, BurstKind::Audio, 0..10_000).is_empty());
-        // the bytes are counted in the video pool
-        assert_eq!(cache.video_bytes(), bytes_before + 32);
-        // a hit by the exact key; another fx_hash/quality — a miss
-        assert!(cache.get_postfx_video(src, (2, 2), 0xDEAD, 0).is_some());
-        assert!(cache.get_postfx_video(src, (2, 2), 0xBEEF, 0).is_none());
-        assert!(cache.get_postfx_video(src, (4, 4), 0xDEAD, 0).is_none());
-        // invalidate_source knocks out post-FX entries as well
-        cache.invalidate_source(src);
-        assert!(cache.get_postfx_video(src, (2, 2), 0xDEAD, 0).is_none());
-        assert_eq!(cache.video_bytes(), 0);
-    }
-
-    /// Post-FX entries are displaced by LRU when the video budget overflows,
-    /// without punching a hole in the pre-FX bar (it has its own kind).
-    #[test]
-    fn t65b_postfx_evicts_under_budget() {
-        let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 64 });
-        let src = SourceId(1);
-        let q = Quality { width: 2, height: 2 };
-        cache.insert_video_span(src, Some(q), 0, 3000, vframe(32));
-        let pre = cache.coverage(src, BurstKind::video(Some(q)), 0..10_000);
-        for i in 0..8 {
-            cache.insert_postfx_video(src, (2, 2), 1, i * 3000, vframe(32));
-            // a pre-FX entry is hot (as in live compose: a get bumps the
-            // recency) — only post-FX entries should be displaced
-            assert!(cache.get_video(src, Some(q), 0).is_some());
-        }
-        assert!(cache.video_bytes() <= 64 + 32, "budget holds");
-        assert_eq!(
-            cache.coverage(src, BurstKind::video(Some(q)), 0..10_000),
-            pre,
-            "pre-FX band is not punched by post-FX eviction"
-        );
-    }
 }
 
 #[cfg(test)]
@@ -1135,14 +1038,4 @@ mod perf_counter_tests {
         assert_eq!(cache.video_bytes(), bytes * 3, "the release brings it back under the budget");
     }
 
-    /// t1535: an empty post-FX memo is no missing frame. Counted as one, the hit rate of the CPU
-    /// path fell to 57 % with every decoded frame there, and the panel warned of a slow decoder.
-    #[test]
-    fn t1535_an_empty_post_fx_memo_is_not_a_video_miss() {
-        let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
-        assert!(cache.get_postfx_video(SourceId(1), (4, 2), 7, 0).is_none());
-        assert_eq!(cache.stats().video_misses, 0, "the memo held nothing, no frame was missing");
-        assert!(cache.get(BurstKey { source: SourceId(1), kind: BurstKind::video(None), idx: 0 }).is_none());
-        assert_eq!(cache.stats().video_misses, 1, "a frame that is not there still counts");
-    }
 }

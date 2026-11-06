@@ -578,3 +578,54 @@ fn gallery_of_the_presets() {
         write(&name, &o, st.a, st.h);
     }
 }
+
+/// A clogged head leaves the discriminator on a carrier drowned in noise: the clicks fall one ULP
+/// apart on the two sides (`FrameTol::SIGNAL`), so such a preset has a wider mean.
+const CLICKS: &[&str] = &["rec_a_spacing"];
+
+/// t1640 (gpu-render-hardening): the shaders and this model tell the same story. The physics tests
+/// read the model, so a stage's WGSL edited without it would leave them green: here the model's
+/// frame and the GPU's stand side by side, at the defaults and at each preset, and such an edit is
+/// red. `FrameTol::SIGNAL` is the class of the chain (t1186).
+#[test]
+fn t1640_the_shaders_follow_the_model() {
+    use kt_fx::video::{fit_into, Frame, VideoFxCtx};
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let (w, h) = (192u32, 108u32);
+    let mut src = vec![255u8; (w * h * 4) as usize];
+    for (i, p) in src.chunks_exact_mut(4).enumerate() {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        p[0] = (x * 255 / (w - 1)) as u8;
+        p[1] = if (x / 8 + y / 8) % 2 == 0 { 200 } else { 60 };
+        p[2] = (y * 255 / (h - 1)) as u8;
+    }
+    let tape = fx_video_tape::VhsTape::new();
+    let mut cases: Vec<Vec<(&str, f64)>> = vec![vec![], vec![("standard", 1.0)]];
+    for v in tape.manifest().ui.variants {
+        cases.push(v.sets.to_vec());
+    }
+    let burst = 90_000;
+    for sets in &cases {
+        let vals = values(sets);
+        let d = Deck::new(&vals);
+        let st = d.st;
+        let frame = Frame { w, h, rgba: src.clone(), has_alpha: false };
+        let mut small = vec![0u8; (st.a * st.h * 4) as usize];
+        fit_into(&frame, st.a, st.h, &mut small);
+        let s = sim::simulate(&d, small, burst);
+        let mut model = vec![0u8; (w * h * 4) as usize];
+        sim::read_out(&s, w, h, &mut model);
+        let fx = kt_model::FxInstance::plugin_with("vhs_tape", &vals).unwrap();
+        let ctx = VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: burst, cam3d: None, in_scale: 1, lead: None };
+        let gpu = kt_gpu::testkit::chain(&[fx], frame, &ctx);
+        kt_gpu::assert_frames_close(&model, &gpu.rgba, w, h, kt_gpu::FrameTol::SIGNAL, &format!("{sets:?}"));
+        // the tolerance class holds an FM click on one ULP; a pass that changed is the mean's to
+        // see: 0.0005 here, 0.42 with one chroma constant moved by 3 %
+        let mean = kt_gpu::mean_lsb(&model, &gpu.rgba);
+        eprintln!("model against the shaders: mean {mean:.4} {sets:?}");
+        let clicks = sets.iter().any(|(n, _)| CLICKS.contains(n));
+        assert!(mean < if clicks { 0.9 } else { 0.02 }, "the shaders left the model: mean {mean:.4} at {sets:?}");
+    }
+}

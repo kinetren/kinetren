@@ -7,7 +7,7 @@ use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
 use kt_plugin_api::generator::{
-    GenDecl, PathTok, PathVal, Row, Tick, count, coverage, fill, isqrt, kind, lowbias32, rgb, smooth, u8v,
+    GenDecl, PathTok, PathVal, Row, Tick, count, fill, kind, lowbias32, rgb, shader_frame, smooth, u8v,
 };
 use kt_plugin_api::{ParamUnit, Plugin};
 
@@ -49,59 +49,6 @@ fn solid(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     fill(w, h, [u8v(p[0]), u8v(p[1]), u8v(p[2]), 255])
 }
 
-fn gradient(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
-    let n = (w as usize) * (h as usize);
-    let angle_deg = p[0];
-    let (a_r, a_g, a_b, b_r, b_g, b_b) = (u8v(p[1]), u8v(p[2]), u8v(p[3]), u8v(p[4]), u8v(p[5]), u8v(p[6]));
-    // a projection of the normalised coordinates onto the direction of the angle,
-    // stretched over the whole frame: at any angle both colours are visible
-    let rad = angle_deg.to_radians();
-    let (dx, dy) = (rad.fcos(), rad.fsin());
-    let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)].map(|(x, y): (f64, f64)| x * dx + y * dy);
-    let lo = corners.iter().cloned().fold(f64::INFINITY, f64::min);
-    let hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let span = (hi - lo).max(1e-9);
-    let mut buf = vec![0u8; n * 4];
-    for y in 0..h as usize {
-        let ny = (y as f64 + 0.5) / h as f64;
-        for x in 0..w as usize {
-            let nx = (x as f64 + 0.5) / w as f64;
-            let t = ((nx * dx + ny * dy - lo) / span).clamp(0.0, 1.0);
-            let mix = |a: u8, b: u8| (a as f64 + (b as f64 - a as f64) * t).round().clamp(0.0, 255.0) as u8;
-            let o = (y * w as usize + x) * 4;
-            buf[o] = mix(a_r, b_r);
-            buf[o + 1] = mix(a_g, b_g);
-            buf[o + 2] = mix(a_b, b_b);
-            buf[o + 3] = 255;
-        }
-    }
-    buf.into_boxed_slice()
-}
-
-fn corners(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
-    let n = (w as usize) * (h as usize);
-    let c: Vec<u8> = p.iter().map(|v| u8v(*v)).collect();
-    let (tl, tr, bl, br) = ([c[0], c[1], c[2]], [c[3], c[4], c[5]], [c[6], c[7], c[8]], [c[9], c[10], c[11]]);
-    let mut buf = vec![0u8; n * 4];
-    let bilerp = |tl: u8, tr: u8, bl: u8, br: u8, fx: f64, fy: f64| {
-        let top = tl as f64 + (tr as f64 - tl as f64) * fx;
-        let bot = bl as f64 + (br as f64 - bl as f64) * fx;
-        (top + (bot - top) * fy).round().clamp(0.0, 255.0) as u8
-    };
-    for y in 0..h as usize {
-        let fy = (y as f64 + 0.5) / h as f64;
-        for x in 0..w as usize {
-            let fx = (x as f64 + 0.5) / w as f64;
-            let o = (y * w as usize + x) * 4;
-            for i in 0..3 {
-                buf[o + i] = bilerp(tl[i], tr[i], bl[i], br[i], fx, fy);
-            }
-            buf[o + 3] = 255;
-        }
-    }
-    buf.into_boxed_slice()
-}
-
 fn checker(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let n = (w as usize) * (h as usize);
     let cols = p[0] as u32;
@@ -122,38 +69,62 @@ fn checker(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     buf.into_boxed_slice()
 }
 
+fn gradient(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    // a projection of the normalised coordinates onto the direction of the angle,
+    // stretched over the whole frame: at any angle both colours are visible
+    let rad = p[0].to_radians();
+    let (dx, dy) = (rad.fcos(), rad.fsin());
+    let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)].map(|(x, y): (f64, f64)| x * dx + y * dy);
+    let lo = corners.iter().cloned().fold(f64::INFINITY, f64::min);
+    let hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let span = (hi - lo).max(1e-9);
+    let colours = [color(&p[1..4]), color(&p[4..7]), [dx as f32, dy as f32, lo as f32, span as f32], [0.0; 4]];
+    shader_frame(include_str!("wgsl/gradient.wgsl"), w, h, [0, 0], colours)
+}
+
+fn corners(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let c = [color(&p[0..3]), color(&p[3..6]), color(&p[6..9]), color(&p[9..12])];
+    shader_frame(include_str!("wgsl/corners.wgsl"), w, h, [0, 0], c)
+}
+
 fn noise(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
-    let n = (w as usize) * (h as usize);
-    let (amount, mono) = (p[0], p[1] >= 0.5);
-    // counter-based (the same lowbias32 as the Noise effect in
-    // kt-fx): grain = f(cell of the BASE grid 1920×1080, pts of the MATERIAL)
-    // — the picture is the same at any Quality/step, and a clip shift does not change
-    // the grain (invariant 11 in the generator’s edition).
-    // The full brightness range: “grey field”.
-    let frame_seed = lowbias32(pts.0 as u32 ^ 0x9e37_79b9);
-    let mut buf = vec![0u8; n * 4];
-    for y in 0..h as usize {
-        let ny = (y as u64 * 1080 / h.max(1) as u64) as u32;
-        let row_seed = lowbias32(ny ^ frame_seed.rotate_left(11));
-        for x in 0..w as usize {
-            let nx = (x as u64 * 1920 / w.max(1) as u64) as u32;
-            let s = lowbias32(nx ^ row_seed);
-            let mixc = |v: u8| (128.0 + (v as f64 - 128.0) * amount).round().clamp(0.0, 255.0) as u8;
-            let o = (y * w as usize + x) * 4;
-            if mono {
-                let v = mixc(s as u8);
-                buf[o] = v;
-                buf[o + 1] = v;
-                buf[o + 2] = v;
-            } else {
-                buf[o] = mixc(s as u8);
-                buf[o + 1] = mixc((s >> 8) as u8);
-                buf[o + 2] = mixc((s >> 16) as u8);
-            }
-            buf[o + 3] = 255;
-        }
-    }
-    buf.into_boxed_slice()
+    // counter-based (the same lowbias32 as the Noise effect): grain = f(cell of the BASE grid
+    // 1920×1080, pts of the MATERIAL): the picture is the same at any Quality/step, and a clip shift
+    // does not change the grain (invariant 11 in the generator's edition).
+    // The full brightness range: "grey field".
+    let seed = lowbias32(pts.0 as u32 ^ 0x9e37_79b9).rotate_left(11);
+    let values = [[p[0] as f32, 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
+    shader_frame(include_str!("wgsl/noise.wgsl"), w, h, [seed, (p[1] >= 0.5) as u32], values)
+}
+
+fn shape_values(p: &[f64], a: [f64; 4], b: [f64; 2]) -> [[f32; 4]; 4] {
+    let (r, g, bl, al) = shape_color(p);
+    [[r as f32, g as f32, bl as f32, al as f32], a.map(|v| v as f32), [b[0] as f32, b[1] as f32, 0.0, 0.0], [0.0; 4]]
+}
+
+fn rect(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (cx, cy, rw, rh, radius, feather) = (p[0], p[1], p[2], p[3], p[4], p[5]);
+    let (fw, fh) = (w.max(1) as f64, h.max(1) as f64);
+    let (hx, hy) = (rw * fw / 2.0, rh * fh / 2.0);
+    let rad = (radius * fh).clamp(0.0, hx.min(hy));
+    let v = shape_values(p, [cx * fw, cy * fh, hx, hy], [rad, (feather * fh).max(1.0 / 256.0)]);
+    shader_frame(include_str!("wgsl/rect.wgsl"), w, h, [0, 0], v)
+}
+
+fn ellipse(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (cx, cy, rw, rh, feather) = (p[0], p[1], p[2], p[3], p[4]);
+    let (fw, fh) = (w.max(1) as f64, h.max(1) as f64);
+    let (hx, hy) = ((rw * fw / 2.0).max(1.0 / 256.0), (rh * fh / 2.0).max(1.0 / 256.0));
+    let v = shape_values(p, [cx * fw, cy * fh, hx, hy], [0.0, (feather * fh).max(1.0 / 256.0)]);
+    shader_frame(include_str!("wgsl/ellipse.wgsl"), w, h, [0, 0], v)
+}
+
+fn line(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (x1, y1, x2, y2, thickness, feather) = (p[0], p[1], p[2], p[3], p[4], p[5]);
+    let (fw, fh) = (w.max(1) as f64, h.max(1) as f64);
+    let half = (thickness * fh / 2.0).max(1.0 / 256.0);
+    let v = shape_values(p, [x1 * fw, y1 * fh, x2 * fw, y2 * fh], [half, (feather * fh).max(1.0 / 256.0)]);
+    shader_frame(include_str!("wgsl/line.wgsl"), w, h, [0, 0], v)
 }
 
 fn transparent(_: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -161,111 +132,30 @@ fn transparent(_: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
 }
 
 /// The shape's colour: the last four rows of the three shapes.
+/// A colour of three rows, as the shaders read it.
+fn color(p: &[f64]) -> [f32; 4] {
+    [u8v(p[0]) as f32, u8v(p[1]) as f32, u8v(p[2]) as f32, 0.0]
+}
+
 fn shape_color(p: &[f64]) -> (u8, u8, u8, u8) {
     let k = p.len();
     (u8v(p[k - 4]), u8v(p[k - 3]), u8v(p[k - 2]), u8v(p[k - 1]))
-}
-
-fn rect(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
-    let n = (w as usize) * (h as usize);
-    let (cx, cy, rw, rh, radius, feather) = (p[0], p[1], p[2], p[3], p[4], p[5]);
-    let (r, g, b, a) = shape_color(p);
-    let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
-    // everything is in whole 1/256 px: float lives ONLY in the preamble
-    // of the frame (the kt-media/CLAUDE.md rule), the pixel loop is integer
-    let q = |v: f64| (v * 256.0).round() as i64;
-    let (ccx, ccy) = (q(cx * fw as f64), q(cy * fh as f64));
-    let (hx, hy) = (q(rw * fw as f64 / 2.0), q(rh * fh as f64 / 2.0));
-    let rad = q(radius * fh as f64).clamp(0, hx.min(hy));
-    let fe = q(feather * fh as f64).max(1);
-    let mut buf = vec![0u8; n * 4];
-    for y in 0..fh {
-        let py = (y * 256 + 128) - ccy;
-        for x in 0..fw {
-            let px = (x * 256 + 128) - ccx;
-            // signed distance to a rounded rectangle
-            let dx = px.abs() - (hx - rad);
-            let dy = py.abs() - (hy - rad);
-            let d = if dx > 0 && dy > 0 { isqrt(dx * dx + dy * dy) - rad } else { dx.max(dy) - rad };
-            let cov = coverage(d, fe);
-            let o = ((y * fw + x) * 4) as usize;
-            buf[o] = r;
-            buf[o + 1] = g;
-            buf[o + 2] = b;
-            buf[o + 3] = ((a as i64 * cov) / 255) as u8;
-        }
-    }
-    buf.into_boxed_slice()
-}
-
-fn ellipse(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
-    let n = (w as usize) * (h as usize);
-    let (cx, cy, rw, rh, feather) = (p[0], p[1], p[2], p[3], p[4]);
-    let (r, g, b, a) = shape_color(p);
-    let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
-    let q = |v: f64| (v * 256.0).round() as i64;
-    let (ccx, ccy) = (q(cx * fw as f64), q(cy * fh as f64));
-    let (hx, hy) = (q(rw * fw as f64 / 2.0).max(1), q(rh * fh as f64 / 2.0).max(1));
-    let fe = q(feather * fh as f64).max(1);
-    let mut buf = vec![0u8; n * 4];
-    for y in 0..fh {
-        let py = (y * 256 + 128) - ccy;
-        for x in 0..fw {
-            let px = (x * 256 + 128) - ccx;
-            // normalised distance ×min(hx,hy): an approximation of the
-            // signed distance, exact on the circle
-            let m = hx.min(hy);
-            let ex = px * m / hx;
-            let ey = py * m / hy;
-            let d = isqrt(ex * ex + ey * ey) - m;
-            let cov = coverage(d, fe);
-            let o = ((y * fw + x) * 4) as usize;
-            buf[o] = r;
-            buf[o + 1] = g;
-            buf[o + 2] = b;
-            buf[o + 3] = ((a as i64 * cov) / 255) as u8;
-        }
-    }
-    buf.into_boxed_slice()
-}
-
-fn line(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
-    let n = (w as usize) * (h as usize);
-    let (x1, y1, x2, y2, thickness, feather) = (p[0], p[1], p[2], p[3], p[4], p[5]);
-    let (r, g, b, a) = shape_color(p);
-    let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
-    let q = |v: f64| (v * 256.0).round() as i64;
-    let (ax, ay) = (q(x1 * fw as f64), q(y1 * fh as f64));
-    let (bx, by) = (q(x2 * fw as f64), q(y2 * fh as f64));
-    let half = q(thickness * fh as f64 / 2.0).max(1);
-    let fe = q(feather * fh as f64).max(1);
-    let (vx, vy) = (bx - ax, by - ay);
-    let len2 = vx * vx + vy * vy;
-    let mut buf = vec![0u8; n * 4];
-    for y in 0..fh {
-        let py = (y * 256 + 128) - ay;
-        for x in 0..fw {
-            let px = (x * 256 + 128) - ax;
-            // projection onto a segment with a clamp: a capsule
-            let t = if len2 == 0 { 0 } else { ((px * vx + py * vy) * 256 / len2).clamp(0, 256) };
-            let qx = px - vx * t / 256;
-            let qy = py - vy * t / 256;
-            let d = isqrt(qx * qx + qy * qy) - half;
-            let cov = coverage(d, fe);
-            let o = ((y * fw + x) * 4) as usize;
-            buf[o] = r;
-            buf[o + 1] = g;
-            buf[o + 2] = b;
-            buf[o + 3] = ((a as i64 * cov) / 255) as u8;
-        }
-    }
-    buf.into_boxed_slice()
 }
 
 // ---- the path tables: the former `format_gen_path` / `apply_token` arms ------------------------
 
 const AB_COLORS: &[(&str, &str)] = &[("a", "genw.color_a"), ("b", "genw.color_b")];
 const SHAPE_COLOR: &[(&str, &str)] = &[("color", "trn.color")];
+
+/// The `pixel` texts of the family's shader kinds.
+pub const SHADERS: [&str; 6] = [
+    include_str!("wgsl/gradient.wgsl"),
+    include_str!("wgsl/corners.wgsl"),
+    include_str!("wgsl/noise.wgsl"),
+    include_str!("wgsl/rect.wgsl"),
+    include_str!("wgsl/ellipse.wgsl"),
+    include_str!("wgsl/line.wgsl"),
+];
 
 /// The family's kinds, in `BUILTIN_IDS` order.
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
