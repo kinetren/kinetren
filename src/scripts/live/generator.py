@@ -128,8 +128,10 @@ def main(out):
         )
         app.shot("recolored")
 
-        # 7. undo removes the colour edit entirely (the window session is one step)
+        # 7. undo removes the colour edit entirely (the window session is one step): Ctrl+Z
+        # undoes a session that has ended, so the window has to be gone first
         app.key("Escape")
+        app.until(lambda: int(app.geom().get("windows", 0)) == 0)
         app.key("ctrl+z")
         back = None
         for _ in range(20):

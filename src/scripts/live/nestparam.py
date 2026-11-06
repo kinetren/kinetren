@@ -191,7 +191,10 @@ def main(out):
         inst_x = app.x_at(inst[0] + inst[1] // 2)
         app.right_click(inst_x, y)
         app.click_probe("nest.enter", "item “Enter the reel”")
-        app.expect(app.geom()["nest"]["depth"] == 1, "entry into the composition did not happen")
+        app.expect(
+            app.until(lambda: app.geom()["nest"]["depth"] == 1),
+            "entry into the composition did not happen",
+        )
 
         inner = sorted(app.live_clips())
         # the HEADER — on the text field itself: a multi-line field has no label
@@ -372,7 +375,7 @@ def main(out):
             f"the strip expanded: there were rows {rows_before}, became {len(video_row_ys(app))}",
         )
         app.expect(
-            app.geom()["nest"]["depth"] == 0,
+            app.until(lambda: app.geom()["nest"]["depth"] == 0),
             "strip expanded, but the person stayed at the root",
         )
         app.expect(
@@ -383,7 +386,7 @@ def main(out):
         app.click_probe("pub.publish.size", "“Publish…” item on the size")
         app.click_probe("pub.dialog.ok", "publish confirmation from the strip")
         app.expect(
-            app.geom()["nest"]["depth"] == 0,
+            app.until(lambda: app.geom()["nest"]["depth"] == 0),
             "publish confirmation dragged inside the composition (item 11)",
         )
         app.shot("published-from-band")

@@ -306,9 +306,8 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   egui takes the click time from the FRAME in which it landed; in software rendering a frame
   takes ~0.2 s, so a "generous" pause of 0.1 s becomes 0.3+ s for egui
   and the double click falls apart into two single ones. test-stability: an idle program starts a
-  frame on the first event, so with any gap the second click lands one render later, and four
-  events in one frame are no gesture on an event: `Live.double_click` lets the press be read alone,
-  then sends the rest in one write. And a click within 0.6 s of the click before last is egui's
+  frame on the first event, so with any gap the second click lands one render later:
+  `Live.double_click` sends its four events in one write to the server. And a click within 0.6 s of the click before last is egui's
   TRIPLE, which is no double click: the gesture waits that window out. Earlier: 0.04 s — 5 of 5,
   0.10 s — 0 of 5.
 - **A quoted dotted string in a kt-app source IS a published place for the coverage guard**

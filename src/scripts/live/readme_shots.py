@@ -299,6 +299,8 @@ class Shooter:
         x = win["x"] + int(r["x"] + r["w"] / 2)
         y = win["y"] + int(r["y"] + 10)
         app.drag(x, y, x, y + int(floor - r["y"]))
+        app.until(lambda: any(f["param"] == name and f["y"] >= floor - 2
+                              for f in app.geom().get("fields", [])))
         moved = self.probe(app, step, name, True)
         self.require(step, moved["y"] >= floor - 2, f"“{name}” below the menu bar")
         return moved

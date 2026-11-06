@@ -41,7 +41,9 @@ def main(out):
         app.click(app.x_at(1 * SEC), y)
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
+        placed = len(app.live_clips())
         app.click_probe("nest.collapse", "collapse item")
+        app.until(lambda: len(app.live_clips()) < placed)
         inst = app.live_clips()[0]
         mid = app.x_at(inst[0] + inst[1] // 2)
         app.shot("collapsed")
@@ -89,24 +91,24 @@ def main(out):
         # expands in place, and the exits from the expansion go differently
         app.right_click(mid, y)
         app.click_probe("nest.enter", "item “Enter the reel”")
-        app.expect(app.geom()["nest"]["depth"] == 1, "did not get inside")
+        app.expect(app.until(lambda: app.geom()["nest"]["depth"] == 1), "did not get inside")
         # path ONE: the project name is the root’s crumb
         app.click_probe("nest.root", "project name as the root breadcrumb")
         app.expect(
-            app.geom()["nest"]["depth"] == 0,
+            app.until(lambda: app.geom()["nest"]["depth"] == 0),
             "a click on the project name did not lead out — and that is the only way to exit "
             "straight to the needed level",
         )
         # path TWO: Esc
         app.right_click(mid, y)
         app.click_probe("nest.enter", "item “Enter the reel” a second time")
-        app.expect(app.geom()["nest"]["depth"] == 1, "did not get inside a second time")
+        app.expect(app.until(lambda: app.geom()["nest"]["depth"] == 1), "did not get inside a second time")
         for _ in range(3):
             app.key("Escape")
             poll_step(0.3)
             if app.geom()["nest"]["depth"] == 0:
                 break
-        app.expect(app.geom()["nest"]["depth"] == 0, "Esc did not lead outward")
+        app.expect(app.until(lambda: app.geom()["nest"]["depth"] == 0), "Esc did not lead outward")
         app.shot("out")
 
         # --- 4. expand into tracks ----------------------------------

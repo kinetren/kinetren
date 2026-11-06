@@ -883,18 +883,12 @@ class Live:
         mark = self.seen()
         self._move(x, y, pause=0.0)
         self._after_gesture(mark, "hover before the double click")
-        # THE PRESS IS READ ALONE, THE REST GOES IN ONE WRITE. egui stamps a click with its FRAME,
-        # and an idle program starts a frame on the first event it gets. Four events with any gap
-        # between them land in two frames, one render apart: past 0.3 s of render they are two
-        # single clicks (with the FX window open, every time). All four in one frame are no
-        # better: a press and its release in one frame are not a gesture on an event. So the
-        # frame that reads the press ends first, and the next one reads two releases at once.
+        # ALL THE EVENTS GO IN ONE WRITE TO THE SERVER. egui stamps a click with its FRAME, and an
+        # idle program starts a frame on the first event it gets: with any gap, the second click
+        # lands one render later, past 0.3 s two single clicks, and a press held across a frame
+        # past 0.8 s is no click at all. In one write they are read in one frame.
         mark = self.seen()
-        seen = self._input_now()
-        probe.button(True, pause=0.0)
-        self.until(lambda: self._input_now() > seen, timeout=2.0)
-        probe.xtest.fake_input(probe.d, X.ButtonRelease, 1)
-        for _ in range(n - 1):
+        for _ in range(n):
             probe.xtest.fake_input(probe.d, X.ButtonPress, 1)
             probe.xtest.fake_input(probe.d, X.ButtonRelease, 1)
         probe.d.sync()
@@ -1469,6 +1463,8 @@ class Live:
         for no reason (R.34)."""
         from PIL import Image
 
+        # the answer to a gesture is drawn after it: the frame in flight is not the comparison
+        self.wait_still(timeout=20.0)
         with Image.open(before) as was:
             px = images_differ(was.convert("RGB"), screen_image())
         g = geometry()

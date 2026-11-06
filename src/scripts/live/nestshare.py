@@ -49,6 +49,7 @@ def main(out):
         app.click(app.x_at(3 * SEC), y, mods=("ctrl",))
         app.right_click(app.x_at(3 * SEC), y)
         app.click_probe("nest.collapse", "collapse item")
+        app.until(lambda: len(app.live_clips()) == 1)
         app.expect(len(app.live_clips()) == 1, f"collapsed not into one: {app.live_clips()}")
         app.shot("one")
 
@@ -81,6 +82,7 @@ def main(out):
         # precisely for the place YOU ARE STANDING IN.
         app.right_click(app.x_at(inst[0] + inst[1] // 2), y)
         app.click_probe("nest.enter", "item “Enter the reel”")
+        app.until(lambda: app.geom()["nest"]["uses"] == 3)
         nest = app.geom()["nest"]
         app.expect(
             nest["uses"] == 3,
@@ -109,7 +111,7 @@ def main(out):
         )
         app.key("Escape")
         app.key("Escape")
-        app.expect(app.geom()["nest"]["depth"] == 0, "did not come out")
+        app.expect(app.until(lambda: app.geom()["nest"]["depth"] == 0), "did not come out")
         app.shot("edited")
 
         # --- consequence: ALL THREE places are the same -----------------------
