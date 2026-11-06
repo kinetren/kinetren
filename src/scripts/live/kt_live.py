@@ -263,6 +263,7 @@ class Live:
         self._reported = False
         self._shot_no = 0
         self._raised = False
+        self._at = None
         # a direct read of a point is accepted only after reconciliation with the reference
         self._direct_px = None
         # OBSERVED frame step: under four workers the software render goes
@@ -654,7 +655,8 @@ class Live:
         self._dt = 0.2
         # after a resize we wait for SEVERAL frames: the re-layout does not go in a single
         # pass (scrolls and groups recount their heights)
-        self.wait_frame(3, what="relayout after changing the window size")
+        self.wait_frame(3, what="relayout after changing the window size", soft=True)
+        self.settle(timeout=max(2.0, 10.0 * self._dt))
 
     def geom(self):
         """Fresh geometry dump: the track area, zoom, row positions."""
@@ -795,6 +797,24 @@ class Live:
         )
         return False
 
+    def _move(self, x, y, pause=0.0):
+        """The pointer to a point; the frame's own bookkeeping of where it is."""
+        self._at = (x, y)
+        probe.move(x, y, pause=pause)
+
+    def _arrive(self, x, y):
+        """The pointer over the target, and READ, before a button goes down (test-stability).
+
+        egui decides what is under a press from the widgets of the frame before. A move and a
+        press that land in one slow frame press what the pointer was over before it moved: the
+        click is lost with no trace, a menu does not open, and a scenario red on a "lost" click
+        was green alone. A move to the same point gives no event, and there is nothing to read."""
+        if self._at == (x, y):
+            return
+        seen = self._input_now()
+        self._move(x, y)
+        self.until(lambda: self._input_now() > seen, timeout=2.0)
+
     def click(self, x, y, mods=()):
         # the window is raised on the FIRST gesture and when the window changes, not before
         # each one (R.69): the X window is one, the program’s modal forms are egui layers
@@ -805,8 +825,8 @@ class Live:
         self.raise_once()
         if mods:
             self._mods(mods, True)
+        self._arrive(x, y)
         mark = self.seen()
-        probe.move(x, y, pause=0.0)
         probe.button(True, pause=0.0)
         probe.button(False, pause=0.0)
         self._after_gesture(mark, "click")
@@ -817,8 +837,8 @@ class Live:
         """RMB: the target of the context menu and the menu itself. A separate method, because
         `click` presses button 1, while the menu opens with the third."""
         self.raise_once()
+        self._arrive(x, y)
         mark = self.seen()
-        probe.move(x, y, pause=0.0)
         probe.button(True, 3, pause=0.0)
         probe.button(False, 3, pause=0.0)
         self._after_gesture(mark, "right click")
@@ -842,7 +862,7 @@ class Live:
         # a frame AFTER the hover: the first click at the fresh position is otherwise lost
         # together with the input frame
         mark = self.seen()
-        probe.move(x, y, pause=0.0)
+        self._move(x, y, pause=0.0)
         self._after_gesture(mark, "hover before the double click")
         for i in range(n):
             # THE EVENTS GO TOGETHER, with a hair between them so that the X server does not
@@ -871,7 +891,7 @@ class Live:
         if mods:
             self._mods(mods, True)
         mark = self.seen()
-        probe.move(x0, y0, pause=0.0)
+        self._move(x0, y0, pause=0.0)
         self._after_gesture(mark, "hover before drag")
         mark = self.seen()
         probe.button(True, pause=0.0)
@@ -881,11 +901,11 @@ class Live:
         self.wait_frame(1, what="frame after drag press", soft=True)
         step = 8 if x1 >= x0 else -8
         mark = self.seen()
-        probe.move(x0 + step, y0, pause=0.0)
+        self._move(x0 + step, y0, pause=0.0)
         self._after_gesture(mark, "first drag shift")
         for i in range(1, steps + 1):
             mark = self.seen()
-            probe.move(
+            self._move(
                 x0 + step + (x1 - x0 - step) * i // steps,
                 y0 + (y1 - y0) * i // steps,
                 pause=0.0,
@@ -1053,7 +1073,7 @@ class Live:
         label for a scenario that needs a gap for a real reason."""
         self.raise_once()
         mark = self.seen()
-        probe.move(x, y, pause=0.0)
+        self._move(x, y, pause=0.0)
         self._after_gesture(mark, "hover")
         # for HOVERING the consequence is the picture (highlight, hint, submenu), and
         # the scenario compares the SCREEN: we wait until the program stops
@@ -1085,7 +1105,7 @@ class Live:
         # such a dump is always falsely red — exactly what the 0.6 s pause
         # in the `geomctl` scenario was hiding.
         self.wait_frame(2, what="fresh probe dump", soft=True)
-        deadline = time.time() + max(0.5 * tries, 1.0)
+        deadline = time.time() + stretched(max(0.5 * tries, 1.0))
         while time.time() < deadline:
             if any(f["param"] == name for f in self.geom().get("fields", [])):
                 return True
@@ -1218,7 +1238,7 @@ class Live:
         """Mouse wheel over a point (ticks > 0 — down). XTest: buttons 4/5."""
         self.raise_once()
         mark = self.seen()
-        probe.move(x, y, pause=0.0)
+        self._move(x, y, pause=0.0)
         btn = 5 if ticks > 0 else 4
         for _ in range(abs(ticks)):
             probe.button(True, btn, pause=0.0)
@@ -1463,7 +1483,7 @@ class Live:
         # the write is synchronous and syncs twice: on a busy disk the program stands in it for
         # tens of seconds, with Ctrl+S long read (a silent 10 s here read the old file and blamed
         # the program: "a Ctrl+S that did not save", found-defects row 47)
-        deadline = time.time() + float(os.environ.get("KT_LIVE_SAVE_WAIT", "300"))
+        deadline = time.time() + 300.0
         while time.time() < deadline:
             if os.path.getmtime(self.project) != before:
                 return True

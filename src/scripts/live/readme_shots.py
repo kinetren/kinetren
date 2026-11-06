@@ -341,6 +341,10 @@ class Shooter:
         """This virtual screen has no GPU, and the program says so once ("software render").
         A person reads it by clicking the bell; unread, it is a "1" in the status strip."""
         self.require(step, app.click_probe("bell"), "click on the bell (read the notice)")
+        # Esc closes the window on top of the LAST frame: pressed before the window has been
+        # drawn once, it goes down the cascade, and the window stays
+        self.require(step, app.until(lambda: int(app.geom().get("windows", 0)) > 0),
+                     "the notices window opened")
         app.key("Escape")
         # the dump is written ten times a second: two frames can still show the window, and what
         # counts is that a fresh dump stops showing it

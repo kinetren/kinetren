@@ -19,6 +19,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Failure, Live, import_project, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import stretched  # noqa: E402
 
 # ITS OWN PROCESS (R.68): the scenario checks the program START ITSELF, not the work in an
 # already open project — the worker stand does not suit it.
@@ -32,7 +33,7 @@ def recovery_of(project):
 
 
 def wait_file(path, timeout=90.0, what="file"):
-    deadline = time.time() + timeout
+    deadline = time.time() + stretched(timeout)
     while time.time() < deadline:
         if os.path.exists(path) and os.path.getsize(path) > 0:
             return True

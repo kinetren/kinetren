@@ -23,6 +23,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, geometry, poll_step, require_tools  # noqa: E402
+from kt_live import stretched  # noqa: E402
 
 # ITS OWN PROCESS (R.68): the scenario checks the program START — the welcome window opens
 # only at start, over an unnamed document, and from an empty store
@@ -51,7 +52,7 @@ def drag_corner(app, r, dx, dy):
 
 
 def wait_for(pred, timeout=30.0):
-    deadline = time.time() + timeout
+    deadline = time.time() + stretched(timeout)
     while time.time() < deadline:
         v = pred()
         if v:

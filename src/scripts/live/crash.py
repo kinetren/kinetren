@@ -15,6 +15,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Failure, Live, geometry, import_project, poll_step, probe, project_with_clips, require_tools  # noqa: E402
+from kt_live import stretched  # noqa: E402
 
 # ITS OWN PROCESS (R.68): the scenario kills the editor and restarts it — the worker stand
 # cannot host that.
@@ -22,7 +23,7 @@ OWN_PROCESS = True
 
 
 def wait_json(path, ok, timeout=60.0, what="file"):
-    deadline = time.time() + timeout
+    deadline = time.time() + stretched(timeout)
     while time.time() < deadline:
         try:
             with open(path) as f:

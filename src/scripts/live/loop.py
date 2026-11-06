@@ -17,6 +17,19 @@ from kt_live import Live, color_media, project_with_clips, require_tools  # noqa
 SEC = 90000
 
 
+def folded():
+    """A wait's condition: the cursor went BACK. The fold is the event, not a place near the
+    region's start: at a frame a second the dump passes over that place between two reads."""
+    last = [None]
+
+    def fold(t):
+        back = last[0] is not None and t < last[0]
+        last[0] = t
+        return back
+
+    return fold
+
+
 def main(out):
     require_tools()
     red = color_media(out, "red", "C81E1E", seconds=10)
@@ -38,7 +51,7 @@ def main(out):
             app.expect(False, "playback did not start (no audio device?)")
             app.shot("no-playback")
             return app.done()
-        inside = app.wait_playhead(lambda t: t < 3 * SEC, "cursor wrapped to the start of the region")
+        inside = app.wait_playhead(folded(), "cursor wrapped to the start of the region")
         app.expect(
             all(t <= 6 * SEC + SEC // 2 for t in inside),
             f"cursor did not escape past the end of the region: max {max(inside)}",
@@ -114,7 +127,7 @@ def main(out):
         app.expect(b > r + 40, f"mid-lap the blue clip shows: RGB {r},{g},{b}")
         app.step("outside-mid-lap", "mid-lap: the picture moved with the sound into blue")
         for lap in (1, 2):
-            app.wait_playhead(lambda t: t < 7.5 * SEC, f"fold {lap}: the cursor back at the start")
+            app.wait_playhead(folded(), f"fold {lap}: the cursor back at the start")
             if lap == 1:
                 app.wait_playhead(lambda t: t > 8.6 * SEC, "the second lap reached blue", timeout=10)
         r, g, b = app.pixel_settled(app.preview_center(), differs_from=blue_now)

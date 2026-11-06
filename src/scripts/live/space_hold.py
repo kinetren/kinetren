@@ -33,8 +33,19 @@ def held(app, ctrl, name, what):
         app._mods(["ctrl"], True)
     start = app.playhead()
     space(True)
-    # the head runs forward at first during playback, so a reverse is proven by its way back
-    app.wait_playhead(lambda t: abs(t - start) > SEC // 2, "the head must run under the key")
+    # the head runs forward at first during playback, so a reverse is proven by its way back:
+    # measured from the moment it turned, which a slow frame puts off by as much as it likes
+    if ctrl:
+        last = [start]
+
+        def turned(t):
+            back = t < last[0]
+            last[0] = t
+            return back
+
+        app.wait_playhead(turned, "the head must turn back under the key", timeout=16.0)
+    else:
+        app.wait_playhead(lambda t: abs(t - start) > SEC // 2, "the head must run under the key")
     first = app.playhead()
     app.wait_playhead(lambda t: abs(t - first) > SEC // 3, "the head must keep running under the key")
     playing = app.playing()
@@ -87,9 +98,12 @@ def main(out):
         after = app.playhead()
         app.wait_playhead(lambda t: t > after, "after the release it runs forward again")
 
-        # the double press
+        # the double press: the second lands one frame after the first, not after the two a
+        # gesture's wait costs, or a busy machine's frames alone outlast the double-press window
         app.key("space")
-        app.key("space")
+        seen = app._input_now()
+        probe.key("space", pause=0.0, after=0.0)
+        app.until(lambda: app._input_now() > seen)
         app.wait_playhead(lambda t: t == 0, "two quick presses stop at the project start")
         app.expect(not app.playing(), "two quick presses leave it stopped")
         app.step("double-press", "two quick presses: stopped at the start")

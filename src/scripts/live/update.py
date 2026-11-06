@@ -19,7 +19,7 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, poll_step, require_tools  # noqa: E402
+from kt_live import Live, poll_step, require_tools, stretched  # noqa: E402
 
 # its own process: the check runs once, on the first frame of a fresh start, with
 # `KT_UPDATE_URL` read at process start — the stand cannot be handed either
@@ -52,7 +52,7 @@ class Releases(http.server.BaseHTTPRequestHandler):
 
 def wait_for(app, ok, timeout=15.0):
     t0 = time.time()
-    while time.time() - t0 < timeout:
+    while time.time() - t0 < stretched(timeout):
         g = app.geom()
         if ok(g):
             return g
@@ -87,7 +87,10 @@ def main(out):
                 int(g.get("windows", 0)) == welcome,
                 f"the check opened no window at start (the welcome window aside): {g.get('windows')}",
             )
-            app.expect("title.outdated" in probes(g), "the word is painted after the version")
+            app.expect(
+                app.until(lambda: "title.outdated" in probes(app.geom())),
+                "the word is painted after the version",
+            )
             app.expect(len(Releases.requests) == 1, f"one request: {Releases.requests}")
             path, agent = Releases.requests[0] if Releases.requests else ("", "")
             app.expect(
