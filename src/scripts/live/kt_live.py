@@ -871,8 +871,6 @@ class Live:
 
         In software rendering a frame takes ~0.2 s, and egui takes the time of a click from the
         frame in which it fell (R.34: a pause of 0.1 s becomes 0.3+ s for egui)."""
-        from Xlib import X
-
         self.raise_once()
         # egui counts a click within 0.6 s of the click before last as the third of a triple, and
         # a triple is no double click: a click just before this gesture took it away, every time
@@ -883,14 +881,17 @@ class Live:
         mark = self.seen()
         self._move(x, y, pause=0.0)
         self._after_gesture(mark, "hover before the double click")
-        # ALL THE EVENTS GO IN ONE WRITE TO THE SERVER. egui stamps a click with its FRAME, and an
-        # idle program starts a frame on the first event it gets: with any gap, the second click
-        # lands one render later, past 0.3 s two single clicks, and a press held across a frame
-        # past 0.8 s is no click at all. In one write they are read in one frame.
+        # THE EVENTS GO TOGETHER, a hair apart. egui stamps a click with its FRAME, so two clicks
+        # that land in frames a slow render apart are that far apart, and past 0.3 s they are two
+        # single clicks. Measured at a frame of 0.55 s (test-stability): 12 of 12 with 0.01 s
+        # between the events, 8 of 12 with the former 0.09 s and 0.04 s. A press read alone first
+        # loses the click when the frame passes 0.8 s, and all four in one write lost events.
         mark = self.seen()
         for _ in range(n):
-            probe.xtest.fake_input(probe.d, X.ButtonPress, 1)
-            probe.xtest.fake_input(probe.d, X.ButtonRelease, 1)
+            probe.button(True, pause=0.0)
+            pause(0.01, "egui stamps a click with its frame: the events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
+            probe.button(False, pause=0.0)
+            pause(0.01, "egui stamps a click with its frame: the events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
         probe.d.sync()
         self._clicked_at = time.time()
         self._after_gesture(mark, "triple click" if n == 3 else "double click")
