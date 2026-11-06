@@ -6,7 +6,7 @@ tries to grow in width; move the mouse anywhere in the main window or the morphe
 widens fast; don't move it — slowly". His system (2026-10-28): Ubuntu, 1920×1080, the
 program's own zoom raised twice with Ctrl+= (1.2). The harness test t923 reproduces it; here
 the REAL program does the same gestures: open the morpher window, Ctrl+= twice, move the
-mouse for thirty seconds, read the window's width from its probe.
+mouse for sixty frames, read the window's width from its probe.
 
 Then ktprompts 26.10.18 item 6: the camera window did not close on Esc. With the FX window and
 the camera window open, Esc closes the camera window (the top one) first, then the FX window.
@@ -14,12 +14,12 @@ the camera window open, Esc closes the camera window (the top one) first, then t
 import json
 import os
 import sys
-import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 from kt_live import Live, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
+MOTION_FRAMES = 60
 
 
 def scene(dest):
@@ -88,20 +88,19 @@ def main(out):
             log = [round(w0, 2)]
             frame0 = app.geom()["frame"]
             x_hi = max(screen * 0.8, 400)
-            t_end = time.time() + 15.0
             n = 0
-            while time.time() < t_end:
+            # the growth was per FRAME (a frame's fractional width), so frames are what is
+            # counted: fifteen seconds gave 50 of them on a free machine and 12 on a busy one
+            while app.geom()["frame"] - frame0 < MOTION_FRAMES:
                 n += 1
                 app.hover(60 + (n * 37) % int(x_hi), 120 + (n * 23) % 400)
                 if n % 3 == 0:
                     log.append(round(width(app, "win.morpher"), 2))
             w1 = width(app, "win.morpher")
             log.append(round(w1, 2))
-            frames = app.geom()["frame"] - frame0
-            app.expect(frames >= 50, f"the program drew {frames} frames during the motion ({n} hovers)")
             app.step(
-                f"zoom-{zoom}-after-15s",
-                f"after fifteen seconds of mouse motion at zoom {zoom} the window has the same width",
+                f"zoom-{zoom}-after-motion",
+                f"after {MOTION_FRAMES} frames of mouse motion at zoom {zoom} the window has the same width",
             )
             app.expect(abs(w1 - w0) <= 1.0, f"the morpher window keeps its width at zoom {zoom}: {log}")
         app.key("ctrl+0")

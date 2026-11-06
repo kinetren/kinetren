@@ -86,7 +86,7 @@ def main(out):
 
         # the “Cancel” button really closes the window
         app.click_probe("fx.cancel", "“Cancel” button of the effects window")
-        app.expect(not app.has_probe("fx.cancel", tries=4), "the window closed by the button")
+        app.expect(app.wait_gone("fx.cancel"), "the window closed by the button")
 
 
 if __name__ == "__main__":

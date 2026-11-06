@@ -14273,6 +14273,43 @@ fn t742_track_badges_take_a_human_click_and_never_move() {
     assert!(!m.mute, "the service row has no right to be muted");
 }
 
+/// Test 1672 (test-stability): a chord is what was held when its key went down. On a stalled frame
+/// Ctrl down, S down and Ctrl up are read together, and the frame's modifiers no longer have Ctrl:
+/// the bare S split the event, and the project stayed unsaved with one more edit in it. The scene
+/// keeps the playhead inside the selected event: on an empty spot the split does nothing.
+#[test]
+fn t1672_a_chord_read_on_a_stalled_frame_stays_a_chord() {
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    let dir = std::env::temp_dir().join(format!("kt-t1672-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("chord.kt");
+    {
+        let app = h.state_mut();
+        app.project_path = Some(path.clone());
+        app.selected.clear();
+        app.selected.insert(kt_model::ClipId(1));
+        app.player.seek(Tick(30_000));
+    }
+    h.step();
+    let clips = h.state().model.project().clips.len();
+    // no ModifiersChanged: what the frame sees at its end is no modifiers at all
+    for pressed in [true, false] {
+        h.event(egui::Event::Key {
+            key: egui::Key::S,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL,
+        });
+    }
+    h.step();
+    assert_eq!(h.state().model.project().clips.len(), clips, "Ctrl+S split the event");
+    assert!(path.exists(), "Ctrl+S did not save");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test 868 (guide-shortcuts-reference): a chord with Alt does not ALSO fire its
 /// bare letter. The split read `S && !ctrl`, so Alt+S soloed the track AND cut the
 /// event under the playhead in the same frame; t742 asserted only the solo. The
@@ -16209,24 +16246,26 @@ fn t947_perf_panel_shows_the_compose_cost() {
     // while playing the value follows the frames (each new frame composes)
     h.state_mut().player.play();
     let before = h.state().player.video_cost();
-    for _ in 0..6 {
+    let deadline = kt_time::test_deadline();
+    while h.state().player.video_cost() == before {
+        assert!(std::time::Instant::now() < deadline, "playing composed nothing new");
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(40));
     }
-    assert_ne!(h.state().player.video_cost(), before, "playing composed nothing new");
     // after Stop the last values stay and nothing composes again (no cost while idle)
     h.state_mut().player.pause();
-    // a frame decoded before Stop may still land and compose once (under load, finish.sh): wait
-    // until the value settles, then it must not move again
+    // the frame on screen is recomposed until its layers have all landed (under load, finish.sh):
+    // it has to be complete and the value settled, then it must not move again
     let deadline = kt_time::test_deadline();
     let mut last = h.state().player.video_cost();
     loop {
         h.step();
         h.step();
         let now = h.state().player.video_cost();
-        if now == last || std::time::Instant::now() > deadline {
+        if now == last && h.state().preview_key.is_some_and(|k| k.2) {
             break;
         }
+        assert!(std::time::Instant::now() < deadline, "the frame after Stop never completed");
         last = now;
         std::thread::sleep(std::time::Duration::from_millis(50));
     }

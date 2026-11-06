@@ -134,7 +134,7 @@ def main(out):
         app.step("frame-by-default", "the frame above the picture for the selected event")
         app.expect(app.has_probe("preview.geom_toggle"), "show button — in the corner of the frame")
         app.click_probe("preview.geom_toggle", "frame show button")
-        app.expect(not app.has_probe("geom.frame", tries=4), "the button turned the frame off")
+        app.expect(app.wait_gone("geom.frame"), "the button turned the frame off")
         app.step("frame-off", "frame turned off by the button")
         app.click_probe("preview.geom_toggle", "frame show button (back)")
         app.expect(app.has_probe("geom.frame"), "the button brought the frame back")

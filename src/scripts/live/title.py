@@ -55,7 +55,7 @@ def main(out):
         # the bin and the preview, and clicks go into it; at the same time the focus is handed back
         # (rule 14): the next hotkey works
         app.key("Escape")
-        app.expect(not app.has_probe("titlew.text", tries=2), "Esc closed the title window")
+        app.expect(app.wait_gone("titlew.text"), "Esc closed the title window")
 
         # 3. preview: on the synth clip the frame is coloured; we put the title on an empty
         # place — white letters arrive over the emptiness

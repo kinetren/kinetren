@@ -7627,58 +7627,71 @@ impl KtApp {
         }
         // MASK EDITING takes Enter, Backspace and Delete on the preview first (shape-masks)
         let (mask_del, mask_enter) = self.mask_keys(ctx);
-        let mut k = ctx.input(|i| Keys {
+        let mut k = ctx.input(|i| {
+            // A chord is what was held when ITS KEY went down. `i.modifiers` is the state at the
+            // end of the frame's input: a stalled frame that read Ctrl down, S down and Ctrl up
+            // together saw a bare S and split the event instead of saving (test-stability, t1672)
+            let m = i
+                .events
+                .iter()
+                .find_map(|e| match e {
+                    egui::Event::Key { pressed: true, modifiers, .. } => Some(*modifiers),
+                    _ => None,
+                })
+                .unwrap_or(i.modifiers);
+            Keys {
             // not on Alt either: Alt+S is solo, and it used to split the event
             // under the playhead in the same frame (t868)
-            cut: i.key_pressed(egui::Key::S) && !i.modifiers.ctrl && !i.modifiers.alt,
+            cut: i.key_pressed(egui::Key::S) && !m.ctrl && !m.alt,
             del: i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
-            undo: i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
-            redo: i.modifiers.ctrl
-                && (i.modifiers.shift && i.key_pressed(egui::Key::Z)
+            undo: m.ctrl && !m.shift && i.key_pressed(egui::Key::Z),
+            redo: m.ctrl
+                && (m.shift && i.key_pressed(egui::Key::Z)
                     || i.key_pressed(egui::Key::Y)),
-            save: i.modifiers.ctrl && i.key_pressed(egui::Key::S),
-            marker: i.key_pressed(egui::Key::M) && !i.modifiers.ctrl && !i.modifiers.alt,
+            save: m.ctrl && i.key_pressed(egui::Key::S),
+            marker: i.key_pressed(egui::Key::M) && !m.ctrl && !m.alt,
             // TRACK (R.62): the bare M and S are already taken by the marker and the cut —
             // both were set by the owner’s direct request and do not move.
             // Mute and solo take ALT, and act on the track
             // of the SELECTED event (otherwise we have no “selected track”).
-            track_mute: i.modifiers.alt && i.key_pressed(egui::Key::M),
-            track_solo: i.modifiers.alt && i.key_pressed(egui::Key::S),
-            region_in: i.key_pressed(egui::Key::I) && !i.modifiers.ctrl && !i.modifiers.alt,
-            region_out: i.key_pressed(egui::Key::O) && !i.modifiers.ctrl && !i.modifiers.alt,
-            loop_toggle: i.key_pressed(egui::Key::L) && !i.modifiers.ctrl && !i.modifiers.alt,
+            track_mute: m.alt && i.key_pressed(egui::Key::M),
+            track_solo: m.alt && i.key_pressed(egui::Key::S),
+            region_in: i.key_pressed(egui::Key::I) && !m.ctrl && !m.alt,
+            region_out: i.key_pressed(egui::Key::O) && !m.ctrl && !m.alt,
+            loop_toggle: i.key_pressed(egui::Key::L) && !m.ctrl && !m.alt,
             // Ctrl+C/Ctrl+V do NOT arrive as key_pressed: egui-winit
             // intercepts them and sends Event::Copy / Event::Paste(..)
             // (regression of item 21 — “Ctrl+V does not work”)
             esc: i.key_pressed(egui::Key::Escape),
-            enter_nest: i.key_pressed(egui::Key::Enter) && !i.modifiers.any(),
+            enter_nest: i.key_pressed(egui::Key::Enter) && !m.any(),
             copy: i.events.iter().any(|e| matches!(e, egui::Event::Copy))
-                || (i.modifiers.ctrl && i.key_pressed(egui::Key::C)),
+                || (m.ctrl && i.key_pressed(egui::Key::C)),
             paste: i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
-                || (i.modifiers.ctrl && i.key_pressed(egui::Key::V)),
+                || (m.ctrl && i.key_pressed(egui::Key::V)),
             // item 16 of round 8: Home/End — to the stop points; with Shift — to the
             // very start/end of the project
             // item 8 of round 10: A/D — the same jumps as the navigation buttons.
             // “To the very end” remains only on Shift+Home/End: Shift+D
             // must not suddenly fly to the end of the project.
             // `key_pressed`: the autorepeat of a held arrow IS the repeated step
-            frame_prev: i.key_pressed(egui::Key::ArrowLeft) && i.modifiers.is_none(),
-            frame_next: i.key_pressed(egui::Key::ArrowRight) && i.modifiers.is_none(),
+            frame_prev: i.key_pressed(egui::Key::ArrowLeft) && m.is_none(),
+            frame_next: i.key_pressed(egui::Key::ArrowRight) && m.is_none(),
             nav_prev: i.key_pressed(egui::Key::Home)
-                || (i.key_pressed(egui::Key::A) && !i.modifiers.ctrl && !i.modifiers.alt),
+                || (i.key_pressed(egui::Key::A) && !m.ctrl && !m.alt),
             nav_next: i.key_pressed(egui::Key::End)
-                || (i.key_pressed(egui::Key::D) && !i.modifiers.ctrl && !i.modifiers.alt),
-            goto_tc: i.modifiers.ctrl && i.key_pressed(egui::Key::L),
-            find: i.modifiers.ctrl && i.key_pressed(egui::Key::F),
-            nav_far: i.modifiers.shift
+                || (i.key_pressed(egui::Key::D) && !m.ctrl && !m.alt),
+            goto_tc: m.ctrl && i.key_pressed(egui::Key::L),
+            find: m.ctrl && i.key_pressed(egui::Key::F),
+            nav_far: m.shift
                 && (i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::End)),
             // item 2 of round 16: Shift+A/D — the jump DRAGS the region edge (Shift as
             // “extend the selection” in pro programs). Home/End has Shift
             // taken for “to the very start/end”, so we look at A/D.
-            nav_region: i.modifiers.shift
-                && !i.modifiers.ctrl
-                && !i.modifiers.alt
+            nav_region: m.shift
+                && !m.ctrl
+                && !m.alt
                 && (i.key_pressed(egui::Key::A) || i.key_pressed(egui::Key::D)),
+        }
         });
         // item 9 of round 11: it also works during playback (seek on the fly
         // the player can do; the “only on pause” gate was over-caution)

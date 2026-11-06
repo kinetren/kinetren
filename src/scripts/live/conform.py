@@ -105,7 +105,7 @@ def main(out):
         app.click_probe("settings.conform.fit", "rule “fit”")
         app.click_probe("settings.conform.fill", "rule “fill”")
         app.click_probe("settings.apply", "“Apply” button")
-        app.expect(not app.has_probe("settings.apply", tries=2), "the window closed after applying")
+        app.expect(app.wait_gone("settings.apply"), "the window closed after applying")
         r2 = app.pixel_settled((cx, cy))
         app.expect(r2[0] > 150 and r2[1] < 90, f"after changing the rule the center is still red: {r2}")
         fill = red_run(app, cy, "fill")
@@ -150,7 +150,7 @@ def main(out):
         app.shot("settings-raster")
         app.click_probe("settings.apply", "“Apply” button after editing the raster")
         app.expect(
-            not app.has_probe("settings.apply", tries=2),
+            app.wait_gone("settings.apply"),
             "the window closed after applying the raster",
         )
         saved = app.saved_project()

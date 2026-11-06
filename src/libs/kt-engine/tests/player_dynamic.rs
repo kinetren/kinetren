@@ -180,9 +180,11 @@ fn t20_paused_player_is_quiescent() {
 
     // a model edit wakes and rebuilds exactly once
     player.set_project(project);
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    let rebuilds = player.loop_stats.prefetch_rebuilds.load(Relaxed) - rb0;
-    assert!(rebuilds >= 1, "after set_project prefetch must rebuild the graphs");
+    let deadline = kt_time::test_deadline();
+    while player.loop_stats.prefetch_rebuilds.load(Relaxed) == rb0 {
+        assert!(std::time::Instant::now() < deadline, "after set_project prefetch must rebuild the graphs");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 /// Pause → resume: the render wakes up and the ring fills again

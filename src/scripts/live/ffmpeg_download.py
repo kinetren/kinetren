@@ -27,14 +27,15 @@ from kt_live import Live, project_with_clips, require_tools  # noqa: E402
 OWN_PROCESS = True
 
 
-def server(status, body, answer_after=0.0):
-    """A local server answering every GET with `status` and `body` — after `answer_after` seconds,
-    the way a slow network answers (the program waits for it, the scenario does not); returns its
-    URL and the server."""
+def server(status, body, answer=None):
+    """A local server answering every GET with `status` and `body` — once `answer` is set, the way
+    a slow network answers, for as long as the scenario needs to see the wait (three seconds were
+    gone before a busy machine reached the bar); returns its URL and the server."""
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
-            threading.Event().wait(answer_after)
+            if answer is not None:
+                answer.wait()
             self.send_response(status)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -50,7 +51,8 @@ def server(status, body, answer_after=0.0):
 
 def main(out):
     require_tools()
-    missing, s1 = server(404, b"", answer_after=3.0)
+    answer = threading.Event()
+    missing, s1 = server(404, b"", answer)
     short, s2 = server(200, b"x" * 100)
     env = {
         "KT_FFMPEG_OS": "windows",
@@ -76,6 +78,7 @@ def main(out):
             # the first mirror is slow to answer: the bar says which host and mirror it waits for
             app.step("connecting", "the bar: “127.0.0.1 — mirror 1 of 2, connecting…”")
             app.hover_probe("ffmpeg.progress", "the progress bar while the first mirror connects")
+            answer.set()
             app.expect(app.wait_gone("ffmpeg.progress"), "the bar is gone after the failure")
             app.expect(app.has_probe("ffmpeg.tried"), "the tried mirrors are listed")
             app.expect(app.has_probe("ffmpeg.download"), "Download is offered again")
@@ -86,6 +89,7 @@ def main(out):
             app.step("open-folder", "Open folder in the actions row")
             return app.done()
     finally:
+        answer.set()
         s1.shutdown()
         s2.shutdown()
         for k, v in was.items():

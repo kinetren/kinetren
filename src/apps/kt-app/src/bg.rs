@@ -266,10 +266,17 @@ mod tests {
         });
         std::thread::sleep(std::time::Duration::from_millis(40));
         job.set_paused(true);
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        let held = ticks.load(Ordering::Acquire);
-        std::thread::sleep(std::time::Duration::from_millis(80));
-        assert_eq!(ticks.load(Ordering::Acquire), held, "the pause does not hold");
+        // the job sees the pause at its next check, whenever the machine lets it run: from then
+        // on no tick comes, and a pause that does not hold ticks every 5 ms
+        let deadline = kt_time::test_deadline();
+        loop {
+            let held = ticks.load(Ordering::Acquire);
+            std::thread::sleep(std::time::Duration::from_millis(80));
+            if ticks.load(Ordering::Acquire) == held {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "the pause does not hold");
+        }
 
         job.cancel();
         let deadline = kt_time::test_deadline();

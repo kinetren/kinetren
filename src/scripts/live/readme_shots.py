@@ -258,20 +258,13 @@ class Shooter:
         """The screen unchanged for `quiet` seconds: thumbnails, waveforms
         and the decoded preview arrive asynchronously and are done only
         then. Filmstrips of 4K footage arrive with pauses between frames,
-        so a zoomed timeline needs a longer quiet period."""
-        deadline = time.time() + timeout
-        prev = app.shot("still")
-        calm = 0.0
-        while time.time() < deadline:
-            self.kt.poll_step(0.5)
-            if app.screen_diff(prev) == 0.0:
-                calm += 0.5
-                if calm >= quiet:
-                    return prev
-            else:
-                calm = 0.0
-                prev = app.shot("still")
-        self.require(step, False, what)
+        so a zoomed timeline needs a longer quiet period.
+
+        Compared straight from X: an `xwd`, a `convert` and a `compare` per look cost this run
+        about a second each, 340 looks in all, and the picture is written once, when it is
+        final."""
+        self.require(step, app.wait_still(timeout, quiet), what)
+        return app.shot("still")
 
     def probe(self, app, step, name, shown):
         """`shown` is `app.has_probe("<name>")` written AT THE CALL SITE: the
@@ -349,7 +342,11 @@ class Shooter:
         A person reads it by clicking the bell; unread, it is a "1" in the status strip."""
         self.require(step, app.click_probe("bell"), "click on the bell (read the notice)")
         app.key("Escape")
-        app.wait_frame(2, what="the notices window closed", soft=True)
+        # the dump is written ten times a second: two frames can still show the window, and what
+        # counts is that a fresh dump stops showing it
+        deadline = time.time() + 30.0
+        while int(app.geom().get("windows", 0)) != 0 and time.time() < deadline:
+            app.wait_frame(1, what="the notices window closed", soft=True)
         self.require(step, int(app.geom().get("windows", 0)) == 0, "the notices window closed")
 
     # ---- the shots -----------------------------------------------------
@@ -614,7 +611,7 @@ class Shooter:
             before = self.frame_image(app, name, "before")
             self.add_effect(app, name, clip, typed, cell)
             app.key("Escape")
-            self.require(name, not app.has_probe("win.fx", tries=4), "the effects window closed")
+            self.require(name, app.wait_gone("win.fx"), "the effects window closed")
             # the next Esc clears the selection: the selected event's transform frame is off
             # the picture, as in the frame before
             app.key("Escape")
@@ -664,7 +661,7 @@ class Shooter:
             with Image.open(png) as im:
                 panel = im.convert("RGB").crop((box[0], box[1], box[0] + box[2], box[1] + box[3]))
             app.key("Escape")
-            self.require(step, not app.has_probe("win.fx", tries=4), "the effects window closed")
+            self.require(step, app.wait_gone("win.fx"), "the effects window closed")
             app.key("Escape")
             self.seek(app, at)
             frame = self.frame_image(app, step, "tape", differs_from=before)

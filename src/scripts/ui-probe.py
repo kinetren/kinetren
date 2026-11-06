@@ -82,7 +82,13 @@ def window():
                 return w
         except Exception:
             pass
-        for c in w.query_tree().children:
+        try:
+            children = w.query_tree().children
+        except Exception:
+            # a window that closed during the walk (BadWindow): a splash, a menu, a dialog of the
+            # window manager. It is not the one searched for
+            return None
+        for c in children:
             r = walk(c)
             if r:
                 return r

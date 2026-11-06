@@ -29,8 +29,32 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 # so a foreign RUNNING run lost its verdicts, declaring everything red.
 out="${KT_LIVE_OUT:-$root/target/live-out}"
 scenarios_dir="$root/scripts/live"
-display_base="${KT_LIVE_DISPLAY:-:99}"
-display_base="${display_base#:}"
+# A FREE DISPLAY, not a fixed one (test-stability). Two sessions' runs on one number clicked into
+# each other's windows, and 13 scenarios went "red twice" with a foreign title in the screenshots.
+# Without KT_LIVE_DISPLAY the run takes the first block of eight numbers from :99 up with no live
+# X server, and holds it by a lock for its whole life.
+display_free() { # display_free <number>
+    local lock="/tmp/.X$1-lock" pid
+    [ -e "$lock" ] || return 0
+    pid=$(tr -d ' ' < "$lock" 2> /dev/null)
+    ! { [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null; }
+}
+if [ -n "${KT_LIVE_DISPLAY:-}" ]; then
+    display_base="${KT_LIVE_DISPLAY#:}"
+else
+    display_base=99
+    while :; do
+        free=1
+        for ((n = 0; n < 8; n++)); do display_free $((display_base + n)) || free=0; done
+        if [ "$free" = 1 ]; then
+            command -v flock > /dev/null || break
+            exec 9> "${TMPDIR:-/tmp}/kinetren-live-display-$display_base.lock"
+            flock -n 9 && break
+            exec 9>&-
+        fi
+        display_base=$((display_base + 8))
+    done
+fi
 
 if ! command -v Xvfb > /dev/null; then
     echo "no Xvfb: sudo apt install xvfb openbox" >&2
@@ -70,7 +94,7 @@ run_worker() { # run_worker <number> <scenarios...>
     [ $# -eq 0 ] && return 0
     local disp=":$((display_base + n))"
     python3 "$scenarios_dir/worker.py" "$disp" "$out" "$@" 2>&1 \
-        | sed "s/^/[$n] /"
+        | sed -u "s/^/[$n] /"
 }
 
 echo "live scenarios: ${#want[@]} pcs., workers $workers (cores $cores)"

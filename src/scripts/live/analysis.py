@@ -37,6 +37,7 @@ def main(out):
         card_x = win["x"] + int((b["left"] + b["right"]) / 2)
 
         # --- 1. hovering starts nothing --------------------------
+        app.expect(app.wait_still(), "the opened project settled")
         before = app.shot("before-hover")
         for dy in (40, 90, 140, 190):
             y = win["y"] + int(b["top"]) + dy
@@ -63,6 +64,7 @@ def main(out):
         # the very presence of an interface response: we click on the ruler and check that
         # the cursor moved
         app.click(app.x_at(2 * SEC), app.ruler_y())
+        app.until(lambda: abs(app.playhead() - 2 * SEC) < 30000)
         ph = app.playhead()
         app.expect(
             abs(ph - 2 * SEC) < 30000,

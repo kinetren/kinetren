@@ -49,6 +49,7 @@ def main(out):
         # the event in the right zone: two quick clicks, two jumps, no window
         v0 = app.geom()["view_start"]
         app.double_click(right - 30, y)
+        app.until(lambda: app.geom()["view_start"] > v0)
         app.settle()
         v1 = app.geom()["view_start"]
         app.expect(v1 > v0, f"a click in the right zone over an event must jump: {v0} → {v1}")
@@ -58,6 +59,7 @@ def main(out):
         # the left zone on a row with badges
         v2 = app.geom()["view_start"]
         app.click(left + 6, y)
+        app.until(lambda: app.geom()["view_start"] < v2)
         app.settle()
         v3 = app.geom()["view_start"]
         app.expect(v3 < v2, f"the left zone must jump on a row with badges: {v2} → {v3}")
@@ -66,6 +68,7 @@ def main(out):
         # the hot end under the header
         row = next(r for r in g["rows"] if r["kind"] == "video" and r["lane"] == 0)
         app.click(left - 20, win["y"] + int(row["top"]) + 4)
+        app.until(lambda: app.geom()["view_start"] < v3)
         app.settle()
         v4 = app.geom()["view_start"]
         app.expect(v4 < v3, f"the header's free part must jump: {v3} → {v4}")

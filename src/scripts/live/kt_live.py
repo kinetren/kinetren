@@ -143,6 +143,32 @@ _SLEPT = [0.0]
 _STARTED = time.time()
 
 
+def screen_image():
+    """The whole screen as an image, by the direct X read of `Live.pixel` (R.69): the look of a
+    wait that compares frames, with no process and no file."""
+    from PIL import Image
+    from Xlib import X
+
+    g = probe.root.get_geometry()
+    data = probe.root.get_image(0, 0, g.width, g.height, X.ZPixmap, 0xFFFFFFFF).data
+    if isinstance(data, str):  # old python3-xlib returns str
+        data = data.encode("latin-1")
+    return Image.frombuffer("RGBX", (g.width, g.height), data, "raw", "BGRX", 0, 1).convert("RGB")
+
+
+def images_differ(a, b, fuzz=7):
+    """How many pixels of two equal-sized images differ by more than `fuzz` of 255 in a channel:
+    3 %, as `compare -fuzz 3%` counts them."""
+    from PIL import ImageChops
+
+    d = ImageChops.difference(a, b)
+    if all(hi <= fuzz for _, hi in d.getextrema()):
+        return 0
+    r, g, bl = d.split()
+    worst = ImageChops.lighter(ImageChops.lighter(r, g), bl)
+    return sum(worst.histogram()[fuzz + 1:])
+
+
 def slept():
     """The actual fixed sleep of the scenario: the framework PLUS driver X."""
     return _SLEPT[0] + probe.SLEPT[0]
@@ -182,6 +208,20 @@ def _poll(seconds=0.02):
     time.sleep(seconds)
 
 
+# THE PROGRAM'S FRAME TIME, as the last wait observed it. A frame of the software render takes
+# about QUIET_FRAME on a free machine; under load it stretches, and everything measured in
+# seconds on a free machine has to stretch with it.
+QUIET_FRAME = 0.2
+_FRAME = [QUIET_FRAME]
+
+
+def stretched(seconds):
+    """`seconds` of a free machine, in the seconds the program runs at now (test-stability). Fifty
+    poll loops count attempts of a fixed step, each a clock limit of its own: the frame they
+    wait for arrived after their last attempt whenever the machine was busy."""
+    return seconds * max(1.0, _FRAME[0] / QUIET_FRAME)
+
+
 def poll_step(seconds=0.25):
     """A POLL STEP IN A SCENARIO LOOP — not a pause “just in case”.
 
@@ -192,7 +232,7 @@ def poll_step(seconds=0.25):
     its own polling loop with its own step). This is a legitimate sleep: there is nothing to wait for here —
     the APPEARANCE itself is checked.
     """
-    time.sleep(seconds)
+    time.sleep(stretched(seconds))
 
 
 class Live:
@@ -520,6 +560,7 @@ class Live:
         """Remember the current frame number (smoothed, with a ceiling)."""
         if 0.0 < gap < 5.0:
             self._dt = max(0.05, min(2.0, 0.5 * self._dt + 0.5 * gap))
+            _FRAME[0] = self._dt
 
     def settle(self, timeout=None, quiet=None):
         """Wait until the program REACTS to the gesture.
@@ -658,7 +699,7 @@ class Live:
 
     def wait_playhead(self, pred, what, timeout=8.0):
         """Waits until the cursor satisfies the condition; returns the history."""
-        deadline = time.time() + timeout
+        deadline = time.time() + stretched(timeout)
         seen = []
         while time.time() < deadline:
             t = self.playhead()
@@ -710,6 +751,20 @@ class Live:
         probe.d.sync()
         # the modifier needs its OWN frame: we wait until the program has read it
         self._after_gesture(mark, "modifier")
+
+    def until(self, cond, timeout=30.0):
+        """Wait for a CONSEQUENCE read from fresh dumps; True when `cond()` held (test-stability).
+
+        After a gesture the answer lies a frame or several ahead, and a read at once judged the
+        frame before: the event seen in the old place, the window still standing. The limit
+        stretches with the frame time, and it is a limit on a defect, not on the machine."""
+        deadline = time.time() + stretched(timeout)
+        while True:
+            if cond():
+                return True
+            if time.time() >= deadline:
+                return False
+            self.wait_frame(1, what="a frame while waiting for a consequence", soft=True)
 
     def _after_gesture(self, mark, what):
         """Wait until the program READS the gesture (R.69).
@@ -790,16 +845,15 @@ class Live:
         probe.move(x, y, pause=0.0)
         self._after_gesture(mark, "hover before the double click")
         for i in range(n):
-            # A GAP between clicks is needed: four events in a row in the
-            # software render land in ONE input frame, and egui counts
-            # one click instead of two (the gesture worked every other time). 0.04 s is
-            # noticeably less than the double-click threshold (0.3 s).
-            if i:
-                pause(0.04, "egui double-click time threshold: the gap between clicks is less than 0.3 s but more than one frame (verified 5 of 5)")
+            # THE EVENTS GO TOGETHER, with a hair between them so that the X server does not
+            # coalesce them. egui stamps a click with its FRAME, so two clicks that land in
+            # neighbouring frames of a slow render are as far apart as the frames, and past
+            # 0.3 s they are two single clicks. Measured at a frame of 0.55 s (test-stability):
+            # 12 of 12 with 0.01 s between the events, 8 of 12 with the former 0.09 s and 0.04 s.
             probe.button(True, pause=0.0)
-            pause(0.09, "egui double click is a TEMPORARY gesture: without spacing, all four events land in one input frame and count as one click (R.34 measurement: 0.04 s between clicks — 5 of 5, 0.10 s — 0 of 5)")
+            pause(0.01, "egui stamps a click with its frame: the four events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
             probe.button(False, pause=0.0)
-            pause(0.09, "egui double click is a TEMPORARY gesture: without spacing, all four events land in one input frame and count as one click (R.34 measurement: 0.04 s between clicks — 5 of 5, 0.10 s — 0 of 5)")
+            pause(0.01, "egui stamps a click with its frame: the four events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
         mark = self.seen()
         probe.d.sync()
         self._after_gesture(mark, "triple click" if n == 3 else "double click")
@@ -902,6 +956,9 @@ class Live:
         probe.key(name, pause=0.0, after=0.0)
         self._after_gesture(mark, f"key {spec}")
         if mods:
+            # the key has to be READ before the modifier goes up. Its short wait can run out on
+            # a stalled frame, and the release would then land in that frame with the key
+            self.until(lambda: self._input_now() > mark[1], timeout=20.0)
             self._mods(mods, False)
 
     # X key names for characters that cannot be typed by a letter: `key()`
@@ -1343,25 +1400,34 @@ class Live:
             self.wait_frame(1, what="frame between pixel reads", soft=True)
         return prev or (0, 0, 0)
 
+    def wait_still(self, timeout=90.0, quiet=0.5):
+        """The screen unchanged for `quiet` seconds: thumbnails, waveforms and the decoded preview
+        arrive by themselves after a project opens or a view changes, and a comparison of two
+        screens taken before they land compares their arrival. True when it settled."""
+        deadline = time.time() + stretched(timeout)
+        prev = screen_image()
+        calm = 0.0
+        while time.time() < deadline:
+            poll_step(0.25)
+            now = screen_image()
+            if images_differ(prev, now) == 0:
+                calm += 0.25
+                if calm >= quiet:
+                    return True
+            else:
+                calm = 0.0
+            prev = now
+        return False
+
     def screen_diff(self, before):
         """Fraction of the screen that changed relative to the `before` snapshot
         (0..1). More reliable than a sparse grid of points: the window could have opened where
         the grid did not touch it — so the check “window appeared” broke
         for no reason (R.34)."""
-        after = self.shot("diff")
-        out = subprocess.run(
-            ["compare", "-metric", "AE", "-fuzz", "3%", before, after, "null:"],
-            capture_output=True,
-            text=True,
-        ).stderr.strip()
-        os.unlink(after)
-        self._shot_no -= 1
-        # ImageMagick prints “12345” or “1.2345e+07” — the second broke the
-        # naive digit sampling and gave “changed 514%”
-        try:
-            px = float(out.split()[0]) if out else 0.0
-        except ValueError:
-            px = 0.0
+        from PIL import Image
+
+        with Image.open(before) as was:
+            px = images_differ(was.convert("RGB"), screen_image())
         g = geometry()
         return min(px / float(max(g["w"] * g["h"], 1)), 1.0)
 
@@ -1392,19 +1458,33 @@ class Live:
         a change of mtime, exactly as long as it took (R.68).
         """
         before = os.path.getmtime(self.project)
+        mark = self.seen()
         self.key("ctrl+s")
-        deadline = time.time() + max(40.0, 90.0 * self._dt)
+        # the write is synchronous and syncs twice: on a busy disk the program stands in it for
+        # tens of seconds, with Ctrl+S long read (a silent 10 s here read the old file and blamed
+        # the program: "a Ctrl+S that did not save", found-defects row 47)
+        deadline = time.time() + float(os.environ.get("KT_LIVE_SAVE_WAIT", "300"))
         while time.time() < deadline:
             if os.path.getmtime(self.project) != before:
                 return True
             # THERE WAS NOTHING TO WRITE — this is not a refusal: the program does not rewrite
             # a file that already holds the current revision (there is no asterisk,
             # `dirty` in the dump is false). To require a write would always mean
-            # declaring a defect exactly the behaviour we asked for.
-            if not self.geom().get("dirty", False):
+            # declaring a defect exactly the behaviour we asked for. Only a dump written after
+            # the program read the key says so: an older one may not show the last edit yet.
+            frame, seen = self._counters()
+            fresh = seen > mark[1] and frame >= mark[0] + 2
+            if fresh and not self.geom().get("dirty", False):
                 return False
             _poll(0.05)
-        raise Failure("the program did not write the project after Ctrl+S, although there are edits")
+        g = self.geom()
+        asks = [f["param"] for f in g.get("fields", []) if f["param"].startswith("ask.")]
+        raise Failure(
+            "the program did not write the project after Ctrl+S, although there are edits; "
+            f"its status line: “{g.get('status', '')}”, frame {g.get('frame')} (Ctrl+S at "
+            f"{mark[0]}), input {g.get('input')} (at {mark[1]}), windows {g.get('windows')}, "
+            f"questions {asks}, clips {len(g.get('clips', []))}"
+        )
 
     def project_text(self):
         """TEXT of the project file as it lies on disk (without saving).
@@ -1427,13 +1507,7 @@ class Live:
     def saved_project(self):
         """Ctrl+S and parsing of what the program wrote to disk (via the export door:
         `doc` — the document of the EXCHANGE file, `otio_path` — its path)."""
-        before = os.path.getmtime(self.project)
-        self.key("ctrl+s")
-        deadline = time.time() + 10.0
-        while time.time() < deadline:
-            if os.path.getmtime(self.project) != before:
-                break
-            _poll(0.05)
+        self.save_now()
         return Timeline(self.project)
 
     # ---- checks ----------------------------------------------------------
