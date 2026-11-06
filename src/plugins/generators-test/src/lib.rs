@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::generator::{GenDecl, PathTok, PathVal, Row, Tick, count, isqrt, kind, smooth};
+use kt_plugin_api::generator::{shader_frame, GenDecl, PathTok, PathVal, Row, Tick, count, kind, smooth};
 use kt_plugin_api::pixfont::{Canvas, text_width};
 use kt_plugin_api::{ParamUnit, Plugin};
 
@@ -22,6 +22,9 @@ const fn decl(live: bool, path: &'static [PathTok]) -> GenDecl {
 }
 
 // ---- SMPTE bars ---------------------------------------------------------------------------------
+
+/// The `pixel` text of the leader's shader.
+pub const LEADER_SHADER: &str = include_str!("wgsl/leader.wgsl");
 
 fn smpte(_: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let n = (w as usize) * (h as usize);
@@ -94,30 +97,15 @@ fn leader(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
         }
         return c.buf.into_boxed_slice();
     }
-    let (cx, cy) = (fw / 2, fh / 2);
     let radius = fw.min(fh) * 2 / 5;
-    let white = [220u8, 220, 220, 255];
-    // a cross across the whole frame: two bars 1/200 of the smaller side thick
+    // a cross across the whole frame: two bars 1/200 of the smaller side thick; the ring of the
+    // same thickness; the sector sweeping clockwise (the quarter and how far into it)
     let bar = (fw.min(fh) / 200).max(1);
-    for y in 0..fh {
-        for x in 0..fw {
-            let on_cross = (x - cx).abs() <= bar || (y - cy).abs() <= bar;
-            // circle: a ring of the same thickness
-            let d = isqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
-            let on_ring = (d - radius).abs() <= bar;
-            // sweeping sector: the sign of the vector product (no atan2)
-            let phase = ((left % 90_000) * 4) / 90_000; // a quarter, 0..3
-            let rem = (left % 90_000) * 4 - phase * 90_000; // 0..90_000
-            let (dx, dy) = (x - cx, y - cy);
-            let swept = d <= radius && sector_covers(dx, dy, phase, rem);
-            let o = ((y * fw + x) * 4) as usize;
-            if on_cross || on_ring {
-                c.buf[o..o + 4].copy_from_slice(&white);
-            } else if swept {
-                c.buf[o..o + 4].copy_from_slice(&[60, 60, 60, 255]);
-            }
-        }
-    }
+    let phase = ((left % 90_000) * 4) / 90_000;
+    let rem = (left % 90_000) * 4 - phase * 90_000;
+    let geometry = [(fw / 2) as f32, (fh / 2) as f32, radius as f32, bar as f32];
+    let frame = shader_frame(LEADER_SHADER, w, h, [phase as u32, rem as u32], [geometry, [0.0; 4], [0.0; 4], [0.0; 4]]);
+    c.buf = frame.into_vec();
     // the seconds digit: how many FULL seconds are left, at least 1
     let digit = ((left + 89_999) / 90_000).max(1).to_string();
     let chars = digit.chars().count();
@@ -126,34 +114,6 @@ fn leader(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
     let ty = (c.h - 5 * s) / 2;
     c.text(tx, ty, s, &digit, [245, 245, 245, 255]);
     c.buf.into_boxed_slice()
-}
-
-/// Whether the ray (dx, dy) is covered by the sweeping sector. Integer signs of
-/// vector products instead of atan2 (the rule “float only in the preamble”):
-/// the sector grows clockwise from “12 o’clock”.
-fn sector_covers(dx: i64, dy: i64, phase: i64, rem: i64) -> bool {
-    // the quadrant of a point, counting from “12 o’clock” clockwise: 0 = right-up
-    let quad = match (dx >= 0, dy < 0) {
-        (true, true) => 0,
-        (true, false) => 1,
-        (false, false) => 2,
-        (false, true) => 3,
-    };
-    if quad < phase {
-        return true;
-    }
-    if quad > phase {
-        return false;
-    }
-    // inside the current quadrant: the share traversed along the chord: a comparison of
-    // |across| and |along| via a vector product with the boundary
-    let (a, b) = match quad {
-        0 => (dx, -dy),
-        1 => (dy, dx),
-        2 => (-dx, dy),
-        _ => (-dy, -dx),
-    };
-    a * 90_000 >= rem * (a + b).max(1)
 }
 
 /// The countdown beep at `beep_db` while `beep` is on (rows: seconds, fps, beep, beep_db).

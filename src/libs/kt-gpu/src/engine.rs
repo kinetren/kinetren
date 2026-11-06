@@ -945,6 +945,24 @@ impl GpuFxEngine {
     /// Builds the pipelines; a shader/device compile error → Err
     /// (the caller shows a notice).
     pub fn new(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
+        Self::build(ctx, false)
+    }
+
+    /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
+    /// on waits until the process is gone.
+    pub fn park(&self) {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = inner.device.poll(wgpu::PollType::wait_indefinitely());
+        std::mem::forget(inner);
+    }
+
+    /// Compile every shader and run no frame: what t1650 asks of WARP, whose FXC is the compiler of
+    /// every D3D12 machine and whose rasterizer dies running our passes.
+    pub fn compile_check(ctx: GpuContext) -> Result<(), GpuInitError> {
+        Self::build(ctx, true).map(|_| ())
+    }
+
+    fn build(ctx: GpuContext, compile_only: bool) -> Result<Arc<GpuFxEngine>, GpuInitError> {
         let device = ctx.device;
         let queue = ctx.queue;
         let ai = &ctx.adapter_info;
@@ -966,10 +984,11 @@ impl GpuFxEngine {
         // with only WARP gets no engine instead of a crash.
         // KT_GPU_ALLOW_WARP=1 lets it through for experiments.
         if name_l.contains("microsoft basic render")
+            && !compile_only
             && std::env::var("KT_GPU_ALLOW_WARP").as_deref() != Ok("1")
         {
             return Err(GpuInitError::Unsupported(format!(
-                "{} (software D3D12): effects render on the CPU",
+                "{} (software D3D12): no picture",
                 ai.name
             )));
         }

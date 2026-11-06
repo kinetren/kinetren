@@ -690,3 +690,33 @@ fn t1223_raw_nr_follows_the_noise_model_and_blooming_spills() {
         raw_at(1.0)
     );
 }
+
+/// t1641 (gpu-render-hardening): the shaders and this model tell the same story, as t1640 for the
+/// tape: an edit of a pass's WGSL without the model is red here, at the defaults and at each preset.
+#[test]
+fn t1641_the_shaders_follow_the_model() {
+    use kt_fx::video::VideoFxCtx;
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let (w, h) = (160u32, 90u32);
+    let f = frame_of(w, h, |x, y| [(x * 255 / (w - 1)) as u8, if (x / 6 + y / 6) % 2 == 0 { 210 } else { 40 }, (y * 255 / (h - 1)) as u8]);
+    let cam = CameraIsp::new();
+    let m = cam.manifest();
+    let mut cases: Vec<Vec<(&str, f64)>> = vec![vec![]];
+    for v in m.ui.variants {
+        cases.push(v.sets.to_vec());
+    }
+    for sets in &cases {
+        let vals = values(sets);
+        let burst = 90_000;
+        let model = run_with(&vals, &f, 1, burst, false);
+        let fx = kt_model::FxInstance::plugin_with("camera_isp", &vals).unwrap();
+        let ctx = VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: burst, cam3d: None, in_scale: 1, lead: None };
+        let src = Frame { w, h, rgba: f.rgba.clone(), has_alpha: false };
+        let gpu = kt_gpu::testkit::chain(&[fx], src, &ctx);
+        kt_gpu::assert_frames_close(&model, &gpu.rgba, w, h, kt_gpu::FrameTol::THRESHOLD, &format!("{sets:?}"));
+        let mean = kt_gpu::mean_lsb(&model, &gpu.rgba);
+        assert!(mean < 0.002, "the shaders left the model: mean {mean:.4} at {sets:?}");
+    }
+}

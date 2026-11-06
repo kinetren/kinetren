@@ -14,6 +14,24 @@ pub mod hw_trial;
 pub mod loader;
 pub mod search;
 
+/// The threads of a video decoder opened from now on: 0 asks libavcodec's auto (gpu-render-hardening,
+/// D1). Auto is 16 on a big machine, and a VP9 file in 4K then holds gigabytes of frames: a render
+/// short of memory opens its sources with less.
+pub fn set_decode_threads(n: u32) {
+    DECODE_THREADS.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+static DECODE_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// What the `threads` option of a video decoder says.
+#[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
+pub(crate) fn decode_threads() -> String {
+    match DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => "auto".to_string(),
+        n => n.to_string(),
+    }
+}
+
 /// Cumulative activity counters of the FFmpeg layer (performance panel; port of the
 /// avcpp metrics of v1: gAvcppOpenCalls/gAvcppPacketReads). Global per process, monotonic;
 /// the UI differentiates them over time.

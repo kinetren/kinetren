@@ -70,7 +70,6 @@ fn run(engine: &dyn VideoGpuExec, src: &Src, t: i64) -> (Vec<u8>, Vec<u8>) {
         out_w: W,
         out_h: H,
         layers: vec![PlanLayer::One { src: src.layer(), alpha_k: 4096, scale_alpha: false, fade: None }],
-        memoize_postfx: false,
     };
     let mut cpu = Vec::new();
     assert!(kt_gpu::reference::next(&mut cpu), "CPU incomplete");

@@ -25,6 +25,8 @@ xxhash-rust = { workspace = true }
 kt-ffmpeg = { workspace = true, optional = true }
 
 [dev-dependencies]
+# the generators' shaders run on the compute device (gpu-render-hardening; dev only)
+kt-gpu = { workspace = true }
 tempfile = "3"
 kt-plugins-builtin = { workspace = true }
 serde_json = { workspace = true }

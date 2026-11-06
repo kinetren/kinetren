@@ -359,6 +359,17 @@ impl MediaSource for GeneratorSource {
 
 #[cfg(test)]
 mod tests {
+    /// Some kinds draw on the compute device: skip without one, as the GPU tests do.
+    fn no_compute() -> bool {
+        kt_plugin_api::compute::install(kt_gpu::compute::open);
+        let none = kt_plugin_api::compute::host().is_none();
+        if none {
+            assert!(std::env::var("KT_REQUIRE_GPU").as_deref() != Ok("1"), "KT_REQUIRE_GPU=1, but no compute device");
+            eprintln!("skipped: no compute device");
+        }
+        none
+    }
+
     use super::*;
 
     fn solid(r: u8, g: u8, b: u8) -> GeneratorSource {
@@ -451,6 +462,9 @@ mod tests {
     /// every 1080p frame.
     #[test]
     fn t507_generator_frame_is_rendered_once_per_quality() {
+        if no_compute() {
+            return;
+        }
         kt_plugins_builtin::install();
         let q1 = Quality { width: 64, height: 36 };
         let q2 = Quality { width: 32, height: 18 };
@@ -481,6 +495,9 @@ mod tests {
     /// has the same cells (independence from Quality and the scale step).
     #[test]
     fn t491_noise_field_is_counter_based() {
+        if no_compute() {
+            return;
+        }
         kt_plugins_builtin::install();
         let mk = |amount: f64, mono: bool| {
             GeneratorKind::plugin_with("noise", &[("amount", amount), ("mono", if mono { 1.0 } else { 0.0 })]).unwrap()
@@ -636,6 +653,9 @@ mod tests {
     /// transparent. The assertion is IN PIXELS, not “the field got set”.
     #[test]
     fn t528_rect_covers_what_it_says() {
+        if no_compute() {
+            return;
+        }
         kt_plugins_builtin::install();
         let q = Quality { width: 200, height: 100 };
         let k = kt_model::parse_gen_path("gen:rect:cx=0.5:cy=0.5:w=0.5:h=0.5:c=ff8800ff")
@@ -658,6 +678,9 @@ mod tests {
     /// transparent to the side, and also transparent beyond the end (projection clamp).
     #[test]
     fn t529_line_is_a_capsule_between_its_ends() {
+        if no_compute() {
+            return;
+        }
         kt_plugins_builtin::install();
         let q = Quality { width: 200, height: 100 };
         let k = kt_model::parse_gen_path("gen:line:x1=0.25:y1=0.5:x2=0.75:y2=0.5:th=0.1")

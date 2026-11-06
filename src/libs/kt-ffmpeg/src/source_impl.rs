@@ -85,6 +85,8 @@ struct AudioPath {
 }
 
 struct VideoPath {
+    /// The `threads` option of its decoder, kept for the reopen on a backward seek.
+    threads: String,
     fmt: *mut ffi::AVFormatContext,
     dec: *mut ffi::AVCodecContext,
     stream_index: c_int,
@@ -737,10 +739,12 @@ impl VideoPath {
         let time_base = st.time_base;
         let start_time = if st.start_time == AV_NOPTS_VALUE { 0 } else { st.start_time };
         let codec_id = unsafe { (*st.codecpar).codec_id };
-        let dec = Self::open_decoder(api, fmt, stream_index, codec_id)?;
+        let threads = crate::decode_threads();
+        let dec = Self::open_decoder(api, fmt, stream_index, codec_id, &threads)?;
         Ok(VideoPath {
             fmt,
             dec,
+            threads,
             stream_index,
             time_base,
             start_time,
@@ -765,6 +769,7 @@ impl VideoPath {
         fmt: *mut ffi::AVFormatContext,
         stream_index: c_int,
         codec_id: ffi::AVCodecID,
+        threads: &str,
     ) -> Result<*mut ffi::AVCodecContext, FfError> {
         let st = unsafe { &**(*fmt).streams.add(stream_index as usize) };
         let codec = unsafe { (api.avcodec_find_decoder)(codec_id) };
@@ -786,7 +791,7 @@ impl VideoPath {
         // (checked by t10_vp9 and t10_h264_backward_seek_is_deterministic).
         let mut opts: *mut ffi::AVDictionary = core::ptr::null_mut();
         let k = CString::new("threads").unwrap();
-        let v = CString::new("auto").unwrap();
+        let v = CString::new(threads).unwrap();
         unsafe { (api.av_dict_set)(&mut opts, k.as_ptr(), v.as_ptr(), 0) };
         let r = unsafe { (api.avcodec_open2)(dec, codec, &mut opts) };
         unsafe { (api.av_dict_free)(&mut opts) };
@@ -811,7 +816,7 @@ impl VideoPath {
             return Err(averr(api, "video seek", r));
         }
         unsafe { (api.avcodec_free_context)(&mut self.dec) };
-        self.dec = Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id)?;
+        self.dec = Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id, &self.threads)?;
         self.last_pts = None;
         self.drop_cached_frames(api);
         self.eof = false;

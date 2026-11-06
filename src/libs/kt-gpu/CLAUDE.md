@@ -95,9 +95,9 @@ is no picture, and an export refuses.
 - `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI stays
   LowPower, invariant 12). A software rasterizer (llvmpipe/lavapipe) is a device like any other.
 - `export_engines()` (compute-kernels-render, D4): llvmpipe runs one frame per queue, so a software
-  adapter gets a device per frame worker, a quarter of the cores, 2 to 8; a card gets one.
-  `KT_VIDEO_ENGINES` overrides it. The file does not depend on their number (t1573). The price is
-  memory: each device keeps its own textures.
+  adapter gets a device per frame worker, an eighth of the cores, 2 to 4, as many as the memory
+  holds (`memory.rs`, gpu-render-hardening D1); a card gets one. `KT_VIDEO_ENGINES` overrides it.
+  The file does not depend on their number (t1573). Each device adds 1.3 GB at 1080p.
 - `offline_engine()`: a headless device for effect thumbnails, reel strips and project posters, out
   of the preview's queue. Serials of frames are process-wide because it serves a fresh cache per job
   (t1574). A blended frame's upload key takes the pair and the weight (t250): it carries its base
@@ -192,7 +192,8 @@ is no picture, and an export refuses.
 - WARP ("Microsoft Basic Render Driver") is refused with `GpuInitError::Unsupported`: on the
   GPU-less Windows CI runner the passes ran for minutes and died inside it. A machine with only
   WARP has no picture; `KT_GPU_ALLOW_WARP=1` lets it through for experiments, and the GPU tests skip
-  on it as they do without an adapter.
+  on it as they do without an adapter. `compile_check` builds every pipeline and runs no frame: t1650
+  gets FXC, the compiler of every D3D12 machine, from WARP in CI.
 
 ## Shape masks (shape-masks)
 

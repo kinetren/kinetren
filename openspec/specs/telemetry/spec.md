@@ -251,7 +251,7 @@ means one line per apply wrapper instead of a hook in every feature.
 `0`, `1-9`, `10-99`, `100-999`, `1000+`), `duration_bucket` (`<1m`, `1-10m`, `10-60m`, `>60m`)
 and flags `has_reels`, `has_morphers`, `has_automation`. `export_finished` SHALL be sent when an
 export ends, with `outcome` (`ok`/`failed`/`cancelled`), `container`, `video_codec`,
-`audio_codec`, `width`, `height`, `fps`, `duration_bucket`, `backend` (`gpu`, or `cpu` when no video device was found; the name is the old value, the export then failed) and
+`audio_codec`, `width`, `height`, `fps`, `duration_bucket`, `backend` (`gpu`, or `none` when no video device was found and the export failed) and
 `speed_x` (media seconds per wall second, one decimal). No project or file name is sent.
 Why: these are rare and each answers a product question by itself (which projects people make,
 whether exports succeed and how fast), so they earn their own events.

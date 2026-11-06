@@ -9573,6 +9573,8 @@ impl eframe::App for KtApp {
         // closing a named project renders its poster (D5): one frame, within a budget
         self.queue_poster();
         crate::welcome::wait_posters(std::time::Duration::from_secs(3));
+        // a reel strip may be on the device: the process must not exit under it
+        kt_gpu::park_offline_engine();
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
         crate::telemetry::signal(crate::telemetry::Signal::Exit);
@@ -9607,8 +9609,8 @@ impl Drop for KtApp {
 /// manifest and the AppStream metainfo. `dist-check.py` (t966) keeps every copy equal to this one.
 pub const APP_ID: &str = "com.kinetren.Kinetren";
 
-pub(crate) fn export_video_gpu() -> Result<Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>>, String> {
-    kt_gpu::export_engines().map(|e| e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect())
+pub(crate) fn export_video_gpu(w: u32, h: u32) -> Result<Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>>, String> {
+    kt_gpu::export_engines(w, h).map(|e| e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect())
 }
 
 pub fn run() -> eframe::Result {

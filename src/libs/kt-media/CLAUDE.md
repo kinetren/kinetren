@@ -28,7 +28,7 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
 - **Generators of R.53 (items 419-424)**: shapes (`Rect`/`Ellipse`/`Line`),
   a transparent backing, a countdown, engineering tables and a level
   window. Rules that the new kind will have to observe:
-  - **Float — ONLY in the preamble of the frame.** The distance fields of the shapes are computed in
+  - **Float — ONLY in the preamble of the frame, on the CPU kinds.** The shapes, gradients, noise and the leader are compute shaders (gpu-render-hardening, D7), f32 pixels: WGSL has no i64. The distance fields were computed in
     integer 1/256 px (`isqrt`, `coverage`), the chroma plane — by the tables of columns and rows computed before the loop. A pixel loop with
     `f64::sqrt`/`atan2` inside is not "the same, but simpler": it is
     a different profile of rounding errors and a different speed.

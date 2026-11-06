@@ -1623,10 +1623,9 @@ impl VideoRenderer {
             nests: &self.nests,
             stages: &self.stages,
             stream_memo: &self.stream_memo,
-            memoize: true,
             blend_footage: false,
         };
-        build_plan(&self.clips, &ctx, cache, t, quality, true)
+        build_plan(&self.clips, &ctx, cache, t, quality)
     }
 }
 
@@ -1640,10 +1639,6 @@ struct PlanCtx<'a> {
     /// Video track stages (R.62). In the SUB-plan of the stage itself it is empty —
     /// otherwise it would assemble itself endlessly.
     stages: &'a [VideoTrackStage],
-    /// Whether to memoize post-FX: inherited DOWNWARD. Otherwise sub-composites
-    /// would evict the not-yet-used pre-frames of neighbouring layers from the
-    /// 192 MB export budget — literally the R.31 item 4 regression.
-    memoize: bool,
     /// Frame blending, inherited from the nesting ABOVE (R.56, item 448).
     /// The mode sits on the reel instance, and its LEAVES execute it: this way one
     /// sub-composite remains per frame (two would cost double on the GPU), and procedural content inside does not land on the grid instead of
@@ -1817,7 +1812,6 @@ fn layer_src<'a>(
                 nests: &sub.nests,
                 stages: &sub.stages,
                 stream_memo: ctx.stream_memo,
-                memoize: ctx.memoize,
                 blend_footage: blend,
             };
             // The sub-plan is assembled at S×Quality (R.50, B5): the chain on the
@@ -1830,7 +1824,6 @@ fn layer_src<'a>(
                 cache,
                 src_pts,
                 clip_decode_quality(clip, quality),
-                ctx.memoize,
             );
             crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {
                 seq: id,
@@ -1883,7 +1876,6 @@ fn track_stage_layer<'a>(
     cache: &BurstCache,
     t: Tick,
     quality: Quality,
-    memoize: bool,
 ) -> PlanLayer<'a> {
     // the sub-plan of ITS OWN events: inside — transitions, overlaps, fades and
     // event levels, exactly as for a reel
@@ -1892,13 +1884,12 @@ fn track_stage_layer<'a>(
         cameras: ctx.cameras,
         project_size: ctx.project_size,
         nests: ctx.nests,
-        memoize: ctx.memoize,
         blend_footage: ctx.blend_footage,
         // the stage does NOT assemble itself
         stages: &[],
         stream_memo: ctx.stream_memo,
     };
-    let plan = build_plan(clips, &sub_ctx, cache, t, quality, memoize);
+    let plan = build_plan(clips, &sub_ctx, cache, t, quality);
     // revision of the sub-composite: the track's properties plus the contents of its events
     let mut h = xxhash_rust::xxh3::Xxh3::new();
     h.update(&st.content.to_le_bytes());
@@ -1955,7 +1946,6 @@ fn build_plan<'a>(
     cache: &BurstCache,
     t: Tick,
     quality: Quality,
-    memoize_postfx: bool,
 ) -> FramePlan<'a> {
     let mut layers = Vec::new();
     // TRACK STAGES (R.62): a track with a stage yields ONE layer at the position of
@@ -1979,7 +1969,7 @@ fn build_plan<'a>(
                 let to = clips[from..].iter().position(|c| c.lane != st.lane).map(|n| from + n);
                 &clips[from..to.unwrap_or(clips.len())]
             };
-            layers.push(track_stage_layer(st, lane_clips, ctx, cache, t, quality, memoize_postfx));
+            layers.push(track_stage_layer(st, lane_clips, ctx, cache, t, quality));
             continue;
         }
         // fade at an edge/Gap: there is no pair in the model, the layer always goes through
@@ -2041,7 +2031,7 @@ fn build_plan<'a>(
             fade: None,
         });
     }
-    FramePlan { t, out_w: quality.width, out_h: quality.height, layers, memoize_postfx }
+    FramePlan { t, out_w: quality.width, out_h: quality.height, layers }
 }
 
 /// The transition partner: a clip of the same track with the SAME window on the opposite
@@ -2050,20 +2040,6 @@ fn find_pair(clips: &[VideoClip], lane: u32, win: (Tick, Tick), incoming: bool) 
     clips.iter().position(|c| {
         c.lane == lane && (if incoming { c.fade_in } else { c.fade_out }) == Some(win)
     })
-}
-
-/// Memoization key of the sub-composite (R.56, item 448): the reel's revision + the frame
-/// mode. The same `inner_t` under “blend” and under “nearest” gives DIFFERENT bytes — the
-/// leaves inside read either the pair or a single frame —
-/// and without the flag the cache would return someone else's picture.
-///
-/// With `blend == false` the key EQUALS `content_hash`: the earlier entries and
-/// earlier tests (t441-t443) do not move.
-pub fn nest_memo_key(content_hash: u64, blend: bool) -> u64 {
-    if !blend {
-        return content_hash;
-    }
-    xxhash_rust::xxh3::xxh3_64(&[content_hash.to_le_bytes().as_slice(), b"blend"].concat())
 }
 
 /// The SOURCE address of an event (R.59, stage 2) — the ONLY rule.

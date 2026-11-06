@@ -275,7 +275,7 @@ countdown beep SHALL be computed by one code with the phase from the global samp
 SHALL show the time of the MATERIAL. A kind SHALL be a variant of an enum when it
 has its own numbers (Rect/Ellipse/Line — three kinds; tables — one kind with a field
 of variety). The alpha of a kind SHALL be declared by an exhaustive method, not by
-`matches!`; the rasterization of shapes is an integer distance field, float only in the
+`matches!`; the rasterization of shapes is a distance field in a compute shader, float on the CPU kinds only in the
 preamble of the frame. A title with alpha under the FX chain SHALL remain transparent outside the
 glyphs.
 Why: a new transparent kind slipping past `matches!` would land in the composite as a black plate; a second
@@ -478,3 +478,14 @@ far and clicks.
 - **WHEN** the generator menu rows are listed
 - **THEN** 24 rows: the 19 former ones in their order, then `tone`, `audio_noise`, `sweep`, `beep`, `silence`, all in the Audio group, each with a catalog name in five languages and a label for every row
 - **TEST** t1163 (`src/apps/kt-app/src/gen_audio_tests.rs`)
+
+### Requirement: A generator that costs more than a compute frame is a shader
+The kinds line, ellipse, rect, leader, gradient, corners and noise SHALL draw on the compute device,
+and with no device SHALL give a transparent frame of their size, without a panic. A kind that costs
+less than a compute frame with its readback SHALL stay on the CPU.
+Why: 1.4 ms against 92 ms on the same 1080p frame, on llvmpipe; the owner, C2 of kkt-26.11.03.
+
+#### Scenario: No device
+- **WHEN** a shader kind is asked for a frame with no compute device
+- **THEN** the frame is transparent, of its size
+- **TEST** t1645 (`src/libs/kt-plugin-api/tests/registry.rs`)
