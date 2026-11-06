@@ -195,7 +195,7 @@ The "crate → mandatory tests" table moved into the specs: `openspec show <cap>
 gives the capability's requirements and scenarios, each scenario has a `TEST tNNN (path)` line.
 Capabilities by behaviour: time-model, transport, audio-render, video-plan, video-fx, audio-fx,
 transitions, automation, morpher, compositions, generators, media-index, export,
-project-format, durability, ui-timeline, ui-reach, telemetry, plugins. Every crate `CLAUDE.md` states in its first
+project-format, durability, ui-timeline, ui-reach, ui-controls, telemetry, plugins. Every crate `CLAUDE.md` states in its first
 line which capabilities cover it. **Any UI change** — kt-app `reach_tests.rs`
 (`ui-reach`) and `layout_tests.rs` (`ui-timeline`); any text in the UI — `font_tests.rs`/`i18n_tests.rs`.
 

@@ -71,7 +71,7 @@ The YAML frontmatter is the only place in `docs/` with a machine-readable format
 | `media/` | MED | media organization, proxies, sources | 7 / 3 |
 | `export/` | EXP | presets, queue, smart render | 5 / 3 |
 | `project/` | PRJ | sequences, history, versions | 5 / 2 |
-| `ui/` | UI | viewer, input, layouts | 6 / 3 |
+| `ui/` | UI | viewer, input, layouts | 7 / 3 |
 | `plugins/` | EXT | OFX/VST hosts, scripting, the contract of foreign code, compute backends of the kernels | 4 / 4 |
 | `help/` | HLP | hints, help, learning, documentation | 34 / 34 |
 | `resilience/` | RES | keeping work safe, recovery, behavior under load and on foreign hardware | 13 / 13 |

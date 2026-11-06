@@ -3,6 +3,7 @@
 //! duplicated in the status bar.
 
 use crate::app::KtApp;
+use crate::controls::Cmd;
 use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::ClipKind;
@@ -64,13 +65,16 @@ pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
 /// Borderless title-bar window button, ICONS ARE DRAWN by the painter (item 22 round 6:
 /// font glyphs ✕/❐ rendered as “tofu” squares). kind: 0=minimise,
 /// 1=maximise/restore, 2=close (red hover).
+/// The width of one window button.
+pub const WINDOW_BUTTON_W: f32 = 22.0;
+
 fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response {
     // 22 px: three buttons fit in a narrow metres column (item 15 round 8).
     // The sense is precisely click: with click_and_drag egui counts the press as the start
     // of a drag, and clicked() does not happen at all (checked t101). A window drag
     // from the button stays with the strip under it — this is the usual title-bar
     // behaviour, and the click itself now gets through (item 9 round 12).
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(WINDOW_BUTTON_W, 20.0), egui::Sense::click());
     let p = ui.painter();
     if resp.hovered() {
         let fill =
@@ -376,11 +380,11 @@ impl KtApp {
     /// burger shows them too when the column is narrow.
     fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
         let file_btn = ui.menu_button(tr(k::menu::file::TITLE), |ui| {
-            if ui.button(tr(k::menu::file::NEW)).clicked() {
+            if Self::menu_btn(ui, tr(k::menu::file::NEW), self.start.controls.label(Cmd::NewProject)) {
                 self.new_project();
                 ui.close();
             }
-            if ui.button(tr(k::menu::file::OPEN)).clicked() {
+            if Self::menu_btn(ui, tr(k::menu::file::OPEN), self.start.controls.label(Cmd::OpenProject)) {
                 self.open_project_dialog();
                 ui.close();
             }
@@ -394,11 +398,11 @@ impl KtApp {
                 ui.close();
             }
             ui.separator();
-            if Self::menu_btn(ui, tr(k::menu::file::SAVE), "Ctrl+S") {
+            if Self::menu_btn(ui, tr(k::menu::file::SAVE), self.start.controls.label(Cmd::Save)) {
                 self.save();
                 ui.close();
             }
-            if ui.button(tr(k::menu::file::SAVE_AS)).clicked() {
+            if Self::menu_btn(ui, tr(k::menu::file::SAVE_AS), self.start.controls.label(Cmd::SaveAs)) {
                 self.save_as();
                 ui.close();
             }
@@ -419,7 +423,7 @@ impl KtApp {
             });
             crate::widgets::field_probe::note("file.export", export.response.rect);
             ui.separator();
-            let r = ui.button(tr(k::menu::file::RENDER));
+            let r = crate::widgets::menu_button(ui, tr(k::menu::file::RENDER), self.start.controls.label(Cmd::Render));
             crate::widgets::field_probe::note("file.render", r.rect);
             crate::widgets::lesson_mark::item(ui, k::menu::file::RENDER, r.rect);
             if r.clicked() {
@@ -452,11 +456,11 @@ impl KtApp {
         // the menu roots by catalog key: a lesson's "Show" opens the root of its target's path
         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("kt_menu_root", k::menu::file::TITLE.0)), file_btn.response.id));
         let edit_btn = ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
-            if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
+            if Self::menu_btn(ui, tr(k::menu::edit::UNDO), self.start.controls.label(Cmd::Undo)) {
                 self.undo();
                 ui.close();
             }
-            if Self::menu_btn(ui, tr(k::menu::edit::REDO), "Ctrl+Shift+Z") {
+            if Self::menu_btn(ui, tr(k::menu::edit::REDO), self.start.controls.label(Cmd::Redo)) {
                 self.redo();
                 ui.close();
             }
@@ -464,13 +468,13 @@ impl KtApp {
             // rectangles — outward for live scenarios (R.27):
             // the system clipboard in the virtual screen may not exist at all,
             // and the hand goes to the menu, and their path is one (rule 17)
-            let (hit, r) = Self::menu_btn_probed(ui, tr(k::menu::edit::COPY), "Ctrl+C");
+            let (hit, r) = Self::menu_btn_probed(ui, tr(k::menu::edit::COPY), self.start.controls.label(Cmd::Copy));
             crate::widgets::field_probe::note("edit.copy", r);
             if hit {
                 self.copy_selection();
                 ui.close();
             }
-            let (hit, r) = Self::menu_btn_probed(ui, tr(k::menu::edit::PASTE), "Ctrl+V");
+            let (hit, r) = Self::menu_btn_probed(ui, tr(k::menu::edit::PASTE), self.start.controls.label(Cmd::Paste));
             crate::widgets::field_probe::note("edit.paste", r);
             if hit {
                 self.paste_at_cursor();
@@ -501,7 +505,7 @@ impl KtApp {
                 self.sync_selected_by_audio();
                 ui.close();
             }
-            if Self::menu_btn(ui, tr(k::menu::edit::DELETE), "Del") {
+            if Self::menu_btn(ui, tr(k::menu::edit::DELETE), self.start.controls.label(Cmd::Delete)) {
                 self.delete_action();
                 ui.close();
             }
@@ -514,7 +518,7 @@ impl KtApp {
                 self.apply(kt_model::Command::SetTrimStretchesAuto { on: stretch });
             }
             ui.separator();
-            if Self::menu_btn(ui, tr(k::tl::menu::SPLIT), "S") {
+            if Self::menu_btn(ui, tr(k::tl::menu::SPLIT), self.start.controls.label(Cmd::Split)) {
                 self.cut_action();
                 ui.close();
             }
@@ -604,6 +608,12 @@ impl KtApp {
         self.hint(r, hint).clicked()
     }
 
+    /// A strip button whose hint names the style's key for it.
+    fn tb_key(&mut self, ui: &mut egui::Ui, label: &str, hint: crate::i18n::Key, cmd: Cmd) -> bool {
+        let r = ui.add_sized([30.0, 26.0], egui::Button::new(label).frame(false));
+        self.hint_key(r, hint, cmd).clicked()
+    }
+
     /// The button strip at the BOTTOM of the timeline panel (port: buttons below),
     /// a gradient background over the full width — nothing sticks out.
     pub fn draw_toolbar_strip(&mut self, ui: &mut egui::Ui) {
@@ -685,21 +695,22 @@ impl KtApp {
         match g {
             0 => {
                 let playing = self.player.transport.is_playing();
-                if self.tb(
+                if self.tb_key(
                     ui,
                     if playing { crate::icons::PAUSE } else { crate::icons::PLAY },
-                    tr(k::tb::PLAY_PAUSE),
+                    k::tb::PLAY_PAUSE,
+                    Cmd::PlayPause,
                 ) {
                     self.on_transport_toggle();
                 }
                 // Shift here is “drag the region” (like Shift+A/D, item 2 round 16); “to
                 // the very start/end” remains on Shift+Home/End
                 // Ctrl — one frame, as the arrows (T11, the owner's "Ctrl instead of Shift?")
-                for (icon, hint, forward) in [
-                    (crate::icons::SKIP_BACK, k::tb::BACK, false),
-                    (crate::icons::SKIP_FWD, k::tb::FORWARD, true),
+                for (icon, hint, cmd, forward) in [
+                    (crate::icons::SKIP_BACK, k::tb::BACK, Cmd::NavPrev, false),
+                    (crate::icons::SKIP_FWD, k::tb::FORWARD, Cmd::NavNext, true),
                 ] {
-                    if self.tb(ui, icon, tr(hint)) {
+                    if self.tb_key(ui, icon, hint, cmd) {
                         let (ctrl, shift) =
                             ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
                         if ctrl {
@@ -730,8 +741,11 @@ impl KtApp {
                         + egui::vec2(6.0, 0.0);
                     let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
                     let editing = self.tc_edit.is_some();
-                    let r =
-                        self.hint(r, if editing { tr(k::tb::TIMECODE_EDIT) } else { tr(k::tb::TIMECODE) });
+                    let r = if editing {
+                        self.hint(r, tr(k::tb::TIMECODE_EDIT))
+                    } else {
+                        self.hint_key(r, k::tb::TIMECODE, Cmd::GotoTimecode)
+                    };
                     if r.double_clicked() && !editing {
                         self.tc_edit = Some(String::new());
                         self.tc_edit_focus = true;
@@ -838,7 +852,7 @@ impl KtApp {
                 self.draw_speed_control(ui);
             }
             2 => {
-                if self.tb(ui, crate::icons::FLAG, tr(k::tb::MARKER)) {
+                if self.tb_key(ui, crate::icons::FLAG, k::tb::MARKER, Cmd::Marker) {
                     self.marker_toggle_at_cursor();
                 }
                 if self.tb(ui, "+V", tr(k::tb::ADD_VIDEO_LANE)) {
@@ -864,16 +878,16 @@ impl KtApp {
                 }
             }
             3 => {
-                if self.tb(ui, crate::icons::SCISSORS, tr(k::tb::CUT)) {
+                if self.tb_key(ui, crate::icons::SCISSORS, k::tb::CUT, Cmd::Split) {
                     self.cut_action();
                 }
-                if self.tb(ui, crate::icons::COPY, tr(k::tb::COPY)) {
+                if self.tb_key(ui, crate::icons::COPY, k::tb::COPY, Cmd::Copy) {
                     self.copy_selection();
                 }
-                if self.tb(ui, crate::icons::CLIPBOARD, tr(k::tb::PASTE)) {
+                if self.tb_key(ui, crate::icons::CLIPBOARD, k::tb::PASTE, Cmd::Paste) {
                     self.paste_at_cursor();
                 }
-                if self.tb(ui, crate::icons::TRASH, tr(k::tb::DELETE)) {
+                if self.tb_key(ui, crate::icons::TRASH, k::tb::DELETE, Cmd::Delete) {
                     self.delete_action();
                 }
                 if self.tb(ui, crate::icons::TRIM_START, tr(k::tb::TRIM_START)) {
@@ -890,7 +904,14 @@ impl KtApp {
                 }
             }
             4 => {
-                if self.tb(ui, crate::icons::MINUS, tr(k::tb::ZOOM_OUT)) {
+                let r = ui.add_sized([30.0, 26.0], egui::Button::new(crate::icons::MINUS).frame(false));
+                if r.hovered() {
+                    self.hover_hint = Some(match self.start.controls.choice.wheel.zoom_prefix() {
+                        Some(prefix) => crate::tf!(k::tb::ZOOM_OUT, prefix),
+                        None => tr(k::controls::cmd::ZOOM_OUT).to_string(),
+                    });
+                }
+                if r.clicked() {
                     self.zoom_at_playhead(1.25);
                 }
                 if self.tb(ui, crate::icons::PLUS, tr(k::tb::ZOOM_IN)) {
@@ -898,10 +919,10 @@ impl KtApp {
                 }
             }
             5 => {
-                if self.tb(ui, crate::icons::REGION_IN, tr(k::tb::REGION_IN)) {
+                if self.tb_key(ui, crate::icons::REGION_IN, k::tb::REGION_IN, Cmd::RegionIn) {
                     self.set_region_edge_from_cursor(true);
                 }
-                if self.tb(ui, crate::icons::REGION_OUT, tr(k::tb::REGION_OUT)) {
+                if self.tb_key(ui, crate::icons::REGION_OUT, k::tb::REGION_OUT, Cmd::RegionOut) {
                     self.set_region_edge_from_cursor(false);
                 }
                 if self.tb(ui, crate::icons::CLEAR, tr(k::tb::REGION_CLEAR)) {
@@ -931,18 +952,18 @@ impl KtApp {
                 } else {
                     egui::RichText::new(crate::icons::LOOP)
                 };
-                let hint = if armed { tr(k::tb::LOOP_ARMED) } else { tr(k::tb::LOOP) };
+                let hint = if armed { k::tb::LOOP_ARMED } else { k::tb::LOOP };
                 let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(loop_on, label));
                 crate::widgets::lesson_mark::control(ui, "tb.loop", &r);
-                if self.hint(r, hint).clicked() {
+                if self.hint_key(r, hint, Cmd::Loop).clicked() {
                     self.toggle_loop();
                 }
             }
             6 => {
-                if self.tb(ui, crate::icons::UNDO, tr(k::tb::UNDO)) {
+                if self.tb_key(ui, crate::icons::UNDO, k::tb::UNDO, Cmd::Undo) {
                     self.undo();
                 }
-                if self.tb(ui, crate::icons::REDO, tr(k::tb::REDO)) {
+                if self.tb_key(ui, crate::icons::REDO, k::tb::REDO, Cmd::Redo) {
                     self.redo();
                 }
             }
@@ -952,7 +973,7 @@ impl KtApp {
                 if self.hint(r, tr(k::tb::RENDER)).clicked() {
                     self.start_render();
                 }
-                if self.tb(ui, crate::icons::SEARCH, tr(k::tb::SEARCH)) {
+                if self.tb_key(ui, crate::icons::SEARCH, k::tb::SEARCH, Cmd::Find) {
                     self.search_open = true;
                     self.search_focus = true;
                 }
@@ -970,7 +991,7 @@ impl KtApp {
                 } else {
                     crate::icons::SAVE.to_string()
                 };
-                if self.tb(ui, &save_label, tr(k::tb::SAVE)) {
+                if self.tb_key(ui, &save_label, k::tb::SAVE, Cmd::Save) {
                     self.save();
                 }
             }

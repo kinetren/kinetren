@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **Work the way your hands already know.** At the first start, or in File › Preferences…, choose a Layout & Controls style: ours, like Vegas, or like Premiere Pro, DaVinci Resolve, Final Cut Pro or After Effects. The keys, the wheel and the panels change at once, and each tile says what that program has and we do not. **Customize** changes any key, and the **settings code** under the tiles brings it all back after a reinstall.
 - **Every picture is now made by one engine, on the graphics card.** The separate processor path is
   gone, so the preview and the render can no longer disagree, and effects no longer exist twice. With
   no graphics card the program runs the same engine through Vulkan on the processor, and a render

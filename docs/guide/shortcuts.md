@@ -3,6 +3,10 @@
 Every key and mouse gesture kinetren understands. The keys work during playback and from the
 detached preview window too. While you type into a text field, the keys go to the field.
 
+This page describes the program's own style, **like Vegas**. Other styles change the keys, the
+wheel and the panels: see [Other styles](#other-styles). The hints and the menus always name the
+keys of the style you chose.
+
 ## Transport
 
 | Keys | Action |
@@ -186,3 +190,82 @@ The mask keys work only while nothing else has the keyboard focus.
 | drag / double-click the title bar | move the window / maximize or restore it |
 
 The status line always shows what the thing under the mouse does.
+
+## Other styles
+
+**File › Preferences… › Layout & Controls style › Choose…** opens the tiles; the same window opens
+once at the first start. A tile changes the keys, the wheel and the panels at once. **Customize**
+changes the panels, the wheel and any key on top of the tile, and the search field finds a command
+by its name or by its key. Esc and Enter stay what they are, and the play key stays a single key
+with its tap, double tap and hold.
+
+The keys that differ from the program's own:
+
+### Like Premiere Pro
+
+| Keys | Action |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>K</kbd> | split at the playhead |
+| <kbd>J</kbd> / <kbd>L</kbd>, <kbd>K</kbd> | play backward / forward, faster on each press; <kbd>K</kbd> stops |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | previous / next stop |
+| <kbd>Ctrl</kbd>+<kbd>L</kbd> | loop the region |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>X</kbd> | clear the region |
+| <kbd>=</kbd> / <kbd>-</kbd> | zoom in / out |
+| <kbd>Backslash</kbd> | the whole project in view |
+| <kbd>Ctrl</kbd>+<kbd>M</kbd> | render |
+| <kbd>Alt</kbd>+wheel | zoom around the mouse |
+
+### Like DaVinci Resolve
+
+| Keys | Action |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>Backslash</kbd> / <kbd>Ctrl</kbd>+<kbd>B</kbd> | split at the playhead |
+| <kbd>J</kbd> / <kbd>L</kbd>, <kbd>K</kbd> | play backward / forward, faster on each press; <kbd>K</kbd> stops |
+| <kbd>↑</kbd> / <kbd>↓</kbd> | previous / next stop |
+| <kbd>Ctrl</kbd>+<kbd>/</kbd> | loop the region |
+| <kbd>Alt</kbd>+<kbd>X</kbd> | clear the region |
+| <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> | zoom in / out |
+| <kbd>Shift</kbd>+<kbd>Z</kbd> | the whole project in view |
+| wheel | scroll tracks |
+| <kbd>Alt</kbd>+wheel | zoom around the mouse |
+
+### Like Final Cut Pro
+
+| Keys | Action |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>B</kbd> | split at the playhead (Cmd is Ctrl here, Option is Alt) |
+| <kbd>J</kbd> / <kbd>L</kbd>, <kbd>K</kbd> | play backward / forward, faster on each press; <kbd>K</kbd> stops |
+| <kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>;</kbd> / <kbd>'</kbd> | previous / next stop |
+| <kbd>Ctrl</kbd>+<kbd>L</kbd> | loop the region |
+| <kbd>Alt</kbd>+<kbd>X</kbd> | clear the region |
+| <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> | zoom in / out |
+| <kbd>Shift</kbd>+<kbd>Z</kbd> | the whole project in view |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | type a timecode to jump to |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | render |
+| wheel | scroll tracks |
+| <kbd>Alt</kbd>+wheel | zoom around the mouse |
+
+### Like After Effects
+
+| Keys | Action |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> | split at the playhead |
+| <kbd>J</kbd> / <kbd>K</kbd> | previous / next stop |
+| <kbd>Page Up</kbd> / <kbd>Page Down</kbd> | one frame back / forward |
+| <kbd>B</kbd> / <kbd>N</kbd> | region start / end |
+| <kbd>Shift</kbd>+<kbd>8</kbd> | add a marker |
+| <kbd>=</kbd> / <kbd>-</kbd> | zoom in / out |
+| <kbd>Shift</kbd>+<kbd>;</kbd> | the whole project in view |
+| <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>J</kbd> | type a timecode to jump to |
+| <kbd>Ctrl</kbd>+<kbd>M</kbd> | render |
+| wheel | scroll tracks |
+| <kbd>Alt</kbd>+wheel | zoom around the mouse |
+
+### The settings code
+
+The **settings code** under the tiles holds the style and everything changed on top of it. Copy it
+or write it down; entered in the field below it after a reinstall, it brings all of that back. The
+case does not matter, and a typo is refused.
+
+VEGAS, Premiere Pro, After Effects, DaVinci Resolve and Final Cut Pro are trademarks of their
+respective owners. Kinetren is not connected with them or endorsed by them.

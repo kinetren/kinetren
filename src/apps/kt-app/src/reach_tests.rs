@@ -2707,6 +2707,7 @@ const WINDOWS: &[(&str, &str)] = &[
     ("kt_ffmpeg", "where FFmpeg was found and how to get it: per machine, outside any project, and reachable when nothing plays (windows-build)"),
     ("kt_welcome", "start: templates, recent projects with posters, the tour, what's new — the first second has no project yet (welcome-window-and-tour)"),
     ("kt_guide", "a searchable index “I want to… → where” and the guide pages — it lives beside the work (welcome-window-and-tour)"),
+    ("kt_controls", "the Layout & Controls style: tiles at their drawn size and a list of 36 commands do not fit a 560 px section of Preferences, and the first entry opens this and not the FFmpeg and privacy rows; Preferences keeps a row with a door here (control-layouts D7)"),
     ("kt_prefs", "the program's preferences: per machine, outside any project, reachable with no project open — the View menu held them mixed with what is viewed (welcome-window-and-settings, kkt-26.11.01 item 13)"),
 ];
 
@@ -3023,6 +3024,7 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
         ("kt_ffmpeg", OpenWin::By(|h| h.state_mut().ffmpeg_ui.open = true), Closes::Action),
         ("kt_welcome", OpenWin::By(|h| h.state_mut().start.welcome.open = true), Closes::Action),
         ("kt_prefs", OpenWin::By(|h| h.state_mut().start.prefs_open = true), Closes::Action),
+        ("kt_controls", OpenWin::By(|h| h.state_mut().start.controls_ui.open = true), Closes::Action),
         ("kt_guide", OpenWin::By(|h| h.state_mut().start.guide.open = true), Closes::Titlebar {
             title: || crate::i18n::tr(crate::i18n::k::guide::TITLE).to_string(),
             why: "the Guide is closed by the title cross: an index and pages with no action of their own",

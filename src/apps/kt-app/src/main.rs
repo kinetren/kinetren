@@ -15,7 +15,10 @@ mod bench;
 mod bg;
 mod bin_panel;
 mod camera_editor;
+mod controls;
 mod ctx_menu;
+#[cfg(test)]
+mod controls_tests;
 #[cfg(test)]
 mod diag_tests;
 mod envclip;

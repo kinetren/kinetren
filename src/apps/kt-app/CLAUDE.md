@@ -1,6 +1,6 @@
 # kt-app (eframe/egui GUI)
 
-> Crate contracts and mandatory tests — `openspec/specs/{ui-timeline,ui-reach,durability,telemetry,distribution}/spec.md`, the reasons for decisions — `design.md` next to them.
+> Crate contracts and mandatory tests — `openspec/specs/{ui-timeline,ui-reach,ui-controls,durability,telemetry,distribution}/spec.md`, the reasons for decisions — `design.md` next to them.
 
 UI invariants earned through the rounds 4–5 (details and test numbers — items 38–94). Violating any of them is a performance or UX regression.
 
@@ -415,6 +415,17 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   `live_gain`/`live_opacity`, the write to history happens on release.
 - Handles are drawn at the SELECTED event: a gesture that is not visible
   does not exist.
+
+## Layout & Controls styles (control-layouts)
+
+- **A key lives in the table of `controls.rs`, nowhere else.** A new command: a row in `Cmd` with the next number (frozen: the settings code stores it), in `COMMANDS` with a catalog name, a branch in `handle_keys`. A menu item prints `controls.label(cmd)`, a hint goes through `hint_key` (built only while hovered: a `tf!` per frame on a toolbar is an allocation per frame). Never a literal `"Ctrl+…"`: t1715.
+- **`KEYS`, `Cmd`, `Style`, `Arrangement`, `WheelAct` are frozen, append only.** t1702 holds two literal codes. A new setting in `Choice` means a new code version with a reader for version 1.
+- **Our style is the owner's: a change to `OWN` is a change to his default,** t1700 lists it. `lookup`'s falling-off of modifiers exists for that table: Shift+S split, Ctrl+Home jumped.
+- **Anything that moves panels goes through `draw_timeline_area` / `draw_bin_column` / `draw_meters_column` / `draw_centre`.** The menu lives in the bin column and the window buttons in the meters column in Classic only; the other arrangements have `draw_header_row`.
+- **A question in a scrolling window goes to the row outside the scroll.** The Taken question first stood under its command's row: under the fold, where a person who just pressed a key had no reason to look (found by the harness, t1712).
+- **The first entry holds the welcome window back** (`controls_ui.first_entry`): both are ordinary windows, and the later one covered the tiles. Green in the harness, seen in the first live run.
+- **`kt_live` seeds `controls_offered` in its stores;** only `live/controls.py` meets the first entry (`first_entry=True`).
+- **`field_probe::note` keeps a test-only map** for `rect_of`: a harness test presses what a live scenario presses, by the same name. `take()` stays the dump's.
 
 ## Effect windows and input fields (R.33, items 217–219)
 

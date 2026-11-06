@@ -293,15 +293,15 @@ fn t83_hints_reach_status_line() {
 
     let toolbar_y = H - 20.0 - 34.0 * 0.5; // status bar 20 + toolbar strip 34
     for (pos, want) in [
-        (egui::pos2(24.0, toolbar_y), tr(k::tb::PLAY_PAUSE)), // the toolbar (drawn AFTER the status bar)
-        (egui::pos2(W - 11.0, 10.0), tr(k::win::CLOSE)),      // window buttons (even later)
-        (egui::pos2(14.0, 40.0), tr(k::bin::HINT_FREE)),      // bin
+        (egui::pos2(24.0, toolbar_y), crate::tf!(k::tb::PLAY_PAUSE, "Space")), // the toolbar (drawn AFTER the status bar)
+        (egui::pos2(W - 11.0, 10.0), tr(k::win::CLOSE).to_string()),      // window buttons (even later)
+        (egui::pos2(14.0, 40.0), tr(k::bin::HINT_FREE).to_string()),      // bin
     ] {
         let mut h = harness();
         h.hover_at(pos);
         h.step();
         let (text, kind) = h.state().status_line_shown.clone();
-        assert!(text.starts_with(want), "from {pos:?} expected “{want}”, in the status line “{text}”");
+        assert!(text.starts_with(&want), "from {pos:?} expected “{want}”, in the status line “{text}”");
         assert_eq!(kind, HintKind::Hover);
     }
 
@@ -14396,7 +14396,8 @@ fn t870_edit_split_item_is_the_s_key_and_says_so() {
         // the toolbar scissors (the same cut_action) say the same, plus the key;
         // `contains`, not `starts_with`: the Arabic table holds the DISPLAY order,
         // where “(S)” stands before the words
-        let hint = tables::TABLES[lang as usize][k::tb::CUT.0 as usize];
+        // (the key comes from the style: its slot is filled here with our style's key)
+        let hint = crate::i18n::interp(tables::TABLES[lang as usize][k::tb::CUT.0 as usize], &[&"S"]);
         assert!(
             hint.contains(label) && hint.contains('S'),
             "{}: the scissors hint “{hint}” is not the split label “{label}” with its key",
@@ -19815,7 +19816,7 @@ fn t1414_search_window_shows_its_finds() {
 /// A project with one long audio event for the transport tests of R.72: the render thread
 /// runs the head only over something to play, and a test feeds the callback's count itself.
 #[cfg(test)]
-fn r72_transport_scene() -> Harness<'static, KtApp> {
+pub(crate) fn r72_transport_scene() -> Harness<'static, KtApp> {
     use kt_model::*;
     use kt_time::Tick;
     let mut h = harness();

@@ -2634,6 +2634,17 @@ gutter are as described.
 **Open, a question for him:** the split of "Marker over the region" (U7) is not made; the item still does
 three things (a new range marker, stretching a point marker at the region start, removing an equal one).
 
+## 2026-11-06 — control-layouts: "Layout & Controls style" (L1, L2)
+
+The owner's words, `docs/ktprompts/v26.10.txt` lines 74–75:
+
+> 1. При первом входе в программу или в настройках - предлагать выбрать "Layout & Controls style" - как в самых известных коммерческих программах. Первой плиточкой идет наша и подпись "like Vegas". Про трейдмарки и права не забудь подписать что они принадлежат тем кому пренадлежат.
+> 2. Есть еще customize-кнопка, типо выбираем нашу плитку и далее можно кастомизировать всё, и в итоге получить "код сохранения" настроек, чтобы можно было при переустановке его ввести (как в старых играх сохранения).
+
+Decided by the executor, to be shown to him: five tiles in the order Vegas, Premiere, Resolve, Final Cut, After Effects; the code covers the style, the panels, the wheel and the keys, not the language or the other preferences; an update does not ask, only a first entry does; `TimelineOnTop` is offered in Customize, not on his tile.
+
+**Open, a question for him:** whether "like Vegas" should move towards real VEGAS (see the report of the round); his default did not move.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

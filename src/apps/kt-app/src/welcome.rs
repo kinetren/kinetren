@@ -155,6 +155,9 @@ pub struct StartPlan {
     pub after_ffmpeg: bool,
     /// The former start: the project to open silently.
     pub open: Option<std::path::PathBuf>,
+    /// The first entry: the style question opens over the welcome window (L1). A start into a
+    /// project passed by hand keeps it for the first start that has the window.
+    pub offer_controls: bool,
 }
 
 /// The start order of `run` (D4): gather the facts — one `exists()` per recent row — and ask
@@ -201,7 +204,8 @@ pub fn plan_start(
     } else {
         cli.map(std::path::PathBuf::from).or(last_path).filter(|p| p.exists())
     };
-    StartPlan { window, after_ffmpeg, open }
+    let offer_controls = window.is_some() && !store.start.controls_offered;
+    StartPlan { window, after_ffmpeg, open, offer_controls }
 }
 
 // ---- the state that lives between projects -------------------------------------------------
@@ -247,6 +251,10 @@ pub struct Start {
     /// File › Preferences… is open (welcome-window-and-settings): here, so a project open from
     /// the welcome window does not close it.
     pub prefs_open: bool,
+    /// The Layout & Controls style in force (control-layouts): here, so File → New keeps it.
+    pub controls: crate::controls::Controls,
+    /// The style window's own state.
+    pub controls_ui: crate::prefs_window::ControlsUi,
 }
 
 impl Default for Start {
@@ -260,6 +268,8 @@ impl Default for Start {
             lessons: Default::default(),
             after_ffmpeg: false,
             pending: None,
+            controls: Default::default(),
+            controls_ui: Default::default(),
             made_from: None,
             prefs_open: false,
         }
@@ -599,7 +609,7 @@ impl crate::app::KtApp {
             let tile = self.start.welcome.primary.clone();
             self.open_welcome(ctx, Some(tile), false);
         }
-        if !self.start.welcome.open {
+        if !self.start.welcome.open || self.start.controls_ui.first_entry {
             return;
         }
         self.start.welcome.posters.poll(ctx);
@@ -609,7 +619,9 @@ impl crate::app::KtApp {
         let posters = &self.start.welcome.posters;
         let scroll_news = std::mem::take(&mut self.start.welcome.at_whats_new);
         // Enter takes the primary tile (no text field has the keyboard here)
-        let enter = !ctx.text_edit_focused() && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.any());
+        let enter = !ctx.text_edit_focused()
+            && !self.start.controls_ui.open
+            && ctx.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.any());
         let tile_go = |t: &Tile| -> Option<Act> {
             Some(match t {
                 Tile::Tour => Act::Go(StartGo::Lesson { lesson: 1, fresh: false }),

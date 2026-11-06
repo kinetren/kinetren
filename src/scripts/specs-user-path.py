@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CAPS = ("ui-timeline", "ui-reach")
+CAPS = ("ui-timeline", "ui-reach", "ui-controls")
 FIRST = 783  # first test number from which the rule applies
 
 SCEN = re.compile(r"^#### Scenario: (.+)$")

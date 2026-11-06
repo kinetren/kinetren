@@ -2126,10 +2126,19 @@ impl KtApp {
                     .sum()
             });
             let zoom = ui.input(|i| i.zoom_delta());
-            let (ctrl, shift) =
-                ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
-            // Shift-vertical does NOT move the window — follow is not cancelled (item 30 round 7)
-            let user_scrolled = (!shift && scroll != egui::Vec2::ZERO) || zoom != 1.0;
+            let (ctrl, shift, alt) = ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift, i.modifiers.alt));
+            // what the wheel does with this modifier is the style's (control-layouts); a pinch
+            // is the zoom in every style, and it needs no key
+            let wheel = self.start.controls.choice.wheel.act(ctrl, shift, alt);
+            // egui eases Ctrl+wheel over frames, past the release of Ctrl: that tail is a zoom only
+            // where Ctrl zooms; a real pinch has its own event
+            let wheels = self.start.controls.choice.wheel;
+            let pinch = zoom != 1.0
+                && (wheels.ctrl == crate::controls::WheelAct::Zoom
+                    || ui.input(|i| i.raw.events.iter().any(|e| matches!(e, egui::Event::Zoom(_)))));
+            // the tracks do NOT move the window — follow is not cancelled (item 30 round 7)
+            let user_scrolled = pinch
+                || (wheel != crate::controls::WheelAct::Tracks && (scroll != egui::Vec2::ZERO || raw_y != 0.0));
             if user_scrolled {
                 // a manual window move disables following (item 14 round 6)
                 self.follow_playhead = false;
@@ -2166,25 +2175,35 @@ impl KtApp {
                 let h = offs.get(i + 1).zip(offs.get(i)).map_or(new_h, |(b, a)| b - a);
                 let top = offs.get(i).copied().unwrap_or(0.0);
                 self.tl_scroll = (top + frac * h - (pos.y - (rect.top() + RULER_H + 3.0))).max(0.0);
-            } else if shift && raw_y != 0.0 {
-                // Shift+wheel = vertical scroll (clamp below, by layout)
-                self.tl_scroll = (self.tl_scroll - raw_y).max(0.0);
-            } else if ctrl && scroll.y != 0.0 || zoom != 1.0 {
+            } else if pinch || wheel == crate::controls::WheelAct::Zoom {
                 // zoom: Ctrl+wheel or pinch, anchor under the cursor (port of the old one)
-                let factor = if zoom != 1.0 {
-                    1.0 / zoom as f64
-                } else if scroll.y > 0.0 {
-                    0.8
-                } else {
-                    1.25
-                };
-                let anchor = view_start + (pos.x - rect.left()) as f64 * tpp;
-                tpp = (tpp * factor).clamp(TPP_MIN, TPP_MAX);
-                view_start = anchor - (pos.x - rect.left()) as f64 * tpp;
-            } else if !shift && (scroll.x != 0.0 || scroll.y != 0.0) {
+                let up = if ctrl { scroll.y } else { raw_y };
+                if up != 0.0 || zoom != 1.0 {
+                    let factor = if zoom != 1.0 {
+                        1.0 / zoom as f64
+                    } else if up > 0.0 {
+                        0.8
+                    } else {
+                        1.25
+                    };
+                    let anchor = view_start + (pos.x - rect.left()) as f64 * tpp;
+                    tpp = (tpp * factor).clamp(TPP_MIN, TPP_MAX);
+                    view_start = anchor - (pos.x - rect.left()) as f64 * tpp;
+                }
+            } else if wheel == crate::controls::WheelAct::Tracks {
+                // Shift+wheel = vertical scroll (clamp below, by layout); a bare wheel in the
+                // styles that walk the tracks with it keeps its smooth steps
+                let dy = if shift || ctrl || alt { raw_y } else { scroll.y };
+                if dy != 0.0 {
+                    self.tl_scroll = (self.tl_scroll - dy).max(0.0);
+                }
+            } else if !shift && !ctrl && (scroll.x != 0.0 || scroll.y != 0.0) {
                 // bare wheel (any axis) = scroll along the timeline (port of the old one)
                 let delta = if scroll.x.abs() > scroll.y.abs() { scroll.x } else { scroll.y };
                 view_start -= delta as f64 * tpp * 2.5;
+            } else if raw_y != 0.0 {
+                // the same with a modifier: egui reroutes those, the raw wheel is the turn
+                view_start -= raw_y as f64 * tpp * 2.5;
             }
         }
         // “Jump” zones at the edges (port): heat = proximity to the edge [-1..1].
@@ -3085,11 +3104,12 @@ impl KtApp {
                                     let w = (c.duration.0 as f64 / tpp) as f32;
                                     !has_level_gesture(lane_h_at(c.kind, c.lane), w)
                                 });
-                                zone_hint = Some(tr(if low {
-                                    k::tl::hint::CLIP_NO_LEVEL
+                                if low {
+                                    zone_hint = Some(tr(k::tl::hint::CLIP_NO_LEVEL));
                                 } else {
-                                    k::tl::hint::CLIP
-                                }));
+                                    let key = self.start.controls.label_all(crate::controls::Cmd::Split);
+                                    hint_owned = Some(crate::tf!(k::tl::hint::CLIP, key));
+                                }
                             }
                         }
                     }
@@ -3133,7 +3153,8 @@ impl KtApp {
                             } else if geom.camera_lane_at_y(pos.y).is_some() {
                                 tr(k::tl::hint::CAMERA_LANE)
                             } else {
-                                tr(k::tl::hint::EMPTY)
+                                hint_owned = Some(crate::tf!(k::tl::hint::EMPTY, self.start.controls.choice.wheel.hint()));
+                                ""
                             },
                         );
                     }
