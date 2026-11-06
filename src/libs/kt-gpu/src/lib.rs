@@ -124,8 +124,18 @@ pub fn export_engine() -> Result<std::sync::Arc<GpuFxEngine>, String> {
 /// project posters), on its own device: it stays out of the preview's queue. Opened once, at the
 /// first use. `None` — no device.
 pub fn offline_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
-    static E: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
-    E.get_or_init(|| GpuContext::new_headless().and_then(GpuFxEngine::new).ok()).clone()
+    OFFLINE.get_or_init(|| GpuContext::new_headless().and_then(GpuFxEngine::new).ok()).clone()
+}
+
+static OFFLINE: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
+
+/// The process is about to exit: wait for the offline engine's frame on the device and let no other
+/// start. A frame on the device at exit kills the process: libLLVM's destructors run under
+/// llvmpipe's threads (gpu-render-hardening, D6).
+pub fn park_offline_engine() {
+    if let Some(Some(e)) = OFFLINE.get() {
+        e.park();
+    }
 }
 
 /// The engines an export of `w`×`h` composes on (compute-kernels-render, D4): a card gets one; a

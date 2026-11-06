@@ -64,3 +64,11 @@ the first one, or it would refuse beside a working lavapipe.
 
 No code outside kt-cache's own tests reads `PostFxVideo`, and nothing reads `memoize_postfx` or
 `nest_memo_key`. t65, t65b and t1535 went with it.
+
+### D6. Nothing may be on the device when the process exits
+
+With the picture on the GPU, a background frame can be on llvmpipe when the process exits: `exit` runs
+libLLVM's destructors under llvmpipe's threads, and LLVM segfaults. t547 went red that way one run in
+three after passing. In the program this is a crash on close, and the supervisor would show it. The
+thumbnail service now joins its worker on drop, and `on_exit` parks the offline engine: it waits for
+the device and keeps the engine's lock, so a reel strip's next frame waits for the process to end.

@@ -42,3 +42,13 @@ Why: the owner allowed changing references, not leaving rules unchecked.
 - **WHEN** two masks combine in each mode, with invert and opacity
 - **THEN** the coverage follows the table
 - **TEST** t1268 (`src/libs/kt-fx/tests/masks.rs`)
+
+### Requirement: No frame is on the device when the process exits
+The thumbnail service SHALL wait for its worker when dropped, and closing the program SHALL wait for
+the offline engine and start no frame on it.
+Why: a frame on llvmpipe at exit kills the process under LLVM's destructors: a crash on close.
+
+#### Scenario: The service goes with its worker
+- **WHEN** a request is queued and the service is dropped
+- **THEN** the worker has ended when the drop returns
+- **TEST** t1644 (`src/apps/kt-app/src/fx_thumbs.rs`)

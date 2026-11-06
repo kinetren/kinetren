@@ -18,3 +18,7 @@
 
 - [x] 4.1 Telemetry `backend`
 - [x] 4.2 The dead memo
+
+## 5. Exit
+
+- [x] 5.1 The thumbnail worker joins, the offline engine parks (t1644)

@@ -948,6 +948,14 @@ impl GpuFxEngine {
         Self::build(ctx, false)
     }
 
+    /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
+    /// on waits until the process is gone.
+    pub fn park(&self) {
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = inner.device.poll(wgpu::PollType::wait_indefinitely());
+        std::mem::forget(inner);
+    }
+
     /// Compile every shader and run no frame: what t1650 asks of WARP, whose FXC is the compiler of
     /// every D3D12 machine and whose rasterizer dies running our passes.
     pub fn compile_check(ctx: GpuContext) -> Result<(), GpuInitError> {

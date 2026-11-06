@@ -81,11 +81,11 @@ fn t1642_the_device_count_follows_the_memory() {
     let gb = |n: u64| Some(n << 30);
     assert_eq!(engines_for(32, gb(64), 1920, 1080), 4, "plenty: the ceiling");
     assert_eq!(engines_for(8, gb(64), 1920, 1080), 2, "an eighth of the cores, at least two");
-    let two = engines_for(32, gb(10), 1920, 1080);
-    assert!((1..=3).contains(&two), "16 GB with 10 free does not take the ceiling: {two}");
+    let two = engines_for(32, gb(7), 1920, 1080);
+    assert!((1..=3).contains(&two), "7 GB free does not take the ceiling: {two}");
     assert_eq!(engines_for(32, gb(4), 1920, 1080), 1, "little memory: one device");
     assert_eq!(engines_for(32, gb(1), 3840, 2160), 1, "never none");
-    assert!(engines_for(32, gb(24), 3840, 2160) < engines_for(32, gb(24), 1920, 1080), "a bigger frame costs more");
+    assert!(engines_for(32, gb(12), 3840, 2160) < engines_for(32, gb(12), 1920, 1080), "a bigger frame costs more");
     assert_eq!(engines_for(32, None, 1920, 1080), 2, "unknown memory: the small machine's count");
     assert_eq!(engines_for(2, None, 1920, 1080), 2);
     use kt_gpu::memory::decode_threads;

@@ -213,17 +213,18 @@ struct TexCache {
 pub struct FxThumbService {
     shared: Arc<Shared>,
     tex: std::cell::RefCell<TexCache>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl FxThumbService {
     pub fn start() -> FxThumbService {
         let shared = Shared::new();
         let sh = shared.clone();
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("fxthumbs".into())
             .spawn(move || worker(sh))
             .expect("spawn fxthumbs");
-        FxThumbService { shared, tex: std::cell::RefCell::new(TexCache::default()) }
+        FxThumbService { shared, tex: std::cell::RefCell::new(TexCache::default()), worker: Some(worker) }
     }
 
     /// Enqueue a request (dedup). Drawing is never blocked.
@@ -398,6 +399,11 @@ impl Drop for FxThumbService {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
         self.shared.cond.notify_all();
+        // a frame on the device when the process exits kills it: LLVM goes down under llvmpipe's
+        // threads (gpu-render-hardening, D6, t1644)
+        if let Some(w) = self.worker.take() {
+            let _ = w.join();
+        }
     }
 }
 
@@ -643,6 +649,18 @@ mod tests {
         };
         assert_eq!(at(90_000).as_raw(), at(90_000).as_raw(), "one tick gave two different thumbs");
         assert_ne!(at(90_000).as_raw(), at(270_000).as_raw(), "noise ignores the tick");
+    }
+
+    /// t1644 (gpu-render-hardening, D6): dropping the service waits for its worker. A frame left on
+    /// the device at exit killed the process: t547 ended in SIGSEGV one run in three.
+    #[test]
+    fn t1644_dropping_the_service_waits_for_its_worker() {
+        crate::plugins::install();
+        let svc = FxThumbService::start();
+        let shared = svc.shared.clone();
+        svc.request(job(5, svc.generation()));
+        drop(svc);
+        assert_eq!(Arc::strong_count(&shared), 1, "the worker outlived its service");
     }
 
     /// The service as a whole: a request reaches `get()`, and `invalidate_media` drops the cells
