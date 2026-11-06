@@ -181,3 +181,34 @@ fn t1269_the_coverage_is_deterministic_and_the_memo_is_invisible() {
     let frozen = 0x435b_82b7_d7c8_b693u64;
     assert_eq!(h, frozen, "the coverage bytes moved");
 }
+
+/// Test 1268: the four modes are the soft Boolean operations; invert and opacity.
+#[test]
+fn t1268_modes_invert_and_opacity() {
+    let n = 100;
+    // A covers x 10..60, B covers x 40..90, both y 10..90
+    let a = rect(0.35, 0.5, 0.5, 0.8, 0.0, 0.0);
+    let b = Mask { id: 2, name: "b".into(), ..rect(0.65, 0.5, 0.5, 0.8, 0.0, 0.0) };
+    let probe = |c: &kt_fx::mask::Coverage| [at(c, 25, 50), at(c, 75, 50), at(c, 50, 50), at(c, 5, 5)];
+    for (mode, want) in [
+        (MaskMode::Add, [255, 255, 255, 0]),
+        (MaskMode::Subtract, [255, 0, 0, 0]),
+        (MaskMode::Intersect, [0, 0, 255, 0]),
+        (MaskMode::Difference, [255, 255, 0, 0]),
+    ] {
+        let c = rasterize(&[a.clone(), Mask { mode, ..b.clone() }], &sp(n), n, n);
+        assert_eq!(probe(&c), want, "{mode:?}: only A, only B, both, none");
+    }
+    // a first subtract / intersect starts from the full frame
+    let c = rasterize(&[Mask { mode: MaskMode::Subtract, ..b.clone() }], &sp(n), n, n);
+    assert_eq!(probe(&c), [255, 0, 0, 255]);
+    let c = rasterize(&[Mask { mode: MaskMode::Intersect, ..b.clone() }], &sp(n), n, n);
+    assert_eq!(probe(&c), [0, 255, 255, 0]);
+    // invert and opacity
+    let c = rasterize(&[Mask { invert: true, ..a.clone() }], &sp(n), n, n);
+    assert_eq!(probe(&c), [0, 255, 0, 255]);
+    let c = rasterize(&[Mask { opacity: 0.5, ..a.clone() }], &sp(n), n, n);
+    assert_eq!(probe(&c), [128, 0, 128, 0]);
+    let c = rasterize(&[a.clone(), Mask { opacity: 0.5, ..b.clone() }], &sp(n), n, n);
+    assert_eq!(probe(&c), [255, 128, 255, 0], "opacity scales the second mask's own share");
+}

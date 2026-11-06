@@ -39,15 +39,15 @@ pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
     desc.backends = wgpu::Backends::PRIMARY;
     let instance = wgpu::Instance::new(desc);
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
-    .map_err(|e| e.to_string())?;
-    let info = adapter.get_info();
-    if info.name.to_lowercase().contains("microsoft basic render") {
-        return Err(format!("{}: software D3D12 is not used", info.name));
-    }
+    // WARP is listed beside a real device (lavapipe on a Windows runner): pick past it
+    let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY));
+    adapters.retain(|a| !a.get_info().name.to_lowercase().contains("microsoft basic render"));
+    adapters.sort_by_key(|a| match a.get_info().device_type {
+        wgpu::DeviceType::DiscreteGpu => 0,
+        wgpu::DeviceType::IntegratedGpu => 1,
+        _ => 2,
+    });
+    let adapter = adapters.into_iter().next().ok_or("no compute device")?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("kt-gpu compute"),
         ..Default::default()
@@ -207,5 +207,28 @@ impl ComputeHost for ComputeDevice {
         }
         self.give(bufs.into_iter().chain(uniforms).chain(staging));
         Ok(out)
+    }
+}
+
+/// Compile one compute shader on `ctx` and run nothing (t1651, FXC on the Windows runner).
+pub fn compile(ctx: &crate::GpuContext, text: &str) -> Result<(), String> {
+    let d = &ctx.device;
+    let validation = d.push_error_scope(wgpu::ErrorFilter::Validation);
+    let internal = d.push_error_scope(wgpu::ErrorFilter::Internal);
+    let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(text.into()),
+    });
+    let _ = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &module,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    match pollster::block_on(internal.pop()).or(pollster::block_on(validation.pop())) {
+        Some(e) => Err(e.to_string()),
+        None => Ok(()),
     }
 }

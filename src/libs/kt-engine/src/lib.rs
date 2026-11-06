@@ -42,7 +42,7 @@ pub use transport::Transport;
 pub use video::{
     NestKey, SourceFacts, VideoRenderer, clip_source_addr, clip_source_addr_in,
     content_hash, gen_salt, gen_source_addr, gen_source_addr_in, gen_sources, instance_content,
-    nest_memo_key, nest_source_id, reel_chain_of_clip, resolve_cam3d, video_cache_idx,
+    nest_source_id, reel_chain_of_clip, resolve_cam3d, video_cache_idx,
 };
 pub use video_plan::{
     Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, LayerSrc, PlanLayer, PresentOptions,

@@ -68,7 +68,6 @@ fn run_frame(
         out_w: w,
         out_h: h,
         layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }],
-        memoize_postfx: true,
     };
     let mut cpu = Vec::new();
     let cc = kt_gpu::reference::next(&mut cpu);
@@ -257,7 +256,6 @@ fn camera_isp_gpu_cost_per_1080p_frame() {
             out_w: w,
             out_h: h,
             layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }],
-            memoize_postfx: false,
         };
         let mut out = Vec::new();
         engine.execute_into(&p, &mut out).expect("GPU execute");

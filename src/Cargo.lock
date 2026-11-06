@@ -1522,7 +1522,11 @@ dependencies = [
 name = "fx-video-camera"
 version = "0.1.0"
 dependencies = [
+ "kt-fx",
+ "kt-gpu",
+ "kt-model",
  "kt-plugin-api",
+ "kt-plugins-builtin",
 ]
 
 [[package]]
@@ -1558,7 +1562,11 @@ dependencies = [
 name = "fx-video-tape"
 version = "0.1.0"
 dependencies = [
+ "kt-fx",
+ "kt-gpu",
+ "kt-model",
  "kt-plugin-api",
+ "kt-plugins-builtin",
 ]
 
 [[package]]
@@ -2278,6 +2286,7 @@ dependencies = [
  "kt-time",
  "pollster 0.4.0",
  "wgpu",
+ "windows-sys 0.61.2",
  "xxhash-rust",
 ]
 

@@ -9470,8 +9470,8 @@ impl Drop for KtApp {
 /// manifest and the AppStream metainfo. `dist-check.py` (t966) keeps every copy equal to this one.
 pub const APP_ID: &str = "com.kinetren.Kinetren";
 
-pub(crate) fn export_video_gpu() -> Result<Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>>, String> {
-    kt_gpu::export_engines().map(|e| e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect())
+pub(crate) fn export_video_gpu(w: u32, h: u32) -> Result<Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>>, String> {
+    kt_gpu::export_engines(w, h).map(|e| e.into_iter().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>).collect())
 }
 
 pub fn run() -> eframe::Result {

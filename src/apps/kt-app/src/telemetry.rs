@@ -636,7 +636,7 @@ impl ExportFacts {
         p.insert("fps".into(), self.fps.into());
         p.insert("duration_bucket".into(), duration_bucket(self.total_s as u64).into());
         if let Some(g) = self.gpu {
-            p.insert("backend".into(), if g { "gpu" } else { "cpu" }.into());
+            p.insert("backend".into(), if g { "gpu" } else { "none" }.into());
         }
         if self.wall_s > 0.0 {
             let x = (self.media_s / self.wall_s * 10.0).round() / 10.0;

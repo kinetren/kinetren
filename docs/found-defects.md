@@ -88,12 +88,8 @@ list may be short of items from them.
 | 69 | Flathub linter depends on our site answering | `https://kinetren.com` slow: the job fails with `appid-url-not-reachable` | `src/scripts/flatpak-build.sh` | open | С.2 |
 | 70 | live scenarios are most of `finish.sh` | 72 scenarios take 3269 s in a row, at least 817 s on 4 workers, `readme_shots` alone 593 s | `src/scripts/live` | open | С.2 |
 | 45 | Color Grade GPU and CPU add in a different order: 140 channels per 1080p frame differ by 1 | `src/plugins/fx-video-color/src/color_grade.wgsl` | reported by `compute-backends` | not a defect once the math moves to compute |
-| 75 | windows has no picture tests | On windows-latest the only adapter is WARP, which the engine refuses, so every composite test skips: no shader of ours has run on DX12 or FXC in CI, and a Windows-only shader break reaches people | `.github/workflows/ci.yml`, `src/libs/kt-gpu/src/engine.rs` | open | С.1, try Mesa lavapipe for Windows on the runner |
-| 76 | dead CPU memo fields | `memoize_postfx`, `nest_memo_key` and kt-cache `PostFxVideo` have no reader since the CPU composite went; t65, t65b, t1535 guard a dead memo | `src/libs/kt-engine/src/video_plan.rs`, `src/libs/kt-cache/src/lib.rs` | open, harmless | С.3 |
-| 77 | telemetry calls no device cpu | `backend` in `export_finished` still sends `cpu` when no device was found | `src/apps/kt-app/src/telemetry.rs:639` | open | С.3 |
-| 78 | rules left without a test | K invariance of barriers (t303), mask modes (t1268), starvation across a reel (t441), a thumbnail is fit plus chain (t544e), grain on the tick (t544f): true in the specs, no test since the CPU composite went | openspec `video-fx`, `compositions` | open | С.2 |
-| 79 | physics tests read models | VHS and camera physics tests read `tests/model/`, not the shaders; an edit of a stage's WGSL that skips the model leaves them green while t1186 and t1217 go red alone | `src/plugins/fx-video-tape/tests/model/sim.rs`, `src/plugins/fx-video-camera/tests/model/cpu.rs` | by design, compute-kernels-render D7 | С.3 |
-| 80 | render memory on a software adapter | 8 devices take 17 GB on the showcase against 7 GB before; on a machine with less memory the render may swap or fail, untested | `kt_gpu::export_engines` | open | С.1, measure and bound by memory |
+| 75 | windows has no picture tests | FXC compiles every shader in `windows-test` (t1650, t1651); the picture itself runs only in `windows-picture` on lavapipe, which has not had its first run: `continue-on-error` until it has | `.github/workflows/ci.yml` | open, needs a push | С.1 |
+| 79 | physics tests read models | VHS and camera physics tests read `tests/model/`; t1640 and t1641 hold the models to the shaders live, so a pass edited alone is red | `src/plugins/fx-video-tape/tests/model/sim.rs`, `src/plugins/fx-video-camera/tests/model/cpu.rs` | by design | — |
 
 ## Changes left unfinished
 

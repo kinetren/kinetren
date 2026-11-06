@@ -1,0 +1,66 @@
+## Context
+
+`compute-kernels-render` deleted the CPU composite. What it left is listed in `docs/found-defects.md`;
+the orchestrator took it up on 2026-11-06.
+
+## Decisions
+
+### D1. The render's memory: devices, decoders, a tight mode
+
+The 17 GB came from two places. Each device adds 1.3 GB at 1080p. The base of about 6 GB was mostly not
+ours: seven VP9 files at `threads=auto`, sixteen frame threads each, held 2.7 GB of frames. A render
+decodes a chunk at a time, not against a clock, so the decoders of a render now open with four threads,
+and the render got faster: 130 s against 144 s at four devices. A preview's stay on auto.
+
+- The device ceiling is an eighth of the cores, 2 to 4: eight devices took 6 GB more and gained nothing.
+- The count follows the memory (`memory::engines_for`). The available memory is `MemAvailable` or the
+  control group's limit, whichever is less, and `GlobalMemoryStatusEx` on Windows.
+- When one device and the base do not fit, the render runs tight: two decoder threads, half the frame
+  cache, four encoder threads.
+
+The showcase under a hard limit (`systemd-run -p MemoryMax=… -p MemorySwapMax=0`, 32 cores, release):
+
+| limit | devices | time | peak |
+|---|---|---|---|
+| 16 GB | 4 | 160.5 s | 8.7 GB |
+| 8 GB | 3 | 139.3 s | 7.6 GB |
+| 6 GB | 1 | 150.6 s | 4.8 GB |
+| 5 GB | 1 | 140.8 s | 4.8 GB |
+| 4 GB | 1, tight | 142.6 s | 3.1 GB |
+| 3 GB | 1, tight | 143.0 s | 3.2 GB |
+
+Before this, a 6 GB limit was killed by the OOM killer. Pairs one after the other: showcase 129.1 and
+130.1 s at four devices, 136.7 and 144.0 s at one; demo 34.4 to 34.8 s and 35.6 s. The times in the table
+differ by load, not by limit. A machine with 3 GB is also a machine with few cores, which only helps.
+
+### D2. Rules come back on the GPU path, under their numbers
+
+t303 runs a true K: the frame physically K× the logical size with a zoom after the barrier, and the
+test asserts from the plan that K is what it claims. Its thresholds did not move. t441 keeps the
+starvation and preview-equals-export; its memo half has no subject. t942 counts the executor's
+sub-samples, and a marked grid runs one more pass than the CPU did (the cell, then the copy). t943 keeps
+its refusals; the tile's bytes are t944's. t544e and t544f run on `render_job`.
+
+### D3. A model is held to its shaders live
+
+Stored frames tie a shader to the day the model last made them, so an edit of a shader alone turned
+only t1186 and t1217 red, and those could be re-blessed. t1640 and t1641 run the model and the GPU side
+by side at every preset. `FrameTol::SIGNAL` was too wide to see it: moving one chroma constant by 3 %
+passed it (mean 0.47 against the class's 0.65). So the tests assert the mean itself: 0.0005 clean, under
+0.02 asserted. The one preset with a clogged head reads 0.44 clean, FM clicks one ULP apart, and has
+its own 0.9. Both tests were seen red on a shader edited alone.
+
+### D4. Windows: FXC always, a device where one can be had
+
+The runner has WARP only, and WARP dies running our passes. Its compiler does not: t1650 and t1651
+build every engine pipeline and compute shader on the D3D12 adapter and run no frame. That is the
+compiler of every D3D12 machine, and it needs no download. `windows-picture` adds a real device:
+Mesa 26.2.6's lavapipe and LunarG's loader 1.4.335.0, both pinned by hash, `WGPU_BACKEND=vulkan`,
+`KT_REQUIRE_GPU=1`. It is `continue-on-error` until it has run once: this session has neither `gh` nor
+leave to push, so it has not run. The compute host now skips WARP in the adapter list instead of taking
+the first one, or it would refuse beside a working lavapipe.
+
+### D5. The memo goes
+
+No code outside kt-cache's own tests reads `PostFxVideo`, and nothing reads `memoize_postfx` or
+`nest_memo_key`. t65, t65b and t1535 went with it.

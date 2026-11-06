@@ -53,7 +53,6 @@ fn bench_vhs_tape() {
             scale_alpha: false,
             fade: None,
         }],
-        memoize_postfx: false,
     };
     let mut out = Vec::new();
     let mut best = |name: &str, f: &mut dyn FnMut(i64, &mut Vec<u8>)| {
@@ -124,7 +123,6 @@ fn bench_engines_in_parallel() {
                             scale_alpha: false,
                             fade: None,
                         }],
-                        memoize_postfx: false,
                     };
                     assert!(engine.execute_into(&plan, &mut out).unwrap());
                 }

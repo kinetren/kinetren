@@ -49,6 +49,11 @@ pub fn backends_many(n: usize) -> ExportBackends {
     ExportBackends { video_gpu_more: more.collect(), ..backends() }
 }
 
+/// What the last frame of the shared engine ran.
+pub fn last_cost() -> kt_fx::video::FrameCost {
+    engine().last_cost()
+}
+
 pub fn compose(video: &VideoRenderer, cache: &BurstCache, t: Tick, q: Quality) -> (Vec<u8>, bool) {
     let mut out = Vec::new();
     let complete = compose_into(video, cache, t, q, &mut out);
@@ -119,7 +124,7 @@ pub fn mix(dst: &mut Vec<u8>, a: &VideoFrame, b: &VideoFrame, k: u32, m: TransMi
         masks: Vec::new(),
     };
     let layers = vec![PlanLayer::Dissolve { a: side(a, 1), b: side(b, 2), k, alpha_k: 4096, mix: m }];
-    let plan = FramePlan { t: Tick(0), out_w: a.width, out_h: a.height, layers, memoize_postfx: false };
+    let plan = FramePlan { t: Tick(0), out_w: a.width, out_h: a.height, layers };
     engine().execute_into(&plan, dst).expect("GPU execute");
 }
 
@@ -149,7 +154,7 @@ pub fn chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame {
         masks: Vec::new(),
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
-    let plan = FramePlan { t: Tick(ctx.burst_index), out_w: ctx.out_w, out_h: ctx.out_h, layers, memoize_postfx: false };
+    let plan = FramePlan { t: Tick(ctx.burst_index), out_w: ctx.out_w, out_h: ctx.out_h, layers };
     let mut rgba = Vec::new();
     engine().execute_into(&plan, &mut rgba).expect("GPU execute");
     let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);

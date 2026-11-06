@@ -6,7 +6,8 @@
 #
 # The picture has one executor, the GPU (compute-kernels-render): the Linux job installs llvmpipe's
 # Vulkan driver and requires it, so a composite test cannot skip itself green there. The Windows
-# runner has only WARP, which the engine refuses: its composite tests skip themselves.
+# runner has only WARP, which the engine refuses: `windows-test` compiles every shader through FXC
+# on it (t1650) and runs no frame, `windows-picture` runs the picture on Mesa's lavapipe.
 #
 # Not here, on purpose: the live Xvfb scenarios, they stay in finish.sh on a real
 # machine. Nothing is uploaded except the test log of a failed run, kept for 3 days:
@@ -395,4 +396,64 @@ jobs:
         with:
           name: nextest-windows-log
           path: nextest-windows.log
+          retention-days: 3
+
+  windows-picture:
+    # The composite on Windows (gpu-render-hardening, D4): the runner has only WARP, which the engine
+    # refuses, so a real Vulkan device comes from Mesa's lavapipe, pinned by hash. `continue-on-error`
+    # until its first green run on the real runner: it could not be tried from outside GitHub.
+    needs: windows-build
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Download the archive and the fixtures
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-tests
+          path: src
+
+      - name: Mesa lavapipe and the Vulkan loader (pinned)
+        run: |
+          curl -fsSL --retry 3 -o mesa.7z https://github.com/pal1000/mesa-dist-win/releases/download/26.2.6/mesa3d-26.2.6-release-msvc.7z
+          echo "b2e00615feaba45942343c265cc8c5f576142ca682c1ac6661922d4b72492877  mesa.7z" | sha256sum -c
+          curl -fsSL --retry 3 -o vkrt.zip https://sdk.lunarg.com/sdk/download/1.4.335.0/windows/VulkanRT-X64-1.4.335.0-Components.zip
+          echo "4f856da356ffb1c16fbfc792cae70f6e6873680e6b62bc132b9d7131cbc97fe2  vkrt.zip" | sha256sum -c
+          mkdir vk
+          7z e -y -bd -ovk mesa.7z 'x64/vulkan_lvp.dll' 'x64/lvp_icd.x86_64.json' > /dev/null
+          7z e -y -bd -ovk vkrt.zip '*/x64/vulkan-1.dll' > /dev/null
+          ls vk
+          echo "$(cygpath -w "$PWD/vk")" >> "$GITHUB_PATH"
+          echo "VK_DRIVER_FILES=$(cygpath -w "$PWD/vk/lvp_icd.x86_64.json")" >> "$GITHUB_ENV"
+
+      - name: The checkout where the tests' compile-time paths point
+        shell: cmd
+        run: mklink /J D:\kt "%GITHUB_WORKSPACE%"
+
+      - name: The picture tests on Vulkan
+        working-directory: src
+        env:
+          WGPU_BACKEND: vulkan
+          KT_REQUIRE_GPU: "1"
+        run: |
+          set -o pipefail
+          cargo nextest run --archive-file target/windows-tests.tar.zst --workspace-remap /d/kt/src \
+            --no-fail-fast -E 'package(kt-gpu) | package(kt-fx) | package(fx-video-tape) | package(fx-video-camera)' \
+            2>&1 | tee ../nextest-picture.log
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-picture-log
+          path: nextest-picture.log
           retention-days: 3

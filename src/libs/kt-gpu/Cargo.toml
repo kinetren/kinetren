@@ -18,6 +18,9 @@ wgpu.workspace = true
 pollster.workspace = true
 xxhash-rust.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
+
 [dev-dependencies]
 # the built-in plugin set for the tests (plugin-api-stage1; dev only — t975)
 kt-plugins-builtin = { workspace = true }

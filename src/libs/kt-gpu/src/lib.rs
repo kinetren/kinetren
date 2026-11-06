@@ -6,6 +6,7 @@
 //! output are the reference, and the conformance is tests/parity.rs (tolerances, t181/t182/t183).
 
 pub mod compute;
+pub mod memory;
 pub mod reference;
 pub mod testkit;
 mod context;
@@ -107,6 +108,12 @@ pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol
     );
 }
 
+/// The mean of |a − b| over all bytes: how far two frames lie, whatever the outliers.
+pub fn mean_lsb(a: &[u8], b: &[u8]) -> f64 {
+    let sum: u64 = a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs() as u64).sum();
+    sum as f64 / a.len().max(1) as f64
+}
+
 /// The export's GPU engine (export-throughput D5).
 pub fn export_engine() -> Result<std::sync::Arc<GpuFxEngine>, String> {
     let ctx = GpuContext::new_headless_for_export().map_err(|e| e.to_string())?;
@@ -121,15 +128,15 @@ pub fn offline_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
     E.get_or_init(|| GpuContext::new_headless().and_then(GpuFxEngine::new).ok()).clone()
 }
 
-/// The engines an export composes on (compute-kernels-render, D4): a software adapter runs one frame
-/// per queue, so a quarter of the cores get a device each, 2 to 8; a card gets one.
-/// `KT_VIDEO_ENGINES` overrides it.
-pub fn export_engines() -> Result<Vec<std::sync::Arc<GpuFxEngine>>, String> {
+/// The engines an export of `w`×`h` composes on (compute-kernels-render, D4): a card gets one; a
+/// software adapter runs one frame per queue, so it gets a device per worker, as many as the cores
+/// and the memory allow (`memory::engines_for`). `KT_VIDEO_ENGINES` overrides it.
+pub fn export_engines(w: u32, h: u32) -> Result<Vec<std::sync::Arc<GpuFxEngine>>, String> {
     let first = export_engine()?;
     use kt_engine::VideoGpuExec as _;
-    let software = first.info().software;
-    let parallel = (std::thread::available_parallelism().map_or(4, |n| n.get()) / 4).clamp(2, 8);
-    let n = std::env::var("KT_VIDEO_ENGINES").ok().and_then(|v| v.parse().ok()).unwrap_or(if software { parallel } else { 1 });
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let fit = if first.info().software { memory::engines_for(cores, memory::available(), w, h) } else { 1 };
+    let n = std::env::var("KT_VIDEO_ENGINES").ok().and_then(|v| v.parse().ok()).unwrap_or(fit);
     let mut engines = vec![first];
     let more: Vec<_> = std::thread::scope(|s| {
         let open: Vec<_> = (1..n).map(|_| s.spawn(export_engine)).collect();

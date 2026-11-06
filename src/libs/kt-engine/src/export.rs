@@ -524,6 +524,8 @@ pub struct ExportOptions {
     /// The video encoder's threads, when not the export's own choice (`auto`, serial `1`): at the
     /// same count the pipelined and the serial streams can be compared packet by packet.
     pub encoder_threads: Option<u32>,
+    /// The machine is short of memory: half the frame cache, four encoder threads (gpu-render-hardening, D1).
+    pub tight: bool,
     /// Collects the busy time of every stage (`kt-cli export --time`).
     pub profile: Option<Arc<ExportProfile>>,
 }
@@ -539,6 +541,7 @@ impl Default for ExportOptions {
             placeholders: Vec::new(),
             serial: false,
             encoder_threads: None,
+            tight: false,
             profile: None,
         }
     }
@@ -599,7 +602,7 @@ pub fn export_mp4_with_backends(
         video_bitrate: opts.video_bitrate,
         audio_bitrate: opts.audio_bitrate,
         force_encoder: opts.force_encoder.clone(),
-        threads: opts.encoder_threads.unwrap_or(if opts.serial { 1 } else { 0 }),
+        threads: opts.encoder_threads.unwrap_or(if opts.serial { 1 } else if opts.tight { 4 } else { 0 }),
     });
     let events = Arc::new(events);
     let mut muxer = match muxer {
@@ -780,7 +783,7 @@ pub fn export_mp4_with_backends(
             bytes: &bytes,
             video_finished: &video_finished,
             profile,
-            budget: EXPORT_VIDEO_CACHE_BYTES,
+            budget: EXPORT_VIDEO_CACHE_BYTES / if opts.tight { 2 } else { 1 },
             incomplete: &incomplete,
         };
         crate::export_pipeline::run(

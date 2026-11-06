@@ -106,7 +106,7 @@ fn one(src: &Src, alpha_k: u32, scale_alpha: bool) -> PlanLayer<'_> {
 }
 
 fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
-    FramePlan { t: Tick(t), out_w: W, out_h: H, layers, memoize_postfx: true }
+    FramePlan { t: Tick(t), out_w: W, out_h: H, layers }
 }
 
 /// CPU against GPU on one plan; returns (cpu, gpu, complete_cpu,
@@ -1128,7 +1128,6 @@ fn t944_one_tile_on_the_gpu_is_the_full_pass() {
                 out_w: w,
                 out_h: h,
                 layers: vec![one(s, 4096, false)],
-                memoize_postfx: true,
             }
         }
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &at(&tiled, w, h));

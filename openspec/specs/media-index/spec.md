@@ -260,11 +260,6 @@ a probe-without-read that refreshed the LRU evicted what had been honestly read;
 - **THEN** the counter grows in the first and third cases and does not grow in the second
 - **TEST** t37 (`src/libs/kt-cache/src/lib.rs`)
 
-#### Scenario: The post-FX kind is invisible to coverage
-- **WHEN** post-FX frames of the same source are inserted
-- **THEN** the pre-FX coverage does not change, the bytes are counted in the video budget, a hit only by the exact (quality, fx_hash), and `invalidate_source` removes them too
-- **TEST** t65 (`src/libs/kt-cache/src/lib.rs`)
-
 #### Scenario: Source invalidation is not linear over the cache
 - **WHEN** `invalidate_source` is called on every edit of a parameter
 - **THEN** only the index of ITS OWN source is scanned
@@ -781,17 +776,6 @@ reach an event's first frame: 52 incomplete composites at that one cut, however 
 - **THEN** the pass asks the window's four frames and the cut's first frame, after them; nearer than
   the bytes reach it adds nothing, and a stack without a cut asks what it asked before
 - **TEST** t1528 (`src/libs/kt-engine/tests/prefetch_budget.rs`)
-
-### Requirement: Only a frame counts as a video miss
-A lookup of an empty post-FX memo SHALL NOT count as a video miss; a hit of the memo SHALL still count
-as a hit.
-Why: the panel warns of a low hit rate below 80 %, and on the since-deleted CPU composite it read 41–57 %
-with every decoded frame in the cache (preview-throughput, 2026-11-04).
-
-#### Scenario: An empty memo
-- **WHEN** an empty post-FX memo is looked up, and then a frame that is not in the cache
-- **THEN** the first adds no video miss and the second adds one
-- **TEST** t1535 (`src/libs/kt-cache/src/lib.rs`)
 
 ### Requirement: The FFmpeg downloader reports what it is doing, mirror by mirror
 Every progress step of the pinned FFmpeg download SHALL be a complete snapshot of the

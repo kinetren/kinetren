@@ -1311,3 +1311,300 @@ fn t994_the_exact_lone_path_keeps_a_permutations_bytes() {
     assert_eq!(run(&[mir]).rgba, mirror_h(&input), "the lone mirror is not the exact flip");
     assert_eq!(run(&[neutral]).rgba, input.rgba, "a neutral lone mirror changed the frame");
 }
+
+/// A barrier at K: the frame is physically K× the chain's logical size and the leading barrier runs
+/// at that resolution (t308); the zoom after it brings the frame to the canvas, at every K alike.
+fn at_k(fx: &FxInstance, frame: Frame, k: u32) -> Frame {
+    let chain = [fx.clone(), FxInstance::geometry_zoom(1.2)];
+    let plan = kt_fx::plan::plan_chain(&chain, W * k, H * k, k, W, H, 0.5, None, 90_000, &[]);
+    let ks: Vec<u32> = plan
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            kt_fx::plan::PlanOp::Barrier { res_scale, .. } => Some(*res_scale),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ks, [k], "the scene: the barrier does not run at K");
+    kt_gpu::testkit::chain(&chain, frame, &VideoFxCtx { in_scale: k, ..ctx() })
+}
+
+/// Test 303 (item 313, R.45): kernel invariance of the barrier look to resolution, WITHOUT chains:
+/// `down_K(kernel_K(up_K(F))) ≈ kernel_1(F)`
+/// (up/down — the same bilinear fit_into as all the resamples). Thresholds ×2 from the
+/// measurement (rule of kt-gpu/CLAUDE.md); edges — a threshold class (binary
+/// decisions on interpolated luma legitimately flip).
+#[test]
+fn t303_barrier_kernels_res_invariant() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    use kt_fx::video::fit_into;
+    // Measurement (K=2 and K=4, frame t26): worst mean 1.04 (vhs), worst p99 24
+    // (vhs K=2); thresholds ×2.
+    let cases: Vec<(&str, FxInstance)> = vec![
+        ("blur", FxInstance::blur(8)),
+        ("glow", FxInstance::glow(0.9)),
+        ("vhs", FxInstance::plugin_with("vhs", &[4.0, 0.4, 5.0, 0.5]).unwrap()),
+        ("noise", FxInstance::plugin_with("noise", &[0.5, 2.0, 1.0]).unwrap()),
+        ("noise-special", FxInstance::noise(0.5)),
+    ];
+    for k in [2u32, 4] {
+        for (name, fx) in &cases {
+            let base = at_k(fx, test_frame(), 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = at_k(fx, upf, k);
+            let down = kf.rgba;
+            let mut diffs: Vec<u32> = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
+                .collect();
+            diffs.sort_unstable();
+            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
+            let p99 = diffs[diffs.len() * 99 / 100] as f64;
+            println!("t303 {name} K={k}: mean {mean:.2}, p99 {p99}");
+            assert!(
+                mean <= 2.5 && p99 <= 48.0,
+                "{name} K={k}: view moved (mean {mean:.2}, p99 {p99})"
+            );
+        }
+        // R.47 Kv3 (smooth): thresholds ×2 from the measurement (see printout)
+        for (name, fx) in [
+            ("sharpen", FxInstance::plugin_with("sharpen", &[2.0, 4.0]).unwrap()),
+            ("chroma", FxInstance::plugin_with("chromatic_aberration", &[0.03]).unwrap()),
+            (
+                "radial-zoom",
+                FxInstance::plugin_with("radial_blur", &[0.5, 0.0, 0.0, 0.0]).unwrap(),
+            ),
+            (
+                "radial-spin",
+                FxInstance::plugin_with("radial_blur", &[0.5, 0.2, 0.1, 1.0]).unwrap(),
+            ),
+        ] {
+            let base = at_k(&fx, test_frame(), 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = at_k(&fx, upf, k);
+            let down = kf.rgba;
+            let mut diffs: Vec<u32> = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
+                .collect();
+            diffs.sort_unstable();
+            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
+            let p99 = diffs[diffs.len() * 99 / 100] as f64;
+            println!("t303 {name} K={k}: mean {mean:.2}, p99 {p99}");
+            assert!(
+                mean <= 2.5 && p99 <= 48.0,
+                "{name} K={k}: view moved (mean {mean:.2}, p99 {p99})"
+            );
+        }
+        // the shadow needs real alpha: a hard circle in the centre
+        {
+            let alpha_frame = || {
+                let mut f = test_frame();
+                f.has_alpha = true;
+                for y in 0..H {
+                    for x in 0..W {
+                        let (dx, dy) = (x as f64 - W as f64 / 2.0, y as f64 - H as f64 / 2.0);
+                        let i = ((y * W + x) * 4 + 3) as usize;
+                        f.rgba[i] = if dx * dx + dy * dy < 144.0 { 255 } else { 0 };
+                    }
+                }
+                f
+            };
+            let fx = FxInstance::builtin("drop_shadow");
+            let base = at_k(&fx, alpha_frame(), 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&alpha_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: true };
+            let kf = at_k(&fx, upf, k);
+            let down = kf.rgba;
+            let mut diffs: Vec<u32> = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
+                .collect();
+            diffs.sort_unstable();
+            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
+            let p99 = diffs[diffs.len() * 99 / 100] as f64;
+            println!("t303 drop-shadow K={k}: mean {mean:.2}, p99 {p99}");
+            // the shadow edge on HARD alpha (a binary circle) shifts by the mip
+            // phase — its own thresholds, ×2 from the measurement (K=2: 2.14/56)
+            assert!(
+                mean <= 4.5 && p99 <= 112.0,
+                "drop-shadow K={k}: view moved (mean {mean:.2}, p99 {p99})"
+            );
+        }
+        // halftone: the K× execution antialiases the dot edges (that is its
+        // gain, not a defect) — a per-pixel metric is unsuitable.
+        // What is compared is the COVERAGE: the mean luma of 8×8 blocks (the position and size of the
+        // dots), thresholds ×2 from the measurement (see printout).
+        {
+            let fx = FxInstance::plugin_with("halftone", &[8.0, 45.0]).unwrap();
+            let base = at_k(&fx, test_frame(), 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = at_k(&fx, upf, k);
+            let down = kf.rgba;
+            let block = 8u32;
+            let mut worst = 0.0f64;
+            for by in 0..H / block {
+                for bx in 0..W / block {
+                    let (mut sa, mut sb) = (0u64, 0u64);
+                    for y in by * block..(by + 1) * block {
+                        for x in bx * block..(bx + 1) * block {
+                            let i = ((y * W + x) * 4) as usize;
+                            sa += base.rgba[i] as u64;
+                            sb += down[i] as u64;
+                        }
+                    }
+                    let n = (block * block) as f64;
+                    worst = worst.max((sa as f64 / n - sb as f64 / n).abs());
+                }
+            }
+            println!("t303 halftone K={k}: worst block delta {worst:.1}");
+            // measurement: 14.0 (K=2), 6.0 (K=4); threshold ×2
+            assert!(worst <= 28.0, "halftone K={k}: pattern moved (block {worst:.1})");
+        }
+        // edges — a threshold class: we compare the FRACTION of pixels that diverged
+        for (name, fx) in [
+            ("edges", FxInstance::edges(48)),
+            (
+                "edges-thick",
+                FxInstance::plugin_with("edges", &[48.0, 2.0, 255.0, 255.0, 255.0]).unwrap(),
+            ),
+            // threshold Kv3: the cell phase at the boundary legitimately flips
+            ("pixelate", FxInstance::plugin_with("pixelate", &[8.0]).unwrap()),
+        ] {
+            let base = at_k(&fx, test_frame(), 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = at_k(&fx, upf, k);
+            let down = kf.rgba;
+            let over = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .filter(|(a, b)| (**a as i32 - **b as i32).unsigned_abs() > 16)
+                .count();
+            let frac = over as f64 / base.rgba.len() as f64;
+            println!("t303 {name} K={k}: |Δ|>16 at {:.2}%", frac * 100.0);
+            // measurement: 0.88 % (K=2); threshold ×2
+            assert!(frac <= 0.02, "{name} K={k}: outlines diverged ({:.2}%)", frac * 100.0);
+        }
+    }
+}
+
+/// Test 332 (R.47 Kv3): the meaning of six barriers + the alpha contract of the shadow.
+#[test]
+fn t332_barrier_semantics() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+
+    // Sharpen: local contrast grows
+    let sharp = run(&[FxInstance::plugin_with("sharpen", &[2.0, 4.0]).unwrap()]);
+    assert!(
+        contrast(&sharp) > contrast(&test_frame()) * 1.2,
+        "sharpen must raise local contrast: {} vs {}",
+        contrast(&sharp),
+        contrast(&test_frame())
+    );
+
+    // Pixelate: each 12×12 cell is constant
+    let pix = run(&[FxInstance::plugin_with("pixelate", &[12.0]).unwrap()]);
+    for cy in 0..H / 12 {
+        for cx in 0..W / 12 {
+            let base = ((cy * 12 * W + cx * 12) * 4) as usize;
+            for y in cy * 12..(cy + 1) * 12 {
+                for x in cx * 12..(cx + 1) * 12 {
+                    let i = ((y * W + x) * 4) as usize;
+                    assert_eq!(
+                        pix.rgba[i..i + 3],
+                        pix.rgba[base..base + 3],
+                        "pixelate cell must be flat at ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
+
+    // ChromaticAberration: the centre is untouched, at the edge the channels have split
+    let ca = run(&[FxInstance::plugin_with("chromatic_aberration", &[0.04]).unwrap()]);
+    let src = test_frame();
+    let c = (((H / 2) * W + W / 2) * 4) as usize;
+    assert_eq!(ca.rgba[c..c + 4], src.rgba[c..c + 4], "chroma: center pixel is a fixed point");
+    let edge = ((H / 2 * W + 2) * 4) as usize;
+    assert_ne!(ca.rgba[edge], src.rgba[edge], "chroma: red must shift near the edge");
+
+    // RadialBlur: the centre is the fixed point of the ray, the edge is smeared
+    let rb =
+        run(&[FxInstance::plugin_with("radial_blur", &[0.8, 0.0, 0.0, 0.0]).unwrap()]);
+    let mut edge_moved = 0;
+    for x in 0..W {
+        let i = ((H / 4 * W + x) * 4) as usize;
+        if rb.rgba[i] != src.rgba[i] {
+            edge_moved += 1;
+        }
+    }
+    assert!(edge_moved > (W / 4) as usize, "radial blur must smear off-center rows");
+
+    // DropShadow on an opaque input — passthrough byte-for-byte
+    let ds = run(&[FxInstance::builtin("drop_shadow")]);
+    assert_eq!(ds.rgba, src.rgba, "opaque input: drop shadow is a byte passthrough");
+
+    // [greenscreen, drop_shadow]: in the cut-out zone at +offset from the opaque edge a SHADOW
+    // appears (alpha > 0, colour — tint)
+    let shadowed = run(&[
+        FxInstance::greenscreen([0, 255, 0], 70, 25),
+        FxInstance::plugin_with("drop_shadow", &[6.0, 6.0, 2.0, 1.0, 0.0, 0.0, 0.0]).unwrap(),
+    ]);
+    // the green corner is switched off by the key; the edge of the opaque zone is at
+    // x == W/2 (and y == H/2); a point slightly right+below the edge in the cut-out
+    // zone must get the shadow
+    let px = (W / 2 + 4, H / 2 + 4);
+    let i = ((px.1 * W + px.0) * 4) as usize;
+    assert!(
+        shadowed.rgba[i + 3] > 32,
+        "shadow must appear in the keyed-out zone: alpha {}",
+        shadowed.rgba[i + 3]
+    );
+    assert!(
+        shadowed.rgba[i] < 32 && shadowed.rgba[i + 1] < 32 && shadowed.rgba[i + 2] < 32,
+        "shadow colour is the tint: {:?}",
+        &shadowed.rgba[i..i + 3]
+    );
+
+    // Halftone: the output is two-level; there are more dots in the dark zone
+    let ht = run(&[FxInstance::plugin_with("halftone", &[8.0, 45.0]).unwrap()]);
+    for pxl in ht.rgba.chunks_exact(4) {
+        assert!(
+            (pxl[0] == 0 || pxl[0] == 255) && pxl[0] == pxl[1] && pxl[1] == pxl[2],
+            "halftone output is binary mono: {pxl:?}"
+        );
+    }
+    let dark_dots =
+        ht.rgba.chunks_exact(4).take((W * H / 4) as usize).filter(|p| p[0] == 0).count();
+    let light_dots =
+        ht.rgba.chunks_exact(4).skip((W * H * 3 / 4) as usize).filter(|p| p[0] == 0).count();
+    assert!(
+        dark_dots > light_dots,
+        "darker area must grow bigger dots: {dark_dots} vs {light_dots}"
+    );
+}

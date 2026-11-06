@@ -72,3 +72,47 @@ fn t1571_the_pool_reuses_and_stays_bounded() {
         assert!(device.pooled_bytes() <= 1 << 30);
     }
 }
+
+/// t1642 (gpu-render-hardening, D1): the devices of an export follow the memory and the frame, stop
+/// at the ceiling, and never reach zero.
+#[test]
+fn t1642_the_device_count_follows_the_memory() {
+    use kt_gpu::memory::engines_for;
+    let gb = |n: u64| Some(n << 30);
+    assert_eq!(engines_for(32, gb(64), 1920, 1080), 4, "plenty: the ceiling");
+    assert_eq!(engines_for(8, gb(64), 1920, 1080), 2, "an eighth of the cores, at least two");
+    let two = engines_for(32, gb(10), 1920, 1080);
+    assert!((1..=3).contains(&two), "16 GB with 10 free does not take the ceiling: {two}");
+    assert_eq!(engines_for(32, gb(4), 1920, 1080), 1, "little memory: one device");
+    assert_eq!(engines_for(32, gb(1), 3840, 2160), 1, "never none");
+    assert!(engines_for(32, gb(24), 3840, 2160) < engines_for(32, gb(24), 1920, 1080), "a bigger frame costs more");
+    assert_eq!(engines_for(32, None, 1920, 1080), 2, "unknown memory: the small machine's count");
+    assert_eq!(engines_for(2, None, 1920, 1080), 2);
+    use kt_gpu::memory::decode_threads;
+    assert_eq!(decode_threads(gb(64), 1920, 1080), 4, "a render does not need auto's sixteen");
+    assert_eq!(decode_threads(None, 1920, 1080), 4);
+    assert_eq!(decode_threads(gb(3), 1920, 1080), 2, "little memory: two");
+}
+
+/// t1643: the memory the process reads is never more than the system has, and it follows a limit.
+#[test]
+fn t1643_the_available_memory_is_read() {
+    if cfg!(any(target_os = "linux", windows)) {
+        assert!(kt_gpu::memory::available().is_some_and(|m| m > 0), "the memory was not read");
+    }
+}
+
+/// t1650 (gpu-render-hardening, D4): every engine shader compiles on D3D12 through FXC, and no frame
+/// runs. The Windows runner has only WARP, which dies running our passes, but its compiler is the
+/// compiler of every D3D12 machine, and FXC refuses what naga and Vulkan pass. Elsewhere: no D3D12,
+/// a skip.
+#[test]
+fn t1650_every_shader_compiles_on_d3d12() {
+    kt_plugins_builtin::install();
+    let Some(ctx) = kt_gpu::GpuContext::new_d3d12() else {
+        eprintln!("skipped: no D3D12 adapter");
+        return;
+    };
+    let name = ctx.adapter_info.name.clone();
+    kt_gpu::GpuFxEngine::compile_check(ctx).unwrap_or_else(|e| panic!("{name}: {e}"));
+}

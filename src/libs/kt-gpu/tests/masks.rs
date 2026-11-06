@@ -102,7 +102,6 @@ fn t1274_masked_frames_agree_exactly_on_both_backends() {
             out_w: W,
             out_h: H,
             layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }],
-            memoize_postfx: true,
         };
         let mut cpu = Vec::new();
         let cc = kt_gpu::reference::next(&mut cpu);
