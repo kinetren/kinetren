@@ -90,6 +90,8 @@ fn t1832_a_moving_pointer_does_not_recompose_an_incomplete_frame() {
         h.step();
     }
     assert!(h.state().incomplete_since.is_some(), "the scene must hold an incomplete frame");
+    // past the retries on a clock, or a slow machine is a retry and this test measures the machine
+    h.state_mut().compose_retry_gap = crate::app::COMPOSE_RETRY_MAX * 2;
     let before = h.state().composites;
     for i in 0..40 {
         h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(300.0 + i as f32, 300.0)));

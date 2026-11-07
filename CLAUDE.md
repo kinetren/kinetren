@@ -31,7 +31,7 @@ cargo run -p kt-cli -- pause-scan <project.kt> <step_s> [--size WxH] [--wait-s N
                            # seeks every step and composes as a paused preview does: a moment
                            # that never comes out complete is a frame that retries for ever
 cargo run -p kt-cli -- showcase <out.kt> --sources <dir> --heavy
-                           # the project of the idle-load guard: nine releases of a composition
+                           # the project of the idle-load guard: ten releases of a composition
                            # under Slowed, VHS Tape and Camera ISP, and a dense edit
 cargo run -p kt-cli -- preview <project.kt> <from_s> <to_s> [--size WxH]
                            # plays a range through the real player against a wall-clock

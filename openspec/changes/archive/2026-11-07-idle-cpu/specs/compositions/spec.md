@@ -12,8 +12,8 @@ row per reel let the releases overwrite each other, so all but the last rendered
 (E4). The request cloned the document for every instance on every frame until the reel was ready.
 
 #### Scenario: More live releases than the cap
-- **WHEN** nine releases are live and each has finished
-- **THEN** all nine stay ready and none asks for a job; the cap still holds for keys nothing shows
+- **WHEN** ten releases are live and each has finished
+- **THEN** all ten stay ready and none asks for a job; the cap still holds for keys nothing shows
 - **TEST** t1830 (`src/apps/kt-app/src/idle_tests.rs`)
 
 #### Scenario: Two releases in the sidecar

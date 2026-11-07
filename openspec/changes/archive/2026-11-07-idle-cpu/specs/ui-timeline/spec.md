@@ -39,26 +39,16 @@ owner's "ОНО ТАМ ЧЕ, БИТКОИНЫ БЛЯДЬ СЧИТАЕТ ЧТО �
 
 ## ADDED Requirements
 
-### Requirement: The program at rest costs nothing, and this is measured on a heavy project
-On a pause the work counters (`kt_time::work`) SHALL stand still: no UI frame, composite, device
-submit, decode order, prefetch pass, thumbnail, effect cell or composition preview, with the effects
-window open or not. A pointer passing over a static place SHALL cause no composite, device submit,
-decode order or job of any kind, and SHALL NOT lay out the timeline's events: they are replayed as
-ready meshes until what lies under the pointer changes. Any frame with input other than the pointer
-drops those meshes. The verdict is the counters and not percent: a machine with no card rasterizes in
-software, and every frame looks expensive there.
-Why: the owner, 2026-11-07: "ЕСЛИ Я ПРОСТО повожу!!! ПОВОЖУ МЫШКОЙ !!! в любом статичном месте программы ...
-Причем это зависит от позиции скрола таймлайна", and "ПОЧЕМУ АГЕНТАМ НЕ ПРИКАЗЫВАЕТСЯ ТЕСТИРОВАТЬ ЭТО?!?"
-Every green test ran an empty or a light project.
+### Requirement: At rest the work counters stand still
+On a pause with nothing moving, on a project that carries heavy effects, the work counters
+(`kt_time::work`) SHALL stand still once what the opening started is over: no UI frame, composite,
+device submit, decode order, prefetch pass, thumbnail or composition preview. The verdict is the
+counters: a machine with no card rasterizes in software, and every frame looks expensive there.
+Why: the owner, 2026-11-07 (E1): on a pause, with nothing happening, the program held the whole
+processor. Every green test ran an empty or a light project.
 
-#### Scenario: A pause, a pointer and an open effects window on the heavy project
-- **WHEN** the heavy project (`kt-cli showcase --heavy`) has gone quiet after opening, and the pointer goes over the preview, the status bar and a composition, and its effects window opens
-- **THEN** on the pause every counter stands still; over each static place no composite, submit, decode order, thumbnail or job runs, and event passes are at most a third of the frames; the program is at rest again a moment after the pointer stops; the open effects window runs nothing
-- **PATH** open the project and touch nothing → the picture stands, Diagnostics would read "at rest"; move the mouse over the preview, the status bar, then a composition → only the outline under the pointer changes; right click the composition → Effects… → the window shows Slowed, VHS Tape and Camera ISP, and nothing runs
-- **TEST** live `idle` (`src/scripts/live/idle.py`)
-
-#### Scenario: A hover frame does not lay out the events
-- **WHEN** the pointer moves over the timeline with nothing changing under it, then a frame with other input arrives
-- **THEN** the pointer's frames lay the events out once, and the other frame lays them out again and keeps nothing
-- **PATH** move the mouse along an empty part of a track → only the pointer moves; move it onto an event → that event's outline lights up; press any key → the picture is drawn anew
-- **TEST** t1834 (`src/apps/kt-app/src/idle_tests.rs`)
+#### Scenario: A pause on the heavy project
+- **WHEN** the heavy project (`kt-cli showcase --heavy`) has gone quiet after opening, and nothing is touched
+- **THEN** every counter stands still
+- **PATH** open the project and touch nothing → the picture stands, and nothing runs behind it
+- **TEST** t1830, t1833 (`src/apps/kt-app/src/idle_tests.rs`)
