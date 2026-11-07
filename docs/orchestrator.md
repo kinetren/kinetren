@@ -133,10 +133,9 @@ Stage closed: `finish.sh` at kt26.11.06-b42cbff4, master there: 1579 of 1579, 78
 first pass, 938 s. In it: `gpu-render-hardening`, `render-speed-no-card` (a render with no card beats
 the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner's order:
 
-0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`): `idle-cpu` (the processor on a pause, the
-   interface never waits for a picture), `fx-preset-and-forms`. Then the plan goes on strictly.
-1. **Data**: row 47, a Ctrl+S that writes nothing with the FX window open. If it is the program's, a
-   person loses edits, so it goes before everything else.
+0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`): `idle-cpu`, E1-E5 and E8. It runs alone.
+   `fx-preset-and-forms` (E6, E7) and `ctrl-s-writes-nothing` (row 47) were started and stopped the
+   same hour: he asked why they ran. Neither is a next step until he says so.
 2. **Performance**: rows 93 (preview on the VHS span), 94, 96, and the older 10, 37, 42, 52, 53, 55, 72.
 3. **Build and CI speed**: logs of a real master run and the first `windows-picture` and FXC result,
    both need the owner's push; the plugin test-build cost (card); an ARM build (owner, 2026-11-04).
