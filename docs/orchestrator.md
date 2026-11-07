@@ -111,6 +111,11 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 - **`docs/found-defects.md` is the one list** of what any agent saw and did not fix: what a person
   suffers, where, the evidence, the state, the verdict. A remark in a report, in a session's memory
   or on a proposal card does not count as recorded.
+- **A run never reaches his desktop** (owner, 2026-11-07: a folder under `target/live-out/idle/xdg`
+  opened in his file manager again and again). `util::open_in_file_manager` spawns nothing under
+  `cfg!(test)` or `KT_NO_EXTERNAL_OPEN` (the live bench sets it and logs the path to `opened.txt`).
+  Anything new that starts an outside program (a browser, a player, a file manager) goes through
+  the same guard.
 - **A runaway test kills only itself** (2026-11-07, 20:55: a new test of `cached-range-plays`,
   `mix_player`, took 55 GB of 61 with no swap; the OOM killer took the Claude app and all three
   executors with it). Every brief says: heavy or new test binaries and the program on a big project

@@ -319,6 +319,11 @@ class Live:
         # by it — without it the scenario finds someone else’s
         # unsaved work in the developer’s home directory
         env["XDG_DATA_HOME"] = os.path.join(self.out, "xdg")
+        # nothing the program opens outside itself reaches the person's desktop: xdg-open goes
+        # over the session bus to HIS file manager, whatever display the bench uses (2026-11-07:
+        # every load-scenario run opened its data folder on the owner's screen)
+        env["KT_NO_EXTERNAL_OPEN"] = "1"
+        env["KT_OPEN_LOG"] = os.path.join(self.out, "opened.txt")
         if self.autoplay:
             env["KT_AUTOPLAY"] = "1"
         log = open(os.path.join(self.out, "kt-app.log"), "w")
