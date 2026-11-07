@@ -55,12 +55,12 @@ fn t942_grid_cost_is_counted() {
             lead: None,
         };
         let src = kt_fx::video::Frame { w: W, h: H, rgba: vec![128; (px * 4) as usize], has_alpha: false };
-        let _ = kt_gpu::testkit::chain(&[f], src, &ctx);
+        let (_, ran) = kt_gpu::testkit::chain_measured(&[f], src, &ctx);
         // a marked grid runs its cell, then copies it: one more pass, the same sub-samples
         let tiled = got < px * 16 && cols >= 4;
         let passes = if tiled { 2 } else { 1 };
         assert_eq!(
-            kt_gpu::testkit::last_cost(),
+            ran,
             FrameCost { passes, subsamples: got, ..FrameCost::default() },
             "{cols}×{rows}: the executor's count"
         );

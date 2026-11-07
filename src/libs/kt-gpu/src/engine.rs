@@ -1406,6 +1406,20 @@ impl GpuFxEngine {
 }
 
 impl GpuFxEngine {
+    /// Execute without the readback memo and return what the frame ran, under ONE hold of the
+    /// engine: `execute_into` followed by `last_cost` is two holds, and a frame another thread
+    /// composes between them is the cost read. Tests sharing one engine measure through this
+    /// (t946b counted a parallel test's frame under load).
+    pub fn execute_measured(
+        &self,
+        plan: &FramePlan<'_>,
+        out: &mut Vec<u8>,
+    ) -> Result<(bool, kt_fx::video::FrameCost), GpuExecError> {
+        let mut inner = self.inner.lock().unwrap();
+        let complete = inner.execute(plan, out, false)?;
+        Ok((complete, inner.last_cost))
+    }
+
     /// t1766: run every fused pass through the interpreter.
     pub fn interpret_geometry(&self, on: bool) {
         self.inner.lock().unwrap().geom_interpret = on;
