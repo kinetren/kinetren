@@ -2673,6 +2673,26 @@ What each decides:
 9. **The tests' temp files move to tmpfs.** He read the question as being about the program: the program's Ctrl+S writes next to the project on the disk, with fsync, and that does not change.
 10. Nothing new was started on this answer.
 
+## 2026-11-07 — the processor on a pause, out of turn
+
+Verbatim in `docs/ktprompts/kkt-26.11.07.txt`, registry `kkt-26.11.07-index.md`. Before the list he
+said: "Мы будем двигаться строго по плану." The list itself opens "У меня пришли запросы в не очереди,
+меня сейчас сожрут и прибьют". So these go first and the plan goes on strictly after them.
+
+What he asks, in short:
+
+- The processor is taken on a pause; a mouse move over a static place raises the load, by the
+  timeline's scroll position; hovering or opening a composition with slowed+vhs+isp takes it all.
+- "Что ты сделал 26.11.03 конечно тоже подтормаживает ... НО НЕ ТАК ФАТАЛЬНО": a regression since then.
+- He has no tool to bring proof, and will not send the project: "это явно фундаментальные проблемы".
+- "ПОЧЕМУ АГЕНТАМ НЕ ПРИКАЗЫВАЕТСЯ ТЕСТИРОВАТЬ ЭТО?!?" Idle load is tested from now on.
+- No dumb questions: a graphics card and memory are there.
+- ⚠ UI, repeated: the Camera ISP form is a long sheet with half of its width empty. "Я СТОЛЬКО РАЗ
+  ПРОСИЛ НАВСЕГДА!!!!! ЗАПОМНИТЬ ЭТИ ПРОБЛЕМЫ". Written as a guard, not as prose.
+- An added effect's preset cannot be changed without deleting the effect.
+- An anomalous parameter lags the interface until the effect cannot be undone: "тупых решений не
+  предлагай, нужны правильные".
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
@@ -2685,6 +2705,7 @@ What each decides:
 | Rules about UI convenience | 5+ (r.8–r.12) | a checklist of 15 items in apps/kt-app/CLAUDE.md |
 | **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | `windows-fill-their-area`: one rule in the window shell (every window resizable, its body fills it, sizes remembered) and a guard over EVERY window that drags its corner (t1125); fixed sizes need a written reason (t1127) |
 | **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS; the camera ISP: noise without its denoiser, defects without their compensation) | open: the 2026-11-01 round |
+| **A form leaves half of its width empty and runs long** | **"СТОЛЬКО РАЗ ПРОСИЛ НАВСЕГДА" (2026-11-07, Camera ISP)** | a guard over every effect form, change `fx-preset-and-forms` |
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |
 | **One claim sent twice (R.43)** | **2** | the first attempt fixed the symptoms: there was nothing to look at in the model. `kt-cli probe` appeared; for the complaint "sound from another event" it is run FIRST |

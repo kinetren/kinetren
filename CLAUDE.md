@@ -170,6 +170,12 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
     audio, driven by the SAME device state (one tape, one deck, one stream), so a dropout, a
     head clog or a broken keyframe is seen and heard at the same moment. A new simulation
     effect is not done until its pair exists or its note says why the device has no sound.
+- **The program at rest costs nothing, and this is tested** (owner, 2026-11-07: "ПОЧЕМУ АГЕНТАМ НЕ
+  ПРИКАЗЫВАЕТСЯ ТЕСТИРОВАТЬ ЭТО?!?"). A change that touches the UI, the preview, the engine or an
+  effect is measured for processor load on a pause, with the mouse moving over a static place, and
+  with an effects window open, on a project that carries heavy effects, not on an empty one. A
+  green test says nothing about load. No interface action waits for a picture: a slow effect costs
+  frames, never the Undo.
 - **Caches are allowed where they pay** (owner, 2026-11-01): a memo or a disk tier is a normal
   tool, not a last resort. It must be keyed by what determines the result (content hashes,
   revisions — never a guess that can go stale silently), bounded in size, and invisible to
