@@ -6,7 +6,7 @@
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
-use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, Biquad, BiquadKind, CH, SmoothedParam, TUNE_STEP, Tick, apply_width, softclip};
+use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, Biquad, BiquadKind, CH, Memo, SmoothedParam, TUNE_STEP, Tick, apply_width, softclip};
 use kt_plugin_api::{
     AudioKernel, AudioState, Decl, HostOpts, Manifest, Media, ParamKind, ParamSpec, ParamUnit,
     ParamValues, Plugin, RowDecl, SlotCurves, Store, UiDecl,
@@ -87,13 +87,16 @@ impl AudioState for WidthNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        if self.width.value() == 1.0 && self.width.target == 1.0 {
-            return;
-        }
-        for fr in buf.chunks_exact_mut(CH) {
-            let w = self.width.tick().clamp(0.0, 2.0);
-            apply_width(fr, w);
-        }
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            if self.width.value() == 1.0 && self.width.target == 1.0 {
+                return;
+            }
+            for fr in buf.chunks_exact_mut(CH) {
+                let w = self.width.tick().clamp(0.0, 2.0);
+                apply_width(fr, w);
+            }
+        })
     }
 
     fn reset(&mut self) {
@@ -219,33 +222,36 @@ impl AudioState for EqNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        for block in buf.chunks_mut(TUNE_STEP * CH) {
-            let mut v = [0f32; 7];
-            for _ in 0..block.len() / CH {
-                for (dst, p) in v.iter_mut().zip(self.params.iter_mut()) {
-                    *dst = p.tick();
-                }
-            }
-            // all gains at zero — plain pass-through: the EQ is transparent byte-for-byte
-            if v[0] == 0.0 && v[2] == 0.0 && v[5] == 0.0 {
-                continue;
-            }
-            for ch in 0..CH {
-                // the same numbers as the frequency response graph (R.48): the same constants
-                self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
-                self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
-                self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
-            }
-            for fr in block.chunks_exact_mut(CH) {
-                for (ch, s) in fr.iter_mut().enumerate() {
-                    let mut x = *s;
-                    for b in &mut self.bands[ch] {
-                        x = b.process(x);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            for block in buf.chunks_mut(TUNE_STEP * CH) {
+                let mut v = [0f32; 7];
+                for _ in 0..block.len() / CH {
+                    for (dst, p) in v.iter_mut().zip(self.params.iter_mut()) {
+                        *dst = p.tick();
                     }
-                    *s = x;
+                }
+                // all gains at zero — plain pass-through: the EQ is transparent byte-for-byte
+                if v[0] == 0.0 && v[2] == 0.0 && v[5] == 0.0 {
+                    continue;
+                }
+                for ch in 0..CH {
+                    // the same numbers as the frequency response graph (R.48): the same constants
+                    self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
+                    self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
+                    self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
+                }
+                for fr in block.chunks_exact_mut(CH) {
+                    for (ch, s) in fr.iter_mut().enumerate() {
+                        let mut x = *s;
+                        for b in &mut self.bands[ch] {
+                            x = b.process(x);
+                        }
+                        *s = x;
+                    }
                 }
             }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -306,6 +312,8 @@ impl AudioKernel for Distortion {
             tone: SmoothedParam::with_ms(0.5, 20.0),
             mix: SmoothedParam::with_ms(1.0, 20.0),
             lp: [0.0; CH],
+            drive_lin: Memo::default(),
+            tone_alpha: Memo::default(),
         })
     }
 }
@@ -317,6 +325,10 @@ struct DistNode {
     tone: SmoothedParam,
     mix: SmoothedParam,
     lp: [f32; CH],
+    /// The drive as a level and the tone's one-pole coefficient (`Memo`: not three transcendental
+    /// functions per sample while the knobs rest).
+    drive_lin: Memo<f32>,
+    tone_alpha: Memo<f32>,
 }
 
 impl AudioState for DistNode {
@@ -337,22 +349,27 @@ impl AudioState for DistNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        for fr in buf.chunks_exact_mut(CH) {
-            let g = 10f32.fpowf(self.drive_db.tick() / 20.0);
-            let comp = 1.0 / g.sqrt();
-            let tone = self.tone.tick().clamp(0.0, 1.0);
-            // tone: one-pole LP 500..12000 Hz (exp-map)
-            let f = 500.0 * (12_000.0f32 / 500.0).fpowf(tone);
-            let alpha = 1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).fexp();
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            for (ch, s) in fr.iter_mut().enumerate() {
-                let dry = *s;
-                let mut y = softclip(dry * g) * comp;
-                self.lp[ch] += (y - self.lp[ch]) * alpha;
-                y = self.lp[ch];
-                *s = dry * (1.0 - k) + y * k;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            for fr in buf.chunks_exact_mut(CH) {
+                let g = self.drive_lin.get(self.drive_db.tick(), |d| 10f32.fpowf(d / 20.0));
+                let comp = 1.0 / g.sqrt();
+                let tone = self.tone.tick().clamp(0.0, 1.0);
+                // tone: one-pole LP 500..12000 Hz (exp-map)
+                let alpha = self.tone_alpha.get(tone, |tone| {
+                    let f = 500.0 * (12_000.0f32 / 500.0).fpowf(tone);
+                    1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).fexp()
+                });
+                let k = self.mix.tick().clamp(0.0, 1.0);
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    let dry = *s;
+                    let mut y = softclip(dry * g) * comp;
+                    self.lp[ch] += (y - self.lp[ch]) * alpha;
+                    y = self.lp[ch];
+                    *s = dry * (1.0 - k) + y * k;
+                }
             }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -410,6 +427,7 @@ impl AudioKernel for Bitcrusher {
             mix: SmoothedParam::with_ms(1.0, 20.0),
             held: [0.0; CH],
             held_cell: i64::MIN,
+            steps: Memo::default(),
         })
     }
 }
@@ -424,6 +442,8 @@ struct CrushNode {
     mix: SmoothedParam,
     held: [f32; CH],
     held_cell: i64,
+    /// The quantiser's steps of the bit depth (`Memo`: not a `pow` per sample).
+    steps: Memo<f32>,
 }
 
 impl AudioState for CrushNode {
@@ -444,24 +464,27 @@ impl AudioState for CrushNode {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let bits = self.bits.tick().clamp(1.0, 16.0);
-            let rate = self.rate_hz.tick().clamp(500.0, 48_000.0) as f64;
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            let q = (2f32).fpowf(bits - 1.0);
-            let p = pos + i as i64;
-            // the hold grid is tied to the clip’s POSITION, not to a counter
-            let cell = ((p as f64) * rate / AUDIO_SAMPLE_RATE as f64).floor() as i64;
-            if cell != self.held_cell {
-                self.held_cell = cell;
-                for (ch, s) in fr.iter().enumerate() {
-                    self.held[ch] = (s * q).round() / q;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let bits = self.bits.tick().clamp(1.0, 16.0);
+                let rate = self.rate_hz.tick().clamp(500.0, 48_000.0) as f64;
+                let k = self.mix.tick().clamp(0.0, 1.0);
+                let q = self.steps.get(bits, |b| (2f32).fpowf(b - 1.0));
+                let p = pos + i as i64;
+                // the hold grid is tied to the clip’s POSITION, not to a counter
+                let cell = ((p as f64) * rate / AUDIO_SAMPLE_RATE as f64).floor() as i64;
+                if cell != self.held_cell {
+                    self.held_cell = cell;
+                    for (ch, s) in fr.iter().enumerate() {
+                        self.held[ch] = (s * q).round() / q;
+                    }
+                }
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    *s = *s * (1.0 - k) + self.held[ch] * k;
                 }
             }
-            for (ch, s) in fr.iter_mut().enumerate() {
-                *s = *s * (1.0 - k) + self.held[ch] * k;
-            }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -579,23 +602,26 @@ impl AudioState for FilterNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        let kind = self.kind();
-        for block in buf.chunks_mut(TUNE_STEP * CH) {
-            let mut f = 0.0;
-            let mut q = 0.0;
-            for _ in 0..block.len() / CH {
-                f = self.cutoff.tick();
-                q = self.q.tick();
-            }
-            for b in &mut self.bq {
-                b.tune(&kind, f, q, 0.0);
-            }
-            for fr in block.chunks_exact_mut(CH) {
-                for (ch, s) in fr.iter_mut().enumerate() {
-                    *s = self.bq[ch].process(*s);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let kind = self.kind();
+            for block in buf.chunks_mut(TUNE_STEP * CH) {
+                let mut f = 0.0;
+                let mut q = 0.0;
+                for _ in 0..block.len() / CH {
+                    f = self.cutoff.tick();
+                    q = self.q.tick();
+                }
+                for b in &mut self.bq {
+                    b.tune(&kind, f, q, 0.0);
+                }
+                for fr in block.chunks_exact_mut(CH) {
+                    for (ch, s) in fr.iter_mut().enumerate() {
+                        *s = self.bq[ch].process(*s);
+                    }
                 }
             }
-        }
+        })
     }
 
     fn tail(&self) -> Tick {

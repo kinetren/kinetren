@@ -365,58 +365,61 @@ impl AudioState for MoshSound {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        let frames = buf.len() / 2;
-        let n_in = self.at.start + pos;
-        // a jump (not the continuation of what was fed): start the stream over at this frame grid
-        let contiguous = self.next_frame.is_some() && self.buf_start + self.input[0].len() as i64 == n_in;
-        if !contiguous {
-            self.restart();
-            let f = n_in.div_euclid(N as i64);
-            // the first block reads one frame of silence before the grid point
-            self.buf_start = (f - 1) * N as i64;
-            let pad = (n_in - self.buf_start) as usize;
-            self.input = [vec![0.0; pad], vec![0.0; pad]];
-            self.next_frame = Some(f);
-            self.out_start = (f - 1) * N as i64;
-        }
-        for i in 0..frames {
-            self.input[0].push(buf[2 * i] as f64);
-            self.input[1].push(buf[2 * i + 1] as f64);
-        }
-        // code every frame whose window [(n−1)N, (n+1)N) has arrived
-        while let Some(n) = self.next_frame {
-            if self.buf_start + (self.input[0].len() as i64) < (n + 1) * N as i64 {
-                break;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let frames = buf.len() / 2;
+            let n_in = self.at.start + pos;
+            // a jump (not the continuation of what was fed): start the stream over at this frame grid
+            let contiguous = self.next_frame.is_some() && self.buf_start + self.input[0].len() as i64 == n_in;
+            if !contiguous {
+                self.restart();
+                let f = n_in.div_euclid(N as i64);
+                // the first block reads one frame of silence before the grid point
+                self.buf_start = (f - 1) * N as i64;
+                let pad = (n_in - self.buf_start) as usize;
+                self.input = [vec![0.0; pad], vec![0.0; pad]];
+                self.next_frame = Some(f);
+                self.out_start = (f - 1) * N as i64;
             }
-            self.frame(n);
-            self.next_frame = Some(n + 1);
-            // drop the input before the next window
-            let keep_from = n * N as i64;
-            let drop = (keep_from - self.buf_start) as usize;
+            for i in 0..frames {
+                self.input[0].push(buf[2 * i] as f64);
+                self.input[1].push(buf[2 * i + 1] as f64);
+            }
+            // code every frame whose window [(n−1)N, (n+1)N) has arrived
+            while let Some(n) = self.next_frame {
+                if self.buf_start + (self.input[0].len() as i64) < (n + 1) * N as i64 {
+                    break;
+                }
+                self.frame(n);
+                self.next_frame = Some(n + 1);
+                // drop the input before the next window
+                let keep_from = n * N as i64;
+                let drop = (keep_from - self.buf_start) as usize;
+                for c in 0..2 {
+                    self.input[c].drain(..drop);
+                }
+                self.buf_start = keep_from;
+            }
+            // the output: timeline frames from `n_in − LA`
+            let o0 = n_in - LA;
+            for i in 0..frames {
+                let t = o0 + i as i64;
+                let idx = t - self.out_start;
+                let (l, r) = if idx >= 0 && (idx as usize) < self.out[0].len() {
+                    (self.out[0][idx as usize], self.out[1][idx as usize])
+                } else {
+                    (0.0, 0.0)
+                };
+                buf[2 * i] = l;
+                buf[2 * i + 1] = r;
+            }
+            // keep only what the next call can still read
+            let next_o0 = o0 + frames as i64;
+            let drop = (next_o0 - self.out_start).clamp(0, self.out[0].len() as i64) as usize;
             for c in 0..2 {
-                self.input[c].drain(..drop);
+                self.out[c].drain(..drop);
             }
-            self.buf_start = keep_from;
-        }
-        // the output: timeline frames from `n_in − LA`
-        let o0 = n_in - LA;
-        for i in 0..frames {
-            let t = o0 + i as i64;
-            let idx = t - self.out_start;
-            let (l, r) = if idx >= 0 && (idx as usize) < self.out[0].len() {
-                (self.out[0][idx as usize], self.out[1][idx as usize])
-            } else {
-                (0.0, 0.0)
-            };
-            buf[2 * i] = l;
-            buf[2 * i + 1] = r;
-        }
-        // keep only what the next call can still read
-        let next_o0 = o0 + frames as i64;
-        let drop = (next_o0 - self.out_start).clamp(0, self.out[0].len() as i64) as usize;
-        for c in 0..2 {
-            self.out[c].drain(..drop);
-        }
-        self.out_start += drop as i64;
+            self.out_start += drop as i64;
+        })
     }
 }

@@ -17,6 +17,7 @@
 //! version that loaded, and every rejected candidate with its reason — and exits non-zero
 //! when nothing loaded.
 
+mod fxcost;
 mod showcase;
 mod wav;
 
@@ -1407,6 +1408,15 @@ fn run(args: &[String]) -> i32 {
         // README showcase (readme-showcase): a dense project cut from real
         // footage in a directory; media by absolute path, never copied
         Some("showcase") => showcase::run(args, force),
+        // what one instance of every audio effect costs against real time (audio-fx-cost)
+        Some("fx-cost") => {
+            let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+            match opt("--project").map(|p| load_project_file(p)) {
+                Some(Err(code)) => code,
+                Some(Ok((p, _))) => fxcost::run(args, Some(&p)),
+                None => fxcost::run(args, None),
+            }
+        }
         Some("demo") => {
             let Some(path) = args.get(1) else {
                 eprintln!("usage: kt-cli demo <out.kt> [--files | --generators] [--force]");

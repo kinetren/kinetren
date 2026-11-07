@@ -58,6 +58,15 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   Rice-coded lines, a bit reservoir, a concealing decoder; frozen math, the same bytes everywhere.
   The predictor stays inside its stability triangle and the decoder inside its range: a broken
   stream smears and saturates, it never runs away (fed the wrong history it reached 56 000).
+- **An audio state's block runs at the CPU's level** (audio-fx-cost): `process` wraps its body in
+  `kt_plugin_api::fast!({ … })` — the same text compiled again with AVX2, taken where the CPU has it,
+  the same bytes (t1981 on both paths, `KT_SIMD=0` / `cpu::with_baseline` force the baseline). The
+  shipped build is SSE2: there every `floor`/`round`/`trunc`/`fract` is a C-library call, so a
+  per-sample helper the body calls is `#[inline]` or it keeps the call. A pure function a per-sample
+  loop takes of a smoothed parameter (`10^(dB/20)`) goes through `dsp::Memo` (bits-keyed, exact). A
+  cheaper form of a frozen function is that function to the bit and proved on every input
+  (`math::powf_neg_half`, t1982). A new kind gets a row in t1980's bounds and t1981's digests
+  (`kt-cli fx-cost --digest`, `KT_PRINT_COST=1`).
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

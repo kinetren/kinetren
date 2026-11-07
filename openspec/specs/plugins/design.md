@@ -143,3 +143,15 @@ rust-gpu (a pinned nightly), Halide/ISPC/Slang (a second language and toolchain,
 rules), CUDA/OpenCL (no new hardware over Vulkan/DX12/Metal, a third text and tolerance class per
 effect). Measurements, the migration estimate and the owner's questions: F-EXT-004
 (`docs/features/plugins/kernels/compute-backends.md`).
+
+## The CPU level of an audio kernel (audio-fx-cost, 2026-11-08)
+
+- `cpu::run_fast` compiles the kernel's block a second time inside a `#[target_feature(enable =
+  "avx2")]` function; the closure is `#[inline(always)]` (`fast!`), or the body stays out of line with
+  the baseline code — the first try showed exactly that in the disassembly. AVX2 without FMA: Rust
+  neither contracts `a * b + c` nor reorders float sums, so the copy gives the same bytes (t1981).
+- Hand-written SIMD was rejected: a second text to keep bit-equal by hand per kernel, where the
+  compiler's second compile of the same text is equal by construction and costs one line per kernel.
+- The AAC codec, the noise suppressor's frame and pitch's grains through the same door measured no
+  gain and were not kept. `math::powf_neg_half` is `powf(x, −0.5)` to the bit, checked on all
+  2 139 095 040 positive finite floats (t1982).

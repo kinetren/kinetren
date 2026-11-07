@@ -59,6 +59,25 @@ pub fn powf(x: f32, y: f32) -> f32 {
     libm::pow(x as f64, y as f64) as f32
 }
 
+/// `powf(x, -0.5)` to the bit, without the `pow` (audio-fx-cost: a compander's gain per sample).
+/// `1 / sqrt(x)` in `f64` and `pow`'s `f64` result both lie within an `f64` ulp or so of the true
+/// value, so they round to the same `f32` unless that value is near a boundary between two `f32`
+/// roundings (the low 29 bits of the `f64` mantissa near the half); there, and outside the
+/// positive finite numbers, `powf` itself answers. t1982 holds it equal to `powf(x, -0.5)` on
+/// every positive `f32`.
+#[inline]
+pub fn powf_neg_half(x: f32) -> f32 {
+    if !(x > 0.0 && x.is_finite()) {
+        return powf(x, -0.5);
+    }
+    let r = 1.0 / (x as f64).sqrt();
+    let low = r.to_bits() & ((1u64 << 29) - 1);
+    if low.abs_diff(1 << 28) <= 1 << 8 {
+        return powf(x, -0.5);
+    }
+    r as f32
+}
+
 /// `log10` of an `f32`.
 #[inline]
 pub fn log10f(x: f32) -> f32 {
