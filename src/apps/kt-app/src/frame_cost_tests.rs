@@ -161,3 +161,43 @@ fn t1913_a_frames_processor_time_does_not_follow_the_project() {
         a as f64 / 1e6
     );
 }
+
+/// Test t1914: an open window's frame does not grow with the project either. The effects window
+/// copied the whole document three times a frame, the transition, camera, composition, render,
+/// project settings and published-parameters windows once or twice each; on the owner's project
+/// with the effects window open a frame cost 280 ms of the UI thread (with a value clamped every
+/// frame into a false edit, which `input-without-work` removed).
+#[test]
+fn t1914_an_open_window_does_not_follow_the_project() {
+    let cost = |h: &mut Harness<'_, KtApp>| -> u64 {
+        (0..3)
+            .map(|_| {
+                let t0 = thread_ns();
+                for _ in 0..10 {
+                    full_frame(h);
+                }
+                thread_ns() - t0
+            })
+            .min()
+            .unwrap()
+    };
+    let open = |h: &mut Harness<'_, KtApp>| {
+        h.state_mut().open_fx_editor(ClipId(1));
+        h.state_mut().open_project_settings();
+        for _ in 0..4 {
+            h.step();
+        }
+        assert!(h.state().fx_editors.iter().any(|e| e.open), "the effects window did not open");
+    };
+    let mut small = scene(0, 30);
+    let mut big = scene(20_000, 30);
+    open(&mut small);
+    open(&mut big);
+    let (a, b) = (cost(&mut small), cost(&mut big));
+    assert!(
+        (b as f64) < (a as f64) * 1.5,
+        "with the windows open ten frames cost {:.1} ms with 20000 events outside the view against {:.1} ms",
+        b as f64 / 1e6,
+        a as f64 / 1e6
+    );
+}
