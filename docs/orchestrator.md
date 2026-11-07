@@ -116,6 +116,9 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   `cfg!(test)` or `KT_NO_EXTERNAL_OPEN` (the live bench sets it and logs the path to `opened.txt`).
   Anything new that starts an outside program (a browser, a player, a file manager) goes through
   the same guard.
+- **After a merge, build the binary too** (2026-11-08): a conflict resolved by keeping both lines
+  dropped a `#[cfg(test)]`, the test build passed and `cargo build -p kt-app` failed; two executors
+  found it. Every merge check runs `cargo build -p kt-app -p kt-cli` before the tests.
 - **A runaway test kills only itself** (2026-11-07, 20:55: a new test of `cached-range-plays`,
   `mix_player`, took 55 GB of 61 with no swap; the OOM killer took the Claude app and all three
   executors with it). Every brief says: heavy or new test binaries and the program on a big project
