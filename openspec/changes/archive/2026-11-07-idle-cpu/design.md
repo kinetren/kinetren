@@ -21,7 +21,7 @@ Camera ISP, a dense edit of 1350 events under them.
 
 After the change, release build, the same project: every counter 0 over 30 s of a pause, on the first
 opening and on the second, and 0.73 % of a core over 60 s of a plain run with no bench attached, of
-which 0.56 % is the audio output's own threads and the load watch. A software rasterizer does not
+which 0.40 % is the audio output's threads and 0.33 % the load watch. A software rasterizer does not
 change this number: nothing is drawn.
 
 The old logic prints the mechanism: one job per UI frame. The request runs in the frame, so whatever
