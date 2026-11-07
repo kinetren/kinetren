@@ -344,6 +344,10 @@ pub struct KtApp {
     pub bin_free: bool,
     /// Positions of cards in the free layout (live in the project, UiState).
     pub bin_layout: std::collections::HashMap<kt_model::MediaId, egui::Pos2>,
+    /// The bin's cards of this state (ui-frame-cost): the list, the reels among it, and the
+    /// state the free layout was last given its new cards in. Built per frame, the list copied
+    /// every path and the layout hashed every card.
+    pub(crate) bin_list: BinList,
     /// Which card is being dragged inside the bin (free mode).
     pub bin_drag: Option<crate::bin_panel::BinDragState>,
     /// Card groups of the bin (item 13 round 11): they live here; they go into
@@ -706,6 +710,8 @@ pub struct KtApp {
     /// building the profile per pixel column — an allocation in the draw path
     /// (invariant #12), so once per revision.
     pub warp_cache: WarpCache,
+    /// What the timeline needs per event and a frame cannot change (ui-frame-cost).
+    pub tl_facts: TlFacts,
     /// Preview of nested reels: frames and envelope (R.56, item 452).
     pub reel_previews: crate::reel_preview::ReelPreviews,
     /// Frame textures of the band: (reel key, frame index).
@@ -1044,6 +1050,8 @@ impl KtApp {
             names_cache: Default::default(),
             uses_cache: Default::default(),
             warp_cache: Default::default(),
+            tl_facts: Default::default(),
+            bin_list: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             event_paint: None,
@@ -1334,6 +1342,8 @@ impl KtApp {
             names_cache: Default::default(),
             uses_cache: Default::default(),
             warp_cache: Default::default(),
+            tl_facts: Default::default(),
+            bin_list: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             event_paint: None,
@@ -1598,6 +1608,8 @@ impl KtApp {
     /// layout harness test can call it (rule item 9 round 8: layout and
     /// interactions are checked by egui_kittest, not only by a screenshot).
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
+        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load report read it
+        let _frame_cost = crate::frame_cost::span(crate::frame_cost::Stage::Frame);
         // LIVE BENCH COUNTERS (R.68) sit here, not in `ui()`: a frame is
         // the drawing, and the harness draws it with the same body, bypassing
         // `eframe::App::ui`. Counting in `ui()` would mean “in the product there are frames,
@@ -1819,6 +1831,7 @@ impl KtApp {
         }
 
         self.sample_perf();
+        let windows_cost = crate::frame_cost::span(crate::frame_cost::Stage::Windows);
         self.draw_search(&ctx);
         self.draw_fx_editors(&ctx);
         self.draw_transition_editors(&ctx);
@@ -1842,6 +1855,7 @@ impl KtApp {
         self.drain_publish_req();
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
+        drop(windows_cost);
         // the static outline of the tour step's panel target, on the panels' own layer
         self.draw_lesson_outline(&ctx);
         // the poster job sleeps while something plays (invariant 6)
@@ -4327,7 +4341,7 @@ impl KtApp {
             if self.shared_warned.contains(&seq) {
                 continue;
             }
-            let uses = self.model.document().sequence_uses(seq);
+            let uses = self.model.doc().sequence_uses(seq);
             if uses > 1 {
                 self.shared_warned.insert(seq);
                 self.warn(crate::tf!(k::msg::NEST_SHARED_EDIT, uses));
@@ -4433,7 +4447,7 @@ impl KtApp {
     fn sync_gen_sources(&mut self) {
         let mut cur: HashMap<ClipId, kt_model::GenState> = HashMap::new();
         {
-            let doc = self.model.document();
+            let doc = self.model.doc_arc();
             for c in doc.clips.iter().chain(doc.sequences.iter().flat_map(|s| s.clips.iter())) {
                 if let Some(k) = &c.r#gen {
                     cur.insert(
@@ -4584,7 +4598,7 @@ impl KtApp {
         self.media_synced_rev = self.model_rev;
         self.media_sync_builds += 1;
         let cur: HashMap<MediaId, String> =
-            self.model.document().media.iter().map(|m| (m.id, m.path.clone())).collect();
+            self.model.doc().media.iter().map(|m| (m.id, m.path.clone())).collect();
         if !self.media_synced {
             // first call: the sources have already been raised by build_player
             self.media_paths = cur;
@@ -6440,7 +6454,7 @@ impl KtApp {
         // a duration from a source — the length is taken from its content.
         // Before, a reel could be placed in a second place ONLY
         // by copy-pasting an already placed instance.
-        if self.model.document().sequence(media_id).is_some() {
+        if self.model.doc().sequence(media_id).is_some() {
             self.place_reel_at(media_id, at, lane_hint);
             return;
         }
@@ -6484,7 +6498,7 @@ impl KtApp {
         // an address of “where to change it” (rules 16, 19). Procedural sources
         // (fps = None) have no proportions and do not set the project.
         if info.has_video && info.fps.is_some() {
-            let settings = self.model.document().settings.clone();
+            let settings = self.model.doc().settings.clone();
             let (vw, vh) = info.view_size();
             let even = |v: f64| ((v.round() as u32).max(16)) & !1;
             let (w, h) = (even(vw), even(vh));
@@ -6690,6 +6704,7 @@ impl KtApp {
             //
             // On the device when it can: the frame is not waited for, read back, converted
             // and uploaded again on this thread (preview-throughput D2).
+            let composite_cost = crate::frame_cost::span(crate::frame_cost::Stage::Composite);
             let presented = self.preview_display.as_ref().and_then(|_| {
                 self.player.present_preview(
                     Tick(key_tick),
@@ -6704,6 +6719,7 @@ impl KtApp {
             let (cq, c) = presented
                 .unwrap_or_else(|| self.player.compose_preview_into(Tick(key_tick), &mut rgba));
             complete = c;
+            drop(composite_cost);
             let cost = self.player.video_cost();
             self.perf.compose_ms_last = cost.compose_ns as f32 / 1e6;
             self.perf.compose_sum_ns += cost.compose_ns;
@@ -7487,6 +7503,14 @@ impl KtApp {
             format!("{:.1}", self.perf.compose_ms_last),
             format!("{:.1}", self.perf.compose_ms_avg)
         ));
+        // what one UI frame costs the UI thread, by stage (ui-frame-cost): the number behind "the
+        // mouse over a still picture takes a quarter of the processor"
+        if let Some(ms) = self.perf.frame_ms {
+            let f = |v: f32| format!("{v:.1}");
+            let r = ui.weak(crate::tf!(k::perf::UI_FRAME, f(ms[0])));
+            crate::widgets::field_probe::note("diag.ui_frame", r.rect);
+            ui.weak(crate::tf!(k::perf::UI_STAGES, f(ms[1]), f(ms[2]), f(ms[3]), f(ms[4]), f(ms[5]), f(ms[6])));
+        }
         // "Economy UI" is not repeated here: the one switch lives in View (D4 — the owner's
         // item 13 forbids the same checkbox in two places)
         // “Black box” of playback (R.28, item 10): the ring of transport events
@@ -7968,10 +7992,13 @@ pub struct SpacePress {
 }
 
 /// State of the perf panel: rolling graphs, counter deltas, the problem log.
+/// (cache epoch, model version, preview quality, the view's ticks)
+type CoverageStamp = (u64, u64, (u32, u32), (i64, i64));
+
 /// The coverage-poll cache of the timeline (item 1).
 #[derive(Default)]
 pub struct CoverageCache {
-    stamp: Option<(u64, u64, (u32, u32))>,
+    stamp: Option<CoverageStamp>,
     /// Arc: a snapshot per frame — a clone of the pointer, not of the maps (item 1 of v1.4).
     pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
     /// Throttling during playback (item 1 of round 5): the cache epoch changes on EVERY
@@ -7991,6 +8018,91 @@ pub struct WarpCache {
     /// Only clips WITH a warp: for the rest the mapping is linear, and there is
     /// nothing to store about them.
     maps: Arc<HashMap<ClipId, kt_engine::ClipWarp>>,
+}
+
+/// What the timeline needs per event and cannot change between two frames of one state
+/// (ui-frame-cost). Each frame walked all the events: for the hatching of a tail past the material,
+/// building every event's speed map from its curves on the way (on the owner's 1974 events a sixth
+/// of every frame, whatever the view showed), for the coverage strip, for the hit test under the
+/// pointer, and to cull the events themselves. Looking an event up by id walked the list for each
+/// transition. A frame asks this index what lies in its view instead.
+#[derive(Default)]
+pub struct TlFacts {
+    /// (model version, number of events, the media lengths): a length is learned when a source
+    /// opens, outside history, and the model can be swapped wholesale without a revision
+    stamp: Option<(u64, usize, u64)>,
+    pub events: Arc<EventIndex>,
+}
+
+/// The media bin's cards of one state (`KtApp::bin_list`).
+#[derive(Default)]
+pub struct BinList {
+    pub(crate) stamp: Option<(u64, usize, usize, crate::i18n::Lang)>,
+    pub media: Arc<Vec<(MediaId, String)>>,
+    pub reels: Arc<std::collections::HashSet<MediaId>>,
+    /// (state, number of cards, number of placed cards) the free layout last placed new cards in
+    pub(crate) placed: Option<(u64, usize, usize)>,
+}
+
+/// The events of one state by time (`TlFacts`).
+#[derive(Default)]
+pub struct EventIndex {
+    /// per event (index in `clips`): where its material ends, when its body runs past it
+    pub tails: Vec<Option<i64>>,
+    /// event id → index in `clips`
+    pub by_id: HashMap<ClipId, usize>,
+    /// (start, end, index) sorted by start
+    by_start: Vec<(i64, i64, usize)>,
+    /// the latest end among `by_start[..=i]`: never falls, so it can be halved too
+    reach: Vec<i64>,
+    /// per event: its place in the composition's draw order (a later one lies on top)
+    rank: Vec<u32>,
+}
+
+impl EventIndex {
+    fn of(p: &kt_model::Project, draw_order: &[usize]) -> EventIndex {
+        let tails = p
+            .clips
+            .iter()
+            .map(|c| {
+                let end = kt_model::material_end_on_timeline(c, p.media_duration(c.media))?;
+                (end < (c.start + c.duration).0).then_some(end)
+            })
+            .collect();
+        let by_id = p.clips.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+        let mut by_start: Vec<(i64, i64, usize)> =
+            p.clips.iter().enumerate().map(|(i, c)| (c.start.0, (c.start + c.duration).0, i)).collect();
+        by_start.sort_unstable();
+        let reach = by_start
+            .iter()
+            .scan(i64::MIN, |m, s| {
+                *m = (*m).max(s.1);
+                Some(*m)
+            })
+            .collect();
+        let mut rank = vec![u32::MAX; p.clips.len()];
+        for (r, &i) in draw_order.iter().enumerate() {
+            if let Some(x) = rank.get_mut(i) {
+                *x = r as u32;
+            }
+        }
+        EventIndex { tails, by_id, by_start, reach, rank }
+    }
+
+    /// The events whose body meets the ticks `t0..=t1`, in no order.
+    pub fn hits(&self, t0: i64, t1: i64) -> impl Iterator<Item = usize> + '_ {
+        let hi = self.by_start.partition_point(|s| s.0 <= t1);
+        let lo = self.reach.partition_point(|&e| e < t0).min(hi);
+        self.by_start[lo..hi].iter().filter(move |s| s.1 >= t0).map(|s| s.2)
+    }
+
+    /// The same, plus `extra`, in the composition's draw order: what lies on top comes last.
+    pub fn in_draw_order(&self, t0: i64, t1: i64, extra: impl Iterator<Item = usize>) -> Vec<usize> {
+        let mut v: Vec<usize> = self.hits(t0, t1).chain(extra).collect();
+        v.sort_unstable_by_key(|&i| (self.rank.get(i).copied().unwrap_or(u32::MAX), i));
+        v.dedup();
+        v
+    }
 }
 
 /// The media caption for the user: for a file — the file name, for a generator —
@@ -8053,6 +8165,22 @@ impl KtApp {
         self.warp_cache.maps.clone()
     }
 
+    /// The timeline's facts of this state, built once (`TlFacts`).
+    pub fn tl_facts(&mut self) -> Arc<EventIndex> {
+        let draw_order = self.names().3;
+        let p = self.model.project();
+        let lengths = p.media.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, m| {
+            let d = m.duration.map_or(u64::MAX, |d| d.0 as u64);
+            (h ^ m.id.0 ^ d.rotate_left(17)).wrapping_mul(0x0100_0000_01b3)
+        });
+        let stamp = (self.model_rev, p.clips.len(), lengths);
+        if self.tl_facts.stamp != Some(stamp) {
+            self.tl_facts.stamp = Some(stamp);
+            self.tl_facts.events = Arc::new(EventIndex::of(p, &draw_order));
+        }
+        self.tl_facts.events.clone()
+    }
+
     /// Preview keys per INSTANCE: `ClipId` → (reel, revision)
     /// (R.56 item 452, rewritten in R.59 stage 3 — t680).
     ///
@@ -8067,7 +8195,7 @@ impl KtApp {
     /// content, and there is no point doing that on every UI frame.
     pub fn reel_keys(&mut self) -> Arc<HashMap<ClipId, crate::reel_preview::ReelKey>> {
         if self.reel_hash_cache.0 != Some(self.model_rev) {
-            let doc = self.model.document();
+            let doc = self.model.doc_arc();
             let mut map: HashMap<ClipId, crate::reel_preview::ReelKey> = HashMap::new();
             // A SINGLE reel now has SEVERAL live revisions at once, and
             // invalidation must keep them all: if it threw out “someone else’s”,
@@ -8153,12 +8281,18 @@ impl KtApp {
         self.reel_previews.request(key, p, db, base);
     }
 
-    /// Runs of coverage per clip; recalculation only when the cache epoch,
-    /// the model version or the preview quality changes.
-    pub fn coverage_runs(&mut self) -> Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>> {
+    /// Runs of coverage per clip IN VIEW (`view`, ticks); recalculation only when the cache epoch,
+    /// the model version, the preview quality or the view changes. All the events were asked
+    /// on every insertion into the cache (ui-frame-cost): a query under the cache's lock per event
+    /// of the project, and the decode qualities searched once per event.
+    pub fn coverage_runs(
+        &mut self,
+        events: &EventIndex,
+        view: (i64, i64),
+    ) -> Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>> {
         use kt_time::AUDIO_BURST_FRAMES;
         let q = self.player.preview_quality();
-        let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height));
+        let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height), view);
         let throttled = self.player.transport.is_playing()
             && self
                 .coverage_cache
@@ -8172,13 +8306,21 @@ impl KtApp {
             // warms up larger than Quality, and coverage by Quality would show a
             // warm clip as cold. A morpher layer could cut a clip into
             // pieces with different chains — we take the union of their qualities.
-            let decode_q = self.player.video_decode_qualities();
+            // by the event a piece was cut from: one look per event, not a search
+            let mut decode_q: HashMap<ClipId, Vec<kt_media::Quality>> = HashMap::new();
+            for (id, dq) in self.player.video_decode_qualities() {
+                if let Some(o) = kt_model::slice_origin(id).filter(|o| *o != id) {
+                    decode_q.entry(o).or_default().push(dq);
+                }
+                decode_q.entry(id).or_default().push(dq);
+            }
             // A nested item: the source reel has none, and the strip asks about its
             // CONTENT — the intersection of the children’s warmth (R.50, B6).
             let nest_cov: HashMap<ClipId, Vec<std::ops::Range<i64>>> =
                 self.player.nest_coverage().into_iter().collect();
             let mut per_clip = HashMap::new();
-            for c in &self.model.project().clips {
+            let clips = &self.model.project().clips;
+            for c in events.hits(view.0, view.1).filter_map(|i| clips.get(i)) {
                 // the ADDRESS of the event’s SOURCE (R.59, stage 2): for a generator the values
                 // live on the event, and its own source is what warms up.
                 // One rule for the program — the request, the read and the strip must
@@ -8200,11 +8342,7 @@ impl KtApp {
                     }
                     ClipKind::Video => {
                         let (b0, b1) = (c.source_in.0, c.source_in.0 + c.duration.0);
-                        let mut qs: Vec<kt_media::Quality> = decode_q
-                            .iter()
-                            .filter(|(id, _)| kt_model::same_clip(*id, c.id))
-                            .map(|(_, dq)| *dq)
-                            .collect();
+                        let mut qs: Vec<kt_media::Quality> = decode_q.get(&c.id).cloned().unwrap_or_default();
                         qs.sort();
                         qs.dedup();
                         if qs.is_empty() {
@@ -9026,6 +9164,9 @@ pub struct PerfState {
     pub compose_ms_avg: f32,
     compose_sum_ns: u64,
     compose_n: u32,
+    /// what a UI frame cost by stage over the last sample (ui-frame-cost), and the totals then
+    pub frame_ms: Option<[f32; crate::frame_cost::Stage::ALL.len()]>,
+    frame_cost_was: (u64, [u64; crate::frame_cost::Stage::ALL.len()]),
     pub diag_open: bool,
     pub log: std::collections::VecDeque<String>,
     /// Dedup of consecutive identical messages: (text, repeat count).
@@ -9084,6 +9225,8 @@ impl PerfState {
             compose_ms_avg: 0.0,
             compose_sum_ns: 0,
             compose_n: 0,
+            frame_ms: None,
+            frame_cost_was: crate::frame_cost::totals(),
             vfps: 0.0,
             last_video_shown: 0,
             video_cells_skipped: 0,
@@ -9444,6 +9587,12 @@ impl KtApp {
             self.perf.compose_sum_ns = 0;
             self.perf.compose_n = 0;
         }
+        // the frame's cost by stage; a second with no frame keeps the last one
+        let cost = crate::frame_cost::totals();
+        if let Some(ms) = crate::frame_cost::per_frame(&self.perf.frame_cost_was, &cost) {
+            self.perf.frame_ms = Some(ms);
+        }
+        self.perf.frame_cost_was = cost;
         self.perf.quality.push(&[fps.min(120.0), v_fps.min(120.0), a_hit, v_hit]);
         let (r_open, r_read) =
             (opens.saturating_sub(lo) as f32 / dt, reads.saturating_sub(lr) as f32 / dt);
@@ -9976,6 +10125,7 @@ impl KtApp {
 
     /// The timeline with its button row under it.
     fn draw_timeline_area(&mut self, ui: &mut egui::Ui) {
+        let _cost = crate::frame_cost::span(crate::frame_cost::Stage::Timeline);
         let full = ui.available_rect_before_wrap();
         self.timeline_rect = full;
         let strip_h = 34.0;
@@ -9999,6 +10149,7 @@ impl KtApp {
 
     /// The left column: the media bin, under the header when the column stands at the window's top.
     fn draw_bin_column(&mut self, ui: &mut egui::Ui, header: bool) {
+        let _cost = crate::frame_cost::span(crate::frame_cost::Stage::Bin);
         // LIMIT SET ON COMPLAINT of item 4 round 13 — do not squeeze without a new
         // request from the user: 420 px were insurance of round 7.1, in round 9 raised to
         // half the window by his direct request, and in round 11 I cut them
@@ -10093,6 +10244,7 @@ impl KtApp {
 
     /// The centre: the preview with its controls under it, the meters beside it where they stand.
     fn draw_centre(&mut self, ui: &mut egui::Ui, arrangement: Arrangement) {
+        let _cost = crate::frame_cost::span(crate::frame_cost::Stage::Centre);
         let p = self.model.project();
         if let Some(r) = p.region
             && !p.loop_enabled

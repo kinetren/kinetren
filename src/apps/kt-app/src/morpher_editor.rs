@@ -292,7 +292,7 @@ impl KtApp {
         // the FX buffer is shared with the event windows
         let mut enabled = ev.enabled;
         let mut fx_clip = self.fx_clipboard.clone();
-        let dflt_shape = self.model.document().settings.default_shape;
+        let dflt_shape = self.model.doc().settings.default_shape;
         let mut paste_req = false;
         // hints — into the status bar, as everywhere (there are no popups in the program)
         let mut hover_out: Option<String> = None;

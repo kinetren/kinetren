@@ -13,7 +13,7 @@ he sent the project after all (line 15); it is his, its media are not on this ma
 
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
-| G1 | 2 | on a pause, on an event, moving the mouse over the preview costs 25 % of the processor (not prefetch) | no: defect, `transport`; in his report the UI thread stands at ~100 % of a core while it draws, up to 0.5 s per frame | `ui-frame-cost` | started 2026-11-07 |
+| G1 | 2 | on a pause, on an event, moving the mouse over the preview costs 25 % of the processor (not prefetch) | done ui-frame-cost, t1910–t1914 + live `ui_frame`: a frame's work grew with the project (document copies in the bin and the windows, a speed map per event for the tail hatching, the speed curve laid out per pixel column); a frame now asks what is in view. His project, release: 6.1 → 1.6 ms a frame over the preview, 10.1 → 5.2 ms zoomed out, the effects window open 291 → 5 ms (with input-without-work); Diagnostics shows the frame's cost by stage | `ui-frame-cost` | ui-frame-cost |
 | G2 | 3 | playing a short rendered range (400 ms): 16 V-fps, the picture stutters, 45 % | no: defect, `transport`, `video-plan` | `cached-range-plays` | started 2026-11-07 |
 | G3 | 4 | the sound crackles in that playback | no: defect, `audio-render` | `cached-range-plays` (own report) | started 2026-11-07 |
 | G4 | 4 | the cache does not work: a rendered range does not play from it | no: defect, `media-index` | `cached-range-plays` (own report) | started 2026-11-07 |

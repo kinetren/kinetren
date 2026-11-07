@@ -1520,3 +1520,30 @@ fn t723_reel_settings_command_and_validation() {
     bad.sequences[0].fps = Some(7);
     assert!(bad.validate().is_err());
 }
+
+/// Test t1911 (ui-frame-cost): the document a drawing path reads is not copied per question. At
+/// the root it is the canon itself; inside a reel the swapped copy is built once per state, follows
+/// every edit, undo, place change and the setters outside history, and equals `document()`.
+#[test]
+fn t1911_the_borrowed_document_is_one_per_state() {
+    kt_plugins_builtin::install();
+    let (mut m, seq) = with_reel();
+    assert_eq!(*m.doc(), m.document());
+    assert!(std::ptr::eq(m.doc(), m.doc()), "at the root a question copied the project");
+    m.set_editing(Some(seq));
+    let a: *const Project = m.doc();
+    assert!(std::ptr::eq(a, m.doc()), "inside a reel each question built its own copy");
+    assert!(std::sync::Arc::ptr_eq(&m.doc_arc(), &m.doc_arc()));
+    assert_eq!(*m.doc(), m.document());
+    m.apply(Command::MoveClip { id: ClipId(20), new_start: Tick(LEN.0 / 2), new_lane: 0 }).unwrap();
+    assert_eq!(*m.doc(), m.document(), "an edit inside the reel kept the old document");
+    assert_eq!(m.doc().sequence(seq).unwrap().clips[0].start.0, LEN.0 / 2);
+    m.undo().unwrap();
+    assert_eq!(*m.doc(), m.document(), "undo kept the old document");
+    m.set_region(Some(Region { start: Tick(0), end: LEN }));
+    assert_eq!(*m.doc(), m.document(), "a region kept the old document");
+    m.set_loop_enabled(true);
+    assert_eq!(*m.doc(), m.document());
+    m.set_editing(None);
+    assert_eq!(*m.doc(), m.document(), "leaving the reel kept the reel's document");
+}

@@ -431,7 +431,7 @@ fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
     // (transition handles) tau leaves [0,1] — the map continues with the edge
     // segment, exactly as chain_source_window_ext does for audio.
     let tau = (t.0 - c.start.0) as f64 / span as f64;
-    let consumed = kt_fx::warp_material_ticks(w.base(), w.prof(), span, tau);
+    let consumed = w.material_ticks(span, tau);
     if c.reversed {
         // WARP, THEN MIRROR — not the other way round. The audio path (`fill_source`)
         // mirrors the ALREADY consumed forward stream; a mirror before the warp would run

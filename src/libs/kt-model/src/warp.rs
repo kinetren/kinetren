@@ -145,9 +145,10 @@ fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     //
     // With `points[0].0 >= 0.0` none of the branches below is executed, so the previous
     // path stays byte-for-byte intact (GOLDEN_* rest on it).
-    while out.len() > 1 && out[0].1 <= 0.0 {
-        out.remove(0);
-    }
+    // one shift, not one per hidden segment: a trimmed sampled curve hides hundreds, and the
+    // former `remove(0)` in a loop made every call quadratic (ui-frame-cost)
+    let hidden = out.iter().take(out.len() - 1).take_while(|seg| seg.1 <= 0.0).count();
+    out.drain(..hidden);
     if out[0].0 < 0.0 {
         let (t0, t1, r0, r1) = out[0];
         let b = if t1.is_finite() && t1 > t0 { (r1 - r0) / (t1 - t0) } else { 0.0 };
@@ -472,6 +473,57 @@ pub fn warp_material_ticks(base: f64, points: &ParamPoints, span_ticks: i64, tau
     (span_ticks as f64 * source_progress(base, points, tau)).round() as i64
 }
 
+
+/// [`source_progress`] with its segments laid out once (ui-frame-cost).
+///
+/// `source_progress` builds the segment list on every call, and the timeline asked it per pixel
+/// column of every waveform, the composite per layer per frame: on a sampled speed curve (a point
+/// per 5 ms) that is thousands of segments a call. Here the list and the material consumed before
+/// each segment are kept, summed in the same order as the loop, so a reading is the same bits.
+#[derive(Debug, Clone, PartialEq)]
+struct Integral {
+    segs: Vec<(f64, f64, f64, f64)>,
+    before: Vec<f64>,
+    /// segment ends grow: the segment of `t` can be found by halving
+    sorted: bool,
+}
+
+impl Integral {
+    fn of(base: f64, points: &ParamPoints) -> Integral {
+        let segs = segments(base, points);
+        let mut before = Vec::with_capacity(segs.len());
+        let mut acc = 0.0;
+        for &(t0, t1, r0, r1) in &segs {
+            before.push(acc);
+            if t1.is_finite() {
+                let b = if t1 > t0 { (r1 - r0) / (t1 - t0) } else { 0.0 };
+                acc += seg_ds(t1 - t0, r0, b);
+            }
+        }
+        let sorted = segs.windows(2).all(|w| w[1].1 >= w[0].1);
+        Integral { segs, before, sorted }
+    }
+
+    fn progress(&self, t: f64) -> f64 {
+        if t < 0.0 {
+            return t * self.segs[0].2;
+        }
+        if t <= 0.0 {
+            return 0.0;
+        }
+        // the first segment that ends at or after `t`: every one before it is consumed whole
+        let k = if self.sorted {
+            self.segs.partition_point(|seg| t > seg.1)
+        } else {
+            self.segs.iter().position(|seg| t <= seg.1).unwrap_or(self.segs.len())
+        }
+        .min(self.segs.len() - 1);
+        let (t0, t1, r0, r1) = self.segs[k];
+        let hi = if t1.is_finite() { t.min(t1) } else { t };
+        let b = if t1.is_finite() && t1 > t0 { (r1 - r0) / (t1 - t0) } else { 0.0 };
+        self.before[k] + seg_ds(hi - t0, r0, b)
+    }
+}
 
 /// Average speed = the consumed fraction of the source over the whole clip: S(1).
 pub fn avg_rate(base: f64, points: &ParamPoints) -> f64 {
@@ -821,6 +873,8 @@ pub struct ClipWarp {
     span_max: i64,
     /// “Mix” mode (R.37 stage 5): read by the layer's executor.
     blend: bool,
+    /// the profile's integral, laid out once
+    integral: Integral,
 }
 
 impl ClipWarp {
@@ -845,12 +899,17 @@ impl ClipWarp {
         self.blend
     }
 
+    /// [`warp_material_ticks`] of this profile, the same bits without laying it out again.
+    pub fn material_ticks(&self, span_ticks: i64, tau: f64) -> i64 {
+        (span_ticks as f64 * self.integral.progress(tau)).round() as i64
+    }
+
     /// How much material is eaten by the moment `tl` ticks from the start of the event.
     /// Reverse — “WARP, THEN MIRROR” (R.37 item 247): a mirror BEFORE the warp would drive
     /// the speed curve backwards and desynchronize A/V.
     pub fn material_off(&self, duration: Tick, reversed: bool, tl: i64) -> i64 {
         let dur = duration.0.max(1);
-        let consumed = warp_material_ticks(self.base, &self.prof, dur, tl as f64 / dur as f64);
+        let consumed = self.material_ticks(dur, tl as f64 / dur as f64);
         // The mirror axis is the SPAN of position, not “how much is eaten” (R.57).
         // On positive curves the span equals (0, used), and the expression
         // collapses to the former `(used − consumed).max(0)` — the same
@@ -967,7 +1026,8 @@ pub fn clip_warp_of(
     .to_vec();
     let used = (span as f64 * consumed_abs(base, &prof, 1.0)).round() as i64;
     let (span_min, span_max) = warp_span_ticks(base, &prof, span);
-    Some(ClipWarp { base, prof, used, span_min, span_max, blend })
+    let integral = Integral::of(base, &prof);
+    Some(ClipWarp { base, prof, used, span_min, span_max, blend, integral })
 }
 
 /// Does the chain actually stretch TIME.
@@ -1328,5 +1388,51 @@ mod signed_tests {
         let reach = rate_reach(1.0, &a);
         assert!(reach.0 <= RATE_AUDIO_FLOOR + 1e-12, "minimum reach: {reach:?}");
         assert!((reach.1 - 32.0).abs() < 1e-12);
+    }
+
+    /// Test 1910 (ui-frame-cost): the integral laid out once reads the same bits as
+    /// `source_progress`, which lays it out per call — sorted and unsorted keys, keys hidden left
+    /// of zero, flat and sampled curves, every side of every segment.
+    #[test]
+    fn t1910_laid_out_integral_is_source_progress_bit_for_bit() {
+        // a fixed sequence, not a clock (invariant 11)
+        let mut x = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut profiles: Vec<(f64, Vec<(f64, f64)>)> = vec![
+            (1.0, vec![]),
+            (0.5, vec![]),
+            (1.0, vec![(0.0, 2.0), (1.0, 0.25)]),
+            (1.0, vec![(-0.4, 3.0), (-0.1, 1.0), (0.3, 0.5), (1.2, 2.0)]),
+            (1.0, vec![(0.5, 1.0), (0.8, 2.0), (0.6, 0.5), (0.7, 3.0)]),
+            (1.0, vec![(0.2, 1.0), (0.2, 2.0), (0.9, 4.0)]),
+            (1.0, vec![(-0.5, -2.0), (0.5, 2.0)]),
+        ];
+        // a sampled curve as the shaped speed makes it, with hundreds of keys hidden by a trim
+        let sampled: Vec<(f64, f64)> = (0..2000).map(|i| (i as f64 / 1000.0 - 0.6, 0.3 + next() * 3.0)).collect();
+        profiles.push((1.0, sampled));
+        for _ in 0..40 {
+            let n = (next() * 12.0) as usize;
+            let pts = (0..n).map(|_| (next() * 1.6 - 0.3, next() * 70.0 - 35.0)).collect();
+            profiles.push((next() * 4.0 - 1.0, pts));
+        }
+        for (base, pts) in &profiles {
+            let it = Integral::of(*base, pts);
+            let mut ts: Vec<f64> = vec![-0.5, -0.0, 0.0, 1e-12, 0.5, 1.0, 1.5, 7.0];
+            ts.extend(pts.iter().map(|p| p.0));
+            ts.extend((0..200).map(|_| next() * 2.4 - 0.4));
+            for t in ts {
+                assert_eq!(
+                    it.progress(t).to_bits(),
+                    source_progress(*base, pts, t).to_bits(),
+                    "base {base}, t {t}, {} keys",
+                    pts.len()
+                );
+            }
+        }
     }
 }
