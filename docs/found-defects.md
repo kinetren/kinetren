@@ -26,9 +26,9 @@ list may be short of items from them.
 | 10 | export composite and memory | Composite is now the bottleneck; export peaks at 7.3 GB of memory | `kt-engine/src/export_pipeline.rs` | open | С.1, follows the `compute-backends` decision |
 | 12 | gallery near a cut | A missing thumbnail is filled from the nearest stored one, so near a cut it shows the other shot | `request_near` | open | later |
 | 13 | sound generator | An audio generator event draws no waveform | generators | unknown | С.3, check first |
-| 14 | Noise default | Added Noise shows nothing until the amount is raised | barrier noise kernel | open | owner's decision: a fix moves bytes |
+| 14 | Noise default | Added Noise shows nothing until the amount is raised | barrier noise kernel | owner decided 2026-11-07: a visible default | С.3 |
 | 16 | loop freeze on wine | Play with a loop region freezes the picture until a click | change `loop-play-latency-hold` | open, unverified | С.3, wine probe first |
-| 17 | `.kt` MIME | A name-only guess can open `.kt` as Kotlin | `src/packaging/kinetren-mime.xml` | open | owner's decision |
+| 17 | `.kt` MIME | A name-only guess can open `.kt` as Kotlin | `src/packaging/kinetren-mime.xml` | owner decided 2026-11-07: the file becomes `.ktren`, a breaking change | С.3 |
 | 18 | seam outside a wrap | A clip dragged during playback does not refill the pitch look-ahead | kt-engine audio | deliberate | only on a complaint |
 | 19 | Arabic wrapped lines | Wrapped Arabic labels have imperfect run order | `MAX_VALUE_CHARS`, kt-app | known limit | later |
 | 20 | mask after Geometry | A mask follows only the leading Geometry node | masks spec | recorded in the spec | later |
@@ -53,7 +53,7 @@ list may be short of items from them.
 | 78 | the top of the ruler takes the panel divider | A drag on the top pixels moves the panel, not the marker's end; visible live, t142 passes in the harness | `kt-app` timeline | open | С.3 |
 | 80 | a cut does not move `geometry_auto` curves | `clip_slice` leaves them in place; read in the code, to check on an event with speed | `kt-model` | not checked | С.3, check first |
 | 81 | a long name runs over the event's edge | Clipped only when a level chip is drawn; read in the code | `kt-app` timeline | not checked | С.3 |
-| 76 | event longer than its file holds the last frame silently | Zero lost layers, nothing in the log; a person who did not mean a freeze is not told | `kt-engine` export | question | ask the owner at the stage's end |
+| 76 | event longer than its file holds the last frame silently | Zero lost layers, nothing in the log; a person who did not mean a freeze is not told | `kt-engine` export | owner decided 2026-11-07: told in the render window BEFORE the start | С.3 |
 | 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
 | 65 | Datamosh not seen on a real device | The compute path ran only on Vulkan through llvmpipe: no real card, DX12, Metal or ARM yet; the panel's message without a device was not looked at in the live program | `fx-video-codec` | open | С.2 CI and the ARM build |
 | 85 | render memory unproven at 4K | The memory formula is extrapolated from 1080p; the Windows branch of reading memory was compiled alone, not run; real card, DX12, Metal, ARM not run either | `kt-engine` export | not measured | С.1, on the first 4K render |
@@ -91,7 +91,7 @@ list may be short of items from them.
 | 74 | `hwencode` live scenario | The second process overwrites the first's `01-step` screenshot, the scenario sets the folder | `src/scripts/live/hwencode.py` | open | С.2 |
 | 83 | `openspec validate --specs` did not finish in 60 s | cause not read | tooling | open | С.2 |
 | 101 | live first pass under load | On the merged tree 70 of 78 first time at load 25–55, 6 more alone; `space_hold` and `readme_shots` stayed red on the rerun. `space_hold` is green alone with the build stopped: it runs on the wall clock (hold 300 ms, double press 400 ms), and a frame past those cannot pass; `readme_shots` lost `win.fx` at the step of the VHS deck, a double click again. The last reds are reads in scenarios and frames slower than a gesture's own window, none shown to be the program, except row 47 | `src/scripts/live` | open | С.2 |
-| 102 | tmpfs for the tests' temp files | Would cut a loaded run's fsyncs at once. `sidecar-fsync-stall` rejected it as hiding a stall a person's disk has; t1460 now holds that stall with a shim, so the reason is weaker, but the disk would leave every other test too | test run | question | the owner, see `test-stability` design D1 |
+| 102 | tmpfs for the tests' temp files | Would cut a loaded run's fsyncs at once. `sidecar-fsync-stall` rejected it as hiding a stall a person's disk has; t1460 now holds that stall with a shim, so the reason is weaker, but the disk would leave every other test too | test run | owner decided 2026-11-07: tests go to tmpfs; live Ctrl+S runs stay on a disk until row 47 is read | С.2 |
 | 77 | a recovered span leaves no trace | After row 71 the decoder failure of a recovered span is written nowhere: right for a person, but a decoder fault cannot be traced later | `kt-engine/src/export.rs` | open | С.2 |
 | 69 | Flathub linter depends on our site answering | `https://kinetren.com` slow: the job fails with `appid-url-not-reachable` | `src/scripts/flatpak-build.sh` | open | С.2 |
 | 70 | live scenarios are most of `finish.sh` | `readme_shots` fell from 593 s to about 380 s on a busy machine; the whole run on 4 workers, under a parallel build, is the longest stage still | `src/scripts/live` | reduced by `test-stability` | С.2 |

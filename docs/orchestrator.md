@@ -138,9 +138,13 @@ the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner'
 2. **Performance**: rows 93 (preview on the VHS span), 94, 96, and the older 10, 37, 42, 52, 53, 55, 72.
 3. **Build and CI speed**: logs of a real master run and the first `windows-picture` and FXC result,
    both need the owner's push; the plugin test-build cost (card); an ARM build (owner, 2026-11-04).
-4. **Usability**: `preview-canvas-and-gizmos` (card, B9), the three answers `control-layouts` waits for,
+4. **Usability**: `preview-canvas-and-gizmos` (card, B9),
    the small defects (`region-copy-of-selected`, `fader-wheel-and-region-edges` cards, the transparent
-   tail at widths not divisible by 8, the vocoder level at start phase), the marker-over-region split.
+   tail at widths not divisible by 8, the vocoder level at start phase).
+
+5. **The owner's answers of 2026-11-07** (`docs/user-feedback.md`): the VEGAS tile apart from ours,
+   the fuller settings code, other interface-scale keys, the marker split, the warning before a
+   render, the Noise default, `.ktren`, the tests' temp files in tmpfs. He said to start nothing yet.
 
 After them: the effects (`temporal-barrier-3dnr`, `chroma-key-upgrade`, `geometry-fx-flex`,
 `pro-keyer`) and the big features to discuss (subtitles and text editing, ripple, scopes, several

@@ -2643,7 +2643,35 @@ The owner's words, `docs/ktprompts/v26.10.txt` lines 74–75:
 
 Decided by the executor, to be shown to him: five tiles in the order Vegas, Premiere, Resolve, Final Cut, After Effects; the code covers the style, the panels, the wheel and the keys, not the language or the other preferences; an update does not ask, only a first entry does; `TimelineOnTop` is offered in Customize, not on his tile.
 
-**Open, a question for him:** whether "like Vegas" should move towards real VEGAS (see the report of the round); his default did not move.
+**Closed 2026-11-07:** separate tiles for ours and for VEGAS, see the round of answers below.
+
+## Round of answers on the stage's open questions (2026-11-07)
+
+Verbatim, to the numbered questions of the closed stage:
+
+> в.1. делаем для нас отдельную плитку, а для vegas - тоже отдельную под них
+> в.2. а
+> в.3. а
+> в.4. а
+> в.5. жест уровня НЕ должен мешать управлению события если оно по каким то причинам мелкое(мелкий масштаб этого события) это не удобно
+> в.6. а (но вообще-то это надо говорить ПЕРЕД рендером а не в конце блядь... где логика!??!?)
+> в.7. а
+> в.8. .ktren breaking change
+> в.9. немного не понимаю вопроса, у нас код kt ПИШЕТ В tmpfs при CTRL+S!?!?. ну пусть в tmpfs пишет.
+> в.10. пока на вопросы ответь
+
+What each decides:
+
+1. **Tiles.** Six, not five: ours under its own name with no "like Vegas" on it, and a separate VEGAS tile that behaves as VEGAS does (the wheel zooms, J/K/L shuttle). Our own layout does not move.
+2. **The settings code** also carries the language, Economy UI and the update check.
+3. **Resolve and Final Cut styles:** the interface scale gets other keys of its own.
+4. **"Marker over the region"** is split into "always a new region" and "stretch the existing one".
+5. **The level gesture stays away from a small event.** R.72's U5.3 stands (his item 31 of v26.10); the question was put wrongly, as if the gesture might return.
+6. **A person is told BEFORE the render, not after it.** An event longer than its file is named in the render window before the start. Anything that warns of a loss goes before the action that causes it.
+7. **Noise** gets a visible default amount; projects with the old default change.
+8. **The project file becomes `.ktren`**, a breaking change: a `.kt` no longer opens by plain Open and goes through the import door (R.67).
+9. **The tests' temp files move to tmpfs.** He read the question as being about the program: the program's Ctrl+S writes next to the project on the disk, with fsync, and that does not change.
+10. Nothing new was started on this answer.
 
 ## What the user repeated more than once
 
