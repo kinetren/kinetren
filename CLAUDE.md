@@ -176,6 +176,13 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
     audio, driven by the SAME device state (one tape, one deck, one stream), so a dropout, a
     head clog or a broken keyframe is seen and heard at the same moment. A new simulation
     effect is not done until its pair exists or its note says why the device has no sound.
+- **A problem is a CLASS, examined in every subsystem** (owner, R.8 item 17, repeated 2026-11-07:
+  "любые проблемы которые мы обсуждаем ОБЯЗАНЫ БЫТЬ РАССМОТРЕНЫ К ДРУГИМ ПОДСИСТЕМАМ/КЕЙСАМ/МЕСТАМ").
+  His example names one place; the defect is the mechanism behind it. A change taking a complaint
+  first states that mechanism, then walks EVERY subsystem, window, panel, effect and path where it
+  can act the same way, and writes the list of what was checked and found into its `design.md`;
+  the report names them. A change named after one widget or one effect is a sign of looking
+  "through a crack", not a revision. (This is not "squeeze everything": a limit he set stays.)
 - **The program at rest costs nothing, and this is tested** (owner, 2026-11-07: "ПОЧЕМУ АГЕНТАМ НЕ
   ПРИКАЗЫВАЕТСЯ ТЕСТИРОВАТЬ ЭТО?!?"). A change that touches the UI, the preview, the engine or an
   effect is measured for processor load on a pause, with the mouse moving over a static place, and

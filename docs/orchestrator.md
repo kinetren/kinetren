@@ -111,6 +111,11 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 - **`docs/found-defects.md` is the one list** of what any agent saw and did not fix: what a person
   suffers, where, the evidence, the state, the verdict. A remark in a report, in a session's memory
   or on a proposal card does not count as recorded.
+- **Discussion is not a go** (owner, 2026-11-07, stopped a start: "я не говорил ИДТИ ДЕЛАТЬ. МЫ НЕ
+  ОБСУДИЛИ ЕЩЕ ДО КОНЦА!"). An executor starts only on his explicit word to start; an answer, a file
+  or a folder he sends is part of the discussion, not that word. Every brief carries the class rule
+  of CLAUDE.md: the complaint's mechanism, then every subsystem where it can act; never a scope
+  named after the one place he gave as an example.
 - **Every executor's report ends with "Найдено, не исправлено"**, or the word "ничего". A report
   without the section goes back to the executor before the merge.
 - **The merge is not finished until the list is updated**: each item gets a row in the turn its

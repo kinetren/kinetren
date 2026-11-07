@@ -21,7 +21,7 @@ the crates' `CLAUDE.md` — "how to write code now"; this file answers the quest
 | Tests are mandatory | every engine change — with a regression autotest; do not weaken tests 1–111 | root CLAUDE.md, openspec specs |
 | UI no worse than C++ v1 | "the UI must be professional" | apps/kt-app/CLAUDE.md |
 | UI is made FOR THE USER | "UI/UX is made FOR THE USER, and you are making it for who-knows-whom, and I have to label everything" (R.8 item 17) | checklist in apps/kt-app/CLAUDE.md |
-| A remark = a CLASS of problems | "I often write 1–2 examples, and in the program there are many similar places" (R.8 item 17) | checklist, section "How to read remarks" |
+| A remark = a CLASS of problems | "I often write 1–2 examples, and in the program there are many similar places" (R.8 item 17); 2026-11-07 "ОБЯЗАНЫ БЫТЬ РАССМОТРЕНЫ К ДРУГИМ ПОДСИСТЕМАМ/КЕЙСАМ/МЕСТАМ" | checklist, section "How to read remarks" |
 | Do not waste space | "DO NOT WASTE SPACE… instead of spawning an empty line across the whole screen — you can neatly write text in the space already allotted on the screen" (R.12 item 4) | checklist item 13 |
 | Check what the user runs | "so you are not checking a damn thing you do. DOUBLE-CHECK" (R.12, after "I took the build from debug") | rule of the finish: `scripts/finish.sh` + version in the report |
 | Check in a maximized window | "you have to check in a maximized window, not the way you do — in a small one" (R.13) | `scripts/ui-probe.py`, test t85 with `maximized` |
@@ -2721,6 +2721,12 @@ What he asks, in short, each its own request:
 - The report: "сделал отложенную запись и я не могу тебе сказать точное время". One telemetry
   journal with load, playback and his actions. "телеметрия != трекинг использования в posthog."
 - "АГЕНТЫ НЕ ДУМАЛИ!!!!!": a tool made for proof must let him say what he did and when.
+
+Then, as I was starting executors on his folder of media: "Останавливаю тебя, я не говорил ИДТИ
+ДЕЛАТЬ. МЫ НЕ ОБСУДИЛИ ЕЩЕ ДО КОНЦА!" and "любые проблемы которые мы обсуждаем ОБЯЗАНЫ БЫТЬ
+РАССМОТРЕНЫ К ДРУГИМ ПОДСИСТЕМАМ/КЕЙСАМ/МЕСТАМ". A scope named "the VHS panel" reads to him as "I
+will look through a crack at one panel and not study the rest". Now a rule in CLAUDE.md (a problem
+is a class, examined in every subsystem) and in `docs/orchestrator.md` (discussion is not a go).
 
 ## What the user repeated more than once
 
