@@ -7483,7 +7483,8 @@ impl KtApp {
         // mouse over a still picture takes a quarter of the processor"
         if let Some(ms) = self.perf.frame_ms {
             let f = |v: f32| format!("{v:.1}");
-            ui.weak(crate::tf!(k::perf::UI_FRAME, f(ms[0])));
+            let r = ui.weak(crate::tf!(k::perf::UI_FRAME, f(ms[0])));
+            crate::widgets::field_probe::note("diag.ui_frame", r.rect);
             ui.weak(crate::tf!(k::perf::UI_STAGES, f(ms[1]), f(ms[2]), f(ms[3]), f(ms[4]), f(ms[5]), f(ms[6])));
         }
         // "Economy UI" is not repeated here: the one switch lives in View (D4 — the owner's
