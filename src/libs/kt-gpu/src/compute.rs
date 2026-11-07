@@ -186,6 +186,7 @@ impl ComputeHost for ComputeDevice {
                 st
             })
             .collect();
+        kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.queue.submit([enc.finish()]);
         if let Some(e) = pollster::block_on(scope.pop()) {
             return Err(format!("compute job refused: {e}"));

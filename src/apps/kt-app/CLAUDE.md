@@ -6,7 +6,10 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 
 ## Redraw and frame cost (items 38–40, 53, 57)
 
-- **`animating` = "something is MOVING", not "something is lit".** Any new animated state must decay/converge and release the repaint in idle (250 ms). Lesson: `MeterState::is_active()` based on the condition "the bar is above the minimum" got stuck forever after the first sound → endless 60 fps while idle, the WHOLE system was heating up (t38, t20-repaint).
+- **At rest no frame is asked for at all** (idle-cpu; the tick of 4 Hz is gone). A background thread that has something to show calls `wake::now()` or, for a stream of small results, `wake::soon()`; a state on a clock adds its moment to `KtApp::rest_wake`. New code that polls a result inside the frame with neither of these shows it only when the mouse moves. The Diagnostics window alone samples on a clock, twice a second.
+- **The work counters are the verdict, not percent** (`kt_time::work`, read by the load watch and the live scenario `idle`). This machine rasterizes in software: most of the UI thread's frame goes to the driver's queue submit, which a card does not have. A new kind of work gets a `Work` row. `wake::news()` answers 0 under `cfg!(test)`: the harness's apps share a process.
+- **A hover frame does not lay the events out** (`EventPaint`). Frames with only pointer motion replay the events as meshes until the set of rectangles under the pointer changes; any other frame drops them, so its stamp has to name only what changes between two hover frames: a wake, the cache's epoch, the revision, the view.
+- **`animating` = "something is MOVING", not "something is lit".** Any new animated state must decay/converge and release the repaint. Lesson: `MeterState::is_active()` based on the condition "the bar is above the minimum" got stuck forever after the first sound → endless 60 fps while idle, the WHOLE system was heating up (t38, t20-repaint).
 - **The key of the preview frame is the tick, ALIGNED to the fps grid** (`preview_key_tick`), never a raw one. A raw tick changed every UI frame → a full recomposite + re-upload of the texture to the GPU 60 times per second (up to ~500 MB/s at 1080p) — "visually no 30 fps" with "FPS=60" (t39).
 - **No allocations/clones of structures in draw paths per frame.** Snapshots for a frame are `Arc` clones of the caches by revision (coverage/names/paths, model_rev / cache.epoch). The preview composition buffer is reused (`compose_preview_into`); the glow mip is rebuilt every 4th new frame.
 - **Thousands of painter primitives = a mesh.** The waveform was 2 `line_segment` per PIXEL; the glow of the meters — ~310 tessellated ellipses per frame. Both are a single `Mesh` (t40).
@@ -26,7 +29,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 
 ## GPU/platform (items 39, 53; video FX — items 181-187)
 
-- The wgpu default `PowerPreference::HighPerformance` picks the discrete card → on hybrid graphics the PRIME copy of every frame slows down the WHOLE system. The default is LowPower, `WGPU_POWER_PREF` overrides it; `WGPU_BACKEND=gl` — a bypass of Vulkan. The active adapter is shown in the performance panel ("GPU: …").
+- The wgpu default `PowerPreference::HighPerformance` picks the discrete card → on hybrid graphics the PRIME copy of every frame slows down the WHOLE system. So the default is LowPower, unless a discrete card alone drives the monitors: `kt_gpu::display_power_preference` (idle-cpu; sysfs says who drives them, so on Windows it stays LowPower). The owner's panel read an integrated Raphael GPU. `WGPU_POWER_PREF` overrides it; `WGPU_BACKEND=gl` — a bypass of Vulkan. The active adapter is shown in the performance panel ("GPU: …").
 - The software renderer is detected by adapter info; heavy glow is disabled with it.
 - **Video FX and composite — on the GPU, the one executor (R.29, compute-kernels-render)**: the kt-gpu engine is created on the first frame of `ui()` from the eframe device (and again when a project is opened — KtApp is recreated, sw_render is reset) and is injected via `player.set_video_gpu`. If it was not created → no picture, and the panel says so; DeviceLost → "poisoning" until the end of the session: no picture, a notice once (t185). A plan the executor refuses (`TooLarge`) has no picture either.
   The performance panel line "FX: GPU (…)" / "FX: GPU lost: …" / "FX: no device" must be honest. The render window shows `BackendLine::None` with the reason, and the export fails.
@@ -110,6 +113,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - `KT_PREVIEW_READBACK=1` — the preview's bytes path on the GPU (compare a picture or its cost with the display path, preview-throughput D2).
 - `KT_SIMD=0` — a forced scalar in the audio kernels (R.32): the AVX2 path is byte-for-byte equal to the scalar one, so the switch is visible only by speed.
 - `KT_DETACH_PREVIEW=1` — start with a detached preview.
+- `<KT_GEOM_DUMP>.load.json` — the load watch's counters and thread ticks, four times a second under the dump: at rest no frame writes the dump itself. `live-ctl` wakes the UI when the bench's file changes; a throttled dump asks for one more frame so the last state lands.
 - `KT_GEOM_DUMP=<file>` — write the timeline geometry for live scenarios (R.27): the zone of tracks, zoom, row centers in window coordinates.
 - `KT_FILE_PICK=<path>` — the answer of the system file-picker dialog (R.67): on Linux rfd goes through xdg-portal, which is absent in Xvfb, and silently returns "nothing"; the menu item in a live scenario is pressed for real, only the choice itself is substituted.
 - `KT_METER_DEMO=1` — feed fictitious levels into the meters: the look of the meter (glow, zones, peak strip) cannot be checked without audio hardware, and "by eye from the code" it has already broken twice.
@@ -190,6 +194,8 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 
 * **The `reel_preview` service** — the shape of a SERVICE (a queue, dedup, a negative cache, one job at a time), the key — `(reel, content_hash)`. **With R.58 (item 463) it has a DISK TIER** in the same sidecar — the `reel_*` tables keyed by (reel, revision, media file fingerprint). The earlier note "it is not put into the sidecar: its schema is keyed by the identity of the FILE" is WITHDRAWN: the identity of the file is what `ensure_media` is keyed by, not the schema — there are no foreign keys in it, and the media fingerprint we carry ourselves, because `content_hash` sees the edit but not a substitution of the file under it. DB reads and writes happen in the thread of the TASK; drawing does not touch sqlite at all.
 * **The request is placed BEFORE the draw loop and by key** — therefore scrolling and zooming do not generate orders (invariant 8), and a repeated request is removed by dedup.
+* **A release an event shows is never evicted** (idle-cpu, t1830). `set_live` tells the service what the view shows; `MAX_REELS_READY` bounds only the rest. A seventh release once went round: the cap evicted one, the frame asked for it, its job evicted the next, one job per UI frame, on a pause, driven by the mouse. `wants` answers before a request clones the document.
+* **One sidecar row per release, not per reel** (`reel_row`, t1831): an instance without overrides keeps the reel's id, a set of overrides has a negative row of its own. One row let the releases overwrite each other, and all but the last rendered on every opening.
 * **Pausing is mandatory:** the offline render decodes files, and during playback it would take the CPU away from real time (invariant 6).
 * **The frames go out BEFORE the peaks:** the audio of the reel is computed for longer, and until then the waveform is honestly empty. The mini-map remained a placeholder.
 * **The moment of the frame — the same map "event tick → material"** as for a file (t549): a slowed or mirrored instance is paged through correctly, and a second formula for this was not created.
@@ -331,8 +337,8 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   egui decides what is under a press from the frame before: a move and a press in one slow frame
   press what the pointer was over before (`Live._arrive`). A modifier released before its key is
   read lands in that frame with it (`Live.key`).
-- **`settle()` also ends on a still picture** (test-stability): an idle program ticks four times a
-  second, so at a frame step past 0.1 s frames never stop, and the wait burned its deadline.
+- **`settle()` also ends on a still picture** (test-stability): frames may go on for a long time
+  (the meters falling), and at a frame step past 0.1 s the wait burned its deadline.
   `poll_step` and `wait_playhead` stretch with the frame time (`stretched`), so a loop that counts
   attempts is not a clock limit in disguise.
 - **A hotkey chord is what was held when its key went down**, read from `Event::Key`, not from

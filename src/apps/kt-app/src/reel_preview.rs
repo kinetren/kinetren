@@ -61,7 +61,9 @@ pub const REEL_THUMB_H: u32 = crate::thumbs::THUMB_H;
 /// an hour-long reel the step simply becomes larger, and the job stays finite.
 pub const MAX_FRAMES_PER_REEL: usize = 48;
 
-/// How many reels we keep ready (LRU). A 320×180 RGBA frame is 230 KiB.
+/// How many reels we keep ready (LRU). A 320×180 RGBA frame is 230 KiB. Only what no event of the
+/// current view shows counts against it: a preview an event is waiting for is never evicted, or
+/// the seventh release sends the service round in a circle on a pause (idle-cpu, t1830).
 pub const MAX_REELS_READY: usize = 6;
 
 /// Negative cache cap (overflow means a full clear, as with thumbnails).
@@ -148,6 +150,10 @@ pub struct ReelPreviews {
     paused: bool,
     /// How many previews were ACTUALLY rendered (not taken from disk).
     renders: usize,
+    /// What the current view shows: each live key and its row in the sidecar (`set_live`).
+    live: HashMap<ReelKey, i64>,
+    /// Every row the document still uses, for `prune_reels`.
+    keep_rows: Arc<Vec<i64>>,
 }
 
 type ReelBody = dyn FnOnce(crate::bg::BgCtl, crate::bg::BgSend<ReelPartial>) -> ReelDone + Send;
@@ -211,6 +217,22 @@ impl ReelPreviews {
         self.queue.len() + usize::from(self.running.is_some())
     }
 
+    /// What the current view shows, from `KtApp::reel_keys`: a key here is never evicted.
+    /// `keep_rows` — the sidecar rows of the whole document.
+    pub fn set_live(&mut self, live: HashMap<ReelKey, i64>, keep_rows: Arc<Vec<i64>>) {
+        self.live = live;
+        self.keep_rows = keep_rows;
+    }
+
+    /// Does this key still need a job? Asked per frame, BEFORE a request has to clone the
+    /// document for its body: a reel being rendered or a reel that failed answers here, for free.
+    pub fn wants(&self, key: &ReelKey) -> bool {
+        !(self.ready.get(key).is_some_and(|(e, _)| e.peaks.is_some())
+            || self.failed.contains_key(key)
+            || self.running.as_ref().is_some_and(|(k, _)| k == key)
+            || self.queue.iter().any(|(k, _)| k == key))
+    }
+
     /// Reel request. Returns `false` if there is nothing to do: already
     /// ready, already being computed, already queued, or already failed.
     ///
@@ -226,16 +248,14 @@ impl ReelPreviews {
         // A FULL entry (frames AND envelope) — nothing to do; a strip without
         // peaks (the job was cancelled at the audio stage, R.67) is SKIPPED by the request;
         // otherwise the envelope would not appear until the next edit of the reel
-        let complete = self.ready.get(&key).is_some_and(|(e, _)| e.peaks.is_some());
-        if complete
-            || self.failed.contains_key(&key)
-            || self.running.as_ref().is_some_and(|(k, _)| *k == key)
-            || self.queue.iter().any(|(k, _)| *k == key)
-        {
+        if !self.wants(&key) {
             return false;
         }
+        let row = self.live.get(&key).copied().unwrap_or(key.seq.0 as i64);
+        let keep_rows = self.keep_rows.clone();
         let body = move |ctl: crate::bg::BgCtl, send: crate::bg::BgSend<ReelPartial>| {
-            render_reel_preview(ctl, send, key, &project, base.as_deref(), index_db.as_deref())
+            let disk = ReelRow { row, keep: &keep_rows };
+            render_reel_preview(ctl, send, key, &project, base.as_deref(), index_db.as_deref(), disk)
         };
         self.queue.push_back((key, Box::new(body)));
         true
@@ -307,6 +327,7 @@ impl ReelPreviews {
         if self.running.is_none()
             && let Some((key, body)) = self.queue.pop_front()
         {
+            kt_time::work::bump(kt_time::work::Work::ReelJob);
             let job = crate::bg::BgJob::spawn("reel-preview", body);
             job.set_paused(self.paused);
             self.running = Some((key, job));
@@ -368,14 +389,36 @@ impl ReelPreviews {
         let stamp = Cell::new(0);
         self.touch(&stamp);
         self.ready.insert(key, (Arc::new(e), stamp));
-        while self.ready.len() > MAX_REELS_READY {
-            let Some(oldest) = self.ready.iter().min_by_key(|(_, (_, s))| s.get()).map(|(k, _)| *k)
-            else {
-                break;
-            };
+        let live = self.ready.keys().filter(|k| self.live.contains_key(k)).count();
+        while self.ready.len() - live > MAX_REELS_READY.saturating_sub(live) {
+            let oldest = self
+                .ready
+                .iter()
+                .filter(|(k, _)| !self.live.contains_key(k))
+                .min_by_key(|(_, (_, s))| s.get())
+                .map(|(k, _)| *k);
+            let Some(oldest) = oldest else { break };
             self.ready.remove(&oldest);
         }
     }
+}
+
+/// The sidecar row of a release of a reel. An instance without overrides is the reel's own row. A
+/// set of overrides has a row of its own: one row per reel let the releases overwrite each other,
+/// and all but the last rendered again on every opening (idle-cpu, t1831). The row depends on the
+/// set and not on the reel's content, so an edit inside the reel replaces it.
+pub fn reel_row(seq: MediaId, overrides: &[kt_model::Override]) -> i64 {
+    if overrides.is_empty() {
+        return seq.0 as i64;
+    }
+    let h = xxhash_rust::xxh3::xxh3_64(format!("{} {overrides:?}", seq.0).as_bytes());
+    -((h >> 1) as i64) - 1
+}
+
+/// Where a job's preview lives in the sidecar, and what the sidecar keeps.
+pub struct ReelRow<'a> {
+    pub row: i64,
+    pub keep: &'a [i64],
 }
 
 /// Media the reel reads — including the reels nested within it.
@@ -453,8 +496,9 @@ pub fn render_reel_preview(
     p: &Project,
     base: Option<&std::path::Path>,
     index_db: Option<&std::path::Path>,
+    disk: ReelRow<'_>,
 ) -> ReelDone {
-    let seq_row = key.seq.0 as i64;
+    let seq_row = disk.row;
     let fp = media_fingerprint(p, base);
     // an opening that fails is a cache miss (the reel renders anew) — but not a SILENT one:
     // a lost disk tier must be visible in the log (t640/t795 under load showed a re-render
@@ -560,8 +604,10 @@ pub fn render_reel_preview(
         if let Err(e) = db.put_reel_frames(seq_row, key.hash, fp, step, end.0, &refs) {
             warn_db_once("write frames", &e);
         } else {
-            let keep: Vec<i64> =
-                std::iter::once(seq_row).chain(p.sequences.iter().map(|s| s.id.0 as i64)).collect();
+            let keep: Vec<i64> = std::iter::once(seq_row)
+                .chain(p.sequences.iter().map(|s| s.id.0 as i64))
+                .chain(disk.keep.iter().copied())
+                .collect();
             if let Err(e) = db.prune_reels(&keep) {
                 warn_db_once("prune", &e);
             }

@@ -1175,6 +1175,8 @@ impl KtApp {
         // raising a fade at all). The frame wait works with 100 ms precision —
         // that is enough for everyone who asks for it.
         if self.geom_dumped_at.is_some_and(|t| now.duration_since(t).as_millis() < 100) {
+            // the last frame before rest must reach the dump: nothing else follows it
+            crate::wake::later(std::time::Duration::from_millis(100));
             return;
         }
         self.geom_dumped_at = Some(now);
@@ -1340,10 +1342,83 @@ impl KtApp {
             geom.view_start,
             rows.join(",")
         );
+        let work: Vec<String> = kt_time::work::Work::ALL
+            .iter()
+            .zip(kt_time::work::totals())
+            .map(|(w, n)| format!("\"{}\":{n}", w.name()))
+            .collect();
+        let json = json.replacen('{', &format!("{{\"work\":{{{}}},", work.join(",")), 1);
         let tmp = format!("{path}.tmp");
         if std::fs::write(&tmp, json).is_ok() {
             let _ = std::fs::rename(&tmp, &path);
         }
+    }
+}
+
+/// What decides the events' picture, apart from the pointer. Any frame that is not a pure hover
+/// drops the kept meshes, so this only has to name what can change between two hover frames.
+pub(crate) type EventStamp =
+    (u64, u64, u64, (u64, u64, u32), egui::Rect, u32, [usize; 2]);
+
+/// The events of the timeline as ready meshes, kept across the frames of a pointer passing over
+/// static things. Valid while the same rectangles lie under the pointer: only those are outlined.
+pub(crate) struct EventPaint {
+    stamp: EventStamp,
+    rects: Vec<egui::Rect>,
+    under: Vec<usize>,
+    meshes: Vec<(egui::Rect, std::sync::Arc<egui::Mesh>)>,
+}
+
+impl EventPaint {
+    fn under(rects: &[egui::Rect], hover: Option<egui::Pos2>) -> Vec<usize> {
+        let Some(h) = hover else { return Vec::new() };
+        rects.iter().enumerate().filter(|(_, r)| r.contains(h)).map(|(i, _)| i).collect()
+    }
+
+    fn fits(&self, stamp: EventStamp, hover: Option<egui::Pos2>) -> bool {
+        self.stamp == stamp && Self::under(&self.rects, hover) == self.under
+    }
+
+    /// Tessellate what this frame drew into `layer` from `first` on.
+    fn capture(
+        ctx: &egui::Context,
+        layer: egui::LayerId,
+        first: usize,
+        rects: Vec<egui::Rect>,
+        stamp: EventStamp,
+        hover: Option<egui::Pos2>,
+    ) -> EventPaint {
+        let shapes: Vec<egui::epaint::ClippedShape> = ctx.graphics(|g| {
+            g.get(layer).map_or(Vec::new(), |l| l.all_entries().skip(first).cloned().collect())
+        });
+        // the atlas's prepared discs are an optimisation for small circles, and only `fonts` of
+        // the frame's end reaches them: without them a disc is an ordinary path
+        let size = ctx.fonts(|f| f.font_image_size());
+        let mut tess = egui::epaint::Tessellator::new(
+            ctx.pixels_per_point(),
+            ctx.tessellation_options(|o| *o),
+            size,
+            Vec::new(),
+        );
+        let meshes = tess
+            .tessellate_shapes(shapes)
+            .into_iter()
+            .filter_map(|p| match p.primitive {
+                egui::epaint::Primitive::Mesh(m) => Some((p.clip_rect, std::sync::Arc::new(m))),
+                egui::epaint::Primitive::Callback(_) => None,
+            })
+            .collect();
+        let under = Self::under(&rects, hover);
+        EventPaint { stamp, rects, under, meshes }
+    }
+
+    fn replay(&self, ctx: &egui::Context, layer: egui::LayerId) {
+        ctx.graphics_mut(|g| {
+            let list = g.entry(layer);
+            for (clip, mesh) in &self.meshes {
+                list.add(*clip, egui::Shape::Mesh(mesh.clone()));
+            }
+        });
     }
 }
 
@@ -4171,14 +4246,13 @@ impl KtApp {
         // The key is per INSTANCE (R.59, stage 3): an instance with
         // overrides has its own revision of the reel and its own frames.
         let reel_keys = self.reel_keys();
-        let wanted: Vec<(crate::reel_preview::ReelKey, Vec<kt_model::Override>)> = self
-            .model
-            .project()
-            .clips
+        let wanted: Vec<(crate::reel_preview::ReelKey, ClipId)> = reel_keys
             .iter()
-            .filter_map(|c| Some((*reel_keys.get(&c.id)?, c.overrides.clone())))
+            .filter(|(_, key)| self.reel_previews.wants(key))
+            .map(|(id, key)| (*key, *id))
             .collect();
-        for (key, ov) in wanted {
+        for (key, id) in wanted {
+            let ov = self.model.clip(id).map(|c| c.overrides.clone()).unwrap_or_default();
             self.request_reel_preview(key, &ov);
         }
         let peaks = self.peaks.lock().unwrap();
@@ -4187,7 +4261,40 @@ impl KtApp {
         // order = the order of the ENGINE COMPOSITION: a later clip lies on top of an
         // earlier one, as in the preview (item 177 — until now the strip drew in
         // the project list order and could show a source other than the one in the frame)
-        for c in draw_order.iter().filter_map(|&i| self.model.project().clips.get(i)) {
+        // A pointer passing over the timeline changes one rectangle's outline at most, and the
+        // events were laid out, shaped and tessellated again for it: the frame of a static hover
+        // scaled with what the view held, so with the scroll (idle-cpu, kkt-26.11.07 item E2).
+        // Those frames reuse the events as ready meshes (`EventPaint`).
+        let event_layer = painter.layer_id();
+        let stamp = (
+            crate::wake::news(),
+            self.player.cache.epoch(),
+            self.model_rev,
+            (geom.view_start.to_bits(), geom.tpp.to_bits(), geom.view_top.to_bits()),
+            rect,
+            ui.ctx().pixels_per_point().to_bits(),
+            ui.ctx().fonts(|f| f.font_image_size()),
+        );
+        // no events at all is a frame of a clock or a falling meter: `stamp` has seen any news
+        let hover_only = ui.ctx().input(|i| {
+            !i.pointer.any_down()
+                && i.events.iter().all(|e| matches!(e, egui::Event::PointerMoved(_) | egui::Event::MouseMoved(_)))
+        }) && self.drag.is_none()
+            && self.render_job.is_none()
+            && !self.player.transport.is_playing();
+        if !hover_only {
+            self.event_paint = None;
+        }
+        let reuse = hover_only && self.event_paint.as_ref().is_some_and(|p| p.fits(stamp, hover));
+        let capture = (hover_only && !reuse).then(|| {
+            ui.ctx().graphics(|g| g.get(event_layer).map_or(0, |l| l.next_idx().0))
+        });
+        if !reuse {
+            self.event_passes += 1;
+            kt_time::work::bump(kt_time::work::Work::EventPass);
+        }
+        let mut event_rects = Vec::new();
+        for c in draw_order.iter().filter(|_| !reuse).filter_map(|&i| self.model.project().clips.get(i)) {
             let (start, end, lane) = match &self.drag {
                 Some(Drag::Clip(d)) if d.id == c.id => (d.cur_start, d.cur_end, d.cur_lane),
                 // the other events of the group move by the same shift (R.33 item 7)
@@ -4246,6 +4353,9 @@ impl KtApp {
                 egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22),
                 egui::Color32::TRANSPARENT,
             );
+            if capture.is_some() {
+                event_rects.push(clip_rect);
+            }
             let hovered =
                 hover.map(|h| clip_rect.contains(h) && self.drag.is_none()).unwrap_or(false);
             if hovered && !selected {
@@ -4748,6 +4858,12 @@ impl KtApp {
             }
         }
         drop(peaks);
+        if let Some(first) = capture {
+            self.event_paint = Some(EventPaint::capture(ui.ctx(), event_layer, first, event_rects, stamp, hover));
+        }
+        if reuse && let Some(p) = &self.event_paint {
+            p.replay(ui.ctx(), event_layer);
+        }
 
         // ---- named areas (R.35 item 2) --------------------------------
         // We do NOT make a separate strip (rule 13): the area is drawn as an outline

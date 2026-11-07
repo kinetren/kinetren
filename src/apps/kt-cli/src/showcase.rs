@@ -105,6 +105,12 @@ fn spread(i: usize) -> f64 {
     (i as f64 * 0.618_033_988_75).fract()
 }
 
+/// The chain of the idle-load guard (idle-cpu): the owner's report names exactly these three
+/// over a composition.
+fn heavy_chain() -> Vec<FxInstance> {
+    vec![slowed(), look("vhs_tape", "fxreg.var.dirty_heads"), look("camera_isp", "fxreg.var.phone_night")]
+}
+
 #[allow(clippy::too_many_arguments)]
 fn clip(
     id: u64,
@@ -249,7 +255,7 @@ fn slowed_curves(si: f64, dur: f64) -> Vec<Vec<ParamCurve>> {
 }
 
 /// Build the showcase project from probed sources (already sorted by name).
-pub fn build(src: &[Source]) -> Project {
+pub fn build(src: &[Source], heavy: bool) -> Project {
     let mut p = Project::new(ProjectSettings {
         fps: 25,
         width: 1920,
@@ -420,7 +426,11 @@ pub fn build(src: &[Source]) -> Project {
     p.sequences.push(reel);
     // intro: the reel as authored; middle of the edit: its own title,
     // a stronger glow and another picture
-    clips.push(clip(id(), ClipKind::Video, 0, 0.0, reel_len, reel_len * 0.5, REEL.0, 0.0));
+    let mut intro = clip(id(), ClipKind::Video, 0, 0.0, reel_len, reel_len * 0.5, REEL.0, 0.0);
+    if heavy {
+        intro.fx = heavy_chain();
+    }
+    clips.push(intro);
     let other_pic = vids[(vids.iter().position(|&v| v == pip_src).unwrap_or(0) + 3) % nv];
     // a little before the middle: the plain 16:9 cut after it stays alone on screen for the
     // README's effect shots, and the hero catches this instance over a styled cut
@@ -431,7 +441,21 @@ pub fn build(src: &[Source]) -> Project {
         Override::value(p_glow, ParamValue::Num(0.9)),
         Override::value(p_pic, ParamValue::Media(MediaId(other_pic as u64 + 1))),
     ];
+    if heavy {
+        c.fx = heavy_chain();
+    }
     clips.push(c);
+    if heavy {
+        // eight more releases of the reel, each with its own title: more live previews than the
+        // service's old cap, which then evicted and rendered them in a circle at rest
+        for i in 0..8 {
+            let at = reel_at + reel_len * (2.0 + i as f64) * 1.1;
+            let mut c = clip(id(), ClipKind::Video, 0, at, reel_len, reel_len * 0.5, REEL.0, 0.0);
+            c.overrides = vec![Override::value(p_title, ParamValue::Text(format!("RELEASE {i}")))];
+            c.fx = heavy_chain();
+            clips.push(c);
+        }
+    }
     let t2 = title("nonlinear video editor", 0.06, 0.82);
     let m2 = gen_media(&mut p, &t2);
     let at2 = total * 0.4;
@@ -526,6 +550,23 @@ pub fn build(src: &[Source]) -> Project {
         -22.0,
     ));
 
+    if heavy {
+        // a dense edit under the montage: what a per-frame walk over the events would scale with
+        const DENSE_LANES: u32 = 6;
+        const DENSE_LEN: f64 = 0.5;
+        p.ensure_tracks(LaneKind::Video, 3 + DENSE_LANES);
+        for lane in 0..DENSE_LANES {
+            for i in 0..(total / DENSE_LEN) as usize {
+                let v = vids[(i + lane as usize) % nv];
+                let si = spread(i) * (src[v].dur - DENSE_LEN).max(0.0);
+                let mut c = clip(id(), ClipKind::Video, 3 + lane, i as f64 * DENSE_LEN, DENSE_LEN, si, v as u64 + 1, 0.0);
+                if i % 4 == 0 {
+                    c.fx = heavy_chain();
+                }
+                clips.push(c);
+            }
+        }
+    }
     p.clips = clips;
     p.transitions = transitions;
 
@@ -603,7 +644,7 @@ pub fn build(src: &[Source]) -> Project {
         ticks_per_px: (t(total).0 as f64 / 1500.0).max(1.0),
         // inside the looped region, a moment before the mid-edit reel instance: the README's
         // hero presses Space here and is shot ~3 s later, with the stinger over a styled cut
-        cursor: t(reel_at - 2.6).0,
+        cursor: t(if heavy { reel_at + 0.5 } else { reel_at - 2.6 }).0,
         bin_free: true,
         bin_layout: free_grid(&[&footage, &tracks, &generated]),
         bin_groups: [("FOOTAGE", footage), ("MUSIC", tracks), ("GENERATED", generated)]
@@ -617,12 +658,13 @@ pub fn build(src: &[Source]) -> Project {
     p
 }
 
-/// `kt-cli showcase <out.kt> --sources <dir> [--force]`.
+/// `kt-cli showcase <out.kt> --sources <dir> [--heavy] [--force]`. `--heavy` lays Slowed, VHS Tape
+/// and Camera ISP over both instances of the reel: the project of the idle-load guard (idle-cpu).
 pub fn run(args: &[String], force: bool) -> i32 {
     let out = args.get(1).filter(|a| !a.starts_with("--"));
     let dir = args.iter().position(|a| a == "--sources").and_then(|i| args.get(i + 1));
     let (Some(out), Some(dir)) = (out, dir) else {
-        eprintln!("usage: kt-cli showcase <out.kt> --sources <dir> [--force]");
+        eprintln!("usage: kt-cli showcase <out.kt> --sources <dir> [--heavy] [--force]");
         return 2;
     };
     let src = match scan(dir) {
@@ -632,7 +674,7 @@ pub fn run(args: &[String], force: bool) -> i32 {
             return 1;
         }
     };
-    let p = build(&src);
+    let p = build(&src, args.iter().any(|a| a == "--heavy"));
     if let Err(e) = p.validate() {
         eprintln!("showcase project is invalid: {e:?}");
         return 1;

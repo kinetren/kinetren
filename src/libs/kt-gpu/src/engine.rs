@@ -1385,6 +1385,7 @@ impl GpuFxEngine {
             },
             wgpu::Extent3d { width: t.w, height: t.h, depth_or_array_layers: 1 },
         );
+        kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         g.queue.submit([enc.finish()]);
         let slice = buf.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
@@ -1531,6 +1532,7 @@ impl Inner {
             },
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
+        kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         let sub = self.queue.submit([enc.finish()]);
         *slot.mapped.lock().unwrap() = None;
         let mapped = slot.mapped.clone();
@@ -1650,6 +1652,7 @@ impl Inner {
                 self.pool.release(result);
             }
             let submit = Instant::now();
+            kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.queue.submit([enc.finish()]);
             self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
         }
@@ -1803,6 +1806,7 @@ impl Inner {
             },
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
+        kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.queue.submit([enc.finish()]);
         self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
         self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;

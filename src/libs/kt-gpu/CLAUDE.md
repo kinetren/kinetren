@@ -101,8 +101,9 @@ is no picture, and an export refuses.
   never write a buffer of a frame in flight by mapping it. The ring neither asks nor fills the
   readback memo (an export composes every moment once). t1457 holds the ring to `execute_into`.
 - `UploadCache` keeps up to four evicted textures per size for reuse.
-- `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI stays
-  LowPower, invariant 12). A software rasterizer (llvmpipe/lavapipe) is a device like any other.
+- `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI and the offline
+  engine ask `display_power_preference`: a discrete card that alone drives the monitors, else
+  LowPower, invariant 12, idle-cpu). A software rasterizer (llvmpipe/lavapipe) is a device like any other.
 - `export_engines()` (compute-kernels-render, D4): llvmpipe runs one frame per queue, so a software
   adapter gets a device per frame worker, an eighth of the cores, 2 to 4, as many as the memory
   holds (`memory.rs`, gpu-render-hardening D1); a card gets one. `KT_VIDEO_ENGINES` overrides it.

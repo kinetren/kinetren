@@ -151,6 +151,7 @@ impl MediaWorker {
     }
 
     pub fn submit(&self, req: DecodeRequest) {
+        kt_time::work::bump(kt_time::work::Work::DecodeRequest);
         let mut q = self.shared.queue.lock().unwrap();
         if req.generation < self.shared.min_generation.load(Ordering::Acquire) {
             return;
@@ -554,12 +555,14 @@ fn read_chunk(
         return source.read_video_span_qualities(&sized, &mut |k, q, frame| {
             let wh = (q.width, q.height);
             done((k.0, Some(wh)));
+            kt_time::work::bump(kt_time::work::Work::Decoded);
             cache.insert_video_span(source_id, Some(q), k.0, step_of(k.0, Some(wh)), Arc::new(frame));
         });
     }
     let pts: Vec<Tick> = chunk.iter().map(|k| Tick(k.pts)).collect();
     source.read_video_span(&pts, None, &mut |k, frame| {
         done((k.0, None));
+        kt_time::work::bump(kt_time::work::Work::Decoded);
         cache.insert_video_span(source_id, None, k.0, step_of(k.0, None), Arc::new(frame));
     })
 }

@@ -1061,6 +1061,24 @@ log_empty = "no se han detectado problemas"
 # Threshold warnings in the problem log.
 flight_save = "Guardar el registro de reproducción"
 flight_stalls = "congelaciones: {0}"
+load_rest = "Procesador {0} %, en reposo"
+load_line = "Procesador {0} %: {1}"
+load_work = "Trabajo por segundo: {0}"
+load_report = "Abrir el informe de carga"
+load_report_hint = "El programa escribe load-report.txt durante una carga y se queda en este equipo"
+
+[perf.work]
+ui_frames = "fotogramas"
+composites = "composiciones"
+device_submits = "envíos al dispositivo"
+decode_requests = "pedidos de decodificación"
+decoded = "decodificado"
+prefetch_passes = "pasadas de precarga"
+audio_renders = "bloques de audio"
+thumb_orders = "pedidos de miniaturas"
+fx_thumbs = "celdas de efectos"
+reel_jobs = "vistas previas de composición"
+event_passes = "pasadas de eventos"
 
 [perf.note]
 ui_stall = "el hilo de la interfaz quedó bloqueado {0} ms dentro de un fotograma"

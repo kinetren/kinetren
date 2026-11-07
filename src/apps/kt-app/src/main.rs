@@ -21,6 +21,8 @@ mod ctx_menu;
 mod controls_tests;
 #[cfg(test)]
 mod diag_tests;
+#[cfg(test)]
+mod idle_tests;
 mod envclip;
 mod deck_face;
 mod eq_graph;
@@ -43,6 +45,7 @@ mod journal;
 #[cfg(test)]
 mod layout_tests;
 mod lessons;
+mod load_watch;
 #[cfg(test)]
 mod mask_tests;
 mod maskctl;
@@ -84,6 +87,7 @@ mod user_store;
 mod welcome;
 mod util;
 mod widgets;
+mod wake;
 mod window_frame;
 mod window_shell;
 

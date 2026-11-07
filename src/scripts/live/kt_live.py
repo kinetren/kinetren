@@ -274,6 +274,7 @@ class Live:
         self._raised = False
         self._at = None
         self._clicked_at = 0.0
+        self._poked = 0.0
         # a direct read of a point is accepted only after reconciliation with the reference
         self._direct_px = None
         # OBSERVED frame step: under four workers the software render goes
@@ -441,6 +442,13 @@ class Live:
         with open(self.ctl_path, "w") as f:
             f.write(f"{seq} {cmd} {arg}\n")
         return seq
+
+    def _poke(self):
+        """Ask for a frame (idle-cpu): a program at rest draws none, and a wait for one would
+        burn its deadline. The stand's channel wakes the UI; a command changes nothing."""
+        if getattr(self, "ctl_path", None) and time.time() - self._poked >= 0.05:
+            self._poked = time.time()
+            self._ctl("noop")
 
     def _wait_ctl(self, seq, timeout=30.0):
         deadline = time.time() + timeout
@@ -630,6 +638,7 @@ class Live:
             frame, seen = self._counters()
             if seen > input0 and frame >= frame0 + 2:
                 return True
+            self._poke()
             _poll()
         return False
 
@@ -656,6 +665,7 @@ class Live:
             if self._frame_now() >= target:
                 self._note_frame_gap((time.time() - started) / max(n, 1))
                 return True
+            self._poke()
             _poll()
         if soft:
             return False
