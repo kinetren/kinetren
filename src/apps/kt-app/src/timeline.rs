@@ -4275,9 +4275,10 @@ impl KtApp {
             ui.ctx().pixels_per_point().to_bits(),
             ui.ctx().fonts(|f| f.font_image_size()),
         );
-        // no events at all is a frame of a clock or a falling meter: `stamp` has seen any news
+        // a frame with no events is not a hover: it came for a reason the stamp may not name
         let hover_only = ui.ctx().input(|i| {
-            !i.pointer.any_down()
+            !i.events.is_empty()
+                && !i.pointer.any_down()
                 && i.events.iter().all(|e| matches!(e, egui::Event::PointerMoved(_) | egui::Event::MouseMoved(_)))
         }) && self.drag.is_none()
             && self.render_job.is_none()
