@@ -2359,7 +2359,14 @@ impl KtApp {
         // the meter's slow fall on a pause moves less than a pixel per step, at the decay's own
         // 25 ms: the window has no reason to redraw faster than the bar does (idle-cpu)
         let falling = self.meter.is_active().then_some(METER_FALL_STEP);
+        // A gesture lands anywhere in the frame, and the panels before it have drawn already: a
+        // window's Done is read after the preview under it. One more frame shows what it did; the
+        // tick used to hide this. A pointer passing changes nothing a later frame would show.
+        let gesture = ctx.input(|i| {
+            i.events.iter().any(|e| !matches!(e, egui::Event::PointerMoved(_) | egui::Event::MouseMoved(_)))
+        });
         let delay = repaint_delay(animating, economy)
+            .or(gesture.then_some(std::time::Duration::ZERO))
             .or(falling)
             .or_else(|| self.rest_wake());
         if let Some(delay) = delay {
