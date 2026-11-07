@@ -184,6 +184,14 @@ pub struct Player {
     /// Graph cache for sample_levels_at (item 1): (version, renderer, store).
     levels_probe: Mutex<Option<(u64, AudioRenderer, FxStateStore)>>,
     pub loop_stats: Arc<LoopStats>,
+    /// What the audio render thread's final-mix store holds (cached-range-plays), as it last
+    /// published it.
+    pub mix_coverage: crate::mix::MixCoverage,
+    /// The moments the preview presented and the executor's key for each, with the versions they
+    /// were presented at (cached-range-plays): the bars' "plays without work" for video.
+    shown: Mutex<std::collections::BTreeMap<i64, (u64, u64, u64)>>,
+    /// Bumped when `shown` gains a moment or a moment's key changes.
+    shown_gen: AtomicU64,
 }
 
 /// State of the preview GPU executor (R.29).
@@ -249,6 +257,7 @@ impl Player {
         let stop = Arc::new(AtomicBool::new(false));
         let underruns = Arc::new(AtomicU64::new(0));
         let flight = Arc::new(crate::flight::FlightRecorder::new());
+        let mix_coverage = crate::mix::MixCoverage::default();
 
         let (producer, consumer) =
             rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * AUDIO_CHANNELS);
@@ -269,6 +278,7 @@ impl Player {
             let loop_region = loop_region.clone();
             let flight_r = flight.clone();
             let natives_r = natives.clone();
+            let mix_r = mix_coverage.clone();
             std::thread::Builder::new()
                 .name("audio-render".into())
                 .spawn(move || {
@@ -289,6 +299,7 @@ impl Player {
                         loop_region,
                         flight: flight_r,
                         natives: natives_r,
+                        mix_coverage: mix_r,
                     })
                 })
                 .expect("spawn audio render")
@@ -309,12 +320,13 @@ impl Player {
             let quality = preview_quality.clone();
             let region_p = loop_region.clone();
             let shared_p = shared.clone();
+            let mix_p = mix_coverage.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, natives_p, project, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p, shared_p,
+                        stats_p, version_p, content_p, region_p, shared_p, mix_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -350,6 +362,9 @@ impl Player {
             gen_states: Mutex::new(HashMap::new()),
             loop_stats,
             levels_probe: Mutex::new(None),
+            mix_coverage,
+            shown: Mutex::new(std::collections::BTreeMap::new()),
+            shown_gen: AtomicU64::new(0),
         };
         // generator sources are raised by the player ITSELF: their addresses
         // are derived from events, and the caller has nowhere to take them from
@@ -981,6 +996,23 @@ impl Player {
         match done {
             Ok(complete) => {
                 let stages = exec.last_stages();
+                if stages.replayed {
+                    kt_time::work::bump(kt_time::work::Work::CompositeReplay);
+                }
+                // what the executor keeps for this moment, for the bars (cached-range-plays)
+                if complete
+                    && matches!(target, Target::Display(_))
+                    && let Some(key) = exec.present_key(&plan)
+                {
+                    let versions = (
+                        self.project_version.load(Ordering::Acquire),
+                        self.content_version.load(Ordering::Acquire),
+                    );
+                    let entry = (key, versions.0, versions.1);
+                    if self.shown.lock().unwrap().insert(aligned.0, entry) != Some(entry) {
+                        self.shown_gen.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 Some((q, complete, true, exec.last_cost(), plan_ns, stages))
             }
             Err(GpuExecError::TooLarge { .. } | GpuExecError::Unsupported(_)) => None,
@@ -989,6 +1021,81 @@ impl Player {
                 None
             }
         }
+    }
+
+    /// The moments that play without work (cached-range-plays): the executor holds the composite
+    /// presented there, and it is still the composite the current plan asks for. A moment
+    /// presented before an edit is checked again against the new plan — at most
+    /// `FINAL_RECHECK` per call, so an edit never makes the UI wait; `pending` says some are
+    /// left. Runs of ticks, each moment `[t, t + frame)`.
+    pub fn final_video_runs(&self) -> (Vec<std::ops::Range<i64>>, bool) {
+        const FINAL_RECHECK: usize = 32;
+        let exec = {
+            let g = self.video_gpu.lock().unwrap();
+            if g.poisoned.is_none() { g.exec.clone() } else { None }
+        };
+        let Some(exec) = exec else { return (Vec::new(), false) };
+        let now = (
+            self.project_version.load(Ordering::Acquire),
+            self.content_version.load(Ordering::Acquire),
+        );
+        let stale: Vec<i64> = {
+            let mut shown = self.shown.lock().unwrap();
+            shown.retain(|_, (key, _, _)| exec.holds(*key));
+            shown.iter().filter(|(_, (_, p, c))| (*p, *c) != now).map(|(t, _)| *t).collect()
+        };
+        let pending = stale.len() > FINAL_RECHECK;
+        let checked: Vec<(i64, Option<u64>)> = if stale.is_empty() {
+            Vec::new()
+        } else {
+            let q = self.preview_quality();
+            let video = self.video.lock().unwrap();
+            stale
+                .into_iter()
+                .take(FINAL_RECHECK)
+                .map(|t| (t, exec.present_key(&video.frame_plan(&self.cache, Tick(t), q))))
+                .collect()
+        };
+        let step = self.video_grid().frame_step();
+        let mut shown = self.shown.lock().unwrap();
+        for (t, key) in checked {
+            match (shown.get_mut(&t), key) {
+                (Some(e), Some(k)) if e.0 == k => (e.1, e.2) = now,
+                _ => {
+                    shown.remove(&t);
+                }
+            }
+        }
+        let mut runs: Vec<std::ops::Range<i64>> = Vec::new();
+        for (t, (_, p, c)) in shown.iter() {
+            if (*p, *c) != now {
+                continue;
+            }
+            match runs.last_mut() {
+                Some(r) if r.end >= *t => r.end = r.end.max(t + step),
+                _ => runs.push(*t..t + step),
+            }
+        }
+        (runs, pending)
+    }
+
+    /// Changes when what plays without work may have changed (a new kept moment, a published
+    /// final mix): a part of the bars' stamp.
+    pub fn final_stamp(&self) -> u64 {
+        let mix = Arc::as_ptr(&self.mix_coverage.get()) as u64;
+        self.shown_gen.load(Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ mix
+    }
+
+    /// The timeline ticks whose final mix the audio render thread holds and would hand out now
+    /// (cached-range-plays), as it last published them.
+    pub fn final_audio_runs(&self) -> Vec<std::ops::Range<i64>> {
+        let region = *self.loop_region.lock().unwrap();
+        self.mix_coverage
+            .get()
+            .playing(region)
+            .into_iter()
+            .map(|r| Tick::from_audio_frames(r.start).0..Tick::from_audio_frames(r.end).0)
+            .collect()
     }
 
     /// The layers of the frame at `t` the cache does not hold (a diagnostic of `preview_bench`).
@@ -1066,6 +1173,7 @@ struct RenderCtx {
     master_gain: Arc<AtomicU32>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
     flight: Arc<crate::flight::FlightRecorder>,
+    mix_coverage: crate::mix::MixCoverage,
     /// Facts of open sources: from them the render thread takes the END OF
     /// MATERIAL (R.63 item 2) — without it honest silence past the file's end
     /// would be counted as starvation.
@@ -1081,6 +1189,17 @@ type Workers = Arc<std::sync::RwLock<HashMap<MediaId, MediaWorker>>>;
 /// proceduralness): only the open source knows them, and the renderer needs them
 /// on every rebuild.
 type Natives = Arc<std::sync::RwLock<crate::video::SourceFacts>>;
+
+/// Build the audio renderer of the current project on a thread of its own (cached-range-plays):
+/// the render thread keeps playing with the old one until it arrives.
+fn spawn_renderer_build(project: Arc<Mutex<Project>>) -> std::sync::mpsc::Receiver<AudioRenderer> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _ = std::thread::Builder::new().name("audio-build".into()).spawn(move || {
+        let p = project.lock().unwrap().clone();
+        let _ = tx.send(AudioRenderer::new(&p));
+    });
+    rx
+}
 
 fn audio_render_loop(ctx: RenderCtx) {
     let RenderCtx {
@@ -1100,10 +1219,19 @@ fn audio_render_loop(ctx: RenderCtx) {
         loop_region,
         flight,
         natives,
+        mix_coverage,
     } = ctx;
     let mut store = FxStateStore::new();
     let mut renderer = AudioRenderer::new(&project.lock().unwrap().clone());
     renderer.sync_fx(&mut store);
+    // the final mix of what was heard (cached-range-plays): a covered range plays from it
+    let mut mix = crate::mix::MixPlay::default();
+    let mut mix_published = std::time::Instant::now();
+    // A rebuild during playback runs on a builder thread: on a large edit it costs longer than
+    // the ring holds (412 ms against 341 ms on the owner's project), and the old renderer plays
+    // until the new one is ready instead of the sound stopping.
+    let mut building: Option<std::sync::mpsc::Receiver<AudioRenderer>> = None;
+    let mut build_again = false;
     let mut fetcher = CacheFetcher::with_lengths(cache.clone(), &natives.read().unwrap().lengths);
     let mut fetcher_facts = natives.read().unwrap().lengths.len();
     // the local render position (frames); may lead the playhead by the ring
@@ -1131,8 +1259,31 @@ fn audio_render_loop(ctx: RenderCtx) {
 
     while !stop.load(Ordering::Acquire) {
         if dirty.swap(false, Ordering::AcqRel) {
-            renderer = AudioRenderer::new(&project.lock().unwrap().clone());
-            renderer.sync_fx(&mut store); // state survives a rebuild (inv. 3)
+            if !transport.is_playing() && building.is_none() {
+                // nothing sounds: the render thread may wait for it
+                renderer = AudioRenderer::new(&project.lock().unwrap().clone());
+                renderer.sync_fx(&mut store); // state survives a rebuild (inv. 3)
+                mix.revalidate(&renderer);
+            } else if building.is_some() {
+                build_again = true;
+            } else {
+                building = Some(spawn_renderer_build(project.clone()));
+            }
+        }
+        if let Some(rx) = &building {
+            match rx.try_recv() {
+                Ok(r) => {
+                    renderer = r;
+                    renderer.sync_fx(&mut store); // state survives a rebuild (inv. 3)
+                    mix.revalidate(&renderer);
+                    building = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => building = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+            if building.is_none() && std::mem::take(&mut build_again) {
+                building = Some(spawn_renderer_build(project.clone()));
+            }
         }
         // The source could appear AFTER the stream started (opening the project,
         // a missing file coming back): the fetcher's material edges must be
@@ -1143,6 +1294,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             if facts.lengths.len() != fetcher_facts {
                 fetcher_facts = facts.lengths.len();
                 fetcher = CacheFetcher::with_lengths(cache.clone(), &facts.lengths);
+                // a source came or went: what was rendered without it is not its sound
+                mix.store.clear();
             }
         }
         let generation = transport.generation();
@@ -1152,6 +1305,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             start_wait = None;
             last_generation = generation;
             store.reset_all(); // pre-roll at the next read
+            mix.fx_reset();
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
             flight.push(crate::flight::Ev::Seek, render_head, 0);
@@ -1176,6 +1330,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             starting = true;
             start_wait = None;
             store.reset_all();
+            mix.fx_reset();
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
@@ -1189,6 +1344,8 @@ fn audio_render_loop(ctx: RenderCtx) {
                     Some((rs, re)) => flight.push(crate::flight::Ev::Region, rs, re),
                     None => flight.push(crate::flight::Ev::Region, -1, 0),
                 }
+                // the laps of another region will not be heard again
+                mix.store.retain_laps(region);
             }
             loop_armed = loop_arm_after_jump(transport.playhead_frames(), region, dir);
             last_region = region;
@@ -1204,6 +1361,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             // system (the armed render_head leads the playhead by laps).
             flight.push(crate::flight::Ev::Reset, transport.playhead_frames(), 0);
             store.reset_all();
+            mix.fx_reset();
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
@@ -1250,9 +1408,23 @@ fn audio_render_loop(ctx: RenderCtx) {
 
         if transport.is_playing() {
             let gain = f32::from_bits(master_gain.load(Ordering::Acquire));
+            // what the final-mix store holds needs no source (cached-range-plays): neither the
+            // look-ahead nor a start orders it
+            let held = |from: i64, n: i64| {
+                dir > 0
+                    && crate::mix::pieces(from, n, effective_region).iter().all(|&(ctx, tl, m)| {
+                        mix.store.holds(ctx, tl, m, &|k| {
+                            let u = AUDIO_BURST_FRAMES as i64;
+                            renderer.scene_hash(k * u..(k + 1) * u)
+                        })
+                    })
+            };
+            let look_now =
+                (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0)) as i64;
             // request the nearest audio with Playback priority (idempotent);
             // in a loop we request via the wrap mapping
             match effective_region {
+                _ if held(render_head, look_now) => {}
                 Some((rs, re))
                     if re > rs && (if dir < 0 { render_head <= re } else { render_head >= rs }) =>
                 {
@@ -1337,7 +1509,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             // a start waits until the bursts of a whole ring are there: the fill below is one
             // pass over all of it, and what is missing now would be silence, not a late burst.
             // Plus the look-ahead margin: the first refill reads just past the ring.
-            let audio_missing = starting && {
+            let audio_missing = starting && !held(render_head, RING_CAPACITY_FRAMES as i64) && {
                 let ring = RING_CAPACITY_FRAMES as i64
                     + (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0)) as i64;
                 let wins: Vec<std::ops::Range<i64>> = if dir < 0 {
@@ -1368,8 +1540,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             // we fill the ring: render_head is linear, loop mapping is inside
             // render_looped_with (the wrap does NOT bump the generation — FX live)
             while !hold && producer.slots() >= chunk.len() {
-                kt_time::work::bump(kt_time::work::Work::AudioRender);
                 let stats = if dir < 0 {
+                    kt_time::work::bump(kt_time::work::Work::AudioRender);
                     // reverse (J4 v1.4): the block BEFORE render_head, the material is
                     // reversed frame by frame before the ring; FX — dry
                     // (see render_frames_raw), loop-wrap via rem_euclid
@@ -1388,24 +1560,23 @@ fn audio_render_loop(ctx: RenderCtx) {
                     render_head = start;
                     st
                 } else {
-                    let st = match effective_region {
-                        Some((rs, re)) if re > rs && render_head >= rs => renderer
-                            .render_looped_with(
-                                &mut fetcher,
-                                &mut store,
-                                rs..re,
-                                render_head,
-                                &mut chunk,
-                            ),
-                        _ => renderer.render_frames_with(
-                            &mut fetcher,
-                            &mut store,
-                            render_head,
-                            &mut chunk,
-                        ),
-                    };
+                    // through the final-mix store: a held chunk is handed out with no decode and
+                    // no effect run; the rest renders live and is kept (cached-range-plays)
+                    let out = mix.render(
+                        &renderer,
+                        &mut fetcher,
+                        &mut store,
+                        effective_region,
+                        render_head,
+                        &mut chunk,
+                    );
+                    kt_time::work::bump(if out.replayed {
+                        kt_time::work::Work::MixReplay
+                    } else {
+                        kt_time::work::Work::AudioRender
+                    });
                     render_head += AUDIO_BURST_FRAMES as i64;
-                    st
+                    out.stats
                 };
                 if stats.underruns > 0 {
                     underruns.fetch_add(stats.underruns, Ordering::Relaxed);
@@ -1421,6 +1592,11 @@ fn audio_render_loop(ctx: RenderCtx) {
                     let _ = producer.push(s);
                 }
             }
+        }
+        // the bars see what the store holds, four times a second at most
+        if mix_published.elapsed() >= std::time::Duration::from_millis(250) {
+            mix_published = std::time::Instant::now();
+            mix.store.publish(&mix_coverage);
         }
         // render_head is reset ONLY on seek (generation): on pause the
         // ring keeps the already rendered tail, resume continues from it.
@@ -1684,6 +1860,7 @@ fn prefetch_loop(
     content_version: Arc<AtomicU64>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
     shared: Arc<AudioShared>,
+    mix: crate::mix::MixCoverage,
 ) {
     // renderers are cached until the project version changes: cloning the Project and
     // rebuilding the graphs every 100 ms was expensive even at idle (item 1)
@@ -1732,7 +1909,12 @@ fn prefetch_loop(
         let generation = transport.generation();
         let head = transport.playhead_frames();
         let region = *loop_region.lock().unwrap();
+        // what the final-mix store holds is not ordered (cached-range-plays)
+        let held = mix.get().playing(region);
         for win in lookahead_windows(head, PREFETCH_AUDIO_LOOKAHEAD_FRAMES, region) {
+            if held.iter().any(|r| r.start <= win.start && r.end >= win.end) {
+                continue;
+            }
             prefetch_audio_pass(
                 renderer,
                 &cache,

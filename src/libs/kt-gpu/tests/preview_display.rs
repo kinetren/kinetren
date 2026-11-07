@@ -129,3 +129,57 @@ fn t1527_glow_and_a_new_size() {
     assert_eq!(after.size, (160, 90));
     assert_ne!(after.generation, before.generation, "a new size is a new texture");
 }
+
+/// t1934 (cached-range-plays): a presented composite is kept by its plan key — presenting the
+/// moment again runs the display pass alone and shows the same picture — and an edit of one event
+/// composes again exactly the moments that event is in.
+#[test]
+fn t1934_a_presented_composite_is_kept_by_its_plan() {
+    kt_plugins_builtin::install();
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    let mut p = demo_project(DemoSources::Synth);
+    // a level no other test presents: the engine is shared by the tests of this process
+    for c in &mut p.clips {
+        c.opacity = 0.37;
+    }
+    let ts: Vec<Tick> = (0..10).map(|i| Tick(90_000 + i * 60_000)).collect();
+    let (video, cache) = warmed(&p, &ts);
+    let mut first = Vec::new();
+    for t in &ts {
+        let plan = plan_at(&video, &cache, *t);
+        assert!(gpu.present(&plan, PresentOptions::default()).unwrap());
+        assert!(!gpu.last_stages().replayed, "the first present of {t:?} composes");
+        assert!(gpu.holds(gpu.present_key(&plan).unwrap()));
+        first.push(gpu.read_display().unwrap());
+    }
+    for (t, pic) in ts.iter().zip(&first) {
+        assert!(gpu.present(&plan_at(&video, &cache, *t), PresentOptions::default()).unwrap());
+        assert!(gpu.last_stages().replayed, "the second present of {t:?} is the kept composite");
+        assert_eq!(gpu.last_cost(), Default::default(), "nothing was composed at {t:?}");
+        assert_eq!(&gpu.read_display().unwrap(), pic, "the kept picture at {t:?}");
+    }
+    // one video event changes its level: only its moments compose again
+    let edited = p
+        .clips
+        .iter()
+        .find(|c| {
+            c.kind == kt_model::ClipKind::Video
+                && ts.iter().any(|t| c.start <= *t && *t < c.start + c.duration)
+                && !ts.iter().all(|t| c.start <= *t && *t < c.start + c.duration)
+        })
+        .map(|c| c.id)
+        .expect("scene guard: an event in some moments and not in others");
+    let mut p2 = p.clone();
+    let c = p2.clips.iter_mut().find(|c| c.id == edited).unwrap();
+    c.opacity = 0.41;
+    let span = (c.start, c.start + c.duration);
+    let video2 = VideoRenderer::new(&p2);
+    let (mut again, mut kept) = (0, 0);
+    for t in &ts {
+        assert!(gpu.present(&plan_at(&video2, &cache, *t), PresentOptions::default()).unwrap());
+        let inside = span.0 <= *t && *t < span.1;
+        assert_eq!(gpu.last_stages().replayed, !inside, "at {t:?} (inside the edited event: {inside})");
+        if inside { again += 1 } else { kept += 1 }
+    }
+    assert!(again > 0 && kept > 0, "scene guard: {again} composed again, {kept} kept");
+}

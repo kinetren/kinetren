@@ -1079,6 +1079,8 @@ thumb_orders = "pedidos de miniaturas"
 fx_thumbs = "celdas de efectos"
 reel_jobs = "vistas previas de composición"
 event_passes = "pasadas de eventos"
+mix_replays = "bloques de audio de la mezcla guardada"
+composite_replays = "composiciones guardadas mostradas"
 
 [perf.note]
 ui_stall = "el hilo de la interfaz quedó bloqueado {0} ms dentro de un fotograma"

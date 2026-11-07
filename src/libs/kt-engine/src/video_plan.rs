@@ -314,6 +314,16 @@ pub trait VideoGpuExec: Send + Sync {
     fn last_stages(&self) -> GpuStages {
         GpuStages::default()
     }
+    /// The key under which the executor keeps the presented composite of this plan
+    /// (cached-range-plays): `None` — it keeps none. The player records it per moment, so the
+    /// bars can say which moments play without work.
+    fn present_key(&self, _plan: &FramePlan<'_>) -> Option<u64> {
+        None
+    }
+    /// Does the executor still hold the composite kept under `key`?
+    fn holds(&self, _key: u64) -> bool {
+        false
+    }
 }
 
 /// How `VideoGpuExec::present` treats a frame.
@@ -339,4 +349,7 @@ pub struct GpuStages {
     pub wait_ns: u64,
     /// Copying the finished frame out of the mapped buffer, and into the readback memo.
     pub copy_ns: u64,
+    /// The frame was a kept composite (cached-range-plays): no layer was uploaded or composed,
+    /// only the display pass ran.
+    pub replayed: bool,
 }

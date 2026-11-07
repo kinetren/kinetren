@@ -1079,6 +1079,8 @@ thumb_orders = "缩略图请求"
 fx_thumbs = "效果单元"
 reel_jobs = "合成预览"
 event_passes = "事件轮次"
+mix_replays = "来自已存混音的音频块"
+composite_replays = "已存合成的显示"
 
 [perf.note]
 ui_stall = "UI 线程在一帧内被阻塞 {0} 毫秒"

@@ -1079,6 +1079,8 @@ thumb_orders = "thumbnail orders"
 fx_thumbs = "effect cells"
 reel_jobs = "composition previews"
 event_passes = "event passes"
+mix_replays = "audio blocks from the kept mix"
+composite_replays = "kept composites shown"
 
 [perf.note]
 ui_stall = "the UI thread was blocked for {0} ms inside one frame"

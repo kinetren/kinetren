@@ -7947,13 +7947,26 @@ pub struct SpacePress {
 /// The coverage-poll cache of the timeline (item 1).
 #[derive(Default)]
 pub struct CoverageCache {
-    stamp: Option<(u64, u64, (u32, u32))>,
+    stamp: Option<(u64, u64, (u32, u32), u64)>,
     /// Arc: a snapshot per frame — a clone of the pointer, not of the maps (item 1 of v1.4).
     pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
+    /// What plays without work (cached-range-plays), in timeline ticks: the moments whose final
+    /// composite the executor keeps (`video`) and the frames whose final mix the audio render
+    /// thread keeps (`audio`). The strips draw it bright over the decoded ranges.
+    pub final_runs: Arc<FinalRuns>,
+    /// Moments presented before an edit are still being checked against the new plan.
+    pub final_pending: bool,
     /// Throttling during playback (item 1 of round 5): the cache epoch changes on EVERY
     /// insert → recalculation ran 60 times/s with the cache mutex (contention with
     /// the decoders and the audio render). The strips are refreshed no more often than 4 Hz.
     last_refresh: Option<std::time::Instant>,
+}
+
+/// What plays without work, in timeline ticks (cached-range-plays).
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub struct FinalRuns {
+    pub video: Vec<std::ops::Range<i64>>,
+    pub audio: Vec<std::ops::Range<i64>>,
 }
 
 /// Clip-name cache (item 1: the HashMaps and the O(n²) suppress were rebuilt every frame).
@@ -8134,7 +8147,8 @@ impl KtApp {
     pub fn coverage_runs(&mut self) -> Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>> {
         use kt_time::AUDIO_BURST_FRAMES;
         let q = self.player.preview_quality();
-        let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height));
+        let stamp =
+            (self.player.cache.epoch(), self.model_rev, (q.width, q.height), self.player.final_stamp());
         let throttled = self.player.transport.is_playing()
             && self
                 .coverage_cache
@@ -8200,6 +8214,16 @@ impl KtApp {
                 per_clip.insert(c.id, runs);
             }
             self.coverage_cache.per_clip = Arc::new(per_clip);
+            let (video, pending) = self.player.final_video_runs();
+            let fin = FinalRuns { video, audio: self.player.final_audio_runs() };
+            if *self.coverage_cache.final_runs != fin {
+                self.coverage_cache.final_runs = Arc::new(fin);
+            }
+            // a finite run of frames after an edit until every kept moment is checked
+            self.coverage_cache.final_pending = pending;
+            if pending {
+                self.coverage_cache.stamp = None;
+            }
         }
         self.coverage_cache.per_clip.clone()
     }
@@ -9481,6 +9505,8 @@ impl KtApp {
             Work::FxThumb => tr(k::perf::work::FX_THUMBS),
             Work::ReelJob => tr(k::perf::work::REEL_JOBS),
             Work::EventPass => tr(k::perf::work::EVENT_PASSES),
+            Work::MixReplay => tr(k::perf::work::MIX_REPLAYS),
+            Work::CompositeReplay => tr(k::perf::work::COMPOSITE_REPLAYS),
         };
         if let Some(s) = crate::load_watch::last() {
             let cpu = format!("{:.0}", s.cpu);
