@@ -465,6 +465,6 @@ during playback stopped the sound (his load report: 12–16 bursts a second inst
 moments, kkt-26.11.07b). A covered range must start and play with no decode.
 
 #### Scenario: Edits while a covered loop plays
-- **WHEN** a 6000-event project loops a short range for 4 s and four edits arrive
-- **THEN** there is no callback underrun and no render underrun, and most bursts come from the kept mix
+- **WHEN** a large project (a reel placed 400 times, each rebuild longer than the ring) loops a short range for 8 s and four edits arrive
+- **THEN** there is no callback underrun and no render underrun, and after two laps every burst comes from the kept mix
 - **TEST** t1935 (`src/libs/kt-engine/tests/mix_player.rs`)

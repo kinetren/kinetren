@@ -57,7 +57,7 @@ impl KtApp {
 
     fn draw_one_camera_editor(&mut self, ctx: &egui::Context, ed: &mut CameraEditor) {
         // the publishing document — one clone per draw of the window (R.59)
-        let pub_doc = self.model.document();
+        let pub_doc = self.model.doc_arc();
         let Some(cur) = self.model.project().cameras.iter().find(|c| c.id == ed.id).cloned() else {
             ed.open = false; // the camera was deleted — the window goes away
             return;
@@ -196,7 +196,7 @@ impl KtApp {
                     to_curve: &to_cur,
                     frame_step,
                     linked: self.auto_axis_linked,
-                    default_shape: self.model.document().settings.default_shape,
+                    default_shape: self.model.doc().settings.default_shape,
                 };
                 let res = crate::automation::draw(
                     ui,

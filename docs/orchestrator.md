@@ -111,6 +111,11 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 - **`docs/found-defects.md` is the one list** of what any agent saw and did not fix: what a person
   suffers, where, the evidence, the state, the verdict. A remark in a report, in a session's memory
   or on a proposal card does not count as recorded.
+- **A run never reaches his desktop** (owner, 2026-11-07: a folder under `target/live-out/idle/xdg`
+  opened in his file manager again and again). `util::open_in_file_manager` spawns nothing under
+  `cfg!(test)` or `KT_NO_EXTERNAL_OPEN` (the live bench sets it and logs the path to `opened.txt`).
+  Anything new that starts an outside program (a browser, a player, a file manager) goes through
+  the same guard.
 - **A runaway test kills only itself** (2026-11-07, 20:55: a new test of `cached-range-plays`,
   `mix_player`, took 55 GB of 61 with no swap; the OOM killer took the Claude app and all three
   executors with it). Every brief says: heavy or new test binaries and the program on a big project
@@ -146,6 +151,12 @@ Stage closed: `finish.sh` at kt26.11.07-677c2f5b, master there: 1588 of 1588, 79
 adds `idle-cpu` to the stage of kt26.11.06-b42cbff4, which held `gpu-render-hardening`, `render-speed-no-card` (a render with no card beats
 the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner's order:
 
+0a. **Now (owner, 2026-11-07 evening): maximum performance of everything**, "невозможно пользоваться
+   программой". Running: `ui-frame-cost`, `cached-range-plays` (merging), `telemetry-journal`.
+   Queue by his words: `edit-without-rebuild` (found-defects 110, 111, 117: a real edit, a loop
+   region or a meter read rebuilds the whole audio engine, 412-447 ms on his project), then
+   `audio-fx-cost` (every audio effect against real time). Deferred: `window-content-reach`, the
+   VHS audio dropout as a level dip (his choice b), any change to an effect's substance.
 0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`), each its own change, each on his word:
    `idle-cpu` (E1, merged; the code of E2, E3, E9, E11 came with it), `hover-static-load` (E2), `scroll-position-cost` (E9),
    `load-proof-tool` (E3), `hover-composition-load` (E4), `fx-window-load` (E10), `idle-load-guard`

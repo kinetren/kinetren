@@ -77,7 +77,7 @@ fn player(p: &Project) -> (Player, rtrb::Consumer<f32>) {
     )
 }
 
-/// t1935: a covered loop plays from the kept mix — after the first laps no burst runs the effects —
+/// t1935: a covered loop plays from the kept mix — after the first two laps no burst runs the effects —
 /// and edits during the play do not stop the sound: the renderer is rebuilt off the render thread.
 #[test]
 fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
@@ -107,7 +107,7 @@ fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
             BenchOptions {
                 from,
                 to,
-                loop_for: Some(std::time::Duration::from_secs(4)),
+                loop_for: Some(std::time::Duration::from_secs(8)),
                 settle: std::time::Duration::from_millis(2000),
                 ..Default::default()
             },
@@ -119,7 +119,9 @@ fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
         // the first lap is linear play, the second the lap; every later one comes from the store
         let lap = (to.to_audio_frames() - from.to_audio_frames()) / kt_time::AUDIO_BURST_FRAMES as i64 + 1;
         assert!(live as i64 <= 2 * lap + 2, "only two laps render live: {live} live, {kept} kept");
-        assert!(kept > 2 * live, "the loop plays from the kept mix: {live} live, {kept} kept");
+        // how many laps fit in the window depends on the machine; that no lap after the second
+        // renders does not
+        assert!(kept as i64 >= lap, "the loop plays from the kept mix: {live} live, {kept} kept");
         assert!(build > std::time::Duration::from_millis(400), "scene guard: a rebuild must outlast the ring, took {build:?}");
         assert_eq!(r.callback_underruns, 0, "the sound stopped (a rebuild took {build:?})");
         assert_eq!(r.underruns, 0);

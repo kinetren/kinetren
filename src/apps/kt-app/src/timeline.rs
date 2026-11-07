@@ -2145,11 +2145,8 @@ impl KtApp {
     pub fn draw_timeline(&mut self, ui: &mut egui::Ui) {
         // one pass of coverage polls per frame (cache by epoch, item 1);
         // Arc-snapshot — a pointer clone, not a map (item 1 of v1.4)
-        let coverage_snapshot = self.coverage_runs();
-        let final_snapshot = self.coverage_cache.final_runs.clone();
-        if self.coverage_cache.final_pending {
-            ui.ctx().request_repaint();
-        }
+        // the events of this state by time (`TlFacts`): the frame asks what lies in its view
+        let events = self.tl_facts();
         let full = ui.available_rect_before_wrap();
         let gutter =
             egui::Rect::from_min_max(full.min, egui::pos2(full.left() + GUTTER_W, full.bottom()));
@@ -2360,6 +2357,16 @@ impl KtApp {
             move |x: f32| -> i64 { (view_start + (x - rect.left()) as f64 * tpp) as i64 };
         let tick_to_x =
             move |t: i64| -> f32 { rect.left() + ((t as f64 - view_start) / tpp) as f32 };
+        // the ticks the view shows, a pixel wider on each side than the culls below
+        let pad = tpp.ceil() as i64 + 1;
+        let (view_t0, view_t1) = (x_to_tick(rect.left()) - pad, x_to_tick(rect.right()) + pad);
+        // one pass of coverage polls per frame, for the events in view (cache by epoch, item 1);
+        // Arc-snapshot — a pointer clone, not a map (item 1 of v1.4)
+        let coverage_snapshot = self.coverage_runs(&events, (view_t0, view_t1));
+        let final_snapshot = self.coverage_cache.final_runs.clone();
+        if self.coverage_cache.final_pending {
+            ui.ctx().request_repaint();
+        }
 
         // ---- global cache strips (port: cyan=audio, green=video) --------
         {
@@ -2378,7 +2385,8 @@ impl KtApp {
                 );
             }
             let q = self.player.preview_quality();
-            for c in &self.model.project().clips {
+            let clips = &self.model.project().clips;
+            for c in events.hits(view_t0, view_t1).filter_map(|i| clips.get(i)) {
                 let (kind, row, col) = match c.kind {
                     ClipKind::Audio => (BurstKind::Audio, 0.0f32, cyan),
                     ClipKind::Video => (BurstKind::video(Some(q)), 5.0, green),
@@ -2946,8 +2954,15 @@ impl KtApp {
 
         // ---- hit-tests --------------------------------------------------------
         // caches by model_rev; Arc-snapshots — pointer clones (item 1 of v1.4)
-        let (media_names, suppress_name, media_paths, draw_order) = self.names();
+        let (media_names, suppress_name, media_paths, _draw_order) = self.names();
         let overlap_zones = self.overlap_zones();
+        // an event by id and the events past their material, once per state (`TlFacts`)
+        let clip_by_id = {
+            let events = events.clone();
+            move |p: &'_ kt_model::Project, id: ClipId| -> Option<usize> {
+                events.by_id.get(&id).copied().filter(|&i| p.clips.get(i).is_some_and(|c| c.id == id))
+            }
+        };
         let pointer = response.interact_pointer_pos();
         let hover = response.hover_pos();
         // the row UNDER THE MOUSE lives exactly while the mouse is over the timeline (R.56,
@@ -3038,7 +3053,7 @@ impl KtApp {
             let p = app.model.project();
             for t in &p.transitions {
                 // fade anchor (R.25) — its only live end
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
+                let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
                 let top = lane_top(a.kind, a.lane);
@@ -3084,7 +3099,7 @@ impl KtApp {
         let transition_body_at = |app: &KtApp, pos: egui::Pos2| -> Option<TransitionId> {
             let p = app.model.project();
             for t in &p.transitions {
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
+                let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
                 // window of the overlapping transition (R.51) — the overlap zone
@@ -3101,9 +3116,11 @@ impl KtApp {
         // hit order is the reverse of the draw order: first what lies on TOP
         // (a later clip when overlapping, item 177), otherwise a click would select not
         // the clip that is visible
-        let order = draw_order.clone();
+        // only the events under the pointer's few pixels, topmost first (`EventIndex`)
+        let under = events.clone();
         let clip_at = move |app: &KtApp, pos: egui::Pos2| -> Option<(ClipId, ClipZone)> {
-            for c in order.iter().rev().filter_map(|&i| app.model.project().clips.get(i)) {
+            let near = under.in_draw_order(x_to_tick(pos.x - 3.0) - 1, x_to_tick(pos.x + 3.0) + 1, std::iter::empty());
+            for c in near.iter().rev().filter_map(|&i| app.model.project().clips.get(i)) {
                 let top = lane_top(c.kind, c.lane);
                 let lane_h = lane_h_at(c.kind, c.lane);
                 if pos.y < top || pos.y > top + lane_h - 2.0 {
@@ -4281,6 +4298,9 @@ impl KtApp {
         // ---- clips -----------------------------------------------------------------
         // stretch maps — once per model version (R.37 item 3)
         let warps = self.warp_maps();
+        // the ×N badge of a reel's instances, counted once per state (it walked the document per
+        // instance in view per frame)
+        let uses = self.media_uses();
         // Previews of REELS (R.56, item 452). Requests are placed BEFORE the draw cycle and
         // by the key (reel, revision) — so neither zoom nor scroll
         // generates them (invariant 8), and a repeat request is removed by dedup.
@@ -4335,8 +4355,23 @@ impl KtApp {
             self.event_passes += 1;
             kt_time::work::bump(kt_time::work::Work::EventPass);
         }
+        let events_cost = (!reuse).then(|| crate::frame_cost::span(crate::frame_cost::Stage::Events));
         let mut event_rects = Vec::new();
-        for c in draw_order.iter().filter(|_| !reuse).filter_map(|&i| self.model.project().clips.get(i)) {
+        // the events in view in the composition's order, and the dragged ones wherever they came
+        // from (the drag draws them at their new place)
+        let shown: Vec<usize> = if reuse {
+            Vec::new()
+        } else {
+            let dragged: Vec<usize> = match &self.drag {
+                Some(Drag::Clip(d)) => std::iter::once(d.id)
+                    .chain(d.extra.iter().map(|(id, _)| *id))
+                    .filter_map(|id| events.by_id.get(&id).copied())
+                    .collect(),
+                _ => Vec::new(),
+            };
+            events.in_draw_order(view_t0, view_t1, dragged.into_iter())
+        };
+        for c in shown.iter().filter_map(|&i| self.model.project().clips.get(i)) {
             let (start, end, lane) = match &self.drag {
                 Some(Drag::Clip(d)) if d.id == c.id => (d.cur_start, d.cur_end, d.cur_lane),
                 // the other events of the group move by the same shift (R.33 item 7)
@@ -4351,6 +4386,7 @@ impl KtApp {
             if x1 < rect.left() || x0 > rect.right() {
                 continue;
             }
+            crate::frame_cost::visit();
             let src_shift = preview_src_shift(self.drag.as_ref(), c.id, c.start.0);
             let top = lane_top(c.kind, lane);
             let lane_h = lane_h_at(c.kind, lane);
@@ -4767,7 +4803,7 @@ impl KtApp {
                 // from Premiere, FCP and VEGAS, and it is free —
                 // the place is already taken by the label.
                 if is_nest {
-                    let n = self.model.document().sequence_uses(c.media);
+                    let n = uses.get(&c.media).copied().unwrap_or(0);
                     if n > 1 {
                         label.push_str(&format!("  ×{n}"));
                     }
@@ -4918,6 +4954,7 @@ impl KtApp {
         if let Some(first) = capture {
             self.event_paint = Some(EventPaint::capture(ui.ctx(), event_layer, first, event_rects, stamp, hover));
         }
+        drop(events_cost);
         if reuse && let Some(p) = &self.event_paint {
             p.replay(ui.ctx(), event_layer);
         }
@@ -5360,15 +5397,9 @@ impl KtApp {
         // 20 — nothing is switched off by itself).
         {
             let p = self.model.project();
-            for c in &p.clips {
-                let Some(end) = kt_model::material_end_on_timeline(c, p.media_duration(c.media))
-                else {
-                    continue;
-                };
+            let tailed = events.hits(view_t0, view_t1).filter_map(|i| Some((p.clips.get(i)?, events.tails.get(i).copied()??)));
+            for (c, end) in tailed {
                 let body_end = (c.start + c.duration).0;
-                if end >= body_end {
-                    continue;
-                }
                 let (x0, x1) = (tick_to_x(end), tick_to_x(body_end));
                 if x1 < rect.left() || x0 > rect.right() {
                     continue;
@@ -5405,7 +5436,7 @@ impl KtApp {
             let p = self.model.project();
             for t in &p.transitions {
                 // fade anchor (R.25) — the only live end, the seam is at it
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
+                let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
                 let Some(base_joint) = t.joint(p).map(|j| j.0) else { continue };
@@ -5448,7 +5479,7 @@ impl KtApp {
                     let xj = tick_to_x(joint);
                     let (left, right) = transition_handle_rects(x0, xj, x1, top, lane_h);
                     let handle_fill = |id: Option<ClipId>| {
-                        let c = id.and_then(|i| p.clips.iter().find(|c| c.id == i))?;
+                        let c = id.and_then(|i| clip_by_id(p, i)).and_then(|i| p.clips.get(i))?;
                         let base = media_paths
                             .get(&c.media)
                             .map(|path| clip_color(path, c.kind))
@@ -5576,9 +5607,15 @@ impl KtApp {
             // saw the level line, did not see the handles, aimed at the line and hit
             // an invisible zone. The width threshold is removed: the handle shrinks along with
             // the grab (`fade_grab_for_width`), rather than disappearing.
-            let handle_on: Vec<ClipId> =
-                self.selected_one().into_iter().chain(hover_clip).collect();
-            for c in p.clips.iter().filter(|c| handle_on.contains(&c.id)) {
+            let mut handle_on: Vec<usize> = self
+                .selected_one()
+                .into_iter()
+                .chain(hover_clip)
+                .filter_map(|id| clip_by_id(p, id))
+                .collect();
+            handle_on.sort_unstable();
+            handle_on.dedup();
+            for c in handle_on.iter().filter_map(|&i| p.clips.get(i)) {
                 let top = lane_top(c.kind, c.lane);
                 let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
                 {

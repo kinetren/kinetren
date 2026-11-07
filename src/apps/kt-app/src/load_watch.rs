@@ -42,6 +42,9 @@ pub struct Sample {
     pub threads: Vec<(String, f32)>,
     /// Per second, in the order of `Work::ALL`.
     pub work: Vec<u32>,
+    /// What a UI frame cost the UI thread in that second, on average, in milliseconds of its own
+    /// processor time (`frame_cost`, ui-frame-cost); none when no frame ran.
+    pub frame_ms: Option<f32>,
 }
 
 impl Sample {
@@ -146,7 +149,7 @@ fn sample_of(
         .zip(was)
         .map(|(n, w)| (n.saturating_sub(*w) as f32 / dt.max(0.001)).round() as u32)
         .collect();
-    Sample { at, cpu, threads, work }
+    Sample { at, cpu, threads, work, frame_ms: None }
 }
 
 /// A line of the report: how long ago, the load, who held it, what ran.
@@ -159,7 +162,7 @@ pub(crate) fn line(s: &Sample, now: u64) -> String {
         .map(|(w, n)| format!("{} {n}", w.name()))
         .collect();
     format!(
-        "{:>6} s ago  {:>5.0} %  {}  |  {}",
+        "{:>6} s ago  {:>5.0} %  {}  |  {}{}",
         now.saturating_sub(s.at),
         s.cpu,
         if threads.is_empty() { "-".to_string() } else { threads.join(", ") },
@@ -170,6 +173,7 @@ pub(crate) fn line(s: &Sample, now: u64) -> String {
         } else {
             "at rest".to_string()
         },
+        s.frame_ms.map_or(String::new(), |ms| format!(", ui frame {ms:.1} ms")),
     )
 }
 
@@ -209,7 +213,16 @@ fn bench_dump(path: &str, totals: &[u64], ticks: &std::collections::BTreeMap<Str
     let work: Vec<String> =
         Work::ALL.iter().zip(totals).map(|(w, n)| format!("\"{}\":{n}", w.name())).collect();
     let threads: Vec<String> = ticks.iter().map(|(n, t)| format!("\"{n}\":{t}")).collect();
-    let json = format!("{{\"work\":{{{}}},\"ticks\":{{{}}}}}\n", work.join(","), threads.join(","));
+    // the frames' cost by stage (ui-frame-cost): frames measured and nanoseconds per stage
+    let (frames, ns) = crate::frame_cost::totals();
+    let stages: Vec<String> =
+        crate::frame_cost::Stage::ALL.iter().zip(ns).map(|(st, n)| format!("\"{}\":{n}", st.name())).collect();
+    let json = format!(
+        "{{\"work\":{{{}}},\"ticks\":{{{}}},\"frame\":{{\"frames\":{frames},\"ns\":{{{}}}}}}}\n",
+        work.join(","),
+        threads.join(","),
+        stages.join(",")
+    );
     let tmp = format!("{path}.tmp");
     if std::fs::write(&tmp, json).is_ok() {
         let _ = std::fs::rename(&tmp, path);
@@ -224,6 +237,7 @@ pub fn start() {
         let mut ring = std::collections::VecDeque::with_capacity(KEEP);
         let mut before = thread_ticks();
         let mut was = work::totals();
+        let mut cost_was = crate::frame_cost::totals();
         let mut t0 = Instant::now();
         let (mut hot, mut written): (usize, Option<Instant>) = (0, None);
         loop {
@@ -234,7 +248,10 @@ pub fn start() {
             if let Some(p) = &bench {
                 bench_dump(p, &totals, &ticks);
             }
-            let s = sample_of(&ticks, &before, &totals, &was, dt, unix_now());
+            let mut s = sample_of(&ticks, &before, &totals, &was, dt, unix_now());
+            let cost = crate::frame_cost::totals();
+            s.frame_ms = crate::frame_cost::per_frame(&cost_was, &cost).map(|ms| ms[0]);
+            cost_was = cost;
             before = ticks;
             was = totals;
             hot = if s.cpu >= HOT_PERCENT { hot + 1 } else { 0 };

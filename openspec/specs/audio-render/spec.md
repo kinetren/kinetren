@@ -545,6 +545,6 @@ Why: his 400 ms covered range ran every effect on every lap (kkt-26.11.07b, line
 - **TEST** t1933 (`src/libs/kt-engine/tests/mix_store.rs`)
 
 #### Scenario: The player's loop and edits during it
-- **WHEN** the player loops a short range of a 6000-event project for 4 s while edits arrive
-- **THEN** the kept mix plays more than three times as many bursts as are rendered live, with no callback or render underrun
+- **WHEN** the player loops a short range of a large project (a reel placed 400 times) for 8 s while edits arrive, each rebuild longer than the ring
+- **THEN** no more than two laps render live, the rest comes from the kept mix, with no callback or render underrun
 - **TEST** t1935 (`src/libs/kt-engine/tests/mix_player.rs`)

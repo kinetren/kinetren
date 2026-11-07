@@ -130,6 +130,35 @@ fn t1833_at_rest_nothing_asks_for_a_frame() {
     h.state_mut().dirty_content = false;
 }
 
+/// Test t1938 (cached-range-plays): the bright "plays without work" layer of the strips does not
+/// cost a hover. Kept ranges over the events: a pointer passing over them lays the events out once
+/// and the layer stays drawn — the bars' refresh is keyed by what the stores report, never by the
+/// frame.
+#[test]
+fn t1938_a_hover_over_kept_ranges_does_not_lay_out_the_events() {
+    let (mut h, g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+    let span = h.state().model.project().clips.iter().map(|c| (c.start + c.duration).0).max().unwrap_or(0);
+    let kept: Vec<std::ops::Range<i64>> = std::iter::once(0..span).collect();
+    h.state_mut().coverage_cache.final_runs =
+        std::sync::Arc::new(crate::app::FinalRuns { video: kept.clone(), audio: kept });
+    let hover = |h: &mut Harness<'_, KtApp>, p: egui::Pos2| {
+        h.input_mut().events.push(egui::Event::PointerMoved(p));
+        h.step();
+    };
+    // over the events of the first row, which the kept ranges cover
+    let y = g.row_top(0) + 8.0;
+    let x = g.rect.left() + 60.0;
+    hover(&mut h, egui::pos2(x, y));
+    hover(&mut h, egui::pos2(x + 1.0, y));
+    let before = h.state().event_passes;
+    for i in 2..30 {
+        hover(&mut h, egui::pos2(x + i as f32 * 0.5, y));
+    }
+    assert_eq!(h.state().event_passes, before, "the pointer over kept ranges laid the events out again");
+    assert!(h.state().event_paint.is_some());
+    assert!(!h.state().coverage_cache.final_runs.video.is_empty(), "scene guard: the kept layer is drawn");
+}
+
 /// Test t1834 (E2): a pointer passing over static things lays the events out once, and only a
 /// change of what lies under it does so again. Without this the cost of a hover frame scaled
 /// with what the view held, so with the scroll (kkt-26.11.07 item E2).

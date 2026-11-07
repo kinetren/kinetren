@@ -234,6 +234,12 @@ Why: the cache is quality-exact; a clip with a step, warmed properly, would look
 - **THEN** the bars' final layer holds the played moments and frames, and after the edit the edited event's moments leave it while the others stay
 - **TEST** t1936 (`src/libs/kt-engine/tests/final_runs.rs`)
 
+#### Scenario: A hover over kept ranges costs no layout
+- **WHEN** the strips carry a kept layer over the events and the pointer passes over them for 28 frames
+- **THEN** the events are laid out once, and the layer stays drawn
+- **PATH** play a range once → the strips over it turn bright → move the mouse over its events on a pause → nothing on the timeline is laid out again, the bright layer stays
+- **TEST** t1938 (`src/apps/kt-app/src/idle_tests.rs`)
+
 #### Scenario: A covered loop plays from what is kept, live
 - **PATH** open the heavy showcase with a half-second loop over the composition → press Space → the first lap composes, then the strips over the loop turn bright → the picture plays at the project's rate, no frame is composed, no burst runs the effects, nothing is decoded, no underrun → press Space → nothing runs
 - **TEST** live scenario `src/scripts/live/cached_range.py`
