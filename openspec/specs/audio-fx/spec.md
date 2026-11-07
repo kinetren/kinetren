@@ -581,7 +581,8 @@ impulse response cannot hold.
 Every audio kind of the registry SHALL be measured one instance at a time, at its defaults and at the
 heavy settings `kt_fx::audio::cost::heavy` names, as its node chain's share of real time on a stereo
 48 kHz stimulus in the engine's blocks, and as a RATIO to a fixed reference kernel (eight cascaded
-biquads per channel) measured in the same run, interleaved with it, best of several. Each kind SHALL
+biquads per channel) measured in the same run: the two timed block by block alternately, each
+block's time the minimum over several rounds, the first block not counted. Each kind SHALL
 stay within its bound in units of that reference (about twice what it measured when the bound was set).
 A cost is never judged by a wall-clock limit: a busy machine slows the kind and the reference alike.
 `kt-cli fx-cost` prints the same numbers on a release build, and with `--project P --clip ID` the chain
@@ -592,7 +593,7 @@ reference kernels at its defaults (2.5 % of a core, release) and 78 at heavy set
 called the C library for every `floor`/`round` per sample.
 
 #### Scenario: Every kind costs within its bound
-- **WHEN** every audio kind runs one second of the stimulus at its defaults and at its heavy settings, three times, alternating with the reference kernel
+- **WHEN** every audio kind runs one second of the stimulus at its defaults and at its heavy settings, nine rounds, each 1024-frame block timed alternately with the reference kernel, under any load (`nextest`, a parallel build)
 - **THEN** its best time over the reference's best time is within its bound; a kind without a bound fails
 - **TEST** t1980 (`src/libs/kt-engine/tests/audio_fx_cost.rs`)
 

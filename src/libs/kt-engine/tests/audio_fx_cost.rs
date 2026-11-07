@@ -1,7 +1,7 @@
 //! The audio effects' cost and bytes (audio-fx-cost; capabilities `audio-fx`, `plugins`).
 //!
 //! t1980 — every audio kind's node chain costs no more than its bound in units of the reference
-//! kernel (`kt_fx::audio::cost`): a RATIO measured in the same run, interleaved, best of several,
+//! kernel (`kt_fx::audio::cost`): a RATIO measured in the same run, block by block alternately, each block the minimum of nine rounds,
 //! never a wall-clock limit. The bounds are about twice what the test profile measured when they
 //! were set; a kind past its bound has grown a per-sample cost (a library call per sample, an
 //! allocation, a walk) and is a finding, not noise.
@@ -117,6 +117,9 @@ const BOUNDS: &[(&str, f64, f64)] = &[
     ("camera_isp_sound", 62.0, 71.0),
 ];
 
+/// Rounds per kind: each block's time is the minimum over them (`cost::chain_cost`).
+const ROUNDS: usize = 9;
+
 #[test]
 fn t1980_every_audio_kind_costs_within_its_bound() {
     let input = cost::stimulus(48_000);
@@ -129,7 +132,7 @@ fn t1980_every_audio_kind_costs_within_its_bound() {
         };
         let cases = [(f.clone(), bd, "default")].into_iter().chain(cost::heavy(f).map(|h| (h, bh, "heavy")));
         for (fx, b, what) in cases {
-            let c = cost::chain_cost(&[fx], &input, 3);
+            let c = cost::chain_cost(&[fx], &input, ROUNDS);
             if print {
                 println!("{:<18} {what:<8} {:>8.2} ref  ({:.3}% of real time)", f.tag(), c.ratio(), c.share * 100.0);
             } else if c.ratio() > b {

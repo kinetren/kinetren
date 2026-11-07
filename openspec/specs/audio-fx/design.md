@@ -293,3 +293,14 @@ limiter 6.0 → 1.2, distortion 4.0 → 0.35, bitcrusher 3.4 → 0.4. Left as th
 the full walk of the class: `changes/archive/2026-11-08-audio-fx-cost/design.md` — the phaser's
 per-sample coefficients (a sound decision), the compressor's per-sample `log10`, the LFO's walk of
 its rate keys, Camera ISP's and Datamosh's codec (the simulation itself).
+
+The first form of t1980's measure (whole one-second runs, best of three) split under `finish.sh`'s
+nextest at load 13–33: "slowed_reverb heavy: 4.23 reference kernels, bound 4" against 1.76 at rest — a
+whole run of the kernel and one of the reference landed on differently loaded cores or one was
+preempted. Widening the bound would only have hidden it. The measure is now immune by construction:
+the reference and the kernel alternate BLOCK BY BLOCK (which goes first swaps every block), so a pair
+runs within microseconds on one core at one clock, and each block's time is the minimum of nine rounds
+(a fresh state per round, the same work per block), which drops a preemption that hit one round. Proof:
+30 of 30 `cargo nextest run -p kt-engine --test audio_fx_cost` green at load 28–52 with a release
+build of kt-app running beside them; the printed ratios at load 57–101 equal the ones at rest within
+2 % (slowed_reverb heavy 1.73 → 1.74–1.77, VHS Tape's sound 27.9 → 27.7).
