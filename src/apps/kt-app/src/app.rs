@@ -9853,12 +9853,14 @@ impl KtApp {
                 let line_h = ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
                 let head_h = ui.spacing().interact_size.y + 3.0 * ui.spacing().item_spacing.y + 8.0;
                 // the instruments and the graphs at their floor come first; what the window has
-                // beyond them goes 60/40 to the graphs and the journal, and the journal never has
-                // fewer than six lines (on a low window the instruments scroll instead)
+                // beyond them goes three quarters to the graphs and a quarter to the journal (the
+                // split the window had before, diagnostics-three-graphs D2: a graph takes a quarter
+                // of any growth), and the journal never has fewer than six lines (on a low window
+                // the instruments scroll instead)
                 let per_graph = ui.text_style_height(&egui::TextStyle::Small) + 6.0 + ui.spacing().item_spacing.y;
                 let floor = self.perf.diag_used + 3.0 * (GRAPH_MIN_H + per_graph) + ui.spacing().interact_size.y;
                 let spare = (body_h - head_h - floor - JOURNAL_MIN_LINES * line_h).max(0.0);
-                let journal_h = JOURNAL_MIN_LINES * line_h + 0.4 * spare;
+                let journal_h = JOURNAL_MIN_LINES * line_h + 0.25 * spare;
                 let top_h = (body_h - journal_h - head_h).max(60.0);
                 egui::ScrollArea::vertical()
                     .id_salt("kt_diag_body")

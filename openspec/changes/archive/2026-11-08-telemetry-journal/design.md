@@ -89,7 +89,10 @@ time. The graphs stay on the frame.
 
 The window body was one scroll: metrics, load, three graphs, then the log, which the graphs pushed
 under the fold at the default height (row 109 / G12). Now the body splits: the journal pane takes the
-bottom 40 % of the body (at least six lines) and is outside the scroll, with "Mark the moment", its
+bottom of the body outside the scroll: at least six lines, plus a quarter of what the window has
+beyond the instruments and the graphs at their floor (the other three quarters go to the graphs, the
+split the window had before — the live `diagnostics` expects a graph to take a quarter of any growth)
+— with "Mark the moment", its
 note field and "Open folder" on its head row; the rest scrolls. The class across every window is
 `window-content-reach`.
 
