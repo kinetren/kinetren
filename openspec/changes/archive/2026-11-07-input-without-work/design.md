@@ -118,3 +118,18 @@ the prefetch and audio render threads under 5 % of a core each by their processo
 
 Measured on llvmpipe. The defect and its fix are processor-side (the model, the engine threads), so the
 card does not change them; the UI thread's own frame cost on his Radeon is `ui-frame-cost`'s.
+
+## D5. The live runs
+
+`idle` with the deck step, debug build, llvmpipe, under a machine load of 5-46 from other sessions'
+builds. With frames arriving, the deck step held every time: 137-154 pointer frames over the VHS deck
+with the dark clip at -80 %, no edit, swap, build, prefetch pass or decode, and no prefetch or audio
+render thread in the sample at all. The first version of the step dragged a field that sat under the
+fold of the window's scrolling body (its rectangle is published while hidden); the step now scrolls it
+into view above the action row and proves the drag was an edit.
+
+Not green as a whole on this machine: the earlier hover steps (idle-cpu's) and once the deck step met
+the known stall of `idle-cpu`'s hand-over, "0 frames and 0 % processor for 10-30 s while the pointer
+moved" — no frame and no processor time at all, so no input reached the program. Once the right-click
+→ Effects… step opened nothing. Cause not found here either; it is not this change's code path (no
+frame runs at all), and a retry is not a fix.
