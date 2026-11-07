@@ -23,6 +23,8 @@ mod controls_tests;
 mod diag_tests;
 #[cfg(test)]
 mod idle_tests;
+#[cfg(test)]
+mod frame_cost_tests;
 mod envclip;
 mod deck_face;
 mod eq_graph;

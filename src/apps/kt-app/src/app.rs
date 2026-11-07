@@ -344,6 +344,10 @@ pub struct KtApp {
     pub bin_free: bool,
     /// Positions of cards in the free layout (live in the project, UiState).
     pub bin_layout: std::collections::HashMap<kt_model::MediaId, egui::Pos2>,
+    /// The bin's cards of this state (ui-frame-cost): the list, the reels among it, and the
+    /// state the free layout was last given its new cards in. Built per frame, the list copied
+    /// every path and the layout hashed every card.
+    pub(crate) bin_list: BinList,
     /// Which card is being dragged inside the bin (free mode).
     pub bin_drag: Option<crate::bin_panel::BinDragState>,
     /// Card groups of the bin (item 13 round 11): they live here; they go into
@@ -1047,6 +1051,7 @@ impl KtApp {
             uses_cache: Default::default(),
             warp_cache: Default::default(),
             tl_facts: Default::default(),
+            bin_list: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             event_paint: None,
@@ -1338,6 +1343,7 @@ impl KtApp {
             uses_cache: Default::default(),
             warp_cache: Default::default(),
             tl_facts: Default::default(),
+            bin_list: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             event_paint: None,
@@ -7964,7 +7970,7 @@ pub struct SpacePress {
 /// The coverage-poll cache of the timeline (item 1).
 #[derive(Default)]
 pub struct CoverageCache {
-    stamp: Option<(u64, u64, (u32, u32))>,
+    stamp: Option<(u64, u64, (u32, u32), (i64, i64))>,
     /// Arc: a snapshot per frame — a clone of the pointer, not of the maps (item 1 of v1.4).
     pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
     /// Throttling during playback (item 1 of round 5): the cache epoch changes on EVERY
@@ -7987,19 +7993,88 @@ pub struct WarpCache {
 }
 
 /// What the timeline needs per event and cannot change between two frames of one state
-/// (ui-frame-cost). Each frame walked all the events for the hatching of a tail past the material,
-/// building every event's speed map from its curves on the way: on the owner's 1974 events that
-/// was a sixth of every frame, whatever the view showed. Looking an event up by id walked the list
-/// for each transition.
+/// (ui-frame-cost). Each frame walked all the events: for the hatching of a tail past the material,
+/// building every event's speed map from its curves on the way (on the owner's 1974 events a sixth
+/// of every frame, whatever the view showed), for the coverage strip, for the hit test under the
+/// pointer, and to cull the events themselves. Looking an event up by id walked the list for each
+/// transition. A frame asks this index what lies in its view instead.
 #[derive(Default)]
 pub struct TlFacts {
     /// (model version, number of events, the media lengths): a length is learned when a source
     /// opens, outside history, and the model can be swapped wholesale without a revision
     stamp: Option<(u64, usize, u64)>,
-    /// events whose body runs past their material: (index in `clips`, where the material ends)
-    pub tails: Arc<Vec<(usize, i64)>>,
+    pub events: Arc<EventIndex>,
+}
+
+/// The media bin's cards of one state (`KtApp::bin_list`).
+#[derive(Default)]
+pub struct BinList {
+    pub(crate) stamp: Option<(u64, usize, usize, crate::i18n::Lang)>,
+    pub media: Arc<Vec<(MediaId, String)>>,
+    pub reels: Arc<std::collections::HashSet<MediaId>>,
+    /// (state, number of cards, number of placed cards) the free layout last placed new cards in
+    pub(crate) placed: Option<(u64, usize, usize)>,
+}
+
+/// The events of one state by time (`TlFacts`).
+#[derive(Default)]
+pub struct EventIndex {
+    /// per event (index in `clips`): where its material ends, when its body runs past it
+    pub tails: Vec<Option<i64>>,
     /// event id → index in `clips`
-    pub index: Arc<HashMap<ClipId, usize>>,
+    pub by_id: HashMap<ClipId, usize>,
+    /// (start, end, index) sorted by start
+    by_start: Vec<(i64, i64, usize)>,
+    /// the latest end among `by_start[..=i]`: never falls, so it can be halved too
+    reach: Vec<i64>,
+    /// per event: its place in the composition's draw order (a later one lies on top)
+    rank: Vec<u32>,
+}
+
+impl EventIndex {
+    fn of(p: &kt_model::Project, draw_order: &[usize]) -> EventIndex {
+        let tails = p
+            .clips
+            .iter()
+            .map(|c| {
+                let end = kt_model::material_end_on_timeline(c, p.media_duration(c.media))?;
+                (end < (c.start + c.duration).0).then_some(end)
+            })
+            .collect();
+        let by_id = p.clips.iter().enumerate().map(|(i, c)| (c.id, i)).collect();
+        let mut by_start: Vec<(i64, i64, usize)> =
+            p.clips.iter().enumerate().map(|(i, c)| (c.start.0, (c.start + c.duration).0, i)).collect();
+        by_start.sort_unstable();
+        let reach = by_start
+            .iter()
+            .scan(i64::MIN, |m, s| {
+                *m = (*m).max(s.1);
+                Some(*m)
+            })
+            .collect();
+        let mut rank = vec![u32::MAX; p.clips.len()];
+        for (r, &i) in draw_order.iter().enumerate() {
+            if let Some(x) = rank.get_mut(i) {
+                *x = r as u32;
+            }
+        }
+        EventIndex { tails, by_id, by_start, reach, rank }
+    }
+
+    /// The events whose body meets the ticks `t0..=t1`, in no order.
+    pub fn hits(&self, t0: i64, t1: i64) -> impl Iterator<Item = usize> + '_ {
+        let hi = self.by_start.partition_point(|s| s.0 <= t1);
+        let lo = self.reach.partition_point(|&e| e < t0).min(hi);
+        self.by_start[lo..hi].iter().filter(move |s| s.1 >= t0).map(|s| s.2)
+    }
+
+    /// The same, plus `extra`, in the composition's draw order: what lies on top comes last.
+    pub fn in_draw_order(&self, t0: i64, t1: i64, extra: impl Iterator<Item = usize>) -> Vec<usize> {
+        let mut v: Vec<usize> = self.hits(t0, t1).chain(extra).collect();
+        v.sort_unstable_by_key(|&i| (self.rank.get(i).copied().unwrap_or(u32::MAX), i));
+        v.dedup();
+        v
+    }
 }
 
 /// The media caption for the user: for a file — the file name, for a generator —
@@ -8063,7 +8138,8 @@ impl KtApp {
     }
 
     /// The timeline's facts of this state, built once (`TlFacts`).
-    pub fn tl_facts(&mut self) -> (Arc<Vec<(usize, i64)>>, Arc<HashMap<ClipId, usize>>) {
+    pub fn tl_facts(&mut self) -> Arc<EventIndex> {
+        let draw_order = self.names().3;
         let p = self.model.project();
         let lengths = p.media.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, m| {
             let d = m.duration.map_or(u64::MAX, |d| d.0 as u64);
@@ -8072,19 +8148,9 @@ impl KtApp {
         let stamp = (self.model_rev, p.clips.len(), lengths);
         if self.tl_facts.stamp != Some(stamp) {
             self.tl_facts.stamp = Some(stamp);
-            let tails = p
-                .clips
-                .iter()
-                .enumerate()
-                .filter_map(|(i, c)| {
-                    let end = kt_model::material_end_on_timeline(c, p.media_duration(c.media))?;
-                    (end < (c.start + c.duration).0).then_some((i, end))
-                })
-                .collect();
-            self.tl_facts.tails = Arc::new(tails);
-            self.tl_facts.index = Arc::new(p.clips.iter().enumerate().map(|(i, c)| (c.id, i)).collect());
+            self.tl_facts.events = Arc::new(EventIndex::of(p, &draw_order));
         }
-        (self.tl_facts.tails.clone(), self.tl_facts.index.clone())
+        self.tl_facts.events.clone()
     }
 
     /// Preview keys per INSTANCE: `ClipId` → (reel, revision)
@@ -8187,12 +8253,18 @@ impl KtApp {
         self.reel_previews.request(key, p, db, base);
     }
 
-    /// Runs of coverage per clip; recalculation only when the cache epoch,
-    /// the model version or the preview quality changes.
-    pub fn coverage_runs(&mut self) -> Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>> {
+    /// Runs of coverage per clip IN VIEW (`view`, ticks); recalculation only when the cache epoch,
+    /// the model version, the preview quality or the view changes. All the events were asked
+    /// on every insertion into the cache (ui-frame-cost): a query under the cache's lock per event
+    /// of the project, and the decode qualities searched once per event.
+    pub fn coverage_runs(
+        &mut self,
+        events: &EventIndex,
+        view: (i64, i64),
+    ) -> Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>> {
         use kt_time::AUDIO_BURST_FRAMES;
         let q = self.player.preview_quality();
-        let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height));
+        let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height), view);
         let throttled = self.player.transport.is_playing()
             && self
                 .coverage_cache
@@ -8206,13 +8278,21 @@ impl KtApp {
             // warms up larger than Quality, and coverage by Quality would show a
             // warm clip as cold. A morpher layer could cut a clip into
             // pieces with different chains — we take the union of their qualities.
-            let decode_q = self.player.video_decode_qualities();
+            // by the event a piece was cut from: one look per event, not a search
+            let mut decode_q: HashMap<ClipId, Vec<kt_media::Quality>> = HashMap::new();
+            for (id, dq) in self.player.video_decode_qualities() {
+                if let Some(o) = kt_model::slice_origin(id).filter(|o| *o != id) {
+                    decode_q.entry(o).or_default().push(dq);
+                }
+                decode_q.entry(id).or_default().push(dq);
+            }
             // A nested item: the source reel has none, and the strip asks about its
             // CONTENT — the intersection of the children’s warmth (R.50, B6).
             let nest_cov: HashMap<ClipId, Vec<std::ops::Range<i64>>> =
                 self.player.nest_coverage().into_iter().collect();
             let mut per_clip = HashMap::new();
-            for c in &self.model.project().clips {
+            let clips = &self.model.project().clips;
+            for c in events.hits(view.0, view.1).filter_map(|i| clips.get(i)) {
                 // the ADDRESS of the event’s SOURCE (R.59, stage 2): for a generator the values
                 // live on the event, and its own source is what warms up.
                 // One rule for the program — the request, the read and the strip must
@@ -8234,11 +8314,7 @@ impl KtApp {
                     }
                     ClipKind::Video => {
                         let (b0, b1) = (c.source_in.0, c.source_in.0 + c.duration.0);
-                        let mut qs: Vec<kt_media::Quality> = decode_q
-                            .iter()
-                            .filter(|(id, _)| kt_model::same_clip(*id, c.id))
-                            .map(|(_, dq)| *dq)
-                            .collect();
+                        let mut qs: Vec<kt_media::Quality> = decode_q.get(&c.id).cloned().unwrap_or_default();
                         qs.sort();
                         qs.dedup();
                         if qs.is_empty() {

@@ -113,6 +113,7 @@ pub fn visit() {
 }
 
 /// The visits counted on this thread so far.
+#[cfg(test)]
 pub fn visits() -> u64 {
     VISITS.with(|v| v.get())
 }

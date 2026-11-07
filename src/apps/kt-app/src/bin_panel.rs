@@ -201,18 +201,30 @@ impl KtApp {
         // `MediaRef` ON PURPOSE (item 378) — if we gave it a path, the watchdog would
         // paint it offline, and the index service would try to build
         // ffmpeg peaks for it.
-        let reels: std::collections::HashSet<MediaId> =
-            self.model.doc().sequences.iter().map(|s| s.id).collect();
-        let media: Vec<(MediaId, String)> = self
-            .model
-            .project()
-            .media
-            .iter()
-            .map(|m| (m.id, m.path.clone()))
-            .chain(self.model.doc().sequences.iter().map(|s| {
-                (s.id, crate::i18n::reel_display_name(&s.name).into_owned())
-            }))
-            .collect();
+        // once per state, not per frame (ui-frame-cost): the model can be swapped wholesale
+        // without a revision, so the counts are in the key too
+        let stamp = (
+            self.model_rev,
+            self.model.project().media.len(),
+            self.model.doc().sequences.len(),
+            crate::i18n::current(),
+        );
+        if self.bin_list.stamp != Some(stamp) {
+            self.bin_list.stamp = Some(stamp);
+            self.bin_list.reels = std::sync::Arc::new(self.model.doc().sequences.iter().map(|s| s.id).collect());
+            self.bin_list.media = std::sync::Arc::new(
+                self.model
+                    .project()
+                    .media
+                    .iter()
+                    .map(|m| (m.id, m.path.clone()))
+                    .chain(self.model.doc().sequences.iter().map(|s| {
+                        (s.id, crate::i18n::reel_display_name(&s.name).into_owned())
+                    }))
+                    .collect(),
+            );
+        }
+        let (reels, media) = (self.bin_list.reels.clone(), self.bin_list.media.clone());
         // the card width is computed ONCE from the panel width: inside a
         // wrapped row the available_width shrinks and the cards came out
         // ragged (item 5 of round 8)
@@ -233,7 +245,10 @@ impl KtApp {
         if self.bin_free {
             // --- free layout: positions live in the project ------------
             let cols = ((ui.available_width() / (card_w + 6.0)).floor() as usize).max(1);
-            for (i, (id, _)) in media.iter().enumerate() {
+            // new cards are placed when the list or the layout changed, not on every frame
+            let placed = (self.model_rev, media.len(), self.bin_layout.len());
+            let fresh = self.bin_list.placed != Some(placed);
+            for (i, (id, _)) in media.iter().enumerate().filter(|_| fresh) {
                 self.bin_layout.entry(*id).or_insert_with(|| {
                     // a new card goes into the first free cell
                     egui::pos2(
@@ -242,6 +257,7 @@ impl KtApp {
                     )
                 });
             }
+            self.bin_list.placed = Some((self.model_rev, media.len(), self.bin_layout.len()));
             let rows = (media.len().div_ceil(cols)).max(1);
             let need_h = self
                 .bin_layout
@@ -271,7 +287,7 @@ impl KtApp {
             card_rects.clear();
             // the rectangles are computed IN ADVANCE: the group frames are drawn BEFORE
             // the cards and therefore lie beneath them (complaint of round 13)
-            for (id, _) in &media {
+            for (id, _) in media.iter() {
                 let p = self.bin_layout.get(id).copied().unwrap_or_default();
                 let max_x = (area.width() - card_w).max(0.0);
                 card_rects.push((
@@ -283,7 +299,8 @@ impl KtApp {
                 ));
             }
             self.draw_bin_groups(ui, &card_rects);
-            for (id, path) in &media {
+            let held = ui.ctx().dragged_id();
+            for (id, path) in media.iter() {
                 let p = self.bin_layout.get(id).copied().unwrap_or_default();
                 // the position is clamped by the ACTUAL panel width: otherwise the
                 // card sticks out to the right, the panel grows to fit the content and
@@ -293,6 +310,10 @@ impl KtApp {
                     area.min + egui::vec2(p.x.min(max_x), p.y),
                     egui::vec2(card_w, row_h),
                 );
+                // a card the scroll hides is not drawn (ui-frame-cost); its rectangle is above
+                if !ui.is_rect_visible(rect) && !held.is_some_and(|h| h == ui.id().with(("bin-card", id.0))) {
+                    continue;
+                }
                 let resp = self.draw_bin_card(
                     ui,
                     *id,
@@ -437,32 +458,45 @@ impl KtApp {
             self.bin_card_rects = card_rects;
         } else {
             // --- grid ---------------------------------------------------
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                for (id, path) in &media {
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(card_w, row_h), egui::Sense::hover());
-                    let resp = self.draw_bin_card(
-                        ui,
-                        *id,
-                        path,
-                        rect,
-                        card_w,
-                        card_h,
-                        &offline,
-                        &reels,
-                        &mut pending,
-                        &mut to_place,
-                        &mut to_measure,
-                        &mut to_gen,
-                        &mut to_kind,
-                        &mut to_remove,
-                    );
-                    if resp.dragged() {
-                        drag_out = Some(*id);
-                    }
+            // laid out by arithmetic, not by egui: the cards the scroll hides are not even
+            // allocated (ui-frame-cost). The wrapped row put one card per (card_w + 6) and a row
+            // per (row_h + 6), the same numbers as here; every card still has its rectangle.
+            const GAP: f32 = 6.0;
+            let cols = (((ui.available_width() + GAP) / (card_w + GAP)).floor() as usize).max(1);
+            let rows = media.len().div_ceil(cols);
+            let height = (rows as f32 * (row_h + GAP) - GAP).max(0.0);
+            let (area, _) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+            let held = ui.ctx().dragged_id();
+            for (i, (id, path)) in media.iter().enumerate() {
+                let rect = egui::Rect::from_min_size(
+                    area.min + egui::vec2((i % cols) as f32 * (card_w + GAP), (i / cols) as f32 * (row_h + GAP)),
+                    egui::vec2(card_w, row_h),
+                );
+                if !ui.is_rect_visible(rect) && !held.is_some_and(|h| h == ui.id().with(("bin-card", id.0))) {
+                    self.bin_card_rects.push((*id, egui::Rect::from_min_size(rect.min, egui::vec2(card_w, card_h))));
+                    continue;
                 }
-            });
+                let resp = self.draw_bin_card(
+                    ui,
+                    *id,
+                    path,
+                    rect,
+                    card_w,
+                    card_h,
+                    &offline,
+                    &reels,
+                    &mut pending,
+                    &mut to_place,
+                    &mut to_measure,
+                    &mut to_gen,
+                    &mut to_kind,
+                    &mut to_remove,
+                );
+                if resp.dragged() {
+                    drag_out = Some(*id);
+                }
+            }
         }
         if media.is_empty() {
             ui.weak(tr(k::bin::EMPTY));
@@ -601,7 +635,10 @@ impl KtApp {
     /// over the preview looked absurd (complaint of round 13).
     fn draw_bin_groups(&mut self, ui: &mut egui::Ui, cards: &[(MediaId, egui::Rect)]) {
         let painter = ui.painter().clone();
-        let at = |id: MediaId| cards.iter().find(|(m, _)| *m == id).map(|(_, r)| *r);
+        // by id, not a search per member: a group of many files searched all the cards for each
+        let by_id: std::collections::HashMap<MediaId, egui::Rect> =
+            if self.bin_groups.is_empty() { Default::default() } else { cards.iter().copied().collect() };
+        let at = |id: MediaId| by_id.get(&id).copied();
         let mut rename: Option<usize> = None;
         for gi in 0..self.bin_groups.len() {
             let g = self.bin_groups[gi].clone();
@@ -797,6 +834,8 @@ impl KtApp {
                 // `reel_preview` (R.56, item 452), and a bin card can take them
                 // by the same key — this is deferred work, not a prohibition.
                 crate::widgets::field_probe::note("bin.reel", thumb_rect);
+                // the ×N count once per state, not a walk of the document per card per frame
+                let all_uses = self.media_uses();
                 if let Some(seq) = self.model.doc().sequence(id) {
                     let end = seq.end().0.max(1);
                     let lanes = seq.lanes(kt_model::LaneKind::Video).max(1)
@@ -826,7 +865,7 @@ impl KtApp {
                     p.add(egui::Shape::mesh(mesh));
                     // ×N BADGE — only when there are SEVERAL places (the same rule
                     // as on an event, t458): “×1” would be noise
-                    let uses = self.model.doc().sequence_uses(id);
+                    let uses = all_uses.get(&id).copied().unwrap_or(0);
                     if uses > 1 {
                         p.text(
                             thumb_rect.right_top() + egui::vec2(-4.0, 2.0),

@@ -128,11 +128,11 @@ impl KtApp {
         let mut apply = false;
         let mut cancel = false;
         let mut save_template: Option<String> = None;
-        let cur = self.model.document().settings.clone();
+        let cur = self.model.doc().settings.clone();
         let reel_name =
             d.reel.and_then(|id| {
                 self.model
-                    .document()
+                    .doc()
                     .sequence(id)
                     .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
             });
