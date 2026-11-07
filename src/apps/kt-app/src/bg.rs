@@ -40,6 +40,7 @@ impl<P> BgSend<P> {
     /// and it is about to stop anyway by the cancel flag.
     pub fn send(&self, p: P) {
         let _ = self.0.send(p);
+        crate::wake::soon();
     }
 }
 
@@ -103,6 +104,7 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
             .spawn(move || {
                 let r = body(ctl, BgSend(prog_tx));
                 let _ = done_tx.send(r);
+                crate::wake::now();
             })
             .expect("spawn background job");
         BgJob {

@@ -1061,6 +1061,24 @@ log_empty = "проблем не замечено"
 # Threshold warnings in the problem log.
 flight_save = "Сохранить журнал воспроизведения"
 flight_stalls = "замираний: {0}"
+load_rest = "Процессор {0} %, покой"
+load_line = "Процессор {0} %: {1}"
+load_work = "Работа в секунду: {0}"
+load_report = "Открыть отчёт о нагрузке"
+load_report_hint = "load-report.txt программа пишет сама во время нагрузки, он остаётся на этом компьютере"
+
+[perf.work]
+ui_frames = "кадры"
+composites = "композиты"
+device_submits = "отправки на устройство"
+decode_requests = "заказы декода"
+decoded = "декодировано"
+prefetch_passes = "проходы упреждения"
+audio_renders = "блоки звука"
+thumb_orders = "заказы миниатюр"
+fx_thumbs = "ячейки эффектов"
+reel_jobs = "превью композиций"
+event_passes = "проходы событий"
 
 [perf.note]
 ui_stall = "UI-поток был заблокирован {0} мс внутри одного кадра"

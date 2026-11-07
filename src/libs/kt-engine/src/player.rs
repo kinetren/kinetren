@@ -931,6 +931,7 @@ impl Player {
         t: Tick,
         target: Target<'_>,
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
+        kt_time::work::bump(kt_time::work::Work::Composite);
         let t0 = std::time::Instant::now();
         let q = self.preview_quality();
         let video = self.video.lock().unwrap();
@@ -1367,6 +1368,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             // we fill the ring: render_head is linear, loop mapping is inside
             // render_looped_with (the wrap does NOT bump the generation — FX live)
             while !hold && producer.slots() >= chunk.len() {
+                kt_time::work::bump(kt_time::work::Work::AudioRender);
                 let stats = if dir < 0 {
                     // reverse (J4 v1.4): the block BEFORE render_head, the material is
                     // reversed frame by frame before the ring; FX — dry
@@ -1718,6 +1720,7 @@ fn prefetch_loop(
             last_state = Some(state);
         }
         loop_stats.prefetch_passes.fetch_add(1, Ordering::Relaxed);
+        kt_time::work::bump(kt_time::work::Work::PrefetchPass);
         let version = project_version.load(Ordering::Acquire);
         if cached.as_ref().map(|(v, _, _)| *v) != Some(version) {
             let p = project.lock().unwrap().clone();

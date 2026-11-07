@@ -49,6 +49,23 @@ fn ctl_path() -> Option<&'static PathBuf> {
     P.get_or_init(|| std::env::var_os("KT_LIVE_CTL").map(PathBuf::from)).as_ref()
 }
 
+/// The channel is read in the frame, and a program at rest has no frames (idle-cpu): a thread
+/// watches the file's timestamp and asks for one. Only under the bench.
+pub(crate) fn watch_channel() {
+    let Some(path) = ctl_path() else { return };
+    let _ = std::thread::Builder::new().name("live-ctl".into()).spawn(move || {
+        let mut seen = None;
+        loop {
+            let now = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+            if now != seen {
+                seen = now;
+                crate::wake::now();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+}
+
 /// Is the bench on? In the product — no, and none of the branches below work.
 pub(crate) fn enabled() -> bool {
     ctl_path().is_some()

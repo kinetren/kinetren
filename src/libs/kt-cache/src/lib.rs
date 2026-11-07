@@ -232,6 +232,10 @@ pub struct BurstCache {
     /// only when it changes.
     epoch: AtomicU64,
     stats: StatCounters,
+    /// What the next insertion calls (`on_next_insert`); the flag keeps an insertion with
+    /// nobody waiting to one atomic read.
+    next_insert: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    next_armed: std::sync::atomic::AtomicBool,
 }
 
 impl BurstCache {
@@ -251,7 +255,16 @@ impl BurstCache {
             }),
             epoch: AtomicU64::new(0),
             stats: StatCounters::default(),
+            next_insert: Mutex::new(None),
+            next_armed: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Call `f` after the next insertion, on the inserting thread: how a paused preview waits for
+    /// a frame without asking on a clock (idle-cpu). A later call replaces an earlier one.
+    pub fn on_next_insert(&self, f: Box<dyn FnOnce() + Send>) {
+        *self.next_insert.lock().unwrap() = Some(f);
+        self.next_armed.store(true, Ordering::Release);
     }
 
     pub fn stats(&self) -> CacheStats {
@@ -484,6 +497,13 @@ impl BurstCache {
 
         self.evict_over_budget(&mut inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
+        drop(inner);
+        if self.next_armed.load(Ordering::Acquire) && self.next_armed.swap(false, Ordering::AcqRel) {
+            let f = self.next_insert.lock().unwrap().take();
+            if let Some(f) = f {
+                f();
+            }
+        }
     }
 
     /// An entry dropped before its first read: thrash while the latest prefetch pass still
@@ -1038,4 +1058,21 @@ mod perf_counter_tests {
         assert_eq!(cache.video_bytes(), bytes * 3, "the release brings it back under the budget");
     }
 
+    /// Test t1836 (idle-cpu): a waiter hears the next insertion, once. A paused preview missing a
+    /// frame waits on this instead of a clock.
+    #[test]
+    fn t1836_the_next_insert_is_heard_once() {
+        use std::sync::atomic::AtomicU32;
+        let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
+        let heard = Arc::new(AtomicU32::new(0));
+        let h = heard.clone();
+        cache.on_next_insert(Box::new(move || {
+            h.fetch_add(1, Ordering::Relaxed);
+        }));
+        assert_eq!(heard.load(Ordering::Relaxed), 0, "nothing arrived yet");
+        let burst = || Arc::new(AudioBurst::silence(0));
+        cache.insert_audio(SourceId(1), burst());
+        cache.insert_audio(SourceId(1), burst());
+        assert_eq!(heard.load(Ordering::Relaxed), 1, "one waiter, one call");
+    }
 }

@@ -664,6 +664,10 @@ pub struct KtApp {
     pub incomplete_since: Option<std::time::Instant>,
     /// Last attempt of a composite of an incomplete frame (retry throttling, item 1).
     pub last_compose_retry: std::time::Instant,
+    /// The cache's epoch the last incomplete composite saw, and the pause before a retry with
+    /// nothing new in the cache. Doubles; past `COMPOSE_RETRY_MAX` the frame waits for news.
+    pub compose_retry_epoch: u64,
+    pub compose_retry_gap: std::time::Duration,
     /// Blurred mini-copy of the frame for the ambient glow (item 18): 32×18,
     /// updated together with the frame, drawn by LINEAR stretching.
     pub glow_texture: Option<egui::TextureHandle>,
@@ -709,6 +713,12 @@ pub struct KtApp {
     /// Reel REVISIONS on the current model (preview key). Computed by
     /// `model_rev`, like the warp maps: `content_hash` walks the reel content, and
     /// doing that every UI frame is pointless.
+    /// The timeline's events as meshes, for the frames of a pointer passing over them.
+    pub(crate) event_paint: Option<crate::timeline::EventPaint>,
+    /// How many frames laid the events out (a test's view of `Work::EventPass`).
+    pub(crate) event_passes: u64,
+    /// How many composites this app asked for (`perf.compose_n` is reset per sample).
+    pub(crate) composites: u64,
     pub reel_hash_cache: (Option<u64>, Arc<HashMap<ClipId, crate::reel_preview::ReelKey>>),
     /// The start, the Guide and the tour (welcome-window-and-tour): the state that lives
     /// BETWEEN projects. `replace_with` carries it across the in-place rebuild of File → New/Open.
@@ -1025,6 +1035,8 @@ impl KtApp {
             preview_project: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
+            compose_retry_epoch: 0,
+            compose_retry_gap: COMPOSE_RETRY_MIN,
             thumb_textures: HashMap::new(),
             thumb_lru: std::collections::VecDeque::new(),
             model_rev: 0,
@@ -1034,6 +1046,9 @@ impl KtApp {
             warp_cache: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
+            event_paint: None,
+            event_passes: 0,
+            composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
         };
@@ -1310,6 +1325,8 @@ impl KtApp {
             preview_project: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
+            compose_retry_epoch: 0,
+            compose_retry_gap: COMPOSE_RETRY_MIN,
             thumb_textures: HashMap::new(),
             thumb_lru: std::collections::VecDeque::new(),
             model_rev: 0,
@@ -1319,6 +1336,9 @@ impl KtApp {
             warp_cache: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
+            event_paint: None,
+            event_passes: 0,
+            composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
         };
@@ -1865,6 +1885,7 @@ impl KtApp {
                     // were serializing a MORE RECENT snapshot landed on disk
                     // (Ctrl+S), we do not write our stale one at all
                     let _ = tx.send(write_project_guarded(&guard, &target, snap_rev, &out));
+                    crate::wake::now();
                 })
                 .ok();
         }
@@ -2322,8 +2343,7 @@ impl KtApp {
             || self.space_press.is_some()
             || self.space_boost.is_some()
             || self.drag.is_some()
-            || self.render_job.is_some()
-            || self.meter.is_active();
+            || self.render_job.is_some();
         // “slow down when busy” (rule 12): picker thumbnails are
         // computed in their own thread, and during playback/export it must yield
         self.fx_thumbs.set_busy(self.player.transport.is_playing() || self.render_job.is_some());
@@ -2334,14 +2354,61 @@ impl KtApp {
         if self.fx_thumbs.pending() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
-        let delay = if animating {
-            std::time::Duration::from_millis(if self.start.store.start.economy_ui { 33 } else { 16 })
-        } else if self.incomplete_since.is_some() {
-            std::time::Duration::from_millis(100) // retries of an incomplete frame
-        } else {
-            repaint_delay(false)
-        };
-        ctx.request_repaint_after(delay);
+        // At rest nothing is asked for: the tick of 4 Hz drew the whole window for nobody.
+        let economy = self.start.store.start.economy_ui;
+        // the meter's slow fall on a pause moves less than a pixel per step, at the decay's own
+        // 25 ms: the window has no reason to redraw faster than the bar does (idle-cpu)
+        let falling = self.meter.is_active().then_some(METER_FALL_STEP);
+        // A gesture lands anywhere in the frame, and the panels before it have drawn already: a
+        // window's Done is read after the preview under it. One more frame shows what it did; the
+        // tick used to hide this. A pointer passing changes nothing a later frame would show.
+        let gesture = ctx.input(|i| {
+            i.events.iter().any(|e| !matches!(e, egui::Event::PointerMoved(_) | egui::Event::MouseMoved(_)))
+        });
+        let delay = repaint_delay(animating, economy)
+            .or(gesture.then_some(std::time::Duration::ZERO))
+            .or(falling)
+            .or_else(|| self.rest_wake());
+        if let Some(delay) = delay {
+            ctx.request_repaint_after(delay);
+        }
+    }
+
+    /// When something on a clock needs a frame while nothing moves: the earliest of them. A new
+    /// timed state belongs here, or it waits for the mouse. Background threads do not: they call
+    /// `wake`.
+    fn rest_wake(&self) -> Option<std::time::Duration> {
+        use std::time::Duration;
+        let left = |at: std::time::Instant, ttl: Duration| ttl.saturating_sub(at.elapsed());
+        let ttl = Duration::from_millis(STATUS_TTL_MS);
+        let plus = |d: Duration| d + Duration::from_millis(5);
+        let mut wake: Vec<Duration> = Vec::new();
+        wake.extend(self.status.iter().map(|(_, at)| plus(left(*at, ttl))));
+        wake.extend(self.error_status.iter().map(|(_, at)| plus(left(*at, ttl))));
+        wake.extend(self.blocked_track.iter().map(|(_, at)| plus(left(*at, ttl))));
+        // an incomplete frame: its scrim, then its next try with nothing new in the cache
+        if let Some(t0) = self.incomplete_since {
+            if t0.elapsed() < LOADING_SCRIM {
+                wake.push(plus(left(t0, LOADING_SCRIM)));
+            }
+            if self.compose_retry_gap <= COMPOSE_RETRY_MAX {
+                wake.push(plus(left(self.last_compose_retry, self.compose_retry_gap)));
+            }
+        }
+        if (self.dirty_content || self.dirty_ui) && self.autosave_rx.is_none() {
+            let every = Duration::from_secs(self.autosave_secs);
+            wake.push(plus(left(self.last_autosave, every)));
+        }
+        // the Diagnostics window is a live instrument: its graphs sample twice a second
+        if self.perf.diag_open {
+            wake.push(Duration::from_millis(500));
+        }
+        // the misclick guard of the FX windows ends with no input of its own
+        wake.extend(self.fx_editors.iter().filter_map(|ed| {
+            let left = crate::fx_thumbs::DECODE_GUARD.saturating_sub(ed.opened_at.elapsed());
+            (!left.is_zero()).then(|| plus(left))
+        }));
+        wake.into_iter().min()
     }
 
     /// After a system drag/resize of the window (X11 `_NET_WM_MOVERESIZE`) the WM
@@ -4677,6 +4744,7 @@ impl KtApp {
                 for (id, label, path) in back {
                     let src = open_source_indexed(&path, db.as_deref()).ok();
                     let _ = tx.send((id, label, src));
+                    crate::wake::now();
                 }
             })
             .ok();
@@ -6502,6 +6570,17 @@ impl KtApp {
 
     // -- snap ---------------------------------------------------------------
 
+    /// Has what the incomplete frame at `key_tick` lacked arrived?
+    fn compose_news(&self, key_tick: i64) -> bool {
+        self.player.cache.epoch() != self.compose_retry_epoch
+            && self.player.missing_layers(Tick(key_tick)).is_empty()
+    }
+
+    fn compose_retry_timed_out(&self) -> bool {
+        self.compose_retry_gap <= COMPOSE_RETRY_MAX
+            && self.last_compose_retry.elapsed() >= self.compose_retry_gap
+    }
+
     fn draw_preview(&mut self, ui: &mut egui::Ui) {
         let (t, display_lap) = self.player.video_playhead_lap();
         let q = self.player.preview_quality();
@@ -6548,22 +6627,36 @@ impl KtApp {
         // rule in the settings window while paused touches none of the above, and the composite
         // counted as “already computed”
         let project = self.player.project_version();
-        let need = match self.preview_key {
-            Some((pt, pq, was_complete)) => {
+        let changed = match self.preview_key {
+            Some((pt, pq, _)) => {
                 pt != key_now.0
                     || pq != key_now.1
-                    || !was_complete
                     || self.preview_content != content
                     || self.preview_project != project
             }
             None => true,
         };
+        // An incomplete frame is composed again when what it lacked has arrived, or, on a growing
+        // pause, in case it never reports. Retrying on every frame put the whole chain of a slow
+        // effect on each move of the mouse (idle-cpu, t1832).
+        let retry = !changed
+            && self.preview_key.is_some_and(|k| !k.2)
+            && (self.compose_news(key_tick) || self.compose_retry_timed_out());
+        let need = changed || retry;
         self.preview_content = content;
         self.preview_project = project;
         let new_frame = self.preview_key.map(|k| k.0) != Some(key_now.0);
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
         if need {
             self.last_compose_retry = std::time::Instant::now();
+            // before the composite: what lands during it is news for the next look
+            let epoch = self.player.cache.epoch();
+            self.compose_retry_gap = if retry && self.player.cache.epoch() == self.compose_retry_epoch {
+                self.compose_retry_gap * 2
+            } else {
+                COMPOSE_RETRY_MIN
+            };
+            self.compose_retry_epoch = epoch;
             let mut rgba = std::mem::take(&mut self.preview_buf);
             let shown_any = self.texture.is_some() || self.preview_on_display;
             // composition by the ratcheted key, not the raw t:
@@ -6591,6 +6684,7 @@ impl KtApp {
             self.perf.compose_ms_last = cost.compose_ns as f32 / 1e6;
             self.perf.compose_sum_ns += cost.compose_ns;
             self.perf.compose_n += 1;
+            self.composites += 1;
             // we hold the last FULL frame: an incomplete composite does not overwrite the
             // picture (the flicker “black frame ↔ Loading”, item 14/15)
             if on_display && (c || !shown_any) {
@@ -6657,8 +6751,15 @@ impl KtApp {
         }
         if complete {
             self.incomplete_since = None;
-        } else if self.incomplete_since.is_none() {
-            self.incomplete_since = Some(std::time::Instant::now());
+        } else {
+            if self.incomplete_since.is_none() {
+                self.incomplete_since = Some(std::time::Instant::now());
+            }
+            // the next insertion wakes this frame; one that landed before the arming is seen here
+            self.player.cache.on_next_insert(Box::new(crate::wake::soon));
+            if self.player.cache.epoch() != self.compose_retry_epoch {
+                crate::wake::soon();
+            }
         }
         let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
         self.preview_rect = rect;
@@ -6834,7 +6935,7 @@ impl KtApp {
             // scrim — only if the incompleteness lasts >180 ms (v1)
             let show_overlay = self
                 .incomplete_since
-                .map(|t0| t0.elapsed() > std::time::Duration::from_millis(180))
+                .map(|t0| t0.elapsed() > LOADING_SCRIM)
                 .unwrap_or(false);
             if show_overlay {
                 // the README's hero waits for a frame without it (a picture mid-load is not one)
@@ -7962,6 +8063,23 @@ impl KtApp {
             for (id, hs) in &live {
                 self.reel_previews.invalidate_seq(*id, hs);
             }
+            // the service's view of what is on the timeline: what it may not evict, and which
+            // sidecar row each release has
+            let rows = map
+                .iter()
+                .filter_map(|(id, key)| {
+                    let c = self.model.project().clips.iter().find(|c| c.id == *id)?;
+                    Some((*key, crate::reel_preview::reel_row(key.seq, &c.overrides)))
+                })
+                .collect();
+            let keep: Vec<i64> = doc
+                .clips
+                .iter()
+                .chain(doc.sequences.iter().flat_map(|s| s.clips.iter()))
+                .filter(|c| live.contains_key(&c.media) && !c.overrides.is_empty())
+                .map(|c| crate::reel_preview::reel_row(c.media, &c.overrides))
+                .collect();
+            self.reel_previews.set_live(rows, Arc::new(keep));
             self.reel_hash_cache = (Some(self.model_rev), Arc::new(map));
         }
         self.reel_hash_cache.1.clone()
@@ -7977,7 +8095,7 @@ impl KtApp {
         key: crate::reel_preview::ReelKey,
         overrides: &[kt_model::Override],
     ) {
-        if self.reel_previews.get(&key).is_some() {
+        if !self.reel_previews.wants(&key) {
             return;
         }
         let Some(mut p) = self.model.document().reel_as_root(key.seq) else { return };
@@ -8189,16 +8307,23 @@ impl KtApp {
     }
 }
 
-/// The delay before the next redraw: 60 fps only when there is something to
-/// animate, at rest — a rare tick (status bar/watchdog).
-/// A pure function — test 20-repaint (item 1).
-pub fn repaint_delay(animating: bool) -> std::time::Duration {
-    if animating {
-        std::time::Duration::from_millis(16)
-    } else {
-        std::time::Duration::from_millis(250)
-    }
+/// The delay before the next redraw: 60 fps only when there is something to animate, and at rest
+/// nothing at all (idle-cpu): a background thread wakes the UI through `wake`, a clock through
+/// `KtApp::rest_wake`. A pure function — test 20-repaint (item 1).
+pub fn repaint_delay(animating: bool, economy: bool) -> Option<std::time::Duration> {
+    animating.then(|| std::time::Duration::from_millis(if economy { 33 } else { 16 }))
 }
+
+/// A frame of the meters falling while nothing else moves.
+const METER_FALL_STEP: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// The first pause before an incomplete frame is composed again with nothing new in the cache.
+pub const COMPOSE_RETRY_MIN: std::time::Duration = std::time::Duration::from_millis(250);
+/// Past this pause an incomplete frame stops retrying: what it lacks is not coming on its own, and
+/// a seek, an edit or an arriving frame composes it again.
+pub const COMPOSE_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(8);
+/// The incomplete frame's scrim shows after this long (v1).
+const LOADING_SCRIM: std::time::Duration = std::time::Duration::from_millis(180);
 
 /// The mouse position in window coordinates (points) during a DnD of a file.
 /// winit 0.30/X11 discards the XdndPosition coordinates and does not send mouse
@@ -9340,6 +9465,52 @@ impl KtApp {
         }
     }
 
+    /// The load watch's last second: who held the processor, what ran, and the file with the
+    /// last quarter of an hour (idle-cpu).
+    fn draw_load_section(&mut self, ui: &mut egui::Ui) {
+        use kt_time::work::Work;
+        let name = |w: Work| match w {
+            Work::UiFrame => tr(k::perf::work::UI_FRAMES),
+            Work::Composite => tr(k::perf::work::COMPOSITES),
+            Work::DeviceSubmit => tr(k::perf::work::DEVICE_SUBMITS),
+            Work::DecodeRequest => tr(k::perf::work::DECODE_REQUESTS),
+            Work::Decoded => tr(k::perf::work::DECODED),
+            Work::PrefetchPass => tr(k::perf::work::PREFETCH_PASSES),
+            Work::AudioRender => tr(k::perf::work::AUDIO_RENDERS),
+            Work::ThumbOrder => tr(k::perf::work::THUMB_ORDERS),
+            Work::FxThumb => tr(k::perf::work::FX_THUMBS),
+            Work::ReelJob => tr(k::perf::work::REEL_JOBS),
+            Work::EventPass => tr(k::perf::work::EVENT_PASSES),
+        };
+        if let Some(s) = crate::load_watch::last() {
+            let cpu = format!("{:.0}", s.cpu);
+            if s.at_rest() {
+                ui.weak(crate::tf!(k::perf::LOAD_REST, cpu));
+            } else {
+                let who: Vec<String> = s.threads.iter().map(|(n, p)| format!("{n} {p:.0}")).collect();
+                ui.weak(crate::tf!(k::perf::LOAD_LINE, cpu, who.join(", ")));
+            }
+            let ran: Vec<String> = Work::ALL
+                .iter()
+                .zip(&s.work)
+                .filter(|(_, n)| **n > 0)
+                .map(|(w, n)| format!("{} {n}", name(*w)))
+                .collect();
+            if !ran.is_empty() {
+                ui.weak(crate::tf!(k::perf::LOAD_WORK, ran.join(", ")));
+            }
+        }
+        let r = ui.button(tr(k::perf::LOAD_REPORT));
+        crate::widgets::field_probe::note("diag.load_report", r.rect);
+        let r = self.hint(r, tr(k::perf::LOAD_REPORT_HINT));
+        if r.clicked() {
+            crate::load_watch::write_now();
+            if let Err(e) = crate::util::open_in_file_manager(&crate::journal::data_dir()) {
+                self.warn(e);
+            }
+        }
+    }
+
     fn draw_diagnostics(&mut self, ctx: &egui::Context) {
         if !self.perf.diag_open {
             return;
@@ -9383,6 +9554,7 @@ impl KtApp {
                         let cache = self.player.cache.stats();
                         ui.weak(crate::tf!(k::perf::NO_READ_DROPS, cache.unused_evictions));
                     });
+                    self.draw_load_section(ui);
                     let (bar, _) = ui.allocate_exact_size(
                         egui::vec2(ui.available_width(), 6.0),
                         egui::Sense::hover(),
@@ -9462,6 +9634,7 @@ impl KtApp {
 
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        kt_time::work::bump(kt_time::work::Work::UiFrame);
         // LIVE BENCH (R.68): the bench command is executed BEFORE the frame — a scenario
         // that waited for the frame must already see the new project. Without
         // KT_LIVE_CTL there is just one OnceLock check here and not a single system operation.
@@ -9620,6 +9793,8 @@ pub fn run() -> eframe::Result {
     // the former data directory (Kinotrain) moves into place BEFORE eframe
     // reads its storage: that storage lives in the same directory
     let _ = crate::journal::data_dir();
+    // who holds the processor, from the first second and with nothing to switch on (idle-cpu)
+    crate::load_watch::start();
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     crate::plugins::install();
     // the FFmpeg folder chosen with Locate… is the first step of the search (windows-build)
@@ -9628,12 +9803,11 @@ pub fn run() -> eframe::Result {
     crate::journal::start_run();
     // GPU: the egui-wgpu default is HighPerformance, i.e. the discrete card; on
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
-    // system (item 1, v1.4). The UI load is modest — we take the power-efficient
-    // adapter; WGPU_POWER_PREF=high_performance returns the discrete one.
+    // system (item 1, v1.4). The card that drives the monitor is the one with no copy:
+    // `display_power_preference` decides; WGPU_POWER_PREF overrides it.
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
-        setup.power_preference = eframe::wgpu::PowerPreference::from_env()
-            .unwrap_or(eframe::wgpu::PowerPreference::LowPower);
+        setup.power_preference = kt_gpu::display_power_preference();
     }
     // borderless (item 22, round 6): our own title bar in the toolbar row; the system frame
     // under wine or with KT_DECORATIONS=1 (wine-frame-and-dark-theme, `window_frame`)
@@ -9671,6 +9845,8 @@ pub fn run() -> eframe::Result {
                 Ok(v) => crate::i18n::choice_from_code(&v),
                 Err(_) => store.lang_choice(former.as_deref()),
             };
+            crate::wake::install(&cc.egui_ctx);
+            crate::bench::watch_channel();
             crate::theme::apply(&cc.egui_ctx);
             crate::theme::apply_debug_flags(&cc.egui_ctx); // item 23, round 6
             crate::i18n::set_lang_ctx(&cc.egui_ctx, crate::i18n::resolve(lang_choice));
@@ -10703,7 +10879,8 @@ mod repaint_tests {
     /// Test 20-repaint (item 1): when idle NOT 60 fps.
     #[test]
     fn t20_idle_repaint_is_slow_playing_is_60fps() {
-        assert_eq!(repaint_delay(true).as_millis(), 16);
-        assert!(repaint_delay(false).as_millis() >= 100, "idle = rare tick");
+        assert_eq!(repaint_delay(true, false).map(|d| d.as_millis()), Some(16));
+        assert_eq!(repaint_delay(true, true).map(|d| d.as_millis()), Some(33));
+        assert_eq!(repaint_delay(false, false), None, "at rest nothing ticks");
     }
 }

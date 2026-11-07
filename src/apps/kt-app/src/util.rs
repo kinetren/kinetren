@@ -158,9 +158,13 @@ impl IndexService {
                                 if let Some(l) = l {
                                     loud.lock().unwrap().insert(id, l);
                                 }
+                                crate::wake::soon();
                             }
                             Ok(None) => {}
-                            Err(e) => err_t.lock().unwrap().push(format!("{path}: {e}")),
+                            Err(e) => {
+                                err_t.lock().unwrap().push(format!("{path}: {e}"));
+                                crate::wake::now();
+                            }
                         }
                     }
                 }
@@ -314,7 +318,12 @@ pub fn spawn_media_watchdog(
                         offline.insert(*id);
                     }
                 }
-                *out.lock().unwrap() = offline;
+                let mut set = out.lock().unwrap();
+                if *set != offline {
+                    *set = offline;
+                    crate::wake::now();
+                }
+                drop(set);
                 std::thread::sleep(std::time::Duration::from_millis(900));
             }
         })

@@ -348,6 +348,7 @@ impl ThumbService {
         let mut q = self.shared.queue.lock().unwrap();
         if q.1.insert(key) {
             self.shared.requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            kt_time::work::bump(kt_time::work::Work::ThumbOrder);
             if cfg!(test) {
                 self.shared.request_log.lock().unwrap().push(key);
             }
@@ -472,6 +473,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 })
             });
             shared.durations.lock().unwrap().insert(pid, dur);
+            crate::wake::soon();
         }
         // poster requests (item 4 round 9): we look for the informative frame — first among
         // ready thumbs in the DB (no decode at all), then by decoding
@@ -483,6 +485,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
         {
             let found = find_poster(&shared, &mut db, &mut sources, pid);
             shared.posters.lock().unwrap().insert(pid, found);
+            crate::wake::soon();
         }
         let Some((key, near_tol)) = next else {
             continue;
@@ -596,6 +599,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                     ready.remove(&old);
                 }
             }
+            crate::wake::soon();
         }
     }
 }

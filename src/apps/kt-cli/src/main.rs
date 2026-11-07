@@ -836,6 +836,70 @@ fn process_cpu_s() -> f64 {
 const BENCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// `kt-cli preview` (preview-throughput): see the dispatch.
+/// A paused frame settles (idle-cpu): at every `step` seconds the program seeks and composes as a
+/// paused preview does, once per 100 ms, until the frame comes out complete. A moment that never
+/// does is a frame the UI would retry for as long as the person looks at it. Returns their number.
+fn pause_scan(
+    project: &Project,
+    path: &str,
+    step: f64,
+    size: Option<kt_media::Quality>,
+    wait_s: f64,
+) -> Result<usize, String> {
+    let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
+    for m in &project.media {
+        let mut db = kt_media::index::MediaIndexDb::open(
+            &std::path::Path::new(path).with_extension("ktindex.db"),
+        )
+        .ok();
+        match kt_media::factory::open_indexed(&m.path, db.as_mut()) {
+            Ok(s) => sources.push((m.id, s)),
+            Err(e) => eprintln!("  skipped: {}: {e}", m.path),
+        }
+    }
+    let end = kt_engine::export::project_range(project).0 as f64 / kt_time::TICK_HZ as f64;
+    let (player, _ring) = kt_engine::Player::new(project.clone(), sources);
+    let q = size.unwrap_or(kt_media::Quality {
+        width: project.settings.width,
+        height: project.settings.height,
+    });
+    player.set_preview_quality(q);
+    let gpu = kt_gpu::GpuContext::new_headless()
+        .and_then(kt_gpu::GpuFxEngine::new)
+        .map_err(|e| format!("no video device: {e}"))?;
+    player.set_video_gpu(Some(gpu));
+    let mut buf = Vec::new();
+    let (mut never, mut at) = (0, 0.0);
+    while at < end {
+        let tick = Tick((at * kt_time::TICK_HZ as f64) as i64);
+        player.seek(tick);
+        let t0 = std::time::Instant::now();
+        let mut n = 0;
+        let done = loop {
+            n += 1;
+            let c = player.compose_preview_into(tick, &mut buf).1;
+            if c || t0.elapsed().as_secs_f64() > wait_s {
+                break c;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        };
+        let cost = player.video_cost();
+        if !done {
+            never += 1;
+        }
+        println!(
+            "{at:7.2} s  {}  composites {n}  settle {:.0} ms  last {:.1} ms  missing {:?}",
+            if done { "ok   " } else { "NEVER" },
+            t0.elapsed().as_secs_f64() * 1e3,
+            cost.compose_ns as f64 / 1e6,
+            if done { Vec::new() } else { player.missing_layers(tick) },
+        );
+        at += step;
+    }
+    println!("never complete: {never}");
+    Ok(never)
+}
+
 fn preview_run(
     project: &Project,
     path: &str,
@@ -1407,6 +1471,28 @@ fn run(args: &[String]) -> i32 {
             let cold = args.iter().any(|a| a == "--cold");
             match preview_run(&project, input, from, to, size, ui_ms, free, cold) {
                 Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        Some("pause-scan") => {
+            let (Some(input), Some(step)) = (args.get(1), args.get(2).and_then(|s| s.parse::<f64>().ok())) else {
+                eprintln!("usage: kt-cli pause-scan <in.kt> <step_s> [--size WxH] [--wait-s N]");
+                return 2;
+            };
+            let project = match load_project_resolved(input) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+            let size = opt("--size").and_then(|s| s.split_once('x')).and_then(|(w, h)| {
+                Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? })
+            });
+            let wait = opt("--wait-s").and_then(|s| s.parse::<f64>().ok()).unwrap_or(4.0);
+            match pause_scan(&project, input, step, size, wait) {
+                Ok(n) => i32::from(n > 0),
                 Err(e) => {
                     eprintln!("{e}");
                     1

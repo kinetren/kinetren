@@ -429,6 +429,7 @@ fn frame_from(img: &egui::ColorImage) -> kt_fx::video::Frame {
 /// Rendering of one request. Taken out of the worker so that a test can call it directly —
 /// without a thread and without waiting. With no video device the cell shows the base.
 pub(crate) fn render_job(job: &FxThumbJob) -> egui::ColorImage {
+    kt_time::work::bump(kt_time::work::Work::FxThumb);
     let base = match (&job.base_img, job.key.base) {
         (Some(img), _) => frame_from(img),
         (None, FxThumbBase::PatternAlpha) => kt_fx::video::test_pattern(REF_W, REF_H, true),

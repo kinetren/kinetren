@@ -13,7 +13,10 @@ mod context;
 mod engine;
 mod pool;
 
-pub use context::{GpuContext, GpuInitError};
+pub use context::{
+    AdapterFact, DrivingCard, GpuContext, GpuInitError, adapter_facts, display_power_preference, driving_cards,
+    power_preference_for,
+};
 pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
 /// A single method of comparing GPU frames with the stored ones (R.29): ad-hoc epsilons in

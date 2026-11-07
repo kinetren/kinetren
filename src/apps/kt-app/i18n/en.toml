@@ -1061,6 +1061,24 @@ log_empty = "no problems noticed"
 # Threshold warnings in the problem log.
 flight_save = "Save the playback journal"
 flight_stalls = "playback froze: {0}"
+load_rest = "Processor {0} %, at rest"
+load_line = "Processor {0} %: {1}"
+load_work = "Work per second: {0}"
+load_report = "Open the load report"
+load_report_hint = "load-report.txt is written by the program during a load and stays on this computer"
+
+[perf.work]
+ui_frames = "frames"
+composites = "composites"
+device_submits = "device submits"
+decode_requests = "decode orders"
+decoded = "decoded"
+prefetch_passes = "prefetch passes"
+audio_renders = "audio blocks"
+thumb_orders = "thumbnail orders"
+fx_thumbs = "effect cells"
+reel_jobs = "composition previews"
+event_passes = "event passes"
 
 [perf.note]
 ui_stall = "the UI thread was blocked for {0} ms inside one frame"
