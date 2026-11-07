@@ -37,6 +37,8 @@ goes here, with its date, in the same turn.
 
 ## Questions to the owner
 
+- **One message is often several requests** (2026-11-07). Each request gets its own change, session
+  and report. Never fold them into one executor because they look related.
 - **A question carries its context and its computed consequences** (2026-10-30, repeated
   2026-11-03: "вопросы должны быть с просчитанными последствиями и контекстом, чтобы я не
   переспрашивал"): quote his own claim, say what the program does today, and for each option what
@@ -133,9 +135,9 @@ Stage closed: `finish.sh` at kt26.11.06-b42cbff4, master there: 1579 of 1579, 78
 first pass, 938 s. In it: `gpu-render-hardening`, `render-speed-no-card` (a render with no card beats
 the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner's order:
 
-0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`): `idle-cpu`, E1-E5 and E8. It runs alone.
-   `fx-preset-and-forms` (E6, E7) and `ctrl-s-writes-nothing` (row 47) were started and stopped the
-   same hour: he asked why they ran. Neither is a next step until he says so.
+0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`), each its own change, each on his word:
+   `idle-cpu` (E1, E2, E4, E5, running), `load-proof-tool` (E3), `ui-never-waits` (E8),
+   `fx-preset-change` (E6), `fx-form-width` (E7). `ctrl-s-writes-nothing` (row 47) waits for his word too.
 2. **Performance**: rows 93 (preview on the VHS span), 94, 96, and the older 10, 37, 42, 52, 53, 55, 72.
 3. **Build and CI speed**: logs of a real master run and the first `windows-picture` and FXC result,
    both need the owner's push; the plugin test-build cost (card); an ARM build (owner, 2026-11-04).

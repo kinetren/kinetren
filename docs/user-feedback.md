@@ -2693,6 +2693,10 @@ What he asks, in short:
 - An anomalous parameter lags the interface until the effect cannot be undone: "тупых решений не
   предлагай, нужны правильные".
 
+The same day: "я тебе сказал что там несколько запросов в одном - а ты по прежнему мне написал всё в
+одном". So one list is several requests and each gets its own change and report: `idle-cpu` (E1, E2,
+E4, E5), `load-proof-tool` (E3), `ui-never-waits` (E8), `fx-preset-change` (E6), `fx-form-width` (E7).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
@@ -2705,7 +2709,7 @@ What he asks, in short:
 | Rules about UI convenience | 5+ (r.8–r.12) | a checklist of 15 items in apps/kt-app/CLAUDE.md |
 | **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | `windows-fill-their-area`: one rule in the window shell (every window resizable, its body fills it, sizes remembered) and a guard over EVERY window that drags its corner (t1125); fixed sizes need a written reason (t1127) |
 | **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS; the camera ISP: noise without its denoiser, defects without their compensation) | open: the 2026-11-01 round |
-| **A form leaves half of its width empty and runs long** | **"СТОЛЬКО РАЗ ПРОСИЛ НАВСЕГДА" (2026-11-07, Camera ISP)** | a guard over every effect form, change `fx-preset-and-forms` |
+| **A form leaves half of its width empty and runs long** | **"СТОЛЬКО РАЗ ПРОСИЛ НАВСЕГДА" (2026-11-07, Camera ISP)** | a guard over every effect form, change `fx-form-width` |
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |
 | **One claim sent twice (R.43)** | **2** | the first attempt fixed the symptoms: there was nothing to look at in the model. `kt-cli probe` appeared; for the complaint "sound from another event" it is run FIRST |
