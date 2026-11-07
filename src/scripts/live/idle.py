@@ -188,13 +188,27 @@ def main(out):
         app.expect(deck is not None, "the chain has a VHS Tape slot whose deck face draws")
         if deck is not None:
             app.step("fx-deck", "VHS Tape is selected: the deck face and its grid")
-            r = app._probe_rect("dark_clip")
-            app.expect(r is not None, "the dark clip field published its rectangle")
+            # the field lies under the fold of the window's scrolling body: a rectangle published
+            # there is not on screen, and a drag at it lands on the timeline
+            r = None
+            for _ in range(15):
+                r, done, w = app._probe_rect("dark_clip"), app._probe_rect("fx.done"), app._probe_rect("win.fx")
+                if r is None or done is None or w is None:
+                    break
+                if r["y"] > w["y"] + 30 and r["y"] + r["h"] < done["y"] - 4:
+                    break
+                ticks = 2 if r["y"] + r["h"] >= done["y"] - 4 else -2
+                app.wheel(win["x"] + int(w["x"] + w["w"] / 2), win["y"] + int(w["y"] + w["h"] / 2), ticks)
+                r = None
+            app.expect(r is not None, "the dark clip field scrolls into view, above the window's action row")
             if r is not None:
                 fx = win["x"] + int(r["x"] + r["w"] / 2)
                 fy = win["y"] + int(r["y"] + r["h"] / 2)
+                edits = meter.read()["work"].get("model_edits", 0)
                 # a real drag far to the left: the field stops at its floor
                 app.drag(fx, fy, max(win["x"] + 5, fx - 420), fy, steps=8)
+                app.until(lambda: meter.read()["work"].get("model_edits", 0) > edits, timeout=10.0)
+                app.expect(meter.read()["work"].get("model_edits", 0) > edits, "the drag on the dark clip field was an edit")
                 app.step("fx-floor", "the dark clip is dragged to its floor, -80 %")
                 wait_quiet(meter, "after the drag")
                 gx, gy = win["x"] + int(r["x"]) - 150, win["y"] + int(r["y"]) - 120
