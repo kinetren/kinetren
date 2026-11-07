@@ -1085,6 +1085,8 @@ event_passes = "جولات الأحداث"
 model_edits = "تعديلات النموذج"
 project_swaps = "استبدالات المشروع"
 engine_builds = "بناءات المحرك"
+mix_replays = "كتل صوت من المزج المحفوظ"
+composite_replays = "تراكيب محفوظة معروضة"
 
 [perf.note]
 ui_stall = "انسدّ خيط الواجهة {0} م.ث داخل إطار واحد"

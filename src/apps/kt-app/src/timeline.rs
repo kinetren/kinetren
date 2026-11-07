@@ -132,6 +132,11 @@ pub const TPP_MAX: f64 = 2_000_000.0;
 ///
 /// The fractions are chosen exact in ticks (90 000 is divisible by all of them): 0.01, 0.05, 0.1,
 /// 0.2, 0.5 s. Then the former 1 s, 10 s, minute, 10 minutes, hour.
+/// The strips' "plays without work" layer (cached-range-plays): the kept final mix over the cyan
+/// audio strip, the kept composites over the green video strip, and the event's line.
+const FINAL_AUDIO: egui::Color32 = egui::Color32::from_rgb(214, 246, 255);
+const FINAL_VIDEO: egui::Color32 = egui::Color32::from_rgb(196, 255, 200);
+const FINAL_LINE: egui::Color32 = egui::Color32::from_rgb(235, 255, 235);
 const RULER_LADDER: [i64; 10] =
     [900, 4_500, 9_000, 18_000, 45_000, 90_000, 900_000, 5_400_000, 54_000_000, 324_000_000];
 pub const EDGE_GRAB_PX: f32 = 7.0;
@@ -2358,6 +2363,10 @@ impl KtApp {
         // one pass of coverage polls per frame, for the events in view (cache by epoch, item 1);
         // Arc-snapshot — a pointer clone, not a map (item 1 of v1.4)
         let coverage_snapshot = self.coverage_runs(&events, (view_t0, view_t1));
+        let final_snapshot = self.coverage_cache.final_runs.clone();
+        if self.coverage_cache.final_pending {
+            ui.ctx().request_repaint();
+        }
 
         // ---- global cache strips (port: cyan=audio, green=video) --------
         {
@@ -2419,6 +2428,28 @@ impl KtApp {
                     // (item 3 round 8) — the gradient on top of it shows through
                     let x0 = tick_to_x(t0).max(full.left());
                     let x1 = tick_to_x(t1).min(rect.right());
+                    if x1 > x0 {
+                        painter.rect_filled(
+                            egui::Rect::from_min_max(
+                                egui::pos2(x0, y0 + row),
+                                egui::pos2(x1, y0 + row + 4.0),
+                            ),
+                            0.0,
+                            col,
+                        );
+                    }
+                }
+            }
+            // what plays without work (cached-range-plays): the kept final mix over the audio
+            // strip, the kept composites over the video strip — bright, the decoded-only part
+            // stays the darker colour under it
+            for (runs, row, col) in [
+                (&final_snapshot.audio, 0.0f32, FINAL_AUDIO),
+                (&final_snapshot.video, 5.0, FINAL_VIDEO),
+            ] {
+                for r in runs.iter() {
+                    let x0 = tick_to_x(r.start).max(full.left());
+                    let x1 = tick_to_x(r.end).min(rect.right());
                     if x1 > x0 {
                         painter.rect_filled(
                             egui::Rect::from_min_max(
@@ -4901,6 +4932,21 @@ impl KtApp {
                         egui::pos2(tick_to_x(t1).min(clip_rect.right()), clip_rect.bottom() - 1.5),
                     ],
                     egui::Stroke::new(2.0, egui::Color32::from_rgb(110, 235, 110)),
+                );
+            }
+            // the part of the event that plays without work, bright over the decoded line
+            let fin = match c.kind {
+                ClipKind::Audio => &final_snapshot.audio,
+                ClipKind::Video => &final_snapshot.video,
+            };
+            let (c0, c1) = (c.start.0, (c.start + c.duration).0);
+            for r in fin.iter().filter(|r| r.end > c0 && r.start < c1) {
+                painter.line_segment(
+                    [
+                        egui::pos2(tick_to_x(r.start.max(c0)).max(clip_rect.left()), clip_rect.bottom() - 1.5),
+                        egui::pos2(tick_to_x(r.end.min(c1)).min(clip_rect.right()), clip_rect.bottom() - 1.5),
+                    ],
+                    egui::Stroke::new(2.0, FINAL_LINE),
                 );
             }
         }

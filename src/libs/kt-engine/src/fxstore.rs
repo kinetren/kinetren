@@ -92,6 +92,11 @@ pub struct NestStream {
     /// function of the index, and the bytes depend neither on the read history nor on
     /// the chunk in which it was requested.
     pub block: u32,
+    /// The inner chains have been built (cached-range-plays): a stream is created empty when its
+    /// instance is first READ and synced then, not when the renderer is built — a reel placed
+    /// 400 times with 300 inner reverbs built 120 000 processors at every `sync_fx` and took the
+    /// machine's memory before a single burst played.
+    pub synced: bool,
 }
 
 impl NestStream {
@@ -109,6 +114,7 @@ impl NestStream {
             next: None,
             preroll,
             block,
+            synced: false,
         }
     }
 
@@ -372,6 +378,30 @@ impl FxStateStore {
     /// lives next to the store — there is no way to take both and mutate them at the same time.
     /// The extracted map unties the borrows, and `put_nests`
     /// returns it back in place within the same call.
+    /// The instance's stream if it exists for this revision (an edit carries its state over,
+    /// invariant 3); a stream of another revision is dropped. Nothing is created: a stream is
+    /// born when its instance is read (`NestStream::synced`).
+    pub fn nest_live_mut(
+        &mut self,
+        id: ClipId,
+        seq: crate::video::NestKey,
+        preroll: u32,
+        block: u32,
+    ) -> Option<&mut NestStream> {
+        if self.nests.get(&id).is_some_and(|e| e.seq != seq) {
+            self.nests.remove(&id);
+        }
+        let e = self.nests.get_mut(&id)?;
+        e.preroll = preroll;
+        e.block = block;
+        Some(e)
+    }
+
+    /// How many instance sub-mix streams exist (t1937).
+    pub fn nest_streams(&self) -> usize {
+        self.nests.len()
+    }
+
     pub fn take_nests(&mut self) -> HashMap<ClipId, NestStream> {
         std::mem::take(&mut self.nests)
     }

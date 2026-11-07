@@ -18,7 +18,7 @@ use xxhash_rust::xxh3::Xxh3;
 
 use crate::context::{GpuContext, GpuInitError};
 use crate::pool::{
-    DISPLAY_FORMAT, FORMAT, ReadbackCache, WORD_FORMAT, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
+    DISPLAY_FORMAT, FORMAT, PresentMemo, ReadbackCache, WORD_FORMAT, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
 };
 
 const SLOT: u64 = 256; // dynamic offset alignment (the maximum per the spec)
@@ -29,6 +29,9 @@ const GEOM_SLOT_UNITS: u32 = (GEOM_UNIFORM_BYTES as u64 / SLOT) as u32;
 const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 const TRANSIENT_BUDGET: u64 = 128 * 1024 * 1024;
 const READBACK_BUDGET: u64 = 64 * 1024 * 1024;
+/// The presented composites the preview keeps (cached-range-plays): 512 MB is 560 frames at
+/// 640×360 and 60 at 1920×1080. What it holds the bars show as playing without work.
+const PRESENT_MEMO_BUDGET: u64 = 512 * 1024 * 1024;
 /// Frames in flight between `submit` and `collect` (export-throughput D5): one being read back,
 /// one being rendered, one being built — more only adds staging memory.
 const RING: usize = 3;
@@ -737,6 +740,7 @@ struct Inner {
     pool: TexturePool,
     upload: UploadCache,
     readback: ReadbackCache,
+    present_memo: PresentMemo,
     /// What the last `execute` ran (morpher-event-grid-cost, D1).
     last_cost: kt_fx::video::FrameCost,
     /// Where the last `execute` spent its time (preview-throughput).
@@ -1292,6 +1296,7 @@ impl GpuFxEngine {
                 pool: TexturePool::new(TRANSIENT_BUDGET),
                 upload: UploadCache::new(UPLOAD_BUDGET),
                 readback: ReadbackCache::new(READBACK_BUDGET),
+                present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
                 last_cost: Default::default(),
                 last_stages: Default::default(),
                 display_pipe,
@@ -1446,6 +1451,14 @@ impl VideoGpuExec for GpuFxEngine {
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
     }
 
+    fn present_key(&self, plan: &FramePlan<'_>) -> Option<u64> {
+        Some(plan_key(plan))
+    }
+
+    fn holds(&self, key: u64) -> bool {
+        self.inner.lock().unwrap().present_memo.holds(key)
+    }
+
     fn readback_depth(&self) -> usize {
         RING
     }
@@ -1592,6 +1605,27 @@ impl Inner {
         self.last_cost = Default::default();
         self.last_stages = Default::default();
         let mark = Instant::now();
+        // a composite this memo holds is shown by the display pass alone (cached-range-plays):
+        // no upload, no chain, no composite
+        let key = plan_key(plan);
+        if let Some(kept) = self.present_memo.get(key) {
+            self.ensure_present_targets(ow, oh, o.glow);
+            self.slot = 0;
+            let display = self.display.as_ref().unwrap().view.clone();
+            let mut enc = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
+            self.pass_display(&mut enc, &kept, &display, (ow, oh), (ow, oh));
+            if o.glow {
+                let glow = self.glow.as_ref().unwrap().view.clone();
+                self.pass_display(&mut enc, &kept, &glow, (ow, oh), GLOW_SIZE);
+            }
+            kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+            self.queue.submit([enc.finish()]);
+            self.last_stages.replayed = true;
+            self.last_stages.encode_ns = mark.elapsed().as_nanos() as u64;
+            return Ok(true);
+        }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
@@ -1611,14 +1645,7 @@ impl Inner {
                 self.arena_slots = slots;
             }
             self.slot = 0;
-            if !self.display.as_ref().is_some_and(|d| (d.w, d.h) == (ow, oh)) {
-                self.display = Some(create_display_tex(&self.device, ow, oh, "kt-gpu display"));
-                self.display_generation += 1;
-            }
-            if o.glow && self.glow.is_none() {
-                let (w, h) = GLOW_SIZE;
-                self.glow = Some(create_display_tex(&self.device, w, h, "kt-gpu glow"));
-            }
+            self.ensure_present_targets(ow, oh, o.glow);
             let display = self.display.as_ref().unwrap().view.clone();
             let mut enc = self
                 .device
@@ -1648,8 +1675,13 @@ impl Inner {
                     let glow = self.glow.as_ref().unwrap().view.clone();
                     self.pass_display(&mut enc, &result.view, &glow, (ow, oh), GLOW_SIZE);
                 }
-                // a later frame writing the accumulator is ordered after this one on the queue
-                self.pool.release(result);
+                // a later frame writing the accumulator is ordered after this one on the queue;
+                // a complete one is kept whole for the next lap (cached-range-plays)
+                if complete {
+                    self.present_memo.insert(key, result, &mut self.pool);
+                } else {
+                    self.pool.release(result);
+                }
             }
             let submit = Instant::now();
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
@@ -1661,6 +1693,19 @@ impl Inner {
         self.last_stages.encode_ns =
             (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
         Ok(complete)
+    }
+
+    /// The display target at the frame's size (a new texture is a new generation for the UI),
+    /// and the glow's, and a uniform arena with room for the two display passes.
+    fn ensure_present_targets(&mut self, ow: u32, oh: u32, glow: bool) {
+        if !self.display.as_ref().is_some_and(|d| (d.w, d.h) == (ow, oh)) {
+            self.display = Some(create_display_tex(&self.device, ow, oh, "kt-gpu display"));
+            self.display_generation += 1;
+        }
+        if glow && self.glow.is_none() {
+            let (w, h) = GLOW_SIZE;
+            self.glow = Some(create_display_tex(&self.device, w, h, "kt-gpu glow"));
+        }
     }
 
     /// The display pass: integer composite → the Rgba8Unorm texture egui samples.

@@ -42,10 +42,15 @@ pub enum Work {
     /// audio render thread, the prefetch thread and the UI. On the owner's project of 1974
     /// events one audio build cost 447 ms; it ran on every mouse move and no counter saw it.
     EngineBuild,
+    /// The audio render thread handed out a burst of the stored final mix (cached-range-plays):
+    /// no decode, no effect ran for it.
+    MixReplay,
+    /// The preview showed a stored composite (cached-range-plays): no layer was composed.
+    CompositeReplay,
 }
 
 impl Work {
-    pub const ALL: [Work; 14] = [
+    pub const ALL: [Work; 16] = [
         Work::UiFrame,
         Work::Composite,
         Work::DeviceSubmit,
@@ -60,6 +65,8 @@ impl Work {
         Work::ModelEdit,
         Work::ProjectSwap,
         Work::EngineBuild,
+        Work::MixReplay,
+        Work::CompositeReplay,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -78,6 +85,8 @@ impl Work {
             Work::ModelEdit => "model_edits",
             Work::ProjectSwap => "project_swaps",
             Work::EngineBuild => "engine_builds",
+            Work::MixReplay => "mix_replays",
+            Work::CompositeReplay => "composite_replays",
         }
     }
 }
@@ -92,6 +101,11 @@ pub fn bump(w: Work) {
 #[inline]
 pub fn add(w: Work, n: u64) {
     COUNTS[w as usize].fetch_add(n, Ordering::Relaxed);
+}
+
+/// The running total of one kind.
+pub fn count(w: Work) -> u64 {
+    COUNTS[w as usize].load(Ordering::Relaxed)
 }
 
 /// The running totals, in the order of [`Work::ALL`].

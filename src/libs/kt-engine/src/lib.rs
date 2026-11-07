@@ -10,6 +10,7 @@ pub mod export;
 pub mod export_pipeline;
 pub mod fetch;
 pub mod flight;
+pub mod mix;
 pub mod fxstore;
 pub mod player;
 pub mod prefetch;

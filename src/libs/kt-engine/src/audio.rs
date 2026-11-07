@@ -102,6 +102,11 @@ struct AudioClip {
     /// echo of the effects before it rings on does not ring here — the next piece's context
     /// carries that echo, as the uncut event would.
     ring_off: bool,
+    /// What determines this event's sound (cached-range-plays): its model event (the chain, the
+    /// curves, the generator's values), the track's level folded into `gain`, the transition
+    /// windows and handles, the reel instance's content, the run it continues. The final-mix
+    /// store keys a burst by the fingerprints of the events that sound in it.
+    fp: u64,
 }
 
 /// The run predecessor of every clip (pitch-event-edges D3): the clip on the same track that ends
@@ -210,6 +215,9 @@ pub struct RenderStats {
     pub nest_warmups: u64,
 }
 
+/// How far from the rendered range a nested instance's sub-mix stream is kept (one second).
+const NEST_KEEP_FRAMES: i64 = kt_time::AUDIO_SAMPLE_RATE as i64;
+
 /// An index bucket of time — one second of output.
 const INDEX_BUCKET_FRAMES: i64 = kt_time::AUDIO_SAMPLE_RATE as i64;
 
@@ -267,6 +275,10 @@ pub struct AudioRenderer {
     /// (pitch-loop-silence, D2): an event covering the region end — and a track stage — wraps its
     /// chain INPUT first, so a look-ahead reads the region head, not what lies past the end.
     loop_region: std::cell::Cell<Option<(i64, i64)>>,
+    /// (the longest tail, the longest look-ahead) of the track stages, in frames.
+    stage_reach: (i64, i64),
+    /// The part of every burst's scene the whole reel shares (`scene_hash`).
+    scene_base: u64,
 }
 
 /// A fetcher behind which nested reels look like ordinary sources.
@@ -385,6 +397,11 @@ impl AudioFetcher for NestFetcher<'_> {
         }
         st.preroll = preroll;
         st.block = block;
+        if !st.synced {
+            // the instance is read for the first time: its inner chains are built now
+            reel.sync_fx(&mut st.store);
+            st.synced = true;
+        }
         // 1) already computed
         if let Some(b) = st.cached(idx) {
             return Some(b);
@@ -738,6 +755,7 @@ impl AudioRenderer {
                     ctx: false,
                     run_prev: None,
                     ring_off: false,
+                    fp: xxhash_rust::xxh3::xxh3_64(format!("{c:?}").as_bytes()),
                 }
             })
             .collect();
@@ -830,6 +848,33 @@ impl AudioRenderer {
         for (c, off) in clips.iter_mut().zip(continued) {
             c.ring_off = off;
         }
+        // the fingerprint takes what the renderer derived from the model on top of the event
+        // itself; the run predecessor by its id, so inserting an event elsewhere moves nothing
+        let prev_ids: Vec<Option<kt_model::ClipId>> =
+            clips.iter().map(|c| c.run_prev.map(|i| clips[i].id)).collect();
+        for (c, prev) in clips.iter_mut().zip(prev_ids) {
+            let derived = format!(
+                "{} {} {} {} {:?} {:?} {:?} {:?} {:?} {:?} {} {} {} {} {:?} {:?} {}",
+                c.fp,
+                c.start,
+                c.end,
+                c.ext_end,
+                c.gain.to_bits(),
+                c.media,
+                c.fade_in,
+                c.fade_out,
+                c.fade_in_curve,
+                c.fade_out_curve,
+                c.head_ext,
+                c.tail_ext,
+                c.fade_in_excl,
+                c.fade_out_excl,
+                c.nest,
+                prev,
+                c.ring_off,
+            );
+            c.fp = xxhash_rust::xxh3::xxh3_64(derived.as_bytes());
+        }
         let mut nests = std::collections::HashMap::new();
         if depth < kt_model::MAX_NEST_DEPTH {
             for c in effective.iter().filter(|c| c.kind == ClipKind::Audio) {
@@ -840,6 +885,16 @@ impl AudioRenderer {
                 });
             }
         }
+        let opts =
+            kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine, fps: project.settings.fps };
+        // a track stage rings after its last event and reads its sum ahead: an event influences
+        // the bursts that far around it (cached-range-plays)
+        let stage_reach = stages.iter().fold((0i64, 0i64), |(tail, la), st| {
+            (tail.max(kt_fx::chain_tail(&st.fx, &empty_auto).to_audio_frames()), la.max(st.la))
+        });
+        let scene_base = xxhash_rust::xxh3::xxh3_64(
+            format!("{opts:?} {overlap_layers} {stages:?} {stage_reach:?}").as_bytes(),
+        );
         AudioRenderer {
             clips,
             index,
@@ -847,11 +902,29 @@ impl AudioRenderer {
             covers,
             overlaps,
             overlap_layers,
-            opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine, fps: project.settings.fps },
+            opts,
             stages,
             nests,
             loop_region: std::cell::Cell::new(None),
+            stage_reach,
+            scene_base,
         }
+    }
+
+    /// What determines the final mix of the timeline frames `range` (cached-range-plays): the
+    /// fingerprints of every event that sounds there — its body, handles and tail, widened by the
+    /// track stages' tail and look-ahead — and what the whole reel shares (the chain options,
+    /// overlaying, the stages). An edit changes the scene of exactly the bursts it can be heard
+    /// in; a superset is safe (a burst is rendered again), a subset would replay a stale mix.
+    pub fn scene_hash(&self, range: std::ops::Range<i64>) -> u64 {
+        let (tail, la) = self.stage_reach;
+        let wide = range.start - tail..range.end + la;
+        let mut h = xxhash_rust::xxh3::Xxh3::new();
+        h.update(&self.scene_base.to_le_bytes());
+        for i in self.active_clips(&wide) {
+            h.update(&self.clips[i].fp.to_le_bytes());
+        }
+        h.digest()
     }
 
     /// Distribute the events into per-second buckets. An event goes into each
@@ -1028,7 +1101,11 @@ impl AudioRenderer {
             let Some(key) = c.nest else { continue };
             let Some(sub) = self.nests.get(&key) else { continue };
             let (preroll, block) = self.nest_preroll(key);
-            sub.sync_fx(&mut store.nest_mut(c.id, key, preroll, block).store);
+            // only the streams that sound: an instance's chains are built when it is first read
+            if let Some(st) = store.nest_live_mut(c.id, key, preroll, block) {
+                sub.sync_fx(&mut st.store);
+                st.synced = true;
+            }
         }
         let live: std::collections::HashSet<_> =
             self.clips.iter().filter(|c| c.nest.is_some()).map(|c| c.id).collect();
@@ -1086,6 +1163,18 @@ impl AudioRenderer {
             st.nest_warmups += f.warmups;
             st
         };
+        // A stream whose instance is not heard around here is released: it can be read again only
+        // after a jump back, and a jump is the canonical move, which resets it anyway — so the
+        // bytes do not change, and memory holds the instances that sound, not every placement.
+        let frames = (out.len() / AUDIO_CHANNELS) as i64;
+        let near = start_frame - NEST_KEEP_FRAMES..start_frame + frames + NEST_KEEP_FRAMES;
+        let heard: std::collections::HashSet<kt_model::ClipId> = self
+            .active_clips(&near)
+            .into_iter()
+            .filter(|&i| self.clips[i].nest.is_some())
+            .map(|i| self.clips[i].id)
+            .collect();
+        states.retain(|id, _| heard.contains(id));
         store.put_nests(states);
         stats
     }

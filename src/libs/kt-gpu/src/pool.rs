@@ -197,6 +197,56 @@ impl UploadCache {
     }
 }
 
+/// The composites the preview presented (cached-range-plays): plan key → the integer composite,
+/// on the device. Presenting a key it holds runs the display pass alone — the frames of a covered
+/// range are composed once, not once a lap. Only complete frames enter. An evicted texture goes
+/// back to the pool it came from.
+pub(crate) struct PresentMemo {
+    map: HashMap<u64, (Tex, u64)>,
+    stamp: u64,
+    bytes: u64,
+    budget: u64,
+}
+
+impl PresentMemo {
+    pub fn new(budget: u64) -> PresentMemo {
+        PresentMemo { map: HashMap::new(), stamp: 0, bytes: 0, budget }
+    }
+
+    pub fn holds(&self, key: u64) -> bool {
+        self.map.contains_key(&key)
+    }
+
+    /// The kept composite, marked recent.
+    pub fn get(&mut self, key: u64) -> Option<wgpu::TextureView> {
+        self.stamp += 1;
+        let stamp = self.stamp;
+        self.map.get_mut(&key).map(|(t, s)| {
+            *s = stamp;
+            t.view.clone()
+        })
+    }
+
+    pub fn insert(&mut self, key: u64, t: Tex, pool: &mut TexturePool) {
+        self.stamp += 1;
+        self.bytes += tex_bytes(t.w, t.h);
+        if let Some((old, _)) = self.map.insert(key, (t, self.stamp)) {
+            self.bytes -= tex_bytes(old.w, old.h);
+            pool.release(old);
+        }
+        while self.bytes > self.budget && self.map.len() > 1 {
+            // the least recent; the memo holds a few hundred frames at most
+            let Some(oldest) = self.map.iter().min_by_key(|(_, (_, s))| *s).map(|(k, _)| *k) else {
+                break;
+            };
+            if let Some((t, _)) = self.map.remove(&oldest) {
+                self.bytes -= tex_bytes(t.w, t.h);
+                pool.release(t);
+            }
+        }
+    }
+}
+
 /// LRU of ready composition frames: plan hash → (RGBA, complete). Keeps the
 /// warm loop fast (the GPU path has no post-FX memoization).
 pub(crate) struct ReadbackCache {

@@ -1085,6 +1085,8 @@ event_passes = "pasadas de eventos"
 model_edits = "ediciones del modelo"
 project_swaps = "cambios de proyecto"
 engine_builds = "construcciones del motor"
+mix_replays = "bloques de audio de la mezcla guardada"
+composite_replays = "composiciones guardadas mostradas"
 
 [perf.note]
 ui_stall = "el hilo de la interfaz quedó bloqueado {0} ms dentro de un fotograma"

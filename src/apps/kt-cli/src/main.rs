@@ -900,6 +900,42 @@ fn pause_scan(
     Ok(never)
 }
 
+/// A 32-bit float stereo WAV at 48 kHz (what the bench's output device played).
+fn write_wav_f32(path: &str, samples: &[f32]) -> std::io::Result<()> {
+    use std::io::Write;
+    let data = (samples.len() * 4) as u32;
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
+    f.write_all(b"RIFF")?;
+    f.write_all(&(36 + data).to_le_bytes())?;
+    f.write_all(b"WAVEfmt ")?;
+    f.write_all(&16u32.to_le_bytes())?;
+    f.write_all(&3u16.to_le_bytes())?; // IEEE float
+    f.write_all(&2u16.to_le_bytes())?;
+    f.write_all(&kt_time::AUDIO_SAMPLE_RATE.to_le_bytes())?;
+    f.write_all(&(kt_time::AUDIO_SAMPLE_RATE * 8).to_le_bytes())?;
+    f.write_all(&8u16.to_le_bytes())?;
+    f.write_all(&32u16.to_le_bytes())?;
+    f.write_all(b"data")?;
+    f.write_all(&data.to_le_bytes())?;
+    for s in samples {
+        f.write_all(&s.to_le_bytes())?;
+    }
+    f.flush()
+}
+
+/// The largest jump between two neighbouring samples of one channel, and the frame it is at: a
+/// click a person hears is a step far above the material's own.
+fn largest_step(s: &[f32]) -> (f32, usize) {
+    let mut best = (0.0f32, 0);
+    for i in 2..s.len() {
+        let d = (s[i] - s[i - 2]).abs();
+        if d > best.0 {
+            best = (d, i / 2);
+        }
+    }
+    best
+}
+
 fn preview_run(
     project: &Project,
     path: &str,
@@ -909,6 +945,8 @@ fn preview_run(
     ui_ms: f64,
     free_running: bool,
     cold: bool,
+    looped: Option<f64>,
+    wav: Option<String>,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
@@ -941,8 +979,15 @@ fn preview_run(
         ui_ns: (ui_ms * 1e6) as u64,
         free_running,
         settle: if cold { std::time::Duration::ZERO } else { BENCH_SETTLE },
+        loop_for: looped.map(std::time::Duration::from_secs_f64),
+        capture: wav.is_some(),
         ..Default::default()
     };
+    let replays0 = (
+        kt_time::work::count(kt_time::work::Work::Composite),
+        kt_time::work::count(kt_time::work::Work::CompositeReplay),
+        kt_time::work::count(kt_time::work::Work::MixReplay),
+    );
     let snap = || {
         (
             io::VIDEO_REOPENS.load(Relaxed),
@@ -1013,6 +1058,29 @@ fn preview_run(
         rgba_px as f64 / 1e6 / rgba.max(1) as f64,
         reopens
     );
+    println!(
+        "  audio: {} bursts rendered live, {} from the kept mix; render underruns {} frames, callback underruns {}",
+        r.audio_renders,
+        kt_time::work::count(kt_time::work::Work::MixReplay) - replays0.2,
+        r.underruns,
+        r.callback_underruns
+    );
+    let replayed = kt_time::work::count(kt_time::work::Work::CompositeReplay) - replays0.1;
+    println!(
+        "  video: {} composed, {} kept composites shown",
+        kt_time::work::count(kt_time::work::Work::Composite) - replays0.0 - replayed,
+        replayed
+    );
+    if let Some(path) = &wav {
+        write_wav_f32(path, &r.played).map_err(|e| format!("{path}: {e}"))?;
+        let (worst, at) = largest_step(&r.played);
+        println!(
+            "  played {:.2} s into {path}; the largest sample step {:.3} at {:.3} s",
+            r.played.len() as f64 / 2.0 / kt_time::AUDIO_SAMPLE_RATE as f64,
+            worst,
+            at as f64 / kt_time::AUDIO_SAMPLE_RATE as f64
+        );
+    }
     if std::env::var_os("KT_BENCH_STARVED").is_some() {
         for (t, n) in &r.underrun_at {
             println!("  underrun {:.2}: {n}", t.0 as f64 / kt_time::TICK_HZ as f64);
@@ -1450,7 +1518,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav]"
                 );
                 return 2;
             };
@@ -1469,7 +1537,9 @@ fn run(args: &[String]) -> i32 {
             let ui_ms = opt("--ui-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
             let free = args.iter().any(|a| a == "--free-running");
             let cold = args.iter().any(|a| a == "--cold");
-            match preview_run(&project, input, from, to, size, ui_ms, free, cold) {
+            let looped = opt("--loop").and_then(|s| s.parse::<f64>().ok());
+            let wav = opt("--wav").cloned();
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

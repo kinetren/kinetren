@@ -31,6 +31,12 @@ pub struct BenchOptions {
     pub free_running: bool,
     /// Keep a hash of every frame shown from the bytes path, for a test to compare.
     pub hash_frames: bool,
+    /// Play `[from, to)` as a loop region for this long instead of once (cached-range-plays: the
+    /// owner plays a short covered range in a loop, and its second lap is what a cache must make
+    /// free).
+    pub loop_for: Option<Duration>,
+    /// Keep what the output device played (f32 stereo interleaved), for a WAV and a test.
+    pub capture: bool,
 }
 
 impl Default for BenchOptions {
@@ -44,6 +50,8 @@ impl Default for BenchOptions {
             settle: Duration::from_millis(1500),
             free_running: false,
             hash_frames: false,
+            loop_for: None,
+            capture: false,
         }
     }
 }
@@ -87,6 +95,12 @@ pub struct BenchReport {
     pub unused_evictions: u64,
     pub abandoned_evictions: u64,
     pub video_decodes: u64,
+    /// Callback underruns: periods the device found the ring empty.
+    pub callback_underruns: u64,
+    /// Bursts the audio render thread produced, and of them those it ran the effects for.
+    pub audio_renders: u64,
+    /// What the output device played, under `capture`.
+    pub played: Vec<f32>,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -115,8 +129,10 @@ fn output_clock(
     mut ring: rtrb::Consumer<f32>,
     quantum: usize,
     stop: Arc<AtomicBool>,
-) -> std::thread::JoinHandle<()> {
+    capture: bool,
+) -> std::thread::JoinHandle<Vec<f32>> {
     std::thread::spawn(move || {
+        let mut played = Vec::new();
         let period = Duration::from_secs_f64(quantum as f64 / AUDIO_SAMPLE_RATE as f64);
         let mut next_at = Instant::now();
         let (mut prev, mut cur, mut primed, mut phase) = ((0.0, 0.0), (0.0, 0.0), false, 0.0);
@@ -150,10 +166,16 @@ fn output_clock(
                 &mut cur,
                 &mut primed,
                 &mut phase,
-                |_, _| {},
+                |_, (l, r)| {
+                    if capture {
+                        played.push(l);
+                        played.push(r);
+                    }
+                },
             );
             player_shared.consumed_frames.fetch_add(consumed, Ordering::AcqRel);
         }
+        played
     })
 }
 
@@ -166,8 +188,12 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
         ring,
         o.quantum,
         stop.clone(),
+        o.capture,
     );
     let grid = player.video_grid();
+    if o.loop_for.is_some() {
+        player.set_loop_region(Some(kt_time::TickRange { start: o.from, end: o.to }));
+    }
     player.seek(o.from);
     // the paused warm-up a person gives it by standing on the frame before pressing Play
     let mut buf = Vec::new();
@@ -184,6 +210,8 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
     let cache0 = player.cache.stats();
     let dec0 = player.decode_stats.video_decodes.load(Ordering::Relaxed);
     let under0 = player.underruns.load(Ordering::Relaxed);
+    let cb0 = player.shared.callback_underruns.load(Ordering::Relaxed);
+    let renders0 = kt_time::work::count(kt_time::work::Work::AudioRender);
     let mut r = BenchReport {
         grid_frames: ((o.to.0 - o.from.0) / grid.frame_step().max(1)) as u64,
         ..BenchReport::default()
@@ -200,8 +228,10 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
         next_vsync += frame;
         let ui0 = Instant::now();
         let (t, lap) = player.video_playhead_lap();
-        if t >= o.to {
-            break;
+        match o.loop_for {
+            Some(d) if started.elapsed() >= d => break,
+            None if t >= o.to => break,
+            _ => {}
         }
         let raw = grid.align_floor(t).0;
         let tgen = (player.transport.generation(), lap);
@@ -272,7 +302,12 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
     r.wall_s = started.elapsed().as_secs_f64();
     player.pause();
     stop.store(true, Ordering::Release);
-    let _ = clock.join();
+    r.played = clock.join().unwrap_or_default();
+    if o.loop_for.is_some() {
+        player.set_loop_region(None);
+    }
+    r.callback_underruns = player.shared.callback_underruns.load(Ordering::Relaxed) - cb0;
+    r.audio_renders = kt_time::work::count(kt_time::work::Work::AudioRender) - renders0;
     let cache = player.cache.stats();
     r.video_hits = cache.video_hits - cache0.video_hits;
     r.video_misses = cache.video_misses - cache0.video_misses;

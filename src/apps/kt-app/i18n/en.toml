@@ -1085,6 +1085,8 @@ event_passes = "event passes"
 model_edits = "model edits"
 project_swaps = "project swaps"
 engine_builds = "engine builds"
+mix_replays = "audio blocks from the kept mix"
+composite_replays = "kept composites shown"
 
 [perf.note]
 ui_stall = "the UI thread was blocked for {0} ms inside one frame"
