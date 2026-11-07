@@ -7968,10 +7968,13 @@ pub struct SpacePress {
 }
 
 /// State of the perf panel: rolling graphs, counter deltas, the problem log.
+/// (cache epoch, model version, preview quality, the view's ticks)
+type CoverageStamp = (u64, u64, (u32, u32), (i64, i64));
+
 /// The coverage-poll cache of the timeline (item 1).
 #[derive(Default)]
 pub struct CoverageCache {
-    stamp: Option<(u64, u64, (u32, u32), (i64, i64))>,
+    stamp: Option<CoverageStamp>,
     /// Arc: a snapshot per frame — a clone of the pointer, not of the maps (item 1 of v1.4).
     pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
     /// Throttling during playback (item 1 of round 5): the cache epoch changes on EVERY
@@ -8144,7 +8147,7 @@ impl KtApp {
         let p = self.model.project();
         let lengths = p.media.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, m| {
             let d = m.duration.map_or(u64::MAX, |d| d.0 as u64);
-            (h ^ m.id.0 as u64 ^ d.rotate_left(17)).wrapping_mul(0x0100_0000_01b3)
+            (h ^ m.id.0 ^ d.rotate_left(17)).wrapping_mul(0x0100_0000_01b3)
         });
         let stamp = (self.model_rev, p.clips.len(), lengths);
         if self.tl_facts.stamp != Some(stamp) {
