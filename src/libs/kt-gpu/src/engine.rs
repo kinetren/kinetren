@@ -1441,6 +1441,23 @@ impl VideoGpuExec for GpuFxEngine {
         self.inner.lock().unwrap().present(plan, o)
     }
 
+    fn wait_presented(&self) {
+        let (device, queue) = {
+            let g = self.inner.lock().unwrap();
+            (g.device.clone(), g.queue.clone())
+        };
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = done.clone();
+        queue.on_submitted_work_done(move || flag.store(true, std::sync::atomic::Ordering::Release));
+        // polled, not waited: a blocking poll can hold the driver's lock against the UI's submit
+        while !done.load(std::sync::atomic::Ordering::Acquire) {
+            if device.poll(wgpu::PollType::Poll).is_err() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
     fn finish_present(&self) {
         let device = self.inner.lock().unwrap().device.clone();
         let _ = device.poll(wgpu::PollType::wait_indefinitely());

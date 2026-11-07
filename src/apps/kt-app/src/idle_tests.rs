@@ -163,3 +163,74 @@ fn t1834_a_hover_frame_does_not_lay_out_the_events() {
     assert!(h.state().event_passes > before, "a frame with other input reused the events");
     assert!(h.state().event_paint.is_none());
 }
+
+/// A kernel that stands as long as the test says: an anomalous parameter with no end in sight.
+struct StuckGpu {
+    info: kt_engine::GpuBackendInfo,
+    open: std::sync::Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+impl kt_engine::VideoGpuExec for StuckGpu {
+    fn execute_into(
+        &self,
+        _p: &kt_engine::FramePlan<'_>,
+        out: &mut Vec<u8>,
+    ) -> Result<bool, kt_engine::GpuExecError> {
+        let mut g = self.open.lock().unwrap();
+        while !*g {
+            g = self.cv.wait(g).unwrap();
+        }
+        out.clear();
+        Ok(true)
+    }
+
+    fn info(&self) -> &kt_engine::GpuBackendInfo {
+        &self.info
+    }
+}
+
+/// Test t1842 (E8): with a composite stuck in its kernel the UI goes on: frames run, Undo acts at
+/// the next frame and the program asks for the state Undo left. "Stuck" is a test's gate, so a frame
+/// that waited for the picture could never return.
+#[test]
+fn t1842_undo_acts_while_the_kernel_is_stuck() {
+    use kt_model::Command;
+    let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+    let gpu = Arc::new(StuckGpu {
+        info: kt_engine::GpuBackendInfo { name: "stuck".into(), backend: "Test".into(), software: true },
+        open: std::sync::Mutex::new(false),
+        cv: std::sync::Condvar::new(),
+    });
+    {
+        let app = h.state_mut();
+        app.compose_grace = Duration::ZERO;
+        app.push_project_to_player();
+        app.player.set_video_gpu(Some(gpu.clone()));
+        app.preview_key = None;
+    }
+    h.step();
+    let id = h.state().model.project().clips[0].id;
+    let was = h.state().model.project().clips[0].fx.len();
+    assert!(h.state_mut().apply(Command::SetFx {
+        id,
+        fx: vec![kt_model::FxInstance::blur(40)],
+    }));
+    for _ in 0..5 {
+        h.step();
+    }
+    assert_eq!(h.state().model.project().clips[0].fx.len(), was + 1);
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(h.state().model.project().clips[0].fx.len(), was, "Undo waited for the picture");
+    let version = h.state().player.project_version();
+    assert!(
+        h.state().preview_asked.is_some_and(|a| a.1.3 == version),
+        "the frame of the state Undo left was not asked for"
+    );
+    *gpu.open.lock().unwrap() = true;
+    gpu.cv.notify_all();
+    h.state_mut().compose_grace = crate::app::COMPOSE_GRACE;
+    h.step();
+    assert!(h.state().preview_asked.is_none(), "the answer never came");
+}

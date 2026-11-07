@@ -11,6 +11,7 @@ pub mod export_pipeline;
 pub mod fetch;
 pub mod flight;
 pub mod fxstore;
+pub mod compose_queue;
 pub mod player;
 pub mod prefetch;
 pub mod preview_bench;

@@ -153,14 +153,19 @@ pub struct Player {
     natives: Natives,
     project: Arc<Mutex<Project>>,
     model_dirty: Arc<AtomicBool>,
-    video: Mutex<VideoRenderer>,
+    /// The renderer behind a pointer: an edit swaps it at once, and a composite that holds the old
+    /// one for seconds finishes on it and is abandoned (idle-cpu).
+    video: Arc<Mutex<Arc<VideoRenderer>>>,
     /// GPU executor of the video composite (R.29): injected from above
     /// (kt-app), lives separately from VideoRenderer — recreating the renderer
     /// on model edits does not lose it. DeviceLost “poisons” it until the end of the
     /// session: no picture, and the notice says why.
-    video_gpu: Mutex<VideoGpuState>,
+    video_gpu: Arc<Mutex<VideoGpuState>>,
     /// The cost of the last preview compose (morpher-event-grid-cost, D1).
-    video_cost: Mutex<VideoCost>,
+    video_cost: Arc<Mutex<VideoCost>>,
+    /// The preview's own thread (`compose_queue`): the UI asks and never waits.
+    composer: Arc<crate::compose_queue::Composer>,
+    compose_thread: Option<std::thread::JoinHandle<()>>,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
     render_thread: Option<std::thread::JoinHandle<()>>,
@@ -237,8 +242,11 @@ impl Player {
         }
         let workers: Workers = Arc::new(std::sync::RwLock::new(workers));
         let natives: Natives = Arc::new(std::sync::RwLock::new(nat));
-        let video = Mutex::new(VideoRenderer::new_with_facts(&project, &natives.read().unwrap()));
-        let video_gpu = Mutex::new(VideoGpuState::default());
+        let video = Arc::new(Mutex::new(Arc::new(VideoRenderer::new_with_facts(
+            &project,
+            &natives.read().unwrap(),
+        ))));
+        let video_gpu = Arc::new(Mutex::new(VideoGpuState::default()));
         let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
         let wake = Arc::new(Wake { lock: Mutex::new(()), cv: std::sync::Condvar::new() });
@@ -320,6 +328,22 @@ impl Player {
                 .expect("spawn prefetch")
         };
 
+        let video_cost = Arc::new(Mutex::new(VideoCost::default()));
+        let composer = crate::compose_queue::Composer::new();
+        let compose_thread = crate::compose_queue::spawn(
+            composer.clone(),
+            PreviewParts {
+                cache: cache.clone(),
+                transport: transport.clone(),
+                workers: workers.clone(),
+                video: video.clone(),
+                video_gpu: video_gpu.clone(),
+                video_cost: video_cost.clone(),
+                preview_quality: preview_quality.clone(),
+                project_version: project_version.clone(),
+                content_version: content_version.clone(),
+            },
+        );
         let player = Player {
             cache,
             natives,
@@ -336,7 +360,9 @@ impl Player {
             model_dirty,
             video,
             video_gpu,
-            video_cost: Mutex::new(VideoCost::default()),
+            video_cost,
+            composer,
+            compose_thread: Some(compose_thread),
             preview_quality,
             stop,
             render_thread: Some(render_thread),
@@ -368,8 +394,8 @@ impl Player {
     }
 
     fn wake_after_project_swap(&self, p: Project) {
-        *self.video.lock().unwrap() =
-            VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap());
+        let renderer = Arc::new(VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap()));
+        *self.video.lock().unwrap() = renderer;
         *self.project.lock().unwrap() = p;
         self.model_dirty.store(true, Ordering::Release);
         self.wake.notify();
@@ -726,7 +752,7 @@ impl Player {
     /// withdraws it unless it is a layer of that frame (video-prefetch-thrash), so a
     /// caller that waits for the frame re-submits in its loop.
     pub fn request_video(&self, media: kt_model::MediaId, pts: Tick, q: Quality) {
-        let step = self.video.lock().unwrap().grid.frame_step();
+        let step = self.renderer().grid.frame_step();
         if let Some(w) = self.workers.read().unwrap().get(&media) {
             w.submit(DecodeRequest {
                 kind: RequestKind::video_on_grid(pts, Some(q), step),
@@ -772,8 +798,8 @@ impl Player {
     /// the step until the first timeline edit.
     fn rebuild_video_renderer(&self) {
         let p = self.project.lock().unwrap().clone();
-        *self.video.lock().unwrap() =
-            VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap());
+        let renderer = Arc::new(VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap()));
+        *self.video.lock().unwrap() = renderer;
     }
 
     /// Remember the source facts (R.46 item 321 — native, R.56 item 448 —
@@ -787,14 +813,14 @@ impl Player {
     /// not about Quality — otherwise a warmed clip is shown as cold.
     pub fn video_decode_qualities(&self) -> Vec<(kt_model::ClipId, Quality)> {
         let q = self.preview_quality();
-        self.video.lock().unwrap().video_decode_qualities(q)
+        self.renderer().video_decode_qualities(q)
     }
 
     /// Warmth of attachments in the ticks of their content (R.50, B6): a reel
     /// has no source, and the bar must ask about its CONTENT.
     pub fn nest_coverage(&self) -> Vec<(kt_model::ClipId, Vec<std::ops::Range<i64>>)> {
         let q = self.preview_quality();
-        self.video.lock().unwrap().nest_coverage(&self.cache, q)
+        self.renderer().nest_coverage(&self.cache, q)
     }
 
     /// The moment that is now AUDIBLE (for choosing the preview video frame):
@@ -855,7 +881,11 @@ impl Player {
     /// The project's frame grid — the preview frame key for the UI (test 39): a tick
     /// aligned to it changes only at a video-frame boundary.
     pub fn video_grid(&self) -> kt_time::FpsGrid {
-        self.video.lock().unwrap().grid
+        self.renderer().grid
+    }
+
+    fn renderer(&self) -> Arc<VideoRenderer> {
+        self.video.lock().unwrap().clone()
     }
 
     /// Injection of the video GPU executor (R.29). None — no picture.
@@ -890,6 +920,36 @@ impl Player {
         *self.video_cost.lock().unwrap() =
             VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64, plan_ns, stages };
         (q, complete)
+    }
+
+    /// Ask for the frame at `t` on the preview's own thread and go on (idle-cpu, stage 2): the UI
+    /// never waits for a picture. `present` — on the display target, if the executor has one and
+    /// the chain is fast; else as bytes. The newest ask replaces a waiting one; the answer comes
+    /// from `take_composed`. Returns the ask's number.
+    pub fn ask_preview(&self, t: Tick, present: Option<PresentOptions>) -> u64 {
+        self.composer.ask(t, present, self.preview_parts().versions())
+    }
+
+    /// The newest finished frame, waiting for it at most `wait`.
+    pub fn take_composed(&self, wait: std::time::Duration) -> Option<crate::compose_queue::Composed> {
+        self.composer.take(wait)
+    }
+
+    /// The bytes of a finished frame go back for the next one.
+    pub fn give_back_preview_buffer(&self, buf: Vec<u8>) {
+        self.composer.give_back(buf);
+    }
+
+    /// Called on the preview's thread when a frame is finished.
+    pub fn set_compose_wake(&self, f: Arc<dyn Fn() + Send + Sync>) {
+        self.composer.set_wake(f);
+    }
+
+    /// The executor a slow chain moves to: a device of its own (`compose_queue`). The setter goes
+    /// to a thread: building that device takes seconds.
+    pub fn slow_gpu_setter(&self) -> impl FnOnce(Option<Arc<dyn VideoGpuExec>>) + Send + 'static {
+        let composer = self.composer.clone();
+        move |exec| composer.set_slow(exec)
     }
 
     /// Compose the frame at `t` onto the executor's display target, without a readback
@@ -931,10 +991,105 @@ impl Player {
         t: Tick,
         target: Target<'_>,
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
+        self.preview_parts().compose(t, target)
+    }
+
+    fn preview_parts(&self) -> PreviewParts {
+        PreviewParts {
+            cache: self.cache.clone(),
+            transport: self.transport.clone(),
+            workers: self.workers.clone(),
+            video: self.video.clone(),
+            video_gpu: self.video_gpu.clone(),
+            video_cost: self.video_cost.clone(),
+            preview_quality: self.preview_quality.clone(),
+            project_version: self.project_version.clone(),
+            content_version: self.content_version.clone(),
+        }
+    }
+
+    /// The layers of the frame at `t` the cache does not hold (a diagnostic of `preview_bench`).
+    pub fn missing_layers(&self, t: Tick) -> Vec<(MediaId, (u32, u32))> {
+        let q = self.preview_quality();
+        let layers = self.renderer().layers_at(t, q);
+        layers
+            .into_iter()
+            .filter(|(m, p, dq)| {
+                !self.cache.contains_video(source_id(*m), Some(*dq), video_cache_idx(*p))
+            })
+            .map(|(m, _, dq)| (m, (dq.width, dq.height)))
+            .collect()
+    }
+
+    pub fn compose_preview(&self, t: Tick) -> (Vec<u8>, Quality, bool) {
+        let mut out = Vec::new();
+        let (q, complete) = self.compose_preview_into(t, &mut out);
+        (out, q, complete)
+    }
+}
+
+/// What a composite needs of the player, shared with its thread.
+#[derive(Clone)]
+pub(crate) struct PreviewParts {
+    cache: Arc<BurstCache>,
+    transport: Arc<Transport>,
+    workers: Workers,
+    video: Arc<Mutex<Arc<VideoRenderer>>>,
+    video_gpu: Arc<Mutex<VideoGpuState>>,
+    video_cost: Arc<Mutex<VideoCost>>,
+    preview_quality: Arc<Mutex<Quality>>,
+    project_version: Arc<AtomicU64>,
+    content_version: Arc<AtomicU64>,
+}
+
+impl PreviewParts {
+    pub(crate) fn compose(
+        &self,
+        t: Tick,
+        target: Target<'_>,
+    ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
+        self.compose_via(None, t, target)
+    }
+
+    pub(crate) fn can_present(&self) -> bool {
+        let g = self.video_gpu.lock().unwrap();
+        g.poisoned.is_none() && g.exec.as_ref().is_some_and(|e| e.can_present())
+    }
+
+    /// One frame on the device at a time: the next is not submitted before this one is done.
+    pub(crate) fn wait_presented(&self) {
+        let exec = self.video_gpu.lock().unwrap().exec.clone();
+        if let Some(e) = exec {
+            e.wait_presented();
+        }
+    }
+
+    pub(crate) fn versions(&self) -> (u64, u64) {
+        (self.project_version.load(Ordering::Acquire), self.content_version.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn quality(&self) -> Quality {
+        *self.preview_quality.lock().unwrap()
+    }
+
+    pub(crate) fn note_cost(&self, cost: VideoCost) {
+        *self.video_cost.lock().unwrap() = cost;
+    }
+
+    /// `via`: the executor of this composite, instead of the display's.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn compose_via(
+        &self,
+        via: Option<&Arc<dyn VideoGpuExec>>,
+        t: Tick,
+        target: Target<'_>,
+    ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
         kt_time::work::bump(kt_time::work::Work::Composite);
         let t0 = std::time::Instant::now();
-        let q = self.preview_quality();
-        let video = self.video.lock().unwrap();
+        let q = *self.preview_quality.lock().unwrap();
+        // the pointer, not the lock: a plan with a stream stage takes as long as its kernel, and an
+        // edit on the UI thread must not wait for it
+        let video = self.video.lock().unwrap().clone();
         let aligned = video.grid.align_floor(t);
         let mut target = target;
         let generation = self.transport.generation();
@@ -970,7 +1125,7 @@ impl Player {
         // the session
         let exec = {
             let g = self.video_gpu.lock().unwrap();
-            if g.poisoned.is_none() { g.exec.clone() } else { None }
+            if g.poisoned.is_none() { via.cloned().or_else(|| g.exec.clone()) } else { None }
         }?;
         let plan = video.frame_plan(&self.cache, aligned, q);
         let plan_ns = t0.elapsed().as_nanos() as u64;
@@ -984,6 +1139,8 @@ impl Player {
                 Some((q, complete, true, exec.last_cost(), plan_ns, stages))
             }
             Err(GpuExecError::TooLarge { .. } | GpuExecError::Unsupported(_)) => None,
+            // the offline device has its own fate: the display's stands
+            Err(_) if via.is_some() => None,
             Err(e) => {
                 self.video_gpu.lock().unwrap().poisoned = Some(format!("{e:?}"));
                 None
@@ -991,28 +1148,10 @@ impl Player {
         }
     }
 
-    /// The layers of the frame at `t` the cache does not hold (a diagnostic of `preview_bench`).
-    pub fn missing_layers(&self, t: Tick) -> Vec<(MediaId, (u32, u32))> {
-        let q = self.preview_quality();
-        let layers = self.video.lock().unwrap().layers_at(t, q);
-        layers
-            .into_iter()
-            .filter(|(m, p, dq)| {
-                !self.cache.contains_video(source_id(*m), Some(*dq), video_cache_idx(*p))
-            })
-            .map(|(m, _, dq)| (m, (dq.width, dq.height)))
-            .collect()
-    }
-
-    pub fn compose_preview(&self, t: Tick) -> (Vec<u8>, Quality, bool) {
-        let mut out = Vec::new();
-        let (q, complete) = self.compose_preview_into(t, &mut out);
-        (out, q, complete)
-    }
 }
 
 /// Where a preview composite goes.
-enum Target<'a> {
+pub(crate) enum Target<'a> {
     Bytes(&'a mut Vec<u8>),
     Display(PresentOptions),
 }
@@ -1034,18 +1173,19 @@ impl Drop for Player {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         self.wake.notify();
+        // not joined: a composite may take seconds, and this runs on the UI thread. It ends by
+        // itself on what it holds.
+        self.composer.stop();
+        drop(self.compose_thread.take());
         if let Some(t) = self.render_thread.take() {
             let _ = t.join();
         }
         if let Some(t) = self.prefetch_thread.take() {
             let _ = t.join();
         }
-        // We will stop the workers by taking them out of the Arc: the render/prefetch threads are already
-        // finished, we are the last owner
-        if let Some(lock) = Arc::get_mut(&mut self.workers) {
-            for (_, w) in lock.get_mut().unwrap().drain() {
-                w.shutdown();
-            }
+        // The render/prefetch threads are finished; the preview's thread may still hold the map
+        for (_, w) in self.workers.write().unwrap().drain() {
+            w.shutdown();
         }
     }
 }
