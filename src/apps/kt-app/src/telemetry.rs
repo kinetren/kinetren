@@ -937,6 +937,8 @@ pub enum Signal<'a> {
 
 /// The door. A no-op when telemetry is off or not installed (`kt-cli`, the harness).
 pub fn signal(s: Signal<'_>) {
+    // the local telemetry journal hears the same door, whatever the consent (telemetry-journal)
+    crate::tele_journal::on_signal(&s);
     #[cfg(test)]
     if let Some(t) = testing::bound() {
         return t.signal(s);

@@ -76,6 +76,7 @@ in the menu of a track's empty space.
 | <kbd>Enter</kbd> in the welcome window | take the highlighted tile (the tour, the last project or a template) |
 | <kbd>Esc</kbd> | close the window on top (the welcome window, Preferences, the Guide, an effects window) |
 | drag a window's corner | make it larger: what is inside takes the room |
+| <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd> | mark this moment in the telemetry journal (Diagnostics lists it; the same as its "Mark the moment" button), in every key style |
 
 ## View and zoom
 

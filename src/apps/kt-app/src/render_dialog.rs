@@ -296,7 +296,10 @@ impl RenderJob {
                 | LogLine::Failed(_)
                 | LogLine::Engine(kt_engine::export::ExportLog::Error(_))
         );
-        self.log_file.write(stamp, &line.english(), flush);
+        let text = line.english();
+        self.log_file.write(stamp, &text, flush);
+        // the same line in the telemetry journal, at its clock time (telemetry-journal)
+        crate::tele_journal::record(crate::tele_journal::Kind::Export, &text);
         if self.log.len() == LOG_LINES {
             self.log.pop_front();
         }
@@ -587,6 +590,7 @@ impl KtApp {
             return;
         }
         let out_path = path.to_string_lossy().to_string();
+        crate::tele_journal::project_act("export started", Some(&path));
         let project = self.model.document();
         let proj_res = (project.settings.width, project.settings.height);
         let proj_fps = project.settings.fps;

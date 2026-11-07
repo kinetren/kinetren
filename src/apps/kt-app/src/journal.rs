@@ -180,6 +180,8 @@ pub fn install_panic_hook() {
         }
         let _ = std::fs::write(&p, &out);
         log("CRASH", &format!("panic report written to {}", p.display()));
+        // the records queued before the panic reach the file before the process goes
+        crate::tele_journal::flush(std::time::Duration::from_millis(300));
         prev(info);
     }));
 }
@@ -305,6 +307,8 @@ pub fn last_run_tail(path: &Path, n: usize) -> Vec<String> {
 /// is just losing a project, would be mockery.
 pub fn log(level: &str, text: &str) {
     write_to(&path(), level, text);
+    // the same line in the telemetry journal, among what the person did (telemetry-journal)
+    crate::tele_journal::record(crate::tele_journal::Kind::Log, &format!("{level} {text}"));
 }
 
 pub(crate) fn write_to(path: &Path, level: &str, text: &str) {
@@ -379,7 +383,7 @@ pub(crate) fn stamp_with(unix_secs: i64, offset_secs: i64) -> String {
 
 /// The local offset from UTC at that moment, in seconds east (D5): `localtime_r`'s `tm_gmtoff`.
 #[cfg(target_os = "linux")]
-fn local_offset(unix_secs: i64) -> i64 {
+pub(crate) fn local_offset(unix_secs: i64) -> i64 {
     let t = unix_secs as libc::time_t;
     // SAFETY: a zeroed plain-data `tm` filled by the reentrant call; `t` outlives the call
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -392,7 +396,7 @@ fn local_offset(unix_secs: i64) -> i64 {
 /// Windows: the zone's CURRENT bias (a moment across a daylight change is an hour off; the journal
 /// stamps "now", the recovery dialog a recent file).
 #[cfg(windows)]
-fn local_offset(_unix_secs: i64) -> i64 {
+pub(crate) fn local_offset(_unix_secs: i64) -> i64 {
     use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
     const TIME_ZONE_ID_DAYLIGHT: u32 = 2;
     const TIME_ZONE_ID_INVALID: u32 = u32::MAX;
@@ -407,7 +411,7 @@ fn local_offset(_unix_secs: i64) -> i64 {
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-fn local_offset(_unix_secs: i64) -> i64 {
+pub(crate) fn local_offset(_unix_secs: i64) -> i64 {
     0
 }
 

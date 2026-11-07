@@ -57,6 +57,8 @@ pub enum Cmd {
     ZoomOut = 33,
     ZoomFit = 34,
     SelectTool = 35,
+    /// telemetry-journal: the person's mark in the telemetry journal.
+    MarkMoment = 36,
 }
 
 /// The groups of the key list, in the order a person reads them.
@@ -117,6 +119,7 @@ pub const COMMANDS: &[(Cmd, Group, Text)] = &[
     (Cmd::ZoomIn, Group::View, k::controls::cmd::ZOOM_IN),
     (Cmd::ZoomOut, Group::View, k::controls::cmd::ZOOM_OUT),
     (Cmd::ZoomFit, Group::View, k::controls::cmd::ZOOM_FIT),
+    (Cmd::MarkMoment, Group::View, k::controls::cmd::MARK_MOMENT),
     (Cmd::Save, Group::File, k::controls::cmd::SAVE),
     (Cmd::SaveAs, Group::File, k::controls::cmd::SAVE_AS),
     (Cmd::NewProject, Group::File, k::controls::cmd::NEW_PROJECT),
@@ -125,7 +128,7 @@ pub const COMMANDS: &[(Cmd, Group, Text)] = &[
 ];
 
 /// The number of commands: one past the highest frozen number.
-const CMD_COUNT: usize = 36;
+const CMD_COUNT: usize = 37;
 
 fn cmd_from(code: u8) -> Option<Cmd> {
     COMMANDS.iter().map(|c| c.0).find(|c| *c as u8 == code)
@@ -409,6 +412,8 @@ impl Style {
 /// The owner's keys, each set at his direct request over the rounds: not a choice of this file.
 /// Space is the transport machine of `handle_keys` (rounds 6, 16, R.72), in every style.
 const OWN: &[(Cmd, &[Chord])] = &[
+    // the same chord in every style: no style binds it, and no modifier falls off onto it
+    (Cmd::MarkMoment, &[ca(Key::M)]),
     (Cmd::PlayPause, &[p(Key::Space)]),
     (Cmd::NavPrev, &[p(Key::A), p(Key::Home)]),
     (Cmd::NavNext, &[p(Key::D), p(Key::End)]),
@@ -436,6 +441,8 @@ const OWN: &[(Cmd, &[Chord])] = &[
 ];
 
 const PREMIERE: &[(Cmd, &[Chord])] = &[
+    // the same chord in every style: no style binds it, and no modifier falls off onto it
+    (Cmd::MarkMoment, &[ca(Key::M)]),
     (Cmd::PlayPause, &[p(Key::Space)]),
     (Cmd::NavPrev, &[p(Key::ArrowUp)]),
     (Cmd::NavNext, &[p(Key::ArrowDown)]),
@@ -469,6 +476,8 @@ const PREMIERE: &[(Cmd, &[Chord])] = &[
 ];
 
 const RESOLVE: &[(Cmd, &[Chord])] = &[
+    // the same chord in every style: no style binds it, and no modifier falls off onto it
+    (Cmd::MarkMoment, &[ca(Key::M)]),
     (Cmd::PlayPause, &[p(Key::Space)]),
     (Cmd::NavPrev, &[p(Key::ArrowUp)]),
     (Cmd::NavNext, &[p(Key::ArrowDown)]),
@@ -498,6 +507,8 @@ const RESOLVE: &[(Cmd, &[Chord])] = &[
 ];
 
 const FINAL_CUT: &[(Cmd, &[Chord])] = &[
+    // the same chord in every style: no style binds it, and no modifier falls off onto it
+    (Cmd::MarkMoment, &[ca(Key::M)]),
     (Cmd::PlayPause, &[p(Key::Space)]),
     (Cmd::NavPrev, &[p(Key::ArrowUp), p(Key::Semicolon)]),
     (Cmd::NavNext, &[p(Key::ArrowDown), p(Key::Quote)]),
@@ -532,6 +543,8 @@ const FINAL_CUT: &[(Cmd, &[Chord])] = &[
 ];
 
 const AFTER_EFFECTS: &[(Cmd, &[Chord])] = &[
+    // the same chord in every style: no style binds it, and no modifier falls off onto it
+    (Cmd::MarkMoment, &[ca(Key::M)]),
     (Cmd::PlayPause, &[p(Key::Space)]),
     (Cmd::NavPrev, &[p(Key::J)]),
     (Cmd::NavNext, &[p(Key::K)]),

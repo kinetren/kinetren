@@ -874,6 +874,8 @@ economy = "适合较弱的 GPU：播放时重绘减半"
 
 # Project-wide search palette.
 flight = "紧凑的传输事件与计数器环形记录——用于排查间歇性播放问题"
+mark = "把此刻和备注写入遥测日志，方便说“就是这里”。{0} 在任何地方都能做同样的事"
+open_folder = "遥测日志和负载报告所在的文件夹：它们只留在这台电脑上，从不发送"
 pitch_engine = "整个项目的变调引擎：WSOLA 保留瞬态，声码器在和声上更平滑"
 project_settings = "本项目的画面尺寸、帧率、适配规则、音高引擎与关键帧形状"
 preferences = "程序首选项：启动时的欢迎窗口、语言、省电界面、统计、更新、FFmpeg"
@@ -942,6 +944,7 @@ video_fx_gpu_lost = "GPU 视频渲染器已丢失（{0}）— 重启前没有画
 
 # Titles of system file dialogs.
 flight_saved = "播放日志已保存：{0}"
+moment_marked = "已在遥测日志中标记此刻：{0}"
 stall_at = "播放在 {0} 处卡住：画面或声音未及时到达"
 
 media_missing = "{0}：素材不可用，显示占位画面（{1}）"
@@ -1055,10 +1058,13 @@ graph_decode = "FFmpeg 活动（/秒）"
 graph_churn = "缓存周转（/秒）"
 cache_occupancy = "视频缓存占用：{0}%（{1} / {2} MB）"
 no_read_drops = "| no-read drops 总计：{0}"
-log_title = "问题日志"
+log_title = "遥测日志"
 log_clear = "清空"
 graph_reset = "重置图表"
-log_empty = "没有发现问题"
+log_empty = "尚无记录"
+mark = "标记此刻"
+mark_note_hint = "备注（可选）"
+open_folder = "打开文件夹"
 
 # Threshold warnings in the problem log.
 flight_save = "保存播放日志"
@@ -1087,15 +1093,6 @@ project_swaps = "项目替换"
 engine_builds = "引擎构建"
 mix_replays = "来自已存混音的音频块"
 composite_replays = "已存合成的显示"
-
-[perf.note]
-ui_stall = "UI 线程在一帧内被阻塞 {0} 毫秒"
-render_underruns = "render underruns +{0}（总计 {1}）"
-callback_underruns = "callback underruns +{0}（总计 {1}）"
-eviction_spike = "eviction 峰值：{0}/秒 — 缓存太小"
-prefetch_thrash = "{0} 条缓存在第一次读取前就被丢弃（prefetch thrash）"
-low_video_hit = "播放时视频 hit {0}% — 解码跟不上"
-offline_changed = "媒体可用性变了：离线 {0}"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
@@ -2061,6 +2058,7 @@ marker = "添加或移除标记"
 zoom_in = "放大"
 zoom_out = "缩小"
 zoom_fit = "显示整个项目"
+mark_moment = "在日志中标记此刻"
 save = "保存"
 save_as = "另存为"
 new_project = "新建项目"

@@ -76,3 +76,22 @@ was where they were. His request of 2026-11-01 (kkt-26.11.01 item 13) moves the 
 preferences out of View into one window; the rule is kept — the checkbox stands in Preferences next to
 Language, with the same disabled-with-a-reason form. The notice and the hint name the new path
 ("File › Preferences…"). The stored value stays where the process-global object owns it.
+
+## The telemetry journal (telemetry-journal, archived 2026-11-08)
+
+The owner's run of 61414dba (kkt-26.11.07b G6, G10): a load report stamped "N s ago" from its
+writing, a Diagnostics log stamped at the next UI frame, a playback black box in memory and no record
+of what he did — "я не могу тебе сказать точное время". The mechanism: diagnostic records kept apart,
+stamped late or relatively, without the person's action next to them. The walk of every record of
+the program and its verdict (folded, mirrored, stays apart and why) is the change's design D1
+(`openspec/changes/archive/2026-11-08-telemetry-journal/design.md`).
+
+- `src/apps/kt-app/src/tele_journal.rs` — the journal: the caller stamps, one writer blocked in
+  `recv` appends with no buffer, rotation at 2 MiB into `.1`/`.2`, a flush barrier from the panic hook,
+  the 15-minute tail; `on_signal` hears `telemetry::signal` whatever the consent; `flight_sink`.
+- `load_watch.rs` — busy seconds and the problem notes at their second; the report is the journal's
+  export. `window_shell.rs` — windows opened/closed. `widgets::chain_strip` — the effect selected.
+  `app.rs` — the playback summary, the mark (`Cmd::MarkMoment`, Ctrl+Alt+M), the Diagnostics pane.
+- Not usage telemetry: nothing in `telemetry.rs` reads the journal, and the journal sends nothing.
+- English, as the render log: the file is the evidence handed over. Paths become file names.
+- Measured on the heavy showcase: 0 wake-ups and 0 bytes at rest (the change's design).

@@ -303,3 +303,143 @@ fn t1148_open_diagnostics_does_not_heat_an_idle_program() {
     }
 }
 
+
+/// A journal bound to this test thread BEFORE the app is built: the flight sink takes the
+/// journal current where the player is built.
+fn journal(name: &str) -> (std::sync::Arc<crate::tele_journal::Journal>, crate::tele_journal::testing::Bound) {
+    use crate::tele_journal::testing::*;
+    let clock = FakeClock::new(1_762_498_800_000, 0);
+    let j = fresh(name, clock, crate::tele_journal::ROTATE_BYTES);
+    let b = bind(j.clone());
+    (j, b)
+}
+
+/// The kind and text of each journal record, in order: `ACT edit AddMarker`.
+fn records(j: &crate::tele_journal::Journal) -> Vec<String> {
+    j.tail(1000)
+        .iter()
+        .map(|r| {
+            let rest = r.line.split_once("  +").and_then(|(_, x)| x.split_once("  ")).map_or("", |(_, x)| x);
+            rest.split_whitespace().collect::<Vec<_>>().join(" ")
+        })
+        .collect()
+}
+
+/// The index of the first record from `from` that starts with `prefix`.
+fn find_from(recs: &[String], from: usize, prefix: &str) -> usize {
+    recs.iter()
+        .skip(from)
+        .position(|r| r.starts_with(prefix))
+        .map(|i| i + from)
+        .unwrap_or_else(|| panic!("no “{prefix}” after record {from}: {recs:#?}"))
+}
+
+/// Test t1961 (telemetry-journal): what the person did shows up in the journal by name and in
+/// order — an edit, an undo, a window opened and closed, a playback with its summary, a mark.
+/// The owner: "Ты как поймешь что я делал в load-report.txt?"
+#[test]
+fn t1961_an_action_shows_up_with_its_name() {
+    let (j, _bound) = journal("t1961");
+    let mut h = crate::layout_tests::harness();
+    h.step();
+    h.state_mut().apply(kt_model::Command::AddMarker { at: kt_time::Tick(90_000), duration: kt_time::Tick(0) });
+    h.state_mut().undo();
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+    h.state_mut().perf.diag_open = false;
+    h.step();
+    h.step();
+    h.state().player.play();
+    h.step();
+    h.state().player.pause();
+    h.step();
+    h.state_mut().mark_moment("  stall here ");
+    let recs = records(&j);
+    let mut at = find_from(&recs, 0, "ACT edit AddMarker");
+    at = find_from(&recs, at + 1, "ACT undo");
+    let title = tr(k::win::DIAG_TITLE);
+    at = find_from(&recs, at + 1, &format!("ACT window opened: {title}"));
+    at = find_from(&recs, at + 1, &format!("ACT window closed: {title}"));
+    at = find_from(&recs, at + 1, "PLAY PLAY head=");
+    at = find_from(&recs, at + 1, "PLAY PAUSE head=");
+    at = find_from(&recs, at + 1, "PLAY playback stopped after");
+    at = find_from(&recs, at + 1, "MARK stall here");
+    assert!(recs[at].ends_with("stall here"), "the note is trimmed, nothing else: {}", recs[at]);
+    // a live gesture is one record, however many frames it sends
+    for _ in 0..5 {
+        h.state_mut().apply_coalesced(kt_model::Command::AddMarker { at: kt_time::Tick(180_000), duration: kt_time::Tick(0) }, 77);
+    }
+    let gestures = records(&j).iter().filter(|r| r.contains("(a live gesture)")).count();
+    assert_eq!(gestures, 1, "{:#?}", records(&j));
+}
+
+/// The rectangle of a published place, after the frame.
+fn probe(name: &str) -> egui::Rect {
+    crate::widgets::field_probe::rect_of(name).unwrap_or_else(|| panic!("“{name}” is not published"))
+}
+
+/// Test t1968 (telemetry-journal, found-defects 109): the journal pane is on screen at the
+/// window's default size and at its minimum — the owner had to make the window taller to see
+/// the log at all (kkt-26.11.07b line 17).
+#[test]
+fn t1968_journal_is_on_screen_at_any_window_height() {
+    let (j, _bound) = journal("t1968");
+    for i in 0..40 {
+        j.record(crate::tele_journal::Kind::Note, &format!("note {i}"));
+    }
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+    h.step();
+    let line_h = 6.0 * 12.0;
+    let check = |h: &Harness<'_, KtApp>, when: &str| {
+        let win = diag_rect(h).expect("the Diagnostics window is drawn");
+        let log = probe("diag.log");
+        let mark = probe("diag.mark");
+        assert!(win.contains_rect(log), "{when}: the journal pane {log:?} leaves the window {win:?}");
+        assert!(log.height() >= line_h, "{when}: the journal pane is {:.0} points high", log.height());
+        assert!(win.contains_rect(mark), "{when}: the mark button {mark:?} is outside the window {win:?}");
+        // the newest record is painted inside the pane
+        let painted = painted_texts(h);
+        let last = painted.iter().find(|t| t.src.ends_with("note 39")).unwrap_or_else(|| panic!("{when}: the newest record is not painted"));
+        assert!(log.contains_rect(last.rect) || log.intersects(last.rect), "{when}: the newest record is outside the pane");
+    };
+    check(&h, "default size");
+    drag_corner(&mut h, egui::vec2(-2000.0, -2000.0));
+    let win = diag_rect(&h).unwrap();
+    assert!(win.height() < 360.0, "the window did not shrink to its minimum: {win:?}");
+    h.step();
+    check(&h, "minimum size");
+}
+
+/// Test t1969 (telemetry-journal): a mark from the Diagnostics button with its note, then from
+/// the key in the main window; the note field empties.
+#[test]
+fn t1969_a_mark_from_the_button_and_from_the_key() {
+    let (j, _bound) = journal("t1969");
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+    click_at(&mut h, probe("diag.mark_note").center());
+    h.event(egui::Event::Text("stall here".into()));
+    h.step();
+    click_at(&mut h, probe("diag.mark").center());
+    assert!(h.state().perf.mark_note.is_empty(), "the note field kept “{}”", h.state().perf.mark_note);
+    h.state_mut().perf.diag_open = false;
+    h.step();
+    h.step();
+    let key = egui::Key::M;
+    let mods = egui::Modifiers { ctrl: true, alt: true, ..Default::default() };
+    h.event(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: mods });
+    h.event(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: mods });
+    h.step();
+    h.step();
+    let marks: Vec<String> = records(&j).into_iter().filter(|r| r.starts_with("MARK")).collect();
+    assert_eq!(marks, ["MARK stall here", "MARK the person marked this moment"], "{:#?}", records(&j));
+    let said = h.state().notices.back().map(|n| n.text.clone()).unwrap_or_default();
+    let head = tr(k::msg::MOMENT_MARKED).split('{').next().unwrap_or_default().to_string();
+    assert!(said.starts_with(&head), "the program does not say the moment is marked: {said:?}");
+}

@@ -51,7 +51,7 @@ pub enum Ev {
 }
 
 impl Ev {
-    fn tag(self) -> &'static str {
+    pub fn tag(self) -> &'static str {
         match self {
             Ev::Play => "PLAY",
             Ev::Pause => "PAUSE",
@@ -95,7 +95,21 @@ pub struct FlightRecorder {
     /// every frame, and the ring would mean a lock and a copy (invariant 12). `clear` keeps them.
     stalls: AtomicU64,
     stall_head: AtomicI64,
+    sink: std::sync::OnceLock<FlightSink>,
 }
+
+/// What the sink is told (telemetry-journal): a record as it is pushed, or a run of repeats that a
+/// different record has just closed — with its count and the time of its last repeat in `rec`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Sunk {
+    New(Rec),
+    /// `now_ms` is the recorder's clock at the closing push: the last repeat was `now_ms - at_ms` ago.
+    Repeats { rec: Rec, now_ms: u64 },
+}
+
+/// The telemetry journal's door into the ring. Called by whichever thread pushes (the render thread,
+/// `Player::play/pause`), outside the ring's lock; it must not block (a channel send).
+pub type FlightSink = Box<dyn Fn(Sunk) + Send + Sync>;
 
 /// One freeze of the playhead is ONE episode (R.72, M5). The engine asked "stands ≥ 1 s?" every
 /// pass and pushed a record each time, so one freeze flooded the 512-entry ring and the "froze"
@@ -140,7 +154,13 @@ impl FlightRecorder {
             t0: Instant::now(),
             stalls: AtomicU64::new(0),
             stall_head: AtomicI64::new(0),
+            sink: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Hand every record to `sink` as it is pushed (once per recorder; a second call is ignored).
+    pub fn set_sink(&self, sink: FlightSink) {
+        let _ = self.sink.set(sink);
     }
 
     pub fn now_ms(&self) -> u64 {
@@ -171,22 +191,32 @@ impl FlightRecorder {
             self.stall_head.store(b, Ordering::Release);
             self.stalls.fetch_add(1, Ordering::AcqRel);
         }
-        let mut ring = self.lock();
-        // consecutive dedup: “×N” instead of N lines (rule 2)
-        if let Some(last) = ring.back_mut()
-            && last.kind == kind
-            && last.a == a
-            && last.b == b
-            && last.snap == snap
-        {
-            last.n += 1;
-            last.at_ms = at_ms;
-            return;
+        let rec = Rec { at_ms, kind, a, b, snap, n: 1 };
+        let closed = {
+            let mut ring = self.lock();
+            if let Some(last) = ring.back_mut()
+                && last.kind == kind
+                && last.a == a
+                && last.b == b
+                && last.snap == snap
+            {
+                last.n += 1;
+                last.at_ms = at_ms;
+                return;
+            }
+            let closed = ring.back().filter(|l| l.n > 1).copied();
+            if ring.len() == CAP {
+                ring.pop_front();
+            }
+            ring.push_back(rec);
+            closed
+        };
+        if let Some(sink) = self.sink.get() {
+            if let Some(c) = closed {
+                sink(Sunk::Repeats { rec: c, now_ms: at_ms });
+            }
+            sink(Sunk::New(rec));
         }
-        if ring.len() == CAP {
-            ring.pop_front();
-        }
-        ring.push_back(Rec { at_ms, kind, a, b, snap, n: 1 });
     }
 
     pub fn records(&self) -> Vec<Rec> {
@@ -211,31 +241,9 @@ impl FlightRecorder {
     /// Text dump: one line per record, time in seconds since start,
     /// frames in seconds (48 kHz), so it reads without a calculator.
     pub fn dump(&self) -> String {
-        let sec = |f: i64| f as f64 / kt_time::AUDIO_SAMPLE_RATE as f64;
         let mut out = String::new();
         for r in self.records() {
-            out.push_str(&format!("{:8.3} {:6}", r.at_ms as f64 / 1000.0, r.kind.tag()));
-            match r.kind {
-                Ev::Snap => out.push_str(&format!(
-                    " u={}/{} w={} head={:.3}",
-                    r.snap.render_underruns,
-                    r.snap.callback_underruns,
-                    r.snap.warmup_misses,
-                    sec(r.snap.head_frames)
-                )),
-                Ev::Region => {
-                    if r.a < 0 {
-                        out.push_str(" off");
-                    } else {
-                        out.push_str(&format!(" {:.3}..{:.3}", sec(r.a), sec(r.b)));
-                    }
-                }
-                Ev::Stall => out.push_str(&format!(" {} ms head={:.3}", r.a, sec(r.b))),
-                Ev::Play | Ev::Pause | Ev::Seek | Ev::Wrap | Ev::Reset => {
-                    out.push_str(&format!(" head={:.3}", sec(r.a)))
-                }
-                Ev::Dir => out.push_str(if r.a < 0 { " reverse" } else { " forward" }),
-            }
+            out.push_str(&format!("{:8.3} {}", r.at_ms as f64 / 1000.0, describe(&r)));
             if r.n > 1 {
                 out.push_str(&format!(" ×{}", r.n));
             }
@@ -243,6 +251,34 @@ impl FlightRecorder {
         }
         out
     }
+}
+
+/// A record without its time and count: `SEEK   head=12.000`.
+pub fn describe(r: &Rec) -> String {
+    let sec = |f: i64| f as f64 / kt_time::AUDIO_SAMPLE_RATE as f64;
+    let mut out = format!("{:6}", r.kind.tag());
+    match r.kind {
+        Ev::Snap => out.push_str(&format!(
+            " u={}/{} w={} head={:.3}",
+            r.snap.render_underruns,
+            r.snap.callback_underruns,
+            r.snap.warmup_misses,
+            sec(r.snap.head_frames)
+        )),
+        Ev::Region => {
+            if r.a < 0 {
+                out.push_str(" off");
+            } else {
+                out.push_str(&format!(" {:.3}..{:.3}", sec(r.a), sec(r.b)));
+            }
+        }
+        Ev::Stall => out.push_str(&format!(" {} ms head={:.3}", r.a, sec(r.b))),
+        Ev::Play | Ev::Pause | Ev::Seek | Ev::Wrap | Ev::Reset => {
+            out.push_str(&format!(" head={:.3}", sec(r.a)))
+        }
+        Ev::Dir => out.push_str(if r.a < 0 { " reverse" } else { " forward" }),
+    }
+    out
 }
 
 #[cfg(test)]
@@ -276,5 +312,31 @@ mod tests {
         assert!(dump.to_lowercase().contains("play"), "dump is empty: {dump:?}");
         f.clear();
         assert!(f.records().is_empty());
+    }
+
+    /// Test t1965 (telemetry-journal): the sink gets each record as it is pushed, and a run of
+    /// repeats once, closed by the next record, with the time of its last repeat — a hundred wraps
+    /// of a tiny loop are one line in the journal, not a hundred (R.28: "tons of logs").
+    #[test]
+    fn t1965_sink_gets_records_and_closed_repeats() {
+        let f = FlightRecorder::new();
+        let got = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let g = got.clone();
+        f.set_sink(Box::new(move |s| g.lock().unwrap().push(s)));
+        f.push_at(10, Ev::Play, 0, 0, Snap::default());
+        for i in 0..100 {
+            f.push_at(20 + i, Ev::Wrap, 48_000, 0, Snap::default());
+        }
+        f.push_at(500, Ev::Pause, 96_000, 0, Snap::default());
+        let got = got.lock().unwrap();
+        let kinds: Vec<String> = got
+            .iter()
+            .map(|s| match s {
+                Sunk::New(r) => format!("new {}", r.kind.tag()),
+                Sunk::Repeats { rec, now_ms } => format!("{} x{} last {} now {now_ms}", rec.kind.tag(), rec.n, rec.at_ms),
+            })
+            .collect();
+        assert_eq!(kinds, ["new PLAY", "new WRAP", "WRAP x100 last 119 now 500", "new PAUSE"]);
+        assert_eq!(describe(&f.records()[2]), "PAUSE  head=2.000");
     }
 }
