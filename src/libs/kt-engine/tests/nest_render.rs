@@ -17,7 +17,7 @@
 //! against which wave B will check the real subtree. Without it there would be nothing
 //! to check the subtree against.
 
-use kt_engine::{AudioRenderer, DirectFetcher, VideoRenderer};
+use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore, VideoRenderer};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_media::{MediaSource, Quality};
 use kt_model::*;
@@ -1908,4 +1908,42 @@ fn t441_hunger_crosses_the_boundary() {
     let (out, complete) = kt_gpu::testkit::compose(&v, &export_cache, t, q);
     assert!(complete, "the export composite with a nested item must be complete");
     assert_eq!(out, preview, "preview and export must match BYTE FOR BYTE");
+}
+
+/// t1937 (cached-range-plays, found while testing it): a reel placed many times builds the state of
+/// its inner chains only for the instances that sound. `sync_fx` built every inner processor of
+/// every placement at once — a reel of 300 reverbs placed 400 times grew the player by gigabytes a
+/// second on a pause until the machine ran out of memory. A stream is now born when its instance
+/// is read and released when the render is a second away from it, and the sound is the same.
+#[test]
+fn t1937_reel_placements_build_state_only_where_they_sound() {
+    kt_plugins_builtin::install();
+    let mut p = audio_nest(vec![], vec![reverb()]);
+    // the same reel in twenty more places, far apart
+    let span = (PART + PART).0;
+    for k in 0..20u64 {
+        let mut c = p.clips[0].clone();
+        c.id = ClipId(100 + k);
+        c.start = Tick((k as i64 + 2) * 3 * span);
+        p.clips.push(c);
+    }
+    p.validate().expect("scene guard: a reel in many places is legal");
+    let r = AudioRenderer::new(&p);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    assert_eq!(store.nest_streams(), 0, "no placement is heard yet, none has state");
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let mut out = vec![0f32; frames * CH];
+    let mut f = direct();
+    let st = r.render_frames_with(&mut f, &mut store, 0, &mut out);
+    assert_eq!(st.underruns, 0);
+    assert_eq!(store.nest_streams(), 1, "only the placement that sounds has a stream");
+    // the sound is the reel's, as it always was
+    assert_eq!(out, render_audio(&p, frames), "a stream born at its first read sounds the same");
+    // far from every placement nothing is held
+    let mut far = vec![0f32; 1024 * CH];
+    r.render_frames_with(&mut f, &mut store, (2 * 3 * span - span).max(0) * 48 / 90, &mut far);
+    assert!(store.nest_streams() <= 1, "streams are released away from their placements");
+    r.render_frames_with(&mut f, &mut store, 10 * 48_000 * 600, &mut far);
+    assert_eq!(store.nest_streams(), 0, "a stream far from its placement is released");
 }

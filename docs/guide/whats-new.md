@@ -5,6 +5,10 @@ month, newest first.
 
 ## kt26.11
 
+- **A range you have played plays again for free.** The picture after the effects and the sound after the effects are kept as you first saw and heard them, like a prerender: a loop over heavy effects (VHS, Camera ISP, a slowed composition) runs at the project's frame rate from its third lap, with no decoding and no effect running. Changing a parameter recomputes only the part it touches. The strips at the top of the timeline and under each event are now bright where a range plays without work and keep their darker colour where only its sources are ready.
+- **Editing during playback no longer cuts the sound.** On a large project every change used to stop the sound for a moment.
+- **A composition placed many times no longer eats the memory.** Its inner effects are prepared only for the places that are playing.
+
 - **A pause is a pause.** A program standing still does no work now: with several releases of a composition on the timeline it kept rendering their previews in a circle, and every move of the mouse started another one. Moving the mouse no longer costs anything that depends on what the timeline shows, and each release keeps its preview between openings.
 - **Effects run on the card your monitor is plugged into.** On a desktop they could end up on the processor's built-in graphics.
 - **The load report.** If the program holds the processor for more than a few seconds it writes `load-report.txt` in its data folder by itself: which threads, which work, which graphics devices. Diagnostics shows the same live, with a button that opens the folder. The file stays on your computer.

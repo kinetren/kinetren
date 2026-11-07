@@ -2736,6 +2736,13 @@ effect against real time), `telemetry-journal` (one journal with real time), `wi
 effects (a), changing invariant 2, or only the effects get faster (b), he chose: "вариант А." Then:
 "давай делать".
 
+Executor `cached-range-plays` (G2–G4), measured on his relinked copy: the decoded frames of the
+400 ms range were held, every frame of every lap was composed again (the preview's present path had
+no memo); every burst ran the effects. The render never fell behind on the range: the clicks there
+are VHS Tape (sound)'s dropouts at his 123 per second, single-sample steps of full scale. His
+choice "вариант А" is implemented: a played range keeps its picture and sound after the effects;
+the strips are bright where a range plays without work.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

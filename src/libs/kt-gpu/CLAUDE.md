@@ -77,7 +77,8 @@ is no picture, and an export refuses.
   (`complete = false`, t182). Edits — only as a pair with
   kt-fx/src/{geom,plan}.rs, in the same commit (t181 geo/tap/k2 cases,
   t309 s2 cases, FrameTol::GEOM).
-- **ReadbackCache is the composite's memoization** (hash of the plan → frame): the post-FX cache
+- **`PresentMemo` keeps what the preview presented** (cached-range-plays): plan key → the integer composite on the device, complete frames only, 512 MB. `present` asks it FIRST and on a hit runs the display pass alone (`GpuStages.replayed`). preview-throughput D2 had moved the preview off the readback memo, and a covered range was composed again every lap. A new input to a frame must reach `plan_key`, or both memos show a stale picture.
+- **ReadbackCache is the readback path's memoization** (hash of the plan → frame): the post-FX cache
   of kt-cache (`PostFxVideo`) is not used by any executor (a per-layer readback would eat up the
   whole gain).
 - Errors: `TooLarge` → no picture for this plan in the preview, an error in an export;

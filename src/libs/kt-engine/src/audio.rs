@@ -215,6 +215,9 @@ pub struct RenderStats {
     pub nest_warmups: u64,
 }
 
+/// How far from the rendered range a nested instance's sub-mix stream is kept (one second).
+const NEST_KEEP_FRAMES: i64 = kt_time::AUDIO_SAMPLE_RATE as i64;
+
 /// An index bucket of time — one second of output.
 const INDEX_BUCKET_FRAMES: i64 = kt_time::AUDIO_SAMPLE_RATE as i64;
 
@@ -394,6 +397,11 @@ impl AudioFetcher for NestFetcher<'_> {
         }
         st.preroll = preroll;
         st.block = block;
+        if !st.synced {
+            // the instance is read for the first time: its inner chains are built now
+            reel.sync_fx(&mut st.store);
+            st.synced = true;
+        }
         // 1) already computed
         if let Some(b) = st.cached(idx) {
             return Some(b);
@@ -1093,7 +1101,11 @@ impl AudioRenderer {
             let Some(key) = c.nest else { continue };
             let Some(sub) = self.nests.get(&key) else { continue };
             let (preroll, block) = self.nest_preroll(key);
-            sub.sync_fx(&mut store.nest_mut(c.id, key, preroll, block).store);
+            // only the streams that sound: an instance's chains are built when it is first read
+            if let Some(st) = store.nest_live_mut(c.id, key, preroll, block) {
+                sub.sync_fx(&mut st.store);
+                st.synced = true;
+            }
         }
         let live: std::collections::HashSet<_> =
             self.clips.iter().filter(|c| c.nest.is_some()).map(|c| c.id).collect();
@@ -1151,6 +1163,18 @@ impl AudioRenderer {
             st.nest_warmups += f.warmups;
             st
         };
+        // A stream whose instance is not heard around here is released: it can be read again only
+        // after a jump back, and a jump is the canonical move, which resets it anyway — so the
+        // bytes do not change, and memory holds the instances that sound, not every placement.
+        let frames = (out.len() / AUDIO_CHANNELS) as i64;
+        let near = start_frame - NEST_KEEP_FRAMES..start_frame + frames + NEST_KEEP_FRAMES;
+        let heard: std::collections::HashSet<kt_model::ClipId> = self
+            .active_clips(&near)
+            .into_iter()
+            .filter(|&i| self.clips[i].nest.is_some())
+            .map(|i| self.clips[i].id)
+            .collect();
+        states.retain(|id, _| heard.contains(id));
         store.put_nests(states);
         stats
     }

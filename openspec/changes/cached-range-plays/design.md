@@ -144,6 +144,19 @@ outside it) and `Player::final_video_runs` (moments presented whose key the exec
 and the current plan still asks; after an edit at most 32 moments are checked per refresh, so an
 edit never waits on it).
 
+### D6. A placement's sub-mix state exists only where it sounds (a defect found by t1935)
+
+The first t1935 scene (2000 events, a reel of 3000 reverbs placed 400 times) took the machine down
+at 20:55: the test process reached 55 GB of 61 GB. Measured under a cap (`systemd-run --user --scope
+-p MemoryMax=8G -p MemorySwapMax=0`): the audio-render thread grew by 1.3 GB a second from the
+moment the player was created, on a pause; the same with the player of `0aeda122` (before this
+change), so it is not the kept mix (bounded at 64 MB), it is older. `sync_fx` built the inner chains
+of EVERY placement of a reel (`store.nest_mut` per instance, then the reel's `sync_fx` into it):
+400 × 3000 processors, whether or not any of them ever sounds. Now a stream is born at its first
+read (`NestStream::synced`), `sync_fx` carries over only existing ones (`nest_live_mut`), and a
+stream a second away from the rendered range is released. The same probe stays at 172 MB. t1937;
+spec `compositions`. Every test of this change that can grow runs under the memory cap.
+
 ## Load at rest
 
 The store and the memo add no work at rest: the publish runs inside the render loop's existing
