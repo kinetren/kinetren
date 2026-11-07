@@ -4,7 +4,10 @@ Source — [`kkt-26.11.07b.txt`](kkt-26.11.07b.txt) (verbatim, the owner's secon
 on build `kt26.11.07-61414dba`). Columns and states — as in [`v26.10-index.md`](v26.10-index.md). The
 round is in `docs/user-feedback.md` ("2026-11-07 — his run of 61414dba"). His files: the folder
 `/media/e/developer/kt.9/fails/26.11.07` (`load-report.txt`, `app.ron`, `kt-app.log`, `haski.kt`);
-he sent the project after all (line 15); it is his, its media are not on this machine, it is not copied into the tree.
+he sent the project after all (line 15); it is his, its media are not on this machine, it is not copied into the tree. Line 19: his media are in
+`/media/e/developer/kt.9/sources/untitled2_v26.09.08/sources` (read only); a copy relinked to them is
+`/media/e/developer/kt.9/repro/26.11.07/haski-relinked.kt` (27 of 30 files found; Morandi,
+`accompaniment.wav`, `vocals.wav` are missing).
 
 ## Registry
 
@@ -20,3 +23,4 @@ he sent the project after all (line 15); it is his, its media are not on this ma
 | G8 | 9 | VHS tape on video is tolerable; added on audio, everything breaks: neither cache nor optimized code | no: defect, `audio-fx` | `vhs-audio-cost` | on his word |
 | G9 | 11 | does he need to send files; what is `app.ron` | question: "Нужно ли мне какие-то файлы скинуть?" Answered 07.11: no more files needed; `app.ron` is the window and settings state, not needed | — | answered |
 | G10 | 12-13 | one telemetry journal: load, the playback journal and his actions in one, with time; telemetry is not usage tracking (posthog) | no: feature, `telemetry`, no note, change `telemetry-journal` (note in `docs/features/` first) | `telemetry-journal` | on his word |
+| G12 | 17 | the Diagnostics log shows only when the window is made taller: its tail is under the fold of the scrolling body | no: defect, `ui-reach`, change `diag-log-visible`; found-defects 109 | `diag-log-visible` | on his word |
