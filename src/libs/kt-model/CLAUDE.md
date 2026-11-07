@@ -638,3 +638,11 @@ shift if a variant were inserted in the middle.
   (`TrackCurvesUnsupported`).
 - **The file version is set by content**: `project_file::version_for` writes 2 only when
   `Project::has_masks()`; a maskless file is format 1 byte for byte. Tests t1260–t1265, t1275.
+
+## An equal command is no edit (input-without-work)
+
+`apply_batch` and `apply_coalesced` compare the simulated project with the canon: equal → no undo step,
+no started gesture, `revision()` unchanged (`apply_coalesced` answers `Ok(false)`). The application hangs
+its revision, the player's project and the dirty mark on `revision()`, so a window frame that re-sends
+what the model holds costs nothing. A new mutation path that writes the canon must bump `revision`
+(t1873).

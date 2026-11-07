@@ -20095,7 +20095,7 @@ fn t1623_boost_eases_in_and_decays_faster() {
 
 /// A view for the timeline tests of R.72: 100 px per second, starting at `start_s`.
 #[cfg(test)]
-fn r72_view(h: &mut Harness<'static, KtApp>, start_s: f64) {
+pub(crate) fn r72_view(h: &mut Harness<'static, KtApp>, start_s: f64) {
     let app = h.state_mut();
     app.ticks_per_px = 900.0;
     app.view_start = start_s * 90_000.0;
@@ -20105,7 +20105,7 @@ fn r72_view(h: &mut Harness<'static, KtApp>, start_s: f64) {
 }
 
 #[cfg(test)]
-fn r72_event(id: u64, kind: kt_model::ClipKind, lane: u32, start_s: i64, secs: i64) -> kt_model::ClipEvent {
+pub(crate) fn r72_event(id: u64, kind: kt_model::ClipKind, lane: u32, start_s: i64, secs: i64) -> kt_model::ClipEvent {
     use kt_model::*;
     use kt_time::Tick;
     let mut c = sample_clip(ClipId(id));
@@ -20118,7 +20118,7 @@ fn r72_event(id: u64, kind: kt_model::ClipKind, lane: u32, start_s: i64, secs: i
 }
 
 #[cfg(test)]
-fn r72_scene(lang: crate::i18n::Lang, dt: Option<f32>, clips: Vec<kt_model::ClipEvent>) -> Harness<'static, KtApp> {
+pub(crate) fn r72_scene(lang: crate::i18n::Lang, dt: Option<f32>, clips: Vec<kt_model::ClipEvent>) -> Harness<'static, KtApp> {
     use kt_model::*;
     let mut h = harness_lang_dt(lang, dt);
     {

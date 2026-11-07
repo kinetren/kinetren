@@ -26,8 +26,14 @@ QUIET_S = 3.0
 # what a pointer passing over static things must not cause at all
 NOT_ON_HOVER = (
     "composites", "device_submits", "decode_requests", "decoded", "thumb_orders", "fx_thumbs",
-    "reel_jobs", "prefetch_passes",
+    "reel_jobs", "prefetch_passes", "model_edits", "project_swaps", "engine_builds",
 )
+# input-without-work: a thread holding this share of a core while no counter moves is work nobody
+# counts (the owner's report: "at rest" at 196 %, prefetch and the audio render rebuilding the
+# engine on every mouse move). Processor ticks, not counters, are the measure here.
+ENGINE_THREADS = ("prefetch", "audio-render")
+ENGINE_LIMIT_PERCENT = 5.0
+UNCOUNTED_PERCENT = 10.0
 
 
 class Meter:
@@ -59,7 +65,21 @@ class Meter:
         dt = time.time() - t0
         work = {k: b["work"][k] - a["work"].get(k, 0) for k in b["work"]}
         ticks = sum(b["ticks"].values()) - sum(a["ticks"].values())
+        # per thread group, percent of one core (100 ticks a second)
+        self.threads = {
+            k: (v - a["ticks"].get(k, 0)) / dt for k, v in b["ticks"].items() if v > a["ticks"].get(k, 0)
+        }
         return {k: v for k, v in work.items() if v}, ticks / dt
+
+    def engine_busy(self):
+        """The engine threads' share of a core over the last `over`, those above the limit."""
+        return {k: round(v) for k, v in self.threads.items() if k in ENGINE_THREADS and v > ENGINE_LIMIT_PERCENT}
+
+    def uncounted(self, work):
+        """A busy thread with every counter still: never rest."""
+        if work:
+            return {}
+        return {k: round(v) for k, v in self.threads.items() if k != "load-watch" and v >= UNCOUNTED_PERCENT}
 
 
 def wait_quiet(meter, step):
@@ -105,8 +125,9 @@ def main(out):
         wait_quiet(meter, "after the screenshot")
 
         work, cpu = meter.over(5.0)
-        print(f"   pause: {work}, {cpu:.0f} % of a core")
+        print(f"   pause: {work}, {cpu:.0f} % of a core, threads {meter.threads}")
         app.expect(not work, f"a pause runs nothing, ran {work}")
+        app.expect(not meter.uncounted(work), f"a pause holds a thread no counter sees: {meter.uncounted(work)}")
 
         g = app.geom()
         win = kt_live.geometry()
@@ -152,6 +173,38 @@ def main(out):
         bad = {k: v for k, v in work.items() if k in NOT_ON_HOVER}
         app.expect(not bad, f"over the effects window: a static hover caused {bad}")
         app.step("fx-hover", "the pointer went over the window, the program is at rest again")
+
+        # input-without-work (kkt-26.11.07b G5, G7): the VHS Tape device panel selected, a number
+        # at the floor its f32 row cannot hold (-80 % is -0.800000012), the pointer moving. Each
+        # move was an edit and a rebuild of the whole engine on the owner's project.
+        deck = None
+        for i in range(6):
+            if not app.has_probe(f"fx.slot.{i}", tries=2):
+                break
+            app.click_probe(f"fx.slot.{i}", f"slot {i} of the chain")
+            if app.has_probe("deck.standard.0", tries=3):
+                deck = i
+                break
+        app.expect(deck is not None, "the chain has a VHS Tape slot whose deck face draws")
+        if deck is not None:
+            app.step("fx-deck", "VHS Tape is selected: the deck face and its grid")
+            r = app._probe_rect("dark_clip")
+            app.expect(r is not None, "the dark clip field published its rectangle")
+            if r is not None:
+                fx = win["x"] + int(r["x"] + r["w"] / 2)
+                fy = win["y"] + int(r["y"] + r["h"] / 2)
+                # a real drag far to the left: the field stops at its floor
+                app.drag(fx, fy, max(win["x"] + 5, fx - 420), fy, steps=8)
+                app.step("fx-floor", "the dark clip is dragged to its floor, -80 %")
+                wait_quiet(meter, "after the drag")
+                gx, gy = win["x"] + int(r["x"]) - 150, win["y"] + int(r["y"]) - 120
+                work, cpu = meter.over(4.0, sweep(app, (gx, gy), (gx + 220, gy + 160)))
+                print(f"   over the deck panel at the floor: {work}, {cpu:.0f} % of a core, threads {meter.threads}")
+                bad = {k: v for k, v in work.items() if k in NOT_ON_HOVER}
+                app.expect(work.get("ui_frames", 0) > 0, "over the deck panel: no frame saw the pointer")
+                app.expect(not bad, f"over the deck panel: a static hover caused {bad}")
+                app.expect(not meter.engine_busy(), f"over the deck panel: the engine threads worked {meter.engine_busy()} % of a core")
+                app.step("fx-deck-hover", "the pointer went over the deck panel, the engine stayed asleep")
         # the one click that hands the proof over: it writes the file, and it is on the machine
         app.key("Escape")
         app.settle()

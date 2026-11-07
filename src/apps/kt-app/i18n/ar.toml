@@ -1064,6 +1064,7 @@ flight_stalls = "حالات التجمد: {0}"
 load_rest = "المعالج {0} %، في راحة"
 load_line = "المعالج {0} %: {1}"
 load_work = "العمل في الثانية: {0}"
+load_uncounted = "لم يتحرك أي عداد عمل: هذا الحمل عمل لا يحسبه البرنامج"
 load_report = "فتح تقرير الحمل"
 load_report_hint = "يكتب البرنامج load-report.txt أثناء الحمل ويبقى على هذا الحاسوب"
 
@@ -1079,6 +1080,9 @@ thumb_orders = "طلبات مصغرات"
 fx_thumbs = "خلايا التأثيرات"
 reel_jobs = "معاينات التراكيب"
 event_passes = "جولات الأحداث"
+model_edits = "تعديلات النموذج"
+project_swaps = "استبدالات المشروع"
+engine_builds = "بناءات المحرك"
 
 [perf.note]
 ui_stall = "انسدّ خيط الواجهة {0} م.ث داخل إطار واحد"

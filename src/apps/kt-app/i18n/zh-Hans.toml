@@ -1064,6 +1064,7 @@ flight_stalls = "卡住次数：{0}"
 load_rest = "处理器 {0} %，空闲"
 load_line = "处理器 {0} %：{1}"
 load_work = "每秒工作量：{0}"
+load_uncounted = "没有工作计数器变化：程序没有统计这部分负载"
 load_report = "打开负载报告"
 load_report_hint = "load-report.txt 由程序在高负载时自动写入，只保存在这台电脑上"
 
@@ -1079,6 +1080,9 @@ thumb_orders = "缩略图请求"
 fx_thumbs = "效果单元"
 reel_jobs = "合成预览"
 event_passes = "事件轮次"
+model_edits = "模型编辑"
+project_swaps = "项目替换"
+engine_builds = "引擎构建"
 
 [perf.note]
 ui_stall = "UI 线程在一帧内被阻塞 {0} 毫秒"
