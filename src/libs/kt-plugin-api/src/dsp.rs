@@ -7,6 +7,34 @@
 use crate::math::FrozenMath;
 pub use kt_time::Tick;
 
+/// The last key and value of a pure function a per-sample loop takes of a smoothed parameter
+/// (audio-fx-cost): a smoother at rest gives the same bits sample after sample, and `10^(dB/20)` of
+/// them is the same value — computed once instead of per sample. Keyed by the BITS of the key, so the
+/// value is the one the function gives, to the bit.
+#[derive(Debug, Clone, Copy)]
+pub struct Memo<T: Copy> {
+    key: Option<u32>,
+    val: T,
+}
+
+impl<T: Copy + Default> Default for Memo<T> {
+    fn default() -> Memo<T> {
+        Memo { key: None, val: T::default() }
+    }
+}
+
+impl<T: Copy> Memo<T> {
+    /// `f(x)`, computed only when `x`'s bits differ from the last call's.
+    #[inline]
+    pub fn get(&mut self, x: f32, f: impl FnOnce(f32) -> T) -> T {
+        if self.key != Some(x.to_bits()) {
+            self.key = Some(x.to_bits());
+            self.val = f(x);
+        }
+        self.val
+    }
+}
+
 /// Smoothed parameter: one-pole toward the target, ~20 ms. It does not “teleport”
 /// on set_target — only in reset().
 #[derive(Debug, Clone, Copy)]

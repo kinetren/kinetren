@@ -432,102 +432,105 @@ impl AudioState for MicSound {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        let frames = buf.len() / 2;
-        let n0 = self.at.start + pos;
-        if self.next_in != Some(n0) {
-            self.rebuild();
-        }
-        let r = self.r;
-        let pa_fs = 10f64.fpowf((r.scene_spl - 94.0) / 20.0);
-        let aop = 20e-6 * 10f64.fpowf(r.aop / 20.0);
-        let self_noise = 20e-6 * 10f64.fpowf(r.self_noise / 20.0);
-        let target = 10f64.fpowf(r.agc_target / 20.0);
-        let max_gain = 10f64.fpowf(r.agc_max / 20.0);
-        let (att, rel) = (1.0 - (-1.0 / (0.010 * FS)).fexp(), 1.0 - (-1.0 / (0.6 * FS)).fexp());
-        let (g_up, g_down) = (1.0 - (-1.0 / (1.5 * FS)).fexp(), 1.0 - (-1.0 / (0.02 * FS)).fexp());
-        let m = r.decimation();
-        let nch = if r.stereo { 2 } else { 1 };
-        for i in 0..frames {
-            let n = n0 + i as i64;
-            let input = if r.stereo {
-                [buf[2 * i] as f64, buf[2 * i + 1] as f64]
-            } else {
-                let x = 0.5 * (buf[2 * i] as f64 + buf[2 * i + 1] as f64);
-                [x, x]
-            };
-            let mut outs = [0f64; 2];
-            for c in 0..nch {
-                let wind = self.wind(n, c);
-                let ch = &mut self.ch[c];
-                // 1–3: the scene's pressure and the wind at the port, through the port
-                let wind = ch.wind_lp.run(wind);
-                let p = ch.port.run(input[c] * pa_fs + wind);
-                // 4: the capsule: the vent, its noise, its overload; full scale at the AOP
-                let h = lowbias32(r.seed ^ (n as u32).wrapping_mul(0x85EB_CA6B) ^ (c as u32) << 29);
-                let hiss = ((h >> 8) as f64 / 16_777_216.0 - 0.5) * 3.464 * self_noise;
-                let e = ch.vent.run(p) + hiss;
-                let d = aop * (e / aop).clamp(-20.0, 20.0).ftanh_frozen() / aop;
-                // 5: the AGC
-                let lvl = d * d;
-                ch.agc_env += if lvl > ch.agc_env { att } else { rel } * (lvl - ch.agc_env);
-                let want = if r.agc { (target / ch.agc_env.sqrt().max(1e-9)).clamp(1.0, max_gain) } else { 1.0 };
-                ch.agc_gain += if want < ch.agc_gain { g_down } else { g_up } * (want - ch.agc_gain);
-                let a = d * ch.agc_gain;
-                // 6: the noise suppressor
-                let s = ch.ns.run(a, r.ns_strength, r.ns);
-                // 7: the device's rate and coding
-                let rs = if m == 1 {
-                    ch.delay_rs.run(s)
-                } else {
-                    ch.aa_hist.copy_within(1.., 0);
-                    ch.aa_hist[2 * RS_M] = s;
-                    let lo: f64 = ch.aa.iter().zip(&ch.aa_hist).map(|(h, x)| h * x).sum();
-                    // decimate: the device keeps every m-th sample; the player's interpolator
-                    // sees zeros between them
-                    let kept = if n.rem_euclid(m as i64) == 0 {
-                        let q = if r.codec == 2 { mulaw(lo) } else { (lo * 32_767.0).round() / 32_767.0 };
-                        q * m as f64
-                    } else {
-                        0.0
-                    };
-                    ch.ai_hist.copy_within(1.., 0);
-                    ch.ai_hist[2 * RS_M] = kept;
-                    ch.ai.iter().zip(&ch.ai_hist).map(|(h, x)| h * x).sum()
-                };
-                outs[c] = if r.codec == 0 {
-                    // AAC: the codec's frames, on the grid of the stream's start
-                    ch.fresh.push(rs);
-                    ch.out.pop_front().unwrap_or(0.0)
-                } else {
-                    ch.delay_codec.run(rs)
-                };
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let frames = buf.len() / 2;
+            let n0 = self.at.start + pos;
+            if self.next_in != Some(n0) {
+                self.rebuild();
             }
-            if r.codec == 0 {
-                self.frame_fill += 1;
-                if self.frame_fill == N {
-                    self.frame_fill = 0;
-                    let bw = (r.kbps.min(128.0) / 128.0 * 16_000.0 / (24_000.0 / N as f64)) as usize;
-                    for c in 0..nch {
-                        let ch = &mut self.ch[c];
-                        ch.block.copy_within(N.., 0);
-                        ch.block[N..].copy_from_slice(&ch.fresh);
-                        ch.fresh.clear();
-                        // the finest step: −96 dB of a line's range, the rate control does the rest
-                        let pkt = ch.enc.encode(&ch.block, false, 1e-3, bw, false);
-                        let bits = pkt.payload.v.clone();
-                        let mut out = vec![0f64; N];
-                        ch.dec.decode(&pkt, &bits, Damage { residual: 1.0, ..Default::default() }, bw, false, 0, &mut out);
-                        ch.out.extend(out);
+            let r = self.r;
+            let pa_fs = 10f64.fpowf((r.scene_spl - 94.0) / 20.0);
+            let aop = 20e-6 * 10f64.fpowf(r.aop / 20.0);
+            let self_noise = 20e-6 * 10f64.fpowf(r.self_noise / 20.0);
+            let target = 10f64.fpowf(r.agc_target / 20.0);
+            let max_gain = 10f64.fpowf(r.agc_max / 20.0);
+            let (att, rel) = (1.0 - (-1.0 / (0.010 * FS)).fexp(), 1.0 - (-1.0 / (0.6 * FS)).fexp());
+            let (g_up, g_down) = (1.0 - (-1.0 / (1.5 * FS)).fexp(), 1.0 - (-1.0 / (0.02 * FS)).fexp());
+            let m = r.decimation();
+            let nch = if r.stereo { 2 } else { 1 };
+            for i in 0..frames {
+                let n = n0 + i as i64;
+                let input = if r.stereo {
+                    [buf[2 * i] as f64, buf[2 * i + 1] as f64]
+                } else {
+                    let x = 0.5 * (buf[2 * i] as f64 + buf[2 * i + 1] as f64);
+                    [x, x]
+                };
+                let mut outs = [0f64; 2];
+                for c in 0..nch {
+                    let wind = self.wind(n, c);
+                    let ch = &mut self.ch[c];
+                    // 1–3: the scene's pressure and the wind at the port, through the port
+                    let wind = ch.wind_lp.run(wind);
+                    let p = ch.port.run(input[c] * pa_fs + wind);
+                    // 4: the capsule: the vent, its noise, its overload; full scale at the AOP
+                    let h = lowbias32(r.seed ^ (n as u32).wrapping_mul(0x85EB_CA6B) ^ (c as u32) << 29);
+                    let hiss = ((h >> 8) as f64 / 16_777_216.0 - 0.5) * 3.464 * self_noise;
+                    let e = ch.vent.run(p) + hiss;
+                    let d = aop * (e / aop).clamp(-20.0, 20.0).ftanh_frozen() / aop;
+                    // 5: the AGC
+                    let lvl = d * d;
+                    ch.agc_env += if lvl > ch.agc_env { att } else { rel } * (lvl - ch.agc_env);
+                    let want = if r.agc { (target / ch.agc_env.sqrt().max(1e-9)).clamp(1.0, max_gain) } else { 1.0 };
+                    ch.agc_gain += if want < ch.agc_gain { g_down } else { g_up } * (want - ch.agc_gain);
+                    let a = d * ch.agc_gain;
+                    // 6: the noise suppressor
+                    let s = ch.ns.run(a, r.ns_strength, r.ns);
+                    // 7: the device's rate and coding
+                    let rs = if m == 1 {
+                        ch.delay_rs.run(s)
+                    } else {
+                        ch.aa_hist.copy_within(1.., 0);
+                        ch.aa_hist[2 * RS_M] = s;
+                        let lo: f64 = ch.aa.iter().zip(&ch.aa_hist).map(|(h, x)| h * x).sum();
+                        // decimate: the device keeps every m-th sample; the player's interpolator
+                        // sees zeros between them
+                        let kept = if n.rem_euclid(m as i64) == 0 {
+                            let q = if r.codec == 2 { mulaw(lo) } else { (lo * 32_767.0).round() / 32_767.0 };
+                            q * m as f64
+                        } else {
+                            0.0
+                        };
+                        ch.ai_hist.copy_within(1.., 0);
+                        ch.ai_hist[2 * RS_M] = kept;
+                        ch.ai.iter().zip(&ch.ai_hist).map(|(h, x)| h * x).sum()
+                    };
+                    outs[c] = if r.codec == 0 {
+                        // AAC: the codec's frames, on the grid of the stream's start
+                        ch.fresh.push(rs);
+                        ch.out.pop_front().unwrap_or(0.0)
+                    } else {
+                        ch.delay_codec.run(rs)
+                    };
+                }
+                if r.codec == 0 {
+                    self.frame_fill += 1;
+                    if self.frame_fill == N {
+                        self.frame_fill = 0;
+                        let bw = (r.kbps.min(128.0) / 128.0 * 16_000.0 / (24_000.0 / N as f64)) as usize;
+                        for c in 0..nch {
+                            let ch = &mut self.ch[c];
+                            ch.block.copy_within(N.., 0);
+                            ch.block[N..].copy_from_slice(&ch.fresh);
+                            ch.fresh.clear();
+                            // the finest step: −96 dB of a line's range, the rate control does the rest
+                            let pkt = ch.enc.encode(&ch.block, false, 1e-3, bw, false);
+                            let bits = pkt.payload.v.clone();
+                            let mut out = vec![0f64; N];
+                            ch.dec.decode(&pkt, &bits, Damage { residual: 1.0, ..Default::default() }, bw, false, 0, &mut out);
+                            ch.out.extend(out);
+                        }
                     }
                 }
+                if !r.stereo {
+                    outs[1] = outs[0];
+                }
+                buf[2 * i] = outs[0] as f32;
+                buf[2 * i + 1] = outs[1] as f32;
             }
-            if !r.stereo {
-                outs[1] = outs[0];
-            }
-            buf[2 * i] = outs[0] as f32;
-            buf[2 * i + 1] = outs[1] as f32;
-        }
-        self.next_in = Some(n0 + frames as i64);
+            self.next_in = Some(n0 + frames as i64);
+        })
     }
 }
 

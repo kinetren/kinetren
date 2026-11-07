@@ -133,3 +133,35 @@ fn t1065_the_frozen_math_is_within_one_ulp_of_glibc() {
     let bad: Vec<_> = all.iter().filter(|t| t.worst > 1).map(|t| t.name).collect();
     assert!(bad.is_empty(), "more than one ulp from glibc: {bad:?}\n{report}");
 }
+
+/// t1982 (audio-fx-cost): `powf_neg_half` is `powf(x, -0.5)` to the bit on EVERY positive `f32`
+/// (and on zero, the infinities, NaN and the negatives, where it calls `powf` itself) — the
+/// exhaustive check a rounding trick on a frozen path owes (kt-fx CLAUDE.md, SIMD).
+#[test]
+fn t1982_powf_neg_half_is_powf_on_every_float() {
+    use kt_plugin_api::math::{powf, powf_neg_half};
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16) as u32;
+    let top = f32::INFINITY.to_bits(); // positive finite floats are the bit patterns below it
+    let per = top.div_ceil(threads);
+    let bad: u64 = std::thread::scope(|s| {
+        let jobs: Vec<_> = (0..threads)
+            .map(|t| {
+                s.spawn(move || {
+                    let mut bad = 0u64;
+                    for b in (t * per)..((t + 1) * per).min(top) {
+                        let x = f32::from_bits(b);
+                        if powf_neg_half(x).to_bits() != powf(x, -0.5).to_bits() {
+                            bad += 1;
+                        }
+                    }
+                    bad
+                })
+            })
+            .collect();
+        jobs.into_iter().map(|j| j.join().unwrap()).sum()
+    });
+    assert_eq!(bad, 0, "powf_neg_half differs from powf(x, -0.5) on {bad} floats");
+    for x in [0.0f32, -0.0, -1.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+        assert_eq!(powf_neg_half(x).to_bits(), powf(x, -0.5).to_bits(), "{x}");
+    }
+}

@@ -51,9 +51,9 @@ pub fn atan2_rad(y: f32, x: f32) -> f32 {
     let ax = x.abs();
     let ay = y.abs();
     let mx = ax.max(ay);
-    if mx == 0.0 {
-        return 0.0;
-    }
+    // the origin is answered LAST, as a select (audio-fx-cost): an early return kept the sound's
+    // eight sub-samples from running side by side; at the origin `a` is NaN and is not used. The
+    // WGSL mirror keeps its early return: the same value, and a GPU's 0/0 is not defined
     let a = ax.min(ay) / mx;
     let s = a * a;
     let mut r = a * (A1 + s * (A3 + s * (A5 + s * (A7 + s * (A9 + s * A11)))));
@@ -66,7 +66,7 @@ pub fn atan2_rad(y: f32, x: f32) -> f32 {
     if y < 0.0 {
         r = -r;
     }
-    r
+    if mx == 0.0 { 0.0 } else { r }
 }
 
 /// atan2(y, x) in CYCLES, in (−½, ½].

@@ -224,6 +224,12 @@ row printed with `KT_PRINT_GOLDEN=1` once), t973 its file form — do not write 
 effect.
 
 
+**What an effect costs** (audio-fx-cost): `audio::cost` is the one measurement — the node chain's
+share of real time and its ratio to a reference kernel run alternately (`chain_cost`), the heavy
+settings per kind (`heavy`), the output digests (`digest`, `switched_output`). `kt-cli fx-cost` prints
+it on a release build (`--project P --clip ID` for a person's chain), t1980 bounds it, t1981 holds the
+bytes. Judge a cost by the ratio, never by milliseconds on a busy machine.
+
 **The clip's seat on the timeline** (sim-audio-pairs): `ClipProcessor::set_origin(start)` and
 `ChainOpts.fps` reach every node as `AudioState::place` — at build and on every sync, without a
 reset. The audio half of a simulated device reads its device at the timeline time the picture reads

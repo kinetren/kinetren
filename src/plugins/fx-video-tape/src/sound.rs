@@ -19,7 +19,7 @@
 //! functions), so a field the picture loses is the field the sound loses (invariant 2).
 //! Everything random is a hash of the timeline sample — a seek gives the same noise (invariant 11).
 
-use kt_plugin_api::math::FrozenMath;
+use kt_plugin_api::math::{powf_neg_half, FrozenMath};
 use kt_plugin_api::{AudioState, Placement};
 
 use crate::deck::{self, row, Deck, WORDS};
@@ -31,6 +31,7 @@ use crate::standard::Std;
 pub const LA: i64 = 96;
 /// The half-length of the linear track's loss filter (65 taps).
 const LIN_M: usize = 32;
+const TAPS: usize = 2 * LIN_M + 1;
 /// The Hi-Fi FM simulation's oversampling of the audio rate (384 kHz complex baseband).
 pub const OS: usize = 8;
 const FS: f64 = 48_000.0;
@@ -198,9 +199,14 @@ impl Shelf {
 struct Chan {
     /// The recorded (encoded) signal at the tape's input, a ring for the flutter's fractional read.
     lin_ring: Vec<f32>,
+    /// The same signal before the tape's transfer curve: while only Hi-Fi plays, nobody reads the
+    /// linear track and its curve waits here (`TapeSound::shape_pending`).
+    lin_raw: Vec<f32>,
     hifi_ring: Vec<f32>,
-    /// The linear track's played signal (before the loss filter).
-    lin_fir: [f32; 2 * LIN_M + 1],
+    /// The linear track's played signal (before the loss filter): a ring written twice, at `i` and
+    /// `i + TAPS`, so the last `TAPS` samples are one slice `[i + 1, i + TAPS]`, oldest first.
+    lin_fir: [f32; 2 * TAPS],
+    lin_i: usize,
     dolby_enc: DolbyB,
     dolby_dec: DolbyB,
     comp_env: f32,
@@ -217,8 +223,10 @@ impl Chan {
     fn new() -> Chan {
         Chan {
             lin_ring: vec![0.0; RING],
+            lin_raw: vec![0.0; RING],
             hifi_ring: vec![0.0; RING],
-            lin_fir: [0.0; 2 * LIN_M + 1],
+            lin_fir: [0.0; 2 * TAPS],
+            lin_i: 0,
             dolby_enc: DolbyB::default(),
             dolby_dec: DolbyB::default(),
             comp_env: 0.0,
@@ -360,8 +368,14 @@ pub struct TapeSound {
     fir: [f32; 2 * LIN_M + 1],
     /// The ring's write index (frames since the last reset).
     w: usize,
+    /// The newest `lin_pend` ring entries hold only `lin_raw`; `pend_drive` is the transfer curve's
+    /// drive they were recorded with (audio-fx-cost: the curve costs an `exp` per sample).
+    lin_pend: usize,
+    pend_drive: f32,
     /// The cached words and line reads: (frame, words), ((frame, y), read).
     words: Option<(i64, Box<[u32; WORDS]>)>,
+    /// The dropout starts of each linear track around the current cell (`linear_dropout_cached`).
+    drops: [(Option<i64>, Vec<f64>); 2],
     line: Option<((i64, u32), LineRead)>,
     shelf: (f32, f32, f32),
     dolby_a: f32,
@@ -382,6 +396,9 @@ impl TapeSound {
             lin_key: None,
             fir: [0.0; 2 * LIN_M + 1],
             w: 0,
+            lin_pend: 0,
+            pend_drive: 0.0,
+            drops: [(None, Vec::new()), (None, Vec::new())],
             words: None,
             line: None,
             shelf: shelf_coefs(),
@@ -437,6 +454,7 @@ impl TapeSound {
 
     /// The Hi-Fi time-base error (samples) at time `t`: the picture's drum and capstan components
     /// (`deck::lt_scalar`'s TBE without the per-line grain, which is 10⁻³ of a sample here).
+    #[inline]
     fn hifi_displacement(&self, t: f64) -> f64 {
         let j = self.v[row::JITTER].max(0.0);
         let drum = (self.deck.st.drum_rate * t).fract();
@@ -445,6 +463,7 @@ impl TapeSound {
     }
 
     /// The linear track's displacement (samples): the capstan's flutter and the head's scrape.
+    #[inline]
     fn linear_displacement(&self, t: f64) -> f64 {
         let j = self.v[row::JITTER].max(0.0);
         let flut = (FLUTTER_HZ * t + FLUTTER_PH).fract();
@@ -459,6 +478,21 @@ impl TapeSound {
     /// picture's rate scaled by the areas the two tracks sweep, each `L = dropout_us · v_write` long
     /// on the tape, passing the stationary head in `L / v_tape`, as deep as they cover the track.
     pub fn linear_dropout(&self, t: f64, k: u32) -> f32 {
+        let d = self.drop_law();
+        let c0 = (t / DROP_CELL).floor() as i64;
+        for c in (c0 - d.back)..=c0 {
+            if let Some(s) = d.start(c, k)
+                && t >= s
+                && t < s + d.dur
+            {
+                return d.depth;
+            }
+        }
+        0.0
+    }
+
+    /// The linear track's dropout law at the current rows (`linear_dropout`'s numbers).
+    fn drop_law(&self) -> DropLaw {
         let st = self.deck.st;
         let stereo = self.pick(row::LINEAR_TRACKS) == 1;
         let w = linear_width(stereo);
@@ -467,25 +501,47 @@ impl TapeSound {
         let len_m = self.v[row::DROPOUT_LEN].max(0.0) * 1e-6 * st.v_write;
         let dur = len_m / v;
         let depth = (len_m / w).min(1.0) as f32;
-        const CELL: f64 = 0.001;
-        let p = (rate * CELL).min(1.0) as f32;
-        let c0 = (t / CELL).floor() as i64;
-        let back = (dur / CELL).ceil() as i64 + 1;
-        for c in (c0 - back)..=c0 {
-            let h = hash3(c as u32, (c >> 32) as u32 ^ 0x11D0, 7 + k);
-            if unit(h) < p {
-                let s = (c as f64 + unit(hash(h ^ 3)) as f64) * CELL;
-                if t >= s && t < s + dur {
-                    return depth;
+        let p = (rate * DROP_CELL).min(1.0) as f32;
+        let back = (dur / DROP_CELL).ceil() as i64 + 1;
+        DropLaw { dur, depth, p, back }
+    }
+
+    /// `linear_dropout` with the cells' starts kept while the cell under `t` stays (audio-fx-cost):
+    /// a long dropout at EP looks 33 cells back, three hashes each, for every sample of each
+    /// track; the starts change once a millisecond. The same answer by construction: every start
+    /// `linear_dropout` would test is tested here with the same numbers.
+    fn linear_dropout_cached(&mut self, d: &DropLaw, t: f64, k: u32) -> f32 {
+        let c0 = (t / DROP_CELL).floor() as i64;
+        let cache = &mut self.drops[k as usize];
+        if cache.0 != Some(c0) {
+            cache.0 = Some(c0);
+            cache.1.clear();
+            for c in (c0 - d.back)..=c0 {
+                if let Some(s) = d.start(c, k) {
+                    cache.1.push(s);
                 }
             }
         }
-        0.0
+        if cache.1.iter().any(|&s| t >= s && t < s + d.dur) { d.depth } else { 0.0 }
+    }
+
+    /// Put the transfer curve over the entries recorded while nobody read the linear track, with
+    /// the drive they were recorded at: the ring then holds what recording them shaped would have.
+    fn shape_pending(&mut self) {
+        let drive = self.pend_drive;
+        for c in &mut self.ch {
+            for j in 0..self.lin_pend {
+                let i = (self.w + RING - j) % RING;
+                c.lin_ring[i] = tanh(drive * c.lin_raw[i] / REF) * REF / drive;
+            }
+        }
+        self.lin_pend = 0;
     }
 
     fn reset_chans(&mut self) {
         self.ch = [Chan::new(), Chan::new()];
         self.w = 0;
+        self.lin_pend = 0;
         self.words = None;
         self.line = None;
     }
@@ -494,6 +550,28 @@ impl TapeSound {
 impl Default for TapeSound {
     fn default() -> TapeSound {
         TapeSound::new()
+    }
+}
+
+/// The cell of the linear track's dropout field (s).
+const DROP_CELL: f64 = 0.001;
+
+/// The linear track's dropout law: a cell holds a dropout with probability `p`, starting at a
+/// hashed moment inside it, `dur` long, `depth` deep; a moment looks `back` cells back.
+#[derive(Clone, Copy)]
+struct DropLaw {
+    dur: f64,
+    depth: f32,
+    p: f32,
+    back: i64,
+}
+
+impl DropLaw {
+    /// The start (s) of cell `c`'s dropout on track `k`, if it has one.
+    #[inline]
+    fn start(&self, c: i64, k: u32) -> Option<f64> {
+        let h = hash3(c as u32, (c >> 32) as u32 ^ 0x11D0, 7 + k);
+        (unit(h) < self.p).then(|| (c as f64 + unit(hash(h ^ 3)) as f64) * DROP_CELL)
     }
 }
 
@@ -518,6 +596,7 @@ impl AudioState for TapeSound {
             self.v = v;
             self.words = None;
             self.line = None;
+            self.drops = Default::default();
         }
         self.refresh_linear();
         if structural {
@@ -526,8 +605,10 @@ impl AudioState for TapeSound {
     }
 
     fn set_targets(&mut self, c: &dyn kt_plugin_api::SlotCurves, s: f64) {
-        // the deck's numbers follow their curves chunk by chunk (tracking turned during a take)
-        let specs = crate::passport();
+        // the deck's numbers follow their curves chunk by chunk (tracking turned during a take); the
+        // passport is built once, not per chunk (audio-fx-cost)
+        static SPECS: std::sync::OnceLock<Vec<kt_plugin_api::ParamSpec>> = std::sync::OnceLock::new();
+        let specs = SPECS.get_or_init(crate::passport);
         let mut changed = false;
         let mut v = self.v.clone();
         for (i, spec) in specs.iter().enumerate() {
@@ -544,6 +625,7 @@ impl AudioState for TapeSound {
             self.v = v;
             self.words = None;
             self.line = None;
+            self.drops = Default::default();
             self.refresh_linear();
         }
     }
@@ -565,6 +647,14 @@ impl AudioState for TapeSound {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
+        kt_plugin_api::fast!(self.run(buf, pos));
+    }
+}
+
+impl TapeSound {
+    /// The per-block body (`process` runs it at the CPU's level, `kt_plugin_api::cpu`).
+    #[inline(always)]
+    fn run(&mut self, buf: &mut [f32], pos: i64) {
         let out_sel = self.pick(row::AUDIO_OUT).min(2);
         let still = self.deck.still();
         let stereo_lin = self.pick(row::LINEAR_TRACKS) == 1;
@@ -592,6 +682,11 @@ impl AudioState for TapeSound {
         let follow = |env: &mut f32, p: f32| *env += if p > *env { att_k } else { rel_k } * (p - *env);
         let fir = self.fir;
         let frames = buf.len() / 2;
+        let lin_on = out_sel != 0;
+        let law = self.drop_law();
+        if self.lin_pend > 0 && (lin_on || drive != self.pend_drive) {
+            self.shape_pending();
+        }
         for i in 0..frames {
             // the INPUT position runs LA ahead; the device is read at the OUTPUT's time
             let n_out = self.at.start + pos + i as i64 - LA;
@@ -606,11 +701,14 @@ impl AudioState for TapeSound {
                 if dolby {
                     s = c.dolby_enc.encode(s, da);
                 }
-                c.lin_ring[w] = tanh(drive * s / REF) * REF / drive;
+                c.lin_raw[w] = s;
+                if lin_on {
+                    c.lin_ring[w] = tanh(drive * s / REF) * REF / drive;
+                }
                 // Hi-Fi encoder: emphasis, then the 2:1 compressor on the RMS
                 let e = c.pre.pre(x[k], shelf);
                 follow(&mut c.comp_env, e * e);
-                let g = (c.comp_env.sqrt().max(1e-5) / REF).fpowf(-0.5);
+                let g = powf_neg_half(c.comp_env.sqrt().max(1e-5) / REF);
                 c.hifi_ring[w] = (e * g).clamp(-1.0, 1.0);
             }
             if still {
@@ -625,14 +723,17 @@ impl AudioState for TapeSound {
                 // the tape passes the head LIN_M samples before the loss filter's output
                 let d_lin = (LA - LIN_M as i64) as f64 + self.linear_displacement(t).clamp(-56.0, 56.0);
                 let t_head = t - LIN_M as f64 / FS;
-                let depth = [self.linear_dropout(t_head, 0), self.linear_dropout(t_head, stereo_lin as u32)];
+                let d0 = self.linear_dropout_cached(&law, t_head, 0);
+                // a mono deck has one track: both channels read the same dropout
+                let depth = [d0, if stereo_lin { self.linear_dropout_cached(&law, t_head, 1) } else { d0 }];
                 for (k, c) in self.ch.iter_mut().enumerate() {
                     let played = ring_read(&c.lin_ring, w, d_lin) * (1.0 - depth[k]);
                     let hn = hiss * gauss(hash3(n_out as u32, (n_out >> 32) as u32, 0xA1 + if stereo_lin { k as u32 } else { 0 }));
-                    c.lin_fir.copy_within(1.., 0);
-                    c.lin_fir[2 * LIN_M] = played + hn;
+                    c.lin_i = (c.lin_i + 1) % TAPS;
+                    c.lin_fir[c.lin_i] = played + hn;
+                    c.lin_fir[c.lin_i + TAPS] = played + hn;
                     let mut y = 0f32;
-                    for (a, b) in fir.iter().zip(c.lin_fir.iter()) {
+                    for (a, b) in fir.iter().zip(&c.lin_fir[c.lin_i + 1..=c.lin_i + TAPS]) {
                         y += a * b;
                     }
                     if dolby {
@@ -657,26 +758,43 @@ impl AudioState for TapeSound {
                     let a = rd.amp[k];
                     // the receiver's phase offset: the playing head's track is `skew` late
                     let off = car[k] * skew * rd.head as f64;
-                    let mut acc = 0f32;
-                    let mut env = 0f32;
-                    for s in 0..OS {
+                    // the sub-samples in LANES (audio-fx-cost): the modulator's phase is a running
+                    // sum and goes first, one by one; the carrier, its noise and the detector of each
+                    // sub-sample are independent and run side by side; the sums then add in the same
+                    // order — the same operations on the same values as one loop, the same bytes
+                    let mut phs = [0f64; OS];
+                    for ph in &mut phs {
                         c.phase += dev_n * m as f64;
                         c.phase -= c.phase.floor();
+                        *ph = c.phase;
+                    }
+                    let (mut zr, mut zi) = ([0f32; OS], [0f32; OS]);
+                    for s in 0..OS {
                         let sub_t = p.in_line + s as f64 / (FS * OS as f64);
                         let dropped = rd.drop_len > 0.0
                             && sub_t >= rd.drop_start as f64
                             && sub_t < (rd.drop_start + rd.drop_len) as f64;
                         let aa = if dropped { 0.0 } else { a };
-                        let ph = (c.phase + off).fract() as f32;
+                        let ph = (phs[s] + off).fract() as f32;
                         let ni = (n_out as u32).wrapping_mul(OS as u32).wrapping_add(s as u32);
                         let hn = hash3(ni, (n_out >> 29) as u32, 0xF0 + k as u32);
-                        let z = (aa * cos_cyc(ph) + sigma * gauss(hn), aa * sin_cyc(ph) + sigma * gauss(hn ^ 0x9E37));
-                        let (pr, pi) = c.prev;
-                        let re = z.0 * pr + z.1 * pi;
-                        let im = z.1 * pr - z.0 * pi;
-                        acc += atan2_cyc(im, re);
-                        env += z.0 * z.0 + z.1 * z.1;
-                        c.prev = z;
+                        zr[s] = aa * cos_cyc(ph) + sigma * gauss(hn);
+                        zi[s] = aa * sin_cyc(ph) + sigma * gauss(hn ^ 0x9E37);
+                    }
+                    let (mut dph, mut pw) = ([0f32; OS], [0f32; OS]);
+                    for s in 0..OS {
+                        let (pr, pi) = if s == 0 { c.prev } else { (zr[s - 1], zi[s - 1]) };
+                        let re = zr[s] * pr + zi[s] * pi;
+                        let im = zi[s] * pr - zr[s] * pi;
+                        dph[s] = atan2_cyc(im, re);
+                        pw[s] = zr[s] * zr[s] + zi[s] * zi[s];
+                    }
+                    c.prev = (zr[OS - 1], zi[OS - 1]);
+                    let mut acc = 0f32;
+                    let mut env = 0f32;
+                    for s in 0..OS {
+                        acc += dph[s];
+                        env += pw[s];
                     }
                     let demod = acc / (OS as f32 * dev_n as f32);
                     let lost = env / OS as f32 / (2.0 * sigma * sigma) < CARRIER_DETECT;
@@ -702,6 +820,10 @@ impl AudioState for TapeSound {
             };
             buf[2 * i] = out[0];
             buf[2 * i + 1] = out[1];
+        }
+        if !lin_on {
+            self.lin_pend = (self.lin_pend + frames).min(RING);
+            self.pend_drive = drive;
         }
     }
 }

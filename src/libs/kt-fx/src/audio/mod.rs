@@ -2,6 +2,7 @@
 //! source. The public surface of the crate is re-exported from lib.rs —
 //! the paths of callers (`kt_fx::ClipProcessor` etc.) have not changed.
 
+pub mod cost;
 pub mod loudness;
 mod nodes;
 pub mod primitives;

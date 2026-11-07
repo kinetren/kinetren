@@ -167,13 +167,16 @@ impl AudioState for TremoloNode {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let d = self.depth.tick().clamp(0.0, 1.0);
-            let g = 1.0 - d * (0.5 + 0.5 * self.lfo.phase(pos + i as i64).fsin() as f32);
-            for s in fr.iter_mut() {
-                *s *= g;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let d = self.depth.tick().clamp(0.0, 1.0);
+                let g = 1.0 - d * (0.5 + 0.5 * self.lfo.phase(pos + i as i64).fsin() as f32);
+                for s in fr.iter_mut() {
+                    *s *= g;
+                }
             }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -239,14 +242,17 @@ impl AudioState for AutoPanNode {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let d = self.depth.tick().clamp(0.0, 1.0);
-            let p = d * self.lfo.phase(pos + i as i64).fsin() as f32;
-            fr[0] *= (1.0 - p).min(1.0);
-            if CH > 1 {
-                fr[1] *= (1.0 + p).min(1.0);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let d = self.depth.tick().clamp(0.0, 1.0);
+                let p = d * self.lfo.phase(pos + i as i64).fsin() as f32;
+                fr[0] *= (1.0 - p).min(1.0);
+                if CH > 1 {
+                    fr[1] *= (1.0 + p).min(1.0);
+                }
             }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -324,16 +330,19 @@ impl AudioState for VibratoNode {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let d = self.depth_ms.tick().clamp(0.05, 5.0);
-            let ph = self.lfo.phase(pos + i as i64).fsin() as f32;
-            let delay = (1.0 + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
-            for (ch, s) in fr.iter_mut().enumerate() {
-                self.lines[ch].write(*s);
-                *s = self.lines[ch].read_frac(delay);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let sr = AUDIO_SAMPLE_RATE as f32;
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let d = self.depth_ms.tick().clamp(0.05, 5.0);
+                let ph = self.lfo.phase(pos + i as i64).fsin() as f32;
+                let delay = (1.0 + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    self.lines[ch].write(*s);
+                    *s = self.lines[ch].read_frac(delay);
+                }
             }
-        }
+        })
     }
 
     fn tail(&self) -> Tick {
@@ -431,27 +440,30 @@ impl AudioState for ChorusNode {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        let nv = self.voices.max(1);
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let d = self.depth_ms.tick().clamp(0.0, 12.0);
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            let phi = self.lfo.phase(pos + i as i64);
-            for (ch, s) in fr.iter_mut().enumerate() {
-                let dry = *s;
-                self.lines[ch].write(dry);
-                let mut wet = 0.0f32;
-                for v in 0..nv {
-                    let ph = phi
-                        + v as f64 * std::f64::consts::TAU / nv as f64
-                        + if ch == 1 { std::f64::consts::FRAC_PI_2 } else { 0.0 };
-                    let delay = (CHORUS_BASE_MS + d * (0.5 + 0.5 * ph.fsin() as f32)) * sr / 1000.0;
-                    wet += self.lines[ch].read_frac(delay);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let sr = AUDIO_SAMPLE_RATE as f32;
+            let nv = self.voices.max(1);
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let d = self.depth_ms.tick().clamp(0.0, 12.0);
+                let k = self.mix.tick().clamp(0.0, 1.0);
+                let phi = self.lfo.phase(pos + i as i64);
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    let dry = *s;
+                    self.lines[ch].write(dry);
+                    let mut wet = 0.0f32;
+                    for v in 0..nv {
+                        let ph = phi
+                            + v as f64 * std::f64::consts::TAU / nv as f64
+                            + if ch == 1 { std::f64::consts::FRAC_PI_2 } else { 0.0 };
+                        let delay = (CHORUS_BASE_MS + d * (0.5 + 0.5 * ph.fsin() as f32)) * sr / 1000.0;
+                        wet += self.lines[ch].read_frac(delay);
+                    }
+                    wet /= nv as f32;
+                    *s = dry * (1.0 - k) + wet * k;
                 }
-                wet /= nv as f32;
-                *s = dry * (1.0 - k) + wet * k;
             }
-        }
+        })
     }
 
     fn tail(&self) -> Tick {
@@ -550,20 +562,23 @@ impl AudioState for FlangerNode {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let d = self.depth_ms.tick().clamp(0.1, 8.0);
-            let fb = self.feedback.tick().clamp(-0.9, 0.9);
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            let ph = self.lfo.phase(pos + i as i64).fsin() as f32;
-            let delay = (FLANGER_BASE_MS + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
-            for (ch, s) in fr.iter_mut().enumerate() {
-                let dry = *s;
-                let wet = self.lines[ch].read_frac(delay);
-                self.lines[ch].write(dry + wet * fb);
-                *s = dry * (1.0 - k) + wet * k;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let sr = AUDIO_SAMPLE_RATE as f32;
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let d = self.depth_ms.tick().clamp(0.1, 8.0);
+                let fb = self.feedback.tick().clamp(-0.9, 0.9);
+                let k = self.mix.tick().clamp(0.0, 1.0);
+                let ph = self.lfo.phase(pos + i as i64).fsin() as f32;
+                let delay = (FLANGER_BASE_MS + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    let dry = *s;
+                    let wet = self.lines[ch].read_frac(delay);
+                    self.lines[ch].write(dry + wet * fb);
+                    *s = dry * (1.0 - k) + wet * k;
+                }
             }
-        }
+        })
     }
 
     fn tail(&self) -> Tick {
@@ -663,30 +678,33 @@ impl AudioState for PhaserNode {
     }
 
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        let n = self.stages.clamp(2, 8) as usize;
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let d = self.depth.tick().clamp(0.0, 1.0);
-            let fb = self.feedback.tick().clamp(0.0, 0.9);
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            let ph = 0.5 + 0.5 * self.lfo.phase(pos + i as i64).fsin() as f32;
-            // center sweep: 200..2000 Hz exp, depth compresses the range
-            let f = 200.0 * (10.0f32).fpowf(ph * d);
-            let t = (std::f32::consts::PI * f / sr).ftan();
-            let ap = (t - 1.0) / (t + 1.0);
-            for (ch, s) in fr.iter_mut().enumerate() {
-                let dry = *s;
-                let mut x = dry + self.fb_state[ch] * fb;
-                for st in 0..n {
-                    // 1-pole allpass: y = a·x + z; z = x − a·y
-                    let y = ap * x + self.z[ch][st];
-                    self.z[ch][st] = x - ap * y;
-                    x = y;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let sr = AUDIO_SAMPLE_RATE as f32;
+            let n = self.stages.clamp(2, 8) as usize;
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let d = self.depth.tick().clamp(0.0, 1.0);
+                let fb = self.feedback.tick().clamp(0.0, 0.9);
+                let k = self.mix.tick().clamp(0.0, 1.0);
+                let ph = 0.5 + 0.5 * self.lfo.phase(pos + i as i64).fsin() as f32;
+                // center sweep: 200..2000 Hz exp, depth compresses the range
+                let f = 200.0 * (10.0f32).fpowf(ph * d);
+                let t = (std::f32::consts::PI * f / sr).ftan();
+                let ap = (t - 1.0) / (t + 1.0);
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    let dry = *s;
+                    let mut x = dry + self.fb_state[ch] * fb;
+                    for st in 0..n {
+                        // 1-pole allpass: y = a·x + z; z = x − a·y
+                        let y = ap * x + self.z[ch][st];
+                        self.z[ch][st] = x - ap * y;
+                        x = y;
+                    }
+                    self.fb_state[ch] = x;
+                    *s = dry * (1.0 - k) + x * k;
                 }
-                self.fb_state[ch] = x;
-                *s = dry * (1.0 - k) + x * k;
             }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -1135,54 +1153,57 @@ impl AudioState for PitchNode {
     // pitch reads curves BY GRAIN POSITION (bind), it does not need targets
 
     fn process(&mut self, buf: &mut [f32], in_pos: i64, _key: Option<&[f32]>) {
-        if self.la == 0 {
-            return; // neutral: do not touch the buffer at all
-        }
-        let n = (buf.len() / CH) as i64;
-        if self.written == i64::MIN {
-            self.restart(in_pos);
-        } else if self.clip_next != in_pos {
-            // a SEAM: the stream continues, only the clip position under it jumps
-            self.deltas.push((self.written, in_pos - self.written));
-            // the curve lookup needs the entries back to the oldest grain still to be
-            // synthesized (the output side, `la` + a vocoder frame behind the input)
-            let keep_from = self.written - self.la - PV_N as i64;
-            while self.deltas.len() > 1 && self.deltas[1].0 <= keep_from {
-                self.deltas.remove(0);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            if self.la == 0 {
+                return; // neutral: do not touch the buffer at all
             }
-        }
-        self.clip_next = in_pos + n;
-        let in_pos = self.written;
-        // 1) input into the ring
-        for (i, fr) in buf.chunks_exact(CH).enumerate() {
-            let idx = (in_pos + i as i64).rem_euclid(PITCH_RING as i64) as usize;
-            for (ch, v) in fr.iter().enumerate() {
-                self.ring[idx * CH + ch] = *v;
+            let n = (buf.len() / CH) as i64;
+            if self.written == i64::MIN {
+                self.restart(in_pos);
+            } else if self.clip_next != in_pos {
+                // a SEAM: the stream continues, only the clip position under it jumps
+                self.deltas.push((self.written, in_pos - self.written));
+                // the curve lookup needs the entries back to the oldest grain still to be
+                // synthesized (the output side, `la` + a vocoder frame behind the input)
+                let keep_from = self.written - self.la - PV_N as i64;
+                while self.deltas.len() > 1 && self.deltas[1].0 <= keep_from {
+                    self.deltas.remove(0);
+                }
             }
-        }
-        self.written = in_pos + n;
-        // 2) synthesis of the grains covering the needed output
-        let out_pos = in_pos - self.la;
-        let out_end = out_pos + n;
-        while self.next_grain * PITCH_HOP < out_end {
-            let g = self.next_grain;
-            if self.vocoder {
-                self.grain_vocoder(g)
-            } else {
-                self.grain_wsola(g)
+            self.clip_next = in_pos + n;
+            let in_pos = self.written;
+            // 1) input into the ring
+            for (i, fr) in buf.chunks_exact(CH).enumerate() {
+                let idx = (in_pos + i as i64).rem_euclid(PITCH_RING as i64) as usize;
+                for (ch, v) in fr.iter().enumerate() {
+                    self.ring[idx * CH + ch] = *v;
+                }
             }
-            self.next_grain += 1;
-        }
-        // 3) output from the accumulator (what was read is zeroed — the ring
-        //    is reused by the next grains)
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let t = out_pos + i as i64;
-            for (ch, v) in fr.iter_mut().enumerate() {
-                let a = self.acc_at(t, ch);
-                *v = *a;
-                *a = 0.0;
+            self.written = in_pos + n;
+            // 2) synthesis of the grains covering the needed output
+            let out_pos = in_pos - self.la;
+            let out_end = out_pos + n;
+            while self.next_grain * PITCH_HOP < out_end {
+                let g = self.next_grain;
+                if self.vocoder {
+                    self.grain_vocoder(g)
+                } else {
+                    self.grain_wsola(g)
+                }
+                self.next_grain += 1;
             }
-        }
+            // 3) output from the accumulator (what was read is zeroed — the ring
+            //    is reused by the next grains)
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let t = out_pos + i as i64;
+                for (ch, v) in fr.iter_mut().enumerate() {
+                    let a = self.acc_at(t, ch);
+                    *v = *a;
+                    *a = 0.0;
+                }
+            }
+        })
     }
 
     fn lookahead(&self) -> i64 {
@@ -1294,26 +1315,29 @@ impl AudioState for DelayNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        // loop filter ~4 kHz: the repeats darken
-        let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).fexp();
-        for fr in buf.chunks_exact_mut(CH) {
-            let d = self.time_ms.tick().clamp(1.0, DELAY_MAX_MS) * sr / 1000.0;
-            let fb = self.feedback.tick().clamp(0.0, 0.9);
-            let k = self.mix.tick().clamp(0.0, 1.0);
-            let mut wet = [0f32; CH];
-            for (w, line) in wet.iter_mut().zip(self.lines.iter()) {
-                *w = line.read_frac(d);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let sr = AUDIO_SAMPLE_RATE as f32;
+            // loop filter ~4 kHz: the repeats darken
+            let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).fexp();
+            for fr in buf.chunks_exact_mut(CH) {
+                let d = self.time_ms.tick().clamp(1.0, DELAY_MAX_MS) * sr / 1000.0;
+                let fb = self.feedback.tick().clamp(0.0, 0.9);
+                let k = self.mix.tick().clamp(0.0, 1.0);
+                let mut wet = [0f32; CH];
+                for (w, line) in wet.iter_mut().zip(self.lines.iter()) {
+                    *w = line.read_frac(d);
+                }
+                for ch in 0..CH {
+                    let dry = fr[ch];
+                    // ping-pong: the feedback goes to the OPPOSITE channel
+                    let fb_src = if self.pingpong { wet[(ch + 1) % CH] } else { wet[ch] };
+                    self.loop_lp[ch] += (fb_src - self.loop_lp[ch]) * alpha;
+                    self.lines[ch].write(dry + self.loop_lp[ch] * fb);
+                    fr[ch] = dry * (1.0 - k) + wet[ch] * k;
+                }
             }
-            for ch in 0..CH {
-                let dry = fr[ch];
-                // ping-pong: the feedback goes to the OPPOSITE channel
-                let fb_src = if self.pingpong { wet[(ch + 1) % CH] } else { wet[ch] };
-                self.loop_lp[ch] += (fb_src - self.loop_lp[ch]) * alpha;
-                self.lines[ch].write(dry + self.loop_lp[ch] * fb);
-                fr[ch] = dry * (1.0 - k) + wet[ch] * k;
-            }
-        }
+        })
     }
 
     /// The built state always rings out (the static formula gates it by the mix).
@@ -1449,7 +1473,10 @@ impl AudioState for ReverbNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        self.rv.process(buf);
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            self.rv.process(buf);
+        })
     }
 
     fn tail(&self) -> Tick {

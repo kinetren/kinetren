@@ -10,7 +10,7 @@
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
-use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, EnvFollower, SmoothedParam};
+use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, EnvFollower, Memo, SmoothedParam};
 use kt_plugin_api::{
     AudioKernel, AudioState, Decl, HostOpts, Manifest, Media, ParamKind, ParamSpec, ParamUnit,
     ParamValues, Plugin, RowDecl, RowRole, SlotCurves, Store, UiDecl,
@@ -150,34 +150,37 @@ impl AudioState for GainNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        if self.gain_auto {
-            for f in buf.chunks_exact_mut(CH) {
-                let g = self.auto_gain.tick();
-                for s in f.iter_mut() {
-                    *s *= g;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            if self.gain_auto {
+                for f in buf.chunks_exact_mut(CH) {
+                    let g = self.auto_gain.tick();
+                    for s in f.iter_mut() {
+                        *s *= g;
+                    }
+                }
+            } else if self.static_gain != 1.0 {
+                for s in buf.iter_mut() {
+                    *s *= self.static_gain;
                 }
             }
-        } else if self.static_gain != 1.0 {
-            for s in buf.iter_mut() {
-                *s *= self.static_gain;
-            }
-        }
-        if self.pan_auto {
-            for f in buf.chunks_exact_mut(CH) {
-                let (l, r) = (self.auto_pan_l.tick(), self.auto_pan_r.tick());
-                f[0] *= l;
-                if CH > 1 {
-                    f[1] *= r;
+            if self.pan_auto {
+                for f in buf.chunks_exact_mut(CH) {
+                    let (l, r) = (self.auto_pan_l.tick(), self.auto_pan_r.tick());
+                    f[0] *= l;
+                    if CH > 1 {
+                        f[1] *= r;
+                    }
+                }
+            } else if self.static_pan_l != 1.0 || self.static_pan_r != 1.0 {
+                for f in buf.chunks_exact_mut(CH) {
+                    f[0] *= self.static_pan_l;
+                    if CH > 1 {
+                        f[1] *= self.static_pan_r;
+                    }
                 }
             }
-        } else if self.static_pan_l != 1.0 || self.static_pan_r != 1.0 {
-            for f in buf.chunks_exact_mut(CH) {
-                f[0] *= self.static_pan_l;
-                if CH > 1 {
-                    f[1] *= self.static_pan_r;
-                }
-            }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -229,6 +232,7 @@ impl AudioKernel for Gate {
             open: false,
             hold_left: 0,
             gain: 0.0,
+            thr_lin: Memo::default(),
         })
     }
 }
@@ -245,6 +249,8 @@ struct GateNode {
     open: bool,
     hold_left: i64,
     gain: f32,
+    /// The opening and closing levels of the threshold (`Memo`: not two `pow` per sample).
+    thr_lin: Memo<(f32, f32)>,
 }
 
 impl AudioState for GateNode {
@@ -268,31 +274,34 @@ impl AudioState for GateNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        let sr = AUDIO_SAMPLE_RATE as f32;
-        let att_step = 1.0 / (self.attack_ms / 1000.0 * sr).max(1.0);
-        let rel_step = 1.0 / (self.release_ms / 1000.0 * sr).max(1.0);
-        for fr in buf.chunks_exact_mut(CH) {
-            let thr_db = self.threshold_db.tick();
-            let open_thr = 10f32.fpowf(thr_db / 20.0);
-            // hysteresis: closing at 6 dB below opening
-            let close_thr = 10f32.fpowf((thr_db - 6.0) / 20.0);
-            let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
-            let env = self.env.tick(peak);
-            if env >= open_thr {
-                self.open = true;
-                self.hold_left = self.hold_frames;
-            } else if env < close_thr {
-                if self.hold_left > 0 {
-                    self.hold_left -= 1;
-                } else {
-                    self.open = false;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            let sr = AUDIO_SAMPLE_RATE as f32;
+            let att_step = 1.0 / (self.attack_ms / 1000.0 * sr).max(1.0);
+            let rel_step = 1.0 / (self.release_ms / 1000.0 * sr).max(1.0);
+            for fr in buf.chunks_exact_mut(CH) {
+                let thr_db = self.threshold_db.tick();
+                // hysteresis: closing at 6 dB below opening
+                let (open_thr, close_thr) =
+                    self.thr_lin.get(thr_db, |t| (10f32.fpowf(t / 20.0), 10f32.fpowf((t - 6.0) / 20.0)));
+                let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
+                let env = self.env.tick(peak);
+                if env >= open_thr {
+                    self.open = true;
+                    self.hold_left = self.hold_frames;
+                } else if env < close_thr {
+                    if self.hold_left > 0 {
+                        self.hold_left -= 1;
+                    } else {
+                        self.open = false;
+                    }
+                }
+                self.gain = if self.open { (self.gain + att_step).min(1.0) } else { (self.gain - rel_step).max(0.0) };
+                for s in fr.iter_mut() {
+                    *s *= self.gain;
                 }
             }
-            self.gain = if self.open { (self.gain + att_step).min(1.0) } else { (self.gain - rel_step).max(0.0) };
-            for s in fr.iter_mut() {
-                *s *= self.gain;
-            }
-        }
+        })
     }
 
     fn reset(&mut self) {
@@ -360,6 +369,8 @@ impl AudioKernel for Limiter {
             win: std::collections::VecDeque::new(),
             fed: 0,
             gain: 1.0,
+            thr_lin: Memo::default(),
+            ceil_lin: Memo::default(),
         })
     }
 }
@@ -386,6 +397,9 @@ struct LimiterNode {
     /// How many frames have been fed into the window (the age of the elements).
     fed: i64,
     gain: f32,
+    /// The threshold and the ceiling as levels (`Memo`: not two `pow` per sample).
+    thr_lin: Memo<f32>,
+    ceil_lin: Memo<f32>,
 }
 
 impl AudioState for LimiterNode {
@@ -414,53 +428,56 @@ impl AudioState for LimiterNode {
     }
 
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
-        if self.la <= 0 {
-            return;
-        }
-        let rel_coef = 1.0 - (-1.0 / (self.release_ms / 1000.0 * 48_000.0)).fexp();
-        for fr in buf.chunks_exact_mut(CH) {
-            let thr = 10f32.fpowf(self.threshold_db.tick() / 20.0);
-            let ceil = 10f32.fpowf(self.ceiling_db.tick() / 20.0);
-            // the INCOMING frame goes into the window (position t + La)
-            let peak = fr.iter().fold(0f32, |m, v| m.max(v.abs()));
-            while let Some(&(_, v)) = self.win.back() {
-                if v <= peak {
-                    self.win.pop_back();
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            if self.la <= 0 {
+                return;
+            }
+            let rel_coef = 1.0 - (-1.0 / (self.release_ms / 1000.0 * 48_000.0)).fexp();
+            for fr in buf.chunks_exact_mut(CH) {
+                let thr = self.thr_lin.get(self.threshold_db.tick(), |t| 10f32.fpowf(t / 20.0));
+                let ceil = self.ceil_lin.get(self.ceiling_db.tick(), |c| 10f32.fpowf(c / 20.0));
+                // the INCOMING frame goes into the window (position t + La)
+                let peak = fr.iter().fold(0f32, |m, v| m.max(v.abs()));
+                while let Some(&(_, v)) = self.win.back() {
+                    if v <= peak {
+                        self.win.pop_back();
+                    } else {
+                        break;
+                    }
+                }
+                self.win.push_back((self.fed, peak));
+                let cutoff = self.fed - self.la;
+                while let Some(&(age, _)) = self.win.front() {
+                    if age < cutoff {
+                        self.win.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+                self.fed += 1;
+                // the output — the frame delayed by La (position t)
+                for v in fr.iter_mut() {
+                    std::mem::swap(&mut self.ring[self.pos], v);
+                    self.pos += 1;
+                }
+                if self.pos >= self.ring.len() {
+                    self.pos = 0;
+                }
+                // the maximum over [t, t+La] — including the output frame itself, therefore
+                // out = wmax * g ≤ ceiling strictly
+                let wmax = self.win.front().map(|&(_, v)| v).unwrap_or(0.0);
+                let target = (thr / wmax.max(thr)) * (ceil / thr);
+                if target < self.gain {
+                    self.gain = target;
                 } else {
-                    break;
+                    self.gain += (target - self.gain) * rel_coef;
+                }
+                for v in fr.iter_mut() {
+                    *v *= self.gain;
                 }
             }
-            self.win.push_back((self.fed, peak));
-            let cutoff = self.fed - self.la;
-            while let Some(&(age, _)) = self.win.front() {
-                if age < cutoff {
-                    self.win.pop_front();
-                } else {
-                    break;
-                }
-            }
-            self.fed += 1;
-            // the output — the frame delayed by La (position t)
-            for v in fr.iter_mut() {
-                std::mem::swap(&mut self.ring[self.pos], v);
-                self.pos += 1;
-            }
-            if self.pos >= self.ring.len() {
-                self.pos = 0;
-            }
-            // the maximum over [t, t+La] — including the output frame itself, therefore
-            // out = wmax * g ≤ ceiling strictly
-            let wmax = self.win.front().map(|&(_, v)| v).unwrap_or(0.0);
-            let target = (thr / wmax.max(thr)) * (ceil / thr);
-            if target < self.gain {
-                self.gain = target;
-            } else {
-                self.gain += (target - self.gain) * rel_coef;
-            }
-            for v in fr.iter_mut() {
-                *v *= self.gain;
-            }
-        }
+        })
     }
 
     fn lookahead(&self) -> i64 {
@@ -529,6 +546,7 @@ impl AudioKernel for Compressor {
             ratio: SmoothedParam::with_ms(4.0, 20.0),
             makeup_db: SmoothedParam::with_ms(0.0, 20.0),
             env: EnvFollower::new(10.0, 150.0),
+            makeup_lin: Memo::default(),
         })
     }
 }
@@ -540,6 +558,8 @@ struct CompNode {
     ratio: SmoothedParam,
     makeup_db: SmoothedParam,
     env: EnvFollower,
+    /// The make-up gain as a level (`Memo`: not a `pow` per sample).
+    makeup_lin: Memo<f32>,
 }
 
 impl AudioState for CompNode {
@@ -572,25 +592,28 @@ impl AudioState for CompNode {
     /// chunk of the window) gives a peak of 0 for the remainder — that is quieter than the threshold, i.e.
     /// “the key is silent”, not a panic.
     fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
-        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-            let thr = self.threshold_db.tick();
-            let ratio = self.ratio.tick().max(1.0);
-            let makeup = 10f32.fpowf(self.makeup_db.tick() / 20.0);
-            let peak = match key {
-                None => fr.iter().fold(0f32, |m, s| m.max(s.abs())),
-                Some(k) => k
-                    .get(i * CH..i * CH + CH)
-                    .map_or(0.0, |kf| kf.iter().fold(0f32, |m, s| m.max(s.abs()))),
-            };
-            let env = self.env.tick(peak).max(1e-6);
-            let env_db = 20.0 * env.flog10();
-            let over = (env_db - thr).max(0.0);
-            let gr_db = over * (1.0 - 1.0 / ratio);
-            let g = 10f32.fpowf(-gr_db / 20.0) * makeup;
-            for s in fr.iter_mut() {
-                *s *= g;
+        // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
+        kt_plugin_api::fast!({
+            for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+                let thr = self.threshold_db.tick();
+                let ratio = self.ratio.tick().max(1.0);
+                let makeup = self.makeup_lin.get(self.makeup_db.tick(), |m| 10f32.fpowf(m / 20.0));
+                let peak = match key {
+                    None => fr.iter().fold(0f32, |m, s| m.max(s.abs())),
+                    Some(k) => k
+                        .get(i * CH..i * CH + CH)
+                        .map_or(0.0, |kf| kf.iter().fold(0f32, |m, s| m.max(s.abs()))),
+                };
+                let env = self.env.tick(peak).max(1e-6);
+                let env_db = 20.0 * env.flog10();
+                let over = (env_db - thr).max(0.0);
+                let gr_db = over * (1.0 - 1.0 / ratio);
+                let g = 10f32.fpowf(-gr_db / 20.0) * makeup;
+                for s in fr.iter_mut() {
+                    *s *= g;
+                }
             }
-        }
+        })
     }
 
     fn reset(&mut self) {
