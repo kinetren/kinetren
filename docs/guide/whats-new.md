@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **The mouse over a big project costs a fraction of what it did.** Moving it over the preview, along the timeline or over an open effects window no longer makes the program redo work for every event of the project: a frame now costs what is on screen, at any scroll and zoom, and playback leaves the picture more of the processor. Diagnostics › Performance shows what one interface frame costs and where ("UI frame … ms").
 - **A pause is a pause.** A program standing still does no work now: with several releases of a composition on the timeline it kept rendering their previews in a circle, and every move of the mouse started another one. Moving the mouse no longer costs anything that depends on what the timeline shows, and each release keeps its preview between openings.
 - **Effects run on the card your monitor is plugged into.** On a desktop they could end up on the processor's built-in graphics.
 - **The load report.** If the program holds the processor for more than a few seconds it writes `load-report.txt` in its data folder by itself: which threads, which work, which graphics devices. Diagnostics shows the same live, with a button that opens the folder. The file stays on your computer.

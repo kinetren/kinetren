@@ -638,3 +638,14 @@ shift if a variant were inserted in the middle.
   (`TrackCurvesUnsupported`).
 - **The file version is set by content**: `project_file::version_for` writes 2 only when
   `Project::has_masks()`; a maskless file is format 1 byte for byte. Tests t1260–t1265, t1275.
+
+## The document and the speed map in drawing paths (ui-frame-cost)
+
+- `TimelineModel::doc()` lends the document: the canon at the root, a swapped copy inside a reel built
+  once per state (emptied in `rebuild_bench` and the four setters outside history — a new path that
+  changes `project` or `editing` must empty it too, t1911). `document()` stays the owned copy for what
+  leaves the model.
+- `ClipWarp` keeps its profile's segments and the material consumed before each (`Integral`), summed in
+  the loop's own order: `material_ticks` is `warp_material_ticks` bit for bit (t1910). A reader that
+  asks the map many times asks the `ClipWarp`, not `source_progress` with the raw points.
+
