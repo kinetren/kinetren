@@ -77,7 +77,7 @@ list may be short of items from them.
 | 113 | a field under the fold publishes its rectangle | a live click may land outside the window | `kt-app` widgets field_probe | open | with `window-content-reach` |
 | 114 | thumbnail and effect-cell caps go round | over 384 thumbnails or 256 effect cells in a frame are evicted and ordered again in a circle | `kt-app` fx_thumbs | open | first |
 | 115 | a paired device's empty command still writes the other half | when the video and audio halves differ | `kt-app` fx editor, paired effects | open | first |
-| 116 | VHS Tape audio dropouts are full-scale one-sample clicks | 123 dropouts/s on his project, jump 0.287 at peak 0.286; asked the owner: honest device sound or a level dip | `fx-video-tape` audio half | question | owner |
+| 116 | VHS Tape audio dropouts are full-scale one-sample clicks | 123 dropouts/s on his project, jump 0.287 at peak 0.286; the owner chose (b): a dropout is a level dip with a short soft envelope, no digital click; deferred: "сейчас мы не трогаем vhs-и всякие фильтры по существу" | `fx-video-tape` audio half | decided, deferred | after the performance work |
 | 117 | setting a loop region rebuilds the audio engine on the UI thread | 412 ms freeze per region change on his project | `kt-engine`, `kt-app` | open | with 110 |
 | 118 | the first loop pass composes every frame in full | 72 ms a frame on llvmpipe | `kt-engine` video | open | first |
 | 119 | a frame evicted and decoded again misses its kept composite | it is composed again; the bar shows it honestly | `kt-cache` | open | first |

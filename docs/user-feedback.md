@@ -2736,6 +2736,12 @@ effect against real time), `telemetry-journal` (one journal with real time), `wi
 effects (a), changing invariant 2, or only the effects get faster (b), he chose: "вариант А." Then:
 "давай делать".
 
+On the VHS Tape audio dropouts (full-scale one-sample clicks, 123 a second on his project): "б."
+(a level dip with a soft envelope), "но сейчас мы не трогаем vhs-и всякие фильтры по существу, мы
+сейчас работаем над максимальной производительностью всего, т.к. невозможно пользоваться
+программой". So the work now is the performance of everything; effects are touched only where
+their COST is the problem, never their substance.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

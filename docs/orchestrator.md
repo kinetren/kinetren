@@ -146,6 +146,12 @@ Stage closed: `finish.sh` at kt26.11.07-677c2f5b, master there: 1588 of 1588, 79
 adds `idle-cpu` to the stage of kt26.11.06-b42cbff4, which held `gpu-render-hardening`, `render-speed-no-card` (a render with no card beats
 the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner's order:
 
+0a. **Now (owner, 2026-11-07 evening): maximum performance of everything**, "невозможно пользоваться
+   программой". Running: `ui-frame-cost`, `cached-range-plays` (merging), `telemetry-journal`.
+   Queue by his words: `edit-without-rebuild` (found-defects 110, 111, 117: a real edit, a loop
+   region or a meter read rebuilds the whole audio engine, 412-447 ms on his project), then
+   `audio-fx-cost` (every audio effect against real time). Deferred: `window-content-reach`, the
+   VHS audio dropout as a level dip (his choice b), any change to an effect's substance.
 0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`), each its own change, each on his word:
    `idle-cpu` (E1, merged; the code of E2, E3, E9, E11 came with it), `hover-static-load` (E2), `scroll-position-cost` (E9),
    `load-proof-tool` (E3), `hover-composition-load` (E4), `fx-window-load` (E10), `idle-load-guard`
