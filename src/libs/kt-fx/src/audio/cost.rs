@@ -1,7 +1,8 @@
 //! What an audio chain costs against real time (audio-fx-cost): ONE text for `kt-cli fx-cost` and
 //! the cost guard t1980. A cost is never judged by a wall-clock limit: it is a RATIO to a fixed
-//! reference kernel measured in the same run, interleaved with it, best of several — a busy machine
-//! slows both alike, so the ratio holds where a millisecond figure does not.
+//! reference kernel measured in the same run, block by block alternately, each block the minimum of
+//! several rounds — a busy machine slows both alike, so the ratio holds where a millisecond figure
+//! does not.
 
 use std::time::Instant;
 
@@ -67,24 +68,8 @@ impl Reference {
     }
 }
 
-/// Seconds of one run of `work` over the stimulus in engine blocks; `work(block, pos)`.
-fn run_once(input: &[f32], work: &mut dyn FnMut(&mut [f32], i64)) -> f64 {
-    let frames = input.len() / CH;
-    let mut buf = vec![0f32; BLOCK * CH];
-    let t0 = Instant::now();
-    let mut pos = 0usize;
-    while pos < frames {
-        let n = BLOCK.min(frames - pos);
-        buf[..n * CH].copy_from_slice(&input[pos * CH..(pos + n) * CH]);
-        work(&mut buf[..n * CH], pos as i64);
-        pos += n;
-    }
-    std::hint::black_box(&buf);
-    t0.elapsed().as_secs_f64()
-}
-
 /// One chain's cost: its share of real time (seconds of CPU per second of audio) and the reference
-/// kernel's, both best of `runs`, measured alternately on the same input.
+/// kernel's, measured together (`chain_cost`).
 #[derive(Clone, Copy, Debug)]
 pub struct Cost {
     pub share: f64,
@@ -98,18 +83,53 @@ impl Cost {
     }
 }
 
-/// The cost of the node chain `fx` (a fresh `TrackProcessor` per run: the first block's buffers
-/// count too) on `input`.
+/// The cost of the node chain `fx` on `input`, against the reference kernel.
+///
+/// Immune to a busy machine by construction, not by a wide bound: the two are timed BLOCK BY BLOCK,
+/// alternately (which goes first swaps every block), so each pair runs within microseconds on one
+/// core at one clock; each block's time is the minimum over `runs` rounds (a fresh processor and a
+/// fresh reference per round, so block `b` does the same work in every round), which drops a
+/// preemption or a migration that hit one round. The first block (the state's buffers coming into
+/// memory) is not counted: the cost is the running one.
 pub fn chain_cost(fx: &[FxInstance], input: &[f32], runs: usize) -> Cost {
-    let secs = (input.len() / CH) as f64 / 48_000.0;
-    let (mut best, mut best_ref) = (f64::MAX, f64::MAX);
+    let frames = input.len() / CH;
+    let blocks = frames.div_ceil(BLOCK);
+    let mut best_k = vec![u64::MAX; blocks];
+    let mut best_r = vec![u64::MAX; blocks];
+    let (mut bk, mut br) = (vec![0f32; BLOCK * CH], vec![0f32; BLOCK * CH]);
     for _ in 0..runs.max(1) {
         let mut r = Reference::default();
-        best_ref = best_ref.min(run_once(input, &mut |b, _| r.process(b)));
         let mut p = TrackProcessor::new(fx, ChainOpts { fps: 25, ..Default::default() });
-        best = best.min(run_once(input, &mut |b, pos| p.process(pos, b)));
+        for b in 0..blocks {
+            let pos = b * BLOCK;
+            let n = BLOCK.min(frames - pos);
+            let src = &input[pos * CH..(pos + n) * CH];
+            br[..n * CH].copy_from_slice(src);
+            bk[..n * CH].copy_from_slice(src);
+            let mut time_ref = || {
+                let t = Instant::now();
+                r.process(&mut br[..n * CH]);
+                t.elapsed().as_nanos() as u64
+            };
+            let (tr, tk) = if b % 2 == 0 {
+                let tr = time_ref();
+                let t = Instant::now();
+                p.process(pos as i64, &mut bk[..n * CH]);
+                (tr, t.elapsed().as_nanos() as u64)
+            } else {
+                let t = Instant::now();
+                p.process(pos as i64, &mut bk[..n * CH]);
+                let tk = t.elapsed().as_nanos() as u64;
+                (time_ref(), tk)
+            };
+            best_r[b] = best_r[b].min(tr);
+            best_k[b] = best_k[b].min(tk);
+        }
+        std::hint::black_box((&bk, &br));
     }
-    Cost { share: best / secs, reference: best_ref / secs }
+    let counted = (frames - BLOCK.min(frames)).max(1) as f64 / 48_000.0;
+    let sum = |v: &[u64]| v.iter().skip(1).sum::<u64>() as f64 * 1e-9;
+    Cost { share: sum(&best_k) / counted, reference: sum(&best_r) / counted }
 }
 
 /// The node chain's output on `input` (block by block, as `chain_cost` runs it).
