@@ -225,15 +225,19 @@ raised a new thread on every call (three per project, writing into orphaned `Arc
 
 ### Requirement: The burst cache is the only truth about coverage
 The warmth bars SHALL be built only from `coverage()` of the cache itself — an interval set,
-maintained on insert/evict, without parallel bookkeeping. Quality SHALL be part of the
+maintained on insert/evict, without parallel bookkeeping — and, for what plays without work, from
+the two stores that hold the final products: the executor's present memo and the audio render
+thread's final-mix store (capabilities `video-plan`, `audio-render`). Quality SHALL be part of the
 key (the audio key has no quality); a quality with a different size MUST NOT satisfy the request.
 The cache stores PRE-FX data; video post-FX is a separate kind, invisible to coverage, prefetch and pin,
-but living in the video budget and removed by `invalidate_source`. Audio post-FX MUST NOT be cached.
+but living in the video budget and removed by `invalidate_source`. The final mix is not in the burst
+cache: the audio render thread keeps it.
 Pin (the head of the loop region) excludes records from eviction, but not from coverage. The probe `contains`
 MUST NOT touch the LRU and the epoch. Records evicted or overwritten before the first read
 SHALL be counted by a separate counter (no-read drops).
-Why: the old ms buckets of coverage lied in four ways (defect g); FX is cheaper than decode;
-a probe-without-read that refreshed the LRU evicted what had been honestly read; the "dead zeros" of the v1 performance panel.
+Why: the old ms buckets of coverage lied in four ways (defect g); a probe-without-read that
+refreshed the LRU evicted what had been honestly read; the "dead zeros" of the v1 performance panel.
+"FX is cheaper than decode" did not hold for a simulated device on a nested reel (kkt-26.11.07b).
 
 #### Scenario: Eviction shrinks coverage exactly, quality does not cross-satisfy
 - **WHEN** records are evicted; another quality is requested; the cache does not mutate

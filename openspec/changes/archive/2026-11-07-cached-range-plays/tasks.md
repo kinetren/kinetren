@@ -28,4 +28,4 @@
 ## 6. Check
 - [x] 6.1 Tests of the specs, `cargo test` of what changed, clippy
 - [x] 6.2 Live scenario `cached_range.py` on the heavy showcase
-- [ ] 6.3 Load at rest on the heavy project; his relinked project after
+- [x] 6.3 Load at rest on the heavy project; his relinked project after
