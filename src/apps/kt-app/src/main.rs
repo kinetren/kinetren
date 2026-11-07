@@ -25,6 +25,7 @@ mod diag_tests;
 mod idle_tests;
 #[cfg(test)]
 mod input_work_tests;
+#[cfg(test)]
 mod frame_cost_tests;
 mod envclip;
 mod deck_face;
