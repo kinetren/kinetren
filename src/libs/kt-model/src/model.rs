@@ -959,6 +959,10 @@ pub struct TimelineModel {
     /// not work) and is not part of the undo snapshot — but EVERY snapshot remembers
     /// in what context the edit was made.
     editing: Option<MediaId>,
+    /// The document inside a reel, built once per state (ui-frame-cost): [`TimelineModel::doc`].
+    /// Emptied wherever the canon or the place changes — `rebuild_bench` and the four setters
+    /// outside history — so it cannot outlive the state it was cut from.
+    doc: std::sync::OnceLock<std::sync::Arc<Project>>,
 }
 
 /// History snapshot: the project and the context in which the edit was made (R.50, B1).
@@ -1150,12 +1154,14 @@ impl TimelineModel {
             redo: Vec::new(),
             last_gesture: None,
             editing: None,
+            doc: std::sync::OnceLock::new(),
         }
     }
 
     /// Rebuild the working view from the canon. Called AFTER every edit of the canon —
     /// including edits of fields outside history (region, loop, ui).
     fn rebuild_bench(&mut self) {
+        self.doc = std::sync::OnceLock::new();
         self.bench = self.project.clone();
         for b in &self.bands {
             self.bench.merge_reel(b);
@@ -1287,6 +1293,31 @@ impl TimelineModel {
             p.swap_reel(seq);
         }
         p
+    }
+
+    /// The same document, BORROWED: what a drawing path reads (ui-frame-cost).
+    ///
+    /// At the root the canon is the document itself, so nothing is copied. Inside a reel the
+    /// swapped copy is built once and kept until the canon or the place changes. `document()`
+    /// cloned the whole project for each question, and the media bin asked it four times a
+    /// frame plus twice per reel card: on the owner's 1974 events that was half of every frame
+    /// of a pointer over the preview.
+    pub fn doc(&self) -> &Project {
+        match self.editing {
+            None => &self.project,
+            Some(_) => self.doc_arc_ref(),
+        }
+    }
+
+    /// The document as a shared snapshot of this state: one clone per state, not per frame. For
+    /// a window that keeps it across its own `&mut` drawing (the effects, camera and composition
+    /// windows publish from it while they edit).
+    pub fn doc_arc(&self) -> std::sync::Arc<Project> {
+        self.doc_arc_ref().clone()
+    }
+
+    fn doc_arc_ref(&self) -> &std::sync::Arc<Project> {
+        self.doc.get_or_init(|| std::sync::Arc::new(self.document()))
     }
 
     /// The event BY WHAT THE PERSON SEES (R.55, C5).
@@ -1455,11 +1486,13 @@ impl TimelineModel {
     pub fn set_region(&mut self, r: Option<Region>) {
         self.project.region = r;
         self.bench.region = r;
+        self.doc = std::sync::OnceLock::new();
     }
 
     pub fn set_loop_enabled(&mut self, on: bool) {
         self.project.loop_enabled = on;
         self.bench.loop_enabled = on;
+        self.doc = std::sync::OnceLock::new();
     }
 
     /// The MEASURED length of the material — outside undo (R.63 item 2).
@@ -1489,6 +1522,7 @@ impl TimelineModel {
         // working view and the canon are different projects: we edit both, the same as the region
         let a = set(&mut self.project);
         let b = set(&mut self.bench);
+        self.doc = std::sync::OnceLock::new();
         a || b
     }
 
@@ -1496,6 +1530,7 @@ impl TimelineModel {
     pub fn set_ui_state(&mut self, ui: Option<crate::UiState>) {
         self.project.ui = ui.clone();
         self.bench.ui = ui;
+        self.doc = std::sync::OnceLock::new();
     }
 
     pub fn undo(&mut self) -> Result<(), CommandError> {

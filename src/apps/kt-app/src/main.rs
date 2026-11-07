@@ -31,6 +31,7 @@ mod ffmpeg_setup;
 mod font_tests;
 mod fx_editor;
 mod fx_registry;
+mod frame_cost;
 mod fx_thumbs;
 mod gen_ui;
 mod geomctl;

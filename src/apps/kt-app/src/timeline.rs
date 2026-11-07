@@ -2917,6 +2917,14 @@ impl KtApp {
         // caches by model_rev; Arc-snapshots — pointer clones (item 1 of v1.4)
         let (media_names, suppress_name, media_paths, draw_order) = self.names();
         let overlap_zones = self.overlap_zones();
+        // an event by id and the events past their material, once per state (`TlFacts`)
+        let (tails, clip_idx) = self.tl_facts();
+        let clip_by_id = {
+            let clip_idx = clip_idx.clone();
+            move |p: &'_ kt_model::Project, id: ClipId| -> Option<usize> {
+                clip_idx.get(&id).copied().filter(|&i| p.clips.get(i).is_some_and(|c| c.id == id))
+            }
+        };
         let pointer = response.interact_pointer_pos();
         let hover = response.hover_pos();
         // the row UNDER THE MOUSE lives exactly while the mouse is over the timeline (R.56,
@@ -3007,7 +3015,7 @@ impl KtApp {
             let p = app.model.project();
             for t in &p.transitions {
                 // fade anchor (R.25) — its only live end
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
+                let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
                 let top = lane_top(a.kind, a.lane);
@@ -3053,7 +3061,7 @@ impl KtApp {
         let transition_body_at = |app: &KtApp, pos: egui::Pos2| -> Option<TransitionId> {
             let p = app.model.project();
             for t in &p.transitions {
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
+                let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
                 // window of the overlapping transition (R.51) — the overlap zone
@@ -4294,6 +4302,7 @@ impl KtApp {
             self.event_passes += 1;
             kt_time::work::bump(kt_time::work::Work::EventPass);
         }
+        let events_cost = (!reuse).then(|| crate::frame_cost::span(crate::frame_cost::Stage::Events));
         let mut event_rects = Vec::new();
         for c in draw_order.iter().filter(|_| !reuse).filter_map(|&i| self.model.project().clips.get(i)) {
             let (start, end, lane) = match &self.drag {
@@ -4310,6 +4319,7 @@ impl KtApp {
             if x1 < rect.left() || x0 > rect.right() {
                 continue;
             }
+            crate::frame_cost::visit();
             let src_shift = preview_src_shift(self.drag.as_ref(), c.id, c.start.0);
             let top = lane_top(c.kind, lane);
             let lane_h = lane_h_at(c.kind, lane);
@@ -4862,6 +4872,7 @@ impl KtApp {
         if let Some(first) = capture {
             self.event_paint = Some(EventPaint::capture(ui.ctx(), event_layer, first, event_rects, stamp, hover));
         }
+        drop(events_cost);
         if reuse && let Some(p) = &self.event_paint {
             p.replay(ui.ctx(), event_layer);
         }
@@ -5304,15 +5315,8 @@ impl KtApp {
         // 20 — nothing is switched off by itself).
         {
             let p = self.model.project();
-            for c in &p.clips {
-                let Some(end) = kt_model::material_end_on_timeline(c, p.media_duration(c.media))
-                else {
-                    continue;
-                };
+            for (c, end) in tails.iter().filter_map(|&(i, end)| Some((p.clips.get(i)?, end))) {
                 let body_end = (c.start + c.duration).0;
-                if end >= body_end {
-                    continue;
-                }
                 let (x0, x1) = (tick_to_x(end), tick_to_x(body_end));
                 if x1 < rect.left() || x0 > rect.right() {
                     continue;
@@ -5349,7 +5353,7 @@ impl KtApp {
             let p = self.model.project();
             for t in &p.transitions {
                 // fade anchor (R.25) — the only live end, the seam is at it
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
+                let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
                 let Some(base_joint) = t.joint(p).map(|j| j.0) else { continue };

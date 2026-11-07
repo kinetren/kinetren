@@ -706,6 +706,8 @@ pub struct KtApp {
     /// building the profile per pixel column — an allocation in the draw path
     /// (invariant #12), so once per revision.
     pub warp_cache: WarpCache,
+    /// What the timeline needs per event and a frame cannot change (ui-frame-cost).
+    pub tl_facts: TlFacts,
     /// Preview of nested reels: frames and envelope (R.56, item 452).
     pub reel_previews: crate::reel_preview::ReelPreviews,
     /// Frame textures of the band: (reel key, frame index).
@@ -1044,6 +1046,7 @@ impl KtApp {
             names_cache: Default::default(),
             uses_cache: Default::default(),
             warp_cache: Default::default(),
+            tl_facts: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             event_paint: None,
@@ -1334,6 +1337,7 @@ impl KtApp {
             names_cache: Default::default(),
             uses_cache: Default::default(),
             warp_cache: Default::default(),
+            tl_facts: Default::default(),
             reel_previews: Default::default(),
             reel_textures: HashMap::new(),
             event_paint: None,
@@ -1598,6 +1602,8 @@ impl KtApp {
     /// layout harness test can call it (rule item 9 round 8: layout and
     /// interactions are checked by egui_kittest, not only by a screenshot).
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
+        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load report read it
+        let _frame_cost = crate::frame_cost::span(crate::frame_cost::Stage::Frame);
         // LIVE BENCH COUNTERS (R.68) sit here, not in `ui()`: a frame is
         // the drawing, and the harness draws it with the same body, bypassing
         // `eframe::App::ui`. Counting in `ui()` would mean “in the product there are frames,
@@ -1819,6 +1825,7 @@ impl KtApp {
         }
 
         self.sample_perf();
+        let windows_cost = crate::frame_cost::span(crate::frame_cost::Stage::Windows);
         self.draw_search(&ctx);
         self.draw_fx_editors(&ctx);
         self.draw_transition_editors(&ctx);
@@ -1842,6 +1849,7 @@ impl KtApp {
         self.drain_publish_req();
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
+        drop(windows_cost);
         // the static outline of the tour step's panel target, on the panels' own layer
         self.draw_lesson_outline(&ctx);
         // the poster job sleeps while something plays (invariant 6)
@@ -4317,7 +4325,7 @@ impl KtApp {
             if self.shared_warned.contains(&seq) {
                 continue;
             }
-            let uses = self.model.document().sequence_uses(seq);
+            let uses = self.model.doc().sequence_uses(seq);
             if uses > 1 {
                 self.shared_warned.insert(seq);
                 self.warn(crate::tf!(k::msg::NEST_SHARED_EDIT, uses));
@@ -4420,7 +4428,7 @@ impl KtApp {
     fn sync_gen_sources(&mut self) {
         let mut cur: HashMap<ClipId, kt_model::GenState> = HashMap::new();
         {
-            let doc = self.model.document();
+            let doc = self.model.doc_arc();
             for c in doc.clips.iter().chain(doc.sequences.iter().flat_map(|s| s.clips.iter())) {
                 if let Some(k) = &c.r#gen {
                     cur.insert(
@@ -4571,7 +4579,7 @@ impl KtApp {
         self.media_synced_rev = self.model_rev;
         self.media_sync_builds += 1;
         let cur: HashMap<MediaId, String> =
-            self.model.document().media.iter().map(|m| (m.id, m.path.clone())).collect();
+            self.model.doc().media.iter().map(|m| (m.id, m.path.clone())).collect();
         if !self.media_synced {
             // first call: the sources have already been raised by build_player
             self.media_paths = cur;
@@ -6416,7 +6424,7 @@ impl KtApp {
         // a duration from a source — the length is taken from its content.
         // Before, a reel could be placed in a second place ONLY
         // by copy-pasting an already placed instance.
-        if self.model.document().sequence(media_id).is_some() {
+        if self.model.doc().sequence(media_id).is_some() {
             self.place_reel_at(media_id, at, lane_hint);
             return;
         }
@@ -6460,7 +6468,7 @@ impl KtApp {
         // an address of “where to change it” (rules 16, 19). Procedural sources
         // (fps = None) have no proportions and do not set the project.
         if info.has_video && info.fps.is_some() {
-            let settings = self.model.document().settings.clone();
+            let settings = self.model.doc().settings.clone();
             let (vw, vh) = info.view_size();
             let even = |v: f64| ((v.round() as u32).max(16)) & !1;
             let (w, h) = (even(vw), even(vh));
@@ -6666,6 +6674,7 @@ impl KtApp {
             //
             // On the device when it can: the frame is not waited for, read back, converted
             // and uploaded again on this thread (preview-throughput D2).
+            let composite_cost = crate::frame_cost::span(crate::frame_cost::Stage::Composite);
             let presented = self.preview_display.as_ref().and_then(|_| {
                 self.player.present_preview(
                     Tick(key_tick),
@@ -6680,6 +6689,7 @@ impl KtApp {
             let (cq, c) = presented
                 .unwrap_or_else(|| self.player.compose_preview_into(Tick(key_tick), &mut rgba));
             complete = c;
+            drop(composite_cost);
             let cost = self.player.video_cost();
             self.perf.compose_ms_last = cost.compose_ns as f32 / 1e6;
             self.perf.compose_sum_ns += cost.compose_ns;
@@ -7463,6 +7473,13 @@ impl KtApp {
             format!("{:.1}", self.perf.compose_ms_last),
             format!("{:.1}", self.perf.compose_ms_avg)
         ));
+        // what one UI frame costs the UI thread, by stage (ui-frame-cost): the number behind "the
+        // mouse over a still picture takes a quarter of the processor"
+        if let Some(ms) = self.perf.frame_ms {
+            let f = |v: f32| format!("{v:.1}");
+            ui.weak(crate::tf!(k::perf::UI_FRAME, f(ms[0])));
+            ui.weak(crate::tf!(k::perf::UI_STAGES, f(ms[1]), f(ms[2]), f(ms[3]), f(ms[4]), f(ms[5]), f(ms[6])));
+        }
         // "Economy UI" is not repeated here: the one switch lives in View (D4 — the owner's
         // item 13 forbids the same checkbox in two places)
         // “Black box” of playback (R.28, item 10): the ring of transport events
@@ -7969,6 +7986,22 @@ pub struct WarpCache {
     maps: Arc<HashMap<ClipId, kt_engine::ClipWarp>>,
 }
 
+/// What the timeline needs per event and cannot change between two frames of one state
+/// (ui-frame-cost). Each frame walked all the events for the hatching of a tail past the material,
+/// building every event's speed map from its curves on the way: on the owner's 1974 events that
+/// was a sixth of every frame, whatever the view showed. Looking an event up by id walked the list
+/// for each transition.
+#[derive(Default)]
+pub struct TlFacts {
+    /// (model version, number of events, the media lengths): a length is learned when a source
+    /// opens, outside history, and the model can be swapped wholesale without a revision
+    stamp: Option<(u64, usize, u64)>,
+    /// events whose body runs past their material: (index in `clips`, where the material ends)
+    pub tails: Arc<Vec<(usize, i64)>>,
+    /// event id → index in `clips`
+    pub index: Arc<HashMap<ClipId, usize>>,
+}
+
 /// The media caption for the user: for a file — the file name, for a generator —
 /// the KIND NAME (R.53, item 416). Until this item the clip-generator was captioned
 /// with the raw path `gen:solid:c=ff8800`, which moreover changed on every
@@ -8029,6 +8062,31 @@ impl KtApp {
         self.warp_cache.maps.clone()
     }
 
+    /// The timeline's facts of this state, built once (`TlFacts`).
+    pub fn tl_facts(&mut self) -> (Arc<Vec<(usize, i64)>>, Arc<HashMap<ClipId, usize>>) {
+        let p = self.model.project();
+        let lengths = p.media.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, m| {
+            let d = m.duration.map_or(u64::MAX, |d| d.0 as u64);
+            (h ^ m.id.0 as u64 ^ d.rotate_left(17)).wrapping_mul(0x0100_0000_01b3)
+        });
+        let stamp = (self.model_rev, p.clips.len(), lengths);
+        if self.tl_facts.stamp != Some(stamp) {
+            self.tl_facts.stamp = Some(stamp);
+            let tails = p
+                .clips
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    let end = kt_model::material_end_on_timeline(c, p.media_duration(c.media))?;
+                    (end < (c.start + c.duration).0).then_some((i, end))
+                })
+                .collect();
+            self.tl_facts.tails = Arc::new(tails);
+            self.tl_facts.index = Arc::new(p.clips.iter().enumerate().map(|(i, c)| (c.id, i)).collect());
+        }
+        (self.tl_facts.tails.clone(), self.tl_facts.index.clone())
+    }
+
     /// Preview keys per INSTANCE: `ClipId` → (reel, revision)
     /// (R.56 item 452, rewritten in R.59 stage 3 — t680).
     ///
@@ -8043,7 +8101,7 @@ impl KtApp {
     /// content, and there is no point doing that on every UI frame.
     pub fn reel_keys(&mut self) -> Arc<HashMap<ClipId, crate::reel_preview::ReelKey>> {
         if self.reel_hash_cache.0 != Some(self.model_rev) {
-            let doc = self.model.document();
+            let doc = self.model.doc_arc();
             let mut map: HashMap<ClipId, crate::reel_preview::ReelKey> = HashMap::new();
             // A SINGLE reel now has SEVERAL live revisions at once, and
             // invalidation must keep them all: if it threw out “someone else’s”,
@@ -9002,6 +9060,9 @@ pub struct PerfState {
     pub compose_ms_avg: f32,
     compose_sum_ns: u64,
     compose_n: u32,
+    /// what a UI frame cost by stage over the last sample (ui-frame-cost), and the totals then
+    pub frame_ms: Option<[f32; crate::frame_cost::Stage::ALL.len()]>,
+    frame_cost_was: (u64, [u64; crate::frame_cost::Stage::ALL.len()]),
     pub diag_open: bool,
     pub log: std::collections::VecDeque<String>,
     /// Dedup of consecutive identical messages: (text, repeat count).
@@ -9060,6 +9121,8 @@ impl PerfState {
             compose_ms_avg: 0.0,
             compose_sum_ns: 0,
             compose_n: 0,
+            frame_ms: None,
+            frame_cost_was: crate::frame_cost::totals(),
             vfps: 0.0,
             last_video_shown: 0,
             video_cells_skipped: 0,
@@ -9420,6 +9483,12 @@ impl KtApp {
             self.perf.compose_sum_ns = 0;
             self.perf.compose_n = 0;
         }
+        // the frame's cost by stage; a second with no frame keeps the last one
+        let cost = crate::frame_cost::totals();
+        if let Some(ms) = crate::frame_cost::per_frame(&self.perf.frame_cost_was, &cost) {
+            self.perf.frame_ms = Some(ms);
+        }
+        self.perf.frame_cost_was = cost;
         self.perf.quality.push(&[fps.min(120.0), v_fps.min(120.0), a_hit, v_hit]);
         let (r_open, r_read) =
             (opens.saturating_sub(lo) as f32 / dt, reads.saturating_sub(lr) as f32 / dt);
@@ -9947,6 +10016,7 @@ impl KtApp {
 
     /// The timeline with its button row under it.
     fn draw_timeline_area(&mut self, ui: &mut egui::Ui) {
+        let _cost = crate::frame_cost::span(crate::frame_cost::Stage::Timeline);
         let full = ui.available_rect_before_wrap();
         self.timeline_rect = full;
         let strip_h = 34.0;
@@ -9970,6 +10040,7 @@ impl KtApp {
 
     /// The left column: the media bin, under the header when the column stands at the window's top.
     fn draw_bin_column(&mut self, ui: &mut egui::Ui, header: bool) {
+        let _cost = crate::frame_cost::span(crate::frame_cost::Stage::Bin);
         // LIMIT SET ON COMPLAINT of item 4 round 13 — do not squeeze without a new
         // request from the user: 420 px were insurance of round 7.1, in round 9 raised to
         // half the window by his direct request, and in round 11 I cut them
@@ -10064,6 +10135,7 @@ impl KtApp {
 
     /// The centre: the preview with its controls under it, the meters beside it where they stand.
     fn draw_centre(&mut self, ui: &mut egui::Ui, arrangement: Arrangement) {
+        let _cost = crate::frame_cost::span(crate::frame_cost::Stage::Centre);
         let p = self.model.project();
         if let Some(r) = p.region
             && !p.loop_enabled

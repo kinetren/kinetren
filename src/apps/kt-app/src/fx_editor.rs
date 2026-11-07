@@ -164,7 +164,7 @@ impl KtApp {
         // the head: `Fx(0)` on an empty chain would show emptiness. For a reel
         // INSTANCE the head is “Composition parameters” (R.63 item 12), and
         // the rule is the same.
-        let doc = self.model.document();
+        let doc = self.model.doc_arc();
         let selected = members
             .iter()
             .filter_map(|id| self.model.clip(*id))
@@ -245,7 +245,7 @@ impl KtApp {
         // Publication (R.59, stage 3): the document is cloned ONCE per
         // drawing of the window — `publish_ctx` is called for each carrier, and
         // cloning the project per row would be an allocation in the drawing path.
-        let pub_doc = self.model.document();
+        let pub_doc = self.model.doc_arc();
         // edits to the composition handles are applied AFTER the drawing, by the window’s
         // token — inside the ui closure `self` is busy with a borrow
         let mut inst_ops: Vec<kt_model::Command> = Vec::new();
@@ -350,7 +350,7 @@ impl KtApp {
         let tl_view = self.tl_view();
         // the axis lock is one for the whole program (R.40 item 15)
         let axis_linked = self.auto_axis_linked;
-        let dflt_shape = self.model.document().settings.default_shape;
+        let dflt_shape = self.model.doc().settings.default_shape;
         let mut axis_req = crate::automation::AxisReq::default();
         // “places: N” of the generator and the path of the scrolling text are computed BEFORE
         // drawing: inside the ui closure `&mut self` is already busy, and the places counter
