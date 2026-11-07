@@ -2694,8 +2694,11 @@ What he asks, in short:
   предлагай, нужны правильные".
 
 The same day: "я тебе сказал что там несколько запросов в одном - а ты по прежнему мне написал всё в
-одном". So one list is several requests and each gets its own change and report: `idle-cpu` (E1, E2,
-E4, E5), `load-proof-tool` (E3), `ui-never-waits` (E8), `fx-preset-change` (E6), `fx-form-width` (E7).
+одном". Then: "ДО СТРОКИ С "26.11.03" ТАМ НЕСКОЛЬКО ЗАПРОСОВ В ОДНОМ ТЕКСТЕ! ТЫ ВЫДЕЛИЛ ТОЛЬКО ДВА - КУЧА
+ГОВНА И ИНСТРУМЕНТ." So each request gets its own change and report: `idle-cpu` (E1, the pause alone),
+`hover-static-load` (E2), `scroll-position-cost` (E9), `load-proof-tool` (E3), `hover-composition-load`
+(E4), `fx-window-load` (E10), `idle-load-guard` (E11), `regression-since-1103` (E5), `ui-never-waits`
+(E8), `fx-preset-change` (E6), `fx-form-width` (E7).
 
 ## What the user repeated more than once
 

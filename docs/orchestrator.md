@@ -136,8 +136,10 @@ first pass, 938 s. In it: `gpu-render-hardening`, `render-speed-no-card` (a rend
 the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner's order:
 
 0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`), each its own change, each on his word:
-   `idle-cpu` (E1, E2, E4, E5, running), `load-proof-tool` (E3), `ui-never-waits` (E8),
-   `fx-preset-change` (E6), `fx-form-width` (E7). `ctrl-s-writes-nothing` (row 47) waits for his word too.
+   `idle-cpu` (E1, the pause alone, running), `hover-static-load` (E2), `scroll-position-cost` (E9),
+   `load-proof-tool` (E3), `hover-composition-load` (E4), `fx-window-load` (E10), `idle-load-guard`
+   (E11), `regression-since-1103` (E5), `ui-never-waits` (E8), `fx-preset-change` (E6), `fx-form-width`
+   (E7). `ctrl-s-writes-nothing` (row 47) waits for his word too.
 2. **Performance**: rows 93 (preview on the VHS span), 94, 96, and the older 10, 37, 42, 52, 53, 55, 72.
 3. **Build and CI speed**: logs of a real master run and the first `windows-picture` and FXC result,
    both need the owner's push; the plugin test-build cost (card); an ARM build (owner, 2026-11-04).
