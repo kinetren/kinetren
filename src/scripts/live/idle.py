@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Live scenario idle-cpu: the program at rest costs nothing, and this is measured.
 
-The owner's words are in `docs/ktprompts/kkt-26.11.07.txt`, items E1-E4. The project is ours (`kt-cli showcase --heavy`): nine releases of
+The owner's words are in `docs/ktprompts/kkt-26.11.07.txt`, items E1-E4. The project is ours (`kt-cli showcase --heavy`): ten releases of
 a composition with Slowed, VHS Tape and Camera ISP over each, and a dense edit under them. The
 verdict is the WORK the program counts, not percent: this machine rasterizes in software, so a
 frame looks expensive here and nowhere else. `<dump>.load.json` carries the counters, because at
@@ -101,6 +101,8 @@ def main(out):
         meter = Meter(app)
         wait_quiet(meter, "after opening")
         app.step("open", "the project is open, nothing touched")
+        # a screenshot's wait pokes the stand for a frame: that is the scenario's own work
+        wait_quiet(meter, "after the screenshot")
 
         work, cpu = meter.over(5.0)
         print(f"   pause: {work}, {cpu:.0f} % of a core")
@@ -129,7 +131,7 @@ def main(out):
             passes = work.get("event_passes", 0)
             app.expect(passes <= max(4, frames // 3),
                        f"over the {name}: {passes} event passes in {frames} frames")
-            work, _ = meter.over(1.5)
+            wait_quiet(meter, f"after the {name}")
             work, cpu = meter.over(2.0)
             app.expect(not work, f"after the {name}: rest again, ran {work}")
 
