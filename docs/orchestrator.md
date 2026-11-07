@@ -37,6 +37,8 @@ goes here, with its date, in the same turn.
 
 ## Questions to the owner
 
+- **A hint is not a reference** (2026-11-07): when he names an older build or another program in
+  passing, that is not the bar to reach. Do not turn it into a target or a change.
 - **One message is often several requests** (2026-11-07). Each request gets its own change, session
   and report. Never fold them into one executor because they look related.
 - **A question carries its context and its computed consequences** (2026-10-30, repeated
@@ -138,7 +140,7 @@ the deleted CPU build), `control-layouts`, `test-stability`. Next, in the owner'
 0. **Out of turn, the owner, 2026-11-07** (`kkt-26.11.07`), each its own change, each on his word:
    `idle-cpu` (E1, the pause alone, running), `hover-static-load` (E2), `scroll-position-cost` (E9),
    `load-proof-tool` (E3), `hover-composition-load` (E4), `fx-window-load` (E10), `idle-load-guard`
-   (E11), `regression-since-1103` (E5), `ui-never-waits` (E8), `fx-preset-change` (E6), `fx-form-width`
+   (E11), `ui-never-waits` (E8), `fx-preset-change` (E6), `fx-form-width`
    (E7). `ctrl-s-writes-nothing` (row 47) waits for his word too.
 2. **Performance**: rows 93 (preview on the VHS span), 94, 96, and the older 10, 37, 42, 52, 53, 55, 72.
 3. **Build and CI speed**: logs of a real master run and the first `windows-picture` and FXC result,
