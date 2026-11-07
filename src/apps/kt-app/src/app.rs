@@ -4156,12 +4156,17 @@ impl KtApp {
     }
 
     pub fn apply(&mut self, cmd: Command) -> bool {
-        self.model_rev += 1;
         // through `apply_batch`, not `apply`: the kinship of born events
         // arrives by ONE path (item 357), and a single cut is no exception
         crate::telemetry::signal(crate::telemetry::Signal::Command(&cmd, &self.model));
+        let was = self.model.revision();
         match self.model.apply_batch(vec![cmd]) {
+            // a command that changed nothing is no edit: nothing to redraw, rebuild or save
+            // (input-without-work)
+            Ok(_) if self.model.revision() == was => true,
             Ok(births) => {
+                self.model_rev += 1;
+                kt_time::work::bump(kt_time::work::Work::ModelEdit);
                 self.push_project_to_player();
                 self.sync_media_sources();
                 self.dirty_content = true;
@@ -4275,10 +4280,15 @@ impl KtApp {
         // title field would stop the audio-render thread).
         let touches_plan = cmd.touches_render_plan();
         crate::telemetry::signal(crate::telemetry::Signal::Gesture(&cmd, gesture, &self.model));
-        if self.model.apply_coalesced(cmd, gesture).is_err() {
-            return false;
+        match self.model.apply_coalesced(cmd, gesture) {
+            Err(_) => return false,
+            // an equal value written again (a window's frame re-sending what the model holds)
+            // is no edit: no revision, no project swap, no dirty mark (input-without-work)
+            Ok(false) => return true,
+            Ok(true) => {}
         }
         self.model_rev += 1;
+        kt_time::work::bump(kt_time::work::Work::ModelEdit);
         if touches_plan {
             self.push_project_to_player();
         }
@@ -4327,11 +4337,14 @@ impl KtApp {
 
     /// A command batch = one undo snapshot per gesture (atomic).
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> bool {
-        self.model_rev += 1;
         self.warn_shared_band(&cmds);
         crate::telemetry::signal(crate::telemetry::Signal::Commands(&cmds, &self.model));
+        let was = self.model.revision();
         match self.model.apply_batch(cmds) {
+            Ok(_) if self.model.revision() == was => true,
             Ok(births) => {
+                self.model_rev += 1;
+                kt_time::work::bump(kt_time::work::Work::ModelEdit);
                 self.push_project_to_player();
                 self.sync_media_sources();
                 self.dirty_content = true;
@@ -5576,9 +5589,19 @@ impl KtApp {
         self.apply_batch(ids.into_iter().map(|id| Command::UnlinkClip { id }).collect());
     }
 
+    /// A held speed drag sets the rate only when it moves (input-without-work): each set resets the
+    /// display clock's extrapolation, and it ran on every frame the button was down.
+    fn set_rate_if_changed(&mut self, rate: f32) {
+        let m = kt_engine::player::ENGINE_RATE_MAX;
+        if rate.clamp(-m, m) != self.player.playback_rate() {
+            self.player.set_playback_rate(rate);
+        }
+    }
+
     pub fn undo(&mut self) {
-        self.model_rev += 1;
         if self.model.undo().is_ok() {
+            self.model_rev += 1;
+            kt_time::work::bump(kt_time::work::Work::ModelEdit);
             crate::telemetry::signal(crate::telemetry::Signal::Undo);
             self.push_project_to_player();
             self.sync_media_sources();
@@ -5588,8 +5611,9 @@ impl KtApp {
     }
 
     pub fn redo(&mut self) {
-        self.model_rev += 1;
         if self.model.redo().is_ok() {
+            self.model_rev += 1;
+            kt_time::work::bump(kt_time::work::Work::ModelEdit);
             crate::telemetry::signal(crate::telemetry::Signal::Redo);
             self.push_project_to_player();
             self.sync_media_sources();
@@ -7033,12 +7057,12 @@ impl KtApp {
                 // upper strip: constant speed (it stays)
                 self.base_rate = rate_of(t);
                 if self.shuttle_override.is_none() {
-                    self.player.set_playback_rate(self.base_rate);
+                    self.set_rate_if_changed(self.base_rate);
                 }
             } else {
                 // lower: temporary shuttle with auto-return
                 self.shuttle_override = Some(t);
-                self.player.set_playback_rate(rate_of(t));
+                self.set_rate_if_changed(rate_of(t));
             }
         }
         if resp.drag_stopped() {
@@ -9481,6 +9505,9 @@ impl KtApp {
             Work::FxThumb => tr(k::perf::work::FX_THUMBS),
             Work::ReelJob => tr(k::perf::work::REEL_JOBS),
             Work::EventPass => tr(k::perf::work::EVENT_PASSES),
+            Work::ModelEdit => tr(k::perf::work::MODEL_EDITS),
+            Work::ProjectSwap => tr(k::perf::work::PROJECT_SWAPS),
+            Work::EngineBuild => tr(k::perf::work::ENGINE_BUILDS),
         };
         if let Some(s) = crate::load_watch::last() {
             let cpu = format!("{:.0}", s.cpu);
@@ -9498,6 +9525,8 @@ impl KtApp {
                 .collect();
             if !ran.is_empty() {
                 ui.weak(crate::tf!(k::perf::LOAD_WORK, ran.join(", ")));
+            } else if s.uncounted() {
+                ui.colored_label(ui.visuals().warn_fg_color, tr(k::perf::LOAD_UNCOUNTED));
             }
         }
         let r = ui.button(tr(k::perf::LOAD_REPORT));

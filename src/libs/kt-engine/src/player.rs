@@ -359,6 +359,7 @@ impl Player {
     }
 
     pub fn set_project(&self, p: Project) {
+        kt_time::work::bump(kt_time::work::Work::ProjectSwap);
         self.project_version.fetch_add(1, Ordering::AcqRel);
         // the set of generators is a function of the PROJECT, and it must be computed by whoever
         // accepts the project: the addresses are derived from events, and
@@ -368,6 +369,7 @@ impl Player {
     }
 
     fn wake_after_project_swap(&self, p: Project) {
+        kt_time::work::bump(kt_time::work::Work::EngineBuild);
         *self.video.lock().unwrap() =
             VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap());
         *self.project.lock().unwrap() = p;
@@ -464,14 +466,33 @@ impl Player {
         *self.loop_region.lock().unwrap() = frames;
         self.cache.unpin_all();
         if let Some((s, _)) = frames {
-            let renderer = AudioRenderer::new(&self.project.lock().unwrap().clone());
-            for (media, bursts) in
+            // the probe's renderer, built once per project version: a region drag on the owner's
+            // 1974 events built a whole one on the UI thread per change, 447 ms each
+            // (input-without-work)
+            let wanted = self.with_probe(|renderer, _| {
                 renderer.wanted_audio_bursts(s..s + kt_time::AUDIO_SAMPLE_RATE as i64 / 2)
-            {
+            });
+            for (media, bursts) in wanted {
                 self.cache.pin_range(source_id(media), kt_cache::BurstKind::Audio, bursts);
             }
         }
         self.wake.notify();
+    }
+
+    /// The UI's own audio renderer and FX states, kept until the project version changes
+    /// (the meters on a pause, the loop's pinned head).
+    fn with_probe<R>(&self, f: impl FnOnce(&AudioRenderer, &mut FxStateStore) -> R) -> R {
+        let version = self.project_version.load(Ordering::Acquire);
+        let mut probe = self.levels_probe.lock().unwrap();
+        if probe.as_ref().is_none_or(|(v, _, _)| *v != version) {
+            kt_time::work::bump(kt_time::work::Work::EngineBuild);
+            let renderer = AudioRenderer::new(&self.project.lock().unwrap().clone());
+            let mut store = FxStateStore::new();
+            renderer.sync_fx(&mut store);
+            *probe = Some((version, renderer, store));
+        }
+        let (_, renderer, store) = probe.as_mut().unwrap();
+        f(renderer, store)
     }
 
     /// Peak levels on pause: one burst from position t through a one-off
@@ -480,20 +501,12 @@ impl Player {
         // Probe cache (item 1): previously EVERY call (8 times/s on pause) cloned
         // the whole Project and recreated all FX. Now the graph lives until the project
         // version changes; the state is reset before measuring (determinism).
-        let version = self.project_version.load(Ordering::Acquire);
-        let mut probe = self.levels_probe.lock().unwrap();
-        let rebuild = probe.as_ref().map(|(v, _, _)| *v != version).unwrap_or(true);
-        if rebuild {
-            let renderer = AudioRenderer::new(&self.project.lock().unwrap().clone());
-            let mut store = FxStateStore::new();
-            renderer.sync_fx(&mut store);
-            *probe = Some((version, renderer, store));
-        }
-        let (_, renderer, store) = probe.as_mut().unwrap();
-        store.reset_all();
-        let mut fetcher = CacheFetcher::new(self.cache.clone());
         let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
-        renderer.render_frames_with(&mut fetcher, store, t.to_audio_frames(), &mut chunk);
+        self.with_probe(|renderer, store| {
+            store.reset_all();
+            let mut fetcher = CacheFetcher::new(self.cache.clone());
+            renderer.render_frames_with(&mut fetcher, store, t.to_audio_frames(), &mut chunk);
+        });
         let gain = self.master_gain();
         let mut pl = 0f32;
         let mut pr = 0f32;
@@ -1131,6 +1144,7 @@ fn audio_render_loop(ctx: RenderCtx) {
 
     while !stop.load(Ordering::Acquire) {
         if dirty.swap(false, Ordering::AcqRel) {
+            kt_time::work::bump(kt_time::work::Work::EngineBuild);
             renderer = AudioRenderer::new(&project.lock().unwrap().clone());
             renderer.sync_fx(&mut store); // state survives a rebuild (inv. 3)
         }
@@ -1725,6 +1739,8 @@ fn prefetch_loop(
         if cached.as_ref().map(|(v, _, _)| *v) != Some(version) {
             let p = project.lock().unwrap().clone();
             loop_stats.prefetch_rebuilds.fetch_add(1, Ordering::Relaxed);
+            // an audio and a video renderer
+            kt_time::work::add(kt_time::work::Work::EngineBuild, 2);
             let vr = VideoRenderer::new_with_facts(&p, &natives.read().unwrap());
             cached = Some((version, AudioRenderer::new(&p), vr));
         }

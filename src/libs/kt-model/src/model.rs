@@ -959,6 +959,11 @@ pub struct TimelineModel {
     /// not work) and is not part of the undo snapshot — but EVERY snapshot remembers
     /// in what context the edit was made.
     editing: Option<MediaId>,
+    /// How many REAL edits the canon took (input-without-work): a command or a batch whose
+    /// result equals the canon is no edit, so it moves nothing here, pushes no undo step and
+    /// ends no gesture. The application hangs its revision, the player's project and the dirty
+    /// mark on this number, not on "a command was sent".
+    revision: u64,
 }
 
 /// History snapshot: the project and the context in which the edit was made (R.50, B1).
@@ -1150,7 +1155,13 @@ impl TimelineModel {
             redo: Vec::new(),
             last_gesture: None,
             editing: None,
+            revision: 0,
         }
+    }
+
+    /// The number of real edits so far (undo and redo count too).
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// Rebuild the working view from the canon. Called AFTER every edit of the canon —
@@ -1316,7 +1327,12 @@ impl TimelineModel {
             return Ok(Births::default());
         }
         let scratch = self.simulate(&cmds)?;
+        // a batch that changes nothing is no edit: no undo step, no revision (input-without-work)
+        if scratch == self.project {
+            return Ok(Births::default());
+        }
         let births = Births::of(&cmds);
+        self.revision += 1;
         self.push_undo();
         self.project = scratch;
         // BANDS could have survived an edit with other track numbers
@@ -1423,9 +1439,16 @@ impl TimelineModel {
     }
 
     /// Like apply, but a series of calls with one `gesture` token is merged into
-    /// one undo entry (live editing of FX parameters from the window).
-    pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> Result<(), CommandError> {
+    /// one undo entry (live editing of FX parameters from the window). `Ok(false)`: the command
+    /// changed nothing and was not taken as an edit.
+    pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> Result<bool, CommandError> {
         let scratch = self.simulate(std::slice::from_ref(&cmd))?;
+        // an equal value written again is no edit (input-without-work): a frame of a window
+        // that re-sends what the model holds must not end in an undo step or a rebuild
+        if scratch == self.project {
+            return Ok(false);
+        }
+        self.revision += 1;
         if self.last_gesture != Some(gesture) {
             self.push_undo();
         }
@@ -1436,7 +1459,7 @@ impl TimelineModel {
         self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
         self.rebuild_bench();
         self.last_gesture = Some(gesture);
-        Ok(())
+        Ok(true)
     }
 
     fn push_undo(&mut self) {
@@ -1513,6 +1536,7 @@ impl TimelineModel {
             bands: self.bands.clone(),
         };
         self.project = prev.project;
+        self.revision += 1;
         // The snapshot already carries the layout of ITS OWN context — an exchange here would be a
         // second one, and the content would move to the wrong place.
         self.editing = prev.scope.filter(|id| self.project.sequence(*id).is_some());
@@ -1537,6 +1561,7 @@ impl TimelineModel {
             bands: self.bands.clone(),
         };
         self.project = next.project;
+        self.revision += 1;
         self.editing = next.scope.filter(|id| self.project.sequence(*id).is_some());
         self.bands = next.bands;
         self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));

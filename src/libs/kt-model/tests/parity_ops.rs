@@ -587,3 +587,22 @@ fn t141_range_markers() {
     assert_eq!(p3.markers[1], Marker::named(Tick(1000), "x"));
     assert!(p3.markers[2].is_range() && p3.markers[2].duration == Tick(300));
 }
+
+/// Test t1873 (input-without-work): a command or a batch whose result equals the canon is no
+/// edit: no undo step, no revision, and a coalesced gesture is not started by it. A window frame
+/// that re-sends what the model holds used to push the project to the player each time.
+#[test]
+fn t1873_an_equal_command_is_no_edit() {
+    let mut m = TimelineModel::new(base());
+    let gain = m.project().clips.iter().find(|c| c.id == ClipId(12)).unwrap().gain_db;
+    let (rev, depth) = (m.revision(), m.undo_depth());
+    assert_eq!(m.apply_coalesced(Command::SetGain { id: ClipId(12), gain_db: gain }, 5), Ok(false));
+    m.apply(Command::SetGain { id: ClipId(12), gain_db: gain }).unwrap();
+    m.apply_batch(vec![Command::SetGain { id: ClipId(12), gain_db: gain }]).unwrap();
+    assert_eq!((m.revision(), m.undo_depth()), (rev, depth), "an equal value was taken as an edit");
+    // the same gesture token then edits for real: one step, one revision
+    assert_eq!(m.apply_coalesced(Command::SetGain { id: ClipId(12), gain_db: gain + 1.0 }, 5), Ok(true));
+    assert_eq!((m.revision(), m.undo_depth()), (rev + 1, depth + 1));
+    m.undo().unwrap();
+    assert_eq!(m.revision(), rev + 2, "an undo is an edit");
+}

@@ -587,9 +587,17 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             }
         }
         // 3) jpeg -> ColorImage into ready (+LRU)
-        if let Some(j) = jpeg
-            && let Some(ci) = decode_thumb_jpeg(&j)
-        {
+        let ci = match jpeg.as_deref().map(decode_thumb_jpeg) {
+            Some(Some(ci)) => Some(ci),
+            // a sidecar JPEG that does not decode is a failure, not a key that every frame orders
+            // again (input-without-work)
+            Some(None) => {
+                fail(&shared, key);
+                continue;
+            }
+            None => None,
+        };
+        if let Some(ci) = ci {
             let mut ready = shared.ready.lock().unwrap();
             let mut order = shared.order.lock().unwrap();
             ready.insert(key, Arc::new(ci));
