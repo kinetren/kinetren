@@ -26,6 +26,10 @@ const HOT_SAMPLES: usize = 3;
 /// A hot spell rewrites the file this seldom.
 const WRITE_EVERY: Duration = Duration::from_secs(5);
 const TOP_THREADS: usize = 6;
+/// A thread holding this share of a core while every counter stands still is work nobody counts
+/// (input-without-work): the owner's report read "at rest" at 196 % while prefetch and the audio
+/// render rebuilt the engine. The watch's own thread is not counted against it.
+const UNCOUNTED_PERCENT: f32 = 10.0;
 
 /// One second of the program.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -41,9 +45,19 @@ pub struct Sample {
 }
 
 impl Sample {
-    /// Nothing moved: what the performance panel calls rest.
+    /// Nothing moved and nothing held the processor: what the performance panel calls rest.
     pub fn at_rest(&self) -> bool {
+        self.counted_nothing() && !self.uncounted()
+    }
+
+    fn counted_nothing(&self) -> bool {
         self.work.iter().all(|&n| n == 0)
+    }
+
+    /// A thread was busy and no counter saw it: never rest, and a gap in the counters to close.
+    pub fn uncounted(&self) -> bool {
+        self.counted_nothing()
+            && self.threads.iter().any(|(n, p)| n != "load-watch" && *p >= UNCOUNTED_PERCENT)
     }
 }
 
@@ -149,7 +163,13 @@ pub(crate) fn line(s: &Sample, now: u64) -> String {
         now.saturating_sub(s.at),
         s.cpu,
         if threads.is_empty() { "-".to_string() } else { threads.join(", ") },
-        if work.is_empty() { "at rest".to_string() } else { work.join(", ") },
+        if !work.is_empty() {
+            work.join(", ")
+        } else if s.uncounted() {
+            "NO COUNTER MOVED".to_string()
+        } else {
+            "at rest".to_string()
+        },
     )
 }
 
@@ -257,5 +277,25 @@ mod tests {
         let rest = sample_of(&map(&[]), &map(&[]), &vec![0; n], &vec![0; n], 1.0, 9);
         assert!(rest.at_rest());
         assert!(line(&rest, 9).contains("at rest"));
+    }
+
+    /// Test t1880 (input-without-work): a second with prefetch and the audio render busy and no
+    /// counter moving is not rest: the owner's report said "at rest" at 196 % (its lines 482
+    /// and 512). The watch's own tick and a thread at a few percent still are.
+    #[test]
+    fn t1880_a_busy_thread_with_no_counter_is_not_rest() {
+        let map = |v: &[(&str, u64)]| v.iter().map(|(n, t)| (n.to_string(), *t)).collect();
+        let n = Work::ALL.len();
+        let still = vec![0; n];
+        let busy = sample_of(&map(&[("prefetch", 95), ("audio-render", 92)]), &map(&[]), &still, &still, 1.0, 9);
+        assert!(!busy.at_rest() && busy.uncounted());
+        let l = line(&busy, 9);
+        assert!(!l.contains("at rest") && l.contains("NO COUNTER MOVED"), "{l}");
+        let quiet = sample_of(&map(&[("load-watch", 20), ("cpal_alsa_out", 1)]), &map(&[]), &still, &still, 1.0, 9);
+        assert!(quiet.at_rest() && !quiet.uncounted(), "the watch's own tick is rest");
+        // the work the owner's report could not see now has its rows
+        for w in [Work::ModelEdit, Work::ProjectSwap, Work::EngineBuild] {
+            assert!(Work::ALL.contains(&w), "{}", w.name());
+        }
     }
 }

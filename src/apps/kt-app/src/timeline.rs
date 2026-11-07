@@ -3976,6 +3976,14 @@ impl KtApp {
                     if let Some(c) = self.model.clip(id) {
                         let (kind, top) = (c.kind, lane_top(c.kind, c.lane));
                         let lv = level_from_y(pos.y, top, lane_h_at(c.kind, c.lane));
+                        // a held drag hands the player nothing (input-without-work): a swap
+                        // rebuilds the whole engine, and it ran on every frame the button was down
+                        let held = if kind == ClipKind::Audio {
+                            self.live_gain.map(|(i, g)| i == id && g == level_to_gain(lv))
+                                .unwrap_or(c.gain_db == level_to_gain(lv))
+                        } else {
+                            self.live_opacity.map(|(i, o)| i == id && o == lv).unwrap_or(c.opacity == lv)
+                        };
                         // live preview without a history entry: for audio the level
                         // is the volume (the v1 rail range), for video —
                         // opacity
@@ -3984,15 +3992,17 @@ impl KtApp {
                         // the reel ITSELF. In both cases the event the person
                         // drags lies at the ROOT of this project, so there is no longer
                         // any need to search for it through the tree.
-                        let mut p = self.player_project();
-                        if let Some(cm) = p.clips.iter_mut().find(|c| c.id == id) {
-                            if kind == ClipKind::Audio {
-                                cm.gain_db = level_to_gain(lv);
-                            } else {
-                                cm.opacity = lv;
+                        if !held {
+                            let mut p = self.player_project();
+                            if let Some(cm) = p.clips.iter_mut().find(|c| c.id == id) {
+                                if kind == ClipKind::Audio {
+                                    cm.gain_db = level_to_gain(lv);
+                                } else {
+                                    cm.opacity = lv;
+                                }
                             }
+                            self.player.set_project(p);
                         }
-                        self.player.set_project(p);
                         if kind == ClipKind::Audio {
                             self.live_gain = Some((id, level_to_gain(lv)));
                         } else {

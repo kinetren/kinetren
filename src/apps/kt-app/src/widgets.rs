@@ -836,6 +836,7 @@ pub fn event_gain_field(
     let r = ui.add(
         egui::DragValue::new(v)
             .range(min..=max)
+            .clamp_existing_to_range(false)
             .speed(0.1)
             .custom_formatter(|n, _| {
                 if n <= min { mute.to_string() } else { format!("{n:.1} dB") }
@@ -881,6 +882,7 @@ pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Re
         let step = spec.step * 100.0;
         let mut dv = egui::DragValue::new(&mut pct)
             .range(spec.min * 100.0..=spec.max * 100.0)
+            .clamp_existing_to_range(false)
             .speed(step)
             .suffix(" %");
         if step >= 1.0 {
@@ -894,7 +896,15 @@ pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Re
         }
         return r;
     }
-    let mut dv = egui::DragValue::new(v).range(spec.min..=spec.max).speed(spec.step);
+    // `clamp_existing_to_range(false)`: a field never writes from a frame of drawing
+    // (input-without-work). A plugin row stored as f32 holds -0.8 as -0.800000012, below the
+    // passport's floor: clamped on display it read "changed" on EVERY frame, the window wrote it
+    // back, the cast put it below the floor again — each mouse move was an edit and a rebuild of
+    // the whole engine (the owner's VHS Tape, kkt-26.11.07b G5/G7).
+    let mut dv = egui::DragValue::new(v)
+        .range(spec.min..=spec.max)
+        .clamp_existing_to_range(false)
+        .speed(spec.step);
     let suffix = unit_suffix(spec.unit);
     if !suffix.is_empty() {
         dv = dv.suffix(suffix);
@@ -923,7 +933,9 @@ fn param_edit(
             let h = r.rect.height();
             let s = ui.add_sized(
                 [w, h],
-                egui::Slider::new(v, spec.min..=spec.max).show_value(false),
+                egui::Slider::new(v, spec.min..=spec.max)
+                    .clamping(egui::SliderClamping::Edits)
+                    .show_value(false),
             );
             r | s
         }
@@ -1653,22 +1665,14 @@ pub fn param_row_bound_ex<P: HasParams + ?Sized>(
         let mut v = if reset { spec.default } else { base };
         let r = param_edit(ui, spec, &mut v, slider);
         field_probe::note(&spec.name, r.rect);
-        if r.changed() || reset {
-            f.set_param(&spec.name, v);
-            return ParamsChanged::base();
-        }
-        return none;
+        return write_base(f, spec, base, v, (r.changed() && edit_gesture(&r)) || reset);
     };
     let Some(ci) = bind.index_of(&spec.name) else {
         let reset = param_label_widget(ui, pin, pubc, &spec.name, &label);
         let mut v = if reset { spec.default } else { base };
         let r = param_edit(ui, spec, &mut v, slider);
         field_probe::note(&spec.name, r.rect);
-        if r.changed() || reset {
-            f.set_param(&spec.name, v);
-            return ParamsChanged::base();
-        }
-        return none;
+        return write_base(f, spec, base, v, (r.changed() && edit_gesture(&r)) || reset);
     };
     // the label in the COLOR of the curve — it is visible which line the field edits
     // (and which line on the graph to look for with the eyes)
@@ -1695,13 +1699,31 @@ pub fn param_row_bound_ex<P: HasParams + ?Sized>(
     // A key — ONLY from a human gesture: drag, keyboard input (focus /
     // confirmation), a click on the slider or a reset; “changed” without a gesture
     // is not an edit
-    let gesture = r.dragged() || r.has_focus() || r.lost_focus() || r.clicked();
-    if (r.changed() && gesture) || reset {
+    if (r.changed() && edit_gesture(&r)) || reset {
         bound_apply(c, key, bind.at, v);
         // the edit went to the CURVE — so the command MUST also be SetFxAuto
         return ParamsChanged::curve();
     }
     none
+}
+
+/// A human gesture on a field: a drag, keyboard input (focus / confirmation) or a click on the
+/// slider. "Changed" without one is not an edit (R.67 for curves, input-without-work for bases).
+fn edit_gesture(r: &egui::Response) -> bool {
+    r.dragged() || r.drag_stopped() || r.has_focus() || r.lost_focus() || r.clicked()
+}
+
+/// The base of a parameter without a curve: written only on `edit`, and a value the carrier
+/// already holds (after its own clamp and cast) is no edit (input-without-work).
+fn write_base<P: HasParams + ?Sized>(f: &mut P, spec: &ParamSpec, base: f64, v: f64, edit: bool) -> ParamsChanged {
+    if !edit {
+        return ParamsChanged::default();
+    }
+    f.set_param(&spec.name, v);
+    if f.get_param(&spec.name) == Some(base) {
+        return ParamsChanged::default();
+    }
+    ParamsChanged::base()
 }
 
 /// What the field of a parameter with a live curve SHOWS: the value of the selected

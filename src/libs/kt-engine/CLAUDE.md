@@ -310,3 +310,12 @@ opening. This is not a regression — the key is a function of the model, not of
   evaluated at the frame's material tick; `apply_chain_with_mixes` cuts the chain at their stops. A
   masked slot at index 0 is a leading stop: no decode step. Masks join `fx_hash` only when present;
   a track with masks is a track stage. Tests t1270–t1273.
+
+## Swaps and builds are counted; the UI renderer is one per version (input-without-work)
+
+`set_project` bumps `Work::ProjectSwap`; every renderer build (the UI's video one, the audio render
+thread's, the prefetch thread's two, the UI's probe) bumps `Work::EngineBuild`. A new place that builds
+a renderer counts it, or the load watch calls its work rest. The UI thread's audio renderer (meters on
+a pause, the loop's pinned head) lives in `levels_probe` until the project version changes —
+`with_probe`; `set_loop_region` built a whole one per region change, 447 ms on the owner's project
+(t1875).

@@ -34,6 +34,14 @@ pub enum Work {
     ReelJob,
     /// The timeline's events were laid out and painted.
     EventPass,
+    /// The model took a real edit (input-without-work: a command that changed nothing is none).
+    ModelEdit,
+    /// The player took a whole new project: a clone and a wake of both engine threads.
+    ProjectSwap,
+    /// An audio or video renderer was built for a project: the price every swap pays on the
+    /// audio render thread, the prefetch thread and the UI. On the owner's project of 1974
+    /// events one audio build cost 447 ms; it ran on every mouse move and no counter saw it.
+    EngineBuild,
     /// The audio render thread handed out a burst of the stored final mix (cached-range-plays):
     /// no decode, no effect ran for it.
     MixReplay,
@@ -42,7 +50,7 @@ pub enum Work {
 }
 
 impl Work {
-    pub const ALL: [Work; 13] = [
+    pub const ALL: [Work; 16] = [
         Work::UiFrame,
         Work::Composite,
         Work::DeviceSubmit,
@@ -54,6 +62,9 @@ impl Work {
         Work::FxThumb,
         Work::ReelJob,
         Work::EventPass,
+        Work::ModelEdit,
+        Work::ProjectSwap,
+        Work::EngineBuild,
         Work::MixReplay,
         Work::CompositeReplay,
     ];
@@ -71,6 +82,9 @@ impl Work {
             Work::FxThumb => "fx_thumbs",
             Work::ReelJob => "reel_jobs",
             Work::EventPass => "event_passes",
+            Work::ModelEdit => "model_edits",
+            Work::ProjectSwap => "project_swaps",
+            Work::EngineBuild => "engine_builds",
             Work::MixReplay => "mix_replays",
             Work::CompositeReplay => "composite_replays",
         }

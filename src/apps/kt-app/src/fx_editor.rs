@@ -1601,6 +1601,22 @@ fn pan_key_rows() -> (
     )
 }
 
+
+/// Three u8 colour rows from a colour button: ROUNDED, and written only when they differ (input-without-work).
+/// The popup gives the colour back through a float round trip; `as u8` truncated 199.99998 to 199,
+/// so an open popup drifted the colour down and wrote it on every frame.
+pub(crate) fn write_rgb8(p: &mut kt_model::PluginSlot, names: [&str; 3], col: [f32; 3]) -> bool {
+    let mut changed = false;
+    for (n, v) in names.iter().zip(col) {
+        let v = (v.clamp(0.0, 1.0) * 255.0).round() as f64;
+        if p.get(n) != Some(v) {
+            p.set(n, v);
+            changed = true;
+        }
+    }
+    changed
+}
+
 pub(crate) fn draw_video_fx_params(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
@@ -1752,10 +1768,7 @@ pub(crate) fn draw_video_fx_params(
                 let mut col = key.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::KEY_COLOR));
                 if ui.color_edit_button_rgb(&mut col).changed() {
-                    for (n, v) in key.iter().zip(col) {
-                        p.set(n, (v * 255.0) as u8 as f64);
-                    }
-                    ch.base = true;
+                    ch.base |= write_rgb8(p, key, col);
                 }
             });
         }
@@ -1775,10 +1788,7 @@ pub(crate) fn draw_video_fx_params(
                 let mut col = line.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::LINE_COLOR));
                 if ui.color_edit_button_rgb(&mut col).changed() {
-                    for (n, v) in line.iter().zip(col) {
-                        p.set(n, (v * 255.0) as u8 as f64);
-                    }
-                    ch.base = true;
+                    ch.base |= write_rgb8(p, line, col);
                 }
             });
         }
@@ -1787,25 +1797,18 @@ pub(crate) fn draw_video_fx_params(
             let rgb = |p: &kt_model::PluginSlot, n: [&str; 3]| -> [f32; 3] {
                 n.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0)
             };
-            let set = |p: &mut kt_model::PluginSlot, n: [&str; 3], c: [f32; 3]| {
-                for (n, v) in n.iter().zip(c) {
-                    p.set(n, (v * 255.0) as u8 as f64);
-                }
-            };
             ui.horizontal(|ui| {
                 let shadow = ["shadow_r", "shadow_g", "shadow_b"];
                 let mut sh = rgb(p, shadow);
                 ui.label(tr(k::fx::SHADOW_COLOR));
                 if ui.color_edit_button_rgb(&mut sh).changed() {
-                    set(p, shadow, sh);
-                    ch.base = true;
+                    ch.base |= write_rgb8(p, shadow, sh);
                 }
                 let high = ["high_r", "high_g", "high_b"];
                 let mut hi = rgb(p, high);
                 ui.label(tr(k::fx::HIGH_COLOR));
                 if ui.color_edit_button_rgb(&mut hi).changed() {
-                    set(p, high, hi);
-                    ch.base = true;
+                    ch.base |= write_rgb8(p, high, hi);
                 }
             });
         }
@@ -1816,10 +1819,7 @@ pub(crate) fn draw_video_fx_params(
                 let mut col = tint.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::TINT));
                 if ui.color_edit_button_rgb(&mut col).changed() {
-                    for (n, v) in tint.iter().zip(col) {
-                        p.set(n, (v * 255.0) as u8 as f64);
-                    }
-                    ch.base = true;
+                    ch.base |= write_rgb8(p, tint, col);
                 }
             });
         }
