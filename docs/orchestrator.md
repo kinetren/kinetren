@@ -111,6 +111,10 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 - **`docs/found-defects.md` is the one list** of what any agent saw and did not fix: what a person
   suffers, where, the evidence, the state, the verdict. A remark in a report, in a session's memory
   or on a proposal card does not count as recorded.
+- **A runaway test kills only itself** (2026-11-07, 20:55: a new test of `cached-range-plays`,
+  `mix_player`, took 55 GB of 61 with no swap; the OOM killer took the Claude app and all three
+  executors with it). Every brief says: heavy or new test binaries and the program on a big project
+  run under a memory cap, `systemd-run --user --scope -p MemoryMax=12G -p MemorySwapMax=0 <cmd>`.
 - **Discussion is not a go** (owner, 2026-11-07, stopped a start: "я не говорил ИДТИ ДЕЛАТЬ. МЫ НЕ
   ОБСУДИЛИ ЕЩЕ ДО КОНЦА!"). An executor starts only on his explicit word to start; an answer, a file
   or a folder he sends is part of the discussion, not that word. Every brief carries the class rule
