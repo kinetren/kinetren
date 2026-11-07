@@ -276,3 +276,20 @@ must not undo:
   switch_lines`) the next head plays, so field B's tail carries head A's loss, in sound as in picture.
 - **Own codec, not the system FFmpeg's**: the render thread opens no codec, FFmpeg's bytes are not
   frozen across versions, and a real decoder cannot be told which packets to lose.
+
+## What an effect costs (audio-fx-cost, 2026-11-08)
+
+The owner (kkt-26.11.07b item 5): "врубаю vhs tape на видео - терпимо, добавляю на аудио - всё". The
+mechanism was per-sample work the sound did not need, in every kernel with the pattern: on the SSE2
+build each `floor`/`round`/`trunc`/`fract` was a C-library call (ten of 21 kernels), and pure math of a
+resting knob (`10^(dB/20)`) was redone per sample. The kernels now run at the CPU's level
+(`kt_plugin_api::fast!`) and memoise such math (`dsp::Memo`); VHS Tape's sound lost its other
+needless work (a `pow` that is a reciprocal square root, the curve of an unheard linear track, a
+33-cell dropout walk per sample, a 64-sample shift per sample). Nothing moved a byte: t1981 holds every
+kind's output, printed before the change, on both paths. A cost is read as a ratio to a reference
+kernel measured in the same run (t1980, `kt-cli fx-cost`), never in milliseconds on a busy machine.
+Release, in reference kernels: VHS Tape's sound 52.8 → 22.2 (heavy 77 → 30.5), gate 5.8 → 0.6,
+limiter 6.0 → 1.2, distortion 4.0 → 0.35, bitcrusher 3.4 → 0.4. Left as they are, with reasons and
+the full walk of the class: `changes/archive/2026-11-08-audio-fx-cost/design.md` — the phaser's
+per-sample coefficients (a sound decision), the compressor's per-sample `log10`, the LFO's walk of
+its rate keys, Camera ISP's and Datamosh's codec (the simulation itself).

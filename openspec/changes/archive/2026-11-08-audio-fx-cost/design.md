@@ -98,6 +98,13 @@ His project (`haski-relinked.kt`, copied to the scratch folder, release):
   and the renderer builds (`cached-range-plays`). The effects' cost was real and is now lower, but on
   his machine it was not the thing that made the program unusable — the report says so plainly.
 
+At rest (the owner's rule "the program at rest costs nothing, and this is tested"): the live scenario
+`idle` on the heavy showcase (ten releases under Slowed, VHS Tape and Camera ISP), this branch with the
+one-line `#[cfg(test)]` fix of the base it lacked (44b89773 on the orchestrator's branch): green —
+a pause, a hover over the preview and the status bar, the effects window open with VHS Tape's deck,
+a drag to the dark clip's floor and the hover after it: no counted work, the engine threads 0 % of a
+core, 3 % of a core on a pause with the effects window open.
+
 ## Decisions
 
 - **Same bytes, everywhere.** The owner: "мы сейчас не трогаем vhs-и всякие фильтры по существу". No
