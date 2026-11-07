@@ -2728,6 +2728,14 @@ Then, as I was starting executors on his folder of media: "Останавлив�
 will look through a crack at one panel and not study the rest". Now a rule in CLAUDE.md (a problem
 is a class, examined in every subsystem) and in `docs/orchestrator.md` (discussion is not a go).
 
+The six requests, renamed by mechanism: `input-without-work` (input that changes nothing does
+work, in every window and path), `ui-frame-cost` (a frame's cost grows with the project),
+`cached-range-plays` (a covered range is decoded and composed again), `audio-fx-cost` (every audio
+effect against real time), `telemetry-journal` (one journal with real time), `window-content-reach`
+(content under the fold in every window). Asked whether a "rendered" range keeps its sound after the
+effects (a), changing invariant 2, or only the effects get faster (b), he chose: "вариант А." Then:
+"давай делать".
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
