@@ -51,9 +51,19 @@ pub fn backends_many(n: usize) -> ExportBackends {
     ExportBackends { video_gpu_more: more.collect(), ..backends() }
 }
 
-/// What the last frame of the shared engine ran.
-pub fn last_cost() -> kt_fx::video::FrameCost {
-    engine().last_cost()
+/// A composite on the shared engine and what it ran, read under the same hold: the engine is one
+/// per test process, so a cost read after the composite may be another test's frame. Never through
+/// the readback memo: a frame another test composed first would cost nothing.
+pub fn compose_measured(
+    video: &VideoRenderer,
+    cache: &BurstCache,
+    t: Tick,
+    q: Quality,
+) -> (Vec<u8>, bool, kt_fx::video::FrameCost) {
+    let mut out = Vec::new();
+    let (complete, cost) =
+        engine().execute_measured(&video.frame_plan(cache, t, q), &mut out).expect("GPU execute");
+    (out, complete, cost)
 }
 
 pub fn compose(video: &VideoRenderer, cache: &BurstCache, t: Tick, q: Quality) -> (Vec<u8>, bool) {
@@ -132,6 +142,24 @@ pub fn mix(dst: &mut Vec<u8>, a: &VideoFrame, b: &VideoFrame, k: u32, m: TransMi
 
 /// A chain over one frame, through the composite.
 pub fn chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame {
+    let plan = chain_plan(fx, frame, ctx);
+    let mut rgba = Vec::new();
+    engine().execute_into(&plan, &mut rgba).expect("GPU execute");
+    let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
+    Frame { w: ctx.out_w, h: ctx.out_h, rgba, has_alpha }
+}
+
+/// `chain` and what it ran, under one hold of the shared engine (see `compose_measured`).
+pub fn chain_measured(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> (Frame, kt_fx::video::FrameCost) {
+    let plan = chain_plan(fx, frame, ctx);
+    let mut rgba = Vec::new();
+    let (_, cost) = engine().execute_measured(&plan, &mut rgba).expect("GPU execute");
+    let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
+    (Frame { w: ctx.out_w, h: ctx.out_h, rgba, has_alpha }, cost)
+}
+
+/// The one-layer plan of `chain`.
+fn chain_plan<'a>(fx: &'a [FxInstance], frame: Frame, ctx: &VideoFxCtx) -> FramePlan<'a> {
     let hash = xxhash_rust::xxh3::xxh3_64(format!("{fx:?}").as_bytes());
     let content = xxhash_rust::xxh3::xxh3_64(&frame.rgba);
     let src = LayerSrc {
@@ -156,9 +184,5 @@ pub fn chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame {
         masks: Vec::new(),
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
-    let plan = FramePlan { t: Tick(ctx.burst_index), out_w: ctx.out_w, out_h: ctx.out_h, layers };
-    let mut rgba = Vec::new();
-    engine().execute_into(&plan, &mut rgba).expect("GPU execute");
-    let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
-    Frame { w: ctx.out_w, h: ctx.out_h, rgba, has_alpha }
+    FramePlan { t: Tick(ctx.burst_index), out_w: ctx.out_w, out_h: ctx.out_h, layers }
 }

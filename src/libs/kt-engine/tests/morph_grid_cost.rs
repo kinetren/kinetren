@@ -102,10 +102,10 @@ fn frame(vr: &mut VideoRenderer, t: Tick) -> (Vec<u8>, kt_fx::video::FrameCost) 
             std::sync::Arc::new(f),
         );
     }
-    let (out, complete) = kt_gpu::testkit::compose(vr, &cache, t, q);
+    // the frame and its cost under one hold of the shared engine: t946 composes on it in parallel
+    let (out, complete, cost) = kt_gpu::testkit::compose_measured(vr, &cache, t, q);
     assert!(complete, "frame {t:?}: all layers are warm");
-    use kt_engine::VideoGpuExec as _;
-    (out, kt_gpu::testkit::engine().last_cost())
+    (out, cost)
 }
 
 /// The range hash of the owner's case, recorded on the CPU composite before any executor change
@@ -201,4 +201,38 @@ fn t945_strength_zero_skips_the_layer() {
     // one frame in (strength 1/15): the grid runs
     let (_, cost) = frame(&mut vr, Tick(SEC / 30));
     assert!(cost.subsamples > 0, "a strength above 0 must run the layer: {cost:?}");
+}
+
+/// t1939: a frame's cost is read with the frame. The test kit shares ONE engine per test process,
+/// and `last_cost` after a composite is whatever composed last: under load t946 (in parallel)
+/// composed between t946b's frame and its read, and t946b counted 318720 sub-samples of another
+/// frame against its bound of 82944. Here the interleaving is made on purpose: frame A, then frame
+/// B on the same engine; A's measured cost is A's, while the engine's last cost is B's.
+#[test]
+fn t1939_a_frames_cost_is_read_with_the_frame() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    kt_plugins_builtin::install();
+    let p = owner_case();
+    let vr = VideoRenderer::new(&p);
+    let q = kt_media::Quality { width: W, height: H };
+    let warm = |t: Tick| {
+        use kt_media::MediaSource;
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        let mut synth = SyntheticSource::new(Tick(SEC * 60), AudioPattern::Silence);
+        for (media, src_pts, dq) in vr.layers_at(t, q) {
+            let f = synth.read_video_frame(src_pts, Some(dq)).unwrap();
+            cache.insert_video(kt_engine::source_id(media), Some(dq), kt_engine::video_cache_idx(src_pts), std::sync::Arc::new(f));
+        }
+        cache
+    };
+    let (ca, cb) = (warm(Tick(2 * SEC)), warm(Tick(SEC / 2)));
+    let (_, _, a) = kt_gpu::testkit::compose_measured(&vr, &ca, Tick(2 * SEC), q);
+    let (_, _, b) = kt_gpu::testkit::compose_measured(&vr, &cb, Tick(SEC / 2), q);
+    assert_ne!(a.subsamples, b.subsamples, "scene guard: the two frames cost differently");
+    use kt_engine::VideoGpuExec as _;
+    assert_eq!(kt_gpu::testkit::engine().last_cost(), b, "the engine's last cost is the last frame's");
+    let (_, _, again) = kt_gpu::testkit::compose_measured(&vr, &ca, Tick(2 * SEC), q);
+    assert_eq!(again, a, "a measured frame reports its own cost, whatever composed before it");
 }

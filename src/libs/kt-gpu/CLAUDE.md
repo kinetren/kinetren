@@ -116,6 +116,11 @@ is no picture, and an export refuses.
 
 ## Tests
 
+- **A cost is read with its frame** (t1939): the test kit's engine is one per test process, so
+  `execute_into` then `last_cost` reads whatever composed last — a parallel test's frame under load.
+  Measure through `testkit::compose_measured` / `chain_measured` (`GpuFxEngine::execute_measured`,
+  one hold, no readback memo: a frame another test composed first would cost nothing).
+
 - **The picture is held by stored frames** (compute-kernels-render, D5): `references/` keeps the last
   output of the deleted CPU composite, one file per test, read through `reference.rs` with the same
   `FrameTol`. The tests of other crates compose through `testkit.rs`: one engine per test process.
