@@ -37,3 +37,7 @@ Why: the cache is quality-exact; a clip with a step, warmed properly, would look
 - **WHEN** a range is played once with a device and an edit then changes one event in it
 - **THEN** the bars' final layer holds the played moments and frames, and after the edit the edited event's moments leave it while the others stay
 - **TEST** t1936 (`src/libs/kt-engine/tests/final_runs.rs`)
+
+#### Scenario: A covered loop plays from what is kept, live
+- **PATH** open the heavy showcase with a half-second loop over the composition → press Space → the first lap composes, then the strips over the loop turn bright → the picture plays at the project's rate, no frame is composed, no burst runs the effects, nothing is decoded, no underrun → press Space → nothing runs
+- **TEST** live scenario `src/scripts/live/cached_range.py`
