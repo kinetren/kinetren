@@ -3235,6 +3235,8 @@ impl KtApp {
 
     pub fn note(&mut self, msg: impl Into<String>) {
         let text = msg.into();
+        // warnings and refusals reach the telemetry journal through `kt-app.log`; a plain notice here
+        crate::tele_journal::record(crate::tele_journal::Kind::Log, &format!("notice: {text}"));
         self.push_notice(Severity::Info, text.clone());
         self.status = Some((text, std::time::Instant::now()));
     }
@@ -4116,7 +4118,6 @@ impl KtApp {
 
     fn push_notice_with(&mut self, severity: Severity, text: String, details: Option<String>) {
         let at = chrono_like_now();
-        crate::tele_journal::record(crate::tele_journal::Kind::Log, &format!("notice {severity:?}: {text}"));
         // Consecutive duplicates collapse into “text ×N”, but the counter of
         // unread items ALWAYS grows (R.49, item 350): earlier the early return
         // suppressed it too, and a second “save failed” in a row did not colour
@@ -9580,7 +9581,10 @@ impl KtApp {
             crate::tele_journal::Kind::Mark,
             if note.is_empty() { "the person marked this moment" } else { note },
         );
-        self.note(crate::tf!(k::msg::MOMENT_MARKED, chrono_like_now()));
+        // the bell and the status line say so; the journal already has the MARK
+        let text = crate::tf!(k::msg::MOMENT_MARKED, chrono_like_now());
+        self.push_notice(Severity::Info, text.clone());
+        self.status = Some((text, std::time::Instant::now()));
     }
 
     /// The telemetry journal's tail in Diagnostics, outside the window's scroll (D5): its head row

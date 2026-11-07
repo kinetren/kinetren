@@ -8,6 +8,6 @@
 - [x] 2.1 Actions: edits, undo/redo, project open/save, windows, the selected effect, the playback summary (t1961)
 - [x] 2.2 The mark: `Cmd::MarkMoment` (Ctrl+Alt+M), the Diagnostics button and note; shortcuts.md; catalogs
 - [x] 2.3 Diagnostics: the journal pane outside the scroll, "Open folder" (t1968, t1969)
-- [ ] 3.1 Live scenario `journal`: gestures, a mark, read back in order with times
-- [ ] 3.2 Cost at rest measured on the heavy showcase (the journal thread's switches, the counters)
-- [ ] 3.3 Archive: specs merged, registry rows G6/G10 and found-defects 109 moved, What's new line
+- [x] 3.1 Live scenario `journal`: gestures, a mark, read back in order with times
+- [x] 3.2 Cost at rest measured on the heavy showcase (the journal thread's switches, the counters)
+- [x] 3.3 Archive: specs merged, registry rows G6/G10 and found-defects 109 moved, What's new line

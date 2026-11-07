@@ -97,6 +97,24 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **The journal is per run** (`journal::start_run`, a fan of four previous runs, a header with the
   version, OS, FFmpeg major, pid and local time with offset); `last_run_tail` is what the window shows.
 
+## The telemetry journal (telemetry-journal)
+
+- **One local file of what happened and what the person did** (`tele_journal.rs`,
+  `<data_dir>/telemetry-journal.log`, never sent, never read by `telemetry.rs`). `record(kind, text)`
+  stamps at the CALL: never record a past event later with `record` — hand its moment in with
+  `record_at` (a run of repeats, a long frame stamped at its start). A writer thread blocked in
+  `recv` appends without a buffer; it must never get a timer (t1964).
+- **A new place where the person acts gets a record**, or a complaint about it cannot be placed: edits
+  come by themselves through `telemetry::signal` (`on_signal`), windows through the shell, the effect
+  selection through `chain_strip`; anything else calls `tele_journal::record(Kind::Act, …)` in
+  English, with no path (`project_act` names a file by its file name; `file_names_only` strips the
+  rest).
+- **The Diagnostics notes are the load watch's** (`load_watch::probe_notes`, at the second they
+  happen): `sample_perf` runs inside a frame, which on a pause is the next mouse move. Underruns come
+  from the flight ring's SNAP through `flight_sink`. A new problem note goes there, not into a frame.
+- **Tests bind their own journal** (`tele_journal::testing::bind`) BEFORE building the app: the flight
+  sink takes the journal current where the player is built. Without a binding `record` is a no-op.
+
 ## Tests and the person's data directory (render-finish-crash)
 
 - **Every path of the program's data hangs off `journal::data_dir()`**, and in a test build it answers

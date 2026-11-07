@@ -100,3 +100,44 @@ note field and "Open folder" on its head row; the rest scrolls. The class across
 - Writing the journal into `kt-app.log`: that file is per run (the crash window reads one run) and
   rotates by run; the journal must read across a crash and its restart.
 - A per-thread ring merged at read time: the order of records across threads would depend on reading.
+
+## Decisions taken while applying
+
+- **The journal speaks English, Diagnostics shows it as written.** The file is the evidence a person
+  hands over (the render log's rule: "the file is for a report — English"); two languages in one
+  file would make a report half unreadable to whoever reads it. The former Diagnostics notes were
+  half English already ("render underruns", "prefetch thrash"); their catalog keys (`[perf.note]`)
+  are gone. Diagnostics colours the person's marks and the problem notes.
+- **The record's time is the event's; the file's order is the order of recording.** A note of a long
+  UI frame is stamped at the frame's START and recorded at its end, so it can stand after a load
+  second stamped later. Sorting would need a buffer, i.e. a delay; the reader sorts by the stamp.
+- **The key is Ctrl+Alt+M in every style.** Ctrl+Shift+M would steal Premiere's and After Effects'
+  Render through the lax lookup (an unbound Shift falls off: Ctrl+M). No style binds Ctrl+Alt+M and
+  no modifier falls off onto it. It is added to the owner's own table too: a new chord, no existing
+  binding moved (t1700 holds the old ones).
+- **t1839 lost its "3 s ago" check on purpose.** That line asserted the relative stamp the owner
+  complained about; it now asserts the opposite (no "ago"), and t1967 holds the report's clock time.
+- **The underrun notes come from the playback black box's SNAP**, written by the render thread in the
+  second they happen; the load watch's probe raises the cache and media notes.
+- **Paths become file names inside the journal** (`file_names_only`): a notice says "Saved:
+  /home/…/haski.kt"; the journal keeps "haski.kt". A path with spaces keeps a word of a directory at
+  worst, never the whole path.
+- **A notice is journaled once**: warnings and refusals through the `kt-app.log` mirror, plain notices
+  in `note()`; the mark's own notice is not journaled again.
+
+## Measured at rest (heavy showcase)
+
+2026-11-08, the debug build (dev profile, opt 1) on Xvfb with llvmpipe, the project of
+`kt-cli showcase --heavy` on `sources/showcase-media` (9 sources, 1357 events, Slowed, VHS Tape and
+Camera ISP), opened and left 90 s to calm, then three windows of 30 s, read from `/proc`:
+
+| Window | journal thread switches | journal file | load watch switches | whole process |
+|---|---|---|---|---|
+| rest | 0 | +0 bytes | 37 | 0.6 % of a core |
+| pointer moving over the preview | 31 | +3869 bytes (a LOAD line per busy second) | 67 | 421 % (llvmpipe; the UI thread 80 %) |
+| rest again | 0 | +0 bytes | 42 | 0.7 % |
+
+The journal costs nothing at rest: no wake-up and no write. While busy it wakes once per busy second
+and took no measurable processor time. The load watch's own second (one read of `/proc/self/task`)
+is idle-cpu's and unchanged. The 421 % of a moving pointer over the preview is the cost of a UI frame
+on this software device — `ui-frame-cost` (kkt-26.11.07b G1), not this change.

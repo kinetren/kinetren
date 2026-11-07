@@ -250,7 +250,12 @@ pub(crate) fn file_names_only(text: &str) -> std::borrow::Cow<'_, str> {
         .split(' ')
         .map(|w| match w.rfind(['/', '\\']) {
             // a URL-ish or a fraction like "1/2" stays readable: only a piece with a letter goes
-            Some(i) if w[..i].chars().any(|c| c.is_alphabetic()) || w.starts_with(['/', '\\', '~']) => &w[i + 1..],
+            Some(i)
+                if i + 1 < w.len()
+                    && (w[..i].chars().any(|c| c.is_alphabetic()) || w.starts_with(['/', '\\', '~'])) =>
+            {
+                &w[i + 1..]
+            }
             _ => w,
         })
         .collect();
@@ -582,6 +587,10 @@ mod tests {
         j.record_at(at, Kind::Play, "WRAP ×100");
         wait_written(&j, 2);
         assert!(read(&j).lines().nth(1).unwrap().starts_with("2025-11-07 10:00:01.750+03:00"));
+        // a path keeps its file name; a lone slash between words stays
+        assert_eq!(file_names_only("Saved: /home/e/My Videos/haski.kt"), "Saved: My haski.kt");
+        assert_eq!(file_names_only("render 0 / callback 2"), "render 0 / callback 2");
+        assert_eq!(file_names_only("C:\\Users\\e\\a.kt ok"), "a.kt ok");
         // a line break of a message cannot split a record
         j.record(Kind::Log, "two\nlines");
         wait_written(&j, 3);
