@@ -25,6 +25,7 @@ mod diag_tests;
 mod idle_tests;
 #[cfg(test)]
 mod input_work_tests;
+mod frame_cost_tests;
 mod envclip;
 mod deck_face;
 mod eq_graph;
@@ -33,6 +34,7 @@ mod ffmpeg_setup;
 mod font_tests;
 mod fx_editor;
 mod fx_registry;
+mod frame_cost;
 mod fx_thumbs;
 mod gen_ui;
 mod geomctl;

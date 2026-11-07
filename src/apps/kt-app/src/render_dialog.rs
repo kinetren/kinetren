@@ -839,8 +839,8 @@ impl KtApp {
                 // the unavailable sources (rules 16, 19).
                 // The “where to change it” address is the track header, and it is named
                 // by the track's own name.
-                let doc = self.model.document();
-                let silenced = kt_model::silenced_tracks(&doc);
+                let doc = self.model.doc_arc();
+                let silenced = kt_model::silenced_tracks(&*doc);
                 if !silenced.is_empty() {
                     ui.add_space(4.0);
                     let col = egui::Color32::from_rgb(255, 190, 120);

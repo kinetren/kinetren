@@ -120,7 +120,7 @@ impl KtApp {
     /// standing inside the strip, its record in `project.sequences` holds
     /// the contents of the root.
     pub fn published_of(&self, seq: MediaId) -> Vec<PublishedParam> {
-        self.model.document().sequence(seq).map(|s| s.published.clone()).unwrap_or_default()
+        self.model.doc().sequence(seq).map(|s| s.published.clone()).unwrap_or_default()
     }
 
     /// How many overrides of this handle live in the WHOLE document.
@@ -129,7 +129,7 @@ impl KtApp {
     /// kills them everywhere in one history step (`reconcile_published`), and
     /// it is exactly this number that must be promised.
     pub fn override_uses(&self, seq: MediaId, id: PubId) -> usize {
-        let doc = self.model.document();
+        let doc = self.model.doc();
         let hit =
             |c: &kt_model::ClipEvent| c.media == seq && c.overrides.iter().any(|o| o.pub_id == id);
         doc.clips.iter().filter(|c| hit(c)).count()
@@ -292,7 +292,7 @@ impl KtApp {
         let mut cancel = false;
         let mut open = true;
         // LIVE preview: what exactly will go outside under this name
-        let doc = self.model.document();
+        let doc = self.model.doc_arc();
         let media: Vec<(MediaId, String)> =
             doc.media.iter().map(|m| (m.id, m.path.clone())).collect();
         let shown = doc
@@ -364,7 +364,7 @@ impl KtApp {
     pub(crate) fn draw_published_win(&mut self, ctx: &egui::Context) {
         let Some(mut w) = self.published_win.take() else { return };
         // the strip vanished under undo — the window has nothing to talk about
-        if self.model.document().sequence(w.seq).is_none() {
+        if self.model.doc().sequence(w.seq).is_none() {
             return;
         }
         // the window has ONE strip and it is named — the commands carry its address (R.63 item 11)
@@ -380,7 +380,7 @@ impl KtApp {
             "{} — {}",
             tr(k::pubp::LIST_TITLE),
             self.model
-                .document()
+                .doc()
                 .sequence(w.seq)
                 .map(|s| crate::i18n::reel_display_name(&s.name).into_owned())
                 .unwrap_or_default()
@@ -390,7 +390,7 @@ impl KtApp {
         // IN PARALLEL with `list` — the order of rows changes by a command, that is,
         // from the next frame, and they cannot diverge within a frame.
         let specs: Vec<Option<kt_model::ParamSpec>> = {
-            let doc = self.model.document();
+            let doc = self.model.doc();
             list.iter().map(|p| doc.addr_spec(Some(w.seq), &p.target)).collect()
         };
         let mut open = w.open;

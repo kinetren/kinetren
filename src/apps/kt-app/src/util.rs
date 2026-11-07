@@ -447,7 +447,25 @@ pub fn mask_text(input: &str) -> (String, String) {
 /// Show a folder in the system's file manager (ffmpeg-download-window-info, D5): `explorer.exe`
 /// on Windows, `xdg-open` elsewhere, detached and never waited on — the window must not freeze
 /// on a file manager that takes its time. A spawn failure comes back as text for the window.
+///
+/// A test or a live scenario never reaches the person's desktop: the live bench runs on its own
+/// display, but `xdg-open` goes over the session bus to the person's file manager, and every run
+/// of the load scenario opened its data folder on the owner's screen (2026-11-07). Under
+/// `cfg!(test)` or `KT_NO_EXTERNAL_OPEN` nothing is spawned; the path is appended to the file
+/// `KT_OPEN_LOG` names, so a scenario can still check what the button asked for.
 pub fn open_in_file_manager(path: &Path) -> Result<(), String> {
+    if cfg!(test) || std::env::var_os("KT_NO_EXTERNAL_OPEN").is_some() {
+        if let Some(log) = std::env::var_os("KT_OPEN_LOG") {
+            use std::io::Write;
+            let line = format!("{}\n", path.display());
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log)
+                .and_then(|mut f| f.write_all(line.as_bytes()));
+        }
+        return Ok(());
+    }
     let program = if cfg!(windows) { "explorer.exe" } else { "xdg-open" };
     std::process::Command::new(program)
         .arg(path)

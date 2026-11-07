@@ -85,7 +85,7 @@ impl KtApp {
 
     fn draw_one_transition_editor(&mut self, ctx: &egui::Context, ed: &mut TransitionEditor) {
         // the publish document — one clone per window draw (R.59)
-        let pub_doc = self.model.document();
+        let pub_doc = self.model.doc_arc();
         let Some(cur) = self.model.project().transitions.iter().find(|t| t.id == ed.id).cloned()
         else {
             ed.open = false; // the transition died (clips were pulled apart) — the window goes away
