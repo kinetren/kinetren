@@ -1,12 +1,18 @@
 //! The load watch (idle-cpu, kkt-26.11.07 item E3: the owner had no tool to bring proof with, and
 //! might not reach a menu in such lag). A thread of its own, on from the start, with no setup: once a second it reads
-//! which threads held the processor and which work counters moved, and keeps the last quarter of
-//! an hour in memory. A spell of load writes the file by itself, so a person in such lag has
+//! which threads held the processor and which work counters moved, and hands each busy second to
+//! the telemetry journal. A spell of load writes the file by itself, so a person in such lag has
 //! nothing to reach: `load-report.txt` in the data directory is there to hand over. It stays on the
 //! machine: nothing in telemetry reads it.
 //!
 //! The price at rest is one read of `/proc/self/task` a second and no write (t1839). It never
 //! touches the UI thread, and the UI only reads the last sample.
+//!
+//! telemetry-journal (kkt-26.11.07b G6): each busy second goes into the telemetry journal AT that
+//! second, and the report is the journal's last quarter of an hour with clock time — it said "487 s
+//! ago" from the moment it was written, and the owner could not say what moment was what. The
+//! Diagnostics notes (evictions, no-read drops, low video hit, offline media) are raised here too,
+//! at the second they happen: inside a UI frame they waited for the next mouse move (t1966).
 
 use kt_time::work::{self, Work};
 use std::path::PathBuf;
@@ -15,8 +21,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 pub const REPORT_FILE: &str = "load-report.txt";
-/// A quarter of an hour of seconds.
-const KEEP: usize = 900;
 const PERIOD: Duration = Duration::from_secs(1);
 /// Under a live scenario: the scenario's own limits read this often.
 const BENCH_PERIOD: Duration = Duration::from_millis(250);
@@ -61,7 +65,62 @@ impl Sample {
     }
 }
 
+/// What the watch reads of the player to raise the Diagnostics notes; handed over by each `KtApp`.
+pub struct PlayerProbe {
+    pub cache: std::sync::Arc<kt_cache::BurstCache>,
+    pub transport: std::sync::Arc<kt_engine::transport::Transport>,
+    pub offline: std::sync::Arc<Mutex<std::collections::HashSet<kt_model::MediaId>>>,
+}
+
+/// A spike of evictions: this many per second.
+const EVICTION_SPIKE: f32 = 500.0;
+/// A low video hit while playing, said at most this often.
+const LOW_HIT_PERCENT: f32 = 80.0;
+const LOW_HIT_EVERY: Duration = Duration::from_secs(10);
+
+/// What the previous sample saw of the probe.
+#[derive(Default)]
+pub(crate) struct NoteState {
+    cache: Option<kt_cache::CacheStats>,
+    offline: usize,
+    hit_warned: Option<Instant>,
+}
+
 static LAST: Mutex<Option<Sample>> = Mutex::new(None);
+static PROBE: Mutex<Option<PlayerProbe>> = Mutex::new(None);
+
+/// The player the notes watch from now on (a new project builds a new one).
+pub fn watch(p: PlayerProbe) {
+    *PROBE.lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
+}
+
+/// The notes of one second: what moved in the cache and the media since the previous one.
+pub(crate) fn probe_notes(p: &PlayerProbe, st: &mut NoteState, dt: f32) -> Vec<String> {
+    let mut out = Vec::new();
+    let now = p.cache.stats();
+    let was = st.cache.replace(now).unwrap_or(now);
+    let per_s = |n: u64| n as f32 / dt.max(0.001);
+    let ev = now.evictions.saturating_sub(was.evictions);
+    if per_s(ev) > EVICTION_SPIKE {
+        out.push(format!("cache eviction spike: {:.0}/s, the cache is too small", per_s(ev)));
+    }
+    let unread = now.unused_evictions.saturating_sub(was.unused_evictions);
+    if unread > 0 {
+        out.push(format!("prefetch thrash: {unread} cache entries dropped before the first read"));
+    }
+    let (vh, vm) = (now.video_hits.saturating_sub(was.video_hits), now.video_misses.saturating_sub(was.video_misses));
+    let hit = if vh + vm > 0 { vh as f32 / (vh + vm) as f32 * 100.0 } else { 100.0 };
+    if hit < LOW_HIT_PERCENT && p.transport.is_playing() && st.hit_warned.is_none_or(|t| t.elapsed() >= LOW_HIT_EVERY) {
+        st.hit_warned = Some(Instant::now());
+        out.push(format!("video cache hit {hit:.0} % while playing: decoding cannot keep up"));
+    }
+    let offline = p.offline.lock().map_or(st.offline, |o| o.len());
+    if offline != st.offline {
+        out.push(format!("media availability changed: offline {offline}"));
+        st.offline = offline;
+    }
+    out
+}
 static WRITE: AtomicBool = AtomicBool::new(false);
 
 /// The last second, for the performance panel.
@@ -149,8 +208,8 @@ fn sample_of(
     Sample { at, cpu, threads, work }
 }
 
-/// A line of the report: how long ago, the load, who held it, what ran.
-pub(crate) fn line(s: &Sample, now: u64) -> String {
+/// A second as the journal records it: the load, who held it, what ran. The time is the journal's.
+pub(crate) fn line(s: &Sample) -> String {
     let threads: Vec<String> = s.threads.iter().map(|(n, p)| format!("{n} {p:.0}")).collect();
     let work: Vec<String> = Work::ALL
         .iter()
@@ -159,8 +218,7 @@ pub(crate) fn line(s: &Sample, now: u64) -> String {
         .map(|(w, n)| format!("{} {n}", w.name()))
         .collect();
     format!(
-        "{:>6} s ago  {:>5.0} %  {}  |  {}",
-        now.saturating_sub(s.at),
+        "{:>5.0} %  {}  |  {}",
         s.cpu,
         if threads.is_empty() { "-".to_string() } else { threads.join(", ") },
         if !work.is_empty() {
@@ -173,8 +231,11 @@ pub(crate) fn line(s: &Sample, now: u64) -> String {
     )
 }
 
-/// The report: what the machine is, newest second first.
-pub(crate) fn report(ring: &std::collections::VecDeque<Sample>, now: u64) -> String {
+/// Seconds of the report.
+pub const REPORT_SPAN_MS: i64 = crate::tele_journal::TAIL_SPAN_MS;
+
+/// The machine: build, processors, devices, which card drives the monitors.
+fn header() -> String {
     let mut out = format!("Kinetren load report\nversion {}\n{} {}\n", kt_version::FULL, std::env::consts::OS, std::env::consts::ARCH);
     out.push_str(&format!("logical processors: {}\n", std::thread::available_parallelism().map_or(0, |n| n.get())));
     out.push_str("devices:\n");
@@ -188,20 +249,44 @@ pub(crate) fn report(ring: &std::collections::VecDeque<Sample>, now: u64) -> Str
         kt_gpu::driving_cards().iter().map(|c| format!("{:04x}:{:04x}", c.vendor, c.device)).collect();
     out.push_str(&format!("monitors hang off: {}\n", if driving.is_empty() { "unknown".to_string() } else { driving.join(", ") }));
     out.push_str(&format!("the choice: {:?}\n", kt_gpu::display_power_preference()));
-    out.push_str("\nseconds, percent of one core, threads, work per second; 100 % = one core\n");
-    for s in ring.iter().rev() {
-        out.push_str(&line(s, now));
+    out
+}
+
+/// The report: the machine, then the journal's last quarter of an hour, oldest first, each record
+/// with its clock time — load, playback, notes and what the person did.
+pub(crate) fn report(header: &str, recs: &[crate::tele_journal::Rec]) -> String {
+    let mut out = header.to_string();
+    out.push_str(&format!("journal: {} in the data directory\n", crate::tele_journal::FILE));
+    out.push_str("\nthe telemetry journal's last 15 minutes; LOAD: percent of one core (100 % = one core), threads | work per second\n");
+    for r in recs {
+        out.push_str(&r.line);
         out.push('\n');
     }
     out
 }
 
-fn write_report(ring: &std::collections::VecDeque<Sample>) {
+fn write_report() {
     let path = report_path();
     let tmp = path.with_extension("txt.tmp");
-    if std::fs::write(&tmp, report(ring, unix_now())).is_ok() {
+    let recs = crate::tele_journal::global()
+        .map(|j| j.since(j.now().unix_ms - REPORT_SPAN_MS))
+        .unwrap_or_default();
+    if std::fs::write(&tmp, report(&header(), &recs)).is_ok() {
         let _ = std::fs::rename(&tmp, &path);
     }
+}
+
+/// One second into the journal, at that second: a busy one as a LOAD record, the first rest after
+/// a busy spell as one "at rest" record; a long rest writes nothing. Returns whether it was busy.
+pub(crate) fn journal_second(j: &crate::tele_journal::Journal, at: crate::tele_journal::Stamp, s: &Sample, was_busy: bool) -> bool {
+    use crate::tele_journal::Kind;
+    let busy = !s.at_rest();
+    if busy {
+        j.record_at(at, Kind::Load, &line(s));
+    } else if was_busy {
+        j.record_at(at, Kind::Load, "at rest");
+    }
+    busy
 }
 
 /// The counters a live scenario reads at rest, when no frame writes the geometry dump.
@@ -221,13 +306,15 @@ pub fn start() {
     let bench = std::env::var("KT_GEOM_DUMP").ok().map(|p| format!("{p}.load.json"));
     let period = if bench.is_some() { BENCH_PERIOD } else { PERIOD };
     let _ = std::thread::Builder::new().name("load-watch".into()).spawn(move || {
-        let mut ring = std::collections::VecDeque::with_capacity(KEEP);
         let mut before = thread_ticks();
         let mut was = work::totals();
         let mut t0 = Instant::now();
         let (mut hot, mut written): (usize, Option<Instant>) = (0, None);
+        let (mut busy, mut notes) = (false, NoteState::default());
         loop {
             std::thread::sleep(period);
+            let journal = crate::tele_journal::global();
+            let at = journal.as_ref().map(|j| j.now());
             let (ticks, totals) = (thread_ticks(), work::totals());
             let dt = t0.elapsed().as_secs_f32();
             t0 = Instant::now();
@@ -237,15 +324,19 @@ pub fn start() {
             let s = sample_of(&ticks, &before, &totals, &was, dt, unix_now());
             before = ticks;
             was = totals;
-            hot = if s.cpu >= HOT_PERCENT { hot + 1 } else { 0 };
-            if ring.len() == KEEP {
-                ring.pop_front();
+            if let (Some(j), Some(at)) = (&journal, at) {
+                busy = journal_second(j, at, &s, busy);
+                if let Some(p) = PROBE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                    for n in probe_notes(p, &mut notes, dt) {
+                        j.record_at(at, crate::tele_journal::Kind::Note, &n);
+                    }
+                }
             }
-            ring.push_back(s.clone());
+            hot = if s.cpu >= HOT_PERCENT { hot + 1 } else { 0 };
             *LAST.lock().unwrap() = Some(s);
             let due = hot >= HOT_SAMPLES && written.is_none_or(|t| t.elapsed() >= WRITE_EVERY);
             if due || WRITE.swap(false, Ordering::AcqRel) {
-                write_report(&ring);
+                write_report();
                 written = Some(Instant::now());
             }
         }
@@ -273,10 +364,11 @@ mod tests {
         assert_eq!(s.cpu, 50.0, "100 ticks over two seconds is half a core");
         assert_eq!(s.work, vec![15; n]);
         assert!(!s.at_rest());
-        assert!(line(&s, 12).contains("3 s ago"), "{}", line(&s, 12));
+        // telemetry-journal: no time relative to the writing; the journal's record carries the time
+        assert!(!line(&s).contains("ago") && line(&s).starts_with("   50 %  a 50"), "{}", line(&s));
         let rest = sample_of(&map(&[]), &map(&[]), &vec![0; n], &vec![0; n], 1.0, 9);
         assert!(rest.at_rest());
-        assert!(line(&rest, 9).contains("at rest"));
+        assert!(line(&rest).contains("at rest"));
     }
 
     /// Test t1880 (input-without-work): a second with prefetch and the audio render busy and no
@@ -289,7 +381,7 @@ mod tests {
         let still = vec![0; n];
         let busy = sample_of(&map(&[("prefetch", 95), ("audio-render", 92)]), &map(&[]), &still, &still, 1.0, 9);
         assert!(!busy.at_rest() && busy.uncounted());
-        let l = line(&busy, 9);
+        let l = line(&busy);
         assert!(!l.contains("at rest") && l.contains("NO COUNTER MOVED"), "{l}");
         let quiet = sample_of(&map(&[("load-watch", 20), ("cpal_alsa_out", 1)]), &map(&[]), &still, &still, 1.0, 9);
         assert!(quiet.at_rest() && !quiet.uncounted(), "the watch's own tick is rest");
@@ -297,5 +389,92 @@ mod tests {
         for w in [Work::ModelEdit, Work::ProjectSwap, Work::EngineBuild] {
             assert!(Work::ALL.contains(&w), "{}", w.name());
         }
+    }
+
+    fn probe() -> PlayerProbe {
+        PlayerProbe {
+            cache: std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig {
+                max_audio_bytes: 1 << 20,
+                max_video_bytes: 1 << 20,
+            })),
+            transport: std::sync::Arc::new(kt_engine::transport::Transport::new()),
+            offline: Default::default(),
+        }
+    }
+
+    fn frame() -> std::sync::Arc<kt_media::VideoFrame> {
+        std::sync::Arc::new(kt_media::VideoFrame {
+            pts: kt_time::Tick(0),
+            width: 4,
+            height: 4,
+            rgba: vec![0u8; 64].into_boxed_slice(),
+            has_alpha: false,
+        })
+    }
+
+    /// Test t1966 (telemetry-journal): the Diagnostics notes are raised by the watch at the second
+    /// they happen, with no UI frame: inside a frame (`sample_perf`) a problem on a pause waited
+    /// for the next mouse move and carried that frame's time (found-defects 109).
+    #[test]
+    fn t1966_a_note_is_stamped_at_its_second() {
+        use crate::tele_journal::{Kind, testing::*};
+        let clock = FakeClock::new(1_762_498_800_000, 0);
+        let j = fresh("t1966", clock.clone(), crate::tele_journal::ROTATE_BYTES);
+        let p = probe();
+        let mut st = NoteState::default();
+        assert!(probe_notes(&p, &mut st, 1.0).is_empty(), "the first look only remembers");
+        // a frame dropped before its first read, and a file gone offline, in one second
+        let src = kt_cache::SourceId(1);
+        p.cache.insert_video(src, None, 0, frame());
+        p.cache.insert_video(src, None, 0, frame());
+        p.offline.lock().unwrap().insert(kt_model::MediaId(3));
+        clock.advance(4_000);
+        let at = j.now();
+        let notes = probe_notes(&p, &mut st, 1.0);
+        clock.advance(60_000); // the reader comes a minute later
+        for n in &notes {
+            j.record_at(at, Kind::Note, n);
+        }
+        let tail = j.tail(10);
+        assert_eq!(tail.len(), 2, "{notes:?}");
+        assert!(tail[0].line.contains("prefetch thrash: 1"), "{}", tail[0].line);
+        assert!(tail[1].line.contains("offline 1"), "{}", tail[1].line);
+        for r in &tail {
+            assert!(r.line.starts_with("2025-11-07 07:00:04.000+00:00"), "{}", r.line);
+        }
+        assert!(probe_notes(&p, &mut st, 1.0).is_empty(), "nothing moved since");
+    }
+
+    /// Test t1967 (telemetry-journal): the load report is the journal's last quarter of an hour
+    /// with clock time — a load second, an edit and a mark, none "s ago".
+    #[test]
+    fn t1967_report_says_clock_time_and_holds_the_actions() {
+        use crate::tele_journal::{Kind, testing::*};
+        let clock = FakeClock::new(1_762_498_800_000, 3 * 3600);
+        let j = fresh("t1967", clock.clone(), crate::tele_journal::ROTATE_BYTES);
+        let map = |v: &[(&str, u64)]| v.iter().map(|(n, t)| (n.to_string(), *t)).collect();
+        let n = Work::ALL.len();
+        let busy = sample_of(&map(&[("prefetch", 90)]), &map(&[]), &vec![1; n], &vec![0; n], 1.0, 0);
+        let rest = sample_of(&map(&[]), &map(&[]), &vec![0; n], &vec![0; n], 1.0, 0);
+        assert!(journal_second(&j, j.now(), &busy, false));
+        clock.advance(1_000);
+        assert!(!journal_second(&j, j.now(), &rest, true), "the first rest closes the spell");
+        clock.advance(1_000);
+        assert!(!journal_second(&j, j.now(), &rest, false));
+        j.record(Kind::Act, "edit SetFx event 2132");
+        clock.advance(500);
+        j.record(Kind::Mark, "stall here");
+        clock.advance(10 * 60_000); // the report is written ten minutes later
+        let text = report("Kinetren load report\n", &j.since(j.now().unix_ms - REPORT_SPAN_MS));
+        assert!(!text.contains("ago"), "{text}");
+        let body: Vec<&str> = text.lines().filter(|l| l.starts_with("2025")).collect();
+        assert_eq!(body.len(), 4, "a busy second, the end of the spell, an edit, a mark: {text}");
+        assert!(body[0].starts_with("2025-11-07 10:00:00.000+03:00") && body[0].contains("LOAD") && body[0].contains("prefetch 90"));
+        assert!(body[1].starts_with("2025-11-07 10:00:01.000+03:00") && body[1].ends_with("at rest"));
+        assert!(body[2].starts_with("2025-11-07 10:00:02.000+03:00") && body[2].contains("ACT"));
+        assert!(body[3].starts_with("2025-11-07 10:00:02.500+03:00") && body[3].ends_with("MARK   stall here"));
+        // older than the quarter of an hour falls out of the report
+        clock.advance(6 * 60_000);
+        assert!(j.since(j.now().unix_ms - REPORT_SPAN_MS).len() < 4);
     }
 }

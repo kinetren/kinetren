@@ -874,6 +874,8 @@ economy = "Para GPU modestas: la mitad de repintados al reproducir"
 
 # Project-wide search palette.
 flight = "Anillo compacto de eventos de transporte y contadores: para depurar fallos intermitentes"
+mark = "Escribe este momento y la nota en el diario de telemetría, para poder decir «aquí». {0} hace lo mismo desde cualquier sitio"
+open_folder = "La carpeta del diario de telemetría y del informe de carga: se quedan en este equipo y nunca se envían"
 pitch_engine = "Motor de tono para todo el proyecto: WSOLA conserva los transitorios, el vocoder suaviza las armonías"
 project_settings = "Tamaño de cuadro, fps, regla de cuadro, motor de tono y forma de claves del proyecto"
 preferences = "Preferencias del programa: ventana de bienvenida al inicio, idioma, interfaz económica, estadísticas, actualizaciones, FFmpeg"
@@ -942,6 +944,7 @@ video_fx_gpu_lost = "Se perdió el renderizador de vídeo en GPU ({0}) — sin i
 
 # Titles of system file dialogs.
 flight_saved = "Registro de reproducción guardado: {0}"
+moment_marked = "Momento marcado en el diario de telemetría: {0}"
 stall_at = "La reproducción se detuvo en {0}: la imagen o el sonido no llegaron a tiempo"
 
 media_missing = "{0}: fuente no disponible, se muestra un marcador ({1})"
@@ -1053,10 +1056,13 @@ graph_decode = "Actividad de FFmpeg (/s)"
 graph_churn = "Rotación de caché (/s)"
 cache_occupancy = "Uso de la caché de vídeo: {0}% ({1} / {2} MB)"
 no_read_drops = "| no-read drops total: {0}"
-log_title = "Registro de problemas"
+log_title = "Diario de telemetría"
 log_clear = "Limpiar"
 graph_reset = "Reiniciar las gráficas"
-log_empty = "no se han detectado problemas"
+log_empty = "todavía no hay nada registrado"
+mark = "Marcar el momento"
+mark_note_hint = "nota (opcional)"
+open_folder = "Abrir carpeta"
 
 # Threshold warnings in the problem log.
 flight_save = "Guardar el registro de reproducción"
@@ -1083,15 +1089,6 @@ event_passes = "pasadas de eventos"
 model_edits = "ediciones del modelo"
 project_swaps = "cambios de proyecto"
 engine_builds = "construcciones del motor"
-
-[perf.note]
-ui_stall = "el hilo de la interfaz quedó bloqueado {0} ms dentro de un fotograma"
-render_underruns = "render underruns +{0} (total {1})"
-callback_underruns = "callback underruns +{0} (total {1})"
-eviction_spike = "pico de eviction: {0}/s — la caché se queda corta"
-prefetch_thrash = "{0} entradas de caché descartadas antes de la primera lectura (prefetch thrash)"
-low_video_hit = "hit de vídeo {0}% al reproducir — la decodificación no llega"
-offline_changed = "cambió la disponibilidad de medios: offline {0}"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
@@ -2057,6 +2054,7 @@ marker = "Añadir o quitar un marcador"
 zoom_in = "Acercar"
 zoom_out = "Alejar"
 zoom_fit = "Mostrar todo el proyecto"
+mark_moment = "Marcar el momento en el diario"
 save = "Guardar"
 save_as = "Guardar como"
 new_project = "Proyecto nuevo"

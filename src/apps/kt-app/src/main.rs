@@ -77,6 +77,7 @@ mod settings_window;
 mod prefs_window;
 mod preview_display;
 mod supervisor;
+mod tele_journal;
 mod telemetry;
 mod track_window;
 mod theme;

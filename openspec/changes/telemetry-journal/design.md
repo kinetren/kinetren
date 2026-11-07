@@ -45,7 +45,7 @@ What the person did, and where it enters:
 | an effect selected in a chain | `fx_editor`: `ChainSel` changes |
 | play / pause / seek / loop region / wrap / stall | the flight sink (render thread and `Player::play/pause`) |
 | playback summary | the UI frame on which `playing` turns false: length, V-fps, new frames, skipped cells, rollbacks, underruns |
-| the person's mark | `Cmd::MarkMoment` (Ctrl+Shift+M in every style) and the Diagnostics button with its note field |
+| the person's mark | `Cmd::MarkMoment` (Ctrl+Alt+M in every style) and the Diagnostics button with its note field |
 
 ## D2. The journal: one writer, stamped by the caller
 

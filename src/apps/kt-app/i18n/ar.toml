@@ -874,6 +874,8 @@ economy = "لبطاقات الرسوم الضعيفة: نصف عدد عمليا�
 
 # Project-wide search palette.
 flight = "حلقة مدمجة لأحداث التشغيل والعدادات — لتشخيص أعطال التشغيل المتقطعة"
+mark = "يكتب هذه اللحظة والملاحظة في سجل القياس عن بعد لتقول «هنا». {0} يفعل الشيء نفسه من أي مكان"
+open_folder = "مجلد سجل القياس عن بعد وتقرير الحمل: يبقيان على هذا الحاسوب ولا يُرسلان أبدًا"
 pitch_engine = "محرك النغمة للمشروع كله: يحافظ WSOLA على النبرات، والمرمّز أنعم مع التناغم"
 project_settings = "حجم الإطار وسرعة الكادر وقاعدة الإطار ومحرك الطبقة وشكل المفاتيح لهذا المشروع"
 preferences = "تفضيلات البرنامج: نافذة الترحيب عند البدء واللغة والواجهة الموفرة والإحصاءات والتحديثات وFFmpeg"
@@ -942,6 +944,7 @@ video_fx_gpu_lost = "فُقد مُصيِّر الفيديو على GPU ({0}) —
 
 # Titles of system file dialogs.
 flight_saved = "تم حفظ سجل التشغيل: {0}"
+moment_marked = "عُلّمت اللحظة في سجل القياس عن بعد: {0}"
 stall_at = "توقف التشغيل عند {0}: لم تصل الصورة أو الصوت في الوقت المناسب"
 
 media_missing = "{0}: المصدر غير متاح، يُعرض بديل مؤقت ({1})"
@@ -1053,10 +1056,13 @@ graph_decode = "نشاط FFmpeg (/ث)"
 graph_churn = "دوران الذاكرة (/ث)"
 cache_occupancy = "استخدام ذاكرة الفيديو: {0}% ({1} / {2} MB)"
 no_read_drops = "| مجموع no-read drops: {0}"
-log_title = "سجل المشكلات"
+log_title = "سجل القياس عن بعد"
 log_clear = "مسح"
 graph_reset = "تصفير الرسوم"
-log_empty = "لم تُلاحظ مشكلات"
+log_empty = "لم يُسجَّل شيء بعد"
+mark = "علّم اللحظة"
+mark_note_hint = "ملاحظة (اختيارية)"
+open_folder = "افتح المجلد"
 
 # Threshold warnings in the problem log.
 flight_save = "حفظ سجل التشغيل"
@@ -1083,15 +1089,6 @@ event_passes = "جولات الأحداث"
 model_edits = "تعديلات النموذج"
 project_swaps = "استبدالات المشروع"
 engine_builds = "بناءات المحرك"
-
-[perf.note]
-ui_stall = "انسدّ خيط الواجهة {0} م.ث داخل إطار واحد"
-render_underruns = "render underruns +{0} (المجموع {1})"
-callback_underruns = "callback underruns +{0} (المجموع {1})"
-eviction_spike = "ذروة eviction: {0}/ث — الذاكرة ضيقة"
-prefetch_thrash = "{0} مدخلات ذاكرة أُسقطت قبل أول قراءة (prefetch thrash)"
-low_video_hit = "إصابة الفيديو {0}% أثناء التشغيل — فك الترميز لا يلحق"
-offline_changed = "تغيّر توفر الوسائط: غير متصل {0}"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
@@ -2057,6 +2054,7 @@ marker = "إضافة علامة أو إزالتها"
 zoom_in = "تكبير"
 zoom_out = "تصغير"
 zoom_fit = "إظهار المشروع كله"
+mark_moment = "علّم اللحظة في السجل"
 save = "حفظ"
 save_as = "حفظ باسم"
 new_project = "مشروع جديد"

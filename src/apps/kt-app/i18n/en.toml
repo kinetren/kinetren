@@ -874,6 +874,8 @@ economy = "For weak GPUs: half the repaints while playing"
 
 # Project-wide search palette.
 flight = "Compact ring of transport events and counters — for diagnosing floating playback bugs"
+mark = "Writes this moment and the note into the telemetry journal, so you can say “here”. {0} does the same from anywhere"
+open_folder = "The folder of the telemetry journal and the load report: they stay on this computer and are never sent"
 pitch_engine = "Pitch engine for the whole project: WSOLA keeps transients, the vocoder is smoother on harmonies"
 project_settings = "Frame size, fps, frame rule, pitch engine and key shape of this project"
 preferences = "The program's preferences: the welcome window at start, language, Economy UI, statistics, updates, FFmpeg"
@@ -942,6 +944,7 @@ video_fx_gpu_lost = "GPU video renderer lost ({0}) — the picture is off until 
 
 # Titles of system file dialogs.
 flight_saved = "Playback journal saved: {0}"
+moment_marked = "Moment marked in the telemetry journal: {0}"
 stall_at = "Playback froze at {0}: picture or sound did not arrive in time"
 
 media_missing = "{0}: source unavailable, a placeholder is shown ({1})"
@@ -1053,10 +1056,13 @@ graph_decode = "FFmpeg activity (/s)"
 graph_churn = "Cache churn (/s)"
 cache_occupancy = "Video cache usage: {0}% ({1} / {2} MB)"
 no_read_drops = "| no-read drops total: {0}"
-log_title = "Problem log"
+log_title = "Telemetry journal"
 log_clear = "Clear"
 graph_reset = "Reset the graphs"
-log_empty = "no problems noticed"
+log_empty = "nothing recorded yet"
+mark = "Mark the moment"
+mark_note_hint = "note (optional)"
+open_folder = "Open folder"
 
 # Threshold warnings in the problem log.
 flight_save = "Save the playback journal"
@@ -1083,15 +1089,6 @@ event_passes = "event passes"
 model_edits = "model edits"
 project_swaps = "project swaps"
 engine_builds = "engine builds"
-
-[perf.note]
-ui_stall = "the UI thread was blocked for {0} ms inside one frame"
-render_underruns = "render underruns +{0} (total {1})"
-callback_underruns = "callback underruns +{0} (total {1})"
-eviction_spike = "eviction spike: {0}/s — the cache is too small"
-prefetch_thrash = "{0} cache entries dropped before the first read (prefetch thrash)"
-low_video_hit = "video hit {0}% while playing — decoding cannot keep up"
-offline_changed = "media availability changed: offline {0}"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]
@@ -2062,6 +2059,7 @@ marker = "Add or remove a marker"
 zoom_in = "Zoom in"
 zoom_out = "Zoom out"
 zoom_fit = "Show the whole project"
+mark_moment = "Mark the moment in the journal"
 save = "Save"
 save_as = "Save as"
 new_project = "New project"

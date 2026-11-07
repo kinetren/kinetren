@@ -2021,6 +2021,7 @@ pub fn chain_strip(
             crate::widgets::field_probe::note("fx.head", resp.rect);
             if resp.clicked() {
                 *edit.selected = ChainSel::Head;
+                crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("effect selected: {} (the head)", h.label));
             }
             // the head also responds to the right button (item 363): it has
             // exactly one action — its own checkbox, and staying silent about it is not allowed.
@@ -2101,6 +2102,8 @@ pub fn chain_strip(
             }
             if resp.clicked() {
                 *edit.selected = ChainSel::Fx(i);
+                // the person's choice, by the name the strip shows (telemetry-journal)
+                crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("effect selected: {name} (slot {i})"));
             }
             if resp.drag_started() {
                 egui::DragAndDrop::set_payload(ui.ctx(), i);

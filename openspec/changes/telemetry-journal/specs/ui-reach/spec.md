@@ -5,7 +5,7 @@ The Diagnostics window SHALL show the telemetry journal's tail, newest at the bo
 its clock time, in a pane outside the window's scroll that takes the lower part of the body at every
 window size down to the window's minimum, so it is readable without enlarging the window. Its head row
 SHALL hold "Mark the moment" with an optional note field (Enter marks too) and "Open folder", which
-opens the data directory. Ctrl+Shift+M SHALL mark the moment from anywhere in the main window, in every
+opens the data directory. Ctrl+Alt+M SHALL mark the moment from anywhere in the main window, in every
 key style. Notices and the journal show local time.
 Why: the owner, kkt-26.11.07b line 17 (G12, found-defects 109): "ОКАЗЫВАЕТСЯ НАДО ОКНО ПО ВЫСОТЕ
 УВЛИЧИТЬ И ТОООГДАДАА ОНО ПОЯВИТСЯ"; and he could only guess when a stall happened.
@@ -17,7 +17,7 @@ Why: the owner, kkt-26.11.07b line 17 (G12, found-defects 109): "ОКАЗЫВА�
 - **TEST** t1968 (`src/apps/kt-app/src/diag_tests.rs`)
 
 #### Scenario: A mark from the button and from the key
-- **WHEN** the person types a note and presses "Mark the moment", then presses Ctrl+Shift+M over the timeline
+- **WHEN** the person types a note and presses "Mark the moment", then presses Ctrl+Alt+M over the timeline
 - **THEN** the journal gets two MARK records in order, the first with the note, and the note field empties
-- **PATH** View → Diagnostics… → type "stall here" in the note field → press "Mark the moment" → a line "MARK stall here" appears at the bottom of the journal with the time; close the window, press Ctrl+Shift+M → the status line says the moment is marked
+- **PATH** View → Diagnostics… → type "stall here" in the note field → press "Mark the moment" → a line "MARK stall here" appears at the bottom of the journal with the time; close the window, press Ctrl+Alt+M → the status line says the moment is marked
 - **TEST** t1969 (`src/apps/kt-app/src/diag_tests.rs`), live `journal` (`src/scripts/live/journal.py`)

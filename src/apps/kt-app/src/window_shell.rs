@@ -194,6 +194,18 @@ impl Shell {
         let default_size = remembered.or(self.default_size).unwrap_or_else(|| {
             egui::vec2(self.default_width.unwrap_or(kind_default), min_size.y)
         });
+        let opened = ctx.data_mut(|d| {
+            let f = d.get_temp_mut_or_default::<Frame>(key());
+            if f.open.iter().any(|(o, _)| *o == id) {
+                return None;
+            }
+            let title = self.title.text().to_string();
+            f.open.push((id, title.clone()));
+            Some(title)
+        });
+        if let Some(t) = opened {
+            crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("window opened: {t}"));
+        }
         let mut open = true;
         let mut w = egui::Window::new(self.title)
             .id(id)
@@ -304,6 +316,10 @@ pub(crate) fn fitting() -> bool {
 struct Frame {
     shown: Vec<(egui::Id, egui::LayerId, bool)>,
     armed: Option<egui::Id>,
+    /// The windows open as the telemetry journal knows them, with their titles: a window that
+    /// appears is journaled once, one that a frame no longer draws is journaled closed
+    /// (telemetry-journal). Allocates only when a window opens.
+    open: Vec<(egui::Id, String)>,
 }
 
 fn key() -> egui::Id {
@@ -329,11 +345,23 @@ fn take_armed(ctx: &egui::Context, id: egui::Id) -> bool {
 /// Start of a frame: the windows of the PREVIOUS frame that take Esc, bottom to top by the layer
 /// order the person sees. `escape_action` closes the last one.
 pub(crate) fn begin_frame(ctx: &egui::Context) -> Vec<egui::Id> {
-    let shown = ctx.data_mut(|d| {
+    let (shown, closed) = ctx.data_mut(|d| {
         let f = d.get_temp_mut_or_default::<Frame>(key());
         f.armed = None;
-        std::mem::take(&mut f.shown)
+        let shown = std::mem::take(&mut f.shown);
+        let mut closed = Vec::new();
+        f.open.retain(|(id, title)| {
+            let still = shown.iter().any(|(s, _, _)| s == id);
+            if !still {
+                closed.push(title.clone());
+            }
+            still
+        });
+        (shown, closed)
     });
+    for t in closed {
+        crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("window closed: {t}"));
+    }
     let order: Vec<egui::LayerId> = ctx.memory(|m| m.layer_ids().collect());
     let mut v: Vec<(usize, egui::Id)> = shown
         .into_iter()

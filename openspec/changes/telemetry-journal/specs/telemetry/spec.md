@@ -42,7 +42,7 @@ frames, skipped cells, rollbacks, underruns); the Diagnostics notes (underruns, 
 no-read drops, low video hit, offline media) raised by the load watch at the second they happen; every
 `kt-app.log` line, notice and export log line; and the person's actions: an edit by command name and
 target, undo, redo, a window opened or closed, the effect selected in a chain, a project opened or
-saved (by file name), and a mark he sets with Ctrl+Shift+M or the Diagnostics button, with an optional
+saved (by file name), and a mark he sets with Ctrl+Alt+M or the Diagnostics button, with an optional
 note. Every existing record of the program SHALL either be folded in or have its reason to stay apart
 written in the capability's design.
 Why: the owner could not say what he did at "487 s НАВЕРНОЕ"; the black box, the load report and the

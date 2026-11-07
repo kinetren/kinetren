@@ -28,7 +28,7 @@ playback black box lives in memory; `kt-app.log` holds warnings only; nothing re
   skipped cells, underruns); the Diagnostics notes, now raised by the load watch at the second they
   happen; `kt-app.log` lines, notices, export log lines; and the person's actions: edits by command
   name and target, undo and redo, windows opened and closed, the effect selected in a chain, project
-  open and save (file name only), and his own mark — Ctrl+Shift+M or the Diagnostics button "Mark the
+  open and save (file name only), and his own mark — Ctrl+Alt+M or the Diagnostics button "Mark the
   moment" with an optional note.
 - `load-report.txt` becomes the export of the journal's last 15 minutes with absolute times; it is
   still written by itself after three seconds of a whole core.

@@ -813,6 +813,10 @@ impl KtApp {
         // “black box” of the panic hook (item 355). Reassigned on every recreation of the application:
         // the dump must be from the LIVE player.
         crate::journal::set_flight(player.flight.clone());
+        // and into the telemetry journal as it is recorded (telemetry-journal)
+        if let Some(sink) = crate::tele_journal::flight_sink() {
+            player.flight.set_sink(sink);
+        }
         let audio = match audio_out::start(ring, player.shared.clone(), player.transport.clone()) {
             Ok(a) => Some(a),
             Err(e) => {
@@ -833,6 +837,7 @@ impl KtApp {
         crate::plugins::install();
         let startup_error = error;
         crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::New, &project));
+        crate::tele_journal::project_act("project new", None);
         let project2 = project.clone();
         let (player, audio, _, _) = Self::build_player(&project, None, None);
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -1064,6 +1069,7 @@ impl KtApp {
     pub(crate) fn open(path: &Path) -> Result<KtApp, String> {
         let (project, retained, notices) = load_project_file(path)?;
         crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Open, &project));
+        crate::tele_journal::project_act("project opened", Some(path));
         Self::open_loaded(path, project, retained, notices)
     }
 
@@ -1093,6 +1099,7 @@ impl KtApp {
             Err(e) => return Err(e.to_string()),
         };
         crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Import, &b.project));
+        crate::tele_journal::project_act("project imported", Some(path));
         let mut app = Self::open_loaded(path, b.project, b.retained, b.notices)?;
         app.project_path = None;
         app.save_hint = Some(path.with_extension(kt_model::project_file::EXTENSION));
@@ -1611,6 +1618,7 @@ impl KtApp {
         // it lists what is sent and what is NOT sent and says where it is switched off (rule 19).
         let playing = self.player.transport.is_playing();
         crate::telemetry::signal(crate::telemetry::Signal::Frame { ctx: ui.ctx(), playing });
+        self.journal_playback(playing);
         // The bell only: no status-line headline, no window (owner, 2026-10-28).
         if self.telemetry.as_ref().is_some_and(|t| t.take_notice()) {
             let details = Some(crate::telemetry::notice_details());
@@ -3308,6 +3316,7 @@ impl KtApp {
                 // next to the project, or next to the unnamed recovery in the data directory —
                 // the same body as an Open, so placeholders, the watchdog and the bell work
                 crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Recovery, &project));
+                crate::tele_journal::project_act("project recovered", c.for_project.as_deref());
                 let home = c.for_project.clone().unwrap_or_else(|| c.path.clone());
                 let mut app = match Self::open_loaded(&home, project, retained, Vec::new()) {
                     Ok(a) => a,
@@ -4107,6 +4116,7 @@ impl KtApp {
 
     fn push_notice_with(&mut self, severity: Severity, text: String, details: Option<String>) {
         let at = chrono_like_now();
+        crate::tele_journal::record(crate::tele_journal::Kind::Log, &format!("notice {severity:?}: {text}"));
         // Consecutive duplicates collapse into “text ×N”, but the counter of
         // unread items ALWAYS grows (R.49, item 350): earlier the early return
         // suppressed it too, and a second “save failed” in a row did not colour
@@ -5769,6 +5779,7 @@ impl KtApp {
         match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
                 crate::telemetry::signal(crate::telemetry::Signal::Saved);
+                crate::tele_journal::project_act("project saved", Some(&path));
                 self.dirty_content = false;
                 self.dirty_ui = false;
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
@@ -7779,6 +7790,9 @@ impl KtApp {
         if k.has(Cmd::Loop) {
             self.toggle_loop();
         }
+        if k.has(Cmd::MarkMoment) {
+            self.mark_moment("");
+        }
         if esc && !self.mask_escape() {
             self.escape_action();
         }
@@ -9006,7 +9020,6 @@ pub struct PerfState {
     last_cache: kt_cache::CacheStats,
     last_decode: (u64, u64),
     last_io: (u64, u64),
-    last_underruns: (u64, u64),
     frames: u32,
     /// Cumulative of actually shown NEW video frames (aligned key).
     pub video_frames_shown: u64,
@@ -9027,11 +9040,21 @@ pub struct PerfState {
     compose_sum_ns: u64,
     compose_n: u32,
     pub diag_open: bool,
-    pub log: std::collections::VecDeque<String>,
-    /// Dedup of consecutive identical messages: (text, repeat count).
-    last_msg: Option<(String, u32)>,
-    last_offline: usize,
-    last_hit_warn: Option<std::time::Instant>,
+    /// The load watch has this app's player for its notes (telemetry-journal D4).
+    probe_set: bool,
+    /// The telemetry journal's tail as the Diagnostics pane shows it, refreshed when the journal's
+    /// generation moves (not per frame: invariant 12).
+    pub journal_view: Vec<(crate::tele_journal::Kind, String)>,
+    journal_gen: Option<u64>,
+    /// "Clear" hides what came before this moment; the file keeps it.
+    journal_cleared: i64,
+    /// The note of the next mark.
+    pub mark_note: String,
+    /// The playback in progress, for its summary in the journal: when it started and the counters
+    /// then (shown frames, skipped cells, rollbacks, render and callback underruns).
+    play: Option<(std::time::Instant, [u64; 5])>,
+    /// What the instruments above the graphs took last frame (the window's split, D5).
+    diag_used: f32,
 }
 
 impl PerfState {
@@ -9077,7 +9100,6 @@ impl PerfState {
             last_cache: Default::default(),
             last_decode: (0, 0),
             last_io: (0, 0),
-            last_underruns: (0, 0),
             frames: 0,
             video_frames_shown: 0,
             compose_ms_last: 0.0,
@@ -9089,32 +9111,16 @@ impl PerfState {
             video_cells_skipped: 0,
             video_rollbacks: 0,
             diag_open: false,
-            log: std::collections::VecDeque::new(),
-            last_msg: None,
-            last_offline: 0,
-            last_hit_warn: None,
+            probe_set: false,
+            journal_view: Vec::new(),
+            journal_gen: None,
+            journal_cleared: i64::MIN,
+            mark_note: String::new(),
+            play: None,
+            diag_used: 300.0,
         }
     }
 
-    fn note(&mut self, msg: String) {
-        // consecutive identical messages collapse into “×N”
-        // (in v1 a burst flooded the whole log within seconds)
-        if let Some((last, n)) = &mut self.last_msg
-            && *last == msg
-        {
-            *n += 1;
-            if let Some(line) = self.log.back_mut() {
-                *line = format!("[{}] {} ×{}", chrono_like_now(), msg, n);
-            }
-            return;
-        }
-        self.last_msg = Some((msg.clone(), 1));
-        let now = chrono_like_now();
-        self.log.push_back(format!("[{now}] {msg}"));
-        while self.log.len() > 800 {
-            self.log.pop_front();
-        }
-    }
 }
 
 /// hh:mm:ss without a chrono dependency.
@@ -9387,16 +9393,39 @@ pub(crate) fn load_project_file(
     }
 }
 
+/// The journal pane keeps at least this many lines on screen, at any window height.
+const JOURNAL_MIN_LINES: f32 = 6.0;
+/// The floor of each Diagnostics graph.
+const GRAPH_MIN_H: f32 = 64.0;
+/// The records the pane lists (the file keeps all).
+const JOURNAL_SHOWN: usize = 400;
+
+/// A journal line as the pane shows it: the time of day and the record, without the date, the
+/// zone and the process offset (`2026-11-07 14:03:12.345+03:00  +12.345  ACT    …`).
+fn journal_display(line: &str) -> String {
+    let time = line.get(11..23).unwrap_or("");
+    let rest = line.split_once("  +").and_then(|(_, r)| r.split_once("  ")).map_or(line, |(_, r)| r);
+    format!("{time}  {rest}")
+}
+
+/// hh:mm:ss of the person's clock: it was UTC without saying so (telemetry-journal), three hours
+/// off the clock on his wall.
 fn chrono_like_now() -> String {
-    let secs =
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    let s = secs % 86_400;
-    format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+    crate::journal::stamp_of(std::time::SystemTime::now())[11..19].to_string()
 }
 
 impl KtApp {
     /// Metrics sampler every 500 ms (port of performanceTimer).
     fn sample_perf(&mut self) {
+        if !self.perf.probe_set {
+            // the load watch raises the problem notes from this player, at their second (D4)
+            self.perf.probe_set = true;
+            crate::load_watch::watch(crate::load_watch::PlayerProbe {
+                cache: self.player.cache.clone(),
+                transport: self.player.transport.clone(),
+                offline: self.offline.clone(),
+            });
+        }
         self.perf.frames += 1;
         let dt = self.perf.last_sample.elapsed().as_secs_f32();
         if dt < 0.5 {
@@ -9453,40 +9482,8 @@ impl KtApp {
         let d_unused = cache.unused_evictions.saturating_sub(lc.unused_evictions);
         self.perf.churn.push(&[d_ev as f32 / dt, (d_am + d_vm) as f32 / dt, d_unused as f32 / dt]);
 
-        // problem log
-        let ur = self.player.underruns.load(ord);
-        let uc = self.player.shared.callback_underruns.load(ord);
-        let (lur, luc) = self.perf.last_underruns;
-        if ur > lur {
-            self.perf.note(crate::tf!(k::perf::note::RENDER_UNDERRUNS, ur - lur, ur));
-        }
-        if uc > luc {
-            self.perf.note(crate::tf!(k::perf::note::CALLBACK_UNDERRUNS, uc - luc, uc));
-        }
-        self.perf.last_underruns = (ur, uc);
-        if d_ev as f32 / dt > 500.0 {
-            self.perf.note(crate::tf!(
-                k::perf::note::EVICTION_SPIKE,
-                format!("{:.0}", d_ev as f32 / dt)
-            ));
-        }
-        // port of the main v1 warning: frames evicted BEFORE the first read
-        if d_unused > 0 {
-            self.perf.note(crate::tf!(k::perf::note::PREFETCH_THRASH, d_unused));
-        }
-        // threshold (v1 had no thresholds at all): low video hit during playback
-        if v_hit < 80.0
-            && self.player.transport.is_playing()
-            && self.perf.last_hit_warn.map(|t| t.elapsed().as_secs() >= 10).unwrap_or(true)
-        {
-            self.perf.last_hit_warn = Some(std::time::Instant::now());
-            self.perf.note(crate::tf!(k::perf::note::LOW_VIDEO_HIT, format!("{v_hit:.0}")));
-        }
-        let offline_now = self.offline.lock().unwrap().len();
-        if offline_now != self.perf.last_offline {
-            self.perf.note(crate::tf!(k::perf::note::OFFLINE_CHANGED, offline_now));
-            self.perf.last_offline = offline_now;
-        }
+        // the problem notes are the load watch's now: raised at the second they happen, into the
+        // telemetry journal (telemetry-journal D4); underruns come from the playback black box
     }
 
     /// The load watch's last second: who held the processor, what ran, and the file with the
@@ -9540,6 +9537,119 @@ impl KtApp {
         }
     }
 
+    /// A playback's summary in the telemetry journal when it stops: the honest numbers of the
+    /// performance panel for exactly that playback (telemetry-journal). One bool compare a frame.
+    fn journal_playback(&mut self, playing: bool) {
+        if playing == self.perf.play.is_some() {
+            return;
+        }
+        let ord = std::sync::atomic::Ordering::Relaxed;
+        let now = [
+            self.perf.video_frames_shown,
+            self.perf.video_cells_skipped,
+            self.perf.video_rollbacks,
+            self.player.underruns.load(ord),
+            self.player.shared.callback_underruns.load(ord),
+        ];
+        match self.perf.play.take() {
+            None => self.perf.play = Some((std::time::Instant::now(), now)),
+            Some((t0, was)) => {
+                let secs = t0.elapsed().as_secs_f64();
+                let d = |i: usize| now[i].saturating_sub(was[i]);
+                crate::tele_journal::record(
+                    crate::tele_journal::Kind::Play,
+                    &format!(
+                        "playback stopped after {secs:.1} s: V-fps {:.1}, new frames {}, skipped cells {}, rollbacks {}, underruns render {} / callback {} frames",
+                        d(0) as f64 / secs.max(0.001),
+                        d(0),
+                        d(1),
+                        d(2),
+                        d(3),
+                        d(4)
+                    ),
+                );
+            }
+        }
+    }
+
+    /// The person's mark of the moment (telemetry-journal): the key and the Diagnostics button, one
+    /// body (rule 17).
+    pub(crate) fn mark_moment(&mut self, note: &str) {
+        let note = note.trim();
+        crate::tele_journal::record(
+            crate::tele_journal::Kind::Mark,
+            if note.is_empty() { "the person marked this moment" } else { note },
+        );
+        self.note(crate::tf!(k::msg::MOMENT_MARKED, chrono_like_now()));
+    }
+
+    /// The telemetry journal's tail in Diagnostics, outside the window's scroll (D5): its head row
+    /// marks the moment and opens the folder.
+    fn draw_journal_pane(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tr(k::perf::LOG_TITLE)).strong());
+            let w = (ui.available_width() * 0.3).max(80.0);
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.perf.mark_note)
+                    .hint_text(tr(k::perf::MARK_NOTE_HINT))
+                    .desired_width(w),
+            );
+            crate::widgets::field_probe::note("diag.mark_note", field.rect);
+            let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let b = ui.button(tr(k::perf::MARK));
+            crate::widgets::field_probe::note("diag.mark", b.rect);
+            let b = self.hint_key(b, k::hint::MARK, crate::controls::Cmd::MarkMoment);
+            if b.clicked() || enter {
+                let note = std::mem::take(&mut self.perf.mark_note);
+                self.mark_moment(&note);
+            }
+            let o = ui.button(tr(k::perf::OPEN_FOLDER));
+            crate::widgets::field_probe::note("diag.open_folder", o.rect);
+            let o = self.hint(o, tr(k::hint::OPEN_FOLDER));
+            if o.clicked()
+                && let Err(e) = crate::util::open_in_file_manager(&crate::journal::data_dir())
+            {
+                self.warn(e);
+            }
+            if ui.button(tr(k::perf::LOG_CLEAR)).clicked() {
+                self.perf.journal_cleared = crate::tele_journal::current().map_or(i64::MAX, |j| j.now().unix_ms);
+                self.perf.journal_gen = None;
+            }
+        });
+        let journal = crate::tele_journal::current();
+        let gen_now = journal.as_ref().map(|j| j.generation());
+        if gen_now != self.perf.journal_gen {
+            self.perf.journal_gen = gen_now;
+            let cleared = self.perf.journal_cleared;
+            self.perf.journal_view = journal
+                .map(|j| j.tail(JOURNAL_SHOWN))
+                .unwrap_or_default()
+                .iter()
+                .filter(|r| r.at.unix_ms >= cleared)
+                .map(|r| (r.kind, journal_display(&r.line)))
+                .collect();
+        }
+        let log_rect = crate::widgets::window_log(ui, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            let (warn, mark) = (ui.visuals().warn_fg_color, ui.visuals().selection.stroke.color);
+            for (kind, line) in &self.perf.journal_view {
+                use crate::tele_journal::Kind;
+                let text = egui::RichText::new(line).monospace();
+                // the person's own marks and the problems stand out of the stream
+                match kind {
+                    Kind::Mark => ui.label(text.color(mark).strong()),
+                    Kind::Note => ui.label(text.color(warn)),
+                    _ => ui.label(text),
+                };
+            }
+            if self.perf.journal_view.is_empty() {
+                ui.weak(tr(k::perf::LOG_EMPTY));
+            }
+            ui.clip_rect()
+        });
+        crate::widgets::field_probe::note("diag.log", log_rect);
+    }
+
     fn draw_diagnostics(&mut self, ctx: &egui::Context) {
         if !self.perf.diag_open {
             return;
@@ -9555,14 +9665,26 @@ impl KtApp {
             // its title (and the cross) above the top edge (t779)
             .size([640.0, default_h], [460.0, 320.0])
             .show(ctx, |ui| {
-                // ONE scroll for the body (the shell's rule): on a screen lower than the floors the
-                // body scrolls instead of pushing the window past what the person gave it
+                // The body is two parts (telemetry-journal D5): the instruments scroll above, and
+                // the telemetry journal holds the lower part OUTSIDE the scroll, so it is on screen at
+                // every window height — the owner had to make the window taller to see the log at
+                // all (kkt-26.11.07b line 17, found-defects 109).
                 let body_h = ui.available_height();
                 let body_h = if body_h.is_finite() { body_h } else { default_h };
+                let line_h = ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
+                let head_h = ui.spacing().interact_size.y + 3.0 * ui.spacing().item_spacing.y + 8.0;
+                // the instruments and the graphs at their floor come first; what the window has
+                // beyond them goes 60/40 to the graphs and the journal, and the journal never has
+                // fewer than six lines (on a low window the instruments scroll instead)
+                let per_graph = ui.text_style_height(&egui::TextStyle::Small) + 6.0 + ui.spacing().item_spacing.y;
+                let floor = self.perf.diag_used + 3.0 * (GRAPH_MIN_H + per_graph) + ui.spacing().interact_size.y;
+                let spare = (body_h - head_h - floor - JOURNAL_MIN_LINES * line_h).max(0.0);
+                let journal_h = JOURNAL_MIN_LINES * line_h + 0.4 * spare;
+                let top_h = (body_h - journal_h - head_h).max(60.0);
                 egui::ScrollArea::vertical()
                     .id_salt("kt_diag_body")
                     .auto_shrink([false, false])
-                    .max_height(body_h)
+                    .max_height(top_h)
                     .show(ui, |ui| {
                     let top = ui.cursor().top();
                     // the former perf box of the left column (diagnostics-three-graphs D2)
@@ -9602,17 +9724,15 @@ impl KtApp {
                         col,
                     );
                     ui.add_space(6.0);
-                    // the three graphs share what the window has left above the log: a larger
-                    // window shows larger graphs (D2); the floors fit the window's minimum size, so
-                    // the content never pushes the window past what the person gave it
+                    // the three graphs share what the scrolling part has left: a larger window
+                    // shows larger graphs (D2); the floor keeps them readable, the part scrolls
                     let gap = 4.0;
                     let title_h = ui.text_style_height(&egui::TextStyle::Small) + 2.0;
                     let per_graph = title_h + gap + ui.spacing().item_spacing.y;
-                    let log_head = ui.spacing().interact_size.y + 12.0;
                     let used = ui.cursor().top() - top;
-                    let rest = body_h - used - 3.0 * per_graph - log_head;
-                    let log_h = (rest * 0.25).max(80.0);
-                    let graph_h = ((rest - log_h) / 3.0).max(64.0);
+                    // the next frame's split reads what the instruments took (they change rarely)
+                    self.perf.diag_used = used;
+                    let graph_h = ((top_h - used - 3.0 * per_graph - ui.spacing().interact_size.y) / 3.0).max(GRAPH_MIN_H);
                     for (g, probe) in [
                         (&mut self.perf.quality, "diag.graph.quality"),
                         (&mut self.perf.decode, "diag.graph.decode"),
@@ -9622,33 +9742,14 @@ impl KtApp {
                         crate::widgets::field_probe::note(probe, r);
                         ui.add_space(gap);
                     }
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(tr(k::perf::LOG_TITLE)).strong());
-                        if ui.button(tr(k::perf::LOG_CLEAR)).clicked() {
-                            self.perf.log.clear();
-                            self.perf.last_msg = None;
-                        }
-                        if ui.button(tr(k::perf::GRAPH_RESET)).clicked() {
-                            self.perf.quality.clear();
-                            self.perf.decode.clear();
-                            self.perf.churn.clear();
-                        }
+                    if ui.button(tr(k::perf::GRAPH_RESET)).clicked() {
+                        self.perf.quality.clear();
+                        self.perf.decode.clear();
+                        self.perf.churn.clear();
+                    }
                     });
-                    // the log is the window's filling tail (windows-fill-their-area: t1125 drags
-                    // the corner and expects the body to take the room); the graphs above left it
-                    // `log_h` of the body, so the two layouts agree
-                    let log_rect = crate::widgets::window_log(ui, |ui| {
-                        for line in &self.perf.log {
-                            ui.monospace(line);
-                        }
-                        if self.perf.log.is_empty() {
-                            ui.weak(tr(k::perf::LOG_EMPTY));
-                        }
-                        ui.clip_rect()
-                    });
-                    crate::widgets::field_probe::note("diag.log", log_rect);
-                    });
+                ui.separator();
+                self.draw_journal_pane(ui);
             });
         if shown.closed() {
             open = false;
@@ -9723,10 +9824,14 @@ impl eframe::App for KtApp {
         // legitimately rare): a block inside a frame (a disk write,
         // a decode on the UI thread) is seen here with an exact timestamp.
         let t0 = std::time::Instant::now();
+        let at = crate::tele_journal::current().map(|j| j.now());
         self.draw_all(ui);
         let ms = t0.elapsed().as_millis();
-        if ms >= 100 {
-            self.perf.note(crate::tf!(k::perf::note::UI_STALL, ms));
+        if ms >= 100
+            && let (Some(j), Some(at)) = (crate::tele_journal::current(), at)
+        {
+            // stamped at the frame's START: the moment the UI stopped answering
+            j.record_at(at, crate::tele_journal::Kind::Note, &format!("the UI thread was blocked for {ms} ms inside one frame"));
         }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -9830,6 +9935,9 @@ pub fn run() -> eframe::Result {
     crate::ffmpeg_setup::install_search_dirs();
     // this run's journal: the previous run moves aside, the header names the build (D5)
     crate::journal::start_run();
+    // the telemetry journal: one file of what the program and the person did, stamped at the moment
+    // (telemetry-journal); its RUN line goes next to the previous run's last records
+    crate::tele_journal::install();
     // GPU: the egui-wgpu default is HighPerformance, i.e. the discrete card; on
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
     // system (item 1, v1.4). The card that drives the monitor is the one with no copy:
