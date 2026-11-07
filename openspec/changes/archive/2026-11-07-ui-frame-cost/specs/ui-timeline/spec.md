@@ -34,6 +34,7 @@ the whole edit in view; with the effects window open, 280 ms.
 #### Scenario: A frame's processor time does not follow the project
 - **WHEN** ten frames run with 20000 events outside the view, or 1000 files in the bin, against a small project
 - **THEN** they cost the UI thread less than one and a half times as much
+- **PATH** open a long edit with hundreds of files in the bin → move the mouse along a track, then over the bin → Diagnostics → Performance reads the same "UI frame" at the start of the edit, at its end and zoomed out
 - **TEST** t1913 (`src/apps/kt-app/src/frame_cost_tests.rs`)
 
 #### Scenario: An open window does not follow the project
