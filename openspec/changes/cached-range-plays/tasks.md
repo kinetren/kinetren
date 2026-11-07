@@ -26,6 +26,6 @@
 - [x] 5.3 What's new line; user-feedback round note; registry rows G2–G4
 
 ## 6. Check
-- [ ] 6.1 Tests of the specs, `cargo test` of what changed, clippy
-- [ ] 6.2 Live scenario `cached_range.py` on the heavy showcase
+- [x] 6.1 Tests of the specs, `cargo test` of what changed, clippy
+- [x] 6.2 Live scenario `cached_range.py` on the heavy showcase
 - [ ] 6.3 Load at rest on the heavy project; his relinked project after

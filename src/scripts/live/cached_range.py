@@ -2,7 +2,7 @@
 """Live scenario cached-range-plays: a covered range plays again without work.
 
 The owner's words are in `docs/ktprompts/kkt-26.11.07b.txt`, line 3-4 (registry G2-G4): a short
-rendered range at 16 V-fps, 45 %, the sound crackling, "не рабочий кэш". The project is ours
+rendered range at 16 V-fps, 45 %, the sound crackling, "a cache that does not work". The project is ours
 (`kt-cli showcase --heavy`): a composition under Slowed, VHS Tape and Camera ISP. A half-second loop
 over it is played; after its first two laps every frame shown is a kept composite and every burst
 heard comes from the kept mix. The verdict is the work the program counts, plus V-fps from the

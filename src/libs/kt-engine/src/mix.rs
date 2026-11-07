@@ -1,4 +1,4 @@
-//! The final mix of a covered range (cached-range-plays; the owner's "вариант А", a change of
+//! The final mix of a covered range (cached-range-plays; the owner's choice "a", a change of
 //! invariant 2): what the audio render thread rendered — after the effects, the track stages and
 //! the nested reels, before the master gain — kept per timeline burst, so that playing the range
 //! again hands it out with no decode and no effect run, as a prerender does in VEGAS.
@@ -258,11 +258,14 @@ impl MixStore {
     }
 }
 
+/// The laps the store holds: per loop region `(start, end)`, its runs.
+pub type LapRuns = Vec<((i64, i64), Vec<Range<i64>>)>;
+
 /// What the store holds, in timeline frames.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MixRuns {
     pub linear: Vec<Range<i64>>,
-    pub laps: Vec<((i64, i64), Vec<Range<i64>>)>,
+    pub laps: LapRuns,
 }
 
 impl MixRuns {

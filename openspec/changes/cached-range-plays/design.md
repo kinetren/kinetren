@@ -157,8 +157,14 @@ read (`NestStream::synced`), `sync_fx` carries over only existing ones (`nest_li
 stream a second away from the rendered range is released. The same probe stays at 172 MB. t1937;
 spec `compositions`. Every test of this change that can grow runs under the memory cap.
 
-## Load at rest
+## Load at rest, and the live scenario
 
 The store and the memo add no work at rest: the publish runs inside the render loop's existing
 wake (250 ms parked on a pause); a pending re-check after an edit asks a finite run of frames.
-Measured on the heavy showcase in the live scenario `cached_range.py` and on his copy (the report).
+
+`cached_range.py` on the heavy showcase (debug build, Xvfb, llvmpipe), a half-second loop over the
+composition under Slowed, VHS Tape and Camera ISP, 6 s once the loop is covered: 129 kept
+composites shown, 0 composed; 300 bursts from the kept mix (real time), 0 rendered live; 0 decoded;
+0 callback underruns; V-fps 21–27 of 25 (a real window's driver submit on llvmpipe caps the UI
+frames here, about 24 a second in that run). The pause after it: no work, 2 % of a core. The bright
+layer of both strips stands exactly over the loop (screenshot `03-step-playing.png`).

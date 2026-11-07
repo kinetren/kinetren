@@ -1,5 +1,5 @@
 //! cached-range-plays: the final mix of a covered range is kept and played again with no decode
-//! and no effect run (the owner's "вариант А", invariant 2 as reworded). t1930–t1933.
+//! and no effect run (the owner's choice "a", invariant 2 as reworded). t1930–t1933.
 
 use kt_engine::mix::{MixCtx, MixPlay, pieces};
 use kt_engine::{AudioFetcher, AudioRenderer, DirectFetcher, FxStateStore};
@@ -234,7 +234,8 @@ fn t1933_loop_laps_are_kept_apart_and_replayed() {
     let (out, replayed) = play(&mut mix, &r, &mut f, &mut fx, Some(region), region.0, n);
     let runs = mix.store.runs();
     assert_eq!(runs.linear, vec![region.0..region.1], "the first lap is linear play");
-    assert_eq!(runs.laps, vec![(region, vec![region.0..region.1])], "the second lap is the lap");
+    let whole: Vec<std::ops::Range<i64>> = std::iter::once(region.0..region.1).collect();
+    assert_eq!(runs.laps, vec![(region, whole)], "the second lap is the lap");
     // laps 2.. come from the store: at most the chunks that straddle into lap 2 rendered live
     assert!(replayed as i64 >= n as i64 - (2 * len) / BURST - 2, "replayed {replayed} of {n}");
     let lap = |k: i64| {

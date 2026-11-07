@@ -245,10 +245,6 @@ impl PresentMemo {
             }
         }
     }
-
-    pub fn bytes(&self) -> u64 {
-        self.bytes
-    }
 }
 
 /// LRU of ready composition frames: plan hash → (RGBA, complete). Keeps the
