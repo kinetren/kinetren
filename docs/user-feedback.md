@@ -2704,6 +2704,24 @@ On 26.11.03: "ТАМ НЕ "стала хуже" а УЖЕ ХУЕВАЯ СБОР�
 ТРЕПЫХАЛАСЬ". An older build is never the bar for load: the bar is zero work at rest. A hint from him
 is not a reference to reach.
 
+## 2026-11-07 — his run of 61414dba
+
+Verbatim in `docs/ktprompts/kkt-26.11.07b.txt`, registry `kkt-26.11.07b-index.md`. His files are in
+`/media/e/developer/kt.9/fails/26.11.07`, and he sent his project after all: "ТАК УЖ И БЫТЬ, я скину
+haski.kt". It is his: never edited, never copied into the tree; its media are not here.
+
+What he asks, in short, each its own request:
+
+- A mouse move over the preview on a pause costs 25 % (not prefetch).
+- A 400 ms rendered range plays at 16 V-fps, 45 %: "три проблемы - производительность, хрип звука,
+  не рабочий кэш".
+- With the effects window open every mouse move sets prefetch to 100 %; with VHS tape selected in
+  the chain, even when VHS and ISP are off; another effect selected, it stops. "ТРЕБУЮ ПОЛНУЮ РЕВИЗИЮ!"
+- VHS tape on audio breaks playback.
+- The report: "сделал отложенную запись и я не могу тебе сказать точное время". One telemetry
+  journal with load, playback and his actions. "телеметрия != трекинг использования в posthog."
+- "АГЕНТЫ НЕ ДУМАЛИ!!!!!": a tool made for proof must let him say what he did and when.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
