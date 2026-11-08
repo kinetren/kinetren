@@ -401,7 +401,7 @@ pub struct KtApp {
     /// files of the one being found on a thread (ui-never-waits: keyed by the revision, every
     /// edit opened them all again on the UI thread while the render window was open).
     pub max_src_cache: Option<(u64, Option<(u32, u32)>)>,
-    pub max_src_job: Option<(u64, std::sync::mpsc::Receiver<Option<(u32, u32)>>)>,
+    pub max_src_job: Option<MaxSrcJob>,
     /// Background autosave (R.31 item 2): (snapshot rev, result). The UI thread
     /// no longer writes the file itself — it only serializes the snapshot and waits for the result.
     pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<SaveOutcome>>)>,
@@ -673,7 +673,7 @@ pub struct KtApp {
     /// Last attempt of a composite of an incomplete frame (retry throttling, item 1).
     pub last_compose_retry: std::time::Instant,
     /// The ask on its way to the preview's thread: its number and (tick, size, content, project).
-    pub preview_asked: Option<(u64, (i64, (u32, u32), u64, u64))>,
+    pub preview_asked: Option<(u64, PreviewAsk)>,
     /// How long a frame waits for its composite, so that a fast one shows in this very frame.
     /// A bound and nothing more: past it the frame goes on with the old picture.
     pub compose_grace: std::time::Duration,
@@ -8584,6 +8584,12 @@ impl KtApp {
 pub fn repaint_delay(animating: bool, economy: bool) -> Option<std::time::Duration> {
     animating.then(|| std::time::Duration::from_millis(if economy { 33 } else { 16 }))
 }
+
+/// The files' key and the answer of the thread finding the largest source.
+pub type MaxSrcJob = (u64, std::sync::mpsc::Receiver<Option<(u32, u32)>>);
+
+/// What a preview ask was for: (tick, size, content version, project version).
+pub type PreviewAsk = (i64, (u32, u32), u64, u64);
 
 /// The largest even video size among `paths` (each opened through the sidecar `db`).
 fn max_source_resolution_of(paths: &[String], db: Option<&std::path::Path>) -> Option<(u32, u32)> {

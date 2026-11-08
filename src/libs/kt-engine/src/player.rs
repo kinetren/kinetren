@@ -194,7 +194,7 @@ pub struct Player {
     pub mix_coverage: crate::mix::MixCoverage,
     /// The moments the preview presented and the executor's key for each, with the versions they
     /// were presented at (cached-range-plays): the bars' "plays without work" for video.
-    shown: Arc<Mutex<std::collections::BTreeMap<i64, (u64, u64, u64)>>>,
+    shown: Shown,
     /// Bumped when `shown` gains a moment or a moment's key changes.
     shown_gen: Arc<AtomicU64>,
 }
@@ -1139,7 +1139,7 @@ pub(crate) struct PreviewParts {
     preview_quality: Arc<Mutex<Quality>>,
     project_version: Arc<AtomicU64>,
     content_version: Arc<AtomicU64>,
-    shown: Arc<Mutex<std::collections::BTreeMap<i64, (u64, u64, u64)>>>,
+    shown: Shown,
     shown_gen: Arc<AtomicU64>,
 }
 
@@ -1454,6 +1454,9 @@ type Workers = Arc<std::sync::RwLock<HashMap<MediaId, MediaWorker>>>;
 /// proceduralness): only the open source knows them, and the renderer needs them
 /// on every rebuild.
 type Natives = Arc<std::sync::RwLock<crate::video::SourceFacts>>;
+
+/// The moments the preview presented: tick → (the executor's key, project and content versions).
+type Shown = Arc<Mutex<std::collections::BTreeMap<i64, (u64, u64, u64)>>>;
 
 /// The UI's own audio renderer (`Player::with_probe`): the one that answers, and the version a
 /// builder thread is making.

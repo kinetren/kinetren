@@ -288,3 +288,13 @@ Mpx, one worker per file, and every run's decoders kept up on 4K VP9 footage. Th
 decoding of pictures nobody asked for, not the speed of decoding. No architecture question arises.
 The RGBA conversion is the larger half, on one thread per file: at 4K native size it is the next
 limit to meet, but nothing measured here reaches it.
+
+## Kept moments checked off the UI thread (ui-never-waits, archived 2026-11-08)
+
+The bars' check of moments presented before an edit builds frame plans, and a plan with a stream stage
+runs its kernel; `holds` takes the engine's lock, which the preview's thread holds for a whole
+composite. Both were asked by `coverage_runs` on the UI thread. The check runs on the preview's
+thread between frames (`PreviewParts::recheck_shown`, eight moments a pass, yielding to an ask); the
+UI reads the map, and the executor is asked with the map free — t1843 caught the first version
+calling `holds` under the map's lock. The display target and the glow are published in a slot of their
+own at the end of `present`, so the UI's paint never takes the engine's lock (t1845).

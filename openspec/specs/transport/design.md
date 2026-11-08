@@ -197,3 +197,29 @@ built: an FFT that allocates its scratch lazily must not do it in the callback. 
   would have from `t`; patching `source_in` afterwards needed a second copy of the mirror and of the curve
   shift. No ripple (rule 20): the material past the end is cut. A chain with no warp slot gets a
   `slowed_reverb` at rate 0 with its reverb off.
+
+## The UI never waits (ui-never-waits, archived 2026-11-08)
+
+- **The preview composes on a thread of its own** (`compose_queue`). The owner's release journal noted
+  UI frames of 0.3–4.5 s during playback at a quarter of a core (kkt-26.11.08 H9): a Datamosh stream
+  stage runs inside the plan and decodes the event's history, one compute job a frame, each read back
+  with a blocking poll, and the composite ran in the UI frame. A composite cannot be stopped inside the
+  device, so the UI must not be the thread that composes; "cancelled" means nobody reads it. A timeout
+  after which the UI gives up was rejected: any wait in the frame is the defect.
+- **A slow chain leaves egui's device.** On its queue the swapchain waits behind it, so a thread alone
+  is not enough. Past 150 ms of EXECUTOR time a chain composes on the offline device and comes back as
+  bytes; the first frame of each new project version is timed there. The plan's time (a stream stage on
+  the compute host's own device) does not count: timing the whole composite sent every Datamosh frame
+  through a readback for nothing. On a real card both devices share the graphics ring, interleaved by
+  submission (found-defects 136).
+- **A guard in an argument lives through the call.** `AudioRenderer::new(&project.lock().unwrap().clone())`
+  held the project lock through a 412 ms build and the UI's next edit waited for it; the same form held
+  the workers' map through a decoder's join and the thumbnail map through a file's opening. Clone in a
+  statement of its own; take a worker out of the map before joining it.
+- **The UI's audio probe of a new version is built off the UI thread**, the one before answering
+  meanwhile; only the first is built where it is asked, because there is nothing to answer with before
+  it (and engine tests that set a loop region on a fresh player rely on that).
+- **A long frame's journal note names its stages by wall time.** The processor time per stage cannot
+  see a wait. The first measurement with it found the live harness's own geometry dump in the frame: a
+  file write on the UI thread, 10–20 s on a disk busy with fsyncs. The dump now has a thread of its own.
+- The walk of every UI-thread wait, with what was kept and why, is the archived change's design D2.
