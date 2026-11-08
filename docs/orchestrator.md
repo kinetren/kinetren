@@ -116,6 +116,13 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   `cfg!(test)` or `KT_NO_EXTERNAL_OPEN` (the live bench sets it and logs the path to `opened.txt`).
   Anything new that starts an outside program (a browser, a player, a file manager) goes through
   the same guard.
+  2026-11-08: during `finish.sh`'s workshop tests his desktop session manager (`cinnamon-session`)
+  aborted with SIGABRT and took the whole desktop, the Claude app and every executor with it; no
+  memory shortage. Cause not proved, but the runs inherited his `DISPLAY` and session bus. Now
+  `finish.sh` unsets `DISPLAY`/`WAYLAND_DISPLAY`/`XAUTHORITY` and sets
+  `DBUS_SESSION_BUS_ADDRESS=disabled:`, and `kt_live.py` gives the program no session bus either.
+  Every brief says: run `cargo test`/`nextest` as
+  `env -u DISPLAY -u WAYLAND_DISPLAY -u XAUTHORITY DBUS_SESSION_BUS_ADDRESS=disabled: <cmd>`.
 - **After a merge, build the binary too** (2026-11-08): a conflict resolved by keeping both lines
   dropped a `#[cfg(test)]`, the test build passed and `cargo build -p kt-app` failed; two executors
   found it. Every merge check runs `cargo build -p kt-app -p kt-cli` before the tests.

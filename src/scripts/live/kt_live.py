@@ -323,6 +323,10 @@ class Live:
         # over the session bus to HIS file manager, whatever display the bench uses (2026-11-07:
         # every load-scenario run opened its data folder on the owner's screen)
         env["KT_NO_EXTERNAL_OPEN"] = "1"
+        # and no session bus of his: a portal, a notification or the session manager would be
+        # HIS (2026-11-08: his desktop session aborted during a run)
+        env["DBUS_SESSION_BUS_ADDRESS"] = "disabled:"
+        env.pop("WAYLAND_DISPLAY", None)
         env["KT_OPEN_LOG"] = os.path.join(self.out, "opened.txt")
         if self.autoplay:
             env["KT_AUTOPLAY"] = "1"
