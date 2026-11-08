@@ -54,11 +54,12 @@ if [ -n "${KT_FINISH_LOCKED:-}" ]; then
     [ "$WAITED" -gt 1 ] && echo "finish.sh: machine lock taken after $WAITED s"
 fi
 
-# The run never reaches the person's desktop (2026-11-08: during the workshop tests his session
-# manager aborted and took the whole desktop with it). Tests and live scenarios get no display of
-# his and no session bus: the live bench brings its own Xvfb, the GPU tests run headless, and
-# anything that would talk to his session (a file manager, a portal, a notification) fails fast.
-unset DISPLAY WAYLAND_DISPLAY XAUTHORITY
+# The run never reaches the person's session (2026-11-08: during the workshop tests his session
+# manager aborted and took the whole desktop with it). Tests and live scenarios get no session bus
+# of his: a file manager, a portal, a notification or the session manager fail fast instead. The
+# display stays: `kt-cli export` crashes without one (found-defects 131), and the live bench brings
+# its own Xvfb anyway.
+unset WAYLAND_DISPLAY
 export DBUS_SESSION_BUS_ADDRESS=disabled:
 
 VER=$(git log -1 --format=%cd --date=format:%y.%m.%d 2>/dev/null || echo 00.00.00)
