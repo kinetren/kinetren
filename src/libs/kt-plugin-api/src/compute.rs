@@ -67,6 +67,28 @@ pub fn fail(reason: String) {
     *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason);
 }
 
+/// [`unavailable`] for a caller that must not wait (an interface drawing a frame): before the device
+/// is opened it answers `None` and opens it on a thread of its own. Opening a device takes from a
+/// fraction of a second to seconds, and a thread already opening it holds the rest at the
+/// `OnceLock` (ui-never-waits).
+pub fn unavailable_now() -> Option<String> {
+    static OPENING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if let Some(r) = FAILED.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Some(r);
+    }
+    match HOST.get() {
+        Some(h) => h.as_ref().err().cloned(),
+        None => {
+            if !OPENING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                let _ = std::thread::Builder::new().name("compute-open".into()).spawn(|| {
+                    let _ = host();
+                });
+            }
+            None
+        }
+    }
+}
+
 /// Why no kernel can compute, or `None` while the device works.
 pub fn unavailable() -> Option<String> {
     if let Some(r) = FAILED.lock().unwrap_or_else(|e| e.into_inner()).clone() {

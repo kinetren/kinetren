@@ -86,5 +86,7 @@ fn t1875_the_ui_renderer_is_built_once_per_project_version() {
     let before = builds();
     player.set_loop_region(Some(TickRange::new(Tick(0), Tick(90_000))));
     player.set_loop_region(Some(TickRange::new(Tick(9_000), Tick(90_000))));
+    // a later version is built on a thread of its own (ui-never-waits): wait for it to land
+    settle();
     assert_eq!(builds() - before, 1);
 }

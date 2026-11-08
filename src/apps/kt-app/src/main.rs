@@ -24,6 +24,8 @@ mod diag_tests;
 #[cfg(test)]
 mod idle_tests;
 #[cfg(test)]
+mod ui_wait_tests;
+#[cfg(test)]
 mod input_work_tests;
 #[cfg(test)]
 mod frame_cost_tests;

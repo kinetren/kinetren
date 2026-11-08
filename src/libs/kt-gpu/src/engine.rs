@@ -1352,6 +1352,13 @@ impl GpuFxEngine {
         self.shown.lock().unwrap().1.clone()
     }
 
+    /// Hold the engine as a composite does, until the returned guard drops: a test of what must
+    /// not wait for it (ui-never-waits).
+    #[doc(hidden)]
+    pub fn hold(&self) -> impl Sized + '_ {
+        self.inner.lock().unwrap()
+    }
+
     /// The display target's bytes (premultiplied, as egui samples them): tests only.
     pub fn read_display(&self) -> Option<Vec<u8>> {
         self.read_target(|i| i.display.as_ref())

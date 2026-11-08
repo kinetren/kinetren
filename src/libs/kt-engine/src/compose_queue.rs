@@ -100,6 +100,11 @@ impl Composer {
         *self.spare.lock().unwrap() = buf;
     }
 
+    /// Wake the UI for news of another thread (the probe's renderer arrived).
+    pub(crate) fn wake_ui(&self) {
+        wake(self);
+    }
+
     pub(crate) fn set_wake(&self, f: Wake) {
         *self.wake.lock().unwrap() = Some(f);
     }

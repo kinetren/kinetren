@@ -456,7 +456,10 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             if shared.durations.lock().unwrap().contains_key(&pid) {
                 continue;
             }
-            let dur = shared.media.lock().unwrap().get(&pid).cloned().and_then(|path| {
+            // the path cloned in a statement of its own: a guard in the chain lived through the
+            // open below, and the UI's `add_media`/`retune_media` waited for it (ui-never-waits)
+            let path = shared.media.lock().unwrap().get(&pid).cloned();
+            let dur = path.and_then(|path| {
                 let opened: Option<Box<dyn kt_media::MediaSource>> =
                     if kt_model::is_pseudo_path(&path) || db.is_none() {
                         open_source(&path).ok()

@@ -396,9 +396,12 @@ pub struct KtApp {
     pub gpu_info: Option<String>,
     /// Notice about loss of GPU video rendering was shown (once per session, R.29).
     pub gpu_fx_lost_notified: bool,
-    /// Cache of max_source_resolution by model_rev (R.31 item 3: the function opens
-    /// ALL media files — it must not be called per frame from the render window).
+    /// Cache of max_source_resolution by the files it opens (R.31 item 3: the function opens
+    /// ALL media files — it must not be called per frame from the render window), and the
+    /// files of the one being found on a thread (ui-never-waits: keyed by the revision, every
+    /// edit opened them all again on the UI thread while the render window was open).
     pub max_src_cache: Option<(u64, Option<(u32, u32)>)>,
+    pub max_src_job: Option<(u64, std::sync::mpsc::Receiver<Option<(u32, u32)>>)>,
     /// Background autosave (R.31 item 2): (snapshot rev, result). The UI thread
     /// no longer writes the file itself — it only serializes the snapshot and waits for the result.
     pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<SaveOutcome>>)>,
@@ -952,6 +955,7 @@ impl KtApp {
             gpu_info: None,
             gpu_fx_lost_notified: false,
             max_src_cache: None,
+            max_src_job: None,
             autosave_rx: None,
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -1248,6 +1252,7 @@ impl KtApp {
             gpu_info: None,
             gpu_fx_lost_notified: false,
             max_src_cache: None,
+            max_src_job: None,
             autosave_rx: None,
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -3029,39 +3034,60 @@ impl KtApp {
     /// Per-component maximum resolution over the project’s video sources
     /// (port of computeMaxSourceVideoResolution; short-lived probes).
     /// Cached variant (R.31 item 3): recomputed only on a model change.
+    /// The largest video size among the project's files, as last found: finding it opens every
+    /// file, so it runs on a thread when the set of files changes, and the value before answers
+    /// meanwhile.
     pub fn max_source_resolution_cached(&mut self) -> Option<(u32, u32)> {
-        if let Some((rev, v)) = self.max_src_cache
-            && rev == self.model_rev
-        {
-            return v;
+        let (key, paths, db) = self.max_source_files();
+        let known = self.max_src_cache.and_then(|(_, v)| v);
+        if self.max_src_cache.is_some_and(|(k, _)| k == key) {
+            return known;
         }
-        let v = self.max_source_resolution();
-        self.max_src_cache = Some((self.model_rev, v));
-        v
+        if let Some((k, rx)) = &self.max_src_job
+            && *k == key
+        {
+            return match rx.try_recv() {
+                Ok(v) => {
+                    self.max_src_cache = Some((key, v));
+                    self.max_src_job = None;
+                    v
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => known,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.max_src_job = None;
+                    known
+                }
+            };
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name("max-source-size".into()).spawn(move || {
+            let _ = tx.send(max_source_resolution_of(&paths, db.as_deref()));
+            crate::wake::now();
+        });
+        if spawned.is_ok() {
+            self.max_src_job = Some((key, rx));
+        }
+        known
     }
 
-    pub fn max_source_resolution(&self) -> Option<(u32, u32)> {
+    /// The files `max_source_resolution` opens, their key and the sidecar.
+    fn max_source_files(&self) -> (u64, Vec<String>, Option<std::path::PathBuf>) {
+        use std::hash::{Hash, Hasher};
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let db = self.index_db_path();
-        let (mut mw, mut mh) = (0u32, 0u32);
-        for m in &self.model.project().media {
-            // Pseudo-sources do not take part: a generator’s “native” is the
-            // reserve of detail for the decode step (GEN_NATIVE, R.52), not the
-            // resolution of the material, and it has no place in “Max (by sources)”.
-            if kt_model::is_pseudo_path(&m.path) {
-                continue;
-            }
-            if let Ok(src) =
-                open_source_indexed(&resolve_media_path(base.as_deref(), &m.path), db.as_deref())
-            {
-                let i = src.info();
-                if i.has_video {
-                    mw = mw.max(i.width);
-                    mh = mh.max(i.height);
-                }
-            }
-        }
-        (mw >= 2 && mh >= 2).then_some((mw & !1, mh & !1))
+        // Pseudo-sources do not take part: a generator’s “native” is the
+        // reserve of detail for the decode step (GEN_NATIVE, R.52), not the
+        // resolution of the material, and it has no place in “Max (by sources)”.
+        let paths: Vec<String> = self
+            .model
+            .project()
+            .media
+            .iter()
+            .filter(|m| !kt_model::is_pseudo_path(&m.path))
+            .map(|m| resolve_media_path(base.as_deref(), &m.path))
+            .collect();
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        paths.hash(&mut h);
+        (h.finish(), paths, self.index_db_path())
     }
 
     /// Esc cascade (item 11): windows → active drag → region+selection.
@@ -8557,6 +8583,21 @@ impl KtApp {
 /// `KtApp::rest_wake`. A pure function — test 20-repaint (item 1).
 pub fn repaint_delay(animating: bool, economy: bool) -> Option<std::time::Duration> {
     animating.then(|| std::time::Duration::from_millis(if economy { 33 } else { 16 }))
+}
+
+/// The largest even video size among `paths` (each opened through the sidecar `db`).
+fn max_source_resolution_of(paths: &[String], db: Option<&std::path::Path>) -> Option<(u32, u32)> {
+    let (mut mw, mut mh) = (0u32, 0u32);
+    for path in paths {
+        if let Ok(src) = open_source_indexed(path, db) {
+            let i = src.info();
+            if i.has_video {
+                mw = mw.max(i.width);
+                mh = mh.max(i.height);
+            }
+        }
+    }
+    (mw >= 2 && mh >= 2).then_some((mw & !1, mh & !1))
 }
 
 /// A frame of the meters falling while nothing else moves.

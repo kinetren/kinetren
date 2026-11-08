@@ -351,6 +351,10 @@ fn probe_range(
     println!("\n-- build cost --");
     println!("  effective_clips: {} clips in {eff_ms:.0} ms", eff_all.len());
     println!("  AudioRenderer::new: {new_ms:.0} ms");
+    // the video renderer an edit builds on the UI thread (`Player::set_project`, ui-never-waits)
+    let t = std::time::Instant::now();
+    let _ = kt_engine::VideoRenderer::new(project);
+    println!("  VideoRenderer::new: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
     println!("  sync_fx (FX processors): {sync_ms:.0} ms");
     println!("  clips with a time warp: {warped_file} in the file, {warped_eff} after layers");
 

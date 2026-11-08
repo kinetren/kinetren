@@ -183,3 +183,23 @@ fn t1934_a_presented_composite_is_kept_by_its_plan() {
     }
     assert!(again > 0 && kept > 0, "scene guard: {again} composed again, {kept} kept");
 }
+
+/// t1845 (ui-never-waits): the UI's paint asks for the display target and the glow while the
+/// preview's thread holds the engine for a whole composite; it gets the last presented target and
+/// never waits for the engine. A call that waited could never return: the hold ends only after it.
+#[test]
+fn t1845_the_display_target_never_waits_for_a_composite() {
+    kt_plugins_builtin::install();
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    let p = demo_project(DemoSources::Synth);
+    let t = Tick(90_000);
+    let (video, cache) = warmed(&p, &[t]);
+    let plan = plan_at(&video, &cache, t);
+    gpu.present(&plan, PresentOptions { show_incomplete: true, glow: true }).unwrap();
+    let presented = gpu.display_target().expect("a presented frame has a target").generation;
+    let held = gpu.hold();
+    let target = gpu.display_target().expect("the target is there while the engine is held");
+    assert_eq!(target.generation, presented);
+    assert!(gpu.glow_view().is_some(), "the glow is there while the engine is held");
+    drop(held);
+}

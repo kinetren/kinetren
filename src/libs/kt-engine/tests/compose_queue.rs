@@ -131,3 +131,94 @@ fn t1840b_a_finished_frame_wakes_the_ui() {
     wait_until("no wake", || woken.load(Ordering::SeqCst) == 1);
     assert!(p.take_composed(Duration::ZERO).is_some());
 }
+
+/// A display executor that keeps every presented frame under one key, and whose memo answers only
+/// when the test lets it: the engine's lock held by a composite.
+struct KeptExec {
+    info: GpuBackendInfo,
+    keys_open: Mutex<bool>,
+    cv: Condvar,
+    asked: AtomicU32,
+}
+
+impl KeptExec {
+    fn gate(&self, open: bool) {
+        *self.keys_open.lock().unwrap() = open;
+        self.cv.notify_all();
+    }
+}
+
+impl VideoGpuExec for KeptExec {
+    fn execute_into(&self, _p: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        out.clear();
+        Ok(true)
+    }
+
+    fn info(&self) -> &GpuBackendInfo {
+        &self.info
+    }
+
+    fn can_present(&self) -> bool {
+        true
+    }
+
+    fn present(&self, _p: &FramePlan<'_>, _o: kt_engine::PresentOptions) -> Result<bool, GpuExecError> {
+        Ok(true)
+    }
+
+    fn present_key(&self, _p: &FramePlan<'_>) -> Option<u64> {
+        Some(7)
+    }
+
+    fn holds(&self, _key: u64) -> bool {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        let mut g = self.keys_open.lock().unwrap();
+        while !*g {
+            g = self.cv.wait(g).unwrap();
+        }
+        true
+    }
+}
+
+/// Test t1843 (ui-never-waits): the bars' "plays without work" never waits for the executor or a
+/// plan. With the executor's memo held, an edit leaves the kept moment stale: the bars' query
+/// returns at once and says the check is pending, a new frame is asked, and the check runs on the
+/// preview's thread when the memo answers.
+#[test]
+fn t1843_the_bars_never_wait_for_the_executor() {
+    let exec = Arc::new(KeptExec {
+        info: GpuBackendInfo { name: "kept".into(), backend: "Test".into(), software: true },
+        keys_open: Mutex::new(true),
+        cv: Condvar::new(),
+        asked: AtomicU32::new(0),
+    });
+    let p = player();
+    p.set_video_gpu(Some(exec.clone()));
+    p.ask_preview(Tick(0), Some(kt_engine::PresentOptions::default()));
+    let covers = |runs: &[std::ops::Range<i64>]| runs.iter().any(|r| r.start <= 0 && 0 < r.end);
+    wait_until("the presented moment never reached the bars", || {
+        let (runs, pending) = p.final_video_runs();
+        !pending && covers(&runs)
+    });
+
+    // the memo stands, as the engine's lock does under a composite of seconds
+    exec.gate(false);
+    let asked = exec.asked.load(Ordering::SeqCst);
+    let mut edited = project();
+    edited.settings.width = 640;
+    p.set_project(edited);
+    let (runs, pending) = p.final_video_runs();
+    assert!(pending && !covers(&runs), "a moment presented before the edit is still drawn as kept");
+    wait_until("the check never started on the preview's thread", || exec.asked.load(Ordering::SeqCst) > asked);
+    // the preview's thread now stands in the memo; everything the UI does goes on
+    for _ in 0..3 {
+        let (_, pending) = p.final_video_runs();
+        assert!(pending);
+        p.ask_preview(Tick(0), Some(kt_engine::PresentOptions::default()));
+    }
+    exec.gate(true);
+    wait_until("the kept moment was never checked against the edit", || {
+        let (runs, pending) = p.final_video_runs();
+        !pending && covers(&runs)
+    });
+}
