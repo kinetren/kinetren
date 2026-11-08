@@ -1,56 +1,64 @@
 // The residual of one plane (compute-kernels D6): source minus the motion prediction per 8×8 block,
 // forward DCT, a uniform step rounded half away from zero, inverse DCT rounded to an integer.
-struct U { w: u32, h: u32, bs: u32, shift: u32, q: f32, mw: u32, intra: u32, pad: u32 };
+// One workgroup per block, one invocation per pixel and per coefficient (gpu-pass-cost): each
+// stage of the separable DCT is a row of eight products summed in the same order as before, the
+// stages joined by barriers. A thread per block with three 64-float arrays spilled to scratch on a
+// card and left most of its lanes idle. The planes `src` and `rf` are bytes, four to a word. `c` is the DCT basis, row u = frequency.
+struct U { w: u32, h: u32, bs: u32, shift: u32, q: f32, mw: u32, intra: u32, pad: u32, c: array<vec4<f32>, 16> };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var<storage, read> src: array<u32>;
 @group(0) @binding(2) var<storage, read> rf: array<u32>;
 @group(0) @binding(3) var<storage, read> mv: array<vec2<i32>>;
 @group(0) @binding(4) var<storage, read_write> res: array<i32>;
 
+fn src_at(i: i32) -> u32 { return (src[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 255u; }
+fn rf_at(i: i32) -> u32 { return (rf[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 255u; }
+
+var<workgroup> B: array<f32, 64>;
+var<workgroup> T: array<f32, 64>;
+var<workgroup> F: array<f32, 64>;
+
 fn round_away(v: f32) -> f32 { return sign(v) * floor(abs(v) + 0.5); }
 
+fn C(i: i32) -> f32 { return u.c[i / 4][i % 4]; }
+
 @compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= u.w / 8u || id.y >= u.h / 8u { return; }
-    let ox = i32(id.x * 8u);
-    let oy = i32(id.y * 8u);
+fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
+    // the dispatch is exactly the plane's blocks: every invocation reaches every barrier
+    let ox = i32(g.x * 8u);
+    let oy = i32(g.y * 8u);
     let w = i32(u.w);
     let h = i32(u.h);
-    var b: array<f32, 64>;
-    for (var y = 0; y < 8; y++) {
-        for (var x = 0; x < 8; x++) {
-            let px = ox + x;
-            let py = oy + y;
-            var p = 128.0;
-            if u.intra == 0u {
-                let pbs = i32(u.bs >> u.shift);
-                let at = u32(py / pbs) * u.mw + u32(px / pbs);
-                let v = mv[at] >> vec2<u32>(u.shift);
-                p = f32(rf[clamp(py + v.y, 0, h - 1) * w + clamp(px + v.x, 0, w - 1)]);
-            }
-            b[y * 8 + x] = f32(src[py * w + px]) - p;
-        }
+    let x = i32(l.x);
+    let y = i32(l.y);
+    let px = ox + x;
+    let py = oy + y;
+    var p = 128.0;
+    if u.intra == 0u {
+        let pbs = i32(u.bs >> u.shift);
+        let at = u32(py / pbs) * u.mw + u32(px / pbs);
+        let v = mv[at] >> vec2<u32>(u.shift);
+        p = f32(rf_at(clamp(py + v.y, 0, h - 1) * w + clamp(px + v.x, 0, w - 1)));
     }
-    var t: array<f32, 64>;
-    var f: array<f32, 64>;
-    for (var y = 0; y < 8; y++) { for (var c0 = 0; c0 < 8; c0++) {
-        var s = 0.0;
-        for (var x = 0; x < 8; x++) { s += C[c0 * 8 + x] * b[y * 8 + x]; }
-        t[y * 8 + c0] = s;
-    } }
-    for (var c0 = 0; c0 < 8; c0++) { for (var v = 0; v < 8; v++) {
-        var s = 0.0;
-        for (var y = 0; y < 8; y++) { s += C[v * 8 + y] * t[y * 8 + c0]; }
-        f[v * 8 + c0] = round_away(s / u.q) * u.q;
-    } }
-    for (var c0 = 0; c0 < 8; c0++) { for (var y = 0; y < 8; y++) {
-        var s = 0.0;
-        for (var v = 0; v < 8; v++) { s += C[v * 8 + y] * f[v * 8 + c0]; }
-        t[y * 8 + c0] = s;
-    } }
-    for (var y = 0; y < 8; y++) { for (var x = 0; x < 8; x++) {
-        var s = 0.0;
-        for (var c0 = 0; c0 < 8; c0++) { s += C[c0 * 8 + x] * t[y * 8 + c0]; }
-        res[(oy + y) * w + ox + x] = i32(clamp(round_away(s), -512.0, 512.0));
-    } }
+    B[y * 8 + x] = f32(src_at(py * w + px)) - p;
+    workgroupBarrier();
+    // rows: t[y][c0], c0 = this invocation's x
+    var s = 0.0;
+    for (var k = 0; k < 8; k++) { s += C(x * 8 + k) * B[y * 8 + k]; }
+    T[y * 8 + x] = s;
+    workgroupBarrier();
+    // columns, quantised: f[v][c0], v = this invocation's y
+    s = 0.0;
+    for (var k = 0; k < 8; k++) { s += C(y * 8 + k) * T[k * 8 + x]; }
+    F[y * 8 + x] = round_away(s / u.q) * u.q;
+    workgroupBarrier();
+    // inverse columns: t[y][c0]
+    s = 0.0;
+    for (var k = 0; k < 8; k++) { s += C(k * 8 + y) * F[k * 8 + x]; }
+    T[y * 8 + x] = s;
+    workgroupBarrier();
+    // inverse rows: the pixel (x, y)
+    s = 0.0;
+    for (var k = 0; k < 8; k++) { s += C(k * 8 + x) * T[y * 8 + k]; }
+    res[py * w + px] = i32(clamp(round_away(s), -512.0, 512.0));
 }

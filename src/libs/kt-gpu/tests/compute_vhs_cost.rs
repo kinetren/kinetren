@@ -166,7 +166,7 @@ fn bench_generators_against_a_compute_frame() {
     let mut best = f64::MAX;
     for i in 0..6u32 {
         let uniform: Vec<u8> = [w, h, i, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
-        let step = Step { shader, uniform: &uniform, read: &[], write: &[Buf(0)], groups: [(w * h).div_ceil(256 * 64), 1, 1] };
+        let step = Step { name: "test", shader, uniform: &uniform, read: &[], write: &[Buf(0)], groups: [(w * h).div_ceil(256 * 64), 1, 1] };
         let t = std::time::Instant::now();
         let got = host.run(&Job { buffers: &[Init::Zero(bytes)], steps: &[step], reads: &[Buf(0)] }).unwrap();
         std::hint::black_box(got);

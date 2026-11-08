@@ -1158,6 +1158,14 @@ impl BarrierKernel for CameraIsp {
         SHADERS
     }
 
+    /// The passes by their files (gpu-pass-cost).
+    fn pass_names(&self) -> &'static [&'static str] {
+        &[
+            "s00-unprocess", "s01-optics", "s02-pixel", "s03-readout", "s04-raw-front", "s05-raw-nr", "s06-raw-correct",
+            "s07-demosaic", "s08-lens-correct", "s09-yuv", "s10-chroma", "s11-view",
+        ]
+    }
+
     /// The passes of `Plan::passes`: the first reads the source, each next one the previous (and
     /// the source for its alpha).
     fn gpu_values(&self, p: &[f64], g: &GpuCtx, out: &mut Vec<Node>) {

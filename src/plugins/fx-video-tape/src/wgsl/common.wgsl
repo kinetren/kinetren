@@ -84,18 +84,25 @@ fn hi16(v: u32, off: f32, scale: f32) -> f32 {
     return f32(v >> 16u) / scale - off;
 }
 
-// the texture readers, the column clamped to the grid line
+// the texture readers, the column clamped to the grid line. The last column of each input is taken
+// once at the pass's entry (`tape_dims`, inserted by `shader_texts`, gpu-pass-cost): a size query
+// per read was most of an 81-tap row kernel's cost
+var<private> WD0: i32;
+var<private> WD1: i32;
+var<private> WD2: i32;
+fn tape_dims() {
+    WD0 = i32(textureDimensions(T0).x) - 1;
+    WD1 = i32(textureDimensions(T1).x) - 1;
+    WD2 = i32(textureDimensions(T2).x) - 1;
+}
 fn ld0(x: i32, y: i32) -> u32 {
-    let d = vec2<i32>(textureDimensions(T0));
-    return word(textureLoad(T0, vec2<i32>(clamp(x, 0, d.x - 1), y), 0));
+    return word(textureLoad(T0, vec2<i32>(clamp(x, 0, WD0), y), 0));
 }
 fn ld1(x: i32, y: i32) -> u32 {
-    let d = vec2<i32>(textureDimensions(T1));
-    return word(textureLoad(T1, vec2<i32>(clamp(x, 0, d.x - 1), y), 0));
+    return word(textureLoad(T1, vec2<i32>(clamp(x, 0, WD1), y), 0));
 }
 fn ld2(x: i32, y: i32) -> u32 {
-    let d = vec2<i32>(textureDimensions(T2));
-    return word(textureLoad(T2, vec2<i32>(clamp(x, 0, d.x - 1), y), 0));
+    return word(textureLoad(T2, vec2<i32>(clamp(x, 0, WD2), y), 0));
 }
 fn ld0f(x: i32, y: i32) -> f32 { return bitcast<f32>(ld0(x, y)); }
 fn ld1f(x: i32, y: i32) -> f32 { return bitcast<f32>(ld1(x, y)); }

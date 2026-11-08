@@ -93,6 +93,22 @@ is no picture, and an export refuses.
   `pan3d_forward` (`fx-video-distort/src/pan3d.rs`), and the shader reads the result
   (t187 checks every run, t301 — an export carries it).
 
+## What a pass costs (gpu-pass-cost)
+
+- **Every render pass of the engine and every compute dispatch is timed** where the device has
+  `TIMESTAMP_QUERY` (`pass_time.rs`; every device we open asks for it, the eframe one through its
+  `device_descriptor`). A new `begin_render_pass` passes `self.timer.pass(label)` as its
+  `timestamp_writes`, or its time is lost from the journal's `GPU` record. A frame is `begin` … `end`
+  (before `finish`) … `submitted` (after `submit`); `harvest` never waits.
+- Labels: a fixed pipe by `Pipe::name`, a plugin's pass `id:name` (`BarrierKernel::pass_names`), a host
+  node inside a barrier `id:node` by the barrier's index in `plugin_barriers()` (blur has no pipe of its
+  own). `:` not `/` — the journal cuts a word with `/` to a file name.
+- **Nothing is created per frame after warm-up** (t2023): a new per-frame `create_*` site calls
+  `crate::created()` and must stay off the steady state. The preview memo's kept composite is the one
+  allowed creation while it fills.
+- **Rank passes with the instrument, minima of repeats, interleaved A/B** (the machine is shared): llvmpipe
+  compiles a pipeline variant at its first draw, so a run of two frames measures the compiler.
+
 ## The export's readback ring (export-throughput D5)
 
 - `submit`/`collect` (`readback_depth` = `RING` = 3): the same resolve and passes as `execute`, the

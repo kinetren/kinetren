@@ -15,12 +15,23 @@ fn yuv(sx: i32, sy: i32) -> vec3<f32> {
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
-    FL = P.u0.x;
+    begin(P.u0.x);
     let p = vec2<i32>(floor(pos.xy));
     let k = KK();
     let sx = p.x / k;
     let sy = p.y / k;
-    let c0 = yuv(sx, sy);
+    // the 5×5 neighbourhood's YUV once (gpu-pass-cost): the five filters below read it up to 72
+    // times a pixel; the 3×3 alone when no 5×5 filter runs
+    let wide = P.f1.z > 0.0 || bitcast<f32>(P.u1.w) > 0.0;
+    var nb: array<vec3<f32>, 25>;
+    for (var j = 0; j < 5; j = j + 1) {
+        for (var i = 0; i < 5; i = i + 1) {
+            if (wide || (i >= 1 && i <= 3 && j >= 1 && j <= 3)) {
+                nb[j * 5 + i] = yuv(sx + i - 2, sy + j - 2);
+            }
+        }
+    }
+    let c0 = nb[12];
     let y0 = c0.x;
     var u = c0.y;
     var v = c0.z;
@@ -31,7 +42,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         var sw = 0.0;
         for (var dy = -1; dy <= 1; dy = dy + 1) {
             for (var dx = -1; dx <= 1; dx = dx + 1) {
-                let q = yuv(sx + dx, sy + dy).x;
+                let q = nb[(dy + 2) * 5 + dx + 2].x;
                 let d = q - y0;
                 let wt = 1.0 / (1.0 + d * d * inv_s2);
                 s = s + wt * q;
@@ -47,7 +58,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         var sw = 0.0;
         for (var dy = -2; dy <= 2; dy = dy + 1) {
             for (var dx = -2; dx <= 2; dx = dx + 1) {
-                let q = yuv(sx + dx, sy + dy);
+                let q = nb[(dy + 2) * 5 + dx + 2];
                 let d = q.x - y0;
                 let wt = 1.0 / (1.0 + d * d * 277.77778);
                 su = su + wt * q.y;
@@ -60,8 +71,8 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     }
     let fcs = bitcast<f32>(P.u1.z);
     if (fcs > 0.0) {
-        let gx = abs(yuv(sx + 1, sy).x - yuv(sx - 1, sy).x);
-        let gy = abs(yuv(sx, sy + 1).x - yuv(sx, sy - 1).x);
+        let gx = abs(nb[13].x - nb[11].x);
+        let gy = abs(nb[17].x - nb[7].x);
         let kk = 1.0 - fcs * clamp(max(gx, gy) * 4.0, 0.0, 1.0);
         u = u * kk;
         v = v * kk;
@@ -71,7 +82,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         var my = 0.0;
         for (var dy = -2; dy <= 2; dy = dy + 1) {
             for (var dx = -2; dx <= 2; dx = dx + 1) {
-                my = max(my, yuv(sx + dx, sy + dy).x);
+                my = max(my, nb[(dy + 2) * 5 + dx + 2].x);
             }
         }
         let kk = 1.0 - purple * clamp((my - 0.9) * 10.0, 0.0, 1.0) * clamp(min(u, v) * 8.0, 0.0, 1.0);
@@ -83,7 +94,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         var s = 0.0;
         for (var dy = -1; dy <= 1; dy = dy + 1) {
             for (var dx = -1; dx <= 1; dx = dx + 1) {
-                s = s + yuv(sx + dx, sy + dy).x;
+                s = s + nb[(dy + 2) * 5 + dx + 2].x;
             }
         }
         yo = ynr + P.f1.w * (y0 - s * 0.11111111);

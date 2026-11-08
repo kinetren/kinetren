@@ -338,7 +338,7 @@ pub fn shader_text(pixel: &str) -> String {
 
 /// A frame from a kind's shader on the compute device (generators round). No device: a transparent
 /// frame, as a project with no picture has.
-pub fn shader_frame(pixel: &str, w: u32, h: u32, ints: [u32; 2], p: [[f32; 4]; 4]) -> Box<[u8]> {
+pub fn shader_frame(name: &str, pixel: &str, w: u32, h: u32, ints: [u32; 2], p: [[f32; 4]; 4]) -> Box<[u8]> {
     use crate::compute::{self, Buf, Init, Job, Step};
     let bytes = w as u64 * h as u64 * 4;
     let blank = || vec![0u8; bytes as usize].into_boxed_slice();
@@ -351,7 +351,7 @@ pub fn shader_frame(pixel: &str, w: u32, h: u32, ints: [u32; 2], p: [[f32; 4]; 4
         uniform.extend_from_slice(&v.to_le_bytes());
     }
     let shader = shader_text(pixel);
-    let step = Step { shader: &shader, uniform: &uniform, read: &[], write: &[Buf(0)], groups: [w.div_ceil(16), h.div_ceil(16), 1] };
+    let step = Step { name, shader: &shader, uniform: &uniform, read: &[], write: &[Buf(0)], groups: [w.div_ceil(16), h.div_ceil(16), 1] };
     match host.run(&Job { buffers: &[Init::Zero(bytes)], steps: &[step], reads: &[Buf(0)] }) {
         Ok(mut out) => out.remove(0).into_boxed_slice(),
         Err(e) => {

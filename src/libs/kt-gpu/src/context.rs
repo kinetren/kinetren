@@ -59,7 +59,11 @@ impl GpuContext {
         let info = adapter.get_info();
         let limits = wgpu::Limits { max_texture_dimension_2d: 8192, ..wgpu::Limits::default() };
         let (device, queue) = pollster::block_on(
-            adapter.request_device(&wgpu::DeviceDescriptor { required_limits: limits, ..Default::default() }),
+            adapter.request_device(&wgpu::DeviceDescriptor {
+                required_features: crate::pass_time::wanted_features(&adapter),
+                required_limits: limits,
+                ..Default::default()
+            }),
         )
         .ok()?;
         Some(GpuContext { device: Arc::new(device), queue: Arc::new(queue), adapter_info: info })
@@ -88,6 +92,8 @@ impl GpuContext {
         };
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("kt-gpu headless"),
+            // the pass timer's timestamps where the adapter has them (gpu-pass-cost)
+            required_features: crate::pass_time::wanted_features(&adapter),
             required_limits: wgpu::Limits { max_texture_dimension_2d: 8192, ..base_limits },
             ..Default::default()
         }))

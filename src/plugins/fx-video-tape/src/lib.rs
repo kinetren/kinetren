@@ -309,6 +309,12 @@ fn shader_texts() -> &'static [&'static str] {
             include_str!("wgsl/fin.wgsl"),
             include_str!("wgsl/s7a.wgsl"),
         ];
+        // every pass takes its inputs' sizes once, first (`tape_dims`, gpu-pass-cost)
+        const ENTRY: &str = "fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {\n";
+        let passes = passes.map(|p| {
+            assert_eq!(p.matches(ENTRY).count(), 1, "a tape pass without its fs entry");
+            &*Box::leak(p.replace(ENTRY, &format!("{ENTRY}    tape_dims();\n")).into_boxed_str())
+        });
         let pal = passes.iter().map(|p| standard::wgsl_taps(p, standard::Std::Pal));
         let ntsc = sh::NTSC.iter().map(|s| standard::wgsl_taps(passes[*s as usize], standard::Std::Ntsc));
         pal.chain(ntsc).map(|p| &*Box::leak(format!("{head}{p}").into_boxed_str())).collect()
@@ -326,6 +332,15 @@ impl BarrierKernel for VhsTape {
 
     fn shaders(&self) -> &'static [&'static str] {
         shader_texts()
+    }
+
+    /// The passes as `sh` names them, NTSC's own after PAL's (gpu-pass-cost).
+    fn pass_names(&self) -> &'static [&'static str] {
+        &[
+            "up", "line-table", "s1-record-luma", "s2-sum", "s3-phase", "s4-write", "s5-head-read", "s6-fm-demod",
+            "s7-playback-lpf", "s8-chroma", "frame", "s7a-dropout-comp", "ntsc-s1-record-luma", "ntsc-s4-write", "ntsc-s6-fm-demod",
+            "ntsc-s7-playback-lpf", "ntsc-s8-chroma",
+        ]
     }
 
     /// Every pass but the frame's holds words, not pixels.

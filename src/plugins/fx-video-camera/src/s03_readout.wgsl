@@ -14,7 +14,7 @@ fn spill(q: f32) -> f32 {
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
-    FL = P.u0.w;
+    begin(P.u0.w);
     let p = vec2<i32>(floor(pos.xy));
     let k = KK();
     let sx = p.x / k;

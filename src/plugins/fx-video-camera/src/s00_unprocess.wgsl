@@ -45,7 +45,7 @@ const DISC = array<vec2<f32>, 8>(
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
-    FL = P.u0.x;
+    begin(P.u0.x);
     let p = vec2<i32>(floor(pos.xy));
     let curve = (FL >> 17u) & 7u;
     var s = lin(p.x, p.y, curve);

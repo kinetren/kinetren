@@ -24,7 +24,7 @@ fn rgb_at(px: f32, py: f32, ch: u32) -> f32 {
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
-    FL = P.u0.x;
+    begin(P.u0.x);
     let p = vec2<i32>(floor(pos.xy));
     let k = KK();
     let sx = p.x / k;

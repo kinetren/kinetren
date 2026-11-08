@@ -17,6 +17,7 @@ use kt_time::Tick;
 use xxhash_rust::xxh3::Xxh3;
 
 use crate::context::{GpuContext, GpuInitError};
+use crate::pass_time::{FrameMeta, PassLabel, Role, Timer};
 use crate::pool::{
     DISPLAY_FORMAT, FORMAT, PresentMemo, ReadbackCache, WORD_FORMAT, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
 };
@@ -207,6 +208,22 @@ enum Pipe {
 
 const PIPE_COUNT: usize = 8;
 
+impl Pipe {
+    /// What the telemetry journal's GPU record calls the pass (gpu-pass-cost).
+    fn name(self) -> &'static str {
+        match self {
+            Pipe::Resample => "resample",
+            Pipe::Mirror => "mirror",
+            Pipe::Composite => "composite",
+            Pipe::LayerMix => "layer_mix",
+            Pipe::Unpremul => "unpremul",
+            Pipe::Premul => "premul",
+            Pipe::GridTile => "grid_tile",
+            Pipe::MaskAlpha => "mask",
+        }
+    }
+}
+
 /// One chain step precomputed on the host (common maths: kt-fx:
 /// pan_frame/cam_at/noise_seed). The number of passes and the sizes are known in advance.
 enum FxOp {
@@ -226,6 +243,9 @@ enum FxOp {
     /// its first shader in `Inner::plugin_pipes`.
     PluginBarrier {
         base: usize,
+        /// The plugin's index in `plugin_barriers()`: what its host nodes are named after (a barrier
+        /// of host nodes alone, blur, has no pipe of its own to name it by).
+        owner: usize,
         nodes: Vec<kt_plugin_api::barrier::Node>,
     },
     /// A point-wise PLUGIN at the barrier position (plugin-api-stage1, D5): its own generated pass,
@@ -567,7 +587,9 @@ fn chain_ops(
                         }
                     }
                     if !nodes.is_empty() {
-                        ops.push(FxOp::PluginBarrier { base: barrier_pipe_base(&slot.manifest().id), nodes });
+                        let id = &slot.manifest().id;
+                        let owner = plugin_barriers().iter().position(|(p, ..)| *p == &**id).expect("assembled at engine creation");
+                        ops.push(FxOp::PluginBarrier { base: barrier_pipe_base(id), owner, nodes });
                     }
                     // the alpha rule (R.53, item 417): declared by the step, not matched by kind
                     match slot.manifest().decl.alpha {
@@ -668,6 +690,34 @@ enum Job {
     },
 }
 
+/// A frame's facts for the GPU record (gpu-pass-cost): the output size, the largest decoded
+/// source it reads and how many sources, nested reels included.
+fn frame_meta(jobs: &[Job], out: (u32, u32)) -> FrameMeta {
+    fn walk(jobs: &[Job], m: &mut FrameMeta) {
+        let mut chain = |c: &ChainSpec| match &c.src {
+            ChainSrc::Tex(_) => {
+                m.layers += 1;
+                if c.src_w * c.src_h > m.decode.0 * m.decode.1 {
+                    m.decode = (c.src_w, c.src_h);
+                }
+            }
+            ChainSrc::Nest(sub) => walk(sub, m),
+        };
+        for j in jobs {
+            match j {
+                Job::Single { chain: c, .. } => chain(c),
+                Job::Dissolve { a, b, .. } => {
+                    chain(a);
+                    chain(b);
+                }
+            }
+        }
+    }
+    let mut m = FrameMeta { out, ..Default::default() };
+    walk(jobs, &mut m);
+    m
+}
+
 impl ChainSpec {
     /// What the chain runs (morpher-event-grid-cost, D1), nested reels included.
     fn cost(&self) -> kt_fx::video::FrameCost {
@@ -760,6 +810,11 @@ struct Inner {
     next_ticket: u64,
     dummy: Tex,
     max_dim: u32,
+    /// What each pass costs on the device (gpu-pass-cost).
+    timer: Timer,
+    /// Inside a barrier plugin's graph: its index in `plugin_barriers()`, so a host node there is
+    /// named after it.
+    host_owner: Option<usize>,
 }
 
 pub struct GpuFxEngine {
@@ -864,6 +919,22 @@ pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str], u32)> {
             }
         })
         .collect()
+}
+
+/// The names of `Inner::plugin_pipes` by index, and the barrier plugins' ids in `plugin_barriers()`
+/// order (gpu-pass-cost): a point-wise plugin's own pass is its id, a barrier's pass `id:name`
+/// (`BarrierKernel::pass_names`), a host node in a barrier's graph `id:node`.
+fn plugin_pipe_names() -> (Vec<String>, Vec<String>) {
+    let mut names: Vec<String> = plugin_taps().iter().map(|(id, _)| id.to_string()).collect();
+    let barriers = plugin_barriers();
+    let Some(reg) = kt_plugin_api::installed() else { return (names, Vec::new()) };
+    for (id, shaders, _) in &barriers {
+        let own = reg.plugins().find(|p| &*p.manifest().id == *id).and_then(|p| p.barrier()).map_or(&[][..], |b| b.pass_names());
+        for i in 0..shaders.len() {
+            names.push(crate::pass_time::barrier_pass_name(id, own, i));
+        }
+    }
+    (names, barriers.iter().map(|(id, ..)| id.to_string()).collect())
 }
 
 /// The index of a barrier plugin's first pass in `Inner::plugin_pipes`.
@@ -1276,6 +1347,8 @@ impl GpuFxEngine {
         });
         let dummy = create_tex(&device, 1, 1, "kt-gpu dummy");
         let max_dim = device.limits().max_texture_dimension_2d;
+        let (names, owners) = plugin_pipe_names();
+        let timer = Timer::new(&device, &queue, &info.name, names, owners);
         Ok(Arc::new(GpuFxEngine {
             info,
             inner: Mutex::new(Inner {
@@ -1309,6 +1382,8 @@ impl GpuFxEngine {
                 next_ticket: 0,
                 dummy,
                 max_dim,
+                timer,
+                host_owner: None,
             }),
         }))
     }
@@ -1513,6 +1588,7 @@ impl Inner {
         let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
         if total > self.arena_slots {
             let slots = total.next_power_of_two();
+            crate::created();
             self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("kt-gpu uniforms"),
                 size: SLOT * slots as u64,
@@ -1522,12 +1598,17 @@ impl Inner {
             self.arena_slots = slots;
         }
         self.slot = 0;
+        let meta = frame_meta(&jobs, (ow, oh));
+        self.timer.harvest(&self.device);
+        self.timer.begin();
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+        self.timer.end(&self.device, &mut enc, Role::Export, meta);
         let padded_bpr = (ow * 4).next_multiple_of(256);
         let i = (ticket % RING as u64) as usize;
         let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == ow && r.h == oh);
         if !fits {
+            crate::created();
             self.ring[i] = Some(RingSlot {
                 buf: self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("kt-gpu readback ring"),
@@ -1561,6 +1642,7 @@ impl Inner {
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         let sub = self.queue.submit([enc.finish()]);
+        self.timer.submitted(&self.queue, Role::Export, meta);
         *slot.mapped.lock().unwrap() = None;
         let mapped = slot.mapped.clone();
         slot.buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
@@ -1605,6 +1687,7 @@ impl Inner {
             }
         }
         slot.buf.unmap();
+        self.timer.harvest(&self.device);
         Ok(f.complete)
     }
 
@@ -1626,6 +1709,9 @@ impl Inner {
             self.ensure_present_targets(ow, oh, o.glow);
             self.slot = 0;
             let display = self.display.as_ref().unwrap().view.clone();
+            let meta = FrameMeta { out: (ow, oh), ..Default::default() };
+            self.timer.harvest(&self.device);
+            self.timer.begin();
             let mut enc = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
@@ -1634,8 +1720,10 @@ impl Inner {
                 let glow = self.glow.as_ref().unwrap().view.clone();
                 self.pass_display(&mut enc, &kept, &glow, (ow, oh), GLOW_SIZE);
             }
+            self.timer.end(&self.device, &mut enc, Role::Preview, meta);
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.queue.submit([enc.finish()]);
+            self.timer.submitted(&self.queue, Role::Preview, meta);
             self.last_stages.replayed = true;
             self.last_stages.encode_ns = mark.elapsed().as_nanos() as u64;
             return Ok(true);
@@ -1650,7 +1738,8 @@ impl Inner {
             let total: u32 = jobs.iter().map(|j| j.slot_units()).sum::<u32>() + 2;
             if total > self.arena_slots {
                 let slots = total.next_power_of_two();
-                self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
+                crate::created();
+            self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("kt-gpu uniforms"),
                     size: SLOT * slots as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1661,6 +1750,9 @@ impl Inner {
             self.slot = 0;
             self.ensure_present_targets(ow, oh, o.glow);
             let display = self.display.as_ref().unwrap().view.clone();
+            let meta = frame_meta(&jobs, (ow, oh));
+            self.timer.harvest(&self.device);
+            self.timer.begin();
             let mut enc = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
@@ -1678,7 +1770,7 @@ impl Inner {
                         },
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: None,
+                    timestamp_writes: self.timer.pass(PassLabel::Fixed("clear")),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
@@ -1697,10 +1789,12 @@ impl Inner {
                     self.pool.release(result);
                 }
             }
+            self.timer.end(&self.device, &mut enc, Role::Preview, meta);
             let submit = Instant::now();
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.queue.submit([enc.finish()]);
             self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
+            self.timer.submitted(&self.queue, Role::Preview, meta);
         }
         self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
         self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
@@ -1766,7 +1860,7 @@ impl Inner {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: self.timer.pass(PassLabel::Fixed(if (tw, th) == GLOW_SIZE { "glow" } else { "display" })),
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -1811,6 +1905,7 @@ impl Inner {
         let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
         if total > self.arena_slots {
             let slots = total.next_power_of_two();
+            crate::created();
             self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("kt-gpu uniforms"),
                 size: SLOT * slots as u64,
@@ -1822,10 +1917,14 @@ impl Inner {
         self.slot = 0;
 
         // --- encode ---
+        let meta = frame_meta(&jobs, (ow, oh));
+        self.timer.harvest(&self.device);
+        self.timer.begin();
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+        self.timer.end(&self.device, &mut enc, Role::Offline, meta);
 
         // --- readback ---
         let padded_bpr = (ow * 4).next_multiple_of(256);
@@ -1835,6 +1934,7 @@ impl Inner {
             None => true,
         };
         if recreate {
+            crate::created();
             self.staging = Some((
                 self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("kt-gpu staging"),
@@ -1867,6 +1967,7 @@ impl Inner {
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.queue.submit([enc.finish()]);
+        self.timer.submitted(&self.queue, Role::Offline, meta);
         self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
         self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
         self.last_stages.encode_ns =
@@ -1897,6 +1998,8 @@ impl Inner {
             }
         }
         staging.unmap();
+        // the frame's timestamps came back with its readback
+        self.timer.harvest(&self.device);
 
         self.pool.release(result);
         if let Some(key) = key {
@@ -2037,7 +2140,7 @@ impl Inner {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: self.timer.pass(PassLabel::Fixed("clear")),
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -2375,8 +2478,9 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::PluginBarrier { base, nodes } => {
+                FxOp::PluginBarrier { base, owner, nodes } => {
                     use kt_plugin_api::barrier::{Node, Slot};
+                    self.host_owner = Some(*owner);
                     // `src` — the barrier's input, `prev` — the last node's output, `saved` — kept ones;
                     // textures the graph made are released when nothing reads them any more
                     let src = view.clone();
@@ -2440,6 +2544,7 @@ impl Inner {
                         pw = tw;
                         ph = th;
                     }
+                    self.host_owner = None;
                     debug_assert_eq!((pw, ph), (w, h), "a barrier graph ends off the frame size");
                     for (_, _, t) in saved {
                         if let Some(t) = t {
@@ -2515,6 +2620,7 @@ impl Inner {
     /// The merged geometry-series pass: GEOM_UNIFORM_BYTES uniform (4 arena slots),
     /// its own layout; the rest of the mechanics is as in `pass`.
     fn geom_pipeline(&self, text: &str) -> wgpu::RenderPipeline {
+        crate::created();
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("geom_shape"),
             source: wgpu::ShaderSource::Wgsl(text.into()),
@@ -2592,7 +2698,7 @@ impl Inner {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: self.timer.pass(PassLabel::Fixed("geometry")),
             occlusion_query_set: None,
             multiview_mask: None,
         });
@@ -2627,6 +2733,11 @@ impl Inner {
         t2: &wgpu::TextureView,
         u: UniformData,
     ) {
+        let label = match (which, self.host_owner) {
+            (Which::Fixed(pipe), Some(owner)) => PassLabel::Host(owner, pipe.name()),
+            (Which::Fixed(pipe), None) => PassLabel::Fixed(pipe.name()),
+            (Which::Plugin(i), _) => PassLabel::Plugin(i),
+        };
         let offset = self.slot as u64 * SLOT;
         debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
         self.slot += 1;
@@ -2670,7 +2781,7 @@ impl Inner {
                 },
             })],
             depth_stencil_attachment: None,
-            timestamp_writes: None,
+            timestamp_writes: self.timer.pass(label),
             occlusion_query_set: None,
             multiview_mask: None,
         });

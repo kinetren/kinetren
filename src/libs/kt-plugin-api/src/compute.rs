@@ -20,6 +20,8 @@ pub enum Init<'a> {
 /// One dispatch.
 #[derive(Debug, Clone, Copy)]
 pub struct Step<'a> {
+    /// What the telemetry journal's GPU record calls this dispatch (`datamosh:search`).
+    pub name: &'a str,
     pub shader: &'a str,
     pub uniform: &'a [u8],
     pub read: &'a [Buf],
