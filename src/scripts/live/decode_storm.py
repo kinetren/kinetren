@@ -8,9 +8,10 @@ frames were decoded, every one dropped before it was read, and four loops in a r
 
 The project is ours (`kt-cli showcase --heavy`): a footage event gets a cut mosh at 1080 lines, and
 a 0.4 s loop is set 3.3 s into it, so the frame's history (~95 frames of 8 MB) is larger than the
-preview's 512 MB cache. The loop is played. The verdict is the work the program counts: the
-decoder is asked for bounded work per frame it decodes (no request storm), and the loop comes to
-show frames (V-fps above 0 from the geometry dump).
+preview's 512 MB cache. Paused there the history must come in and the pause fall quiet; then the
+loop is played. The verdict is the work the program counts: the decoder is asked for bounded work
+per frame it decodes (no request storm), and the loop shows frames (V-fps above 0 from the geometry
+dump; on llvmpipe a real window's UI frame caps the number itself).
 """
 import json
 import os
@@ -55,7 +56,14 @@ def main(out):
     clip, at = mosh_loop(proj)
     with Live("decode_storm", out, project=proj, own_process=True) as app:
         meter = Meter(app)
+        # paused on the loop's start: the mosh's history (~95 frames of 8 MB, past the 512 MB cache)
+        # is decoded window by window and computed by the prefetch thread, then the pause is quiet —
+        # before decode-request-storm the paused frame asked ~1500 requests a second for ever
         wait_quiet(meter, "after opening")
+        work, _ = meter.over(3.0)
+        print(f"   paused on the mosh after it settled: {work}")
+        app.expect(work.get("decode_requests", 0) <= 5 and work.get("decoded", 0) <= 5,
+                   f"the paused frame asks for nothing more once its history is in: {work}")
         app.step("open", f"the heavy showcase is open: event {clip} carries a cut mosh, a 0.4 s loop over it")
 
         app.key("space")
