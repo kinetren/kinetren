@@ -31,6 +31,12 @@ pub const KEEP_RUNS: usize = 4;
 pub const RUN_HEADER: &str = "==== kinetren ";
 /// The line the supervisor appends to a crash report it showed in its window (D4).
 pub const SHOWN_MARK: &str = "shown: ";
+/// The native-crash handler's raw report in the data directory (segv-crashes), and where it goes
+/// once a healthy process has symbolized it into `kt-app-crash.txt`.
+pub const NATIVE_RAW: &str = "kt-app-crash.raw";
+pub const NATIVE_RAW_SEEN: &str = "kt-app-crash.raw.seen";
+/// A report's one-line summary of a native crash: the signal, the thread, the function.
+pub const SUMMARY_MARK: &str = "summary: ";
 
 /// Name of the per-user data directory under `$XDG_DATA_HOME`.
 pub const DATA_DIR_NAME: &str = "kinetren";
@@ -184,6 +190,44 @@ pub fn install_panic_hook() {
         crate::tele_journal::flush(std::time::Duration::from_millis(300));
         prev(info);
     }));
+}
+
+/// The native-crash handler (segv-crashes): a fatal signal writes the raw report into the data
+/// directory; the supervisor (or, without one, the next start) symbolizes it. The editor's
+/// process only — the supervisor runs no native code that could fault.
+pub fn install_crash_handler() {
+    let dir = data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    kt_crash::install(&kt_crash::Config {
+        raw: dir.join(NATIVE_RAW),
+        header: format!("kinetren {}", kt_version::FULL),
+        symbolizer: None,
+    });
+}
+
+/// A raw report no supervisor took (`KT_NO_SUPERVISOR`, a supervisor killed with its child):
+/// the start symbolizes it into the crash report the bell then announces.
+pub fn absorb_native_report() {
+    absorb_native_report_in(&data_dir());
+}
+
+pub(crate) fn absorb_native_report_in(dir: &Path) {
+    let raw = dir.join(NATIVE_RAW);
+    let Ok(text) = std::fs::read_to_string(&raw) else { return };
+    let sig = text.lines().find_map(|l| l.strip_prefix("signal: ")).and_then(|v| v.trim().parse().ok()).unwrap_or(11);
+    // a panic report written just before the abort that followed it still counts as the crash's
+    let since = std::fs::metadata(&raw)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.checked_sub(std::time::Duration::from_secs(60)))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    crate::supervisor::gather(crate::supervisor::Death::Signal(sig), since, dir, None);
+}
+
+/// The one-line summary a crash report carries (`summary: `), for the journal's record of it.
+pub fn report_summary(report: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(report).ok()?;
+    text.lines().find_map(|l| l.strip_prefix(SUMMARY_MARK)).map(str::to_string)
 }
 
 /// The session the report will name (telemetry's `$session_id`, set once at start): the next

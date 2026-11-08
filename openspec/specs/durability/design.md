@@ -198,3 +198,18 @@ line). The other writers of `dirty_ui` were read: each follows a person's gestur
 groups, region and loop, band expand/collapse, the meters' width, the geometry frame toggle,
 detach, the automation axis) or the lesson sandbox, which never reaches Recent or recovery. Rule:
 work the program does by itself never sets a dirty flag; it asks for a repaint.
+
+## The native-crash report (segv-crashes)
+
+The owner, kkt-26.11.08 H5: "краш скудный" — a SIGSEGV's report named the signal and a log of one
+header line. The panic hook never runs for a signal, and the supervisor sees only its number, so the
+record is written AT the signal by `kt-crash`'s handler: async-signal-safe (system calls and static
+buffers; libgcc's unwinder primed at install), bounded by an alarm, re-raising so the death stays
+what it was. Names come later from a healthy process (the supervisor, the next start, kt-cli's own
+`crash-report` child) — `addr2line` allocates. No alternate signal stack: Rust's is too small for the
+unwinder and the drivers' threads have none, so a stack overflow ends without the report. A minidump
+with a ptrace-ing supervisor was rejected: exact, but a dependency family we do not have offline and
+a remote unwinder. The window shows the run's telemetry-journal lines: since telemetry-journal
+`kt-app.log` holds warnings only, and the owner's report showed exactly its empty tail. Details and
+the walk of every native path: the archived change `segv-crashes`, design D1–D2.
+

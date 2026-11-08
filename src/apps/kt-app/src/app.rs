@@ -10075,6 +10075,10 @@ impl eframe::App for KtApp {
                 crate::bench::Cmd::Store(dir) => crate::bench::set_store(dir),
                 crate::bench::Cmd::Noop => {}
                 crate::bench::Cmd::Crash => panic!("live bench: a deliberate panic on the UI thread"),
+                crate::bench::Cmd::Fault => {
+                    let t = std::thread::Builder::new().name("live-fault".into());
+                    let _ = t.spawn(kt_crash::testing::kt_crash_probe_segv);
+                }
             }
             crate::bench::finished(seq);
         }
@@ -10248,6 +10252,9 @@ pub fn run() -> eframe::Result {
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
     // system (item 1, v1.4). The card that drives the monitor is the one with no copy:
     // `display_power_preference` decides; WGPU_POWER_PREF overrides it.
+    // the adapter list, once, BEFORE eframe opens its own instance (segv-crashes): the load watch's
+    // report asks for it later from its thread, and no instance is created beside eframe's at start
+    let _ = kt_gpu::adapter_facts();
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
         setup.power_preference = kt_gpu::display_power_preference();
@@ -10345,6 +10352,7 @@ pub fn run() -> eframe::Result {
             // the previous session crashed — the report lies there and waits (item 355)
             // a report the supervisor's crash window showed is still taken (telemetry), but not
             // announced a second time (render-crash-and-recovery D4)
+            crate::journal::absorb_native_report();
             if let Some(r) = crate::journal::take_crash_report() {
                 crate::telemetry::signal(crate::telemetry::Signal::CrashReport(&r.path));
                 if !r.shown {

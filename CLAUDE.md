@@ -75,6 +75,8 @@ src/libs/kt-media   MediaSource trait, bridge to kt-ffmpeg, SyntheticSource, sid
 src/libs/kt-text    title rasterization: harfrust+ab_glyph, vendored Noto Sans (R.52)
 src/libs/kt-cache   burst cache + coverage (the only truth about "warmth")
 src/libs/kt-fx      AudioFx/VideoFx: slowedreverb, gain, video FX
+src/libs/kt-crash   the native-crash report: an async-signal-safe handler writes a raw report
+                     (thread, stack, threads, mappings), a healthy process symbolizes it (segv-crashes)
 src/libs/kt-engine  render graph, MediaWorker scheduler, transport, prefetch, export
 src/libs/kt-plugin-api  the plugin contract (plugin-api-stage1): manifest + param passport, the
                      FX/transition/generator kernels, the registry by family; depends on kt-time and serde

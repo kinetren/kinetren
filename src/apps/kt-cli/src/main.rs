@@ -16,6 +16,12 @@
 //! `ffmpeg` (windows-build) prints the FFmpeg search report — the folder (or SONAME) and
 //! version that loaded, and every rejected candidate with its reason — and exits non-zero
 //! when nothing loaded.
+//!
+//! A native crash (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT) prints its report on stderr — the
+//! faulting thread, its stack with functions and lines, the other threads — and leaves it in the
+//! temporary folder (segv-crashes): the handler writes a raw report and starts `kt-cli
+//! crash-report <raw>`, a fresh process, to name the frames. `crash-probe` crashes on purpose, for
+//! the test of that path.
 
 mod fxcost;
 mod showcase;
@@ -32,8 +38,41 @@ fn main() {
     // a throwaway process that meets a hardware driver for the export (hw-encode-context D10)
     kt_ffmpeg::hw_trial::serve();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // the symbolizer the crash handler starts: it must not install a handler of its own
+    if args.first().map(String::as_str) == Some("crash-report") {
+        std::process::exit(crash_report(&args));
+    }
+    install_crash_handler();
     let code = run(&args);
     std::process::exit(code);
+}
+
+/// The native-crash handler (segv-crashes): the raw report into the temporary folder, then this
+/// binary's `crash-report` names the frames.
+fn install_crash_handler() {
+    let raw = std::env::temp_dir().join(format!("kt-cli-crash-{}.raw", std::process::id()));
+    let symbolizer = std::env::current_exe().ok().map(|e| vec![e.into_os_string(), "crash-report".into()]);
+    kt_crash::install(&kt_crash::Config { raw, header: format!("kt-cli {}", kt_version::FULL), symbolizer });
+}
+
+/// `crash-report <raw>`: the report a person reads, on stderr and beside the raw one (`.txt`).
+fn crash_report(args: &[String]) -> i32 {
+    let Some(raw) = args.get(1).map(std::path::Path::new) else {
+        eprintln!("usage: kt-cli crash-report <crash.raw>");
+        return 2;
+    };
+    let out = raw.with_extension("txt");
+    match kt_crash::symbolize_file(raw, &out) {
+        Ok(summary) => {
+            eprint!("{}", std::fs::read_to_string(&out).unwrap_or_default());
+            eprintln!("kt-cli: {}; the report is in {}", summary.unwrap_or_default(), out.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("kt-cli: the crash report {} could not be read: {e}", raw.display());
+            1
+        }
+    }
 }
 
 // Parsing of pseudo-paths (`synth:`, `gen:`) — the SINGLE factory of kt-media
@@ -1335,6 +1374,12 @@ fn run(args: &[String]) -> i32 {
                 print!("{}", probe_encoders());
             }
             if ok { 0 } else { 1 }
+        }
+        Some("crash-probe") => {
+            // the crash report's own test (t2082): a fault on a named thread
+            let t = std::thread::Builder::new().name("kt-cli-probe".into());
+            let _ = t.spawn(kt_crash::testing::kt_crash_probe_segv).map(|h| h.join());
+            1
         }
         Some("version") | None => {
             println!("kt-cli {} (tick rate {} Hz)", kt_version::FULL, kt_time::TICK_HZ);

@@ -1,0 +1,16 @@
+[package]
+name = "kt-crash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# segv-crashes: the native-crash report. The handler is async-signal-safe Rust over libc; the
+# symbolizer reads the binaries' own line tables (the dev profile keeps `debug = 1`) in a healthy
+# process. Linux only: the supervisor names a Windows exception by its code.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+addr2line = { version = "0.24", default-features = false, features = ["std", "rustc-demangle", "fallible-iterator", "smallvec"] }
+gimli = { version = "0.31", default-features = false, features = ["read", "std"] }
+object = { version = "0.36", default-features = false, features = ["read_core", "elf", "std"] }
+memmap2 = "0.9"

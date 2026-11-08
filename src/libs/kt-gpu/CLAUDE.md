@@ -13,6 +13,11 @@ is no picture, and an export refuses.
 - **wgpu is STRICTLY the same major version as the one inside eframe** (the workspace pin
   in src/Cargo.toml): the preview shares an `Arc<wgpu::Device>` with egui-wgpu — another
   major = incompatible types. Upgrading eframe = upgrading wgpu HERE TOO.
+- **One `wgpu::Instance` per backend set per process, one device opening at a time** (segv-crashes):
+  every headless device, the compute host and `adapter_facts` take `context::opening()` and ask
+  `context::instance(&opening, backends)`. Never call `wgpu::Instance::new` elsewhere: devices opened
+  at once on threads, each with its own instance, raced the Vulkan loader into SIGSEGV (kt-cli export
+  without a display every run, t985 33 of 60). Instances are leaked on purpose. t2086, t2087.
 - **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
   sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
   with table reads lane by lane, ten times the cost. Write taps out, or specialize the text
