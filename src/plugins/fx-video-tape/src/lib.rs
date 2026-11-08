@@ -328,6 +328,15 @@ impl BarrierKernel for VhsTape {
         shader_texts()
     }
 
+    /// The passes as `sh` names them, NTSC's own after PAL's (gpu-pass-cost).
+    fn pass_names(&self) -> &'static [&'static str] {
+        &[
+            "up", "line-table", "s1-record-luma", "s2-sum", "s3-phase", "s4-write", "s5-head-read", "s6-fm-demod",
+            "s7-playback-lpf", "s8-chroma", "frame", "s7a-dropout-comp", "ntsc-s1-record-luma", "ntsc-s4-write", "ntsc-s6-fm-demod",
+            "ntsc-s7-playback-lpf", "ntsc-s8-chroma",
+        ]
+    }
+
     /// Every pass but the frame's holds words, not pixels.
     fn word_passes(&self) -> u32 {
         !(1 << sh::FIN)

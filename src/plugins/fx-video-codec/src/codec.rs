@@ -181,7 +181,7 @@ fn decode_uniforms(w: u32, h: u32, bs: u32, gain_q8: i32, intra: bool) -> [Vec<u
 }
 
 fn decode_step<'a>(u: &'a [u8], read: &'a [Buf], write: &'a [Buf], groups: [u32; 3]) -> Step<'a> {
-    Step { shader: include_str!("wgsl/decode.wgsl"), uniform: u, read, write, groups }
+    Step { name: "datamosh:decode", shader: include_str!("wgsl/decode.wgsl"), uniform: u, read, write, groups }
 }
 
 /// Decode a picture: the prediction from `rf` by the vector field (one vector per luma block of
@@ -252,14 +252,15 @@ pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
     let groups = [bw.div_ceil(8), bh.div_ceil(8), 1];
     let mut steps = Vec::new();
     if prev.is_some() {
-        steps.push(Step { shader: search, uniform: &search_u, read: &[Buf(0), Buf(3), Buf(6)], write: &[Buf(7)], groups });
-        steps.push(Step { shader: search, uniform: &search_u, read: &[Buf(0), Buf(3), Buf(7)], write: &[Buf(8)], groups });
+        steps.push(Step { name: "datamosh:search", shader: search, uniform: &search_u, read: &[Buf(0), Buf(3), Buf(6)], write: &[Buf(7)], groups });
+        steps.push(Step { name: "datamosh:search", shader: search, uniform: &search_u, read: &[Buf(0), Buf(3), Buf(7)], write: &[Buf(8)], groups });
     }
     let reads = [[Buf(0), Buf(3), Buf(8)], [Buf(1), Buf(4), Buf(8)], [Buf(2), Buf(5), Buf(8)]];
     let writes = [[Buf(9)], [Buf(10)], [Buf(11)]];
     for (i, pw) in [w, w / 2, w / 2].into_iter().enumerate() {
         let ph = if i == 0 { h } else { h / 2 };
         steps.push(Step {
+            name: "datamosh:residual",
             shader: residual_shader(),
             uniform: &us[i],
             read: &reads[i],

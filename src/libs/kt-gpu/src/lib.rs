@@ -7,6 +7,7 @@
 
 pub mod compute;
 pub mod memory;
+pub mod pass_time;
 pub mod reference;
 pub mod testkit;
 mod context;

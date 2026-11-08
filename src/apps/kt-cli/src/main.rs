@@ -1001,7 +1001,10 @@ fn preview_run(
     };
     let io0 = snap();
     let cpu0 = process_cpu_s();
+    let _ = kt_gpu::pass_time::take();
     let r = kt_engine::preview_bench::play_range(&player, ring, opts);
+    // what the device did over the run, pass by pass, as the journal's GPU record says it (gpu-pass-cost)
+    let gpu_second = kt_gpu::pass_time::take();
     let cpu_s = process_cpu_s() - cpu0;
     let io1 = snap();
     let (reopens, vdec, vdec_ns, rgba, rgba_ns, rgba_px) = (
@@ -1072,6 +1075,9 @@ fn preview_run(
         kt_time::work::count(kt_time::work::Work::Composite) - replays0.0 - replayed,
         replayed
     );
+    if let Some(g) = gpu_second {
+        println!("  GPU over the run: {}", g.line());
+    }
     if let Some(path) = &wav {
         write_wav_f32(path, &r.played).map_err(|e| format!("{path}: {e}"))?;
         let (worst, at) = largest_step(&r.played);

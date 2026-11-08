@@ -49,6 +49,8 @@ pub struct Sample {
     /// What a UI frame cost the UI thread in that second, on average, in milliseconds of its own
     /// processor time (`frame_cost`, ui-frame-cost); none when no frame ran.
     pub frame_ms: Option<f32>,
+    /// What the GPU did in that second, pass by pass (gpu-pass-cost); none when nothing composed.
+    pub gpu: Option<kt_gpu::pass_time::Second>,
 }
 
 impl Sample {
@@ -208,7 +210,7 @@ fn sample_of(
         .zip(was)
         .map(|(n, w)| (n.saturating_sub(*w) as f32 / dt.max(0.001)).round() as u32)
         .collect();
-    Sample { at, cpu, threads, work, frame_ms: None }
+    Sample { at, cpu, threads, work, frame_ms: None, gpu: None }
 }
 
 /// A second as the journal records it: the load, who held it, what ran. The time is the journal's.
@@ -262,6 +264,7 @@ pub(crate) fn report(header: &str, recs: &[crate::tele_journal::Rec]) -> String 
     let mut out = header.to_string();
     out.push_str(&format!("journal: {} in the data directory\n", crate::tele_journal::FILE));
     out.push_str("\nthe telemetry journal's last 15 minutes; LOAD: percent of one core (100 % = one core), threads | work per second\n");
+    out.push_str("GPU: the device that second: adapter | frame and decode size | frames, device ms a frame, span | each pass's mean ms ×count, the largest total first | the compute host's jobs\n");
     for r in recs {
         out.push_str(&r.line);
         out.push('\n');
@@ -287,6 +290,10 @@ pub(crate) fn journal_second(j: &crate::tele_journal::Journal, at: crate::tele_j
     let busy = !s.at_rest();
     if busy {
         j.record_at(at, Kind::Load, &line(s));
+        // the device's second beside the processor's (gpu-pass-cost)
+        if let Some(g) = &s.gpu {
+            j.record_at(at, Kind::Gpu, &g.line());
+        }
     } else if was_busy {
         j.record_at(at, Kind::Load, "at rest");
     }
@@ -338,6 +345,8 @@ pub fn start() {
             let mut s = sample_of(&ticks, &before, &totals, &was, dt, unix_now());
             let cost = crate::frame_cost::totals();
             s.frame_ms = crate::frame_cost::per_frame(&cost_was, &cost).map(|ms| ms[0]);
+            // the device's passes of the same second: a lock and a swap, nothing when nothing composed
+            s.gpu = kt_gpu::pass_time::take();
             cost_was = cost;
             before = ticks;
             was = totals;
@@ -493,5 +502,44 @@ mod tests {
         // older than the quarter of an hour falls out of the report
         clock.advance(6 * 60_000);
         assert!(j.since(j.now().unix_ms - REPORT_SPAN_MS).len() < 4);
+    }
+
+    /// Test t2021 (gpu-pass-cost): a busy second that composed carries a GPU record at the same
+    /// moment, after its LOAD record, with the adapter, the sizes and each pass's mean and count;
+    /// a second that composed nothing carries none.
+    #[test]
+    fn t2021_a_busy_second_carries_the_gpu_record() {
+        use crate::tele_journal::testing::*;
+        let clock = FakeClock::new(1_762_498_800_000, 3 * 3600);
+        let j = fresh("t2021", clock.clone(), crate::tele_journal::ROTATE_BYTES);
+        let map = |v: &[(&str, u64)]| v.iter().map(|(n, t)| (n.to_string(), *t)).collect();
+        let n = Work::ALL.len();
+        let mut busy = sample_of(&map(&[("kinetren", 40)]), &map(&[]), &vec![1; n], &vec![0; n], 1.0, 0);
+        busy.gpu = Some(kt_gpu::pass_time::Second {
+            adapters: vec!["AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO)".into()],
+            timestamps: true,
+            frames: 24,
+            preview: 24,
+            frame_ns: 24 * 7_300_000,
+            span_ns: 24 * 7_500_000,
+            passes: vec![("vhs_tape:s5-head-read".into(), 24 * 6_100_000, 24), ("composite".into(), 24 * 1_200_000, 24)],
+            out: (1920, 1080),
+            decode: (1920, 1080),
+            layers: 1,
+            ..Default::default()
+        });
+        assert!(journal_second(&j, j.now(), &busy, false));
+        clock.advance(1_000);
+        let quiet = sample_of(&map(&[("kinetren", 40)]), &map(&[]), &vec![1; n], &vec![0; n], 1.0, 0);
+        assert!(journal_second(&j, j.now(), &quiet, true));
+        let text = report("Kinetren load report\n", &j.since(j.now().unix_ms - REPORT_SPAN_MS));
+        let body: Vec<&str> = text.lines().filter(|l| l.starts_with("2025")).collect();
+        assert_eq!(body.len(), 3, "LOAD, GPU, LOAD: {text}");
+        assert!(body[0].contains("LOAD") && body[1].contains("GPU    AMD Radeon"), "{text}");
+        assert_eq!(body[0][..23], body[1][..23], "the GPU record carries its second's time: {text}");
+        for part in ["frame 1920×1080, decode 1920×1080 ×1", "24 frames (preview 24), 7.30 ms a frame", "vhs_tape:s5-head-read 6.100 ×24", "composite 1.200 ×24"] {
+            assert!(body[1].contains(part), "{part}: {text}");
+        }
+        assert!(body[2].contains("LOAD"), "a second that composed nothing has no GPU record: {text}");
     }
 }

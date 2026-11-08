@@ -79,12 +79,12 @@ fn gradient(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let span = (hi - lo).max(1e-9);
     let colours = [color(&p[1..4]), color(&p[4..7]), [dx as f32, dy as f32, lo as f32, span as f32], [0.0; 4]];
-    shader_frame(include_str!("wgsl/gradient.wgsl"), w, h, [0, 0], colours)
+    shader_frame("generator:gradient", include_str!("wgsl/gradient.wgsl"), w, h, [0, 0], colours)
 }
 
 fn corners(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let c = [color(&p[0..3]), color(&p[3..6]), color(&p[6..9]), color(&p[9..12])];
-    shader_frame(include_str!("wgsl/corners.wgsl"), w, h, [0, 0], c)
+    shader_frame("generator:corners", include_str!("wgsl/corners.wgsl"), w, h, [0, 0], c)
 }
 
 fn noise(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -94,7 +94,7 @@ fn noise(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
     // The full brightness range: "grey field".
     let seed = lowbias32(pts.0 as u32 ^ 0x9e37_79b9).rotate_left(11);
     let values = [[p[0] as f32, 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
-    shader_frame(include_str!("wgsl/noise.wgsl"), w, h, [seed, (p[1] >= 0.5) as u32], values)
+    shader_frame("generator:noise", include_str!("wgsl/noise.wgsl"), w, h, [seed, (p[1] >= 0.5) as u32], values)
 }
 
 fn shape_values(p: &[f64], a: [f64; 4], b: [f64; 2]) -> [[f32; 4]; 4] {
@@ -108,7 +108,7 @@ fn rect(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let (hx, hy) = (rw * fw / 2.0, rh * fh / 2.0);
     let rad = (radius * fh).clamp(0.0, hx.min(hy));
     let v = shape_values(p, [cx * fw, cy * fh, hx, hy], [rad, (feather * fh).max(1.0 / 256.0)]);
-    shader_frame(include_str!("wgsl/rect.wgsl"), w, h, [0, 0], v)
+    shader_frame("generator:rect", include_str!("wgsl/rect.wgsl"), w, h, [0, 0], v)
 }
 
 fn ellipse(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -116,7 +116,7 @@ fn ellipse(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let (fw, fh) = (w.max(1) as f64, h.max(1) as f64);
     let (hx, hy) = ((rw * fw / 2.0).max(1.0 / 256.0), (rh * fh / 2.0).max(1.0 / 256.0));
     let v = shape_values(p, [cx * fw, cy * fh, hx, hy], [0.0, (feather * fh).max(1.0 / 256.0)]);
-    shader_frame(include_str!("wgsl/ellipse.wgsl"), w, h, [0, 0], v)
+    shader_frame("generator:ellipse", include_str!("wgsl/ellipse.wgsl"), w, h, [0, 0], v)
 }
 
 fn line(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -124,7 +124,7 @@ fn line(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let (fw, fh) = (w.max(1) as f64, h.max(1) as f64);
     let half = (thickness * fh / 2.0).max(1.0 / 256.0);
     let v = shape_values(p, [x1 * fw, y1 * fh, x2 * fw, y2 * fh], [half, (feather * fh).max(1.0 / 256.0)]);
-    shader_frame(include_str!("wgsl/line.wgsl"), w, h, [0, 0], v)
+    shader_frame("generator:line", include_str!("wgsl/line.wgsl"), w, h, [0, 0], v)
 }
 
 fn transparent(_: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {

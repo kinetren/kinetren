@@ -1073,6 +1073,7 @@ load_rest = "Procesador {0} %, en reposo"
 load_line = "Procesador {0} %: {1}"
 load_work = "Trabajo por segundo: {0}"
 load_uncounted = "Ningún contador de trabajo se movió: el programa no cuenta esta carga"
+load_gpu = "Tarjeta gráfica en ese segundo: {0}"
 load_report = "Abrir el informe de carga"
 load_report_hint = "El programa escribe load-report.txt durante una carga y se queda en este equipo"
 
