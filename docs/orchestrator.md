@@ -122,6 +122,12 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   `DBUS_SESSION_BUS_ADDRESS=disabled:`, and `kt_live.py` gives the program no session bus either.
   The display stays: without it `kt-cli export` segfaults (found-defects 131). Every brief says:
   run `cargo test`/`nextest` as `DBUS_SESSION_BUS_ADDRESS=disabled: <cmd>`.
+  2026-11-08, 16:40: the orchestrator itself ran `target/release/kinetren --version` to print the
+  version after a build. The GUI has no `--version`: it took the word for a file, opened its window
+  on his desktop with his real data folder (`~/.local/share/kinetren`), appended to his journal and
+  load report and asked GitHub for updates. The GUI binary is NEVER started outside the live bench
+  (`scripts/live-check.sh`, its own virtual display and XDG folders): the version comes from
+  `finish.sh`'s `VERSION:` line or `git describe`, not from running the program.
 - **After a merge, build the binary too** (2026-11-08): a conflict resolved by keeping both lines
   dropped a `#[cfg(test)]`, the test build passed and `cargo build -p kt-app` failed; two executors
   found it. Every merge check runs `cargo build -p kt-app -p kt-cli` before the tests.
