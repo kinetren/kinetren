@@ -128,6 +128,11 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   load report and asked GitHub for updates. The GUI binary is NEVER started outside the live bench
   (`scripts/live-check.sh`, its own virtual display and XDG folders): the version comes from
   `finish.sh`'s `VERSION:` line or `git describe`, not from running the program.
+- **Never tune the program to one machine** (owner, 2026-11-08: "ты весь софт под конкретную машину
+  пытаешься оптимизировать? насколько же это тупо"). No design waits for his journal: priorities,
+  budgets and thresholds are general rules or are measured at run time on the machine that runs the
+  program, and are proved on our benches (llvmpipe, the showcase, the relinked copy). His journal
+  confirms that a fix reached his machine; it never decides the design.
 - **After a merge, build the binary too** (2026-11-08): a conflict resolved by keeping both lines
   dropped a `#[cfg(test)]`, the test build passed and `cargo build -p kt-app` failed; two executors
   found it. Every merge check runs `cargo build -p kt-app -p kt-cli` before the tests.

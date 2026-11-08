@@ -2774,6 +2774,15 @@ Registry: `docs/ktprompts/kkt-26.11.08-index.md` (H1–H9). His files: `fails/26
   планировщика - возможно даже не только GPU но и CPU планировщик. И может быть задуматься JIT
   математики и вычислений?" → change `engine-audit` (H10–H11).
 
+- On the audit (08.11): "про JIT я вообще-то имел ввиду не только шейдеры" — JIT is examined for
+  every computation, not only shaders. "а с какого перепуга ты от меня ждешь журнала для построения
+  приоритетов на видеокарте? это же буквально ты весь софт под конкретную машину пытаешься
+  оптимизировать? насколько же это тупо..." — RULE: a design is never tuned to his machine; it is
+  general, adapts by measuring at run time on whatever machine runs it, and is proved on our
+  benches; his journal confirms a fix, it never designs one. Answers: builder-cost-guard — "Да";
+  background services paused during playback — "Да"; fused chains shift goldens ≤1 LSB per
+  boundary — "Согласен"; master — "переводи".
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
