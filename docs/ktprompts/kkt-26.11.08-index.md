@@ -25,4 +25,4 @@ kt26.11.08-b614203c. His files: `/media/e/developer/kt.9/fails/26.11.08/` and `�
 | H14 | 23 | в.1 "Да": run `builder-cost-guard` now | partial: change `builder-cost-guard` | `builder-cost-guard` | running |
 | H15 | 24 | в.2 "Да": the scheduler may pause background services (thumbnails, analysis, index) during playback | partial: decision for `one-scheduler` | `one-scheduler` | decided |
 | H16 | 25 | в.3 "Согласен": fused effect chains may shift goldens by at most 1 LSB per former boundary | partial: decision for the fusion change (F-EXT-005) | fusion | decided |
-| H17 | 26 | в.4 "переводи": fast-forward master to the stage | done: master = orch-26-11-01 at the stage (t985 known red, row 132) | — | done |
+| H17 | 26 | в.4 "переводи": fast-forward master to the stage | done: master fast-forwarded by the orchestrator (the stage of ui-never-waits, decode-request-storm, gpu-pass-cost, engine-audit at kt26.11.08-a3ee2f53; t985 known red, row 132) | — | done |
