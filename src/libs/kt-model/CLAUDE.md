@@ -656,3 +656,20 @@ what the model holds costs nothing. A new mutation path that writes the canon mu
   the loop's own order: `material_ticks` is `warp_material_ticks` bit for bit (t1910). A reader that
   asks the map many times asks the `ClipWarp`, not `source_progress` with the raw points.
 
+
+## A per-element question never rescans the whole (builder-cost-guard)
+
+- **A transition's ends go through `Reel::clip`**: the default scans and counts
+  (`Cost::ClipSearch`); a pass that asks per transition or per event wraps the reel in `Indexed`
+  (`Indexed::over` borrows an index the caller keeps, e.g. the timeline's `EventIndex.by_id`). The
+  answer is the scan's — the first event of the id.
+- **`curve_value` finds its segment by halving** on the sorted keys (every curve the model holds is
+  validated sorted; a sampled or resolved one is built sorted). Its callers ask per sample.
+- **`sign_knots`/`span_over` lay the map out once** (`Integral::over` of `segments` or
+  `abs_segments`) — the same bits as the per-point readings (t2060).
+- **The cut pass asks `ZoneIndex`**, laid out once per layer pass; `forbidden_zones` is its
+  one-off form. The zones come in the scan's order: `snap_out_of` takes the first.
+- **`resolve_derived` resolves leaders first** and finds each leader once per curve by index; a
+  link to the event's own other curve reads the event as it stood before its step.
+- The guard is `kt-engine/tests/build_cost.rs` (t2062–t2067): a new pass over a reel joins its
+  `passes()`, a new axis a project can grow along joins its scenes.

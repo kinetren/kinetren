@@ -328,10 +328,10 @@ impl TransitionEvent {
     /// have vanished; such a state lives only inside a mutation before
     /// reconcile_transitions.
     pub fn joint(&self, p: &dyn Reel) -> Option<Tick> {
-        if let Some(a) = self.a.and_then(|id| p.clips().iter().find(|c| c.id == id)) {
+        if let Some(a) = self.a.and_then(|id| p.clip(id)) {
             return Some(a.start + a.duration);
         }
-        let b = self.b.and_then(|id| p.clips().iter().find(|c| c.id == id))?;
+        let b = self.b.and_then(|id| p.clip(id))?;
         Some(b.start)
     }
 
@@ -352,8 +352,8 @@ impl TransitionEvent {
     /// inside b. A full nesting and equal starts are not counted as a pair:
     /// such an arrangement has neither a direction nor a meaningful window.
     pub fn overlap_pair<'a>(&self, p: &'a dyn Reel) -> Option<(&'a ClipEvent, &'a ClipEvent)> {
-        let a = p.clips().iter().find(|c| Some(c.id) == self.a)?;
-        let b = p.clips().iter().find(|c| Some(c.id) == self.b)?;
+        let a = p.clip(self.a?)?;
+        let b = p.clip(self.b?)?;
         let (a_end, b_end) = (a.start + a.duration, b.start + b.duration);
         (a.kind == b.kind
             && a.lane == b.lane
@@ -417,6 +417,78 @@ pub trait Reel {
     fn published(&self) -> &[PublishedParam] {
         &[]
     }
+    /// The event with this id (the first, as a scan finds it). The default scans the events and
+    /// counts what it looked at (`Cost::ClipSearch`); a pass that asks per transition or per
+    /// event wraps the reel in [`Indexed`] (builder-cost-guard).
+    fn clip(&self, id: ClipId) -> Option<&ClipEvent> {
+        let clips = self.clips();
+        let at = clips.iter().position(|c| c.id == id);
+        kt_time::cost::add(kt_time::cost::Cost::ClipSearch, at.map_or(clips.len(), |i| i + 1) as u64);
+        at.map(|i| &clips[i])
+    }
+}
+
+/// A reel with its events indexed by id, for a pass that asks a transition's ends per
+/// transition or a clip by id per event (builder-cost-guard): through the bare reel each answer
+/// scans the events, and the pass is quadratic in them. It answers exactly what the scan answers
+/// (the first event of an id) and passes everything else through.
+pub struct Indexed<'a> {
+    reel: &'a dyn Reel,
+    by_id: std::borrow::Cow<'a, std::collections::HashMap<ClipId, usize>>,
+}
+
+impl<'a> Indexed<'a> {
+    pub fn new(reel: &'a dyn Reel) -> Indexed<'a> {
+        let mut by_id = std::collections::HashMap::with_capacity(reel.clips().len());
+        for (i, c) in reel.clips().iter().enumerate() {
+            by_id.entry(c.id).or_insert(i);
+        }
+        Indexed { reel, by_id: std::borrow::Cow::Owned(by_id) }
+    }
+
+    /// Over an index the caller already keeps (the timeline's per-state `EventIndex`): a draw
+    /// path builds nothing. An entry that does not name its event (an index of another state)
+    /// falls back to the scan.
+    pub fn over(reel: &'a dyn Reel, by_id: &'a std::collections::HashMap<ClipId, usize>) -> Indexed<'a> {
+        Indexed { reel, by_id: std::borrow::Cow::Borrowed(by_id) }
+    }
+}
+
+impl Reel for Indexed<'_> {
+    fn clips(&self) -> &[ClipEvent] {
+        self.reel.clips()
+    }
+    fn transitions(&self) -> &[TransitionEvent] {
+        self.reel.transitions()
+    }
+    fn rows(&self) -> Vec<(LaneKind, u32)> {
+        self.reel.rows()
+    }
+    fn tracks(&self) -> &[Track] {
+        self.reel.tracks()
+    }
+    fn morphers(&self) -> &[MorpherEvent] {
+        self.reel.morphers()
+    }
+    fn cameras(&self) -> &[CameraEvent] {
+        self.reel.cameras()
+    }
+    fn foreign(&self) -> &[ForeignEvent] {
+        self.reel.foreign()
+    }
+    fn overlaps_allowed(&self) -> bool {
+        self.reel.overlaps_allowed()
+    }
+    fn published(&self) -> &[PublishedParam] {
+        self.reel.published()
+    }
+    fn clip(&self, id: ClipId) -> Option<&ClipEvent> {
+        match self.by_id.get(&id).and_then(|&i| self.reel.clips().get(i)) {
+            Some(c) if c.id == id => Some(c),
+            _ if matches!(self.by_id, std::borrow::Cow::Borrowed(_)) => self.reel.clip(id),
+            _ => None,
+        }
+    }
 }
 
 /// The zones where the boundary of a morpher layer does not stand: the transition windows of this clip
@@ -427,29 +499,87 @@ pub trait Reel {
 /// calls `t.joint(reel)` — there is no way to do the coercion `&Self -> &dyn Reel` inside
 /// a provided method.
 pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange> {
-    let body = TickRange::new(c.start, c.start + c.duration);
-    let mut out = Vec::new();
-    for t in reel.transitions() {
-        if t.a != Some(c.id) && t.b != Some(c.id) {
-            continue;
+    ZoneIndex::new(reel).zones(c)
+}
+
+/// The forbidden zones of a reel's events, laid out once per pass (builder-cost-guard): the cut
+/// pass asks them per target and per cutting layer, and each answer walked every transition and
+/// every event of the reel — targets × (transitions + events). The answer is the scan's, in the
+/// scan's order (`snap_out_of` takes the FIRST zone that holds the point).
+pub struct ZoneIndex<'a> {
+    reel: Indexed<'a>,
+    /// the transitions that name an event as an end, ascending
+    touching: std::collections::HashMap<ClipId, Vec<usize>>,
+    /// per (kind, lane): (start, end, index) by start, and the latest end up to each
+    lanes: std::collections::HashMap<(ClipKind, u32), LaneStarts>,
+}
+
+/// A track's events as (start, end, index) by start, and the latest end up to each.
+type LaneStarts = (Vec<(i64, i64, usize)>, Vec<i64>);
+
+impl<'a> ZoneIndex<'a> {
+    pub fn new(reel: &'a dyn Reel) -> ZoneIndex<'a> {
+        let mut touching: std::collections::HashMap<ClipId, Vec<usize>> = Default::default();
+        for (i, t) in reel.transitions().iter().enumerate() {
+            for id in [t.a, t.b].into_iter().flatten() {
+                let v = touching.entry(id).or_default();
+                if v.last() != Some(&i) {
+                    v.push(i);
+                }
+            }
         }
-        // for an overlapped transition (R.51) the window is the overlap zone
-        let Some(w) = t.window(reel) else { continue };
-        let z = w.intersect(&body);
-        if !z.is_empty() {
-            out.push(z);
+        let mut lanes: std::collections::HashMap<(ClipKind, u32), LaneStarts> = Default::default();
+        for (i, o) in reel.clips().iter().enumerate() {
+            lanes.entry((o.kind, o.lane)).or_default().0.push((o.start.0, (o.start + o.duration).0, i));
         }
+        for (by_start, reach) in lanes.values_mut() {
+            by_start.sort_unstable();
+            let mut m = i64::MIN;
+            *reach = by_start.iter().map(|s| {
+                m = m.max(s.1);
+                m
+            }).collect();
+        }
+        ZoneIndex { reel: Indexed::new(reel), touching, lanes }
     }
-    for o in reel.clips() {
-        if o.id == c.id || o.kind != c.kind || o.lane != c.lane {
-            continue;
+
+    /// The zones of `c`: the transition windows of this clip and the overlaps of neighbours on
+    /// its track (see [`forbidden_zones`]).
+    pub fn zones(&self, c: &ClipEvent) -> Vec<TickRange> {
+        let body = TickRange::new(c.start, c.start + c.duration);
+        let mut out = Vec::new();
+        let transitions = self.reel.transitions();
+        for &i in self.touching.get(&c.id).map_or(&[][..], |v| &v[..]) {
+            // for an overlapped transition (R.51) the window is the overlap zone
+            let Some(w) = transitions[i].window(&self.reel) else { continue };
+            let z = w.intersect(&body);
+            if !z.is_empty() {
+                out.push(z);
+            }
         }
-        let z = TickRange::new(o.start, o.start + o.duration).intersect(&body);
-        if !z.is_empty() {
-            out.push(z);
+        if let Some((by_start, reach)) = self.lanes.get(&(c.kind, c.lane)) {
+            // the neighbours that can reach the body: started before its end, and (walking back)
+            // while anything before still ends after its start
+            let hi = by_start.partition_point(|s| s.0 < body.end.0);
+            let mut near: Vec<(usize, TickRange)> = Vec::new();
+            let mut j = hi;
+            while j > 0 && reach[j - 1] > body.start.0 {
+                j -= 1;
+                let (st, en, i) = by_start[j];
+                if self.reel.clips()[i].id == c.id {
+                    continue;
+                }
+                let z = TickRange::new(Tick(st), Tick(en)).intersect(&body);
+                if !z.is_empty() {
+                    near.push((i, z));
+                }
+            }
+            kt_time::cost::add(kt_time::cost::Cost::ReelPass, (hi - j) as u64);
+            near.sort_unstable_by_key(|&(i, _)| i);
+            out.extend(near.into_iter().map(|(_, z)| z));
         }
+        out
     }
-    out
 }
 
 // ---- EXPANDING A REEL IN PLACE (R.55, C5) -----------------------------------
@@ -2005,7 +2135,7 @@ impl MorpherEvent {
         &self,
         c: &ClipEvent,
         p: &Project,
-        reel: &dyn Reel,
+        reel: &ZoneIndex,
         rows: &[(LaneKind, u32)],
     ) -> Vec<TickRange> {
         let body = TickRange::new(c.start, c.start + c.duration);
@@ -2081,7 +2211,7 @@ impl MorpherEvent {
         w: TickRange,
         c: &ClipEvent,
         p: &Project,
-        reel: &dyn Reel,
+        reel: &ZoneIndex,
         body: TickRange,
     ) -> Option<TickRange> {
         if w.len() < crate::MIN_CLIP_DURATION {
@@ -2115,7 +2245,7 @@ impl MorpherEvent {
         // event”. The window now only SHRINKS; if no window is left —
         // the layer did not reach here, and that is an honest answer, not a silent
         // widening.
-        let zones = forbidden_zones(reel, c);
+        let zones = reel.zones(c);
         let mut s = snap_out_of(grid(w.start), &zones, true);
         let mut e = snap_out_of(grid(w.end), &zones, false);
         s = Tick(s.0.clamp(body.start.0, body.end.0));
@@ -4421,15 +4551,20 @@ pub fn curve_value(keys: &[AutoKey], at: Tick) -> f64 {
     if at <= first.t {
         return first.v;
     }
-    for w in keys.windows(2) {
-        let (a, b) = (&w[0], &w[1]);
-        if at <= b.t {
-            let span = (b.t.0 - a.t.0).max(1) as f64;
-            let s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
-            // the segment's shape is carried by the LEFT key — it decides (R.61);
-            // the seconds from it — the variable `t` of the segment formula (R.67)
-            return a.shape.at_t(s, a.v, b.v, (at.0 - a.t.0) as f64 / 90_000.0);
-        }
+    // the first segment whose right key reaches `at` — by HALVING (builder-cost-guard): the keys
+    // are sorted (every curve the model holds is validated so, a sampled or resolved one is built
+    // so), and the readers ask per sample — a speed curve sampled every 5 ms, a link resolved per
+    // frame, the decode zoom per key tick — so the former walk from key 0 made each of them
+    // quadratic in the keys. On sorted keys it is the segment the walk found, the same bits.
+    let i = keys[1..].partition_point(|b| at > b.t);
+    kt_time::cost::add(kt_time::cost::Cost::CurveWalk, (usize::BITS - keys.len().leading_zeros()) as u64);
+    if let Some(b) = keys.get(i + 1) {
+        let a = &keys[i];
+        let span = (b.t.0 - a.t.0).max(1) as f64;
+        let s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
+        // the segment's shape is carried by the LEFT key — it decides (R.61);
+        // the seconds from it — the variable `t` of the segment formula (R.67)
+        return a.shape.at_t(s, a.v, b.v, (at.0 - a.t.0) as f64 / 90_000.0);
     }
     keys.last().unwrap().v
 }
@@ -5920,7 +6055,7 @@ pub fn check_transition_full(
     t: &TransitionEvent,
     ignore: Option<TransitionId>,
 ) -> Result<(), ProjectError> {
-    let clip = |id: ClipId| p.clips().iter().find(|c| c.id == id);
+    let clip = |id: ClipId| p.clip(id);
     let find = |side: Option<ClipId>| -> Result<Option<&ClipEvent>, ProjectError> {
         match side {
             None => Ok(None),
@@ -6455,9 +6590,10 @@ impl Project {
         // adjustment layer in AE); within a row, the former rule by id applies.
         ms.sort_by_key(|m| (std::cmp::Reverse(m.row_in(rows)), m.id));
         let mut out = Vec::with_capacity(resolved.len());
+        let zones = ZoneIndex::new(reel);
         for c in resolved.iter() {
             let wins: Vec<Vec<TickRange>> =
-                ms.iter().map(|m| m.windows_on(c, self, reel, rows)).collect();
+                ms.iter().map(|m| m.windows_on(c, self, &zones, rows)).collect();
             let body = TickRange::new(c.start, c.start + c.duration);
             // CUT POINTS ARE NOT GIVEN BY ALL LAYERS (R.55, stage 2). Only those whose
             // contribution cannot be switched off by a strength curve cut: source substitution and
@@ -7373,11 +7509,13 @@ impl Project {
             }
         }
         let mut tr_ids = std::collections::HashSet::new();
+        // the ends by id: a scan per transition made validation quadratic (builder-cost-guard)
+        let indexed = Indexed::new(reel);
         for t in reel.transitions() {
             if !tr_ids.insert(t.id) {
                 return Err(ProjectError::DuplicateTransitionId(t.id));
             }
-            check_transition_full(reel, t, None)?;
+            check_transition_full(&indexed, t, None)?;
         }
         let mut foreign_keys = std::collections::HashSet::new();
         for f in reel.foreign() {
@@ -7436,7 +7574,12 @@ impl Project {
     }
 
     pub fn sequence(&self, id: MediaId) -> Option<&Sequence> {
-        self.sequences.iter().find(|s| s.id == id)
+        let at = self.sequences.iter().position(|s| s.id == id);
+        kt_time::cost::add(
+            kt_time::cost::Cost::ReelPass,
+            at.map_or(self.sequences.len(), |i| i + 1) as u64,
+        );
+        at.map(|i| &self.sequences[i])
     }
 
     pub fn sequence_mut(&mut self, id: MediaId) -> Option<&mut Sequence> {

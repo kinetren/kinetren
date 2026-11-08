@@ -89,6 +89,22 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - Audio of a span's own priority is read between its chunks (t1529): audio has its own demuxer, so the video cursor does not move.
 - `preview_bench::play_range` is the real player against a wall-clock output device and a display loop with `draw_preview`'s counts: `kt-cli preview` on footage, t1524 on a model decoder. Measure the preview with it, and with the footage in /dev/shm: on a busy disk two runs differ by hundreds of incomplete composites.
 
+## A build costs what the project holds, not its square (builder-cost-guard)
+
+- **The builds are guarded by counts** (`tests/build_cost.rs`, t2062–t2067): six generated axes
+  ×1/×4/×16 (events with transitions, a long signed shaped speed curve, placements of a growing
+  reel, a reel of placements, a cutting layer, linked curves) through validation, `effective_clips`,
+  both builds, `gen_sources` and the file round trip; walked elements (`kt_time::cost`) and bytes
+  allocated may grow at most 2× the scene's factor. `effective_clips` flattens placements, so its
+  bound is its output's size. A new build pass joins `passes()`.
+- **A reel's revision is computed once per build**: `revisions_scope` (opened by both builds and
+  `gen_sources`) memoizes `content_hash` per reel; a nested reel enters its parent's hash by its own
+  revision. A new place that asks revisions per placement opens the scope.
+- **A transition's engine events are found by `PieceEdges`** (original id, edge), the ends by
+  `kt_model::Indexed` — never `clips.iter_mut().find` per transition.
+- **The rebuild-outlasts-the-ring case is a test seam** (`hold_builds_for_tests`, t1935): the
+  builder thread holds each build; zero in the product.
+
 ## Law P: the media path is a property of the SOURCE, not of the plan (R.53, item 412)
 
 The renderers know about media exactly `MediaId`; WHAT lies at that address —
