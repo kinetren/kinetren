@@ -298,3 +298,17 @@ thread between frames (`PreviewParts::recheck_shown`, eight moments a pass, yiel
 UI reads the map, and the executor is asked with the map free — t1843 caught the first version
 calling `holds` under the map's lock. The display target and the glow are published in a slot of their
 own at the end of `present`, so the UI's paint never takes the engine's lock (t1845).
+
+## The pass timer's read buffers are made with it (gpu-pass-cost follow-up, 2026-11-08)
+
+t2023 went red on the merged branch under a full `cargo nextest run --workspace` and green alone: "4
+created in three warm presented frames". Traced: the three were the memo's kept composites, the fourth
+the pass timer's read buffer. A frame's timestamps come back by a map the next frames collect; on a
+loaded machine llvmpipe finishes later, more frames wait for their maps, and `Timer::end` made a buffer
+whenever none was free. So the count of buffers followed the device's lag, a creation per frame exactly
+when the machine was busiest. Now the timer makes its PENDING_MAX buffers (8 × 8 KiB) with itself and
+`end` cannot create; a frame past them runs untimed, as `begin` already decided. The class, walked
+across the sites `crate::created()` marks: the pool, the upload cache, the readback cache and the
+memo are bounded by budget and recycle; the export ring has RING fixed slots; the arena and staging
+grow only with the frame's shape; the compute host keeps its buffers by size. None grows with lag.
+t2025 checks the timer with no poll at all; t2023 under 32 CPU burners was red 3 of 4 runs before.
