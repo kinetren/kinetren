@@ -8,7 +8,11 @@ set as it was SHALL ask nothing. `prewarm` SHALL return at once: the device's wa
 started when work arrives and ended when its queue is empty) draws each reached pipeline once into a
 few-texel target — the core (the fixed pipes, the display pass, the geometry interpreter) the first
 time, then each effect's own passes — so a driver that compiles at the first draw (llvmpipe, lavapipe)
-has compiled them before a frame draws them. Until a pipeline is warm a frame draws it as before. A
+has compiled them before a frame draws them. Until a pipeline is warm a frame draws it as before. The
+worker SHALL submit one pipeline at a time, each after the frames composing on the device, and on a
+software rasterizer whose frames a person watches it SHALL warm a shadow device of the same adapter
+first, so the watched device's warm draws are loads from the driver's cache: a frame never stands
+behind a warm-up's compile. A
 geometry shape a frame meets without a warm pipeline of its own SHALL run the interpreter (the same
 bytes) while the worker compiles and warms the shape; a frame SHALL create no pipeline. An export
 SHALL prewarm every device it composes on and wait for the worker before its first frame. The pipelines
@@ -20,7 +24,9 @@ Why: engine-audit M8, found-defects 64 and 139 — measured with `kt-cli first-f
 empty Mesa cache: the first composite of all 10.5 s, Camera ISP's first frame 4.6 s, VHS Tape's 1.2 s,
 7.2 s of first-frame excess over every effect, while creating every pipeline took 1.9 s; a new
 geometry shape compiled inside its frame; the editor built its engine on the UI thread at every project
-open (0.95–1.9 s). After: excess 130 ms over every effect, no cold draw.
+open (0.95–1.9 s). After: excess 149 ms over every effect, no cold draw. A first version drew the whole
+warm-up in one submission, and lavapipe's one queue thread made the showcase's first moment wait
+behind it (16.0 s against 12.8 s).
 
 #### Scenario: After the prewarm no frame compiles
 - **WHEN** an engine is prewarmed with every effect id and the heavy stack, then every video effect at its defaults and each preset, and the heavy stack, compose at 1080p through the readback and the present paths

@@ -65,6 +65,16 @@ pub fn run(args: &[String]) -> i32 {
         engine.settle();
         println!("prewarm of every effect {:.1} ms (on the warm worker; the UI never waits for it)", ms(t));
     }
+    if args.iter().any(|a| a == "--warm-elsewhere") {
+        // experiment: warm every effect on ANOTHER device and see whether this one's first frames gain
+        let ids: Vec<String> = reg.plugins().map(|p| p.manifest().id.to_string()).collect();
+        let t = Instant::now();
+        if let Ok(other) = kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new) {
+            other.prewarm_effects(&ids);
+            other.settle();
+        }
+        println!("prewarm on another device {:.1} ms", ms(t));
+    }
     if args.iter().any(|a| a == "--compute") {
         // what a first Datamosh or generator frame paid inside it before: the device, then each shader
         let t = Instant::now();

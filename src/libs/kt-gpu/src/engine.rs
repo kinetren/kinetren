@@ -1109,14 +1109,20 @@ impl GpuFxEngine {
     /// Builds the pipelines; a shader/device compile error → Err
     /// (the caller shows a notice).
     pub fn new(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
-        Self::build(ctx, false, false).map(|e| e.expect("an engine"))
+        Self::build(ctx, false, false, false).map(|e| e.expect("an engine"))
+    }
+
+    /// `new` for an export's device: its warm-up is waited for before the first frame, with no
+    /// frame beside it, so it warms no shadow device (pipeline-prewarm D2b).
+    pub fn new_for_export(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
+        Self::build(ctx, false, false, true).map(|e| e.expect("an engine"))
     }
 
     /// `new` for a device that lives as long as the process (the editor's display device,
     /// pipeline-prewarm D3): its compiled pipelines stay, so the next engine on it — a project
     /// opened again — takes them as they are, already warm.
     pub fn new_kept(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
-        Self::build(ctx, false, true).map(|e| e.expect("an engine"))
+        Self::build(ctx, false, true, false).map(|e| e.expect("an engine"))
     }
 
     /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
@@ -1142,10 +1148,10 @@ impl GpuFxEngine {
     /// Compile every shader and run no frame: what t1650 asks of WARP, whose FXC is the compiler of
     /// every D3D12 machine and whose rasterizer dies running our passes.
     pub fn compile_check(ctx: GpuContext) -> Result<(), GpuInitError> {
-        Self::build(ctx, true, false).map(|_| ())
+        Self::build(ctx, true, false, false).map(|_| ())
     }
 
-    fn build(ctx: GpuContext, compile_only: bool, keep: bool) -> Result<Option<Arc<GpuFxEngine>>, GpuInitError> {
+    fn build(ctx: GpuContext, compile_only: bool, keep: bool, export: bool) -> Result<Option<Arc<GpuFxEngine>>, GpuInitError> {
         let device = ctx.device;
         let queue = ctx.queue;
         let ai = &ctx.adapter_info;
@@ -1175,7 +1181,7 @@ impl GpuFxEngine {
                 ai.name
             )));
         }
-        let c = crate::compiled::for_device(&device, &queue, ai, keep && !compile_only)?;
+        let c = crate::compiled::for_device(&device, &queue, ai, keep && !compile_only, info.software && !export)?;
         if compile_only {
             return Ok(None);
         }
@@ -1329,6 +1335,7 @@ impl GpuFxEngine {
         plan: &FramePlan<'_>,
         out: &mut Vec<u8>,
     ) -> Result<(bool, kt_fx::video::FrameCost), GpuExecError> {
+        let _frame = self.compiled.frame();
         let mut inner = self.inner.lock().unwrap();
         let complete = inner.execute(plan, out, false)?;
         Ok((complete, inner.last_cost))
@@ -1355,10 +1362,12 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        let _frame = self.compiled.frame();
         self.inner.lock().unwrap().execute(plan, out, true)
     }
 
     fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        let _frame = self.compiled.frame();
         self.inner.lock().unwrap().execute(plan, out, false)
     }
 
@@ -1379,6 +1388,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn present(&self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
+        let _frame = self.compiled.frame();
         let mut g = self.inner.lock().unwrap();
         let r = g.present(plan, o);
         let target = g.display.as_ref().map(|d| DisplayTarget {

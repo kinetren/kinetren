@@ -64,6 +64,29 @@ everything: a project without Camera ISP must not pay its 4.5 s.
 The kit (bind groups, targets, a uniform) is made once per device and outside `created()`: a warm
 thread runs beside frames, and t2023 counts what a frame makes.
 
+## D2b. A warm draw must not stand in front of a frame
+
+Found by measuring the showcase (`pause-scan` from the first moment, empty Mesa cache): with the warm
+worker drawing everything the project reaches in ONE submission, the first moment took 16.0 s against
+12.8 s before. A software rasterizer (lavapipe) executes every submission of a device on one queue
+thread, and compiles there: the frame's submission waited behind 15 s of warm draws. Two rules:
+
+- **Frames first.** The worker submits one pipeline at a time, each after the frames composing on the
+  device now (`Compiled::frame` brackets `execute_*` and `present`); a frame waits behind one warm draw
+  at most.
+- **A shadow device for a software rasterizer a person watches** (not an export: an export waits for
+  its warm-up with no frame beside it). The worker opens the same adapter once more — its own queue
+  thread — and warms there first, in one submission; what it compiles lands in the driver's disk cache,
+  so the watched device's warm draw of the same code is a load. Measured (`kt-cli first-frame
+  --warm-elsewhere`, an experiment kept in the instrument): warming on another device leaves the first
+  frames 197 ms of excess in all, against 4056 ms with `MESA_SHADER_CACHE_DISABLE=true` — the gain is
+  the driver's disk cache, and it needs the same adapter, backend and driver (the editor's GL device
+  under the live check gets no shadow: its Vulkan twin compiles other code). The shadow lives for one
+  run of the worker and goes with it.
+
+After both: the showcase's first moment 13.3 s against 12.6 s before (the frame asked at once compiles
+what it needs, as before; nothing stands in front of it), the later moments as before.
+
 ## D3. Compiled pipelines belong to the device
 
 `Compiled` holds the layouts, every pipeline, the warm kit, which pipelines are warm, the geometry
@@ -138,4 +161,22 @@ tests set none, so no test writes into the tree or the home folder.
 
 ## D8. Measured after
 
-(filled in stage 6)
+Release, llvmpipe 20.1.2 on Vulkan, 1080p, the machine shared (load 6–7), `kt-cli first-frame`:
+
+| | before | after |
+|---|---|---|
+| first-frame excess over every effect, empty Mesa cache | 4042 ms (7170 in the first run) | 149 ms with the prewarm done; 0 cold draws |
+| Camera ISP first frame, empty cache | 1884 ms (4600) | 98 ms (warm 96) |
+| VHS Tape first frame, empty cache | 1180 ms | 163 ms (warm 64: the rest is its 1135×576 textures, made at first use, not a compile) |
+| Event Grid first frame, empty cache | 586 ms | 7.6 ms |
+| the first composite of all, empty cache | 7835 ms (10 499) | 23 ms |
+| first-frame excess, Mesa cache warm | 71 ms | 40 ms |
+| the warm-up itself (on the worker), empty / warm cache | — | 15.5 s / 46 ms |
+| an engine on the display device again (a project opened again) | 614–1900 ms, on the UI thread | 0.0 ms (kept), and the first build is on a thread |
+| Datamosh residual shader, empty cache | inside its first frame | 4.1 s on `compute-warm` before it |
+| showcase `pause-scan` first moment, empty cache | 12.6 s | 13.3 s (the frame asked at once; D2b) |
+
+The disk tier on lavapipe: `PIPELINE_CACHE` is offered and the blob is 96 bytes — its header; lavapipe
+keeps no binaries there and Mesa's own disk cache serves it. A card's driver fills it.
+
+CPU at rest on the heavy showcase: the live scenario `idle` (D9).

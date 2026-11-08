@@ -139,7 +139,7 @@ pub fn mean_lsb(a: &[u8], b: &[u8]) -> f64 {
 /// The export's GPU engine (export-throughput D5).
 pub fn export_engine() -> Result<std::sync::Arc<GpuFxEngine>, String> {
     let ctx = GpuContext::new_headless_for_export().map_err(|e| e.to_string())?;
-    GpuFxEngine::new(ctx).map_err(|e| e.to_string())
+    GpuFxEngine::new_for_export(ctx).map_err(|e| e.to_string())
 }
 
 /// The engine of the work that is neither the preview nor an export (effect thumbnails, reel strips,

@@ -88,6 +88,25 @@ pub(crate) struct Compiled {
     work: Mutex<Work>,
     idle: Condvar,
     asked: Mutex<Asked>,
+    /// Frames composing on this device now: the worker submits nothing while one is (D2b).
+    frames: Mutex<usize>,
+    frame_done: Condvar,
+    /// The adapter, and whether the worker warms a shadow device first (D2b).
+    info: wgpu::AdapterInfo,
+    shadow: bool,
+}
+
+/// A frame composing on the device (`Compiled::frame`): the warm worker waits for it to end.
+pub(crate) struct FrameGuard<'a>(&'a Compiled);
+
+impl Drop for FrameGuard<'_> {
+    fn drop(&mut self) {
+        let mut n = self.0.frames.lock().unwrap_or_else(|e| e.into_inner());
+        *n -= 1;
+        if *n == 0 {
+            self.0.frame_done.notify_all();
+        }
+    }
 }
 
 /// A pipeline's slot in the warm flags.
@@ -190,27 +209,29 @@ fn render_pipe(
 }
 
 /// The compiled pipelines of `device`: with `keep`, the kept ones of that device if an engine made
-/// them before (a project opened again) and kept from now on; else new ones.
+/// them before (a project opened again) and kept from now on; else new ones. `shadow` — a software
+/// device whose frames a person watches: its worker warms a shadow device first (D2b).
 pub(crate) fn for_device(
     device: &Arc<wgpu::Device>,
     queue: &Arc<wgpu::Queue>,
     info: &wgpu::AdapterInfo,
     keep: bool,
+    shadow: bool,
 ) -> Result<Arc<Compiled>, GpuInitError> {
     if !keep {
-        return Ok(Arc::new(Compiled::compile(device, queue, info)?));
+        return Ok(Arc::new(Compiled::compile(device, queue, info, shadow)?));
     }
     let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(c) = kept.iter().find(|c| *c.device == **device) {
         return Ok(c.clone());
     }
-    let c = Arc::new(Compiled::compile(device, queue, info)?);
+    let c = Arc::new(Compiled::compile(device, queue, info, shadow)?);
     kept.push(c.clone());
     Ok(c)
 }
 
 impl Compiled {
-    fn compile(device: &Arc<wgpu::Device>, queue: &Arc<wgpu::Queue>, info: &wgpu::AdapterInfo) -> Result<Compiled, GpuInitError> {
+    fn compile(device: &Arc<wgpu::Device>, queue: &Arc<wgpu::Queue>, info: &wgpu::AdapterInfo, shadow: bool) -> Result<Compiled, GpuInitError> {
         let src = sources();
         let cache = crate::pipeline_cache::DiskCache::open(device, info, "engine", src.hash());
         let pc = cache.as_ref().map(|c| c.get());
@@ -311,7 +332,38 @@ impl Compiled {
             work: Mutex::default(),
             idle: Condvar::new(),
             asked: Mutex::default(),
+            frames: Mutex::new(0),
+            frame_done: Condvar::new(),
+            info: info.clone(),
+            shadow,
         })
+    }
+
+    /// A frame starts composing on the device; it ends when the guard drops.
+    pub(crate) fn frame(&self) -> FrameGuard<'_> {
+        *self.frames.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        FrameGuard(self)
+    }
+
+    /// Wait until no frame composes on the device: a software rasterizer runs every submission on
+    /// one queue thread, so a warm draw submitted first is a draw the frame waits behind.
+    fn wait_frames(&self) {
+        let mut n = self.frames.lock().unwrap_or_else(|e| e.into_inner());
+        while *n > 0 {
+            n = self.frame_done.wait(n).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    /// The shadow device (D2b): the same adapter opened once more, its own queue thread. What it
+    /// compiles lands in the driver's disk cache, so this device's warm draw of the same code is a
+    /// load. `None` — no such device (another adapter answers, the device does not open).
+    fn open_shadow(&self) -> Option<Compiled> {
+        let ctx = crate::context::GpuContext::new_headless().ok()?;
+        let i = &ctx.adapter_info;
+        if (i.name.as_str(), i.backend, i.driver_info.as_str()) != (self.info.name.as_str(), self.info.backend, self.info.driver_info.as_str()) {
+            return None;
+        }
+        Compiled::compile(&ctx.device, &ctx.queue, i, false).ok()
     }
 
     fn index(&self, s: Slot) -> usize {
@@ -412,11 +464,24 @@ impl Compiled {
     }
 
     fn run(self: Arc<Self>) {
+        // opened at the first job of a run that wants it, dropped with the run
+        let mut shadow: Option<Option<Compiled>> = None;
+        let shadow_of = |me: &Compiled| -> Option<Compiled> { if me.shadow { me.open_shadow() } else { None } };
         loop {
             let job = self.work.lock().unwrap_or_else(|e| e.into_inner()).queue.pop_front();
             match job {
-                Some(Job::Slots(slots)) => self.warm_slots(&slots),
-                Some(Job::Shape(h)) => self.compile_shape(h),
+                Some(Job::Slots(slots)) => {
+                    if let Some(sh) = shadow.get_or_insert_with(|| shadow_of(&self)) {
+                        sh.warm_batch(&slots);
+                    }
+                    self.warm_slots(&slots)
+                }
+                Some(Job::Shape(h)) => {
+                    if let Some(sh) = shadow.get_or_insert_with(|| shadow_of(&self)) {
+                        sh.compile_shape(h);
+                    }
+                    self.compile_shape(h)
+                }
                 None => {
                     // the queue is empty: keep what was compiled, then end unless work came meanwhile
                     if let Some(c) = &self.cache {
@@ -433,7 +498,20 @@ impl Compiled {
         }
     }
 
+    /// Warm `slots` one pipeline per submission, each after the frames composing now: a frame
+    /// waits behind one warm draw at most (D2b).
     fn warm_slots(&self, slots: &[usize]) {
+        for &i in slots {
+            if self.warm[i].load(Ordering::Acquire) {
+                continue;
+            }
+            self.wait_frames();
+            self.warm_batch(&[i]);
+        }
+    }
+
+    /// Warm `slots` in one submission.
+    fn warm_batch(&self, slots: &[usize]) {
         let list: Vec<(wgpu::RenderPipeline, Layout, wgpu::TextureFormat)> = slots
             .iter()
             .filter(|&&i| !self.warm[i].load(Ordering::Acquire))
@@ -461,6 +539,7 @@ impl Compiled {
             (!failed).then_some(p)
         });
         if let Some(p) = &pipe {
+            self.wait_frames();
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }
         self.shapes.lock().unwrap_or_else(|e| e.into_inner()).insert(h, Shape::Ready(pipe));

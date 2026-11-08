@@ -130,6 +130,11 @@ is no picture, and an export refuses.
 - **A geometry shape never compiles in a frame**: `Compiled::shape` answers `None` until the worker has
   compiled AND warmed it, and the frame runs the interpreter (t1766 holds the bytes). Tests that need a
   shape call `settle()` first.
+- **A warm draw never stands in front of a frame**: lavapipe runs (and compiles) every submission of a
+  device on ONE queue thread. The worker submits one pipeline at a time after `wait_frames` (a new frame
+  entry point takes `self.compiled.frame()`), and a watched software device warms a shadow device first
+  (`open_shadow`: same adapter, its own queue; the driver's disk cache carries the code over). An export
+  (`new_for_export`) has no shadow: it settles before its first frame.
 - **`new_kept` only for the editor's display device**: `wgpu::Device` compares by its id inside its
   instance, so a device of another instance can equal one of ours; every other engine compiles its own.
 - **The disk tier** (`pipeline_cache.rs`): every pipeline descriptor passes `cache`; the folder is set by
