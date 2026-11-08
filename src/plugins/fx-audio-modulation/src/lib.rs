@@ -8,7 +8,8 @@
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;
 
-use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, DelayLine, Freeverb, SmoothedParam, Tick, lfo_phase, tail_frames_for};
+use kt_plugin_api::curves::ParamIntegral;
+use kt_plugin_api::dsp::{AUDIO_SAMPLE_RATE, CH, DelayLine, Freeverb, SmoothedParam, Tick, lfo_phase_of, tail_frames_for};
 use kt_plugin_api::{
     AudioKernel, AudioState, CurveRead, Decl, HostOpts, Manifest, Media, ParamKind, ParamSpec, ParamUnit,
     ParamValues, Plugin, RowDecl, SlotCurves, Store, TimeWarp, UiDecl,
@@ -87,17 +88,22 @@ macro_rules! plugin_boilerplate {
 #[derive(Clone)]
 struct LfoDrive {
     base_hz: f64,
-    points: Vec<(f64, f64)>,
+    /// the frequency curve compiled into its prefix integral at bind (compiled-curves): the phase is
+    /// read per sample, and the former walk from the first point was O(points) a sample
+    rate: ParamIntegral,
     clip_len: i64,
 }
 
 impl LfoDrive {
     fn new(base_hz: f64) -> LfoDrive {
-        LfoDrive { base_hz, points: Vec::new(), clip_len: 1 }
+        LfoDrive { base_hz, rate: ParamIntegral::default(), clip_len: 1 }
     }
 
     fn bind(&mut self, c: &dyn SlotCurves, clip_len: i64) {
-        self.points = c.points("rate_hz").to_vec();
+        let points = c.points("rate_hz");
+        if self.rate.points() != points {
+            self.rate = ParamIntegral::of(points);
+        }
         self.clip_len = clip_len.max(1);
     }
 
@@ -105,7 +111,7 @@ impl LfoDrive {
     #[inline]
     fn phase(&self, p: i64) -> f64 {
         let tau = p as f64 / self.clip_len as f64;
-        lfo_phase(self.base_hz, &self.points, tau, self.clip_len) * std::f64::consts::TAU
+        lfo_phase_of(self.base_hz, &self.rate, tau, self.clip_len) * std::f64::consts::TAU
     }
 }
 

@@ -658,3 +658,27 @@ fn bench_pitch_cost() {
         );
     }
 }
+
+/// Test 2108 (compiled-curves; found-defects row 152): an LFO's phase costs O(log points) a sample.
+/// The frequency curve of every modulation node is read per sample as an integral; the former walk
+/// started from the first point each time, so a curve resolved per frame (a formula layer: 10 800
+/// points on a 6-minute event) cost thousands of steps a sample. Counted, not timed (t1671): the
+/// integral steps of a render of a 2 s event under a 3000-point curve stay a small multiple of its
+/// samples, for every modulation node that has a frequency curve.
+#[test]
+fn t2108_lfo_phase_reads_a_prefix_integral() {
+    kt_plugins_builtin::install();
+    let dense: Vec<AutoKey> =
+        (0..3000).map(|i| AutoKey::shaped(Tick(i * 60), 1.0 + (i % 13) as f64 * 0.5, SegShape::Linear)).collect();
+    for (id, vals) in [("tremolo", &[5.0, 1.0][..]), ("auto_pan", &[1.0, 0.8][..])] {
+        let Some(slot) = kt_model::FxInstance::plugin_with(id, vals) else { panic!("{id} is built in") };
+        let curve = vec![vec![ParamCurve { param: "rate_hz".into(), keys: dense.clone(), source: Default::default() }]];
+        let (out, costs) = kt_time::cost::meter(|| render(vec![slot.clone()], curve.clone(), false, 0));
+        assert_eq!(out.len(), DUR as usize * CH);
+        let walks = costs[kt_time::cost::Cost::IntegralWalk as usize];
+        assert!(
+            walks <= 16 * DUR as u64,
+            "{id}: {walks} integral steps for {DUR} samples — the phase walks the curve per sample"
+        );
+    }
+}

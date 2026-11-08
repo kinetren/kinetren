@@ -552,7 +552,8 @@ struct SlotCurve {
     /// Segment shape AFTER each point (R.61); for `rate` it is always empty —
     /// the speed profile is piecewise linear by law.
     shapes: Vec<crate::SegShape>,
-    points: Vec<(f64, f64)>,
+    /// shared with the profile memo for a speed curve (compiled-curves)
+    points: Points,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -600,50 +601,28 @@ impl AutoProfiles {
                         .map(|c| {
                             // the PROFILE of rate stays piecewise linear — the closed form of the
                             // map rests on it — but the CURVE may have any shape: it is sampled into
-                            // straight points by ONE function (slowed-reverb-is-an-event, D2)
-                            let sampled;
-                            let keys: &[AutoKey] = if c.param == "rate" {
-                                sampled = rate_profile_keys(c, src_in_frames, clip_len_frames);
-                                &sampled
-                            } else {
-                                &c.keys
-                            };
-                            let shapes: Vec<crate::SegShape> = if c.param == "rate" {
-                                Vec::new()
-                            } else {
-                                keys.iter().map(|k| k.shape).collect()
-                            };
-                            // the value is clamped HERE: `segments` clamps the ends before interpolation,
-                            // and `eff_rate` — after, and on a key outside RATE_CLAMP they diverged.
-                            // Such a key cannot be set from the UI, but
-                            // `migrate_legacy_slowed` copies a legacy number
-                            // as is, and a mismatch of the map with the DSP means
-                            // prefetch misses and silence
-                            // (item 13/t17).
-                            let clamp = c.param == "rate";
-                            let pts: Vec<(f64, f64)> = keys
-                                .iter()
-                                .map(|k| {
-                                    let f = k.t.to_audio_frames() - src_in_frames;
-                                    let v = if clamp {
-                                        k.v.clamp(RATE_CLAMP.0, RATE_CLAMP.1)
-                                    } else {
-                                        k.v
-                                    };
-                                    let u = f as f64 / len;
-                                    (if reversed { 1.0 - u } else { u }, v)
-                                })
-                                .collect();
+                            // straight points by ONE function (slowed-reverb-is-an-event, D2), once
+                            // per content (compiled-curves)
+                            if c.param == "rate" {
+                                let points = rate_points(c, src_in_frames, clip_len_frames, reversed);
+                                return SlotCurve { param: c.param.clone(), shapes: Vec::new(), points };
+                            }
+                            let shapes: Vec<crate::SegShape> = c.keys.iter().map(|k| k.shape).collect();
+                            let pts = c.keys.iter().map(|k| {
+                                let f = k.t.to_audio_frames() - src_in_frames;
+                                let u = f as f64 / len;
+                                (if reversed { 1.0 - u } else { u }, k.v)
+                            });
                             // the mirror reverses the order of the points, while
                             // the map walks the array from left to right
-                            let pts: Vec<(f64, f64)> = if reversed {
-                                let mut v = pts;
+                            let points: Points = if reversed {
+                                let mut v: Vec<(f64, f64)> = pts.collect();
                                 v.reverse();
-                                v
+                                v.into()
                             } else {
-                                pts
+                                pts.collect()
                             };
-                            SlotCurve { param: c.param.clone(), shapes, points: pts }
+                            SlotCurve { param: c.param.clone(), shapes, points }
                         })
                         .collect()
                 })
@@ -660,7 +639,7 @@ impl AutoProfiles {
         self.slots
             .get(slot)
             .and_then(|s| s.iter().find(|c| c.param == param))
-            .map_or(&[], |c| c.points.as_slice())
+            .map_or(&[], |c| &c.points[..])
     }
 
     /// Shapes of the segments of a parameter curve: nodes that read the value BY
@@ -679,7 +658,7 @@ impl AutoProfiles {
 
     /// Index of the slot with the warp and its speed profile — the whole analytics of the
     /// source rests on it (how much material the clip will eat).
-    fn warp_slot(fx: &[FxInstance]) -> Option<usize> {
+    pub(crate) fn warp_slot(fx: &[FxInstance]) -> Option<usize> {
         fx.iter().position(FxInstance::warps_time)
     }
 
@@ -870,7 +849,8 @@ mod zero_start_tests {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipWarp {
     base: f64,
-    prof: Vec<(f64, f64)>,
+    /// shared with the profile memo (compiled-curves): a clone is a pointer
+    prof: Points,
     /// Material in ticks that the event ACTUALLY EATS: A(1)·span.
     /// With signed speed (R.57) this is no longer “how far we got”: the curve
     /// may go back and return, having eaten twice what it passed.
@@ -883,7 +863,7 @@ pub struct ClipWarp {
     /// “Mix” mode (R.37 stage 5): read by the layer's executor.
     blend: bool,
     /// the profile's integral, laid out once
-    integral: Integral,
+    integral: std::sync::Arc<Integral>,
 }
 
 impl ClipWarp {
@@ -957,20 +937,19 @@ pub fn rate_profile_keys(c: &ParamCurve, src_in_frames: i64, clip_len_frames: i6
         && c.source.link_path().is_none()
         && let Ok(f) = crate::formula::Formula::parse(expr)
     {
+        // compiled once per profile (compiled-curves): the slots are `LAYER_VARS` — t, src, k
+        let f = f.compile(crate::LAYER_VARS);
         // the material window of the event in ticks (frames → ticks exactly on the 8-frame grid)
         let from = src_in_frames * 15 / 8;
         let to = from + clip_len_frames.max(1) * 15 / 8;
         let lo = c.keys.first().map_or(from, |k| k.t.0.min(from));
         let hi = c.keys.last().map_or(to, |k| k.t.0.max(to));
         let mut out = Vec::new();
+        let mut under = crate::CurveCursor::new(&c.keys);
         let mut t = lo;
         loop {
-            let k = if c.keys.is_empty() { 0.0 } else { crate::curve_value(&c.keys, Tick(t)) };
-            let mut vars = std::collections::BTreeMap::new();
-            vars.insert("src".to_string(), 0.0);
-            vars.insert("k".to_string(), k);
-            vars.insert("t".to_string(), (t - from) as f64 / 90_000.0);
-            match f.eval(&vars) {
+            let k = if c.keys.is_empty() { 0.0 } else { under.value(Tick(t)) };
+            match f.eval(&[(t - from) as f64 / 90_000.0, 0.0, k]) {
                 Ok(v) if v.is_finite() => out.push(AutoKey::shaped(Tick(t), v, SegShape::Linear)),
                 // not computable here — validation has said so loudly; the keys stay
                 _ => return c.keys.iter().map(straight).collect(),
@@ -980,6 +959,7 @@ pub fn rate_profile_keys(c: &ParamCurve, src_in_frames: i64, clip_len_frames: i6
             }
             t = grid_up(t).min(hi);
         }
+        kt_time::cost::add(kt_time::cost::Cost::ProfileSample, out.len() as u64);
         return out;
     }
     let keys = &c.keys;
@@ -987,6 +967,7 @@ pub fn rate_profile_keys(c: &ParamCurve, src_in_frames: i64, clip_len_frames: i6
         return keys.iter().map(straight).collect();
     }
     let mut out = Vec::with_capacity(keys.len());
+    let mut cur = crate::CurveCursor::new(keys);
     for (i, k) in keys.iter().enumerate() {
         out.push(straight(k));
         let Some(next) = keys.get(i + 1) else { break };
@@ -995,13 +976,156 @@ pub fn rate_profile_keys(c: &ParamCurve, src_in_frames: i64, clip_len_frames: i6
         }
         let mut t = grid_up(k.t.0);
         while t < next.t.0 - 1 {
-            out.push(AutoKey::shaped(Tick(t), crate::curve_value(keys, Tick(t)), SegShape::Linear));
+            out.push(AutoKey::shaped(Tick(t), cur.value(Tick(t)), SegShape::Linear));
             t += RATE_GRID_TICKS;
         }
         let last = next.t.0 - 1;
-        out.push(AutoKey::shaped(Tick(last), crate::curve_value(keys, Tick(last)), SegShape::Linear));
+        out.push(AutoKey::shaped(Tick(last), cur.value(Tick(last)), SegShape::Linear));
     }
+    kt_time::cost::add(kt_time::cost::Cost::ProfileSample, out.len() as u64);
     out
+}
+
+// ---------------------------------------------------------------------------
+// SPEED PROFILES COMPILED ONCE PER CONTENT (compiled-curves). A speed curve becomes its profile
+// (`rate_profile_keys` → points in material fractions → the map's integrals) in every
+// `clip_warp`: per piece in `clip_slice`, per trim helper, per morph pass, in every build of every
+// consumer (2 audio + 2–3 video builds per edit) — for curves the edit did not touch. Here the
+// profile and the clip's map are memoized by EXACTLY what determines them: the curve's keys (tick,
+// value bits, shape bits) and the part of its source the sampling reads, the material window, the
+// reverse, the base speed and the blend. The key is compared whole on a hit — a content hash
+// alone could collide and go stale silently. The store is bounded (two generations of
+// `MEMO_POINTS` points each: a generation that fills becomes the old one, a hit in the old one moves
+// to the new), shared by every thread, and invisible to determinism: a hit is the value the
+// function computed for that key (t2104).
+// ---------------------------------------------------------------------------
+
+/// Points per generation of a profile memo: a bound on memory (≈ 56 B a point for a clip map), not a
+/// tuning — the working set is the speed curves of the open project.
+const MEMO_POINTS: usize = 1 << 18;
+
+struct Gen<V> {
+    new: std::collections::HashMap<Box<[u64]>, (V, usize)>,
+    old: std::collections::HashMap<Box<[u64]>, (V, usize)>,
+    weight: usize,
+}
+
+thread_local! {
+    static BYPASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with the profile memo neither read nor written on this thread: the two-path tests
+/// (t2104) and the build cost guard, whose counts must be a function of the project, not of what
+/// another test left in a shared store.
+pub fn without_profile_memo<R>(f: impl FnOnce() -> R) -> R {
+    let was = BYPASS.with(|b| b.replace(true));
+    let r = f();
+    BYPASS.with(|b| b.set(was));
+    r
+}
+
+fn memo<V: Clone>(
+    store: &std::sync::Mutex<Option<Gen<V>>>,
+    key: Vec<u64>,
+    weight: impl Fn(&V) -> usize,
+    make: impl FnOnce() -> V,
+) -> V {
+    if BYPASS.with(|b| b.get()) {
+        return make();
+    }
+    {
+        let mut g = store.lock().unwrap_or_else(|e| e.into_inner());
+        let g = g.get_or_insert_with(|| Gen { new: Default::default(), old: Default::default(), weight: 0 });
+        if let Some((v, _)) = g.new.get(key.as_slice()) {
+            return v.clone();
+        }
+        if let Some((k, (v, w))) = g.old.remove_entry(key.as_slice()) {
+            g.weight += w;
+            g.new.insert(k, (v.clone(), w));
+            return v;
+        }
+    }
+    // computed outside the lock: a long profile must not hold another thread's build
+    let v = make();
+    let w = weight(&v).max(1);
+    let mut g = store.lock().unwrap_or_else(|e| e.into_inner());
+    let g = g.get_or_insert_with(|| Gen { new: Default::default(), old: Default::default(), weight: 0 });
+    if g.weight + w > MEMO_POINTS {
+        g.old = std::mem::take(&mut g.new);
+        g.weight = 0;
+    }
+    g.weight += w;
+    g.new.insert(key.into_boxed_slice(), (v.clone(), w));
+    v
+}
+
+/// The words of a speed curve's key: what `rate_profile_keys` reads, exactly.
+fn curve_words(c: &ParamCurve, out: &mut Vec<u64>) {
+    use crate::SegShape;
+    out.push(c.keys.len() as u64);
+    for k in &c.keys {
+        out.push(k.t.0 as u64);
+        out.push(k.v.to_bits());
+        match k.shape {
+            SegShape::Linear => out.push(0),
+            SegShape::Hold => out.push(1),
+            SegShape::Smooth { tension } => out.extend([2, tension.to_bits()]),
+            SegShape::EaseIn { tension } => out.extend([3, tension.to_bits()]),
+            SegShape::EaseOut { tension } => out.extend([4, tension.to_bits()]),
+            SegShape::Zigzag { periods, amplitude, profile } => {
+                out.extend([5, periods.to_bits(), amplitude.to_bits(), profile as u64])
+            }
+            // interned: one handle per text in this process, as long as the memo lives
+            SegShape::Formula { expr } => out.extend([6, crate::project::expr_index(expr)]),
+        }
+    }
+    // the source matters only as the layer formula the sampling evaluates
+    match c.source.expr().filter(|_| c.source.link_path().is_none()) {
+        None => out.push(0),
+        Some(e) => {
+            out.push(1 + e.len() as u64);
+            out.extend(e.as_bytes().chunks(8).map(|b| {
+                let mut w = [0u8; 8];
+                w[..b.len()].copy_from_slice(b);
+                u64::from_le_bytes(w)
+            }));
+        }
+    }
+}
+
+type Points = std::sync::Arc<[(f64, f64)]>;
+
+static RATE_POINTS: std::sync::Mutex<Option<Gen<Points>>> = std::sync::Mutex::new(None);
+static CLIP_WARPS: std::sync::Mutex<Option<Gen<ClipWarp>>> = std::sync::Mutex::new(None);
+
+/// The speed curve `c` as the map's points in material fractions, clamped, mirrored under a reverse
+/// — the profile `AutoProfiles` and `clip_warp_of` read, compiled once per content.
+fn rate_points(c: &ParamCurve, src_in_frames: i64, clip_len_frames: i64, reversed: bool) -> Points {
+    let mut key = Vec::with_capacity(4 + 3 * c.keys.len());
+    key.extend([src_in_frames as u64, clip_len_frames as u64, reversed as u64]);
+    curve_words(c, &mut key);
+    memo(&RATE_POINTS, key, |p| p.len(), || {
+        let len = clip_len_frames.max(1) as f64;
+        let keys = rate_profile_keys(c, src_in_frames, clip_len_frames);
+        // the value is clamped HERE: `segments` clamps the ends before interpolation,
+        // and `eff_rate` — after, and on a key outside RATE_CLAMP they diverged.
+        // Such a key cannot be set from the UI, but `migrate_legacy_slowed` copies a legacy number
+        // as is, and a mismatch of the map with the DSP means prefetch misses and silence
+        // (item 13/t17).
+        let pts = keys.iter().map(|k| {
+            let f = k.t.to_audio_frames() - src_in_frames;
+            let u = f as f64 / len;
+            (if reversed { 1.0 - u } else { u }, k.v.clamp(RATE_CLAMP.0, RATE_CLAMP.1))
+        });
+        // the mirror reverses the order of the points, while the map walks the array from left to right
+        if reversed {
+            let mut v: Vec<(f64, f64)> = pts.collect();
+            v.reverse();
+            v.into()
+        } else {
+            pts.collect()
+        }
+    })
 }
 
 /// Map from the CHAIN AND ITS CURVES. `None` — there is no warp, the mapping is linear.
@@ -1025,18 +1149,33 @@ pub fn clip_warp_of(
     // is dimensionless, and both sides get one number. In TICKS only the OUTPUT of the map is
     // computed (`warp_material_ticks`): there the 48 kHz grid
     // would miss the frame boundary.
-    let prof = AutoProfiles::from_curves_rev(
-        auto,
-        source_in.to_audio_frames(),
-        duration.to_audio_frames().max(1),
-        reversed,
-    )
-    .rate_points(fx)
-    .to_vec();
-    let used = (span as f64 * consumed_abs(base, &prof, 1.0)).round() as i64;
-    let (span_min, span_max) = warp_span_ticks(base, &prof, span);
-    let integral = Integral::of(base, &prof);
-    Some(ClipWarp { base, prof, used, span_min, span_max, blend, integral })
+    //
+    // The curve is the one `AutoProfiles::rate_points` reads: the first `rate` curve of the warp slot
+    // that is a curve at all (keys, or a formula layer without a link).
+    let (src_in_frames, len_frames) = (source_in.to_audio_frames(), duration.to_audio_frames().max(1));
+    let curve = AutoProfiles::warp_slot(fx).and_then(|i| auto.get(i)).and_then(|cs| {
+        cs.iter().find(|c| {
+            c.param == "rate"
+                && (!c.keys.is_empty() || (c.source.expr().is_some() && c.source.link_path().is_none()))
+        })
+    });
+    let mut key = Vec::with_capacity(8 + curve.map_or(0, |c| 3 * c.keys.len()));
+    key.extend([base.to_bits(), blend as u64, reversed as u64, span as u64, src_in_frames as u64, len_frames as u64]);
+    match curve {
+        Some(c) => curve_words(c, &mut key),
+        None => key.push(u64::MAX),
+    }
+    Some(memo(&CLIP_WARPS, key, |w| w.prof.len(), || {
+        let prof: Points = match curve {
+            Some(c) => rate_points(c, src_in_frames, len_frames, reversed),
+            None => Points::from([]),
+        };
+        kt_time::cost::add(kt_time::cost::Cost::ProfileSample, prof.len() as u64);
+        let used = (span as f64 * consumed_abs(base, &prof, 1.0)).round() as i64;
+        let (span_min, span_max) = warp_span_ticks(base, &prof, span);
+        let integral = std::sync::Arc::new(Integral::of(base, &prof));
+        ClipWarp { base, prof, used, span_min, span_max, blend, integral }
+    }))
 }
 
 /// Does the chain actually stretch TIME.
