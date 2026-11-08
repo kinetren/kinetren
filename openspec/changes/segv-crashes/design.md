@@ -104,6 +104,52 @@ t2086 (kt-cli, no DISPLAY, `KT_VIDEO_ENGINES=4`, three runs): red on the old kt-
 first run), green now. t2087: four threads × three rounds open devices and the list is asked twice —
 one instance.
 
-## D4. t985 under nextest (row 132)
+## D4. t985 under nextest (row 132): the same race, not the exit
 
-(see the measurement below)
+The note on row 132 guessed the exit race of gpu-render-hardening D6 (a frame on llvmpipe while
+libLLVM's destructors run). Measured instead, with the handler installed in the test process
+(temporarily) and `KINETREN_DATA_DIR` kept (the test data folders of dead processes are swept):
+
+- old kt-gpu, `nextest --stress-count 60` of t985's poster half: **33 of 60 died by SIGSEGV**, each
+  about 0.2 s in — not at exit. The report: thread `media-worker-46`, pc 0 (a call through a null
+  function pointer), the stack scan `libvulkan.so.1.3.275` ← `vkEnumerateInstanceExtensionProperties`
+  ← `wgpu_hal::vulkan::Instance::desired_extensions` ← `wgpu::Instance::new` ←
+  `kt_gpu::compute::open_device` ← `kt_plugin_api::compute::host` ← `generator::shader_frame` ←
+  `generators_basic::gradient` ← `GeneratorSource::frame_bytes`. The lesson project's gradient
+  generator opened the compute host on its first frame while the poster opened the offline engine:
+  two instances at once, row 131's race;
+- old kt-gpu, the kt-app suite twice beside it: SIGSEGV also in t1312 (a real render), t986 (the
+  welcome window — "a load flake" in render-crash-and-recovery's notes), t958 (render over a file);
+- new kt-gpu: t985 **40 of 40** under a full `nextest --workspace`, and three more full runs (D7).
+
+The exit race of D6 stays closed where it was (`park_offline_engine` in `on_exit`); nothing in these
+runs died at exit. Under nextest a test's process exits right after its last line, so a GPU frame left
+running would show here as a death at the test's end; none did.
+
+## D5. The owner's SIGSEGVs
+
+What can be said from his files (Context): the crash came 17 s after a hot spell that made the load
+watch write its report, 20 s after `SetFxBypass` with the Effects window open (the first fx
+thumbnails: the offline engine's first use) and four engine builds. Each of these opened or could
+open a wgpu instance on its own thread on build b614203c: the load watch's report header (every 5 s
+of a hot spell), the offline engine's first frame, the compute host's first job. That is the
+mechanism of rows 131 and 132, which this machine's loader (1.3.275) turns into a SIGSEGV, now closed
+for every path. It is the most probable cause, NOT a proof: his Fedora 41 loader is newer, and his
+files hold no stack. What was tried: his project is not ours to run (rule), his journals have no
+record of the moment, his machine's driver (RADV) is not this one's (llvmpipe on a virtual card).
+What changes for the next one: his next crash names its thread, its library and our calling
+function in the window and the report, and the journal's crash record carries the same line.
+
+## D6. Rejected
+
+- **Tuning to one machine** (the owner, H13): no timeouts or thread counts picked for this
+  machine's loader; the fix is the shape (one instance, one opening at a time), true on any loader.
+- **Serializing only `export_engines`**: closes row 131 and leaves t985 and the owner's paths
+  (the compute host, the offline engine, the load watch) racing each other.
+- **Keeping per-call instances and a lock around `Instance::new` only**: the load watch would still
+  load and unload every driver every five seconds, and an instance dropped at exit is one more native
+  call racing the device threads.
+
+## D7. Proof
+
+(see tasks 3.1)

@@ -312,3 +312,18 @@ across the sites `crate::created()` marks: the pool, the upload cache, the readb
 memo are bounded by budget and recycle; the export ring has RING fixed slots; the arena and staging
 grow only with the frame's shape; the compute host keeps its buffers by size. None grows with lag.
 t2025 checks the timer with no poll at all; t2023 under 32 CPU burners was red 3 of 4 runs before.
+
+## One wgpu instance per process (segv-crashes)
+
+Opening wgpu devices at once on several threads, each with its own `wgpu::Instance`, races the Vulkan
+loader's instance-level entry points: `kt-cli export` without a display died every run
+(`export_engines` opens two to four devices on threads on a software adapter), t985 died 33 of 60
+runs (a generator's first shader frame opened the compute host on a media worker beside the poster's
+offline engine), and t986, t1312, t958 under load. The load watch's report header created and dropped
+a whole instance — every ICD loaded, every driver's configuration parsed — each five seconds of a hot
+spell. So `context::instance` keeps one leaked instance per backend set, `context::opening` lets one
+device open at a time, and `adapter_facts` is computed once, in the editor before eframe opens its own
+instance. Instances are never dropped: one destroyed at exit is one more native call racing the
+threads on its devices. Not tuned to a loader version: the shape holds on any. Archived change
+`segv-crashes`, design D3–D4.
+

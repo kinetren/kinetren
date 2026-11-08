@@ -113,6 +113,9 @@ pub(crate) enum Cmd {
     /// Panic on the UI thread — the crash window's live scenario (render-crash-and-recovery D7).
     /// Only the bench can ask for it: no variable or menu item crashes a normal run.
     Crash,
+    /// A native fault (SIGSEGV) on a thread named `live-fault` — the native-crash report's live
+    /// scenario (segv-crashes). The bench alone asks for it.
+    Fault,
 }
 
 /// The store assigned by the bench (see `Cmd::Store`). `user_store::store_dir`
@@ -166,6 +169,7 @@ pub(crate) fn poll() -> Option<(u64, Cmd)> {
         "store" => Cmd::Store(PathBuf::from(it.next()?.trim())),
         "noop" => Cmd::Noop,
         "crash" => Cmd::Crash,
+        "fault" => Cmd::Fault,
         _ => return None,
     };
     Some((seq, cmd))

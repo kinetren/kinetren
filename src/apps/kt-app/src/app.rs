@@ -10057,6 +10057,10 @@ impl eframe::App for KtApp {
                 crate::bench::Cmd::Store(dir) => crate::bench::set_store(dir),
                 crate::bench::Cmd::Noop => {}
                 crate::bench::Cmd::Crash => panic!("live bench: a deliberate panic on the UI thread"),
+                crate::bench::Cmd::Fault => {
+                    let t = std::thread::Builder::new().name("live-fault".into());
+                    let _ = t.spawn(kt_crash::testing::kt_crash_probe_segv);
+                }
             }
             crate::bench::finished(seq);
         }

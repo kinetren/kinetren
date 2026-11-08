@@ -402,9 +402,10 @@ fn write_dump(path: &Path, c: &Crash, rects: &[(&'static str, egui::Rect)], fram
         })
         .collect();
     let json = format!(
-        "{{\"crash\":true,\"frame\":{frame},\"what\":\"{}\",\"panic\":\"{}\",\"version\":\"{}\",\"report\":\"{}\",\"tail\":{},\"fields\":[{}]}}\n",
+        "{{\"crash\":true,\"frame\":{frame},\"what\":\"{}\",\"panic\":\"{}\",\"fault\":\"{}\",\"version\":\"{}\",\"report\":\"{}\",\"tail\":{},\"fields\":[{}]}}\n",
         esc(&death_words(c)),
         esc(c.panic.as_deref().unwrap_or("")),
+        esc(c.fault.as_deref().unwrap_or("")),
         esc(&c.version),
         esc(&c.report.to_string_lossy()),
         c.tail.len(),

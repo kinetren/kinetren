@@ -96,6 +96,15 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   recovery offer is then not quiet.
 - `KT_NO_SUPERVISOR=1` — the editor in the first process (debuggers attach to it). The live bench's
   `crash` command panics on the UI thread; nothing else crashes a run on purpose.
+- **A native crash is reported at the signal** (segv-crashes, `kt-crash`): the editor's process
+  installs the handler first thing (`journal::install_crash_handler`), which writes
+  `kt-app-crash.raw`; the supervisor symbolizes it in `gather` (the child's pid finds the run's
+  telemetry-journal lines), the next start absorbs one no supervisor took
+  (`journal::absorb_native_report`). Nothing in the handler may call into the program. A test that
+  crashes on purpose does it in a child (`t1072_child_body` modes).
+- **Every wgpu device opens through kt-gpu's one instance** (`kt_gpu::GpuContext`, `compute::open`,
+  `adapter_facts`): a new `wgpu::Instance::new` in kt-app is the race that killed t985, t986, t1312
+  and t958 under load (segv-crashes D4).
 - **The journal is per run** (`journal::start_run`, a fan of four previous runs, a header with the
   version, OS, FFmpeg major, pid and local time with offset); `last_run_tail` is what the window shows.
 
