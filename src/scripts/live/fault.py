@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Live scenario segv-crashes: a NATIVE crash says where it happened.
 
-The owner (kkt-26.11.08 H5): "краш скудный" — a SIGSEGV left a report with the signal and nothing
+The owner (kkt-26.11.08 H5): the crash report was scanty — a SIGSEGV left the signal and nothing
 else. The editor is faulted on purpose (the bench command `fault`: a write through a null pointer on
 a thread named `live-fault`); the supervisor's crash window must name the signal, the thread and the
 function, show the run's journal lines, and the report must hold the stack with file and line and the
