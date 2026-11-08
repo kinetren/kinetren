@@ -10327,6 +10327,7 @@ pub fn run() -> eframe::Result {
             // the previous session crashed — the report lies there and waits (item 355)
             // a report the supervisor's crash window showed is still taken (telemetry), but not
             // announced a second time (render-crash-and-recovery D4)
+            crate::journal::absorb_native_report();
             if let Some(r) = crate::journal::take_crash_report() {
                 crate::telemetry::signal(crate::telemetry::Signal::CrashReport(&r.path));
                 if !r.shown {

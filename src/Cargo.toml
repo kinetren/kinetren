@@ -16,6 +16,7 @@ members = [
     "libs/kt-fx",
     "libs/kt-engine",
     "libs/kt-gpu",
+    "libs/kt-crash",
     "libs/kt-plugins-builtin",
     # the built-in plugin families (plugin-api-stage1, D6): leaves of the crate graph (t975)
     "plugins/fx-video-blur",
@@ -56,6 +57,7 @@ kt-cache = { path = "libs/kt-cache" }
 kt-fx = { path = "libs/kt-fx" }
 kt-engine = { path = "libs/kt-engine" }
 kt-gpu = { path = "libs/kt-gpu" }
+kt-crash = { path = "libs/kt-crash" }
 kt-plugins-builtin = { path = "libs/kt-plugins-builtin" }
 fx-video-blur = { path = "plugins/fx-video-blur" }
 fx-video-codec = { path = "plugins/fx-video-codec" }

@@ -108,5 +108,7 @@ fn main() -> eframe::Result {
     if let Some(code) = supervisor::run() {
         std::process::exit(code);
     }
+    // the editor's process: a fatal signal leaves a report naming its thread and stack (segv-crashes)
+    journal::install_crash_handler();
     app::run()
 }

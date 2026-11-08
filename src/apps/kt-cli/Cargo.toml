@@ -21,5 +21,7 @@ kt-ffmpeg = { workspace = true }
 kt-dirs = { workspace = true }
 serde_json = { workspace = true }
 kt-otio = { workspace = true }
+# the native-crash report (segv-crashes)
+kt-crash = { workspace = true }
 
 [dev-dependencies]

@@ -25,6 +25,8 @@ fx-audio-tone = { workspace = true }
 # “glyph missing” in the title window is counted by the same crate that draws the frame (R.52)
 kt-text = { workspace = true }
 kt-otio = { workspace = true }
+# the native-crash report (segv-crashes)
+kt-crash = { workspace = true }
 kt-media = { workspace = true }
 kt-ffmpeg = { workspace = true }
 kt-dirs = { workspace = true }

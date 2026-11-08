@@ -1472,3 +1472,25 @@ fn t1603_the_file_streams_equal_the_serial_export() {
     assert_eq!(stream(&piped, "0:a"), stream(&serial, "0:a"), "the audio packets");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 2082 (segv-crashes, durability): a native crash of kt-cli dies by its own signal and prints
+/// the report on stderr — the faulting thread, the function with its file and line, the other
+/// threads — symbolized by a fresh process the handler starts, and leaves it in the temporary folder.
+#[cfg(target_os = "linux")]
+#[test]
+fn t2082_cli_crash_prints_its_report() {
+    use std::os::unix::process::ExitStatusExt;
+    let out = cli().arg("crash-probe").output().unwrap();
+    assert_eq!(out.status.signal(), Some(11), "kt-cli must still die by SIGSEGV: {:?}", out.status);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("signal: SIGSEGV (segmentation fault)"), "{err}");
+    assert!(err.contains("thread: kt-cli-probe"), "{err}");
+    assert!(err.contains("kt_crash::testing::kt_crash_probe_segv (libs/kt-crash/src/lib.rs:"), "{err}");
+    assert!(err.contains("kt-cli-probe  ← faulted"), "{err}");
+    let line = err.lines().find(|l| l.starts_with("kt-cli: SIGSEGV in thread \"kt-cli-probe\"")).expect(&err);
+    let report = std::path::PathBuf::from(line.rsplit("the report is in ").next().unwrap());
+    let text = std::fs::read_to_string(&report).expect("the report beside the raw one");
+    assert!(text.starts_with(&format!("kt-cli {}\n", kt_version::FULL)), "{text}");
+    let _ = std::fs::remove_file(&report);
+    let _ = std::fs::remove_file(report.with_extension("raw"));
+}

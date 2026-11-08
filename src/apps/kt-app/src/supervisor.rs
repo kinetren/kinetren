@@ -14,6 +14,7 @@
 
 use crate::i18n::{k, tr};
 use eframe::egui;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -26,6 +27,8 @@ pub const ENV_AFTER_CRASH: &str = "KT_AFTER_CRASH";
 
 /// Lines of the crashed run's journal the window shows.
 const TAIL_LINES: usize = 40;
+/// Lines of the crashed run's telemetry journal the report and the window carry (segv-crashes).
+const EVENT_LINES: usize = 60;
 
 /// The editor was started by "Restore the project" in the crash window.
 pub fn after_crash() -> bool {
@@ -140,6 +143,9 @@ pub struct Crash {
     pub death: Death,
     /// The panic message with its place, from a FRESH report.
     pub panic: Option<String>,
+    /// A native crash in one line: the signal, the thread and where (segv-crashes), from the
+    /// handler's fresh raw report.
+    pub fault: Option<String>,
     /// The report: the child's own (a panic) or the one the supervisor wrote.
     pub report: PathBuf,
     /// The journal lines of the crashed run.
@@ -165,27 +171,57 @@ pub fn panic_message(report: &str) -> Option<String> {
 /// Gather what happened (D2): the child's FRESH report (written after it started), or a report
 /// the supervisor writes itself naming the exit — "the last report is always in place" holds
 /// for signals too — and the journal lines of the crashed run.
-pub fn gather(death: Death, started: SystemTime, data_dir: &Path) -> Crash {
+///
+/// A native crash (segv-crashes): the handler's fresh raw report is symbolized HERE, in a healthy
+/// process, into the report — the faulting thread and its stack, the other threads — beside the
+/// last lines of the run's telemetry journal (`pid`: the child's, to find its RUN line). The raw
+/// file then moves to `.seen`, so the next start does not take it again.
+pub fn gather(death: Death, started: SystemTime, data_dir: &Path, pid: Option<u32>) -> Crash {
     let report = data_dir.join("kt-app-crash.txt");
+    let raw = data_dir.join(crate::journal::NATIVE_RAW);
     let tail = crate::journal::last_run_tail(&data_dir.join("kt-app.log"), TAIL_LINES);
+    let events = crate::tele_journal::run_tail(&data_dir.join(crate::tele_journal::FILE), pid, EVENT_LINES);
     // a second of slack: the mtime of some file systems is whole seconds
     let since = started.checked_sub(Duration::from_secs(2)).unwrap_or(started);
-    let fresh = std::fs::metadata(&report)
-        .and_then(|m| m.modified())
-        .is_ok_and(|t| t >= since);
+    let is_fresh = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).is_ok_and(|t| t >= since);
+    let fresh = is_fresh(&report);
+    let native = if is_fresh(&raw) { std::fs::read_to_string(&raw).ok() } else { None };
+    let fault = native.as_deref().and_then(kt_crash::summary);
+    let native_text = native.as_deref().map(kt_crash::symbolize);
     let panic = if fresh { std::fs::read_to_string(&report).ok().and_then(|t| panic_message(&t)) } else { None };
-    if !fresh {
+    let events_text = if events.is_empty() {
+        String::new()
+    } else {
+        format!("\n--- telemetry journal, the run's last lines ---\n{}\n", events.join("\n"))
+    };
+    if fresh {
+        // the child's own panic report; an abort after it (a panic while panicking) adds its stack
+        if let Some(n) = &native_text {
+            let _ = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&report)
+                .and_then(|mut f| f.write_all(format!("\n--- the native crash that followed ---\n{n}").as_bytes()));
+        }
+    } else {
         let _ = std::fs::create_dir_all(data_dir);
         let text = format!(
-            "kinetren {}\ntime: {}\nexit: the editor {}\n\n--- log tail ---\n{}\n",
+            "kinetren {}\ntime: {}\nexit: the editor {}\n{}{}{}\n--- log tail ---\n{}\n",
             kt_version::FULL,
             crate::journal::stamp_of(SystemTime::now()),
             death_plain(death),
+            fault.as_deref().map_or(String::new(), |f| format!("{}{f}\n", crate::journal::SUMMARY_MARK)),
+            native_text.as_deref().map_or(String::new(), |n| format!("\n--- native crash ---\n{n}")),
+            events_text,
             tail.join("\n"),
         );
         let _ = std::fs::write(&report, text);
     }
-    Crash { death, panic, report, tail, version: kt_version::FULL.to_string() }
+    if native.is_some() {
+        let _ = kt_otio::replace_file(&raw, &data_dir.join(crate::journal::NATIVE_RAW_SEEN));
+    }
+    // the window shows what the person did and what the program saw; the log when there is no journal
+    let tail = if events.is_empty() { tail } else { events };
+    Crash { death, panic, fault, report, tail, version: kt_version::FULL.to_string() }
 }
 
 /// Run the editor as a watched child. `Some(code)` — this process was the supervisor and is done;
@@ -205,7 +241,7 @@ pub fn run() -> Option<i32> {
             cmd.env(ENV_AFTER_CRASH, "1");
         }
         let started = SystemTime::now();
-        let status = match spawn_watched(cmd) {
+        let (status, pid) = match spawn_watched(cmd) {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("kinetren: could not start the editor as a child ({e}); running it here");
@@ -215,7 +251,7 @@ pub fn run() -> Option<i32> {
         let (code, signal) = status_parts(&status);
         let v = classify(code, signal);
         let Verdict::Crash(death) = v else { return Some(exit_code(v)) };
-        let crash = gather(death, started, &crate::journal::data_dir());
+        let crash = gather(death, started, &crate::journal::data_dir(), Some(pid));
         eprintln!("kinetren: the editor {}; the report is in {}", death_plain(death), crash.report.display());
         match show(&crash) {
             Choice::Restart => after = true,
@@ -224,8 +260,9 @@ pub fn run() -> Option<i32> {
     }
 }
 
-/// Start the child and wait for it. On Linux it gets SIGTERM when the supervisor dies.
-pub fn spawn_watched(mut cmd: std::process::Command) -> std::io::Result<std::process::ExitStatus> {
+/// Start the child and wait for it; its exit and its pid. On Linux it gets SIGTERM when the
+/// supervisor dies.
+pub fn spawn_watched(mut cmd: std::process::Command) -> std::io::Result<(std::process::ExitStatus, u32)> {
     cmd.env(ENV_CHILD, "1");
     #[cfg(target_os = "linux")]
     {
@@ -243,7 +280,9 @@ pub fn spawn_watched(mut cmd: std::process::Command) -> std::io::Result<std::pro
             });
         }
     }
-    cmd.status()
+    let mut child = cmd.spawn()?;
+    let pid = child.id();
+    child.wait().map(|st| (st, pid))
 }
 
 /// What the person chose in the crash window.
@@ -298,6 +337,10 @@ pub fn draw(ui: &mut egui::Ui, c: &Crash, rects: &mut Vec<(&'static str, egui::R
         ui.label(death_words(c));
         if let Some(p) = &c.panic {
             ui.label(egui::RichText::new(p).monospace());
+        }
+        // the signal, the thread and the function (segv-crashes): data, drawn as it is
+        if let Some(f) = &c.fault {
+            ui.label(egui::RichText::new(f).monospace());
         }
         ui.add_space(4.0);
         ui.label(crate::tf!(k::crash::VERSION, &c.version));
@@ -458,7 +501,7 @@ mod tests {
 
     fn run_child(test: &str, mode: &str, data: &Path) -> (Verdict, SystemTime) {
         let started = SystemTime::now();
-        let st = spawn_watched(child(test, mode, data)).unwrap();
+        let (st, _) = spawn_watched(child(test, mode, data)).unwrap();
         let (code, signal) = status_parts(&st);
         (classify(code, signal), started)
     }
@@ -480,6 +523,16 @@ mod tests {
             #[cfg(target_os = "linux")]
             "abort" => std::process::abort(),
             #[cfg(target_os = "linux")]
+            "segv" => {
+                // the editor's own start: the telemetry journal's RUN line, then the handler
+                crate::tele_journal::install();
+                crate::tele_journal::record(crate::tele_journal::Kind::Act, "t2084 child: about to fault");
+                crate::tele_journal::flush(std::time::Duration::from_secs(5));
+                crate::journal::install_crash_handler();
+                let t = std::thread::Builder::new().name("t2084-fault".into());
+                let _ = t.spawn(kt_crash::testing::kt_crash_probe_segv).map(|h| h.join());
+            }
+            #[cfg(target_os = "linux")]
             "kill" => unsafe {
                 libc::raise(libc::SIGKILL);
             },
@@ -499,7 +552,7 @@ mod tests {
         let data = dir.join("kinetren");
         let (v, started) = run_child("supervisor::tests::t1072_child_body", "panic", &data);
         assert_eq!(v, Verdict::Crash(Death::Code(101)), "the child's panic is not a crash");
-        let c = gather(Death::Code(101), started, &data);
+        let c = gather(Death::Code(101), started, &data, None);
         let msg = c.panic.as_deref().unwrap_or_default();
         assert!(msg.contains("t1072: a deliberate panic in the child"), "the panic message: {c:?}");
         assert!(msg.contains("supervisor.rs"), "the panic's place is lost: {msg}");
@@ -516,6 +569,64 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Test 2084 (segv-crashes): a native crash of the editor leaves a report that names the
+    /// signal, the faulting thread and its function with file and line, the other threads, and the
+    /// run's last telemetry journal lines; the window gets the one-line summary and those lines; the
+    /// raw report is taken once.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn t2084_native_crash_report_names_thread_stack_and_journal() {
+        let dir = scratch("t2084");
+        let data = dir.join("kinetren");
+        let started = SystemTime::now();
+        let (st, pid) = spawn_watched(child("supervisor::tests::t1072_child_body", "segv", &data)).unwrap();
+        let (code, signal) = status_parts(&st);
+        assert_eq!(classify(code, signal), Verdict::Crash(Death::Signal(11)), "the editor dies by SIGSEGV");
+        assert!(data.join(crate::journal::NATIVE_RAW).exists(), "the handler wrote no raw report");
+        let c = gather(Death::Signal(11), started, &data, Some(pid));
+        let fault = c.fault.clone().unwrap_or_default();
+        assert!(fault.starts_with("SIGSEGV in thread \"t2084-fault\" at kt_crash::testing::kt_crash_probe_segv"), "{fault}");
+        let report = std::fs::read_to_string(&c.report).unwrap();
+        for want in [
+            "exit: the editor was ended by SIGSEGV".to_string(),
+            format!("{}{fault}", crate::journal::SUMMARY_MARK),
+            "thread: t2084-fault".to_string(),
+            "kt_crash::testing::kt_crash_probe_segv (libs/kt-crash/src/lib.rs:".to_string(),
+            "t2084-fault  ← faulted".to_string(),
+            "--- telemetry journal, the run's last lines ---".to_string(),
+            "t2084 child: about to fault".to_string(),
+        ] {
+            assert!(report.contains(&want), "the report misses “{want}”:\n{report}");
+        }
+        assert!(c.tail.iter().any(|l| l.contains("t2084 child: about to fault")), "the window's lines: {:?}", c.tail);
+        assert!(c.tail[0].contains(&format!(" pid {pid}")), "the lines are not this run's: {:?}", c.tail);
+        // taken once: the raw report moved aside, a second gather finds no native crash
+        assert!(!data.join(crate::journal::NATIVE_RAW).exists() && data.join(crate::journal::NATIVE_RAW_SEEN).exists());
+        assert_eq!(crate::journal::report_summary(&c.report).as_deref(), Some(fault.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Test 2085 (segv-crashes): with no supervisor (`KT_NO_SUPERVISOR`, a supervisor killed
+    /// with its child) the next start symbolizes the raw report into the crash report, which the
+    /// bell then announces.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn t2085_a_raw_report_is_absorbed_at_the_next_start() {
+        let dir = scratch("t2085");
+        let data = dir.join("kinetren");
+        let (st, _) = spawn_watched(child("supervisor::tests::t1072_child_body", "segv", &data)).unwrap();
+        assert_eq!(status_parts(&st).1, Some(11));
+        crate::journal::absorb_native_report_in(&data);
+        let report = data.join("kt-app-crash.txt");
+        let summary = crate::journal::report_summary(&report).expect("no summary in the absorbed report");
+        assert!(summary.starts_with("SIGSEGV in thread \"t2084-fault\""), "{summary}");
+        assert!(std::fs::read_to_string(&report).unwrap().contains("t2084 child: about to fault"));
+        assert!(!data.join(crate::journal::NATIVE_RAW).exists(), "taken twice");
+        let taken = crate::journal::take_crash_report_at(&report, &data.join("kt-app-crash.seen.txt")).unwrap();
+        assert!(!taken.shown, "no window showed it: the bell announces it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Test 1073 (D2): an abort and a SIGKILL are crashes with a report the supervisor wrote;
     /// SIGTERM and a clean exit open nothing; the Windows codes have names.
     #[test]
@@ -527,7 +638,7 @@ mod tests {
             let body = "supervisor::tests::t1072_child_body";
             let (v, started) = run_child(body, "abort", &data);
             assert_eq!(v, Verdict::Crash(Death::Signal(6)), "abort");
-            let c = gather(Death::Signal(6), started, &data);
+            let c = gather(Death::Signal(6), started, &data, None);
             assert_eq!(c.panic, None);
             let report = std::fs::read_to_string(&c.report).unwrap();
             assert!(report.contains("SIGABRT") && report.contains(kt_version::FULL), "{report}");
@@ -569,6 +680,7 @@ mod tests {
         let crash = Crash {
             death: Death::Code(101),
             panic: Some("cannot convert float seconds to Duration: value is negative — render_dialog.rs:937:52".into()),
+            fault: None,
             report: PathBuf::from("/tmp/kt-t1074/kt-app-crash.txt"),
             tail: (0..60).map(|i| format!("2026-11-01 18:10:{:02}+03:00 INFO  line {i}", i % 60)).collect(),
             version: kt_version::FULL.to_string(),
