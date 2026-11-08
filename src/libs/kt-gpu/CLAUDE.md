@@ -18,6 +18,9 @@ is no picture, and an export refuses.
   `context::instance(&opening, backends)`. Never call `wgpu::Instance::new` elsewhere: devices opened
   at once on threads, each with its own instance, raced the Vulkan loader into SIGSEGV (kt-cli export
   without a display every run, t985 33 of 60). Instances are leaked on purpose. t2086, t2087.
+  **Except a GL device**: GL adapters of one instance share its one EGL context, so a GL device opens
+  from `own_instance` (dropped with it); on the shared one, the offline engine and the export's
+  engines hit EGL_BAD_ACCESS in `GpuFxEngine::build` and every render from the editor died. t2088.
 - **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
   sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
   with table reads lane by lane, ten times the cost. Write taps out, or specialize the text
