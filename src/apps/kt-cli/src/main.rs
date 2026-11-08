@@ -23,6 +23,7 @@
 //! crash-report <raw>`, a fresh process, to name the frames. `crash-probe` crashes on purpose, for
 //! the test of that path.
 
+mod firstframe;
 mod fxcost;
 mod showcase;
 mod wav;
@@ -1480,6 +1481,8 @@ fn run(args: &[String]) -> i32 {
         // README showcase (readme-showcase): a dense project cut from real
         // footage in a directory; media by absolute path, never copied
         Some("showcase") => showcase::run(args, force),
+        // what the first frame of each video effect costs against its warm frames (pipeline-prewarm)
+        Some("first-frame") => firstframe::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)
         Some("fx-cost") => {
             let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
