@@ -9702,8 +9702,9 @@ impl KtApp {
                 ui.colored_label(ui.visuals().warn_fg_color, tr(k::perf::LOAD_UNCOUNTED));
             }
             // what each pass cost the device (gpu-pass-cost): the journal's GPU record, as it reads
+            // wrapped: a pass list is longer than any window is wide, and the section truncates
             if let Some(g) = &s.gpu {
-                ui.weak(crate::tf!(k::perf::LOAD_GPU, g.line()));
+                ui.add(egui::Label::new(egui::RichText::new(crate::tf!(k::perf::LOAD_GPU, g.line())).weak()).wrap());
             }
         }
         let r = ui.button(tr(k::perf::LOAD_REPORT));
