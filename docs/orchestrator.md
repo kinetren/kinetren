@@ -68,6 +68,10 @@ Every brief carries the standing rules, because executors start fresh:
 - imitation is not simulation; a simulated device that records sound simulates both halves;
 - an old file that stopped loading is fixed in the import door; a model change OTIO cannot express
   goes into "What OTIO export loses";
+- a background wait reads a LOG line (`until grep -q "Summary" <log>`), never `pgrep -f "<cmd>"`:
+  the wait's own command line contains the pattern, so it matches itself and never ends
+  (2026-11-09: `pipeline-prewarm` stood on `until ! pgrep -f "cargo test --workspace"`; the
+  orchestrator fell into the same trap the day before);
 - do not merge into `master`; report ONCE, in Russian, when done (no interim notes); a question
   for the owner goes into that report, addressed to the orchestrator, which carries it; the report
   ends with "Найдено, не исправлено" (see "What executors find and leave").
