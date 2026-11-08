@@ -383,7 +383,8 @@ pub struct KtApp {
     pub(crate) last_title: String,
     /// `last_title` ends with the translated "(outdated)" word (the title row paints it apart).
     pub(crate) title_outdated: bool,
-    /// Reusable buffer of the preview composition (no per-frame allocations).
+    /// The bytes of the last composite that came back (empty on the display path); the one
+    /// before goes back to the preview's thread for reuse (no per-frame allocations).
     pub(crate) preview_buf: Vec<u8>,
     /// The picture on the device; `None` — the bytes path (no engine, the harness).
     preview_display: Option<crate::preview_display::PreviewDisplay>,
@@ -668,6 +669,11 @@ pub struct KtApp {
     pub incomplete_since: Option<std::time::Instant>,
     /// Last attempt of a composite of an incomplete frame (retry throttling, item 1).
     pub last_compose_retry: std::time::Instant,
+    /// The ask on its way to the preview's thread: its number and (tick, size, content, project).
+    pub preview_asked: Option<(u64, (i64, (u32, u32), u64, u64))>,
+    /// How long a frame waits for its composite, so that a fast one shows in this very frame.
+    /// A bound and nothing more: past it the frame goes on with the old picture.
+    pub compose_grace: std::time::Duration,
     /// The cache's epoch the last incomplete composite saw, and the pause before a retry with
     /// nothing new in the cache. Doubles; past `COMPOSE_RETRY_MAX` the frame waits for news.
     pub compose_retry_epoch: u64,
@@ -770,6 +776,13 @@ impl KtApp {
                 self.preview_display = (!readback)
                     .then(|| crate::preview_display::PreviewDisplay::new(engine.clone(), rs.clone()));
                 self.player.set_video_gpu(Some(engine));
+                self.player.set_compose_wake(std::sync::Arc::new(crate::wake::now));
+                // the device a slow chain moves to: building it takes seconds, and until it
+                // stands everything composes on the display's device
+                let slow = self.player.slow_gpu_setter();
+                let _ = std::thread::Builder::new().name("offline-engine".into()).spawn(move || {
+                    slow(kt_gpu::offline_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+                });
             }
             Err(e) => self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, e)),
         }
@@ -1046,6 +1059,8 @@ impl KtApp {
             preview_project: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
+            preview_asked: None,
+            compose_grace: COMPOSE_GRACE,
             compose_retry_epoch: 0,
             compose_retry_gap: COMPOSE_RETRY_MIN,
             thumb_textures: HashMap::new(),
@@ -1340,6 +1355,8 @@ impl KtApp {
             preview_project: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
+            preview_asked: None,
+            compose_grace: COMPOSE_GRACE,
             compose_retry_epoch: 0,
             compose_retry_gap: COMPOSE_RETRY_MIN,
             thumb_textures: HashMap::new(),
@@ -6620,6 +6637,30 @@ impl KtApp {
 
     // -- snap ---------------------------------------------------------------
 
+    /// The answer to the last ask, if it is there or comes within `compose_grace`. An answer to an
+    /// older ask is a frame too, and playback shows it.
+    fn take_composed(&mut self) -> Option<kt_engine::compose_queue::Composed> {
+        let (seq, _) = self.preview_asked?;
+        let deadline = std::time::Instant::now() + self.compose_grace;
+        let mut got: Option<kt_engine::compose_queue::Composed> = None;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let Some(done) = self.player.take_composed(left) else { break };
+            let last = done.seq == seq;
+            if let Some(old) = got.replace(done) {
+                self.player.give_back_preview_buffer(old.rgba);
+            }
+            if last {
+                self.preview_asked = None;
+                break;
+            }
+            if left.is_zero() {
+                break;
+            }
+        }
+        got
+    }
+
     /// Has what the incomplete frame at `key_tick` lacked arrived?
     fn compose_news(&self, key_tick: i64) -> bool {
         self.player.cache.epoch() != self.compose_retry_epoch
@@ -6650,7 +6691,7 @@ impl KtApp {
         let tgen = (self.player.transport.generation(), display_lap);
         let reanchor = !self.player.transport.is_playing() || tgen != self.preview_gen;
         let (key_tick, skipped, rolled) = kt_engine::player::preview_key_step(
-            self.preview_key.map(|k| k.0),
+            self.preview_asked.map(|a| a.1.0).or(self.preview_key.map(|k| k.0)),
             raw_key,
             grid.frame_step(),
             if self.play_dir_back { -1 } else { 1 },
@@ -6695,41 +6736,41 @@ impl KtApp {
         let need = changed || retry;
         self.preview_content = content;
         self.preview_project = project;
-        let new_frame = self.preview_key.map(|k| k.0) != Some(key_now.0);
-        let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
-        if need {
+        let asked_now = (key_now.0, key_now.1, content, project);
+        // what the UI itself spends on the picture: the ask and the take, never the composite
+        let composite_cost = crate::frame_cost::span(crate::frame_cost::Stage::Composite);
+        if need && self.preview_asked.map(|a| a.1) != Some(asked_now) {
             self.last_compose_retry = std::time::Instant::now();
             // before the composite: what lands during it is news for the next look
             let epoch = self.player.cache.epoch();
-            self.compose_retry_gap = if retry && self.player.cache.epoch() == self.compose_retry_epoch {
+            self.compose_retry_gap = if retry && epoch == self.compose_retry_epoch {
                 self.compose_retry_gap * 2
             } else {
                 COMPOSE_RETRY_MIN
             };
             self.compose_retry_epoch = epoch;
-            let mut rgba = std::mem::take(&mut self.preview_buf);
-            let shown_any = self.texture.is_some() || self.preview_on_display;
             // composition by the ratcheted key, not the raw t:
             // otherwise on a retry (the frame is still loading) the picture was rebuilt
             // for a position 1–2 cells behind the key, and an earlier frame
             // went on screen (item 14 of round 14)
             //
             // On the device when it can: the frame is not waited for, read back, converted
-            // and uploaded again on this thread (preview-throughput D2).
-            let composite_cost = crate::frame_cost::span(crate::frame_cost::Stage::Composite);
-            let presented = self.preview_display.as_ref().and_then(|_| {
-                self.player.present_preview(
-                    Tick(key_tick),
-                    kt_engine::PresentOptions {
-                        show_incomplete: !shown_any,
-                        glow: self.sw_render == Some(false)
-                            && self.glow_skip.wrapping_add(1) % 4 == 1,
-                    },
-                )
+            // and uploaded again on this thread (preview-throughput D2). And never here: the
+            // composite has a thread of its own, and a slow chain costs frames, not the Undo
+            // (idle-cpu, stage 2).
+            let shown_any = self.texture.is_some() || self.preview_on_display;
+            let present = self.preview_display.as_ref().map(|_| kt_engine::PresentOptions {
+                show_incomplete: !shown_any,
+                glow: self.sw_render == Some(false) && self.glow_skip.wrapping_add(1) % 4 == 1,
             });
-            let on_display = presented.is_some();
-            let (cq, c) = presented
-                .unwrap_or_else(|| self.player.compose_preview_into(Tick(key_tick), &mut rgba));
+            let seq = self.player.ask_preview(Tick(key_tick), present);
+            self.preview_asked = Some((seq, asked_now));
+        }
+        let mut complete = self.preview_key.map(|k| k.2).unwrap_or(true);
+        if let Some(done) = self.take_composed() {
+            let new_frame = self.preview_key.map(|k| k.0) != Some(done.t.0);
+            let shown_any = self.texture.is_some() || self.preview_on_display;
+            let (cq, c, on_display) = (done.quality, done.complete, done.on_display);
             complete = c;
             drop(composite_cost);
             let cost = self.player.video_cost();
@@ -6737,6 +6778,7 @@ impl KtApp {
             self.perf.compose_sum_ns += cost.compose_ns;
             self.perf.compose_n += 1;
             self.composites += 1;
+            let rgba = done.rgba;
             // we hold the last FULL frame: an incomplete composite does not overwrite the
             // picture (the flicker “black frame ↔ Loading”, item 14/15)
             if on_display && (c || !shown_any) {
@@ -6798,8 +6840,10 @@ impl KtApp {
                     self.perf.video_frames_shown += 1;
                 }
             }
-            self.preview_key = Some((key_now.0, key_now.1, c));
-            self.preview_buf = rgba; // buffer back (reuse)
+            self.preview_key = Some((done.t.0, (cq.width, cq.height), c));
+            // the last composite's bytes stay readable; the buffer before them goes back for reuse
+            let old = std::mem::replace(&mut self.preview_buf, rgba);
+            self.player.give_back_preview_buffer(old);
         }
         if complete {
             self.incomplete_since = None;
@@ -8517,6 +8561,10 @@ pub fn repaint_delay(animating: bool, economy: bool) -> Option<std::time::Durati
 
 /// A frame of the meters falling while nothing else moves.
 const METER_FALL_STEP: std::time::Duration = std::time::Duration::from_millis(40);
+
+/// What a UI frame gives a composite. The harness composes in the frame, as its steps expect.
+pub const COMPOSE_GRACE: std::time::Duration =
+    std::time::Duration::from_millis(if cfg!(test) { 5000 } else { 3 });
 
 /// The first pause before an incomplete frame is composed again with nothing new in the cache.
 pub const COMPOSE_RETRY_MIN: std::time::Duration = std::time::Duration::from_millis(250);

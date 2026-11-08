@@ -306,6 +306,9 @@ pub trait VideoGpuExec: Send + Sync {
     fn present(&self, _plan: &FramePlan<'_>, _o: PresentOptions) -> Result<bool, GpuExecError> {
         Err(GpuExecError::Unsupported("no display target"))
     }
+    /// Wait until what was presented has finished, without standing in the device's way: the
+    /// preview's own thread calls this between frames (idle-cpu), so the queue holds one composite.
+    fn wait_presented(&self) {}
     /// Wait until everything presented has finished: what a swapchain does to a real window.
     /// Only a headless caller needs it (`preview_bench`).
     fn finish_present(&self) {}

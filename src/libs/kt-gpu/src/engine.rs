@@ -765,6 +765,9 @@ struct Inner {
 pub struct GpuFxEngine {
     info: GpuBackendInfo,
     inner: Mutex<Inner>,
+    /// What `present` last drew into and the glow, published apart from `inner` (ui-never-waits):
+    /// the UI's paint reads them, and the preview's thread holds `inner` for a whole composite.
+    shown: Mutex<(Option<DisplayTarget>, Option<wgpu::TextureView>)>,
 }
 
 const SHADERS: [(&str, &str); PIPE_COUNT] = [
@@ -1278,6 +1281,7 @@ impl GpuFxEngine {
         let max_dim = device.limits().max_texture_dimension_2d;
         Ok(Arc::new(GpuFxEngine {
             info,
+            shown: Mutex::new((None, None)),
             inner: Mutex::new(Inner {
                 device,
                 queue,
@@ -1338,18 +1342,14 @@ pub struct DisplayTarget {
 
 impl GpuFxEngine {
     /// What `present` last drew into; `None` before the first frame.
+    /// Never waits for a composite: the target is published when `present` ends.
     pub fn display_target(&self) -> Option<DisplayTarget> {
-        let g = self.inner.lock().unwrap();
-        g.display.as_ref().map(|d| DisplayTarget {
-            view: d.view.clone(),
-            size: (d.w, d.h),
-            generation: g.display_generation,
-        })
+        self.shown.lock().unwrap().0.clone()
     }
 
     /// The 32×18 ambient glow; `None` until a `present` asked for it.
     pub fn glow_view(&self) -> Option<wgpu::TextureView> {
-        self.inner.lock().unwrap().glow.as_ref().map(|t| t.view.clone())
+        self.shown.lock().unwrap().1.clone()
     }
 
     /// The display target's bytes (premultiplied, as egui samples them): tests only.
@@ -1457,7 +1457,33 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn present(&self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
-        self.inner.lock().unwrap().present(plan, o)
+        let mut g = self.inner.lock().unwrap();
+        let r = g.present(plan, o);
+        let target = g.display.as_ref().map(|d| DisplayTarget {
+            view: d.view.clone(),
+            size: (d.w, d.h),
+            generation: g.display_generation,
+        });
+        let glow = g.glow.as_ref().map(|t| t.view.clone());
+        *self.shown.lock().unwrap() = (target, glow);
+        r
+    }
+
+    fn wait_presented(&self) {
+        let (device, queue) = {
+            let g = self.inner.lock().unwrap();
+            (g.device.clone(), g.queue.clone())
+        };
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = done.clone();
+        queue.on_submitted_work_done(move || flag.store(true, std::sync::atomic::Ordering::Release));
+        // polled, not waited: a blocking poll can hold the driver's lock against the UI's submit
+        while !done.load(std::sync::atomic::Ordering::Acquire) {
+            if device.poll(wgpu::PollType::Poll).is_err() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     fn finish_present(&self) {
