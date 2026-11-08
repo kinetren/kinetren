@@ -108,8 +108,14 @@ pub(crate) struct Named {
     pub names: Vec<String>,
 }
 
+/// The faulting pc at address 0: what a call through a null function pointer looks like.
+const NULL_CALL: &str = "address 0 (a call through a null function pointer)";
+
 impl Named {
     fn place(&self) -> String {
+        if self.module == NULL_CALL {
+            return NULL_CALL.to_string();
+        }
         format!("{}+{:#x}", self.module, self.offset)
     }
 }
@@ -196,6 +202,9 @@ impl<'a> Namer<'a> {
 
     /// `ret`: a return address — the call is the instruction before it.
     pub(crate) fn name(&mut self, addr: usize, ret: bool) -> Named {
+        if addr == 0 {
+            return Named { module: NULL_CALL.into(), offset: 0, names: Vec::new() };
+        }
         let Some(m) = self.maps.iter().find(|m| addr >= m.start && addr < m.end) else {
             return Named { module: "?".into(), offset: addr, names: Vec::new() };
         };
@@ -303,7 +312,7 @@ pub(crate) fn symbolize(raw: &str) -> String {
     out.push('\n');
     out.push_str(&format!("thread: {} (tid {}, pid {})\n", r.thread, r.tid, r.pid));
     out.push_str("\nstack of the faulting thread:\n");
-    for (i, &a) in r.stack.iter().enumerate().filter(|(_, a)| **a != 0) {
+    for (i, &a) in r.stack.iter().enumerate().filter(|(i, a)| *i == 0 || **a != 0) {
         push_frame(&mut out, i, a, namer.name(a, i > 0));
     }
     if !r.scan.is_empty() {
@@ -378,5 +387,12 @@ mod tests {
         assert_eq!(strip_hash("kt_gpu::engine::run::h0123456789abcdef"), "kt_gpu::engine::run");
         assert_eq!(strip_hash("kt_gpu::engine::run"), "kt_gpu::engine::run");
         assert!(parse("plain text").is_none() && symbolize("plain text") == "plain text");
+        // a jump to address 0 is named for what it is, and the callers come from the scan
+        let null = raw.replace("pc: 0x0000000000001000\nsp: 0x0\n--- stack ---\n0x0000000000001000\n0x0000000000002000\n", "pc: 0x0\nsp: 0x0\n--- stack ---\n0x0\n--- scan ---\n0x0000000000002000\n");
+        assert!(symbolize(&null).contains("    0  0x0000000000000000  address 0 (a call through a null function pointer)"), "{}", symbolize(&null));
+        assert_eq!(
+            summary(&null).as_deref(),
+            Some("SIGSEGV in thread \"audio-render\" at address 0 (a call through a null function pointer)")
+        );
     }
 }
