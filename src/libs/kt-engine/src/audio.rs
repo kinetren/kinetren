@@ -279,6 +279,8 @@ pub struct AudioRenderer {
     stage_reach: (i64, i64),
     /// The part of every burst's scene the whole reel shares (`scene_hash`).
     scene_base: u64,
+    /// The reel's pre-roll in bursts (`reel_preroll_bursts`), a function of the reel computed once.
+    preroll_bursts: u32,
 }
 
 /// A fetcher behind which nested reels look like ordinary sources.
@@ -895,7 +897,7 @@ impl AudioRenderer {
         let scene_base = xxhash_rust::xxh3::xxh3_64(
             format!("{opts:?} {overlap_layers} {stages:?} {stage_reach:?}").as_bytes(),
         );
-        AudioRenderer {
+        let mut r = AudioRenderer {
             clips,
             index,
             index_from,
@@ -908,7 +910,11 @@ impl AudioRenderer {
             loop_region: std::cell::Cell::new(None),
             stage_reach,
             scene_base,
-        }
+            preroll_bursts: 0,
+        };
+        // the sub-renderers are built already: their own pre-rolls are in
+        r.preroll_bursts = r.compute_preroll_bursts();
+        r
     }
 
     /// What determines the final mix of the timeline frames `range` (cached-range-plays): the
@@ -999,6 +1005,13 @@ impl AudioRenderer {
     /// a reverb or a delay stands inside — and exactly as much as its
     /// tail is long.
     fn reel_preroll_bursts(&self) -> u32 {
+        self.preroll_bursts
+    }
+
+    /// `reel_preroll_bursts`, computed once when the renderer is built: it walks every event's
+    /// chain tail, and asking it per placement and per burst cost 1.2 M tail walks per swap for a
+    /// reel of 3000 events placed 400 times (cached-range-plays).
+    fn compute_preroll_bursts(&self) -> u32 {
         let mut tail = 0i64;
         for c in &self.clips {
             if !c.fx.is_empty() {
@@ -1051,7 +1064,25 @@ impl AudioRenderer {
     /// Synchronize the FX state with this graph (called by the owner
     /// of the store — the audio render thread — after each rebuild of the graph).
     pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
+        self.sync_fx_since(None, store);
+    }
+
+    /// `sync_fx` after a rebuild from `old` (cached-range-plays): an event whose fingerprint did
+    /// not change (`AudioClip.fp` holds everything `sync_clip` carries — the chain, the curves, the
+    /// source anchor, the length, the seat) keeps its processor untouched. Syncing every event ran
+    /// on the audio render thread for 250–425 ms on 2000 events under load, against a 341 ms
+    /// ring, and the sound stopped at the swap; a real edit touches a few.
+    pub fn sync_fx_since(&self, old: Option<&AudioRenderer>, store: &mut crate::fxstore::FxStateStore) {
+        let same: std::collections::HashMap<kt_model::ClipId, u64> = match old {
+            Some(o) if o.opts == self.opts => {
+                o.clips.iter().map(|c| (c.id, c.fp)).collect()
+            }
+            _ => Default::default(),
+        };
         for c in &self.clips {
+            if same.get(&c.id) == Some(&c.fp) {
+                continue;
+            }
             store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.start, c.end - c.start, self.opts);
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();

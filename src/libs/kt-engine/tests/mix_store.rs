@@ -249,3 +249,39 @@ fn t1933_loop_laps_are_kept_apart_and_replayed() {
     let ps = pieces(region.1 - 100, BURST, Some(region));
     assert_eq!(ps, vec![(MixCtx::Linear, region.1 - 100, 100), (MixCtx::Lap(region.0, region.1), region.0, BURST - 100)]);
 }
+
+/// t1940: a rebuild costs the audio render thread what the edit changed. The swap synced every
+/// event (250–425 ms on 2400 events under load, against a 341 ms ring: run 1 of the orchestrator's
+/// workspace run heard the sound stop), and asked a reel's pre-roll per placement. Now one edited
+/// event is one sync, the rest keep their processors untouched, and the sound after the swap is
+/// what a full sync gives.
+#[test]
+fn t1940_a_rebuild_syncs_what_the_edit_changed() {
+    let clips: Vec<ClipEvent> =
+        (0..50).map(|i| clip(i + 1, 1 + (i % 2), (i % 3) as u32, i as i64 * SEC / 4, SEC, vec![reverb(0.3)])).collect();
+    let p = project(clips);
+    let r1 = AudioRenderer::new(&p);
+    let mut fx = FxStateStore::new();
+    r1.sync_fx(&mut fx);
+    assert_eq!(fx.clip_syncs(), 50);
+    let mut f = Counting::new();
+    let mut warm = vec![0f32; 20 * AUDIO_BURST_FRAMES * CH];
+    r1.render_frames_with(&mut f, &mut fx, 0, &mut warm);
+
+    let mut p2 = p.clone();
+    p2.clips[7].gain_db = -3.0;
+    let r2 = AudioRenderer::new(&p2);
+    let before = fx.clip_syncs();
+    r2.sync_fx_since(Some(&r1), &mut fx);
+    assert_eq!(fx.clip_syncs() - before, 1, "only the edited event is synced");
+
+    // the same continuation as after syncing everything
+    let mut full = FxStateStore::new();
+    r1.sync_fx(&mut full);
+    r1.render_frames_with(&mut Counting::new(), &mut full, 0, &mut warm.clone());
+    r2.sync_fx(&mut full);
+    let (mut a, mut b) = (vec![0f32; 20 * AUDIO_BURST_FRAMES * CH], vec![0f32; 20 * AUDIO_BURST_FRAMES * CH]);
+    r2.render_frames_with(&mut f, &mut fx, 20 * BURST, &mut a);
+    r2.render_frames_with(&mut Counting::new(), &mut full, 20 * BURST, &mut b);
+    assert!(a == b, "a partial sync continues as a full one");
+}

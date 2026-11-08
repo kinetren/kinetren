@@ -129,6 +129,9 @@ pub struct LoopStats {
     pub render_passes: AtomicU64,
     pub prefetch_passes: AtomicU64,
     pub prefetch_rebuilds: AtomicU64,
+    /// The longest the audio render thread spent taking a new renderer in (`sync_fx` and the
+    /// kept mix's recheck), in microseconds: the one part of a rebuild still on that thread.
+    pub max_swap_us: AtomicU64,
 }
 
 pub struct Player {
@@ -1507,12 +1510,17 @@ fn pin_loop_head(cache: &BurstCache, renderer: &AudioRenderer, s: i64) {
 
 /// Build the audio renderer of the current project on a thread of its own (cached-range-plays):
 /// the render thread keeps playing with the old one until it arrives.
-fn spawn_renderer_build(project: Arc<Mutex<Project>>) -> std::sync::mpsc::Receiver<AudioRenderer> {
+fn spawn_renderer_build(
+    project: Arc<Mutex<Project>>,
+    wake: Arc<Wake>,
+) -> std::sync::mpsc::Receiver<AudioRenderer> {
     let (tx, rx) = std::sync::mpsc::channel();
     let _ = std::thread::Builder::new().name("audio-build".into()).spawn(move || {
         let p = project.lock().unwrap().clone();
         kt_time::work::bump(kt_time::work::Work::EngineBuild);
         let _ = tx.send(AudioRenderer::new(&p));
+        // a parked render thread (a pause) takes it now, not at its next timeout
+        wake.notify();
     });
     rx
 }
@@ -1538,6 +1546,10 @@ fn audio_render_loop(ctx: RenderCtx) {
         mix_coverage,
     } = ctx;
     let mut store = FxStateStore::new();
+    // this build IS the first model: the flag the player starts with must not ask for a second
+    // one (under load each took seconds, and the render thread served nothing meanwhile); cleared
+    // BEFORE the clone, so an edit landing in between still asks
+    dirty.store(false, Ordering::Release);
     // the clone in a statement of its own: a guard in the argument lives through the whole build,
     // and the UI's next edit waits for it (ui-never-waits)
     let p = project.lock().unwrap().clone();
@@ -1552,6 +1564,9 @@ fn audio_render_loop(ctx: RenderCtx) {
     // until the new one is ready instead of the sound stopping.
     let mut building: Option<std::sync::mpsc::Receiver<AudioRenderer>> = None;
     let mut build_again = false;
+    // A build asked on a pause: the next start waits for it (time stands before the first frame,
+    // invariant 6), so Play after an edit plays the edit. The render thread itself never builds.
+    let mut build_holds_start = false;
     let mut fetcher = CacheFetcher::with_lengths(cache.clone(), &natives.read().unwrap().lengths);
     let mut fetcher_facts = natives.read().unwrap().lengths.len();
     // the local render position (frames); may lead the playhead by the ring
@@ -1579,34 +1594,42 @@ fn audio_render_loop(ctx: RenderCtx) {
 
     while !stop.load(Ordering::Acquire) {
         if dirty.swap(false, Ordering::AcqRel) {
-            if !transport.is_playing() && building.is_none() {
-                // nothing sounds: the render thread may wait for it
-                kt_time::work::bump(kt_time::work::Work::EngineBuild);
-                // the clone apart from the build: the UI's next edit takes this lock
-                let p = project.lock().unwrap().clone();
-                renderer = AudioRenderer::new(&p);
-                renderer.sync_fx(&mut store); // state survives a rebuild (inv. 3)
-                mix.revalidate(&renderer);
-            } else if building.is_some() {
+            // never on this thread: a build on a pause blocked the next Play for its whole length
+            // (seconds under load), and one during playback stopped the sound
+            build_holds_start |= !transport.is_playing();
+            if building.is_some() {
                 build_again = true;
             } else {
-                building = Some(spawn_renderer_build(project.clone()));
+                building = Some(spawn_renderer_build(project.clone(), wake.clone()));
             }
         }
         if let Some(rx) = &building {
             match rx.try_recv() {
                 Ok(r) => {
-                    renderer = r;
-                    renderer.sync_fx(&mut store); // state survives a rebuild (inv. 3)
+                    let swap = std::time::Instant::now();
+                    let old = std::mem::replace(&mut renderer, r);
+                    // only what changed: the state survives a rebuild (inv. 3), and an event the
+                    // edit did not touch costs this thread nothing
+                    renderer.sync_fx_since(Some(&old), &mut store);
                     mix.revalidate(&renderer);
+                    // dropping a whole renderer is not this thread's work either
+                    let _ = std::thread::Builder::new()
+                        .name("audio-build".into())
+                        .spawn(move || drop(old));
+                    loop_stats
+                        .max_swap_us
+                        .fetch_max(swap.elapsed().as_micros() as u64, Ordering::Relaxed);
                     building = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => building = None,
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
             if building.is_none() && std::mem::take(&mut build_again) {
-                building = Some(spawn_renderer_build(project.clone()));
+                building = Some(spawn_renderer_build(project.clone(), wake.clone()));
             }
+        }
+        if building.is_none() {
+            build_holds_start = false;
         }
         // The source could appear AFTER the stream started (opening the project,
         // a missing file coming back): the fetcher's material edges must be
@@ -1853,9 +1876,10 @@ fn audio_render_loop(ctx: RenderCtx) {
                     )
                 }) > 0
             };
-            let hold = audio_missing
-                && start_wait.get_or_insert_with(std::time::Instant::now).elapsed()
-                    < START_AUDIO_GRACE;
+            let hold = build_holds_start
+                || (audio_missing
+                    && start_wait.get_or_insert_with(std::time::Instant::now).elapsed()
+                        < START_AUDIO_GRACE);
             if !hold {
                 starting = false;
                 start_wait = None;

@@ -41,6 +41,13 @@ The third — "the music drowns out the voice" (the most frequent live complaint
 
 ## Non-obvious details
 
+- **A rebuild's swap costs what the edit changed** (cached-range-plays, t1935 red under a loaded
+  workspace run). The audio render thread took the new renderer in by `sync_fx` over every event and
+  asked each reel placement's pre-roll, which walks the reel's events: 1.2 M chain-tail walks for a
+  reel of 3000 placed 400 times, 244–425 ms against a 341 ms ring. `sync_fx_since` skips events whose
+  fingerprint is unchanged, the pre-roll is a field computed at build, the old renderer is dropped
+  elsewhere: 0.6 ms. Builds never run on that thread; one asked on a pause holds the next start.
+
 - The axis of the mirror of a reversed event is `kt_fx::chain_source_used` (`src/libs/kt-fx/src/audio/mod.rs`), not the `.end` of the window `chain_source_window_ext`: the end includes `WARP_SOURCE_MARGIN_FRAMES` = 8192 frames of resampler margin. Both quantities live separately in `SrcWindow`; the same axis MUST stand in the mirror branch of `wanted_audio_bursts_for` (`src/libs/kt-engine/src/audio.rs`).
 - `FxStateStore::sync_clip` (`src/libs/kt-engine/src/fxstore.rs`) in the reuse branch calls `ClipProcessor::set_src_in` (`src/libs/kt-fx/src/audio/mod.rs`) — the anchor is reassigned by a seam. `reset()` does not help here: `hard_seek` and `seam` compute the position from the same field. There, `lookahead_frames()` is also checked against the static `chain_lookahead`, and `opts()` against the project settings — a mismatch rebuilds the processor.
 - `ClipProcessor::read` (`src/libs/kt-fx/src/audio/mod.rs`) distinguishes breaks by `next_local == i64::MIN`: only the state after `reset()` looks like that. Any other jump is a `seam`: `Warp::seek_source` (`src/libs/kt-fx/src/audio/warp.rs`) discards the ready resampler buffer, but not the sinc state and not the reverb. A seam costs ≈0.3 ms per chain — so the price of the place depends on the length of the region, and it must be measured in the repeat mode of `kt-cli probe … --time`, not by a linear run.

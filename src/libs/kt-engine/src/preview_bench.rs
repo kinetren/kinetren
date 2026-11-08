@@ -33,7 +33,8 @@ pub struct BenchOptions {
     pub hash_frames: bool,
     /// Play `[from, to)` as a loop region for this long instead of once (cached-range-plays: the
     /// owner plays a short covered range in a loop, and its second lap is what a cache must make
-    /// free).
+    /// free). Counted from the first sound, not from Play: a start waits for its sound, and under
+    /// load that wait (a renderer being built) took most of a window counted from Play.
     pub loop_for: Option<Duration>,
     /// Keep what the output device played (f32 stereo interleaved), for a WAV and a test.
     pub capture: bool,
@@ -219,6 +220,8 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
     let (mut stalls, mut composes) = (Vec::new(), Vec::new());
     let frame = Duration::from_secs_f64(1.0 / o.display_hz.max(1) as f64);
     let started = Instant::now();
+    let head0 = player.transport.playhead_frames();
+    let mut sounding: Option<Instant> = None;
     player.play();
     let mut key: Option<(i64, bool)> = None;
     let mut gen_lap = (player.transport.generation(), 0u64);
@@ -228,8 +231,13 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
         next_vsync += frame;
         let ui0 = Instant::now();
         let (t, lap) = player.video_playhead_lap();
+        if sounding.is_none() && player.transport.playhead_frames() != head0 {
+            sounding = Some(Instant::now());
+        }
         match o.loop_for {
-            Some(d) if started.elapsed() >= d => break,
+            Some(d) if sounding.is_some_and(|s| s.elapsed() >= d) => break,
+            // a start that never sounds does not hold the bench forever
+            Some(d) if sounding.is_none() && started.elapsed() >= d + Duration::from_secs(60) => break,
             None if t >= o.to => break,
             _ => {}
         }

@@ -45,6 +45,8 @@ pub struct FxStateStore {
     /// chains), and their windows also differ
     /// when the target has lookahead.
     keys: HashMap<TrackId, Box<FxStateStore>>,
+    /// How many times an event's processor was synced (t1940: a rebuild syncs what changed).
+    clip_syncs: u64,
 }
 
 /// Sub-mix stream of ONE instance of a nested reel.
@@ -166,6 +168,7 @@ impl FxStateStore {
         clip_len_frames: i64,
         opts: kt_fx::ChainOpts,
     ) {
+        self.clip_syncs += 1;
         if fx.is_empty() {
             self.map.remove(&id);
             return;
@@ -395,6 +398,11 @@ impl FxStateStore {
         e.preroll = preroll;
         e.block = block;
         Some(e)
+    }
+
+    /// How many times an event's processor was synced (t1940).
+    pub fn clip_syncs(&self) -> u64 {
+        self.clip_syncs
     }
 
     /// How many instance sub-mix streams exist (t1937).

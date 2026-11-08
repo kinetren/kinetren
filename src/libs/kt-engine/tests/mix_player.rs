@@ -92,8 +92,15 @@ fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
     let kept0 = kt_time::work::count(kt_time::work::Work::MixReplay);
     std::thread::scope(|s| {
         let edits = s.spawn(|| {
-            // edits of an event far from the region, while the loop plays
-            std::thread::sleep(std::time::Duration::from_millis(1500));
+            // edits of an event far from the region, once the loop SOUNDS: fired on a fixed delay
+            // they landed in the paused warm-up under load, which is another case
+            let head0 = player.transport.playhead_frames();
+            let deadline = kt_time::test_deadline();
+            while !(player.transport.is_playing() && player.transport.playhead_frames() != head0) {
+                assert!(std::time::Instant::now() < deadline, "the loop never sounded");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
             for k in 0..4 {
                 let mut q = p.clone();
                 q.clips[1500].gain_db = -1.0 - k as f32;
@@ -115,7 +122,12 @@ fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
         edits.join().unwrap();
         let live = kt_time::work::count(kt_time::work::Work::AudioRender) - live0;
         let kept = kt_time::work::count(kt_time::work::Work::MixReplay) - kept0;
-        eprintln!("build {build:?}, live {live}, kept {kept}, callback underruns {}, render underruns {}", r.callback_underruns, r.underruns);
+        let swap_ms = player.loop_stats.max_swap_us.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e3;
+        eprintln!(
+            "build {build:?}, live {live}, kept {kept}, callback underruns {}, render underruns {}, \
+             longest swap on the render thread {swap_ms:.1} ms",
+            r.callback_underruns, r.underruns
+        );
         // the first lap is linear play, the second the lap; every later one comes from the store
         let lap = (to.to_audio_frames() - from.to_audio_frames()) / kt_time::AUDIO_BURST_FRAMES as i64 + 1;
         assert!(live as i64 <= 2 * lap + 2, "only two laps render live: {live} live, {kept} kept");
