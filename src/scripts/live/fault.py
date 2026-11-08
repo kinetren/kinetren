@@ -59,12 +59,13 @@ def main(out):
         app.step("crash-window", "the crash window names the signal, the thread and the function")
         app.expect(app.proc.poll() is None, "the supervisor is alive and shows the window")
         app.expect("SIGSEGV" in d["what"], f"the window says what happened: {d['what']!r}")
-        fault = d.get("fault", "")
+        # the dump writes a double quote as a single one
+        fault = d.get("fault", "").replace("'", '"')
         app.expect(fault.startswith('SIGSEGV in thread "live-fault"'), f"the window names the thread: {fault!r}")
         app.expect("kt_crash_probe_segv" in fault, f"the window names the function: {fault!r}")
         app.expect(d["tail"] > 0, "the window shows the run's journal lines")
         text = open(d["report"]).read()
-        app.expect("summary: " + fault in text.replace("\\", "/"), "the report carries the summary line")
+        app.expect("summary: " + fault in text, "the report carries the summary line")
         app.expect("kt_crash::testing::kt_crash_probe_segv (libs/kt-crash/src/lib.rs:" in text,
                    "the report holds the stack with file and line")
         app.expect("live-fault  ← faulted" in text, "the report lists the threads, the faulted one marked")

@@ -152,4 +152,21 @@ function in the window and the report, and the journal's crash record carries th
 
 ## D7. Proof
 
-(see tasks 3.1)
+All without `DISPLAY` and `WAYLAND_DISPLAY`, the debug build, this machine (32 threads, llvmpipe on
+a virtual card, libvulkan 1.3.275):
+
+- `kt-cli export` of the demo project: 0 of 3 before (exit 139), 5 of 5 after; t2086 red on the old
+  kt-gpu (exit 139 at the first run), green on the new;
+- t985's poster half, `nextest --stress-count`: old kt-gpu 27 of 60 passed (33 SIGSEGV), new kt-gpu
+  40 of 40 with a full `nextest --workspace` running beside it;
+- full `cargo nextest run --workspace`, three runs on the new code: 1654/1655, 1654/1655, 1655/1655,
+  no test died by a signal; the one red twice is t1935 (2 callback underruns while a rebuild took
+  6 s under load: a wall-clock race of the audio ring, found-defects 152, kt-engine untouched here).
+  Two more runs were lost to the disk filling up (0 bytes free, other worktrees): one ended in
+  SIGTERM at test 1206, one failed linking; they are not counted;
+- live `fault` (the crash window names `SIGSEGV in thread "live-fault" at
+  kt_crash::testing::kt_crash_probe_segv (libs/kt-crash/src/lib.rs:109)` and shows the run's
+  journal), `crash` (the panic path unchanged), `idle` (rest costs nothing) — green.
+
+At rest the change costs nothing: the handler is a `sigaction` at start, the adapter list is now
+taken once instead of at every hot spell, the opening lock is taken only when a device opens.
