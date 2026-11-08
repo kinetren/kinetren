@@ -1,0 +1,18 @@
+# Registry of the owner's list `kkt-26.11.08`
+
+Source — [`kkt-26.11.08.txt`](kkt-26.11.08.txt) (verbatim, two messages of 08.11.2026). Columns and
+states — as in [`v26.10-index.md`](v26.10-index.md). The first message was a run of the OLD build
+kt26.11.07-61414dba (its `kt-app.log` and `load-report.txt` say so); the second, of
+kt26.11.08-b614203c. His files: `/media/e/developer/kt.9/fails/26.11.08/` and `…/new/`.
+
+## Registry
+
+| # | Line | Claim (brief) | State | Address | Stage |
+|---|---|---|---|---|---|
+| H1 | 3 | the effects window with VHS Tape selected lags everything, prefetch hammers on a pause | partial: input-without-work (the field at its floor wrote an edit per frame); his run was the old build; on b614203c "стало лучше" | `input-without-work` | merged in orch |
+| H2 | 4 | the lag depends on the place: moving right, when another event appears it lags hard | partial: likely the same field on other VHS events, not proved on this scenario | `input-without-work` | merged in orch |
+| H3 | 7 | "Ты точно там что-то исправил?!?!? Отвечай." | question: "Ты точно там что-то исправил?" Answered 08.11: he ran 61414dba; the fixes are in b614203c | — | answered |
+| H4 | 9 | the debug build falls on SIGSEGV often | no: defect, `durability`, change `segv-crashes` | `segv-crashes` | on his word |
+| H5 | 10 | the crash report is scanty | no: defect, `durability`, the report must carry the faulting thread's stack; change `segv-crashes` | `segv-crashes` | on his word |
+| H6 | 11 | overall performance could be faster on his machine | no: defect, `transport`; his journal: an edit makes UI frames of 330 ms for seconds, short loops play at V-fps 0, 2.5 and 15.5, video cache hit 0 %; changes `edit-without-rebuild`, `loop-picture-throughput`; speed is judged on a release build | `edit-without-rebuild`, `loop-picture-throughput` | on his word |
+| H7 | 12 | "Что дальше?" | question: "Что дальше?" Answered 08.11 with the plan | — | answered |
