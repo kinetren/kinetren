@@ -75,11 +75,11 @@ back to back). His relinked project, event 293 (Datamosh, gop 15, mosh 1, 480 li
 
 | scenario | before | after |
 |---|---|---|
-| paused at 2706.2, 1080 lines: complete? | never in 30 s | the decoder keeps up; the encoder at 1080 lines on llvmpipe (~8 positions/s) is the limit |
-| — requests / decoded in 30 s | 88 653 / 2 026 | 389 / 257, nothing dropped unread |
+| paused at 2706.2, 1080 lines: complete? | never in 30 s | not in 60 s either: the decoder keeps up, the encoder at 1080 lines on llvmpipe (~8 positions/s) is the limit |
+| — requests / decoded | 88 653 / 2 026 in 30 s | 270 / 269 in 60 s, nothing dropped unread |
 | paused at 2706.2, 480 lines: time to the frame / longest composite | 9.1 s / 8 970 ms | 6.0 s / 111 ms |
 | 0.22 s loop, cold, 1080 lines: pictures / reopens / dropped unread | 19 378 / 162 / 770 | 65 / 1 / 0 |
-| 0.22 s loop, cold, 480 lines: V-fps / longest composite | 11.6 / 5 484 ms | 35.9 / 52 ms (first build of D3) |
+| 0.22 s loop, cold, 480 lines: V-fps / longest composite | 13.1 / 9 306 ms | 25.2 / 64 ms |
 | 1.2 s loop, warm, 480 lines: V-fps / longest composite | 28.7 / 807 ms | 28.8 / 73 ms |
 | linear 2700–2710, 480 lines: V-fps / composite p50 | 0.8 / 866 ms (4.3 / 206 ms at low load) | 10.8 / 27 ms |
 | linear 2700–2710, 144 lines: V-fps / composite p50 | 9.1 / 54 ms | 7.0 / 27 ms |
