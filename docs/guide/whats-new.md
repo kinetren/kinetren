@@ -5,6 +5,8 @@ month, newest first.
 
 ## kt26.11
 
+- **Camera ISP and Datamosh ask less of the graphics card.** The camera simulation no longer recomputes the same sensor row and column for every pixel around it, and Datamosh's encoder spreads its work over the whole card instead of a few of its lanes and sends a quarter of the data. They look exactly as before.
+- **The program now writes down what the graphics card spent its time on.** Every busy second, the telemetry journal (and `load-report.txt`) gets a line with the card's name, the frame size, how many milliseconds a frame took on the card and which effect pass took them — VHS Tape's head read, Camera ISP's demosaic, the composite. Diagnostics shows the same line while it plays. Nothing to switch on and nothing to measure by hand: a normal run is enough.
 - **A range you have played plays again for free.** The picture after the effects and the sound after the effects are kept as you first saw and heard them, like a prerender: a loop over heavy effects (VHS, Camera ISP, a slowed composition) runs at the project's frame rate from its third lap, with no decoding and no effect running. Changing a parameter recomputes only the part it touches. The strips at the top of the timeline and under each event are now bright where a range plays without work and keep their darker colour where only its sources are ready.
 - **Editing during playback no longer cuts the sound.** On a large project every change used to stop the sound for a moment.
 - **A composition placed many times no longer eats the memory.** Its inner effects are prepared only for the places that are playing.
