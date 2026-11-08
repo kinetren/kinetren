@@ -315,13 +315,14 @@ pub fn resolve_derived<'a>(
     clips: &'a [ClipEvent],
     frame_step: i64,
 ) -> std::borrow::Cow<'a, [ClipEvent]> {
-    let any = clips
-        .iter()
-        .any(|c| {
-            c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(|x| x.needs_resolve())
-                || c.masks.iter().any(|(_, m)| m.auto.iter().any(|x| x.needs_resolve()))
-        });
-    if !any {
+    // what `resolve_curve` would change: a speed curve without a link is left to
+    // `rate_profile_keys`, so it alone neither clones the reel nor an event
+    let pending = |x: &ParamCurve| x.needs_resolve() && !(x.param == "rate" && x.source.link_path().is_none());
+    let derived = |c: &ClipEvent| {
+        c.fx_auto.iter().flatten().chain(c.gen_auto.iter()).any(pending)
+            || c.masks.iter().any(|(_, m)| m.auto.iter().any(pending))
+    };
+    if !clips.iter().any(derived) {
         return std::borrow::Cow::Borrowed(clips);
     }
     let mut out = clips.to_vec();
@@ -343,6 +344,11 @@ pub fn resolve_derived<'a>(
     for _ in 0..=out.len() {
         let mut moved = false;
         for &i in &order {
+            // an event with nothing left to resolve is not cloned per pass (compiled-curves): every
+            // one of its curves would return at once, the event as it was
+            if !derived(&out[i]) {
+                continue;
+            }
             let me = LinkCtx::of(&out[i], frame_step);
             let id = out[i].id;
             // the event's curves are taken out while it resolves against the reel; a link to its
@@ -449,20 +455,17 @@ pub fn formula_preview(
     let source_in = material.0;
     let Some(expr) = cur.source.expr() else { return Vec::new() };
     let Ok(f) = crate::formula::Formula::parse(expr) else { return Vec::new() };
+    // compiled once (compiled-curves): the slots are `LAYER_VARS` — t, src, k
+    let f = f.compile(crate::LAYER_VARS);
     let step = step.max(1);
     let mut out = Vec::new();
+    let mut under = crate::CurveCursor::new(&cur.keys);
     let mut t = from.0;
     while t <= to.0 {
         // beyond the material's body — the extreme value, as for a resolved curve
         let tm = t.clamp(material.0.0, material.1.0.max(material.0.0));
-        let mut vars = std::collections::BTreeMap::new();
-        vars.insert("src".to_string(), 0.0);
-        vars.insert(
-            "k".to_string(),
-            if cur.keys.is_empty() { 0.0 } else { crate::curve_value(&cur.keys, Tick(tm)) },
-        );
-        vars.insert("t".to_string(), (tm - source_in.0) as f64 / 90_000.0);
-        match f.eval(&vars) {
+        let k = if cur.keys.is_empty() { 0.0 } else { under.value(Tick(tm)) };
+        match f.eval(&[(tm - source_in.0) as f64 / 90_000.0, 0.0, k]) {
             Ok(v) => out.push(AutoKey::shaped(Tick(t), v, SegShape::Linear)),
             Err(_) => return Vec::new(),
         }
@@ -520,7 +523,12 @@ fn resolve_curve<'a>(
     if cur.param == "rate" && cur.source.link_path().is_none() {
         return false;
     }
-    let expr = cur.source.expr().and_then(|e| crate::formula::Formula::parse(e).ok());
+    // compiled once per curve (compiled-curves): the slots are `LAYER_VARS` — t, src, k
+    let expr = cur
+        .source
+        .expr()
+        .and_then(|e| crate::formula::Formula::parse(e).ok())
+        .map(|f| f.compile(crate::LAYER_VARS));
     // `k` is the value of the KEYS WITH SHAPES under the layer (R.67); without keys — 0,
     // and the source formula of older files sounds as before
     let base_keys = cur.keys.clone();
@@ -540,6 +548,7 @@ fn resolve_curve<'a>(
         None => None,
     };
     let mut keys = Vec::new();
+    let mut under = crate::CurveCursor::new(&base_keys);
     let mut t = from;
     while t <= to {
         let at = Tick(t);
@@ -550,14 +559,10 @@ fn resolve_curve<'a>(
             },
             _ => 0.0,
         };
-        let k = if base_keys.is_empty() { 0.0 } else { crate::curve_value(&base_keys, at) };
+        let k = if base_keys.is_empty() { 0.0 } else { under.value(at) };
         let v = match &expr {
             Some(f) => {
-                let mut vars = std::collections::BTreeMap::new();
-                vars.insert("src".to_string(), src);
-                vars.insert("k".to_string(), k);
-                vars.insert("t".to_string(), (t - from) as f64 / 90_000.0);
-                match f.eval(&vars) {
+                match f.eval(&[(t - from) as f64 / 90_000.0, src, k]) {
                     Ok(v) => v,
                     // not computable — not a silent zero: the curve stays raw,
                     // and validation has already said so loudly

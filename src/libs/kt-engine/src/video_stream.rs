@@ -226,10 +226,11 @@ impl StreamLayout for ClipStream<'_> {
             self.step,
             t,
         );
-        let mut chain = self.clip.fx.clone();
-        plan.apply(&mut chain, mat);
-        match chain.get(self.st.slot) {
-            Some(kt_model::FxInstance::Plugin(p)) => Some(p.values.clone()),
+        // the stage's own slot alone (compiled-curves): a chain clone per position read one slot
+        let mut slot = self.clip.fx.get(self.st.slot)?.clone();
+        plan.apply_slot(self.st.slot, &mut slot, mat);
+        match slot {
+            kt_model::FxInstance::Plugin(p) => Some(p.values),
             _ => None,
         }
     }

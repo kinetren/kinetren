@@ -304,3 +304,8 @@ runs within microseconds on one core at one clock, and each block's time is the 
 30 of 30 `cargo nextest run -p kt-engine --test audio_fx_cost` green at load 28–52 with a release
 build of kt-app running beside them; the printed ratios at load 57–101 equal the ones at rest within
 2 % (slowed_reverb heavy 1.73 → 1.74–1.77, VHS Tape's sound 27.9 → 27.7).
+
+## The LFO phase by a prefix integral (compiled-curves, 2026-11-09)
+
+- **What hurt**: `param_integral` walked the frequency curve from its first point per sample (row 152); a formula layer on the frequency is a point per frame. Measured on a 57 s event: the live render 364 → 38 ms for 8 s.
+- **Decision**: `ParamIntegral` (plugin API) keeps the running sum before each non-empty segment, added exactly as the walk adds a whole segment (`hi = t1`, the same `v_hi` expression), and reads by halving: the walk's bits (t2107), O(log points) a sample (t2108). An unsorted list reads through the walk.
