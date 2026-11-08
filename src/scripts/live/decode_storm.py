@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Live scenario t2045 (decode-request-storm): a short loop over a Datamosh event plays.
 
-The owner's words are in `docs/ktprompts/kkt-26.11.08.txt`, line 14 (registry H8): "а
-loop-picture-throughput может связан с тяжелым эффектом? типо я поменял там что-то и оно пошло
-считать?" His journal: after he selected Datamosh, 1570 decode requests a second while 15–100
+The owner's words are in `docs/ktprompts/kkt-26.11.08.txt`, line 14 (registry H8): he asked
+whether the dead loop picture is tied to a heavy effect he changed. His journal: after he selected Datamosh, 1570 decode requests a second while 15–100
 frames were decoded, every one dropped before it was read, and four loops in a row at V-fps 0.
 
 The project is ours (`kt-cli showcase --heavy`): a footage event gets a cut mosh at 1080 lines, and
