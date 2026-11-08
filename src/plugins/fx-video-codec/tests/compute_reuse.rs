@@ -19,7 +19,7 @@ fn t2024_a_datamosh_frame_creates_nothing_after_warm_up() {
     }
     let cfg = Cfg { bs: 16, search: 16, qp: 26.0 };
     let mut prev = codec::encode(&src, None, &cfg).unwrap();
-    let mut frame = |prev: &codec::Clean| {
+    let frame = |prev: &codec::Clean| {
         let n = codec::encode(&src, Some(&prev.recon), &cfg).unwrap();
         codec::decode(&prev.recon, &n.pkt.mv, 16, &n.pkt.res, 256).unwrap();
         n

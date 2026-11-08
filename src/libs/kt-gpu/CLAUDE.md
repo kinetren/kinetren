@@ -105,7 +105,10 @@ is no picture, and an export refuses.
   own). `:` not `/` — the journal cuts a word with `/` to a file name.
 - **Nothing is created per frame after warm-up** (t2023): a new per-frame `create_*` site calls
   `crate::created()` and must stay off the steady state. The preview memo's kept composite is the one
-  allowed creation while it fills.
+  allowed creation while it fills. Nothing is made "when none is free" either: a pool that grows only
+  when the device lags is a per-frame creation on a loaded machine (the timer made a read buffer whenever
+  the earlier maps had not come back; t2023 red under a full `nextest`, t2025). Make the bounded set up
+  front and skip the work past it.
 - **Rank passes with the instrument, minima of repeats, interleaved A/B** (the machine is shared): llvmpipe
   compiles a pipeline variant at its first draw, so a run of two frames measures the compiler.
 

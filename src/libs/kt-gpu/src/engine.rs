@@ -1636,7 +1636,7 @@ impl Inner {
         self.timer.begin();
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
-        self.timer.end(&self.device, &mut enc, Role::Export, meta);
+        self.timer.end(&mut enc, Role::Export, meta);
         let padded_bpr = (ow * 4).next_multiple_of(256);
         let i = (ticket % RING as u64) as usize;
         let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == ow && r.h == oh);
@@ -1753,7 +1753,7 @@ impl Inner {
                 let glow = self.glow.as_ref().unwrap().view.clone();
                 self.pass_display(&mut enc, &kept, &glow, (ow, oh), GLOW_SIZE);
             }
-            self.timer.end(&self.device, &mut enc, Role::Preview, meta);
+            self.timer.end(&mut enc, Role::Preview, meta);
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.queue.submit([enc.finish()]);
             self.timer.submitted(&self.queue, Role::Preview, meta);
@@ -1822,7 +1822,7 @@ impl Inner {
                     self.pool.release(result);
                 }
             }
-            self.timer.end(&self.device, &mut enc, Role::Preview, meta);
+            self.timer.end(&mut enc, Role::Preview, meta);
             let submit = Instant::now();
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.queue.submit([enc.finish()]);
@@ -1957,7 +1957,7 @@ impl Inner {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
-        self.timer.end(&self.device, &mut enc, Role::Offline, meta);
+        self.timer.end(&mut enc, Role::Offline, meta);
 
         // --- readback ---
         let padded_bpr = (ow * 4).next_multiple_of(256);

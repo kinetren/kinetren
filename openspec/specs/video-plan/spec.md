@@ -633,6 +633,11 @@ every frame; on an integrated GPU that memory is the system's.
 - **THEN** the readback frames created nothing, and the presented ones at most one texture each
 - **TEST** t2023 (`src/libs/kt-gpu/tests/no_creation.rs`)
 
+#### Scenario: A device that returns its timestamps late makes the timer no buffer
+- **WHEN** a timed frame is composed again and again while none of the earlier frames' timestamp maps has come back (a loaded machine; in the test nobody polls)
+- **THEN** the timer's read buffers are the PENDING_MAX it was made with: the frames past them run untimed, nothing is created, and once the maps return the frames are timed again
+- **TEST** t2025 (`src/libs/kt-gpu/src/pass_time.rs`)
+
 #### Scenario: A Datamosh frame reuses the compute host's buffers
 - **WHEN** a warm Datamosh encoder job and decoder job run three times
 - **THEN** no buffer or pipeline was created

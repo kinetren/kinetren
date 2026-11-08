@@ -13,6 +13,8 @@ use std::time::Instant;
 /// Queries of one frame: a pair per pass. Passes past the room run untimed and are counted.
 pub(crate) const QUERIES: u32 = 1024;
 /// Frames whose timestamps may wait for their map; past it a frame runs untimed (no poll came).
+/// Their read buffers are made with the timer, all of them: a device that lags (a loaded machine)
+/// keeps more frames waiting, and a buffer made then would be a resource made per frame (t2023).
 const PENDING_MAX: usize = 8;
 
 /// Who asked for the frame.
@@ -90,6 +92,20 @@ impl Timer {
                 mapped_at_creation: false,
             })
         });
+        let free = if has {
+            (0..PENDING_MAX)
+                .map(|_| {
+                    device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("kt-gpu pass time read"),
+                        size: QUERIES as u64 * 8,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         Timer {
             set,
             resolve,
@@ -99,7 +115,7 @@ impl Timer {
             owners,
             labels: Vec::new(),
             untimed: 0,
-            free: Vec::new(),
+            free,
             pending: VecDeque::new(),
             on: false,
         }
@@ -136,24 +152,20 @@ impl Timer {
     }
 
     /// The frame's queries resolved and copied into a buffer of its own, before `finish`.
-    pub fn end(&mut self, device: &wgpu::Device, enc: &mut wgpu::CommandEncoder, role: Role, meta: FrameMeta) {
+    pub fn end(&mut self, enc: &mut wgpu::CommandEncoder, role: Role, meta: FrameMeta) {
         if !self.on || self.labels.is_empty() {
             self.on = false;
             return;
         }
         self.on = false;
         let (Some(set), Some(resolve)) = (&self.set, &self.resolve) else { return };
+        // `begin` timed the frame only with fewer than PENDING_MAX waiting: a buffer is free
+        let Some(buf) = self.free.pop() else {
+            self.labels.clear();
+            return;
+        };
         let n = self.labels.len() as u32 * 2;
         enc.resolve_query_set(set, 0..n, resolve, 0);
-        let buf = self.free.pop().unwrap_or_else(|| {
-            crate::created();
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("kt-gpu pass time read"),
-                size: QUERIES as u64 * 8,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            })
-        });
         enc.copy_buffer_to_buffer(resolve, 0, &buf, 0, n as u64 * 8);
         self.pending.push_back(Pending {
             buf,
@@ -435,4 +447,77 @@ pub(crate) fn note_job(adapter: &str, job_ns: u64, dispatches: &[(&str, u64)]) {
 /// The features a device asks for so the timer works: `TIMESTAMP_QUERY` where the adapter has it.
 pub fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test t2025 (gpu-pass-cost; capability `video-plan`): a device whose timestamps come back late
+    /// (a loaded machine; here: nobody polls) makes the timer no read buffer per frame. Its
+    /// PENDING_MAX buffers are made with it; past them a frame runs untimed, and once the maps come
+    /// back the frames are timed again. Before, a frame made a buffer whenever none was free, and
+    /// t2023 counted a fourth resource in three warm presented frames under load.
+    #[test]
+    fn t2025_a_lagging_device_makes_the_timer_no_buffer_per_frame() {
+        let Ok(ctx) = crate::GpuContext::new_headless() else {
+            eprintln!("skipped: no wgpu adapter");
+            return;
+        };
+        let (device, queue) = (&ctx.device, &ctx.queue);
+        if !device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+            eprintln!("skipped: this adapter has no timestamps");
+            return;
+        }
+        let mut timer = Timer::new(device, queue, "test", Vec::new(), Vec::new());
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+        let meta = FrameMeta { out: (4, 4), decode: (4, 4), layers: 1 };
+        let frame = |timer: &mut Timer| {
+            timer.begin();
+            let mut enc = device.create_command_encoder(&Default::default());
+            drop(enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: timer.pass(PassLabel::Fixed("composite")),
+                occlusion_query_set: None,
+                multiview_mask: None,
+            }));
+            timer.end(&mut enc, Role::Preview, meta);
+            queue.submit([enc.finish()]);
+            timer.submitted(queue, Role::Preview, meta);
+        };
+        let buffers = |t: &Timer| t.free.len() + t.pending.len();
+        assert_eq!(buffers(&timer), PENDING_MAX, "the read buffers are made with the timer");
+        for _ in 0..3 * PENDING_MAX {
+            frame(&mut timer);
+        }
+        assert_eq!(timer.pending.len(), PENDING_MAX, "the first PENDING_MAX frames wait for their maps");
+        assert_eq!(buffers(&timer), PENDING_MAX, "the frames past them ran untimed and made no buffer");
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        timer.harvest(device);
+        assert!(timer.pending.is_empty(), "every map came back");
+        frame(&mut timer);
+        assert_eq!(timer.pending.len(), 1, "with buffers free again a frame is timed");
+        assert_eq!(buffers(&timer), PENDING_MAX);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        timer.harvest(device);
+        let second = take().expect("the timed frames were summed");
+        assert_eq!(second.frames, PENDING_MAX as u32 + 1, "{}", second.line());
+    }
 }

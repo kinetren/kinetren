@@ -164,7 +164,7 @@ pub fn shaders() -> [&'static str; 3] {
 /// A plane as the shaders read it: its bytes, four samples to a word, padded to a whole word
 /// (gpu-pass-cost: a word per sample had quadrupled every upload and cost a pass over the plane).
 fn packed(v: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if v.len() % 4 == 0 {
+    if v.len().is_multiple_of(4) {
         return std::borrow::Cow::Borrowed(v);
     }
     let mut p = v.to_vec();
