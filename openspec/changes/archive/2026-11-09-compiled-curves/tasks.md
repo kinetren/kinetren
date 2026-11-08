@@ -34,7 +34,7 @@
     time), loop 1387 → 148 ms for 32 s; `AudioRenderer::new` 6 → 1 ms, `VideoRenderer::new` 11 → 7 ms.
   - CPU at rest (live `idle`, the heavy showcase, debug kt-app): pause 2 % of a core and nothing ran, an open
     effects window 2 %, the engine threads 0 % over the deck panel; one run red at load ~50 on a UI-frame check
-    after hovering the preview, green on the rerun (found-defects row 162).
+    after hovering the preview, green on the rerun (found-defects row 170).
   - bytes: `kt-cli render` of `dense.kt` (104 s) identical between the two binaries; the relinked copy's
     whole `kt-cli render` (8087 s, 3.1 GB, its 9 missing files skipped) identical too.
 - [x] 5.3 found-defects rows, What's new if noticeable

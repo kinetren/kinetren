@@ -82,13 +82,13 @@ slot's own curves with the same `curve_value` and the same owner's clamp (t2110)
 | Subsystem | Reader | Before | Now |
 |---|---|---|---|
 | Speed / warp (model) | `clip_warp` in `clip_slice`, trim helpers, `material_end_on_timeline`, `clip_material_span` | sampled + laid out per call | memoized by content (D2) |
-| Speed / warp (audio build) | `AutoProfiles::from_curves_rev` | sampled per clip per build | memoized points (D2); `sign_knots`/`rate_signed`/`chain_tail` still lay segments once per build — linear, **left** (row 159) |
+| Speed / warp (audio build) | `AutoProfiles::from_curves_rev` | sampled per clip per build | memoized points (D2); `sign_knots`/`rate_signed`/`chain_tail` still lay segments once per build — linear, **left** (row 167) |
 | Speed / warp (video build) | `clip_warp_of` per clip | sampled + 3 integrals per clip per build | memoized map |
 | Speed sampling | `rate_profile_keys` | interpreter + map per grid point, halving per point | compiled formula, cursor (D1, D3) |
 | Segment formulas | `SegShape::at_t` | lock + text clone + string lookup + map of 4 names | compiled per text, thread-local (D1) |
 | Audio automation | `AutoProfiles::value`/`param_at`, `SlotCurves::value` | halving per block; name `find` among the slot's curves | unchanged (O(log n) a block) |
 | LFO (6 modulation nodes) | `param_integral` per sample | O(points) a sample | prefix integral (D4) |
-| Video automation | `AutoPlan::apply` | halving per frame (builder-cost-guard); chain clone per animated layer per frame | unchanged; the per-frame chain is the plan's owned `LayerSrc.fx` — **left** to the frame-plan template (row 160) |
+| Video automation | `AutoPlan::apply` | halving per frame (builder-cost-guard); chain clone per animated layer per frame | unchanged; the per-frame chain is the plan's owned `LayerSrc.fx` — **left** to the frame-plan template (row 168) |
 | Stream stage rows | `rows_at` | chain clone per position | one slot (D6) |
 | Decode-zoom probes | `max_zoom` probes, `owned.clone_from_slice` per key tick | linear in key ticks | unchanged (bounded by keys) |
 | Links | `resolve_curve` | interpreter + map per frame; every event cloned per pass | compiled, cursor, pending events only (D1, D3, D5) |
@@ -96,9 +96,9 @@ slot's own curves with the same `curve_value` and the same owner's clamp (t2110)
 | Curve graphs (UI) | `curve_value` per pixel | halving; segment formula interpreted | segment formula compiled |
 | Morpher | `apply_to`, `clip_slice` per piece; `morph_pass` ~5× per build | warp resampled per piece | warp memoized; the repeated passes stay — **row 155** (`edit-without-rebuild`) |
 | Compositions' public params | `apply_overrides` → `resolve_curve_in` | interpreter per frame | compiled (through D1) |
-| Generators | `GenState::kind_at` per frame | kind clone + name-addressed `set_param` per curve | unchanged — bounded by params, not by curve length; **left** (row 161) |
-| Transitions | `TransAnim::mix_at` per frame | kind clone + name-addressed `set_param` | as generators (row 161) |
-| Cameras, masks | `params_at`, `ClipMask::at` per frame | name-addressed, halving | as generators (row 161) |
+| Generators | `GenState::kind_at` per frame | kind clone + name-addressed `set_param` per curve | unchanged — bounded by params, not by curve length; **left** (row 169) |
+| Transitions | `TransAnim::mix_at` per frame | kind clone + name-addressed `set_param` | as generators (row 169) |
+| Cameras, masks | `params_at`, `ClipMask::at` per frame | name-addressed, halving | as generators (row 169) |
 
 ## Measurements
 
