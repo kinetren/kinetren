@@ -133,3 +133,10 @@ The requirement "the body of the reel inline in every instance, the sidecar advi
 the EXCHANGE FILE and remains correct for it: a foreign reader does not know `metadata.kt.seq` and
 is obliged to see the edit. For the PROJECT file the same property is a multiplicative cost (the owner's three
 reels → 15 220 clips, 115 MB), therefore the project stores the reel once, and the instance stores a reference to its address; this is a property of the model (`Project.sequences`), and the project's own format does not spoil it (t810). The laws E and G, the processing order, and the public parameters do not depend on the format — they are read from the same model.
+
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: every placement hashed its whole reel's text (2× audio build, 4× video build, the timeline's preview keys), and a nested reel's text was fed into its parent per placement: placements × reel events per edit.
+- **Decision**: `revisions_scope` memoizes `content_hash` per reel for a build (the project is borrowed, so the key cannot go stale); a nested reel enters its parent's hash by its own revision. A reel holding reels gets a new revision once — its sidecar previews render once again; leaf reels keep theirs bit for bit (t2064, t2065).
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.

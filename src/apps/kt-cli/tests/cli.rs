@@ -1472,3 +1472,58 @@ fn t1603_the_file_streams_equal_the_serial_export() {
     assert_eq!(stream(&piped, "0:a"), stream(&serial, "0:a"), "the audio packets");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 2082 (segv-crashes, durability): a native crash of kt-cli dies by its own signal and prints
+/// the report on stderr — the faulting thread, the function with its file and line, the other
+/// threads — symbolized by a fresh process the handler starts, and leaves it in the temporary folder.
+#[cfg(target_os = "linux")]
+#[test]
+fn t2082_cli_crash_prints_its_report() {
+    use std::os::unix::process::ExitStatusExt;
+    let out = cli().arg("crash-probe").output().unwrap();
+    assert_eq!(out.status.signal(), Some(11), "kt-cli must still die by SIGSEGV: {:?}", out.status);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("signal: SIGSEGV (segmentation fault)"), "{err}");
+    assert!(err.contains("thread: kt-cli-probe"), "{err}");
+    assert!(err.contains("kt_crash::testing::kt_crash_probe_segv (libs/kt-crash/src/lib.rs:"), "{err}");
+    assert!(err.contains("kt-cli-probe  ← faulted"), "{err}");
+    let line = err.lines().find(|l| l.starts_with("kt-cli: SIGSEGV in thread \"kt-cli-probe\"")).expect(&err);
+    let report = std::path::PathBuf::from(line.rsplit("the report is in ").next().unwrap());
+    let text = std::fs::read_to_string(&report).expect("the report beside the raw one");
+    assert!(text.starts_with(&format!("kt-cli {}\n", kt_version::FULL)), "{text}");
+    let _ = std::fs::remove_file(&report);
+    let _ = std::fs::remove_file(report.with_extension("raw"));
+}
+
+/// Test 2086 (segv-crashes, found-defects 131): a headless export needs no X server. With no
+/// DISPLAY the export's devices (two to four on a software adapter) were opened at once on threads,
+/// each with its own wgpu instance, and the process died by SIGSEGV in the Vulkan loader every run.
+#[test]
+fn t2086_export_without_a_display_does_not_crash() {
+    kt_plugins_builtin::install();
+    if kt_media::ffmpeg::backend_info().is_none() {
+        eprintln!("t2086 skipped: needs FFmpeg");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-cli-t2086-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut p = owner_grid_case();
+    p.morphers.clear();
+    p.clips[0].duration = kt_time::Tick(45_000);
+    p.validate().unwrap();
+    let project = dir.join("short.kt");
+    std::fs::write(&project, kt_model::project_file::to_text(&p, None)).unwrap();
+    for i in 0..3 {
+        let out = dir.join(format!("out{i}.mp4"));
+        let r = cli()
+            .env_remove("DISPLAY")
+            .env_remove("WAYLAND_DISPLAY")
+            .env("KT_VIDEO_ENGINES", "4")
+            .args(["export", project.to_str().unwrap(), out.to_str().unwrap(), "libx264"])
+            .output()
+            .unwrap();
+        assert!(r.status.success(), "run {i}: {:?}\n{}", r.status, String::from_utf8_lossy(&r.stderr));
+        assert!(std::fs::metadata(&out).map(|m| m.len() > 0).unwrap_or(false), "run {i}: no file");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

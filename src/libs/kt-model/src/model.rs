@@ -2861,13 +2861,21 @@ fn max_publish_cascade() -> usize {
 }
 
 fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
+    // the ends by id (the first, as the scan found it): a scan per transition made every batch
+    // quadratic in the reel's events (builder-cost-guard)
+    let mut by_id: std::collections::HashMap<ClipId, &ClipEvent> = std::collections::HashMap::new();
+    if !transitions.is_empty() {
+        for c in clips {
+            by_id.entry(c.id).or_insert(c);
+        }
+    }
     transitions.retain_mut(|t| {
         let side = |id: Option<ClipId>| match id {
             // the empty side of a fade (R.25) is legal and stays empty
             None => Some(None),
             // the clip of a side has vanished: the transition dies entirely (fades
             // are set explicitly, not left over from a deletion)
-            Some(id) => clips.iter().find(|c| c.id == id).map(Some),
+            Some(id) => by_id.get(&id).copied().map(Some),
         };
         let (Some(mut a), Some(mut b)) = (side(t.a), side(t.b)) else { return false };
         if let (Some(ca), Some(cb)) = (a, b) {

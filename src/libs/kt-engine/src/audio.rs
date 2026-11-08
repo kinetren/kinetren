@@ -168,6 +168,35 @@ fn split_predecessors(clips: &[AudioClip], overlaps: &[bool], ringing: bool) -> 
         .collect()
 }
 
+/// The engine events of a reel by (original clip, edge): what `clips.iter().find(|c|
+/// same_clip(c.id, id) && c.end == e)` answers — the FIRST such event — without a scan per
+/// transition (builder-cost-guard). Generic over the edge unit: audio frames or ticks.
+pub(crate) struct PieceEdges<E: std::hash::Hash + Eq> {
+    by_end: std::collections::HashMap<(kt_model::ClipId, E), usize>,
+    by_start: std::collections::HashMap<(kt_model::ClipId, E), usize>,
+}
+
+impl<E: std::hash::Hash + Eq + Copy> PieceEdges<E> {
+    pub(crate) fn of(clips: impl Iterator<Item = (kt_model::ClipId, E, E)>) -> PieceEdges<E> {
+        let (mut by_end, mut by_start) = (std::collections::HashMap::new(), std::collections::HashMap::new());
+        for (i, (id, start, end)) in clips.enumerate() {
+            // `same_clip(id, origin)`: the event itself or a piece of it
+            let origin = kt_model::slice_origin(id).unwrap_or(id);
+            by_end.entry((origin, end)).or_insert(i);
+            by_start.entry((origin, start)).or_insert(i);
+        }
+        PieceEdges { by_end, by_start }
+    }
+
+    pub(crate) fn ending(&self, origin: kt_model::ClipId, at: E) -> Option<usize> {
+        self.by_end.get(&(origin, at)).copied()
+    }
+
+    pub(crate) fn starting(&self, origin: kt_model::ClipId, at: E) -> Option<usize> {
+        self.by_start.get(&(origin, at)).copied()
+    }
+}
+
 /// The crossfade weight over the transition windows of the clip. It does not know the
 /// position or the direction (the reverse transport uses the same one). The formulas are verbatim from
 /// weight_at (test 2): for a converted overlap the weights are bit-for-bit identical.
@@ -588,7 +617,7 @@ fn overlap_weight(clips: &[AudioClip], covers: &OverlapMap, ci: usize, frame: i6
 
 impl AudioRenderer {
     pub fn new(project: &Project) -> AudioRenderer {
-        AudioRenderer::build_reel(project, None, &[], 0)
+        crate::video::revisions_scope(|| AudioRenderer::build_reel(project, None, &[], 0))
     }
 
     fn build_reel(
@@ -770,33 +799,33 @@ impl AudioRenderer {
             Some(s) => s,
             None => project,
         };
+        // a transition's ends by id, and its engine events by (original, edge): each scanned per
+        // transition made the build quadratic in the events (builder-cost-guard, t2062)
+        let reel = kt_model::Indexed::new(reel);
+        let ends = PieceEdges::of(clips.iter().map(|c| (c.id, c.start, c.end)));
         for t in resolved.transitions.iter() {
             // An OVERLAID transition (R.51, item 399): the window is the overlap zone itself,
             // there are no handles (the material on both sides is real),
             // the curve works instead of the built-in equal-power overlap
-            if let Some((pa, pb)) = t.overlap_pair(reel) {
+            if let Some((pa, pb)) = t.overlap_pair(&reel) {
                 let w0 = pb.start.to_audio_frames();
                 let w1 = (pa.start + pa.duration).to_audio_frames();
                 if w1 <= w0 {
                     continue;
                 }
-                if let Some(a) =
-                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pa.id) && c.end == w1)
-                {
+                if let Some(a) = ends.ending(pa.id, w1).map(|i| &mut clips[i]) {
                     a.fade_out = Some((w0, w1));
                     a.fade_out_curve = t.audio;
                     a.fade_out_excl = true;
                 }
-                if let Some(b) =
-                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pb.id) && c.start == w0)
-                {
+                if let Some(b) = ends.starting(pb.id, w0).map(|i| &mut clips[i]) {
                     b.fade_in = Some((w0, w1));
                     b.fade_in_curve = t.audio;
                     b.fade_in_excl = true;
                 }
                 continue;
             }
-            let Some(joint) = t.joint(reel) else { continue };
+            let Some(joint) = t.joint(&reel) else { continue };
             let w0 = (joint - t.in_offset).to_audio_frames();
             let w1 = (joint + t.out_offset).to_audio_frames();
             let jf = joint.to_audio_frames();
@@ -807,9 +836,7 @@ impl AudioRenderer {
             // the “partner” is simply absent, and the material opposite is silence;
             // a target cut by a morpher (R.35): the junction is at the piece whose
             // boundary stands on it; the id of the original is carried by piece No. 0
-            if let Some(a) = t.a.and_then(|id| {
-                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == jf)
-            }) {
+            if let Some(a) = t.a.and_then(|id| ends.ending(id, jf)).map(|i| &mut clips[i]) {
                 // reversed FX: the mirrored source anchor is tied to
                 // window_end — we do not extend the handle (a v1 limitation, item 136),
                 // the fade weight is applied as is
@@ -819,9 +846,7 @@ impl AudioRenderer {
                 a.tail_ext = ext.max(0);
                 a.ext_end += a.tail_ext;
             }
-            if let Some(b) = t.b.and_then(|id| {
-                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == jf)
-            }) {
+            if let Some(b) = t.b.and_then(|id| ends.starting(id, jf)).map(|i| &mut clips[i]) {
                 let ext = if b.reversed && !b.fx.is_empty() { 0 } else { b.start - w0 };
                 b.fade_in = Some((w0, w1));
                 b.fade_in_curve = t.audio;

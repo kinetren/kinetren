@@ -134,6 +134,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "addr2line"
+version = "0.24.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfbe277e56a376000877090da837660b4427aad530e3028d44e0bffe4f89a1c1"
+dependencies = [
+ "fallible-iterator",
+ "gimli",
+ "rustc-demangle",
+ "smallvec",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1645,6 +1657,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gimli"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07e28edb80900c19c28f1072f2e8aeca7fa06b23cd4169cefe1af5aa3260783f"
+dependencies = [
+ "fallible-iterator",
+ "stable_deref_trait",
+]
+
+[[package]]
 name = "gl_generator"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2160,6 +2182,7 @@ dependencies = [
  "getrandom 0.3.4",
  "image",
  "kt-cache",
+ "kt-crash",
  "kt-dirs",
  "kt-engine",
  "kt-ffmpeg",
@@ -2201,6 +2224,7 @@ name = "kt-cli"
 version = "0.1.0"
 dependencies = [
  "kt-cache",
+ "kt-crash",
  "kt-dirs",
  "kt-engine",
  "kt-ffmpeg",
@@ -2214,6 +2238,17 @@ dependencies = [
  "kt-time",
  "kt-version",
  "serde_json",
+]
+
+[[package]]
+name = "kt-crash"
+version = "0.1.0"
+dependencies = [
+ "addr2line",
+ "gimli",
+ "libc",
+ "memmap2",
+ "object",
 ]
 
 [[package]]
@@ -3049,6 +3084,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.36.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3628,6 +3672,12 @@ dependencies = [
  "libsqlite3-sys",
  "smallvec",
 ]
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
 name = "rustc-hash"

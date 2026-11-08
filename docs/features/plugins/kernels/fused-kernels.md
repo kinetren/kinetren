@@ -1,6 +1,6 @@
 ---
 id: F-EXT-005
-title: Fused and specialized kernels — JIT of an effect chain
+title: Fused, specialized and compiled kernels — JIT of computation, GPU and CPU
 status: researched
 priority: B
 cost: L
@@ -19,7 +19,7 @@ services: []
 checked: 2026-11-08
 ---
 
-# F-EXT-005 — Fused and specialized kernels — JIT of an effect chain
+# F-EXT-005 — Fused, specialized and compiled kernels — JIT of computation, GPU and CPU
 
 ## Essence
 
@@ -27,7 +27,10 @@ An effect chain on an event runs as one program generated at run time, instead o
 effect. Point-wise effects are folded into one shader, so intermediate values stay in registers and
 never round-trip through a texture. Discrete settings (a mode, a tap count) are compiled in as
 constants. Compiled pipelines are kept between runs, so the first use of an effect does not hitch.
-The person sees the same picture, sooner, and no stall the first time an effect appears.
+On the CPU the same idea compiles what stands still: a curve, a speed profile, a formula
+or a schedule becomes an evaluator built once, and a kernel runs as the variant specialized for its
+state or the machine's instruction set. The person sees and hears the same result, sooner, with no
+stall the first time an effect appears.
 
 ## Who has it and how
 
@@ -51,6 +54,10 @@ DSP compilers. The verdict needs their numbers and their failure modes.
 | Dolphin | 2506 | ubershaders, hybrid mode | an interpreter shader draws while the specialized one compiles in the background, then is swapped in |
 | Faust | 2.79 | `compute()` / libfaust | a whole DSP diagram compiles into one per-sample loop (C++/LLVM JIT/WASM); `-vec` deliberately splits it again so non-recursive parts vectorize |
 | wgpu | 27 | `override` constants, `PipelineCache` | overrides are substituted by naga before the backend text is emitted (a full compile per value); the pipeline cache is implemented on Vulkan only |
+| Cmajor | 1.0 | JIT via LLVM | a DSP graph compiled as a whole at run time; hot reload; the vendor claims C++ speed, a JUCE forum developer says "about the same" because both go through LLVM's optimizer |
+| Max | 9 | gen~ | code generated from a patch and run per sample; it exists for single-sample feedback, which block-based MSP cannot do; speed is a by-product |
+| SuperCollider / Pure Data | 3.14 / 0.55 | unit generators | precompiled C units interpreted per block (64 samples); the block amortizes the dispatch, there is no JIT |
+| Cranelift | 0.12x | `synfx-dsp-jit` (HexoSynth) | a DSP syntax tree compiled at run time and swapped in without interrupting audio; a measured log: scalar Cranelift 20 µs against 2.6 µs of rustc-compiled Rust, because it does not auto-vectorize |
 
 ## The trick behind it
 
@@ -65,6 +72,13 @@ DSP compilers. The verdict needs their numbers and their failure modes.
   constant. wgpu-hal, however, replaces it in the naga IR before emitting SPIR-V/MSL/HLSL. Each new
   value is a full translation plus a driver compile, so specializing on a continuous or automated
   value would compile every frame. Only discrete values qualify.
+- **On the CPU the win is compiling the DATA, not emitting machine code.** Faust compiles a whole
+  diagram into one loop and then offers `-vec`, which splits it again into separate loops with
+  buffers, because one fused loop with a recursive filter in it stops vectorizing. Pd and
+  SuperCollider keep an interpreter of precompiled units and pay nothing for it, because the block
+  amortizes the dispatch. The measured Cranelift log loses 8× to rustc for lack of SIMD. What these
+  systems really gain is precomputation per block and per graph (coefficients, ramps, schedules), and
+  that needs no code generator.
 - **The hitch is hidden by drawing something else first, never by waiting.** UE5 and Dolphin draw
   with a generic program while the specialized pipeline compiles. For us this is safe only for the
   preview, and only for frames that are never stored. The same frame from two different programs
@@ -78,6 +92,9 @@ DSP compilers. The verdict needs their numbers and their failure modes.
   dominant cost.
 - k − 1 fewer dispatches, barriers and bind groups per frame (found-defects row 138 is their CPU side).
 - No 8-bit quantization between fused effects: the intermediate stays f32.
+- On the CPU, a curve or a formula compiled once per build turns per-sample and per-frame walks
+  into O(1) reads. Our measured build cost (~450 ms an edit on the relinked haski,
+  `docs/engine-audit.md` §0) and prefetch pass (160–280 ms, found-defects row 144) are such walks.
 - A disk pipeline cache plus prewarm at project open removes first-use stalls. Found-defects row 64
   (6.6 s first Datamosh frame under load) and row 139 (a geometry shape compiled inside a frame) are
   this.
@@ -89,9 +106,14 @@ DSP compilers. The verdict needs their numbers and their failure modes.
 - Generated shaders have no human source. A compile error or a wrong pixel must be mapped back to the
   effect, and the generated text dumped.
 - A fused shader takes the register budget of its heaviest stage. Long runs lower occupancy or
-  spill, so run length needs a cap measured on real cards.
+  spill, so the run length needs a cap. It is measured at run time on the machine that runs the
+  program: a fused pipeline slower than its parts there is split.
 - Very large generated shaders trip compilers: FXC on Windows (row 97 already lives at that edge),
   and slow, fragile mobile drivers.
+- Real run-time code generation on the CPU (Cranelift, LLVM) is a second implementation of
+  byte-exact audio (invariant 11), held to the first by tests. LLVM is a large native dependency;
+  generated code needs writable-executable memory, which macOS's hardened runtime allows only with an
+  entitlement.
 - It does nothing for multi-pass simulations dominated by neighbourhood reads and ALU: Camera ISP
   (12 passes, 92–97 ms a frame on llvmpipe) and VHS Tape (14 passes, 65–72 ms) are our two heaviest
   costs (gpu-pass-cost D2).
@@ -123,6 +145,12 @@ CAPABILITY: openspec/specs/video-plan/
   device, each export device) compiles everything again.
 - **Hand specialization is already the practice.** gpu-pass-cost hoisted per-pass constants out of
   per-pixel code (Camera ISP 115–129 → 92–97 ms).
+- **CPU evaluators.** A prefix-sum warp map exists (`Integral`, `src/libs/kt-model/src/warp.rs:483-526`)
+  but only the video frame map and the UI use it. The audio build, the prefetch and `sign_knots`
+  re-walk the profile with `segments()`. The LFO phase walks the rate curve from its first point every
+  sample (`param_integral`, `src/libs/kt-plugin-api/src/curves.rs:21-48`). Formulas are a tree
+  interpreter with a `BTreeMap<String,f64>` per evaluation (`src/libs/kt-model/src/formula.rs`).
+  `dsp::Memo` already skips work while a value stands still.
 - **Audio.** It is compiled ahead of time with an AVX2 second copy (`cpu::fast!`, audio-fx-cost: VHS
   sound 40 → 22 reference kernels on that path).
 
@@ -137,10 +165,15 @@ CAPABILITY: openspec/specs/video-plan/
 
 ### What hinders
 
-- **Measurement.** Our only per-pass numbers are from llvmpipe (gpu-pass-cost D2: point-wise
-  effects 2–3 ms each at 1080p, composite 1.1 ms a layer). On a card these passes are short and
-  bandwidth-bound, and his journal's `GPU` record (found-defects row 108) has not come yet. The gain
-  of fusion on his machine is unknown.
+- **Proof without a particular card.** The decision may not wait for one machine (owner, H13). Fusion
+  is therefore a general rule proved on our bench, by two readings:
+  - the bytes read and written per frame, which do not depend on the device;
+  - the time per frame on llvmpipe (gpu-pass-cost D2: point-wise effects 2–3 ms each at 1080p,
+    composite 1.1 ms a layer).
+
+  The run-length cap is measured at run time.
+- **Byte-exact audio.** Any CPU specialization must perform the same operations in the same order as
+  the general path. The two-path byte test of audio-fx-cost (t1981) is the pattern.
 - **Stored frames.** The references of fused chains move: tolerances `FrameTol`, t181, t183.
 - **Invariant 7.** One composition path must hold: the generator must live inside the single
   executor, not beside it.
@@ -149,14 +182,15 @@ CAPABILITY: openspec/specs/video-plan/
 
 - 7: one composition path; the generator is part of the GPU executor of `frame_plan`.
 - 11: video bytes equal between runs on one device. This means no timing-dependent choice between the
-  fused and unfused program for anything stored or exported.
+  fused and unfused program for anything stored or exported. Audio stays byte for byte, so every
+  specialized CPU path equals the general one.
 
 ## Estimate
 
 | What | Answer |
 |---|---|
 | Scope | L for fusion (a round); S for prewarm + pipeline cache; specialization stays per effect |
-| Where the main work is | kt-plugin-api (kernel class, pure function), kt-gpu (generator, cache), kt-fx `plan_chain` |
+| Where the main work is | kt-model (compiled curves, profiles, formulas), kt-plugin-api (kernel class, pure function, curve cursors), kt-gpu (generator, cache), kt-fx `plan_chain` and the audio plugins (specialized variants) |
 | Project format | does not touch |
 | Tests that will have to be written | fused equals unfused within the kind's tolerance; no in-frame pipeline creation after prewarm (t2023's style); offline never uses a fallback |
 | Depends on | F-EXT-004 |
@@ -164,12 +198,24 @@ CAPABILITY: openspec/specs/video-plan/
 
 ## Verdict
 
-Take the pipeline prewarm and the Vulkan pipeline cache now: cheap, and they invisibly remove rows 64
-and 139. Take fused point-wise runs later, as generated plain WGSL on the Core Image class model, once
-a real card's `GPU` record shows point-wise passes are a real share of a frame. Specialize only by
-discrete values. Reject audio JIT: audio is 0.1–4.4 % of real time, a block dispatch is not the cost,
-and a second implementation endangers byte-exact audio. Reject CPU SIMD JIT: the CPU video path was
-deleted by the owner's decision. Analysis and order: `docs/engine-audit.md` §3–§4.
+Take, in this order:
+1. **Compiled data on the CPU.** Curves, speed profiles, formulas (closures over numbered slots), the
+   morph pass and the Datamosh schedule are built once per build, and the prefix-sum warp map is used
+   everywhere.
+2. **Specialized Rust variants chosen at run time:** "stands still" paths, and the AVX2 copy for the
+   meters and the mixdown (NEON is the ARM baseline).
+3. **Pipeline prewarm and the Vulkan pipeline cache.**
+4. **Fused point-wise runs as generated plain WGSL.** A general rule proved on our bench; references
+   move ≤ 1 LSB per former boundary, which the owner agreed (H16).
+
+Specialize shader constants by hand, and only for discrete values.
+
+Reject run-time machine-code generation for now (Cranelift, LLVM, a Faust-like graph compiler).
+Nothing measured on the CPU is bound by dispatch or by an interpretation closures cannot remove. It
+would be a second implementation of byte-exact audio. Cranelift for formulas is the one candidate if
+a profile after step 1 still shows them.
+
+Per-area table and order: `docs/engine-audit.md` §3–§4.
 
 ## Sources
 
@@ -185,6 +231,6 @@ Read 2026-11-08; core-editor rows from vendor documentation and forums, not chec
 - https://blogs.igalia.com/itoral/2018/03/ ; https://nonstrict.eu/wwdcindex/wwdc2016/605/
 - https://docs.rs/crate/naga/29.0.3/source/src/back/pipeline_constants.rs ; https://docs.rs/wgpu/latest/wgpu/struct.Features.html
 - https://dev.epicgames.com/documentation/unreal-engine/pso-precaching-for-unreal-engine ; https://dolphin-emu.org/blog/2017/07/30/ubershaders/
-- https://faustdoc.grame.fr/manual/options/ ; https://github.com/cmajor-lang/cmajor ; https://docs.rs/synfx-dsp-jit ; https://rhizome-lab.github.io/resin/design/jit-optimization-log.html
+- https://faustdoc.grame.fr/manual/embedding/ ; https://faustdoc.grame.fr/manual/options/ ; https://docs.cycling74.com/userguide/gen/_gen_overview ; https://github.com/cmajor-lang/cmajor ; https://docs.rs/synfx-dsp-jit ; https://rhizome-lab.github.io/resin/design/jit-optimization-log.html
 - https://dawn.googlesource.com/tint/+/b293f51f83cab41b45f334414c44e6d50fe64ba0
 - Our measurements: `openspec/changes/archive/2026-11-08-gpu-pass-cost/design.md` (D2), `openspec/changes/archive/2026-11-08-audio-fx-cost/design.md`, `docs/engine-audit.md` §0.

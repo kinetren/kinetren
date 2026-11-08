@@ -351,6 +351,26 @@ pub fn path() -> PathBuf {
     crate::journal::data_dir().join(FILE)
 }
 
+/// The last `n` lines of one run in the journal file at `path`: from its RUN line (the one naming
+/// `pid`, else the last RUN line) to the next run's. What a crash report carries (segv-crashes):
+/// another instance may write the same file meanwhile, so a run is found by its pid.
+pub fn run_tail(path: &Path, pid: Option<u32>, n: usize) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
+    let lines: Vec<&str> = text.lines().collect();
+    let is_run = |l: &str| l.contains("  RUN    ");
+    let from = match pid {
+        Some(p) => {
+            let tag = format!(" pid {p}");
+            lines.iter().rposition(|l| is_run(l) && l.ends_with(&tag))
+        }
+        None => lines.iter().rposition(|l| is_run(l)),
+    };
+    let Some(from) = from else { return Vec::new() };
+    let to = lines[from + 1..].iter().position(|l| is_run(l)).map_or(lines.len(), |i| from + 1 + i);
+    let run = &lines[from..to];
+    run[run.len().saturating_sub(n)..].iter().map(|l| l.to_string()).collect()
+}
+
 /// Open the program's journal and write the run's first line: once per process, before the
 /// first window.
 pub fn install() {
@@ -417,10 +437,19 @@ pub fn on_signal(s: &Signal<'_>) {
             Kind::Log,
             &format!("GPU: {} / {:?} / {:?}{}", info.name, info.device_type, info.backend, if *software { ", software" } else { "" }),
         ),
-        Signal::CrashReport(p) => j.record(
-            Kind::Log,
-            &format!("the previous run crashed: {}", p.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned())),
-        ),
+        Signal::CrashReport(p) => {
+            // a native crash's one line goes into the journal too (segv-crashes): the journal is
+            // where a complaint is placed, and the report beside it may be overwritten
+            let summary = crate::journal::report_summary(p);
+            j.record(
+                Kind::Log,
+                &format!(
+                    "the previous run crashed: {}{}",
+                    p.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned()),
+                    summary.map_or(String::new(), |s| format!(" — {s}"))
+                ),
+            )
+        }
         Signal::Exit => j.record(Kind::Act, "the program closes"),
         // named by the app's own call with the file name (`project_act`); the frame is no action
         Signal::Saved | Signal::ProjectOpened(..) | Signal::ExportEnded(_) | Signal::Frame { .. } => {}

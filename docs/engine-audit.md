@@ -14,7 +14,8 @@ Contents:
 - §0 What was measured for this audit
 - §1 Defects by mechanism (M1–M11), with the architectural/local verdict
 - §2 Replacing the core or targeted fixes: (a) incremental engine, (b) one CPU+GPU scheduler
-- §3 JIT of math and computation (the note is `docs/features/plugins/kernels/fused-kernels.md`)
+- §3 JIT of math and computation, every computation: CPU and GPU (the note is
+  `docs/features/plugins/kernels/fused-kernels.md`)
 - §4 Recommendation and the answer to "a new engine as a breaking change?"
 - Appendix: every performance row of `found-defects.md`, mapped to its mechanism
 
@@ -131,7 +132,7 @@ cost is O(N·K). It is invisible on hand-made data and explodes on generated dat
 
 | Defect | Cost | State |
 |---|---|---|
-| row 151 (new): `sign_knots` rebuilds the segment list per point | ~450 ms per build on haski (§0) | **open** |
+| row 151 (new): `sign_knots` rebuilds the segment list per point | ~450 ms per build on haski (§0) | closed by `builder-cost-guard`: 368–572 → 11–12 ms, bytes identical, counting guard t2060–t2067 |
 | row 144: prefetch calls the stage's `needs` per frame of its 2 s window | 160–280 ms a pass against a 100 ms target | **open** |
 | LFO walks the rate-curve keys per sample (audio-fx-cost walk) | O(keys) per sample | **open**, not in found-defects before; listed there now under 151 |
 | morpher grid: 360 identical tiles computed per sub-sample (morpher-event-grid-cost) | 8.3 M sub-samples a frame; 274 → 2.1 ms CPU, 12.0 → 3.4 ms llvmpipe | closed (t942–t946) |
@@ -193,7 +194,7 @@ circle.
 | idle-cpu D1: the preview service evicted a live reel release and ordered it again | 236 % of a core against 46 %; 66 submits/s | closed: previews settle (t1830) |
 | media-index t69: an unpublished failure made the UI order again every frame | opens grow with FPS | closed |
 | row 114: thumbnail and effect-cell caps go round (384 / 256) | — | **open** |
-| row 134: ~45 GPU submits/s from Datamosh jobs prefetch runs far ahead | 35–49 submits/s | **open**, re-read in his next journal |
+| row 134: ~45 GPU submits/s from Datamosh jobs prefetch runs far ahead | 35–49 submits/s | **open**: `gpu-arbiter` and the stream pacing; his next journal confirms |
 | row 143: the Datamosh memo (256 MB) holds ~20 positions at 1080 lines | a long loop recomputes history every lap | **open** |
 | `thumbs` queue is LIFO and unbounded, with no pause while playing (code map A2) | — | **open**, not measured |
 
@@ -297,7 +298,7 @@ pick their own size, and nobody sees the sum or evicts by the value of a byte ac
 | "work the device does that nobody measured" (gpu-pass-cost) | closed: pass timer, `GPU` journal record (t2020–t2022) |
 | notes stamped late or in UTC (telemetry-journal) | closed: one journal (t1960–t1969) |
 | row 53: dropped-frame counter on the CPU path | open (the CPU path is deleted; to recheck) |
-| row 108: no load number proved on a real card | **open: the decisive unknown of this audit** |
+| row 108: no load number proved on a real card | **open**: a confirmation, not an input to the design — every rule in §2b and §3 is general or measured at run time on the machine that runs it, and proved on our benches |
 
 Why it matters for §2: the next structure should count by itself. A scheduler counts every job it
 runs, and at rest it counts zero.
@@ -454,9 +455,18 @@ whose resources.
   - input-without-work: prefetch 69 % → 0.
 - The scheduler would not repeat those gains. It makes them the default for the next producer.
 - The open rows it addresses: 94, 98, 114, 122, 134, 140, 143, 144, 147, 148, 149, and the timers.
-  Their cost on his card is unknown until his next journal with the `GPU` record (row 108).
-- **Guess:** on his journal's symptoms (45 submits/s, V-fps 9, UI blocks now gone), the GPU arbitration
-  and the stream pacing matter more than the CPU pool.
+
+**No machine decides the design** (owner, H13: «ты весь софт под конкретную машину пытаешься
+оптимизировать?»; rule in `docs/orchestrator.md`):
+- Priorities are a fixed general order: the classes above.
+- Budgets and limits are measured at run time on the machine that runs the program:
+  - the length of one GPU submission, from the pass timer every device already has (t2020–t2022);
+  - the cores free for the CPU pool;
+  - the memory the ledger may use.
+- Each rule is proved on our benches. Row 149 (one ring for the display and the offline work) is
+  reproduced on llvmpipe by running the preview and the offline route on ONE device, and the bench
+  reads the display's frame latency with and without the bounded submission.
+- His journal confirms that a fix reached his machine. Nothing in this plan waits for it.
 
 ### Why not a new engine as a breaking change (the core question)
 
@@ -475,69 +485,142 @@ where the defects are, and it carries most of the tests.
 **What a rewrite would not fix by itself:** M2, M7 and M8 recur in any engine written by hand.
 Only guards fix them: count-based cost tests, the scheduler's counters, a pipeline cache.
 
-## 3. JIT of math and computation
+## 3. JIT of math and computation — every computation, not only shaders
 
-The reconnaissance note is `docs/features/plugins/kernels/fused-kernels.md` (F-EXT-005).
+The owner (H12): «про JIT я вообще-то имел ввиду не только шейдеры». The first version of this section
+judged only shaders and today's audio cost. This one walks every computation the engine does and
+weighs it against what the measured defects show costs on the CPU.
 
-The owner's fixed scope (UF:2547-2577, 2026-11-04):
-- all math, on plain WGSL compute through wgpu/Vulkan;
-- the byte reference dropped;
-- ARM needed;
-- no invented language;
-- audio stays on the CPU (registry C2).
+The reconnaissance of other programs is the note `docs/features/plugins/kernels/fused-kernels.md`
+(F-EXT-005). The code facts below come from a read of `src/` at 8770e6b2.
 
-| Kind of JIT | Who does it | Fits the scope? | Gain on OUR measured costs | What it breaks | Verdict |
-|---|---|---|---|---|---|
-| (c) pipeline prewarm + disk pipeline cache | UE5 PSO precaching, Dolphin, Metal/driver caches; wgpu `PipelineCache` (Vulkan only) | yes | Removes first-use hitches. Row 64: first Datamosh frame 6.6 s under load; 62–209 ms open + 247–690 ms intra with an empty Mesa cache. Row 139: geometry shape compiled in the frame. llvmpipe `glow:resample` 2 s at first draw. Every new device (offline, export) recompiles everything | nothing (keyed by device + driver + text hash; bytes unchanged) | **take**: small |
-| (a) fuse a run of point-wise effects into one generated WGSL pass (colour/warp kernels; neighbourhood kernels cut the run) | Core Image (kernel concatenation, FCP); Photoroom PhotoGraph; Halide (with tiling); our own `geom_fused` already absorbs point-wise taps | yes: plain WGSL, generated text, no new language | llvmpipe: the point-wise effects cost 2–3 ms each at 1080p and the composite 1.1 ms a layer (gpu-pass-cost D2), so a run of k saves ~(k−1)×2 ms (**guess**). On a card these passes are bandwidth-bound (~0.13 GB a 1080p RGBA8 round trip, **guess** ~0.1–0.3 ms each): the gain grows on ARM/iGPU bandwidth. The two heaviest costs are not point-wise and are NOT helped: Camera ISP 92–97 ms (12 passes), VHS 65–72 ms (14 passes) | plugin API (a point-wise effect gives a pure WGSL function besides or instead of its pass); stored frames: an 8-bit texture between effects disappears, so outputs move by ≤1 LSB per boundary (FrameTol, t181 references; the owner allowed updating references, UF:2553/2567); invariant 7 holds (the generator is part of the one executor); invariant 11 holds only if offline paths always wait for the fused pipeline and the unfused fallback is never stored | **take later, measured**: after his card's `GPU` record shows the point-wise share |
-| (b) specialization by constants | Metal function constants, Vulkan spec constants, WGSL `override` | yes, narrowly | In wgpu an `override` is a full naga + driver recompile per value, so only discrete values (mode, tap count, radius class, booleans) qualify. gpu-pass-cost already did the hand version: ISP −25 % by hoisting per-pass constants; radial-blur spin's per-frame sin/cos (row 137) is the next | nothing if per discrete value; a compile per frame if misused on a continuous value | **take per heavy effect, by hand or by `override`**: no framework |
-| (d) JIT the audio chain (Cranelift/LLVM, Faust/Cmajor style) | Faust, Cmajor/SOUL, Max gen~, synfx-dsp-jit | no: audio stays on the CPU by decision; LLVM is a heavy dependency | Audio render is 0.1 % of real time on the measured ranges (§0) and 3–4.4 % on his densest chain (audio-fx-cost: 881 → 597 ms for 20 s). A 1024-frame block costs ~47 dispatches per node per second: nothing to recover. Cranelift does not auto-vectorize; rustc + `cpu::fast!` already does (VHS sound 40 → 22) | invariant 11 (audio byte for byte; a second implementation must equal the first, `kt_plugin_api::math`) | **reject**: precompute per block in Rust (rows 128, 129) |
-| (e) CPU SIMD JIT for video | BlinkScript CPU path, ISPC | no: the CPU video path was deleted by the owner's decision | none | — | **reject** |
+### 3.1 Three kinds of "compiling", and the limits they must keep
 
-**JIT verdict.** Take the pipeline cache and prewarm now (S). Take fused point-wise runs later, as
-generated plain WGSL, after his card's numbers (L). Keep specialization manual and discrete. No audio
-JIT and no CPU JIT. None of it is a new engine: (a) is a code generator inside the existing executor,
-fed by `plan_chain`, which already segments chains into fusable runs and barriers.
+**T1. Compile the DATA: build an evaluator once, use it per element.**
+- What it does: a curve, a speed profile, a formula or a schedule is turned once per build into a
+  structure answered in O(1) or O(log n), instead of being re-walked per sample, frame or pass.
+- Its parts:
+  - a cursor for in-order reads;
+  - prefix sums for integrals (the warp map already has one: `Integral { segs, before }`,
+    `kt-model/src/warp.rs:483-526`, used only by the video frame map and the UI);
+  - formulas compiled into closures over numbered variable slots;
+  - per-block constants hoisted out of the per-sample loop.
+- Precedent: Halide's "schedule", Faust's per-diagram `compute()`, Core Image's recipe-then-program.
+
+**T2. "JIT without a JIT": specialized Rust kernels chosen at run time.**
+- What it does: the same Rust source compiled into several monomorphic variants. One variant is chosen
+  per block, per frame or per build, by state (a parameter standing still, a weight of exactly 1, no
+  curve) or by instruction set.
+- We already do it in three places:
+  - `cpu::fast!` is an AVX2 copy chosen at start (audio-fx-cost: VHS sound 40 → 22 reference
+    kernels);
+  - `dsp::Memo` skips work while a value stands still;
+  - `geom_specialized` builds one pipeline per geometry shape.
+
+**T3. Real run-time code generation** (Cranelift, LLVM, a Faust-like graph compiler).
+- What it does: machine code emitted while the program runs.
+
+**Limits any of the three keeps:**
+- **Audio is byte for byte, always** (invariant 11). A specialized or generated path must perform the
+  same IEEE operations in the same order as the general path.
+  - Rust neither contracts `a·b+c` into FMA nor reassociates.
+  - `kt_plugin_api::math` (pure-Rust libm) is the one source of transcendentals on every ISA.
+  - So T1 and T2 can be made bit-identical and proved by the existing two-path test pattern
+    (t1981: bytes on both paths).
+  - T3 must emit exactly that sequence, and call the same math functions out of line. That is a
+    second implementation held to the first by tests.
+- **ARM:** aarch64's baseline already has NEON (128-bit), so rustc vectorizes our plain loops there
+  with no second copy. `cpu::fast!` matters only on x86-64, where the shipped baseline is SSE2.
+  Cranelift has an aarch64 back end. An LLVM JIT would add a large native dependency on every
+  platform.
+- **No invented language:** T1 compiles the formulas the program already has. T2 is Rust. T3 would
+  generate from the same Rust or WGSL texts. Nothing new for a person to learn.
+
+### 3.2 Area by area
+
+What the code does is read at 8770e6b2. "Measured" cites a number. A **guess** is marked.
+
+| Area | What costs (code read / measured) | Kind that fits | Expected gain | Risk | Size | Verdict |
+|---|---|---|---|---|---|---|
+| **Engine build: speed profiles, warp, links, morph pass** | **Measured:** `AudioRenderer::new` 393–488 ms on haski against 1 ms on the showcase (§0). Code: `sign_knots` O(K²) with allocations (row 151). `rate_profile_keys` builds a `BTreeMap` with three `String` keys and walks `curve_value` from the first key at every 5 ms grid point (`warp.rs:943-1000`). It is redone on every `clip_warp` (per piece in `clip_slice`, per trim helper) and in every one of the 4–5 morph passes per build (`project.rs:6440-6505`). Links: per frame-grid tick, a linear clip search plus a `BTreeMap` plus a tree eval, and a whole clip clone per pass (`links.rs:315-490`). | T1: the profile is sampled ONCE per curve revision and memoized by its content; warp questions go through the prebuilt prefix-sum map; `sign_knots` in one sweep; formulas compiled to closures; one morph pass per build | 450 ms → a few ms per build (**guess**, the showcase builds in 1 ms); it multiplies with M1's 2–3 builds per edit | low: the sums must keep their order (`source_progress` "repeats step by step… the same order of addition"); the prefix map stores exactly those partial sums | S–M | **take first**; `builder-cost-guard` (running) takes row 151 and 144; `compiled-curves` generalizes it |
+| **Prefetch passes** | **Measured:** 160–280 ms a pass against a 100 ms target (row 144). Code: `wanted_audio_bursts_for` walks ALL clips each pass and, per FX clip, rebuilds `segments()` several times and clones `ParamValues` per slot, where the render side caches the same numbers in `src_ends` (`audio.rs:1813-1893`). `video_prefetch_wants` calls `layers_at` (all clips) per frame of a 2 s window. Datamosh `needs` builds a new `Sched` + `HashMap` + `Keys` per call, per frame of the window (`mosh.rs:140-417`). | T1: per-build tables (`src_ends` shared with prefetch; the bucket index instead of all clips; the stream layout compiled once per build) | 160–280 ms → ≤ 10 ms a pass (**guess**); fewer rows 134/143 side effects | low | S–M | **take** (with the scheduler's producer rule) |
+| **Audio DSP per sample** | **Measured:** his chain 51.4 reference kernels after audio-fx-cost; compressor `log10`+`pow` per sample 4 kernels (row 129); phaser 6.2 (row 128, owner). Code: every LFO effect (tremolo, auto-pan, vibrato, chorus, flanger, phaser) computes its phase with `param_integral`, which walks the rate curve FROM THE FIRST POINT every sample (`kt-plugin-api/src/curves.rs:21-48`). A curve resolved on the frame grid makes that thousands of steps per sample, never measured. EQ and filter re-tune their biquads every 128 frames whether or not a value moved (`fx-audio-tone/src/lib.rs:224-250, 604-618`). Smoothers tick at rest. | T1: a prefix-integral cursor for the LFO; T2: "stands still" variants (the `Memo` pattern: skip a re-tune whose inputs are equal, a constant-parameter block path); x86 keeps the `fast!` copy, ARM gets NEON from the baseline | the LFO case is unbounded today and becomes O(1); the rest **guess** 51 → ~40 reference kernels on his chain (compressor below threshold, EQ at rest) | low: bit-identical by construction, two-path tests | S | **take** (`kernel-specialization`); row 128 stays the owner's |
+| **Audio chain as one compiled graph (Faust/Cmajor, Cranelift/LLVM)** | Code: a `dyn` call per node per 1024-frame chunk (`audio/mod.rs:1319-1355`) ≈ 47 calls a second per node; kernels are already monomorphic inside. Source: Faust's `-vec` mode splits fused loops again because fusion stops vectorization; a Cranelift DSP log found dispatch "isn't the bottleneck" and scalar Cranelift slower than rustc. | T3 | nothing measurable from dispatch (**guess** < 1 %); worse vectorization without a SIMD back end | high: a second implementation of every kernel held byte for byte; W^X memory on macOS needs an entitlement | L–XL | **reject** — T1/T2 give the gains without a second implementation |
+| **Mixdown weights** | Code: per sample `fade_weight` (branches + `sqrt`) and `overlap_at` with a binary search, times `gain`, also across stretches where the weight is exactly 1 (`audio.rs:176-192, 548-585, 1381-1396`). Not measured alone; the whole render is ≤ 1 % on our ranges, 2.5–4.4 % on his densest (§0, audio-fx-cost). | T2: split a block into constant-weight runs (a plain multiply or copy) and ramp runs | **guess** small; grows with overlaps | low (same values) | S | **take inside `kernel-specialization`**, after the above |
+| **Automation per frame (video)** | Code: `AutoPlan::apply` reads each curve with the linear `curve_value` (`project.rs:4419-4436`). Resolved link and formula curves have a key per frame, so one frame costs O(frames of the clip) and a clip O(n²). The chain is cloned per animated layer per frame (`video.rs:1864-1871`), and again per stream position (`rows_at`). | T1: a compiled curve per build (binary search or a cursor); parameters patched into a reused chain | not measured; quadratic in clip length | low (same interpolation) | S | **take** (`compiled-curves`) |
+| **Formulas** | Code: a boxed-tree interpreter, a `BTreeMap<String,f64>` per evaluation, a `Vec` per call node (`formula.rs:109-293`); `SegShape::Formula` also locks a global `Mutex`, clones the text and hashes it per evaluation (`project.rs:3910-3915, 3998-4008`). Reached at build (rate profiles, links: per grid tick) and in UI curve drawing. | T1: compile to closures over slot-indexed variables once per text; T3 (Cranelift) only if closures still show in a profile | **guess** 10–50× per evaluation (no allocation, no string compares) | low: same operations, same `math` functions | S | **take closures; T3 not needed** |
+| **Frame plan and geometry (CPU side)** | **Measured:** plan 0.02 ms, encode 0.1–0.2 ms a composite (ui-frame-cost). Code: `build_plan` scans all clips per frame (`video.rs:2028-2120`); `plan_chain` allocates per layer per frame; the mask key and `plan_key` hash a `format!("{:?}")` per frame; plugin predicates search the registry by id string. | T1: a plan template per (layer, chain revision) compiled at build, patched per frame; the bucket index | small today; grows with the project | low | S | **take later**, with `compiled-curves` |
+| **Datamosh / stream stages, CPU side** | **Measured:** part of row 144; row 135: residuals and the rebuilt frame read back as 32 bits a sample (~25 MB a 1080p frame). Code: `Sched`/`Keys` rebuilt per call; `rows_at` clones the chain + `AutoPlan::apply` per position; scalar BT.601 conversion on the CPU (`codec.rs:77-125`); the audio half builds a `Sched` + `HashMap` per 1024-frame codec frame (`sound.rs:187-232`). | T1: the stream layout compiled once per build; packing; move the colour conversion into the compute pass (the scope: math on WGSL) | **guess** −60 % readback (row 135's own estimate) and most of the per-frame CPU work | medium: t1239's pinned bytes | M | **take** (`stream-layout-per-build`) |
+| **Analysis: LUFS, true peak, peaks, sync** | Code: `LoudnessMeter::feed` scalar f64 biquads per sample; true peak does `tail.rotate_left(1)` every sample and a `OnceLock::get` per tap (`loudness.rs:163-314`); `PeakAcc` scalar. It runs in every export and on every first opening of a file. Not measured. | T2: `fast!` copy on x86 (NEON is baseline on ARM); a ring index instead of the rotate; the kernel hoisted | **guess** 2–4× on the meter | low: f64, same order; loudness rounding (row 6) unaffected | S | **take** (`kernel-specialization`) |
+| **Export, CPU side** | **Measured:** RGBA conversion 64 s against 17 s decoding before four converter threads (render-speed-no-card D2). Code: `sws_to_rgba` allocates a zeroed frame each time (`source_impl.rs:1301-1320`); the audio chunk is copied per burst. FFmpeg's `swscale` already picks hand SIMD at run time. | not JIT: buffer pools; frame blending (row 86, scalar `dissolve_into`) moves to a WGSL pass by the acceleration scope | small per frame | low | S | **take as housekeeping**, not as JIT |
+| **Shaders: pipeline prewarm + disk cache** | **Measured:** row 64: first Datamosh frame 6.6 s under load (62–209 ms open + 247–690 ms intra with an empty Mesa cache); row 139: a geometry shape compiled inside a frame; llvmpipe `glow:resample` 2 s at its first draw. Each new device recompiles everything (`cache: None`). | prewarm at project open; wgpu `PipelineCache` on Vulkan | the first-use hitch goes on every machine | none (bytes unchanged) | S | **take** (`pipeline-prewarm`) |
+| **Shaders: fused point-wise runs** | **Measured** (llvmpipe, gpu-pass-cost D2): point-wise effects 2–3 ms each at 1080p, composite 1.1 ms a layer. A device-independent count: every pass reads and writes a full frame. | generated plain WGSL per run, Core Image's colour/warp/general classes; a run cut where a neighbourhood kernel stands | k − 1 frame round trips and dispatches fewer per run, on every device; on our bench ~(k−1)×2 ms (**guess** until the bench runs) | the plugin API grows a point-wise form; references move ≤ 1 LSB per former boundary (**owner agreed**, H16); offline paths never take an unfused fallback | L | **take** — a general rule, proved on our bench by bytes moved per frame and time per frame; the run-length cap is measured at run time (a fused pipeline slower than its parts on this device is split) |
+| **Shaders: specialization by constants** | Code: wgpu substitutes WGSL `override` in naga before the driver compile, so each value is a full compile. Precedent: gpu-pass-cost's hand hoisting, Camera ISP −25 %. | discrete values only (mode, tap count, radius class) | per heavy effect | compile per value if misused | S each | **take by hand, per effect** (row 137) |
+
+### 3.3 Verdict
+
+- **JIT is taken, mostly as T1 and T2.**
+- **T1 (compile the data) carries the largest measured CPU costs:** the build (~450 ms an edit,
+  row 151), the prefetch pass (160–280 ms, row 144), per-sample LFO walks, per-frame automation,
+  formulas, the Datamosh schedule.
+- **T2 (specialized Rust chosen at run time)** extends what audio-fx-cost proved: the AVX2 copy and
+  the "stands still" memo, now for the remaining kernels and the analysis.
+- **T3, real code generation, is rejected for now.** Nothing measured on the CPU is bound by
+  dispatch or by interpretation that closures cannot remove. Generated machine code would be a second
+  implementation of byte-exact audio. If a profile after T1 still shows formula evaluation, Cranelift
+  for formulas is the one candidate; it has an aarch64 back end.
+- **On the GPU:** prewarm and the pipeline cache now; fused point-wise runs as generated WGSL, decided
+  by a general rule and proved on our bench; specialization by hand.
+- **Nothing here waits for any one machine's numbers.**
 
 ## 4. Recommendation
 
 The changes are named by mechanism. Sizes use the `docs/features` scale: S = one stage, M = 2–3 stages,
-L = a round. Test numbers are allocated by the change; t2000–t2019 are reserved for
+L = a round. Test numbers are allocated by each change; t2000–t2019 are reserved for
 `edit-without-rebuild`.
+
+Every limit below is a general rule or is measured at run time on the machine that runs the program,
+and is proved on our benches (llvmpipe, the showcase, the relinked copy). No step waits for a
+journal from one machine.
 
 | # | Change | Mechanism | What it fixes | Size | Risk | Tests that hold it |
 |---|---|---|---|---|---|---|
-| 1 | `builder-cost-guard` | M2 (and the cheap half of M1) | row 151 (linear `sign_knots`), row 144 (prefetch `needs` per frame), the LFO key walk per sample; a count-based guard on every builder and per-frame path (calls of `segments` per build; passes per hover frame for row 107) | S | low: same numbers, bit-identical knots (t17, t292 and the warp tests hold) | new count tests; probe build cost on haski before/after |
-| 2 | `edit-without-rebuild` | M1 | rows 110, 111, 117, 150: one build per project version shared by render, prefetch and probe, built off the UI thread; an `Arc` snapshot instead of a UI-thread clone; per-event derived state memoized by `fp` | M | medium: FX state continuity (invariant 3) and the scene hash must not move | t2000–t2019; t1875, t1935, t1930–t1937, invariant 3 tests |
-| 3 | `one-scheduler` (stage 1) | M3, M4, M6, M10 | job classes, counters, cancellation tokens; the background services (thumbs, fx-thumbs, posters, reel preview, analysis, index, watchdog) moved onto one background executor with event wakes and uniform pause-on-play; rows 114, 122, 140, the seven timers; the remaining UI-thread waits (rows 98, 148, first probe) become jobs; a counter of blocking calls on the UI and render threads | L | medium: many services; behaviour must stay; live scenarios hold it | live `idle`, `ui_wait`, `cached_range`, `journal`; t1830–t1836, t1840–t1848, t2040–t2045 |
-| 4 | `gpu-arbiter` (scheduler stage 2) | M5, M4 | one submission queue per device with class priority and bounded submissions (row 149); compute-host jobs tagged by class (row 134); `StreamKernel::render` stop check (row 147, plugin API); per-render decode settings instead of globals (row 94) | M | medium; needs his `GPU` journal first (row 108) | t2020–t2025, t1239, new cancellation test |
-| 5 | `memory-ledger` (scheduler stage 3) | M9 | one budget across BurstCache, PresentMemo, StreamMemo, MixStore and the pools; rows 10, 85, 96, 143 | M | medium: eviction order is correctness for export (holds stay) | t1600–t1605, t1934, t1570 |
-| 6 | `pipeline-prewarm` | M8, JIT (c) | rows 64 and 139: prewarm the known pipelines at project open, wgpu `PipelineCache` on Vulkan | S | low | a count of in-frame pipeline creations (t2023's style) |
-| 7 | `fused-pointwise-runs` | M7, JIT (a) | point-wise runs as one generated WGSL pass | L | high: plugin API, references | t181 tolerances, t183, new fused-equals-unfused test |
-| 8 | local cost queue | M7, M9 | rows 129, 135, 136, 137, 138, 118, 119; row 128 only on the owner's word | S each | low | t1980–t1982, t1217, t2023 |
-| 9 | test hygiene | M11 | row 126 under t1671; rows 101, 133 | S | low | t1671 |
+| 1 | `builder-cost-guard` (**running**, owner H14) | M2, the cheap half of M1 | row 151 (linear `sign_knots`), row 144 (prefetch `needs` per frame), the LFO key walk; a count-based guard on builders and per-frame paths (row 107) | S | low: bit-identical knots (t17, t292, the warp tests) | new count tests; probe build cost on haski before/after |
+| 2 | `compiled-curves` (JIT T1) | M2, M7 | rate profiles sampled once per curve revision and memoized by content; every warp question through the prefix-sum map; formulas compiled to closures (`formula.rs`, `SegShape::Formula`); `resolve_one`/`resolve_derived` and the morph pass once per build; `AutoPlan::apply` on compiled curves, no per-frame chain clone; LFO phase by a prefix-integral cursor | M | low: the same sums in the same order, two-path byte tests | t17, t292, t645, the automation and warp tests; new "same bytes, compiled and interpreted" tests |
+| 3 | `edit-without-rebuild` | M1 | rows 110, 111, 117, 150: one build per project version shared by render, prefetch and probe, off the UI thread; an `Arc` snapshot instead of a UI-thread clone; per-event derived state memoized by `fp` | M | medium: FX state continuity (invariant 3), the scene hash | t2000–t2019; t1875, t1935, t1930–t1937 |
+| 4 | `one-scheduler` (stage 1) | M3, M4, M6, M10 | job classes, counters, cancellation tokens; the background services on one executor with event wakes, all paused while playing (**owner agreed**, H15); rows 114, 122, 140, the seven timers; the UI-thread waits (rows 98, 148, the first probe) become jobs; a counter of blocking calls on the UI and render threads | L | medium; live scenarios hold it | live `idle`, `ui_wait`, `cached_range`, `journal`; t1830–t1836, t1840–t1848, t2040–t2045 |
+| 5 | `gpu-arbiter` (scheduler stage 2) | M5, M4 | per device, one submission queue with class priority; one submission bounded by the device time the pass timer measures on THIS machine (row 149, reproduced on llvmpipe with preview and offline on one device); compute-host jobs tagged by class (row 134); a stop check in `StreamKernel::render` (row 147, plugin API); per-render decode settings (row 94) | M | medium | t2020–t2025, t1239; new bench: display latency under a Datamosh history, shared device |
+| 6 | `pipeline-prewarm` | M8 | rows 64 and 139: prewarm at project open; wgpu `PipelineCache` on Vulkan | S | low | a count of in-frame pipeline creations (t2023's style) |
+| 7 | `kernel-specialization` (JIT T2) | M7 | "stands still" variants (biquad re-tune only on change, compressor below threshold, smoothers at rest, constant-weight mixdown runs); `fast!` copies for the loudness meter, peaks and mixdown; true peak without a per-sample rotate; rows 129 (128 stays the owner's) | S–M | low: two-path byte tests (t1981's pattern) | t1980–t1982, loudness tests |
+| 8 | `stream-layout-per-build` | M2, M7 | the Datamosh schedule compiled once per build (video and sound halves); packed readbacks (row 135); colour conversion inside the compute pass; the memo against loop length (row 143) | M | medium: t1239's pinned bytes | t1239, t2040–t2045 |
+| 9 | `memory-ledger` (scheduler stage 3) | M9 | one budget across BurstCache, PresentMemo, StreamMemo, MixStore and the pools, sized from this machine's memory at run time; rows 10, 85, 96 | M | medium: eviction order is correctness for export (holds stay) | t1600–t1605, t1934, t1570 |
+| 10 | `fused-pointwise-runs` (JIT, shaders) | M7 | point-wise runs as one generated WGSL pass; run-length cap measured at run time; references move ≤ 1 LSB per boundary (**owner agreed**, H16) | L | medium: plugin API, references | t181 tolerances, t183; new fused-against-unfused test and bench (bytes moved and time per frame on llvmpipe) |
+| 11 | local cost queue | M7, M9 | rows 136, 137, 138, 118, 119; row 128 only on the owner's word | S each | low | t1217, t2023 |
+| 12 | test hygiene | M11 | row 126 under t1671; rows 101, 133 | S | low | t1671 |
 
 **Order and why:**
-- 1 first: smallest, and it removes most of the measured edit cost.
-- 2 next: the architectural half of M1. It must land before the scheduler, because the scheduler
-  schedules builds.
-- 3 to 5 are the scheduler in three stages, each shippable. 4 waits for his card's journal.
-- 6 is independent and cheap; it can run beside 1.
-- 7 only on numbers from a real card.
+- 1 is running. 2 extends it from the sites found to the whole class.
+- 3 then makes one build per edit.
+- 4 and 5 are the scheduler, which schedules those builds. 5 no longer waits for anything: it is
+  proved on the shared-device bench.
+- 6 and 7 are independent and small; they can run beside 2–5 on other files.
+- 8 follows 2 (it uses the compiled curves).
+- 9 follows 4.
+- 10 last of the large ones, because its plugin-API change should meet a settled scheduler.
 
 **Explicit answer:** no new engine as a breaking change.
 - The data puts every architectural defect in the coordination layer: rebuild per edit, waits on the
   UI/render threads, producers without back-pressure, resources without an arbiter, budgets without a
-  ledger. It puts none in the computation layer.
-- The coordination layer can be replaced in place, piece by piece, under the ~1358 spec-named tests,
-  without touching the `.kt` format. The plugin API gets one additive change (the stream stop check),
-  plus a second one only if fusion is taken.
-- What would break if we rewrote anyway:
+  ledger.
+- The CPU "JIT" opportunities are compiled data and specialized kernels inside the existing engine.
+- All of it is replaced in place, under the ~1358 spec-named tests, with no `.kt` change.
+- The plugin API grows twice, both additive: a stream stop check, and a point-wise kernel form.
+- What a rewrite would break:
   - every engine-internal test would have to be re-earned;
   - every M7 fix would have to be redone;
   - the stored-frame references would move;
-  - the plugins would be rebuilt against a new contract;
-  - meanwhile M2/M7/M8 would recur in the new code exactly as in the old.
+  - the plugins would be rebuilt;
+  - M2/M7/M8 would recur in the new code as in the old.
 
 ## Appendix — performance rows of `docs/found-defects.md` by mechanism
 

@@ -1510,6 +1510,18 @@ fn pin_loop_head(cache: &BurstCache, renderer: &AudioRenderer, s: i64) {
 
 /// Build the audio renderer of the current project on a thread of its own (cached-range-plays):
 /// the render thread keeps playing with the old one until it arrives.
+/// A hold the builder thread adds to every build, in milliseconds: a test's seam for "a rebuild
+/// outlasts the ring" (t1935). The scene used to get it from a quadratic build; since
+/// builder-cost-guard a build is a few ms, and a heavy enough honest scene would take gigabytes
+/// and still depend on the machine's speed. Zero in the product.
+static BUILD_HOLD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Hold every later audio renderer build of this process by `ms` (tests only).
+#[doc(hidden)]
+pub fn hold_builds_for_tests(ms: u64) {
+    BUILD_HOLD_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn spawn_renderer_build(
     project: Arc<Mutex<Project>>,
     wake: Arc<Wake>,
@@ -1518,7 +1530,12 @@ fn spawn_renderer_build(
     let _ = std::thread::Builder::new().name("audio-build".into()).spawn(move || {
         let p = project.lock().unwrap().clone();
         kt_time::work::bump(kt_time::work::Work::EngineBuild);
-        let _ = tx.send(AudioRenderer::new(&p));
+        let built = AudioRenderer::new(&p);
+        let hold = BUILD_HOLD_MS.load(std::sync::atomic::Ordering::Relaxed);
+        if hold > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(hold));
+        }
+        let _ = tx.send(built);
         // a parked render thread (a pause) takes it now, not at its next timeout
         wake.notify();
     });

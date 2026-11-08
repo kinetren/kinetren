@@ -312,3 +312,42 @@ across the sites `crate::created()` marks: the pool, the upload cache, the readb
 memo are bounded by budget and recycle; the export ring has RING fixed slots; the arena and staging
 grow only with the frame's shape; the compute host keeps its buffers by size. None grows with lag.
 t2025 checks the timer with no poll at all; t2023 under 32 CPU burners was red 3 of 4 runs before.
+
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: the video build shared the audio build's quadratic sites (transition ends, the reel revision per placement, the decode zoom probes walking curves from key 0).
+- **Decision**: the same indexes and the same counting guard (t2062–t2067). On the owner's project the video build was never quadratic (18–20 ms); its cost is `edit-without-rebuild`'s.
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.
+
+## One wgpu instance per process (segv-crashes)
+
+Opening wgpu devices at once on several threads, each with its own `wgpu::Instance`, races the Vulkan
+loader's instance-level entry points: `kt-cli export` without a display died every run
+(`export_engines` opens two to four devices on threads on a software adapter), t985 died 33 of 60
+runs (a generator's first shader frame opened the compute host on a media worker beside the poster's
+offline engine), and t986, t1312, t958 under load. The load watch's report header created and dropped
+a whole instance — every ICD loaded, every driver's configuration parsed — each five seconds of a hot
+spell. So `context::instance` keeps one leaked instance per backend set, `context::opening` lets one
+device open at a time, and `adapter_facts` is computed once, in the editor before eframe opens its own
+instance. Instances are never dropped: one destroyed at exit is one more native call racing the
+threads on its devices. Not tuned to a loader version: the shape holds on any. Archived change
+`segv-crashes`, design D3–D4.
+
+**Except a GL device** (follow-up, 2026-11-09). The shared instance broke every render from the
+editor under the live scenarios' `WGPU_BACKEND=gl`: wgpu-hal's EGL instance hands each adapter it
+enumerates a CLONE of its one EGL context (`egl: Some(inner.egl.clone())`, each with its own glow
+mutex), so the offline engine and the export's engines, all from one instance, made one context
+current on several threads; `eglMakeCurrent` returned EGL_BAD_ACCESS, the `unwrap` in `make_current`
+panicked inside `GpuFxEngine::build`, and dropping the queue during the unwind locked the context
+again and aborted ("panic in a destructor during cleanup"). Before the one-instance change each
+device had its own instance and so its own context, which is why stage 4 was green. A GL device
+now opens from an instance of its own, under the opening lock (EGL's instance-level calls do not
+race the Vulkan loader); it is not leaked — wgpu keeps it alive with its device, and wgpu-hal counts
+the EGL display's references, so dropping one ends only its own context. The adapter is first asked
+of the shared instance (the backend set may hold Vulkan and GL); only a GL answer is asked again of
+an own one. Walked for the same mechanism (one instance's devices sharing a context): the compute
+host asks `Backends::PRIMARY` (no GL), `new_d3d12` DX12, `adapter_facts` only enumerates under the
+opening lock, the preview's device is eframe's own instance; every other headless device goes
+through `headless_with`. Windows' GL (WGL) shares the same way and takes the same branch. t2088.
+

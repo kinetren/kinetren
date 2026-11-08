@@ -42,3 +42,11 @@ the format".
 ## Deferred
 
 Nothing.
+
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: a shaped speed curve is a point every 5 ms; `sign_knots` asked three readings per point that each laid out the whole map — O(K²) per event, ~400 ms of every build of the owner's project.
+- **Decision**: lay the map out once (`Integral::over` of `segments` or `abs_segments`, summed in the loop's own order) and read by halving: the same bits (t2060 against frozen oracles). `curve_value` halves on sorted keys.
+- **Rejected**: a cache of knots keyed by the curve (the build already has the curve; the cost was the algorithm, not a repeat).
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.

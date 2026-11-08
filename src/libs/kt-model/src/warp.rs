@@ -117,6 +117,7 @@ fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     if points.is_empty() {
         return vec![(0.0, f64::INFINITY, cl(base), cl(base))];
     }
+    kt_time::cost::add(kt_time::cost::Cost::WarpSegment, points.len() as u64);
     let mut out = Vec::with_capacity(points.len() + 1);
     let first = cl(points[0].1);
     if points[0].0 > 0.0 {
@@ -332,16 +333,19 @@ pub fn output_time_for_consumption(base: f64, points: &ParamPoints, a: f64) -> f
 /// For a monotonic profile it returns EXACTLY `(P(t0), P(t1))` — the bit-identity of the
 /// prefetch windows and of the mirror axis rests on this.
 pub fn span_over(base: f64, points: &ParamPoints, t0: f64, t1: f64) -> (f64, f64) {
-    let (a, b) = (source_progress(base, points, t0), source_progress(base, points, t1));
+    // laid out once (builder-cost-guard): a sampled curve that crosses zero at every second key
+    // asked `source_progress` — a fresh segment list — per crossing, O(keys²) per window
+    let pos = Integral::of(base, points);
+    let (a, b) = (pos.progress(t0), pos.progress(t1));
     let (mut lo, mut hi) = (a.min(b), a.max(b));
     // the extrema of P — only at speed zeros: between them the sign is constant
-    for (s0, s1, r0, r1) in segments(base, points) {
+    for &(s0, s1, r0, r1) in &pos.segs {
         if !(s1.is_finite() && s1 > s0) || r0 * r1 >= 0.0 {
             continue;
         }
         let tz = s0 - r0 / ((r1 - r0) / (s1 - s0));
         if tz > t0.min(t1) && tz < t0.max(t1) {
-            let v = source_progress(base, points, tz);
+            let v = pos.progress(tz);
             lo = lo.min(v);
             hi = hi.max(v);
         }
@@ -407,9 +411,14 @@ pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
             1
         }
     };
+    // the segment lists and the integrals over them are laid out ONCE (builder-cost-guard): asking
+    // `dir_after`, `consumed_abs` and `source_progress` per node rebuilt both lists per node, and a
+    // shaped speed curve is sampled into a node every 5 ms — 393–488 ms of every build of the
+    // owner's project went here. The readings are the loops' own bits (t2060).
+    let abs = Integral::over(abs_segments(base, points));
+    let pos = Integral::of(base, points);
     let mut taus: Vec<f64> = vec![0.0];
-    for (t0, t1, r0, r1) in abs_segments(base, points) {
-        let _ = (r0, r1);
+    for &(t0, t1, _, _) in &abs.segs {
         if t0 > 0.0 {
             taus.push(t0);
         }
@@ -425,13 +434,8 @@ pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
         // the direction RIGHT AFTER the node: the speed in the middle of the next
         // micro-step, not at the point itself (at the point it may be zero
         // exactly at the sign change)
-        let dir = dir_after(base, points, tau);
-        let k = SignKnot {
-            tau,
-            a: consumed_abs(base, points, tau),
-            p: source_progress(base, points, tau),
-            dir_after: dir,
-        };
+        let dir = dir_after_in(&abs, base, points, tau);
+        let k = SignKnot { tau, a: abs.progress(tau), p: pos.progress(tau), dir_after: dir };
         match out.last() {
             Some(prev) if prev.dir_after == dir => {}
             _ => out.push(k),
@@ -444,25 +448,25 @@ pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
 }
 
 /// The direction right AFTER the moment `tau` (zero at the very point of a sign change
-/// is not counted as a direction).
-fn dir_after(base: f64, points: &ParamPoints, tau: f64) -> i8 {
-    for (t0, t1, r0, r1) in abs_segments(base, points) {
-        if tau >= t1 {
-            continue;
-        }
-        // on this segment the magnitude is linear; the sign is taken from the SOURCE profile
-        let mid = if t1.is_finite() { (tau.max(t0) + t1) * 0.5 } else { tau.max(t0) + 0.5 };
-        let r = eff_rate(base, points, mid);
-        let _ = (r0, r1);
-        return if r.abs() < RATE_AUDIO_FLOOR {
-            0
-        } else if r < 0.0 {
-            -1
-        } else {
-            1
-        };
+/// is not counted as a direction), over the split segments laid out once.
+fn dir_after_in(abs: &Integral, base: f64, points: &ParamPoints, tau: f64) -> i8 {
+    // the first segment that ends after `tau`; the former loop skipped the others one by one
+    let k = if abs.sorted {
+        abs.segs.partition_point(|seg| tau >= seg.1)
+    } else {
+        abs.segs.iter().position(|seg| tau < seg.1).unwrap_or(abs.segs.len())
+    };
+    let Some(&(t0, t1, _, _)) = abs.segs.get(k) else { return 0 };
+    // on this segment the magnitude is linear; the sign is taken from the SOURCE profile
+    let mid = if t1.is_finite() { (tau.max(t0) + t1) * 0.5 } else { tau.max(t0) + 0.5 };
+    let r = eff_rate(base, points, mid);
+    if r.abs() < RATE_AUDIO_FLOOR {
+        0
+    } else if r < 0.0 {
+        -1
+    } else {
+        1
     }
-    0
 }
 
 /// Material CONSUMED, in TICKS, by output progress `tau` (R.37 item 2).
@@ -490,7 +494,12 @@ struct Integral {
 
 impl Integral {
     fn of(base: f64, points: &ParamPoints) -> Integral {
-        let segs = segments(base, points);
+        Integral::over(segments(base, points))
+    }
+
+    /// Over any contiguous segment list: `segments` reads [`source_progress`], `abs_segments`
+    /// reads [`consumed_abs`] — the two loops are the same text over different lists.
+    fn over(segs: Vec<(f64, f64, f64, f64)>) -> Integral {
         let mut before = Vec::with_capacity(segs.len());
         let mut acc = 0.0;
         for &(t0, t1, r0, r1) in &segs {
@@ -1434,5 +1443,152 @@ mod signed_tests {
                 );
             }
         }
+    }
+
+    use kt_plugin_api::math::FrozenMath as _;
+
+    /// The former `sign_knots`, frozen as the oracle of t2060: three whole-map readings per node.
+    fn sign_knots_oracle(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
+        let dir_of = |r: f64| -> i8 {
+            if r.abs() < RATE_AUDIO_FLOOR {
+                0
+            } else if r < 0.0 {
+                -1
+            } else {
+                1
+            }
+        };
+        let dir_after = |tau: f64| -> i8 {
+            for (t0, t1, _, _) in abs_segments(base, points) {
+                if tau >= t1 {
+                    continue;
+                }
+                let mid = if t1.is_finite() { (tau.max(t0) + t1) * 0.5 } else { tau.max(t0) + 0.5 };
+                return dir_of(eff_rate(base, points, mid));
+            }
+            0
+        };
+        let mut taus: Vec<f64> = vec![0.0];
+        for (t0, t1, _, _) in abs_segments(base, points) {
+            if t0 > 0.0 {
+                taus.push(t0);
+            }
+            if t1.is_finite() && t1 > t0 {
+                taus.push(t1);
+            }
+        }
+        taus.retain(|t| t.is_finite());
+        taus.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        taus.dedup();
+        let mut out: Vec<SignKnot> = Vec::new();
+        for tau in taus {
+            let dir = dir_after(tau);
+            let k = SignKnot {
+                tau,
+                a: consumed_abs(base, points, tau),
+                p: source_progress(base, points, tau),
+                dir_after: dir,
+            };
+            match out.last() {
+                Some(prev) if prev.dir_after == dir => {}
+                _ => out.push(k),
+            }
+        }
+        if out.is_empty() {
+            out.push(SignKnot { tau: 0.0, a: 0.0, p: 0.0, dir_after: dir_of(base) });
+        }
+        out
+    }
+
+    /// The former `span_over`, frozen as the oracle of t2060.
+    fn span_over_oracle(base: f64, points: &ParamPoints, t0: f64, t1: f64) -> (f64, f64) {
+        let (a, b) = (source_progress(base, points, t0), source_progress(base, points, t1));
+        let (mut lo, mut hi) = (a.min(b), a.max(b));
+        for (s0, s1, r0, r1) in segments(base, points) {
+            if !(s1.is_finite() && s1 > s0) || r0 * r1 >= 0.0 {
+                continue;
+            }
+            let tz = s0 - r0 / ((r1 - r0) / (s1 - s0));
+            if tz > t0.min(t1) && tz < t0.max(t1) {
+                let v = source_progress(base, points, tz);
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+        }
+        (lo, hi)
+    }
+
+    /// Signed profiles of every kind the map meets: flat, straight, crossing zero, holding at
+    /// zero, keys hidden left of zero, unsorted keys, and a long sampled curve swinging through
+    /// zero (a shaped speed curve as `rate_profile_keys` samples it).
+    fn signed_profiles() -> Vec<(f64, Vec<(f64, f64)>)> {
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut profiles: Vec<(f64, Vec<(f64, f64)>)> = vec![
+            (1.0, vec![]),
+            (-1.0, vec![]),
+            (0.0, vec![]),
+            (1.0, vec![(0.0, 2.0), (1.0, -2.0)]),
+            (1.0, vec![(0.0, 1.0), (0.3, 0.0), (0.6, 0.0), (1.0, -1.0)]),
+            (1.0, vec![(-0.4, -3.0), (-0.1, 1.0), (0.3, -0.5), (1.2, 2.0)]),
+            (1.0, vec![(0.5, 1.0), (0.8, -2.0), (0.6, 0.5), (0.7, 3.0)]),
+            (1.0, vec![(0.2, 0.005), (0.4, -0.005), (0.9, 4.0)]),
+        ];
+        let swing: Vec<(f64, f64)> =
+            (0..3000).map(|i| (i as f64 / 2000.0 - 0.3, (i as f64 * 0.37).fsin() * 3.0 + next() - 0.5)).collect();
+        profiles.push((1.0, swing));
+        for _ in 0..60 {
+            let n = (next() * 14.0) as usize;
+            let pts = (0..n).map(|_| (next() * 1.6 - 0.3, next() * 70.0 - 35.0)).collect();
+            profiles.push((next() * 8.0 - 4.0, pts));
+        }
+        profiles
+    }
+
+    /// Test 2060 (builder-cost-guard): the knots and the span laid out once are the former
+    /// per-node readings bit for bit — the sound of every signed event rests on them.
+    #[test]
+    fn t2060_sign_knots_and_span_laid_out_once_are_bit_identical() {
+        let bits = |k: &[SignKnot]| -> Vec<(u64, u64, u64, i8)> {
+            k.iter().map(|k| (k.tau.to_bits(), k.a.to_bits(), k.p.to_bits(), k.dir_after)).collect()
+        };
+        for (base, pts) in signed_profiles() {
+            assert_eq!(
+                bits(&sign_knots(base, &pts)),
+                bits(&sign_knots_oracle(base, &pts)),
+                "base {base}, {} keys",
+                pts.len()
+            );
+            for (t0, t1) in [(0.0, 1.0), (0.25, 0.75), (-0.2, 0.1), (0.9, 0.1), (0.0, 7.0)] {
+                let (a, b) = (span_over(base, &pts, t0, t1), span_over_oracle(base, &pts, t0, t1));
+                assert_eq!((a.0.to_bits(), a.1.to_bits()), (b.0.to_bits(), b.1.to_bits()));
+            }
+        }
+    }
+
+    /// Test 2061 (builder-cost-guard): the map's work for the knots of a sampled speed curve grows
+    /// with the curve, not with its square. The count of segments laid out, not a clock (t1671):
+    /// at ×16 the former per-node readings laid out ~256× the segments of ×1.
+    #[test]
+    fn t2061_sign_knots_work_is_linear_in_the_curve() {
+        let curve = |n: usize| -> Vec<(f64, f64)> {
+            (0..n).map(|i| (i as f64 / n as f64, (i as f64 * 0.37).fsin() * 3.0)).collect()
+        };
+        let work = |n: usize| {
+            let pts = curve(n);
+            let ((), c) = kt_time::cost::meter(|| {
+                let _ = sign_knots(1.0, &pts);
+                let _ = span_over(1.0, &pts, 0.0, 1.0);
+            });
+            c[kt_time::cost::Cost::WarpSegment as usize]
+        };
+        let (w1, w16) = (work(500), work(8000));
+        assert!(w1 > 0);
+        assert!(w16 <= 16 * w1 + 16, "×16 keys cost {w16} segments against {w1} at ×1");
     }
 }

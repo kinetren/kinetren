@@ -325,41 +325,104 @@ pub fn resolve_derived<'a>(
         return std::borrow::Cow::Borrowed(clips);
     }
     let mut out = clips.to_vec();
-    // order: first the events WITHOUT derived sources (they are the leaders),
-    // then the rest. A chain longer than two links is resolved by repeated
-    // passes — there are no more of them than events, and the cycle has already been rejected.
+    // The events by id (`same_clip`: the event or a piece of it, the first), and the order
+    // LEADERS FIRST (builder-cost-guard): the former passes went over every event in file order
+    // and resolved one more link of a chain per pass, so a chain of n links cost n passes over
+    // the reel, each with a scan per leader. In the leaders-first order one pass resolves
+    // everything a curve of another event leads; the loop stays for a link between two curves
+    // of one event. A leader's resolved keys do not depend on the pass that resolved them, so
+    // the curves are the former ones.
+    let mut by_id: std::collections::HashMap<ClipId, usize> = std::collections::HashMap::new();
+    for (i, c) in out.iter().enumerate() {
+        by_id.entry(c.id).or_insert(i);
+        if let Some(o) = crate::slice_origin(c.id) {
+            by_id.entry(o).or_insert(i);
+        }
+    }
+    let order = leaders_first(&out, &by_id);
     for _ in 0..=out.len() {
-        let snapshot = out.clone();
         let mut moved = false;
-        for i in 0..out.len() {
-            let me = LinkCtx::of(&snapshot[i], frame_step);
-            let id = snapshot[i].id;
-            for slot in 0..out[i].fx_auto.len() {
-                for j in 0..out[i].fx_auto[slot].len() {
-                    if resolve_one(&snapshot, &mut out[i].fx_auto[slot][j], &me, id, frame_step) {
-                        moved = true;
-                    }
-                }
+        for &i in &order {
+            let me = LinkCtx::of(&out[i], frame_step);
+            let id = out[i].id;
+            // the event's curves are taken out while it resolves against the reel; a link to its
+            // own other curve reads the event as it was before this step, as the former pass
+            // snapshot gave it
+            let own = out[i].clone();
+            let mut fx_auto = std::mem::take(&mut out[i].fx_auto);
+            let mut gen_auto = std::mem::take(&mut out[i].gen_auto);
+            let mut masks = std::mem::take(&mut out[i].masks);
+            let reel = Leaders { clips: &out, by_id: &by_id, own: (i, &own) };
+            for cur in fx_auto.iter_mut().flatten().chain(gen_auto.iter_mut()) {
+                moved |= resolve_with(&reel, cur, &me, id, frame_step);
             }
-            for j in 0..out[i].gen_auto.len() {
-                if resolve_one(&snapshot, &mut out[i].gen_auto[j], &me, id, frame_step) {
-                    moved = true;
-                }
-            }
-            let masks = &mut out[i].masks;
             for m in masks.picture.iter_mut().chain(masks.slots.iter_mut().flatten()) {
                 for cur in &mut m.auto {
-                    if resolve_one(&snapshot, cur, &me, id, frame_step) {
-                        moved = true;
-                    }
+                    moved |= resolve_with(&reel, cur, &me, id, frame_step);
                 }
             }
+            out[i].fx_auto = fx_auto;
+            out[i].gen_auto = gen_auto;
+            out[i].masks = masks;
         }
         if !moved {
             break;
         }
     }
     std::borrow::Cow::Owned(out)
+}
+
+/// The events of a reel and their index by id, for the leaders' lookups.
+struct Leaders<'a> {
+    clips: &'a [ClipEvent],
+    by_id: &'a std::collections::HashMap<ClipId, usize>,
+    /// the event being resolved, as it was before its step
+    own: (usize, &'a ClipEvent),
+}
+
+/// The event indices with every link's leader before its follower (a depth-first post-order
+/// over the links; a cycle, already rejected by validation, is cut where it closes).
+fn leaders_first(clips: &[ClipEvent], by_id: &std::collections::HashMap<ClipId, usize>) -> Vec<usize> {
+    let leads = |i: usize| -> Vec<usize> {
+        let c = &clips[i];
+        let curves = c
+            .fx_auto
+            .iter()
+            .flatten()
+            .chain(c.gen_auto.iter())
+            .chain(c.masks.iter().flat_map(|(_, m)| m.auto.iter()));
+        curves
+            .filter_map(|x| x.source.link_path().and_then(LinkPath::parse))
+            .filter_map(|p| p.clip.and_then(|id| by_id.get(&id).copied()))
+            .filter(|&j| j != i)
+            .collect()
+    };
+    let mut state = vec![0u8; clips.len()]; // 0 new, 1 on the stack, 2 placed
+    let mut order = Vec::with_capacity(clips.len());
+    for root in 0..clips.len() {
+        if state[root] != 0 {
+            continue;
+        }
+        let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, leads(root))];
+        state[root] = 1;
+        while let Some((i, next)) = stack.last_mut() {
+            match next.pop() {
+                Some(j) if state[j] == 0 => {
+                    state[j] = 1;
+                    let l = leads(j);
+                    stack.push((j, l));
+                }
+                Some(_) => {}
+                None => {
+                    let i = *i;
+                    state[i] = 2;
+                    order.push(i);
+                    stack.pop();
+                }
+            }
+        }
+    }
+    order
 }
 
 /// Values of a FORMULA curve over a window — for display (R.63 item 3, R.67).
@@ -430,6 +493,24 @@ fn resolve_one(
     me_id: ClipId,
     frame_step: i64,
 ) -> bool {
+    resolve_curve(cur, me, me_id, frame_step, |p| link_leader(clips, p))
+}
+
+/// [`resolve_one`] with the leader found by the reel's index.
+fn resolve_with(reel: &Leaders, cur: &mut ParamCurve, me: &LinkCtx, me_id: ClipId, frame_step: i64) -> bool {
+    resolve_curve(cur, me, me_id, frame_step, |p| {
+        let i = *reel.by_id.get(&p.clip?)?;
+        leader_ready(if i == reel.own.0 { reel.own.1 } else { &reel.clips[i] }, p)
+    })
+}
+
+fn resolve_curve<'a>(
+    cur: &mut ParamCurve,
+    me: &LinkCtx,
+    me_id: ClipId,
+    frame_step: i64,
+    leader_of: impl FnOnce(&LinkPath) -> Option<&'a ClipEvent>,
+) -> bool {
     if !cur.needs_resolve() {
         return false;
     }
@@ -447,20 +528,27 @@ fn resolve_one(
     let step = frame_step.max(1);
     let from = me.source_in.0;
     let to = from + me.duration.0.max(step);
+    // the leader is found ONCE per curve (builder-cost-guard): it does not depend on the
+    // sample, and finding it per sample scanned the reel's events per frame of the curve
+    let path = path.map(|p| LinkPath { clip: p.clip.or(Some(me_id)), ..p });
+    let leader = match &path {
+        Some(p) => match leader_of(p) {
+            Some(c) => Some(c),
+            // the leader is not yet resolved — we wait for the next pass
+            None => return false,
+        },
+        None => None,
+    };
     let mut keys = Vec::new();
     let mut t = from;
     while t <= to {
         let at = Tick(t);
-        let src = match &path {
-            Some(p) => {
-                let p = LinkPath { clip: p.clip.or(Some(me_id)), ..p.clone() };
-                match read_link_in(clips, me, &p, at) {
-                    Some(v) => v,
-                    // the leader is not yet resolved — we wait for the next pass
-                    None => return false,
-                }
-            }
-            None => 0.0,
+        let src = match (&path, leader) {
+            (Some(p), Some(c)) => match read_link_from(c, me, p, at) {
+                Some(v) => v,
+                None => return false,
+            },
+            _ => 0.0,
         };
         let k = if base_keys.is_empty() { 0.0 } else { crate::curve_value(&base_keys, at) };
         let v = match &expr {
@@ -497,10 +585,17 @@ fn resolve_one(
     true
 }
 
-/// The same as `read_link`, but over a slice of events (the reel is already parsed).
-fn read_link_in(clips: &[ClipEvent], me: &LinkCtx, path: &LinkPath, at: Tick) -> Option<f64> {
+/// The leader of a link in a slice of events (the reel is already parsed), or `None` while it
+/// is itself not yet resolved.
+fn link_leader<'a>(clips: &'a [ClipEvent], path: &LinkPath) -> Option<&'a ClipEvent> {
     let want = path.clip?;
-    let src = clips.iter().find(|c| crate::same_clip(c.id, want))?;
+    let at = clips.iter().position(|c| crate::same_clip(c.id, want));
+    kt_time::cost::add(kt_time::cost::Cost::ClipSearch, at.map_or(clips.len(), |i| i + 1) as u64);
+    leader_ready(&clips[at?], path)
+}
+
+/// The leader itself, or `None` while its own curve is not yet resolved.
+fn leader_ready<'a>(src: &'a ClipEvent, path: &LinkPath) -> Option<&'a ClipEvent> {
     // the leading property, itself not yet resolved, cannot be read: one would get
     // a value “before the link”, that is, not what a person will see
     let pending = match &path.owner {
@@ -519,6 +614,11 @@ fn read_link_in(clips: &[ClipEvent], me: &LinkCtx, path: &LinkPath, at: Tick) ->
     if pending {
         return None;
     }
+    Some(src)
+}
+
+/// The leader's value at the follower's material moment `at`.
+fn read_link_from(src: &ClipEvent, me: &LinkCtx, path: &LinkPath, at: Tick) -> Option<f64> {
     let tl = clip_timeline_at(me.source_in, me.start, me.duration, me.reversed, me.frame_step, at);
     let lo = src.start.0;
     let hi = src.start.0 + src.duration.0.max(1);

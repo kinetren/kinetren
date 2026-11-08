@@ -19,7 +19,10 @@ goes here, with its date, in the same turn.
 - **The orchestrator merges** ("сам вливай и управляй ими", 2026-11-01). The executor branch goes
   into the orchestrator's own branch first (conflicts resolved there; the full workspace tests on
   the merged tree when both sides carry code; load-sensitive reds rerun alone), then `master`
-  fast-forwards to it. `master` never takes a direct commit (2026-11-01: "я запрещаю любым агентам
+  takes it by a merge commit, `git merge --no-ff -m "<stage>: <changes merged>" orch-26-11-01`,
+  never a fast-forward (2026-11-09: "все правки в master идут строго через merge, чтобы в master на
+  правки было по одному коммиту, а всякие промежуточные были в петле сбоку и не мешали в
+  истории"); the message names the stage and each change it brings. `master` never takes a direct commit (2026-11-01: "я запрещаю любым агентам
   вносить правки в master напрямую без merge из ветки"). The orchestrator never pushes.
 - **Three executors at once, no more** (2026-11-01: "пять много").
 

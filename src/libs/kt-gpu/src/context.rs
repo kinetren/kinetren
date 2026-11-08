@@ -5,8 +5,72 @@
 //!   the limits repeat the egui-wgpu rule (downlevel_webgl2 on GL, otherwise
 //!   default; max_texture_dimension_2d 8192): shader behaviour in the GUI
 //!   and in headless MUST match.
+//!
+//! Every headless device, the compute host and the adapter list come from ONE `wgpu::Instance` per
+//! backend set (`instance`), opened under one lock (`open_lock`), and the instances are never
+//! dropped (segv-crashes, found-defects 131): the Vulkan loader's instance-level entry points are not
+//! safe to race — `export_engines` opened two to four instances on threads at once and the process
+//! died in `vkEnumerateInstanceExtensionProperties` beside a `vkCreateInstance` (row 131, every run on
+//! a software adapter) — and the load watch created and destroyed a whole instance (every ICD loaded,
+//! every driver's config parsed) each five seconds of a hot spell, beside the preview's device.
+//!
+//! The one exception is a device on the GL backend (`WGPU_BACKEND=gl`, a machine without Vulkan):
+//! wgpu's GL adapters of one instance share that instance's ONE EGL context, so two devices of one
+//! instance make it current on two threads and the second dies with EGL_BAD_ACCESS (t2088: every
+//! render from the editor under the live scenarios' GL died in `GpuFxEngine::build` beside the
+//! offline engine). A GL device therefore opens from an instance of its own (`own_instance`), still
+//! under the opening lock; wgpu keeps it alive as long as its device, and EGL counts the display's
+//! references, so dropping it with its device ends only its own context.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// Held while a device is opened or the adapters are listed: one opening at a time in the process.
+pub(crate) type Opening = MutexGuard<'static, ()>;
+
+pub(crate) fn opening() -> Opening {
+    static OPEN: Mutex<()> = Mutex::new(());
+    OPEN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The process's instance for `backends` (the environment's descriptor otherwise, `WGPU_BACKEND`
+/// respected), created at the first ask under the opening lock and kept for the process's life: an
+/// instance is the loader and every driver it loaded, and destroying one at exit races the threads
+/// still on its devices.
+pub(crate) fn instance(_opening: &Opening, backends: wgpu::Backends) -> &'static wgpu::Instance {
+    static ALL: Mutex<Vec<(wgpu::Backends, &'static wgpu::Instance)>> = Mutex::new(Vec::new());
+    let mut all = ALL.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, i)) = all.iter().find(|(b, _)| *b == backends) {
+        return i;
+    }
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    desc.backends = backends;
+    let i: &'static wgpu::Instance = Box::leak(Box::new(wgpu::Instance::new(desc)));
+    INSTANCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    all.push((backends, i));
+    i
+}
+
+/// An instance for ONE GL device: GL adapters of an instance share its EGL context (see the module
+/// doc). Not kept: it lives as long as the device opened from it.
+fn own_instance(_opening: &Opening) -> wgpu::Instance {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+    desc.backends = wgpu::Backends::GL;
+    wgpu::Instance::new(desc)
+}
+
+static INSTANCES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Shared instances this process created (t2087): one per backend set, however many devices it
+/// opened. A GL device's own instance is not one of them.
+#[doc(hidden)]
+pub fn instances_created() -> usize {
+    INSTANCES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The environment's backends (`WGPU_BACKEND`), what `new_without_display_handle_from_env` takes.
+pub(crate) fn env_backends() -> wgpu::Backends {
+    wgpu::InstanceDescriptor::new_without_display_handle_from_env().backends
+}
 
 #[derive(Debug)]
 pub enum GpuInitError {
@@ -52,9 +116,8 @@ impl GpuContext {
 
     /// The device of the D3D12 backend, whatever adapter it is; `None` where there is none.
     pub fn new_d3d12() -> Option<GpuContext> {
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-        desc.backends = wgpu::Backends::DX12;
-        let instance = wgpu::Instance::new(desc);
+        let g = opening();
+        let instance = instance(&g, wgpu::Backends::DX12);
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
         let info = adapter.get_info();
         let limits = wgpu::Limits { max_texture_dimension_2d: 8192, ..wgpu::Limits::default() };
@@ -78,13 +141,18 @@ impl GpuContext {
     }
 
     fn headless_with(default: wgpu::PowerPreference) -> Result<GpuContext, GpuInitError> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let g = opening();
+        let options = wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::from_env().unwrap_or(default),
             ..Default::default()
-        }))
-        .map_err(|e| GpuInitError::NoAdapter(e.to_string()))?;
+        };
+        let request = |i: &wgpu::Instance| {
+            pollster::block_on(i.request_adapter(&options)).map_err(|e| GpuInitError::NoAdapter(e.to_string()))
+        };
+        let mut adapter = request(instance(&g, env_backends()))?;
+        if adapter.get_info().backend == wgpu::Backend::Gl {
+            adapter = request(&own_instance(&g))?;
+        }
         let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
             wgpu::Limits::downlevel_webgl2_defaults()
         } else {
@@ -144,17 +212,22 @@ pub fn power_preference_for(adapters: &[AdapterFact], driving: &[DrivingCard]) -
 }
 
 /// Every device this machine offers: the load report names them, so that "which card did it run
-/// on" is a fact in the file, not a question to the person.
+/// on" is a fact in the file, not a question to the person. Listed once per process: the load
+/// watch asks at every hot spell, and each listing once loaded every driver anew (segv-crashes).
 pub fn adapter_facts() -> Vec<AdapterFact> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
-        .iter()
-        .map(|a| {
-            let i = a.get_info();
-            AdapterFact { name: i.name, kind: i.device_type, backend: i.backend, vendor: i.vendor, device: i.device }
+    static FACTS: std::sync::OnceLock<Vec<AdapterFact>> = std::sync::OnceLock::new();
+    FACTS
+        .get_or_init(|| {
+            let g = opening();
+            pollster::block_on(instance(&g, env_backends()).enumerate_adapters(wgpu::Backends::all()))
+                .iter()
+                .map(|a| {
+                    let i = a.get_info();
+                    AdapterFact { name: i.name, kind: i.device_type, backend: i.backend, vendor: i.vendor, device: i.device }
+                })
+                .collect()
         })
-        .collect()
+        .clone()
 }
 
 /// The cards with a monitor plugged in. Empty where sysfs has no such thing (Windows): the

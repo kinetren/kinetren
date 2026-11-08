@@ -75,6 +75,8 @@ src/libs/kt-media   MediaSource trait, bridge to kt-ffmpeg, SyntheticSource, sid
 src/libs/kt-text    title rasterization: harfrust+ab_glyph, vendored Noto Sans (R.52)
 src/libs/kt-cache   burst cache + coverage (the only truth about "warmth")
 src/libs/kt-fx      AudioFx/VideoFx: slowedreverb, gain, video FX
+src/libs/kt-crash   the native-crash report: an async-signal-safe handler writes a raw report
+                     (thread, stack, threads, mappings), a healthy process symbolizes it (segv-crashes)
 src/libs/kt-engine  render graph, MediaWorker scheduler, transport, prefetch, export
 src/libs/kt-plugin-api  the plugin contract (plugin-api-stage1): manifest + param passport, the
                      FX/transition/generator kernels, the registry by family; depends on kt-time and serde
@@ -149,8 +151,11 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
 - **`master` changes only by a merge from a branch** (owner, 2026-11-01: "I forbid any agent to
   make edits in master directly without a merge from a branch"). Every session works on its own
   branch in its own worktree (`.claude/worktrees/<name>`); `master` receives that branch by a merge
-  (fast-forward when it can), and the merge itself is done or ordered by the orchestrating session
-  or the owner. A commit made on `master` itself is a process defect.
+  COMMIT, never a fast-forward (owner, 2026-11-09: "чтобы в master на правки было по одному коммиту,
+  а всякие промежуточные были в петле сбоку"): `git merge --no-ff`, so `git log --first-parent
+  master` reads one commit per change and the intermediate commits sit on the side loop. The merge
+  itself is done or ordered by the orchestrating session or the owner. A commit made on `master`
+  itself is a process defect.
 - **The disk is short** (owner, 2026-10-30 and 2026-11-01). A worktree's `target` is ~14 GB fresh
   and grows with every core edit. So:
   - `scripts/target-prune.py` runs after every committed stage;
