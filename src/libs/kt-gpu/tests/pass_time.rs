@@ -50,6 +50,11 @@ fn plan<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance], t: i64) -> FramePlan<'a> 
     }
 }
 
+fn defaults_of(id: &str) -> Vec<f64> {
+    let reg = kt_plugin_api::installed().unwrap();
+    reg.get(kt_plugin_api::Family::Fx, id).unwrap().manifest().passport.iter().map(|s| s.default).collect()
+}
+
 /// `name mean ×n` items of a record's line: Σ mean·n.
 fn line_sum(line: &str) -> (f64, u32) {
     let mut sum = 0.0;
@@ -77,10 +82,7 @@ fn t2020_t2022_every_pass_is_timed_and_the_passes_sum_to_the_frame() {
     assert_eq!(pass_time::take(), None, "nothing composed, nothing recorded");
 
     let f = frame();
-    let reg = kt_plugin_api::installed().unwrap();
-    let m = reg.get(kt_plugin_api::Family::Fx, "vhs_tape").unwrap().manifest();
-    let defaults: Vec<f64> = m.passport.iter().map(|s| s.default).collect();
-    let fx = vec![FxInstance::plugin_with("vhs_tape", &defaults).expect("vhs_tape")];
+    let fx = vec![FxInstance::plugin_with("vhs_tape", &defaults_of("vhs_tape")).expect("vhs_tape")];
     let mut out = Vec::new();
     for t in 0..3 {
         assert!(engine.execute_once(&plan(&f, &fx, t * 3750), &mut out).expect("execute"));
@@ -119,6 +121,15 @@ fn t2020_t2022_every_pass_is_timed_and_the_passes_sum_to_the_frame() {
     assert!((sum - frame_ms).abs() <= 0.0005 * n as f64 + 1e-9, "Σ {sum} ms against {frame_ms} ms: {line}");
     // t2022: once taken, and nothing composes, the next second has nothing
     assert_eq!(pass_time::take(), None);
+
+    // a barrier of host nodes alone (blur: a mip down and up) names them after itself, not after
+    // the barrier whose pipes follow it
+    let blur = vec![FxInstance::plugin_with("blur", &defaults_of("blur")).expect("blur")];
+    assert!(engine.execute_once(&plan(&f, &blur, 8 * 3750), &mut out).expect("execute"));
+    let s = pass_time::take().expect("a blurred frame");
+    let line = s.line();
+    assert!(s.passes.iter().any(|p| p.0 == "blur:resample" && p.2 == 2), "{line}");
+    assert!(s.passes.iter().all(|p| !p.0.starts_with("glow")), "{line}");
 
     // a device without timestamps (the interface's GL device, say): the frame's submit-to-done time
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());

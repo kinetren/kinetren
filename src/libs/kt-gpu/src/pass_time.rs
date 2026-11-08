@@ -32,7 +32,7 @@ pub(crate) enum PassLabel {
     Fixed(&'static str),
     /// A plugin's own pass: its index in the engine's plugin pipes.
     Plugin(usize),
-    /// A host node inside a barrier plugin's graph: the plugin's first pipe and the node.
+    /// A host node inside a barrier plugin's graph: the plugin's index among the barriers, the node.
     Host(usize, &'static str),
 }
 
@@ -61,7 +61,7 @@ pub(crate) struct Timer {
     resolve: Option<wgpu::Buffer>,
     period_ns: f64,
     adapter: Arc<str>,
-    /// The names of the plugin pipes and the plugin each belongs to, by pipe index.
+    /// The names of the plugin pipes by index, and the barrier plugins' ids by their order.
     names: Vec<String>,
     owners: Vec<String>,
     labels: Vec<PassLabel>,
@@ -243,8 +243,8 @@ impl Timer {
         match l {
             PassLabel::Fixed(s) => s.to_string(),
             PassLabel::Plugin(i) => self.names.get(i).cloned().unwrap_or_else(|| format!("plugin {i}")),
-            PassLabel::Host(base, node) => {
-                format!("{}:{node}", self.owners.get(base).map_or("plugin", String::as_str))
+            PassLabel::Host(owner, node) => {
+                format!("{}:{node}", self.owners.get(owner).map_or("plugin", String::as_str))
             }
         }
     }

@@ -243,6 +243,9 @@ enum FxOp {
     /// its first shader in `Inner::plugin_pipes`.
     PluginBarrier {
         base: usize,
+        /// The plugin's index in `plugin_barriers()`: what its host nodes are named after (a barrier
+        /// of host nodes alone, blur, has no pipe of its own to name it by).
+        owner: usize,
         nodes: Vec<kt_plugin_api::barrier::Node>,
     },
     /// A point-wise PLUGIN at the barrier position (plugin-api-stage1, D5): its own generated pass,
@@ -584,7 +587,9 @@ fn chain_ops(
                         }
                     }
                     if !nodes.is_empty() {
-                        ops.push(FxOp::PluginBarrier { base: barrier_pipe_base(&slot.manifest().id), nodes });
+                        let id = &slot.manifest().id;
+                        let owner = plugin_barriers().iter().position(|(p, ..)| *p == &**id).expect("assembled at engine creation");
+                        ops.push(FxOp::PluginBarrier { base: barrier_pipe_base(id), owner, nodes });
                     }
                     // the alpha rule (R.53, item 417): declared by the step, not matched by kind
                     match slot.manifest().decl.alpha {
@@ -807,7 +812,8 @@ struct Inner {
     max_dim: u32,
     /// What each pass costs on the device (gpu-pass-cost).
     timer: Timer,
-    /// Inside a barrier plugin's graph: its first pipe, so a host node there is named after it.
+    /// Inside a barrier plugin's graph: its index in `plugin_barriers()`, so a host node there is
+    /// named after it.
     host_owner: Option<usize>,
 }
 
@@ -915,23 +921,20 @@ pub fn plugin_barriers() -> Vec<(&'static str, &'static [&'static str], u32)> {
         .collect()
 }
 
-/// The names of `Inner::plugin_pipes` and the plugin each belongs to, by index (gpu-pass-cost): a
-/// point-wise plugin's own pass is its id, a barrier's pass `id:name` (`BarrierKernel::pass_names`).
+/// The names of `Inner::plugin_pipes` by index, and the barrier plugins' ids in `plugin_barriers()`
+/// order (gpu-pass-cost): a point-wise plugin's own pass is its id, a barrier's pass `id:name`
+/// (`BarrierKernel::pass_names`), a host node in a barrier's graph `id:node`.
 fn plugin_pipe_names() -> (Vec<String>, Vec<String>) {
-    let (mut names, mut owners) = (Vec::new(), Vec::new());
-    for (id, _) in plugin_taps() {
-        names.push(id.to_string());
-        owners.push(id.to_string());
-    }
-    let Some(reg) = kt_plugin_api::installed() else { return (names, owners) };
-    for (id, shaders, _) in plugin_barriers() {
-        let own = reg.plugins().find(|p| &*p.manifest().id == id).and_then(|p| p.barrier()).map_or(&[][..], |b| b.pass_names());
+    let mut names: Vec<String> = plugin_taps().iter().map(|(id, _)| id.to_string()).collect();
+    let barriers = plugin_barriers();
+    let Some(reg) = kt_plugin_api::installed() else { return (names, Vec::new()) };
+    for (id, shaders, _) in &barriers {
+        let own = reg.plugins().find(|p| &*p.manifest().id == *id).and_then(|p| p.barrier()).map_or(&[][..], |b| b.pass_names());
         for i in 0..shaders.len() {
             names.push(crate::pass_time::barrier_pass_name(id, own, i));
-            owners.push(id.to_string());
         }
     }
-    (names, owners)
+    (names, barriers.iter().map(|(id, ..)| id.to_string()).collect())
 }
 
 /// The index of a barrier plugin's first pass in `Inner::plugin_pipes`.
@@ -2475,9 +2478,9 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::PluginBarrier { base, nodes } => {
+                FxOp::PluginBarrier { base, owner, nodes } => {
                     use kt_plugin_api::barrier::{Node, Slot};
-                    self.host_owner = Some(*base);
+                    self.host_owner = Some(*owner);
                     // `src` — the barrier's input, `prev` — the last node's output, `saved` — kept ones;
                     // textures the graph made are released when nothing reads them any more
                     let src = view.clone();
@@ -2731,7 +2734,7 @@ impl Inner {
         u: UniformData,
     ) {
         let label = match (which, self.host_owner) {
-            (Which::Fixed(pipe), Some(base)) => PassLabel::Host(base, pipe.name()),
+            (Which::Fixed(pipe), Some(owner)) => PassLabel::Host(owner, pipe.name()),
             (Which::Fixed(pipe), None) => PassLabel::Fixed(pipe.name()),
             (Which::Plugin(i), _) => PassLabel::Plugin(i),
         };
