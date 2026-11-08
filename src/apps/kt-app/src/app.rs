@@ -10230,6 +10230,9 @@ pub fn run() -> eframe::Result {
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
     // system (item 1, v1.4). The card that drives the monitor is the one with no copy:
     // `display_power_preference` decides; WGPU_POWER_PREF overrides it.
+    // the adapter list, once, BEFORE eframe opens its own instance (segv-crashes): the load watch's
+    // report asks for it later from its thread, and no instance is created beside eframe's at start
+    let _ = kt_gpu::adapter_facts();
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
         setup.power_preference = kt_gpu::display_power_preference();

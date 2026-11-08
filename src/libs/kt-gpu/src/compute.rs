@@ -42,9 +42,9 @@ pub fn open() -> Result<Arc<dyn ComputeHost>, String> {
 }
 
 pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
-    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
-    desc.backends = wgpu::Backends::PRIMARY;
-    let instance = wgpu::Instance::new(desc);
+    // the process's one instance and opening lock (segv-crashes): see `context::instance`
+    let g = crate::context::opening();
+    let instance = crate::context::instance(&g, wgpu::Backends::PRIMARY);
     // WARP is listed beside a real device (lavapipe on a Windows runner): pick past it
     let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY));
     adapters.retain(|a| !a.get_info().name.to_lowercase().contains("microsoft basic render"));
