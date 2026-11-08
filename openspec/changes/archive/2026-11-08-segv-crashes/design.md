@@ -161,7 +161,7 @@ a virtual card, libvulkan 1.3.275):
   40 of 40 with a full `nextest --workspace` running beside it;
 - full `cargo nextest run --workspace`, three runs on the new code: 1654/1655, 1654/1655, 1655/1655,
   no test died by a signal; the one red twice is t1935 (2 callback underruns while a rebuild took
-  6 s under load: a wall-clock race of the audio ring, found-defects 152, kt-engine untouched here).
+  6 s under load: a wall-clock race of the audio ring, found-defects 158, kt-engine untouched here).
   Two more runs were lost to the disk filling up (0 bytes free, other worktrees): one ended in
   SIGTERM at test 1206, one failed linking; they are not counted;
 - live `fault` (the crash window names `SIGSEGV in thread "live-fault" at
