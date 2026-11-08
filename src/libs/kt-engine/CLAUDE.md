@@ -5,7 +5,7 @@
 Render graph, decode scheduler, transport, prefetch, export. The core builds without FFmpeg/audio hardware (real sources come from kt-media through a trait).
 
 ## Invariants
-- Exactly one MediaWorker thread owns the decoder; clients go only through a priority queue (Playback > NearPrefetch > FarPrefetch > Thumbnail) with generation cancellation; at equal priority, requests go ahead of the decoder's cursor (anti ping-pong seek, defect h).
+- Exactly one MediaWorker thread owns the decoder; clients go only through a priority queue (Playback > NearPrefetch > FarPrefetch > Thumbnail) with generation cancellation; at equal priority, requests go ahead of the decoder's cursor (anti ping-pong seek, defect h). Behind the cursor the pick is the START of the run of queued keys (`video_run_start`), read forward in one span — the nearest key took one key per span, a seek per frame (decode-request-storm, t2040). A key queued or in the span being decoded (`in_flight`) is not queued again and not counted in `decode_requests` (t2041).
 - Playback is not blocked on decoding: a miss by the deadline → silence / the last frame + an underrun flag (defect l).
 - FxStateStore — only on the audio-render thread; a diff of chains by clip id on model edits (invariants No. 2–3, defects b, f). The final-mix store (`mix.rs`) is that thread's too.
 - Transport: the playhead is advanced by the audio-render thread by exactly the frames consumed by the callback; wall-clock in render paths is forbidden (determinism, invariant No. 10).
@@ -29,6 +29,14 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   `stream_memo()`; an export sets its own (`set_stream_memo`) and pre-rolls before each frame (`stream_preroll` in
   export.rs: decode the earliest missing frames in budget-bounded batches, `stream_advance`, until nothing is missing).
   Tests t1241/t1242/t1248.
+  **The live preview PACES the stage** (decode-request-storm, `StreamPacing`, set by the player on its renderers
+  only): the order is the earliest history positions that fit a quarter of the cache (a whole history ordered at
+  once ran the decoder through it while the stage read only at composites, and LRU dropped its front — the frame
+  never came); the prefetch thread advances the stages (`stream_advance_ahead`: the frame on screen and, playing,
+  the frames ahead to the next pass) and keeps passing on a pause while one is pending; a composite runs a stage
+  only two positions short — paused it reports incomplete, playing it shows the stage's latest held frame
+  (`StreamKernel::held`) and is not kept as the moment's composite (`stream_held`). The UI thread never computes a
+  history. The reel strip and the poster call `stream_preroll`. Tests t2042–t2045.
 - **Frame blending (R.37 C5, "Frames: blending")** is done in the COMMON code of the plan (`layer_src` → `blend_frames`), not in the executor, which receives an already blended pre-FX frame (invariant No. 7). The kernel is `dissolve_into`, integer and scalar. A blended frame carries its base frame's serial, so kt-gpu's upload key takes the pair and the weight (t250).
   - A PAIR is decided by ONE function `clip_frame_keys`; `layers_at` MUST return BOTH pts, otherwise prefetch warms one frame while the plan asks for two — an eternal miss. With R.56 it also has a second entry — `blend_footage`, inherited from the attachment above (item 448): the reel itself has no pairs, its leaves blend.
   - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.

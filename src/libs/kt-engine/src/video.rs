@@ -19,7 +19,7 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 
 #[path = "video_stream.rs"]
 mod stream;
-pub use stream::stream_memo;
+pub use stream::{StreamPacing, stream_memo};
 use stream::StreamStage;
 
 /// VIDEO-TRACK STAGE (R.62, change B): a track with a chain, a level ≠ 1
@@ -471,6 +471,11 @@ pub struct VideoRenderer {
     stages: Vec<VideoTrackStage>,
     /// The memo of the stream stages (datamosh-codec-path, D3).
     stream_memo: Arc<kt_plugin_api::stream::StreamMemo>,
+    /// How a live preview paces its stream stages (decode-request-storm); `None` — everything at
+    /// once, as an export and the tools ask.
+    stream_pacing: Option<StreamPacing>,
+    /// The last plan showed a stream layer's held (late) frame (`StreamPacing::hold`).
+    stream_held: std::sync::atomic::AtomicBool,
 }
 
 /// Source frame(s) for moment `t`: the main one and, in “blend” mode,
@@ -1257,7 +1262,35 @@ impl VideoRenderer {
             nests,
             stages,
             stream_memo: stream_memo().clone(),
+            stream_pacing: None,
+            stream_held: Default::default(),
         }
+    }
+
+    /// Playing or paused, for the stream stages' late frames (`StreamPacing::hold`).
+    pub fn set_stream_hold(&mut self, hold: bool) {
+        if let Some(p) = self.stream_pacing.as_mut() {
+            p.hold = hold;
+        }
+        for sub in self.nests.values_mut() {
+            sub.set_stream_hold(hold);
+        }
+    }
+
+    /// Whether the last `frame_plan` showed a stream layer's late frame: such a composite is not
+    /// the moment's own, and must not be kept as what plays there without work.
+    pub fn stream_held(&self) -> bool {
+        self.stream_held.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Pace the stream stages as a live preview must (decode-request-storm): the order names the
+    /// earliest history frames that fit `order_bytes`, a composite runs a stage only when its frame
+    /// lacks at most `compose_steps` positions, and the rest is `stream_advance` off the UI thread.
+    pub fn set_stream_pacing(&mut self, pacing: Option<StreamPacing>) {
+        for sub in self.nests.values_mut() {
+            sub.set_stream_pacing(pacing);
+        }
+        self.stream_pacing = pacing;
     }
 
     /// The memo the stream stages of this renderer (and of its reels) keep their codec results
@@ -1270,18 +1303,45 @@ impl VideoRenderer {
     }
 
     /// Run every stream stage active at `t` as far as the cached frames allow (the export's
-    /// pre-roll, D6): the results stay in the memo, so the next `layers_at` names less.
-    pub fn stream_advance(&self, cache: &BurstCache, t: Tick, quality: Quality) {
+    /// pre-roll, D6; the live preview's prefetch thread, decode-request-storm): the results stay
+    /// in the memo, so the next `layers_at` names less. `true` — a stage still lacks frames.
+    pub fn stream_advance(&self, cache: &BurstCache, t: Tick, quality: Quality) -> bool {
+        let mut pending = false;
         for c in self.clips.iter().filter(|c| c.active_at(t)) {
             match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(st), None) => {
                     let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache));
-                    let _ = st.kernel().render(&st.values, &cs, cs.pos(t), &self.stream_memo, &mut Vec::new());
+                    let n = cs.pos(t);
+                    if st.kernel().needs(&st.values, &cs, n, &self.stream_memo).is_empty() {
+                        continue;
+                    }
+                    pending |= st.kernel().render(&st.values, &cs, n, &self.stream_memo, &mut Vec::new()).is_none();
                 }
-                (_, Some(sub)) => sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality)),
+                (_, Some(sub)) => {
+                    pending |= sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality))
+                }
                 _ => {}
             }
         }
+        pending
+    }
+
+    /// The largest frame (RGBA bytes) a stream stage active at `t` orders (decode-request-storm:
+    /// what the player's look-ahead of the stages may keep in the memo); 0 — none.
+    pub fn stream_frame_bytes(&self, t: Tick, quality: Quality) -> usize {
+        self.clips
+            .iter()
+            .filter(|c| c.active_at(t))
+            .map(|c| match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
+                (Some(st), None) => {
+                    let sq = stream::stream_quality(c, st, quality);
+                    sq.width as usize * sq.height as usize * 4
+                }
+                (_, Some(sub)) => sub.stream_frame_bytes(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality)),
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// Frames needed for the composition of moment `t` (aligned by the caller):
@@ -1331,7 +1391,10 @@ impl VideoRenderer {
                     let st = c.stream.as_deref().expect("checked");
                     let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
                     let needs = st.kernel().needs(&st.values, &cs, cs.pos(t), &self.stream_memo);
-                    cs.order(&needs, out);
+                    match self.stream_pacing {
+                        Some(p) => cs.order(cs.window(&needs, p.order_bytes), out),
+                        None => cs.order(&needs, out),
+                    }
                 }
                 None => {
                     let dq = clip_decode_quality(c, quality);
@@ -1623,8 +1686,11 @@ impl VideoRenderer {
             nests: &self.nests,
             stages: &self.stages,
             stream_memo: &self.stream_memo,
+            stream_pacing: self.stream_pacing,
+            stream_held: &self.stream_held,
             blend_footage: false,
         };
+        self.stream_held.store(false, std::sync::atomic::Ordering::Relaxed);
         build_plan(&self.clips, &ctx, cache, t, quality)
     }
 }
@@ -1648,6 +1714,10 @@ struct PlanCtx<'a> {
     /// The memo of the stream stages (datamosh-codec-path, D3): the root renderer's, inherited
     /// downward, so an export's private memo serves its reels too.
     stream_memo: &'a kt_plugin_api::stream::StreamMemo,
+    /// The live preview's pacing of the stream stages (decode-request-storm), inherited downward.
+    stream_pacing: Option<StreamPacing>,
+    /// Set when a stream layer of the plan shows a late frame (the root renderer's flag).
+    stream_held: &'a std::sync::atomic::AtomicBool,
 }
 
 /// The chain's camera: pinned by id, otherwise the active one by `t`, otherwise the default
@@ -1735,7 +1805,7 @@ fn layer_src<'a>(
     // event's stream HERE, in the plan's common code, and both executors receive those bytes. The
     // frame at the ordinary decode quality is not read — it is not ordered either (D5).
     let streamed = match (&clip.stream, clip.nest) {
-        (Some(st), None) => Some(stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, quality, dq, t, src_pts)),
+        (Some(st), None) => Some(stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_pacing, ctx.stream_held, quality, dq, t, src_pts)),
         _ => None,
     };
     let (frame, content) = if clip.nest.is_some() {
@@ -1812,6 +1882,8 @@ fn layer_src<'a>(
                 nests: &sub.nests,
                 stages: &sub.stages,
                 stream_memo: ctx.stream_memo,
+                stream_pacing: ctx.stream_pacing,
+                stream_held: ctx.stream_held,
                 blend_footage: blend,
             };
             // The sub-plan is assembled at S×Quality (R.50, B5): the chain on the
@@ -1888,6 +1960,8 @@ fn track_stage_layer<'a>(
         // the stage does NOT assemble itself
         stages: &[],
         stream_memo: ctx.stream_memo,
+        stream_pacing: ctx.stream_pacing,
+        stream_held: ctx.stream_held,
     };
     let plan = build_plan(clips, &sub_ctx, cache, t, quality);
     // revision of the sub-composite: the track's properties plus the contents of its events

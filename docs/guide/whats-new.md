@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **A Datamosh no longer stalls the picture.** After you added or changed a Datamosh, the program could ask for the same frames over and over, throw each one away before using it, and leave a paused frame or a short loop standing still for as long as you watched, with the interface freezing for seconds at a time. Now its frames are fetched in the order the effect uses them, the effect is worked out in the background, and the interface never waits for it: a loop over a Datamosh plays, and on a computer too slow for the effect in real time you see it run late rather than not at all.
 - **A range you have played plays again for free.** The picture after the effects and the sound after the effects are kept as you first saw and heard them, like a prerender: a loop over heavy effects (VHS, Camera ISP, a slowed composition) runs at the project's frame rate from its third lap, with no decoding and no effect running. Changing a parameter recomputes only the part it touches. The strips at the top of the timeline and under each event are now bright where a range plays without work and keep their darker colour where only its sources are ready.
 - **Editing during playback no longer cuts the sound.** On a large project every change used to stop the sound for a moment.
 - **A composition placed many times no longer eats the memory.** Its inner effects are prepared only for the places that are playing.

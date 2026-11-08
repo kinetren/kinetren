@@ -217,7 +217,17 @@ impl Player {
         project: Project,
         sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     ) -> (Player, rtrb::Consumer<f32>) {
-        let cache = Arc::new(BurstCache::new(CacheConfig::default()));
+        Player::with_cache(project, sources, CacheConfig::default())
+    }
+
+    /// The same with a cache of the given budget (a test whose history must not fit it,
+    /// decode-request-storm t2044).
+    pub fn with_cache(
+        project: Project,
+        sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+        config: CacheConfig,
+    ) -> (Player, rtrb::Consumer<f32>) {
+        let cache = Arc::new(BurstCache::new(config));
         let transport = Arc::new(Transport::new());
         let shared = Arc::new(AudioShared {
             consumed_frames: AtomicI64::new(0),
@@ -245,7 +255,7 @@ impl Player {
         }
         let workers: Workers = Arc::new(std::sync::RwLock::new(workers));
         let natives: Natives = Arc::new(std::sync::RwLock::new(nat));
-        let video = Mutex::new(VideoRenderer::new_with_facts(&project, &natives.read().unwrap()));
+        let video = Mutex::new(preview_video(&project, &natives.read().unwrap(), &cache));
         let video_gpu = Mutex::new(VideoGpuState::default());
         let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
@@ -385,8 +395,7 @@ impl Player {
 
     fn wake_after_project_swap(&self, p: Project) {
         kt_time::work::bump(kt_time::work::Work::EngineBuild);
-        *self.video.lock().unwrap() =
-            VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap());
+        *self.video.lock().unwrap() = preview_video(&p, &self.natives.read().unwrap(), &self.cache);
         *self.project.lock().unwrap() = p;
         self.model_dirty.store(true, Ordering::Release);
         self.wake.notify();
@@ -800,8 +809,7 @@ impl Player {
     /// the step until the first timeline edit.
     fn rebuild_video_renderer(&self) {
         let p = self.project.lock().unwrap().clone();
-        *self.video.lock().unwrap() =
-            VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap());
+        *self.video.lock().unwrap() = preview_video(&p, &self.natives.read().unwrap(), &self.cache);
     }
 
     /// Remember the source facts (R.46 item 321 — native, R.56 item 448 —
@@ -962,7 +970,10 @@ impl Player {
         kt_time::work::bump(kt_time::work::Work::Composite);
         let t0 = std::time::Instant::now();
         let q = self.preview_quality();
-        let video = self.video.lock().unwrap();
+        let mut video = self.video.lock().unwrap();
+        // playing, a stream stage short of its frame shows its latest one; paused, the frame itself
+        // is waited for (decode-request-storm)
+        video.set_stream_hold(self.transport.is_playing());
         let aligned = video.grid.align_floor(t);
         let mut target = target;
         let generation = self.transport.generation();
@@ -1015,6 +1026,7 @@ impl Player {
                 // what the executor keeps for this moment, for the bars (cached-range-plays)
                 if complete
                     && matches!(target, Target::Display(_))
+                    && !video.stream_held()
                     && let Some(key) = exec.present_key(&plan)
                 {
                     let versions = (
@@ -1860,6 +1872,60 @@ pub fn lookahead_windows(
     }
 }
 
+/// How far past the frame on screen the prefetch thread computes a stream stage during playback
+/// (decode-request-storm): the frames the display reaches before the next pass, twice over, at
+/// least `STREAM_AHEAD_MIN`. A frame the display reaches is then held in the memo, and the
+/// composite — which runs a stage only `compose_steps` short — shows it. A pass on a big edit takes
+/// a few hundred milliseconds (its look-ahead walk), so a fixed few frames fell behind the display
+/// and the picture stood. Bounded by what the memo keeps: a position holds about two frames of the
+/// stream's size (the decoded picture and the clean encoder's planes), and a quarter of the memo is
+/// the most the frames ahead may take.
+const STREAM_AHEAD_MIN: usize = 4;
+
+/// Advance the stream stages at the frame on screen and, while playing, at the frames after it
+/// (wrapping in the loop region), stopping at the first that still lacks source frames. `ahead` —
+/// how many frames after it. `true` — something is still pending.
+fn stream_advance_ahead(
+    video: &VideoRenderer,
+    cache: &BurstCache,
+    shown: Tick,
+    q: Quality,
+    region: Option<(i64, i64)>,
+    ahead: usize,
+) -> bool {
+    let step = video.grid.frame_step().max(1);
+    let mut t = video.grid.align_floor(shown);
+    let inside = region.is_some_and(|(s, e)| s <= t.0 && t.0 < e);
+    for _ in 0..=ahead {
+        if video.stream_advance(cache, t, q) {
+            return true;
+        }
+        t = Tick(t.0 + step);
+        if let Some((s, e)) = region.filter(|_| inside)
+            && t.0 >= e
+        {
+            t = video.grid.align_floor(Tick(s));
+        }
+    }
+    false
+}
+
+/// The frames ahead for a pass interval of `interval` (see `STREAM_AHEAD_MIN`).
+fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std::time::Duration) -> usize {
+    let fps = kt_time::TICK_HZ as f64 / video.grid.frame_step().max(1) as f64;
+    let want = (interval.as_secs_f64() * fps * 2.0).ceil() as usize;
+    let per_position = 2 * video.stream_frame_bytes(t, q).max(1);
+    let room = crate::video::stream_memo().bytes_cap() / 4 / per_position;
+    want.max(STREAM_AHEAD_MIN).min(room.max(1))
+}
+
+/// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).
+fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &BurstCache) -> VideoRenderer {
+    let mut vr = VideoRenderer::new_with_facts(p, facts);
+    vr.set_stream_pacing(Some(crate::StreamPacing::preview(cache.max_video_bytes())));
+    vr
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prefetch_loop(
     cache: Arc<BurstCache>,
@@ -1892,6 +1958,12 @@ fn prefetch_loop(
     // (law P, R.53 item 411).
     type PassState = (i64, u64, u64, u64, Quality, Option<(i64, i64)>);
     let mut last_state: Option<PassState> = None;
+    // a stream stage at the frame on screen still lacks history (decode-request-storm): the pass
+    // runs again while it does, paused or not — the decoder fills the window, this thread advances
+    // the stage over it, and the next window is ordered. Nothing pending — the pause costs nothing.
+    let mut stream_pending = false;
+    // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
+    let mut last_pass = std::time::Instant::now();
     while !stop.load(Ordering::Acquire) {
         wake.wait_timeout(std::time::Duration::from_millis(100));
         if stop.load(Ordering::Acquire) {
@@ -1906,7 +1978,7 @@ fn prefetch_loop(
                 *preview_quality.lock().unwrap(),
                 *loop_region.lock().unwrap(),
             );
-            if !transport.is_playing() && last_state == Some(state) {
+            if !transport.is_playing() && last_state == Some(state) && !stream_pending {
                 continue;
             }
             last_state = Some(state);
@@ -1919,7 +1991,7 @@ fn prefetch_loop(
             loop_stats.prefetch_rebuilds.fetch_add(1, Ordering::Relaxed);
             // an audio and a video renderer
             kt_time::work::add(kt_time::work::Work::EngineBuild, 2);
-            let vr = VideoRenderer::new_with_facts(&p, &natives.read().unwrap());
+            let vr = preview_video(&p, &natives.read().unwrap(), &cache);
             cached = Some((version, AudioRenderer::new(&p), vr));
         }
         let (_, renderer, video) = cached.as_ref().unwrap();
@@ -1958,6 +2030,16 @@ fn prefetch_loop(
         let region_ticks =
             region.map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
         let t0 = Tick::from_audio_frames(shown);
+        // the stream stages of the frame on screen advance HERE, over what the decoder brought
+        // since the last pass, before the window asks for more (decode-request-storm): a
+        // composite runs a stage only a few positions short, so the UI thread never computes a
+        // history, and a history ordered window by window is read before the cache drops it
+        let interval = last_pass.elapsed();
+        last_pass = std::time::Instant::now();
+        stream_pending = video.has_stream_stages() && {
+            let ahead = if transport.is_playing() { stream_ahead_frames(video, t0, q, interval) } else { 0 };
+            stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead)
+        };
         let missing = video_prefetch_pass(video, &cache, t0, q, region_ticks);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue

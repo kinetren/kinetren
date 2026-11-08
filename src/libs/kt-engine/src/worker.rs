@@ -10,8 +10,12 @@
 //! - at equal priority — requests FORWARD from the decoder cursor, the nearest
 //!   first (anti ping-pong: do not jump back while there is work ahead);
 //!   backward only when forward is empty;
-//! - each key is served at most once per submission (dedup);
+//! - each key is served at most once per submission (dedup); a key already queued or already
+//!   taken into the span being decoded is not queued again and is not counted as a request
+//!   (decode-request-storm: the preview re-asks its whole frame on every composite);
 //! - what is already in the cache is not decoded again;
+//! - behind the cursor, a run of queued keys is read FORWARD from its start, not one key per seek
+//!   from its end (decode-request-storm);
 //! - a transport seek bumps the generation: requests of old generations are dropped.
 
 use crate::Priority;
@@ -86,6 +90,9 @@ struct Queue {
     /// otherwise a composite on the OLD frame could run between “invalidated” and “applied”
     /// and write the stale result again.
     retune: Option<(Retune, Vec<SourceId>)>,
+    /// The keys of the span the decoder holds now (pts, decode size): taken off the queue, not yet
+    /// in the cache. A submit of one of them is a duplicate, not new work (decode-request-storm).
+    in_flight: std::collections::HashSet<(i64, Option<(u32, u32)>)>,
     closed: bool,
 }
 
@@ -151,19 +158,23 @@ impl MediaWorker {
     }
 
     pub fn submit(&self, req: DecodeRequest) {
-        kt_time::work::bump(kt_time::work::Work::DecodeRequest);
         let mut q = self.shared.queue.lock().unwrap();
         if req.generation < self.shared.min_generation.load(Ordering::Acquire) {
             return;
         }
-        // dedup: the same key updates the generation but does not duplicate the work
-        match req.kind {
-            RequestKind::Audio { idx } => {
-                q.audio.insert((req.prio, idx), req.generation);
-            }
+        // dedup: the same key updates the generation but does not duplicate the work, and only a
+        // key that enters the queue is a request (the journal's `decode_requests`): the preview
+        // re-asks every layer of its frame on every composite, and counting each repeat made a
+        // frame waiting for its history read as 1500 requests a second (decode-request-storm)
+        let new = match req.kind {
+            RequestKind::Audio { idx } => q.audio.insert((req.prio, idx), req.generation).is_none(),
+            RequestKind::Video { pts, quality, .. } if q.in_flight.contains(&(pts.0, quality)) => return,
             RequestKind::Video { pts, quality, step } => {
-                q.video.insert((req.prio, pts.0, quality), (req.generation, step));
+                q.video.insert((req.prio, pts.0, quality), (req.generation, step)).is_none()
             }
+        };
+        if new {
+            kt_time::work::bump(kt_time::work::Work::DecodeRequest);
         }
         self.shared.idle.store(false, Ordering::Release);
         drop(q);
@@ -300,6 +311,7 @@ fn worker_loop(
                     q = shared.queue.lock().unwrap();
                     continue;
                 }
+                q.in_flight.clear();
                 match pick_next(&q, cursor_audio, cursor_video) {
                     Some(Pick::Audio(key)) => {
                         q.audio.remove(&key);
@@ -355,6 +367,7 @@ fn worker_loop(
                                 q.video.remove(&k);
                             }
                         }
+                        q.in_flight.extend(keys.iter().map(|k| (k.pts, k.quality)));
                         break Job::VideoSpan {
                             keys,
                             generation_of_span: first_gen,
@@ -583,6 +596,36 @@ enum Pick {
     Video(VideoQueueKey),
 }
 
+/// The first key of the run of queued keys that ends at `last` behind the cursor: at `last`'s
+/// priority, at most `SPAN_MAX_KEYS` moments and the span's 2 s back (decode-request-storm). Going
+/// back to the NEAREST key took one key per span — the span tops up only forward of its first key,
+/// and forward of it everything was already done — so a run behind the cursor (a stream stage's
+/// history asked after the decoder had passed it, a reverse look-ahead) cost a seek and a decode
+/// from the keyframe per frame, read from its end to its start. From the run's start one span
+/// reads it forward.
+fn video_run_start(q: &Queue, last: VideoQueueKey) -> VideoQueueKey {
+    const RUN_BACK_TICKS: i64 = 2 * kt_time::TICK_HZ;
+    let mut start = last;
+    let mut moments = 1usize;
+    for (&k, _) in q.video.range(..last).rev() {
+        if k.0 != last.0 || k.1 < last.1 - RUN_BACK_TICKS {
+            break;
+        }
+        // a native-size key never shares a span with a sized one
+        if k.2.is_some() != last.2.is_some() {
+            continue;
+        }
+        if k.1 != start.1 {
+            if moments == SPAN_MAX_KEYS {
+                break;
+            }
+            moments += 1;
+        }
+        start = k;
+    }
+    start
+}
+
 /// Choosing the next request: the minimum priority across BOTH maps; within
 /// it, for each kind — the candidate forward from ITS OWN cursor (the nearest);
 /// if both have a forward candidate — the smaller forward distance (tie → audio);
@@ -623,14 +666,16 @@ fn pick_next(q: &Queue, cursor_audio: i64, cursor_video: i64) -> Option<Pick> {
                 .next_back()
                 .map(|(&k, _)| k)
                 .filter(|k| k.0 == top);
-            match (a_back, v_back) {
-                (Some(a), Some(v)) => {
+            // the distance is the nearest key's, the pick is the start of its run (see below)
+            let v_run = v_back.map(|v| (v, video_run_start(q, v)));
+            match (a_back, v_run) {
+                (Some(a), Some((v, start))) => {
                     let da = cursor_audio - a.1 * kt_time::AUDIO_BURST_TICKS;
                     let dv = cursor_video - v.1;
-                    if da <= dv { Some(Pick::Audio(a)) } else { Some(Pick::Video(v)) }
+                    if da <= dv { Some(Pick::Audio(a)) } else { Some(Pick::Video(start)) }
                 }
                 (Some(a), None) => Some(Pick::Audio(a)),
-                (None, Some(v)) => Some(Pick::Video(v)),
+                (None, Some((_, start))) => Some(Pick::Video(start)),
                 (None, None) => {
                     // only entries of another priority/edge remain — any
                     q.audio

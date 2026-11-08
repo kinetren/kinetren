@@ -654,6 +654,12 @@ fn compose_offline_frame(
     q: Quality,
     buf: &mut Vec<u8>,
 ) {
+    // a stream stage's history is read in batches the job's small cache keeps, the codec advanced
+    // over each, every other layer with it (decode-request-storm): read at once, the history lost
+    // its front before the composite came, and the poster stayed black
+    if video.has_stream_stages() {
+        kt_engine::stream_preroll(video, cache, src, t, q);
+    }
     let mut per_src: HashMap<(MediaId, Quality), Vec<Tick>> = HashMap::new();
     for (media, pts, dq) in
         video.wanted_frames(kt_time::TickRange::new(t, Tick(t.0 + video.grid.frame_step())), q)
