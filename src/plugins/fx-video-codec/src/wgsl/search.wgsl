@@ -7,6 +7,12 @@ struct U { w: u32, h: u32, bs: u32, r: i32 };
 @group(0) @binding(3) var<storage, read> seed: array<vec2<i32>>;
 @group(0) @binding(4) var<storage, read_write> mv: array<vec2<i32>>;
 
+// a plane's sample: four to a word, as the plane's bytes are (gpu-pass-cost)
+fn cur_at(i: i32) -> u32 { return (cur[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 255u; }
+
+// a plane's sample: four to a word, as the plane's bytes are (gpu-pass-cost)
+fn rf_at(i: i32) -> u32 { return (rf[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 255u; }
+
 fn sad(bx: i32, by: i32, v: vec2<i32>, limit: u32) -> u32 {
     var s = 0u;
     let w = i32(u.w);
@@ -15,8 +21,8 @@ fn sad(bx: i32, by: i32, v: vec2<i32>, limit: u32) -> u32 {
         let sy = clamp(by + y + v.y, 0, h - 1);
         for (var x = 0; x < i32(u.bs); x++) {
             let sx = clamp(bx + x + v.x, 0, w - 1);
-            let a = i32(cur[(by + y) * w + bx + x]);
-            let b = i32(rf[sy * w + sx]);
+            let a = i32(cur_at((by + y) * w + bx + x));
+            let b = i32(rf_at(sy * w + sx));
             s += u32(abs(a - b));
         }
         if s >= limit { return s; }

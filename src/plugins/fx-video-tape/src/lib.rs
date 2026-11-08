@@ -309,6 +309,12 @@ fn shader_texts() -> &'static [&'static str] {
             include_str!("wgsl/fin.wgsl"),
             include_str!("wgsl/s7a.wgsl"),
         ];
+        // every pass takes its inputs' sizes once, first (`tape_dims`, gpu-pass-cost)
+        const ENTRY: &str = "fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {\n";
+        let passes = passes.map(|p| {
+            assert_eq!(p.matches(ENTRY).count(), 1, "a tape pass without its fs entry");
+            &*Box::leak(p.replace(ENTRY, &format!("{ENTRY}    tape_dims();\n")).into_boxed_str())
+        });
         let pal = passes.iter().map(|p| standard::wgsl_taps(p, standard::Std::Pal));
         let ntsc = sh::NTSC.iter().map(|s| standard::wgsl_taps(passes[*s as usize], standard::Std::Ntsc));
         pal.chain(ntsc).map(|p| &*Box::leak(format!("{head}{p}").into_boxed_str())).collect()

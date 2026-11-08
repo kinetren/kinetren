@@ -135,16 +135,24 @@ impl Planes {
 
 /// The residual shader with the DCT-II basis `C[u][x]` as its table.
 fn residual_shader() -> &'static str {
-    static S: OnceLock<String> = OnceLock::new();
-    S.get_or_init(|| {
-        let mut c = String::from("var<private> C: array<f32, 64> = array<f32, 64>(");
+    include_str!("wgsl/residual.wgsl")
+}
+
+/// The DCT basis as the residual's uniform carries it (gpu-pass-cost): row u = frequency. Each value
+/// is the decimal the shader once held as a literal, rounded as naga rounds an abstract float to
+/// `f32` (through `f64`), so the products are the same bits.
+fn dct_basis() -> &'static [u8] {
+    static B: OnceLock<Vec<u8>> = OnceLock::new();
+    B.get_or_init(|| {
+        let mut out = Vec::with_capacity(256);
         for u in 0..8 {
             let k = if u == 0 { 0.353_553_390_593_273_73 } else { 0.5 };
             for x in 0..8 {
-                c += &format!("{:.9},", k * (((2 * x + 1) * u) as f64 * std::f64::consts::PI / 16.0).fcos());
+                let text = format!("{:.9}", k * (((2 * x + 1) * u) as f64 * std::f64::consts::PI / 16.0).fcos());
+                out.extend_from_slice(&(text.parse::<f64>().unwrap() as f32).to_le_bytes());
             }
         }
-        format!("{c});\n{}", include_str!("wgsl/residual.wgsl"))
+        out
     })
 }
 
@@ -153,8 +161,15 @@ pub fn shaders() -> [&'static str; 3] {
     [include_str!("wgsl/search.wgsl"), residual_shader(), include_str!("wgsl/decode.wgsl")]
 }
 
-fn words(v: &[u8]) -> Vec<u8> {
-    v.iter().flat_map(|b| (*b as u32).to_le_bytes()).collect()
+/// A plane as the shaders read it: its bytes, four samples to a word, padded to a whole word
+/// (gpu-pass-cost: a word per sample had quadrupled every upload and cost a pass over the plane).
+fn packed(v: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if v.len() % 4 == 0 {
+        return std::borrow::Cow::Borrowed(v);
+    }
+    let mut p = v.to_vec();
+    p.resize(v.len().next_multiple_of(4), 0);
+    std::borrow::Cow::Owned(p)
 }
 
 fn uniform(v: &[[u8; 4]]) -> Vec<u8> {
@@ -192,7 +207,7 @@ pub fn decode(rf: &Planes, mv: &[(i16, i16)], bs: usize, res: &Residual, gain_q8
     let (w, h, b) = (rf.w as u32, rf.h as u32, bs as u32);
     let (bw, bh) = (w / b, h / b);
     let vectors: Vec<u8> = mv.iter().flat_map(|v| [(v.0 as i32).to_le_bytes(), (v.1 as i32).to_le_bytes()].concat()).collect();
-    let rf_words = [words(&rf.y), words(&rf.cb), words(&rf.cr)];
+    let rf_words = [packed(&rf.y), packed(&rf.cb), packed(&rf.cr)];
     let res_words = [wide(&res.y), wide(&res.cb), wide(&res.cr)];
     let plane = |i: usize| res_words[i].len() as u64;
     // 0–2 the reference, 3 the vectors, 4–6 the residual, 7–9 the picture
@@ -230,8 +245,8 @@ pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
     let (bw, bh) = (w / bs, h / bs);
     let mv_bytes = (bw * bh * 8) as u64;
     let q = cfg.qstep() as f32;
-    let cur = [words(&src.y), words(&src.cb), words(&src.cr)];
-    let rf = prev.map(|p| [words(&p.y), words(&p.cb), words(&p.cr)]);
+    let cur = [packed(&src.y), packed(&src.cb), packed(&src.cr)];
+    let rf = prev.map(|p| [packed(&p.y), packed(&p.cb), packed(&p.cr)]);
     let rf_init = |i: usize| rf.as_ref().map_or(Init::Zero(16), |r| Init::Bytes(&r[i]));
     // 0–2 the source, 3–5 the reference, 6 the zero seed, 7–8 the two sweeps' vectors, 9–11 the
     // residual, 12–14 the reconstruction
@@ -245,7 +260,9 @@ pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
     ];
     let search_u = uniform(&[w.to_le_bytes(), h.to_le_bytes(), bs.to_le_bytes(), cfg.search.max(0).to_le_bytes()]);
     let residual_u = |pw: u32, ph: u32, shift: u32| {
-        uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), bs.to_le_bytes(), shift.to_le_bytes(), q.to_le_bytes(), bw.to_le_bytes(), (prev.is_none() as u32).to_le_bytes(), [0; 4]])
+        let mut u = uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), bs.to_le_bytes(), shift.to_le_bytes(), q.to_le_bytes(), bw.to_le_bytes(), (prev.is_none() as u32).to_le_bytes(), [0; 4]]);
+        u.extend_from_slice(dct_basis());
+        u
     };
     let us = [residual_u(w, h, 0), residual_u(w / 2, h / 2, 1), residual_u(w / 2, h / 2, 1)];
     let search = include_str!("wgsl/search.wgsl");
@@ -265,7 +282,8 @@ pub fn encode(src: &Planes, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
             uniform: &us[i],
             read: &reads[i],
             write: &writes[i],
-            groups: [(pw / 8).div_ceil(8), (ph / 8).div_ceil(8), 1],
+            // a workgroup per 8×8 block
+            groups: [pw / 8, ph / 8, 1],
         });
     }
     let ds = decode_uniforms(w, h, bs, 256, prev.is_none());

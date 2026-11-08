@@ -1585,6 +1585,7 @@ impl Inner {
         let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
         if total > self.arena_slots {
             let slots = total.next_power_of_two();
+            crate::created();
             self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("kt-gpu uniforms"),
                 size: SLOT * slots as u64,
@@ -1595,7 +1596,7 @@ impl Inner {
         }
         self.slot = 0;
         let meta = frame_meta(&jobs, (ow, oh));
-        self.timer.harvest();
+        self.timer.harvest(&self.device);
         self.timer.begin();
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
@@ -1604,6 +1605,7 @@ impl Inner {
         let i = (ticket % RING as u64) as usize;
         let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == ow && r.h == oh);
         if !fits {
+            crate::created();
             self.ring[i] = Some(RingSlot {
                 buf: self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("kt-gpu readback ring"),
@@ -1682,7 +1684,7 @@ impl Inner {
             }
         }
         slot.buf.unmap();
-        self.timer.harvest();
+        self.timer.harvest(&self.device);
         Ok(f.complete)
     }
 
@@ -1705,7 +1707,7 @@ impl Inner {
             self.slot = 0;
             let display = self.display.as_ref().unwrap().view.clone();
             let meta = FrameMeta { out: (ow, oh), ..Default::default() };
-            self.timer.harvest();
+            self.timer.harvest(&self.device);
             self.timer.begin();
             let mut enc = self
                 .device
@@ -1733,7 +1735,8 @@ impl Inner {
             let total: u32 = jobs.iter().map(|j| j.slot_units()).sum::<u32>() + 2;
             if total > self.arena_slots {
                 let slots = total.next_power_of_two();
-                self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
+                crate::created();
+            self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("kt-gpu uniforms"),
                     size: SLOT * slots as u64,
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1745,7 +1748,7 @@ impl Inner {
             self.ensure_present_targets(ow, oh, o.glow);
             let display = self.display.as_ref().unwrap().view.clone();
             let meta = frame_meta(&jobs, (ow, oh));
-            self.timer.harvest();
+            self.timer.harvest(&self.device);
             self.timer.begin();
             let mut enc = self
                 .device
@@ -1899,6 +1902,7 @@ impl Inner {
         let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
         if total > self.arena_slots {
             let slots = total.next_power_of_two();
+            crate::created();
             self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("kt-gpu uniforms"),
                 size: SLOT * slots as u64,
@@ -1911,7 +1915,7 @@ impl Inner {
 
         // --- encode ---
         let meta = frame_meta(&jobs, (ow, oh));
-        self.timer.harvest();
+        self.timer.harvest(&self.device);
         self.timer.begin();
         let mut enc = self
             .device
@@ -1927,6 +1931,7 @@ impl Inner {
             None => true,
         };
         if recreate {
+            crate::created();
             self.staging = Some((
                 self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("kt-gpu staging"),
@@ -1991,7 +1996,7 @@ impl Inner {
         }
         staging.unmap();
         // the frame's timestamps came back with its readback
-        self.timer.harvest();
+        self.timer.harvest(&self.device);
 
         self.pool.release(result);
         if let Some(key) = key {
@@ -2612,6 +2617,7 @@ impl Inner {
     /// The merged geometry-series pass: GEOM_UNIFORM_BYTES uniform (4 arena slots),
     /// its own layout; the rest of the mechanics is as in `pass`.
     fn geom_pipeline(&self, text: &str) -> wgpu::RenderPipeline {
+        crate::created();
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("geom_shape"),
             source: wgpu::ShaderSource::Wgsl(text.into()),

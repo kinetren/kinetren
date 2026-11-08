@@ -146,6 +146,7 @@ impl Timer {
         let n = self.labels.len() as u32 * 2;
         enc.resolve_query_set(set, 0..n, resolve, 0);
         let buf = self.free.pop().unwrap_or_else(|| {
+            crate::created();
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("kt-gpu pass time read"),
                 size: QUERIES as u64 * 8,
@@ -187,8 +188,13 @@ impl Timer {
         }
     }
 
-    /// The frames whose timestamps are back, oldest first, into the process-wide sum. Never waits.
-    pub fn harvest(&mut self) {
+    /// The frames whose timestamps are back, oldest first, into the process-wide sum. Never waits:
+    /// a non-blocking poll runs the callbacks of maps that finished (the preview never waits on its
+    /// own, so without it a map would wait for someone else's submit).
+    pub fn harvest(&mut self, device: &wgpu::Device) {
+        if self.pending.iter().any(|p| p.state.is_some()) {
+            let _ = device.poll(wgpu::PollType::Poll);
+        }
         while let Some(p) = self.pending.front() {
             let st = p.state.as_ref().map_or(0, |s| s.load(Ordering::Acquire));
             if st == 0 {

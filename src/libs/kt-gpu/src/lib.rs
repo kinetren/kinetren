@@ -20,6 +20,19 @@ pub use context::{
 };
 pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
+/// Textures, buffers and pipelines the engine and the compute host created since the process
+/// started (gpu-pass-cost): after warm-up a frame creates none (t2023). Bind groups and command
+/// encoders, which every pass makes by design, are not counted.
+pub fn resources_created() -> u64 {
+    CREATED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(crate) static CREATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn created() {
+    CREATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A single method of comparing GPU frames with the stored ones (R.29): ad-hoc epsilons in
 /// tests are forbidden; only this helper is used.
 #[derive(Clone, Copy)]

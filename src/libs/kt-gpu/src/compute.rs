@@ -88,6 +88,7 @@ impl ComputeDevice {
             return (b, true);
         }
         drop(pool);
+        crate::created();
         (self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size, usage, mapped_at_creation: false }), false)
     }
 
@@ -136,6 +137,7 @@ impl ComputeDevice {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
+        crate::created();
         let pipe = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: None,
             layout: Some(&pipe_layout),

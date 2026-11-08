@@ -4,6 +4,22 @@
 
 var<private> FL: u32;
 var<private> TAB: vec4<u32>;
+// what every helper asks per call, taken once per pixel by `begin` (gpu-pass-cost): the texture's
+// size, the sensor's, the scale and the mosaic period — a textureDimensions and two integer
+// divisions per neighbour read were most of a 5×5 window's cost
+var<private> FDIM: vec2<i32>;
+var<private> SDIM: vec2<i32>;
+var<private> KSC: i32;
+var<private> PERIOD: i32;
+
+// every pass's first line: its flags, then the sizes the helpers read
+fn begin(fl: u32) {
+    FL = fl;
+    KSC = max(i32(FL & 255u), 1);
+    PERIOD = i32((FL >> 8u) & 15u);
+    FDIM = vec2<i32>(textureDimensions(T0));
+    SDIM = (FDIM + vec2<i32>(KSC - 1)) / KSC;
+}
 
 fn nh(v: u32) -> u32 {
     var x = v;
@@ -31,21 +47,20 @@ fn unit(h1: u32) -> f32 {
 }
 
 fn KK() -> i32 {
-    return max(i32(FL & 255u), 1);
+    return KSC;
 }
 
 fn PER() -> i32 {
-    return i32((FL >> 8u) & 15u);
+    return PERIOD;
 }
 
 fn fdims() -> vec2<i32> {
-    return vec2<i32>(textureDimensions(T0));
+    return FDIM;
 }
 
 // the sensor's size: the logical frame (D6)
 fn sdims() -> vec2<i32> {
-    let k = KK();
-    return (fdims() + vec2<i32>(k - 1)) / k;
+    return SDIM;
 }
 
 // the previous pass at sensor pixel (sx, sy), clamped
@@ -73,10 +88,19 @@ fn wrap1(n: i32, size: i32) -> i32 {
 
 fn cfa_code(x: i32, y: i32) -> u32 {
     let p = PER();
-    let xm = ((x % p) + p) % p;
-    let ym = ((y % p) + p) % p;
-    let i = u32(ym * p + xm);
+    return cfa_mod(((x % p) + p) % p, ((y % p) + p) % p);
+}
+
+// the code at a position already reduced by the period (a window reduces its five columns and
+// five rows once, not 2·25 times)
+fn cfa_mod(xm: i32, ym: i32) -> u32 {
+    let i = u32(ym * PER() + xm);
     return (TAB[i / 10u] >> ((i % 10u) * 3u)) & 7u;
+}
+
+fn pmod(n: i32) -> i32 {
+    let p = PER();
+    return ((n % p) + p) % p;
 }
 
 fn v16(t: vec4<u32>) -> u32 {

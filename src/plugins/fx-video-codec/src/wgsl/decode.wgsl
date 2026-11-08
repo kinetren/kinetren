@@ -7,6 +7,9 @@ struct U { w: u32, h: u32, bs: u32, shift: u32, gain: i32, mw: u32, intra: u32, 
 @group(0) @binding(3) var<storage, read> res: array<i32>;
 @group(0) @binding(4) var<storage, read_write> pic: array<u32>;
 
+// a plane's sample: four to a word, as the plane's bytes are (gpu-pass-cost)
+fn rf_at(i: i32) -> u32 { return (rf[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 255u; }
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let pbs = i32(u.bs >> u.shift);
@@ -21,7 +24,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let sy = clamp(oy + y + v.y, 0, h - 1);
         for (var x = 0; x < pbs; x++) {
             var p = 128;
-            if u.intra == 0u { p = i32(rf[sy * w + clamp(ox + x + v.x, 0, w - 1)]); }
+            if u.intra == 0u { p = i32(rf_at(sy * w + clamp(ox + x + v.x, 0, w - 1))); }
             let i = (oy + y) * w + ox + x;
             pic[i] = u32(clamp(p + ((res[i] * u.gain) >> 8u), 0, 255));
         }
