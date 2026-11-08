@@ -2783,6 +2783,14 @@ Registry: `docs/ktprompts/kkt-26.11.08-index.md` (H1–H9). His files: `fails/26
   background services paused during playback — "Да"; fused chains shift goldens ≤1 LSB per
   boundary — "Согласен"; master — "переводи".
 
+## 2026-11-09 — the next two changes and how master takes them (`kkt-26.11.08` H18–H19)
+
+- "запускай compiled-curves и pipeline-prewarm" — both started (rows 2 and 6 of the audit's order).
+- "на будущее - все правки в master идут строго через merge, чтобы в master на правки было по одному
+  коммиту, а всякие промежуточные были в петле сбоку и не мешали в истории" — RULE: master takes a
+  stage only by `git merge --no-ff` (a merge commit naming the stage and its changes), never a
+  fast-forward; `git log --first-parent master` is the history of changes.
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
