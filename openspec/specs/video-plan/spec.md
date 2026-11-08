@@ -674,7 +674,9 @@ Every headless device (export engines, the offline engine, kt-cli), the compute 
 adapter list SHALL come from one `wgpu::Instance` per backend set, created at the first ask under one
 process-wide opening lock and never dropped; devices SHALL be opened one at a time; the adapter list
 SHALL be taken once per process, and in the editor before eframe opens its own instance. An export
-run with no `DISPLAY` and no `WAYLAND_DISPLAY` SHALL finish.
+run with no `DISPLAY` and no `WAYLAND_DISPLAY` SHALL finish. A device on the GL backend SHALL open
+from an instance of its own (still under the opening lock, dropped with its device): wgpu's GL
+adapters of one instance share its one EGL context, and two devices on it cannot run on two threads.
 Why: found-defects 131 — `env -u DISPLAY kt-cli export … libx264` died by SIGSEGV every run:
 `export_engines` opened two to four devices on threads at once on a software adapter, each creating
 its own instance, and the Vulkan loader's instance-level calls raced (`vkEnumerateInstanceExtension
@@ -694,3 +696,8 @@ native-crash report named `media-worker-46` in `vkEnumerateInstanceExtensionProp
 - **WHEN** four threads open an export device at once while two more open the compute host and list the adapters, three times
 - **THEN** every device opens and the process created at most two instances (the headless devices' backend set and the compute host's primary one)
 - **TEST** t2087 (`src/libs/kt-gpu/tests/one_instance.rs`)
+
+#### Scenario: On GL the export opens its engines beside a live device
+- **WHEN** under `WGPU_BACKEND=gl` the offline engine is open and `export_engines` opens four engines (`KT_VIDEO_ENGINES=4`), twice
+- **THEN** every engine builds and the process lives (before: `GpuFxEngine::build` panicked on EGL_BAD_ACCESS — the shared instance's one EGL context was current on another thread — and the unwind aborted dropping the queue; every render from the editor in the live `render`, `renderregion`, `hwencode` scenarios died so)
+- **TEST** t2088 (`src/libs/kt-gpu/tests/gl_devices.rs`)

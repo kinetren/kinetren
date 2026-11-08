@@ -213,3 +213,14 @@ a remote unwinder. The window shows the run's telemetry-journal lines: since tel
 `kt-app.log` holds warnings only, and the owner's report showed exactly its empty tail. Details and
 the walk of every native path: the archived change `segv-crashes`, design D1–D2.
 
+
+### The first panic keeps the report (segv-crashes follow-up, 2026-11-09)
+
+The live `render` scenario's report held only "panic in a destructor during cleanup": the render
+threads panicked one after another (nine reports in 10 ms) and the hook rewrote `kt-app-crash.txt`
+each time, so the EGL error that started it all was gone and the last word was the unwind's. The
+first panic of the process now writes the report and later ones add a short section (time, thread,
+message) under it; a lock keeps the first writer whole. The same mechanism, walked: the native-crash
+report has one owner by design (`OWNER`, the first signal wins); the supervisor appends its native
+section to a fresh panic report instead of replacing it; kt-cli's panics print to stderr, which
+keeps every one. t2089.

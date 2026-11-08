@@ -334,3 +334,20 @@ instance. Instances are never dropped: one destroyed at exit is one more native 
 threads on its devices. Not tuned to a loader version: the shape holds on any. Archived change
 `segv-crashes`, design D3–D4.
 
+**Except a GL device** (follow-up, 2026-11-09). The shared instance broke every render from the
+editor under the live scenarios' `WGPU_BACKEND=gl`: wgpu-hal's EGL instance hands each adapter it
+enumerates a CLONE of its one EGL context (`egl: Some(inner.egl.clone())`, each with its own glow
+mutex), so the offline engine and the export's engines, all from one instance, made one context
+current on several threads; `eglMakeCurrent` returned EGL_BAD_ACCESS, the `unwrap` in `make_current`
+panicked inside `GpuFxEngine::build`, and dropping the queue during the unwind locked the context
+again and aborted ("panic in a destructor during cleanup"). Before the one-instance change each
+device had its own instance and so its own context, which is why stage 4 was green. A GL device
+now opens from an instance of its own, under the opening lock (EGL's instance-level calls do not
+race the Vulkan loader); it is not leaked — wgpu keeps it alive with its device, and wgpu-hal counts
+the EGL display's references, so dropping one ends only its own context. The adapter is first asked
+of the shared instance (the backend set may hold Vulkan and GL); only a GL answer is asked again of
+an own one. Walked for the same mechanism (one instance's devices sharing a context): the compute
+host asks `Backends::PRIMARY` (no GL), `new_d3d12` DX12, `adapter_facts` only enumerates under the
+opening lock, the preview's device is eframe's own instance; every other headless device goes
+through `headless_with`. Windows' GL (WGL) shares the same way and takes the same branch. t2088.
+

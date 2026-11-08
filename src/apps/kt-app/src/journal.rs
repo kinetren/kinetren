@@ -179,17 +179,34 @@ pub fn set_flight(f: std::sync::Arc<kt_engine::flight::FlightRecorder>) {
 pub fn install_panic_hook() {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let out = crash_report(&info.to_string());
+        static WRITTEN: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
         let p = crash_path();
-        if let Some(d) = p.parent() {
-            let _ = std::fs::create_dir_all(d);
+        {
+            let mut written = WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+            write_panic_report(&p, &mut written, || crash_report(&info.to_string()), &info.to_string());
         }
-        let _ = std::fs::write(&p, &out);
         log("CRASH", &format!("panic report written to {}", p.display()));
         // the records queued before the panic reach the file before the process goes
         crate::tele_journal::flush(std::time::Duration::from_millis(300));
         prev(info);
     }));
+}
+
+/// One file for the process's panics: the FIRST writes the report (`report`), each later one —
+/// another thread's, or the panic of a destructor during the unwind that aborts the process — adds
+/// its time, thread and message under it. Before, every panic rewrote the file, and the cause was
+/// lost under the cleanup's "panic in a destructor during cleanup" (segv-crashes, t2089).
+pub(crate) fn write_panic_report(p: &Path, written: &mut bool, report: impl FnOnce() -> String, later: &str) {
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if !*written {
+        *written = std::fs::write(p, report()).is_ok();
+        return;
+    }
+    let t = std::thread::current();
+    let line = format!("\n--- a later panic ({}, thread {}) ---\n{later}\n", stamp(), t.name().unwrap_or("<unnamed>"));
+    let _ = std::fs::OpenOptions::new().append(true).open(p).and_then(|mut f| f.write_all(line.as_bytes()));
 }
 
 /// The native-crash handler (segv-crashes): a fatal signal writes the raw report into the data
@@ -538,6 +555,24 @@ mod tests {
         );
         assert!(r.contains("--- flight recorder ---"), "no black box dump");
         assert!(r.to_lowercase().contains("play"), "black box is empty: {r}");
+    }
+
+    /// t2089 (segv-crashes): the first panic of the process keeps the report; later panics — the
+    /// other render threads', the destructor's during the unwind — are added under it. The live
+    /// `render` scenario's report showed only "panic in a destructor during cleanup": nine reports
+    /// in 10 ms, each rewriting the last, and the EGL error that started it was gone.
+    #[test]
+    fn t2089_the_first_panic_keeps_the_report() {
+        let p = tmp("first-panic").with_file_name("kt-app-crash.txt");
+        let mut written = false;
+        write_panic_report(&p, &mut written, || "panic: EGL BadAccess\nthe first one's backtrace\n".into(), "EGL BadAccess");
+        write_panic_report(&p, &mut written, || unreachable!("a later panic builds no report"), "another thread: EGL BadAccess");
+        write_panic_report(&p, &mut written, || unreachable!(), "panic in a destructor during cleanup");
+        let body = std::fs::read_to_string(&p).unwrap();
+        assert!(body.starts_with("panic: EGL BadAccess\nthe first one's backtrace"), "the first panic lost: {body}");
+        assert_eq!(body.matches("--- a later panic").count(), 2, "{body}");
+        assert!(body.contains("panic in a destructor during cleanup"), "{body}");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 
     /// t374: the previous session's report is handed out exactly ONCE and is not lost.

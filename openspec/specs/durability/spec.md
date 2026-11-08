@@ -237,6 +237,11 @@ lines of the crashed run could not be told from the others.
 - **THEN** the report holds the version, thread, message, function names, and the dump of the box; the second start stays silent about the crash, and the report lies in `.seen`
 - **TEST** t375 (`src/apps/kt-app/src/journal.rs`), t374 (`src/apps/kt-app/src/journal.rs`), t373 (`src/libs/kt-engine/src/flight.rs`)
 
+#### Scenario: The first panic keeps the report
+- **WHEN** a process panics on one thread, then on another, then in a destructor during the unwind
+- **THEN** `kt-app-crash.txt` begins with the first panic's report and holds two "a later panic" sections with their thread and message (before: each panic rewrote the file and the live `render` report showed only "panic in a destructor during cleanup", the EGL error that started it gone)
+- **TEST** t2089 (`src/apps/kt-app/src/journal.rs`)
+
 #### Scenario: A crash the window showed is not announced again
 - **WHEN** a report marked `shown:` and then an unmarked one are taken at start
 - **THEN** both are taken (moved to `.seen`, handed to telemetry); the bell announces only the unmarked one
