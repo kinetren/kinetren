@@ -10101,7 +10101,14 @@ impl eframe::App for KtApp {
             && let (Some(j), Some(at)) = (crate::tele_journal::current(), at)
         {
             // stamped at the frame's START: the moment the UI stopped answering
-            j.record_at(at, crate::tele_journal::Kind::Note, &format!("the UI thread was blocked for {ms} ms inside one frame"));
+            // where it went, waits included (ui-never-waits): the stages' wall time
+            let wall = crate::frame_cost::last_frame_wall();
+            let at_stage = if wall.is_empty() { String::new() } else { format!(" ({wall} ms)") };
+            j.record_at(
+                at,
+                crate::tele_journal::Kind::Note,
+                &format!("the UI thread was blocked for {ms} ms inside one frame{at_stage}"),
+            );
         }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

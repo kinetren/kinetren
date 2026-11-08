@@ -27,7 +27,9 @@ import time
 # scripts/live/kt_live.py → src/ two levels up
 RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ROOT = os.path.dirname(RUST)
-KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
+# KT_LIVE_APP: another build of the program (a release one, to judge speed by hand); the suite runs
+# the debug binary finish.sh builds
+KT_APP = os.environ.get("KT_LIVE_APP") or os.path.join(RUST, "target", "debug", "kinetren")
 
 # WORKER STAND (R.68): the directory with `ctl`, `geom.json` and `window.json` of an
 # already running program — it is set up by `scripts/live/worker.py`. Without the variable

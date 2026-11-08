@@ -137,3 +137,30 @@ fn t1848_the_effects_window_and_ctrl_z_answer_while_the_kernel_is_stuck() {
     assert!(h.state().fx_editors.is_empty(), "the effects window did not close on Done");
     gpu.release();
 }
+
+/// Test t1846 (H9: the owner's journal said a frame stood seconds, not where): a long frame's
+/// stages are measured by the wall clock too, so a wait (a lock, a file, the device) is named by its
+/// stage even when the thread spent no processor time in it.
+#[test]
+fn t1846_a_long_frame_says_which_stage_waited() {
+    use crate::frame_cost::{Stage, last_frame_wall, span};
+    let frame = span(Stage::Frame);
+    {
+        let _timeline = span(Stage::Timeline);
+        // a wait, not work: a lock held elsewhere stands for it
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    {
+        let _centre = span(Stage::Centre);
+    }
+    drop(frame);
+    let wall = last_frame_wall();
+    let ms: u64 = wall
+        .split(", ")
+        .find_map(|s| s.strip_prefix("timeline "))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("the waiting stage is not named: {wall:?}"));
+    assert!(ms >= 5, "{wall}");
+    assert!(!wall.contains("centre"), "a stage under a millisecond is named: {wall}");
+    assert!(!wall.contains("frame"), "the frame itself is not a stage of itself: {wall}");
+}

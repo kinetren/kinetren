@@ -71,19 +71,45 @@ pub fn thread_ns() -> u64 {
 pub struct Span {
     stage: Stage,
     t0: u64,
+    wall: std::time::Instant,
+}
+
+thread_local! {
+    /// The current frame's WALL time by stage (ui-never-waits): a long frame's journal note says
+    /// where the time went, waits included, which the processor time above cannot see.
+    static WALL: std::cell::Cell<[u64; Stage::ALL.len()]> = const { std::cell::Cell::new([0; Stage::ALL.len()]) };
 }
 
 pub fn span(stage: Stage) -> Span {
     if stage == Stage::Frame {
         FRAMES.fetch_add(1, Ordering::Relaxed);
+        WALL.with(|w| w.set([0; Stage::ALL.len()]));
     }
-    Span { stage, t0: thread_ns() }
+    Span { stage, t0: thread_ns(), wall: std::time::Instant::now() }
 }
 
 impl Drop for Span {
     fn drop(&mut self) {
         NS[self.stage as usize].fetch_add(thread_ns().saturating_sub(self.t0), Ordering::Relaxed);
+        let ns = self.wall.elapsed().as_nanos() as u64;
+        WALL.with(|w| {
+            let mut a = w.get();
+            a[self.stage as usize] += ns;
+            w.set(a);
+        });
     }
+}
+
+/// Where the last frame on this thread spent its wall time: "timeline 12, events 3, …" in whole
+/// milliseconds, the stages of a millisecond or more.
+pub fn last_frame_wall() -> String {
+    let a = WALL.with(|w| w.get());
+    Stage::ALL
+        .iter()
+        .filter(|s| **s != Stage::Frame && a[**s as usize] >= 1_000_000)
+        .map(|s| format!("{} {}", s.name(), a[*s as usize] / 1_000_000))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Frames measured and nanoseconds per stage since the start, process-wide.

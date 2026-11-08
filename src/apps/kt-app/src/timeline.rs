@@ -1232,7 +1232,14 @@ impl KtApp {
             .clips
             .iter()
             .map(|c| {
-                format!("{{\"id\":{},\"start\":{},\"dur\":{}}}", c.id.0, c.start.0, c.duration.0)
+                // the chain's length: a scenario reads an added or undone effect off the live model
+                format!(
+                    "{{\"id\":{},\"start\":{},\"dur\":{},\"fx\":{}}}",
+                    c.id.0,
+                    c.start.0,
+                    c.duration.0,
+                    c.fx.len()
+                )
             })
             .collect();
         // WHERE WE STAND (R.50, B4): without this all future scenarios would silently
@@ -1353,11 +1360,47 @@ impl KtApp {
             .map(|(w, n)| format!("\"{}\":{n}", w.name()))
             .collect();
         let json = json.replacen('{', &format!("{{\"work\":{{{}}},", work.join(",")), 1);
+        write_dump(path, json);
+    }
+}
+
+/// The geometry dump is written by a thread of its own (ui-never-waits): on a disk busy with the
+/// sidecar's fsyncs one write stood 10–20 s in the UI frame, and every live measurement of the
+/// interface's waits measured the harness. The newest dump replaces one still waiting.
+fn write_dump(path: String, json: String) {
+    use std::sync::{Condvar, Mutex, OnceLock};
+    let write = |path: &str, json: String| {
         let tmp = format!("{path}.tmp");
         if std::fs::write(&tmp, json).is_ok() {
-            let _ = std::fs::rename(&tmp, &path);
+            let _ = std::fs::rename(&tmp, path);
         }
+    };
+    // the harness reads the dump right after its frame, and its apps share a process
+    if cfg!(test) {
+        write(&path, json);
+        return;
     }
+    static SLOT: OnceLock<(Mutex<Option<(String, String)>>, Condvar)> = OnceLock::new();
+    let first = SLOT.get().is_none();
+    let slot = SLOT.get_or_init(|| (Mutex::new(None), Condvar::new()));
+    if first {
+        let _ = std::thread::Builder::new().name("geom-dump".into()).spawn(move || {
+            loop {
+                let (path, json) = {
+                    let mut g = slot.0.lock().unwrap();
+                    loop {
+                        if let Some(d) = g.take() {
+                            break d;
+                        }
+                        g = slot.1.wait(g).unwrap();
+                    }
+                };
+                write(&path, json);
+            }
+        });
+    }
+    *slot.0.lock().unwrap() = Some((path, json));
+    slot.1.notify_one();
 }
 
 /// What decides the events' picture, apart from the pointer. Any frame that is not a pure hover
