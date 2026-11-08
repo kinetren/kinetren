@@ -26,6 +26,7 @@ pub(crate) fn create_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> 
 }
 
 fn create_tex_as(device: &wgpu::Device, w: u32, h: u32, format: wgpu::TextureFormat, label: &str) -> Tex {
+    crate::created();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
@@ -48,6 +49,7 @@ pub(crate) const DISPLAY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba
 
 /// A target the UI draws (preview-throughput D2). COPY_SRC serves `read_display` alone.
 pub(crate) fn create_display_tex(device: &wgpu::Device, w: u32, h: u32, label: &str) -> Tex {
+    crate::created();
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },

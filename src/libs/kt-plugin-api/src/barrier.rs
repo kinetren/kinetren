@@ -117,6 +117,11 @@ pub trait BarrierKernel: Send + Sync {
     fn shaders(&self) -> &'static [&'static str] {
         &[]
     }
+    /// A short name for each pass of `shaders()`, in the same order (gpu-pass-cost): what the
+    /// telemetry journal's GPU record calls it. Empty — the host calls them `p0`, `p1`, ….
+    fn pass_names(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// The passes of `shaders()` that keep one 32-bit word per texel, as a bit per index: their
     /// target is `R32Uint`, not `Rgba8Uint`, and they write and read the word in `.x`: no four
     /// channels unpacked and packed back per load.

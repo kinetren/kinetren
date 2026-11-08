@@ -24,6 +24,37 @@ pub fn stream_memo() -> &'static Arc<StreamMemo> {
     M.get_or_init(|| Arc::new(StreamMemo::new(256 << 20)))
 }
 
+/// How a live preview paces a stream stage (decode-request-storm). The history of a frame can be
+/// far larger than the cache — a cut mosh at 1080 lines asks up to 600 frames of 8 MB against a
+/// 512 MB budget — and ordering it whole let the decoder run through it front to back while the
+/// stage read it only when a composite came: the cache evicted the front, the very frames the
+/// stage needed next, and the frame never came (the owner's journal, kkt-26.11.08: 1570 requests
+/// and 15–100 frames decoded a second, every one dropped unread, V-fps 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamPacing {
+    /// The order names the earliest positions the history lacks, as many as fit these bytes (at
+    /// least one): what the stage will read next, never more than the cache keeps until then.
+    pub order_bytes: usize,
+    /// A composite runs the stage only when its frame lacks at most this many positions (a step
+    /// of playback, a skipped frame or two); a longer history is advanced by the prefetch thread
+    /// (`VideoRenderer::stream_advance`) and the composite reports the frame incomplete — the UI
+    /// thread never computes a history.
+    pub compose_steps: usize,
+    /// While playing, a frame further short shows the latest the stage holds on its stream (a late
+    /// frame of the layer, as a late decode shows its last one) instead of none: when the stage is
+    /// slower than real time the playhead never meets its frontier, and the picture stood. Off on a
+    /// pause, where the frame itself is waited for. The player sets it per composite.
+    pub hold: bool,
+}
+
+impl StreamPacing {
+    /// The preview's pacing for a cache of `max_video_bytes`: a quarter of it for the history (the
+    /// look-ahead takes half, the span being decoded the rest).
+    pub fn preview(max_video_bytes: usize) -> StreamPacing {
+        StreamPacing { order_bytes: max_video_bytes / 4, compose_steps: 2, hold: false }
+    }
+}
+
 /// A clip's stream stage: the slot's plugin and rows, the event before on the same lane and the
 /// events of the second input's lane (clones made when the renderer is built — the renderer is
 /// rebuilt on every edit, so they cannot go stale).
@@ -147,6 +178,12 @@ impl<'a> ClipStream<'a> {
         Some((c, clip_frame_keys(c, t, self.grid, false).0))
     }
 
+    /// The earliest of `needs` (ascending) that fit `bytes` at the stream's size, at least one.
+    pub fn window<'n>(&self, needs: &'n [(Side, i64)], bytes: usize) -> &'n [(Side, i64)] {
+        let frame = (self.q.width as usize * self.q.height as usize * 4).max(1);
+        &needs[..needs.len().min((bytes / frame).max(1))]
+    }
+
     /// The order of positions: (media, pts, the stream's size).
     pub fn order(&self, needs: &[(Side, i64)], out: &mut Vec<(MediaId, Tick, Quality)>) {
         for &(side, k) in needs {
@@ -228,14 +265,31 @@ pub(super) fn run(
     grid: &FpsGrid,
     cache: &BurstCache,
     memo: &StreamMemo,
+    pacing: Option<StreamPacing>,
+    held: &std::sync::atomic::AtomicBool,
     quality: Quality,
     dq: Quality,
     t: Tick,
     pts: Tick,
 ) -> (Option<Arc<VideoFrame>>, u64) {
     let cs = ClipStream::new(clip, st, grid, quality, Some(cache));
+    let k = st.kernel();
+    let mut n = cs.pos(t);
+    if let Some(p) = pacing
+        && k.needs(&st.values, &cs, n, memo).len() > p.compose_steps
+    {
+        // the history is the prefetch thread's (`stream_advance`); playing, the layer shows the
+        // latest frame the stage holds, a frame it can give without computing anything
+        match k.held(&st.values, &cs, n, memo).filter(|&f| p.hold && k.needs(&st.values, &cs, f, memo).is_empty()) {
+            Some(f) => {
+                n = f;
+                held.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            None => return (None, 0),
+        }
+    }
     let mut buf = Vec::new();
-    let Some(out) = st.kernel().render(&st.values, &cs, cs.pos(t), memo, &mut buf) else {
+    let Some(out) = k.render(&st.values, &cs, n, memo, &mut buf) else {
         return (None, 0);
     };
     let src = kt_fx::video::Frame { w: out.w, h: out.h, rgba: buf, has_alpha: false };

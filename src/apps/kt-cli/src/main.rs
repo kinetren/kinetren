@@ -850,6 +850,8 @@ fn pause_scan(
     step: f64,
     size: Option<kt_media::Quality>,
     wait_s: f64,
+    from: f64,
+    to: Option<f64>,
 ) -> Result<usize, String> {
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
@@ -862,7 +864,7 @@ fn pause_scan(
             Err(e) => eprintln!("  skipped: {}: {e}", m.path),
         }
     }
-    let end = kt_engine::export::project_range(project).0 as f64 / kt_time::TICK_HZ as f64;
+    let end = to.unwrap_or(kt_engine::export::project_range(project).0 as f64 / kt_time::TICK_HZ as f64);
     let (player, _ring) = kt_engine::Player::new(project.clone(), sources);
     let q = size.unwrap_or(kt_media::Quality {
         width: project.settings.width,
@@ -874,11 +876,13 @@ fn pause_scan(
         .map_err(|e| format!("no video device: {e}"))?;
     player.set_video_gpu(Some(gpu));
     let mut buf = Vec::new();
-    let (mut never, mut at) = (0, 0.0);
+    let (mut never, mut at) = (0, from);
+    use kt_time::work::{count, Work};
     while at < end {
         let tick = Tick((at * kt_time::TICK_HZ as f64) as i64);
         player.seek(tick);
         let t0 = std::time::Instant::now();
+        let (r0, d0) = (count(Work::DecodeRequest), count(Work::Decoded));
         let mut n = 0;
         let done = loop {
             n += 1;
@@ -893,10 +897,12 @@ fn pause_scan(
             never += 1;
         }
         println!(
-            "{at:7.2} s  {}  composites {n}  settle {:.0} ms  last {:.1} ms  missing {:?}",
+            "{at:7.2} s  {}  composites {n}  settle {:.0} ms  last {:.1} ms  requests {} decoded {}  missing {:?}",
             if done { "ok   " } else { "NEVER" },
             t0.elapsed().as_secs_f64() * 1e3,
             cost.compose_ns as f64 / 1e6,
+            count(Work::DecodeRequest) - r0,
+            count(Work::Decoded) - d0,
             if done { Vec::new() } else { player.missing_layers(tick) },
         );
         at += step;
@@ -1005,7 +1011,10 @@ fn preview_run(
     };
     let io0 = snap();
     let cpu0 = process_cpu_s();
+    let _ = kt_gpu::pass_time::take();
     let r = kt_engine::preview_bench::play_range(&player, ring, opts);
+    // what the device did over the run, pass by pass, as the journal's GPU record says it (gpu-pass-cost)
+    let gpu_second = kt_gpu::pass_time::take();
     let cpu_s = process_cpu_s() - cpu0;
     let io1 = snap();
     let (reopens, vdec, vdec_ns, rgba, rgba_ns, rgba_px) = (
@@ -1076,6 +1085,9 @@ fn preview_run(
         kt_time::work::count(kt_time::work::Work::Composite) - replays0.0 - replayed,
         replayed
     );
+    if let Some(g) = gpu_second {
+        println!("  GPU over the run: {}", g.line());
+    }
     if let Some(path) = &wav {
         write_wav_f32(path, &r.played).map_err(|e| format!("{path}: {e}"))?;
         let (worst, at) = largest_step(&r.played);
@@ -1563,7 +1575,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some("pause-scan") => {
             let (Some(input), Some(step)) = (args.get(1), args.get(2).and_then(|s| s.parse::<f64>().ok())) else {
-                eprintln!("usage: kt-cli pause-scan <in.kt> <step_s> [--size WxH] [--wait-s N]");
+                eprintln!("usage: kt-cli pause-scan <in.kt> <step_s> [--size WxH] [--wait-s N] [--from S] [--to S]");
                 return 2;
             };
             let project = match load_project_resolved(input) {
@@ -1575,7 +1587,9 @@ fn run(args: &[String]) -> i32 {
                 Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? })
             });
             let wait = opt("--wait-s").and_then(|s| s.parse::<f64>().ok()).unwrap_or(4.0);
-            match pause_scan(&project, input, step, size, wait) {
+            let from = opt("--from").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+            let to = opt("--to").and_then(|s| s.parse::<f64>().ok());
+            match pause_scan(&project, input, step, size, wait, from, to) {
                 Ok(n) => i32::from(n > 0),
                 Err(e) => {
                     eprintln!("{e}");

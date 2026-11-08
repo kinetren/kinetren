@@ -263,6 +263,9 @@ impl StreamKernel for Datamosh {
     fn needs(&self, p: &[f64], lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<(Side, i64)> {
         mosh::needs(mosh::Rows::from(p), lay, n, memo)
     }
+    fn held(&self, p: &[f64], lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
+        mosh::held(mosh::Rows::from(p), lay, n, memo)
+    }
     fn render(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo, out: &mut Vec<u8>) -> Option<StreamOut> {
         if kt_plugin_api::compute::host().is_none() {
             return pass_through(input, n, out);

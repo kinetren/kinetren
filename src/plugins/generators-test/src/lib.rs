@@ -104,7 +104,7 @@ fn leader(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
     let phase = ((left % 90_000) * 4) / 90_000;
     let rem = (left % 90_000) * 4 - phase * 90_000;
     let geometry = [(fw / 2) as f32, (fh / 2) as f32, radius as f32, bar as f32];
-    let frame = shader_frame(LEADER_SHADER, w, h, [phase as u32, rem as u32], [geometry, [0.0; 4], [0.0; 4], [0.0; 4]]);
+    let frame = shader_frame("generator:leader", LEADER_SHADER, w, h, [phase as u32, rem as u32], [geometry, [0.0; 4], [0.0; 4], [0.0; 4]]);
     c.buf = frame.into_vec();
     // the seconds digit: how many FULL seconds are left, at least 1
     let digit = ((left + 89_999) / 90_000).max(1).to_string();

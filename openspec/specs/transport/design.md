@@ -211,7 +211,7 @@ built: an FFT that allocates its scratch lazily must not do it in the callback. 
   bytes; the first frame of each new project version is timed there. The plan's time (a stream stage on
   the compute host's own device) does not count: timing the whole composite sent every Datamosh frame
   through a readback for nothing. On a real card both devices share the graphics ring, interleaved by
-  submission (found-defects 136).
+  submission (found-defects 149).
 - **A guard in an argument lives through the call.** `AudioRenderer::new(&project.lock().unwrap().clone())`
   held the project lock through a 412 ms build and the UI's next edit waited for it; the same form held
   the workers' map through a decoder's join and the thumbnail map through a file's opening. Clone in a

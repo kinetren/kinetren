@@ -416,6 +416,14 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
     v
 }
 
+/// The latest position of `n`'s chain whose broken picture the memo holds (decode-request-storm).
+pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
+    let s = Sched::new(r, lay);
+    let chain = s.chain(n);
+    let dk = Keys::new(&s).decoded(&chain);
+    (0..chain.len()).rev().find(|&i| memo.contains(dk[i])).map(|i| chain[i].0)
+}
+
 /// The source frame at `k` as padded planes; `None` — the host does not have it.
 fn source(input: &dyn StreamInput, side: Side, k: i64, w: usize, h: usize) -> Option<Planes> {
     let mut out = None;

@@ -9796,6 +9796,11 @@ impl KtApp {
             } else if s.uncounted() {
                 ui.colored_label(ui.visuals().warn_fg_color, tr(k::perf::LOAD_UNCOUNTED));
             }
+            // what each pass cost the device (gpu-pass-cost): the journal's GPU record, as it reads
+            // wrapped: a pass list is longer than any window is wide, and the section truncates
+            if let Some(g) = &s.gpu {
+                ui.add(egui::Label::new(egui::RichText::new(crate::tf!(k::perf::LOAD_GPU, g.line())).weak()).wrap());
+            }
         }
         let r = ui.button(tr(k::perf::LOAD_REPORT));
         crate::widgets::field_probe::note("diag.load_report", r.rect);
@@ -10228,6 +10233,14 @@ pub fn run() -> eframe::Result {
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
         setup.power_preference = kt_gpu::display_power_preference();
+        // the pass timer's timestamps where the adapter has them (gpu-pass-cost): the same
+        // descriptor egui-wgpu builds, plus `TIMESTAMP_QUERY`
+        let base = setup.device_descriptor.clone();
+        setup.device_descriptor = std::sync::Arc::new(move |adapter| {
+            let mut d = base(adapter);
+            d.required_features |= kt_gpu::pass_time::wanted_features(adapter);
+            d
+        });
     }
     // borderless (item 22, round 6): our own title bar in the toolbar row; the system frame
     // under wine or with KT_DECORATIONS=1 (wine-frame-and-dark-theme, `window_frame`)

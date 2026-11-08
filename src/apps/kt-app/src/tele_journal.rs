@@ -46,6 +46,8 @@ pub enum Kind {
     Run,
     /// A busy second of the load watch, or the return to rest.
     Load,
+    /// What the GPU did in a busy second, pass by pass (gpu-pass-cost).
+    Gpu,
     /// The playback black box and the summary of a playback.
     Play,
     /// A problem the program noticed (underruns, evictions, offline media).
@@ -65,6 +67,7 @@ impl Kind {
         match self {
             Kind::Run => "RUN",
             Kind::Load => "LOAD",
+            Kind::Gpu => "GPU",
             Kind::Play => "PLAY",
             Kind::Note => "NOTE",
             Kind::Act => "ACT",

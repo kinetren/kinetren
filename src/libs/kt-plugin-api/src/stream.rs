@@ -102,6 +102,12 @@ pub trait StreamKernel: Send + Sync {
     /// The positions whose frames are still needed to produce frame `n`, given the memo; empty —
     /// the memo already holds it. Ascending, without duplicates.
     fn needs(&self, p: &[f64], lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<(Side, i64)>;
+    /// The latest position at or before `n` on `n`'s own stream whose output the memo holds — the
+    /// picture a live preview shows while the stage is still computing its way to `n` (a late
+    /// frame, as a late decode shows its last one); `None` — none, or the kernel does not say.
+    fn held(&self, _p: &[f64], _lay: &dyn StreamLayout, _n: i64, _memo: &StreamMemo) -> Option<i64> {
+        None
+    }
     /// Produce frame `n` as RGBA (opaque) into `out`; `None` — a frame of the history is missing.
     /// Everything computed before the gap stays in the memo (progress is monotonic).
     fn render(
@@ -175,6 +181,11 @@ impl StreamMemo {
                 g.bytes -= e.1;
             }
         }
+    }
+
+    /// The bound it was made with.
+    pub fn bytes_cap(&self) -> usize {
+        self.cap
     }
 
     /// Bytes held.

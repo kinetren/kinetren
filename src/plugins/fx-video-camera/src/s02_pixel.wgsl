@@ -25,7 +25,7 @@ fn poisson(lambda: f32, h1: u32) -> f32 {
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
-    FL = P.u1.x;
+    begin(P.u1.x);
     TAB = P.u0;
     let p = vec2<i32>(floor(pos.xy));
     let k = u32(KK());

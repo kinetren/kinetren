@@ -26,7 +26,7 @@ pub mod worker;
 pub use audio::{AudioRenderer, RenderStats, db_to_linear, event_gain_linear};
 pub use export::{
     ExportBackends, ExportOptions, ExportStats,
-    export_mp4_with_backends, render_raw_audio,
+    export_mp4_with_backends, render_raw_audio, stream_preroll,
 };
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use flight::{FlightRecorder, Snap as FlightSnap};
@@ -42,7 +42,7 @@ pub use prefetch::{
 pub use transitions::TransMix;
 pub use transport::Transport;
 pub use video::{
-    NestKey, SourceFacts, VideoRenderer, clip_source_addr, clip_source_addr_in,
+    NestKey, SourceFacts, StreamPacing, VideoRenderer, clip_source_addr, clip_source_addr_in,
     content_hash, gen_salt, gen_source_addr, gen_source_addr_in, gen_sources, instance_content,
     nest_source_id, reel_chain_of_clip, resolve_cam3d, video_cache_idx,
 };

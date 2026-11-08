@@ -1073,6 +1073,7 @@ load_rest = "处理器 {0} %，空闲"
 load_line = "处理器 {0} %：{1}"
 load_work = "每秒工作量：{0}"
 load_uncounted = "没有工作计数器变化：程序没有统计这部分负载"
+load_gpu = "该秒的显卡：{0}"
 load_report = "打开负载报告"
 load_report_hint = "load-report.txt 由程序在高负载时自动写入，只保存在这台电脑上"
 

@@ -17,13 +17,15 @@ His journal, 06:38:35–06:39:09, playback over events he had just given a Datam
 - `LOAD` 22–57 % of ONE core for the whole process; `composites` 1 a second, `device_submits` ~45 a
   second; `ui_frames` 1–3 a second. `PLAY … V-fps 9.0`.
 
-The UI thread did not compute, it waited. One composite a second, but 45 submits a second: one
-composite submitted dozens of times. The submits are the compute host's (`kt-gpu/src/compute.rs`): a
-Datamosh slot is a STREAM stage (`video_stream.rs`), which runs inside `frame_plan` (`layer_src` →
-`stream::run` → `StreamKernel::render`) on the thread that composes, and its kernel decodes the event's
-history, one compute job per frame, each read back with `poll(wait_indefinitely)`. The composite ran in
-the UI frame (`draw_preview` → `Player::present_preview`), so the UI thread stood through the whole
-history.
+The UI thread did not compute, it waited. One composite a second, but 45 submits a second. The
+submits are the compute host's (`kt-gpu/src/compute.rs`, one device, jobs serialised): a Datamosh slot
+is a STREAM stage (`video_stream.rs`), which runs inside `frame_plan` (`layer_src` → `stream::run` →
+`StreamKernel::render`) on the thread that composes, and its kernel decodes the event's history, one
+compute job per frame, each read back with `poll(wait_indefinitely)`; the prefetch thread ran the same
+jobs ahead of the cursor (found-defects 134, `decode-request-storm`, merged beside this change, which also
+limits a composite's own share of a history to two positions). The composite ran in the UI frame
+(`draw_preview` → `Player::present_preview`), so the UI thread stood through its own jobs and behind the
+prefetch's on the one compute device.
 
 Reproduced on our fixture (`kt-cli showcase --heavy`, Datamosh at the far end of its range on the
 file events of the first ten seconds: search 64, gop 600, before 300, mosh 1), debug build, llvmpipe,

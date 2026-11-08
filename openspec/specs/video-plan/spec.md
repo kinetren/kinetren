@@ -590,6 +590,54 @@ not use (a second arithmetic, forbidden since R.64).
 - **THEN** generators and titles are still conformed as an identity (t471 green), the placeholder still fills the whole canvas in 4:3 (no margins), t796, t796b, t796d, t715 and `GOLDEN_VIDEO` are green with no regeneration
 - **TEST** t941 (`src/libs/kt-engine/tests/stills.rs`)
 
+### Requirement: A live preview paces a stream stage's history
+In the live preview (`StreamPacing`, set by the player on its renderers; `None` for an export and every
+other path, whose bytes do not move) the order of a stream layer SHALL be the earliest positions its
+history lacks that fit a quarter of the video cache, at least one, in the order the stage reads them. The
+prefetch thread SHALL advance the stream stages over what the decoder brought — at the frame on screen and,
+while playing, ahead of it (wrapping in the loop region) by the frames the display reaches before its next
+pass, twice over, bounded by a quarter of the stage's memo — and a pass that leaves a stage pending SHALL
+run again even on a pause. A composite SHALL run a stage only when its frame lacks at most two positions:
+on a pause it reports the frame incomplete; while playing it shows the latest frame the stage holds on that
+frame's stream, and such a composite is not kept as the moment's own. An offline path with its own sources
+and a small cache (the reel strip, the project poster) SHALL pre-roll a stream stage as the export does, in
+batches of half its cache.
+Why: ordering the whole history (up to 600 frames of 8 MB at 1080 lines against a 512 MB cache) let the
+decoder run through it while the stage read only at composites; the cache dropped the history's front, the
+frame never came, and the owner saw a loop at V-fps 0. With the history cached, the composite computed it
+on the UI thread: 9 s for one composite on his relinked project (decode-request-storm).
+
+#### Scenario: The paced order is the earliest of the history
+- **WHEN** a frame 3 s into a cut mosh (a ~100-frame history) is ordered with budgets of 1, 7 and 30 frames, and of one byte
+- **THEN** each order equals the first 1, 7, 30 and 1 entries of the unpaced order
+- **TEST** t2042 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: The advance computes the history, not the composite
+- **WHEN** every frame of that history is cached and a paced renderer composes the frame, then runs `stream_advance`, then composes again
+- **THEN** the first composite is incomplete and the memo untouched; the advance reports nothing pending; the second composite is complete and byte-identical to the unpaced renderer's; the next frame, one step on, is the composite's own
+- **TEST** t2043 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+### Requirement: A frame creates no GPU resource after warm-up
+After its first frames (new pipeline shapes, the pool's textures, the uniform arena, the pass timer's
+buffers), composing a frame SHALL create no texture, buffer or pipeline: transients come from the pool,
+uploads from the upload cache's spares, readback buffers are kept. The one exception is the preview's
+memo of presented composites (cached-range-plays), which keeps each new complete composite until its
+budget is full and then recycles the evicted ones: at most one texture a new presented frame. The compute
+host likewise reuses its buffers and pipelines job after job. `kt_gpu::resources_created()` counts every
+creation at the sites a frame can reach.
+Why: gpu-pass-cost — a creation per frame is an allocation, often a cleared one, on the card's memory
+every frame; on an integrated GPU that memory is the system's.
+
+#### Scenario: Every effect and preset composes without creating anything
+- **WHEN** every video effect of the registry at its defaults and at each preset, and the heavy stack (VHS Tape, Camera ISP, glow, radial blur over two more layers), compose three warm frames at 1080p through the readback path, and three more through the present path
+- **THEN** the readback frames created nothing, and the presented ones at most one texture each
+- **TEST** t2023 (`src/libs/kt-gpu/tests/no_creation.rs`)
+
+#### Scenario: A Datamosh frame reuses the compute host's buffers
+- **WHEN** a warm Datamosh encoder job and decoder job run three times
+- **THEN** no buffer or pipeline was created
+- **TEST** t2024 (`src/plugins/fx-video-codec/tests/compute_reuse.rs`)
+
 ### Requirement: The kept moments are checked against an edit off the UI thread
 The bars' "plays without work" layer SHALL be read on the UI thread from the map of kept moments
 alone. Moments presented before an edit SHALL be checked against the current plan on the preview's

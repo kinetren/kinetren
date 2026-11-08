@@ -445,9 +445,12 @@ impl IncompleteRuns {
 
 /// The stream stages' PRE-ROLL before frame `t` (datamosh-codec-path, D6): while the frame names
 /// source frames the cache lacks (a range starting inside a mosh, an evicted memo entry), decode the
-/// EARLIEST of them in a batch bounded by the export cache and advance the codecs over it. Every
-/// batch leaves its results in the memo, so the loop ends; a frame no source can give ends it too.
-fn stream_preroll(
+/// EARLIEST of them in a batch bounded by half the cache's video budget and advance the codecs over
+/// it. Every batch leaves its results in the memo, so the loop ends; a frame no source can give
+/// ends it too. Every offline path with its own sources runs it before a composite — the export,
+/// and the reel strip and project poster (decode-request-storm: they read the whole history into a
+/// 16–64 MB cache at once, which dropped its front before the composite read it).
+pub fn stream_preroll(
     video: &VideoRenderer,
     cache: &BurstCache,
     src: &mut std::collections::HashMap<MediaId, Box<dyn MediaSource>>,
@@ -465,7 +468,7 @@ fn stream_preroll(
             return;
         }
         let frame_bytes = missing.iter().map(|(_, _, q)| q.width as usize * q.height as usize * 4).max().unwrap_or(1);
-        let batch = (EXPORT_VIDEO_CACHE_BYTES / 2 / frame_bytes.max(1)).max(1);
+        let batch = (cache.max_video_bytes() / 2 / frame_bytes.max(1)).max(1);
         let mut per_src: std::collections::BTreeMap<(MediaId, Quality), Vec<Tick>> = Default::default();
         for &(m, pts, q) in missing.iter().take(batch) {
             per_src.entry((m, q)).or_default().push(pts);

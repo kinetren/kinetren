@@ -2749,6 +2749,23 @@ On the VHS Tape audio dropouts (full-scale one-sample clicks, 123 a second on hi
 программой". So the work now is the performance of everything; effects are touched only where
 their COST is the problem, never their substance.
 
+## 2026-11-08 — his runs of b614203c and release 360b50e6 (`kkt-26.11.08`)
+
+Registry: `docs/ktprompts/kkt-26.11.08-index.md` (H1–H9). His files: `fails/26.11.08/`, `new/`, `new2/`.
+
+- The effects window with VHS Tape lags and prefetch hammers on a pause; the lag depends on the place.
+  He had run the OLD build 61414dba: "Ты точно там что-то исправил?!?!? Отвечай." Answered: the fixes
+  were in b614203c, which I had not given him clearly, nor fast-forwarded master.
+- On b614203c: "Ну в целом стало лучше конечно не тормозит так рьяно. Но debug сборка как-то обильно
+  падает на SIGSEGV", the crash report is scanty, "производительность под вопросом общая, кажется что
+  на моем компьютере оно могло бы пошустрее работать".
+- On release 360b50e6 (new2): "а loop-picture-throughput может связан с тяжелым эффектом? типо я
+  поменял там что-то и оно пошло считать?" and "все равно я думаю что на моем компьютере всё что могло
+  бы - работало пошустрее... гораздо..". His journal: the UI blocked 0.3–4.5 s, ~45 GPU submits a
+  second, after a Datamosh ~1570 decode requests a second, loops at V-fps 0.
+- On the proposal (ui-never-waits, gpu-pass-cost, decode-request-storm first; segv-crashes and
+  edit-without-rebuild next): "запускай".
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
