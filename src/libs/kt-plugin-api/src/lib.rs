@@ -1429,6 +1429,13 @@ pub trait Plugin: Send + Sync {
     fn stream(&self) -> Option<&dyn stream::StreamKernel> {
         None
     }
+    /// The compute shaders the plugin's kernels run on the host's compute device: the host
+    /// prepares them when a project reaches the plugin, so its first frame compiles nothing
+    /// (pipeline-prewarm D6). A shader a kernel runs and does not name here compiles inside the
+    /// job that first needs it (t2122 counts it).
+    fn compute_shaders(&self) -> Vec<compute::Shader> {
+        Vec::new()
+    }
 }
 
 /// The tail of an audio plugin in frames — ONE home of the formula: the registry, the static

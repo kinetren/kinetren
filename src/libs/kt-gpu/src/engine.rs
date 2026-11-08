@@ -4,7 +4,6 @@
 //! The integer kernels are held to the stored frames of the deleted CPU composite byte for byte,
 //! the bilinear ones within tolerance (t181/t182).
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -16,16 +15,17 @@ use kt_model::FxInstance;
 use kt_time::Tick;
 use xxhash_rust::xxh3::Xxh3;
 
+use crate::compiled::Slot;
 use crate::context::{GpuContext, GpuInitError};
 use crate::pass_time::{FrameMeta, PassLabel, Role, Timer};
 use crate::pool::{
-    DISPLAY_FORMAT, FORMAT, PresentMemo, ReadbackCache, WORD_FORMAT, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
+    FORMAT, PresentMemo, ReadbackCache, WORD_FORMAT, Tex, TexturePool, UploadCache, create_display_tex, create_tex,
 };
 
 const SLOT: u64 = 256; // dynamic offset alignment (the maximum per the spec)
 /// Uniform of the merged geometry pass (R.44): the primitive program does not fit
 /// into the shared 128 B, so it has its own bind group layout and 4 arena slots per pass.
-const GEOM_UNIFORM_BYTES: usize = 1024;
+pub(crate) const GEOM_UNIFORM_BYTES: usize = 1024;
 const GEOM_SLOT_UNITS: u32 = (GEOM_UNIFORM_BYTES as u64 / SLOT) as u32;
 const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 const TRANSIENT_BUDGET: u64 = 128 * 1024 * 1024;
@@ -206,7 +206,7 @@ enum Pipe {
     MaskAlpha,
 }
 
-const PIPE_COUNT: usize = 8;
+pub(crate) const PIPE_COUNT: usize = 8;
 
 impl Pipe {
     /// What the telemetry journal's GPU record calls the pass (gpu-pass-cost).
@@ -770,18 +770,8 @@ impl Job {
 struct Inner {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    layout: wgpu::BindGroupLayout,
-    pipes: [wgpu::RenderPipeline; PIPE_COUNT],
-    /// The own passes of the point-wise plugins, in `plugin_taps()` order (D5).
-    plugin_pipes: Vec<wgpu::RenderPipeline>,
-    /// The plugin pipes that target `WORD_FORMAT`, by the same index.
-    plugin_word: Vec<bool>,
-    /// The merged geometry pass (R.44): its own 1024 B uniform → its own layout/pipe.
-    geom_layout: wgpu::BindGroupLayout,
-    geom_pipe: wgpu::RenderPipeline,
-    geom_pipe_layout: wgpu::PipelineLayout,
-    /// The specialized fused passes by program shape, built when a shape first runs.
-    geom_shapes: HashMap<[u32; 4], Option<wgpu::RenderPipeline>>,
+    /// The pipelines, shared by every engine on the device (pipeline-prewarm D3).
+    c: Arc<crate::compiled::Compiled>,
     /// t1766: the interpreter for every shape.
     geom_interpret: bool,
     arena: wgpu::Buffer,
@@ -795,8 +785,7 @@ struct Inner {
     last_cost: kt_fx::video::FrameCost,
     /// Where the last `execute` spent its time (preview-throughput).
     last_stages: GpuStages,
-    /// The preview's display pass and targets (preview-throughput D2).
-    display_pipe: wgpu::RenderPipeline,
+    /// The preview's display targets (preview-throughput D2).
     display: Option<Tex>,
     /// Bumped when `display` is a new texture: the UI registers it again.
     display_generation: u64,
@@ -819,13 +808,16 @@ struct Inner {
 
 pub struct GpuFxEngine {
     info: GpuBackendInfo,
+    /// The device's pipelines, reachable without `inner` (which a composite holds whole): a prewarm
+    /// asked from the UI thread never waits for a frame.
+    compiled: Arc<crate::compiled::Compiled>,
     inner: Mutex<Inner>,
     /// What `present` last drew into and the glow, published apart from `inner` (ui-never-waits):
     /// the UI's paint reads them, and the preview's thread holds `inner` for a whole composite.
     shown: Mutex<(Option<DisplayTarget>, Option<wgpu::TextureView>)>,
 }
 
-const SHADERS: [(&str, &str); PIPE_COUNT] = [
+pub(crate) const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("resample", include_str!("shaders/resample.wgsl")),
     ("mirror", include_str!("shaders/mirror.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
@@ -836,8 +828,8 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("mask", include_str!("shaders/mask.wgsl")),
 ];
 
-const COMMON: &str = include_str!("shaders/common.wgsl");
-const DISPLAY: &str = include_str!("shaders/display.wgsl");
+pub(crate) const COMMON: &str = include_str!("shaders/common.wgsl");
+pub(crate) const DISPLAY: &str = include_str!("shaders/display.wgsl");
 /// The ambient glow's target.
 const GLOW_SIZE: (u32, u32) = (32, 18);
 
@@ -1033,7 +1025,7 @@ pub fn assembled_shaders() -> (String, Vec<String>) {
 /// coefficients still in the uniform, so the bytes are the same (t1766). The interpreter's loop
 /// over a run-time count and its table of varying slots cost a software rasterizer up to half this
 /// pass, and a camera puts this pass on nearly every frame of a project.
-fn geom_specialized(h: [u32; 4]) -> Option<String> {
+pub(crate) fn geom_specialized(h: [u32; 4]) -> Option<String> {
     let [n, kinds_lo, kinds_hi, ss] = h;
     let (mode, nx, ny, taps) = (ss & 0xff, (ss >> 8) & 0xff, (ss >> 16) & 0xff, ss >> 24);
     if taps != 0 || (mode == 0 && (nx == 0 || ny == 0)) {
@@ -1117,7 +1109,14 @@ impl GpuFxEngine {
     /// Builds the pipelines; a shader/device compile error → Err
     /// (the caller shows a notice).
     pub fn new(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
-        Self::build(ctx, false)
+        Self::build(ctx, false, false).map(|e| e.expect("an engine"))
+    }
+
+    /// `new` for a device that lives as long as the process (the editor's display device,
+    /// pipeline-prewarm D3): its compiled pipelines stay, so the next engine on it — a project
+    /// opened again — takes them as they are, already warm.
+    pub fn new_kept(ctx: GpuContext) -> Result<Arc<GpuFxEngine>, GpuInitError> {
+        Self::build(ctx, false, true).map(|e| e.expect("an engine"))
     }
 
     /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
@@ -1128,13 +1127,25 @@ impl GpuFxEngine {
         std::mem::forget(inner);
     }
 
+    /// Warm, on the device's worker, the pipelines the effects `ids` reach, and the core the first
+    /// time (pipeline-prewarm D5). Returns at once; ids asked before are skipped.
+    pub fn prewarm_effects(&self, ids: &[String]) {
+        self.compiled.prewarm(ids);
+    }
+
+    /// Wait until the device's warm worker has nothing left (an export before its first frame,
+    /// tests, `kt-cli first-frame`).
+    pub fn settle(&self) {
+        self.compiled.settle();
+    }
+
     /// Compile every shader and run no frame: what t1650 asks of WARP, whose FXC is the compiler of
     /// every D3D12 machine and whose rasterizer dies running our passes.
     pub fn compile_check(ctx: GpuContext) -> Result<(), GpuInitError> {
-        Self::build(ctx, true).map(|_| ())
+        Self::build(ctx, true, false).map(|_| ())
     }
 
-    fn build(ctx: GpuContext, compile_only: bool) -> Result<Arc<GpuFxEngine>, GpuInitError> {
+    fn build(ctx: GpuContext, compile_only: bool, keep: bool) -> Result<Option<Arc<GpuFxEngine>>, GpuInitError> {
         let device = ctx.device;
         let queue = ctx.queue;
         let ai = &ctx.adapter_info;
@@ -1164,182 +1175,10 @@ impl GpuFxEngine {
                 ai.name
             )));
         }
-        // Two scopes: a shader the backend's compiler rejects (FXC on D3D12: "not natively
-        // addressable", windows-build) is an INTERNAL error, not a validation one. With only
-        // the validation scope it escaped to the default handler, which panics — a crash on
-        // Windows instead of a clean error. Popped in reverse order.
-        let internal_scope = device.push_error_scope(wgpu::ErrorFilter::Internal);
-        let err_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("kt-gpu layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    // The VERTEX stage also reads the uniform (vs3d Pan3d:
-                    // MVP/anchor): FRAGMENT-only made create_render_pipeline fail
-                    // on real hardware and refused the WHOLE engine (R.31 item 1)
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(128),
-                    },
-                    count: None,
-                },
-                texture_entry(1),
-                texture_entry(2),
-                texture_entry(3),
-            ],
-        });
-        let pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("kt-gpu pipeline layout"),
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let (fused_src, plugin_srcs) = assembled_shaders();
-        let composite = assembled_composite();
-        let fixed: Vec<(String, String)> = SHADERS
-            .iter()
-            .map(|(n, b)| (n.to_string(), if *n == "composite" { composite.clone() } else { b.to_string() }))
-            .collect();
-        let mut plugins: Vec<(String, String)> =
-            plugin_taps().iter().zip(&plugin_srcs).map(|((id, _), body)| (format!("plugin {id}"), body.clone())).collect();
-        let mut plugin_word = vec![false; plugins.len()];
-        // the barrier plugins' passes follow, in `plugin_barriers` order (`barrier_pipe_base`)
-        for (id, shaders, words) in plugin_barriers() {
-            for (i, body) in shaders.iter().enumerate() {
-                plugins.push((format!("barrier {id} {i}"), body.to_string()));
-                plugin_word.push(words >> i & 1 == 1);
-            }
+        let c = crate::compiled::for_device(&device, &queue, ai, keep && !compile_only)?;
+        if compile_only {
+            return Ok(None);
         }
-        let fixed_count = fixed.len();
-        let mut pipes: Vec<wgpu::RenderPipeline> = fixed
-            .iter()
-            .chain(plugins.iter())
-            .enumerate()
-            .map(|(i, (name, body))| {
-                let name = name.as_str();
-                let format = if i >= fixed_count && plugin_word[i - fixed_count] { WORD_FORMAT } else { FORMAT };
-                let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(name),
-                    source: wgpu::ShaderSource::Wgsl(format!("{COMMON}\n{body}").into()),
-                });
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(name),
-                    layout: Some(&pipe_layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some("vs"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some("fs"),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    primitive: Default::default(),
-                    depth_stencil: None,
-                    multisample: Default::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            })
-            .collect();
-        let display_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("display"),
-            source: wgpu::ShaderSource::Wgsl(format!("{COMMON}\n{DISPLAY}").into()),
-        });
-        let display_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("display"),
-            layout: Some(&pipe_layout),
-            vertex: wgpu::VertexState {
-                module: &display_module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &display_module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: DISPLAY_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        // The merged geometry pass (R.44): the GEOM_UNIFORM_BYTES uniform does not fit into
-        // the shared layout (128 B) — its own layout and pipe from the same arena buffer.
-        let geom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("kt-gpu geom layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
-                    },
-                    count: None,
-                },
-                texture_entry(1),
-            ],
-        });
-        let geom_pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("kt-gpu geom pipeline layout"),
-            bind_group_layouts: &[Some(&geom_layout)],
-            immediate_size: 0,
-        });
-        let geom_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("geom_fused"),
-            source: wgpu::ShaderSource::Wgsl(fused_src.into()),
-        });
-        let geom_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("geom_fused"),
-            layout: Some(&geom_pipe_layout),
-            vertex: wgpu::VertexState {
-                module: &geom_module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &geom_module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        let validation = pollster::block_on(err_scope.pop());
-        let internal = pollster::block_on(internal_scope.pop());
-        if let Some(e) = validation.or(internal) {
-            return Err(GpuInitError::Pipeline(e.to_string()));
-        }
-        let plugin_pipes = pipes.split_off(PIPE_COUNT);
-        let pipes: [wgpu::RenderPipeline; PIPE_COUNT] =
-            pipes.try_into().map_err(|_| GpuInitError::Pipeline("pipe count".into()))?;
 
         let arena_slots = 256u32;
         let arena = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1352,20 +1191,14 @@ impl GpuFxEngine {
         let max_dim = device.limits().max_texture_dimension_2d;
         let (names, owners) = plugin_pipe_names();
         let timer = Timer::new(&device, &queue, &info.name, names, owners);
-        Ok(Arc::new(GpuFxEngine {
+        Ok(Some(Arc::new(GpuFxEngine {
             info,
+            compiled: c.clone(),
             shown: Mutex::new((None, None)),
             inner: Mutex::new(Inner {
                 device,
                 queue,
-                layout,
-                pipes,
-                plugin_pipes,
-                plugin_word,
-                geom_layout,
-                geom_pipe,
-                geom_pipe_layout,
-                geom_shapes: HashMap::new(),
+                c,
                 geom_interpret: false,
                 arena,
                 arena_slots,
@@ -1376,7 +1209,6 @@ impl GpuFxEngine {
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
                 last_cost: Default::default(),
                 last_stages: Default::default(),
-                display_pipe,
                 display: None,
                 display_generation: 0,
                 glow: None,
@@ -1389,11 +1221,11 @@ impl GpuFxEngine {
                 timer,
                 host_owner: None,
             }),
-        }))
+        })))
     }
 }
 
-fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+pub(crate) fn texture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
@@ -1509,11 +1341,19 @@ impl GpuFxEngine {
 
     /// t1766: how many program shapes have a pass of their own so far.
     pub fn geometry_shapes(&self) -> usize {
-        self.inner.lock().unwrap().geom_shapes.values().flatten().count()
+        self.inner.lock().unwrap().c.shapes_ready()
     }
 }
 
 impl VideoGpuExec for GpuFxEngine {
+    fn prewarm(&self, ids: &[String]) {
+        self.prewarm_effects(ids);
+    }
+
+    fn settle_prewarm(&self) {
+        self.settle();
+    }
+
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         self.inner.lock().unwrap().execute(plan, out, true)
     }
@@ -1866,7 +1706,7 @@ impl Inner {
         let dummy = self.dummy.view.clone();
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &self.layout,
+            layout: &self.c.layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -1897,7 +1737,8 @@ impl Inner {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        rp.set_pipeline(&self.display_pipe);
+        self.c.drawn(Slot::Display);
+        rp.set_pipeline(&self.c.display_pipe);
         rp.set_bind_group(0, &bg, &[offset as u32]);
         rp.draw(0..3, 0..1);
     }
@@ -2566,7 +2407,7 @@ impl Inner {
                                 UniformData { u: *u, f: *f, ..Default::default() },
                             ),
                         };
-                        let word = matches!(which, Which::Plugin(i) if self.plugin_word[i]);
+                        let word = matches!(which, Which::Plugin(i) if self.c.plugin_word[i]);
                         let dst = self.pool.acquire_as(&self.device, tw, th, if word { WORD_FORMAT } else { FORMAT });
                         self.pass_which(enc, which, &dst.view, &t0, &t1, &t2, u);
                         if let Some(t) = prev_tex.take() {
@@ -2652,35 +2493,6 @@ impl Inner {
 
     /// The merged geometry-series pass: GEOM_UNIFORM_BYTES uniform (4 arena slots),
     /// its own layout; the rest of the mechanics is as in `pass`.
-    fn geom_pipeline(&self, text: &str) -> wgpu::RenderPipeline {
-        crate::created();
-        let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("geom_shape"),
-            source: wgpu::ShaderSource::Wgsl(text.into()),
-        });
-        self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("geom_shape"),
-            layout: Some(&self.geom_pipe_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState { format: FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        })
-    }
-
     fn pass_geom(
         &mut self,
         enc: &mut wgpu::CommandEncoder,
@@ -2695,15 +2507,16 @@ impl Inner {
         );
         self.slot += GEOM_SLOT_UNITS;
         self.queue.write_buffer(&self.arena, offset, &u.bytes());
-        if !self.geom_interpret && !self.geom_shapes.contains_key(&u.h) {
-            let pipe = geom_specialized(u.h).map(|text| self.geom_pipeline(&text));
-            self.geom_shapes.insert(u.h, pipe);
+        // a shape without a warm pipeline of its own runs the interpreter, the same bytes (t1766),
+        // while the device's worker compiles it (pipeline-prewarm D4): a frame never compiles
+        let shaped = if self.geom_interpret { None } else { self.c.shape(u.h) };
+        if shaped.is_none() {
+            self.c.drawn(Slot::Geom);
         }
-        let shaped = if self.geom_interpret { None } else { self.geom_shapes.get(&u.h).and_then(|p| p.as_ref()) };
-        let pipe = shaped.unwrap_or(&self.geom_pipe);
+        let pipe = shaped.as_ref().unwrap_or(&self.c.geom_pipe);
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &self.geom_layout,
+            layout: &self.c.geom_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -2777,7 +2590,7 @@ impl Inner {
         self.queue.write_buffer(&self.arena, offset, &u.bytes());
         let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &self.layout,
+            layout: &self.c.layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -2819,8 +2632,14 @@ impl Inner {
             multiview_mask: None,
         });
         match which {
-            Which::Fixed(pipe) => rp.set_pipeline(&self.pipes[pipe as usize]),
-            Which::Plugin(i) => rp.set_pipeline(&self.plugin_pipes[i]),
+            Which::Fixed(pipe) => {
+                self.c.drawn(Slot::Fixed(pipe as usize));
+                rp.set_pipeline(&self.c.pipes[pipe as usize])
+            }
+            Which::Plugin(i) => {
+                self.c.drawn(Slot::Plugin(i));
+                rp.set_pipeline(&self.c.plugin_pipes[i])
+            }
         }
         rp.set_bind_group(0, &bg, &[offset as u32]);
         rp.draw(0..3, 0..1);

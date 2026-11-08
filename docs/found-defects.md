@@ -54,7 +54,6 @@ list may be short of items from them.
 | 80 | a cut does not move `geometry_auto` curves | `clip_slice` leaves them in place; read in the code, to check on an event with speed | `kt-model` | not checked | С.3, check first |
 | 81 | a long name runs over the event's edge | Clipped only when a level chip is drawn; read in the code | `kt-app` timeline | not checked | С.3 |
 | 76 | event longer than its file holds the last frame silently | Zero lost layers, nothing in the log; a person who did not mean a freeze is not told | `kt-engine` export | owner decided 2026-11-07: told in the render window BEFORE the start | С.3 |
-| 64 | first frame of Datamosh | The first frame after a start took 6.6 s on llvmpipe under load about 20: the compute device opens and the shaders compile, no disk cache of shaders; new with `compute-kernels` | `src/libs/kt-gpu/src/compute.rs` `open`, `pipe` | open | С.1, next compute stage |
 | 65 | Datamosh not seen on a real device | The compute path ran only on Vulkan through llvmpipe: no real card, DX12, Metal or ARM yet; the panel's message without a device was not looked at in the live program | `fx-video-codec` | open | С.2 CI and the ARM build |
 | 85 | render memory unproven at 4K | The memory formula is extrapolated from 1080p; the Windows branch of reading memory was compiled alone, not run; real card, DX12, Metal, ARM not run either | `kt-engine` export | not measured | С.1, on the first 4K render |
 | 86 | frame blending on a stretch and `fit_into` still on the CPU | Not moved, no measurement whether it pays | `kt-engine` | not measured | С.1 |
@@ -97,7 +96,6 @@ list may be short of items from them.
 | 136 | Camera ISP behind a K× barrier (k>1) computes every sensor pixel k² times | found by `gpu-pass-cost` | `fx-video-camera`, `kt-gpu` barriers | open | performance queue |
 | 137 | radial blur in spin mode computes 16 sin/cos a pixel, one set a frame | a table in the uniform needs room the barrier pass does not have | `fx-video-blur`, `kt-gpu` | open | performance queue |
 | 138 | a bind group and a uniform write per pass on the composing thread | processor cost per pass | `kt-gpu` | open | performance queue |
-| 139 | a new geometry shape compiles its pipeline inside the frame | a hitch the first time a shape appears | `kt-gpu` | open | performance queue |
 | 140 | after a pause the live bench repaints ~70 times a second with no composite | llvmpipe at 500 %; seen by `gpu-pass-cost` on the live bench only | `kt-app` repaint | open, check outside the bench | first |
 | 141 | t1964 red once under load, green in three reruns | telemetry journal; `gpu-pass-cost` did not touch it | `kt-app` tests | open | watch |
 | 142 | VHS Tape always runs on the 1135×576 tape grid, even for a small preview | a smaller grid for the preview changes the look; question to the owner (preview faster but not equal to the export, or keep) | `fx-video-tape` | question to owner | — |

@@ -444,9 +444,11 @@ pub(crate) fn note_job(adapter: &str, job_ns: u64, dispatches: &[(&str, u64)]) {
     });
 }
 
-/// The features a device asks for so the timer works: `TIMESTAMP_QUERY` where the adapter has it.
+/// The features every device we open asks for, where the adapter has them: `TIMESTAMP_QUERY` (the
+/// timer) and `PIPELINE_CACHE` (the disk tier of compiled pipelines, pipeline-prewarm D7).
 pub fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
-    adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+    // and the disk tier of compiled pipelines where the adapter has it (pipeline-prewarm D7)
+    adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_CACHE)
 }
 
 #[cfg(test)]

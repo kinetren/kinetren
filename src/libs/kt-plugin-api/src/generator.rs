@@ -121,9 +121,18 @@ pub struct Kind {
     tone: Option<Tone>,
     gate: Option<Gate>,
     synth: Option<Synth>,
+    /// The `pixel` text the kind's frame runs on the compute device (`shader_frame`).
+    shader: Option<&'static str>,
 }
 
 impl Kind {
+    /// The kind draws its frame with `shader_frame(…, pixel, …)`: the same text, named so the host
+    /// prepares it before the first frame (pipeline-prewarm D6).
+    pub fn with_shader(mut self, pixel: &'static str) -> Kind {
+        self.shader = Some(pixel);
+        self
+    }
+
     /// The kind sounds: its level and, when not every sample sounds, its gate.
     pub fn with_tone(mut self, tone: Tone, gate: Option<Gate>) -> Kind {
         self.tone = Some(tone);
@@ -158,6 +167,9 @@ impl crate::Plugin for Kind {
     }
     fn generator(&self) -> Option<&dyn GenKernel> {
         Some(self)
+    }
+    fn compute_shaders(&self) -> Vec<crate::compute::Shader> {
+        self.shader.map(|p| crate::compute::Shader { text: shader_text(p).into(), reads: 0, writes: 1 }).into_iter().collect()
     }
 }
 
@@ -249,6 +261,7 @@ pub fn kind(
         tone: None,
         gate: None,
         synth: None,
+        shader: None,
     }
 }
 

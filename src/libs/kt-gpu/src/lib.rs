@@ -10,14 +10,19 @@ pub mod memory;
 pub mod pass_time;
 pub mod reference;
 pub mod testkit;
+mod compiled;
 mod context;
 mod engine;
+mod pipeline_cache;
 mod pool;
+mod warm;
 
 pub use context::{
     AdapterFact, DrivingCard, GpuContext, GpuInitError, adapter_facts, display_power_preference, driving_cards,
     instances_created, power_preference_for,
 };
+pub use compiled::{cold_draws, pipelines_in_frame};
+pub use pipeline_cache::set_cache_dir;
 pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
 /// Textures, buffers and pipelines the engine and the compute host created since the process

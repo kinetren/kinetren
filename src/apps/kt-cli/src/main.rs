@@ -1362,6 +1362,8 @@ fn run(args: &[String]) -> i32 {
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     kt_plugins_builtin::install();
     kt_plugin_api::compute::install(kt_gpu::compute::open);
+    // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
+    kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
         Some("ffmpeg") => {
             // the search report (media-index): what was loaded, what was rejected and why

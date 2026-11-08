@@ -37,10 +37,24 @@ pub struct Job<'a> {
     pub reads: &'a [Buf],
 }
 
+/// A compute shader a plugin runs (pipeline-prewarm D6): its text and how many buffers a step with
+/// it reads and writes, which fix its bindings. A plugin names them in `Plugin::compute_shaders`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Shader {
+    pub text: std::borrow::Cow<'static, str>,
+    pub reads: usize,
+    pub writes: usize,
+}
+
 /// The host's compute device. `run` blocks until the buffers are back; an error names what the
 /// device refused and never panics.
 pub trait ComputeHost: Send + Sync {
     fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String>;
+    /// Compile `shader` and run it once off any frame, so a job using it compiles nothing
+    /// (pipeline-prewarm D6). Blocks until done.
+    fn prepare(&self, _shader: &Shader) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 type Open = fn() -> Result<Arc<dyn ComputeHost>, String>;
@@ -97,4 +111,35 @@ pub fn unavailable() -> Option<String> {
         return Some(r);
     }
     host().is_none().then(|| HOST.get().and_then(|h| h.as_ref().err().cloned()).unwrap_or_default())
+}
+
+/// Open the device and prepare `shaders` on a thread of its own (`compute-warm`), when a host is
+/// installed (pipeline-prewarm D6). Returns at once; a shader asked before is skipped, so a project
+/// whose shaders did not change asks nothing. A failure is left for the job that needs the shader
+/// to report.
+pub fn prewarm(shaders: Vec<Shader>) {
+    static ASKED: Mutex<Vec<Shader>> = Mutex::new(Vec::new());
+    if OPEN.get().is_none() || FAILED.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+        return;
+    }
+    let new: Vec<Shader> = {
+        let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
+        let new: Vec<Shader> = shaders.into_iter().filter(|s| !asked.contains(s)).collect();
+        for s in &new {
+            if !asked.contains(s) {
+                asked.push(s.clone());
+            }
+        }
+        new
+    };
+    if new.is_empty() {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("compute-warm".into()).spawn(move || {
+        if let Some(h) = host() {
+            for s in &new {
+                let _ = h.prepare(s);
+            }
+        }
+    });
 }

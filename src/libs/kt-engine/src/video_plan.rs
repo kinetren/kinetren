@@ -327,6 +327,12 @@ pub trait VideoGpuExec: Send + Sync {
     fn holds(&self, _key: u64) -> bool {
         false
     }
+    /// Compile, off the caller's thread, what the effects `ids` reach on this executor, so their
+    /// first frame does not (pipeline-prewarm D5). Returns at once and never waits for a frame;
+    /// frames before it is done behave as before it was asked.
+    fn prewarm(&self, _ids: &[String]) {}
+    /// Wait until what `prewarm` started is done (an export before its first frame).
+    fn settle_prewarm(&self) {}
 }
 
 /// How `VideoGpuExec::present` treats a frame.

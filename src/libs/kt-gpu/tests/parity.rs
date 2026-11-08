@@ -121,7 +121,8 @@ fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, 
 
 /// t1766 (render-speed-no-card D4): a fused pass written out for its program shape gives the
 /// interpreter's bytes, on every kind of step it takes: affine, supersampled, clamped, bounded,
-/// perspective with its per-pixel taps, and a warp.
+/// perspective with its per-pixel taps, and a warp. The shape is compiled beside the frame and taken
+/// once the worker settles (pipeline-prewarm D4).
 #[test]
 fn t1766_a_shape_of_its_own_gives_the_interpreters_bytes() {
     kt_plugins_builtin::install();
@@ -144,6 +145,10 @@ fn t1766_a_shape_of_its_own_gives_the_interpreters_bytes() {
             let plan = FramePlan { t: Tick(i as i64), out_w: 320, out_h: 180, layers: vec![one(&src, 4096, false)] };
             let (mut shaped, mut read) = (Vec::new(), Vec::new());
             engine.interpret_geometry(false);
+            // the first frame of a shape runs the interpreter while the shape compiles on the
+            // device's worker (pipeline-prewarm D4); the frame after it takes the shape
+            engine.execute_once(&plan, &mut shaped).expect("the first frame");
+            engine.settle();
             engine.execute_once(&plan, &mut shaped).expect("the shape");
             engine.interpret_geometry(true);
             engine.execute_once(&plan, &mut read).expect("the interpreter");

@@ -177,6 +177,9 @@ pub enum EnterOnNest {
 /// Selection frame in the model domain: [start, end) and the touched tracks.
 pub type Band = (kt_time::Tick, kt_time::Tick, Vec<(LaneKind, u32)>);
 
+/// Where the engine built on its thread arrives (pipeline-prewarm D3).
+type EngineBuild = std::sync::mpsc::Receiver<Result<std::sync::Arc<kt_gpu::GpuFxEngine>, String>>;
+
 pub struct KtApp {
     pub model: TimelineModel,
     pub project_path: Option<PathBuf>,
@@ -388,6 +391,8 @@ pub struct KtApp {
     pub(crate) preview_buf: Vec<u8>,
     /// The picture on the device; `None` — the bytes path (no engine, the harness).
     preview_display: Option<crate::preview_display::PreviewDisplay>,
+    /// The video engine being built on its thread (pipeline-prewarm D3): taken by the frame it arrives.
+    gpu_building: Option<(EngineBuild, eframe::egui_wgpu::RenderState)>,
     /// The last frame shown lives in `preview_display`, not in `texture`.
     preview_on_display: bool,
     /// Throttling of the glow mip: every N new frames (ambient does not flicker).
@@ -766,18 +771,40 @@ impl KtApp {
             self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, "no wgpu render state"));
             return;
         };
-        let built = kt_gpu::GpuFxEngine::new(kt_gpu::GpuContext::from_parts(
+        // built on a thread (pipeline-prewarm D3): compiling every pipeline took 0.95–1.9 s of a
+        // frozen window on llvmpipe, at start and at every project open. The display device lives
+        // as long as the process, so its pipelines are kept and the next project's engine takes them.
+        let ctx = kt_gpu::GpuContext::from_parts(
             std::sync::Arc::new(rs.device.clone()),
             std::sync::Arc::new(rs.queue.clone()),
             rs.adapter.get_info(),
-        ))
-        .map_err(|e| e.to_string());
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new().name("engine-build".into()).spawn(move || {
+            let _ = tx.send(kt_gpu::GpuFxEngine::new_kept(ctx).map_err(|e| e.to_string()));
+            crate::wake::now();
+        });
+        match spawned {
+            Ok(_) => self.gpu_building = Some((rx, rs.clone())),
+            Err(e) => self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, e)),
+        }
+    }
+
+    /// The engine `init_video_gpu` started, when it stands: into the player and the display.
+    fn take_video_gpu(&mut self) {
+        let Some((rx, _)) = &self.gpu_building else { return };
+        let built = match rx.try_recv() {
+            Ok(b) => b,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("the engine build ended".into()),
+        };
+        let Some((_, rs)) = self.gpu_building.take() else { return };
         match built {
             Ok(engine) => {
                 // KT_PREVIEW_READBACK=1: the bytes path, to compare a picture or its cost
                 let readback = std::env::var_os("KT_PREVIEW_READBACK").is_some();
-                self.preview_display = (!readback)
-                    .then(|| crate::preview_display::PreviewDisplay::new(engine.clone(), rs.clone()));
+                self.preview_display =
+                    (!readback).then(|| crate::preview_display::PreviewDisplay::new(engine.clone(), rs));
                 self.player.set_video_gpu(Some(engine));
                 self.player.set_compose_wake(std::sync::Arc::new(crate::wake::now));
                 // the device a slow chain moves to: building it takes seconds, and until it
@@ -950,6 +977,7 @@ impl KtApp {
             title_outdated: false,
             preview_buf: Vec::new(),
             preview_display: None,
+            gpu_building: None,
             preview_on_display: false,
             glow_skip: 0,
             gpu_info: None,
@@ -1247,6 +1275,7 @@ impl KtApp {
             title_outdated: false,
             preview_buf: Vec::new(),
             preview_display: None,
+            gpu_building: None,
             preview_on_display: false,
             glow_skip: 0,
             gpu_info: None,
@@ -10121,6 +10150,7 @@ impl eframe::App for KtApp {
             // eframe device. Software rendering (llvmpipe) also counts as “GPU present”.
             self.init_video_gpu(_frame);
         }
+        self.take_video_gpu();
 
         // R.31 item 2: long UI-thread frames go to the perf log. The DURATION
         // of a frame is measured (not the gap between frames — idle repaint is
@@ -10241,6 +10271,8 @@ pub fn run() -> eframe::Result {
     crate::load_watch::start();
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     crate::plugins::install();
+    // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
+    kt_gpu::set_cache_dir(crate::journal::data_dir().join("shader-cache"));
     // the FFmpeg folder chosen with Locate… is the first step of the search (windows-build)
     crate::ffmpeg_setup::install_search_dirs();
     // this run's journal: the previous run moves aside, the header names the build (D5)
@@ -10259,7 +10291,7 @@ pub fn run() -> eframe::Result {
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
         setup.power_preference = kt_gpu::display_power_preference();
         // the pass timer's timestamps where the adapter has them (gpu-pass-cost): the same
-        // descriptor egui-wgpu builds, plus `TIMESTAMP_QUERY`
+        // descriptor egui-wgpu builds, plus `TIMESTAMP_QUERY` and `PIPELINE_CACHE` (pipeline-prewarm)
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = std::sync::Arc::new(move |adapter| {
             let mut d = base(adapter);

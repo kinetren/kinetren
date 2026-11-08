@@ -70,3 +70,6 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.
+- **A kernel that runs a compute shader names it** (pipeline-prewarm D6): `Plugin::compute_shaders`
+  (Datamosh), `Kind::with_shader` for a generator drawn by `shader_frame` — the same constant the frame
+  passes. An unnamed shader compiles inside the job that first needs it; t2123 runs every generator kind.

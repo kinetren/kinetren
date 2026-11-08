@@ -67,12 +67,15 @@ thread runs beside frames, and t2023 counts what a frame makes.
 ## D3. Compiled pipelines belong to the device
 
 `Compiled` holds the layouts, every pipeline, the warm kit, which pipelines are warm, the geometry
-shapes and the device's pipeline cache. Every engine on a device shares one `Compiled`; a process
-registry finds it by the device (`wgpu::Device` is `Eq + Hash`). An ordinary engine registers it
-weakly (an export's devices go with their engines: 1.3 GB each). The editor's display device lives
-as long as the process, and `KtApp` is rebuilt at every project open after the old one is gone, so
-its engine is made by `new_kept`: the registry keeps that `Compiled`, and a project opened again
-builds its engine in microseconds, already warm.
+shapes and the device's pipeline cache. The editor's display device lives as
+long as the process, and `KtApp` is rebuilt at every project open after the old one is gone, so its
+engine is made by `new_kept`: the process keeps that device's `Compiled`, and a project opened again
+builds its engine in microseconds, already warm. An ordinary engine (an export's devices, the
+offline one) compiles its own, and its pipelines go with it (an export device holds 1.3 GB).
+
+(A `wgpu::Device` compares by its id inside its instance: a device of another instance can equal
+one of ours. So only `new_kept` looks the device up, and only the editor calls it, for its one display
+device; every other engine compiles its own and drops them with it.)
 
 The editor builds the engine on a thread (`engine-build`) and hands it to the player and the display
 when it stands; until then the preview has no picture, as before the first frame, and the

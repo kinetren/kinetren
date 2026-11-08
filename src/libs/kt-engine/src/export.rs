@@ -568,6 +568,19 @@ pub fn export_mp4_with_backends(
     if backends.video_gpu.is_none() {
         return Err(ExportError::NoDevice("no Vulkan, DX12 or Metal device".into()));
     }
+    // compile what the project reaches on every device before the first frame (pipeline-prewarm
+    // D5): the same work, but no frame worker stands in a compiler while the ring waits for it
+    {
+        let ids: Vec<String> = crate::prewarm::effect_ids(project).into_iter().map(String::from).collect();
+        let execs: Vec<&Arc<dyn VideoGpuExec>> = backends.video_gpu.iter().chain(&backends.video_gpu_more).collect();
+        for e in &execs {
+            e.prewarm(&ids);
+        }
+        crate::prewarm::compute(&ids);
+        for e in &execs {
+            e.settle_prewarm();
+        }
+    }
     // pause (port of v1 waitWhilePaused): cooperative wait of 40 ms,
     // cancellable; checked on every frame/chunk via the progress wrappers
     let wait_paused = {
