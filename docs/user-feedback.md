@@ -2766,6 +2766,14 @@ Registry: `docs/ktprompts/kkt-26.11.08-index.md` (H1–H9). His files: `fails/26
 - On the proposal (ui-never-waits, gpu-pass-cost, decode-request-storm first; segv-crashes and
   edit-without-rebuild next): "запускай".
 
+- On performance as a whole: "может нам учитывая все огрехи которые насобирали за всю историю -
+  придумать новый движок? а этот выкинуть просто как breaking change?" Answered: no rewrite from
+  zero (the ~1650 tests and invariants are the asset, a rewrite unmeasured collects the same class);
+  the two architecturally wrong parts are replaced in place — the engine rebuilt whole on each edit,
+  and no common scheduler of work. Then: "запускай разбор дефектов по механизмам ... по поводу
+  планировщика - возможно даже не только GPU но и CPU планировщик. И может быть задуматься JIT
+  математики и вычислений?" → change `engine-audit` (H10–H11).
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |
