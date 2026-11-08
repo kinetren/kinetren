@@ -340,7 +340,7 @@ fn probe_range(
     let warped_file = project.clips.iter().filter(|c| c.fx.iter().any(|f| f.warps_time())).count();
     let warped_eff = eff_all.iter().filter(|c| c.fx.iter().any(|f| f.warps_time())).count();
     let t = std::time::Instant::now();
-    let built = AudioRenderer::new(project);
+    let (built, audio_walks) = kt_time::cost::meter(|| AudioRenderer::new(project));
     let new_ms = t.elapsed().as_secs_f64() * 1e3;
     // `sync_fx` creates a processor for EVERY event with a chain, and a
     // warp inside has a sinc resampler: exactly there the render thread stalled.
@@ -353,8 +353,19 @@ fn probe_range(
     println!("  AudioRenderer::new: {new_ms:.0} ms");
     // the video renderer an edit builds on the UI thread (`Player::set_project`, ui-never-waits)
     let t = std::time::Instant::now();
-    let _ = kt_engine::VideoRenderer::new(project);
+    let (_, video_walks) = kt_time::cost::meter(|| kt_engine::VideoRenderer::new(project));
     println!("  VideoRenderer::new: {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+    // what the builds walked (builder-cost-guard): a count that grows with the square of the
+    // project shows here before it shows on a clock
+    let walks = |c: &kt_time::cost::Costs| {
+        kt_time::cost::Cost::ALL
+            .iter()
+            .map(|r| format!("{} {}", r.name(), c[*r as usize]))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    println!("  audio build walked: {}", walks(&audio_walks));
+    println!("  video build walked: {}", walks(&video_walks));
     println!("  sync_fx (FX processors): {sync_ms:.0} ms");
     println!("  clips with a time warp: {warped_file} in the file, {warped_eff} after layers");
 

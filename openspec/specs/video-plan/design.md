@@ -312,3 +312,10 @@ across the sites `crate::created()` marks: the pool, the upload cache, the readb
 memo are bounded by budget and recycle; the export ring has RING fixed slots; the arena and staging
 grow only with the frame's shape; the compute host keeps its buffers by size. None grows with lag.
 t2025 checks the timer with no poll at all; t2023 under 32 CPU burners was red 3 of 4 runs before.
+
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: the video build shared the audio build's quadratic sites (transition ends, the reel revision per placement, the decode zoom probes walking curves from key 0).
+- **Decision**: the same indexes and the same counting guard (t2062–t2067). On the owner's project the video build was never quadratic (18–20 ms); its cost is `edit-without-rebuild`'s.
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.

@@ -8159,11 +8159,17 @@ pub struct EventIndex {
 
 impl EventIndex {
     fn of(p: &kt_model::Project, draw_order: &[usize]) -> EventIndex {
+        // the durations by media, once: asked per event, a scan of the media list per event
+        // (builder-cost-guard); the same answer as `media_duration`
+        let mut durations: HashMap<MediaId, Option<Tick>> = HashMap::new();
+        for m in &p.media {
+            durations.entry(m.id).or_insert_with(|| p.media_duration(m.id));
+        }
         let tails = p
             .clips
             .iter()
             .map(|c| {
-                let end = kt_model::material_end_on_timeline(c, p.media_duration(c.media))?;
+                let end = kt_model::material_end_on_timeline(c, durations.get(&c.media).copied().flatten())?;
                 (end < (c.start + c.duration).0).then_some(end)
             })
             .collect();
@@ -8302,23 +8308,29 @@ impl KtApp {
             for s in &doc.sequences {
                 live.entry(s.id).or_default();
             }
-            for c in &self.model.project().clips {
-                if !live.contains_key(&c.media) {
-                    continue;
+            // one revision per reel, not per placement (builder-cost-guard): each placement
+            // hashed its whole reel's text again
+            kt_engine::revisions_scope(|| {
+                for c in &self.model.project().clips {
+                    if !live.contains_key(&c.media) {
+                        continue;
+                    }
+                    let hash = kt_engine::instance_content(&doc, c.media, &c.overrides);
+                    map.insert(c.id, crate::reel_preview::ReelKey { seq: c.media, hash });
+                    live.entry(c.media).or_default().insert(hash);
                 }
-                let hash = kt_engine::instance_content(&doc, c.media, &c.overrides);
-                map.insert(c.id, crate::reel_preview::ReelKey { seq: c.media, hash });
-                live.entry(c.media).or_default().insert(hash);
-            }
+            });
             for (id, hs) in &live {
                 self.reel_previews.invalidate_seq(*id, hs);
             }
             // the service's view of what is on the timeline: what it may not evict, and which
             // sidecar row each release has
+            let by_id: HashMap<ClipId, &kt_model::ClipEvent> =
+                self.model.project().clips.iter().rev().map(|c| (c.id, c)).collect();
             let rows = map
                 .iter()
                 .filter_map(|(id, key)| {
-                    let c = self.model.project().clips.iter().find(|c| c.id == *id)?;
+                    let c = *by_id.get(id)?;
                     Some((*key, crate::reel_preview::reel_row(key.seq, &c.overrides)))
                 })
                 .collect();
@@ -8500,6 +8512,14 @@ impl KtApp {
             let p = self.model.project();
             let media_names: HashMap<MediaId, String> =
                 p.media.iter().map(|m| (m.id, media_display_name(&m.path))).collect();
+            // the video halves by (group, media): asked per audio event, a scan of every event
+            // made this pass quadratic (builder-cost-guard)
+            let video_pairs: std::collections::HashSet<(kt_model::GroupId, MediaId)> = p
+                .clips
+                .iter()
+                .filter(|o| o.kind == ClipKind::Video)
+                .filter_map(|o| Some((o.link_group?, o.media)))
+                .collect();
             for c in &p.clips {
                 if let Some(n) = media_names.get(&c.media) {
                     names.insert(c.id, n.clone());
@@ -8507,9 +8527,7 @@ impl KtApp {
                 // suppress the name of the AUDIO half of an A/V pair (drawn on the video)
                 if c.kind == ClipKind::Audio
                     && let Some(g) = c.link_group
-                    && p.clips.iter().any(|o| {
-                        o.kind == ClipKind::Video && o.link_group == Some(g) && o.media == c.media
-                    })
+                    && video_pairs.contains(&(g, c.media))
                 {
                     suppress.insert(c.id);
                 }
@@ -8529,16 +8547,16 @@ impl KtApp {
             let mut sorted: Vec<&ClipEvent> = p.clips.iter().collect();
             sorted.sort_by_key(|c| (c.kind as u8, c.lane, c.start.0));
             let mut ov: Vec<(ClipKind, u32, i64, i64)> = Vec::new();
+            let paired: std::collections::HashSet<(Option<ClipId>, Option<ClipId>)> =
+                p.transitions.iter().map(|t| (t.a, t.b)).collect();
             for (i, a) in sorted.iter().enumerate() {
                 let a_end = a.start.0 + a.duration.0;
                 for b in sorted[i + 1..]
                     .iter()
                     .take_while(|b| b.kind == a.kind && b.lane == a.lane && b.start.0 < a_end)
                 {
-                    let covered = p.transitions.iter().any(|t| {
-                        (t.a, t.b) == (Some(a.id), Some(b.id))
-                            || (t.a, t.b) == (Some(b.id), Some(a.id))
-                    });
+                    let covered = paired.contains(&(Some(a.id), Some(b.id)))
+                        || paired.contains(&(Some(b.id), Some(a.id)));
                     if !covered {
                         ov.push((a.kind, a.lane, b.start.0, a_end.min(b.start.0 + b.duration.0)));
                     }

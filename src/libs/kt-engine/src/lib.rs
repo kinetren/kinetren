@@ -32,7 +32,8 @@ pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use flight::{FlightRecorder, Snap as FlightSnap};
 pub use fxstore::FxStateStore;
 pub use player::{
-    AudioShared, Player, VideoBackendStatus, VideoCost, callback_step, lookahead_windows,
+    AudioShared, Player, VideoBackendStatus, VideoCost, callback_step, hold_builds_for_tests,
+    lookahead_windows,
     reverse_frames, varispeed_fill,
 };
 pub use prefetch::{
@@ -44,7 +45,7 @@ pub use transport::Transport;
 pub use video::{
     NestKey, SourceFacts, StreamPacing, VideoRenderer, clip_source_addr, clip_source_addr_in,
     content_hash, gen_salt, gen_source_addr, gen_source_addr_in, gen_sources, instance_content,
-    nest_source_id, reel_chain_of_clip, resolve_cam3d, video_cache_idx,
+    nest_source_id, reel_chain_of_clip, resolve_cam3d, revisions_scope, video_cache_idx,
 };
 pub use video_plan::{
     Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, LayerSrc, PlanLayer, PresentOptions,

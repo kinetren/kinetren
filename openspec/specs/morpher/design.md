@@ -119,3 +119,10 @@ Reconnaissance of other editors (Vegas Adjustment Events, AE adjustment layer) r
 - The composite stage "effects on the mixed picture of the tracks below" — a separate object, not the first (`docs/features/morpher/gaps/composite-below-vs-per-clip.md`).
 - Exact cutting inside a crossfade (the engine learns the geometry of the original) — only if sticking of the boundary gets in the way on live editing.
 - The morph layer bypasses the ban on warp for a reel instance — recorded in R.55, not closed (capability `compositions`).
+
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: each cut target walked every transition and every event of its reel for its forbidden zones, per cutting layer.
+- **Decision**: `ZoneIndex`, laid out once per layer pass; zones come in the scan's order because `snap_out_of` takes the first zone holding the point (t2066).
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.

@@ -132,7 +132,7 @@ cost is O(N·K). It is invisible on hand-made data and explodes on generated dat
 
 | Defect | Cost | State |
 |---|---|---|
-| row 151 (new): `sign_knots` rebuilds the segment list per point | ~450 ms per build on haski (§0) | **open** |
+| row 151 (new): `sign_knots` rebuilds the segment list per point | ~450 ms per build on haski (§0) | closed by `builder-cost-guard`: 368–572 → 11–12 ms, bytes identical, counting guard t2060–t2067 |
 | row 144: prefetch calls the stage's `needs` per frame of its 2 s window | 160–280 ms a pass against a 100 ms target | **open** |
 | LFO walks the rate-curve keys per sample (audio-fx-cost walk) | O(keys) per sample | **open**, not in found-defects before; listed there now under 151 |
 | morpher grid: 360 identical tiles computed per sub-sample (morpher-event-grid-cost) | 8.3 M sub-samples a frame; 274 → 2.1 ms CPU, 12.0 → 3.4 ms llvmpipe | closed (t942–t946) |

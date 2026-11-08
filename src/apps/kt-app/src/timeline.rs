@@ -3094,6 +3094,9 @@ impl KtApp {
         // the transition grab takes priority over clip zones: its edges lie INSIDE clip bodies
         let transition_at = |app: &KtApp, pos: egui::Pos2| -> Option<(TransitionId, TransZone)> {
             let p = app.model.project();
+            // the ends by the per-state index: a bare `t.joint(p)` scans the events per
+            // transition, per frame (builder-cost-guard)
+            let ix = kt_model::Indexed::over(p, &events.by_id);
             for t in &p.transitions {
                 // fade anchor (R.25) — its only live end
                 let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
@@ -3117,10 +3120,10 @@ impl KtApp {
                 // at an OVERLAPPING transition (R.51) there are no drag zones: the window is the overlap zone itself
                 // and follows the clip trims (a second handle subsystem is not added —
                 // Kdenlive lesson, F-TL-010).
-                if t.overlap_pair(p).is_some() {
+                if t.overlap_pair(&ix).is_some() {
                     continue;
                 }
-                let Some(joint) = t.joint(p).map(|j| j.0) else { continue };
+                let Some(joint) = t.joint(&ix).map(|j| j.0) else { continue };
                 let xj = tick_to_x(joint);
                 if (pos.x - xj).abs() <= EDGE_GRAB_PX {
                     return Some((t.id, TransZone::Joint));
@@ -3141,12 +3144,13 @@ impl KtApp {
         // “the transition wins the pixel over the clip” — as already in hover and press.
         let transition_body_at = |app: &KtApp, pos: egui::Pos2| -> Option<TransitionId> {
             let p = app.model.project();
+            let ix = kt_model::Indexed::over(p, &events.by_id);
             for t in &p.transitions {
                 let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
                 // window of the overlapping transition (R.51) — the overlap zone
-                let Some(w) = t.window(p) else { continue };
+                let Some(w) = t.window(&ix) else { continue };
                 let top = lane_top(a.kind, a.lane);
                 let lane_h = lane_h_at(a.kind, a.lane);
                 let r = transition_rect(tick_to_x(w.start.0), tick_to_x(w.end.0), top, lane_h);
@@ -5477,12 +5481,13 @@ impl KtApp {
         // ---- transitions (R.24, item 140): backing + X + seam tick ----
         {
             let p = self.model.project();
+            let ix = kt_model::Indexed::over(p, &events.by_id);
             for t in &p.transitions {
                 // fade anchor (R.25) — the only live end, the seam is at it
                 let Some(a) = t.a.or(t.b).and_then(|id| clip_by_id(p, id)).and_then(|i| p.clips.get(i)) else {
                     continue;
                 };
-                let Some(base_joint) = t.joint(p).map(|j| j.0) else { continue };
+                let Some(base_joint) = t.joint(&ix).map(|j| j.0) else { continue };
                 let joint = match &self.drag {
                     Some(Drag::TransitionBody { id, cur_at, .. }) if *id == t.id => *cur_at,
                     _ => base_joint,
@@ -5504,7 +5509,7 @@ impl KtApp {
                 };
                 // AN OVERLAPPING transition (R.51, item 399): the window is the overlap zone itself,
                 // there are no “handles” (the material of both sides is real)
-                let staggered = t.overlap_pair(p).and_then(|_| t.window(p));
+                let staggered = t.overlap_pair(&ix).and_then(|_| t.window(&ix));
                 let (x0, x1) = match &staggered {
                     Some(w) => (tick_to_x(w.start.0), tick_to_x(w.end.0)),
                     None => (tick_to_x(joint - in_off), tick_to_x(joint + out_off)),

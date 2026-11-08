@@ -8,6 +8,9 @@ use kt_model::*;
 use kt_time::Tick;
 
 const SEC: i64 = 48_000;
+/// How long the builder thread holds every rebuild: longer than the ring (341 ms), as the owner's
+/// project's rebuild was (412 ms) before builder-cost-guard made it a few ms.
+const BUILD_HOLD_MS: u64 = 600;
 
 fn clip(id: u64, start: i64, dur: i64, fx: Vec<FxInstance>) -> ClipEvent {
     ClipEvent {
@@ -54,8 +57,7 @@ fn big_project(n: u64) -> Project {
         FxInstance::plugin_with("slowed_reverb", &[0.8, 0.4, 60.0, 0.4, 0.7, 1.0, 0.0, 0.0, 1.0]).unwrap(),
     ];
     p.clips = (0..n).map(|i| clip(i + 1, i as i64 * SEC / 8, SEC / 4, fx.clone())).collect();
-    // a composition placed many times far from the played range, as the owner's reels: each
-    // instance's revision is a hash of the reel, so a rebuild of the renderer is long
+    // a composition placed many times far from the played range, as the owner's reels
     let mut reel = Sequence::new(MediaId(100), "Reel");
     reel.clips = (0..3000u64).map(|i| clip(100_000 + i, i as i64 * SEC / 8, SEC / 4, fx.clone())).collect();
     reel.ensure_tracks(LaneKind::Audio, 4);
@@ -82,9 +84,11 @@ fn player(p: &Project) -> (Player, rtrb::Consumer<f32>) {
 #[test]
 fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
     let p = big_project(2000);
+    // every rebuild outlasts the ring, on any machine (the seam in `spawn_renderer_build`)
+    kt_engine::hold_builds_for_tests(BUILD_HOLD_MS);
     let t0 = std::time::Instant::now();
     let _ = kt_engine::AudioRenderer::new(&p);
-    let build = t0.elapsed();
+    let build = t0.elapsed() + std::time::Duration::from_millis(BUILD_HOLD_MS);
     let (player, ring) = player(&p);
     let from = Tick::from_audio_frames(10 * SEC);
     let to = Tick::from_audio_frames(10 * SEC + SEC / 2);

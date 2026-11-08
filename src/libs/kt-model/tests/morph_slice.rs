@@ -320,7 +320,7 @@ fn t236_untimed_morpher_ignores_block_position() {
     assert_eq!(eff.len(), 1, "an old morpher does not cut");
     assert_eq!(eff[0].media, MediaId(2), "and acts independently of the block time");
     assert_eq!(
-        p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows()),
+        p.morphers[0].windows_on(&p.clips[0], &p, &kt_model::ZoneIndex::new(&p), &p.rows()),
         vec![TickRange::new(Tick(0), LEN)]
     );
 
@@ -1104,7 +1104,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
         p.morphers[0].covers(&p.clips[0], &rows),
         "the layer must cover the clip SPATIALLY — otherwise the check about TIME          would run by itself"
     );
-    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &rows);
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &kt_model::ZoneIndex::new(&p), &rows);
     assert!(
         wins.is_empty(),
         "a block at the 10th second has nothing to do with the clip 0..1 s, even if that one \
@@ -1149,7 +1149,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     p.validate().unwrap();
 
     let rows = p.rows();
-    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &rows);
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &kt_model::ZoneIndex::new(&p), &rows);
     assert_eq!(wins.len(), 1, "one window inside the clip");
     assert!(
         wins[0].start > Tick(0) && wins[0].end < LEN,
@@ -1298,7 +1298,7 @@ fn t555_time_window_is_exact_on_an_event_with_fades() {
     m.patch.media = None;
     p.morphers.push(m);
 
-    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows());
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &kt_model::ZoneIndex::new(&p), &p.rows());
     assert_eq!(
         wins,
         vec![TickRange::new(Tick(5_000), Tick(85_000))],
@@ -1352,7 +1352,7 @@ fn t556_source_replacing_layer_still_cuts_but_only_inward() {
     p.morphers.push(layer(Tick(5_000), Tick(80_000))); // patch.media = Some(2)
     p.validate().expect("the scene is legal");
 
-    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows());
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &kt_model::ZoneIndex::new(&p), &p.rows());
     assert_eq!(
         wins,
         vec![TickRange::new(Tick(20_000), Tick(70_000))],

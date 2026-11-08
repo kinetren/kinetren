@@ -303,17 +303,69 @@ pub fn instance_content(project: &Project, seq: MediaId, overrides: &[kt_model::
 }
 
 pub fn content_hash(project: &Project, seq: MediaId) -> u64 {
-    use xxhash_rust::xxh3::Xxh3;
-    let mut h = Xxh3::new();
-    hash_reel(project, seq, 0, &mut h);
-    h.digest()
+    let key = (project as *const Project as usize, seq);
+    if let Some(h) = REVISIONS.with(|m| m.borrow().as_ref().and_then(|m| m.get(&key).copied())) {
+        return h;
+    }
+    let mut memo = std::collections::HashMap::new();
+    let h = hash_reel(project, seq, 0, &mut memo);
+    REVISIONS.with(|m| {
+        if let Some(m) = m.borrow_mut().as_mut() {
+            m.insert(key, h);
+        }
+    });
+    h
 }
 
-fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust::xxh3::Xxh3) {
-    let Some(s) = project.sequence(seq) else { return };
-    if depth > kt_model::MAX_NEST_DEPTH {
-        return;
+thread_local! {
+    /// The revisions computed during one build (builder-cost-guard): the builders ask the content
+    /// of a reel per placement — in the clip list, the sub-renderer key, the decode step, the
+    /// generator sources — and each asked the whole reel's Debug text again, placements × events.
+    /// Keyed by the project's address, alive only inside [`revisions_scope`], where the project
+    /// is borrowed and cannot change.
+    static REVISIONS: std::cell::RefCell<Option<std::collections::HashMap<(usize, MediaId), u64>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs a build with the reel revisions memoized (see `REVISIONS`). Nested scopes share the
+/// outer one's memo.
+pub fn revisions_scope<R>(f: impl FnOnce() -> R) -> R {
+    let opened = REVISIONS.with(|m| {
+        let mut m = m.borrow_mut();
+        let open = m.is_none();
+        if open {
+            *m = Some(std::collections::HashMap::new());
+        }
+        open
+    });
+    struct Close(bool);
+    impl Drop for Close {
+        fn drop(&mut self) {
+            if self.0 {
+                REVISIONS.with(|m| *m.borrow_mut() = None);
+            }
+        }
     }
+    let _close = Close(opened);
+    f()
+}
+
+/// One reel's revision. A nested reel enters by ITS revision, computed once per reel
+/// (builder-cost-guard): the text of every placement's reel fed again made an outer reel of 400
+/// placements hash the inner one 400 times, and every level of nesting multiplied it.
+fn hash_reel(
+    project: &Project,
+    seq: MediaId,
+    depth: usize,
+    memo: &mut std::collections::HashMap<MediaId, u64>,
+) -> u64 {
+    use xxhash_rust::xxh3::Xxh3;
+    let mut h = Xxh3::new();
+    let Some(s) = project.sequence(seq) else { return h.digest() };
+    if depth > kt_model::MAX_NEST_DEPTH {
+        return h.digest();
+    }
+    kt_time::cost::add(kt_time::cost::Cost::ReelHash, s.clips.len() as u64);
     h.update(&[s.overlap_layers as u8]);
     // TRACKS of the reel (R.62) — the whole revision: the row order, switches,
     // level, blend mode and track chain change the picture and the sound
@@ -330,9 +382,18 @@ fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust:
     h.update(format!("{:?}{:?}", s.raster, s.fps).as_bytes());
     for c in &s.clips {
         if project.sequence(c.media).is_some() {
-            hash_reel(project, c.media, depth + 1, h);
+            let inner = match memo.get(&c.media) {
+                Some(&v) => v,
+                None => {
+                    let v = hash_reel(project, c.media, depth + 1, memo);
+                    memo.insert(c.media, v);
+                    v
+                }
+            };
+            h.update(&inner.to_le_bytes());
         }
     }
+    h.digest()
 }
 
 /// Chain hash for the post-FX cache. Input — the Debug representation of the parameters
@@ -956,7 +1017,7 @@ impl VideoRenderer {
     /// procedurality. The player, export and kt-cli call this constructor —
     /// otherwise a slowed title stays stepped.
     pub fn new_with_facts(project: &Project, facts: &SourceFacts) -> VideoRenderer {
-        VideoRenderer::build(project, facts)
+        revisions_scope(|| VideoRenderer::build(project, facts))
     }
 
     fn build(project: &Project, facts: &SourceFacts) -> VideoRenderer {
@@ -1175,34 +1236,33 @@ impl VideoRenderer {
             Some(s) => s,
             None => project,
         };
+        // indexed, as in the audio build (builder-cost-guard, t2063)
+        let reel = kt_model::Indexed::new(reel);
+        let ends = crate::audio::PieceEdges::of(clips.iter().map(|c| (c.id, c.start, c.end)));
         for t in resolved.transitions.iter() {
             // An OVERLAID transition (R.51, item 399): the window is the overlap zone itself,
             // there are no handles (the material of both sides is real,
             // ext = 0). Further, the pair finds itself by the ordinary find_pair by
             // window equality, and build_plan collapses it into a Dissolve —
             // instead of a hard cut in the Vegas order inside the overlap zone.
-            if let Some((pa, pb)) = t.overlap_pair(reel) {
+            if let Some((pa, pb)) = t.overlap_pair(&reel) {
                 let (w0, w1) = (pb.start, pa.start + pa.duration);
                 if w1.0 <= w0.0 {
                     continue;
                 }
-                if let Some(a) =
-                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pa.id) && c.end == w1)
-                {
+                if let Some(a) = ends.ending(pa.id, w1).map(|i| &mut clips[i]) {
                     a.fade_out = Some((w0, w1));
                     a.fade_out_solo = false;
                     a.fade_out_trans = Some(TransAnim::of(t, w0));
                 }
-                if let Some(b) =
-                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pb.id) && c.start == w0)
-                {
+                if let Some(b) = ends.starting(pb.id, w0).map(|i| &mut clips[i]) {
                     b.fade_in = Some((w0, w1));
                     b.fade_in_solo = false;
                     b.fade_in_trans = Some(TransAnim::of(t, w0));
                 }
                 continue;
             }
-            let Some(joint) = t.joint(reel) else { continue };
+            let Some(joint) = t.joint(&reel) else { continue };
             let (w0, w1) = (joint - t.in_offset, joint + t.out_offset);
             if w1.0 <= w0.0 {
                 continue;
@@ -1211,17 +1271,13 @@ impl VideoRenderer {
             // a morpher layer could cut the target (R.35): the id stayed on piece
             // No.0, and the joint went to the piece whose boundary sits on it —
             // without this a transition on a cut clip silently vanished
-            if let Some(a) = t.a.and_then(|id| {
-                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == joint)
-            }) {
+            if let Some(a) = t.a.and_then(|id| ends.ending(id, joint)).map(|i| &mut clips[i]) {
                 a.fade_out = Some((w0, w1));
                 a.fade_out_solo = solo;
                 a.fade_out_trans = Some(TransAnim::of(t, w0));
                 a.tail_ext = Tick((w1.0 - a.end.0).max(0));
             }
-            if let Some(b) = t.b.and_then(|id| {
-                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == joint)
-            }) {
+            if let Some(b) = t.b.and_then(|id| ends.starting(id, joint)).map(|i| &mut clips[i]) {
                 b.fade_in = Some((w0, w1));
                 b.fade_in_solo = solo;
                 b.fade_in_trans = Some(TransAnim::of(t, w0));
@@ -2203,6 +2259,10 @@ pub fn clip_source_addr_in(c: &kt_model::ClipEvent, salt: u64) -> MediaId {
 /// this list: there must be no second enumeration, otherwise export would
 /// render something other than what the preview showed.
 pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
+    revisions_scope(|| gen_sources_in(project))
+}
+
+fn gen_sources_in(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
     let mut out: Vec<(MediaId, kt_model::GenState)> = Vec::new();
     let mut have: std::collections::HashSet<MediaId> = std::collections::HashSet::new();
     let mut push = |addr: MediaId, st: kt_model::GenState| {
