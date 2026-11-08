@@ -174,3 +174,9 @@ Each refusal was read in the code for the reason it states, and whether the reas
 - Open and recommended: a LINK on the speed curve (needs other events, so only `effective_clips` can
   resolve it; the material map would need the resolved snapshot the morpher preview already builds).
 
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: `resolve_derived` resolved one more link of a chain per pass (copying the reel each pass) and scanned the reel for the leader per sample.
+- **Decision**: leaders first (a depth-first post-order over the links), the leader by index once per curve; a link to the event's own other curve reads the event as it stood before its step, as the former pass snapshot did (t2067).
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.

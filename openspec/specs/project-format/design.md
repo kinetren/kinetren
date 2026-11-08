@@ -128,3 +128,10 @@ build that reads only format 1 then refuses the file as "written by a newer Kine
 opening it with every mask gone and the masked effect over the whole frame — the silent corruption
 the version refusal exists for. The OTIO envelope does the same (v14 by content); a foreign editor
 sees the event unmasked (the "What OTIO export loses" row).
+
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: `validate` and `reconcile_reel` found a transition's ends by a scan per transition — 4480× the work at ×16 the transitions.
+- **Decision**: `Indexed` (the first event of an id, the scan's answer) in validation, a map in reconcile (t2062). An overlapped transition still scans for a third event (found-defects row 156).
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.

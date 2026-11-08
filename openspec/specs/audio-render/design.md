@@ -118,3 +118,12 @@ The third — "the music drowns out the voice" (the most frequent live complaint
 - Formant correction and a pitch engine per event instead of a project setting.
 - The extended warp mode (a curve below 0.25) limits the anchor to 2× — the anti-aliasing cut on fast sections is coarser; this was accepted deliberately.
 - **R.62 B, tracks:** envelopes of a TRACK (a curve along the timeline tick, not along the event's material) — its key lives on a different axis, and introducing it together with the stage would mean changing two contracts at once. Buses and sends: a track today has exactly one output — the mix. Skipping the DECODE of a muted track: the prefetch order stays whole deliberately (invariant 4 — "order == read"), the cost is as in Vegas, and unmuting MUST sound without a cold start.
+
+## A build costs what the project holds, not its square (builder-cost-guard, 2026-11-08)
+
+- **What hurt**: `AudioRenderer::new` took 393–488 ms on the owner's project (1 ms on the heavy showcase): `sign_knots` rebuilt a shaped speed curve's segment list per sampled point (found-defects row 151). Every edit pays it, in every consumer. Now 11–12 ms (release, relinked copy), the sound byte-identical.
+- **Decision**: a COUNT guards growth, never a clock (t1671): `kt_time::cost` (a thread-local walk meter) and the bytes allocated on the building thread, at generated projects ×1/×4/×16 along six axes (t2062–t2067). A clock would pass on a fast machine and say nothing about the next quadratic.
+- **Non-obvious**: a transition's engine events are found by `PieceEdges` (the first event of an original id at an edge — what the scan answered); a reel's revision is computed once per build (`revisions_scope`).
+- **t1935's "a rebuild outlasts the ring"** now comes from `hold_builds_for_tests`: its scene was slow only through the per-placement hash.
+
+The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.
