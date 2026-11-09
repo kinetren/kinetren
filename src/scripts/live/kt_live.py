@@ -1274,12 +1274,17 @@ class Live:
         # the probe gave up sooner than the program managed to open the menu.
         self.wait_frame(2, what="fresh probe dump", soft=True)
         deadline = time.time() + max(8.0, 40.0 * self._dt)
+        last = None
         while time.time() < deadline:
             f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
-            if f:
+            # THE SAME RECTANGLE IN TWO DUMPS A FRAME APART (test-hygiene): a window that re-centres
+            # after a resize moves for several frames, and `lessons` clicked "Start the tour" where
+            # the button had been (the journal: the Welcome window, then nothing)
+            if f and last and all(abs(f[k] - last[k]) < 1.0 for k in ("x", "y", "w", "h")):
                 return f
+            last = f
             self.wait_frame(1, what=f"frame while waiting for a widget {name}", soft=True)
-        return None
+        return last
 
     def double_click_probe(self, name, what=None):
         """Double click on a widget from the geometry dump."""
