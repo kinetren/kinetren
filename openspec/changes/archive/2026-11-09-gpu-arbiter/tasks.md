@@ -28,9 +28,9 @@
 
 - [x] 5.1 `kt-cli trace gpu` — t2263
 - [x] 5.2 After numbers: `kt-cli gpu-share` both modes, `kt-cli preview` on the mosh showcase (submits/s by class); design.md D-measure
-- [ ] 5.3 `cargo test` of touched crates (workspace for core crates), clippy, live `idle`, `sched_pause`, `heavy_loop`, `ui_wait`; CPU at rest on the heavy showcase
-- [ ] 5.4 docs: kt-gpu CLAUDE.md, kt-plugin-api/kt-engine notes, found-defects (rows 94, 134, 147, 149, 271, 272 moved; new 290–309), What's new line, t1671 list; target-prune; commit "gpu-arbiter 4"
+- [x] 5.3 `cargo test` of touched crates (workspace for core crates), clippy, live `idle`, `sched_pause`, `heavy_loop`, `ui_wait`; CPU at rest on the heavy showcase
+- [x] 5.4 docs: kt-gpu CLAUDE.md, kt-plugin-api/kt-engine notes, found-defects (rows 94, 134, 147, 149, 271, 272 moved; new 290–309), What's new line, t1671 list; target-prune; commit "gpu-arbiter 4"
 
 ## 6. Archive
 
-- [ ] 6.1 `/opsx:archive`, specs merged, design records into `openspec/specs/{video-plan,plugins,export,telemetry}/design.md`, audit table row 5 done; commit "gpu-arbiter 5". (`finish.sh` is the orchestrator's, per stage.)
+- [x] 6.1 `/opsx:archive`, specs merged, design records into `openspec/specs/{video-plan,plugins,export,telemetry}/design.md`, audit table row 5 done; commit "gpu-arbiter 5". (`finish.sh` is the orchestrator's, per stage.)
