@@ -47,4 +47,4 @@
 - [x] 5.4 docs: crate CLAUDE.md (kt-time, kt-gpu, kt-engine, kt-cache), `docs/engine-audit.md` row 9
   and M9, `docs/found-defects.md` (310, 119 out; 10, 85, 96 updated; 330–331 in), whats-new line,
   F-RES-011 verdict
-- [ ] 5.5 Archive (specs merged); `src/scripts/finish.sh` is run by the orchestrator per stage
+- [x] 5.5 Archive (specs merged); `src/scripts/finish.sh` is run by the orchestrator per stage

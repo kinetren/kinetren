@@ -354,3 +354,14 @@ queue had been the look-ahead's real limit**: when chunks grew, the byte limit f
 time and the 3 GB render died in the second run of three. The cache is three budgets now. Details and
 pairs: `openspec/changes/archive/2026-11-06-render-speed-no-card/design.md`.
 
+## An export's devices and the ledger (memory-ledger, 2026-11-09)
+
+- An export uploads each source frame once; each device kept a 256 MB upload cache of frames already
+  written. An export's device now keeps only what its frames in flight (`RING`) and the frame being
+  built read; on every device an upload the frame being resolved reads is never evicted or reused
+  within it (a reused spare would be rewritten before the frame's passes read it — harmless only while
+  256 MB held every frame's layers).
+- An export holds a ledger claim: the preview's grown memos drop to their bases while it runs. The
+  render window takes it on its job thread before it counts devices and `tight`, never on the UI thread.
+- **Measured** (our showcase, max RSS under a 12 GB cap): 1080p 8.43 → 7.07 GB at the same wall time;
+  4K 4.76 → 4.96 GB (it runs tight in the cap; seven 4K frames were all its upload cache held).

@@ -435,4 +435,30 @@ over every family and core node, D-measure).
   reads it).
 - **Measured:** the owner's region (667 positions at 720 lines) held in 1577 MB; laps 2 and 3 of
   `kt-cli stream-cost --loop` run no job (t2276 holds the rule on a small stream).
-- **Left:** the present memo of kept composites is the same kind of constant (512 MB): found-defects 310.
+- **Left:** the present memo of kept composites is the same kind of constant (512 MB): found-defects 310 — closed by memory-ledger (below).
+
+## One memory ledger; the present memo sized by the loop (memory-ledger, 2026-11-09)
+
+- **What hurt:** found-defects 310 — the present memo was a constant 512 MB (582 composites at
+  640×360, 60 at 1080p); the owner's `problem_region_26_11_09` is 665 frames, so its laps composed
+  again forever (laps 14–21 still made ~52 frames each), and an LRU over a cycle longer than itself
+  evicts exactly what the next lap reads first.
+- **Decision:** one ledger (`kt_time::mem`, media-index) grants growth above the proven bases from
+  half of (available + growth held), measured at run time, in the order kept composites → stream
+  history → decoded frames. The player's prefetch thread tells the display's executor the loop's
+  moments (`keep_loop`); the executor wants them at the size it presents plus an eighth. A loop the
+  memo cannot hold keeps a part (no admission over a composite shown within a lap of presents; `get`
+  stamps only hits so the stamp counts presents). The stream memo's want (stream-layout-per-build) is
+  granted after the composites'.
+- **A card's memory is learned, not set:** wgpu does not tell a device's memory, backend extensions are
+  not portable; past its base on a non-CPU device the memo creates the next frame's texture under an
+  out-of-memory scope, and a refusal bounds its growth at three quarters of what it held.
+- **Row 119:** held end to end by t2294 (the serial return of structured-telemetry, through the
+  executor). The heavy showcase's laps still blame "decoded again" for frames incomplete on the lap
+  before (found-defects 334).
+- **Measured** (release, his region, 640×360, 240 s, same load): composed 1935 → 1172, shown from kept
+  5407 → 8943, every lap from 10 on composes nothing; V-fps 28.9 → 40.4; 11.8 → 6.5 cores.
+- **Rejected:** one LRU across all caches by value per byte (a lock across crates; the value of a byte
+  is stable by kind, so the fixed order chooses the same); a timer re-measuring memory (rest costs
+  nothing); cutting the bases on a small machine (they feed the prefetch window, the stream pacing
+  and the export chunks — found-defects 330).
