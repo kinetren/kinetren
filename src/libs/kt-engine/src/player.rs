@@ -16,7 +16,7 @@
 use crate::audio::AudioRenderer;
 use crate::fetch::CacheFetcher;
 use crate::fxstore::FxStateStore;
-use crate::prefetch::{prefetch_audio_pass, video_prefetch_pass};
+use crate::prefetch::{prefetch_audio_pass, video_prefetch_pass_except};
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
 use crate::video_plan::{GpuBackendInfo, GpuExecError, PresentOptions, VideoGpuExec};
@@ -326,6 +326,7 @@ impl Player {
         };
 
         let preview_quality = Arc::new(Mutex::new(Quality { width: 640, height: 360 }));
+        let shown: Shown = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let prefetch_thread = {
             let wake_p = wake.clone();
             let stats_p = loop_stats.clone();
@@ -341,19 +342,19 @@ impl Player {
             let region_p = loop_region.clone();
             let shared_p = shared.clone();
             let mix_p = mix_coverage.clone();
+            let shown_p = shown.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, natives_p, project, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p, shared_p, mix_p,
+                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p,
                     )
                 })
                 .expect("spawn prefetch")
         };
 
         let video_cost = Arc::new(Mutex::new(VideoCost::default()));
-        let shown = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let shown_gen = Arc::new(AtomicU64::new(0));
         let composer = crate::compose_queue::Composer::new();
         let compose_thread = crate::compose_queue::spawn(
@@ -419,7 +420,9 @@ impl Player {
 
     pub fn set_project(&self, p: Project) {
         kt_time::work::bump(kt_time::work::Work::ProjectSwap);
-        self.project_version.fetch_add(1, Ordering::AcqRel);
+        let version = self.project_version.fetch_add(1, Ordering::AcqRel) + 1;
+        // the edit in the trace: what it invalidates follows with this version
+        kt_time::trace::ev(kt_time::trace::Ev::Edit).b(version).emit();
         // the set of generators is a function of the PROJECT, and it must be computed by whoever
         // accepts the project: the addresses are derived from events, and
         // the caller has nowhere to take them from.
@@ -455,7 +458,11 @@ impl Player {
     fn wake_after_project_swap(&self, p: Project) {
         kt_time::work::bump(kt_time::work::Work::EngineBuild);
         let facts = self.natives.read().unwrap().clone();
-        let renderer = Arc::new(preview_video(&p, &facts, &self.cache));
+        let renderer = {
+            let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
+            span.aux(kt_time::trace::job::VIDEO_BUILD).a(self.project_version.load(Ordering::Acquire));
+            Arc::new(preview_video(&p, &facts, &self.cache))
+        };
         *self.video.lock().unwrap() = renderer;
         *self.project.lock().unwrap() = p;
         self.model_dirty.store(true, Ordering::Release);
@@ -1067,7 +1074,10 @@ impl Player {
     /// the chain is fast; else as bytes. The newest ask replaces a waiting one; the answer comes
     /// from `take_composed`. Returns the ask's number.
     pub fn ask_preview(&self, t: Tick, present: Option<PresentOptions>) -> u64 {
-        self.composer.ask(t, present, self.preview_parts().versions())
+        use kt_time::trace::ask;
+        let flags = if present.is_some() { ask::PRESENT } else { 0 }
+            | if self.transport.is_playing() { ask::PLAYING } else { 0 };
+        self.composer.ask(t, present, self.preview_parts().versions(), flags)
     }
 
     /// The newest finished frame, waiting for it at most `wait`.
@@ -1178,6 +1188,42 @@ impl Player {
     }
 }
 
+/// The layers of a composed plan in the trace: what the kept key is made of, so a key that moved
+/// between two laps names the layer that moved (a re-decode, a held stream frame).
+fn trace_layers(frame: u64, plan: &crate::video_plan::FramePlan<'_>) {
+    use crate::video_plan::PlanLayer;
+    use kt_time::trace::{self, Ev};
+    let mut i = 0u32;
+    let mut put = |s: &crate::video_plan::LayerSrc<'_>| {
+        trace::ev(Ev::FrameLayer).id(frame).a(s.source.0).b(s.cache_idx as u64).c(s.content).aux(i).emit();
+        i += 1;
+    };
+    for l in &plan.layers {
+        match l {
+            PlanLayer::One { src, .. } => put(src),
+            PlanLayer::Dissolve { a, b, .. } => {
+                put(a);
+                put(b);
+            }
+        }
+    }
+}
+
+/// A lock the frame took, its wait in the trace when it stood a millisecond or more.
+fn locked<'a, T>(m: &'a Mutex<T>, frame: u64, what: &'static str) -> std::sync::MutexGuard<'a, T> {
+    if let Ok(g) = m.try_lock() {
+        return g;
+    }
+    let t = std::time::Instant::now();
+    let g = m.lock().unwrap_or_else(|p| p.into_inner());
+    let ns = t.elapsed().as_nanos() as u64;
+    if ns >= 1_000_000 {
+        use kt_time::trace;
+        trace::ev(trace::Ev::FrameWait).id(frame).aux(trace::wait::LOCK).a(trace::name(what) as u64).lasted(ns).emit();
+    }
+    g
+}
+
 /// What a composite needs of the player, shared with its thread.
 #[derive(Clone)]
 pub(crate) struct PreviewParts {
@@ -1200,7 +1246,7 @@ impl PreviewParts {
         t: Tick,
         target: Target<'_>,
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
-        self.compose_via(None, t, target)
+        self.compose_via(None, None, t, target)
     }
 
     pub(crate) fn can_present(&self) -> bool {
@@ -1232,25 +1278,48 @@ impl PreviewParts {
         *self.video_cost.lock().unwrap() = cost;
     }
 
-    /// `via`: the executor of this composite, instead of the display's.
+    /// `via`: the executor of this composite, instead of the display's; `kept_on`: the display
+    /// target a kept composite may be shown on instead (the slow-chain route's bytes otherwise).
     #[allow(clippy::type_complexity)]
     pub(crate) fn compose_via(
         &self,
         via: Option<&Arc<dyn VideoGpuExec>>,
+        kept_on: Option<PresentOptions>,
         t: Tick,
         target: Target<'_>,
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
+        use kt_time::trace::{self, Ev};
         kt_time::work::bump(kt_time::work::Work::Composite);
         let t0 = std::time::Instant::now();
+        // the frame's id: the compose thread's ask set it; a direct call (a bench, a test, the bytes
+        // path) is a frame of its own
+        let mut frame = trace::cause();
+        let _own = (frame == 0 && trace::on()).then(|| {
+            frame = trace::next_id();
+            let flags = trace::ask::PLAYING * self.transport.is_playing() as u32;
+            trace::ev(Ev::FrameAsk).id(frame).a(t.0 as u64).aux(flags).emit();
+            trace::with_cause(frame)
+        });
         let q = *self.preview_quality.lock().unwrap();
         // the pointer, not the lock: a plan with a stream stage takes as long as its kernel, and an
         // edit on the UI thread must not wait for it
-        let video = self.video.lock().unwrap().clone();
+        let video = locked(&self.video, frame, "video renderer").clone();
         // playing, a stream stage short of its frame shows its latest one; paused, the frame itself
         // is waited for (decode-request-storm)
         video.set_stream_hold(self.transport.is_playing());
         let aligned = video.grid.align_floor(t);
         let mut target = target;
+        // A KEPT MOMENT IS SHOWN BEFORE ANYTHING IS ASKED (structured-telemetry, kkt-26.11.09 I8: "если
+        // хоть сто раз пройтись по небольшому куску - он все равно что-то loading делает"): the key of
+        // the moment's composite comes from a plan that runs no stream stage, so a covered frame is
+        // found without its history, its decodes or the look-ahead's leftovers — the plan of a
+        // kept frame used to wait for a history the memo had dropped, and showed "Loading".
+        if let Some(r) = self.show_kept(&video, frame, aligned, q, kept_on.or(match &target {
+            Target::Display(o) => Some(*o),
+            Target::Bytes(_) => None,
+        })) {
+            return Some(r);
+        }
         let generation = self.transport.generation();
         let step = video.grid.frame_step();
         // the decode quality comes FROM THE REQUEST (R.46, item 318): a clip with a zooming
@@ -1267,27 +1336,55 @@ impl PreviewParts {
                     .any(|(m, p, dq)| m == media && p.0 == pts && wq == Some((dq.width, dq.height)))
             });
         }
+        let n_layers = layers.len();
+        let mut missing = 0u64;
         for (media, src_pts, dq) in layers {
             let idx = video_cache_idx(src_pts);
             // contains, not get: the probe must not refresh the LRU (item 19)
-            if !self.cache.contains_video(source_id(media), Some(dq), idx)
-                && let Some(w) = self.workers.read().unwrap().get(&media)
-            {
-                w.submit(DecodeRequest {
-                    kind: RequestKind::video_on_grid(src_pts, Some(dq), step),
-                    prio: Priority::Playback,
-                    generation,
-                });
+            if !self.cache.contains_video(source_id(media), Some(dq), idx) {
+                missing += 1;
+                if trace::on() {
+                    let kind = kt_cache::BurstKind::video(Some(dq));
+                    trace::ev(Ev::FrameWait)
+                        .id(frame)
+                        .aux(trace::wait::DECODE)
+                        .a(kt_cache::trace_id(source_id(media), kind, idx))
+                        .b(media.0)
+                        .c(idx as u64)
+                        .emit();
+                }
+                if let Some(w) = self.workers.read().unwrap().get(&media) {
+                    w.submit(DecodeRequest {
+                        kind: RequestKind::video_on_grid(src_pts, Some(dq), step),
+                        prio: Priority::Playback,
+                        generation,
+                    });
+                }
             }
         }
         // TooLarge — no picture for this plan; DeviceLost/Validation — “poison” until the end of
         // the session
         let exec = {
-            let g = self.video_gpu.lock().unwrap();
+            let g = locked(&self.video_gpu, frame, "video executor");
             if g.poisoned.is_none() { via.cloned().or_else(|| g.exec.clone()) } else { None }
         }?;
+        let plan_span = trace::span(Ev::FramePlan);
         let plan = video.frame_plan(&self.cache, aligned, q);
         let plan_ns = t0.elapsed().as_nanos() as u64;
+        let route = match (&target, via) {
+            (_, Some(_)) => trace::route::SLOW,
+            (Target::Display(_), None) => trace::route::DISPLAY,
+            (Target::Bytes(_), None) => trace::route::BYTES,
+        };
+        let key = if trace::on() { exec.present_key(&plan) } else { None };
+        if trace::on() {
+            trace_layers(frame, &plan);
+        }
+        {
+            let mut s = plan_span;
+            s.id(frame).a(key.unwrap_or(0)).b(missing).c(route).aux(n_layers as u32);
+        }
+        let mut exec_span = trace::span(Ev::FrameExec);
         let done = match &mut target {
             Target::Bytes(out) => exec.execute_into(&plan, out),
             Target::Display(o) => exec.present(&plan, *o),
@@ -1298,20 +1395,37 @@ impl PreviewParts {
                 if stages.replayed {
                     kt_time::work::bump(kt_time::work::Work::CompositeReplay);
                 }
+                let held = video.stream_held();
+                {
+                    use trace::exec as x;
+                    let flags = if complete { x::COMPLETE } else { 0 }
+                        | if stages.replayed { x::MEMO_HIT } else { 0 }
+                        | if stages.stored { x::MEMO_STORED } else { 0 }
+                        | if held { x::STREAM_HELD } else { 0 }
+                        | if via.is_some() { x::SLOW } else { 0 };
+                    exec_span.id(frame).a(key.unwrap_or(0)).b(stages.cold as u64).aux(flags);
+                }
+                drop(exec_span);
+                // the slow-chain device's picture is kept on the display's executor too: the next
+                // lap shows it from there (structured-telemetry)
+                let kept_by = match (&target, via) {
+                    (Target::Display(_), _) => Some(exec.clone()),
+                    (Target::Bytes(out), Some(_)) if complete && !held => {
+                        let display = self.display_exec();
+                        if let (Some(d), Some(key)) = (&display, exec.present_key(&plan)) {
+                            d.keep(key, plan.out_w, plan.out_h, out);
+                        }
+                        display
+                    }
+                    _ => None,
+                };
                 // what the executor keeps for this moment, for the bars (cached-range-plays)
                 if complete
-                    && matches!(target, Target::Display(_))
-                    && !video.stream_held()
-                    && let Some(key) = exec.present_key(&plan)
+                    && !held
+                    && let Some(e) = kept_by
+                    && let Some(key) = e.present_key(&plan)
                 {
-                    let versions = (
-                        self.project_version.load(Ordering::Acquire),
-                        self.content_version.load(Ordering::Acquire),
-                    );
-                    let entry = (key, versions.0, versions.1);
-                    if self.shown.lock().unwrap().insert(aligned.0, entry) != Some(entry) {
-                        self.shown_gen.fetch_add(1, Ordering::Relaxed);
-                    }
+                    self.note_kept(aligned, key);
                 }
                 Some((q, complete, true, exec.last_cost(), plan_ns, stages))
             }
@@ -1323,6 +1437,59 @@ impl PreviewParts {
                 None
             }
         }
+    }
+
+    /// The display's executor, when it can show a picture.
+    fn display_exec(&self) -> Option<Arc<dyn VideoGpuExec>> {
+        let g = self.video_gpu.lock().unwrap();
+        if g.poisoned.is_some() { None } else { g.exec.clone().filter(|e| e.can_present()) }
+    }
+
+    /// The moment `t` is kept under `key` (cached-range-plays): the bars show it.
+    fn note_kept(&self, t: Tick, key: u64) {
+        let versions = (self.project_version.load(Ordering::Acquire), self.content_version.load(Ordering::Acquire));
+        let entry = (key, versions.0, versions.1);
+        if self.shown.lock().unwrap().insert(t.0, entry) != Some(entry) {
+            self.shown_gen.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Show the moment's kept composite if the display's executor holds it, by a probe plan that
+    /// runs no stream stage (structured-telemetry).
+    #[allow(clippy::type_complexity)]
+    fn show_kept(
+        &self,
+        video: &VideoRenderer,
+        frame: u64,
+        t: Tick,
+        q: Quality,
+        on: Option<PresentOptions>,
+    ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
+        use kt_time::trace::{self, Ev};
+        let o = on?;
+        let exec = self.display_exec()?;
+        let t0 = std::time::Instant::now();
+        let mut plan_span = trace::span(Ev::FramePlan);
+        let key = {
+            let probe = video.probe_plan(&self.cache, t, q);
+            exec.present_key(&probe)?
+        };
+        let plan_ns = t0.elapsed().as_nanos() as u64;
+        plan_span.id(frame).a(key).c(trace::route::DISPLAY);
+        drop(plan_span);
+        if !exec.holds(key) {
+            return None;
+        }
+        let mut exec_span = trace::span(Ev::FrameExec);
+        if !exec.present_kept(key, o) {
+            exec_span.cancel();
+            return None;
+        }
+        exec_span.id(frame).a(key).aux(trace::exec::COMPLETE | trace::exec::MEMO_HIT);
+        drop(exec_span);
+        kt_time::work::bump(kt_time::work::Work::CompositeReplay);
+        self.note_kept(t, key);
+        Some((q, true, true, Default::default(), plan_ns, exec.last_stages()))
     }
 
     /// Forget the kept moments the display's executor no longer holds, and check at most `budget`
@@ -1352,6 +1519,9 @@ impl PreviewParts {
                 shown.iter().filter(|(_, (_, p, c))| (*p, *c) != now).map(|(t, _)| *t).collect();
             (stale, shown.len() != before)
         };
+        if changed {
+            kt_time::trace::ev(kt_time::trace::Ev::Invalidate).aux(kt_time::trace::inval::SHOWN).a(now.0).emit();
+        }
         if stale.is_empty() {
             if changed {
                 self.shown_gen.fetch_add(1, Ordering::Relaxed);
@@ -1365,9 +1535,10 @@ impl PreviewParts {
             if stop() {
                 break;
             }
-            let plan = video.frame_plan(&self.cache, Tick(t), q);
-            // a stream layer's late frame is not the moment's own (decode-request-storm)
-            let key = exec.present_key(&plan).filter(|_| !video.stream_held());
+            // the key-only plan: a stream stage names its frame's key and runs nothing
+            // (structured-telemetry), so the check costs no history
+            let plan = video.probe_plan(&self.cache, Tick(t), q);
+            let key = exec.present_key(&plan);
             drop(plan);
             done += 1;
             let mut shown = self.shown.lock().unwrap();
@@ -1571,6 +1742,7 @@ fn spawn_renderer_build(
     let _ = std::thread::Builder::new().name("audio-build".into()).spawn(move || {
         let p = project.lock().unwrap().clone();
         kt_time::work::bump(kt_time::work::Work::EngineBuild);
+        let _span = kt_time::trace::span(kt_time::trace::Ev::AudioBuild);
         let built = AudioRenderer::new(&p);
         let hold = BUILD_HOLD_MS.load(std::sync::atomic::Ordering::Relaxed);
         if hold > 0 {
@@ -1625,6 +1797,7 @@ fn audio_render_loop(ctx: RenderCtx) {
     // A build asked on a pause: the next start waits for it (time stands before the first frame,
     // invariant 6), so Play after an edit plays the edit. The render thread itself never builds.
     let mut build_holds_start = false;
+    let mut traced_hold = 0u64;
     let mut fetcher = CacheFetcher::with_lengths(cache.clone(), &natives.read().unwrap().lengths);
     let mut fetcher_facts = natives.read().unwrap().lengths.len();
     // the local render position (frames); may lead the playhead by the ring
@@ -1942,6 +2115,20 @@ fn audio_render_loop(ctx: RenderCtx) {
                 starting = false;
                 start_wait = None;
             }
+            // a start held for its sound or its renderer, in the trace once per change
+            let why_hold = if !hold { 0 } else if build_holds_start { 1 } else { 2 };
+            if why_hold != traced_hold {
+                traced_hold = why_hold;
+                if why_hold != 0 {
+                    kt_time::trace::ev(kt_time::trace::Ev::Play)
+                        .aux(kt_time::trace::play::START_HOLD)
+                        .a(kt_time::Tick::from_audio_frames(render_head).0 as u64)
+                        .b(why_hold)
+                        .emit();
+                }
+            }
+            let mut fill = kt_time::trace::span(kt_time::trace::Ev::AudioFill);
+            let (mut live_frames, mut kept_frames) = (0u64, 0u64);
             // we fill the ring: render_head is linear, loop mapping is inside
             // render_looped_with (the wrap does NOT bump the generation — FX live)
             while !hold && producer.slots() >= chunk.len() {
@@ -1963,6 +2150,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                     };
                     reverse_frames(&mut chunk);
                     render_head = start;
+                    live_frames += AUDIO_BURST_FRAMES as u64;
                     st
                 } else {
                     // through the final-mix store: a held chunk is handed out with no decode and
@@ -1980,6 +2168,11 @@ fn audio_render_loop(ctx: RenderCtx) {
                     } else {
                         kt_time::work::Work::AudioRender
                     });
+                    if out.replayed {
+                        kept_frames += AUDIO_BURST_FRAMES as u64;
+                    } else {
+                        live_frames += AUDIO_BURST_FRAMES as u64;
+                    }
                     render_head += AUDIO_BURST_FRAMES as i64;
                     out.stats
                 };
@@ -1996,6 +2189,11 @@ fn audio_render_loop(ctx: RenderCtx) {
                 for &s in chunk.iter() {
                     let _ = producer.push(s);
                 }
+            }
+            if live_frames + kept_frames == 0 {
+                fill.cancel();
+            } else {
+                fill.a(live_frames).b(kept_frames).c(render_head as u64);
             }
         }
         // the bars see what the store holds, four times a second at most
@@ -2270,12 +2468,14 @@ fn stream_advance_ahead(
     q: Quality,
     region: Option<(i64, i64)>,
     ahead: usize,
+    kept: &dyn Fn(Tick) -> bool,
 ) -> bool {
     let step = video.grid.frame_step().max(1);
     let mut t = video.grid.align_floor(shown);
     let inside = region.is_some_and(|(s, e)| s <= t.0 && t.0 < e);
     for _ in 0..=ahead {
-        if video.stream_advance(cache, t, q) {
+        // a kept moment needs no history (structured-telemetry)
+        if !kept(t) && video.stream_advance(cache, t, q) {
             return true;
         }
         t = Tick(t.0 + step);
@@ -2320,6 +2520,7 @@ fn prefetch_loop(
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
     shared: Arc<AudioShared>,
     mix: crate::mix::MixCoverage,
+    kept_moments: Shown,
 ) {
     // renderers are cached until the project version changes: cloning the Project and
     // rebuilding the graphs every 100 ms was expensive even at idle (item 1)
@@ -2363,8 +2564,18 @@ fn prefetch_loop(
         }
         loop_stats.prefetch_passes.fetch_add(1, Ordering::Relaxed);
         kt_time::work::bump(kt_time::work::Work::PrefetchPass);
+        // the pass in the trace: its requests and stage advances carry its id as their cause
+        let pass = kt_time::trace::next_id();
+        let _cause = kt_time::trace::with_cause(pass);
+        let mut pass_span = kt_time::trace::span(kt_time::trace::Ev::Job);
+        pass_span.id(pass).aux(kt_time::trace::job::PREFETCH_PASS).a(transport.is_playing() as u64);
         let version = project_version.load(Ordering::Acquire);
         if cached.as_ref().map(|(v, _, _)| *v) != Some(version) {
+            let _build = kt_time::trace::span(kt_time::trace::Ev::Job);
+            kt_time::trace::ev(kt_time::trace::Ev::Invalidate)
+                .aux(kt_time::trace::inval::RENDERERS)
+                .a(version)
+                .emit();
             let p = project.lock().unwrap().clone();
             loop_stats.prefetch_rebuilds.fetch_add(1, Ordering::Relaxed);
             // an audio and a video renderer
@@ -2417,11 +2628,19 @@ fn prefetch_loop(
         // history, and a history ordered window by window is read before the cache drops it
         let interval = last_pass.elapsed();
         last_pass = std::time::Instant::now();
+        // the moments whose composite the display's executor keeps play without work: neither
+        // their decodes nor their stream history are asked (structured-telemetry, I8)
+        let kept_now: std::collections::HashSet<i64> = {
+            let versions = (project_version.load(Ordering::Acquire), content_version.load(Ordering::Acquire));
+            kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect()
+        };
+        let kept = |t: Tick| kept_now.contains(&t.0);
         stream_pending = video.has_stream_stages() && {
             let ahead = if transport.is_playing() { stream_ahead_frames(video, t0, q, interval) } else { 0 };
-            stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead)
+            stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
         };
-        let missing = video_prefetch_pass(video, &cache, t0, q, region_ticks);
+        let missing = video_prefetch_pass_except(video, &cache, t0, q, region_ticks, &kept);
+        pass_span.b(missing.len() as u64).c(stream_pending as u64);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue
         // would be decoded behind the playhead into an entry nobody reads, in the time the

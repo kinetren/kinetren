@@ -327,6 +327,14 @@ pub trait VideoGpuExec: Send + Sync {
     fn holds(&self, _key: u64) -> bool {
         false
     }
+    /// Show the composite kept under `key` on the display target with no plan run
+    /// (structured-telemetry: a kept moment costs no history, no decode); `false` — not kept.
+    fn present_kept(&self, _key: u64, _o: PresentOptions) -> bool {
+        false
+    }
+    /// Keep under `key` a complete composite another executor made (the slow-chain device's
+    /// bytes), so the moment plays without work on the next lap.
+    fn keep(&self, _key: u64, _w: u32, _h: u32, _rgba: &[u8]) {}
     /// Compile, off the caller's thread, what the effects `ids` reach on this executor, so their
     /// first frame does not (pipeline-prewarm D5). Returns at once and never waits for a frame;
     /// frames before it is done behave as before it was asked.
@@ -361,4 +369,8 @@ pub struct GpuStages {
     /// The frame was a kept composite (cached-range-plays): no layer was uploaded or composed,
     /// only the display pass ran.
     pub replayed: bool,
+    /// The composite was kept for the next lap (the executor's memo).
+    pub stored: bool,
+    /// Pipelines drawn in this frame before they were warm (a compile inside the frame).
+    pub cold: u32,
 }

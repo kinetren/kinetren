@@ -39,7 +39,7 @@ pub use player::{
 };
 pub use prefetch::{
     PREFETCH_VIDEO_LOOKAHEAD_TICKS, prefetch_audio_pass, simulate_video_playback,
-    video_prefetch_pass, video_prefetch_wants,
+    video_prefetch_pass, video_prefetch_pass_except, video_prefetch_wants, video_prefetch_wants_except,
 };
 pub use transitions::TransMix;
 pub use transport::Transport;

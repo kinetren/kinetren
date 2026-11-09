@@ -219,13 +219,13 @@ impl PresentMemo {
         self.map.contains_key(&key)
     }
 
-    /// The kept composite, marked recent.
-    pub fn get(&mut self, key: u64) -> Option<wgpu::TextureView> {
+    /// The kept composite and its size, marked recent.
+    pub fn get(&mut self, key: u64) -> Option<(wgpu::TextureView, u32, u32)> {
         self.stamp += 1;
         let stamp = self.stamp;
         self.map.get_mut(&key).map(|(t, s)| {
             *s = stamp;
-            t.view.clone()
+            (t.view.clone(), t.w, t.h)
         })
     }
 
@@ -244,8 +244,10 @@ impl PresentMemo {
             if let Some((t, _)) = self.map.remove(&oldest) {
                 self.bytes -= tex_bytes(t.w, t.h);
                 pool.release(t);
+                kt_time::trace::ev(kt_time::trace::Ev::MemoEvict).id(oldest).cause(key).emit();
             }
         }
+        kt_time::trace::ev(kt_time::trace::Ev::MemoStore).id(key).a(self.bytes).b(self.map.len() as u64).emit();
     }
 }
 

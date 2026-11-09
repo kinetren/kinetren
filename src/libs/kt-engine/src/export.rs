@@ -311,6 +311,8 @@ fn render_raw_video_profiled(
             progress(stats.video_frames);
             stream_preroll(&video, &cache, &mut src, t, quality);
             let mark = Instant::now();
+            let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
+            span.aux(kt_time::trace::job::EXPORT_FRAME).a(t.0 as u64);
             let plan = video.frame_plan(&cache, t, quality);
             let complete = gpu
                 .execute_into(&plan, &mut frame_buf)

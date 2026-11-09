@@ -270,6 +270,11 @@ impl StreamKernel for Datamosh {
     fn held(&self, p: &[f64], lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
         mosh::held(mosh::Rows::from(p), lay, n, memo)
     }
+    fn key(&self, p: &[f64], lay: &dyn StreamLayout, n: i64) -> Option<u64> {
+        // with no device `render` passes the source through under its own key
+        kt_plugin_api::compute::host()?;
+        Some(mosh::key(mosh::Rows::from(p), lay, n))
+    }
     fn render(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo, out: &mut Vec<u8>) -> Option<StreamOut> {
         if kt_plugin_api::compute::host().is_none() {
             return pass_through(input, n, out);

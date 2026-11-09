@@ -11,7 +11,7 @@
 
 use kt_cache::{BurstCache, CacheConfig};
 use kt_engine::preview_bench::{BenchOptions, play_range};
-use kt_engine::{DecodeRequest, MediaWorker, Player, Priority, RequestKind, StreamPacing, VideoRenderer};
+use kt_engine::{DecodeRequest, FramePlan, MediaWorker, Player, Priority, RequestKind, StreamPacing, VideoRenderer};
 use kt_media::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_model::*;
 use kt_plugin_api::stream::StreamMemo;
@@ -427,4 +427,189 @@ fn t2044_a_short_loop_over_a_mosh_plays() {
         "{} pictures for a history of {history}: the decoder seeks in a circle",
         c.pictures
     );
+}
+
+// ---- structured-telemetry -----------------------------------------------------------------------
+
+use kt_time::trace::{self, Ev, Rec};
+
+/// A player over the mosh project on model decoders, the test kit's executor, paused at `t`.
+fn mosh_player(cache: CacheConfig) -> (Player, rtrb::Consumer<f32>) {
+    let counts = Arc::new(Mutex::new(Counts::default()));
+    let sources: Vec<(MediaId, Box<dyn MediaSource>)> = vec![
+        (MediaId(1), Box::new(GopSource::new(Duration::from_millis(1), counts.clone()))),
+        (MediaId(2), Box::new(GopSource::new(Duration::from_millis(1), counts))),
+    ];
+    let (player, ring) = Player::with_cache(mosh_project(), sources, cache);
+    player.set_preview_quality(Q);
+    player.set_video_gpu(Some(kt_gpu::testkit::engine()));
+    (player, ring)
+}
+
+const SHOW: kt_engine::PresentOptions = kt_engine::PresentOptions { show_incomplete: false, glow: false };
+
+/// Present `t` until it comes out complete (the prefetch thread computes the history meanwhile).
+fn present_until_complete(player: &Player, t: Tick) {
+    let deadline = kt_time::test_deadline();
+    // the prefetch thread advances the history of the frame at the playhead
+    player.seek(t);
+    loop {
+        if player.present_preview(t, SHOW).is_some_and(|(_, c)| c) {
+            player.finish_present();
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "the frame at {t:?} never came");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn of(items: &[trace::Item], e: Ev) -> Vec<Rec> {
+    trace::testing::recs(items).into_iter().filter(|r| r.kind() == Some(e)).collect()
+}
+
+/// t2144: one preview frame's life is joined across threads by its id: asked on the compose
+/// thread, it waits for a decode whose request names the frame as its cause, the media worker
+/// decodes that key on its own thread, and the plan, the executor and the answer name the frame.
+#[test]
+fn t2144_a_frame_is_joined_to_the_decode_it_waited_for() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let (player, _ring) = mosh_player(CacheConfig::default());
+    // the plain event before the mosh: one layer, one decode
+    let t = Tick(SEC);
+    let mut seq = 0;
+    let items = trace::testing::capture(|| {
+        seq = player.ask_preview(t, Some(SHOW));
+        let deadline = kt_time::test_deadline();
+        loop {
+            if player.take_composed(Duration::from_millis(50)).is_some_and(|c| c.seq == seq && c.complete) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "the frame never came");
+            seq = player.ask_preview(t, Some(SHOW));
+        }
+    });
+    let asks: Vec<u64> = of(&items, Ev::FrameAsk).iter().filter(|r| r.a == t.0 as u64).map(|r| r.id).collect();
+    let first = *asks.first().expect("the ask is recorded");
+    let wait = of(&items, Ev::FrameWait)
+        .into_iter()
+        .find(|w| w.id == first && w.aux == trace::wait::DECODE)
+        .expect("the first composite waits for a decode");
+    let req = of(&items, Ev::DecReq).into_iter().find(|r| r.id == wait.a).expect("its request");
+    assert_eq!(req.cause, first, "the request names the frame that made it");
+    let dec = of(&items, Ev::Decoded).into_iter().find(|r| r.id == wait.a).expect("the key is decoded");
+    assert_ne!(dec.th, req.th, "the decode is the worker's, on another thread");
+    assert!(dec.t >= req.t);
+    let done = of(&items, Ev::FrameDone).into_iter().find(|d| d.id == seq).expect("the answer");
+    assert_eq!(done.aux, 1, "complete");
+    assert!(of(&items, Ev::FramePlan).iter().any(|p| p.id == seq) && of(&items, Ev::FrameExec).iter().any(|p| p.id == seq));
+    let compose_th = of(&items, Ev::FramePlan).iter().find(|p| p.id == seq).unwrap().th;
+    assert_eq!(compose_th, req.th, "the request went out from the compose thread");
+}
+
+/// t2145 (kkt-26.11.09 I8): a moment whose composite the executor keeps is shown from it with no
+/// stream stage run, no decode asked and no plan of the chain, even after the stage's history memo
+/// and the cache dropped everything; before, the plan of a kept frame ran the stage, found its
+/// history gone and the frame came out incomplete ("Loading").
+#[test]
+fn t2145_a_kept_moment_needs_no_history() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let (player, _ring) = mosh_player(CacheConfig { max_audio_bytes: 16 << 20, max_video_bytes: 256 << 20 });
+    let t = Tick(5 * SEC);
+    present_until_complete(&player, t);
+    // the history and the source frames are gone
+    kt_engine::video::stream_memo().clear();
+    for m in [1, 2] {
+        player.cache.invalidate_source(kt_engine::source_id(MediaId(m)));
+    }
+    let mut shown = None;
+    let items = trace::testing::capture(|| shown = player.present_preview(t, SHOW));
+    assert_eq!(shown.map(|s| s.1), Some(true), "the kept moment is complete at once");
+    let execs = of(&items, Ev::FrameExec);
+    assert!(execs.iter().any(|e| e.aux & trace::exec::MEMO_HIT != 0), "shown from the kept composite: {execs:?}");
+    let frame = execs.iter().find(|e| e.aux & trace::exec::MEMO_HIT != 0).unwrap().id;
+    assert!(!of(&items, Ev::StreamRun).iter().any(|r| r.cause == frame), "no stream stage ran for it");
+    assert!(!of(&items, Ev::DecReq).iter().any(|r| r.cause == frame), "no decode was asked for it");
+    assert!(!of(&items, Ev::FrameWait).iter().any(|r| r.id == frame), "it waited for nothing");
+    assert!(player.final_video_runs().0.iter().any(|r| r.contains(&t.0)), "the bars show the moment as kept");
+}
+
+/// t2150: the look-ahead asks nothing for the moments whose composite is kept, and asks the rest
+/// as before.
+#[test]
+fn t2150_the_look_ahead_skips_kept_moments() {
+    let _g = serial();
+    let p = mosh_project();
+    let r = renderer(&p, None);
+    let t0 = Tick(SEC);
+    let all = kt_engine::video_prefetch_wants(&r, t0, Q, None, 1 << 30);
+    let kept = |t: Tick| t.0 < SEC + 10 * STEP;
+    let some = kt_engine::video_prefetch_wants_except(&r, t0, Q, None, 1 << 30, &kept);
+    assert!(!all.is_empty() && some.len() < all.len());
+    let kept_keys: Vec<_> = (0..10).flat_map(|k| r.layers_at(Tick(SEC + k * STEP), Q)).collect();
+    assert!(some.iter().all(|k| !kept_keys.contains(k)), "a kept moment's keys are not asked");
+    assert!(all.iter().filter(|k| !kept_keys.contains(k)).all(|k| some.contains(k)), "the rest is asked as before");
+}
+
+/// The slow-chain device of t2151: the test kit's executor, past `SLOW_CHAIN` per frame.
+struct Slow(Arc<dyn kt_engine::VideoGpuExec>);
+
+impl kt_engine::VideoGpuExec for Slow {
+    fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        std::thread::sleep(kt_engine::compose_queue::SLOW_CHAIN * 2);
+        self.0.execute_into(plan, out)
+    }
+    fn info(&self) -> &kt_engine::GpuBackendInfo {
+        self.0.info()
+    }
+    fn present_key(&self, plan: &FramePlan<'_>) -> Option<u64> {
+        self.0.present_key(plan)
+    }
+}
+
+/// t2151: a moment composed on the slow-chain device (bytes) is kept on the display's executor: the
+/// next ask of it is shown on the display target from the kept composite, with no chain composed,
+/// and the route stays on the slow device for what is not kept.
+#[test]
+fn t2151_the_slow_route_keeps_its_composites() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let (player, _ring) = mosh_player(CacheConfig::default());
+    (player.slow_gpu_setter())(Some(Arc::new(Slow(kt_gpu::testkit::engine()))));
+    let t = Tick(SEC);
+    let deadline = kt_time::test_deadline();
+    let ask = |t: Tick| {
+        let seq = player.ask_preview(t, Some(SHOW));
+        loop {
+            if let Some(c) = player.take_composed(Duration::from_millis(100)).filter(|c| c.seq == seq) {
+                break c;
+            }
+            assert!(std::time::Instant::now() < deadline, "the frame never came");
+        }
+    };
+    let first = loop {
+        let c = ask(t);
+        if c.complete {
+            break c;
+        }
+    };
+    assert!(!first.on_display, "a slow chain composes on the slow device, as bytes");
+    let r0 = kt_time::work::count(kt_time::work::Work::CompositeReplay);
+    let again = ask(t);
+    assert!(again.complete && again.on_display, "shown on the display from the kept composite");
+    assert_eq!(kt_time::work::count(kt_time::work::Work::CompositeReplay) - r0, 1);
+    let other = loop {
+        let c = ask(Tick(SEC + STEP));
+        if c.complete {
+            break c;
+        }
+    };
+    assert!(!other.on_display, "a moment not kept still goes to the slow device: the replay timed no chain");
 }

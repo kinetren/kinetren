@@ -84,6 +84,20 @@ pub fn video_prefetch_wants(
     region_ticks: Option<(i64, i64)>,
     max_video_bytes: usize,
 ) -> Vec<(MediaId, Tick, Quality)> {
+    video_prefetch_wants_except(video, t0, q, region_ticks, max_video_bytes, &|_| false)
+}
+
+/// [`video_prefetch_wants`] without the moments `kept` names: the executor keeps their composite,
+/// and they play without a decoded frame (structured-telemetry; the audio look-ahead already
+/// skips what the kept mix holds).
+pub fn video_prefetch_wants_except(
+    video: &VideoRenderer,
+    t0: Tick,
+    q: Quality,
+    region_ticks: Option<(i64, i64)>,
+    max_video_bytes: usize,
+    kept: &dyn Fn(Tick) -> bool,
+) -> Vec<(MediaId, Tick, Quality)> {
     let step = video.grid.frame_step().max(1);
     let share = max_video_bytes / 2;
     let mut out: Vec<(MediaId, Tick, Quality)> = Vec::new();
@@ -96,6 +110,11 @@ pub fn video_prefetch_wants(
     for r in lookahead_windows(t0.0, PREFETCH_VIDEO_LOOKAHEAD_TICKS, region_ticks) {
         let mut t = video.grid.align_floor(Tick(r.start));
         while t.0 < r.end {
+            if kept(t) {
+                before.clear();
+                t = Tick(t.0 + step);
+                continue;
+            }
             let layers = video.layers_at(t, q);
             // a source slower than the project grid repeats its frame, and a blended
             // pair shares a side with the next tick: a key is counted once
@@ -150,7 +169,19 @@ pub fn video_prefetch_pass(
     q: Quality,
     region_ticks: Option<(i64, i64)>,
 ) -> Vec<(MediaId, Tick, Quality)> {
-    let wants = video_prefetch_wants(video, t0, q, region_ticks, cache.max_video_bytes());
+    video_prefetch_pass_except(video, cache, t0, q, region_ticks, &|_| false)
+}
+
+/// [`video_prefetch_pass`] without the kept moments.
+pub fn video_prefetch_pass_except(
+    video: &VideoRenderer,
+    cache: &BurstCache,
+    t0: Tick,
+    q: Quality,
+    region_ticks: Option<(i64, i64)>,
+    kept: &dyn Fn(Tick) -> bool,
+) -> Vec<(MediaId, Tick, Quality)> {
+    let wants = video_prefetch_wants_except(video, t0, q, region_ticks, cache.max_video_bytes(), kept);
     let key = |&(m, pts, dq): &(MediaId, Tick, Quality)| BurstKey {
         source: source_id(m),
         kind: BurstKind::video(Some(dq)),

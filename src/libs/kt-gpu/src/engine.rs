@@ -1367,7 +1367,11 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         let _frame = self.compiled.frame();
-        self.inner.lock().unwrap().execute(plan, out, true)
+        let cold = crate::compiled::cold_draws();
+        let mut g = self.inner.lock().unwrap();
+        let r = g.execute(plan, out, true);
+        g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
+        r
     }
 
     fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
@@ -1393,8 +1397,10 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn present(&self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
         let _frame = self.compiled.frame();
+        let cold = crate::compiled::cold_draws();
         let mut g = self.inner.lock().unwrap();
         let r = g.present(plan, o);
+        g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         let target = g.display.as_ref().map(|d| DisplayTarget {
             view: d.view.clone(),
             size: (d.w, d.h),
@@ -1433,6 +1439,26 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn holds(&self, key: u64) -> bool {
         self.inner.lock().unwrap().present_memo.holds(key)
+    }
+
+    fn present_kept(&self, key: u64, o: PresentOptions) -> bool {
+        let _frame = self.compiled.frame();
+        let mut g = self.inner.lock().unwrap();
+        if !g.present_kept(key, o) {
+            return false;
+        }
+        let target = g.display.as_ref().map(|d| DisplayTarget {
+            view: d.view.clone(),
+            size: (d.w, d.h),
+            generation: g.display_generation,
+        });
+        let glow = g.glow.as_ref().map(|t| t.view.clone());
+        *self.shown.lock().unwrap() = (target, glow);
+        true
+    }
+
+    fn keep(&self, key: u64, w: u32, h: u32, rgba: &[u8]) {
+        self.inner.lock().unwrap().keep(key, w, h, rgba);
     }
 
     fn readback_depth(&self) -> usize {
@@ -1592,26 +1618,7 @@ impl Inner {
         // a composite this memo holds is shown by the display pass alone (cached-range-plays):
         // no upload, no chain, no composite
         let key = plan_key(plan);
-        if let Some(kept) = self.present_memo.get(key) {
-            self.ensure_present_targets(ow, oh, o.glow);
-            self.slot = 0;
-            let display = self.display.as_ref().unwrap().view.clone();
-            let meta = FrameMeta { out: (ow, oh), ..Default::default() };
-            self.timer.harvest(&self.device);
-            self.timer.begin();
-            let mut enc = self
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
-            self.pass_display(&mut enc, &kept, &display, (ow, oh), (ow, oh));
-            if o.glow {
-                let glow = self.glow.as_ref().unwrap().view.clone();
-                self.pass_display(&mut enc, &kept, &glow, (ow, oh), GLOW_SIZE);
-            }
-            self.timer.end(&mut enc, Role::Preview, meta);
-            kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
-            self.queue.submit([enc.finish()]);
-            self.timer.submitted(&self.queue, Role::Preview, meta);
-            self.last_stages.replayed = true;
+        if self.present_kept(key, o) {
             self.last_stages.encode_ns = mark.elapsed().as_nanos() as u64;
             return Ok(true);
         }
@@ -1672,6 +1679,7 @@ impl Inner {
                 // a complete one is kept whole for the next lap (cached-range-plays)
                 if complete {
                     self.present_memo.insert(key, result, &mut self.pool);
+                    self.last_stages.stored = true;
                 } else {
                     self.pool.release(result);
                 }
@@ -1688,6 +1696,52 @@ impl Inner {
         self.last_stages.encode_ns =
             (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
         Ok(complete)
+    }
+
+    /// Show the composite kept under `key` with the display pass alone; `false` — it is not kept.
+    fn present_kept(&mut self, key: u64, o: PresentOptions) -> bool {
+        let Some((kept, ow, oh)) = self.present_memo.get(key) else { return false };
+        self.last_cost = Default::default();
+        self.last_stages = Default::default();
+        self.ensure_present_targets(ow, oh, o.glow);
+        self.slot = 0;
+        let display = self.display.as_ref().unwrap().view.clone();
+        let meta = FrameMeta { out: (ow, oh), ..Default::default() };
+        self.timer.harvest(&self.device);
+        self.timer.begin();
+        let mut enc =
+            self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
+        self.pass_display(&mut enc, &kept, &display, (ow, oh), (ow, oh));
+        if o.glow {
+            let glow = self.glow.as_ref().unwrap().view.clone();
+            self.pass_display(&mut enc, &kept, &glow, (ow, oh), GLOW_SIZE);
+        }
+        self.timer.end(&mut enc, Role::Preview, meta);
+        kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+        self.queue.submit([enc.finish()]);
+        self.timer.submitted(&self.queue, Role::Preview, meta);
+        self.last_stages.replayed = true;
+        true
+    }
+
+    /// Keep a composite another device made, as bytes, under `key` (the slow-chain route).
+    fn keep(&mut self, key: u64, w: u32, h: u32, rgba: &[u8]) {
+        if self.present_memo.holds(key) || rgba.len() != (w * h * 4) as usize || w == 0 || h == 0 {
+            return;
+        }
+        let tex = self.pool.acquire(&self.device, w, h);
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            rgba,
+            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        self.present_memo.insert(key, tex, &mut self.pool);
     }
 
     /// The display target at the frame's size (a new texture is a new generation for the UI),

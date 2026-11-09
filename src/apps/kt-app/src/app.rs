@@ -6896,6 +6896,13 @@ impl KtApp {
                 }
             }
             self.preview_key = Some((done.t.0, (cq.width, cq.height), c));
+            {
+                use kt_time::trace::{self, show};
+                let flags = if c { show::COMPLETE } else { 0 }
+                    | if new_frame { show::NEW } else { 0 }
+                    | if on_display { show::ON_DISPLAY } else { 0 };
+                trace::ev(trace::Ev::FrameShow).id(done.seq).a(done.t.0 as u64).aux(flags).emit();
+            }
             // the last composite's bytes stay readable; the buffer before them goes back for reuse
             let old = std::mem::replace(&mut self.preview_buf, rgba);
             self.player.give_back_preview_buffer(old);
@@ -7088,6 +7095,11 @@ impl KtApp {
                 .incomplete_since
                 .map(|t0| t0.elapsed() > LOADING_SCRIM)
                 .unwrap_or(false);
+            // the scrim's coming and going in the trace: `kt-cli trace loading` asks exactly this
+            if LOADING_TRACED.swap(show_overlay, std::sync::atomic::Ordering::Relaxed) != show_overlay {
+                let at = self.preview_key.map_or(0, |k| k.0);
+                kt_time::trace::ev(kt_time::trace::Ev::Loading).aux(show_overlay as u32).a(at as u64).emit();
+            }
             if show_overlay {
                 // the README's hero waits for a frame without it (a picture mid-load is not one)
                 crate::widgets::field_probe::note("preview.loading", img_rect);
@@ -10090,9 +10102,28 @@ impl KtApp {
     }
 }
 
+/// A UI frame long enough to be a stall goes into the trace when it ends.
+struct UiFrameTrace(std::time::Instant);
+
+impl Drop for UiFrameTrace {
+    fn drop(&mut self) {
+        let ns = self.0.elapsed().as_nanos() as u64;
+        if ns >= 50_000_000 {
+            kt_time::trace::ev(kt_time::trace::Ev::UiFrame).lasted(ns).emit();
+        }
+    }
+}
+
+/// Is the preview's "Loading" scrim on, as the trace last heard (one app draws a preview at a time).
+static LOADING_TRACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         kt_time::work::bump(kt_time::work::Work::UiFrame);
+        // a UI frame of 50 ms or more is a stall: the trace holds it beside what the other threads
+        // did (structured-telemetry); a hover frame records nothing, so the pointer over a still
+        // place wakes no writer
+        let _ui_frame = UiFrameTrace(std::time::Instant::now());
         // LIVE BENCH (R.68): the bench command is executed BEFORE the frame — a scenario
         // that waited for the frame must already see the new project. Without
         // KT_LIVE_CTL there is just one OnceLock check here and not a single system operation.

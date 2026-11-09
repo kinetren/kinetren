@@ -1379,10 +1379,23 @@ impl VideoRenderer {
                 (Some(st), None) => {
                     let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache));
                     let n = cs.pos(t);
-                    if st.kernel().needs(&st.values, &cs, n, &self.stream_memo).is_empty() {
+                    let needs = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
+                    if needs == 0 {
                         continue;
                     }
-                    pending |= st.kernel().render(&st.values, &cs, n, &self.stream_memo, &mut Vec::new()).is_none();
+                    // the advance in the trace: from how far short, and whether a source frame stopped it
+                    let mut span = kt_time::trace::span(kt_time::trace::Ev::StreamAdvance);
+                    span.id(c.id.0).a(n as u64).b(needs as u64);
+                    let short = st.kernel().render(&st.values, &cs, n, &self.stream_memo, &mut Vec::new()).is_none();
+                    pending |= short;
+                    if kt_time::trace::on() {
+                        let left = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
+                        span.c(needs.saturating_sub(left) as u64).aux(if short {
+                            kt_time::trace::stream::SOURCE_MISSING
+                        } else {
+                            kt_time::trace::stream::DONE
+                        });
+                    }
                 }
                 (_, Some(sub)) => {
                     pending |= sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality))
@@ -1746,7 +1759,20 @@ impl VideoRenderer {
     /// Frame plan for an external executor (GPU in kt-gpu). The pre-FX frames
     /// are already read from the cache (recency bumped), the layer structure is settled.
     pub fn frame_plan(&self, cache: &BurstCache, t: Tick, quality: Quality) -> FramePlan<'_> {
+        self.plan_with(cache, t, quality, false)
+    }
+
+    /// The plan whose only use is its key (structured-telemetry): a stream stage gives the key its
+    /// kernel names for the frame and runs nothing (`StreamKernel::key`), so asking whether the
+    /// executor keeps the moment's composite costs no history. Its key equals the key of the
+    /// frame's full plan whenever that plan renders the stage's own frame; never execute it.
+    pub fn probe_plan(&self, cache: &BurstCache, t: Tick, quality: Quality) -> FramePlan<'_> {
+        self.plan_with(cache, t, quality, true)
+    }
+
+    fn plan_with(&self, cache: &BurstCache, t: Tick, quality: Quality, probe: bool) -> FramePlan<'_> {
         let ctx = PlanCtx {
+            probe,
             grid: &self.grid,
             cameras: &self.cameras,
             project_size: self.project_size,
@@ -1757,7 +1783,9 @@ impl VideoRenderer {
             stream_held: &self.stream_held,
             blend_footage: false,
         };
-        self.stream_held.store(false, std::sync::atomic::Ordering::Relaxed);
+        if !probe {
+            self.stream_held.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
         build_plan(&self.clips, &ctx, cache, t, quality)
     }
 }
@@ -1785,6 +1813,8 @@ struct PlanCtx<'a> {
     stream_pacing: Option<StreamPacing>,
     /// Set when a stream layer of the plan shows a late frame (the root renderer's flag).
     stream_held: &'a std::sync::atomic::AtomicBool,
+    /// A key-only plan (`probe_plan`): stream stages are keyed, not run.
+    probe: bool,
 }
 
 /// The chain's camera: pinned by id, otherwise the active one by `t`, otherwise the default
@@ -1872,7 +1902,14 @@ fn layer_src<'a>(
     // event's stream HERE, in the plan's common code, and both executors receive those bytes. The
     // frame at the ordinary decode quality is not read — it is not ordered either (D5).
     let streamed = match (&clip.stream, clip.nest) {
-        (Some(st), None) => Some(stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_pacing, ctx.stream_held, quality, dq, t, src_pts)),
+        (Some(st), None) => Some(
+            ctx.probe
+                .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, t, src_pts))
+                .flatten()
+                .unwrap_or_else(|| {
+                    stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_pacing, ctx.stream_held, quality, dq, t, src_pts)
+                }),
+        ),
         _ => None,
     };
     let (frame, content) = if clip.nest.is_some() {
@@ -1951,6 +1988,7 @@ fn layer_src<'a>(
                 stream_memo: ctx.stream_memo,
                 stream_pacing: ctx.stream_pacing,
                 stream_held: ctx.stream_held,
+                probe: ctx.probe,
                 blend_footage: blend,
             };
             // The sub-plan is assembled at S×Quality (R.50, B5): the chain on the
@@ -2029,6 +2067,7 @@ fn track_stage_layer<'a>(
         stream_memo: ctx.stream_memo,
         stream_pacing: ctx.stream_pacing,
         stream_held: ctx.stream_held,
+        probe: ctx.probe,
     };
     let plan = build_plan(clips, &sub_ctx, cache, t, quality);
     // revision of the sub-composite: the track's properties plus the contents of its events

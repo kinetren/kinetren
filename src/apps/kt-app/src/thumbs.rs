@@ -534,6 +534,8 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             }
         }
         // 2) decode on a miss (+ write of the exact key to the DB)
+        let mut _span = kt_time::trace::span(kt_time::trace::Ev::Job);
+        _span.aux(kt_time::trace::job::THUMB).a(key.media.0).b(key.t as u64);
         if jpeg.is_none() {
             if !sources.contains(key.media) {
                 // synthetic — via open_source; files — via open_indexed

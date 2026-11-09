@@ -84,6 +84,17 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The preview composes on its own thread** (`compose_queue`, ui-never-waits): the UI asks (`ask_preview`) and takes (`take_composed`); the newest ask replaces a waiting one; a frame of a state the model has left is dropped; a chain whose executor time passes `SLOW_CHAIN` goes to the offline device. The renderer is an `Arc` behind a mutex: clone the pointer, never hold the lock through a plan. The kept moments' recheck runs there too (`recheck_shown`).
 - **A guard taken inside an expression lives to the end of the statement.** `X::new(&lock.lock().unwrap().clone())` holds the lock through the build, and `if let Some(w) = map.write().unwrap().remove(k) { w.shutdown() }` joins under the guard. Clone, or take out, in a statement of its own (ui-never-waits: the UI's edits waited 412 ms for the audio render thread's build).
 - **The preview presents** (preview-throughput D2). `Player::present_preview` ends in the executor's display target with no readback.
+- **A kept moment is reached without the work that made it** (structured-telemetry, kkt-26.11.09 I8;
+  t2145, t2150, t2151). `compose_via` asks `show_kept` FIRST: a probe plan (`VideoRenderer::probe_plan`)
+  keys every stream stage by `StreamKernel::key` without running it, and a key the display's executor
+  holds is shown by `present_kept` — no decode asked, no stage, no chain. The kept-moment recheck uses the
+  probe plan; the slow route keeps its bytes on the display's executor (`VideoGpuExec::keep`) and a
+  replay does not re-time the route; the prefetch thread skips kept moments (`video_prefetch_pass_except`,
+  `stream_advance_ahead`). A new input of a stream layer's picture must reach its kernel's `key`, or a
+  kept composite of another picture is shown; a kernel without `key` keeps the old path (the stage runs).
+- **The preview frame's life is in the trace** (capability `telemetry`): the compose thread sets the
+  frame's id as its cause, so its decode requests, stream runs and compute jobs carry it; a new thing a
+  composite waits for records a `FrameWait`, a new keeper records its store and eviction.
 - **Past its bytes the look-ahead asks the first frame of each cut** (`jumps_to`, `CUT_LEAD_KEYS`, D3): reaching it takes a decoder the same time however near it is asked. t1528.
 - **A start waits for its sound** (cold-start-audio). The fill loop renders a whole ring in one pass, so at a start (`starting`: opening, a seek, a change of direction, a loop flip) `audio_render` holds it until the bursts of the ring plus the look-ahead margin are cached, at most `START_AUDIO_GRACE`. Time stands before the first frame, so this costs no sync (invariant 6); the limit keeps a dead source from stopping playback (t1537, t1538). A new way to move the render head sets `starting` too.
 - Audio of a span's own priority is read between its chunks (t1529): audio has its own demuxer, so the video cursor does not move.

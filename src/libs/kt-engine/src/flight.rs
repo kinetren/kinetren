@@ -141,6 +141,29 @@ impl StallWatch {
     }
 }
 
+/// Every push goes into the trace as it happens, repeats included (structured-telemetry): the
+/// query splits a loop into its laps by the wraps. Positions in ticks.
+fn trace_play(r: &Rec) {
+    use kt_time::trace::{self, play};
+    if !trace::on() {
+        return;
+    }
+    let tick = |f: i64| kt_time::Tick::from_audio_frames(f).0 as u64;
+    let (kind, a, b, c) = match r.kind {
+        Ev::Play => (play::PLAY, tick(r.a), 0, 0),
+        Ev::Pause => (play::PAUSE, tick(r.a), 0, 0),
+        Ev::Seek => (play::SEEK, tick(r.a), 0, 0),
+        Ev::Region if r.a < 0 => (play::REGION, 0, 0, 0),
+        Ev::Region => (play::REGION, 0, tick(r.a), tick(r.b)),
+        Ev::Wrap => (play::WRAP, tick(r.a), 0, 0),
+        Ev::Dir => (play::DIRECTION, 0, r.a as u64, 0),
+        Ev::Reset => (play::RESET, tick(r.a), 0, 0),
+        Ev::Snap => (play::UNDERRUN, tick(r.snap.head_frames), r.snap.callback_underruns, r.snap.render_underruns),
+        Ev::Stall => (play::STALL, tick(r.b), r.a as u64, 0),
+    };
+    trace::ev(trace::Ev::Play).aux(kind).a(a).b(b).c(c).emit();
+}
+
 impl Default for FlightRecorder {
     fn default() -> Self {
         FlightRecorder::new()
@@ -192,6 +215,7 @@ impl FlightRecorder {
             self.stalls.fetch_add(1, Ordering::AcqRel);
         }
         let rec = Rec { at_ms, kind, a, b, snap, n: 1 };
+        trace_play(&rec);
         let closed = {
             let mut ring = self.lock();
             if let Some(last) = ring.back_mut()

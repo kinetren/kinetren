@@ -362,6 +362,8 @@ fn poster_worker() {
             q.jobs.pop_front()
         };
         if let Some(job) = job {
+            let mut _span = kt_time::trace::span(kt_time::trace::Ev::Job);
+            _span.aux(kt_time::trace::job::POSTER);
             let ctl = crate::bg::BgCtl::from_flags(Default::default(), poster_pause().clone());
             if let Some(rgba) = crate::reel_preview::render_poster(&ctl, &job.project, job.base.as_deref(), job.at) {
                 write_poster(&job.out, rgba);

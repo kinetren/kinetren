@@ -98,6 +98,42 @@ pub struct GpuContext {
     pub adapter_info: wgpu::AdapterInfo,
 }
 
+/// What the trace says of a device a role opened (structured-telemetry): the adapter, its driver,
+/// the features and limits the device got — so a design never needs the person's machine tuned by
+/// hand: what it ran on is in the run's own record.
+pub fn trace_device(role: &str, info: &wgpu::AdapterInfo, device: &wgpu::Device) {
+    if !kt_time::trace::on() {
+        return;
+    }
+    let l = device.limits();
+    let f = device.features();
+    let m = |k: &str, v: String| kt_time::trace::machine(&format!("gpu.{role}.{k}"), &v);
+    m("adapter", info.name.clone());
+    m("type", format!("{:?}", info.device_type));
+    m("backend", format!("{:?}", info.backend));
+    m("driver", format!("{} {}", info.driver, info.driver_info));
+    m("pci", format!("{:04x}:{:04x}", info.vendor, info.device));
+    m("timestamps", f.contains(wgpu::Features::TIMESTAMP_QUERY).to_string());
+    m("pipeline_cache", f.contains(wgpu::Features::PIPELINE_CACHE).to_string());
+    m("features", format!("{f:?}"));
+    m(
+        "limits",
+        format!(
+            "tex2d {} buffer {} storage {} workgroup {}x{}x{} invocations {}",
+            l.max_texture_dimension_2d,
+            l.max_buffer_size,
+            l.max_storage_buffer_binding_size,
+            l.max_compute_workgroup_size_x,
+            l.max_compute_workgroup_size_y,
+            l.max_compute_workgroup_size_z,
+            l.max_compute_invocations_per_workgroup
+        ),
+    );
+    if let Ok(b) = std::env::var("WGPU_BACKEND") {
+        m("env_backend", b);
+    }
+}
+
 impl GpuContext {
     /// The eframe device (preview): handles from `egui_wgpu::RenderState`.
     pub fn from_parts(
@@ -105,6 +141,7 @@ impl GpuContext {
         queue: Arc<wgpu::Queue>,
         adapter_info: wgpu::AdapterInfo,
     ) -> GpuContext {
+        trace_device("display", &adapter_info, &device);
         GpuContext { device, queue, adapter_info }
     }
 
@@ -166,6 +203,8 @@ impl GpuContext {
             ..Default::default()
         }))
         .map_err(|e| GpuInitError::Device(e.to_string()))?;
+        let role = if default == wgpu::PowerPreference::HighPerformance { "export" } else { "headless" };
+        trace_device(role, &adapter.get_info(), &device);
         Ok(GpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),

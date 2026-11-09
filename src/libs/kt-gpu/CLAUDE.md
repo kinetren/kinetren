@@ -86,6 +86,12 @@ is no picture, and an export refuses.
   kt-fx/src/{geom,plan}.rs, in the same commit (t181 geo/tap/k2 cases,
   t309 s2 cases, FrameTol::GEOM).
 - **`PresentMemo` keeps what the preview presented** (cached-range-plays): plan key → the integer composite on the device, complete frames only, 512 MB. `present` asks it FIRST and on a hit runs the display pass alone (`GpuStages.replayed`). preview-throughput D2 had moved the preview off the readback memo, and a covered range was composed again every lap. A new input to a frame must reach `plan_key`, or both memos show a stale picture.
+- **The kept composites are reached by key alone** (structured-telemetry): `present_kept(key)` shows one
+  with no plan (the engine's probe plan found the key), `keep(key, bytes)` writes a composite another
+  device made (the slow route) into the memo; stores and evictions go into the trace, and
+  `GpuStages.stored`/`cold` say what a frame kept and how many pipelines it drew cold.
+- **Every device a role opens describes itself to the trace** (`trace_device`: adapter, driver, features,
+  limits): a new way to open a device calls it.
 - **ReadbackCache is the readback path's memoization** (hash of the plan → frame): the post-FX cache
   of kt-cache (`PostFxVideo`) is not used by any executor (a per-layer readback would eat up the
   whole gain).

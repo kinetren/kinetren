@@ -18,7 +18,7 @@ mod pipeline_cache;
 mod pool;
 mod warm;
 
-pub use context::{
+pub use context::{trace_device, 
     AdapterFact, DrivingCard, GpuContext, GpuInitError, adapter_facts, display_power_preference, driving_cards,
     instances_created, power_preference_for,
 };

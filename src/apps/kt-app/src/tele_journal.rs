@@ -186,6 +186,9 @@ impl Journal {
     /// Record an event that happened at `at`.
     pub fn record_at(&self, at: Stamp, kind: Kind, text: &str) {
         let text = file_names_only(text);
+        // the trace holds every journal line too, on its clock, so a query shows what the person
+        // did next to what the program did (structured-telemetry)
+        kt_time::trace::journal_at(at.mono_ms * 1_000_000, kind as u64, &format!("{} {text}", kind.tag()));
         let line = format_line(at, kind, &text, self.clock.offset(at.unix_ms.div_euclid(1000)));
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(tx) = &st.tx {
@@ -374,8 +377,13 @@ pub fn run_tail(path: &Path, pid: Option<u32>, n: usize) -> Vec<String> {
 /// Open the program's journal and write the run's first line: once per process, before the
 /// first window.
 pub fn install() {
+    // the structured trace beside it, on the same clock (structured-telemetry): `<data>/trace`
+    kt_time::trace::install(kt_time::trace::Config::new(
+        Some(crate::journal::data_dir().join("trace")),
+        &format!("kinetren {}", kt_version::FULL),
+    ));
     let j = GLOBAL.get_or_init(|| {
-        Journal::open(path(), Arc::new(SystemClock(Instant::now())), ROTATE_BYTES)
+        Journal::open(path(), Arc::new(SystemClock(kt_time::trace::start_instant())), ROTATE_BYTES)
     });
     j.record(
         Kind::Run,

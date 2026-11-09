@@ -102,7 +102,19 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
         std::thread::Builder::new()
             .name(name.to_string())
             .spawn(move || {
-                let r = body(ctl, BgSend(prog_tx));
+                // the job in the trace (structured-telemetry): its kind from its thread's name
+                let r = {
+                    let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
+                    let name = std::thread::current().name().unwrap_or("").to_string();
+                    span.aux(match name.as_str() {
+                        "reel-preview" => kt_time::trace::job::REEL_PREVIEW,
+                        n if n.starts_with("analysis") => kt_time::trace::job::ANALYSIS,
+                        n if n.starts_with("render") || n.starts_with("export") => kt_time::trace::job::EXPORT,
+                        _ => 0,
+                    })
+                    .a(kt_time::trace::name(&name) as u64);
+                    body(ctl, BgSend(prog_tx))
+                };
                 let _ = done_tx.send(r);
                 crate::wake::now();
             })
