@@ -28,14 +28,15 @@ pub fn stream_memo() -> &'static Arc<StreamMemo> {
 /// The preview memo's bound with no loop to keep: a stretch of playback and its look-ahead.
 pub const STREAM_MEMO_BASE: usize = 256 << 20;
 
-/// The preview memo's bound for a loop of `loop_positions` stream positions at `per_position` bytes
-/// (stream-layout-per-build, found-defects 143). A loop whose history the memo cannot hold recomputes
-/// it every lap: at 1080 lines 256 MB held about 20 positions. So the bound is what the loop needs —
-/// every position of it plus an eighth — never below `base`, and never above a quarter of the memory
-/// the machine has `available` when it is sized (measured at run time; unknown — `base`).
+/// The preview memo's bound for a loop of `loop_positions` stream positions keeping `per_position`
+/// bytes each (stream-layout-per-build, found-defects 143). A loop whose history the memo cannot hold
+/// recomputes it every lap: at 1080 lines 256 MB held about 20 positions. So the bound is what the
+/// loop keeps — every position's picture plus an eighth — on top of `base` (the working set of the
+/// stage: the encoder's transient state, the look-ahead), and never above a quarter of the memory the
+/// machine has `available` when it is sized (measured at run time; unknown — `base`), nor below `base`.
 pub fn stream_memo_bytes(base: usize, per_position: usize, loop_positions: Option<usize>, available: Option<u64>) -> usize {
     let (Some(n), Some(free)) = (loop_positions, available) else { return base };
-    let want = per_position.saturating_mul(n + n / 8 + 2);
+    let want = per_position.saturating_mul(n + n / 8 + 2).saturating_add(base);
     want.min(usize::try_from(free / 4).unwrap_or(usize::MAX)).max(base)
 }
 

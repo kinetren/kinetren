@@ -593,7 +593,8 @@ fn clean_at(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p:
         let cfg = s.at(q).cfg;
         let c = Arc::new(encode_at(input, side, q, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
         let k = s.clean(lay, side, q)?;
-        memo.put(k, c.clone(), clean_bytes(&c));
+        // the encoder's state is read by the next frame's encoder; the loop keeps the pictures
+        memo.put_transient(k, c.clone(), clean_bytes(&c));
         prev = Some(c.clone());
         last = Some(c);
     }

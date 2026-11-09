@@ -171,7 +171,12 @@ pub trait StreamKernel: Send + Sync {
 }
 
 /// One memo entry: opaque to the host, sized for the bound.
-type Entry = (Arc<dyn Any + Send + Sync>, usize, u64);
+/// (the value, its bytes, its last use, transient).
+type Entry = (Arc<dyn Any + Send + Sync>, usize, u64, bool);
+
+/// The newest transient entries the eviction spares like any other: what the next step still reads
+/// (the clean encoder's state of the last frame, on each side).
+const TRANSIENT_SPARED: usize = 4;
 
 /// The host-owned memo of a stream kernel (design D3): a bounded LRU of opaque entries keyed by a
 /// `u64` the kernel derives from what determines the entry. Speed only — never another byte.
@@ -217,6 +222,18 @@ impl StreamMemo {
 
     /// Keep `v` under `key`, evicting the least recently used entries past the bound.
     pub fn put<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        self.put_entry(key, v, bytes, false);
+    }
+
+    /// `put` an entry only the next steps read (stream-layout-per-build: the clean encoder's state of
+    /// a frame, which the encoder of the next frame reads, against the decoded picture a loop shows
+    /// again): past the newest few, such entries go before any other, so a memo sized for a loop's
+    /// pictures keeps them.
+    pub fn put_transient<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        self.put_entry(key, v, bytes, true);
+    }
+
+    fn put_entry<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, transient: bool) {
         let cap = self.bytes_cap();
         if bytes > cap {
             return;
@@ -224,7 +241,7 @@ impl StreamMemo {
         let mut g = self.lock();
         g.clock += 1;
         let now = g.clock;
-        if let Some(old) = g.map.insert(key, (v, bytes, now)) {
+        if let Some(old) = g.map.insert(key, (v, bytes, now, transient)) {
             g.bytes -= old.1;
         }
         g.bytes += bytes;
@@ -236,7 +253,15 @@ impl StreamMemo {
     fn evict_to(g: &mut MemoInner, cap: usize, cause: u64) {
         let key = cause;
         while g.bytes > cap {
-            let Some((&k, _)) = g.map.iter().min_by_key(|(_, e)| e.2) else { break };
+            // the oldest transient past the newest few, else the least recently used
+            let mut tr: Vec<(u64, u64)> = g.map.iter().filter(|(_, e)| e.3).map(|(k, e)| (e.2, *k)).collect();
+            let victim = if tr.len() > TRANSIENT_SPARED {
+                tr.select_nth_unstable(0);
+                Some(tr[0].1)
+            } else {
+                g.map.iter().min_by_key(|(_, e)| e.2).map(|(k, _)| *k)
+            };
+            let Some(k) = victim else { break };
             if let Some(e) = g.map.remove(&k) {
                 g.bytes -= e.1;
                 // what the history lost, and to what (structured-telemetry)

@@ -14,9 +14,9 @@ fn t2275_the_bound_follows_the_loop_within_the_machine() {
     let per = 8 * MB;
     let plenty = Some(64u64 << 30);
     assert_eq!(stream_memo_bytes(base, per, None, plenty), base, "no loop");
-    assert_eq!(stream_memo_bytes(base, per, Some(10), plenty), base, "a short loop keeps the base");
-    // 666 positions (11 s at 60 fps): every position and an eighth
-    assert_eq!(stream_memo_bytes(base, per, Some(666), plenty), per * (666 + 83 + 2));
+    assert_eq!(stream_memo_bytes(base, per, Some(10), plenty), base + per * 13, "a short loop: its pictures over the base");
+    // 666 positions (11 s at 60 fps): every position and an eighth, over the working set
+    assert_eq!(stream_memo_bytes(base, per, Some(666), plenty), per * (666 + 83 + 2) + base);
     assert_eq!(stream_memo_bytes(base, per, Some(666), Some(4u64 << 30)), 1 << 30, "a quarter of 4 GB");
     assert_eq!(stream_memo_bytes(base, per, Some(666), Some(512 << 20)), base, "never below the base");
     assert_eq!(stream_memo_bytes(base, per, Some(666), None), base, "unknown memory");

@@ -178,11 +178,11 @@ fn t2276_a_loop_the_memo_holds_computes_nothing_twice() {
         return;
     }
     let s = Loop { frames: (0..40).map(|k| frame(LW, LH, 9, 2 * k)).collect() };
-    // the player's rule (`stream_memo_bytes`, kt-engine): two stage frames a position, every position
-    // of the loop and an eighth; a base of one frame so the loop decides
-    let per = 2 * (LW * LH * 4) as usize;
+    // the player's rule (`stream_memo_bytes`, kt-engine): half a stage frame a position, every
+    // position of the loop and an eighth, over a working set (here eight frames, not 256 MB)
+    let frame = (LW * LH * 4) as usize;
     let n = 30usize;
-    let sized = per * (n + n / 8 + 2);
+    let sized = frame / 2 * (n + n / 8 + 2) + 8 * frame;
     let (jobs, a, b) = laps(&kt_plugin_api::stream::StreamMemo::new(sized), &s);
     assert_eq!(jobs, 0, "the second lap computed again");
     assert_eq!(a, b);

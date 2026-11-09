@@ -129,7 +129,7 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
     if sized {
         // the player's sizing for this range as its loop region
         let positions = ((t1.0 - t0.0).max(0) / video.grid.frame_step().max(1)) as usize + 1;
-        let per = 2 * video.stream_frame_bytes(t0, q);
+        let per = video.stream_frame_bytes(t0, q) / 2;
         let cap = kt_engine::video::size_stream_memo(per, Some(positions));
         let free = kt_engine::video::memory_available().unwrap_or(0);
         println!("  memo sized for a loop of {positions} positions: {} MB (available {} MB)", cap >> 20, free >> 20);

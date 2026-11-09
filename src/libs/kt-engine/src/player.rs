@@ -2634,9 +2634,10 @@ fn stream_advance_ahead(
 }
 
 /// Size the preview's stream memo by the loop it must keep (stream-layout-per-build, found-defects
-/// 143): `2 × the stage's frame` a position (`STREAM_AHEAD_MIN`'s estimate), every position of the
-/// loop region, within a quarter of the memory available — measured only when the loop or the
-/// stage's size changes (`last`), so a pass that changes neither reads nothing.
+/// 143): a position keeps the stage's picture — half the stage's RGBA frame at most (Datamosh's
+/// Y'CbCr 4:2:0 is 3/8 of it) — every position of the loop region, within a quarter of the memory
+/// available — measured only when the loop or the stage's size changes (`last`), so a pass that
+/// changes neither reads nothing.
 fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, last: &mut Option<(usize, Option<usize>)>) {
     let frame = video.stream_frame_bytes(t, q);
     if frame == 0 {
@@ -2644,7 +2645,7 @@ fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(
     }
     let step = video.grid.frame_step().max(1);
     let positions = region.map(|(s, e)| ((e - s).max(0) / step) as usize + 1);
-    let now = (2 * frame, positions);
+    let now = (frame / 2, positions);
     if *last == Some(now) {
         return;
     }
