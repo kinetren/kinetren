@@ -129,6 +129,9 @@ list may be short of items from them.
 | 190 | a value edit of a generator (a title keystroke) resolves every reel on the UI thread | `Player::update_gen` asks `gen_sources` of the stored project for the other instances' addresses, and the app's `sync_gen_sources` falls back to `Player::sync_generators` (a project copy and `gen_sources`) when a passport changes; ~5 resolves of 7 ms on his project per keystroke (structural edits sync on the builder thread since `edit-without-rebuild`) | `kt-engine` player, `kt-app` app.rs | open | performance queue (the builder could take the addresses' resync) |
 | 191 | an export builds a whole video renderer once just to ask whether it has a stream stage | `export.rs` `VideoRenderer::new(project).has_stream_stages()` before the serial/pipelined choice, then each path builds its own; offline, once per export (~25 ms on his project) | `kt-engine` `export.rs` | open | small: ask the resolved reels, or hand the renderer on |
 | 192 | an incremental build still walks the whole project | the root's resolve (7.6 ms on his project) and the Debug-text hash of every event (the memo key) run per edit; an edit's build is 20.5 ms against 31.6 fresh (release, `kt-cli edit-cost`), off the UI thread, one per version | `kt-engine` builders, `kt-model` resolve | open | the audit's step 4 (a persistent index), only if a 10× project misses the budget |
+| 210 | the limiter divides `ceil/thr` every sample | seen by `kernel-specialization`; small | `fx-audio-dynamics` | open | local cost queue |
+| 211 | the camera mic's µ-law takes `log10(256)` for every stored sample | seen by `kernel-specialization`; small | `fx-video-camera` (audio half) | open | local cost queue |
+| 212 | the ARM build is unchecked after `kernel-specialization` | no aarch64 target on this machine; no new architecture-specific code, only the existing `fast!` with its `cfg` | workspace | open | with row 44 (no ARM build) |
 
 ## Internal
 
