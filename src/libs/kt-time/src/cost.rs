@@ -38,10 +38,21 @@ pub enum Cost {
     /// A segment walked by an integral reading that starts from the curve's beginning (an LFO phase
     /// per sample before compiled-curves).
     IntegralWalk,
+    /// An event whose derived state a builder computed (edit-without-rebuild): the audio event or the
+    /// video layer before transitions. The `engine-build` thread keeps them from one build to the
+    /// next by the hash of what they derive from, so a rebuild after an edit derives the touched
+    /// events only.
+    EventDerive,
+    /// A whole renderer built (`AudioRenderer::new`, `VideoRenderer::new_with_facts`, the player's
+    /// shared build). A UI path counts none.
+    RendererBuild,
+    /// A reel instance resolved (its morpher layers, links, overrides) by a builder: once per
+    /// instance per build (edit-without-rebuild, found-defects row 155).
+    ReelResolve,
 }
 
 impl Cost {
-    pub const ALL: [Cost; 8] = [
+    pub const ALL: [Cost; 11] = [
         Cost::WarpSegment,
         Cost::ClipSearch,
         Cost::ReelHash,
@@ -50,6 +61,9 @@ impl Cost {
         Cost::FormulaParse,
         Cost::ProfileSample,
         Cost::IntegralWalk,
+        Cost::EventDerive,
+        Cost::RendererBuild,
+        Cost::ReelResolve,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -62,6 +76,9 @@ impl Cost {
             Cost::FormulaParse => "formula_parses",
             Cost::ProfileSample => "profile_samples",
             Cost::IntegralWalk => "integral_walks",
+            Cost::EventDerive => "event_derives",
+            Cost::RendererBuild => "renderer_builds",
+            Cost::ReelResolve => "reel_resolves",
         }
     }
 }

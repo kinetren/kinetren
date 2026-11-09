@@ -1,6 +1,8 @@
 //! Test t1875 (input-without-work, capability `transport`): the UI's own audio renderer — the
 //! meters on a pause and the loop's pinned head — is built once per project version. Each change
-//! of the loop region built a whole one on the UI thread: 447 ms on the owner's 1974 events.
+//! of the loop region built a whole one on the UI thread: 447 ms on the owner's 1974 events. Since
+//! edit-without-rebuild it is the player's shared build: region changes and meter readings build
+//! nothing at all, and a new version is built once for every consumer.
 //!
 //! Its own test binary: `kt_time::work` counts process-wide, and no other player may run beside it.
 
@@ -77,16 +79,15 @@ fn t1875_the_ui_renderer_is_built_once_per_project_version() {
         player.set_loop_region(Some(TickRange::new(Tick(i * 9_000), Tick(90_000 + i * 9_000))));
         let _ = player.sample_levels_at(Tick(i * 1_000));
     }
-    assert_eq!(builds() - before, 1, "five region changes and five meter readings on one project version");
+    assert_eq!(builds() - before, 0, "five region changes and five meter readings on one project version");
     // a new project is a new version: the next region change builds again, once
     let mut p = project();
     p.clips[0].gain_db = -3.0;
-    player.set_project(p);
-    settle();
     let before = builds();
+    player.set_project(p);
     player.set_loop_region(Some(TickRange::new(Tick(0), Tick(90_000))));
     player.set_loop_region(Some(TickRange::new(Tick(9_000), Tick(90_000))));
-    // a later version is built on a thread of its own (ui-never-waits): wait for it to land
+    // the version is built once, an audio and a video renderer, on the player's builder thread
     settle();
-    assert_eq!(builds() - before, 1);
+    assert_eq!(builds() - before, 2);
 }
