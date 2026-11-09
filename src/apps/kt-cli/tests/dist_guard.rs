@@ -1203,6 +1203,9 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         // seven: a ratio of the frame's cost, judged against what the machine gave both (t1913, t1914)
         ("apps/kt-app/src/frame_cost_tests.rs", "let t0 = thread_ns();"),
         ("apps/kt-app/src/frame_cost_tests.rs", "*b = (*b).min(thread_ns() - t0);"),
+        // the window the display's latencies are sampled over while the other classes load the
+        // ring: a fixed span of presents, not a wait for something to happen (gpu-arbiter, t2254)
+        ("libs/kt-gpu/tests/arbiter.rs", "while start.elapsed() < run {"),
     ];
     fn walk(d: &Path, out: &mut Vec<PathBuf>) {
         for e in std::fs::read_dir(d).unwrap().flatten() {

@@ -255,17 +255,18 @@ fn t2233_at_rest_no_worker_wakes() {
         v.sort();
         v
     };
-    // other tests of this binary post jobs too: wait for a quiet window, then require it stays quiet
+    // other tests of this binary post jobs too: wait for a quiet window, then require it stays quiet.
+    // A worker just spawned carries its name only once it first runs (the thread names itself), so
+    // on a loaded machine the pool is counted whole only when it rests (finish.sh 2026-11-09: 5 of 6)
     let deadline = crate::test_deadline();
     loop {
         let a = workers_now();
-        assert_eq!(a.len(), workers(), "the pool's size");
         std::thread::sleep(Duration::from_millis(1500));
         let b = workers_now();
-        if a == b && stats().running == 0 {
+        if a == b && a.len() == workers() && stats().running == 0 {
             break;
         }
-        assert!(Instant::now() < deadline, "the pool never rested");
+        assert!(Instant::now() < deadline, "the pool never rested: {} of {} workers named", b.len(), workers());
     }
 }
 
