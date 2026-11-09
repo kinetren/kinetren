@@ -4,16 +4,16 @@
 //! Frame N is the decoder's loop from its ANCHOR (the last self-contained node of its dependency
 //! chain) to N — a pure function of the rows (their curves included, read per position through
 //! `StreamLayout::rows_at`) and of the source frames the chain reads. The memo only skips work:
-//! every entry is exactly what the replay computes from the same inputs.
+//! every entry is exactly what the replay computes from the same inputs. The schedule itself — the
+//! rows per position, the chain, the keys — is compiled once per layout (`Plan`,
+//! stream-layout-per-build).
 //!
 //! The breakages are GATES drawn by curves (the owner, 2026-11-01: "reset/inactivity marks by hand
 //! on the beat"): `mosh` drops the I-frames while on, a `reset` key rising to on forces an intact
 //! I-frame there, `bloom` repeats the motion of its run's first P-frame, `freeze` stops the
 //! reference from updating.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use kt_plugin_api::generator::lowbias32;
 use kt_plugin_api::math::FrozenMath;
@@ -41,7 +41,7 @@ pub const BLOCKS: &[&str] = &["16", "8"];
 pub const FROM: &[&str] = &["own", "track_above", "track_below"];
 
 /// The rows, read for one position.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rows {
     /// The GOP length; 0 — only the stream start, the cut, the resets (and `KEYINT_MAX`).
     pub gop: i64,
@@ -132,228 +132,348 @@ pub enum Node {
     Inter { p: i64, dep: i64 },
 }
 
-/// The schedule of one stream: the static rows, the layout and the rows per position.
-pub struct Sched<'a> {
-    pub r: Rows,
-    pub lay: &'a dyn StreamLayout,
-    first: i64,
-    cut: i64,
-    at: RefCell<HashMap<i64, Rows>>,
+/// One position of the compiled schedule: the rows read there and everything the decoder's
+/// schedule and the content keys derive from them. Each field is a forward recurrence over
+/// positions (what a position depends on lies before it), so the schedule is filled once, in order.
+#[derive(Debug, Clone, Copy)]
+struct Pos {
+    r: Rows,
+    reset_edge: bool,
+    sched_i: bool,
+    dropped: bool,
+    /// The packet the decoder receives here (a bloom repeats its run's first P-frame).
+    pkt: i64,
+    /// The decoder's node, the intra refresh applied.
+    node: Node,
+    /// The position before this one in its dependency chain (`Hold`, `Inter`); itself for an anchor.
+    dep: i64,
+    /// The index in the RAW chain, counted from its self-contained anchor (the refresh grid).
+    idx: u64,
+    /// The broken decoder's content key here.
+    dk: u64,
+    /// The clean encoder's key per side and its GOP start.
+    clean: [Option<u64>; 2],
+    gs: [Option<i64>; 2],
+    /// The starts of the `bloom` and `freeze` runs reaching here (uncapped), the latest reset
+    /// edge and the latest self-contained position at or before here, the first P-frame of the
+    /// bloom run before here.
+    s_bloom: i64,
+    s_freeze: i64,
+    lre: i64,
+    lsc: i64,
+    fni: Option<i64>,
 }
 
-impl<'a> Sched<'a> {
-    pub fn new(r: Rows, lay: &'a dyn StreamLayout) -> Sched<'a> {
+/// The schedule of one stream COMPILED (stream-layout-per-build): the static rows and, per position
+/// from the stream's first, the rows with their curves, the decoder's node, its dependency and the
+/// content keys. Filled lazily up to the furthest position asked, under a lock, by the forward
+/// recurrences of `fill`; a question afterwards reads stored values. Before it, every call (`needs`
+/// per frame of the prefetch window, `held`, `key`, `render`) built a schedule and two maps, walked the
+/// chain back to its anchor reading the rows at each node, and hashed the GOP again (found-defects 144).
+/// The values are those of that walk (t2270); a host keeps one per stage, build and size
+/// (`StreamLayout::plan_cell`), a host without a cell gets one per call.
+pub struct Plan {
+    pub r: Rows,
+    first: i64,
+    cut: i64,
+    g: i64,
+    enc: u64,
+    brk: u64,
+    pos: Mutex<Vec<Pos>>,
+}
+
+impl Plan {
+    pub fn new(r: Rows, lay: &dyn StreamLayout) -> Plan {
         let cut = lay.cut();
-        Sched { r, lay, first: lay.first().min(cut), cut, at: RefCell::new(HashMap::new()) }
-    }
-
-    /// The rows at position `k` (its curves applied).
-    pub fn at(&self, k: i64) -> Rows {
-        if let Some(r) = self.at.borrow().get(&k) {
-            return *r;
+        let enc = r.enc_hash(lay.size());
+        Plan {
+            r,
+            first: lay.first().min(cut),
+            cut,
+            g: if r.gop == 0 { KEYINT_MAX } else { r.gop },
+            enc,
+            brk: r.break_hash(enc),
+            pos: Mutex::new(Vec::new()),
         }
-        let r = self.lay.rows_at(k.max(self.first)).map_or(self.r, |v| Rows::from(&v));
-        self.at.borrow_mut().insert(k, r);
-        r
     }
 
-    fn g(&self) -> i64 {
-        if self.r.gop == 0 { KEYINT_MAX } else { self.r.gop }
+    /// The layout's compiled schedule: the host's cell when it gives one (compiled once), else a
+    /// schedule for this call.
+    pub fn of(r: Rows, lay: &dyn StreamLayout) -> Arc<Plan> {
+        match lay.plan_cell().and_then(|c| c.get_or_init(|| Plan::new(r, lay))) {
+            Some(p) if p.r == r => p,
+            _ => Arc::new(Plan::new(r, lay)),
+        }
     }
 
-    /// A `reset` key rising to on at `k`: an intact I-frame there.
-    pub fn reset_edge(&self, k: i64) -> bool {
-        k > self.first && self.at(k).reset && !self.at(k - 1).reset
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<Pos>> {
+        // a position is complete once pushed; a panic elsewhere cannot leave one half-written
+        self.pos.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The GOP grid (counted from the cut, and from the stream start inside the event before). A
-    /// reset adds a keyframe; it does not move the grid.
-    fn on_grid(&self, k: i64) -> bool {
-        let g = self.g();
-        (k > self.cut && (k - self.cut) % g == 0) || (k > self.first && k < self.cut && (k - self.first) % g == 0)
+    /// Positions compiled so far.
+    pub fn len(&self) -> usize {
+        self.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn first(&self) -> i64 {
+        self.first
+    }
+
+    /// Compile the schedule up to position `n` (inclusive).
+    pub fn ensure(&self, lay: &dyn StreamLayout, n: i64) {
+        let mut v = self.lock();
+        let have = self.first + v.len() as i64;
+        if n < have {
+            return;
+        }
+        kt_plugin_api::stream::compiling(have, n + 1, || {
+            v.reserve((n + 1 - have) as usize);
+            for k in have..=n {
+                let p = self.fill(lay, &v, k);
+                v.push(p);
+            }
+            v.len()
+        });
+    }
+
+    /// The GOP start of the second input at `k` (its event's start, the GOP grid from there).
+    fn second_gs(&self, lay: &dyn StreamLayout, k: i64) -> Option<i64> {
+        if self.r.second == SecondFrom::None {
+            return None;
+        }
+        let s = lay.second_start(k)?;
+        Some(s + (k - s).max(0) / self.g * self.g)
+    }
+
+    fn h0(&self, side: Side, gs: i64) -> u64 {
+        mix(mix(self.enc, side as u64 + 1), gs as u64)
+    }
+
+    /// Position `k` from the ones before it (`v` holds `first .. k`).
+    fn fill(&self, lay: &dyn StreamLayout, v: &[Pos], k: i64) -> Pos {
+        let (first, cut, g) = (self.first, self.cut, self.g);
+        let at = |j: i64| &v[(j - first) as usize];
+        let prev = (k > first).then(|| at(k - 1));
+        let r = lay.rows_at(k).map_or(self.r, |x| Rows::from(&x));
+        let reset_edge = prev.is_some_and(|p| r.reset && !p.r.reset);
+        let on_grid = (k > cut && (k - cut) % g == 0) || (k > first && k < cut && (k - first) % g == 0);
+        let sched_i = k == first || k == cut || on_grid || reset_edge;
+        let dropped = sched_i && k != first && !reset_edge && r.mosh;
+        // the clean encoder's GOP start: the grid, or a later reset (a reset adds a keyframe, the
+        // grid does not move)
+        let grid = if k >= cut { cut + (k - cut) / g * g } else { first + (k - first).max(0) / g * g };
+        let lre = if reset_edge { k } else { prev.map_or(i64::MIN, |p| p.lre) };
+        let gs = if lre > grid { lre } else { grid };
+        // the runs of the gates reaching here
+        let s_bloom = match prev {
+            Some(p) if p.r.bloom => p.s_bloom,
+            _ => k,
+        };
+        let s_freeze = match prev {
+            Some(p) if p.r.freeze => p.s_freeze,
+            _ => k,
+        };
+        let fni = match prev {
+            Some(p) if s_bloom < k => p.fni.or((!p.sched_i).then_some(k - 1)),
+            _ => None,
+        };
+        // the packet received: while `bloom` is on, the run's first P-frame (within MAX_WALK)
+        let pkt = if !r.bloom {
+            k
+        } else {
+            let r0 = s_bloom.max(k - MAX_WALK as i64);
+            match fni {
+                Some(j) if j >= r0 => j,
+                Some(_) => (r0..k).find(|&j| !at(j).sched_i).unwrap_or(k),
+                None => k,
+            }
+        };
+        let (pi, pd) = if pkt == k { (sched_i, dropped) } else { (at(pkt).sched_i, at(pkt).dropped) };
+        let sc = pi && !pd;
+        let lsc = if sc { k } else { prev.map_or(i64::MIN, |p| p.lsc) };
+        // the frozen reference: the run's first picture, or the last self-contained one inside it
+        let frozen = if !r.freeze {
+            None
+        } else {
+            let r0 = s_freeze.max(k - MAX_WALK as i64);
+            (r0 != k).then_some(match prev {
+                Some(p) if p.lsc > r0 => p.lsc,
+                _ => r0,
+            })
+        };
+        let raw = if pi {
+            if pd { Node::Hold } else { Node::Intra { p: pkt } }
+        } else {
+            Node::Inter { p: pkt, dep: frozen.unwrap_or(k - 1) }
+        };
+        let dep = match raw {
+            Node::Hold => k - 1,
+            Node::Inter { dep, .. } => dep,
+            _ => k,
+        };
+        let idx = if dep == k { 0 } else { at(dep).idx + 1 };
+        // the intra refresh: every MAX_CHAIN-th node of a chain from its anchor is a forced intact
+        // I-frame — a grid fixed by the chain, so consecutive frames continue each other
+        let node = if idx > 0 && idx % MAX_CHAIN as u64 == 0 { Node::Refresh { p: pkt } } else { raw };
+        // the clean encoder's keys: its configuration, the addresses and quantisers from the GOP start
+        let rows_of = |j: i64| if j >= k { r } else { at(j.max(first)).r };
+        let main = {
+            let base = match prev {
+                Some(p) if k > gs => p.clean[0].unwrap_or(0),
+                _ => self.h0(Side::Main, gs),
+            };
+            mix(mix(base, lay.ident(Side::Main, k)), r.cfg.qp.to_bits())
+        };
+        let gs2 = self.second_gs(lay, k);
+        let second = gs2.map(|g2| {
+            let base = match prev {
+                Some(p) if k > g2 && p.gs[1] == Some(g2) => p.clean[1].unwrap_or(0),
+                _ => {
+                    let mut h = self.h0(Side::Second, g2);
+                    for j in g2..k {
+                        h = mix(mix(h, lay.ident(Side::Second, j)), rows_of(j).cfg.qp.to_bits());
+                    }
+                    h
+                }
+            };
+            mix(mix(base, lay.ident(Side::Second, k)), r.cfg.qp.to_bits())
+        });
+        let clean_of = |side: usize, p: i64| -> Option<u64> {
+            if p == k { [Some(main), second][side] } else { at(p).clean[side] }
+        };
+        let dk = match node {
+            Node::Base => mix(self.brk, 0xba5e),
+            Node::Intra { p } => mix(self.brk ^ 1, clean_of(0, p).unwrap_or(0)),
+            Node::Refresh { p } => mix(self.brk ^ 2, self.intra_key(lay, p, rows_of(p))),
+            Node::Hold => mix(at(dep).dk, 3),
+            Node::Inter { p, .. } => {
+                let mut h = mix(mix(mix(at(dep).dk, clean_of(0, p).unwrap_or(0)), clean_of(1, p).unwrap_or(0)), (k as u64) ^ 4);
+                for x in [r.scale, r.rotate, r.loss] {
+                    h = mix(h, x.to_bits());
+                }
+                mix(h, r.gain_q8 as u64)
+            }
+        };
+        Pos {
+            r,
+            reset_edge,
+            sched_i,
+            dropped,
+            pkt,
+            node,
+            dep,
+            idx,
+            dk,
+            clean: [Some(main), second],
+            gs: [Some(gs), gs2],
+            s_bloom,
+            s_freeze,
+            lre,
+            lsc,
+            fni,
+        }
+    }
+
+    fn intra_key(&self, lay: &dyn StreamLayout, p: i64, r: Rows) -> u64 {
+        mix(mix(mix(self.enc, 0x1a), lay.ident(Side::Main, p)), r.cfg.qp.to_bits())
+    }
+
+    /// The stored position `k` (compiled: `ensure` first); `None` before the stream.
+    fn pos(&self, k: i64) -> Option<Pos> {
+        if k < self.first {
+            return None;
+        }
+        let p = self.lock().get((k - self.first) as usize).copied();
+        debug_assert!(p.is_some(), "position {k} read before it was compiled");
+        p
+    }
+
+    /// The rows at position `k` (its curves applied; before the stream, the stream's first).
+    pub fn at(&self, k: i64) -> Rows {
+        self.pos(k.max(self.first)).map_or(self.r, |p| p.r)
     }
 
     /// An I-frame of the clean encoder: the stream start, the cut, the grid, a reset.
     pub fn sched_i(&self, k: i64) -> bool {
-        k == self.first || k == self.cut || self.on_grid(k) || self.reset_edge(k)
+        self.pos(k).is_some_and(|p| p.sched_i)
     }
 
-    /// The clean encoder's GOP start of `k` on the main side: the latest I-frame at or before it.
-    pub fn gop_start(&self, k: i64) -> i64 {
-        let g = self.g();
-        let grid = if k >= self.cut {
-            self.cut + (k - self.cut) / g * g
-        } else {
-            self.first + (k - self.first).max(0) / g * g
-        };
-        let mut j = k;
-        while j > grid {
-            if self.reset_edge(j) {
-                return j;
-            }
-            j -= 1;
-        }
-        grid
-    }
-
-    fn second_gop_start(&self, k: i64) -> Option<i64> {
-        if self.r.second == SecondFrom::None {
-            return None;
-        }
-        let s = self.lay.second_start(k)?;
-        Some(s + (k - s).max(0) / self.g() * self.g())
-    }
-
-    /// The start of the run of a gate that is on at `k`.
-    fn run_start(&self, k: i64, gate: impl Fn(&Rows) -> bool) -> i64 {
-        let mut j = k;
-        let mut n = 0;
-        while j > self.first && gate(&self.at(j - 1)) && n < MAX_WALK {
-            j -= 1;
-            n += 1;
-        }
-        j
-    }
-
-    /// The packet the decoder receives at `k`: while `bloom` is on, the run's first P-frame is
-    /// repeated (the frames before it in the run decode their own).
-    pub fn pkt_pos(&self, k: i64) -> i64 {
-        if !self.at(k).bloom {
-            return k;
-        }
-        let r0 = self.run_start(k, |r| r.bloom);
-        (r0..k).find(|&j| !self.sched_i(j)).unwrap_or(k)
-    }
-
-    /// While `mosh` is on, every I-frame is deleted from the stream but the stream's first one (a
-    /// decoder needs a first picture) and a reset (the person's own keyframe).
+    /// An I-frame `mosh` deletes from the stream.
     pub fn dropped(&self, k: i64) -> bool {
-        self.sched_i(k) && k != self.first && !self.reset_edge(k) && self.at(k).mosh
+        self.pos(k).is_some_and(|p| p.dropped)
     }
 
-    fn self_contained(&self, k: i64) -> bool {
-        let p = self.pkt_pos(k);
-        self.sched_i(p) && !self.dropped(p)
+    /// A `reset` key rising to on at `k`.
+    pub fn reset_edge(&self, k: i64) -> bool {
+        self.pos(k).is_some_and(|p| p.reset_edge)
     }
 
-    /// The frozen reference of `k`: while `freeze` is on, every P-frame predicts from the run's
-    /// first picture (or from the last self-contained one inside the run).
-    fn frozen_ref(&self, k: i64) -> Option<i64> {
-        if !self.at(k).freeze {
-            return None;
-        }
-        let r0 = self.run_start(k, |r| r.freeze);
-        if r0 == k {
-            return None;
-        }
-        Some(((r0 + 1)..k).rev().find(|&j| self.self_contained(j)).unwrap_or(r0))
+    /// The packet the decoder receives at `k`.
+    pub fn pkt_pos(&self, k: i64) -> i64 {
+        self.pos(k).map_or(k, |p| p.pkt)
     }
 
-    /// The node at `k` before the refresh rule.
-    fn node_raw(&self, k: i64) -> Node {
-        if k < self.first {
-            return Node::Base;
-        }
-        let p = self.pkt_pos(k);
-        if self.sched_i(p) {
-            return if self.dropped(p) { Node::Hold } else { Node::Intra { p } };
-        }
-        Node::Inter { p, dep: self.frozen_ref(k).unwrap_or(k - 1) }
+    /// The decoder's node at `k`, the intra refresh applied.
+    pub fn node(&self, k: i64) -> Node {
+        self.pos(k).map_or(Node::Base, |p| p.node)
+    }
+
+    /// The broken decoder's key at `k`.
+    pub fn dk(&self, k: i64) -> u64 {
+        self.pos(k).map_or(mix(self.brk, 0xba5e), |p| p.dk)
     }
 
     /// The dependency chain of `n`, anchor first: positions and nodes, the intra refresh applied.
-    pub fn chain(&self, n: i64) -> Vec<(i64, Node)> {
+    pub fn chain(&self, n: i64) -> Vec<(i64, Node, u64)> {
+        let v = self.lock();
+        let Some(mut i) = (n >= self.first).then(|| (n - self.first) as usize) else {
+            return vec![(n, Node::Base, mix(self.brk, 0xba5e))];
+        };
         let mut back = vec![];
-        let mut k = n;
         loop {
-            let node = self.node_raw(k);
-            back.push((k, node));
-            let dep = match node {
-                Node::Base | Node::Intra { .. } | Node::Refresh { .. } => break,
-                Node::Hold => k - 1,
-                Node::Inter { dep, .. } => dep,
-            };
-            if back.len() >= MAX_WALK {
-                break;
+            let p = &v[i];
+            let k = self.first + i as i64;
+            back.push((k, p.node, p.dk));
+            match p.node {
+                Node::Hold | Node::Inter { .. } => i = (p.dep - self.first) as usize,
+                _ => break,
             }
-            k = dep;
         }
         back.reverse();
-        // the refresh grid: every MAX_CHAIN-th node from the anchor is a forced intact I-frame
-        let last = (back.len() - 1) / MAX_CHAIN * MAX_CHAIN;
-        if last > 0 {
-            back.drain(..last);
-            let (k, _) = back[0];
-            back[0] = (k, Node::Refresh { p: self.pkt_pos(k) });
-        }
         back
     }
-}
 
-/// The content keys of one call (computed from addresses and rows, never from frames).
-struct Keys<'s, 'a> {
-    s: &'s Sched<'a>,
-    enc: u64,
-    brk: u64,
-    clean: HashMap<(Side, i64), u64>,
-}
-
-impl<'s, 'a> Keys<'s, 'a> {
-    fn new(s: &'s Sched<'a>) -> Keys<'s, 'a> {
-        let enc = s.r.enc_hash(s.lay.size());
-        Keys { s, enc, brk: s.r.break_hash(enc), clean: HashMap::new() }
-    }
-
-    fn gop_start(&self, side: Side, p: i64) -> Option<i64> {
-        match side {
-            Side::Main => Some(self.s.gop_start(p)),
-            Side::Second => self.s.second_gop_start(p),
+    /// The clean encoder's GOP start of `p` on a side.
+    fn gop_start(&self, lay: &dyn StreamLayout, side: Side, p: i64) -> Option<i64> {
+        match (side, self.pos(p)) {
+            (Side::Main, Some(x)) => x.gs[0],
+            (Side::Second, Some(x)) => x.gs[1],
+            (Side::Main, None) => Some(self.first),
+            (Side::Second, None) => self.second_gs(lay, p),
         }
     }
 
-    /// The clean encoder's key at `p`: its configuration, and the addresses and quantisers from
-    /// the GOP start.
-    fn clean(&mut self, side: Side, p: i64) -> Option<u64> {
-        if let Some(&k) = self.clean.get(&(side, p)) {
-            return Some(k);
+    /// The clean encoder's key at `p` on a side (positions before the stream: hashed from its GOP
+    /// start, the rows at the stream's first, as before).
+    fn clean(&self, lay: &dyn StreamLayout, side: Side, p: i64) -> Option<u64> {
+        if let Some(x) = self.pos(p) {
+            return x.clean[side as usize];
         }
-        let gs = self.gop_start(side, p)?;
-        let mut h = mix(mix(self.enc, side as u64 + 1), gs as u64);
+        let gs = self.gop_start(lay, side, p)?;
+        let mut h = self.h0(side, gs);
         for j in gs..=p {
-            h = mix(mix(h, self.s.lay.ident(side, j)), self.s.at(j).cfg.qp.to_bits());
-            self.clean.insert((side, j), h);
+            h = mix(mix(h, lay.ident(side, j)), self.at(j).cfg.qp.to_bits());
         }
         Some(h)
     }
 
-    fn intra(&self, p: i64) -> u64 {
-        mix(mix(mix(self.enc, 0x1a), self.s.lay.ident(Side::Main, p)), self.s.at(p).cfg.qp.to_bits())
-    }
-
-    /// The decoded keys along a chain.
-    fn decoded(&mut self, chain: &[(i64, Node)]) -> Vec<u64> {
-        let mut out: Vec<u64> = Vec::with_capacity(chain.len());
-        for (i, &(k, node)) in chain.iter().enumerate() {
-            let prev = if i > 0 { out[i - 1] } else { 0 };
-            let key = match node {
-                Node::Base => mix(self.brk, 0xba5e),
-                Node::Intra { p } => mix(self.brk ^ 1, self.clean(Side::Main, p).unwrap_or(0)),
-                Node::Refresh { p } => mix(self.brk ^ 2, self.intra(p)),
-                Node::Hold => mix(prev, 3),
-                Node::Inter { p, .. } => {
-                    let a = self.clean(Side::Main, p).unwrap_or(0);
-                    let b = self.clean(Side::Second, p).unwrap_or(0);
-                    let r = self.s.at(k);
-                    let mut h = mix(mix(mix(prev, a), b), (k as u64) ^ 4);
-                    for v in [r.scale, r.rotate, r.loss] {
-                        h = mix(h, v.to_bits());
-                    }
-                    mix(h, r.gain_q8 as u64)
-                }
-            };
-            out.push(key);
-        }
-        out
+    fn intra(&self, lay: &dyn StreamLayout, p: i64) -> u64 {
+        self.intra_key(lay, p, self.at(p))
     }
 }
 
@@ -367,23 +487,28 @@ fn padded(lay: &dyn StreamLayout) -> (usize, usize) {
     (codec::pad16(w.max(16)), codec::pad16(h.max(16)))
 }
 
+/// The layout's schedule compiled up to `n`.
+fn plan(r: Rows, lay: &dyn StreamLayout, n: i64) -> Arc<Plan> {
+    let p = Plan::of(r, lay);
+    p.ensure(lay, n);
+    p
+}
+
 /// The positions whose frames are still needed to produce `n` given the memo (design D3, D5).
 pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<(Side, i64)> {
-    let s = Sched::new(r, lay);
+    let s = plan(r, lay, n);
     let chain = s.chain(n);
-    let mut keys = Keys::new(&s);
-    let dk = keys.decoded(&chain);
-    let start = match (0..chain.len()).rev().find(|&i| memo.contains(dk[i])) {
+    let start = match (0..chain.len()).rev().find(|&i| memo.contains(chain[i].2)) {
         Some(i) if i + 1 == chain.len() && lay.region_ident(n) == 0 => return vec![],
         Some(i) => i + 1,
         None => 0,
     };
     let mut out = std::collections::BTreeSet::new();
-    let need_clean = |keys: &mut Keys, side: Side, p: i64, out: &mut std::collections::BTreeSet<(Side, i64)>| {
-        let Some(gs) = keys.gop_start(side, p) else { return };
+    let need_clean = |side: Side, p: i64, out: &mut std::collections::BTreeSet<(Side, i64)>| {
+        let Some(gs) = s.gop_start(lay, side, p) else { return };
         let mut j = p;
         while j >= gs {
-            match keys.clean(side, j) {
+            match s.clean(lay, side, j) {
                 Some(k) if memo.contains(k) => break,
                 _ => {}
             }
@@ -391,23 +516,23 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
             j -= 1;
         }
     };
-    for &(_, node) in &chain[start..] {
+    for &(_, node, _) in &chain[start..] {
         match node {
             Node::Base | Node::Hold => {}
-            Node::Intra { p } => need_clean(&mut keys, Side::Main, p, &mut out),
+            Node::Intra { p } => need_clean(Side::Main, p, &mut out),
             Node::Refresh { p } => {
-                if !memo.contains(keys.intra(p)) {
+                if !memo.contains(s.intra(lay, p)) {
                     out.insert((Side::Main, p));
                 }
             }
             Node::Inter { p, .. } => {
-                need_clean(&mut keys, Side::Main, p, &mut out);
-                need_clean(&mut keys, Side::Second, p, &mut out);
+                need_clean(Side::Main, p, &mut out);
+                need_clean(Side::Second, p, &mut out);
             }
         }
     }
     if lay.region_ident(n) != 0 {
-        need_clean(&mut keys, Side::Main, n, &mut out);
+        need_clean(Side::Main, n, &mut out);
     }
     // the earliest position first, both sides interleaved: a host that warms the needs in bounded
     // batches (the export's pre-roll, D6) then always advances the replay
@@ -418,9 +543,7 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
 
 /// The key `render` returns for `n`, from the rows and addresses alone (structured-telemetry).
 pub fn key(r: Rows, lay: &dyn StreamLayout, n: i64) -> u64 {
-    let s = Sched::new(r, lay);
-    let chain = s.chain(n);
-    let key = Keys::new(&s).decoded(&chain).last().copied().unwrap_or(0);
+    let key = plan(r, lay, n).dk(n);
     match lay.region_ident(n) {
         0 => key,
         rid => mix(key, rid),
@@ -429,29 +552,29 @@ pub fn key(r: Rows, lay: &dyn StreamLayout, n: i64) -> u64 {
 
 /// The latest position of `n`'s chain whose broken picture the memo holds (decode-request-storm).
 pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
-    let s = Sched::new(r, lay);
-    let chain = s.chain(n);
-    let dk = Keys::new(&s).decoded(&chain);
-    (0..chain.len()).rev().find(|&i| memo.contains(dk[i])).map(|i| chain[i].0)
+    plan(r, lay, n).chain(n).into_iter().rev().find(|c| memo.contains(c.2)).map(|c| c.0)
 }
 
-/// The source frame at `k` as padded planes; `None` — the host does not have it.
-fn source(input: &dyn StreamInput, side: Side, k: i64, w: usize, h: usize) -> Option<Planes> {
+/// The clean encoder's output for the source frame at `k` against `prev` (`None` — intra): the job
+/// converts the frame's RGBA to the padded planes itself. `None` — the host does not have the frame,
+/// or the device failed.
+fn encode_at(input: &dyn StreamInput, side: Side, k: i64, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
+    let (w, h) = padded(input);
     let mut out = None;
-    input.with_frame(side, k, &mut |f| out = Some(Planes::from_rgba(f.rgba, f.w, f.h, w, h)));
+    input.with_frame(side, k, &mut |f| out = codec::encode_rgba(f.rgba, f.w, f.h, w, h, prev, cfg));
     out
 }
 
 /// The clean encoder's output at `p` (memo first, else encoded forward from the GOP start or the
 /// last memoised position).
-fn clean_at(keys: &mut Keys, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p: i64) -> Option<Arc<Clean>> {
-    let gs = keys.gop_start(side, p)?;
-    let (w, h) = padded(keys.s.lay);
+fn clean_at(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p: i64) -> Option<Arc<Clean>> {
+    let lay: &dyn StreamLayout = input;
+    let gs = s.gop_start(lay, side, p)?;
     // back to a held entry or the GOP start
     let mut j = p;
     let mut prev: Option<Arc<Clean>> = None;
     loop {
-        let k = keys.clean(side, j)?;
+        let k = s.clean(lay, side, j)?;
         if let Some(c) = memo.get::<Clean>(k) {
             if j == p {
                 return Some(c);
@@ -471,11 +594,11 @@ fn clean_at(keys: &mut Keys, input: &dyn StreamInput, memo: &StreamMemo, side: S
         if input.stop() {
             return None;
         }
-        let src = source(input, side, q, w, h)?;
-        let cfg = keys.s.at(q).cfg;
-        let c = Arc::new(codec::encode(&src, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
-        let k = keys.clean(side, q)?;
-        memo.put(k, c.clone(), clean_bytes(&c));
+        let cfg = s.at(q).cfg;
+        let c = Arc::new(encode_at(input, side, q, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
+        let k = s.clean(lay, side, q)?;
+        // the encoder's state is read by the next frame's encoder; the loop keeps the pictures
+        memo.put_transient(k, c.clone(), clean_bytes(&c));
         prev = Some(c.clone());
         last = Some(c);
     }
@@ -525,28 +648,6 @@ fn decode_inter(r: &Rows, k: i64, rf: &Planes, own: &Clean, second: Option<&Clea
     codec::decode(rf, &mv, bs, &own.pkt.res, r.gain_q8)
 }
 
-/// Frame `n` of the broken stream as planes plus its key; `None` — a frame of the history is
-/// missing (everything computed before the gap stays in the memo).
-pub fn render(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
-    let lay: &dyn StreamLayout = input;
-    let s = Sched::new(r, lay);
-    let (pic, key) = broken(&s, input, n, memo)?;
-    // the REGION OF INTEREST (the bridge for masks and detectors): the broken stream inside it, the
-    // intact one outside — a per-pixel blend by its coverage; the broken loop itself is untouched
-    let rid = lay.region_ident(n);
-    if rid == 0 {
-        return Some((pic, key));
-    }
-    let mut cov: Option<Vec<u8>> = None;
-    if !input.with_region(n, &mut |c| cov = Some(c.to_vec())) {
-        return Some((pic, key));
-    }
-    let cov = cov?;
-    let mut keys = Keys::new(&s);
-    let clean = clean_at(&mut keys, input, memo, Side::Main, n)?;
-    Some((Arc::new(region_blend(&pic, &clean.recon, &cov, lay.size())), mix(key, rid)))
-}
-
 /// `clean + (broken − clean) × coverage`, per plane; the coverage is at the stream's size, read
 /// with clamped coordinates over the padding, at half resolution for the chroma.
 fn region_blend(broken: &Planes, clean: &Planes, cov: &[u8], size: (u32, u32)) -> Planes {
@@ -575,53 +676,71 @@ fn region_blend(broken: &Planes, clean: &Planes, cov: &[u8], size: (u32, u32)) -
     out
 }
 
+
+/// Frame `n` of the broken stream as planes plus its key; `None` — a frame of the history is
+/// missing (everything computed before the gap stays in the memo).
+pub fn render(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
+    let lay: &dyn StreamLayout = input;
+    let s = plan(r, lay, n);
+    let (pic, key) = broken(&s, input, n, memo)?;
+    // the REGION OF INTEREST (the bridge for masks and detectors): the broken stream inside it, the
+    // intact one outside — a per-pixel blend by its coverage; the broken loop itself is untouched
+    let rid = lay.region_ident(n);
+    if rid == 0 {
+        return Some((pic, key));
+    }
+    let mut cov: Option<Vec<u8>> = None;
+    if !input.with_region(n, &mut |c| cov = Some(c.to_vec())) {
+        return Some((pic, key));
+    }
+    let cov = cov?;
+    let clean = clean_at(&s, input, memo, Side::Main, n)?;
+    Some((Arc::new(region_blend(&pic, &clean.recon, &cov, lay.size())), mix(key, rid)))
+}
+
 /// The broken decoder's picture at `n` and its key.
-fn broken(s: &Sched, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
+fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
     let lay: &dyn StreamLayout = input;
     let r = s.r;
     let chain = s.chain(n);
-    let mut keys = Keys::new(s);
-    let dk = keys.decoded(&chain);
     let (w, h) = padded(lay);
     let mut start = 0;
     let mut cur: Option<Arc<Planes>> = None;
     for i in (0..chain.len()).rev() {
-        if let Some(p) = memo.get::<Planes>(dk[i]) {
+        if let Some(p) = memo.get::<Planes>(chain[i].2) {
             if i + 1 == chain.len() {
-                return Some((p, dk[i]));
+                return Some((p, chain[i].2));
             }
             cur = Some(p);
             start = i + 1;
             break;
         }
     }
-    for i in start..chain.len() {
+    for &(k, node, dk) in &chain[start..] {
         // before each position: the host may have left the frame (gpu-arbiter, row 147); every
         // position computed so far is in the memo
         if input.stop() {
             return None;
         }
-        let (k, node) = chain[i];
         let pic: Arc<Planes> = match node {
             Node::Base => Arc::new(Planes::grey(w, h)),
             Node::Hold => cur.clone().unwrap_or_else(|| Arc::new(Planes::grey(w, h))),
-            Node::Intra { p } => Arc::new(clean_at(&mut keys, input, memo, Side::Main, p)?.recon.clone()),
+            Node::Intra { p } => Arc::new(clean_at(s, input, memo, Side::Main, p)?.recon.clone()),
             Node::Refresh { p } => {
-                let ik = keys.intra(p);
+                let ik = s.intra(lay, p);
                 match memo.get::<Planes>(ik) {
                     Some(x) => x,
                     None => {
-                        let src = source(input, Side::Main, p, w, h)?;
-                        let x = Arc::new(codec::encode(&src, None, &s.at(p).cfg)?.recon);
+                        let x = Arc::new(encode_at(input, Side::Main, p, None, &s.at(p).cfg)?.recon);
                         memo.put(ik, x.clone(), x.bytes());
                         x
                     }
                 }
             }
             Node::Inter { p, .. } => {
-                let own = clean_at(&mut keys, input, memo, Side::Main, p)?;
+                let own = clean_at(s, input, memo, Side::Main, p)?;
                 let second = if r.second != SecondFrom::None && lay.second_start(p).is_some() {
-                    Some(clean_at(&mut keys, input, memo, Side::Second, p)?)
+                    Some(clean_at(s, input, memo, Side::Second, p)?)
                 } else {
                     None
                 };
@@ -629,8 +748,8 @@ fn broken(s: &Sched, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Opti
                 Arc::new(decode_inter(&s.at(k), k, &rf, &own, second.as_deref())?)
             }
         };
-        memo.put(dk[i], pic.clone(), pic.bytes());
+        memo.put(dk, pic.clone(), pic.bytes());
         cur = Some(pic);
     }
-    cur.map(|p| (p, dk[chain.len() - 1]))
+    cur.map(|p| (p, chain[chain.len() - 1].2))
 }

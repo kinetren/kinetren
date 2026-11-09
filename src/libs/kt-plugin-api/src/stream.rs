@@ -12,7 +12,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Which input a stream position reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -60,6 +60,42 @@ pub trait StreamLayout {
     /// decides what that means (the datamosh shows its broken stream inside, the intact one outside).
     fn region_ident(&self, _k: i64) -> u64 {
         0
+    }
+    /// Where the kernel keeps what it COMPILED from this layout (stream-layout-per-build): its
+    /// schedule, the rows per position, the content keys. The host gives one cell per stage, build
+    /// and stream size, and drops it with the build, so the kernel compiles once and every later
+    /// question (`needs`, `held`, `key`, `render`) reads it. `None` — no cell: the kernel compiles per
+    /// call, to the same values.
+    fn plan_cell(&self) -> Option<&PlanCell> {
+        None
+    }
+}
+
+/// A host-owned slot for a kernel's compiled schedule of one layout (stream-layout-per-build). Opaque
+/// to the host; filled once, by the first question. Speed only: what it holds is a pure function of
+/// the rows and the layout.
+#[derive(Default)]
+pub struct PlanCell(OnceLock<Arc<dyn Any + Send + Sync>>);
+
+impl PlanCell {
+    /// The compiled value, built by `f` at the first call; `None` — the cell holds another type.
+    pub fn get_or_init<T: Any + Send + Sync>(&self, f: impl FnOnce() -> T) -> Option<Arc<T>> {
+        self.0.get_or_init(|| Arc::new(f())).clone().downcast::<T>().ok()
+    }
+}
+
+/// Run `f`, a kernel compiling positions `from .. to` of its schedule, as a record of the structured
+/// trace (`stream_plan`); `f` returns the positions the schedule holds after it.
+pub fn compiling(from: i64, to: i64, f: impl FnOnce() -> usize) {
+    let mut span = kt_time::trace::span(kt_time::trace::Ev::StreamPlan);
+    span.a(from as u64).b(to as u64);
+    let held = f();
+    span.c(held as u64);
+}
+
+impl std::fmt::Debug for PlanCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.get().is_some() { "PlanCell(filled)" } else { "PlanCell(empty)" })
     }
 }
 
@@ -124,6 +160,13 @@ pub trait StreamKernel: Send + Sync {
     fn key(&self, _p: &[f64], _lay: &dyn StreamLayout, _n: i64) -> Option<u64> {
         None
     }
+    /// Advance the history to frame `n` in the memo without producing its picture (the prefetch's
+    /// advance, the export's pre-roll: stream-layout-per-build — they converted a picture and threw it
+    /// away);
+    /// `false` — a frame of the history is missing. By default `render` into a scratch buffer.
+    fn advance(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> bool {
+        self.render(p, input, n, memo, &mut Vec::new()).is_some()
+    }
     /// Produce frame `n` as RGBA (opaque) into `out`; `None` — a frame of the history is missing.
     /// Everything computed before the gap stays in the memo (progress is monotonic).
     fn render(
@@ -137,12 +180,19 @@ pub trait StreamKernel: Send + Sync {
 }
 
 /// One memo entry: opaque to the host, sized for the bound.
-type Entry = (Arc<dyn Any + Send + Sync>, usize, u64);
+/// (the value, its bytes, its last use, transient).
+type Entry = (Arc<dyn Any + Send + Sync>, usize, u64, bool);
+
+/// The newest transient entries the eviction spares like any other: what the next step still reads
+/// (the clean encoder's state of the last frame, on each side).
+const TRANSIENT_SPARED: usize = 4;
 
 /// The host-owned memo of a stream kernel (design D3): a bounded LRU of opaque entries keyed by a
 /// `u64` the kernel derives from what determines the entry. Speed only — never another byte.
 pub struct StreamMemo {
-    cap: usize,
+    /// The bound; the host may change it while the memo is used (stream-layout-per-build: the
+    /// preview sizes it by its loop and the machine's memory).
+    cap: std::sync::atomic::AtomicUsize,
     inner: Mutex<MemoInner>,
 }
 
@@ -156,7 +206,7 @@ struct MemoInner {
 impl StreamMemo {
     /// A memo holding at most `cap_bytes` (an entry larger than that is not kept).
     pub fn new(cap_bytes: usize) -> StreamMemo {
-        StreamMemo { cap: cap_bytes, inner: Mutex::new(MemoInner::default()) }
+        StreamMemo { cap: std::sync::atomic::AtomicUsize::new(cap_bytes), inner: Mutex::new(MemoInner::default()) }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, MemoInner> {
@@ -181,18 +231,46 @@ impl StreamMemo {
 
     /// Keep `v` under `key`, evicting the least recently used entries past the bound.
     pub fn put<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
-        if bytes > self.cap {
+        self.put_entry(key, v, bytes, false);
+    }
+
+    /// `put` an entry only the next steps read (stream-layout-per-build: the clean encoder's state of
+    /// a frame, which the encoder of the next frame reads, against the decoded picture a loop shows
+    /// again): past the newest few, such entries go before any other, so a memo sized for a loop's
+    /// pictures keeps them.
+    pub fn put_transient<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        self.put_entry(key, v, bytes, true);
+    }
+
+    fn put_entry<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, transient: bool) {
+        let cap = self.bytes_cap();
+        if bytes > cap {
             return;
         }
         let mut g = self.lock();
         g.clock += 1;
         let now = g.clock;
-        if let Some(old) = g.map.insert(key, (v, bytes, now)) {
+        if let Some(old) = g.map.insert(key, (v, bytes, now, transient)) {
             g.bytes -= old.1;
         }
         g.bytes += bytes;
-        while g.bytes > self.cap {
-            let Some((&k, _)) = g.map.iter().min_by_key(|(_, e)| e.2) else { break };
+        Self::evict_to(&mut g, cap, key);
+    }
+
+    /// Drop the least recently used entries until `cap` holds the rest; `cause` names the key that
+    /// made room necessary (0 — the bound shrank).
+    fn evict_to(g: &mut MemoInner, cap: usize, cause: u64) {
+        let key = cause;
+        while g.bytes > cap {
+            // the oldest transient past the newest few, else the least recently used
+            let mut tr: Vec<(u64, u64)> = g.map.iter().filter(|(_, e)| e.3).map(|(k, e)| (e.2, *k)).collect();
+            let victim = if tr.len() > TRANSIENT_SPARED {
+                tr.select_nth_unstable(0);
+                Some(tr[0].1)
+            } else {
+                g.map.iter().min_by_key(|(_, e)| e.2).map(|(k, _)| *k)
+            };
+            let Some(k) = victim else { break };
             if let Some(e) = g.map.remove(&k) {
                 g.bytes -= e.1;
                 // what the history lost, and to what (structured-telemetry)
@@ -201,9 +279,16 @@ impl StreamMemo {
         }
     }
 
-    /// The bound it was made with.
+    /// The bound.
     pub fn bytes_cap(&self) -> usize {
-        self.cap
+        self.cap.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A new bound; a smaller one drops the least recently used entries now.
+    pub fn set_cap(&self, cap_bytes: usize) {
+        self.cap.store(cap_bytes, std::sync::atomic::Ordering::Relaxed);
+        let mut g = self.lock();
+        Self::evict_to(&mut g, cap_bytes, 0);
     }
 
     /// Bytes held.

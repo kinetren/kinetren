@@ -3,13 +3,15 @@
 // One workgroup per block, one invocation per pixel and per coefficient (gpu-pass-cost): each
 // stage of the separable DCT is a row of eight products summed in the same order as before, the
 // stages joined by barriers. A thread per block with three 64-float arrays spilled to scratch on a
-// card and left most of its lanes idle. The planes `src` and `rf` are bytes, four to a word. `c` is the DCT basis, row u = frequency.
+// card and left most of its lanes idle. The planes `src` and `rf` are bytes, four to a word; the
+// residual is two samples to a word, 16 bits each (stream-layout-per-build: a word a sample was read
+// back whole). `c` is the DCT basis, row u = frequency.
 struct U { w: u32, h: u32, bs: u32, shift: u32, q: f32, mw: u32, intra: u32, pad: u32, c: array<vec4<f32>, 16> };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var<storage, read> src: array<u32>;
 @group(0) @binding(2) var<storage, read> rf: array<u32>;
 @group(0) @binding(3) var<storage, read> mv: array<vec2<i32>>;
-@group(0) @binding(4) var<storage, read_write> res: array<i32>;
+@group(0) @binding(4) var<storage, read_write> res: array<u32>;
 
 fn src_at(i: i32) -> u32 { return (src[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 255u; }
 fn rf_at(i: i32) -> u32 { return (rf[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 255u; }
@@ -17,6 +19,7 @@ fn rf_at(i: i32) -> u32 { return (rf[u32(i) >> 2u] >> ((u32(i) & 3u) * 8u)) & 25
 var<workgroup> B: array<f32, 64>;
 var<workgroup> T: array<f32, 64>;
 var<workgroup> F: array<f32, 64>;
+var<workgroup> R: array<i32, 64>;
 
 fn round_away(v: f32) -> f32 { return sign(v) * floor(abs(v) + 0.5); }
 
@@ -60,5 +63,10 @@ fn main(@builtin(workgroup_id) g: vec3<u32>, @builtin(local_invocation_id) l: ve
     // inverse rows: the pixel (x, y)
     s = 0.0;
     for (var k = 0; k < 8; k++) { s += C(k * 8 + x) * T[y * 8 + k]; }
-    res[py * w + px] = i32(clamp(round_away(s), -512.0, 512.0));
+    R[y * 8 + x] = i32(clamp(round_away(s), -512.0, 512.0));
+    workgroupBarrier();
+    // a pair of samples to a word: the even column writes it (the plane's width is a multiple of 8)
+    if (x & 1) == 0 {
+        res[u32(py * w + px) >> 1u] = (u32(R[y * 8 + x]) & 0xffffu) | (u32(R[y * 8 + x + 1]) << 16u);
+    }
 }

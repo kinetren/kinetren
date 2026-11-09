@@ -24,4 +24,8 @@ kt-otio = { workspace = true }
 # the native-crash report (segv-crashes)
 kt-crash = { workspace = true }
 
+# the advancing thread's processor time (`stream-cost`)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]

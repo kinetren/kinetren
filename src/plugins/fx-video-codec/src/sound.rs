@@ -1,8 +1,8 @@
 //! The sound of the broken stream (sim-audio-pairs; note F-FX-013): the audio half of `datamosh`.
 //! The event's sound is coded by the codec of `kt_plugin_api::audio_codec` (an AAC-Main-like MDCT
 //! codec with per-line prediction and a bit reservoir) into the same muxed stream as the picture,
-//! and the stream is broken by the SAME rows on the SAME schedule — the picture's own `mosh::Sched`
-//! over a layout of the audio's event:
+//! and the stream is broken by the SAME rows on the SAME schedule — the picture's own `mosh::Plan`
+//! over a layout of the audio's event, compiled once per rows, curves and placement:
 //!
 //! - every I-frame of the picture's GOP is a random-access point of the stream: the audio encoder
 //!   resets its predictors in the audio frame that carries it (a segmented stream aligns the two);
@@ -25,13 +25,14 @@
 //! `k` is the one its time falls in.
 
 use std::collections::VecDeque;
+use std::sync::{Arc, OnceLock};
 
 use kt_plugin_api::audio_codec::{self as codec, Damage, Decoder, Encoder, Packet, N};
 use kt_plugin_api::generator::lowbias32;
 use kt_plugin_api::stream::{Side, StreamLayout};
 use kt_plugin_api::{AudioState, CurveRead, ParamKind, Placement, SlotCurves};
 
-use crate::mosh::{Rows, Sched};
+use crate::mosh::{Plan, Rows};
 
 /// The audio look-ahead: a frame is decoded once its whole window (2N) has arrived.
 pub const LA: i64 = 2 * N as i64;
@@ -128,6 +129,10 @@ pub struct MoshSound {
     packets: VecDeque<(i64, [Packet; 2])>,
     /// Slots deleted (by frame index) — recent.
     deleted: VecDeque<i64>,
+    /// The picture's schedule over the event's layout, compiled once for the rows, curves and
+    /// placement (stream-layout-per-build): a codec frame used to build it, and walk a gate's run
+    /// back reading the curves at every position, per 1024 samples.
+    plan: OnceLock<Arc<Plan>>,
 }
 
 impl Clone for MoshSound {
@@ -146,6 +151,7 @@ impl Clone for MoshSound {
             next_frame: self.next_frame,
             packets: self.packets.clone(),
             deleted: self.deleted.clone(),
+            plan: self.plan.clone(),
         }
     }
 }
@@ -168,6 +174,7 @@ impl MoshSound {
             next_frame: None,
             packets: VecDeque::new(),
             deleted: VecDeque::new(),
+            plan: OnceLock::new(),
         }
     }
 
@@ -202,10 +209,12 @@ impl MoshSound {
             base: &self.v,
             curves: &self.curves,
         };
-        let s = Sched::new(r, &lay);
+        let s = self.plan.get_or_init(|| Arc::new(Plan::new(r, &lay)));
         let t0 = (n * N as i64) as f64 * 15.0 / 8.0;
         let t1 = ((n + 1) * N as i64) as f64 * 15.0 / 8.0;
         let (k0, k1) = ((t0 / step).ceil() as i64, (t1 / step).ceil() as i64);
+        // `k0` may equal `k1`: a codec frame is shorter than a picture's
+        s.ensure(&lay, k1.max(lay.first));
         let mut f = FrameSched { residual: 1.0, ..Default::default() };
         let first_frame = (self.at.start).div_euclid(N as i64);
         f.reset = n == first_frame;
@@ -331,6 +340,9 @@ impl AudioState for MoshSound {
             *o = *x;
         }
         let rebuild = kbps_of(&v) != kbps_of(&self.v);
+        if v != self.v {
+            self.plan = OnceLock::new();
+        }
         self.v = v;
         if structural || rebuild {
             self.restart();
@@ -339,6 +351,7 @@ impl AudioState for MoshSound {
 
     fn bind(&mut self, c: &dyn SlotCurves, clip_len: i64) {
         self.clip_len = clip_len.max(1);
+        self.plan = OnceLock::new();
         let specs = crate::Datamosh::passport();
         self.curves = specs
             .iter()
@@ -349,6 +362,9 @@ impl AudioState for MoshSound {
     }
 
     fn place(&mut self, at: Placement) {
+        if at != self.at {
+            self.plan = OnceLock::new();
+        }
         self.at = at;
     }
 

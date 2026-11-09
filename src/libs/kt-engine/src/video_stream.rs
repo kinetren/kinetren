@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use kt_cache::{BurstCache, SourceId};
 use kt_media::{Quality, VideoFrame};
 use kt_model::MediaId;
-use kt_plugin_api::stream::{mix, Rgba, SecondFrom, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
+use kt_plugin_api::stream::{mix, PlanCell, Rgba, SecondFrom, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
 use kt_time::{FpsGrid, Tick};
 
 use super::{clip_base_quality, clip_frame_keys, video_cache_idx, VideoClip};
@@ -52,9 +52,52 @@ fn stop_now() -> Option<u32> {
 
 /// The preview's ONE memo (design D3): the composer, the prefetch and the picker share it, so
 /// "what is still needed" and "what was computed" see the same entries. Each export owns its own.
+/// Its bound starts at `STREAM_MEMO_BASE`; the player sizes it by the loop (`stream_memo_bytes`).
 pub fn stream_memo() -> &'static Arc<StreamMemo> {
     static M: OnceLock<Arc<StreamMemo>> = OnceLock::new();
-    M.get_or_init(|| Arc::new(StreamMemo::new(256 << 20)))
+    M.get_or_init(|| Arc::new(StreamMemo::new(STREAM_MEMO_BASE)))
+}
+
+/// The preview memo's bound with no loop to keep: a stretch of playback and its look-ahead.
+pub const STREAM_MEMO_BASE: usize = 256 << 20;
+
+/// The preview memo's bound for a loop of `loop_positions` stream positions keeping `per_position`
+/// bytes each (stream-layout-per-build, found-defects 143). A loop whose history the memo cannot hold
+/// recomputes it every lap: at 1080 lines 256 MB held about 20 positions. So the bound is what the
+/// loop keeps — every position's picture plus an eighth — on top of `base` (the working set of the
+/// stage: the encoder's transient state, the look-ahead), and never above a quarter of the memory the
+/// machine has `available` when it is sized (measured at run time; unknown — `base`), nor below `base`.
+pub fn stream_memo_bytes(base: usize, per_position: usize, loop_positions: Option<usize>, available: Option<u64>) -> usize {
+    let (Some(n), Some(free)) = (loop_positions, available) else { return base };
+    let want = per_position.saturating_mul(n + n / 8 + 2).saturating_add(base);
+    want.min(usize::try_from(free / 4).unwrap_or(usize::MAX)).max(base)
+}
+
+/// Size the preview's memo for a loop of `loop_positions` at `per_position` bytes (`None` — no loop),
+/// by the memory available now; the bound set, with a `stream_memo_cap` record.
+pub fn size_stream_memo(per_position: usize, loop_positions: Option<usize>) -> usize {
+    let free = memory_available();
+    let cap = stream_memo_bytes(STREAM_MEMO_BASE, per_position, loop_positions, free);
+    stream_memo().set_cap(cap);
+    kt_time::trace::ev(kt_time::trace::Ev::StreamMemoCap)
+        .a(cap as u64)
+        .b(loop_positions.unwrap_or(0) as u64)
+        .c(free.map_or(0, |f| f >> 20))
+        .emit();
+    cap
+}
+
+/// How the engine learns the memory the process can still take (the host injects it: the probe
+/// lives with the device code, `kt_gpu::memory::available`); `None` — unknown.
+pub fn set_memory_probe(probe: fn() -> Option<u64>) {
+    let _ = PROBE.set(probe);
+}
+
+static PROBE: OnceLock<fn() -> Option<u64>> = OnceLock::new();
+
+/// The memory available now, by the injected probe.
+pub fn memory_available() -> Option<u64> {
+    PROBE.get().and_then(|p| p())
 }
 
 /// How a live preview paces a stream stage (decode-request-storm). The history of a frame can be
@@ -88,6 +131,9 @@ impl StreamPacing {
     }
 }
 
+/// The compiled schedules of one stage, per stream size.
+type PlanCells = Vec<(Quality, Arc<PlanCell>)>;
+
 /// A clip's stream stage: the slot's plugin and rows, the event before on the same lane and the
 /// events of the second input's lane (clones made when the renderer is built — the renderer is
 /// rebuilt on every edit, so they cannot go stale).
@@ -99,6 +145,10 @@ pub(super) struct StreamStage {
     pub values: Vec<f64>,
     pub before: Option<Box<VideoClip>>,
     pub second: Vec<VideoClip>,
+    /// The kernel's compiled schedule per stream size (stream-layout-per-build): made fresh by
+    /// `link_stages` on every build, so a neighbour's edit (the event before, the second input) can
+    /// never leave a stale one; shared by the composer, the prefetch and the picker of the build.
+    pub plans: Arc<std::sync::Mutex<PlanCells>>,
 }
 
 impl std::fmt::Debug for StreamStage {
@@ -118,13 +168,31 @@ impl StreamStage {
         fx.iter().enumerate().find_map(|(slot, f)| match f {
             kt_model::FxInstance::Plugin(p) if f.is_stream() => p
                 .plugin()
-                .map(|plugin| StreamStage { plugin, slot, values: p.values.clone(), before: None, second: vec![] }),
+                .map(|plugin| StreamStage {
+                    plugin,
+                    slot,
+                    values: p.values.clone(),
+                    before: None,
+                    second: vec![],
+                    plans: Default::default(),
+                }),
             _ => None,
         })
     }
 
     pub fn kernel(&self) -> &'static dyn StreamKernel {
         self.plugin.stream().expect("a stream slot's plugin has a stream kernel (registry, t1240)")
+    }
+
+    /// The cell of the schedule compiled at stream size `q`.
+    fn plan_cell(&self, q: Quality) -> Arc<PlanCell> {
+        let mut g = self.plans.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, c)) = g.iter().find(|(s, _)| *s == q) {
+            return c.clone();
+        }
+        let c = Arc::new(PlanCell::default());
+        g.push((q, c.clone()));
+        c
     }
 }
 
@@ -138,6 +206,8 @@ pub(super) fn link_stages(clips: &mut [VideoClip]) {
     };
     for c in clips.iter_mut() {
         let Some(st) = c.stream.as_mut() else { continue };
+        // this build's own schedules: the stage may be the last build's, copied (edit-without-rebuild)
+        st.plans = Default::default();
         let k = st.kernel();
         if k.before(&st.values) > 0 {
             st.before = snapshot
@@ -179,6 +249,7 @@ pub(super) struct ClipStream<'a> {
     cut: i64,
     end: i64,
     cache: Option<&'a BurstCache>,
+    plan: Arc<PlanCell>,
     /// The kernel asked `stop` and was told to: who stopped it, and before which position.
     stopped: std::cell::Cell<Option<u32>>,
 }
@@ -194,7 +265,8 @@ impl<'a> ClipStream<'a> {
             Some(b) => cut - (st.kernel().before(&st.values) as i64).min(cut - ceil_div(b.start.0, step)).max(0),
             None => ceil_div(clip.start.0 - clip.head_ext.0, step).min(cut),
         };
-        ClipStream { clip, st, grid, q: stream_quality(clip, st, quality), step, first, cut, end, cache, stopped: Default::default() }
+        let q = stream_quality(clip, st, quality);
+        ClipStream { clip, st, grid, q, step, first, cut, end, cache, plan: st.plan_cell(q), stopped: Default::default() }
     }
 
     /// The position of a frame time.
@@ -268,6 +340,9 @@ impl StreamLayout for ClipStream<'_> {
             kt_model::FxInstance::Plugin(p) => Some(p.values),
             _ => None,
         }
+    }
+    fn plan_cell(&self) -> Option<&PlanCell> {
+        Some(&self.plan)
     }
     fn ident(&self, side: Side, k: i64) -> u64 {
         let Some((c, pts)) = self.at(side, k) else { return 0 };

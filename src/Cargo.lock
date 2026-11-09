@@ -1547,6 +1547,7 @@ version = "0.1.0"
 dependencies = [
  "kt-gpu",
  "kt-plugin-api",
+ "kt-time",
 ]
 
 [[package]]
@@ -2237,6 +2238,7 @@ dependencies = [
  "kt-plugins-builtin",
  "kt-time",
  "kt-version",
+ "libc",
  "serde_json",
 ]
 

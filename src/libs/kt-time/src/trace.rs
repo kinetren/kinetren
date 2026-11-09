@@ -89,9 +89,15 @@ pub enum Ev {
     StreamAdvance = 21,
     /// The stream memo evicted an entry. `id` its key, `a` bytes, `cause` the key put.
     StreamMemoEvict = 22,
+    /// A stream kernel compiled positions of its schedule (a span; stream-layout-per-build). `a` the
+    /// first position compiled, `b` one past the last, `c` the positions the schedule holds after it.
+    StreamPlan = 23,
+    /// The preview sized its stream memo (stream-layout-per-build). `a` the bound in bytes, `b` the
+    /// loop's positions (0 — no loop), `c` the memory available then, in MB (0 — unknown).
+    StreamMemoCap = 24,
     /// A stream history stopped because nobody wanted its frame any more (gpu-arbiter). `id` clip,
     /// `a` the position it stopped before, `aux` [`stop`] who stopped it.
-    StreamStop = 23,
+    StreamStop = 25,
 
     /// A compute job ran (a span). `aux` kernel [`name`], `a` dispatches, `b` device time (ns),
     /// `c` the wait for its buffers (ns), `id` the caller's [`crate::sched::Class`] (gpu-arbiter).
@@ -161,7 +167,7 @@ pub enum Ev {
 }
 
 impl Ev {
-    pub const ALL: [Ev; 42] = [
+    pub const ALL: [Ev; 44] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -180,6 +186,8 @@ impl Ev {
         Ev::StreamRun,
         Ev::StreamAdvance,
         Ev::StreamMemoEvict,
+        Ev::StreamPlan,
+        Ev::StreamMemoCap,
         Ev::StreamStop,
         Ev::ComputeJob,
         Ev::GpuAdmit,
@@ -230,6 +238,8 @@ impl Ev {
             Ev::StreamRun => "stream_run",
             Ev::StreamAdvance => "stream_advance",
             Ev::StreamMemoEvict => "stream_memo_evict",
+            Ev::StreamPlan => "stream_plan",
+            Ev::StreamMemoCap => "stream_memo_cap",
             Ev::ComputeJob => "compute_job",
             Ev::GpuAdmit => "gpu_admit",
             Ev::GpuPiece => "gpu_piece",

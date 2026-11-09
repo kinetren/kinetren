@@ -13,6 +13,8 @@ pub fn install() -> &'static Arc<Registry> {
     #[cfg(test)]
     let reg = kt_plugins_builtin::install_with(test_tint::register);
     kt_plugin_api::compute::install(kt_gpu::compute::open);
+    // the memory the preview's stream memo may grow into (stream-layout-per-build)
+    kt_engine::video::set_memory_probe(kt_gpu::memory::available);
     reg
 }
 
