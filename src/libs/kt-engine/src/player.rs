@@ -128,6 +128,7 @@ impl Wake {
 pub struct LoopStats {
     pub render_passes: AtomicU64,
     pub prefetch_passes: AtomicU64,
+    /// New builds the prefetch thread took (it builds none since edit-without-rebuild).
     pub prefetch_rebuilds: AtomicU64,
     /// The longest the audio render thread spent taking a new renderer in (`sync_fx` and the
     /// kept mix's recheck), in microseconds: the one part of a rebuild still on that thread.
@@ -154,11 +155,14 @@ pub struct Player {
     display_lap: Mutex<DisplayLap>,
     workers: Workers,
     natives: Natives,
-    project: Arc<Mutex<Project>>,
     model_dirty: Arc<AtomicBool>,
-    /// The renderer behind a pointer: an edit swaps it at once, and a composite that holds the old
-    /// one for seconds finishes on it and is abandoned (idle-cpu).
-    video: Arc<Mutex<Arc<VideoRenderer>>>,
+    /// The one build per project version every consumer reads (edit-without-rebuild): the newest
+    /// project handed over, and the renderers last published by the `engine-build` thread. A
+    /// composite that holds an old renderer for seconds finishes on it and is abandoned (idle-cpu).
+    builds: Arc<crate::builds::Builds>,
+    build_thread: Option<std::thread::JoinHandle<()>>,
+    /// The sources and the generators raised from the project, shared with the builder thread.
+    media: Arc<MediaParts>,
     /// GPU executor of the video composite (R.29): injected from above
     /// (kt-app), lives separately from VideoRenderer — recreating the renderer
     /// on model edits does not lose it. DeviceLost “poisons” it until the end of the
@@ -184,14 +188,9 @@ pub struct Player {
     content_version: Arc<AtomicU64>,
     /// Counter of raised decoder threads (guard t500/t502).
     worker_spawns: Arc<AtomicU64>,
-    /// Values of the generators that are NOW set in the live sources
-    /// (R.59, stage 2). They cannot be asked of the sources themselves —
-    /// they are exclusively owned by the worker thread (invariant 5) — and the diff of
-    /// “what changed” is needed here.
-    gen_states: Mutex<HashMap<MediaId, kt_model::GenState>>,
     /// The effect ids of the project last handed to the prewarm (pipeline-prewarm D5).
     reach: Arc<Mutex<std::collections::BTreeSet<&'static str>>>,
-    /// Graph cache for sample_levels_at (item 1): (version, renderer, store).
+    /// The UI's audio renderer and FX states (meters on a pause), synced by the builder thread.
     levels_probe: Arc<Probe>,
     pub loop_stats: Arc<LoopStats>,
     /// What the audio render thread's final-mix store holds (cached-range-plays), as it last
@@ -265,14 +264,32 @@ impl Player {
         }
         let workers: Workers = Arc::new(std::sync::RwLock::new(workers));
         let natives: Natives = Arc::new(std::sync::RwLock::new(nat));
-        let video = Arc::new(Mutex::new(Arc::new(preview_video(&project, &natives.read().unwrap(), &cache))));
         let video_gpu = Arc::new(Mutex::new(VideoGpuState::default()));
-        let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
         let wake = Arc::new(Wake { lock: Mutex::new(()), cv: std::sync::Condvar::new() });
         let project_version = Arc::new(AtomicU64::new(0));
         let content_version = Arc::new(AtomicU64::new(0));
         let worker_spawns = Arc::new(AtomicU64::new(0));
+        let media = Arc::new(MediaParts {
+            workers: workers.clone(),
+            natives: natives.clone(),
+            cache: cache.clone(),
+            decode_stats: decode_stats.clone(),
+            worker_spawns: worker_spawns.clone(),
+            content_version: content_version.clone(),
+            wake: wake.clone(),
+            gen_states: Mutex::new(HashMap::new()),
+            gen_lock: Mutex::new(()),
+        });
+        // The opening builds once, here; every later version is built on `engine-build`. The
+        // generator sources are raised by the player ITSELF, inside the build: their addresses are
+        // derived from events, and the caller has nowhere to take them from.
+        let project = Arc::new(project);
+        let mut memo = crate::incremental::BuildMemo::default();
+        let first = build_version(&media, &cache, &project, 0, 0, &mut memo, None);
+        let probe = Arc::new(Probe::default());
+        sync_probe(&probe, &first.audio, 0);
+        let builds = Arc::new(crate::builds::Builds::new(first));
         let loop_stats = Arc::new(LoopStats::default());
         let stop = Arc::new(AtomicBool::new(false));
         let underruns = Arc::new(AtomicU64::new(0));
@@ -289,7 +306,7 @@ impl Player {
             let transport = transport.clone();
             let shared = shared.clone();
             let workers = workers.clone();
-            let project = project.clone();
+            let builds = builds.clone();
             let dirty = model_dirty.clone();
             let stop = stop.clone();
             let underruns = underruns.clone();
@@ -310,7 +327,7 @@ impl Player {
                         loop_stats: stats_r,
                         shared,
                         workers,
-                        project,
+                        builds,
                         dirty,
                         stop,
                         underruns,
@@ -334,8 +351,7 @@ impl Player {
             let cache = cache.clone();
             let transport = transport.clone();
             let workers = workers.clone();
-            let natives_p = natives.clone();
-            let project = project.clone();
+            let builds = builds.clone();
             let stop = stop.clone();
             let quality = preview_quality.clone();
             let region_p = loop_region.clone();
@@ -345,7 +361,7 @@ impl Player {
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
-                        cache, transport, workers, natives_p, project, quality, stop, wake_p,
+                        cache, transport, workers, builds, quality, stop, wake_p,
                         stats_p, version_p, content_p, region_p, shared_p, mix_p,
                     )
                 })
@@ -362,7 +378,7 @@ impl Player {
                 cache: cache.clone(),
                 transport: transport.clone(),
                 workers: workers.clone(),
-                video: video.clone(),
+                builds: builds.clone(),
                 video_gpu: video_gpu.clone(),
                 video_cost: video_cost.clone(),
                 preview_quality: preview_quality.clone(),
@@ -372,6 +388,19 @@ impl Player {
                 shown_gen: shown_gen.clone(),
             },
         );
+        let build_thread = {
+            let ctx = BuildCtx {
+                builds: builds.clone(),
+                media: media.clone(),
+                cache: cache.clone(),
+                probe: probe.clone(),
+                loop_region: loop_region.clone(),
+                wake: wake.clone(),
+                composer: composer.clone(),
+                memo,
+            };
+            std::thread::Builder::new().name("engine-build".into()).spawn(move || build_loop(ctx)).expect("spawn the engine builder")
+        };
         let player = Player {
             cache,
             natives,
@@ -384,9 +413,10 @@ impl Player {
             video_clock: Mutex::new((0, std::time::Instant::now(), 0)),
             display_lap: Mutex::new(DisplayLap::default()),
             workers,
-            project,
             model_dirty,
-            video,
+            builds,
+            build_thread: Some(build_thread),
+            media,
             video_gpu,
             video_cost,
             composer,
@@ -401,31 +431,31 @@ impl Player {
             project_version,
             content_version,
             worker_spawns,
-            gen_states: Mutex::new(HashMap::new()),
             reach: Arc::default(),
             loop_stats,
-            levels_probe: Arc::new(Probe::default()),
+            levels_probe: probe,
             mix_coverage,
             shown,
             shown_gen,
         };
-        // generator sources are raised by the player ITSELF: their addresses
-        // are derived from events, and the caller has nowhere to take them from
-        let p = player.project.lock().unwrap().clone();
-        player.sync_generators(&p);
-        player.prewarm_reach(&p);
+        player.prewarm_reach(&project);
         (player, consumer)
     }
 
-    pub fn set_project(&self, p: Project) {
+    /// Hand the player a new project state. Nothing is built here (edit-without-rebuild): the
+    /// `engine-build` thread builds the version once for every consumer, and raises its generator
+    /// sources (a function of the PROJECT, their addresses derived from events) before it publishes.
+    /// The app hands the model's shared snapshot (`Model::doc_arc`): no copy per edit.
+    pub fn set_project(&self, p: impl Into<Arc<Project>>) {
+        let p = p.into();
         kt_time::work::bump(kt_time::work::Work::ProjectSwap);
-        self.project_version.fetch_add(1, Ordering::AcqRel);
-        // the set of generators is a function of the PROJECT, and it must be computed by whoever
-        // accepts the project: the addresses are derived from events, and
-        // the caller has nowhere to take them from.
-        self.sync_generators(&p);
         self.prewarm_reach(&p);
-        self.wake_after_project_swap(p);
+        // the want first, the version after: whoever reads the new version finds its build asked
+        let version = self.project_version.load(Ordering::Acquire) + 1;
+        self.builds.want_project(p, version);
+        self.project_version.store(version, Ordering::Release);
+        self.model_dirty.store(true, Ordering::Release);
+        self.wake.notify();
     }
 
     /// Hand the effects the project reaches to the executor's and the compute host's prewarm when
@@ -452,18 +482,28 @@ impl Player {
         crate::prewarm::compute(&ids);
     }
 
-    fn wake_after_project_swap(&self, p: Project) {
-        kt_time::work::bump(kt_time::work::Work::EngineBuild);
-        let facts = self.natives.read().unwrap().clone();
-        let renderer = Arc::new(preview_video(&p, &facts, &self.cache));
-        *self.video.lock().unwrap() = renderer;
-        *self.project.lock().unwrap() = p;
-        self.model_dirty.store(true, Ordering::Release);
-        self.wake.notify();
+    /// The newest project handed over (export, diagnostics): a pointer, not a copy.
+    pub fn project(&self) -> Arc<Project> {
+        self.builds.want.lock().unwrap().project.clone()
     }
 
-    pub fn project(&self) -> Project {
-        self.project.lock().unwrap().clone()
+    /// The last published build (edit-without-rebuild): what the render thread, prefetch, the
+    /// probe and the preview read. A test compares its renderers' pointers.
+    #[doc(hidden)]
+    pub fn built(&self) -> Arc<crate::builds::Built> {
+        self.builds.latest()
+    }
+
+    /// The build of the newest project state, waited for: a test's (or an offline tool's) way to
+    /// read what the edit it just made built. Never called on the UI thread.
+    pub fn wait_built(&self) -> Arc<crate::builds::Built> {
+        self.builds.wait_current()
+    }
+
+    /// The want the last published build answers: it moves when the renderers the UI reads (the
+    /// grid, the coverage bars) change — a key of their caches next to the model revision.
+    pub fn built_seq(&self) -> u64 {
+        self.builds.built_seq()
     }
 
     /// How many times the project was swapped out whole. Each swap is a clone of the whole
@@ -515,8 +555,8 @@ impl Player {
     /// The LOGICAL raster of what is playing (the project's, or the entered reel's): the frame
     /// of "as is" is counted in its pixels, not in the preview canvas's (still-image-frame-rule).
     pub fn raster(&self) -> (u32, u32) {
-        let p = self.project.lock().unwrap();
-        (p.settings.width, p.settings.height)
+        let w = self.builds.want.lock().unwrap();
+        (w.project.settings.width, w.project.settings.height)
     }
 
     pub fn play(&self) {
@@ -545,83 +585,27 @@ impl Player {
     }
 
     /// Loop region (None = off). The region head is pinned in the cache
-    /// so that the wrap does not start cold (test 14).
+    /// so that the wrap does not start cold (test 14). Not a model edit: it builds nothing — the
+    /// head is pinned with the renderer already built (edit-without-rebuild), and pinned again by
+    /// the builder thread when a new version lands.
     pub fn set_loop_region(&self, region: Option<TickRange>) {
         let frames = region.map(|r| (r.start.to_audio_frames(), r.end.to_audio_frames()));
         *self.loop_region.lock().unwrap() = frames;
         self.cache.unpin_all();
         if let Some((s, _)) = frames {
-            // the probe's renderer, built once per project version: a region drag on the owner's
-            // 1974 events built a whole one on the UI thread per change, 447 ms each
-            // (input-without-work)
-            self.with_probe(|renderer, _| pin_loop_head(&self.cache, renderer, s));
+            let built = self.builds.latest();
+            pin_loop_head(&self.cache, &built.audio, s);
         }
         self.wake.notify();
     }
 
-    /// The UI's own audio renderer and FX states, kept until the project version changes
-    /// (the meters on a pause, the loop's pinned head). Only the first is built here: a later
-    /// version is built on a thread of its own while the one before answers (ui-never-waits; a
-    /// build takes 412-447 ms on the owner's project, and this runs on the UI thread). The loop's
-    /// head is pinned again when the new one arrives.
-    fn with_probe<R>(&self, f: impl FnOnce(&AudioRenderer, &mut FxStateStore) -> R) -> R {
-        let version = self.project_version.load(Ordering::Acquire);
+    /// The UI's FX states over the last published audio renderer (the meters on a pause). The
+    /// builder thread syncs them when a version lands, off the UI thread; `None` for the moment it
+    /// holds them.
+    fn with_probe<R>(&self, f: impl FnOnce(&AudioRenderer, &mut FxStateStore) -> R) -> Option<R> {
         let mut probe = self.levels_probe.slot.lock().unwrap();
-        match probe.as_ref() {
-            None => {
-                kt_time::work::bump(kt_time::work::Work::EngineBuild);
-                let p = self.project.lock().unwrap().clone();
-                *probe = Some(probe_build(&p, version));
-            }
-            Some((v, _, _)) if *v != version => self.spawn_probe_build(version),
-            Some(_) => {}
-        }
-        let (_, renderer, store) = probe.as_mut().unwrap();
-        f(renderer, store)
-    }
-
-    fn spawn_probe_build(&self, version: u64) {
-        {
-            let mut building = self.levels_probe.building.lock().unwrap();
-            if *building == Some(version) {
-                return;
-            }
-            *building = Some(version);
-        }
-        let probe = self.levels_probe.clone();
-        let project = self.project.clone();
-        let project_version = self.project_version.clone();
-        let (cache, loop_region, wake, composer) =
-            (self.cache.clone(), self.loop_region.clone(), self.wake.clone(), self.composer.clone());
-        let spawned = std::thread::Builder::new().name("probe-build".into()).spawn(move || {
-            probe.wait_gate();
-            kt_time::work::bump(kt_time::work::Work::EngineBuild);
-            let p = project.lock().unwrap().clone();
-            let built = probe_build(&p, version);
-            drop(p);
-            // a newer version asks for its own build; this one is still better than the old
-            if project_version.load(Ordering::Acquire) >= version {
-                let region = *loop_region.lock().unwrap();
-                let mut slot = probe.slot.lock().unwrap();
-                if slot.as_ref().is_none_or(|(v, _, _)| *v < version) {
-                    if let Some((s, _)) = region {
-                        cache.unpin_all();
-                        pin_loop_head(&cache, &built.1, s);
-                    }
-                    *slot = Some(built);
-                }
-            }
-            let mut building = probe.building.lock().unwrap();
-            if *building == Some(version) {
-                *building = None;
-            }
-            drop(building);
-            wake.notify();
-            composer.wake_ui();
-        });
-        if spawned.is_err() {
-            *self.levels_probe.building.lock().unwrap() = None;
-        }
+        let (_, renderer, store) = probe.as_mut()?;
+        Some(f(renderer, store))
     }
 
     /// The project version of the UI's own audio renderer that answers now.
@@ -630,20 +614,25 @@ impl Player {
         self.levels_probe.slot.lock().unwrap().as_ref().map(|(v, _, _)| *v)
     }
 
-    /// Hold the probe's builder at its start until opened again: a test of what the UI does
+    /// Hold the builder thread before its next build until opened again: a test of what the UI does
     /// while a build takes its time.
     #[doc(hidden)]
+    pub fn gate_builds(&self, closed: bool) {
+        self.builds.set_gate(closed);
+    }
+
+    /// The former name of `gate_builds` (t1844): the probe has no builder of its own any more.
+    #[doc(hidden)]
     pub fn gate_probe_builds(&self, closed: bool) {
-        *self.levels_probe.gate.lock().unwrap() = closed;
-        self.levels_probe.gate_cv.notify_all();
+        self.gate_builds(closed);
     }
 
     /// Peak levels on pause: one burst from position t through a one-off
     /// FX state and the cache (a miss = silence — enough for the meter).
     pub fn sample_levels_at(&self, t: Tick) -> (f32, f32) {
         // Probe cache (item 1): previously EVERY call (8 times/s on pause) cloned
-        // the whole Project and recreated all FX. Now the graph lives until the project
-        // version changes; the state is reset before measuring (determinism).
+        // the whole Project and recreated all FX. Now the graph is the shared build's and the
+        // states are synced by the builder; the state is reset before measuring (determinism).
         let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
         self.with_probe(|renderer, store| {
             store.reset_all();
@@ -673,58 +662,20 @@ impl Player {
 
     /// Add a media source WITHOUT recreating the player: a new MediaWorker
     /// on the shared cache; transport, ring, FX state and the warmed cache are untouched
-    /// (regression item 27: previously adding a file reset the whole cache).
+    /// (regression item 27: previously adding a file reset the whole cache). The version is
+    /// built again with the new facts (the decode step, R.46) on the builder thread.
     pub fn add_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
-        self.worker_spawns.fetch_add(1, Ordering::AcqRel);
-        self.remember_native(media, source.as_ref());
-        let w = MediaWorker::spawn_with_stats(
-            media,
-            source,
-            self.cache.clone(),
-            self.decode_stats.clone(),
-        );
-        // the guard ends with the statement: a join under it held the render, prefetch and
-        // preview threads for the old decoder's last span (ui-never-waits)
-        let old = self.workers.write().unwrap().insert(media, w);
-        if let Some(old) = old {
-            old.shutdown();
-        }
-        self.rebuild_video_renderer();
+        self.media.add_media(media, source);
+        self.builds.refresh();
     }
 
     /// Replace a media source ON THE FLY (R.33 item 10: a missing file came back
-    /// to disk — the placeholder yields to the real one). The order matters:
-    /// first stop the worker, then evict its frames from the cache, and only then
-    /// raise the new one — otherwise the old one would manage to write a placeholder
-    /// frame into the cache after the invalidation. The transport, position and cache of
-    /// the other sources are not touched.
+    /// to disk — the placeholder yields to the real one). See `MediaParts::replace_media`; the
+    /// native size could change (placeholder → real file), so the version is built again with
+    /// the new facts without waiting for a project edit.
     pub fn replace_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
-        self.worker_spawns.fetch_add(1, Ordering::AcqRel);
-        let old = self.workers.write().unwrap().remove(&media);
-        if let Some(old) = old {
-            old.shutdown();
-        }
-        // the native size of the new file may differ from the placeholder — the decode scale step
-        // must be recomputed at the next renderer rebuild (R.46)
-        self.remember_native(media, source.as_ref());
-        self.cache.invalidate_source(kt_cache::SourceId(media.0));
-        let w = MediaWorker::spawn_with_stats(
-            media,
-            source,
-            self.cache.clone(),
-            self.decode_stats.clone(),
-        );
-        self.workers.write().unwrap().insert(media, w);
-        // the native size could change (placeholder → real file) — the preview renderer
-        // must recompute the steps without waiting for a project edit
-        self.rebuild_video_renderer();
-        // the set of sources has changed — prefetch must wake up and
-        // warm the cache anew (at idle it skips passes while
-        // the state signature is the same, and without a version bump it would not notice).
-        // A CONTENT version, not a project one: the renderer's own rebuild
-        // the swap has already done above, and the plan is indifferent to the source.
-        self.content_version.fetch_add(1, Ordering::AcqRel);
-        self.wake.notify();
+        self.media.replace_media(media, source);
+        self.builds.refresh();
     }
 
     /// Retune a source to a new path WITHOUT recreation (R.53,
@@ -746,49 +697,13 @@ impl Player {
         true
     }
 
-    /// Bring the GENERATOR SOURCES into line with the project (R.59,
-    /// stage 2).
-    ///
-    /// A diff by ADDRESS: a generator that appeared gets a stream, one that disappeared
-    /// loses it; for the remaining ones the values arrive by retuning — the stream
-    /// lives, the cache of foreign sources is intact, the renderers are not rebuilt.
-    /// Recreation remains for exactly one case: the source's passport
-    /// changed (SMPTE with the tone switched on becomes a SOUNDING medium, and
-    /// that is already a different set of clips), and then `can_retune_gen` honestly
-    /// says “no”.
+    /// Bring the GENERATOR SOURCES into line with `p` now (see `MediaParts::sync_generators`).
+    /// The player does it itself inside every build; this is the app's door for a source whose
+    /// passport changed under a value edit, and the version is built again with the new facts.
     pub fn sync_generators(&self, p: &Project) {
-        let wanted = crate::gen_sources(p);
-        let want_ids: std::collections::HashSet<MediaId> =
-            wanted.iter().map(|(id, _)| *id).collect();
-        let stale: Vec<MediaId> = self
-            .workers
-            .read()
-            .unwrap()
-            .keys()
-            .filter(|m| m.0 & kt_model::GEN_TAG != 0 && !want_ids.contains(m))
-            .copied()
-            .collect();
-        for m in stale {
-            self.remove_media(m);
-            self.cache.invalidate_source(kt_cache::SourceId(m.0));
-        }
-        for (addr, state) in wanted {
-            let live = self.gen_states.lock().unwrap().get(&addr).cloned();
-            match live {
-                Some(old) if old == state => {}
-                Some(old) if kt_media::factory::can_retune_gen(&old, &state) => {
-                    self.update_gen_at(addr, state, Vec::new());
-                }
-                Some(_) => {
-                    self.gen_states.lock().unwrap().insert(addr, state.clone());
-                    self.replace_media(addr, kt_media::factory::open_gen(&state));
-                }
-                None => {
-                    self.gen_states.lock().unwrap().insert(addr, state.clone());
-                    self.add_media(addr, kt_media::factory::open_gen(&state));
-                }
-            }
-        }
+        let _g = self.media.gen_lock.lock().unwrap();
+        self.media.sync_generators(crate::gen_sources(p));
+        self.builds.refresh();
     }
 
     /// New VALUES of one event's generator — without rebuilding
@@ -807,25 +722,32 @@ impl Player {
     ) -> bool {
         let addr = crate::gen_source_addr(clip);
         let state = kt_model::GenState { kind, auto };
-        let live = self.gen_states.lock().unwrap().get(&addr).cloned();
+        // the builder's generator sync reads the newest project under the same lock: it cannot
+        // retune a source back to the values this edit replaces
+        let _g = self.media.gen_lock.lock().unwrap();
+        let live = self.media.gen_states.lock().unwrap().get(&addr).cloned();
         match live {
             Some(old) if !kt_media::factory::can_retune_gen(&old, &state) => false,
             Some(_) => {
                 // the values of the stored project must remain truthful:
                 // `Player::project()` is read by export and diagnostics
-                let mut p = self.project.lock().unwrap();
-                let put = |cs: &mut Vec<kt_model::ClipEvent>| {
-                    for c in cs.iter_mut().filter(|c| c.id == clip) {
-                        c.r#gen = Some(state.kind.clone());
-                        c.gen_auto = state.auto.clone();
+                let p = {
+                    let mut w = self.builds.want.lock().unwrap();
+                    let p = Arc::make_mut(&mut w.project);
+                    let put = |cs: &mut Vec<kt_model::ClipEvent>| {
+                        for c in cs.iter_mut().filter(|c| c.id == clip) {
+                            c.r#gen = Some(state.kind.clone());
+                            c.gen_auto = state.auto.clone();
+                        }
+                    };
+                    put(&mut p.clips);
+                    for i in 0..p.sequences.len() {
+                        let mut cs = std::mem::take(&mut p.sequences[i].clips);
+                        put(&mut cs);
+                        p.sequences[i].clips = cs;
                     }
+                    w.project.clone()
                 };
-                put(&mut p.clips);
-                for i in 0..p.sequences.len() {
-                    let mut cs = std::mem::take(&mut p.sequences[i].clips);
-                    put(&mut cs);
-                    p.sequences[i].clips = cs;
-                }
                 let stale: Vec<kt_cache::SourceId> = crate::reel_chain_of_clip(&p, clip)
                     .into_iter()
                     .map(crate::nest_source_id)
@@ -839,20 +761,21 @@ impl Player {
                 // `gen_sources` that raises the sources.
                 let wanted = crate::gen_sources(&p);
                 drop(p);
-                self.update_gen_at(addr, state, stale.clone());
+                self.media.update_gen_at(addr, state, stale.clone());
                 for (a, st) in wanted {
                     if a == addr {
                         continue;
                     }
-                    let live = self.gen_states.lock().unwrap().get(&a).cloned();
+                    let live = self.media.gen_states.lock().unwrap().get(&a).cloned();
                     match live {
                         Some(o) if o == st => {}
                         Some(o) if kt_media::factory::can_retune_gen(&o, &st) => {
-                            self.update_gen_at(a, st, stale.clone());
+                            self.media.update_gen_at(a, st, stale.clone());
                         }
                         Some(_) => {
-                            self.gen_states.lock().unwrap().insert(a, st.clone());
-                            self.replace_media(a, kt_media::factory::open_gen(&st));
+                            self.media.gen_states.lock().unwrap().insert(a, st.clone());
+                            self.media.replace_media(a, kt_media::factory::open_gen(&st));
+                            self.builds.refresh();
                         }
                         None => {}
                     }
@@ -861,21 +784,6 @@ impl Player {
             }
             None => false,
         }
-    }
-
-    fn update_gen_at(
-        &self,
-        addr: MediaId,
-        state: kt_model::GenState,
-        stale: Vec<kt_cache::SourceId>,
-    ) {
-        self.gen_states.lock().unwrap().insert(addr, state.clone());
-        let workers = self.workers.read().unwrap();
-        let Some(w) = workers.get(&addr) else { return };
-        w.retune_gen(state, stale);
-        drop(workers);
-        self.content_version.fetch_add(1, Ordering::AcqRel);
-        self.wake.notify();
     }
 
     /// Request a frame from the worker directly (R.53): the same product
@@ -911,8 +819,10 @@ impl Player {
     /// (R.53, item 412): `Player::project()` must remain truthful,
     /// but the plan is indifferent to the path — the renderers know only `MediaId`.
     pub fn set_media_path(&self, media: kt_model::MediaId, path: &str) {
-        let mut p = self.project.lock().unwrap();
-        if let Some(m) = p.media.iter_mut().find(|m| m.id == media) {
+        let mut w = self.builds.want.lock().unwrap();
+        if w.project.media.iter().any(|m| m.id == media && m.path != path)
+            && let Some(m) = Arc::make_mut(&mut w.project).media.iter_mut().find(|m| m.id == media)
+        {
             m.path = path.to_string();
         }
     }
@@ -920,28 +830,7 @@ impl Player {
     /// Remove media (symmetry with RemoveMedia): the worker is stopped, the cache of
     /// other sources is not touched.
     pub fn remove_media(&self, media: kt_model::MediaId) {
-        let old = self.workers.write().unwrap().remove(&media);
-        if let Some(w) = old {
-            w.shutdown();
-        }
-        self.natives.write().unwrap().forget(media);
-    }
-
-    /// Rebuild the preview renderer for the current natives (R.46, item 321):
-    /// the prefetch thread does this itself by project version, but the player's renderer
-    /// lives until the model is swapped — without this a returning file would not change
-    /// the step until the first timeline edit.
-    fn rebuild_video_renderer(&self) {
-        let p = self.project.lock().unwrap().clone();
-        let facts = self.natives.read().unwrap().clone();
-        let renderer = Arc::new(preview_video(&p, &facts, &self.cache));
-        *self.video.lock().unwrap() = renderer;
-    }
-
-    /// Remember the source facts (R.46 item 321 — native, R.56 item 448 —
-    /// proceduralness). A source without video gets neither of them.
-    fn remember_native(&self, media: kt_model::MediaId, src: &dyn kt_media::MediaSource) {
-        self.natives.write().unwrap().observe(media, src.info());
+        self.media.remove_media(media);
     }
 
     /// Decode qualities of video clips at the current preview Quality (R.46,
@@ -1021,7 +910,7 @@ impl Player {
     }
 
     fn renderer(&self) -> Arc<VideoRenderer> {
-        self.video.lock().unwrap().clone()
+        self.builds.latest().video.clone()
     }
 
     /// Injection of the video GPU executor (R.29). None — no picture.
@@ -1147,7 +1036,7 @@ impl Player {
             cache: self.cache.clone(),
             transport: self.transport.clone(),
             workers: self.workers.clone(),
-            video: self.video.clone(),
+            builds: self.builds.clone(),
             video_gpu: self.video_gpu.clone(),
             video_cost: self.video_cost.clone(),
             preview_quality: self.preview_quality.clone(),
@@ -1184,7 +1073,7 @@ pub(crate) struct PreviewParts {
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
     workers: Workers,
-    video: Arc<Mutex<Arc<VideoRenderer>>>,
+    builds: Arc<crate::builds::Builds>,
     video_gpu: Arc<Mutex<VideoGpuState>>,
     video_cost: Arc<Mutex<VideoCost>>,
     preview_quality: Arc<Mutex<Quality>>,
@@ -1243,9 +1132,10 @@ impl PreviewParts {
         kt_time::work::bump(kt_time::work::Work::Composite);
         let t0 = std::time::Instant::now();
         let q = *self.preview_quality.lock().unwrap();
-        // the pointer, not the lock: a plan with a stream stage takes as long as its kernel, and an
-        // edit on the UI thread must not wait for it
-        let video = self.video.lock().unwrap().clone();
+        // the renderer of the state asked for: this thread waits for its build, never the UI
+        // (edit-without-rebuild); the pointer, not the lock: a plan with a stream stage takes as long
+        // as its kernel, and an edit on the UI thread must not wait for it
+        let video = self.builds.wait_current().video.clone();
         // playing, a stream stage short of its frame shows its latest one; paused, the frame itself
         // is waited for (decode-request-storm)
         video.set_stream_hold(self.transport.is_playing());
@@ -1359,7 +1249,9 @@ impl PreviewParts {
             return (changed, false);
         }
         let q = self.quality();
-        let video = self.video.lock().unwrap().clone();
+        // the renderer of the state the moments are rechecked for: this runs on the compose
+        // thread, which waits for that build (edit-without-rebuild)
+        let video = self.builds.wait_current().video.clone();
         let mut done = 0;
         for &t in stale.iter().take(budget) {
             if stop() {
@@ -1461,7 +1353,12 @@ pub struct VideoCost {
 impl Drop for Player {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.builds.shutdown();
         self.wake.notify();
+        // a build is tens of ms on a large project, and it ends at the stop
+        if let Some(t) = self.build_thread.take() {
+            let _ = t.join();
+        }
         // not joined: a composite may take seconds, and this runs on the UI thread. It ends by
         // itself on what it holds.
         self.composer.stop();
@@ -1488,7 +1385,7 @@ struct RenderCtx {
     loop_stats: Arc<LoopStats>,
     shared: Arc<AudioShared>,
     workers: Workers,
-    project: Arc<Mutex<Project>>,
+    builds: Arc<crate::builds::Builds>,
     dirty: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     underruns: Arc<AtomicU64>,
@@ -1516,30 +1413,24 @@ type Natives = Arc<std::sync::RwLock<crate::video::SourceFacts>>;
 /// The moments the preview presented: tick → (the executor's key, project and content versions).
 type Shown = Arc<Mutex<std::collections::BTreeMap<i64, (u64, u64, u64)>>>;
 
-/// The UI's own audio renderer (`Player::with_probe`): the one that answers, and the version a
-/// builder thread is making.
+/// The UI's own FX states over the shared audio renderer (`Player::with_probe`), with the project
+/// version they answer for. Synced by the builder thread (`sync_probe`).
 #[derive(Default)]
 struct Probe {
-    slot: Mutex<Option<(u64, AudioRenderer, FxStateStore)>>,
-    building: Mutex<Option<u64>>,
-    gate: Mutex<bool>,
-    gate_cv: std::sync::Condvar,
+    slot: Mutex<Option<(u64, Arc<AudioRenderer>, FxStateStore)>>,
 }
 
-impl Probe {
-    fn wait_gate(&self) {
-        let mut g = self.gate.lock().unwrap();
-        while *g {
-            g = self.gate_cv.wait(g).unwrap();
-        }
-    }
-}
-
-fn probe_build(p: &Project, version: u64) -> (u64, AudioRenderer, FxStateStore) {
-    let renderer = AudioRenderer::new(p);
-    let mut store = FxStateStore::new();
-    renderer.sync_fx(&mut store);
-    (version, renderer, store)
+/// The probe's FX states carried over to a new build: only the events whose fingerprint changed
+/// are synced (invariant 3, as on the render thread). Out of the slot while it runs, so a meter
+/// reading on the UI thread never waits for it (it reads silence for that moment).
+fn sync_probe(probe: &Probe, audio: &Arc<AudioRenderer>, version: u64) {
+    let old = probe.slot.lock().unwrap().take();
+    let (old_r, mut store) = match old {
+        Some((_, r, s)) => (Some(r), s),
+        None => (None, FxStateStore::new()),
+    };
+    audio.sync_fx_since(old_r.as_deref(), &mut store);
+    *probe.slot.lock().unwrap() = Some((version, audio.clone(), store));
 }
 
 /// Pin the first half second of the loop region in the cache (test 14).
@@ -1549,38 +1440,223 @@ fn pin_loop_head(cache: &BurstCache, renderer: &AudioRenderer, s: i64) {
     }
 }
 
-/// Build the audio renderer of the current project on a thread of its own (cached-range-plays):
-/// the render thread keeps playing with the old one until it arrives.
 /// A hold the builder thread adds to every build, in milliseconds: a test's seam for "a rebuild
 /// outlasts the ring" (t1935). The scene used to get it from a quadratic build; since
 /// builder-cost-guard a build is a few ms, and a heavy enough honest scene would take gigabytes
 /// and still depend on the machine's speed. Zero in the product.
 static BUILD_HOLD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Hold every later audio renderer build of this process by `ms` (tests only).
+/// Hold every later engine build of this process by `ms` (tests only).
 #[doc(hidden)]
 pub fn hold_builds_for_tests(ms: u64) {
     BUILD_HOLD_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
 }
 
-fn spawn_renderer_build(
-    project: Arc<Mutex<Project>>,
+/// The sources the player raised and what it knows of them, shared by the UI thread (a file
+/// added, replaced, retuned) and the builder thread (the generator sources of a version).
+pub(crate) struct MediaParts {
+    workers: Workers,
+    natives: Natives,
+    cache: Arc<BurstCache>,
+    decode_stats: Arc<DecodeStats>,
+    worker_spawns: Arc<AtomicU64>,
+    content_version: Arc<AtomicU64>,
     wake: Arc<Wake>,
-) -> std::sync::mpsc::Receiver<AudioRenderer> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let _ = std::thread::Builder::new().name("audio-build".into()).spawn(move || {
-        let p = project.lock().unwrap().clone();
-        kt_time::work::bump(kt_time::work::Work::EngineBuild);
-        let built = AudioRenderer::new(&p);
+    /// Values of the generators that are NOW set in the live sources
+    /// (R.59, stage 2). They cannot be asked of the sources themselves —
+    /// they are exclusively owned by the worker thread (invariant 5) — and the diff of
+    /// “what changed” is needed here.
+    gen_states: Mutex<HashMap<MediaId, kt_model::GenState>>,
+    /// Held by whoever brings the generator sources into line with a project (the builder, a
+    /// value edit): the builder reads the newest project under it, so it never retunes a source
+    /// back to values a value edit has just replaced.
+    gen_lock: Mutex<()>,
+}
+
+impl MediaParts {
+    fn add_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        self.worker_spawns.fetch_add(1, Ordering::AcqRel);
+        self.natives.write().unwrap().observe(media, source.info());
+        let w = MediaWorker::spawn_with_stats(media, source, self.cache.clone(), self.decode_stats.clone());
+        // the guard ends with the statement: a join under it held the render, prefetch and
+        // preview threads for the old decoder's last span (ui-never-waits)
+        let old = self.workers.write().unwrap().insert(media, w);
+        if let Some(old) = old {
+            old.shutdown();
+        }
+    }
+
+    /// The order matters: first stop the worker, then evict its frames from the cache, and only
+    /// then raise the new one — otherwise the old one would manage to write a placeholder frame
+    /// into the cache after the invalidation. The transport, position and cache of the other
+    /// sources are not touched.
+    fn replace_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        self.worker_spawns.fetch_add(1, Ordering::AcqRel);
+        let old = self.workers.write().unwrap().remove(&media);
+        if let Some(old) = old {
+            old.shutdown();
+        }
+        // the native size of the new file may differ from the placeholder — the decode scale step
+        // must be recomputed at the next build (R.46)
+        self.natives.write().unwrap().observe(media, source.info());
+        self.cache.invalidate_source(kt_cache::SourceId(media.0));
+        let w = MediaWorker::spawn_with_stats(media, source, self.cache.clone(), self.decode_stats.clone());
+        self.workers.write().unwrap().insert(media, w);
+        // the set of sources has changed — prefetch must wake up and
+        // warm the cache anew (at idle it skips passes while
+        // the state signature is the same, and without a version bump it would not notice).
+        // A CONTENT version, not a project one: the plan is indifferent to the source.
+        self.content_version.fetch_add(1, Ordering::AcqRel);
+        self.wake.notify();
+    }
+
+    fn remove_media(&self, media: kt_model::MediaId) {
+        let old = self.workers.write().unwrap().remove(&media);
+        if let Some(w) = old {
+            w.shutdown();
+        }
+        self.natives.write().unwrap().forget(media);
+    }
+
+    /// Bring the GENERATOR SOURCES into line with the project (R.59, stage 2); the caller holds
+    /// `gen_lock`.
+    ///
+    /// A diff by ADDRESS: a generator that appeared gets a stream, one that disappeared
+    /// loses it; for the remaining ones the values arrive by retuning — the stream
+    /// lives, the cache of foreign sources is intact, the renderers are not rebuilt.
+    /// Recreation remains for exactly one case: the source's passport
+    /// changed (SMPTE with the tone switched on becomes a SOUNDING medium, and
+    /// that is already a different set of clips), and then `can_retune_gen` honestly
+    /// says “no”.
+    fn sync_generators(&self, wanted: Vec<(MediaId, kt_model::GenState)>) {
+        let want_ids: std::collections::HashSet<MediaId> = wanted.iter().map(|(id, _)| *id).collect();
+        let stale: Vec<MediaId> = self
+            .workers
+            .read()
+            .unwrap()
+            .keys()
+            .filter(|m| m.0 & kt_model::GEN_TAG != 0 && !want_ids.contains(m))
+            .copied()
+            .collect();
+        for m in stale {
+            self.remove_media(m);
+            self.cache.invalidate_source(kt_cache::SourceId(m.0));
+        }
+        for (addr, state) in wanted {
+            let live = self.gen_states.lock().unwrap().get(&addr).cloned();
+            match live {
+                Some(old) if old == state => {}
+                Some(old) if kt_media::factory::can_retune_gen(&old, &state) => {
+                    self.update_gen_at(addr, state, Vec::new());
+                }
+                Some(_) => {
+                    self.gen_states.lock().unwrap().insert(addr, state.clone());
+                    self.replace_media(addr, kt_media::factory::open_gen(&state));
+                }
+                None => {
+                    self.gen_states.lock().unwrap().insert(addr, state.clone());
+                    self.add_media(addr, kt_media::factory::open_gen(&state));
+                }
+            }
+        }
+    }
+
+    fn update_gen_at(&self, addr: MediaId, state: kt_model::GenState, stale: Vec<kt_cache::SourceId>) {
+        self.gen_states.lock().unwrap().insert(addr, state.clone());
+        let workers = self.workers.read().unwrap();
+        let Some(w) = workers.get(&addr) else { return };
+        w.retune_gen(state, stale);
+        drop(workers);
+        self.content_version.fetch_add(1, Ordering::AcqRel);
+        self.wake.notify();
+    }
+}
+
+/// Build one version for every consumer (edit-without-rebuild): its generator sources first (what
+/// they raise is a fact of the video build), then the audio and the video renderer, in one
+/// revisions scope (each reel resolved once) with the last build's events reused. `builds`: the
+/// player's wants, when it exists — the generator sync reads the newest project.
+fn build_version(
+    media: &MediaParts,
+    cache: &BurstCache,
+    project: &Arc<Project>,
+    version: u64,
+    seq: u64,
+    memo: &mut crate::incremental::BuildMemo,
+    builds: Option<&crate::builds::Builds>,
+) -> crate::builds::Built {
+    // an audio and a video renderer
+    kt_time::work::add(kt_time::work::Work::EngineBuild, 2);
+    let (mut built, cost) = kt_time::cost::meter(|| crate::incremental::with_memo(memo, || {
+        crate::video::revisions_scope(|| {
+            let wanted = crate::gen_sources(project);
+            {
+                let _g = media.gen_lock.lock().unwrap();
+                // a value edit replaced the stored project meanwhile: its values are the truth
+                let newest = builds.map(|b| b.want.lock().unwrap().project.clone());
+                match newest {
+                    Some(n) if !Arc::ptr_eq(&n, project) => media.sync_generators(crate::gen_sources(&n)),
+                    _ => media.sync_generators(wanted),
+                }
+            }
+            // the facts cloned out: a UI writer (a source added or replaced) must not wait for
+            // a whole-project build behind a read guard
+            let facts = media.natives.read().unwrap().clone();
+            let audio = Arc::new(AudioRenderer::new(project));
+            let video = Arc::new(preview_video(project, &facts, cache));
+            crate::builds::Built { seq, version, project: project.clone(), audio, video, cost: Default::default() }
+        })
+    }));
+    built.cost = cost;
+    built
+}
+
+struct BuildCtx {
+    builds: Arc<crate::builds::Builds>,
+    media: Arc<MediaParts>,
+    cache: Arc<BurstCache>,
+    probe: Arc<Probe>,
+    loop_region: Arc<Mutex<Option<(i64, i64)>>>,
+    wake: Arc<Wake>,
+    composer: Arc<crate::compose_queue::Composer>,
+    memo: crate::incremental::BuildMemo,
+}
+
+/// The `engine-build` thread: the newest want, built once and published; the probe's states
+/// synced and the loop's head pinned with the new renderer; the render thread and the UI woken.
+fn build_loop(ctx: BuildCtx) {
+    let BuildCtx { builds, media, cache, probe, loop_region, wake, composer, mut memo } = ctx;
+    let mut done = builds.built_seq();
+    while builds.next_want(done).is_some() {
+        builds.wait_gate();
+        if builds.stop.load(Ordering::Acquire) {
+            return;
+        }
+        // the newest want after the gate: the ones in between are never built
+        let (project, version, seq) = {
+            let w = builds.want.lock().unwrap();
+            (w.project.clone(), w.version, w.seq)
+        };
+        let built = build_version(&media, &cache, &project, version, seq, &mut memo, Some(&builds));
+        drop(project);
         let hold = BUILD_HOLD_MS.load(std::sync::atomic::Ordering::Relaxed);
         if hold > 0 {
             std::thread::sleep(std::time::Duration::from_millis(hold));
         }
-        let _ = tx.send(built);
+        let audio = built.audio.clone();
+        builds.publish(built);
+        sync_probe(&probe, &audio, version);
+        let region = *loop_region.lock().unwrap();
+        if let Some((s, _)) = region {
+            cache.unpin_all();
+            pin_loop_head(&cache, &audio, s);
+        }
+        drop(audio);
+        done = seq;
         // a parked render thread (a pause) takes it now, not at its next timeout
         wake.notify();
-    });
-    rx
+        composer.wake_ui();
+    }
 }
 
 fn audio_render_loop(ctx: RenderCtx) {
@@ -1592,7 +1668,7 @@ fn audio_render_loop(ctx: RenderCtx) {
         loop_stats,
         shared,
         workers,
-        project,
+        builds,
         dirty,
         stop,
         underruns,
@@ -1604,26 +1680,22 @@ fn audio_render_loop(ctx: RenderCtx) {
         mix_coverage,
     } = ctx;
     let mut store = FxStateStore::new();
-    // this build IS the first model: the flag the player starts with must not ask for a second
-    // one (under load each took seconds, and the render thread served nothing meanwhile); cleared
-    // BEFORE the clone, so an edit landing in between still asks
+    // the opening's build IS the first model: the flag the player starts with asks for nothing
     dirty.store(false, Ordering::Release);
-    // the clone in a statement of its own: a guard in the argument lives through the whole build,
-    // and the UI's next edit waits for it (ui-never-waits)
-    let p = project.lock().unwrap().clone();
-    let mut renderer = AudioRenderer::new(&p);
-    drop(p);
+    let first = builds.latest();
+    let mut renderer: Arc<AudioRenderer> = first.audio.clone();
+    // the want the renderer answers, and the newest one an edit on a pause asked
+    let (mut have, mut wanted) = (first.seq, first.seq);
+    drop(first);
     renderer.sync_fx(&mut store);
     // the final mix of what was heard (cached-range-plays): a covered range plays from it
     let mut mix = crate::mix::MixPlay::default();
     let mut mix_published = std::time::Instant::now();
-    // A rebuild during playback runs on a builder thread: on a large edit it costs longer than
-    // the ring holds (412 ms against 341 ms on the owner's project), and the old renderer plays
-    // until the new one is ready instead of the sound stopping.
-    let mut building: Option<std::sync::mpsc::Receiver<AudioRenderer>> = None;
-    let mut build_again = false;
     // A build asked on a pause: the next start waits for it (time stands before the first frame,
-    // invariant 6), so Play after an edit plays the edit. The render thread itself never builds.
+    // invariant 6), so Play after an edit plays the edit. The render thread itself never builds:
+    // the player's `engine-build` thread builds each version once (edit-without-rebuild), and the
+    // old renderer plays until the new one is published — on a large edit a build costs longer
+    // than the ring holds (412 ms against 341 ms on the owner's project before builder-cost-guard).
     let mut build_holds_start = false;
     let mut fetcher = CacheFetcher::with_lengths(cache.clone(), &natives.read().unwrap().lengths);
     let mut fetcher_facts = natives.read().unwrap().lengths.len();
@@ -1652,41 +1724,27 @@ fn audio_render_loop(ctx: RenderCtx) {
 
     while !stop.load(Ordering::Acquire) {
         if dirty.swap(false, Ordering::AcqRel) {
-            // never on this thread: a build on a pause blocked the next Play for its whole length
-            // (seconds under load), and one during playback stopped the sound
             build_holds_start |= !transport.is_playing();
-            if building.is_some() {
-                build_again = true;
-            } else {
-                building = Some(spawn_renderer_build(project.clone(), wake.clone()));
-            }
+            wanted = builds.want_seq();
         }
-        if let Some(rx) = &building {
-            match rx.try_recv() {
-                Ok(r) => {
-                    let swap = std::time::Instant::now();
-                    let old = std::mem::replace(&mut renderer, r);
-                    // only what changed: the state survives a rebuild (inv. 3), and an event the
-                    // edit did not touch costs this thread nothing
-                    renderer.sync_fx_since(Some(&old), &mut store);
-                    mix.revalidate(&renderer);
-                    // dropping a whole renderer is not this thread's work either
-                    let _ = std::thread::Builder::new()
-                        .name("audio-build".into())
-                        .spawn(move || drop(old));
-                    loop_stats
-                        .max_swap_us
-                        .fetch_max(swap.elapsed().as_micros() as u64, Ordering::Relaxed);
-                    building = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => building = None,
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        if builds.built_seq() > have {
+            let b = builds.latest();
+            let swap = std::time::Instant::now();
+            let old = std::mem::replace(&mut renderer, b.audio.clone());
+            have = b.seq;
+            drop(b);
+            // only what changed: the state survives a rebuild (inv. 3), and an event the
+            // edit did not touch costs this thread nothing
+            renderer.sync_fx_since(Some(&old), &mut store);
+            mix.revalidate(&renderer);
+            // dropping a whole renderer is not this thread's work either; the others may still
+            // hold it, and then the last of them frees it
+            if Arc::strong_count(&old) == 1 {
+                let _ = std::thread::Builder::new().name("audio-drop".into()).spawn(move || drop(old));
             }
-            if building.is_none() && std::mem::take(&mut build_again) {
-                building = Some(spawn_renderer_build(project.clone(), wake.clone()));
-            }
+            loop_stats.max_swap_us.fetch_max(swap.elapsed().as_micros() as u64, Ordering::Relaxed);
         }
-        if building.is_none() {
+        if have >= wanted {
             build_holds_start = false;
         }
         // The source could appear AFTER the stream started (opening the project,
@@ -2309,8 +2367,7 @@ fn prefetch_loop(
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
     workers: Workers,
-    natives: Natives,
-    project: Arc<Mutex<Project>>,
+    builds: Arc<crate::builds::Builds>,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
     wake: Arc<Wake>,
@@ -2321,9 +2378,9 @@ fn prefetch_loop(
     shared: Arc<AudioShared>,
     mix: crate::mix::MixCoverage,
 ) {
-    // renderers are cached until the project version changes: cloning the Project and
-    // rebuilding the graphs every 100 ms was expensive even at idle (item 1)
-    let mut cached: Option<(u64, AudioRenderer, VideoRenderer)> = None;
+    // the renderers are the player's shared build (edit-without-rebuild): this thread builds
+    // none; it notes when it takes a new one
+    let mut taken: Option<u64> = None;
     // state of the last pass: at idle (pause, nothing changed)
     // the pass is skipped — previously the thread hammered 10 times/s with dozens of
     // cache mutex grabs even in complete silence (item 1 of v1.4). Warm-up
@@ -2334,7 +2391,9 @@ fn prefetch_loop(
     // parameters at idle would not wake the prefetch), but it is NOT in the
     // RENDERER REBUILD condition: the plan does not depend on parameters
     // (law P, R.53 item 411).
-    type PassState = (i64, u64, u64, u64, Quality, Option<(i64, i64)>);
+    // The build the pass reads is in it too: a version's build lands after its edit
+    // (edit-without-rebuild), and a pause must not skip the pass that takes it.
+    type PassState = (i64, u64, u64, u64, Quality, Option<(i64, i64)>, u64);
     let mut last_state: Option<PassState> = None;
     // a stream stage at the frame on screen still lacks history (decode-request-storm): the pass
     // runs again while it does, paused or not — the decoder fills the window, this thread advances
@@ -2355,6 +2414,7 @@ fn prefetch_loop(
                 transport.generation(),
                 *preview_quality.lock().unwrap(),
                 *loop_region.lock().unwrap(),
+                builds.built_seq(),
             );
             if !transport.is_playing() && last_state == Some(state) && !stream_pending {
                 continue;
@@ -2363,19 +2423,12 @@ fn prefetch_loop(
         }
         loop_stats.prefetch_passes.fetch_add(1, Ordering::Relaxed);
         kt_time::work::bump(kt_time::work::Work::PrefetchPass);
-        let version = project_version.load(Ordering::Acquire);
-        if cached.as_ref().map(|(v, _, _)| *v) != Some(version) {
-            let p = project.lock().unwrap().clone();
+        let built = builds.latest();
+        if taken != Some(built.seq) {
+            taken = Some(built.seq);
             loop_stats.prefetch_rebuilds.fetch_add(1, Ordering::Relaxed);
-            // an audio and a video renderer
-            kt_time::work::add(kt_time::work::Work::EngineBuild, 2);
-            // the facts cloned out: a UI writer (a source added or replaced) must not wait for
-            // a whole-project build behind a read guard
-            let facts = natives.read().unwrap().clone();
-            let vr = preview_video(&p, &facts, &cache);
-            cached = Some((version, AudioRenderer::new(&p), vr));
         }
-        let (_, renderer, video) = cached.as_ref().unwrap();
+        let (renderer, video) = (&*built.audio, &*built.video);
         let generation = transport.generation();
         let head = transport.playhead_frames();
         let region = *loop_region.lock().unwrap();

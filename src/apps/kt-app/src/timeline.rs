@@ -4065,7 +4065,7 @@ impl KtApp {
                                     cm.opacity = lv;
                                 }
                             }
-                            self.player.set_project(p);
+                            self.player.set_project(std::sync::Arc::new(p));
                         }
                         if kind == ClipKind::Audio {
                             self.live_gain = Some((id, level_to_gain(lv)));

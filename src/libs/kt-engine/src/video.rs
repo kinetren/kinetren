@@ -44,7 +44,7 @@ struct VideoTrackStage {
 }
 
 #[derive(Debug, Clone)]
-struct VideoClip {
+pub(crate) struct VideoClip {
     /// Track MUTED (mute, or not in the solo set, R.62): the layer does not go
     /// into the composite, but the PREFETCH ORDER remains — lifting mute otherwise
     /// would give a black frame until warmed up (invariant 4 about order == read
@@ -338,15 +338,20 @@ pub fn revisions_scope<R>(f: impl FnOnce() -> R) -> R {
         }
         open
     });
-    struct Close(bool);
+    // the reels resolved in this build, once per instance (edit-without-rebuild, row 155)
+    let resolved = crate::incremental::open_resolved();
+    struct Close(bool, bool);
     impl Drop for Close {
         fn drop(&mut self) {
             if self.0 {
                 REVISIONS.with(|m| *m.borrow_mut() = None);
             }
+            if self.1 {
+                crate::incremental::close_resolved();
+            }
         }
     }
-    let _close = Close(opened);
+    let _close = Close(opened, resolved);
     f()
 }
 
@@ -660,7 +665,7 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
     let mut stack: Vec<(Option<MediaId>, Vec<kt_model::Override>, usize)> =
         vec![(None, Vec::new(), 0)];
     while let Some((reel, ov, depth)) = stack.pop() {
-        let resolved = project.resolve_reel(reel, &ov);
+        let resolved = crate::incremental::resolve(project, reel, &ov);
         for c in &resolved.clips {
             if c.kind != ClipKind::Video || project.sequence(c.media).is_none() {
                 continue;
@@ -1016,7 +1021,21 @@ impl VideoRenderer {
     /// A renderer that knows the FACTS about opened sources (R.56): the native size and
     /// procedurality. The player, export and kt-cli call this constructor —
     /// otherwise a slowed title stays stepped.
+    /// The renderer's derived state as text (a test's comparison of an incremental build with a
+    /// fresh one, t2004): every layer, the cameras, the stages and the nested reels.
+    #[doc(hidden)]
+    pub fn state_text(&self) -> String {
+        let mut nests: Vec<_> = self.nests.iter().collect();
+        nests.sort_by_key(|(k, _)| **k);
+        let nests: Vec<String> = nests.iter().map(|(k, r)| format!("{k:?}: {}", r.state_text())).collect();
+        format!(
+            "{:?}\n{:?} {:?} {:?}\n{:?}\n{nests:?}",
+            self.clips, self.grid, self.cameras, self.project_size, self.stages
+        )
+    }
+
     pub fn new_with_facts(project: &Project, facts: &SourceFacts) -> VideoRenderer {
+        crate::incremental::count_renderer_build();
         revisions_scope(|| VideoRenderer::build(project, facts))
     }
 
@@ -1037,7 +1056,7 @@ impl VideoRenderer {
         // The overrides of an INSTANCE are also resolved by the model (R.59, stage
         // 3): the engine knows nothing about publishing at all, it gets ready-made
         // clips. An empty set goes the byte-for-byte prior path.
-        let resolved = project.resolve_reel(seq, overrides);
+        let resolved = crate::incremental::resolve(project, seq, overrides);
         let effective = &resolved.clips;
         let grid = FpsGrid::new(project.settings.fps);
         // Cameras are OWN to each reel, and `head_zoom` must be computed
@@ -1108,10 +1127,49 @@ impl VideoRenderer {
                 .map(|i| &tracks[i])
                 .is_some_and(|t| t.mute || (solo_on && !t.solo))
         };
+        // the cameras enter every layer's decode zoom: hashed once per reel, into each layer's key
+        let cams_key = crate::incremental::hash_debug(&cams);
         let mut clips: Vec<VideoClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Video)
             .map(|c| {
+                let addr = clip_source_addr_in(c, salt);
+                // conform context: the source kind and the event rule allowed by the project.
+                // The kind is ONE fact (`lead_view`): a reel's own raster (law E — without one
+                // the frame equals the canvas), a source drawn at the requested quality
+                // (generator, title, placeholder) has none (frame = canvas, the node is identity,
+                // spec generators, R.62), a single picture and a file have their view.
+                let procedural = facts.procedural.contains(&addr);
+                let view = lead_view(project, facts, c, addr);
+                let lead = Some(
+                    kt_fx::conform::LeadCtx::new(
+                        view,
+                        c.geometry.rule.resolve(project.settings.conform),
+                    )
+                    .in_raster(raster),
+                );
+                let nest = project
+                    .sequence(c.media)
+                    .map(|_| (c.media, instance_content(project, c.media, &c.overrides)));
+                let nest_fps = nest.and_then(|_| project.sequence(c.media)).and_then(|s| s.fps);
+                let nest_scale = nest.and_then(|(id, _)| nest_scales.get(&id).copied()).unwrap_or(1);
+                let native = facts.natives.get(&addr).copied();
+                // a reel has no material of its own (its frames are computed by the
+                // sub-composite); a generator never has edges
+                let material_end =
+                    (nest.is_none() && !procedural).then(|| facts.lengths.get(&addr).copied()).flatten();
+                let silent = silent_lane(c.lane);
+                // everything the layer is derived from: the same key → the last build's layer,
+                // copied (edit-without-rebuild)
+                let key = crate::incremental::hash_fmt(format_args!(
+                    "{} {} {procedural} {lead:?} {nest:?} {nest_fps:?} {nest_scale} {native:?} {material_end:?} {silent} {cams_key} {raster:?} {} {} {}",
+                    crate::incremental::hash_debug(c),
+                    addr.0,
+                    project.settings.width,
+                    project.settings.height,
+                    project.settings.fps,
+                ));
+                crate::incremental::video_clip(key, || {
                 let fx = c.active_fx(); // bypass slots are filtered out (item 2)
                 let auto = c.active_fx_auto();
                 // The leading “Geometry” node (R.62) is materialized INTO THE CHAIN
@@ -1121,9 +1179,6 @@ impl VideoRenderer {
                 let (fx, auto) = materialize_lead(c, fx, auto);
                 let stream = StreamStage::of(&fx).map(Box::new);
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
-                let nest = project
-                    .sequence(c.media)
-                    .map(|_| (c.media, instance_content(project, c.media, &c.overrides)));
                 let content = nest.map(|(_, h)| h).unwrap_or(0);
                 let fx_hash = fx_chain_hash(
                     &fx,
@@ -1149,22 +1204,6 @@ impl VideoRenderer {
                 } else {
                     fx_hash
                 };
-                let addr = clip_source_addr_in(c, salt);
-                // conform context: the source kind and the event rule allowed by the project.
-                // The kind is ONE fact (`lead_view`): a reel's own raster (law E — without one
-                // the frame equals the canvas), a source drawn at the requested quality
-                // (generator, title, placeholder) has none (frame = canvas, the node is identity,
-                // spec generators, R.62), a single picture and a file have their view.
-                let procedural = facts.procedural.contains(&addr);
-                let view = lead_view(project, facts, c, addr);
-                let lead = Some(
-                    kt_fx::conform::LeadCtx::new(
-                        view,
-                        c.geometry.rule.resolve(project.settings.conform),
-                    )
-                    .in_raster(raster),
-                );
-                let nest_fps = nest.and_then(|_| project.sequence(c.media)).and_then(|s| s.fps);
                 let crop =
                     [c.geometry.crop_l, c.geometry.crop_t, c.geometry.crop_r, c.geometry.crop_b];
                 let head_zoom = clip_head_zoom(
@@ -1185,8 +1224,8 @@ impl VideoRenderer {
                     end: c.start + c.duration,
                     source_in: c.source_in,
                     lane: c.lane,
-                    silent: silent_lane(c.lane),
-                    media: clip_source_addr_in(c, salt),
+                    silent,
+                    media: addr,
                     reversed: c.reversed,
                     fx,
                     auto_plan,
@@ -1202,19 +1241,15 @@ impl VideoRenderer {
                     tail_ext: Tick::ZERO,
                     warp,
                     head_zoom,
-                    native: facts.natives.get(&addr).copied(),
+                    native,
                     lead,
                     crop,
                     nest,
                     content,
-                    nest_scale: nest.and_then(|(id, _)| nest_scales.get(&id).copied()).unwrap_or(1),
+                    nest_scale,
                     nest_fps,
                     procedural,
-                    // a reel has no material of its own (its frames are computed by the
-                    // sub-composite); a generator never has edges
-                    material_end: (nest.is_none() && !procedural)
-                        .then(|| facts.lengths.get(&addr).copied())
-                        .flatten(),
+                    material_end,
                     stream: if nest.is_none() { stream } else { None },
                     src_rev: if procedural {
                         xxhash_rust::xxh3::xxh3_64(format!("{:?}|{:?}", c.r#gen, c.gen_auto).as_bytes())
@@ -1224,6 +1259,7 @@ impl VideoRenderer {
 
                     masks,
                 }
+                })
             })
             .collect();
         // dissolve windows from transitions (R.24): pairs find each other by
@@ -2274,7 +2310,7 @@ fn gen_sources_in(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
     //    A reel that was placed nowhere is also visible: the bin shows it and
     //    the preview service counts it, and its sources must not be lost.
     for seq in std::iter::once(None).chain(project.sequences.iter().map(|s| Some(s.id))) {
-        for c in project.effective_reel(seq).iter() {
+        for c in crate::incremental::resolve(project, seq, &[]).clips.iter() {
             if let Some(k) = &c.r#gen {
                 push(
                     gen_source_addr(c.id),
@@ -2299,7 +2335,7 @@ fn gen_sources_in(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
             },
         };
         let salt = gen_salt(published, &ov);
-        for c in project.resolve_reel(seq, &ov).clips.iter() {
+        for c in crate::incremental::resolve(project, seq, &ov).clips.iter() {
             if let Some(k) = &c.r#gen {
                 push(
                     gen_source_addr_in(c.id, salt),

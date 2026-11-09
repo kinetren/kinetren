@@ -95,7 +95,11 @@ fn t1840_a_stuck_composite_holds_nobody() {
     let mut edited = project();
     edited.settings.fps = 30;
     p.set_project(edited);
-    assert_eq!(p.video_grid().frame_step(), 3000, "the edit reached the renderer at once");
+    // the build lands on the builder thread while the kernel is still stuck (edit-without-rebuild:
+    // the UI hands the edit over and reads the last published renderer, it never builds one)
+    wait_until("the edit never reached the renderer while the composite is stuck", || {
+        p.video_grid().frame_step() == 3000
+    });
     let mut last = first;
     for i in 1..5 {
         last = p.ask_preview(Tick(i * 3000), None);
