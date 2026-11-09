@@ -924,8 +924,12 @@ class Live:
         mark = self.seen()
         probe.button(True, pause=0.0)
         probe.button(False, pause=0.0)
-        self._clicked_at = time.time()
         self._after_gesture(mark, "click")
+        # the click's moment for egui is the frame that READ it, and on a loaded machine that
+        # frame came seconds after the send (a save's fsync held the UI): measured from the send,
+        # the next double click fell inside egui's triple window, and a triple click on an event
+        # closes the effects window its double click opened (`formula` in all three proof sets)
+        self._clicked_at = time.time()
         if mods:
             self._mods(mods, False)
 
@@ -976,8 +980,8 @@ class Live:
             probe.button(False, pause=0.0)
             pause(0.01, "egui stamps a click with its frame: the events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
         probe.d.sync()
-        self._clicked_at = time.time()
         self._after_gesture(mark, "triple click" if n == 3 else "double click")
+        self._clicked_at = time.time()
 
     def drag(self, x0, y0, x1, y1, steps=6, mods=()):
         """Drag LIKE A HUMAN: hover → press → nudge a little → move
