@@ -256,6 +256,13 @@ enum FxOp {
         /// A positioned kernel (D11.1): `b.zw` = the pass's frame size, set at execution.
         positioned: bool,
     },
+    /// A point-wise RUN (fused-pointwise-runs): the stages in chain order and how this frame runs
+    /// them — `pieces` is filled by `Inner::bind_runs` before the arena is sized (empty: every stage
+    /// its own pass).
+    TapRun {
+        stages: Vec<crate::runs::Stage>,
+        pieces: Vec<RunPiece>,
+    },
     /// Merged geometry series (R.44): the program of inverse mappings is built in
     /// kt-fx, one pass, a 1024 B uniform.
     /// EventGrid always takes this path (the mosaic of the former 2 passes is removed).
@@ -321,9 +328,22 @@ fn coverage_frame(c: &kt_fx::mask::Coverage) -> (Arc<kt_media::VideoFrame>, u64)
     (Arc::new(f), key)
 }
 
+/// A piece of a point-wise run as one frame runs it: `stages[a..b]` fused by `pipe` or as their own
+/// passes; `probe` — the shape whose trial times it (fused-pointwise-runs).
+struct RunPiece {
+    a: usize,
+    b: usize,
+    fused: Option<wgpu::RenderPipeline>,
+    probe: Option<(u32, bool)>,
+}
+
 impl FxOp {
     fn passes(&self) -> u32 {
         match self {
+            FxOp::TapRun { stages, pieces } if pieces.is_empty() => stages.len() as u32,
+            FxOp::TapRun { pieces, .. } => {
+                pieces.iter().map(|p| if p.fused.is_some() { 1 } else { (p.b - p.a) as u32 }).sum()
+            }
             // every node is a pass but `Save` (the arena prediction stays exact)
             FxOp::PluginBarrier { nodes, .. } => {
                 nodes.iter().filter(|n| !matches!(n, kt_plugin_api::barrier::Node::Save(_))).count() as u32
@@ -345,6 +365,10 @@ impl FxOp {
             FxOp::GeomFused { .. } => GEOM_SLOT_UNITS,
             // the tile pass (a geometry uniform) and the replicate pass (one slot)
             FxOp::GeomTile { .. } => GEOM_SLOT_UNITS + 1,
+            FxOp::TapRun { pieces, .. } if !pieces.is_empty() => pieces
+                .iter()
+                .map(|p| if p.fused.is_some() { GEOM_SLOT_UNITS } else { (p.b - p.a) as u32 })
+                .sum(),
             _ => self.passes(),
         }
     }
@@ -466,7 +490,7 @@ fn chain_ops(
     for op in plan.ops {
         // where this op starts in the chain; the mask points standing there come first
         let span = match &op {
-            kt_fx::plan::PlanOp::Run { i, j, .. } => Some((*i, *j)),
+            kt_fx::plan::PlanOp::Run { i, j, .. } | kt_fx::plan::PlanOp::PointRun { i, j, .. } => Some((*i, *j)),
             kt_fx::plan::PlanOp::Barrier { idx, .. } | kt_fx::plan::PlanOp::Mix { idx } => {
                 Some((*idx, *idx + 1))
             }
@@ -557,6 +581,20 @@ fn chain_ops(
                     }
                 }
             },
+            kt_fx::plan::PlanOp::PointRun { i, j, .. } => {
+                // the run's fusable stages; the transparent slots between them run nothing
+                let stages: Vec<crate::runs::Stage> = fx[i..j]
+                    .iter()
+                    .filter(|f| kt_fx::plan::fuses_in_runs(f))
+                    .map(|f| {
+                        let t = kt_fx::geom::PluginTap::of(f).expect("a fusable stage is a tap");
+                        let g = t.gpu();
+                        let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).expect("assembled at engine creation");
+                        crate::runs::Stage { idx, f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]], positioned: t.positioned }
+                    })
+                    .collect();
+                ops.push(FxOp::TapRun { stages, pieces: Vec::new() });
+            }
             kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
                 f @ FxInstance::Plugin(slot) if kt_fx::video::plugin_barrier(f).is_some() => {
                     // a barrier plugin (plugin-api-barriers): its graph against the frame here; an empty
@@ -774,6 +812,10 @@ struct Inner {
     c: Arc<crate::compiled::Compiled>,
     /// t1766: the interpreter for every shape.
     geom_interpret: bool,
+    /// How point-wise runs run (fused-pointwise-runs): the device's trial, or forced either way.
+    fuse: crate::runs::FuseRuns,
+    /// Tells the pieces of point-wise runs apart in the timer's probes.
+    run_serial: u32,
     arena: wgpu::Buffer,
     arena_slots: u32,
     slot: u32,
@@ -1210,6 +1252,8 @@ impl GpuFxEngine {
                 queue,
                 c,
                 geom_interpret: false,
+                fuse: crate::runs::FuseRuns::from_env(),
+                run_serial: 0,
                 arena,
                 arena_slots,
                 slot: 0,
@@ -1350,6 +1394,28 @@ impl GpuFxEngine {
         self.inner.lock().unwrap().geom_interpret = on;
     }
 
+    /// How point-wise runs run on this engine (fused-pointwise-runs): `Measured` in the product;
+    /// `Always`/`Never` for the tests and `kt-cli fuse-cost`.
+    pub fn fuse_runs(&self, mode: crate::runs::FuseRuns) {
+        self.inner.lock().unwrap().fuse = mode;
+    }
+
+    /// Point-wise run shapes with a warm pass of their own, and how many the trial kept fused and split.
+    pub fn run_shapes(&self) -> (usize, usize, usize) {
+        self.compiled.runs_ready()
+    }
+
+    /// Compile and warm on the device's worker the point-wise run shapes `runs` (plugin ids in chain
+    /// order). Returns at once; shapes asked before are skipped, a run of an unassembled id is ignored.
+    pub fn prewarm_point_runs(&self, runs: &[Vec<String>]) {
+        let taps = plugin_taps();
+        let keys: Vec<Vec<u16>> = runs
+            .iter()
+            .filter_map(|r| r.iter().map(|id| taps.iter().position(|(t, _)| t == id).map(|i| i as u16)).collect())
+            .collect();
+        self.compiled.prewarm_runs(keys);
+    }
+
     /// t1766: how many program shapes have a pass of their own so far.
     pub fn geometry_shapes(&self) -> usize {
         self.inner.lock().unwrap().c.shapes_ready()
@@ -1359,6 +1425,10 @@ impl GpuFxEngine {
 impl VideoGpuExec for GpuFxEngine {
     fn prewarm(&self, ids: &[String]) {
         self.prewarm_effects(ids);
+    }
+
+    fn prewarm_runs(&self, runs: &[Vec<String>]) {
+        self.prewarm_point_runs(runs);
     }
 
     fn settle_prewarm(&self) {
@@ -1512,7 +1582,7 @@ impl Inner {
         }
         self.slot = 0;
         let meta = frame_meta(&jobs, (ow, oh));
-        self.timer.harvest(&self.device);
+        self.harvest();
         self.timer.begin();
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
@@ -1600,7 +1670,7 @@ impl Inner {
             }
         }
         slot.buf.unmap();
-        self.timer.harvest(&self.device);
+        self.harvest();
         Ok(f.complete)
     }
 
@@ -1645,7 +1715,7 @@ impl Inner {
             self.ensure_present_targets(ow, oh, o.glow);
             let display = self.display.as_ref().unwrap().view.clone();
             let meta = frame_meta(&jobs, (ow, oh));
-            self.timer.harvest(&self.device);
+            self.harvest();
             self.timer.begin();
             let mut enc = self
                 .device
@@ -1707,7 +1777,7 @@ impl Inner {
         self.slot = 0;
         let display = self.display.as_ref().unwrap().view.clone();
         let meta = FrameMeta { out: (ow, oh), ..Default::default() };
-        self.timer.harvest(&self.device);
+        self.harvest();
         self.timer.begin();
         let mut enc =
             self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
@@ -1860,7 +1930,7 @@ impl Inner {
 
         // --- encode ---
         let meta = frame_meta(&jobs, (ow, oh));
-        self.timer.harvest(&self.device);
+        self.harvest();
         self.timer.begin();
         let mut enc = self
             .device
@@ -1941,7 +2011,7 @@ impl Inner {
         }
         staging.unmap();
         // the frame's timestamps came back with its readback
-        self.timer.harvest(&self.device);
+        self.harvest();
 
         self.pool.release(result);
         if let Some(key) = key {
@@ -2160,6 +2230,52 @@ impl Inner {
     /// None — no frame starvation; Some((chain, fits, complete)) — the chain
     /// is ready, `fits` = the final size matched Quality, `complete` —
     /// the completeness of the SUBTREE (an ordinary layer is always true).
+    /// How this frame runs each point-wise run of `ops` (fused-pointwise-runs): pieces of at most
+    /// `MAX_RUN_STAGES`, each fused where its shape is warm and its trial (or the engine's mode) says
+    /// so, split into halves where the trial found the fused pass slower, its parts otherwise. Decided
+    /// before the arena is sized, so the slot count stays exact.
+    fn bind_runs(&mut self, ops: &mut [FxOp]) {
+        for op in ops.iter_mut() {
+            if let FxOp::TapRun { stages, pieces } = op {
+                pieces.clear();
+                let mut a = 0;
+                while a < stages.len() {
+                    let b = (a + crate::runs::MAX_RUN_STAGES).min(stages.len());
+                    self.run_pieces(stages, a, b, pieces);
+                    a = b;
+                }
+            }
+        }
+    }
+
+    fn run_pieces(&self, stages: &[crate::runs::Stage], a: usize, b: usize, out: &mut Vec<RunPiece>) {
+        use crate::compiled::RunUse;
+        use crate::runs::FuseRuns;
+        if b - a < 2 || self.fuse == FuseRuns::Never {
+            out.push(RunPiece { a, b, fused: None, probe: None });
+            return;
+        }
+        let key: Vec<u16> = stages[a..b].iter().map(|s| s.idx as u16).collect();
+        match self.c.run_use(&key, self.fuse == FuseRuns::Measured) {
+            RunUse::Own(probe) => out.push(RunPiece { a, b, fused: None, probe: probe.map(|id| (id, false)) }),
+            RunUse::Fused { pipe, id, probe } => {
+                out.push(RunPiece { a, b, fused: Some(pipe), probe: probe.then_some((id, true)) })
+            }
+            RunUse::Split => {
+                let m = a + (b - a) / 2;
+                self.run_pieces(stages, a, m, out);
+                self.run_pieces(stages, m, b, out);
+            }
+        }
+    }
+
+    /// The timestamps that came back, the run trials' samples handed to the device's shapes.
+    fn harvest(&mut self) {
+        for s in self.timer.harvest(&self.device) {
+            self.c.note_run(s);
+        }
+    }
+
     fn resolve_chain(
         &mut self,
         src: &LayerSrc<'_>,
@@ -2183,6 +2299,7 @@ impl Inner {
             let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
                 // the sub-composite always has alpha (see below)
                 chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true, &src.masks);
+            self.bind_runs(&mut ops);
             if fit.is_some() {
                 ops.insert(
                     0,
@@ -2204,7 +2321,7 @@ impl Inner {
         if frame.width > self.max_dim || frame.height > self.max_dim {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
-        let (ops, (fw, fh), ha, ha_known, (mw, mh)) = chain_ops(
+        let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) = chain_ops(
             &src.fx,
             frame.width,
             frame.height,
@@ -2218,6 +2335,7 @@ impl Inner {
             frame.has_alpha,
             &src.masks,
         );
+        self.bind_runs(&mut ops);
         // The K×-gaps of the plan (item 314) MUST fit within the device texture limit;
         // if they do not, a clean TooLarge (the plan gets no picture)
         if mw > self.max_dim || mh > self.max_dim {
@@ -2517,6 +2635,46 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
+                FxOp::TapRun { stages, pieces } => {
+                    debug_assert!(!pieces.is_empty(), "a run reaches the encoder bound");
+                    for p in pieces {
+                        let serial = self.run_serial;
+                        self.run_serial = self.run_serial.wrapping_add(1);
+                        let probe = |_: bool| p.probe.map(|(shape, fused)| crate::runs::Probe { shape, fused, piece: serial, px: w as u64 * h as u64 });
+                        if let Some(pipe) = &p.fused {
+                            let dst = self.pool.acquire(&self.device, w, h);
+                            if let Some(pr) = probe(true) {
+                                self.timer.probe(pr);
+                            }
+                            let u = crate::runs::uniform(&stages[p.a..p.b], w, h);
+                            self.pass_run(enc, pipe, p.b - p.a, &dst.view, &view, &u);
+                            if let Some(t) = owned.take() {
+                                self.pool.release(t);
+                            }
+                            view = dst.view.clone();
+                            owned = Some(dst);
+                            continue;
+                        }
+                        for st in &stages[p.a..p.b] {
+                            let dst = self.pool.acquire(&self.device, w, h);
+                            let mut f = st.f;
+                            if st.positioned {
+                                f[6] = w as f32;
+                                f[7] = h as f32;
+                            }
+                            if let Some(pr) = probe(false) {
+                                self.timer.probe(pr);
+                            }
+                            let u = UniformData { f, ..Default::default() };
+                            self.pass_which(enc, Which::Plugin(st.idx), &dst.view, &view, &dummy, &dummy, u);
+                            if let Some(t) = owned.take() {
+                                self.pool.release(t);
+                            }
+                            view = dst.view.clone();
+                            owned = Some(dst);
+                        }
+                    }
+                }
                 FxOp::GeomFused { prog } => {
                     debug_assert_eq!((prog.in_w, prog.in_h), (w, h), "geom run input dims");
                     let dst = self.pool.acquire(&self.device, prog.out_w, prog.out_h);
@@ -2557,6 +2715,59 @@ impl Inner {
             retired.push(t);
         }
         (view, retired)
+    }
+
+    /// A point-wise run's generated pass (fused-pointwise-runs): the geometry pass's layout, its
+    /// 1024-byte uniform (4 arena slots); warm by construction (`Compiled::run_use` hands out only
+    /// pipelines the worker drew).
+    fn pass_run(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        pipe: &wgpu::RenderPipeline,
+        n: usize,
+        target: &wgpu::TextureView,
+        t0: &wgpu::TextureView,
+        u: &[u8; GEOM_UNIFORM_BYTES],
+    ) {
+        let offset = self.slot as u64 * SLOT;
+        debug_assert!(self.slot + GEOM_SLOT_UNITS <= self.arena_slots, "uniform arena overflow (run)");
+        self.slot += GEOM_SLOT_UNITS;
+        self.queue.write_buffer(&self.arena, offset, u);
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.c.geom_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.arena,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
+            ],
+        });
+        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    // SAFETY: the fullscreen triangle of `vs` writes every pixel of the target
+                    load: wgpu::LoadOp::DontCare(unsafe { wgpu::LoadOpDontCare::enabled() }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: self.timer.pass(PassLabel::Run(n)),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        rp.set_pipeline(pipe);
+        rp.set_bind_group(0, &bg, &[offset as u32]);
+        rp.draw(0..3, 0..1);
     }
 
     /// The merged geometry-series pass: GEOM_UNIFORM_BYTES uniform (4 arena slots),

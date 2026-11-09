@@ -75,6 +75,10 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   variant keeps its general path, which `cpu::with_general` forces on a thread (read once per block):
   t2171 holds every kind on the specialized, general and baseline paths to digests printed before, t2176
   checks that a variant is still taken and pays. A new variant gets a row in both.
+- **`fuses_in_runs` is the ONE answer to "does this stage fuse into a point-wise run"**
+  (fused-pointwise-runs): `PointWise`, `Gpu::Wgsl`, no barrier kernel. A point-wise tap is pasted
+  into generated passes, so `register` refuses a WGSL without `fn tap_<id>(` or one that reads a
+  texture or the host's `P` (`impure_tap`, t2194); t2195 pins the built-in list.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

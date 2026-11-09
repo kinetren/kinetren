@@ -24,6 +24,15 @@ code); geo runs are rendered into the K×-target by CONJUGATION (two edge
 affines; the arithmetic of the steps remains 1×). If you edit plan.rs/geom.rs, edit
 `geom_fused.wgsl` in THE SAME COMMIT (t181).
 
+**Point-wise runs (fused-pointwise-runs)**: two or more consecutive stages for which
+`plan::fuses_in_runs` holds (the plugin contract's `kt_plugin_api::fuses_in_runs`: point-wise, a
+`tap_<id>`, no barrier kernel) at a barrier position are ONE `PlanOp::PointRun { i, j, res_scale }`;
+audio, stream and identity-Geometry slots between them are transparent; an active geometry step, a
+barrier, noise/greenscreen (their barrier kernel), a strength slot and every stop end it; a lone stage
+stays `Barrier`. The run's K is its first stage's K as a barrier (phase C treats it as one). Stages
+between two geometry steps stay absorbed in the series. `run_shapes(fx)` is the frame-free form the
+player prewarms. t2191.
+
 **Decode scale step (R.46, item 317)**: `plan_chain` accepts `in_scale` —
 the frame arrived at S× the logical size (decoding is larger than Quality). Phase A
 is built on the logic of `in/in_scale`, phase C seeds the compression accumulator with

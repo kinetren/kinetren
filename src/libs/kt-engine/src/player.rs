@@ -211,7 +211,7 @@ pub struct Player {
     /// Counter of raised decoder threads (guard t500/t502).
     worker_spawns: Arc<AtomicU64>,
     /// The effect ids of the project last handed to the prewarm (pipeline-prewarm D5).
-    reach: Arc<Mutex<std::collections::BTreeSet<&'static str>>>,
+    reach: Arc<Mutex<crate::prewarm::Reach>>,
     /// The UI's audio renderer and FX states (meters on a pause), synced by the builder thread.
     levels_probe: Arc<Probe>,
     pub loop_stats: Arc<LoopStats>,
@@ -488,22 +488,23 @@ impl Player {
     /// the set changed (pipeline-prewarm D5): an effect added compiles beside, before its first
     /// frame. Both return at once; a project whose set did not change asks nothing.
     fn prewarm_reach(&self, p: &Project) {
-        let ids = crate::prewarm::effect_ids(p);
+        let now = crate::prewarm::Reach { ids: crate::prewarm::effect_ids(p), runs: crate::prewarm::run_shapes(p) };
         {
             let mut last = self.reach.lock().unwrap();
-            if *last == ids {
+            if *last == now {
                 return;
             }
-            *last = ids;
+            *last = now;
         }
         self.prewarm_now();
     }
 
     fn prewarm_now(&self) {
-        let ids: Vec<String> = self.reach.lock().unwrap().iter().map(|s| s.to_string()).collect();
+        let (ids, runs) = self.reach.lock().unwrap().lists();
         let exec = self.video_gpu.lock().unwrap().exec.clone();
         if let Some(e) = exec {
             e.prewarm(&ids);
+            e.prewarm_runs(&runs);
         }
         crate::prewarm::compute(&ids);
     }
@@ -1024,8 +1025,9 @@ impl Player {
         move |exec| {
             // the slow chains of this project compose there: warm them as on the main device
             if let Some(e) = &exec {
-                let ids: Vec<String> = reach.lock().unwrap().iter().map(|s| s.to_string()).collect();
+                let (ids, runs) = reach.lock().unwrap().lists();
                 e.prewarm(&ids);
+                e.prewarm_runs(&runs);
             }
             composer.set_slow(exec)
         }

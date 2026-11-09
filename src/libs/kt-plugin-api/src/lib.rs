@@ -1398,6 +1398,40 @@ pub trait AudioKernel: Send + Sync {
     fn build(&self, opts: &HostOpts) -> Box<dyn AudioState>;
 }
 
+/// Whether the stage fuses into a point-wise RUN (fused-pointwise-runs): a video effect of class
+/// `PointWise` whose GPU side is its `tap_<id>` WGSL and that has no barrier kernel. Its barrier
+/// position is then its tap and nothing else, so the host may paste the tap into one generated pass
+/// with its neighbours. A point-wise plugin with a barrier kernel (noise, greenscreen) runs that
+/// kernel at a barrier position and ends a run. The ONE answer the planner and the executor ask.
+pub fn fuses_in_runs(p: &dyn Plugin) -> bool {
+    let m = p.manifest();
+    m.media == Media::VideoFx
+        && m.decl.video_class == Some(VideoClass::PointWise)
+        && matches!(m.decl.gpu, Gpu::Wgsl(_))
+        && p.barrier().is_none()
+}
+
+/// Why a point-wise tap's WGSL cannot be pasted into another pass (fused-pointwise-runs), or `None`:
+/// it must define `fn tap_<id>(` and read only its arguments — no texture, no host uniform `P`.
+pub fn impure_tap(id: &str, wgsl: &str) -> Option<&'static str> {
+    if !wgsl.contains(&format!("fn tap_{id}(")) {
+        return Some("a point-wise WGSL does not define its tap_<id> function");
+    }
+    let reads_texture = ["textureLoad", "textureSample", "textureDimensions"].iter().any(|t| wgsl.contains(t));
+    if reads_texture {
+        return Some("a point-wise tap reads a texture (a neighbourhood is not point-wise)");
+    }
+    // a word `P` followed by a field access: the host's uniform of its own passes
+    let b = wgsl.as_bytes();
+    let reads_p = b.windows(2).enumerate().any(|(i, w)| {
+        w == b"P." && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_'))
+    });
+    if reads_p {
+        return Some("a point-wise tap reads the host's uniform P (a tap reads only its arguments)");
+    }
+    None
+}
+
 /// A plugin: its manifest and its kernels.
 pub trait Plugin: Send + Sync {
     fn manifest(&self) -> &Manifest;
@@ -1548,6 +1582,13 @@ impl Registry {
                 }
                 if m.decl.video_class == Some(VideoClass::Barrier) && p.barrier().is_none() {
                     return refuse("a barrier without a kernel");
+                }
+                // a tap is pasted into the fused pass and into a generated run (fused-pointwise-runs):
+                // a pure function of its value, numbers and coordinate
+                if let (Some(VideoClass::PointWise), Gpu::Wgsl(w)) = (m.decl.video_class, m.decl.gpu)
+                    && let Some(why) = impure_tap(&m.id, w)
+                {
+                    return refuse(why);
                 }
                 // a barrier, or a point-wise plugin whose barrier position is a kernel of its own
                 // (noise, greenscreen): the graph is checked whenever a GPU side is declared

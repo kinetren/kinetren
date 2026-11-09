@@ -16,6 +16,7 @@ mod exit;
 mod engine;
 mod pipeline_cache;
 mod pool;
+pub mod runs;
 mod warm;
 
 pub use context::{trace_device, 

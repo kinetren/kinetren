@@ -51,6 +51,29 @@ enum Shape {
 enum Job {
     Slots(Vec<usize>),
     Shape([u32; 4]),
+    /// A point-wise run's shape: its stages' indices in `plugin_taps()` (fused-pointwise-runs).
+    Run(Vec<u16>),
+}
+
+/// A point-wise run's shape on this device (fused-pointwise-runs): its pipeline, compiled and warmed
+/// by the worker, and the trial that decides whether frames run it fused.
+struct RunShape {
+    id: u32,
+    pipe: Shape,
+    trial: Option<crate::runs::Trial>,
+}
+
+/// The run shapes by their stage indices, and their keys by id.
+type RunTable = (HashMap<Vec<u16>, RunShape>, Vec<Vec<u16>>);
+
+/// How a frame runs one piece of a point-wise run (`Compiled::run_use`).
+pub(crate) enum RunUse {
+    /// The stages' own passes; `Some(id)` — timed for the trial of that shape.
+    Own(Option<u32>),
+    /// The shape's generated pass; `probe` — timed for its trial.
+    Fused { pipe: wgpu::RenderPipeline, id: u32, probe: bool },
+    /// The trial split the shape: its two halves are asked in turn.
+    Split,
 }
 
 #[derive(Default)]
@@ -85,6 +108,10 @@ pub(crate) struct Compiled {
     /// Warm flags by slot: the fixed pipes, the plugin pipes, `display`, `geom_fused`.
     warm: Vec<AtomicBool>,
     shapes: Mutex<HashMap<[u32; 4], Shape>>,
+    /// Point-wise run shapes by their stage indices, and their keys by id (fused-pointwise-runs).
+    runs: Mutex<RunTable>,
+    /// The device has timestamps: a warm run shape is tried against its parts.
+    timed: bool,
     work: Mutex<Work>,
     idle: Condvar,
     asked: Mutex<Asked>,
@@ -332,6 +359,8 @@ impl Compiled {
             kit,
             warm: (0..slots).map(|_| AtomicBool::new(false)).collect(),
             shapes: Mutex::new(HashMap::new()),
+            runs: Mutex::default(),
+            timed: device.features().contains(wgpu::Features::TIMESTAMP_QUERY),
             work: Mutex::default(),
             idle: Condvar::new(),
             asked: Mutex::default(),
@@ -431,6 +460,91 @@ impl Compiled {
         }
     }
 
+    /// How a frame runs the run shape `key` (2..=MAX_RUN_STAGES stages): a shape seen for the first
+    /// time goes to the worker and runs as its parts meanwhile (the same bytes); a warm one runs fused,
+    /// split, or — while its trial lasts — alternately fused and as its parts, each timed. `trial`
+    /// false: a warm shape runs fused with no trial (an engine whose fusion is forced on).
+    pub(crate) fn run_use(self: &Arc<Self>, key: &[u16], trial: bool) -> RunUse {
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let (map, ids) = &mut *runs;
+        if let Some(r) = map.get_mut(key) {
+            return match &r.pipe {
+                Shape::Pending | Shape::Ready(None) => RunUse::Own(None),
+                Shape::Ready(Some(p)) => {
+                    let t = r.trial.get_or_insert_with(|| crate::runs::Trial::new(self.timed));
+                    match (trial, t.verdict) {
+                        (false, _) | (true, crate::runs::Verdict::Fused) => RunUse::Fused { pipe: p.clone(), id: r.id, probe: false },
+                        (true, crate::runs::Verdict::Split) => RunUse::Split,
+                        (true, crate::runs::Verdict::Trying) => {
+                            if t.next_fused() {
+                                RunUse::Fused { pipe: p.clone(), id: r.id, probe: true }
+                            } else {
+                                RunUse::Own(Some(r.id))
+                            }
+                        }
+                    }
+                }
+            };
+        }
+        let id = ids.len() as u32;
+        ids.push(key.to_vec());
+        map.insert(key.to_vec(), RunShape { id, pipe: Shape::Pending, trial: None });
+        drop(runs);
+        self.enqueue(Job::Run(key.to_vec()));
+        RunUse::Own(None)
+    }
+
+    /// A timed piece of a trying shape: device ns over its pixels.
+    pub(crate) fn note_run(&self, (p, ns): crate::runs::Sample) {
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let (map, ids) = &mut *runs;
+        let Some(key) = ids.get(p.shape as usize) else { return };
+        let Some(r) = map.get_mut(key) else { return };
+        if let Some(t) = r.trial.as_mut() {
+            let before = t.verdict;
+            t.note(p.fused, ns as f64 / p.px.max(1) as f64);
+            if t.verdict != before && kt_time::trace::on() {
+                let (f, o) = t.minima();
+                let n = kt_time::trace::name(&format!(
+                    "run:{} {:?} fused {:.3} own {:.3} ns/px",
+                    key.len(),
+                    t.verdict,
+                    f.unwrap_or(0.0),
+                    o.unwrap_or(0.0)
+                ));
+                kt_time::trace::ev(kt_time::trace::Ev::Warm).aux(n).emit();
+            }
+        }
+    }
+
+    /// Compile and warm, on the worker, the run shapes `keys` no frame or prewarm asked before.
+    pub(crate) fn prewarm_runs(self: &Arc<Self>, keys: Vec<Vec<u16>>) {
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut fresh = Vec::new();
+        for key in keys {
+            let (map, ids) = &mut *runs;
+            if key.len() < 2 || key.len() > crate::runs::MAX_RUN_STAGES || map.contains_key(&key) {
+                continue;
+            }
+            let id = ids.len() as u32;
+            ids.push(key.clone());
+            map.insert(key.clone(), RunShape { id, pipe: Shape::Pending, trial: None });
+            fresh.push(key);
+        }
+        drop(runs);
+        for key in fresh {
+            self.enqueue(Job::Run(key));
+        }
+    }
+
+    /// Run shapes with a warm pipeline of their own, and their verdicts (fused, split).
+    pub(crate) fn runs_ready(&self) -> (usize, usize, usize) {
+        let runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let ready = runs.0.values().filter(|r| matches!(r.pipe, Shape::Ready(Some(_)))).count();
+        let verdict = |v| runs.0.values().filter(|r| r.trial.as_ref().is_some_and(|t| t.verdict == v)).count();
+        (ready, verdict(crate::runs::Verdict::Fused), verdict(crate::runs::Verdict::Split))
+    }
+
     /// How many shapes have a warm pipeline of their own.
     pub(crate) fn shapes_ready(&self) -> usize {
         self.shapes.lock().unwrap_or_else(|e| e.into_inner()).values().filter(|s| matches!(s, Shape::Ready(Some(_)))).count()
@@ -513,6 +627,12 @@ impl Compiled {
                     }
                     self.compile_shape(h)
                 }
+                Some(Job::Run(key)) => {
+                    if let Some(sh) = shadow.get_or_insert_with(|| shadow_of(&self)) {
+                        sh.compile_run(&key);
+                    }
+                    self.compile_run(&key)
+                }
                 None => {
                     // the queue is empty: keep what was compiled, then end unless work came meanwhile
                     if let (Some(c), false) = (&self.cache, crate::exit::exiting()) {
@@ -565,6 +685,39 @@ impl Compiled {
         self.kit.draw(&self.device, &self.queue, &list);
         for &i in slots {
             self.warm[i].store(true, Ordering::Release);
+        }
+    }
+
+    /// A run shape's generated pass (fused-pointwise-runs): compiled on the geometry pass's layout,
+    /// warmed by one draw after the frames composing now. A text the device refuses leaves the shape
+    /// to its parts.
+    fn compile_run(&self, key: &[u16]) {
+        let taps = plugin_taps();
+        let ids: Option<Vec<&str>> = key.iter().map(|&i| taps.get(i as usize).map(|t| t.0)).collect();
+        let pipe = ids.and_then(|ids| {
+            let text = crate::runs::run_text(&ids, &taps);
+            let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
+            let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+            let p = render_pipe(&self.device, &self.geom_pipe_layout, self.cache.as_ref().map(|c| c.get()), "point_run", text, FORMAT);
+            let failed = pollster::block_on(validation.pop()).is_some() | pollster::block_on(internal.pop()).is_some();
+            (!failed).then_some(p)
+        });
+        if let Some(p) = pipe.as_ref().filter(|_| !crate::exit::exiting()) {
+            let mut span = kt_time::trace::span(kt_time::trace::Ev::Warm);
+            span.aux(kt_time::trace::name("pointwise:run"));
+            self.wait_frames();
+            self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
+        }
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let (map, ids) = &mut *runs;
+        match map.get_mut(key) {
+            Some(r) => r.pipe = Shape::Ready(pipe),
+            // a shadow device compiles what its device was asked: the shape is new here
+            None => {
+                let id = ids.len() as u32;
+                ids.push(key.to_vec());
+                map.insert(key.to_vec(), RunShape { id, pipe: Shape::Ready(pipe), trial: None });
+            }
         }
     }
 
