@@ -443,3 +443,24 @@ next editor:
 - **Not here — the temporal stages**: 3DNR with its trails, rolling shutter and flicker need the
   slot's previous OUTPUT; the stream class is a CPU-only source stage, so they are the change
   `temporal-barrier-3dnr` (a temporal-barrier contract, GPU and CPU).
+
+## The datamosh's schedule compiled once, packed jobs (stream-layout-per-build, archived 2026-11-09)
+
+- **What hurt:** every question of the host (`needs` per frame of the prefetch's 2 s window, `held`,
+  `key`, `render`) built a schedule and two maps and walked the dependency chain back reading the curves
+  at each node; the audio half did the same per 1024-sample frame; the jobs moved a 32-bit word per
+  8- or 16-bit sample, and the source's colour conversion ran per pixel on the prefetch thread
+  (found-defects 135, 144; the engine audit's mechanisms M2, M7).
+- **Decision:** `mosh::Plan` — per-position forward recurrences (rows, node, dependency, chain index
+  from the anchor, the clean and broken keys) filled once up to the furthest position asked; the host
+  keeps one per stage, build and stream size (`StreamLayout::plan_cell`), the audio half one per rows,
+  curves and placement. The same values as the walk, pinned from it (t2270, t2272). Packed residual
+  (16-bit pairs) and pictures (bytes); the source's conversion is the encoder job's first step
+  (`convert.wgsl`); an advance produces no picture (`StreamKernel::advance`).
+- **Revision — chains past 8192 frames:** the walk cut the chain there and counted the refresh grid
+  from the cut, an anchor that moved every frame; the plan counts from the true anchor.
+- **Rejected — the output's conversion on the device:** a job of its own waited behind the frame's
+  other passes (a stage run 1.65 → 9.8 ms on llvmpipe in the real player); one picture per shown frame
+  converts on the CPU in about a millisecond.
+- **Measured** (release, the owner's region at 720 lines, same load): the stage's thread 10.4–17.2 →
+  4.3–4.4 ms a frame; readback 18.3 → 6.2 MB a frame; the window question 12–20 → 2.2–3.6 ms.

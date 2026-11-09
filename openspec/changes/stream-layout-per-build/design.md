@@ -17,6 +17,14 @@ stream), the old and the new binary one after the other at the same load (load a
 | the prefetch's 2 s window question (`wanted_frames`) | 12.2–19.9 ms | 2.2–3.6 ms |
 | second lap of the whole region (667 positions) | 690 encodes again, 102 ms a frame | none: the loop is held (1577 MB memo) |
 
+In the real player (`kt-cli preview … --size 640x360 --loop 240 --trace`, llvmpipe, the old binary
+at load average ~32, the new one at ~100 — another session's build): the old binary's laps showed at
+most 4 kept composites of 110–350 frames a lap; the new one's last laps showed 164 of 222 and 170 of
+203 (the loop converging on what is kept); a composite's stage run 1.65 ms before, 2.8 ms after at
+that load (9.8 ms while the output's conversion was a device job, D4). On llvmpipe the rest of the
+chain (VHS Tape, Camera ISP: 65 ms a frame at 640×360) keeps a lap far from real time; whether the
+loop becomes all-kept also depends on the present memo's constant 512 MB (found-defects row 310).
+
 The jobs' device time does not move with this change (23–30 ms a frame at load 10, 72–83 at load 20 on
 llvmpipe): it is the card's. A first run read 175 ms there at load ~49; the paired runs above are the
 ones to compare.

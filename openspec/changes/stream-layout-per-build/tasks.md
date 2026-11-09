@@ -37,8 +37,8 @@
 ## 6. Check and record
 
 - [x] 6.1 After numbers (`stream-cost`, the preview loop on the region, release), design.md
-- [ ] 6.2 Rest costs nothing: live `idle` and `heavy_loop`
+- [x] 6.2 Rest costs nothing: live `idle`, `heavy_loop`, `datamosh` green (pause 2 % of a core, effects window open 2 %, a covered loop plays only kept composites)
 - [x] 6.3 found-defects: rows 135, 143, 144 to fixed as far as closed; rows 310–314 for the class walk
 - [x] 6.4 engine-audit row 8 done; whats-new line; clippy; target-prune
-- [ ] 6.5 Archive (specs merged), design record in video-fx/video-plan design.md
+- [x] 6.5 Archive (specs merged), design record in video-fx/video-plan design.md
 - [ ] 6.6 `src/scripts/finish.sh` — run by the orchestrator per stage (not by this executor)

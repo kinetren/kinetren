@@ -421,3 +421,18 @@ over every family and core node, D-measure).
   constant, a property of the layout.
 - Measured on llvmpipe at 1080p: a chain of k stages moves 16.6 MB instead of k × 16.6 MB; device
   time 9.3 → 2.2 ms for six stages. The heavy showcase holds one two-stage run and does not change.
+
+## The preview's stream memo sized by the loop (stream-layout-per-build, archived 2026-11-09)
+
+- **What hurt:** a constant 256 MB held about 20 positions at 1080 lines, so a loop over a Datamosh
+  recomputed its codec history every lap (found-defects 143).
+- **Decision:** `stream_memo_bytes` — the loop's pictures (half the stage's RGBA frame a position,
+  every position and an eighth) over the 256 MB working set, within a quarter of the memory the process
+  can still take, measured at run time by a probe the host injects (`kt_gpu::memory::available`, which
+  honours a control group's limit); sized only when the loop or the stage's size changes, so rest
+  reads nothing. The encoder's per-frame state is a transient entry: past the newest four it goes
+  before any picture (it was three quarters of a position's bytes, and only the next frame's encoder
+  reads it).
+- **Measured:** the owner's region (667 positions at 720 lines) held in 1577 MB; laps 2 and 3 of
+  `kt-cli stream-cost --loop` run no job (t2276 holds the rule on a small stream).
+- **Left:** the present memo of kept composites is the same kind of constant (512 MB): found-defects 310.
