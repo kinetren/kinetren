@@ -12,7 +12,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Which input a stream position reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -60,6 +60,42 @@ pub trait StreamLayout {
     /// decides what that means (the datamosh shows its broken stream inside, the intact one outside).
     fn region_ident(&self, _k: i64) -> u64 {
         0
+    }
+    /// Where the kernel keeps what it COMPILED from this layout (stream-layout-per-build): its
+    /// schedule, the rows per position, the content keys. The host gives one cell per stage, build
+    /// and stream size, and drops it with the build, so the kernel compiles once and every later
+    /// question (`needs`, `held`, `key`, `render`) reads it. `None` — no cell: the kernel compiles per
+    /// call, to the same values.
+    fn plan_cell(&self) -> Option<&PlanCell> {
+        None
+    }
+}
+
+/// A host-owned slot for a kernel's compiled schedule of one layout (stream-layout-per-build). Opaque
+/// to the host; filled once, by the first question. Speed only: what it holds is a pure function of
+/// the rows and the layout.
+#[derive(Default)]
+pub struct PlanCell(OnceLock<Arc<dyn Any + Send + Sync>>);
+
+impl PlanCell {
+    /// The compiled value, built by `f` at the first call; `None` — the cell holds another type.
+    pub fn get_or_init<T: Any + Send + Sync>(&self, f: impl FnOnce() -> T) -> Option<Arc<T>> {
+        self.0.get_or_init(|| Arc::new(f())).clone().downcast::<T>().ok()
+    }
+}
+
+/// Run `f`, a kernel compiling positions `from .. to` of its schedule, as a record of the structured
+/// trace (`stream_plan`); `f` returns the positions the schedule holds after it.
+pub fn compiling(from: i64, to: i64, f: impl FnOnce() -> usize) {
+    let mut span = kt_time::trace::span(kt_time::trace::Ev::StreamPlan);
+    span.a(from as u64).b(to as u64);
+    let held = f();
+    span.c(held as u64);
+}
+
+impl std::fmt::Debug for PlanCell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.get().is_some() { "PlanCell(filled)" } else { "PlanCell(empty)" })
     }
 }
 

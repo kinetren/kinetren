@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use kt_cache::{BurstCache, SourceId};
 use kt_media::{Quality, VideoFrame};
 use kt_model::MediaId;
-use kt_plugin_api::stream::{mix, Rgba, SecondFrom, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
+use kt_plugin_api::stream::{mix, PlanCell, Rgba, SecondFrom, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
 use kt_time::{FpsGrid, Tick};
 
 use super::{clip_base_quality, clip_frame_keys, video_cache_idx, VideoClip};
@@ -55,6 +55,9 @@ impl StreamPacing {
     }
 }
 
+/// The compiled schedules of one stage, per stream size.
+type PlanCells = Vec<(Quality, Arc<PlanCell>)>;
+
 /// A clip's stream stage: the slot's plugin and rows, the event before on the same lane and the
 /// events of the second input's lane (clones made when the renderer is built — the renderer is
 /// rebuilt on every edit, so they cannot go stale).
@@ -66,6 +69,10 @@ pub(super) struct StreamStage {
     pub values: Vec<f64>,
     pub before: Option<Box<VideoClip>>,
     pub second: Vec<VideoClip>,
+    /// The kernel's compiled schedule per stream size (stream-layout-per-build): made fresh by
+    /// `link_stages` on every build, so a neighbour's edit (the event before, the second input) can
+    /// never leave a stale one; shared by the composer, the prefetch and the picker of the build.
+    pub plans: Arc<std::sync::Mutex<PlanCells>>,
 }
 
 impl std::fmt::Debug for StreamStage {
@@ -85,13 +92,31 @@ impl StreamStage {
         fx.iter().enumerate().find_map(|(slot, f)| match f {
             kt_model::FxInstance::Plugin(p) if f.is_stream() => p
                 .plugin()
-                .map(|plugin| StreamStage { plugin, slot, values: p.values.clone(), before: None, second: vec![] }),
+                .map(|plugin| StreamStage {
+                    plugin,
+                    slot,
+                    values: p.values.clone(),
+                    before: None,
+                    second: vec![],
+                    plans: Default::default(),
+                }),
             _ => None,
         })
     }
 
     pub fn kernel(&self) -> &'static dyn StreamKernel {
         self.plugin.stream().expect("a stream slot's plugin has a stream kernel (registry, t1240)")
+    }
+
+    /// The cell of the schedule compiled at stream size `q`.
+    fn plan_cell(&self, q: Quality) -> Arc<PlanCell> {
+        let mut g = self.plans.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, c)) = g.iter().find(|(s, _)| *s == q) {
+            return c.clone();
+        }
+        let c = Arc::new(PlanCell::default());
+        g.push((q, c.clone()));
+        c
     }
 }
 
@@ -105,6 +130,8 @@ pub(super) fn link_stages(clips: &mut [VideoClip]) {
     };
     for c in clips.iter_mut() {
         let Some(st) = c.stream.as_mut() else { continue };
+        // this build's own schedules: the stage may be the last build's, copied (edit-without-rebuild)
+        st.plans = Default::default();
         let k = st.kernel();
         if k.before(&st.values) > 0 {
             st.before = snapshot
@@ -146,6 +173,7 @@ pub(super) struct ClipStream<'a> {
     cut: i64,
     end: i64,
     cache: Option<&'a BurstCache>,
+    plan: Arc<PlanCell>,
 }
 
 impl<'a> ClipStream<'a> {
@@ -159,7 +187,8 @@ impl<'a> ClipStream<'a> {
             Some(b) => cut - (st.kernel().before(&st.values) as i64).min(cut - ceil_div(b.start.0, step)).max(0),
             None => ceil_div(clip.start.0 - clip.head_ext.0, step).min(cut),
         };
-        ClipStream { clip, st, grid, q: stream_quality(clip, st, quality), step, first, cut, end, cache }
+        let q = stream_quality(clip, st, quality);
+        ClipStream { clip, st, grid, q, step, first, cut, end, cache, plan: st.plan_cell(q) }
     }
 
     /// The position of a frame time.
@@ -233,6 +262,9 @@ impl StreamLayout for ClipStream<'_> {
             kt_model::FxInstance::Plugin(p) => Some(p.values),
             _ => None,
         }
+    }
+    fn plan_cell(&self) -> Option<&PlanCell> {
+        Some(&self.plan)
     }
     fn ident(&self, side: Side, k: i64) -> u64 {
         let Some((c, pts)) = self.at(side, k) else { return 0 };
