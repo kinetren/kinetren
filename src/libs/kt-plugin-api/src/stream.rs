@@ -153,7 +153,8 @@ pub trait StreamKernel: Send + Sync {
         None
     }
     /// Advance the history to frame `n` in the memo without producing its picture (the prefetch's
-    /// advance, the export's pre-roll: stream-layout-per-build — they threw the picture away);
+    /// advance, the export's pre-roll: stream-layout-per-build — they converted a picture and threw it
+    /// away);
     /// `false` — a frame of the history is missing. By default `render` into a scratch buffer.
     fn advance(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> bool {
         self.render(p, input, n, memo, &mut Vec::new()).is_some()

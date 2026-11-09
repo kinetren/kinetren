@@ -278,7 +278,7 @@ impl StreamKernel for Datamosh {
         if kt_plugin_api::compute::host().is_none() {
             return self.render(p, input, n, memo, &mut Vec::new()).is_some();
         }
-        // the history into the memo; no conversion of a picture nobody shows
+        // the history into the memo; no picture nobody shows
         mosh::render(mosh::Rows::from(p), input, n, memo).is_some()
     }
     fn render(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo, out: &mut Vec<u8>) -> Option<StreamOut> {
@@ -290,10 +290,9 @@ impl StreamKernel for Datamosh {
             return if kt_plugin_api::compute::host().is_none() { pass_through(input, n, out) } else { None };
         };
         let (w, h) = input.size();
-        // the conversion back on the device; the CPU reference when the device just failed
-        if !codec::to_rgba_gpu(&pic, w, h, out) {
-            pic.to_rgba(w, h, out);
-        }
+        // the conversion back stays here: a job of its own would wait behind the frame's other passes
+        // on the device (stream-layout-per-build D4: 1.6 → 9.8 ms a stage run on llvmpipe)
+        pic.to_rgba(w, h, out);
         Some(StreamOut { w: w.min(pic.w as u32), h: h.min(pic.h as u32), key })
     }
 }

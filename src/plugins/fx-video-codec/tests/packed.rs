@@ -1,8 +1,8 @@
 //! The codec's jobs move packed planes (stream-layout-per-build): t2273 (an encoder job reads back
 //! the vectors, the residual at 16 bits a sample and the reconstruction at 8, and a decoder job reads
-//! back its picture at 8 — found-defects 135: a 32-bit word a sample), t2274 (the colour conversion
-//! on the device is the CPU reference to the byte, both ways, at sizes that pad and crop), t2276 (a
-//! loop the memo is sized for runs no job on its second lap), t2278 (an advance converts no picture).
+//! back its picture at 8 — found-defects 135: a 32-bit word a sample), t2274 (the source's colour
+//! conversion on the device is the CPU reference to the byte, at sizes that pad), t2276 (a loop the
+//! memo is sized for runs no job on its second lap), t2278 (an advance produces no picture).
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use kt_plugin_api::generator::lowbias32;
 static UP: AtomicU64 = AtomicU64::new(0);
 static DOWN: AtomicU64 = AtomicU64::new(0);
 static JOBS: AtomicU64 = AtomicU64::new(0);
-static RGBA_JOBS: AtomicU64 = AtomicU64::new(0);
+static CONVERSIONS: AtomicU64 = AtomicU64::new(0);
 /// The counters are the process's: one test at a time.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -26,8 +26,8 @@ impl ComputeHost for Counting {
         let up: usize = job.buffers.iter().map(|b| if let Init::Bytes(b) = b { b.len() } else { 0 }).sum();
         UP.fetch_add(up as u64, Relaxed);
         JOBS.fetch_add(1, Relaxed);
-        if job.steps.iter().any(|s| s.name.ends_with(":rgba")) {
-            RGBA_JOBS.fetch_add(1, Relaxed);
+        if job.steps.iter().any(|s| s.name.ends_with(":convert")) {
+            CONVERSIONS.fetch_add(1, Relaxed);
         }
         let got = self.0.run(job)?;
         DOWN.fetch_add(got.iter().map(|v| v.len() as u64).sum(), Relaxed);
@@ -89,13 +89,6 @@ fn t2273_t2274_packed_jobs_and_the_conversion() {
         assert_eq!(pb_gpu.recon, pb_cpu.recon, "inter {sw}x{sh}");
         assert_eq!(pb_gpu.pkt, pb_cpu.pkt, "inter packet {sw}x{sh}");
         assert!(pb_cpu.pkt.res.y.iter().any(|&r| r < 0) && pb_cpu.pkt.mv.iter().any(|&v| v != (0, 0)), "a residual with both signs and some motion");
-        // back to RGBA, whole and cropped
-        for (ow, oh) in [(sw, sh), (sw - 5, sh - 3), (w as u32 + 9, h as u32 + 2)] {
-            let (mut cpu, mut gpu) = (Vec::new(), Vec::new());
-            pb_cpu.recon.to_rgba(ow, oh, &mut cpu);
-            assert!(codec::to_rgba_gpu(&pb_cpu.recon, ow, oh, &mut gpu));
-            assert_eq!(gpu, cpu, "to RGBA {ow}x{oh} of {w}x{h}");
-        }
     }
     // t2273: the bytes of one encoder job and one decoder job, 1280×720 (the owner's 720 lines)
     let (sw, sh) = (1280u32, 720u32);
@@ -191,8 +184,8 @@ fn t2276_a_loop_the_memo_holds_computes_nothing_twice() {
     assert_eq!(a, c, "the bytes do not depend on the memo");
 }
 
-/// t2278: the prefetch's advance fills the memo with the history and converts no picture; the frame
-/// then needs nothing, and its render (one conversion) gives the bytes of a cold render.
+/// t2278: the prefetch's advance fills the memo with the history and produces no picture; the frame
+/// then needs nothing, and its render (no job) gives the bytes of a cold render.
 #[test]
 fn t2278_an_advance_converts_no_picture() {
     use kt_plugin_api::stream::{StreamKernel, StreamMemo};
@@ -205,14 +198,14 @@ fn t2278_an_advance_converts_no_picture() {
     p[fx_video_codec::rows::MOSH] = 1.0;
     let k = fx_video_codec::Datamosh::new();
     let memo = StreamMemo::new(64 << 20);
-    let r0 = RGBA_JOBS.load(Relaxed);
+    let r0 = CONVERSIONS.load(Relaxed);
     assert!(k.advance(&p, &s, 25, &memo));
-    assert_eq!(RGBA_JOBS.load(Relaxed), r0, "the advance converted a picture");
+    assert!(CONVERSIONS.load(Relaxed) > r0, "the advance's encoder jobs convert their sources");
     assert!(k.needs(&p, &s, 25, &memo).is_empty(), "the advance left the frame's history behind");
     let (mut warm, mut cold) = (Vec::new(), Vec::new());
     let j0 = JOBS.load(Relaxed);
     k.render(&p, &s, 25, &memo, &mut warm).unwrap();
-    assert_eq!(JOBS.load(Relaxed) - j0, 1, "a held frame costs one conversion");
+    assert_eq!(JOBS.load(Relaxed) - j0, 0, "a held frame costs no job");
     k.render(&p, &s, 25, &StreamMemo::new(64 << 20), &mut cold).unwrap();
     assert_eq!(warm, cold);
 }

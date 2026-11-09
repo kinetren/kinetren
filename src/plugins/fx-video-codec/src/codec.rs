@@ -3,8 +3,8 @@
 //! no B-frames, integer-pel vectors — the MECHANISM of an inter-frame codec, not a standard's syntax.
 //!
 //! The colour conversion, the motion search, the residual and the decoder are compute shaders
-//! (`wgsl/`, compute-kernels; the conversion since stream-layout-per-build, `Planes::from_rgba` and
-//! `to_rgba` staying as the CPU reference):
+//! (`wgsl/`, compute-kernels; the conversion of the source since stream-layout-per-build,
+//! `Planes::from_rgba` staying as the CPU reference):
 //! `encode` and `decode` are jobs for the host's device, and `None` means the device failed. The same machine gives the same
 //! bytes; another device may differ, the codec's look does not depend on it.
 
@@ -160,18 +160,16 @@ fn dct_basis() -> &'static [u8] {
 
 /// Every compute shader of the codec, as the device receives it, with the buffers a step of it reads
 /// and writes.
-pub fn shaders() -> [(&'static str, usize, usize); 5] {
+pub fn shaders() -> [(&'static str, usize, usize); 4] {
     [
         (CONVERT, 1, 3),
         (include_str!("wgsl/search.wgsl"), 3, 1),
         (residual_shader(), 3, 1),
         (include_str!("wgsl/decode.wgsl"), 3, 1),
-        (RGBA, 3, 1),
     ]
 }
 
 const CONVERT: &str = include_str!("wgsl/convert.wgsl");
-const RGBA: &str = include_str!("wgsl/rgba.wgsl");
 
 /// A plane as the shaders read it: its bytes, four samples to a word, padded to a whole word
 /// (gpu-pass-cost: a word per sample had quadrupled every upload and cost a pass over the plane).
@@ -363,31 +361,6 @@ pub fn encode_from(src: Source<'_>, prev: Option<&Planes>, cfg: &Cfg) -> Option<
     let res = Residual { y: unpack16(&next()), cb: unpack16(&next()), cr: unpack16(&next()) };
     let recon = Planes { w: pw, h: ph, y: next(), cb: next(), cr: next() };
     Some(Clean { recon, pkt: Packet { intra: prev.is_none(), mv, res } })
-}
-
-/// `Planes::to_rgba` on the device (stream-layout-per-build): the same bytes into `out`; `false` — no
-/// device, or it failed (the caller converts on the CPU).
-pub fn to_rgba_gpu(p: &Planes, ow: u32, oh: u32, out: &mut Vec<u8>) -> bool {
-    let Some(host) = compute::host() else { return false };
-    let (ow, oh) = ((ow as usize).min(p.w) as u32, (oh as usize).min(p.h) as u32);
-    if ow == 0 || oh == 0 {
-        p.to_rgba(ow, oh, out);
-        return true;
-    }
-    let words = [packed(&p.y), packed(&p.cb), packed(&p.cr)];
-    let buffers = [Init::Bytes(&words[0]), Init::Bytes(&words[1]), Init::Bytes(&words[2]), Init::Zero(ow as u64 * oh as u64 * 4)];
-    let u = uniform(&[(p.w as u32).to_le_bytes(), ow.to_le_bytes(), oh.to_le_bytes(), [0; 4]]);
-    let steps = [Step { name: "datamosh:rgba", shader: RGBA, uniform: &u, read: &[Buf(0), Buf(1), Buf(2)], write: &[Buf(3)], groups: [ow.div_ceil(8), oh.div_ceil(8), 1] }];
-    match host.run(&Job { buffers: &buffers, steps: &steps, reads: &[Buf(3)] }) {
-        Ok(mut g) => {
-            *out = g.pop().unwrap_or_default();
-            true
-        }
-        Err(e) => {
-            compute::fail(e);
-            false
-        }
-    }
 }
 
 /// Zero the residual of luma block `i` (and its chroma) — a lost macroblock.

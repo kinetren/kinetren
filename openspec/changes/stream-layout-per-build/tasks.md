@@ -29,11 +29,16 @@
 - [x] 4.2 The player sizes it when the loop or the stage size changes; `stream_memo_cap` record — t2275
 - [x] 4.3 A loop the sized memo holds runs no job on lap 2 — t2276
 
-## 5. Check and record
+## 5. Found while measuring
 
-- [ ] 5.1 After numbers (`stream-cost`, the preview loop on the region, release), design.md
-- [ ] 5.2 Rest costs nothing: live `idle` and `heavy_loop`
-- [ ] 5.3 found-defects: rows 135, 143, 144 to fixed as far as closed; rows 310–314 for the class walk
-- [ ] 5.4 engine-audit row 8 done; whats-new line; clippy; target-prune
-- [ ] 5.5 Archive (specs merged), design record in video-fx/video-plan design.md
-- [ ] 5.6 `src/scripts/finish.sh` — run by the orchestrator per stage (not by this executor)
+- [x] 5.1 `StreamKernel::advance`: the advance converts no picture — t2278
+- [x] 5.2 `StreamMemo::put_transient`: the encoder's state evicted before the pictures — t2276, t2275
+
+## 6. Check and record
+
+- [x] 6.1 After numbers (`stream-cost`, the preview loop on the region, release), design.md
+- [ ] 6.2 Rest costs nothing: live `idle` and `heavy_loop`
+- [x] 6.3 found-defects: rows 135, 143, 144 to fixed as far as closed; rows 310–314 for the class walk
+- [x] 6.4 engine-audit row 8 done; whats-new line; clippy; target-prune
+- [ ] 6.5 Archive (specs merged), design record in video-fx/video-plan design.md
+- [ ] 6.6 `src/scripts/finish.sh` — run by the orchestrator per stage (not by this executor)

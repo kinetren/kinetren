@@ -6,16 +6,20 @@ Row 8 of the order table of `docs/engine-audit.md`. The owner's complaint (kkt-2
 Datamosh on `problem_region_26_11_09` (event 2149 of his project: Camera ISP → Datamosh gop 66, 720
 lines, block 8, search 64, `mv_rotate` drawn by a zigzag curve → VHS Tape; the event is 209 s long)
 stays "Loading" for seconds, paused and on repeated laps. The stream stage's own share, measured
-before this change with `kt-cli stream-cost` (release, this machine's llvmpipe, 4 s of the region,
-1280×720 stream):
+with `kt-cli stream-cost` (release, this machine's llvmpipe, the relinked copy's region, 1280×720
+stream), the old and the new binary one after the other at the same load (load average 10–20):
 
-| | before |
-|---|---|
-| the advancing thread's own processor time, outside the jobs | 15.7–22.9 ms a frame |
-| inside the jobs (submission, copies) | 5.4–9.9 ms a frame |
-| uploaded / read back | 10.63 / 18.28 MB a frame |
-| the prefetch's 2 s window question (`wanted_frames`) | 23.3 ms |
-| second lap over 240 frames, the 256 MB memo | 264 encodes again (everything) |
+| | before | after |
+|---|---|---|
+| the advancing thread, outside the jobs | 7.5–18.6 ms a frame | 2.1–3.4 ms |
+| the advancing thread, inside the jobs (submission, copies) | 2.8–8.9 ms a frame | 2.1–4.0 ms |
+| uploaded / read back | 10.0–10.6 / 17.2–18.3 MB a frame | 9.6–10.2 / 5.8–6.2 MB |
+| the prefetch's 2 s window question (`wanted_frames`) | 12.2–19.9 ms | 2.2–3.6 ms |
+| second lap of the whole region (667 positions) | 690 encodes again, 102 ms a frame | none: the loop is held (1577 MB memo) |
+
+The jobs' device time does not move with this change (23–30 ms a frame at load 10, 72–83 at load 20 on
+llvmpipe): it is the card's. A first run read 175 ms there at load ~49; the paired runs above are the
+ones to compare.
 
 ## The mechanism (the class)
 
@@ -80,11 +84,16 @@ as bytes, so a readback is a copy. Per 1280×720 frame: the encoder reads back 4
 
 `convert.wgsl` is the encoder job's first step when it is given RGBA (`codec::encode_rgba`): one
 invocation per 8×2 luma samples writes two luma words per row and one word of each chroma plane — the
-integer BT.601 of `Planes::from_rgba`, edge replication included. `rgba.wgsl` converts the decoded
-picture back (`codec::to_rgba_gpu`), with the CPU path as the fallback when the device fails. Both CPU
-functions stay as the reference (t2274 compares packets, reconstructions and RGBA at sizes that pad and
-crop). The trade: the encoder uploads the frame's RGBA (4 bytes a pixel) instead of planes (1.5), and
-the processor does no per-pixel work.
+integer BT.601 of `Planes::from_rgba`, edge replication included; `from_rgba` stays as the reference
+(t2274 compares packets and reconstructions at sizes that pad). The trade: the encoder uploads the
+frame's RGBA (4 bytes a pixel) instead of planes (1.5), and the processor does no per-pixel work.
+
+- **Rejected after measuring — the output's conversion on the device.** `rgba.wgsl` converted the
+  shown picture back as a job of its own. In the real player over his region (llvmpipe, 640×360, a
+  240 s loop, traces) a composite's stage run grew from 1.65 to 9.8 ms: the job queued behind the
+  frame's VHS and Camera ISP passes on the same device, where the CPU's conversion of one picture is a
+  millisecond and waits for nothing. Unlike the source's conversion it is not a step of a job that runs
+  anyway. `Planes::to_rgba` stays on the CPU, once per shown frame (an advance converts none, D6).
 
 ### D5. The preview memo sized by the loop and the machine
 
@@ -96,6 +105,22 @@ device crate). The player sizes it when the loop region or the stage's frame siz
 changes neither reads nothing, so rest costs nothing — and a smaller bound evicts at once. A
 `stream_memo_cap` record names each sizing.
 
+### D6. An advance converts no picture
+
+`StreamKernel::advance` (default: `render` into a scratch buffer). The prefetch's advance and the
+export's pre-roll threw the RGBA away; Datamosh's advance runs the decoder loop into the memo only
+(t2278). Found by the first after-measurement: 240 extra jobs over 240 frames.
+
+### D7. A loop keeps the pictures; the encoder's state goes first
+
+The first sized loop still recomputed every lap: a position kept the decoded picture (1.5 bytes a
+pixel) and the clean encoder's state (reconstruction, 16-bit residual, vectors: 4.5 bytes a pixel), and
+a quarter of the 12 GB the test process had was 3 GB against 3.7 GB needed. A loop shows the pictures
+again; the encoder's state is read only by the next frame's encoder. `StreamMemo::put_transient` marks
+such entries; past the newest four (the last frame's state on each side) they are evicted before any
+other. The bound counts half the stage's RGBA frame a position over the 256 MB base. Result: 1577 MB,
+laps 2 and 3 run no job (t2276 holds the rule on a small stream).
+
 ## The class walk (what was checked)
 
 | Place | Acts? | What |
@@ -104,7 +129,8 @@ changes neither reads nothing, so rest costs nothing — and a smaller bound evi
 | Datamosh sound: `MoshSound::sched` per 1024 samples | **yes — fixed** (D2) | a layout + schedule per codec frame, gate runs walked back |
 | Datamosh codec jobs | **yes — fixed** (D3, D4) | a word per sample on the boundary; per-pixel conversion on the CPU |
 | kt-engine: prefetch `layers_at` per frame of the 2 s window, `stream_advance_ahead`, the composite's `key`/`needs`/`held` | the multiplier; **fixed by D1** | each call is now a stored-chain read |
-| the preview stream memo (256 MB constant) | **yes — fixed** (D5) | a constant against the loop's length |
+| the preview stream memo (256 MB constant) | **yes — fixed** (D5, D7) | a constant against the loop's length; the encoder's state crowding the pictures out |
+| the prefetch's advance and the export's pre-roll | **yes — fixed** (D6) | a picture converted and thrown away per advanced frame |
 | the export's stream memo (64 MB) | no | the export reads forward once; no loop to keep |
 | the present memo of kept composites (512 MB constant) | **yes — not fixed here** | at 1080p it holds ~60 composites, so a longer loop is composed again every lap: found-defects row 310 |
 | VHS tape sound `set_targets` (`fx-video-tape/src/sound.rs:607-631`) | **yes — not fixed** | per chunk with curves: ~40 curve lookups, `Deck::new`, a cache drop, an FIR redesign when gap/spacing/bias are curved: row 311 |
