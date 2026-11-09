@@ -23,6 +23,7 @@
 //! crash-report <raw>`, a fresh process, to name the frames. `crash-probe` crashes on purpose, for
 //! the test of that path.
 
+mod firstframe;
 mod fxcost;
 mod showcase;
 mod wav;
@@ -405,6 +406,34 @@ fn probe_range(
     };
     println!("  audio build walked: {}", walks(&audio_walks));
     println!("  video build walked: {}", walks(&video_walks));
+    // what the NEXT build of the same project costs — the next consumer of an edit (2 audio + 2–3
+    // video builds), or an edit elsewhere: the compiled curves are kept by content
+    // (compiled-curves); beside it the same rebuild with the profile memo bypassed. Best of three,
+    // so a loaded machine shows the work rather than the queue.
+    let rebuild = || {
+        let mut best = [f64::INFINITY; 3];
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            drop(project.effective_clips());
+            let a = t.elapsed().as_secs_f64() * 1e3;
+            let t = std::time::Instant::now();
+            drop(AudioRenderer::new(project));
+            let b = t.elapsed().as_secs_f64() * 1e3;
+            let t = std::time::Instant::now();
+            drop(kt_engine::VideoRenderer::new(project));
+            let c = t.elapsed().as_secs_f64() * 1e3;
+            for (m, v) in best.iter_mut().zip([a, b, c]) {
+                *m = m.min(v);
+            }
+        }
+        best
+    };
+    let [ra, rb, rc] = rebuild();
+    let [na, nb, nc] = kt_model::without_profile_memo(rebuild);
+    println!(
+        "  rebuild of the unchanged project: effective_clips {ra:.1}, audio {rb:.1}, video {rc:.1} ms \
+         (recompiling every curve: {na:.1}, {nb:.1}, {nc:.1} ms)"
+    );
     println!("  sync_fx (FX processors): {sync_ms:.0} ms");
     println!("  clips with a time warp: {warped_file} in the file, {warped_eff} after layers");
 
@@ -1361,6 +1390,8 @@ fn run(args: &[String]) -> i32 {
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     kt_plugins_builtin::install();
     kt_plugin_api::compute::install(kt_gpu::compute::open);
+    // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
+    kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
         Some("ffmpeg") => {
             // the search report (media-index): what was loaded, what was rejected and why
@@ -1480,6 +1511,8 @@ fn run(args: &[String]) -> i32 {
         // README showcase (readme-showcase): a dense project cut from real
         // footage in a directory; media by absolute path, never copied
         Some("showcase") => showcase::run(args, force),
+        // what the first frame of each video effect costs against its warm frames (pipeline-prewarm)
+        Some("first-frame") => firstframe::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)
         Some("fx-cost") => {
             let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));

@@ -291,7 +291,9 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                 ),
                 leader,
             )
-            .with_tone(leader_tone, Some(leader_gate)),
+            .with_tone(leader_tone, Some(leader_gate))
+            // its frame runs this text on the compute device: named for the prewarm (pipeline-prewarm D6)
+            .with_shader(LEADER_SHADER),
         ),
         // the engineering tables (item 422): ONE kind, the sort is a field — part of the media
         // address and of the name, five rows of the creation menu

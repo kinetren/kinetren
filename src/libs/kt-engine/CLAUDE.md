@@ -345,3 +345,10 @@ a renderer counts it, or the load watch calls its work rest. The UI thread's aud
 a pause, the loop's pinned head) lives in `levels_probe` until the project version changes —
 `with_probe`; `set_loop_region` built a whole one per region change, 447 ms on the owner's project
 (t1875).
+
+## What a project reaches is warmed (pipeline-prewarm)
+
+`prewarm::effect_ids` walks clips, tracks, morpher patches and compositions (tags are `&'static str`: no
+allocation per element). The player hands the set to `VideoGpuExec::prewarm` and `prewarm::compute` when
+it changes (`set_project`), when an executor arrives (`set_video_gpu`, the slow-chain setter); an edit that
+keeps the set asks nothing (t2127). The export prewarms its devices and waits (`settle_prewarm`).

@@ -320,6 +320,18 @@ pub fn lfo_phase(
         / AUDIO_SAMPLE_RATE as f64
 }
 
+/// [`lfo_phase`] over the curve's prefix integral (compiled-curves): O(log points) per sample, the
+/// same bits.
+#[inline]
+pub fn lfo_phase_of(
+    base_hz: f64,
+    integral: &crate::curves::ParamIntegral,
+    tau: f64,
+    clip_len_frames: i64,
+) -> f64 {
+    integral.at(base_hz, tau) * clip_len_frames as f64 / AUDIO_SAMPLE_RATE as f64
+}
+
 /// Peak envelope with attack/release (per channel or on the stereo link —
 /// decided by the caller).
 #[derive(Debug, Clone, Copy)]

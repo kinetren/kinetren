@@ -15,6 +15,7 @@ pub mod fxstore;
 pub mod compose_queue;
 pub mod player;
 pub mod prefetch;
+pub mod prewarm;
 pub mod preview_bench;
 pub mod transitions;
 pub mod transport;

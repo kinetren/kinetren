@@ -10,14 +10,21 @@ pub mod memory;
 pub mod pass_time;
 pub mod reference;
 pub mod testkit;
+mod compiled;
 mod context;
+mod exit;
 mod engine;
+mod pipeline_cache;
 mod pool;
+mod warm;
 
 pub use context::{
     AdapterFact, DrivingCard, GpuContext, GpuInitError, adapter_facts, display_power_preference, driving_cards,
     instances_created, power_preference_for,
 };
+pub use compiled::{cold_draws, pipelines_in_frame};
+pub use exit::background_gpu_work;
+pub use pipeline_cache::set_cache_dir;
 pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
 /// Textures, buffers and pipelines the engine and the compute host created since the process
@@ -134,7 +141,7 @@ pub fn mean_lsb(a: &[u8], b: &[u8]) -> f64 {
 /// The export's GPU engine (export-throughput D5).
 pub fn export_engine() -> Result<std::sync::Arc<GpuFxEngine>, String> {
     let ctx = GpuContext::new_headless_for_export().map_err(|e| e.to_string())?;
-    GpuFxEngine::new(ctx).map_err(|e| e.to_string())
+    GpuFxEngine::new_for_export(ctx).map_err(|e| e.to_string())
 }
 
 /// The engine of the work that is neither the preview nor an export (effect thumbnails, reel strips,

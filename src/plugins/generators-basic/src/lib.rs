@@ -79,12 +79,12 @@ fn gradient(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
     let span = (hi - lo).max(1e-9);
     let colours = [color(&p[1..4]), color(&p[4..7]), [dx as f32, dy as f32, lo as f32, span as f32], [0.0; 4]];
-    shader_frame("generator:gradient", include_str!("wgsl/gradient.wgsl"), w, h, [0, 0], colours)
+    shader_frame("generator:gradient", GRADIENT, w, h, [0, 0], colours)
 }
 
 fn corners(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let c = [color(&p[0..3]), color(&p[3..6]), color(&p[6..9]), color(&p[9..12])];
-    shader_frame("generator:corners", include_str!("wgsl/corners.wgsl"), w, h, [0, 0], c)
+    shader_frame("generator:corners", CORNERS, w, h, [0, 0], c)
 }
 
 fn noise(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -94,7 +94,7 @@ fn noise(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
     // The full brightness range: "grey field".
     let seed = lowbias32(pts.0 as u32 ^ 0x9e37_79b9).rotate_left(11);
     let values = [[p[0] as f32, 0.0, 0.0, 0.0], [0.0; 4], [0.0; 4], [0.0; 4]];
-    shader_frame("generator:noise", include_str!("wgsl/noise.wgsl"), w, h, [seed, (p[1] >= 0.5) as u32], values)
+    shader_frame("generator:noise", NOISE, w, h, [seed, (p[1] >= 0.5) as u32], values)
 }
 
 fn shape_values(p: &[f64], a: [f64; 4], b: [f64; 2]) -> [[f32; 4]; 4] {
@@ -108,7 +108,7 @@ fn rect(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let (hx, hy) = (rw * fw / 2.0, rh * fh / 2.0);
     let rad = (radius * fh).clamp(0.0, hx.min(hy));
     let v = shape_values(p, [cx * fw, cy * fh, hx, hy], [rad, (feather * fh).max(1.0 / 256.0)]);
-    shader_frame("generator:rect", include_str!("wgsl/rect.wgsl"), w, h, [0, 0], v)
+    shader_frame("generator:rect", RECT, w, h, [0, 0], v)
 }
 
 fn ellipse(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -116,7 +116,7 @@ fn ellipse(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let (fw, fh) = (w.max(1) as f64, h.max(1) as f64);
     let (hx, hy) = ((rw * fw / 2.0).max(1.0 / 256.0), (rh * fh / 2.0).max(1.0 / 256.0));
     let v = shape_values(p, [cx * fw, cy * fh, hx, hy], [0.0, (feather * fh).max(1.0 / 256.0)]);
-    shader_frame("generator:ellipse", include_str!("wgsl/ellipse.wgsl"), w, h, [0, 0], v)
+    shader_frame("generator:ellipse", ELLIPSE, w, h, [0, 0], v)
 }
 
 fn line(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -124,7 +124,7 @@ fn line(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     let (fw, fh) = (w.max(1) as f64, h.max(1) as f64);
     let half = (thickness * fh / 2.0).max(1.0 / 256.0);
     let v = shape_values(p, [x1 * fw, y1 * fh, x2 * fw, y2 * fh], [half, (feather * fh).max(1.0 / 256.0)]);
-    shader_frame("generator:line", include_str!("wgsl/line.wgsl"), w, h, [0, 0], v)
+    shader_frame("generator:line", LINE, w, h, [0, 0], v)
 }
 
 fn transparent(_: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
@@ -147,14 +147,22 @@ fn shape_color(p: &[f64]) -> (u8, u8, u8, u8) {
 const AB_COLORS: &[(&str, &str)] = &[("a", "genw.color_a"), ("b", "genw.color_b")];
 const SHAPE_COLOR: &[(&str, &str)] = &[("color", "trn.color")];
 
+// the frame functions, the kinds' `with_shader` (pipeline-prewarm D6) and `SHADERS` read the same text
+const GRADIENT: &str = include_str!("wgsl/gradient.wgsl");
+const CORNERS: &str = include_str!("wgsl/corners.wgsl");
+const NOISE: &str = include_str!("wgsl/noise.wgsl");
+const RECT: &str = include_str!("wgsl/rect.wgsl");
+const ELLIPSE: &str = include_str!("wgsl/ellipse.wgsl");
+const LINE: &str = include_str!("wgsl/line.wgsl");
+
 /// The `pixel` texts of the family's shader kinds.
 pub const SHADERS: [&str; 6] = [
-    include_str!("wgsl/gradient.wgsl"),
-    include_str!("wgsl/corners.wgsl"),
-    include_str!("wgsl/noise.wgsl"),
-    include_str!("wgsl/rect.wgsl"),
-    include_str!("wgsl/ellipse.wgsl"),
-    include_str!("wgsl/line.wgsl"),
+    GRADIENT,
+    CORNERS,
+    NOISE,
+    RECT,
+    ELLIPSE,
+    LINE,
 ];
 
 /// The family's kinds, in `BUILTIN_IDS` order.
@@ -227,7 +235,8 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                 AB_COLORS,
             ),
             gradient,
-        )),
+        )
+        .with_shader(GRADIENT)),
         // a four-colour gradient across the corners (bilinear)
         Arc::new(kind(
             "corners",
@@ -252,7 +261,8 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                 ],
             ),
             corners,
-        )),
+        )
+        .with_shader(CORNERS)),
         // a checkerboard: the cell is given by a COUNT of columns (resolution-independent)
         Arc::new(kind(
             "checker",
@@ -277,7 +287,8 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
             vec![smooth("amount", 0.0, 1.0, 1.0, 0.01, ParamUnit::Norm), Row::Flag("mono", true)],
             decl(false, true, false, &[PathTok { key: "amt", val: PathVal::Num("amount") }, PathTok { key: "mono", val: PathVal::Flag0("mono") }], &[]),
             noise,
-        )),
+        )
+        .with_shader(NOISE)),
         // a TRANSPARENT backing (R.53, item 420): a frame of zeros — a placeholder on the track and
         // a matte blank; empty by meaning, so the bin card writes its name
         Arc::new(kind("transparent", "genkind.transparent", BG, Vec::new(), decl(true, false, true, &[], &[]), transparent)),
@@ -304,7 +315,8 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                 SHAPE_COLOR,
             ),
             rect,
-        )),
+        )
+        .with_shader(RECT)),
         // an ellipse (item 419): a kind of its own — no rounding, a merged kind would give a dead control
         Arc::new(kind(
             "ellipse",
@@ -326,7 +338,8 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                 SHAPE_COLOR,
             ),
             ellipse,
-        )),
+        )
+        .with_shader(ELLIPSE)),
         // a line segment (item 419): the ends, not a centre with dimensions
         Arc::new(kind(
             "line",
@@ -349,6 +362,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                 SHAPE_COLOR,
             ),
             line,
-        )),
+        )
+        .with_shader(LINE)),
     ]
 }

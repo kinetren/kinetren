@@ -189,6 +189,8 @@ pub struct Player {
     /// they are exclusively owned by the worker thread (invariant 5) — and the diff of
     /// “what changed” is needed here.
     gen_states: Mutex<HashMap<MediaId, kt_model::GenState>>,
+    /// The effect ids of the project last handed to the prewarm (pipeline-prewarm D5).
+    reach: Arc<Mutex<std::collections::BTreeSet<&'static str>>>,
     /// Graph cache for sample_levels_at (item 1): (version, renderer, store).
     levels_probe: Arc<Probe>,
     pub loop_stats: Arc<LoopStats>,
@@ -400,6 +402,7 @@ impl Player {
             content_version,
             worker_spawns,
             gen_states: Mutex::new(HashMap::new()),
+            reach: Arc::default(),
             loop_stats,
             levels_probe: Arc::new(Probe::default()),
             mix_coverage,
@@ -410,6 +413,7 @@ impl Player {
         // are derived from events, and the caller has nowhere to take them from
         let p = player.project.lock().unwrap().clone();
         player.sync_generators(&p);
+        player.prewarm_reach(&p);
         (player, consumer)
     }
 
@@ -420,7 +424,32 @@ impl Player {
         // accepts the project: the addresses are derived from events, and
         // the caller has nowhere to take them from.
         self.sync_generators(&p);
+        self.prewarm_reach(&p);
         self.wake_after_project_swap(p);
+    }
+
+    /// Hand the effects the project reaches to the executor's and the compute host's prewarm when
+    /// the set changed (pipeline-prewarm D5): an effect added compiles beside, before its first
+    /// frame. Both return at once; a project whose set did not change asks nothing.
+    fn prewarm_reach(&self, p: &Project) {
+        let ids = crate::prewarm::effect_ids(p);
+        {
+            let mut last = self.reach.lock().unwrap();
+            if *last == ids {
+                return;
+            }
+            *last = ids;
+        }
+        self.prewarm_now();
+    }
+
+    fn prewarm_now(&self) {
+        let ids: Vec<String> = self.reach.lock().unwrap().iter().map(|s| s.to_string()).collect();
+        let exec = self.video_gpu.lock().unwrap().exec.clone();
+        if let Some(e) = exec {
+            e.prewarm(&ids);
+        }
+        crate::prewarm::compute(&ids);
     }
 
     fn wake_after_project_swap(&self, p: Project) {
@@ -998,9 +1027,13 @@ impl Player {
     /// Injection of the video GPU executor (R.29). None — no picture.
     /// Clears the “poisoning” (a new engine = a new attempt).
     pub fn set_video_gpu(&self, exec: Option<Arc<dyn VideoGpuExec>>) {
-        let mut g = self.video_gpu.lock().unwrap();
-        g.exec = exec;
-        g.poisoned = None;
+        {
+            let mut g = self.video_gpu.lock().unwrap();
+            g.exec = exec;
+            g.poisoned = None;
+        }
+        // a new executor has warmed nothing of this project yet
+        self.prewarm_now();
     }
 
     /// Status of the video backend for the notice/performance panel.
@@ -1056,7 +1089,15 @@ impl Player {
     /// to a thread: building that device takes seconds.
     pub fn slow_gpu_setter(&self) -> impl FnOnce(Option<Arc<dyn VideoGpuExec>>) + Send + 'static {
         let composer = self.composer.clone();
-        move |exec| composer.set_slow(exec)
+        let reach = self.reach.clone();
+        move |exec| {
+            // the slow chains of this project compose there: warm them as on the main device
+            if let Some(e) = &exec {
+                let ids: Vec<String> = reach.lock().unwrap().iter().map(|s| s.to_string()).collect();
+                e.prewarm(&ids);
+            }
+            composer.set_slow(exec)
+        }
     }
 
     /// Compose the frame at `t` onto the executor's display target, without a readback

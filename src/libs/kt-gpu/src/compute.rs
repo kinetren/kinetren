@@ -5,12 +5,14 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use kt_plugin_api::compute::{ComputeHost, Init, Job};
+use kt_plugin_api::compute::{ComputeHost, Init, Job, Shader};
 
 /// One shader's pipeline; the layout follows from how many buffers a step binds.
 struct Pipe {
     pipe: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
+    /// Dispatched once already (by `prepare` or a job): a software rasterizer has compiled its code.
+    warm: std::sync::atomic::AtomicBool,
 }
 
 /// Timestamps of one job: a pair per dispatch; dispatches past the room run untimed.
@@ -34,6 +36,23 @@ pub struct ComputeDevice {
     stamps: Option<(wgpu::QuerySet, wgpu::Buffer)>,
     pipes: Mutex<HashMap<(String, usize, usize), Arc<Pipe>>>,
     pool: Mutex<Pool>,
+    /// The disk tier of its pipelines (pipeline-prewarm D7), where the device has one.
+    cache: Option<crate::pipeline_cache::DiskCache>,
+}
+
+/// What the compute host's disk-tier key takes from the shaders: every text the installed plugins
+/// declare (pipeline-prewarm D7).
+fn declared_hash() -> u64 {
+    let mut h = xxhash_rust::xxh3::Xxh3::new();
+    if let Some(reg) = kt_plugin_api::installed() {
+        for p in reg.plugins() {
+            for s in p.compute_shaders() {
+                h.update(s.text.as_bytes());
+                h.update(&[s.reads as u8, s.writes as u8]);
+            }
+        }
+    }
+    h.digest()
 }
 
 /// Open the device: what `kt_plugin_api::compute::install` takes.
@@ -42,6 +61,8 @@ pub fn open() -> Result<Arc<dyn ComputeHost>, String> {
 }
 
 pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
+    // the prewarm opens it on its own thread at a project's opening: the exit waits (pipeline-prewarm D10)
+    let _busy = crate::exit::busy().ok_or("the process is exiting")?;
     // the process's one instance and opening lock (segv-crashes): see `context::instance`
     let g = crate::context::opening();
     let instance = crate::context::instance(&g, wgpu::Backends::PRIMARY);
@@ -74,8 +95,17 @@ pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
         });
         (set, buf)
     });
-    let adapter = adapter.get_info().name;
-    Ok(Arc::new(ComputeDevice { device, queue, adapter, stamps, pipes: Mutex::new(HashMap::new()), pool: Mutex::default() }))
+    let info = adapter.get_info();
+    let cache = crate::pipeline_cache::DiskCache::open(&device, &info, "compute", declared_hash());
+    Ok(Arc::new(ComputeDevice {
+        device,
+        queue,
+        adapter: info.name,
+        stamps,
+        pipes: Mutex::new(HashMap::new()),
+        pool: Mutex::default(),
+        cache,
+    }))
 }
 
 impl ComputeDevice {
@@ -107,11 +137,12 @@ impl ComputeDevice {
         self.pool.lock().unwrap_or_else(|e| e.into_inner()).bytes
     }
 
-    fn pipe(&self, text: &str, reads: usize, writes: usize) -> Result<Arc<Pipe>, String> {
+    /// The pipeline of a text, and whether this call created it.
+    fn pipe(&self, text: &str, reads: usize, writes: usize) -> Result<(Arc<Pipe>, bool), String> {
         let mut pipes = self.pipes.lock().unwrap_or_else(|e| e.into_inner());
         let key = (text.to_string(), reads, writes);
         if let Some(p) = pipes.get(&key) {
-            return Ok(p.clone());
+            return Ok((p.clone(), false));
         }
         let d = &self.device;
         let entry = |binding: usize, ty| wgpu::BindGroupLayoutEntry {
@@ -144,25 +175,73 @@ impl ComputeDevice {
             module: &module,
             entry_point: Some("main"),
             compilation_options: Default::default(),
-            cache: None,
+            cache: self.cache.as_ref().map(|c| c.get()),
         });
         if let Some(e) = pollster::block_on(internal.pop()).or(pollster::block_on(validation.pop())) {
             return Err(format!("compute shader refused: {e}"));
         }
-        let p = Arc::new(Pipe { pipe, layout });
+        let p = Arc::new(Pipe { pipe, layout, warm: Default::default() });
         pipes.insert(key, p.clone());
-        Ok(p)
+        Ok((p, true))
     }
 }
 
 impl ComputeHost for ComputeDevice {
+    fn prepare(&self, shader: &Shader) -> Result<(), String> {
+        // on the compute-warm thread: the exit waits for it (pipeline-prewarm D10)
+        let _busy = crate::exit::busy().ok_or("the process is exiting")?;
+        let (p, _) = self.pipe(&shader.text, shader.reads, shader.writes)?;
+        if p.warm.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(());
+        }
+        // one workgroup over zero buffers: every size the shader reads from its uniform is 0. The
+        // uniform takes the largest binding a device must allow (a uniform may carry a table: the
+        // Datamosh residual's DCT basis)
+        let d = &self.device;
+        let zeros = |size: u64, usage| d.create_buffer(&wgpu::BufferDescriptor { label: Some("kt-gpu compute warm"), size, usage, mapped_at_creation: false });
+        let uniform = zeros(d.limits().max_uniform_buffer_binding_size.min(1 << 16), wgpu::BufferUsages::UNIFORM);
+        let bufs: Vec<wgpu::Buffer> = (0..shader.reads + shader.writes).map(|_| zeros(256, wgpu::BufferUsages::STORAGE)).collect();
+        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }];
+        entries.extend(bufs.iter().enumerate().map(|(i, b)| wgpu::BindGroupEntry { binding: i as u32 + 1, resource: b.as_entire_binding() }));
+        let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
+        let bind = d.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &p.layout, entries: &entries });
+        let mut enc = d.create_command_encoder(&Default::default());
+        {
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("kt-gpu compute warm"), timestamp_writes: None });
+            cp.set_pipeline(&p.pipe);
+            cp.set_bind_group(0, &bind, &[]);
+            cp.dispatch_workgroups(1, 1, 1);
+        }
+        self.queue.submit([enc.finish()]);
+        let refused = pollster::block_on(scope.pop());
+        d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        if let Some(e) = refused {
+            return Err(format!("compute warm-up refused: {e}"));
+        }
+        p.warm.store(true, std::sync::atomic::Ordering::Release);
+        if let Some(c) = &self.cache {
+            c.save();
+        }
+        Ok(())
+    }
+
     fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String> {
         let d = &self.device;
         let pipes = job
             .steps
             .iter()
-            .map(|s| self.pipe(s.shader, s.read.len(), s.write.len()))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|s| {
+                let (p, created) = self.pipe(s.shader, s.read.len(), s.write.len())?;
+                // a text no prewarm prepared compiles here, inside the frame (pipeline-prewarm D6)
+                if created {
+                    crate::compiled::in_frame();
+                }
+                if !p.warm.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    crate::compiled::cold_draw();
+                }
+                Ok(p)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
         let mut enc = d.create_command_encoder(&Default::default());

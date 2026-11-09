@@ -248,6 +248,10 @@ impl Plugin for Datamosh {
     fn stream(&self) -> Option<&dyn StreamKernel> {
         Some(self)
     }
+    fn compute_shaders(&self) -> Vec<kt_plugin_api::compute::Shader> {
+        // every step of the encoder and the decoder reads three buffers and writes one
+        codec::shaders().into_iter().map(|t| kt_plugin_api::compute::Shader { text: t.into(), reads: 3, writes: 1 }).collect()
+    }
 }
 
 impl StreamKernel for Datamosh {

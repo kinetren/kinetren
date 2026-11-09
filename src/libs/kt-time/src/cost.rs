@@ -29,11 +29,28 @@ pub enum Cost {
     CurveWalk,
     /// An event of a reel walked by a pass over the whole reel (resolve, layers, layout).
     ReelPass,
+    /// A formula text parsed (compiled-curves): a text is parsed once per text and evaluated
+    /// compiled; a parse per sample or per frame is the interpreter coming back.
+    FormulaParse,
+    /// A point of a speed profile sampled or laid out (compiled-curves): the profile is compiled once
+    /// per content and memoized, so a rebuild of an unchanged project samples none.
+    ProfileSample,
+    /// A segment walked by an integral reading that starts from the curve's beginning (an LFO phase
+    /// per sample before compiled-curves).
+    IntegralWalk,
 }
 
 impl Cost {
-    pub const ALL: [Cost; 5] =
-        [Cost::WarpSegment, Cost::ClipSearch, Cost::ReelHash, Cost::CurveWalk, Cost::ReelPass];
+    pub const ALL: [Cost; 8] = [
+        Cost::WarpSegment,
+        Cost::ClipSearch,
+        Cost::ReelHash,
+        Cost::CurveWalk,
+        Cost::ReelPass,
+        Cost::FormulaParse,
+        Cost::ProfileSample,
+        Cost::IntegralWalk,
+    ];
 
     pub const fn name(self) -> &'static str {
         match self {
@@ -42,6 +59,9 @@ impl Cost {
             Cost::ReelHash => "reel_hashes",
             Cost::CurveWalk => "curve_walks",
             Cost::ReelPass => "reel_passes",
+            Cost::FormulaParse => "formula_parses",
+            Cost::ProfileSample => "profile_samples",
+            Cost::IntegralWalk => "integral_walks",
         }
     }
 }

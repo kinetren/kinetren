@@ -120,6 +120,33 @@ is no picture, and an export refuses.
 - **Rank passes with the instrument, minima of repeats, interleaved A/B** (the machine is shared): llvmpipe
   compiles a pipeline variant at its first draw, so a run of two frames measures the compiler.
 
+## A frame never compiles (pipeline-prewarm)
+
+- **A software rasterizer compiles a pipeline at its first DRAW**, not at its creation: on an empty Mesa
+  cache the first composite took 10.5 s and Camera ISP's first frame 4.6 s, while creating every pipeline
+  took 1.9 s. Warming is a draw (`warm.rs`: one draw into a 6×6 target, zero uniforms), not a creation.
+- **The pipelines are a `Compiled`** (`compiled.rs`): layouts, pipes, warm flags, geometry shapes, the
+  disk cache and the warm worker (one thread, started by work, gone when the queue is empty — nothing at
+  rest). `GpuFxEngine::prewarm_effects` returns at once and is reachable without `inner`. A new pipe goes
+  into `Compiled` with a `Slot`, and its pass calls `self.c.drawn(slot)` before `set_pipeline`, or a cold
+  draw goes uncounted (t2120).
+- **A geometry shape never compiles in a frame**: `Compiled::shape` answers `None` until the worker has
+  compiled AND warmed it, and the frame runs the interpreter (t1766 holds the bytes). Tests that need a
+  shape call `settle()` first.
+- **A warm draw never stands in front of a frame**: lavapipe runs (and compiles) every submission of a
+  device on ONE queue thread. The worker submits one pipeline at a time after `wait_frames` (a new frame
+  entry point takes `self.compiled.frame()`), and a watched software device warms a shadow device first
+  (`open_shadow`: same adapter, its own queue; the driver's disk cache carries the code over). An export
+  (`new_for_export`) has no shadow: it settles before its first frame.
+- **`new_kept` only for the editor's display device**: `wgpu::Device` compares by its id inside its
+  instance, so a device of another instance can equal one of ours; every other engine compiles its own.
+- **Background GPU work holds the exit** (`exit.rs`, row 172, t2129): a thread of ours that compiles or
+  draws off a frame takes `crate::exit::busy()` (refused once the process exits) and checks
+  `exit::exiting()` between steps; an `atexit` hook waits for the guards, so libLLVM's destructors never
+  run under a compile. A new background GPU thread takes the guard too.
+- **The disk tier** (`pipeline_cache.rs`): every pipeline descriptor passes `cache`; the folder is set by
+  the program (`set_cache_dir`), never by a test. Lavapipe's blob is its 96-byte header.
+
 ## The export's readback ring (export-throughput D5)
 
 - `submit`/`collect` (`readback_depth` = `RING` = 3): the same resolve and passes as `execute`, the

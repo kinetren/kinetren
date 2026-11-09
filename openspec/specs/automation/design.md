@@ -180,3 +180,12 @@ Each refusal was read in the code for the reason it states, and whether the reas
 - **Decision**: leaders first (a depth-first post-order over the links), the leader by index once per curve; a link to the event's own other curve reads the event as it stood before its step, as the former pass snapshot did (t2067).
 
 The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.
+
+## Formulas compiled once per text (compiled-curves, 2026-11-09)
+
+- **What hurt**: a segment formula took a global lock, a text clone, a string-keyed lookup and a map of four allocated names per reading; layer and link formulas the map per frame.
+- **Decision**: `Formula::compile(vars)` — closures over numbered slots, sharing the operator and function bodies (`bin`, `call`) with the interpreter; interned segment formulas compiled once per text per thread (`ExprId::compiled`). The interpreter's bits and errors (t2100, t2101). Links resolve with compiled formulas and a cursor, and an event with nothing pending is not cloned (t2109); a stream stage applies its own slot (t2110).
+- **Rejected**: a bytecode with jumps (no gain over closures at formula sizes); Cranelift (nothing measured is bound by interpretation once the map and allocations are gone; engine-audit §3.3).
+- **Left**: the per-frame chain copy of an animated layer (row 168) and name-addressed curves on transitions, generators, cameras, masks (row 169).
+
+The class walked and the numbers: `openspec/changes/archive/2026-11-09-compiled-curves/design.md`.

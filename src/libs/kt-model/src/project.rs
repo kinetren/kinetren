@@ -4040,12 +4040,47 @@ impl ExprId {
         ExprId((v.len() - 1) as u32)
     }
 
+    /// The segment formula COMPILED over `SEGMENT_VARS` (compiled-curves); `None` — the text does
+    /// not parse (validation names it where it is typed; the segment reads as a straight line).
+    ///
+    /// Once per text per thread: the curve reads it per sample (a speed curve sampled every 5 ms, a
+    /// link per frame, a graph per pixel), and the former path locked the interner, cloned the text,
+    /// looked it up in a parse cache by string and built a map of four allocated names per reading.
+    /// The handle indexes a table that only grows, as the interner does.
+    pub fn compiled(self) -> Option<std::rc::Rc<crate::formula::Compiled>> {
+        thread_local! {
+            static COMPILED: std::cell::RefCell<Vec<Option<Option<std::rc::Rc<crate::formula::Compiled>>>>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+        let i = self.0 as usize;
+        if let Some(Some(f)) = COMPILED.with(|c| c.borrow().get(i).cloned()) {
+            return f;
+        }
+        let f = crate::formula::Formula::parse(&self.text())
+            .ok()
+            .map(|f| std::rc::Rc::new(f.compile(SEGMENT_VARS)));
+        COMPILED.with(|c| {
+            let mut c = c.borrow_mut();
+            if c.len() <= i {
+                c.resize(i + 1, None);
+            }
+            c[i] = Some(f.clone());
+        });
+        f
+    }
+
     /// The formula text.
     pub fn text(self) -> String {
         let m = EXPRS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
         let v = m.lock().unwrap_or_else(|e| e.into_inner());
         v.get(self.0 as usize).cloned().unwrap_or_default()
     }
+}
+
+/// The interner index of a segment formula — a key word of the profile memo (compiled-curves): one
+/// index per text for the life of the process, as long as the memo lives.
+pub(crate) fn expr_index(e: ExprId) -> u64 {
+    e.0 as u64
 }
 
 impl Serialize for ExprId {
@@ -4125,17 +4160,11 @@ impl SegShape {
                 let k = tension.clamp(0.0, 4.0).max(f64::MIN_POSITIVE);
                 a + (b - a) * (1.0 - (1.0 - s).fpowf(1.0 + k))
             }
-            SegShape::Formula { expr } => {
-                let mut vars = std::collections::BTreeMap::new();
-                vars.insert("s".to_string(), s);
-                vars.insert("a".to_string(), a);
-                vars.insert("b".to_string(), b);
-                vars.insert("t".to_string(), secs);
-                match crate::formula::cached(&expr.text()).and_then(|f| f.eval(&vars).ok()) {
-                    Some(v) => v,
-                    None => a + (b - a) * s,
-                }
-            }
+            // compiled once per text (compiled-curves): the slots are `SEGMENT_VARS` in order
+            SegShape::Formula { expr } => match expr.compiled().and_then(|f| f.eval(&[s, a, b, secs]).ok()) {
+                Some(v) => v,
+                None => a + (b - a) * s,
+            },
             SegShape::Zigzag { periods, amplitude, profile } => {
                 let (periods, amplitude, profile) = (*periods, *amplitude, *profile);
                 let base = a + (b - a) * s;
@@ -4558,6 +4587,13 @@ pub fn curve_value(keys: &[AutoKey], at: Tick) -> f64 {
     // quadratic in the keys. On sorted keys it is the segment the walk found, the same bits.
     let i = keys[1..].partition_point(|b| at > b.t);
     kt_time::cost::add(kt_time::cost::Cost::CurveWalk, (usize::BITS - keys.len().leading_zeros()) as u64);
+    segment_value(keys, i, at)
+}
+
+/// The value on segment `i` (the first whose right key reaches `at`) — ONE body for
+/// [`curve_value`] and [`CurveCursor`], so the two readings are the same bits.
+#[inline]
+fn segment_value(keys: &[AutoKey], i: usize, at: Tick) -> f64 {
     if let Some(b) = keys.get(i + 1) {
         let a = &keys[i];
         let span = (b.t.0 - a.t.0).max(1) as f64;
@@ -4567,6 +4603,46 @@ pub fn curve_value(keys: &[AutoKey], at: Tick) -> f64 {
         return a.shape.at_t(s, a.v, b.v, (at.0 - a.t.0) as f64 / 90_000.0);
     }
     keys.last().unwrap().v
+}
+
+/// A reader of one curve at NON-DECREASING positions (compiled-curves): the sampling of a shaped
+/// speed curve on its 5 ms grid and the resolution of a link or a formula on the frame grid read a
+/// curve point after point, and each reading halved the whole key list again. The cursor keeps the
+/// segment and steps forward, so a sweep costs the keys plus the points. A position that goes back
+/// is found by halving again; any position gives [`curve_value`]'s bits (the same segment, the same
+/// [`segment_value`]).
+#[derive(Debug, Clone)]
+pub struct CurveCursor<'a> {
+    keys: &'a [AutoKey],
+    /// every key in `keys[1..=i]` lies strictly before the last position read
+    i: usize,
+}
+
+impl<'a> CurveCursor<'a> {
+    pub fn new(keys: &'a [AutoKey]) -> CurveCursor<'a> {
+        CurveCursor { keys, i: 0 }
+    }
+
+    /// [`curve_value`] at `at`.
+    pub fn value(&mut self, at: Tick) -> f64 {
+        let keys = self.keys;
+        let Some(first) = keys.first() else { return 0.0 };
+        if at <= first.t {
+            return first.v;
+        }
+        if self.i >= 1 && at <= keys[self.i].t {
+            // went back: find it again
+            self.i = keys[1..].partition_point(|b| at > b.t);
+            kt_time::cost::add(kt_time::cost::Cost::CurveWalk, (usize::BITS - keys.len().leading_zeros()) as u64);
+        } else {
+            let from = self.i;
+            while self.i + 1 < keys.len() && at > keys[self.i + 1].t {
+                self.i += 1;
+            }
+            kt_time::cost::add(kt_time::cost::Cost::CurveWalk, (self.i - from) as u64 + 1);
+        }
+        segment_value(keys, self.i, at)
+    }
 }
 
 /// Apply the slot's curves to an effect at the material position `at`.

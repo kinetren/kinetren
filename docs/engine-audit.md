@@ -262,8 +262,8 @@ audio kernels, and −25 % on one GPU simulation.
 | preview D2: premultiply into a new allocation each frame | (part of 11–17 ms) | closed |
 | gpu-pass-cost: no resource after warm-up (t2023); pass timer buffers grew with device lag (t2025) | — | closed |
 | row 138: a bind group and a uniform write per pass on the composing thread | ≈ µs a pass (CPU) | **open** |
-| row 139: a new geometry shape compiles its pipeline inside the frame | a hitch; llvmpipe `glow:resample` 2 s at its first draw | **open** |
-| row 64: the first Datamosh frame — device open + shader compile, no disk cache | 6.6 s under load; 62–209 ms open + 247–690 ms intra with an empty Mesa cache | **open** |
+| row 139: a new geometry shape compiles its pipeline inside the frame | a hitch; llvmpipe `glow:resample` 2 s at its first draw | closed: the interpreter runs the frame, the shape compiles beside (pipeline-prewarm, t2121) |
+| row 64: the first Datamosh frame — device open + shader compile, no disk cache | 6.6 s under load; 62–209 ms open + 247–690 ms intra with an empty Mesa cache | closed: prewarm at project open, compute shaders named and prepared (pipeline-prewarm, t2120, t2122) |
 | export memory: glibc's dynamic mmap threshold | 16.2 / 14.9 GB → 7.3 GB | closed (t1458) |
 | cached-range-plays D6: nest streams per placement | the test process reached 55 GB; 1.3 GB a second → 172 MB | closed (t1937) |
 | row 96: upload makes two copies | ~12 ms a frame (software device) | **open** |

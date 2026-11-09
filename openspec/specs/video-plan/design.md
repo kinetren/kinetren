@@ -351,3 +351,37 @@ host asks `Backends::PRIMARY` (no GL), `new_d3d12` DX12, `adapter_facts` only en
 opening lock, the preview's device is eframe's own instance; every other headless device goes
 through `headless_with`. Windows' GL (WGL) shares the same way and takes the same branch. t2088.
 
+
+## A frame never compiles (pipeline-prewarm, 2026-11-09)
+
+The mechanism: code for the GPU compiled at its first use, inside a frame (or a UI frame). The walk
+(full table in `openspec/changes/archive/2026-11-09-pipeline-prewarm/design.md` D1): the engine's fixed,
+plugin and barrier pipes (created at build, their CODE compiled by a software rasterizer at the first
+DRAW — the 10.5 s first composite), the display/glow pass, the geometry shapes (created inside the
+frame, row 139), the editor's engine (built on the UI thread at every project open), the offline and
+export devices, the compute host's device and pipes (row 64), every device's `cache: None`.
+
+- **Warming is a draw, not a creation**; what a project reaches is warmed by the device's worker when
+  the set of effects changes, never at rest.
+- **A warm draw never stands in front of a frame**: lavapipe runs and compiles every submission of a
+  device on one queue thread. The first version drew the warm-up in one submission and the showcase's
+  first moment waited behind it (16.0 s against 12.8 s). One pipeline per submission after the frames,
+  and a shadow device of the same adapter on Vulkan whose compiles reach the watched device through
+  the driver's disk cache.
+- **A geometry shape is never predicted**: it follows from values and sizes only the plan knows; the
+  interpreter (same bytes, t1766) runs the frames until its own pipeline is warm.
+- **`wgpu::Device` equality is per instance**: only the editor's display device keeps its pipelines
+  for the process (`new_kept`); a device of another instance can compare equal.
+- **The disk tier is speed only** (t2125); lavapipe's blob is its 96-byte header.
+- **Background GPU work holds the exit** (row 172, D10 of the change in spirit): gpu-render-hardening D6
+  says nothing may be on the device when the process exits — `exit` runs libLLVM's destructors under
+  llvmpipe's threads. The frames are synchronous and `on_exit` parks the offline engine, but the warm
+  worker, its shadow, `compute-warm` and the engine built on a thread are not: two kt-app tests slowed by a
+  loaded full run returned while a warm-up compiled and died by SIGSEGV after "ok". `kt_gpu::exit`: such
+  work holds a `Busy` guard; the first guard registers an `atexit` hook that stops the queues (the worker
+  drops its queue, `wait_frames` gives up) and waits for the guards. The worker warms one pipeline a
+  submission on the shadow too, so the exit waits for one draw, not a batch. Walked: the worker (guard for
+  its whole run, the shadow dropped first), the shadow's compiles, `Compiled::compile` (the editor's
+  `engine-build`, `offline-engine`, the shadow), the compute host's `open_device` and `prepare`
+  (`compute-warm`); the frame paths are synchronous and stay as D6 left them. t2129 reproduces it: 1 of
+  3 child exits died by SIGSEGV with the hook off, 9 of 9 clean with it.
