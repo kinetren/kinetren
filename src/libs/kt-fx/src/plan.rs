@@ -42,6 +42,11 @@ pub enum PlanOp {
     Run { i: usize, j: usize, exec: GeomExec },
     /// Barrier effect `fx[idx]` at the `res_scale`× resolution (item 314).
     Barrier { idx: usize, res_scale: u32 },
+    /// A RUN of point-wise stages `fx[i..j)` at a barrier position (fused-pointwise-runs): two or
+    /// more stages that fuse in runs (`fuses_in_runs`), the transparent slots between them included.
+    /// The executor runs it as one generated pass; `res_scale` is what its first stage had as a
+    /// barrier (every stage of a run gets the same K: no run or stop stands between them).
+    PointRun { i: usize, j: usize, res_scale: u32 },
     /// Snapshot of the dry side of the layer strength (position from `stops`).
     Snapshot,
     /// Strength slot `fx[idx]` (LayerMix): the executor mixes the snapshot with the
@@ -109,8 +114,79 @@ fn legacy_lens(step: &FxInstance, lw: u32, lh: u32, out_w: u32, out_h: u32, u: f
 enum RawKind {
     Run { i: usize, j: usize, exec: GeomExec, lens: (f64, f64) },
     Barrier { idx: usize },
+    PointRun { i: usize, j: usize },
     Snapshot,
     Mix { idx: usize },
+}
+
+/// Whether the stage fuses into a point-wise run (fused-pointwise-runs): the plugin contract's answer,
+/// `kt_plugin_api::fuses_in_runs` — never guessed from a kind.
+pub fn fuses_in_runs(f: &FxInstance) -> bool {
+    match f {
+        FxInstance::Plugin(slot) => slot.plugin().is_some_and(|p| kt_plugin_api::fuses_in_runs(p.as_ref())),
+        _ => false,
+    }
+}
+
+/// A slot a point-wise run passes through: audio, a stream stage (a source stage the planner never
+/// executes) and an identity “Geometry” node, as a geometry window does.
+fn run_transparent(f: &FxInstance, lead: Option<LeadCtx>, out_w: u32, out_h: u32) -> bool {
+    f.is_audio() || f.is_stream() || (is_geo(f) && !is_geo_active(f, lead, out_w, out_h))
+}
+
+/// The end of a point-wise run started at the fusable stage `i` and how many fusable stages it holds:
+/// fusable stages and transparent slots, ended by any other stage or a stop; trailing transparent
+/// slots are left out (they stay where they were).
+fn point_run_end(fx: &[FxInstance], i: usize, stops: &[usize], lead: Option<LeadCtx>, out_w: u32, out_h: u32) -> (usize, usize) {
+    let (mut j, mut end, mut n) = (i, i, 0usize);
+    while j < fx.len() {
+        if j > i && stops.contains(&j) {
+            break;
+        }
+        let f = &fx[j];
+        if fuses_in_runs(f) {
+            n += 1;
+            j += 1;
+            end = j;
+        } else if run_transparent(f, lead, out_w, out_h) {
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    (end, n)
+}
+
+/// The point-wise runs a chain holds when nothing else is known (fused-pointwise-runs): the plugin
+/// ids of each run of two or more fusable stages, ended by every other stage and every strength
+/// slot's snapshot point. What the player hands the executor to prewarm; a run the plan cuts
+/// otherwise (a mask point, a geometry series that absorbs the stages) compiles when a frame meets it.
+pub fn run_shapes(fx: &[FxInstance]) -> Vec<Vec<&'static str>> {
+    let stops: Vec<usize> = fx
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f {
+            FxInstance::LayerMix { from, .. } => Some((*from as usize).min(i)),
+            _ => None,
+        })
+        .collect();
+    let geo_ahead = |k: usize| fx[k..].iter().any(|g| is_geo_active(g, None, 2, 2));
+    let mut out = Vec::new();
+    let mut k = 0;
+    while k < fx.len() {
+        // a stage between two geometry steps is absorbed into their series (`run_window_end`)
+        let absorbed = fx[..k].iter().any(|g| is_geo_active(g, None, 2, 2)) && geo_ahead(k);
+        if fuses_in_runs(&fx[k]) && !absorbed {
+            let (end, n) = point_run_end(fx, k, &stops, None, 2, 2);
+            if n >= 2 {
+                out.push(fx[k..end].iter().filter(|f| fuses_in_runs(f)).map(|f| f.tag()).collect());
+            }
+            k = end.max(k + 1);
+        } else {
+            k += 1;
+        }
+    }
+    out
 }
 
 /// Phase A: segmentation of the chain and the 1× program (items 311-312). `in_w/in_h` are
@@ -199,6 +275,15 @@ fn segment(
             idx = j;
             continue;
         }
+        if fuses_in_runs(f) {
+            // two or more fusable point-wise stages: one generated pass (fused-pointwise-runs)
+            let (end, n) = point_run_end(fx, idx, stops, lead, out_w, out_h);
+            if n >= 2 {
+                raw.push(RawKind::PointRun { i: idx, j: end });
+                idx = end;
+                continue;
+            }
+        }
         if f.is_layer_mix() {
             raw.push(RawKind::Mix { idx });
         } else if !f.is_audio() && !f.is_stream() && !is_geo(f) {
@@ -222,7 +307,7 @@ fn tail_zooms(raw: &[RawKind]) -> (Vec<(f64, f64)>, (f64, f64)) {
                 tm.0 *= 1.0 / lens.0.max(1e-9);
                 tm.1 *= 1.0 / lens.1.max(1e-9);
             }
-            RawKind::Barrier { .. } => tail[ri] = tm,
+            RawKind::Barrier { .. } | RawKind::PointRun { .. } => tail[ri] = tm,
             RawKind::Snapshot | RawKind::Mix { .. } => tm = (1.0, 1.0),
         }
     }
@@ -335,7 +420,7 @@ pub fn plan_chain_in(
                 sq.0 *= lens.0;
                 sq.1 *= lens.1;
             }
-            RawKind::Barrier { .. } => {
+            RawKind::Barrier { .. } | RawKind::PointRun { .. } => {
                 if resampled {
                     let benefit = tail[ri].0.max(tail[ri].1).min(sq.0.max(sq.1));
                     kmap[ri] = ss_taps(benefit).min(k_cap);
@@ -361,6 +446,7 @@ pub fn plan_chain_in(
             .map(|r| match r {
                 RawKind::Run { i, j, exec, .. } => PlanOp::Run { i, j, exec },
                 RawKind::Barrier { idx } => PlanOp::Barrier { idx, res_scale: 1 },
+                RawKind::PointRun { i, j } => PlanOp::PointRun { i, j, res_scale: 1 },
                 RawKind::Snapshot => PlanOp::Snapshot,
                 RawKind::Mix { idx } => PlanOp::Mix { idx },
             })
@@ -376,7 +462,7 @@ pub fn plan_chain_in(
                 // run target: K of the next barrier; the budget cut, the stop and
                 // the end of the chain — 1×
                 let k_out = match raw.get(ri + 1) {
-                    Some(RawKind::Barrier { .. }) => kmap[ri + 1],
+                    Some(RawKind::Barrier { .. } | RawKind::PointRun { .. }) => kmap[ri + 1],
                     _ => 1,
                 };
                 let steps: Vec<&FxInstance> = fx[*i..*j]
@@ -413,6 +499,10 @@ pub fn plan_chain_in(
             RawKind::Barrier { idx } => {
                 debug_assert_eq!(cur_k, kmap[ri], "barrier not at its segment resolution");
                 ops.push(PlanOp::Barrier { idx: *idx, res_scale: kmap[ri] });
+            }
+            RawKind::PointRun { i, j } => {
+                debug_assert_eq!(cur_k, kmap[ri], "point run not at its segment resolution");
+                ops.push(PlanOp::PointRun { i: *i, j: *j, res_scale: kmap[ri] });
             }
             RawKind::Snapshot => {
                 debug_assert_eq!(cur_k, 1, "layer-mix snapshot must be 1x");

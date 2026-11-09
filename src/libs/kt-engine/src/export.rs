@@ -575,8 +575,10 @@ pub fn export_mp4_with_backends(
     {
         let ids: Vec<String> = crate::prewarm::effect_ids(project).into_iter().map(String::from).collect();
         let execs: Vec<&Arc<dyn VideoGpuExec>> = backends.video_gpu.iter().chain(&backends.video_gpu_more).collect();
+        let runs = crate::prewarm::run_list(&crate::prewarm::run_shapes(project));
         for e in &execs {
             e.prewarm(&ids);
+            e.prewarm_runs(&runs);
         }
         crate::prewarm::compute(&ids);
         for e in &execs {

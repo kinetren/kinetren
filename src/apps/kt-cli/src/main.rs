@@ -26,6 +26,7 @@
 mod editcost;
 mod firstframe;
 mod fxcost;
+mod fusecost;
 mod showcase;
 mod trace_query;
 mod wav;
@@ -1526,6 +1527,8 @@ fn run(args: &[String]) -> i32 {
         Some("showcase") => showcase::run(args, force),
         // what the first frame of each video effect costs against its warm frames (pipeline-prewarm)
         Some("first-frame") => firstframe::run(args),
+        // a chain of point-wise effects fused against unfused (fused-pointwise-runs)
+        Some("fuse-cost") => fusecost::run(args),
         Some("trace") => trace_query::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)
         Some("fx-cost") => {

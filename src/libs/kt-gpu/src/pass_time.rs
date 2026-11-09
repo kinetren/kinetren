@@ -36,6 +36,8 @@ pub(crate) enum PassLabel {
     Plugin(usize),
     /// A host node inside a barrier plugin's graph: the plugin's index among the barriers, the node.
     Host(usize, &'static str),
+    /// A point-wise run's generated pass (fused-pointwise-runs): how many stages it holds.
+    Run(usize),
 }
 
 /// A frame's facts beside its passes.
@@ -50,6 +52,8 @@ pub(crate) struct FrameMeta {
 struct Pending {
     buf: wgpu::Buffer,
     labels: Vec<PassLabel>,
+    /// The passes of trying run shapes: (label index, probe).
+    probes: Vec<(u32, crate::runs::Probe)>,
     untimed: u32,
     role: Role,
     meta: FrameMeta,
@@ -67,6 +71,9 @@ pub(crate) struct Timer {
     names: Vec<String>,
     owners: Vec<String>,
     labels: Vec<PassLabel>,
+    /// The next pass belongs to a trying run shape (`probe`), and the probed passes of this frame.
+    probe_next: Option<crate::runs::Probe>,
+    probes: Vec<(u32, crate::runs::Probe)>,
     untimed: u32,
     free: Vec<wgpu::Buffer>,
     pending: VecDeque<Pending>,
@@ -114,6 +121,8 @@ impl Timer {
             names,
             owners,
             labels: Vec::new(),
+            probe_next: None,
+            probes: Vec::new(),
             untimed: 0,
             free,
             pending: VecDeque::new(),
@@ -124,13 +133,24 @@ impl Timer {
     /// A new frame begins encoding.
     pub fn begin(&mut self) {
         self.labels.clear();
+        self.probes.clear();
         self.untimed = 0;
         self.on = self.set.is_some() && self.pending.len() < PENDING_MAX;
     }
 
+    /// The next pass is a trying run shape's (fused-pointwise-runs): its time comes back from
+    /// `harvest` as a sample for the shape's trial.
+    pub fn probe(&mut self, p: crate::runs::Probe) {
+        self.probe_next = Some(p);
+    }
+
     /// The timestamp writes of the next pass, or `None` (no timestamps, no room).
     pub fn pass(&mut self, label: PassLabel) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        let probe = self.probe_next.take();
         let i = self.slot(label)?;
+        if let Some(p) = probe {
+            self.probes.push((i, p));
+        }
         Some(wgpu::RenderPassTimestampWrites {
             query_set: self.set.as_ref()?,
             beginning_of_pass_write_index: Some(2 * i),
@@ -162,6 +182,7 @@ impl Timer {
         // `begin` timed the frame only with fewer than PENDING_MAX waiting: a buffer is free
         let Some(buf) = self.free.pop() else {
             self.labels.clear();
+            self.probes.clear();
             return;
         };
         let n = self.labels.len() as u32 * 2;
@@ -170,6 +191,7 @@ impl Timer {
         self.pending.push_back(Pending {
             buf,
             labels: std::mem::take(&mut self.labels),
+            probes: std::mem::take(&mut self.probes),
             untimed: self.untimed,
             role,
             meta,
@@ -203,7 +225,8 @@ impl Timer {
     /// The frames whose timestamps are back, oldest first, into the process-wide sum. Never waits:
     /// a non-blocking poll runs the callbacks of maps that finished (the preview never waits on its
     /// own, so without it a map would wait for someone else's submit).
-    pub fn harvest(&mut self, device: &wgpu::Device) {
+    pub fn harvest(&mut self, device: &wgpu::Device) -> Vec<crate::runs::Sample> {
+        let mut samples = Vec::new();
         if self.pending.iter().any(|p| p.state.is_some()) {
             let _ = device.poll(wgpu::PollType::Poll);
         }
@@ -225,6 +248,14 @@ impl Timer {
                     continue;
                 }
                 let ns = |t: u64| (t as f64 * self.period_ns) as u64;
+                if !p.probes.is_empty() {
+                    let timed: Vec<(crate::runs::Probe, u64)> = p
+                        .probes
+                        .iter()
+                        .map(|&(i, pr)| (pr, ns(ticks[2 * i as usize + 1].saturating_sub(ticks[2 * i as usize]))))
+                        .collect();
+                    samples.extend(crate::runs::pieces(&timed));
+                }
                 let passes: Vec<(String, u64)> = p
                     .labels
                     .iter()
@@ -249,12 +280,14 @@ impl Timer {
             }
             self.free.push(p.buf);
         }
+        samples
     }
 
     fn name(&self, l: PassLabel) -> String {
         match l {
             PassLabel::Fixed(s) => s.to_string(),
             PassLabel::Plugin(i) => self.names.get(i).cloned().unwrap_or_else(|| format!("plugin {i}")),
+            PassLabel::Run(n) => format!("pointwise:run{n}"),
             PassLabel::Host(owner, node) => {
                 format!("{}:{node}", self.owners.get(owner).map_or("plugin", String::as_str))
             }

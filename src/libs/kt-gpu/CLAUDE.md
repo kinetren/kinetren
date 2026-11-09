@@ -153,6 +153,23 @@ is no picture, and an export refuses.
 - **The disk tier** (`pipeline_cache.rs`): every pipeline descriptor passes `cache`; the folder is set by
   the program (`set_cache_dir`), never by a test. Lavapipe's blob is its 96-byte header.
 
+## Point-wise runs (fused-pointwise-runs)
+
+- **A `PlanOp::PointRun` is ONE generated pass** (`runs.rs`): the stages' `tap_<id>` texts pasted
+  into a text built per run SHAPE (the stages' indices in `plugin_taps()`), on the geometry pass's
+  layout (1024-byte uniform, two vec4 a stage: 32 stages a piece, `MAX_RUN_STAGES`). Each stage is
+  rounded and clamped as its own pass stores it, so fused and unfused are the same bytes (t2190); keep
+  that rounding — it is what lets the trial switch forms at run time without moving a kept or exported
+  frame (invariant 11), and posterize would move a whole level without it.
+- **`FxOp::TapRun.pieces` is decided before the arena is sized** (`Inner::bind_runs`, in
+  `resolve_chain`): `passes`/`slot_units` read the pieces, so the slot count stays exact. A shape is a
+  `Compiled` run shape like a geometry shape: pending → its parts (the frame never compiles), warm →
+  the trial (`runs::Trial`: interleaved forms, the pass timer's `probe`, minima of five; slower fused
+  → split in halves, each tried; no timestamps → fused). `fuse_runs(FuseRuns::{Always, Never})` forces
+  a form for tests and `kt-cli fuse-cost`. t2190, t2192, t2193, t2197.
+- A new point-wise plugin needs no code here: `fuses_in_runs` (kt-plugin-api) admits it, and its
+  `tap_<id>` must read only its arguments (the registry refuses a texture or `P` read, t2194).
+
 ## The export's readback ring (export-throughput D5)
 
 - `submit`/`collect` (`readback_depth` = `RING` = 3): the same resolve and passes as `execute`, the

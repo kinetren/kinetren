@@ -339,6 +339,10 @@ pub trait VideoGpuExec: Send + Sync {
     /// first frame does not (pipeline-prewarm D5). Returns at once and never waits for a frame;
     /// frames before it is done behave as before it was asked.
     fn prewarm(&self, _ids: &[String]) {}
+    /// Compile, off the caller's thread, the point-wise run shapes a project reaches (plugin ids in
+    /// chain order, fused-pointwise-runs), so a run's first frame runs its generated pass. Returns at
+    /// once; until a shape is ready its frames run the stages' own passes (the same bytes).
+    fn prewarm_runs(&self, _runs: &[Vec<String>]) {}
     /// Wait until what `prewarm` started is done (an export before its first frame).
     fn settle_prewarm(&self) {}
 }
