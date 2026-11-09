@@ -121,4 +121,28 @@ differently compiles when a frame meets it.
 
 ## D-measure
 
-(filled after the release measurements)
+`kt-cli fuse-cost`, release, llvmpipe 20.1.2 (Vulkan, 256-bit), 1920×1080, the colour family in turn
+at a third of each row's range, 7 interleaved blocks of 4 frames a form, minima; load average 10.9 on
+a shared machine. "Chain" is the device time of the chain's passes from the pass timer; "frame" the
+wall time of a frame with its upload, the composite and the readback.
+
+| stages | bytes moved by the chain, unfused → fused | chain, device ms | frame, ms | same bytes |
+|---|---|---|---|---|
+| 2 | 33.2 → 16.6 MB | 3.11 → 1.77 | 5.8 → 4.1 | yes |
+| 3 | 49.8 → 16.6 MB | 4.72 → 1.81 | 7.9 → 4.4 | yes |
+| 4 | 66.4 → 16.6 MB | 7.22 → 2.33 | 10.9 → 5.5 | yes |
+| 5 | 83.0 → 16.6 MB | 7.47 → 2.05 | 10.1 → 4.4 | yes |
+| 6 | 99.5 → 16.6 MB | 9.30 → 2.22 | 12.6 → 4.8 | yes |
+
+A fused pass costs about what ONE own pass costs (1.8–2.3 ms whatever k): on llvmpipe these stages
+are bound by the frame's trip through memory, not by their arithmetic, so the audit's guess of
+"(k − 1) × 2 ms" holds (k = 6: 7.1 ms saved). The bytes are device-independent: k × 8 B/px → 8 B/px.
+On llvmpipe the trial kept every shape fused (t2192 decided after 10 frames; no split).
+
+**The heavy showcase** (`kt-cli showcase --heavy`, the footage in /dev/shm): its chains are
+VHS Tape, Camera ISP, Slowed+Reverb, blurs and glows; it holds ONE point-wise run (Posterize →
+Vignette, one event at 62.4 s). `kt-cli preview heavy.kt 62.4 67.4`, A/B by `KT_FUSE_RUNS`, two runs
+each: a frame there costs 1059–1073 ms of device time, of which Camera ISP and VHS Tape take ~95 %;
+V-fps 0.2 either way. The run's two passes are 4.3–5.7 ms of it — the change cannot be seen on this
+project, and the measurement says so instead of claiming a gain. (Only two frames of the range were
+composed, both before the shape was warm, so both forms ran the parts there.)

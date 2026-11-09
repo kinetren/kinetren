@@ -166,7 +166,8 @@ is no picture, and an export refuses.
   `Compiled` run shape like a geometry shape: pending → its parts (the frame never compiles), warm →
   the trial (`runs::Trial`: interleaved forms, the pass timer's `probe`, minima of five; slower fused
   → split in halves, each tried; no timestamps → fused). `fuse_runs(FuseRuns::{Always, Never})` forces
-  a form for tests and `kt-cli fuse-cost`. t2190, t2192, t2193, t2197.
+  a form for tests and `kt-cli fuse-cost`; `KT_FUSE_RUNS=never|always` sets an engine's mode at its
+  creation, for an A/B of a project through `kt-cli preview`/`pause-scan`. t2190, t2192, t2193, t2197.
 - A new point-wise plugin needs no code here: `fuses_in_runs` (kt-plugin-api) admits it, and its
   `tap_<id>` must read only its arguments (the registry refuses a texture or `P` read, t2194).
 

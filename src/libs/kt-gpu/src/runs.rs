@@ -70,6 +70,18 @@ pub enum FuseRuns {
     Never,
 }
 
+impl FuseRuns {
+    /// An engine's mode at its creation: `KT_FUSE_RUNS=never|always` for an A/B measurement of a
+    /// project (`kt-cli preview`, `pause-scan`), else the trial.
+    pub fn from_env() -> FuseRuns {
+        match std::env::var("KT_FUSE_RUNS").as_deref() {
+            Ok("never") => FuseRuns::Never,
+            Ok("always") => FuseRuns::Always,
+            _ => FuseRuns::Measured,
+        }
+    }
+}
+
 /// One stage of a run as the executor holds it: its own pass's index in `plugin_taps()` and the eight
 /// numbers that pass reads (`P.f0`, `P.f1`); a positioned stage reads the pass's size in `b.zw`.
 #[derive(Clone, Copy, Debug)]

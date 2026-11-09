@@ -1252,7 +1252,7 @@ impl GpuFxEngine {
                 queue,
                 c,
                 geom_interpret: false,
-                fuse: crate::runs::FuseRuns::Measured,
+                fuse: crate::runs::FuseRuns::from_env(),
                 run_serial: 0,
                 arena,
                 arena_slots,

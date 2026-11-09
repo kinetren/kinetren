@@ -93,8 +93,9 @@ pub fn run(args: &[String]) -> i32 {
                     passes = cost.passes;
                 }
                 let wall = t.elapsed().as_secs_f64() * 1e3 / per as f64;
-                // one plain frame collects the block's timestamps
-                engine.park();
+                // one plain frame collects the block's timestamps: its readback waits for the device,
+                // and the harvest after it reads the maps that came back
+                let _ = engine.execute_measured(&plain, &mut Vec::new());
                 let _ = engine.execute_measured(&plain, &mut Vec::new());
                 let dev = kt_gpu::pass_time::take().map_or(f64::NAN, |s| {
                     let chain: u64 =
@@ -109,15 +110,16 @@ pub fn run(args: &[String]) -> i32 {
             }
         }
         engine.fuse_runs(FuseRuns::Measured);
-        // the chain's passes each read and write the frame: 8 bytes a pixel (the composite apart)
-        let mb = |passes: u32| (passes - 1) as f64 * 8.0 * px / 1e6;
+        // the chain's passes (`FrameCost.passes`, the composite apart) each read and write the frame:
+        // 8 bytes a pixel
+        let mb = |passes: u32| passes as f64 * 8.0 * px / 1e6;
         println!(
             "{k} stages: unfused {} passes {:.1} MB, chain {:.2} ms device, frame {:.1} ms | fused {} passes {:.1} MB, chain {:.2} ms device, frame {:.1} ms | same bytes: {}",
-            best[0].2 - 1,
+            best[0].2,
             mb(best[0].2),
             best[0].0 / 1e6,
             best[0].1,
-            best[1].2 - 1,
+            best[1].2,
             mb(best[1].2),
             best[1].0 / 1e6,
             best[1].1,
