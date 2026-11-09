@@ -51,6 +51,8 @@ NO_WAKE_THREADS = (
     "prefetch", "audio-render", "engine-build", "sched-", "index-service", "media-watchdog", "thumbs",
     "fxthumbs", "kt-posters", "preview-compose", "trace-writer",
 )
+# the audio output (cpal's ALSA worker, PipeWire's data loop) hands out silence on a pause: its
+# wakes are printed, not judged (found-defects row 274)
 
 
 def editor_pid(app):

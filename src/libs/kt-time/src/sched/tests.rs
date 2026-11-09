@@ -17,7 +17,7 @@ static VOTES: Mutex<()> = Mutex::new(());
 /// classes are taken in priority order when the pool is held.
 #[test]
 fn t2230_lanes_are_fifo_one_at_a_time_and_classes_run_in_order() {
-    let lane = Lane::new("t2230:fifo", Class::Answer);
+    let lane = Lane::open("t2230:fifo", Class::Answer);
     let order = Arc::new(Mutex::new(Vec::new()));
     let inflight = Arc::new(AtomicUsize::new(0));
     let most = Arc::new(AtomicUsize::new(0));
@@ -64,7 +64,7 @@ fn t2230_lanes_are_fifo_one_at_a_time_and_classes_run_in_order() {
     let entered = Arc::new(AtomicUsize::new(0));
     let holders: Vec<LaneRef> = (0..workers() - 1)
         .map(|_| {
-            let l = Lane::new("t2230:hold", Class::Background);
+            let l = Lane::open("t2230:hold", Class::Background);
             let (r, e) = (release.clone(), entered.clone());
             l.post(move |_| {
                 e.fetch_add(1, Ordering::SeqCst);
@@ -77,9 +77,9 @@ fn t2230_lanes_are_fifo_one_at_a_time_and_classes_run_in_order() {
         .collect();
     until("the holders run", || entered.load(Ordering::SeqCst) == workers() - 1);
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let bg = Lane::new("t2230:bg", Class::Background);
-    let vis = Lane::new("t2230:vis", Class::Visible);
-    let ans = Lane::new("t2230:ans", Class::Answer);
+    let bg = Lane::open("t2230:bg", Class::Background);
+    let vis = Lane::open("t2230:vis", Class::Visible);
+    let ans = Lane::open("t2230:ans", Class::Answer);
     let s = seen.clone();
     bg.post(move |_| s.lock().unwrap().push("background"));
     let s = seen.clone();
@@ -101,7 +101,7 @@ fn t2230_lanes_are_fifo_one_at_a_time_and_classes_run_in_order() {
 #[test]
 fn t2231_votes_pause_background_classes_and_resume_them() {
     let _v = VOTES.lock().unwrap_or_else(|e| e.into_inner());
-    let vis = Lane::new("t2231:thumbs", Class::Visible);
+    let vis = Lane::open("t2231:thumbs", Class::Visible);
     let entered = Arc::new(AtomicBool::new(false));
     let passed = Arc::new(AtomicUsize::new(0));
     let go = Arc::new(AtomicBool::new(false));
@@ -128,10 +128,10 @@ fn t2231_votes_pause_background_classes_and_resume_them() {
     let later = Arc::new(AtomicBool::new(false));
     let l2 = later.clone();
     vis.post(move |_| l2.store(true, Ordering::Release));
-    let bg = Lane::new("t2231:index", Class::Background);
+    let bg = Lane::open("t2231:index", Class::Background);
     let l3 = later.clone();
     bg.post(move |_| l3.store(true, Ordering::Release));
-    let ans = Lane::new("t2231:save", Class::Answer);
+    let ans = Lane::open("t2231:save", Class::Answer);
     assert!(ans.post(|_| {}) != 0);
     assert!(ans.wait_idle(crate::test_deadline()), "a save waited for the pause");
     std::thread::sleep(Duration::from_millis(50));
@@ -150,7 +150,7 @@ fn t2231_votes_pause_background_classes_and_resume_them() {
 #[test]
 fn t2232_cancellation_supersede_and_panics() {
     let _v = VOTES.lock().unwrap_or_else(|e| e.into_inner());
-    let lane = Lane::new("t2232:close", Class::Answer);
+    let lane = Lane::open("t2232:close", Class::Answer);
     let started = Arc::new(AtomicBool::new(false));
     let saw_cancel = Arc::new(AtomicBool::new(false));
     let ran_after = Arc::new(AtomicBool::new(false));
@@ -174,7 +174,7 @@ fn t2232_cancellation_supersede_and_panics() {
     assert!(!ran_after.load(Ordering::Acquire), "a job of a closed lane ran");
 
     // supersede
-    let lane = Lane::new("t2232:save", Class::Answer);
+    let lane = Lane::open("t2232:save", Class::Answer);
     let gate = Arc::new(AtomicBool::new(false));
     let g = gate.clone();
     lane.post(move |_| {
@@ -192,7 +192,7 @@ fn t2232_cancellation_supersede_and_panics() {
     assert_eq!(*wrote.lock().unwrap(), vec![4], "only the newest of a key is written");
 
     // a token releases a paused checkpoint
-    let vis = Lane::new("t2232:vis", Class::Visible);
+    let vis = Lane::open("t2232:vis", Class::Visible);
     let tok = Token::new();
     let entered = Arc::new(AtomicBool::new(false));
     let stopped = Arc::new(AtomicBool::new(false));
@@ -218,7 +218,7 @@ fn t2232_cancellation_supersede_and_panics() {
     drop(vote);
 
     // a panic is contained
-    let lane = Lane::new("t2232:panic", Class::Answer);
+    let lane = Lane::open("t2232:panic", Class::Answer);
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     lane.post(|_| panic!("t2232"));
@@ -235,7 +235,7 @@ fn t2232_cancellation_supersede_and_panics() {
 #[cfg(target_os = "linux")]
 #[test]
 fn t2233_at_rest_no_worker_wakes() {
-    let lane = Lane::new("t2233:one", Class::Answer);
+    let lane = Lane::open("t2233:one", Class::Answer);
     lane.post(|_| {});
     assert!(lane.wait_idle(crate::test_deadline()));
     let workers_now = || -> Vec<(String, u64)> {
@@ -274,7 +274,7 @@ fn t2233_at_rest_no_worker_wakes() {
 #[test]
 fn t2234_every_job_and_pause_is_traced() {
     let _v = VOTES.lock().unwrap_or_else(|e| e.into_inner());
-    let lane = Lane::new("t2234:lane", Class::Answer);
+    let lane = Lane::open("t2234:lane", Class::Answer);
     let (mut ran, mut gone) = (0, 0);
     let items = trace::testing::capture(|| {
         ran = lane.post(|ctx| {

@@ -62,7 +62,8 @@ time, never a red.
   (sqlite, `Send`) is kept between runs. The offline path's three conditions are unchanged: a lane's
   source is shared with nobody, promises no tempo, and its job is finite and cancellable (the lane's
   token, closed with its owner).
-- **6 (nothing on the cpal callback).** The callback is untouched. The audio render thread stays
+- **6 (nothing on the cpal callback).** The callback and the stream are untouched (see the audio
+  output's row in D5). The audio render thread stays
   dedicated; it is marked as a thread that must not wait (`kt_time::block`).
 - **12 (repaint only while something moves).** Jobs wake the UI through `wake::now`/`wake::soon`
   when they publish; the analysis' 120 ms repaint while running is gone (its progress and its end
@@ -103,6 +104,7 @@ time, never a red.
 | thumbnails | 2 s wait (row 174) | a pump |
 | `BgCtl` pause | 30 ms sleep loop | the gate |
 | telemetry heartbeat | every 5 minutes | a quiet session sleeps on its channel; the next counted activity re-arms it |
+| the audio output stream (cpal) | its callback ~24/s and PipeWire's data loop ~48/s hand out silence on a pause (found by the live `idle` scenario's new per-thread wake count) | **unchanged**: cpal's `pause()` did not stop either on this backend (measured: the same counts), and closing the stream means opening the device again on every play — a blocking open, and `cpal::Stream` is not `Send`, so it could not move to a job. Row 274 |
 
 **Lost wakes.** A parked engine thread waits for the `Wake` notify count to move from what it saw
 before it last read the state (`Wake::seen`, `wait_since`): a seek between its last look and its wait

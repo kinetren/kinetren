@@ -161,7 +161,7 @@ type ReelBody = dyn FnOnce(crate::bg::BgCtl, crate::bg::BgSend<ReelPartial>) -> 
 /// the scheduler's votes; one job at a time.
 pub fn lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
-    L.get_or_init(|| kt_time::sched::Lane::new("reel-preview", kt_time::sched::Class::Visible))
+    L.get_or_init(|| kt_time::sched::Lane::open("reel-preview", kt_time::sched::Class::Visible))
 }
 
 impl ReelPreviews {

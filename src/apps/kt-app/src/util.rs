@@ -308,11 +308,6 @@ impl WatchdogHandle {
         self.lane.kick();
     }
 
-    /// Wait for the poked look (tests).
-    #[cfg(test)]
-    pub fn wait_idle(&self) -> bool {
-        self.lane.wait_idle(kt_time::test_deadline())
-    }
 }
 
 pub fn spawn_media_watchdog(

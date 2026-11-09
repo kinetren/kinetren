@@ -132,6 +132,7 @@ list may be short of items from them.
 | 271 | an export paused by the person polls its pause | `export.rs` sleeps 40 ms and the pipeline waits 50 ms in a loop while the render window's Pause holds; only while paused, never at rest; seen by `one-scheduler`'s walk | `kt-engine` export.rs, export_pipeline.rs | open | small: the scheduler's gate (`wait_gate`) fits |
 | 272 | the preview's present waits by polling the device every 1 ms | `wait_presented` polls until the queue's work is done (a blocking poll held the driver's lock against the UI's submit); finite, after a present only; seen by `one-scheduler`'s walk | `kt-gpu` engine.rs | open | `gpu-arbiter` |
 | 273 | a counter that moves while telemetry's sender falls asleep waits for the next activity | between the heartbeat's snapshot and its "dormant" mark an activity sees no sleeper to wake; its beat is late by one activity, the close carries the final counters anyway | `kt-app` telemetry.rs | open | small |
+| 274 | the audio output hands out silence at rest | on a pause cpal's ALSA worker wakes ~24 times a second and PipeWire's data loop ~48 (measured by the live `idle` scenario's per-thread wake count); cpal's `pause()` did not stop them on this backend, and closing the stream means a blocking device open on every play from the UI thread (`cpal::Stream` is not `Send`) | `kt-app` audio_out.rs | open | needs a decision: an output thread that owns the stream and opens it on play, or accept |
 
 ## Internal
 

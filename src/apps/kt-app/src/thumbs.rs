@@ -557,7 +557,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
         if let Some(pid) = poster_job
             && !shared.posters.lock().unwrap().contains_key(&pid)
         {
-            let found = find_poster(&shared, &mut db, &mut sources, pid);
+            let found = find_poster(shared, db, &mut sources, pid);
             shared.posters.lock().unwrap().insert(pid, found);
             crate::wake::soon();
         }
@@ -575,7 +575,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
             continue;
         }
         let Some(path) = shared.media.lock().unwrap().get(&key.media).cloned() else {
-            fail(&shared, key); // unknown media: do not request forever
+            fail(shared, key); // unknown media: do not request forever
             continue;
         };
         let path = &path;
@@ -624,7 +624,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
                     None => {
                         // NOT a dummy source (item 1 round 7): an honest failure
                         shared.durations.lock().unwrap().entry(key.media).or_insert(None);
-                        fail(&shared, key);
+                        fail(shared, key);
                         continue;
                     }
                 }
@@ -658,7 +658,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
                 ok = true;
             }
             if !ok {
-                fail(&shared, key); // negative cache: without an eternal seek+reopen
+                fail(shared, key); // negative cache: without an eternal seek+reopen
                 continue;
             }
         }
@@ -668,7 +668,7 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
             // a sidecar JPEG that does not decode is a failure, not a key that every frame orders
             // again (input-without-work)
             Some(None) => {
-                fail(&shared, key);
+                fail(shared, key);
                 continue;
             }
             None => None,

@@ -32,7 +32,8 @@ a resume or an exit; the load watch parks after five quiet seconds until a work 
 frame included; the bench keeps sampling); telemetry's sender sleeps on its channel once a heartbeat
 finds nothing new, until the next counted activity; the media watch looks at the files on the
 opening, a focus change and play or stop, never on a clock and never on a pointer move. A pointer
-over a still place SHALL start no job.
+over a still place SHALL start no job. On a settled pause of the heavy showcase none of the
+engine's, the scheduler's or the services' threads makes a context switch.
 Why: the owner, 2026-11-07: "ПОЧЕМУ АГЕНТАМ НЕ ПРИКАЗЫВАЕТСЯ ТЕСТИРОВАТЬ ЭТО?!?"; `docs/engine-audit.md`
 §2b counted seven timers at rest (rows 122, 174).
 
@@ -45,6 +46,11 @@ Why: the owner, 2026-11-07: "ПОЧЕМУ АГЕНТАМ НЕ ПРИКАЗЫВА
 - **WHEN** a watcher parks until work moves and nothing is counted for 300 ms, then one count
 - **THEN** it stays parked, then wakes
 - **TEST** t2241 (`src/libs/kt-time/src/work.rs`)
+
+#### Scenario: A settled pause wakes none of our threads
+- **WHEN** the heavy showcase project has gone quiet after opening and stands paused for five seconds
+- **THEN** the work counters stand still, the trace grows by nothing, and none of the engine's, the scheduler's or the services' threads made a context switch
+- **TEST** live `idle` (`src/scripts/live/idle.py`)
 
 #### Scenario: A quiet session's telemetry sleeps
 - **WHEN** a heartbeat carried one activity and the next found nothing new; then another activity

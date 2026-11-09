@@ -9742,7 +9742,7 @@ enum MediaDone {
 /// in the order asked.
 fn media_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
-    L.get_or_init(|| kt_time::sched::Lane::new("media", kt_time::sched::Class::Answer))
+    L.get_or_init(|| kt_time::sched::Lane::open("media", kt_time::sched::Class::Answer))
 }
 
 /// A Ctrl+S in flight (one-scheduler).
@@ -9762,13 +9762,13 @@ pub(crate) const ANSWER_GRACE: std::time::Duration =
 /// Ctrl+S's lane: class `Answer`, so it never waits behind background work or for playback.
 fn save_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
-    L.get_or_init(|| kt_time::sched::Lane::new("save", kt_time::sched::Class::Answer))
+    L.get_or_init(|| kt_time::sched::Lane::open("save", kt_time::sched::Class::Answer))
 }
 
 /// The autosave's lane: class `Background`, it waits out playback and an export.
 fn autosave_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
-    L.get_or_init(|| kt_time::sched::Lane::new("autosave", kt_time::sched::Class::Background))
+    L.get_or_init(|| kt_time::sched::Lane::open("autosave", kt_time::sched::Class::Background))
 }
 
 pub fn write_project_guarded(

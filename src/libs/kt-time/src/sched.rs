@@ -324,7 +324,7 @@ impl LaneRef {
 
 impl Lane {
     /// A lane of one-shot jobs.
-    pub fn new(name: &'static str, class: Class) -> LaneRef {
+    pub fn open(name: &'static str, class: Class) -> LaneRef {
         LaneRef(Arc::new(Lane {
             name,
             class,
@@ -336,7 +336,7 @@ impl Lane {
 
     /// A service lane: `pump` drains the service's own queue; [`Lane::kick`] schedules it.
     pub fn service(name: &'static str, class: Class, pump: impl Fn(&Ctx) -> Pump + Send + Sync + 'static) -> LaneRef {
-        let l = Lane::new(name, class);
+        let l = Lane::open(name, class);
         l.st().pump = Some(Arc::new(pump));
         l
     }
