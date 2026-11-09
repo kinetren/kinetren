@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import kt_live  # noqa: E402
 from kt_live import Live, require_tools  # noqa: E402
 from idle import Meter, wait_quiet  # noqa: E402
+from heavy_loop import loading  # noqa: E402
 from readme_shots import fixture_sources  # noqa: E402
 
 OWN_PROCESS = True
@@ -58,6 +59,9 @@ def main(out):
         # paused on the loop's start: the mosh's history (~95 frames of 8 MB, past the 512 MB cache)
         # is decoded window by window and computed by the prefetch thread, then the pause is quiet —
         # before decode-request-storm the paused frame asked ~1500 requests a second for ever
+        # the paused frame complete first (test-hygiene): an incomplete one retries at 1, 2, 4, 8 s,
+        # and three still seconds between two retries are not its history being in
+        app.expect(app.until(lambda: not loading(app), timeout=120.0), "the paused frame on the mosh came")
         wait_quiet(meter, "after opening")
         work, _ = meter.over(3.0)
         print(f"   paused on the mosh after it settled: {work}")
@@ -91,7 +95,10 @@ def main(out):
         g2 = app.geom()
         vfps = (g2["compose"]["shown"] - g1["compose"]["shown"]) / 6.0
         print(f"   playing the moshed loop: {work}, {cpu:.0f} % of a core, V-fps {vfps:.1f}")
-        app.expect(vfps > 0, f"the loop keeps showing frames: V-fps {vfps:.1f}")
+        # the picture goes on: ANOTHER frame comes (test-hygiene). Six seconds was a clock: at load
+        # ~140 one moshed frame on the software rasterizer took longer, with the sound playing
+        moved = app.until(lambda: app.geom()["compose"]["shown"] > g1["compose"]["shown"], timeout=60.0)
+        app.expect(moved, f"the loop keeps showing frames: V-fps {vfps:.1f} over 6 s, and no new frame after")
         app.key("space")
         return app.done()
 

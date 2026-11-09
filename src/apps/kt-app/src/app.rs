@@ -8118,6 +8118,9 @@ pub struct KeyClock {
     /// Widen egui's click windows (`widen_clicks`). Off in the harness: its frames step egui's
     /// clock by a fixed `step_dt` while `busy` is the wall clock, so the two would not agree.
     pub widen: bool,
+    /// egui's double-click window as last set (the live dump's `double_click_s`): a scenario's next
+    /// double click waits out twice it after the click before, or it is egui's triple.
+    pub double_s: f64,
 }
 
 impl Default for KeyClock {
@@ -8128,6 +8131,7 @@ impl Default for KeyClock {
             animating: false,
             gated: false,
             widen: !cfg!(test),
+            double_s: DOUBLE_CLICK_S,
         }
     }
 }
@@ -8150,12 +8154,13 @@ impl KeyClock {
     /// frame apart were two single clicks, and a press and release two frames apart no click
     /// (found-defects 166, `formula` and `lessons` under the full live run). Its windows widen
     /// by the busy frame, as the double Space does; on a card that is ~16 ms.
-    pub fn widen_clicks(&self, ctx: &egui::Context) {
+    pub fn widen_clicks(&mut self, ctx: &egui::Context) {
         if !self.widen {
             return;
         }
         let busy = self.busy.as_secs_f64();
         let (double, click) = (DOUBLE_CLICK_S + busy, CLICK_HOLD_S + busy);
+        self.double_s = double;
         if ctx.options(|o| (o.input_options.max_double_click_delay - double).abs() > 0.002) {
             ctx.options_mut(|o| {
                 o.input_options.max_double_click_delay = double;

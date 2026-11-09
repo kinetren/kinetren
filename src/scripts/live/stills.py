@@ -178,11 +178,13 @@ def main(out):
             app.click_probe(f"geo.conform.{word}", f"rule “{word}” of the leading node")
             # a consequence waited for by the program's frames, not twenty attempts of a fixed
             # step: under load the picture changed after the last of them (test-hygiene)
-            seen = [before]
+            # — and it must HOLD for two readings: a frame in passage (the start's own reading was
+            # one under load) differs from `before` without being the rule's picture
+            seen = [before, None]
 
             def changed():
-                seen[0] = red_extent(app, cx, cy, f"square-{word}")
-                return seen[0] != before
+                seen[1], seen[0] = seen[0], red_extent(app, cx, cy, f"square-{word}")
+                return seen[0] != before and seen[0] == seen[1]
 
             app.until(changed)
             return seen[0]

@@ -106,6 +106,39 @@ between); `fxpreset` takes the program's probe as the proof the window opened (a
 selected the event and changed the screen by 1 % too); `heavy_loop`/`cached_range` judge by the
 trace's reasons; `idle.wait_quiet` asks the program's threads too.
 
+### D9. The bench's own channel leaves the working disk
+
+The program's geometry dump and the bench's command file lived in the run's folder on the working
+disk. A write and rename there stood 10–20 s while builds and the sidecars synced the disk (the dump
+thread's comment already recorded it), and a scenario then read a dump that many seconds old:
+`space_hold`'s first hold played 17 s (the journal: 10 s → 72 s) while the dump showed the head
+standing. `_channel.py` puts both on tmpfs (`$XDG_RUNTIME_DIR/kinetren-live/<run>`), emptied when a
+program starts (a new program runs the last command it finds), and copies the dump and its companions
+beside the screenshots when the scenario ends. A red stand scenario also gets the stand's journal and
+trace (`stand-*`): the stand's next start wipes them.
+
+### D10. A gesture waits for what the program says, not for a guess of it
+
+- The double click after a click waits out twice the double-click window the program published
+  (`double_click_s`): D4 widened it, and the script's own estimate fell short of the triple window
+  (`formula` red in all three sets of the first proof run).
+- `focus()` waits until the X server names the window focused: `decode_storm`'s Space reached no
+  window (no PLAY in the run's journal).
+- `poll_step` waits for one more program frame, so N attempts are N frames, not a stale clock
+  (`stills`, `generator`).
+- `idle` sweeps until frames have seen the pointer and waits for a frame after the sweep before
+  judging rest: a stalled program read the sweep's moves seconds late, in the next window.
+- `decode_storm` waits for the paused frame to come before judging the pause, and for a new frame
+  instead of reading V-fps over 6 s.
+- A program of the scenario's own, and the stand stopped for one, are gone only when their WINDOW is
+  gone: the editor is the supervisor's child and dies after it, and `probe.window()` takes the first
+  window of the class. The next program's Space, Ctrl+F and drag went to the dying window
+  (`cached_range`, `readme_shots`, `welcome`, `lessons` in the second proof run).
+- `_wait_ctl` waits while the stand draws: a fixed 30 s ran out while the stand, alive, opened a
+  scenario's project after a heavy one (`formula`, `geomctl`, `fade`).
+- `poll_step` waits for a frame the program draws by itself, never a poked one: `morphgrid` counts
+  the frames after Stop.
+
 ## The walk (what was checked, and found)
 
 ### Rows of `docs/found-defects.md`
@@ -138,6 +171,14 @@ trace's reasons; `idle.wait_quiet` asks the program's threads too.
 | `heavy_loop` | baseline | at a display rate below the frame rate each lap shows a different subset of frames; a moment shown for the first time is composed once ("for the first time (kept since)" ×9 over 6 s) | the trace's reasons: nothing kept is composed again |
 | `ui_wait` | baseline | a 410 ms frame of 10 ms work at load 142 | D5 |
 | `cached_range` | (same check as `heavy_loop`) | | the trace's reasons |
+| `cached_range` "a pause runs nothing" | a quick run | 166 UI frames in 4 s after a quiet pause; the trace shows no input and no work | rest checks print the repaint causes of the window (D9's evidence); not repeated since |
+| `formula` | proof run 1, all three sets | D4's wider window made the script's triple wait short | D10 |
+| `idle` | proof run 1 | the sweep's moves read seconds late, in the rest window (14 of 17 frames had input) | D10 |
+| `decode_storm` | proof run 1 | Space sent before the window had the focus; the pause judged between two retries; V-fps over a fixed 6 s | D10 |
+| `nestparam` | proof run 1 | the placed clips read from a stale dump; a bin menu that did not open (cause not seen: the stand's journal was wiped) | `app.until`; D9 keeps the stand's journal for the next red |
+| `stills` | proof run 1 | the start's reading came from a frame in passage | the width must hold for two readings |
+| `generator` | proof run 1 | the undo's 20 attempts ran out | D10 `poll_step` |
+| `space_hold` | a quick run | the dump stood 17 s on the disk while the program played | D9 |
 
 ### Workshop tests with a clock or a sleep
 

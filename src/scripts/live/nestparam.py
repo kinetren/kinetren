@@ -237,6 +237,8 @@ def main(out):
                 win["y"] + int(card["y"] + card["h"] / 2),
             )
             app.click_probe("bin.place", "“Place” item on the composition card")
+        # the consequence from fresh dumps (test-hygiene): read at once, it was the dump before
+        app.until(lambda: len(app.live_clips()) == 3)
         places = app.live_clips()
         app.expect(len(places) == 3, f"the second broadcast did not place: {places}")
 

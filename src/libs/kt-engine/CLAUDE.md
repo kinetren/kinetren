@@ -103,6 +103,12 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   frame's id as its cause, so its decode requests, stream runs and compute jobs carry it; a new thing a
   composite waits for records a `FrameWait`, a new keeper records its store and eviction.
 - **Past its bytes the look-ahead asks the first frame of each cut** (`jumps_to`, `CUT_LEAD_KEYS`, D3): reaching it takes a decoder the same time however near it is asked. t1528.
+- **A start's first pass reaches the ring whole** (test-hygiene, t2216): the callback primes on the
+  first frames in the ring and runs the clock from then on, so the pass after a start is collected in
+  `start_pass` and committed with one `write_chunk_uninit`. Pushed burst by burst, a render thread put
+  off between two bursts let the device eat them (t1935's underruns at load 192, the bench's device on
+  time). `preview_bench` prints how late its device thread woke (`device_late_max_ms`): a red tells the
+  bench from the render.
 - **A start waits for its sound** (cold-start-audio). The fill loop renders a whole ring in one pass, so at a start (`starting`: opening, a seek, a change of direction, a loop flip) `audio_render` holds it until the bursts of the ring plus the look-ahead margin are cached, at most `START_AUDIO_GRACE`. Time stands before the first frame, so this costs no sync (invariant 6); the limit keeps a dead source from stopping playback (t1537, t1538). A new way to move the render head sets `starting` too.
 - Audio of a span's own priority is read between its chunks (t1529): audio has its own demuxer, so the video cursor does not move.
 - `preview_bench::play_range` is the real player against a wall-clock output device and a display loop with `draw_preview`'s counts: `kt-cli preview` on footage, t1524 on a model decoder. Measure the preview with it, and with the footage in /dev/shm: on a busy disk two runs differ by hundreds of incomplete composites.

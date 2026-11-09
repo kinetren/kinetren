@@ -192,6 +192,11 @@ def main(out):
             app.step(f"hover-{name.replace(' ', '-')}", f"the pointer goes over the {name}")
             t0 = trace_bytes(out)
             work, cpu = meter.over(3.0, sweep(app, a, b))
+            # on a loaded machine the program can stand a whole sweep in one frame (test-hygiene):
+            # sweep on until frames have seen the pointer, as a person goes on moving it
+            deadline = time.time() + kt_live.stretched(30.0)
+            while not work.get("ui_frames", 0) and time.time() < deadline:
+                work, cpu = meter.over(3.0, sweep(app, a, b))
             frames = work.get("ui_frames", 0)
             # printed: the load watch's busy seconds (the UI frames counted) go into the journal and
             # the trace once a second; no frame of the pointer is recorded
@@ -202,6 +207,9 @@ def main(out):
             # printed, not judged: a frame with no input after each hover frame still lays the
             # events out, about every second frame. The limit is hover-static-load's to set.
             print(f"   over the {name}: {work.get('event_passes', 0)} event passes in {frames} frames")
+            # the moves still queued are read by the next frames: a frame drawn after the sweep has
+            # read them all, or the "rest" below sees the backlog's frames (test-hygiene: 14 of 17)
+            app.wait_frame(2, what=f"a frame after the sweep over the {name}", soft=True)
             wait_quiet(meter, f"after the {name}")
             w0 = wakes(app)
             work, cpu = meter.over(2.0)

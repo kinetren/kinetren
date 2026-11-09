@@ -34,6 +34,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from _channel import channel_dir, keep_channel  # noqa: E402
 RUST = os.path.abspath(os.path.join(HERE, "..", ".."))
 KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
@@ -145,6 +147,18 @@ class Screen:
         return False
 
 
+def ui_probe():
+    """The mouse and keyboard driver (`ui-probe.py`), loaded once the X server is up."""
+    if not hasattr(ui_probe, "mod"):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("ui_probe", os.path.join(RUST, "scripts", "ui-probe.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        ui_probe.mod = mod
+    return ui_probe.mod
+
+
 class Bench:
     """One kt-app of the worker: in it the scenarios open their projects one after another."""
 
@@ -155,8 +169,10 @@ class Bench:
         # frames. This is what looked like “parallelism paints everything”.
         self.dir = os.path.join(out, "bench" + display.replace(":", ""))
         os.makedirs(self.dir, exist_ok=True)
-        self.ctl = os.path.join(self.dir, "ctl")
-        self.geom = os.path.join(self.dir, "geom.json")
+        # the dump and the command file on tmpfs (test-hygiene, `kt_live.channel_dir`)
+        self.chan = channel_dir(self.dir)
+        self.ctl = os.path.join(self.chan, "ctl")
+        self.geom = os.path.join(self.chan, "geom.json")
         self.store = os.path.join(self.dir, "store")
         self.blank = os.path.join(self.dir, "blank.kt")
         self.proc = None
@@ -245,13 +261,7 @@ class Bench:
         # the dump: the form-contract scenario (R.66) sets the window low, and the
         # next one must get it back. The egui canvas size is in POINTS, and restoring
         # from it shrank the window on every run.
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location(
-            "ui_probe", os.path.join(RUST, "scripts", "ui-probe.py")
-        )
-        probe = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(probe)
+        probe = ui_probe()
         # GEOMETRY IS CAPTURED WHEN IT HAS SETTLED: the window manager
         # maximizes the window NOT instantly, and a snapshot right after the first
         # frames recorded the window BEFORE it was maximized. Every next scenario
@@ -282,6 +292,17 @@ class Bench:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self.proc = None
+        # THE STAND'S WINDOW GONE TOO (test-hygiene): the editor is the supervisor's child and dies
+        # after it; a scenario of its own process that starts meanwhile finds the stand's window
+        # first, focuses it, and its Space goes nowhere (`cached_range`: no PLAY in its journal)
+        probe = ui_probe()
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            try:
+                probe.window()
+            except SystemExit:
+                return
+            time.sleep(0.05)
 
 
 FIRST_TRY = "first-try"
@@ -309,6 +330,22 @@ def fresh_folder(scen_out, retry):
     os.makedirs(scen_out, exist_ok=True)
     if kept:
         os.rename(kept, os.path.join(scen_out, FIRST_TRY))
+
+
+def keep_stand_evidence(bench, scen_out):
+    """A red scenario that ran in the stand: the stand's journal and trace are its run's too, and
+    the stand's next start wipes them (test-hygiene). Copied beside the screenshots."""
+    data = os.path.join(bench.dir, "xdg", "kinetren")
+    for name in ("telemetry-journal.log", "trace"):
+        src = os.path.join(data, name)
+        dst = os.path.join(scen_out, "stand-" + name)
+        try:
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            elif os.path.exists(src):
+                shutil.copy2(src, dst)
+        except OSError:
+            pass
 
 
 def run_scenario(name, scen_out, env):
@@ -372,6 +409,9 @@ def main():
                 except OSError:
                     pass
                 ok = rc == 0
+                if not ok and not own:
+                    keep_stand_evidence(bench, scen_out)
+                    keep_channel(bench.chan, scen_out)
                 with open(os.path.join(verdicts, name), "w") as f:
                     f.write("ok" if ok else "fail")
                 if ok:
