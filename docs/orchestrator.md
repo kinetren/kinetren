@@ -172,6 +172,14 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   `finish.sh`; for UI work the live screenshots.
 - Name what is not done and why; never a session's note as proof — check the diff and the images.
 
+## Standing go (2026-11-09)
+
+"когда эти закончат - продолжай другие делать по таблице" — the owner's word to start, without asking
+again, the remaining rows of the order table in `docs/engine-audit.md` as slots free (≤3 at once):
+`one-scheduler`, `gpu-arbiter` (both after `structured-telemetry` merges, so its trace can judge
+them), `stream-layout-per-build`, `memory-ledger`, `fused-pointwise-runs`, the local cost queue
+(row 128 only on his word), test hygiene. Stages and finish.sh as usual; master by a merge commit.
+
 ## Current plan (2026-11-06)
 
 Stage closed: `finish.sh` at kt26.11.07-677c2f5b, master there: 1588 of 1588, 79 of 79 live, 578 s. It
