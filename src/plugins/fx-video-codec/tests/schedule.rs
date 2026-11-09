@@ -1,8 +1,8 @@
 //! The datamosh's schedule compiled once (stream-layout-per-build): t2270 (the keys, the needs and
 //! the held positions are the values of the per-call walk, pinned from it), t2271 (a layout with the
 //! host's cell compiles each position once and answers as one without), t2272 (the audio half's bytes
-//! under every gate, pinned from the per-frame schedule). No compute device is needed: nothing here
-//! encodes a frame.
+//! under every gate, pinned from the per-frame schedule), t2277 (a compile is a trace record). No
+//! compute device is needed: nothing here encodes a frame.
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
@@ -238,4 +238,26 @@ fn t2272_the_sound_keeps_its_bytes() {
     eprintln!("{a:#x}");
     assert_eq!(a, sound_bytes(), "two runs differ");
     assert_eq!(a, SOUND_PINNED);
+}
+
+/// t2277: each compile of a schedule is a `stream_plan` record: a question about a later position
+/// compiles from where the last ended, an earlier one compiles nothing.
+#[test]
+fn t2277_a_compile_is_a_record() {
+    use kt_time::trace::{self, Ev};
+    let mut l = streams().remove(1);
+    l.cell = Some(PlanCell::default());
+    let r = Rows::from(&l.base);
+    // this test's records by their cause: the other tests compile schedules on their threads meanwhile
+    let mine = trace::next_id();
+    let items = trace::testing::capture(|| {
+        let _cause = trace::with_cause(mine);
+        mosh::key(r, &l, 50);
+        mosh::key(r, &l, 20);
+        mosh::key(r, &l, 120);
+    });
+    let recs: Vec<_> = trace::testing::recs(&items).into_iter().filter(|x| x.kind() == Some(Ev::StreamPlan) && x.cause == mine).collect();
+    assert_eq!(recs.len(), 2, "{recs:?}");
+    assert_eq!((recs[0].a, recs[0].b, recs[0].c), (0, 51, 51));
+    assert_eq!((recs[1].a, recs[1].b, recs[1].c), (51, 121, 121));
 }

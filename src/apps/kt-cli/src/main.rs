@@ -1406,6 +1406,7 @@ fn run(args: &[String]) -> i32 {
     kt_plugins_builtin::install();
     // the GPU's compute host, counting the bytes each job moves (`stream-cost`)
     kt_plugin_api::compute::install(streamcost::open);
+    kt_engine::video::set_memory_probe(kt_gpu::memory::available);
     // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
     kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
@@ -1708,7 +1709,7 @@ fn run(args: &[String]) -> i32 {
         // What a stream stage costs over a range, lap after lap (stream-layout-per-build)
         Some("stream-cost") => {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3)) else {
-                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH]");
+                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop]");
                 return 2;
             };
             let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
@@ -1724,7 +1725,8 @@ fn run(args: &[String]) -> i32 {
                 Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? })
             });
             let laps = opt("--laps").and_then(|s| s.parse::<usize>().ok()).unwrap_or(2);
-            match streamcost::run(&project, input, from, to, laps, size) {
+            let sized = args.iter().any(|a| a == "--loop");
+            match streamcost::run(&project, input, from, to, laps, size, sized) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

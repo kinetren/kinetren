@@ -2633,6 +2633,25 @@ fn stream_advance_ahead(
     false
 }
 
+/// Size the preview's stream memo by the loop it must keep (stream-layout-per-build, found-defects
+/// 143): `2 × the stage's frame` a position (`STREAM_AHEAD_MIN`'s estimate), every position of the
+/// loop region, within a quarter of the memory available — measured only when the loop or the
+/// stage's size changes (`last`), so a pass that changes neither reads nothing.
+fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, last: &mut Option<(usize, Option<usize>)>) {
+    let frame = video.stream_frame_bytes(t, q);
+    if frame == 0 {
+        return;
+    }
+    let step = video.grid.frame_step().max(1);
+    let positions = region.map(|(s, e)| ((e - s).max(0) / step) as usize + 1);
+    let now = (2 * frame, positions);
+    if *last == Some(now) {
+        return;
+    }
+    *last = Some(now);
+    crate::video::size_stream_memo(now.0, positions);
+}
+
 /// The frames ahead for a pass interval of `interval` (see `STREAM_AHEAD_MIN`).
 fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std::time::Duration) -> usize {
     let fps = kt_time::TICK_HZ as f64 / video.grid.frame_step().max(1) as f64;
@@ -2689,6 +2708,7 @@ fn prefetch_loop(
     let mut stream_pending = false;
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
+    let mut memo_sized: Option<(usize, Option<usize>)> = None;
     // the last pass was skipped: nothing moved (one-scheduler: then the thread parks with no clock)
     let mut skipped = false;
     let mut seen = wake.seen();
@@ -2788,6 +2808,9 @@ fn prefetch_loop(
             kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect()
         };
         let kept = |t: Tick| kept_now.contains(&t.0);
+        if video.has_stream_stages() {
+            size_stream_memo(video, t0, q, region_ticks, &mut memo_sized);
+        }
         stream_pending = video.has_stream_stages() && {
             let ahead = if transport.is_playing() { stream_ahead_frames(video, t0, q, interval) } else { 0 };
             stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)

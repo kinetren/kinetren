@@ -92,6 +92,9 @@ pub enum Ev {
     /// A stream kernel compiled positions of its schedule (a span; stream-layout-per-build). `a` the
     /// first position compiled, `b` one past the last, `c` the positions the schedule holds after it.
     StreamPlan = 23,
+    /// The preview sized its stream memo (stream-layout-per-build). `a` the bound in bytes, `b` the
+    /// loop's positions (0 — no loop), `c` the memory available then, in MB (0 — unknown).
+    StreamMemoCap = 24,
 
     /// A compute job ran (a span). `aux` kernel [`name`], `a` dispatches.
     ComputeJob = 30,
@@ -152,7 +155,7 @@ pub enum Ev {
 }
 
 impl Ev {
-    pub const ALL: [Ev; 40] = [
+    pub const ALL: [Ev; 41] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -172,6 +175,7 @@ impl Ev {
         Ev::StreamAdvance,
         Ev::StreamMemoEvict,
         Ev::StreamPlan,
+        Ev::StreamMemoCap,
         Ev::ComputeJob,
         Ev::MemoStore,
         Ev::MemoEvict,
@@ -220,6 +224,7 @@ impl Ev {
             Ev::StreamAdvance => "stream_advance",
             Ev::StreamMemoEvict => "stream_memo_evict",
             Ev::StreamPlan => "stream_plan",
+            Ev::StreamMemoCap => "stream_memo_cap",
             Ev::ComputeJob => "compute_job",
             Ev::MemoStore => "memo_store",
             Ev::MemoEvict => "memo_evict",

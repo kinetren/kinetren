@@ -19,9 +19,51 @@ use super::{clip_base_quality, clip_frame_keys, video_cache_idx, VideoClip};
 
 /// The preview's ONE memo (design D3): the composer, the prefetch and the picker share it, so
 /// "what is still needed" and "what was computed" see the same entries. Each export owns its own.
+/// Its bound starts at `STREAM_MEMO_BASE`; the player sizes it by the loop (`stream_memo_bytes`).
 pub fn stream_memo() -> &'static Arc<StreamMemo> {
     static M: OnceLock<Arc<StreamMemo>> = OnceLock::new();
-    M.get_or_init(|| Arc::new(StreamMemo::new(256 << 20)))
+    M.get_or_init(|| Arc::new(StreamMemo::new(STREAM_MEMO_BASE)))
+}
+
+/// The preview memo's bound with no loop to keep: a stretch of playback and its look-ahead.
+pub const STREAM_MEMO_BASE: usize = 256 << 20;
+
+/// The preview memo's bound for a loop of `loop_positions` stream positions at `per_position` bytes
+/// (stream-layout-per-build, found-defects 143). A loop whose history the memo cannot hold recomputes
+/// it every lap: at 1080 lines 256 MB held about 20 positions. So the bound is what the loop needs —
+/// every position of it plus an eighth — never below `base`, and never above a quarter of the memory
+/// the machine has `available` when it is sized (measured at run time; unknown — `base`).
+pub fn stream_memo_bytes(base: usize, per_position: usize, loop_positions: Option<usize>, available: Option<u64>) -> usize {
+    let (Some(n), Some(free)) = (loop_positions, available) else { return base };
+    let want = per_position.saturating_mul(n + n / 8 + 2);
+    want.min(usize::try_from(free / 4).unwrap_or(usize::MAX)).max(base)
+}
+
+/// Size the preview's memo for a loop of `loop_positions` at `per_position` bytes (`None` — no loop),
+/// by the memory available now; the bound set, with a `stream_memo_cap` record.
+pub fn size_stream_memo(per_position: usize, loop_positions: Option<usize>) -> usize {
+    let free = memory_available();
+    let cap = stream_memo_bytes(STREAM_MEMO_BASE, per_position, loop_positions, free);
+    stream_memo().set_cap(cap);
+    kt_time::trace::ev(kt_time::trace::Ev::StreamMemoCap)
+        .a(cap as u64)
+        .b(loop_positions.unwrap_or(0) as u64)
+        .c(free.map_or(0, |f| f >> 20))
+        .emit();
+    cap
+}
+
+/// How the engine learns the memory the process can still take (the host injects it: the probe
+/// lives with the device code, `kt_gpu::memory::available`); `None` — unknown.
+pub fn set_memory_probe(probe: fn() -> Option<u64>) {
+    let _ = PROBE.set(probe);
+}
+
+static PROBE: OnceLock<fn() -> Option<u64>> = OnceLock::new();
+
+/// The memory available now, by the injected probe.
+pub fn memory_available() -> Option<u64> {
+    PROBE.get().and_then(|p| p())
 }
 
 /// How a live preview paces a stream stage (decode-request-storm). The history of a frame can be

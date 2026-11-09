@@ -1,11 +1,12 @@
-//! `kt-cli stream-cost <p.kt> <from_s> <to_s> [--laps N] [--size WxH]` (stream-layout-per-build):
+//! `kt-cli stream-cost <p.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop]` (stream-layout-per-build):
 //! what a stream stage (Datamosh) costs over a range, lap after lap, the way the prefetch thread
 //! advances it: the source frames are decoded into a cache FIRST (never timed), then each frame of the
 //! range is advanced (`VideoRenderer::stream_advance`) and measured — the advancing thread's processor
 //! time (the stage's own work: schedule, keys, colour conversion, packing), the compute jobs' wall
 //! time, their count by kind, and the bytes each job uploaded and read back. Every few frames the
 //! prefetch's question for its 2 s window (`wanted_frames`) is timed too (found-defects 144). The memo
-//! is the preview's own (`stream_memo`), so lap 2 shows what a loop recomputes (found-defects 143).
+//! is the preview's own (`stream_memo`), so lap 2 shows what a loop recomputes (found-defects 143);
+//! `--loop` sizes it as the player does for the range as its loop region.
 //! Judge the numbers on a RELEASE build; the device's time depends on the device.
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
@@ -108,7 +109,7 @@ fn since(a: Snap) -> Snap {
     }
 }
 
-pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: usize, size: Option<kt_media::Quality>) -> Result<(), String> {
+pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: usize, size: Option<kt_media::Quality>, sized: bool) -> Result<(), String> {
     let mut fetcher = crate::open_sources(project, path, false, None)?;
     let mut facts = kt_engine::SourceFacts::default();
     for m in &project.media {
@@ -125,6 +126,14 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
     let t0 = video.grid.align_floor(Tick::from_secs_f64(from));
     let t1 = Tick::from_secs_f64(to);
     let memo = kt_engine::video::stream_memo();
+    if sized {
+        // the player's sizing for this range as its loop region
+        let positions = ((t1.0 - t0.0).max(0) / video.grid.frame_step().max(1)) as usize + 1;
+        let per = 2 * video.stream_frame_bytes(t0, q);
+        let cap = kt_engine::video::size_stream_memo(per, Some(positions));
+        let free = kt_engine::video::memory_available().unwrap_or(0);
+        println!("  memo sized for a loop of {positions} positions: {} MB (available {} MB)", cap >> 20, free >> 20);
+    }
     println!(
         "-- stream cost {:.2}–{:.2} s at {}x{} (renderer built in {build_ms:.0} ms, memo {} MB) --",
         from,

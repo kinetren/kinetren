@@ -19,7 +19,9 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 
 #[path = "video_stream.rs"]
 mod stream;
-pub use stream::{StreamPacing, stream_memo};
+pub use stream::{
+    STREAM_MEMO_BASE, StreamPacing, memory_available, set_memory_probe, size_stream_memo, stream_memo, stream_memo_bytes,
+};
 use stream::StreamStage;
 
 /// VIDEO-TRACK STAGE (R.62, change B): a track with a chain, a level ≠ 1

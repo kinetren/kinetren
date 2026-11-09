@@ -170,7 +170,9 @@ type Entry = (Arc<dyn Any + Send + Sync>, usize, u64);
 /// The host-owned memo of a stream kernel (design D3): a bounded LRU of opaque entries keyed by a
 /// `u64` the kernel derives from what determines the entry. Speed only — never another byte.
 pub struct StreamMemo {
-    cap: usize,
+    /// The bound; the host may change it while the memo is used (stream-layout-per-build: the
+    /// preview sizes it by its loop and the machine's memory).
+    cap: std::sync::atomic::AtomicUsize,
     inner: Mutex<MemoInner>,
 }
 
@@ -184,7 +186,7 @@ struct MemoInner {
 impl StreamMemo {
     /// A memo holding at most `cap_bytes` (an entry larger than that is not kept).
     pub fn new(cap_bytes: usize) -> StreamMemo {
-        StreamMemo { cap: cap_bytes, inner: Mutex::new(MemoInner::default()) }
+        StreamMemo { cap: std::sync::atomic::AtomicUsize::new(cap_bytes), inner: Mutex::new(MemoInner::default()) }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, MemoInner> {
@@ -209,7 +211,8 @@ impl StreamMemo {
 
     /// Keep `v` under `key`, evicting the least recently used entries past the bound.
     pub fn put<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
-        if bytes > self.cap {
+        let cap = self.bytes_cap();
+        if bytes > cap {
             return;
         }
         let mut g = self.lock();
@@ -219,7 +222,14 @@ impl StreamMemo {
             g.bytes -= old.1;
         }
         g.bytes += bytes;
-        while g.bytes > self.cap {
+        Self::evict_to(&mut g, cap, key);
+    }
+
+    /// Drop the least recently used entries until `cap` holds the rest; `cause` names the key that
+    /// made room necessary (0 — the bound shrank).
+    fn evict_to(g: &mut MemoInner, cap: usize, cause: u64) {
+        let key = cause;
+        while g.bytes > cap {
             let Some((&k, _)) = g.map.iter().min_by_key(|(_, e)| e.2) else { break };
             if let Some(e) = g.map.remove(&k) {
                 g.bytes -= e.1;
@@ -229,9 +239,16 @@ impl StreamMemo {
         }
     }
 
-    /// The bound it was made with.
+    /// The bound.
     pub fn bytes_cap(&self) -> usize {
-        self.cap
+        self.cap.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A new bound; a smaller one drops the least recently used entries now.
+    pub fn set_cap(&self, cap_bytes: usize) {
+        self.cap.store(cap_bytes, std::sync::atomic::Ordering::Relaxed);
+        let mut g = self.lock();
+        Self::evict_to(&mut g, cap_bytes, 0);
     }
 
     /// Bytes held.
