@@ -80,8 +80,11 @@ thread, and compiles there: the frame's submission waited behind 15 s of warm dr
   so the watched device's warm draw of the same code is a load. Measured (`kt-cli first-frame
   --warm-elsewhere`, an experiment kept in the instrument): warming on another device leaves the first
   frames 197 ms of excess in all, against 4056 ms with `MESA_SHADER_CACHE_DISABLE=true` — the gain is
-  the driver's disk cache, and it needs the same adapter, backend and driver (the editor's GL device
-  under the live check gets no shadow: its Vulkan twin compiles other code). The shadow lives for one
+  the driver's disk cache, and it needs the same adapter, backend and driver. **Vulkan only**: the
+  first live run had the shadow on GL too (the live check's `WGPU_BACKEND=gl`), and a second EGL device
+  opened and dropped on the worker thread left the watched device's context unusable — `BadAccess` at
+  its next call, a panic on the compose and export threads (render, renderregion and idle red). On GL
+  the worker warms the watched device alone, one pipeline at a time. The shadow lives for one
   run of the worker and goes with it.
 
 After both: the showcase's first moment 13.3 s against 12.6 s before (the frame asked at once compiles
