@@ -505,6 +505,8 @@ pub(crate) fn run<S: ExportSink>(
             let collect = |gpu: &Arc<dyn crate::VideoGpuExec>, i: u64, ticket: u64| -> std::io::Result<bool> {
                 let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                 let mark = Instant::now();
+                let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
+                span.aux(kt_time::trace::job::EXPORT_FRAME).a(i);
                 let complete =
                     gpu.collect(ticket, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                 ExportProfile::add(prof.map(|p| &p.readback_ns), mark);

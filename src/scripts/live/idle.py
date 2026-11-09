@@ -36,6 +36,15 @@ ENGINE_LIMIT_PERCENT = 5.0
 UNCOUNTED_PERCENT = 10.0
 
 
+def trace_bytes(out):
+    """What the structured trace holds on disk (structured-telemetry): at rest it must not grow."""
+    d = os.path.join(out, "xdg", "kinetren", "trace")
+    try:
+        return sum(os.path.getsize(os.path.join(d, f)) for f in os.listdir(d))
+    except OSError:
+        return 0
+
+
 class Meter:
     def __init__(self, app):
         self.app = app
@@ -124,9 +133,12 @@ def main(out):
         # a screenshot's wait pokes the stand for a frame: that is the scenario's own work
         wait_quiet(meter, "after the screenshot")
 
+        t0 = trace_bytes(out)
         work, cpu = meter.over(5.0)
-        print(f"   pause: {work}, {cpu:.0f} % of a core, threads {meter.threads}")
+        grew = trace_bytes(out) - t0
+        print(f"   pause: {work}, {cpu:.0f} % of a core, threads {meter.threads}, trace +{grew} bytes")
         app.expect(not work, f"a pause runs nothing, ran {work}")
+        app.expect(grew == 0, f"a pause records nothing in the trace: +{grew} bytes")
         app.expect(not meter.uncounted(work), f"a pause holds a thread no counter sees: {meter.uncounted(work)}")
 
         g = app.geom()
@@ -143,9 +155,12 @@ def main(out):
         phases.append(("composition", (x_reel - 2, y_reel), (x_reel + 2, y_reel)))
         for name, a, b in phases:
             app.step(f"hover-{name.replace(' ', '-')}", f"the pointer goes over the {name}")
+            t0 = trace_bytes(out)
             work, cpu = meter.over(3.0, sweep(app, a, b))
             frames = work.get("ui_frames", 0)
-            print(f"   over the {name}: {work}, {cpu:.0f} % of a core")
+            # printed: the load watch's busy seconds (the UI frames counted) go into the journal and
+            # the trace once a second; no frame of the pointer is recorded
+            print(f"   over the {name}: {work}, {cpu:.0f} % of a core, trace +{trace_bytes(out) - t0} bytes")
             app.expect(frames > 0, f"over the {name}: no frame saw the pointer, so this proves nothing")
             bad = {k: v for k, v in work.items() if k in NOT_ON_HOVER}
             app.expect(not bad, f"over the {name}: a static hover caused {bad}")
@@ -162,9 +177,12 @@ def main(out):
         app.click_probe("tl.fx", "item “Effects…” of the event")
         app.step("fx-open", "the effects window of the composition is open")
         wait_quiet(meter, "with the effects window open")
+        t0 = trace_bytes(out)
         work, cpu = meter.over(5.0)
-        print(f"   effects window, pause: {work}, {cpu:.0f} % of a core")
+        grew = trace_bytes(out) - t0
+        print(f"   effects window, pause: {work}, {cpu:.0f} % of a core, trace +{grew} bytes")
         app.expect(not work, f"an open effects window runs nothing, ran {work}")
+        app.expect(grew == 0, f"an open effects window records nothing in the trace: +{grew} bytes")
         r = app._probe_rect("win.fx")
         app.expect(r is not None, "the effects window published its rectangle")
         x0, y0 = win["x"] + int(r["x"]) + 40, win["y"] + int(r["y"]) + 60

@@ -67,6 +67,14 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   cheaper form of a frozen function is that function to the bit and proved on every input
   (`math::powf_neg_half`, t1982). A new kind gets a row in t1980's bounds and t1981's digests
   (`kt-cli fx-cost --digest`, `KT_PRINT_COST=1`).
+- **A kernel standing still takes its constant path, to the bit** (kernel-specialization): a re-tune
+  only when its inputs' bits move (`Biquad::tune_key`, the EQ's seven values), one set of values for a
+  block whose smoothers stand still (`SmoothedParam::still` is a FIXED POINT of the tick, not
+  `value == target`: a glide stops ulps short of its target, and −0 ticks to +0; `advance(n)`), a
+  computation skipped where its answer is known exactly (the compressor under `below_threshold`). Each
+  variant keeps its general path, which `cpu::with_general` forces on a thread (read once per block):
+  t2171 holds every kind on the specialized, general and baseline paths to digests printed before, t2176
+  checks that a variant is still taken and pays. A new variant gets a row in both.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

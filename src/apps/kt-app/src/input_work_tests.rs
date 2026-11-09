@@ -353,3 +353,35 @@ fn t1877_a_colour_written_back_is_the_colour_held() {
         assert!(!wrote && p == before, "colour {held:?} came back as {:?}", rows.map(|n| p.get(n)));
     }
 }
+
+/// Test t2008 (edit-without-rebuild, capability `transport`): edits through the app's doors hand the
+/// player the model's shared snapshot of the new state — the pointer the windows publish from, not a
+/// copy — and the UI thread builds nothing: no renderer, no derived event, no resolved reel, frames
+/// drawn included. The player's builder thread builds each version once.
+#[test]
+fn t2008_an_edit_hands_the_shared_snapshot_and_builds_nothing() {
+    use kt_time::cost::{Cost, meter};
+    crate::plugins::install();
+    let mut h = fx_scene(FxInstance::builtin("vhs_tape"), false);
+    h.step();
+    let mut fx = h.state().model.clip(kt_model::ClipId(1)).expect("the event").fx.clone();
+    let v0 = h.state().player.project_version();
+    let (_, ui) = meter(|| {
+        for i in 0..5 {
+            fx[0].set_param("cn_db", 30.0 + 2.0 * i as f64);
+            let app = h.state_mut();
+            let g = app.gesture_counter + 1;
+            assert!(app.apply_coalesced(kt_model::Command::SetFx { id: kt_model::ClipId(1), fx: fx.clone() }, g));
+            h.step();
+        }
+    });
+    assert_eq!(h.state().player.project_version(), v0 + 5, "each step reached the player");
+    assert_eq!(ui[Cost::RendererBuild as usize], 0, "a renderer was built on the UI thread");
+    assert_eq!(ui[Cost::EventDerive as usize], 0, "an event was derived on the UI thread");
+    assert_eq!(ui[Cost::ReelResolve as usize], 0, "a reel was resolved on the UI thread");
+    let app = h.state();
+    assert!(
+        std::sync::Arc::ptr_eq(&app.player.project(), &app.model.doc_arc()),
+        "the player holds a copy of the document, not the model's snapshot"
+    );
+}

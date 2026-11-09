@@ -175,6 +175,7 @@ impl MediaWorker {
         };
         if new {
             kt_time::work::bump(kt_time::work::Work::DecodeRequest);
+            trace_req(self.source_id(), req.kind, req.prio);
         }
         self.shared.idle.store(false, Ordering::Release);
         drop(q);
@@ -210,16 +211,40 @@ impl MediaWorker {
     /// the playhead has passed it — is not decoded into an entry nobody reads. A span
     /// already taken by the decoder is not interrupted.
     pub fn withdraw_video(&self, prio: Priority, keep: impl Fn(i64, Option<(u32, u32)>) -> bool) {
+        let source = self.source_id();
         let mut q = self.shared.queue.lock().unwrap();
-        q.video.retain(|&(p, pts, quality), _| p != prio || keep(pts, quality));
+        q.video.retain(|&(p, pts, quality), _| {
+            let kept = p != prio || keep(pts, quality);
+            if !kept {
+                trace_withdraw(source, kt_cache::BurstKind::Video { quality }, pts);
+            }
+            kept
+        });
+    }
+
+    fn source_id(&self) -> SourceId {
+        crate::source_id(self.media)
     }
 
     /// Cancel all requests of generations < `min_generation` (transport seek).
     pub fn cancel_generations_below(&self, min_generation: u64) {
         self.shared.min_generation.store(min_generation, Ordering::Release);
+        let source = self.source_id();
         let mut q = self.shared.queue.lock().unwrap();
-        q.audio.retain(|_, g| *g >= min_generation);
-        q.video.retain(|_, (g, _)| *g >= min_generation);
+        q.audio.retain(|&(_, idx), g| {
+            let kept = *g >= min_generation;
+            if !kept {
+                trace_withdraw(source, kt_cache::BurstKind::Audio, idx);
+            }
+            kept
+        });
+        q.video.retain(|&(_, pts, quality), (g, _)| {
+            let kept = *g >= min_generation;
+            if !kept {
+                trace_withdraw(source, kt_cache::BurstKind::Video { quality }, pts);
+            }
+            kept
+        });
         drop(q);
         self.shared.cond.notify_one();
     }
@@ -239,6 +264,45 @@ impl MediaWorker {
             let _ = j.join();
         }
     }
+}
+
+/// A request entered the queue (structured-telemetry): its key, and the thread's cause — the frame
+/// or the pass that asked.
+fn trace_req(source: SourceId, kind: RequestKind, prio: Priority) {
+    use kt_time::trace::{self, Ev};
+    if !trace::on() {
+        return;
+    }
+    let (bk, idx) = match kind {
+        RequestKind::Audio { idx } => (kt_cache::BurstKind::Audio, idx),
+        RequestKind::Video { pts, quality, .. } => (kt_cache::BurstKind::Video { quality }, pts.0),
+    };
+    let (w, h) = bk.trace_size();
+    trace::ev(Ev::DecReq)
+        .id(kt_cache::trace_id(source, bk, idx))
+        .a(source.0)
+        .b(idx as u64)
+        .c(trace::size(w, h))
+        .aux(prio as u32)
+        .emit();
+}
+
+fn trace_withdraw(source: SourceId, kind: kt_cache::BurstKind, idx: i64) {
+    kt_time::trace::ev(kt_time::trace::Ev::DecWithdraw)
+        .id(kt_cache::trace_id(source, kind, idx))
+        .a(source.0)
+        .b(idx as u64)
+        .emit();
+}
+
+/// A decoded entry went into the cache.
+fn trace_decoded(source: SourceId, kind: kt_cache::BurstKind, idx: i64) {
+    use kt_time::trace::{self, Ev};
+    if !trace::on() {
+        return;
+    }
+    let (w, h) = kind.trace_size();
+    trace::ev(Ev::Decoded).id(kt_cache::trace_id(source, kind, idx)).a(source.0).b(idx as u64).c(trace::size(w, h)).emit();
 }
 
 fn worker_loop(
@@ -400,6 +464,8 @@ fn worker_loop(
                     continue;
                 }
                 stats.video_decodes.fetch_add(missing.len() as u64, Ordering::Relaxed);
+                let mut span = kt_time::trace::span(kt_time::trace::Ev::DecSpan);
+                span.a(source_id.0).b(missing[0].pts as u64).c(missing.len() as u64);
                 if missing.len() > 1 {
                     stats.video_span_batches.fetch_add(1, Ordering::Relaxed);
                     stats.video_span_frames.fetch_add(missing.len() as u64, Ordering::Relaxed);
@@ -477,6 +543,8 @@ fn worker_loop(
                         break;
                     }
                 }
+                span.aux(emitted.len() as u32);
+                drop(span);
                 if res.is_ok() {
                     // Keys not closed by the decoder (EOF) go into the negative cache,
                     // but ONLY those we actually reached: the abandoned span tail was not decoded at all,
@@ -507,7 +575,10 @@ fn read_audio(
     }
     stats.audio_decodes.fetch_add(1, Ordering::Relaxed);
     match source.read_audio_burst(idx) {
-        Ok(burst) => cache.insert_audio(source_id, Arc::new(burst)),
+        Ok(burst) => {
+            trace_decoded(source_id, kt_cache::BurstKind::Audio, idx);
+            cache.insert_audio(source_id, Arc::new(burst))
+        }
         Err(kt_media::MediaError::OutOfRange) => {
             failed.insert(idx);
         }
@@ -569,6 +640,7 @@ fn read_chunk(
             let wh = (q.width, q.height);
             done((k.0, Some(wh)));
             kt_time::work::bump(kt_time::work::Work::Decoded);
+            trace_decoded(source_id, kt_cache::BurstKind::Video { quality: Some(wh) }, k.0);
             cache.insert_video_span(source_id, Some(q), k.0, step_of(k.0, Some(wh)), Arc::new(frame));
         });
     }
@@ -576,6 +648,7 @@ fn read_chunk(
     source.read_video_span(&pts, None, &mut |k, frame| {
         done((k.0, None));
         kt_time::work::bump(kt_time::work::Work::Decoded);
+        trace_decoded(source_id, kt_cache::BurstKind::Video { quality: None }, k.0);
         cache.insert_video_span(source_id, None, k.0, step_of(k.0, None), Arc::new(frame));
     })
 }

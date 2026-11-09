@@ -257,6 +257,23 @@ impl StreamInput for ClipStream<'_> {
     }
 }
 
+/// The stage's key for frame time `t` without running it (a probe plan, structured-telemetry): an
+/// empty frame of the layer's size and the key the kernel names; `None` — the kernel cannot say.
+pub(super) fn key_only(
+    clip: &VideoClip,
+    st: &StreamStage,
+    grid: &FpsGrid,
+    quality: Quality,
+    dq: Quality,
+    t: Tick,
+    pts: Tick,
+) -> Option<(Option<Arc<VideoFrame>>, u64)> {
+    let cs = ClipStream::new(clip, st, grid, quality, None);
+    let key = st.kernel().key(&st.values, &cs, cs.pos(t))?;
+    let frame = VideoFrame { pts, width: dq.width, height: dq.height, rgba: Box::new([]), has_alpha: false };
+    Some((Some(Arc::new(frame)), key))
+}
+
 /// Run the stage for frame time `t`: the decoded picture fitted to `dq` (opaque) and its key;
 /// `(None, 0)` — a frame of the history is missing (starvation; the order asks for it).
 #[allow(clippy::too_many_arguments)]
@@ -273,11 +290,17 @@ pub(super) fn run(
     t: Tick,
     pts: Tick,
 ) -> (Option<Arc<VideoFrame>>, u64) {
+    use kt_time::trace::{self, stream as so, Ev};
     let cs = ClipStream::new(clip, st, grid, quality, Some(cache));
     let k = st.kernel();
     let mut n = cs.pos(t);
+    // the stage's run in the trace: the position, what the memo still lacked, and what came out
+    let mut span = trace::span(Ev::StreamRun);
+    span.id(clip.id.0).a(n as u64).c(n as u64);
+    let needs = if pacing.is_some() || trace::on() { k.needs(&st.values, &cs, n, memo).len() } else { 0 };
+    span.b(needs as u64);
     if let Some(p) = pacing
-        && k.needs(&st.values, &cs, n, memo).len() > p.compose_steps
+        && needs > p.compose_steps
     {
         // the history is the prefetch thread's (`stream_advance`); playing, the layer shows the
         // latest frame the stage holds, a frame it can give without computing anything
@@ -285,14 +308,22 @@ pub(super) fn run(
             Some(f) => {
                 n = f;
                 held.store(true, std::sync::atomic::Ordering::Relaxed);
+                span.aux(so::HELD).c(f as u64);
             }
-            None => return (None, 0),
+            None => {
+                span.aux(so::SHORT);
+                return (None, 0);
+            }
         }
+    } else {
+        span.aux(so::RENDERED);
     }
     let mut buf = Vec::new();
     let Some(out) = k.render(&st.values, &cs, n, memo, &mut buf) else {
+        span.aux(so::SOURCE_MISSING);
         return (None, 0);
     };
+    drop(span);
     let src = kt_fx::video::Frame { w: out.w, h: out.h, rgba: buf, has_alpha: false };
     let mut rgba = vec![0u8; (dq.width * dq.height * 4) as usize];
     kt_fx::video::fit_into(&src, dq.width, dq.height, &mut rgba);

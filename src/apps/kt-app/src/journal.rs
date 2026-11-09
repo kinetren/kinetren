@@ -188,6 +188,7 @@ pub fn install_panic_hook() {
         log("CRASH", &format!("panic report written to {}", p.display()));
         // the records queued before the panic reach the file before the process goes
         crate::tele_journal::flush(std::time::Duration::from_millis(300));
+        kt_time::trace::flush();
         prev(info);
     }));
 }

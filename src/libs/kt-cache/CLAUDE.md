@@ -11,6 +11,12 @@ Cache of bursts + coverage. Without FFmpeg/audio hardware.
 - Pin (a loop region) excludes records from eviction, but not from coverage.
 - **The content serial is unique in the process, not per cache** (t1607): a GPU engine outlives a
   cache and keys its textures and its frames by the serial alone. Never take it from a per-cache count.
+- **An entry evicted and decoded again takes back its serial** (structured-telemetry, t2152): an
+  unchanged source gives the same bytes for the same key (invariant 11), and the executor's kept
+  composites are keyed by the serial. `Inner::past` remembers evicted serials (bounded);
+  `invalidate_source` forgets a source's, and an overwrite of a present entry gets a new serial. A path
+  that puts NEW bytes at an old address must invalidate the source first.
+- Evictions go into the trace with the key's parts and the insert that pushed them out (`trace_evict`).
 - **A hold is a counted pin for a job that reads ahead of its use** (export-pipeline-determinism):
   `hold_video` answers "present" and holds in one step, `insert_video_held` holds with the insert, each
   hold needs its `release_video`. LRU's order is not the order of need: a read refreshes an entry that

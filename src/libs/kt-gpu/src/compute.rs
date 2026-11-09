@@ -96,6 +96,7 @@ pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
         (set, buf)
     });
     let info = adapter.get_info();
+    crate::context::trace_device("compute", &info, &device);
     let cache = crate::pipeline_cache::DiskCache::open(&device, &info, "compute", declared_hash());
     Ok(Arc::new(ComputeDevice {
         device,
@@ -227,6 +228,12 @@ impl ComputeHost for ComputeDevice {
 
     fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String> {
         let d = &self.device;
+        // the job in the trace: its kernel, dispatches, the device time and the wait for its buffers;
+        // its cause is the caller's (a frame's stream stage, a prefetch advance)
+        let mut span = kt_time::trace::span(kt_time::trace::Ev::ComputeJob);
+        if kt_time::trace::on() {
+            span.aux(job.steps.first().map_or(0, |s| kt_time::trace::name(s.name))).a(job.steps.len() as u64);
+        }
         let pipes = job
             .steps
             .iter()
@@ -327,6 +334,7 @@ impl ComputeHost for ComputeDevice {
             st.unmap();
         }
         let waited = submitted.elapsed().as_nanos() as u64;
+        span.c(waited);
         match stamp_read {
             Some(st) => {
                 let (tx, rx) = std::sync::mpsc::channel();
@@ -352,6 +360,7 @@ impl ComputeHost for ComputeDevice {
                         .map(|(i, s)| (s.name, (ticks[2 * i + 1].saturating_sub(ticks[2 * i]) as f64 * period) as u64))
                         .collect();
                     crate::pass_time::note_job(&self.adapter, ds.iter().map(|d| d.1).sum(), &ds);
+                    span.b(ds.iter().map(|d| d.1).sum());
                 }
                 self.give([st]);
             }

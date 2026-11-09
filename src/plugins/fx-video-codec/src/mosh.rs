@@ -416,6 +416,17 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
     v
 }
 
+/// The key `render` returns for `n`, from the rows and addresses alone (structured-telemetry).
+pub fn key(r: Rows, lay: &dyn StreamLayout, n: i64) -> u64 {
+    let s = Sched::new(r, lay);
+    let chain = s.chain(n);
+    let key = Keys::new(&s).decoded(&chain).last().copied().unwrap_or(0);
+    match lay.region_ident(n) {
+        0 => key,
+        rid => mix(key, rid),
+    }
+}
+
 /// The latest position of `n`'s chain whose broken picture the memo holds (decode-request-storm).
 pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
     let s = Sched::new(r, lay);

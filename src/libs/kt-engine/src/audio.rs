@@ -44,7 +44,7 @@ struct TrackStage {
 
 /// A clip prepared for audio render (boundaries in 48 kHz frames).
 #[derive(Debug, Clone)]
-struct AudioClip {
+pub(crate) struct AudioClip {
     id: kt_model::ClipId,
     start: i64,
     end: i64,
@@ -91,7 +91,7 @@ struct AudioClip {
     /// handles), and each costs a walk over the whole speed profile. A shaped speed curve is
     /// sampled into tens of thousands of points (slowed-reverb-is-an-event), and computing
     /// them per burst made a 10-minute zigzag-speed event cost 20× a straight one.
-    src_ends: std::cell::Cell<Option<(i64, i64)>>,
+    src_ends: std::sync::OnceLock<(i64, i64)>,
     /// The chain reads the event's own source across its edges (`kt_fx::chain_context`,
     /// pitch-event-edges D1) — computed once with the clip.
     ctx: bool,
@@ -300,10 +300,6 @@ pub struct AudioRenderer {
     /// change by a single line: an attachment is simply one of the clips in
     /// `active_clips`, and GOLDEN_AUDIO does not move.
     nests: std::collections::HashMap<crate::video::NestKey, AudioRenderer>,
-    /// The armed loop region while `render_looped_with` runs, else `None`
-    /// (pitch-loop-silence, D2): an event covering the region end — and a track stage — wraps its
-    /// chain INPUT first, so a look-ahead reads the region head, not what lies past the end.
-    loop_region: std::cell::Cell<Option<(i64, i64)>>,
     /// (the longest tail, the longest look-ahead) of the track stages, in frames.
     stage_reach: (i64, i64),
     /// The part of every burst's scene the whole reel shares (`scene_hash`).
@@ -615,9 +611,105 @@ fn overlap_weight(clips: &[AudioClip], covers: &OverlapMap, ci: usize, frame: i6
     }
 }
 
+/// One event's audio clip before transitions, run predecessors and the derived fingerprint: a pure
+/// function of the event and its reel context (`media`, `gain`, `nest`), so the player's builder
+/// keeps it by their hash (`incremental`).
+fn derive_audio_clip(
+    c: &ClipEvent,
+    fp: u64,
+    media: kt_model::MediaId,
+    gain: f32,
+    nest: Option<crate::video::NestKey>,
+) -> AudioClip {
+    let start = c.start.to_audio_frames();
+    let end = (c.start + c.duration).to_audio_frames();
+    let active = c.active_fx(); // bypass slots are filtered out (item 2)
+    // the clip’s curves into the SOURCE domain: the audio stream further on sees
+    // only numbers (R.33)
+    // REVERSE enters the normalization (R.39): the UI writes the key
+    // mirrored (`clip_material_at`), and without the mirror here the DSP
+    // would run the curve backwards
+    let auto = kt_model::AutoProfiles::from_curves_rev(
+        &c.active_fx_auto(),
+        c.source_in.to_audio_frames(),
+        (end - start).max(1),
+        c.reversed,
+    );
+    let tail = kt_fx::chain_tail(&active, &auto).to_audio_frames();
+    AudioClip {
+        id: c.id,
+        start,
+        end,
+        ext_end: end + tail,
+        source_in: c.source_in.to_audio_frames(),
+        lane: c.lane,
+        gain,
+        // the address of the SOURCE, not the media (R.59, stage 2): for a
+        // sounding generator (SMPTE with a tone, a count with a
+        // beep) the values are on the event, so the stream is its own
+        media,
+        addr: kt_fx::chain_addr_knots(&active, &auto, (end - start).max(1)).map(std::sync::Arc::new),
+        ctx: kt_fx::chain_context(&active, &auto),
+        fx: active,
+        auto,
+        reversed: c.reversed,
+        fade_in: None,
+        fade_out: None,
+        fade_in_curve: Default::default(),
+        fade_out_curve: Default::default(),
+        head_ext: 0,
+        tail_ext: 0,
+        fade_in_excl: false,
+        fade_out_excl: false,
+        nest,
+        src_ends: std::sync::OnceLock::new(),
+        run_prev: None,
+        ring_off: false,
+        fp,
+    }
+}
+
+thread_local! {
+    /// The armed loop region while `render_looped_with` runs, else `None` (pitch-loop-silence, D2):
+    /// an event covering the region end — and a track stage — wraps its chain INPUT first, so a
+    /// look-ahead reads the region head, not what lies past the end. Keyed by the renderer, on the
+    /// thread that renders: one built renderer is shared by the render thread, prefetch and the probe
+    /// (edit-without-rebuild), and only the render that set it — not a nested reel's renderer, not
+    /// another thread — may see it.
+    static LOOP_REGION: std::cell::Cell<Option<(usize, (i64, i64))>> = const { std::cell::Cell::new(None) };
+}
+
 impl AudioRenderer {
     pub fn new(project: &Project) -> AudioRenderer {
+        crate::incremental::count_renderer_build();
         crate::video::revisions_scope(|| AudioRenderer::build_reel(project, None, &[], 0))
+    }
+
+    /// The renderer's derived state as text (a test's comparison of an incremental build with a
+    /// fresh one, t2004): every event, the index, the overlaps, the stages and the nested reels.
+    #[doc(hidden)]
+    pub fn state_text(&self) -> String {
+        let mut nests: Vec<_> = self.nests.iter().collect();
+        nests.sort_by_key(|(k, _)| **k);
+        let nests: Vec<String> = nests.iter().map(|(k, r)| format!("{k:?}: {}", r.state_text())).collect();
+        format!(
+            "{:?}\n{:?} {}\n{:?}\n{:?} {:?}\n{:?} {} {} {}\n{nests:?}",
+            self.clips,
+            self.index,
+            self.index_from,
+            self.overlaps,
+            self.opts,
+            self.stages,
+            self.stage_reach,
+            self.overlap_layers,
+            self.scene_base,
+            self.preroll_bursts
+        )
+    }
+
+    /// The loop region `render_looped_with` armed for THIS renderer on this thread.
+    fn loop_region(&self) -> Option<(i64, i64)> {
+        LOOP_REGION.with(|l| l.get()).filter(|(r, _)| *r == self as *const AudioRenderer as usize).map(|(_, r)| r)
     }
 
     fn build_reel(
@@ -629,7 +721,7 @@ impl AudioRenderer {
         // morpher layers are already applied (source substitution, live FX batch) —
         // the engine does not know about the morpher (H1); attachments are NOT expanded: each
         // has its own sub-mix (R.50, B4)
-        let resolved = project.resolve_reel(seq, overrides);
+        let resolved = crate::incremental::resolve(project, seq, overrides);
         let effective = &resolved.clips;
         // TRACK MULTIPLIER (R.62, change B): the level in dB, muting and
         // solo by a set of ITS kind. This is yet another SCALAR after the weights and
@@ -739,55 +831,17 @@ impl AudioRenderer {
             .iter()
             .filter(|c| c.kind == ClipKind::Audio)
             .map(|c: &ClipEvent| {
-                let start = c.start.to_audio_frames();
-                let end = (c.start + c.duration).to_audio_frames();
-                let active = c.active_fx(); // bypass slots are filtered out (item 2)
-                // the clip’s curves into the SOURCE domain: the audio stream further on sees
-                // only numbers (R.33)
-                // REVERSE enters the normalization (R.39): the UI writes the key
-                // mirrored (`clip_material_at`), and without the mirror here the DSP
-                // would run the curve backwards
-                let auto = kt_model::AutoProfiles::from_curves_rev(
-                    &c.active_fx_auto(),
-                    c.source_in.to_audio_frames(),
-                    (end - start).max(1),
-                    c.reversed,
-                );
-                let tail = kt_fx::chain_tail(&active, &auto).to_audio_frames();
-                AudioClip {
-                    id: c.id,
-                    start,
-                    end,
-                    ext_end: end + tail,
-                    source_in: c.source_in.to_audio_frames(),
-                    lane: c.lane,
-                    gain: event_gain_linear(c.gain_db) * track_gain(c.lane),
-                    // the address of the SOURCE, not the media (R.59, stage 2): for a
-                    // sounding generator (SMPTE with a tone, a count with a
-                    // beep) the values are on the event, so the stream is its own
-                    media: crate::video::clip_source_addr_in(c, salt),
-                    addr: kt_fx::chain_addr_knots(&active, &auto, (end - start).max(1))
-                        .map(std::sync::Arc::new),
-                    fx: active,
-                    auto,
-                    reversed: c.reversed,
-                    fade_in: None,
-                    fade_out: None,
-                    fade_in_curve: Default::default(),
-                    fade_out_curve: Default::default(),
-                    head_ext: 0,
-                    tail_ext: 0,
-                    fade_in_excl: false,
-                    fade_out_excl: false,
-                    nest: project.sequence(c.media).map(|_| {
-                        (c.media, crate::instance_content(project, c.media, &c.overrides))
-                    }),
-                    src_ends: std::cell::Cell::new(None),
-                    ctx: false,
-                    run_prev: None,
-                    ring_off: false,
-                    fp: xxhash_rust::xxh3::xxh3_64(format!("{c:?}").as_bytes()),
-                }
+                // what the event is derived from: its model text (the fingerprint's own input) and
+                // its reel context — the source address, the track's level, the instance. The same
+                // key → the last build's event, copied (edit-without-rebuild)
+                let fp = crate::incremental::hash_debug(c);
+                let media = crate::video::clip_source_addr_in(c, salt);
+                let gain = event_gain_linear(c.gain_db) * track_gain(c.lane);
+                let nest = project
+                    .sequence(c.media)
+                    .map(|_| (c.media, crate::instance_content(project, c.media, &c.overrides)));
+                let key = crate::incremental::hash_fmt(format_args!("{fp} {} {} {nest:?}", media.0, gain.to_bits()));
+                crate::incremental::audio_clip(key, || derive_audio_clip(c, fp, media, gain, nest))
             })
             .collect();
         // Crossfade windows from transitions (R.24): the window boundaries are floored into frames
@@ -864,9 +918,6 @@ impl AudioRenderer {
         };
         let covers = if overlap_layers { build_lane_covers(&clips) } else { OverlapMap::new() };
         let overlaps = overlapping_clips(&clips, &covers);
-        for c in &mut clips {
-            c.ctx = kt_fx::chain_context(&c.fx, &c.auto);
-        }
         let runs = run_predecessors(&clips, &overlaps);
         for (c, r) in clips.iter_mut().zip(runs) {
             c.run_prev = r;
@@ -880,7 +931,7 @@ impl AudioRenderer {
         let prev_ids: Vec<Option<kt_model::ClipId>> =
             clips.iter().map(|c| c.run_prev.map(|i| clips[i].id)).collect();
         for (c, prev) in clips.iter_mut().zip(prev_ids) {
-            let derived = format!(
+            c.fp = crate::incremental::hash_fmt(format_args!(
                 "{} {} {} {} {:?} {:?} {:?} {:?} {:?} {:?} {} {} {} {} {:?} {:?} {}",
                 c.fp,
                 c.start,
@@ -899,8 +950,7 @@ impl AudioRenderer {
                 c.nest,
                 prev,
                 c.ring_off,
-            );
-            c.fp = xxhash_rust::xxh3::xxh3_64(derived.as_bytes());
+            ));
         }
         let mut nests = std::collections::HashMap::new();
         if depth < kt_model::MAX_NEST_DEPTH {
@@ -932,7 +982,6 @@ impl AudioRenderer {
             opts,
             stages,
             nests,
-            loop_region: std::cell::Cell::new(None),
             stage_reach,
             scene_base,
             preroll_bursts: 0,
@@ -1312,7 +1361,7 @@ impl AudioRenderer {
             // track events — with the same code as all the others. Under an armed loop with a
             // look-ahead the input window is FOLDED into the region (pitch-loop-silence, D2): the
             // part past the region end is the region head, which is what will sound next lap.
-            match self.loop_region.get().filter(|(rs, re)| {
+            match self.loop_region().filter(|(rs, re)| {
                 st.la > 0 && range.start >= *rs && range.end <= *re && win.end > *re
             }) {
                 None => self.sum_lane(st.lane, fetcher, store, &win, &mut scratch, &mut stats),
@@ -1420,6 +1469,67 @@ impl AudioRenderer {
         }
     }
 
+    /// The run of frames from `f` (before `to`) over which the weight's formula stays in one regime
+    /// (kernel-specialization): no fade window, overlaid window, overlap boundary or FX-tail edge
+    /// (`tail_end`, the FX path's `clip.end + clip.tail_ext`) starts or ends inside it. `true` when
+    /// that regime's weight is a constant — outside the windows, before a fade-in, under one or three
+    /// and more overlapping events — so `fade_weight · overlap_at · gain` taken at `f` is the weight
+    /// of every frame of the run, to the bit; `false` for a ramp, which keeps the per-frame formula.
+    fn weight_run(&self, ci: usize, f: i64, to: i64, tail_end: Option<i64>) -> (i64, bool) {
+        let c = &self.clips[ci];
+        let mut end = to;
+        let mut cut = |b: i64| {
+            if b > f && b < end {
+                end = b;
+            }
+        };
+        let mut constant = true;
+        if let Some(e) = tail_end {
+            cut(e);
+        }
+        let inside = |w: Option<(i64, i64)>| w.is_some_and(|(w0, w1)| f >= w0 && f < w1);
+        if tail_end.is_none_or(|e| f < e) {
+            // `fade_weight`'s branches: a fade-in up to its end (a constant `rise(0)` before its
+            // start), else a fade-out inside its window, else 1
+            if let Some((w0, w1)) = c.fade_in {
+                cut(w0);
+                cut(w1);
+                if f < w1 && (f >= w0 || w1 <= w0) {
+                    constant = false;
+                }
+            }
+            if let Some((w0, w1)) = c.fade_out {
+                cut(w0);
+                cut(w1);
+                if !c.fade_in.is_some_and(|(_, w1)| f < w1) && f >= w0 && f < w1 {
+                    constant = false;
+                }
+            }
+        }
+        // `overlap_at`'s branches: an overlaid window is 1, else the overlap of the lane's cover
+        for (excl, w) in [(c.fade_in_excl, c.fade_in), (c.fade_out_excl, c.fade_out)] {
+            if let (true, Some((w0, w1))) = (excl, w) {
+                cut(w0);
+                cut(w1);
+            }
+        }
+        let excl = (c.fade_in_excl && inside(c.fade_in)) || (c.fade_out_excl && inside(c.fade_out));
+        if !excl
+            && self.overlap_layers
+            && self.overlaps[ci]
+            && let Some(m) = self.covers.get(c.lane as usize)
+        {
+            if let Some(&b) = m.bounds.get(m.bounds.partition_point(|&b| b <= f)) {
+                cut(b);
+            }
+            // two events cross-fade by their progress; one and three or more weigh a constant
+            if m.at(f).len() == 2 {
+                constant = false;
+            }
+        }
+        (end, constant)
+    }
+
     fn render_plain_clip(
         &self,
         ci: usize,
@@ -1438,6 +1548,7 @@ impl AudioRenderer {
             let mut f = from;
             let mut cursor: Option<(i64, Arc<AudioBurst>)> = None; // (burst idx, data)
             let clip_len = clip.end - clip.start;
+            let spec = kt_plugin_api::cpu::specialized();
             // END OF MATERIAL (R.63 item 2) — the same edge as its start
             // above: beyond it there is no source, and silence there is not an underrun.
             let material_end = fetcher.material_end_frames(clip.media);
@@ -1489,15 +1600,42 @@ impl AudioRenderer {
                 };
                 match burst {
                     Some(b) => {
-                        for k in 0..take {
-                            let w =
-                                fade_weight(clip, f + k) * self.overlap_at(ci, f + k) * clip.gain;
-                            let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
-                            let sk = if clip.reversed { within - k } else { within + k };
-                            let si = (sk as usize) * AUDIO_CHANNELS;
-                            for ch in 0..AUDIO_CHANNELS {
-                                out[oi + ch] += b.data[si + ch] * w;
+                        let mut k = 0;
+                        while k < take {
+                            // a run of one weight regime (kernel-specialization)
+                            let (run_end, constant) = if spec {
+                                self.weight_run(ci, f + k, f + take, None)
+                            } else {
+                                (f + take, false)
+                            };
+                            let n = run_end - (f + k);
+                            let weight = |k: i64| fade_weight(clip, f + k) * self.overlap_at(ci, f + k) * clip.gain;
+                            let w0 = weight(k);
+                            debug_assert!(!constant || weight(k + n - 1).to_bits() == w0.to_bits());
+                            let at = |k: i64| {
+                                let sk = if clip.reversed { within - k } else { within + k };
+                                (((f + k - range.start) as usize) * AUDIO_CHANNELS, (sk as usize) * AUDIO_CHANNELS)
+                            };
+                            if constant {
+                                // one multiply per sample, at the CPU's level (the same bytes)
+                                kt_plugin_api::fast!({
+                                    for k in k..k + n {
+                                        let (oi, si) = at(k);
+                                        for ch in 0..AUDIO_CHANNELS {
+                                            out[oi + ch] += b.data[si + ch] * w0;
+                                        }
+                                    }
+                                })
+                            } else {
+                                for k in k..k + n {
+                                    let w = weight(k);
+                                    let (oi, si) = at(k);
+                                    for ch in 0..AUDIO_CHANNELS {
+                                        out[oi + ch] += b.data[si + ch] * w;
+                                    }
+                                }
                             }
+                            k += n;
                         }
                     }
                     // a missing burst in the HANDLE zone (beyond the media edge) —
@@ -1628,10 +1766,8 @@ impl AudioRenderer {
         // The boundary is CONSUMPTION (R.57): the resampler cursor lives on it, and the
         // addresses under the signed curve go both left and right. For a
         // monotonic chain it is the same number as before.
-        let (src_window_end, src_mirror_end) = match clip.src_ends.get() {
-            Some(e) => e,
-            None => {
-                let e = (
+        let (src_window_end, src_mirror_end) = *clip.src_ends.get_or_init(|| {
+                (
                     clip.source_in
                         + kt_fx::chain_consumption_window_ext(
                             &clip.fx,
@@ -1642,11 +1778,8 @@ impl AudioRenderer {
                         )
                         .end,
                     clip.source_in + kt_fx::chain_source_used(&clip.fx, &clip.auto, clip_len),
-                );
-                clip.src_ends.set(Some(e));
-                e
-            }
-        };
+                )
+        });
         // MIRROR AXIS ≠ window end (R.43, item 292). The window includes the resampler's margin
         // (`WARP_SOURCE_MARGIN_FRAMES`, 8192 frames = 170.7 ms) —
         // this is the correct boundary “silence beyond”, but an unfit axis: mirroring
@@ -1676,7 +1809,7 @@ impl AudioRenderer {
         // the loop span in clip-local frames, for an event that covers the region end; an event
         // that reads across its edges and starts INSIDE the region is not what sounds after the
         // wrap — its input continues into its own material (pitch-event-edges D5)
-        let span = self.loop_region.get().and_then(|(rs, re)| {
+        let span = self.loop_region().and_then(|(rs, re)| {
             (clip.start < re && clip.end >= re && (!clip.ctx || clip.start <= rs))
                 .then_some((rs - clip.start, re - clip.start))
         });
@@ -1741,19 +1874,37 @@ impl AudioRenderer {
         }
         stats.underruns += pull_underruns;
         stats.warmup_misses += warmup_misses;
-        for k in 0..count as i64 {
-            let f = from + k;
-            // weights act on the body and handles (transition windows); in the
-            // FX tail zone (past the material) — 1.0: the reverb rings out under
-            // its neighbours without weighting.
-            let w = if f < clip.end + clip.tail_ext { fade_weight(clip, f) } else { 1.0 }
-                * self.overlap_at(ci, f)
-                * clip.gain;
-            let oi = ((f - range.start) as usize) * AUDIO_CHANNELS;
-            let bi = (k as usize) * AUDIO_CHANNELS;
-            for ch in 0..AUDIO_CHANNELS {
-                out[oi + ch] += buf[bi + ch] * w;
+        // weights act on the body and handles (transition windows); in the
+        // FX tail zone (past the material) — 1.0: the reverb rings out under
+        // its neighbours without weighting.
+        let tail_end = clip.end + clip.tail_ext;
+        let weight =
+            |f: i64| if f < tail_end { fade_weight(clip, f) } else { 1.0 } * self.overlap_at(ci, f) * clip.gain;
+        let spec = kt_plugin_api::cpu::specialized();
+        let mut f = from;
+        while f < to {
+            // a run of one weight regime (kernel-specialization): a constant weight is taken once
+            let (run_end, constant) = if spec { self.weight_run(ci, f, to, Some(tail_end)) } else { (to, false) };
+            let w0 = weight(f);
+            debug_assert!(!constant || weight(run_end - 1).to_bits() == w0.to_bits());
+            let (o0, b0) = (((f - range.start) as usize) * AUDIO_CHANNELS, ((f - from) as usize) * AUDIO_CHANNELS);
+            let len = ((run_end - f) as usize) * AUDIO_CHANNELS;
+            if constant {
+                // one multiply per sample, at the CPU's level (the same bytes)
+                kt_plugin_api::fast!({
+                    for (o, s) in out[o0..o0 + len].iter_mut().zip(&buf[b0..b0 + len]) {
+                        *o += *s * w0;
+                    }
+                })
+            } else {
+                for (k, (o, s)) in out[o0..o0 + len].chunks_exact_mut(AUDIO_CHANNELS).zip(buf[b0..b0 + len].chunks_exact(AUDIO_CHANNELS)).enumerate() {
+                    let w = weight(f + k as i64);
+                    for (o, s) in o.iter_mut().zip(s) {
+                        *o += *s * w;
+                    }
+                }
             }
+            f = run_end;
         }
         // the earlier laps' echo at the weight of the tail zone it lies in (1.0 · the clip gain)
         if let Some(sum) = laps_out {
@@ -1794,7 +1945,7 @@ impl AudioRenderer {
         let total = (out.len() / AUDIO_CHANNELS) as i64;
         let mut stats = RenderStats::default();
         let mut done = 0i64;
-        self.loop_region.set(Some((region.start, region.end)));
+        let was = LOOP_REGION.with(|l| l.replace(Some((self as *const AudioRenderer as usize, (region.start, region.end)))));
         while done < total {
             let tl = region.start + (start_frame - region.start + done).rem_euclid(len);
             let chunk = (region.end - tl).min(total - done);
@@ -1805,7 +1956,7 @@ impl AudioRenderer {
             stats.warmup_misses += s.warmup_misses;
             done += chunk;
         }
-        self.loop_region.set(None);
+        LOOP_REGION.with(|l| l.set(was));
         stats
     }
 

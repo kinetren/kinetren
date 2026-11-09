@@ -1,0 +1,248 @@
+use super::*;
+use kt_time::trace::{exec, mix, play, stream, wait};
+
+const MS: u64 = 1_000_000;
+
+fn rec(ev: Ev, t: u64, f: impl FnOnce(&mut Rec)) -> Rec {
+    let mut r = Rec { t, ev: ev as u16, th: 1, ..Default::default() };
+    f(&mut r);
+    r
+}
+
+fn run_of(mut recs: Vec<Rec>) -> Run {
+    recs.sort_by_key(|r| r.t);
+    let mut run = Run { label: "test".into(), recs, ..Default::default() };
+    run.threads.insert(1, "preview-compose".into());
+    run.threads.insert(2, "prefetch".into());
+    run.names.insert(77, "datamosh:search".into());
+    run
+}
+
+/// A paused frame that waits 2 s: a decode, then a stream history computed by the prefetch thread.
+fn paused_wait() -> Run {
+    let key = 1u64 << 63 | 5;
+    let mut v = vec![];
+    for (id, at, done_ok) in [(1u64, 0, false), (2, 300 * MS, false), (3, 2000 * MS, true)] {
+        v.push(rec(Ev::FrameAsk, at, |r| {
+            r.id = id;
+            r.a = 9000;
+        }));
+        v.push(rec(Ev::FramePlan, at + MS, |r| {
+            r.id = id;
+            r.dur = 2 * MS;
+            r.aux = 2;
+            r.b = u64::from(!done_ok);
+        }));
+        if !done_ok {
+            v.push(rec(Ev::FrameWait, at + MS, |r| {
+                r.id = id;
+                r.aux = wait::DECODE;
+                r.a = key;
+            }));
+        }
+        v.push(rec(Ev::StreamRun, at + MS, |r| {
+            r.id = 9;
+            r.cause = id;
+            r.dur = MS;
+            r.a = 120;
+            r.b = if done_ok { 0 } else { 60 };
+            r.aux = if done_ok { stream::RENDERED } else { stream::SHORT };
+        }));
+        v.push(rec(Ev::FrameExec, at + 4 * MS, |r| {
+            r.id = id;
+            r.dur = 10 * MS;
+            r.aux = if done_ok { exec::COMPLETE | exec::MEMO_STORED } else { 0 };
+        }));
+        v.push(rec(Ev::FrameDone, at + 15 * MS, |r| {
+            r.id = id;
+            r.a = 9000;
+            r.aux = done_ok as u32;
+        }));
+    }
+    v.push(rec(Ev::DecReq, MS, |r| {
+        r.id = key;
+        r.cause = 1;
+        r.a = 3;
+        r.b = 9000;
+    }));
+    v.push(rec(Ev::Decoded, 400 * MS, |r| {
+        r.id = key;
+        r.a = 3;
+        r.b = 9000;
+    }));
+    v.push(rec(Ev::StreamAdvance, 410 * MS, |r| {
+        r.th = 2;
+        r.id = 9;
+        r.dur = 1500 * MS;
+        r.a = 120;
+        r.b = 60;
+        r.c = 60;
+        r.aux = stream::DONE;
+    }));
+    for k in 0..60u64 {
+        v.push(rec(Ev::ComputeJob, 420 * MS + k * 24 * MS, |r| {
+            r.th = 2;
+            r.dur = 20 * MS;
+            r.aux = 77;
+            r.b = 4 * MS;
+        }));
+    }
+    run_of(v)
+}
+
+/// Test t2146: "why was the preview Loading": the stretch of a paused frame's wait, its waits ranked
+/// by time (the stream history first, the decode next), and the critical path of its last composite.
+#[test]
+fn t2146_loading_ranks_the_waits() {
+    let run = paused_wait();
+    let st = stretches(&run, 180 * MS);
+    assert_eq!(st.len(), 1, "{st:?}");
+    assert_eq!(st[0].frames, vec![1, 2, 3]);
+    assert!(st[0].shown);
+    let out = loading(&run, None, None);
+    println!("{out}");
+    let lines: Vec<&str> = out.lines().filter(|l| l.contains(" ms  ")).collect();
+    assert!(lines[0].contains("stream history"), "{out}");
+    assert!(lines[0].contains("computed 60 positions"), "{out}");
+    assert!(out.contains("compute datamosh:search ×60"), "{out}");
+    assert!(out.contains("decoded frames (1 keys"), "{out}");
+    assert!(out.contains("the last composite (3)") && out.contains("done at") && out.contains("complete"), "{out}");
+    // the UI's own scrim records decide the stretch when it recorded them
+    let mut ui = run.clone();
+    ui.recs.push(rec(Ev::Loading, 180 * MS, |r| r.aux = 1));
+    ui.recs.push(rec(Ev::Loading, 2016 * MS, |r| r.aux = 0));
+    ui.recs.sort_by_key(|r| r.t);
+    let st = stretches(&ui, 180 * MS);
+    assert_eq!(st.len(), 1);
+    assert_eq!(st[0].to, 2016 * MS);
+}
+
+/// A loop of three ticks over three laps: kept composites, one evicted, one whose key moved; the
+/// kept mix replays on the second lap but for a chunk never kept in the lap context.
+fn looped() -> Run {
+    let mut v = vec![
+        rec(Ev::Play, 0, |r| {
+            r.aux = play::REGION;
+            r.b = 9000;
+            r.c = 9000 + 3 * 3000;
+        }),
+        rec(Ev::Play, MS, |r| r.aux = play::PLAY),
+    ];
+    let mut id = 100;
+    let mut frame = |v: &mut Vec<Rec>, at: u64, tick: u64, key: u64, flags: u32| {
+        id += 1;
+        let i = id;
+        v.push(rec(Ev::FrameAsk, at, |r| {
+            r.id = i;
+            r.a = tick;
+        }));
+        v.push(rec(Ev::FrameExec, at + MS, |r| {
+            r.id = i;
+            r.a = key;
+            r.dur = if flags & exec::MEMO_HIT != 0 { MS } else { 30 * MS };
+            r.aux = flags;
+        }));
+        v.push(rec(Ev::FrameDone, at + 32 * MS, |r| {
+            r.id = i;
+            r.a = tick;
+            r.aux = 1;
+        }));
+        if flags & exec::MEMO_STORED != 0 {
+            v.push(rec(Ev::MemoStore, at + 31 * MS, |r| r.id = key));
+        }
+    };
+    let stored = exec::COMPLETE | exec::MEMO_STORED;
+    let hit = exec::COMPLETE | exec::MEMO_HIT;
+    // lap 0
+    frame(&mut v, 10 * MS, 9000, 11, stored);
+    frame(&mut v, 50 * MS, 12000, 12, stored);
+    frame(&mut v, 90 * MS, 15000, 13, stored);
+    v.push(rec(Ev::Play, 120 * MS, |r| r.aux = play::WRAP));
+    // lap 1: tick 1 kept; tick 2 evicted meanwhile; tick 3's key moved
+    v.push(rec(Ev::MemoEvict, 125 * MS, |r| {
+        r.id = 12;
+        r.cause = 99;
+    }));
+    frame(&mut v, 130 * MS, 9000, 11, hit);
+    frame(&mut v, 170 * MS, 12000, 12, stored);
+    frame(&mut v, 210 * MS, 15000, 14, stored);
+    v.push(rec(Ev::MixChunk, 135 * MS, |r| r.aux = mix::REPLAY));
+    v.push(rec(Ev::MixChunk, 175 * MS, |r| {
+        r.aux = mix::KEPT;
+        r.c = 1 | 1 << 8;
+    }));
+    v.push(rec(Ev::Play, 240 * MS, |r| r.aux = play::WRAP));
+    // lap 2: all kept
+    frame(&mut v, 250 * MS, 9000, 11, hit);
+    frame(&mut v, 290 * MS, 12000, 12, hit);
+    frame(&mut v, 330 * MS, 15000, 14, hit);
+    v.push(rec(Ev::Play, 360 * MS, |r| r.aux = play::PAUSE));
+    run_of(v)
+}
+
+/// Test t2147: "pass N over the loop": per lap the kept and composed frames, and for every frame
+/// composed again on a later lap the reason (evicted, key moved), and the kept mix's misses.
+#[test]
+fn t2147_loop_names_why_a_frame_was_composed_again() {
+    let run = looped();
+    let b = lap_bounds(&run);
+    assert_eq!(b.len(), 3, "{b:?}");
+    let out = laps(&run);
+    println!("{out}");
+    let rows: Vec<&str> =
+        out.lines().filter(|l| l.split_whitespace().nth(1).is_some_and(|w| w.starts_with('+'))).collect();
+    let cols = |l: &str| l.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+    assert_eq!(cols(rows[0])[3..6], ["3", "0", "3"], "lap 0: three composed");
+    assert_eq!(cols(rows[1])[3..6], ["3", "1", "2"], "lap 1: one kept, two composed again");
+    assert!(out.contains("1 × evicted from the kept composites before this lap"), "{out}");
+    assert!(out.contains("1 × the frame's key changed since the last lap"), "{out}");
+    assert!(out.contains("lap context never kept ×1"), "{out}");
+    let lap2 = cols(rows.last().unwrap());
+    assert_eq!(lap2[3..6], ["3", "3", "0"], "lap 2: all kept");
+}
+
+/// Test t2148: "the slowest frames and their critical path": ordered by ask → done, each with its
+/// plan, stream runs, compute and executor lines.
+#[test]
+fn t2148_slow_frames_carry_their_critical_path() {
+    let mut run = paused_wait();
+    if let Some(d) = run.recs.iter_mut().find(|r| r.kind() == Some(Ev::FrameDone) && r.id == 3) {
+        d.t += 30 * MS;
+    }
+    for k in 0..3u64 {
+        run.recs.push(rec(Ev::ComputeJob, 2001 * MS + k, |r| {
+            r.cause = 3;
+            r.dur = 5 * MS;
+            r.aux = 77;
+        }));
+    }
+    run.recs.sort_by_key(|r| r.t);
+    let out = slow(&run, 2);
+    println!("{out}");
+    let heads: Vec<&str> = out.lines().filter(|l| l.starts_with("-- frame")).collect();
+    assert_eq!(heads.len(), 2);
+    assert!(heads[0].contains("frame 3") && heads[0].contains("45.0 ms"), "{out}");
+    assert!(out.contains("compute datamosh:search ×3: 15.0 ms"), "{out}");
+    assert!(out.contains("stream stage of clip 9 at position 120: short of history (60 positions lacked)"), "{out}");
+    assert!(out.contains("executor at"), "{out}");
+}
+
+/// Test t2149: "what ran in this window", one frame's life, and the exports a tool reads: JSON
+/// lines and a Chrome trace that parses, with the threads named.
+#[test]
+fn t2149_window_frame_and_exports() {
+    let run = paused_wait();
+    let out = during(&run, 400 * MS, 1000 * MS);
+    println!("{out}");
+    assert!(out.contains("prefetch"), "{out}");
+    assert!(out.contains("compute_job:datamosh:search"), "{out}");
+    let f = frame(&run, 1);
+    assert!(f.contains("asked +0.001 (prio 0) → decoded +0.400"), "{f}");
+    let d = dump(&run, None, None);
+    assert_eq!(d.lines().count(), run.recs.len());
+    assert!(d.lines().all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()));
+    let c: serde_json::Value = serde_json::from_str(&chrome(&run)).expect("chrome JSON");
+    let evs = c["traceEvents"].as_array().unwrap();
+    assert!(evs.iter().any(|e| e["name"] == "thread_name" && e["args"]["name"] == "prefetch"));
+    assert!(evs.iter().any(|e| e["name"] == "compute_job:datamosh:search" && e["ph"] == "X"));
+}

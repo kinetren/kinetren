@@ -290,6 +290,12 @@ pub(crate) fn journal_second(j: &crate::tele_journal::Journal, at: crate::tele_j
     let busy = !s.at_rest();
     if busy {
         j.record_at(at, Kind::Load, &line(s));
+        // typed, for the query: the second's load and each counter that moved (structured-telemetry)
+        let t = at.mono_ms * 1_000_000;
+        kt_time::trace::ev(kt_time::trace::Ev::Load).at(t).a((s.cpu * 10.0) as u64).emit();
+        for (i, n) in s.work.iter().enumerate().filter(|(_, n)| **n > 0) {
+            kt_time::trace::ev(kt_time::trace::Ev::Work).at(t).aux(i as u32).a(*n as u64).emit();
+        }
         // the device's second beside the processor's (gpu-pass-cost)
         if let Some(g) = &s.gpu {
             j.record_at(at, Kind::Gpu, &g.line());

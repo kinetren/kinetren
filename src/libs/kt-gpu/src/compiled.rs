@@ -392,8 +392,25 @@ impl Compiled {
 
     /// A frame is about to draw the pipeline of `s`: a never-warmed one is a cold draw.
     pub(crate) fn drawn(&self, s: Slot) {
-        if !self.warm[self.index(s)].swap(true, Ordering::AcqRel) {
+        let i = self.index(s);
+        if !self.warm[i].swap(true, Ordering::AcqRel) {
             cold_draw();
+            if kt_time::trace::on() {
+                let n = kt_time::trace::name(&self.label(i));
+                kt_time::trace::ev(kt_time::trace::Ev::ColdDraw).aux(n).emit();
+            }
+        }
+    }
+
+    /// What the trace calls a pipeline (structured-telemetry).
+    fn label(&self, i: usize) -> String {
+        const FIXED: [&str; PIPE_COUNT] =
+            ["resample", "mirror", "composite", "layer_mix", "unpremul", "premul", "grid_tile", "mask"];
+        match self.slot(i) {
+            Slot::Fixed(f) => FIXED[f].to_string(),
+            Slot::Plugin(p) => format!("{}:pass{p}", self.plugin_owner[p]),
+            Slot::Display => "display".into(),
+            Slot::Geom => "geometry".into(),
         }
     }
 
@@ -523,6 +540,10 @@ impl Compiled {
             if crate::exit::exiting() {
                 return;
             }
+            let mut span = kt_time::trace::span(kt_time::trace::Ev::Warm);
+            if kt_time::trace::on() {
+                span.aux(kt_time::trace::name(&self.label(i)));
+            }
             self.warm_batch(&[i]);
         }
     }
@@ -556,6 +577,8 @@ impl Compiled {
             (!failed).then_some(p)
         });
         if let Some(p) = pipe.as_ref().filter(|_| !crate::exit::exiting()) {
+            let mut span = kt_time::trace::span(kt_time::trace::Ev::Warm);
+            span.aux(kt_time::trace::name("geometry:shape"));
             self.wait_frames();
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }

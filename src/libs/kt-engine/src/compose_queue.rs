@@ -20,7 +20,7 @@ use crate::player::{PreviewParts, Target, VideoCost};
 use crate::video_plan::{PresentOptions, VideoGpuExec};
 use kt_media::Quality;
 use kt_time::Tick;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -55,7 +55,6 @@ pub(crate) struct Composer {
     done: Mutex<Option<Composed>>,
     done_cv: Condvar,
     spare: Mutex<Vec<u8>>,
-    seq: AtomicU64,
     stop: AtomicBool,
     wake: Mutex<Option<Wake>>,
     slow: Mutex<Option<Arc<dyn VideoGpuExec>>>,
@@ -71,7 +70,6 @@ impl Composer {
             done: Mutex::new(None),
             done_cv: Condvar::new(),
             spare: Mutex::new(Vec::new()),
-            seq: AtomicU64::new(0),
             stop: AtomicBool::new(false),
             wake: Mutex::new(None),
             slow: Mutex::new(None),
@@ -79,11 +77,18 @@ impl Composer {
         })
     }
 
-    /// The newest ask replaces the waiting one. Its number comes back.
-    pub(crate) fn ask(&self, t: Tick, present: Option<PresentOptions>, versions: (u64, u64)) -> u64 {
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        *self.ask.lock().unwrap() = Some(Ask { t, present, seq, versions });
+    /// The newest ask replaces the waiting one. Its number comes back: the frame's id in the trace
+    /// (process-wide, so two players never share one).
+    pub(crate) fn ask(&self, t: Tick, present: Option<PresentOptions>, versions: (u64, u64), flags: u32) -> u64 {
+        use kt_time::trace::{self, Ev};
+        let seq = trace::next_id();
+        let old = self.ask.lock().unwrap().replace(Ask { t, present, seq, versions });
         self.ask_cv.notify_one();
+        let replaced = old.map_or(0, |o| o.seq);
+        trace::ev(Ev::FrameAsk).id(seq).a(t.0 as u64).b(replaced).aux(flags).emit();
+        if replaced != 0 {
+            trace::ev(Ev::FrameDrop).id(replaced).aux(trace::drop::SUPERSEDED).emit();
+        }
         seq
     }
 
@@ -184,25 +189,38 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
             continue;
         };
         let t0 = Instant::now();
+        // every record of this composite, on this thread and in the requests it makes, names the frame
+        let _cause = kt_time::trace::with_cause(ask.seq);
         let mut rgba = std::mem::take(&mut *c.spare.lock().unwrap());
         let display = ask.present.filter(|_| parts.can_present());
         let slow = c.slow.lock().unwrap().clone();
         let via = slow.filter(|_| display.is_some() && route.through_slow(ask.versions.0));
         let timed = via.is_some();
-        let on_display = display.is_some() && via.is_none();
+        let mut on_display = display.is_some() && via.is_none();
         let out = match display.filter(|_| on_display) {
             Some(o) => {
                 let r = parts.compose(ask.t, Target::Display(o));
+                let w = Instant::now();
                 parts.wait_presented();
+                let waited = w.elapsed().as_nanos() as u64;
+                kt_time::trace::ev(kt_time::trace::Ev::FrameWait)
+                    .id(ask.seq)
+                    .aux(kt_time::trace::wait::DEVICE)
+                    .lasted(waited)
+                    .emit();
                 r
             }
-            None => parts.compose_via(via.as_ref(), ask.t, Target::Bytes(&mut rgba)),
+            None => parts.compose_via(via.as_ref(), display, ask.t, Target::Bytes(&mut rgba)),
         };
         let spent = t0.elapsed();
         // the executor's own time: the plan (a stream stage's kernel included) holds no queue
         let plan = out.as_ref().map_or(0, |o| o.4);
         let exec = spent.saturating_sub(Duration::from_nanos(plan));
-        if timed {
+        // a kept composite was shown on the display: it timed no chain (structured-telemetry)
+        let replayed = out.as_ref().is_some_and(|o| o.5.replayed);
+        if replayed {
+            on_display = display.is_some();
+        } else if timed {
             route.timed(exec);
         } else if on_display {
             route.slow = exec >= SLOW_CHAIN;
@@ -213,12 +231,23 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
         });
         // a picture of a state the model has left is nobody's: an Undo must not see it land
         if parts.versions() != ask.versions {
+            kt_time::trace::ev(kt_time::trace::Ev::FrameDrop).id(ask.seq).aux(kt_time::trace::drop::STATE_LEFT).emit();
             c.give_back(rgba);
             continue;
         }
+        if answer.is_none() {
+            kt_time::trace::ev(kt_time::trace::Ev::FrameDrop).id(ask.seq).aux(kt_time::trace::drop::NO_PICTURE).emit();
+        }
         let (quality, complete) = answer.unwrap_or((parts.quality(), false));
+        kt_time::trace::ev(kt_time::trace::Ev::FrameDone)
+            .id(ask.seq)
+            .a(ask.t.0 as u64)
+            .aux(complete as u32)
+            .lasted(spent.as_nanos() as u64)
+            .emit();
         let frame = Composed { seq: ask.seq, t: ask.t, quality, complete, on_display, rgba };
         if let Some(old) = c.done.lock().unwrap().replace(frame) {
+            kt_time::trace::ev(kt_time::trace::Ev::FrameDrop).id(old.seq).aux(kt_time::trace::drop::UNTAKEN).emit();
             c.give_back(old.rgba);
         }
         c.done_cv.notify_all();
@@ -239,6 +268,10 @@ fn wake(c: &Composer) {
 
 /// One pass of `recheck_shown`, yielding to a frame that is asked meanwhile.
 fn recheck(c: &Composer, parts: &PreviewParts, checked_gen: &mut u64) {
+    let id = kt_time::trace::next_id();
+    let _cause = kt_time::trace::with_cause(id);
+    let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
+    span.aux(kt_time::trace::job::RECHECK_SHOWN).id(id);
     let (changed, pending) =
         parts.recheck_shown(RECHECK_PER_PASS, || c.ask.lock().unwrap().is_some() || c.stop.load(Ordering::Acquire));
     *checked_gen = parts.shown_gen();

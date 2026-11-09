@@ -28,6 +28,54 @@ impl BurstKind {
     pub fn video(q: Option<Quality>) -> BurstKind {
         BurstKind::Video { quality: q.map(|q| (q.width, q.height)) }
     }
+
+    /// The size the trace packs: audio `(0, 0)`, a native-size frame `(0, 1)`.
+    pub fn trace_size(self) -> (u32, u32) {
+        match self {
+            BurstKind::Audio => (0, 0),
+            BurstKind::Video { quality } => quality.unwrap_or((0, 1)),
+        }
+    }
+}
+
+/// The trace's id of a cache key (structured-telemetry): the decode request, the decoded entry, the
+/// eviction and the frame waiting for it name the same number.
+pub fn trace_id(source: SourceId, kind: BurstKind, idx: i64) -> u64 {
+    let (w, h) = kind.trace_size();
+    kt_time::trace::key_id(source.0, w, h, idx)
+}
+
+impl BurstKey {
+    pub fn trace_id(&self) -> u64 {
+        trace_id(self.source, self.kind, self.idx)
+    }
+}
+
+/// An eviction in the trace: the key's parts, read or not, and the insert that pushed it out.
+fn trace_evict(key: &BurstKey, had_hit: bool, wanted: bool, by: u64) {
+    use kt_time::trace::{self, evict, Ev};
+    if !trace::on() {
+        return;
+    }
+    let (w, h) = key.kind.trace_size();
+    let mut flags = 0;
+    if !had_hit {
+        flags |= evict::UNREAD;
+        if wanted {
+            flags |= evict::WANTED;
+        }
+    }
+    if key.kind == BurstKind::Audio {
+        flags |= evict::AUDIO;
+    }
+    trace::ev(Ev::CacheEvict)
+        .id(key.trace_id())
+        .a(key.source.0)
+        .b(key.idx as u64)
+        .c(trace::size(w, h))
+        .aux(flags)
+        .cause(by)
+        .emit();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -190,6 +238,29 @@ struct Inner {
     recency_counter: u64,
     /// The number of the last prefetch pass, one per `refresh` call (video-prefetch-thrash).
     want_pass: u64,
+    /// The serials of evicted entries (structured-telemetry): an entry decoded again from an
+    /// unchanged source holds the same bytes (invariant 11), so it takes the serial it had, and
+    /// what is keyed by the serial — the executor's kept composites — survives the eviction.
+    /// `invalidate_source` forgets a source's (new bytes at the old address get a new serial,
+    /// item 409). Bounded, oldest first.
+    past: HashMap<BurstKey, u64>,
+    past_order: std::collections::VecDeque<BurstKey>,
+}
+
+/// Evicted serials remembered (`Inner::past`): 24 bytes each.
+const PAST_SERIALS: usize = 1 << 16;
+
+impl Inner {
+    fn remember(&mut self, key: BurstKey, serial: u64) {
+        if self.past.insert(key, serial).is_none() {
+            self.past_order.push_back(key);
+            while self.past_order.len() > PAST_SERIALS {
+                if let Some(k) = self.past_order.pop_front() {
+                    self.past.remove(&k);
+                }
+            }
+        }
+    }
 }
 
 /// Counters for the performance panel (cumulative; the UI computes the deltas).
@@ -252,6 +323,8 @@ impl BurstCache {
                 held_bytes: 0,
                 recency_counter: 0,
                 want_pass: 0,
+                past: HashMap::new(),
+                past_order: std::collections::VecDeque::new(),
             }),
             epoch: AtomicU64::new(0),
             stats: StatCounters::default(),
@@ -443,9 +516,12 @@ impl BurstCache {
         let is_audio = payload.is_audio();
         debug_assert_eq!(is_audio, key.kind == BurstKind::Audio);
 
-        // an overwrite keeps the holds of the entry it replaces
+        // an overwrite keeps the holds of the entry it replaces; its bytes are new (a new serial).
+        // An entry evicted and decoded again takes the serial it had (`Inner::past`)
         let mut holds = holds_added;
+        let mut kept_serial = inner.past.remove(&key);
         if let Some(old) = inner.map.remove(&key) {
+            kept_serial = None;
             holds += old.holds;
             if old.holds > 0 {
                 inner.held_bytes -= old.payload.bytes();
@@ -453,6 +529,7 @@ impl BurstCache {
             if !old.had_hit {
                 // overwriting an unread entry is also thrash (v1)
                 self.count_unread_drop(&old, inner.want_pass);
+                trace_evict(&key, false, old.wanted == inner.want_pass, key.trace_id());
             }
             inner.lru.remove(&old.recency);
             let ob = old.payload.bytes();
@@ -474,7 +551,7 @@ impl BurstCache {
         // same address — other bytes” is always distinguishable (item 409). A GPU engine keys its
         // textures and frames by it alone and outlives any one cache, so a per-cache count gave a
         // new cache the old one's pictures (t1457, t1574, t1607).
-        let serial = NEXT_SERIAL.fetch_add(1, Ordering::Relaxed);
+        let serial = kept_serial.unwrap_or_else(|| NEXT_SERIAL.fetch_add(1, Ordering::Relaxed));
         inner.map.insert(
             key,
             Entry { payload, serial, recency, pinned: false, holds, had_hit: false, wanted, span },
@@ -495,7 +572,7 @@ impl BurstCache {
             .or_default()
             .insert_range(key.idx, key.idx + span);
 
-        self.evict_over_budget(&mut inner);
+        self.evict_over_budget(&mut inner, key.trace_id());
         self.epoch.fetch_add(1, Ordering::AcqRel);
         drop(inner);
         if self.next_armed.load(Ordering::Acquire) && self.next_armed.swap(false, Ordering::AcqRel) {
@@ -518,7 +595,7 @@ impl BurstCache {
         }
     }
 
-    fn evict_over_budget(&self, inner: &mut Inner) {
+    fn evict_over_budget(&self, inner: &mut Inner, by: u64) {
         // Go from the oldest; pinned and held ones are skipped. If everything is — the budget
         // may be exceeded, and this is deliberate (a pin is stronger than the budget).
         let mut cursor = 0u64;
@@ -555,6 +632,8 @@ impl BurstCache {
                 set.remove_range(key.idx, key.idx + entry.span);
             }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
+            inner.remember(key, entry.serial);
+            trace_evict(&key, entry.had_hit, entry.wanted == inner.want_pass, by);
             if !entry.had_hit {
                 self.count_unread_drop(&entry, inner.want_pass);
             }
@@ -624,7 +703,7 @@ impl BurstCache {
                 inner.held_bytes -= bytes;
             }
         }
-        self.evict_over_budget(&mut inner);
+        self.evict_over_budget(&mut inner, 0);
     }
 
     /// The bytes of the entries held at least once: each counted once, however many hold it.
@@ -640,6 +719,9 @@ impl BurstCache {
         let keys: Vec<BurstKey> =
             inner.by_source.remove(&source).map(|k| k.into_iter().collect()).unwrap_or_default();
         self.stats.invalidate_scan_steps.fetch_add(keys.len() as u64, Ordering::Relaxed);
+        kt_time::trace::ev(kt_time::trace::Ev::CacheInvalidate).a(source.0).b(keys.len() as u64).emit();
+        inner.past.retain(|k, _| k.source != source);
+        inner.past_order.retain(|k| k.source != source);
         for key in keys {
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&entry.recency);
@@ -1074,5 +1156,40 @@ mod perf_counter_tests {
         cache.insert_audio(SourceId(1), burst());
         cache.insert_audio(SourceId(1), burst());
         assert_eq!(heard.load(Ordering::Relaxed), 1, "one waiter, one call");
+    }
+}
+
+#[cfg(test)]
+mod serial_tests {
+    use super::*;
+
+    fn frame() -> Arc<VideoFrame> {
+        Arc::new(VideoFrame { pts: kt_time::Tick(0), width: 4, height: 4, rgba: vec![1u8; 64].into_boxed_slice(), has_alpha: false })
+    }
+
+    /// Test t2152 (structured-telemetry): an entry evicted and decoded again from an unchanged source
+    /// takes back its content serial (what the executor's kept composites are keyed by); after the
+    /// source is invalidated the same address gets a new one, and an overwrite of a present entry
+    /// is new bytes with a new serial.
+    #[test]
+    fn t2152_a_redecoded_entry_keeps_its_serial() {
+        let c = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 64 * 2 });
+        let (s, q) = (SourceId(5), Some(Quality { width: 4, height: 4 }));
+        c.insert_video(s, q, 0, frame());
+        let first = c.get_video_stamped(s, q, 0).unwrap().1;
+        c.insert_video(s, q, 1, frame());
+        c.insert_video(s, q, 2, frame());
+        assert!(!c.contains_video(s, q, 0), "scene guard: the budget evicted the first entry");
+        c.insert_video(s, q, 0, frame());
+        assert_eq!(c.get_video_stamped(s, q, 0).unwrap().1, first, "decoded again: the same serial");
+        c.insert_video(s, q, 0, frame());
+        let over = c.get_video_stamped(s, q, 0).unwrap().1;
+        assert_ne!(over, first, "an overwrite is new bytes");
+        c.insert_video(s, q, 1, frame());
+        c.insert_video(s, q, 2, frame());
+        c.invalidate_source(s);
+        c.insert_video(s, q, 0, frame());
+        let after = c.get_video_stamped(s, q, 0).unwrap().1;
+        assert!(after != first && after != over, "after the source changed the address is new bytes");
     }
 }

@@ -23,9 +23,11 @@
 //! crash-report <raw>`, a fresh process, to name the frames. `crash-probe` crashes on purpose, for
 //! the test of that path.
 
+mod editcost;
 mod firstframe;
 mod fxcost;
 mod showcase;
+mod trace_query;
 mod wav;
 
 use kt_engine::{AudioRenderer, DirectFetcher};
@@ -44,7 +46,18 @@ fn main() {
         std::process::exit(crash_report(&args));
     }
     install_crash_handler();
+    // `--trace DIR` on any command: record the run's structured trace there (structured-telemetry)
+    let mut args = args;
+    if let Some(i) = args.iter().position(|a| a == "--trace")
+        && args.first().map(String::as_str) != Some("trace")
+        && let Some(dir) = args.get(i + 1).cloned()
+    {
+        kt_time::trace::install(kt_time::trace::Config::new(Some(dir.into()), &format!("kt-cli {}", kt_version::FULL)));
+        kt_time::trace::machine("args", &args.join(" "));
+        args.drain(i..i + 2);
+    }
     let code = run(&args);
+    kt_time::trace::flush();
     std::process::exit(code);
 }
 
@@ -1513,6 +1526,7 @@ fn run(args: &[String]) -> i32 {
         Some("showcase") => showcase::run(args, force),
         // what the first frame of each video effect costs against its warm frames (pipeline-prewarm)
         Some("first-frame") => firstframe::run(args),
+        Some("trace") => trace_query::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)
         Some("fx-cost") => {
             let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
@@ -1655,6 +1669,30 @@ fn run(args: &[String]) -> i32 {
             let looped = opt("--loop").and_then(|s| s.parse::<f64>().ok());
             let wav = opt("--wav").cloned();
             match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        // What one edit and one slider step cost the player (edit-without-rebuild)
+        Some("edit-cost") => {
+            let Some(input) = args.get(1) else {
+                eprintln!("usage: kt-cli edit-cost <in.kt> [--steps N]");
+                return 2;
+            };
+            let project = match load_project_resolved(input) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            let steps = args
+                .iter()
+                .position(|a| a == "--steps")
+                .and_then(|i| args.get(i + 1))
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(20);
+            match editcost::run(&project, steps.max(1)) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

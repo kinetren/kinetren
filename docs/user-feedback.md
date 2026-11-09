@@ -2791,6 +2791,23 @@ Registry: `docs/ktprompts/kkt-26.11.08-index.md` (H1–H9). His files: `fails/26
   stage only by `git merge --no-ff` (a merge commit naming the stage and its changes), never a
   fast-forward; `git log --first-parent master` is the history of changes.
 
+## 2026-11-09 — his run of release 85ea51da (`kkt-26.11.09`)
+
+Registry: `docs/ktprompts/kkt-26.11.09-index.md` (I1–I4). His files: `fails/26.11.09/`.
+
+- "Мда. Он теперь как будто ленивый стал.." — after a heavy Datamosh on `problem_region_26_11_09`
+  "тупо все в loading. лоадинг даже когда на паузе стою.. и даже низкая скорость воспроизведения
+  loading не сбивает." The UI thread is free; the frame with the stream's history never completes
+  in the live preview, while our headless bench assembles the same spot in about a second.
+- On the proposal (a bench reproducing it, then builds before and after stage 7): "нет" — the
+  frame does load "через ПАРУ СЕКУНД... или ПЯТЬ". "а еще у тебя в логах срач, очень не
+  структурированные логи - действительно ли в них тебе удобно работать?... давай делай телеметрию
+  так - чтобы ты мог понять что у тебя происходит, без мышиной возни туда-сюда версиями ... с
+  стендом." RULE: the telemetry itself must explain what happened (structured, with causes, queried
+  by a tool); diagnosing by shuffling builds or building a bench for each complaint is not the way.
+  "и по поводу кэша тоже пиздешь - если хоть сто раз пройтись по небольшому куску - он все равно
+  что-то loading делает." → change `structured-telemetry` (go given: "давай делай").
+
 ## What the user repeated more than once
 
 | Topic | Rounds | Resulting rule |

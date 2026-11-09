@@ -108,6 +108,14 @@ pub trait StreamKernel: Send + Sync {
     fn held(&self, _p: &[f64], _lay: &dyn StreamLayout, _n: i64, _memo: &StreamMemo) -> Option<i64> {
         None
     }
+    /// The key `render` would return for frame `n` (structured-telemetry), from the rows and the
+    /// addresses alone: nothing computed, the memo not read. The host finds a kept composite of the
+    /// frame by it without running the stage, so a covered loop never waits for a history the memo
+    /// has dropped. `None` — the kernel cannot say; the host runs the stage. Must equal the key of a
+    /// `render(.., n, ..)` that returns, or a kept composite is shown for another picture.
+    fn key(&self, _p: &[f64], _lay: &dyn StreamLayout, _n: i64) -> Option<u64> {
+        None
+    }
     /// Produce frame `n` as RGBA (opaque) into `out`; `None` — a frame of the history is missing.
     /// Everything computed before the gap stays in the memo (progress is monotonic).
     fn render(
@@ -179,6 +187,8 @@ impl StreamMemo {
             let Some((&k, _)) = g.map.iter().min_by_key(|(_, e)| e.2) else { break };
             if let Some(e) = g.map.remove(&k) {
                 g.bytes -= e.1;
+                // what the history lost, and to what (structured-telemetry)
+                kt_time::trace::ev(kt_time::trace::Ev::StreamMemoEvict).id(k).a(e.1 as u64).cause(key).emit();
             }
         }
     }

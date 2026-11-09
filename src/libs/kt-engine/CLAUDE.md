@@ -54,11 +54,18 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   - after a replayed chunk the FX state is stale: the next live chunk resets it, so it pre-rolls exactly as a seek there (t1932). Do not try to "continue" the processors past a replay;
   - the store is cleared when a source comes or goes; offline paths never see it.
   `kt-cli probe … --time` still measures the LIVE cost of a place (it never uses the store); `kt-cli preview --loop` shows what the player does on the second lap.
-- **The audio render thread never builds a renderer** (`spawn_renderer_build`): `AudioRenderer::new` takes 412 ms on the owner's 1974-event project against a 341 ms ring, and 5–7 s in a loaded test run. During playback the old renderer plays until the new one arrives; a build asked on a pause holds the next start (`build_holds_start`, time stands before the first frame). The flag the player starts with does not ask for a second build of the first model. **The swap costs what the edit changed** (t1940): `sync_fx_since` skips every event whose `AudioClip.fp` is unchanged, a reel's pre-roll is computed once per build (`preroll_bursts`), and the old renderer is dropped on another thread; `LoopStats::max_swap_us` reports the longest swap (0.6 ms at load 48, was 244–425 ms).
+- **The audio render thread never builds a renderer** (the player's `engine-build` thread does, edit-without-rebuild): `AudioRenderer::new` took 412 ms on the owner's 1974-event project against a 341 ms ring, and 5–7 s in a loaded test run. During playback the old renderer plays until the new one is published; a build asked on a pause holds the next start (`build_holds_start`, time stands before the first frame). The opening's build is the first model. **The swap costs what the edit changed** (t1940): `sync_fx_since` skips every event whose `AudioClip.fp` is unchanged, a reel's pre-roll is computed once per build (`preroll_bursts`), and the old renderer is dropped on another thread; `LoopStats::max_swap_us` reports the longest swap (0.6 ms at load 48, was 244–425 ms).
 - **The cost of a place depends on the LENGTH OF THE REGION** (R.43, item 303): the wrap-around is a seam, and a seam resets the ready resampler buffer (`Warp::seek_source`), and it is primed again, ≈0.3 ms per chain. A short region wraps more often and pays more often: 300 ms over the reverb tails costs 10.2 ms/s against 4.7 for a region of 1700 ms (7 chains, release). The worst is a region with NO BODIES of events — only tails. This must be measured in REPEAT mode (`kt-cli probe … --time` prints both the linear run and the loop): a linear measurement does not see the dependence on length at all.
 - **Nothing in the hot path may be O(the whole edit)** (R.43, item 305).
   `overlap_weight` went through ALL the clips FOR EACH FRAME, and the cost of a PLACE grew linearly with the size of the PROJECT: 7 events — 3.6 ms/s, the same 7 plus 2000 distant ones — 92 ms/s. The set of covering events changes only at boundaries, therefore it is computed once by a sweep (`LaneCover`), and per frame a binary search remains; the maps lie in an array BY TRACK NUMBER (a hash per frame cost 40 % on small projects). The order of indices in the set is ascending: `overlap_weight` takes "the first two" in exactly that order, and GOLDEN_AUDIO stands on this. Tests 292/293 guard it.
   The search itself gave 11.5× on the user's project (889 → 77 ms); on top stands the flag `overlaps` — for an event that overlaps nobody, the weight is identically 1.0, and the path is closed by one `bool`. It is free and helps where many events are active at once; on a real edit it is about 1 %. **Do not compare the share of total time between benches** — it has a different denominator (item 305).
+- **The mixdown weighs a constant run once** (kernel-specialization): `weight_run` splits an event's frames
+  at every regime boundary of `fade_weight · overlap_at · gain` (fade and overlaid windows, the lane
+  cover's bounds, the FX tail edge) and says whether the regime is a constant; a constant run takes the
+  weight once by the same expression and multiplies inside `fast!`, a ramp keeps the per-frame formula. A
+  new term in the weight is a new boundary in `weight_run`, or the run hands out a stale weight (t2173
+  holds the bytes on the specialized, general and baseline paths; a `debug_assert` compares the run's
+  last frame).
 - **In the tail of FX the warp is not computed** (R.43, item 304): beyond `gate_end` the dry signal is zeroed by the gate anyway, so a chunk lying entirely beyond it is skipped — byte-identical by construction, but without the resampler and without reading the source. Tests 294/295.
 - Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7).
 - **A split of a pitched event is ONE stream** (pitch-event-edges D3): `run_predecessors` marks for an
@@ -84,6 +91,17 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The preview composes on its own thread** (`compose_queue`, ui-never-waits): the UI asks (`ask_preview`) and takes (`take_composed`); the newest ask replaces a waiting one; a frame of a state the model has left is dropped; a chain whose executor time passes `SLOW_CHAIN` goes to the offline device. The renderer is an `Arc` behind a mutex: clone the pointer, never hold the lock through a plan. The kept moments' recheck runs there too (`recheck_shown`).
 - **A guard taken inside an expression lives to the end of the statement.** `X::new(&lock.lock().unwrap().clone())` holds the lock through the build, and `if let Some(w) = map.write().unwrap().remove(k) { w.shutdown() }` joins under the guard. Clone, or take out, in a statement of its own (ui-never-waits: the UI's edits waited 412 ms for the audio render thread's build).
 - **The preview presents** (preview-throughput D2). `Player::present_preview` ends in the executor's display target with no readback.
+- **A kept moment is reached without the work that made it** (structured-telemetry, kkt-26.11.09 I8;
+  t2145, t2150, t2151). `compose_via` asks `show_kept` FIRST: a probe plan (`VideoRenderer::probe_plan`)
+  keys every stream stage by `StreamKernel::key` without running it, and a key the display's executor
+  holds is shown by `present_kept` — no decode asked, no stage, no chain. The kept-moment recheck uses the
+  probe plan; the slow route keeps its bytes on the display's executor (`VideoGpuExec::keep`) and a
+  replay does not re-time the route; the prefetch thread skips kept moments (`video_prefetch_pass_except`,
+  `stream_advance_ahead`). A new input of a stream layer's picture must reach its kernel's `key`, or a
+  kept composite of another picture is shown; a kernel without `key` keeps the old path (the stage runs).
+- **The preview frame's life is in the trace** (capability `telemetry`): the compose thread sets the
+  frame's id as its cause, so its decode requests, stream runs and compute jobs carry it; a new thing a
+  composite waits for records a `FrameWait`, a new keeper records its store and eviction.
 - **Past its bytes the look-ahead asks the first frame of each cut** (`jumps_to`, `CUT_LEAD_KEYS`, D3): reaching it takes a decoder the same time however near it is asked. t1528.
 - **A start waits for its sound** (cold-start-audio). The fill loop renders a whole ring in one pass, so at a start (`starting`: opening, a seek, a change of direction, a loop flip) `audio_render` holds it until the bursts of the ring plus the look-ahead margin are cached, at most `START_AUDIO_GRACE`. Time stands before the first frame, so this costs no sync (invariant 6); the limit keeps a dead source from stopping playback (t1537, t1538). A new way to move the render head sets `starting` too.
 - Audio of a span's own priority is read between its chunks (t1529): audio has its own demuxer, so the video cursor does not move.
@@ -337,14 +355,35 @@ opening. This is not a regression — the key is a function of the model, not of
   masked slot at index 0 is a leading stop: no decode step. Masks join `fx_hash` only when present;
   a track with masks is a track stage. Tests t1270–t1273.
 
-## Swaps and builds are counted; the UI renderer is one per version (input-without-work)
+## One build per project version, shared (edit-without-rebuild)
 
-`set_project` bumps `Work::ProjectSwap`; every renderer build (the UI's video one, the audio render
-thread's, the prefetch thread's two, the UI's probe) bumps `Work::EngineBuild`. A new place that builds
-a renderer counts it, or the load watch calls its work rest. The UI thread's audio renderer (meters on
-a pause, the loop's pinned head) lives in `levels_probe` until the project version changes —
-`with_probe`; `set_loop_region` built a whole one per region change, 447 ms on the owner's project
-(t1875).
+- **Nobody builds a renderer but the player's `engine-build` thread** (`builds.rs`). `set_project`
+  stores an `Arc<Project>` and wakes it; it builds the NEWEST want once (generator sources first, then
+  the audio and the video renderer, in one revisions scope) and publishes a `Built`. The render
+  thread swaps to it (`sync_fx_since`), prefetch and the probe read it, the composer composes with
+  `Builds::wait_current` — the compose thread waits for the build of its state, the UI thread never
+  does. A new consumer reads `Builds::latest()`; it does not build. `incremental::RENDERER_BUILDS`
+  (t2000) counts every renderer built in the process.
+- **The UI thread builds nothing** (t2001): a meter reading, a region change, the grid and coverage
+  questions read the last published build. A UI reader of the renderer that caches by revision also
+  keys by `Player::built_seq` — the build lands after its edit. The opening is the one build on the
+  caller's thread (the constructor).
+- **A loop region change is not an edit** (t2002): the head is pinned with the published renderer,
+  and again by the builder when a version lands.
+- **`AudioRenderer` is shared across threads**: no render-time `Cell` in it. A value computed at the
+  first render goes in a `OnceLock`; a state of one render call goes in a thread-local keyed by the
+  renderer (`LOOP_REGION`), never in the renderer.
+- **The per-event memo is keyed by everything an event is derived from** (`incremental.rs`, t2003,
+  t2004): the model event's Debug text plus every context value the builder passes in (the source
+  address, the track level, the instance; for a layer the source facts, `LeadCtx`, the cameras, the
+  raster, the frame rate). A builder that starts reading a new input for an event puts it into the
+  key, or an incremental build differs from a fresh one — t2004 compares their whole state text.
+- **A reel instance is resolved once per build**: builders call `incremental::resolve`, never
+  `Project::resolve_reel` (t2005, `Cost::ReelResolve`).
+- Generator sources are raised by the builder under `MediaParts::gen_lock` from the newest project; a
+  value edit (`update_gen`) replaces the stored project under the same lock.
+- `set_project` bumps `Work::ProjectSwap`; a build bumps `Work::EngineBuild` by two (an audio and a video
+  renderer). `kt-cli edit-cost` measures an edit, a 60 Hz drag and region changes.
 
 ## What a project reaches is warmed (pipeline-prewarm)
 

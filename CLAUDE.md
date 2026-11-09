@@ -30,6 +30,11 @@ cargo run -p kt-cli -- probe <project.kt> <from_s> <to_s> [--time]
 cargo run -p kt-cli -- pause-scan <project.kt> <step_s> [--size WxH] [--wait-s N]
                            # seeks every step and composes as a paused preview does: a moment
                            # that never comes out complete is a frame that retries for ever
+cargo run -p kt-cli -- trace [<dir>] loading|loop|during <a> <b>|slow|frame <id>|summary|machine|dump|chrome <out.json>
+                           # the structured trace of ONE run (structured-telemetry): why the preview
+                           # was Loading, pass by pass over a loop, what ran in a window, the slowest
+                           # frames' critical path. The owner's file: <data>/trace (send the folder).
+                           # `--trace DIR` on any kt-cli command records that run's trace there
 cargo run -p kt-cli -- showcase <out.kt> --sources <dir> --heavy
                            # the project of the idle-load guard: ten releases of a composition
                            # under Slowed, VHS Tape and Camera ISP, and a dense edit

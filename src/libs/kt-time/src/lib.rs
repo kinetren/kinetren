@@ -9,6 +9,7 @@
 #[cfg(all(windows, target_env = "gnu"))]
 mod libm_fix;
 pub mod cost;
+pub mod trace;
 pub mod work;
 
 use serde::{Deserialize, Serialize};

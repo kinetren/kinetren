@@ -6,12 +6,14 @@
 //! Ahead: M7 (export). Architecture and thread ownership — docs/architecture.md.
 
 pub mod audio;
+pub mod builds;
 pub mod export;
 pub mod export_pipeline;
 pub mod fetch;
 pub mod flight;
 pub mod mix;
 pub mod fxstore;
+pub mod incremental;
 pub mod compose_queue;
 pub mod player;
 pub mod prefetch;
@@ -39,7 +41,7 @@ pub use player::{
 };
 pub use prefetch::{
     PREFETCH_VIDEO_LOOKAHEAD_TICKS, prefetch_audio_pass, simulate_video_playback,
-    video_prefetch_pass, video_prefetch_wants,
+    video_prefetch_pass, video_prefetch_pass_except, video_prefetch_wants, video_prefetch_wants_except,
 };
 pub use transitions::TransMix;
 pub use transport::Transport;

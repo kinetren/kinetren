@@ -114,6 +114,24 @@ impl MixStore {
         true
     }
 
+    /// Why the store cannot hand the frames out (structured-telemetry): 0 — it can, 1 — a burst was
+    /// never kept (or was evicted), 2 — a burst is kept at another scene, 3 — kept only in part.
+    pub fn miss_reason(&self, ctx: MixCtx, start: i64, n: i64, scene: &dyn Fn(i64) -> u64) -> u64 {
+        let mut f = start;
+        while f < start + n {
+            let k = f.div_euclid(UNIT);
+            let to = ((k + 1) * UNIT).min(start + n);
+            match self.units.get(&(ctx, k)) {
+                None => return 1,
+                Some(u) if u.scene != scene(k) => return 2,
+                Some(u) if !(u.lo <= f - k * UNIT && u.hi >= to - k * UNIT) => return 3,
+                _ => {}
+            }
+            f = to;
+        }
+        0
+    }
+
     /// Copy the frames `[start, start + out/2)` of `ctx` into `out` if every one is held at its
     /// current scene; `false` leaves `out` unspecified.
     pub fn read(&mut self, ctx: MixCtx, start: i64, out: &mut [f32], scene: &dyn Fn(i64) -> u64) -> bool {
@@ -201,6 +219,8 @@ impl MixStore {
             keep
         });
         self.changed |= self.units.len() != before;
+        let dropped = (before - self.units.len()) as u64;
+        kt_time::trace::ev(kt_time::trace::Ev::Invalidate).aux(kt_time::trace::inval::MIX_STORE).b(dropped).emit();
     }
 
     /// Drop the laps of every loop region but `keep`.
@@ -221,6 +241,11 @@ impl MixStore {
     }
 
     pub fn clear(&mut self) {
+        kt_time::trace::ev(kt_time::trace::Ev::Invalidate)
+            .aux(kt_time::trace::inval::MIX_STORE)
+            .b(self.units.len() as u64)
+            .a(1)
+            .emit();
         self.changed |= !self.units.is_empty();
         self.units.clear();
         self.order.clear();
@@ -377,8 +402,19 @@ impl MixPlay {
                 done += len;
             }
             self.fx_stale = true;
+            kt_time::trace::ev(kt_time::trace::Ev::MixChunk).a(head as u64).b(n as u64).aux(kt_time::trace::mix::REPLAY).emit();
             return ChunkOutcome { stats: RenderStats::default(), replayed: true };
         }
+        // why the chunk is live: the first piece the store could not hand out, and its context
+        let why = if kt_time::trace::on() {
+            parts
+                .iter()
+                .map(|&(ctx, tl, m)| self.store.miss_reason(ctx, tl, m, &scene) | (u64::from(ctx != MixCtx::Linear) << 8))
+                .find(|r| r & 0xff != 0)
+                .unwrap_or(0)
+        } else {
+            0
+        };
         if std::mem::take(&mut self.fx_stale) {
             // the processors stand where the store took over: going on from there as a seek does
             fx.reset_all();
@@ -389,13 +425,23 @@ impl MixPlay {
             }
             _ => renderer.render_frames_with(fetcher, fx, head, out),
         };
-        if stats.underruns == 0 && stats.warmup_misses == 0 {
+        let clean = stats.underruns == 0 && stats.warmup_misses == 0;
+        if clean {
             let mut done = 0usize;
             for &(ctx, tl, m) in &parts {
                 let len = m as usize * AUDIO_CHANNELS;
                 self.store.write(ctx, tl, &out[done..done + len], &scene);
                 done += len;
             }
+        }
+        {
+            use kt_time::trace::{self, mix};
+            trace::ev(trace::Ev::MixChunk)
+                .a(head as u64)
+                .b(n as u64)
+                .c(why)
+                .aux(if clean { mix::KEPT } else { mix::NOT_CLEAN })
+                .emit();
         }
         ChunkOutcome { stats, replayed: false }
     }
