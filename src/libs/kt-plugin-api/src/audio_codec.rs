@@ -127,8 +127,9 @@ impl Fft {
 pub fn dct4(r: &[f64], out: &mut [f64]) {
     let t = tables();
     let m = N / 2;
-    let mut re = vec![0f64; m];
-    let mut im = vec![0f64; m];
+    // stack scratch (local-cost-queue, row 314: two vectors per transform)
+    let mut re = [0f64; N / 2];
+    let mut im = [0f64; N / 2];
     for n in 0..m {
         let (a, b) = (r[2 * n], r[N - 1 - 2 * n]);
         let (c, s) = t.twiddle[n];
@@ -149,7 +150,7 @@ pub fn dct4(r: &[f64], out: &mut [f64]) {
 pub fn mdct(x: &[f64], out: &mut [f64]) {
     let w = &tables().window;
     let h = N / 2;
-    let mut r = vec![0f64; N];
+    let mut r = [0f64; N];
     let xw = |n: usize| x[n] * w[n];
     for n in 0..h {
         r[n] = -xw(3 * h + n) - xw(3 * h - 1 - n);
@@ -163,7 +164,7 @@ pub fn mdct(x: &[f64], out: &mut [f64]) {
 pub fn imdct(spec: &[f64], out: &mut [f64]) {
     let w = &tables().window;
     let h = N / 2;
-    let mut r = vec![0f64; N];
+    let mut r = [0f64; N];
     dct4(spec, &mut r);
     let s = 2.0 / N as f64;
     for n in 0..h {
@@ -201,7 +202,10 @@ impl Predictor {
         Predictor { r1: vec![0.0; N], r2: vec![0.0; N], a1: vec![0.0; N], a2: vec![0.0; N] }
     }
     pub fn reset(&mut self) {
-        *self = Predictor::new();
+        // in place: a random-access point allocates nothing (row 314)
+        for v in [&mut self.r1, &mut self.r2, &mut self.a1, &mut self.a2] {
+            v.fill(0.0);
+        }
     }
     /// The prediction of every line.
     pub fn predict(&self, out: &mut [f64]) {
@@ -440,30 +444,36 @@ impl Encoder {
         let g0 = gain_of(floor).clamp(0, GAIN_STEPS);
         quant(g0, &mut self.q, &self.spec, &self.p);
         let mut g = g0;
-        if coded_bits(&self.q, bw) > avail {
-            let (mut lo, mut hi) = (g0, GAIN_STEPS);
+        // the coded size of the gain chosen, known from the search where it measured it: the payload
+        // is allocated once at its size (row 314)
+        let mut size = coded_bits(&self.q, bw);
+        if size > avail {
+            let (mut lo, mut hi, mut hi_size) = (g0, GAIN_STEPS, None);
             while hi - lo > 1 {
                 let mid = (lo + hi) / 2;
                 quant(mid, &mut self.q, &self.spec, &self.p);
-                if coded_bits(&self.q, bw) <= avail {
+                let c = coded_bits(&self.q, bw);
+                if c <= avail {
                     hi = mid;
+                    hi_size = Some(c);
                 } else {
                     lo = mid;
                 }
             }
             g = hi;
             quant(g, &mut self.q, &self.spec, &self.p);
+            size = hi_size.unwrap_or_else(|| coded_bits(&self.q, bw));
         }
         let step = step_of(g);
         for k in 0..N {
             self.rec[k] = self.p[k] + self.q[k] as f64 * step;
         }
         if predict {
-            let p = self.p.clone();
-            self.pred.update(&self.rec, &p);
+            self.pred.update(&self.rec, &self.p);
         }
-        let mut payload = Bits::default();
+        let mut payload = Bits { v: Vec::with_capacity(size) };
         encode_lines(&self.q, bw, &mut payload);
+        debug_assert_eq!(payload.v.len(), size, "coded_bits is encode_lines' size");
         self.written = begin + payload.v.len();
         self.frame += 1;
         Packet { gain: g, reset, payload, begin }
@@ -541,8 +551,7 @@ impl Decoder {
             }
         }
         if predict && !dmg.freeze {
-            let p = self.p.clone();
-            self.pred.update(&self.spec, &p);
+            self.pred.update(&self.spec, &self.p);
         }
         self.last.copy_from_slice(&self.spec);
         imdct(&self.spec, &mut self.block);
