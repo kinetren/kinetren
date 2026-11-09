@@ -751,7 +751,7 @@ pub fn laps(run: &Run) -> String {
                         None => "the frame's key changed since the last lap (an input of the plan moved)".into(),
                     }
                 } else if e.aux & trace::exec::SLOW != 0 {
-                    "composed on the slow-chain device (bytes, no kept composite)".into()
+                    "composed on the slow-chain device for the first time (kept since)".into()
                 } else if e.aux & trace::exec::COMPLETE == 0 {
                     "incomplete (never kept)".into()
                 } else {
