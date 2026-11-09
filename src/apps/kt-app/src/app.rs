@@ -10260,6 +10260,9 @@ impl KtApp {
         }
         let mut open = self.perf.diag_open;
         let default_h = (ctx.content_rect().height() - 60.0).clamp(320.0, 720.0);
+        // egui has never laid this window out (no remembered size): its first frame is the
+        // invisible sizing pass, in which the body may claim the height its floors need
+        let first = egui::AreaState::load(ctx, egui::Id::new("kt_diag")).is_none();
         let shown = crate::window_shell::Shell::new(
             egui::Id::new("kt_diag"),
             tr(k::win::DIAG_TITLE),
@@ -10273,6 +10276,7 @@ impl KtApp {
                 // the telemetry journal holds the lower part OUTSIDE the scroll, so it is on screen at
                 // every window height — the owner had to make the window taller to see the log at
                 // all (kkt-26.11.07b line 17, found-defects 109).
+                let body_top = ui.cursor().top();
                 let body_h = ui.available_height();
                 let body_h = if body_h.is_finite() { body_h } else { default_h };
                 let line_h = ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
@@ -10375,6 +10379,25 @@ impl KtApp {
                     });
                 ui.separator();
                 self.draw_journal_pane(ui);
+                // The window OPENS at its floors where the screen has the room (t2304): the
+                // instruments, the three graphs at their floor and the journal's six lines. The
+                // fixed default (720) fell under them as rows were added (the memory line, a stall
+                // line), so the third graph opened under the fold and a corner drag first paid off
+                // that shortfall: the graphs did not take their quarter of the growth (D2). Only in
+                // egui's sizing pass of a window it never laid out: the window then grows to what
+                // the body took (egui's Resize), once, before it is first seen; a size the person
+                // gave is never touched.
+                if first && ui.is_sizing_pass() {
+                    let floor = self.perf.diag_used + 3.0 * (GRAPH_MIN_H + per_graph) + ui.spacing().interact_size.y;
+                    let need = head_h + floor + JOURNAL_MIN_LINES * line_h;
+                    // down to the screen's bottom edge, as a fitting window body (`fill_scroll`)
+                    let room = ctx.content_rect().bottom() - body_top - 48.0;
+                    let took = ui.min_rect().bottom() - body_top;
+                    let want = need.min(room);
+                    if want > took {
+                        ui.allocate_space(egui::vec2(0.0, want - took));
+                    }
+                }
             });
         if shown.closed() {
             open = false;

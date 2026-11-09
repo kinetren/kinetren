@@ -114,22 +114,33 @@ pub type FlightSink = Box<dyn Fn(Sunk) + Send + Sync>;
 /// One freeze of the playhead is ONE episode (R.72, M5). The engine asked "stands ≥ 1 s?" every
 /// pass and pushed a record each time, so one freeze flooded the 512-entry ring and the "froze"
 /// counter overstated it. At rate 0 the head stands by request: no stall.
+///
+/// The wait starts at the first PLAYING look, never at the last look before it: the render thread
+/// parks on a pause with no clock (one-scheduler), so the look before a play can be seconds old,
+/// and counting from it reported "playback froze" for the rest itself, on every play after a
+/// second of rest (t2303).
 #[derive(Debug, Default)]
 pub struct StallWatch {
     head: i64,
     since_ms: u64,
     stalled: bool,
+    /// The last look was a playing one at a rate: `since_ms` is a moment of this playing stretch.
+    armed: bool,
 }
 
 impl StallWatch {
     pub fn new(head: i64) -> StallWatch {
-        StallWatch { head, since_ms: 0, stalled: false }
+        StallWatch { head, since_ms: 0, stalled: false, armed: false }
     }
 
     /// `Some(ms)` — the moment the episode starts; nothing more until the head moves.
     pub fn tick(&mut self, now_ms: u64, playing: bool, rate: f32, head: i64) -> Option<u64> {
-        if !playing || rate == 0.0 || head != self.head {
-            *self = StallWatch { head, since_ms: now_ms, stalled: false };
+        if !playing || rate == 0.0 {
+            *self = StallWatch { head, since_ms: now_ms, stalled: false, armed: false };
+            return None;
+        }
+        if !self.armed || head != self.head {
+            *self = StallWatch { head, since_ms: now_ms, stalled: false, armed: true };
             return None;
         }
         let idle = now_ms.saturating_sub(self.since_ms);

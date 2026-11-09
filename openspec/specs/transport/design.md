@@ -257,3 +257,14 @@ quality did not before (the timer covered them). t2144 had relied on prefetch's 
 100 ms after the quality was set; it stands the playhead past its frame now. The audio output
 stream itself still hands out silence at rest (cpal's pause does not stop it on ALSA/PipeWire):
 found-defects row 274.
+
+A clock read across the park is a stall that never was (orch stage 9, t2303). `StallWatch` measured
+"the head stood still" from its last look, and the last look before a play was the one before the
+park: seconds old. Every play after a second of rest pushed a STALL of the rest's length, the bell
+said "playback froze" and the Diagnostics window got its red line (the live `diagnostics` read one row
+more and its graphs grew less). The wait now starts at the first PLAYING look. Checked for the same
+mechanism (a duration measured from a look that a park can make old): the render thread's snapshot
+deltas (`push_snap`) carry counts, not a rate, so a long gap only sums them; the start grace
+(`start_wait`) is reset on every start; prefetch's pass interval (`last_pass`, `stream_ahead_frames`)
+is read across a pause too, but it was before the park as well (paused passes that skip leave it
+unstamped) and its result is capped by the stream memo's room: noted, not changed here.

@@ -651,6 +651,12 @@ squeezed the bin all the time, and diagnosing a slow spot meant looking in two p
   stretch to the new height, the log stays at the bottom; leave the mouse → nothing moves
 - **TEST** t1147 (`src/apps/kt-app/src/diag_tests.rs`)
 
+#### Scenario: Diagnostics opens at its floors
+- **WHEN** the Diagnostics window opens for the first time (egui knows no size of it) on a screen with the room
+- **THEN** it opens tall enough for the instruments, the three graphs at their floor and the journal's six lines: the third graph ends above the journal's head row, and a corner drag gives each graph a quarter of the growth
+- **PATH** click the gauge button → the window shows the Performance rows, the memory line, all three graphs whole and the journal under them, nothing under a fold; drag its corner down → each graph grows by a quarter of what the window grew
+- **TEST** t2304 (`src/apps/kt-app/src/diag_tests.rs`)
+
 #### Scenario: An open Diagnostics window does not heat an idle program
 - **WHEN** the Diagnostics window is open and nothing plays or moves
 - **THEN** the frame asks for its next repaint no sooner than the idle tick (≥ 100 ms) and the

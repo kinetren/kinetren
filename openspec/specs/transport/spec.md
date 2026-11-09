@@ -397,6 +397,12 @@ loop pass of one freeze, so the counter overstated it and flooded the 512-entry 
 - **PATH** there is no gesture: the freeze is produced by the test player → the bell gets one red entry "playback froze at 00:01:02"
 - **TEST** t1625 (`src/libs/kt-engine/tests/flight_stall.rs`), t1626 (`src/apps/kt-app/src/layout_tests.rs`)
 
+#### Scenario: A play after a rest is no freeze
+- **WHEN** the render thread looked at the transport paused, parked for 3.5 s, and the play woke it with the head not yet moved
+- **THEN** no stall is recorded: the wait for a freeze starts at the first playing look; a head that then stands a second is still one stall
+- **PATH** there is no gesture: pause, wait, press Space → Diagnostics shows no "playback froze" line and the bell gets no entry
+- **TEST** t2303 (`src/libs/kt-engine/tests/flight_stall.rs`)
+
 ### Requirement: "Freeze frame here" holds the frame at the playhead and continues after it
 The event's menu SHALL have the command "Insert frame hold (freeze frame)" for the event under the
 playhead. The name follows the industry: Premiere's "Insert Frame Hold Segment", Resolve's "Freeze
