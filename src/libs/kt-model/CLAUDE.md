@@ -358,6 +358,20 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
   — the split of such an event was refused as `BadFxAuto` ("slowed does not let me cut it",
   t917). On an event without a warp the delta is zero and a negative key is still refused (t190).
 
+## Curves are compiled once per revision (compiled-curves)
+
+- **A formula is compiled, never interpreted per sample.** `Formula::compile(vars)` gives closures
+  over slots with the interpreter's bits (t2100); a segment formula reads `ExprId::compiled()`
+  (a thread-local table by handle). The operators and functions have ONE body (`bin`, `call`)
+  shared with the interpreter — a new function goes there, not into one of the two paths.
+- **A sweep reads by `CurveCursor`**, any single position by `curve_value`; both end in
+  `segment_value`, so the bits agree in any order (t2101).
+- **A speed profile is memoized by content** (`warp.rs`: `rate_points`, `CLIP_WARPS`). The key is a
+  word vector of EXACTLY what the sampling reads (`curve_words`): if `rate_profile_keys` or
+  `clip_warp_of` starts reading anything new (a field of the curve, the clip, the slot), that thing
+  MUST enter the key, or the store hands out a stale map. t2105 changes every field one by one.
+  Counts that must be a function of a scene go through `without_profile_memo` (`build_cost.rs`).
+
 ## Automation of FX parameters (R.30, the domain rewritten in R.33)
 - `ClipEvent.fx_auto: Vec<Vec<ParamCurve>>` — the curves by slots, parallel to
   fx; `active_fx_auto()` aligns them with `active_fx()` (a bypass slot

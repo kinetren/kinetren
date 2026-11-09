@@ -151,8 +151,11 @@ reasons and history are in the `design.md` next to it. Here — one line each, t
 - **`master` changes only by a merge from a branch** (owner, 2026-11-01: "I forbid any agent to
   make edits in master directly without a merge from a branch"). Every session works on its own
   branch in its own worktree (`.claude/worktrees/<name>`); `master` receives that branch by a merge
-  (fast-forward when it can), and the merge itself is done or ordered by the orchestrating session
-  or the owner. A commit made on `master` itself is a process defect.
+  COMMIT, never a fast-forward (owner, 2026-11-09: "чтобы в master на правки было по одному коммиту,
+  а всякие промежуточные были в петле сбоку"): `git merge --no-ff`, so `git log --first-parent
+  master` reads one commit per change and the intermediate commits sit on the side loop. The merge
+  itself is done or ordered by the orchestrating session or the owner. A commit made on `master`
+  itself is a process defect.
 - **The disk is short** (owner, 2026-10-30 and 2026-11-01). A worktree's `target` is ~14 GB fresh
   and grows with every core edit. So:
   - `scripts/target-prune.py` runs after every committed stage;

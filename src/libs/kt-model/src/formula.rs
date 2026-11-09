@@ -19,33 +19,6 @@
 use kt_plugin_api::math::FrozenMath;
 use std::collections::BTreeMap;
 
-thread_local! {
-    /// Parse cache by text (R.67): the CURVE formula is computed from
-    /// `curve_value` in the interface on every pixel of the graph, and parsing
-    /// the text on every probe would be an allocation in the draw path. Formula rendering
-    /// does not compute them at all — the resolver expands them before the audio stream.
-    static PARSED: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Formula>>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-/// A parsed formula from the stream's cache; invalid text — `None` (the cache
-/// stores only successes, the error is named by `Formula::parse` where the text is
-/// entered).
-pub fn cached(expr: &str) -> Option<std::rc::Rc<Formula>> {
-    PARSED.with(|c| {
-        if let Some(f) = c.borrow().get(expr) {
-            return Some(f.clone());
-        }
-        let f = std::rc::Rc::new(Formula::parse(expr).ok()?);
-        let mut m = c.borrow_mut();
-        if m.len() > 256 {
-            m.clear();
-        }
-        m.insert(expr.to_string(), f.clone());
-        Some(f)
-    })
-}
-
 /// What went wrong — with a position in the source string.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormulaError {
@@ -111,14 +84,14 @@ enum Node {
     Num(f64),
     Var(String),
     Neg(Box<Node>),
-    Bin(Op, Box<Node>, Box<Node>),
+    Bin(Op2, Box<Node>, Box<Node>),
     Call(Fun, Vec<Node>),
     /// `if(cond, a, b)` — branching WITHOUT statements: this is an expression.
     If(Box<Node>, Box<Node>, Box<Node>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Op {
+enum Op2 {
     Add,
     Sub,
     Mul,
@@ -204,6 +177,7 @@ impl Fun {
 impl Formula {
     /// Parse the text. The error carries a position — the input field will highlight it.
     pub fn parse(src: &str) -> Result<Formula, FormulaError> {
+        kt_time::cost::add(kt_time::cost::Cost::FormulaParse, 1);
         let mut p = Parser { s: src.as_bytes(), i: 0, reads: Vec::new() };
         p.ws();
         let root = p.expr()?;
@@ -228,6 +202,168 @@ impl Formula {
     }
 }
 
+// ---- compiled form (compiled-curves, JIT tier T1) ------------------------------------------------
+
+/// One compiled node: reads the numbered variable slots and returns what [`eval`] returns for the
+/// same node, error included.
+type Op = Box<dyn Fn(&[f64]) -> Result<f64, FormulaError> + Send + Sync>;
+
+/// A formula COMPILED once into closures over numbered variable slots (compiled-curves). The
+/// interpreter walks the boxed tree, looks every name up in a `BTreeMap<String, f64>` the caller
+/// allocated, and builds a `Vec` per function call — per sampled point of a speed curve, per frame of
+/// a link, per pixel of a graph. Here the names are resolved to slot indices once, and an evaluation
+/// is the closures alone: no allocation, no string compare, no lock.
+///
+/// **The same bits as [`Formula::eval`]** (invariant 11): every node performs the same IEEE
+/// operation on the same operands in the same order (Rust neither contracts `a·b+c` into an FMA nor
+/// reassociates), the transcendental functions are the same `kt_plugin_api::math` ones, a binary
+/// operator and a call evaluate their operands left to right and return the FIRST error, `if`
+/// evaluates only the branch it takes, and a name absent from the slot list is the interpreter's
+/// `UnknownName` at evaluation, not at compilation. Guard: t2100 (both paths on every operator,
+/// function, error and random trees).
+pub struct Compiled {
+    root: Op,
+}
+
+impl std::fmt::Debug for Compiled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Compiled")
+    }
+}
+
+impl Compiled {
+    /// Evaluate with the slot values in the order of the names given to [`Formula::compile`].
+    #[inline]
+    pub fn eval(&self, slots: &[f64]) -> Result<f64, FormulaError> {
+        let v = (self.root)(slots)?;
+        if v.is_finite() {
+            Ok(v)
+        } else {
+            Err(FormulaError { at: 0, kind: FormulaErrorKind::NotFinite })
+        }
+    }
+}
+
+impl Formula {
+    /// Compile with the variables named by `vars`: slot `i` of [`Compiled::eval`] is `vars[i]`.
+    pub fn compile(&self, vars: &[&str]) -> Compiled {
+        Compiled { root: compile(&self.root, vars) }
+    }
+}
+
+fn compile(n: &Node, vars: &[&str]) -> Op {
+    match n {
+        Node::Num(v) => {
+            let v = *v;
+            Box::new(move |_| Ok(v))
+        }
+        Node::Var(name) => match vars.iter().position(|v| v == name) {
+            Some(i) => Box::new(move |s| Ok(s[i])),
+            None => {
+                let name = name.clone();
+                Box::new(move |_| {
+                    Err(FormulaError { at: 0, kind: FormulaErrorKind::UnknownName(name.clone()) })
+                })
+            }
+        },
+        Node::Neg(a) => {
+            let a = compile(a, vars);
+            Box::new(move |s| Ok(-a(s)?))
+        }
+        Node::Bin(op, a, b) => {
+            let (a, b, op) = (compile(a, vars), compile(b, vars), *op);
+            Box::new(move |s| {
+                let (x, y) = (a(s)?, b(s)?);
+                bin(op, x, y)
+            })
+        }
+        Node::If(c, a, b) => {
+            let (c, a, b) = (compile(c, vars), compile(a, vars), compile(b, vars));
+            Box::new(move |s| if c(s)? != 0.0 { a(s) } else { b(s) })
+        }
+        Node::Call(f, args) => {
+            let f = *f;
+            let mut ops: Vec<Op> = args.iter().map(|x| compile(x, vars)).collect();
+            // the arity is checked by the parser; the slots are filled left to right as `collect`
+            match ops.len() {
+                1 => {
+                    let a = ops.pop().expect("one argument");
+                    Box::new(move |s| Ok(call(f, &[a(s)?])))
+                }
+                2 => {
+                    let b = ops.pop().expect("two arguments");
+                    let a = ops.pop().expect("two arguments");
+                    Box::new(move |s| {
+                        let x = a(s)?;
+                        let y = b(s)?;
+                        Ok(call(f, &[x, y]))
+                    })
+                }
+                _ => {
+                    let c = ops.pop().expect("three arguments");
+                    let b = ops.pop().expect("three arguments");
+                    let a = ops.pop().expect("three arguments");
+                    Box::new(move |s| {
+                        let x = a(s)?;
+                        let y = b(s)?;
+                        let z = c(s)?;
+                        Ok(call(f, &[x, y, z]))
+                    })
+                }
+            }
+        }
+    }
+}
+
+/// A binary operator — ONE body for the interpreter and the compiled form.
+#[inline]
+fn bin(op: Op2, x: f64, y: f64) -> Result<f64, FormulaError> {
+    Ok(match op {
+        Op2::Add => x + y,
+        Op2::Sub => x - y,
+        Op2::Mul => x * y,
+        Op2::Div | Op2::Mod if y == 0.0 => {
+            return Err(FormulaError { at: 0, kind: FormulaErrorKind::DivZero });
+        }
+        Op2::Div => x / y,
+        Op2::Mod => x.rem_euclid(y),
+        Op2::Lt => f64::from(u8::from(x < y)),
+        Op2::Gt => f64::from(u8::from(x > y)),
+        Op2::Le => f64::from(u8::from(x <= y)),
+        Op2::Ge => f64::from(u8::from(x >= y)),
+        Op2::Eq => f64::from(u8::from(x == y)),
+        Op2::Ne => f64::from(u8::from(x != y)),
+    })
+}
+
+/// A function on its evaluated arguments — ONE body for the interpreter and the compiled form.
+#[inline]
+fn call(f: Fun, a: &[f64]) -> f64 {
+    match f {
+        Fun::Min => a[0].min(a[1]),
+        Fun::Max => a[0].max(a[1]),
+        Fun::Clamp => a[0].clamp(a[1].min(a[2]), a[2].max(a[1])),
+        Fun::Abs => a[0].abs(),
+        Fun::Floor => a[0].floor(),
+        Fun::Ceil => a[0].ceil(),
+        Fun::Round => a[0].round(),
+        Fun::Sqrt => a[0].sqrt(),
+        Fun::Sin => a[0].fsin(),
+        Fun::Cos => a[0].fcos(),
+        Fun::Lerp => a[0] + (a[1] - a[0]) * a[2],
+        // DETERMINISTIC noise: an integer seed into a hash, nothing from the
+        // environment. The same algorithm as the counter-based noise of the
+        // generator — there is no second “randomness” in the program.
+        Fun::Noise => {
+            let mut h = (a[0].floor() as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            h ^= h >> 29;
+            h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h ^= h >> 32;
+            (h >> 11) as f64 / ((1u64 << 53) as f64) * 2.0 - 1.0
+        }
+    }
+}
+
 fn eval(n: &Node, vars: &BTreeMap<String, f64>) -> Result<f64, FormulaError> {
     Ok(match n {
         Node::Num(v) => *v,
@@ -238,22 +374,7 @@ fn eval(n: &Node, vars: &BTreeMap<String, f64>) -> Result<f64, FormulaError> {
         Node::Neg(a) => -eval(a, vars)?,
         Node::Bin(op, a, b) => {
             let (x, y) = (eval(a, vars)?, eval(b, vars)?);
-            match op {
-                Op::Add => x + y,
-                Op::Sub => x - y,
-                Op::Mul => x * y,
-                Op::Div | Op::Mod if y == 0.0 => {
-                    return Err(FormulaError { at: 0, kind: FormulaErrorKind::DivZero });
-                }
-                Op::Div => x / y,
-                Op::Mod => x.rem_euclid(y),
-                Op::Lt => f64::from(u8::from(x < y)),
-                Op::Gt => f64::from(u8::from(x > y)),
-                Op::Le => f64::from(u8::from(x <= y)),
-                Op::Ge => f64::from(u8::from(x >= y)),
-                Op::Eq => f64::from(u8::from(x == y)),
-                Op::Ne => f64::from(u8::from(x != y)),
-            }
+            bin(*op, x, y)?
         }
         Node::If(c, a, b) => {
             if eval(c, vars)? != 0.0 {
@@ -264,30 +385,7 @@ fn eval(n: &Node, vars: &BTreeMap<String, f64>) -> Result<f64, FormulaError> {
         }
         Node::Call(f, args) => {
             let a: Result<Vec<f64>, _> = args.iter().map(|x| eval(x, vars)).collect();
-            let a = a?;
-            match f {
-                Fun::Min => a[0].min(a[1]),
-                Fun::Max => a[0].max(a[1]),
-                Fun::Clamp => a[0].clamp(a[1].min(a[2]), a[2].max(a[1])),
-                Fun::Abs => a[0].abs(),
-                Fun::Floor => a[0].floor(),
-                Fun::Ceil => a[0].ceil(),
-                Fun::Round => a[0].round(),
-                Fun::Sqrt => a[0].sqrt(),
-                Fun::Sin => a[0].fsin(),
-                Fun::Cos => a[0].fcos(),
-                Fun::Lerp => a[0] + (a[1] - a[0]) * a[2],
-                // DETERMINISTIC noise: an integer seed into a hash, nothing from the
-                // environment. The same algorithm as the counter-based noise of the
-                // generator — there is no second “randomness” in the program.
-                Fun::Noise => {
-                    let mut h = (a[0].floor() as i64 as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-                    h ^= h >> 29;
-                    h = h.wrapping_mul(0xBF58_476D_1CE4_E5B9);
-                    h ^= h >> 32;
-                    (h >> 11) as f64 / ((1u64 << 53) as f64) * 2.0 - 1.0
-                }
-            }
+            call(*f, &a?)
         }
     })
 }
@@ -318,17 +416,17 @@ impl Parser<'_> {
         let mut a = self.sum()?;
         loop {
             let op = if self.eat("<=") {
-                Op::Le
+                Op2::Le
             } else if self.eat(">=") {
-                Op::Ge
+                Op2::Ge
             } else if self.eat("==") {
-                Op::Eq
+                Op2::Eq
             } else if self.eat("!=") {
-                Op::Ne
+                Op2::Ne
             } else if self.eat("<") {
-                Op::Lt
+                Op2::Lt
             } else if self.eat(">") {
-                Op::Gt
+                Op2::Gt
             } else {
                 return Ok(a);
             };
@@ -339,9 +437,9 @@ impl Parser<'_> {
         let mut a = self.prod()?;
         loop {
             let op = if self.eat("+") {
-                Op::Add
+                Op2::Add
             } else if self.eat("-") {
-                Op::Sub
+                Op2::Sub
             } else {
                 return Ok(a);
             };
@@ -352,11 +450,11 @@ impl Parser<'_> {
         let mut a = self.unary()?;
         loop {
             let op = if self.eat("*") {
-                Op::Mul
+                Op2::Mul
             } else if self.eat("/") {
-                Op::Div
+                Op2::Div
             } else if self.eat("%") {
-                Op::Mod
+                Op2::Mod
             } else {
                 return Ok(a);
             };

@@ -406,6 +406,34 @@ fn probe_range(
     };
     println!("  audio build walked: {}", walks(&audio_walks));
     println!("  video build walked: {}", walks(&video_walks));
+    // what the NEXT build of the same project costs — the next consumer of an edit (2 audio + 2–3
+    // video builds), or an edit elsewhere: the compiled curves are kept by content
+    // (compiled-curves); beside it the same rebuild with the profile memo bypassed. Best of three,
+    // so a loaded machine shows the work rather than the queue.
+    let rebuild = || {
+        let mut best = [f64::INFINITY; 3];
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            drop(project.effective_clips());
+            let a = t.elapsed().as_secs_f64() * 1e3;
+            let t = std::time::Instant::now();
+            drop(AudioRenderer::new(project));
+            let b = t.elapsed().as_secs_f64() * 1e3;
+            let t = std::time::Instant::now();
+            drop(kt_engine::VideoRenderer::new(project));
+            let c = t.elapsed().as_secs_f64() * 1e3;
+            for (m, v) in best.iter_mut().zip([a, b, c]) {
+                *m = m.min(v);
+            }
+        }
+        best
+    };
+    let [ra, rb, rc] = rebuild();
+    let [na, nb, nc] = kt_model::without_profile_memo(rebuild);
+    println!(
+        "  rebuild of the unchanged project: effective_clips {ra:.1}, audio {rb:.1}, video {rc:.1} ms \
+         (recompiling every curve: {na:.1}, {nb:.1}, {nc:.1} ms)"
+    );
     println!("  sync_fx (FX processors): {sync_ms:.0} ms");
     println!("  clips with a time warp: {warped_file} in the file, {warped_eff} after layers");
 

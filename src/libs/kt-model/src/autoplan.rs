@@ -75,6 +75,15 @@ impl AutoPlan {
         }
     }
 
+    /// [`AutoPlan::apply`] for ONE slot (compiled-curves): a stream stage reads its own slot's rows
+    /// per position, and cloning the whole chain for it was a chain per position. The same
+    /// `curve_value` and the same owner's clamp, so the slot's values are `apply`'s bits.
+    pub fn apply_slot(&self, slot: usize, f: &mut FxInstance, at: Tick) {
+        for c in self.curves.iter().filter(|c| c.slot as usize == slot) {
+            f.set_param_idx(c.idx as usize, curve_value(&c.keys, at));
+        }
+    }
+
     /// The ticks of all the plan's keys — the curve is probed at them where exactly
     /// the breaks matter (for example, the maximum zoom per clip).
     pub fn key_ticks(&self) -> impl Iterator<Item = Tick> + '_ {

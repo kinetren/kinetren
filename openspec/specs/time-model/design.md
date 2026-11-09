@@ -50,3 +50,12 @@ Nothing.
 - **Rejected**: a cache of knots keyed by the curve (the build already has the curve; the cost was the algorithm, not a repeat).
 
 The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.
+
+## A speed profile is compiled once per content (compiled-curves, 2026-11-09)
+
+- **What hurt**: every `clip_warp` resampled and re-laid the profile — per piece, per trim helper, per morph pass, in every build of every consumer — for curves no edit had touched (96 020 / 166 968 segments per audio / video build of the relinked copy).
+- **Decision**: a bounded two-generation memo of the curve's points and the clip map, keyed by a word vector of exactly what the sampling reads, compared whole on a hit; computed outside the lock; `ClipWarp` shares its points and integral by `Arc`. The sampling reads the curve by `CurveCursor` and the layer formula compiled. Same bits (t2103–t2105); a rebuild samples only what an edit changed (t2106).
+- **Rejected**: a thread-local store (each consumer thread would compute again); a 64-bit hash as the key (a collision would go stale silently); memoizing `sign_knots` too (linear already; found-defects row 167).
+- **Rule**: whatever `rate_profile_keys` or `clip_warp_of` starts reading enters `curve_words`, or the store hands out a stale map.
+
+The class walked and the numbers: `openspec/changes/archive/2026-11-09-compiled-curves/design.md`.

@@ -58,7 +58,9 @@ impl Work {
 
 fn work<R>(f: impl FnOnce() -> R) -> Work {
     let b0 = BYTES.with(|b| b.get());
-    let (r, walks) = kt_time::cost::meter(f);
+    // the profile memo is shared by the process: a count must be a function of the scene, not of
+    // what another test left there (compiled-curves; the memo's own guard is t2106)
+    let (r, walks) = kt_model::without_profile_memo(|| kt_time::cost::meter(f));
     let bytes = BYTES.with(|b| b.get()) - b0;
     drop(r);
     Work { walks, bytes }
@@ -394,4 +396,54 @@ fn t2066_cutting_layer() {
 #[test]
 fn t2067_linked_curves() {
     holds_linear("links", linked, 12);
+}
+
+/// Test 2106 (compiled-curves): a speed profile is compiled once per CONTENT. A rebuild of an
+/// unchanged project — the next consumer's build, or the next edit elsewhere — samples no profile
+/// and lays out no clip map; an edit of one event's curve samples that event's profile alone.
+/// The other tests of this file measure through `without_profile_memo`, so this one meets an empty
+/// store.
+#[test]
+fn t2106_a_rebuild_samples_only_the_profiles_an_edit_changed() {
+    kt_plugins_builtin::install();
+    const N: u64 = 40;
+    let builds = |p: &Project| {
+        kt_time::cost::meter(|| {
+            drop(p.effective_clips());
+            drop(kt_engine::AudioRenderer::new(p));
+            drop(kt_engine::VideoRenderer::new(p));
+        })
+        .1
+    };
+    let samples = |c: &Costs| c[Cost::ProfileSample as usize];
+    let mut p = events(N);
+    // a scene of its own (no other test of this binary writes the store), each pair's curve its own
+    for c in &mut p.clips {
+        c.fx_auto[0][0].keys[0].v = 1.4375 + c.link_group.map_or(0, |g| g.0) as f64 / 4096.0;
+    }
+    let fresh = kt_model::without_profile_memo(|| builds(&p));
+    let first = builds(&p);
+    let again = builds(&p);
+    assert!(samples(&fresh) > 0, "the scene samples shaped speed curves: {}", rows(&fresh));
+    // within one build the passes and the linked partners already share a profile
+    assert!(samples(&first) > 0 && samples(&first) <= samples(&fresh), "the first build compiles each profile once: {} against {}", samples(&first), samples(&fresh));
+    assert_eq!(samples(&again), 0, "a rebuild of the same content samples nothing: {}", rows(&again));
+    assert!(
+        again[Cost::WarpSegment as usize] < fresh[Cost::WarpSegment as usize],
+        "and lays out fewer maps: {} against {}",
+        rows(&again),
+        rows(&fresh)
+    );
+    // one event's curve edited (its linked partner follows the pair rule, so both carry it)
+    for c in p.clips.iter_mut().filter(|c| c.link_group == Some(GroupId(10))) {
+        c.fx_auto[0][0].keys[1].v = 1.0625;
+    }
+    let edited = builds(&p);
+    assert!(samples(&edited) > 0);
+    assert!(
+        samples(&edited) * (N / 2) <= samples(&first),
+        "an edit of one of {N} pairs samples its own profile only: {} against {} for the whole",
+        samples(&edited),
+        samples(&fresh)
+    );
 }
