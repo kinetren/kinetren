@@ -19,33 +19,49 @@ use super::{clip_base_quality, clip_frame_keys, video_cache_idx, VideoClip};
 
 /// The preview's ONE memo (design D3): the composer, the prefetch and the picker share it, so
 /// "what is still needed" and "what was computed" see the same entries. Each export owns its own.
-/// Its bound starts at `STREAM_MEMO_BASE`; the player sizes it by the loop (`stream_memo_bytes`).
+/// Its bound is `STREAM_MEMO_BASE` plus what the memory ledger grants the stream history
+/// (memory-ledger); the player asks by the loop (`stream_memo_bytes`), and a grant taken back (the
+/// kept composites asked first, an export claimed the room) drops the entries past it at once.
 pub fn stream_memo() -> &'static Arc<StreamMemo> {
     static M: OnceLock<Arc<StreamMemo>> = OnceLock::new();
-    M.get_or_init(|| Arc::new(StreamMemo::new(STREAM_MEMO_BASE)))
+    M.get_or_init(|| {
+        let m = Arc::new(StreamMemo::new(STREAM_MEMO_BASE));
+        let weak = Arc::downgrade(&m);
+        m.account().on_shrink(move |grant| {
+            if let Some(m) = weak.upgrade() {
+                m.set_cap(STREAM_MEMO_BASE.saturating_add(usize::try_from(grant).unwrap_or(usize::MAX)));
+            }
+        });
+        m
+    })
 }
 
 /// The preview memo's bound with no loop to keep: a stretch of playback and its look-ahead.
 pub const STREAM_MEMO_BASE: usize = 256 << 20;
 
-/// The preview memo's bound for a loop of `loop_positions` stream positions keeping `per_position`
+/// The preview memo's want for a loop of `loop_positions` stream positions keeping `per_position`
 /// bytes each (stream-layout-per-build, found-defects 143). A loop whose history the memo cannot hold
-/// recomputes it every lap: at 1080 lines 256 MB held about 20 positions. So the bound is what the
+/// recomputes it every lap: at 1080 lines 256 MB held about 20 positions. So the want is what the
 /// loop keeps — every position's picture plus an eighth — on top of `base` (the working set of the
 /// stage: the encoder's transient state, the look-ahead), and never above a quarter of the memory the
 /// machine has `available` when it is sized (measured at run time; unknown — `base`), nor below `base`.
+/// The memory ledger then grants it after the kept composites (`size_stream_memo`).
 pub fn stream_memo_bytes(base: usize, per_position: usize, loop_positions: Option<usize>, available: Option<u64>) -> usize {
     let (Some(n), Some(free)) = (loop_positions, available) else { return base };
     let want = per_position.saturating_mul(n + n / 8 + 2).saturating_add(base);
     want.min(usize::try_from(free / 4).unwrap_or(usize::MAX)).max(base)
 }
 
-/// Size the preview's memo for a loop of `loop_positions` at `per_position` bytes (`None` — no loop),
-/// by the memory available now; the bound set, with a `stream_memo_cap` record.
+/// Size the preview's memo for a loop of `loop_positions` at `per_position` bytes (`None` — no loop):
+/// its want by the memory available now, granted by the memory ledger after the kept composites';
+/// the bound set, with a `stream_memo_cap` record.
 pub fn size_stream_memo(per_position: usize, loop_positions: Option<usize>) -> usize {
     let free = memory_available();
-    let cap = stream_memo_bytes(STREAM_MEMO_BASE, per_position, loop_positions, free);
-    stream_memo().set_cap(cap);
+    let want = stream_memo_bytes(STREAM_MEMO_BASE, per_position, loop_positions, free);
+    let memo = stream_memo();
+    let grant = memo.account().want((want - STREAM_MEMO_BASE) as u64);
+    let cap = STREAM_MEMO_BASE.saturating_add(usize::try_from(grant).unwrap_or(usize::MAX));
+    memo.set_cap(cap);
     kt_time::trace::ev(kt_time::trace::Ev::StreamMemoCap)
         .a(cap as u64)
         .b(loop_positions.unwrap_or(0) as u64)
@@ -55,16 +71,15 @@ pub fn size_stream_memo(per_position: usize, loop_positions: Option<usize>) -> u
 }
 
 /// How the engine learns the memory the process can still take (the host injects it: the probe
-/// lives with the device code, `kt_gpu::memory::available`); `None` — unknown.
+/// lives with the device code, `kt_gpu::memory::available`); `None` — unknown. It is the memory
+/// ledger's probe (`kt_time::mem::set_probe`).
 pub fn set_memory_probe(probe: fn() -> Option<u64>) {
-    let _ = PROBE.set(probe);
+    kt_time::mem::set_probe(probe);
 }
-
-static PROBE: OnceLock<fn() -> Option<u64>> = OnceLock::new();
 
 /// The memory available now, by the injected probe.
 pub fn memory_available() -> Option<u64> {
-    PROBE.get().and_then(|p| p())
+    kt_time::mem::available()
 }
 
 /// How a live preview paces a stream stage (decode-request-storm). The history of a frame can be

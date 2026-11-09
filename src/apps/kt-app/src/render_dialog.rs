@@ -609,15 +609,20 @@ impl KtApp {
             },
             ..Default::default()
         };
-        let opts_thread = opts.clone();
+        let mut opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
             // an export pauses the background classes while it runs (one-scheduler): its vote is
             // down when the body returns, whatever the window does after
             let export_vote = kt_time::sched::Vote::new(kt_time::sched::why::EXPORT);
             export_vote.set(true);
-            // the render's sources decode with the threads of a render; the preview's stay on auto
+            // and takes back the preview's memory growth before it counts its devices and its tight
+            // mode (memory-ledger D6): here, not on the UI thread — the preview's memo drops its
+            // composites under its engine's lock
+            let _room = kt_time::mem::claim();
             let (rw, rh) = opts_thread.resolution.unwrap_or(proj_res);
+            opts_thread.tight = kt_gpu::memory::tight(kt_gpu::memory::available(), rw, rh);
+            // the render's sources decode with the threads of a render; the preview's stay on auto
             kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(kt_gpu::memory::available(), rw, rh));
             kt_ffmpeg::set_rgba_threads(kt_gpu::memory::rgba_threads(kt_gpu::memory::available(), rw, rh));
             let (a, _) = open_all(&project, base.as_deref());

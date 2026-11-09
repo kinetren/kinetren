@@ -381,12 +381,13 @@ impl Player {
             let shared_p = shared.clone();
             let mix_p = mix_coverage.clone();
             let shown_p = shown.clone();
+            let gpu_p = video_gpu.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, builds, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p,
+                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p, gpu_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -963,6 +964,8 @@ impl Player {
         }
         // a new executor has warmed nothing of this project yet
         self.prewarm_now();
+        // and has not been told the loop to keep (the prefetch thread tells it)
+        self.wake.notify();
     }
 
     /// Status of the video backend for the notice/performance panel.
@@ -2653,6 +2656,32 @@ fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(
     crate::video::size_stream_memo(now.0, positions);
 }
 
+/// Tell the display's executor the loop region's moments when they or the executor change
+/// (memory-ledger D4): it keeps every composite of the loop within what the memory ledger grants.
+/// On this thread, not the UI's: the executor's lock may stand behind a composite.
+fn tell_loop(
+    video_gpu: &Mutex<VideoGpuState>,
+    builds: &crate::builds::Builds,
+    loop_region: &Mutex<Option<(i64, i64)>>,
+    told: &mut Option<(Option<usize>, usize)>,
+) {
+    let exec = {
+        let g = video_gpu.lock().unwrap();
+        if g.poisoned.is_some() { None } else { g.exec.clone().filter(|e| e.can_present()) }
+    };
+    let Some(exec) = exec else { return };
+    let step = builds.latest().video.grid.frame_step().max(1);
+    let moments = (*loop_region.lock().unwrap()).map(|(s, e)| {
+        let (s, e) = (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0);
+        ((e - s).max(0) / step) as usize + 1
+    });
+    let now = (moments, Arc::as_ptr(&exec) as *const () as usize);
+    if *told != Some(now) {
+        *told = Some(now);
+        exec.keep_loop(moments);
+    }
+}
+
 /// The frames ahead for a pass interval of `interval` (see `STREAM_AHEAD_MIN`).
 fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std::time::Duration) -> usize {
     let fps = kt_time::TICK_HZ as f64 / video.grid.frame_step().max(1) as f64;
@@ -2685,6 +2714,7 @@ fn prefetch_loop(
     shared: Arc<AudioShared>,
     mix: crate::mix::MixCoverage,
     kept_moments: Shown,
+    video_gpu: Arc<Mutex<VideoGpuState>>,
 ) {
     // the renderers are the player's shared build (edit-without-rebuild): this thread builds
     // none; it notes when it takes a new one
@@ -2710,6 +2740,8 @@ fn prefetch_loop(
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
     let mut memo_sized: Option<(usize, Option<usize>)> = None;
+    // the loop the display's executor was told to keep, and which executor (memory-ledger D4)
+    let mut loop_told: Option<(Option<usize>, usize)> = None;
     // the last pass was skipped: nothing moved (one-scheduler: then the thread parks with no clock)
     let mut skipped = false;
     let mut seen = wake.seen();
@@ -2726,6 +2758,7 @@ fn prefetch_loop(
         if stop.load(Ordering::Acquire) {
             return;
         }
+        tell_loop(&video_gpu, &builds, &loop_region, &mut loop_told);
         {
             let state = (
                 transport.playhead_frames(),

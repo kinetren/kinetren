@@ -152,10 +152,19 @@ pub enum Ev {
     /// A blocking call on a thread that must not wait (`block`, one-scheduler): `aux` its
     /// [`crate::block::kind`], `a` the thread's [`crate::block::role`], `dur` how long it took.
     Block = 75,
+
+    /// The memory ledger sized its growth budget (`mem`, memory-ledger). `a` the growth budget in
+    /// bytes, `b` what is granted, `c` the memory available then in MB (0 — unknown), `aux` the
+    /// claims held (an export takes the growth while it runs).
+    MemBudget = 91,
+    /// A tenant's cap changed at a sizing, or a device refused its growth (memory-ledger). `aux` the
+    /// [`crate::mem::Tenant`], `a` its want, `b` its new cap, `c` the bytes it holds, `id` 1 — a
+    /// device refusal set the cap.
+    MemGrant = 92,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 41] = [
+    pub const ALL: [Ev; 43] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -197,6 +206,8 @@ impl Ev {
         Ev::SchedCancel,
         Ev::SchedPause,
         Ev::Block,
+        Ev::MemBudget,
+        Ev::MemGrant,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -246,6 +257,8 @@ impl Ev {
             Ev::SchedCancel => "sched_cancel",
             Ev::SchedPause => "sched_pause",
             Ev::Block => "block",
+            Ev::MemBudget => "mem_budget",
+            Ev::MemGrant => "mem_grant",
         }
     }
 }

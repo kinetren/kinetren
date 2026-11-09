@@ -10,6 +10,7 @@
 mod libm_fix;
 pub mod block;
 pub mod cost;
+pub mod mem;
 pub mod sched;
 pub mod trace;
 pub mod work;

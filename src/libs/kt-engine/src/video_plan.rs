@@ -335,6 +335,9 @@ pub trait VideoGpuExec: Send + Sync {
     /// Keep under `key` a complete composite another executor made (the slow-chain device's
     /// bytes), so the moment plays without work on the next lap.
     fn keep(&self, _key: u64, _w: u32, _h: u32, _rgba: &[u8]) {}
+    /// The loop the preview plays: `Some(moments)` — keep every composite of it (the executor asks the
+    /// memory ledger for them at the size it presents, memory-ledger D4), `None` — no loop.
+    fn keep_loop(&self, _moments: Option<usize>) {}
     /// Compile, off the caller's thread, what the effects `ids` reach on this executor, so their
     /// first frame does not (pipeline-prewarm D5). Returns at once and never waits for a frame;
     /// frames before it is done behave as before it was asked.

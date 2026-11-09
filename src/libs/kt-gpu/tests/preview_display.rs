@@ -203,3 +203,120 @@ fn t1845_the_display_target_never_waits_for_a_composite() {
     assert!(gpu.glow_view().is_some(), "the glow is there while the engine is held");
     drop(held);
 }
+
+// ---- memory-ledger: the present memo's bound, its loop rule, a device's refusal ----
+
+/// The memo tests change the process's memory ledger: one at a time.
+static LEDGER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// One composite at `Q`.
+const ONE: u64 = Q.width as u64 * Q.height as u64 * 4;
+
+/// `n` moments, a frame apart, and their warmed renderer.
+fn loop_scene(n: i64) -> (VideoRenderer, BurstCache, Vec<Tick>) {
+    let mut p = demo_project(DemoSources::Synth);
+    for c in &mut p.clips {
+        c.opacity = 0.53;
+    }
+    let ts: Vec<Tick> = (0..n).map(|i| Tick(90_000 + i * 3_600)).collect();
+    let (video, cache) = warmed(&p, &ts);
+    (video, cache, ts)
+}
+
+/// Present every moment once: (composed, replayed), the pictures.
+fn lap(gpu: &kt_gpu::GpuFxEngine, video: &VideoRenderer, cache: &BurstCache, ts: &[Tick]) -> (usize, usize, Vec<Vec<u8>>) {
+    let (mut made, mut kept, mut pics) = (0, 0, Vec::new());
+    for t in ts {
+        assert!(gpu.present(&plan_at(video, cache, *t), PresentOptions::default()).unwrap(), "complete at {t:?}");
+        if gpu.last_stages().replayed { kept += 1 } else { made += 1 }
+        pics.push(gpu.read_display().unwrap());
+    }
+    (made, kept, pics)
+}
+
+/// t2292: told of a loop and granted it, the memo keeps every moment past its base: the next laps
+/// compose nothing and show the same pictures.
+#[test]
+fn t2292_a_granted_loop_is_kept_whole_past_the_base() {
+    kt_plugins_builtin::install();
+    let _one = LEDGER.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    kt_time::mem::set_probe(|| Some(64 << 30));
+    gpu.set_present_base_for_tests(10 * ONE);
+    let (video, cache, ts) = loop_scene(30);
+    let keys: std::collections::HashSet<u64> = ts.iter().map(|t| gpu.present_key(&plan_at(&video, &cache, *t)).unwrap()).collect();
+    assert_eq!(keys.len(), 30, "scene guard: thirty different composites");
+    gpu.keep_loop(Some(30));
+    let (made, _, first) = lap(&gpu, &video, &cache, &ts);
+    assert_eq!(made, 30);
+    let (len, bytes, cap) = gpu.present_memo_stats();
+    assert_eq!(len, 30, "all thirty kept");
+    assert!(bytes > 10 * ONE && cap >= 30 * ONE, "past the base: {bytes} of {cap}");
+    for _ in 0..2 {
+        let (made, kept, pics) = lap(&gpu, &video, &cache, &ts);
+        assert_eq!((made, kept), (0, 30), "the lap composes nothing");
+        assert_eq!(pics, first, "the same pictures");
+    }
+    gpu.keep_loop(None);
+    kt_time::mem::set_probe(|| None);
+}
+
+/// t2293: a loop three times the memo with no grant keeps a third, lap after lap; without the loop
+/// told, the LRU keeps nothing the next lap reads.
+#[test]
+fn t2293_a_loop_longer_than_the_memo_keeps_a_part() {
+    kt_plugins_builtin::install();
+    let _one = LEDGER.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    kt_time::mem::set_probe(|| None);
+    kt_time::mem::ledger().size(None);
+    let (video, cache, ts) = loop_scene(30);
+    // not told: the plain LRU
+    gpu.set_present_base_for_tests(10 * ONE);
+    lap(&gpu, &video, &cache, &ts);
+    let (_, kept, _) = lap(&gpu, &video, &cache, &ts);
+    assert_eq!(kept, 0, "an LRU over a longer cycle keeps nothing the next lap reads");
+    // told, no grant
+    gpu.set_present_base_for_tests(10 * ONE);
+    gpu.keep_loop(Some(30));
+    assert_eq!(gpu.present_memo_stats().2, 10 * ONE, "no grant: the base");
+    let (made, _, first) = lap(&gpu, &video, &cache, &ts);
+    assert_eq!(made, 30);
+    for _ in 0..2 {
+        let (made, kept, pics) = lap(&gpu, &video, &cache, &ts);
+        assert_eq!((made, kept), (20, 10), "a third kept, the rest composed");
+        assert_eq!(pics, first, "the same pictures");
+    }
+    gpu.keep_loop(None);
+}
+
+/// t2295: a device's refusal of the memo's growth keeps that composite unkept, bounds the growth at
+/// three quarters of what it held past the base, and leaves the picture and the device working.
+#[test]
+fn t2295_a_refused_growth_is_learned() {
+    kt_plugins_builtin::install();
+    let _one = LEDGER.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    kt_time::mem::set_probe(|| Some(64 << 30));
+    gpu.set_present_base_for_tests(10 * ONE);
+    let (video, cache, ts) = loop_scene(40);
+    gpu.keep_loop(Some(40));
+    lap(&gpu, &video, &cache, &ts[..30]);
+    assert_eq!(gpu.present_memo_stats().0, 30, "twenty past the base");
+    gpu.refuse_next_growth_for_tests();
+    let items = kt_time::trace::testing::capture(|| {
+        assert!(gpu.present(&plan_at(&video, &cache, ts[30]), PresentOptions::default()).unwrap(), "the picture is complete");
+    });
+    assert!(!gpu.last_stages().stored, "the refused composite is not kept");
+    assert!(
+        kt_time::trace::testing::recs(&items).iter().any(|r| r.kind() == Some(kt_time::trace::Ev::MemGrant) && r.id == 1),
+        "the refusal is a record"
+    );
+    let (len, _, cap) = gpu.present_memo_stats();
+    assert_eq!((len, cap), (25, 25 * ONE), "fifteen past the base");
+    lap(&gpu, &video, &cache, &ts[31..]);
+    assert!(gpu.present_memo_stats().0 <= 25, "later keeps never pass the bound");
+    assert!(gpu.present(&plan_at(&video, &cache, ts[0]), PresentOptions::default()).is_ok(), "the device works");
+    gpu.keep_loop(None);
+    kt_time::mem::set_probe(|| None);
+}

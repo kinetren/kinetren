@@ -238,6 +238,8 @@ fn render_raw_video_profiled(
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
     let gpu = backends.video_gpu.as_ref().ok_or_else(|| std::io::Error::other("no video device"))?;
+    // while it runs the preview's memos keep only their bases (memory-ledger D6)
+    let _room = kt_time::mem::claim();
     let mut stats = ExportStats::default();
     let mut src: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();

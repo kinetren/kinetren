@@ -313,6 +313,8 @@ pub(crate) fn run<S: ExportSink>(
     sink: &mut S,
 ) -> std::io::Result<(ExportStats, ExportStats)> {
     let started = Instant::now();
+    // while it runs the preview's memos keep only their bases (memory-ledger D6)
+    let _room = kt_time::mem::claim();
     let prof = hooks.profile;
     let mut src: HashMap<MediaId, Box<dyn MediaSource>> = video_sources.into_iter().collect();
     // the same source set, facts and renderer as `render_raw_video_range_with`

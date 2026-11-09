@@ -186,6 +186,9 @@ pub struct StreamMemo {
     /// preview sizes it by its loop and the machine's memory).
     cap: std::sync::atomic::AtomicUsize,
     inner: Mutex<MemoInner>,
+    /// Its account in the process's memory ledger (memory-ledger): stream history, its first bound
+    /// as the base.
+    account: kt_time::mem::Account,
 }
 
 #[derive(Default)]
@@ -198,7 +201,11 @@ struct MemoInner {
 impl StreamMemo {
     /// A memo holding at most `cap_bytes` (an entry larger than that is not kept).
     pub fn new(cap_bytes: usize) -> StreamMemo {
-        StreamMemo { cap: std::sync::atomic::AtomicUsize::new(cap_bytes), inner: Mutex::new(MemoInner::default()) }
+        StreamMemo {
+            cap: std::sync::atomic::AtomicUsize::new(cap_bytes),
+            inner: Mutex::new(MemoInner::default()),
+            account: kt_time::mem::open(kt_time::mem::Tenant::History, cap_bytes as u64),
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, MemoInner> {
@@ -247,6 +254,7 @@ impl StreamMemo {
         }
         g.bytes += bytes;
         Self::evict_to(&mut g, cap, key);
+        self.account.set(g.bytes as u64);
     }
 
     /// Drop the least recently used entries until `cap` holds the rest; `cause` names the key that
@@ -281,6 +289,12 @@ impl StreamMemo {
         self.cap.store(cap_bytes, std::sync::atomic::Ordering::Relaxed);
         let mut g = self.lock();
         Self::evict_to(&mut g, cap_bytes, 0);
+        self.account.set(g.bytes as u64);
+    }
+
+    /// Its account in the memory ledger: the base is its first bound.
+    pub fn account(&self) -> &kt_time::mem::Account {
+        &self.account
     }
 
     /// Bytes held.
@@ -293,6 +307,7 @@ impl StreamMemo {
         let mut g = self.lock();
         g.map.clear();
         g.bytes = 0;
+        self.account.set(0);
     }
 }
 

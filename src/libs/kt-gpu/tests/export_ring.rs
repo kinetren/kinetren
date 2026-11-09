@@ -137,3 +137,47 @@ fn t1573_several_engines_write_the_frames_of_one() {
     assert!(want.0.len() > 40);
     assert_eq!(got.0, want.0, "the file does not depend on how many devices composed it");
 }
+
+/// t2298 (memory-ledger D7): an export's device keeps only the uploads its frames in flight read: a
+/// frame read again at once is not uploaded again, nothing older stays, and the frames are the bytes
+/// of a preview device with its full upload cache.
+#[test]
+fn t2298_an_export_device_keeps_the_uploads_of_the_frames_in_flight() {
+    use kt_cache::{BurstCache, CacheConfig};
+    kt_plugins_builtin::install();
+    let Some(preview) = kt_gpu::test_engine() else { return };
+    let export = kt_gpu::GpuFxEngine::new_for_export(kt_gpu::GpuContext::new_headless().unwrap()).expect("engine");
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let q = Quality { width: 320, height: 180 };
+    let ts: Vec<Tick> = (0..24).map(|i| Tick(90_000 * 3 + i * 3_000)).collect();
+    let video = VideoRenderer::new(&p);
+    let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 512 << 20 });
+    let mut srcs: std::collections::HashMap<_, _> = sources(&p).into_iter().collect();
+    for (media, pts, dq) in ts.iter().flat_map(|t| video.layers_at(*t, q)) {
+        if let Some(s) = srcs.get_mut(&media) {
+            let f = s.read_video_frame(pts, Some(dq)).unwrap();
+            cache.insert_video(kt_engine::source_id(media), Some(dq), kt_engine::video_cache_idx(pts), f.into());
+        }
+    }
+    let ring = export.readback_depth();
+    let most = ts.iter().map(|t| video.layers_at(*t, q).len()).max().unwrap();
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    let mut uploaded_total = 0usize;
+    for t in &ts {
+        let plan = video.frame_plan(&cache, *t, q);
+        export.execute_once(&plan, &mut a).unwrap();
+        preview.execute_once(&plan, &mut b).unwrap();
+        assert_eq!(fnv(&a), fnv(&b), "the bytes at {t:?}");
+        uploaded_total += video.layers_at(*t, q).len();
+        assert!(
+            export.uploads_held() <= (ring + 1) * most,
+            "at {t:?}: {} uploads held, the frames in flight read at most {}",
+            export.uploads_held(),
+            (ring + 1) * most
+        );
+        // the same frame again at once: nothing is uploaded
+        export.execute_once(&plan, &mut a).unwrap();
+        assert_eq!(export.last_stages().upload_bytes, 0, "read again at once, not uploaded at {t:?}");
+    }
+    assert!(preview.uploads_held() > (ring + 1) * most, "scene guard: the preview's cache holds more ({} of {uploaded_total})", preview.uploads_held());
+}

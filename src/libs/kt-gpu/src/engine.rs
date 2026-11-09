@@ -823,6 +823,11 @@ struct Inner {
     upload: UploadCache,
     readback: ReadbackCache,
     present_memo: PresentMemo,
+    /// The device's textures are not the process's memory (not a CPU rasterizer): the present memo's
+    /// growth is checked against the device's refusal (memory-ledger D8).
+    memo_guard: bool,
+    /// Tests: the next growth of the present memo is refused as a device would.
+    refuse_next_growth: bool,
     /// What the last `execute` ran (morpher-event-grid-cost, D1).
     last_cost: kt_fx::video::FrameCost,
     /// Where the last `execute` spent its time (preview-throughput).
@@ -1167,6 +1172,35 @@ impl GpuFxEngine {
         Self::build(ctx, false, true, false).map(|e| e.expect("an engine"))
     }
 
+    /// The present memo now: (composites, bytes, bound) — tests and `kt-cli`.
+    pub fn present_memo_stats(&self) -> (usize, u64, u64) {
+        let g = self.inner.lock().unwrap();
+        (g.present_memo.len(), g.present_memo.bytes(), g.present_memo.cap())
+    }
+
+    /// The uploads held now (tests).
+    pub fn uploads_held(&self) -> usize {
+        self.inner.lock().unwrap().upload.held()
+    }
+
+    /// Tests: the present memo's base (the product's is 512 MB), set before it keeps anything.
+    #[doc(hidden)]
+    pub fn set_present_base_for_tests(&self, bytes: u64) {
+        let mut g = self.inner.lock().unwrap();
+        let hook = g.present_memo.take_on_shrink();
+        g.present_memo = PresentMemo::new(bytes);
+        if let Some(h) = hook {
+            g.present_memo.set_on_shrink(h);
+        }
+    }
+
+    /// Tests: the next growth of the present memo past its base is refused, as a device out of memory
+    /// would refuse it.
+    #[doc(hidden)]
+    pub fn refuse_next_growth_for_tests(&self) {
+        self.inner.lock().unwrap().refuse_next_growth = true;
+    }
+
     /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
     /// on waits until the process is gone.
     pub fn park(&self) {
@@ -1243,7 +1277,7 @@ impl GpuFxEngine {
         let max_dim = device.limits().max_texture_dimension_2d;
         let (names, owners) = plugin_pipe_names();
         let timer = Timer::new(&device, &queue, &info.name, names, owners);
-        Ok(Some(Arc::new(GpuFxEngine {
+        let engine = Arc::new(GpuFxEngine {
             info,
             compiled: c.clone(),
             shown: Mutex::new((None, None)),
@@ -1258,9 +1292,12 @@ impl GpuFxEngine {
                 arena_slots,
                 slot: 0,
                 pool: TexturePool::new(TRANSIENT_BUDGET),
-                upload: UploadCache::new(UPLOAD_BUDGET),
+                // an export's device keeps what its frames in flight read (memory-ledger D7)
+                upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(RING as u64)),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
+                memo_guard: ai.device_type != wgpu::DeviceType::Cpu,
+                refuse_next_growth: false,
                 last_cost: Default::default(),
                 last_stages: Default::default(),
                 display: None,
@@ -1275,7 +1312,18 @@ impl GpuFxEngine {
                 timer,
                 host_owner: None,
             }),
-        })))
+        });
+        // a grant the ledger takes back (an export claimed the room) drops the kept composites past
+        // it at once, under the engine's lock, from the claiming thread (memory-ledger D6)
+        let weak = Arc::downgrade(&engine);
+        engine.inner.lock().unwrap().present_memo.set_on_shrink(Arc::new(move |_| {
+            if let Some(e) = weak.upgrade() {
+                let mut g = e.inner.lock().unwrap_or_else(|p| p.into_inner());
+                let Inner { present_memo, pool, .. } = &mut *g;
+                present_memo.evict_to_cap(pool);
+            }
+        }));
+        Ok(Some(engine))
     }
 }
 
@@ -1531,6 +1579,10 @@ impl VideoGpuExec for GpuFxEngine {
         self.inner.lock().unwrap().keep(key, w, h, rgba);
     }
 
+    fn keep_loop(&self, moments: Option<usize>) {
+        self.inner.lock().unwrap().present_memo.keep_loop(moments);
+    }
+
     fn readback_depth(&self) -> usize {
         RING
     }
@@ -1560,6 +1612,7 @@ impl Inner {
         let ticket = self.next_ticket;
         self.next_ticket += 1;
         self.last_cost = Default::default();
+        self.upload.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1693,6 +1746,7 @@ impl Inner {
             return Ok(true);
         }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
+        self.upload.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1748,8 +1802,7 @@ impl Inner {
                 // a later frame writing the accumulator is ordered after this one on the queue;
                 // a complete one is kept whole for the next lap (cached-range-plays)
                 if complete {
-                    self.present_memo.insert(key, result, &mut self.pool);
-                    self.last_stages.stored = true;
+                    self.last_stages.stored = self.memo_keep(key, result);
                 } else {
                     self.pool.release(result);
                 }
@@ -1811,7 +1864,27 @@ impl Inner {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
-        self.present_memo.insert(key, tex, &mut self.pool);
+        self.memo_keep(key, tex);
+    }
+
+    /// Keep a complete composite in the present memo; false — not kept. Past its base on a device
+    /// whose memory is its own, the texture the next frame will need instead is created first under
+    /// an out-of-memory check: a refusal keeps nothing and bounds the memo (memory-ledger D8).
+    fn memo_keep(&mut self, key: u64, t: Tex) -> bool {
+        let refused = std::mem::take(&mut self.refuse_next_growth);
+        if (self.memo_guard || refused) && self.present_memo.grows_past_base(t.w, t.h) {
+            let scope = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+            let spare = create_tex(&self.device, t.w, t.h, "kt-gpu transient");
+            let failed = pollster::block_on(scope.pop()).is_some();
+            if failed || refused {
+                drop(spare);
+                self.pool.release(t);
+                self.present_memo.refuse(&mut self.pool);
+                return false;
+            }
+            self.pool.release(spare);
+        }
+        self.present_memo.insert(key, t, &mut self.pool)
     }
 
     /// The display target at the frame's size (a new texture is a new generation for the UI),
@@ -1901,6 +1974,7 @@ impl Inner {
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
 
         // --- resolve: presence/size ---
+        self.upload.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());

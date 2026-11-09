@@ -36,6 +36,8 @@ pub struct ComputeDevice {
     stamps: Option<(wgpu::QuerySet, wgpu::Buffer)>,
     pipes: Mutex<HashMap<(String, usize, usize), Arc<Pipe>>>,
     pool: Mutex<Pool>,
+    /// The pool's free buffers, to the memory ledger (memory-ledger).
+    account: kt_time::mem::Account,
     /// The disk tier of its pipelines (pipeline-prewarm D7), where the device has one.
     cache: Option<crate::pipeline_cache::DiskCache>,
 }
@@ -105,6 +107,7 @@ pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
         stamps,
         pipes: Mutex::new(HashMap::new()),
         pool: Mutex::default(),
+        account: kt_time::mem::open(kt_time::mem::Tenant::Compute, POOL_BYTES),
         cache,
     }))
 }
@@ -116,6 +119,7 @@ impl ComputeDevice {
         let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(b) = pool.free.get_mut(&(size, usage.bits())).and_then(Vec::pop) {
             pool.bytes -= size;
+            self.account.set(pool.bytes);
             return (b, true);
         }
         drop(pool);
@@ -131,6 +135,7 @@ impl ComputeDevice {
                 pool.free.entry((b.size(), b.usage().bits())).or_default().push(b);
             }
         }
+        self.account.set(pool.bytes);
     }
 
     /// What the pool holds now.
