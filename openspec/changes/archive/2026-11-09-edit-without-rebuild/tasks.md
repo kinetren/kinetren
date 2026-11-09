@@ -27,4 +27,4 @@
 ## 5. Contracts, numbers, check
 - [x] 5.1 Spec deltas; design.md with the class walk; CLAUDE.md rules (kt-engine, kt-app)
 - [x] 5.2 Release numbers before/after; found-defects rows 110, 111, 117, 150, 155; What's new
-- [ ] 5.3 `cargo test` of the touched crates, clippy, live `cached_range`, `idle`, `audiofx`, target-prune
+- [x] 5.3 `cargo test` of the touched crates, clippy, live `cached_range`, `idle`, `audiofx`, target-prune

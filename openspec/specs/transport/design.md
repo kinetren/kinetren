@@ -223,3 +223,25 @@ built: an FFT that allocates its scratch lazily must not do it in the callback. 
   see a wait. The first measurement with it found the live harness's own geometry dump in the frame: a
   file write on the UI thread, 10–20 s on a disk busy with fsyncs. The dump now has a thread of its own.
 - The walk of every UI-thread wait, with what was kept and why, is the archived change's design D2.
+
+## One build per project version, shared (edit-without-rebuild, archived 2026-11-09)
+
+- Every consumer built its own engine from each edit: the UI thread a video renderer and the generator
+  sources, the `audio-build` thread, prefetch a pair, the probe another. On the owner's 1977 events
+  a slider step held the UI thread 88 ms (p50) and cost ~197 ms of CPU and 5 renderer builds
+  (release, `kt-cli edit-cost`). Now the player's `engine-build` thread builds the NEWEST version once
+  and publishes it. The UI thread hands an `Arc<Project>` (the model's `doc_arc`) and reads the last
+  published build: 1.4 ms per step, 40 ms of CPU, one build.
+- A composite uses the build of the state it was asked for, waited for on the compose thread
+  (`Builds::wait_current`). Otherwise a frame of the old state is shown as the edit's picture, and the
+  kept-moment recheck marks moments by the old plan's key.
+- The probe is the shared renderer plus the UI's FX store, synced by the builder. A meter reading
+  during that sync reads silence rather than waiting. A region change pins the head with the
+  published renderer and builds nothing.
+- Prefetch's pass state carries the build sequence: a build lands after its edit, and on a pause a
+  skipped pass would never take it (t20).
+- The opening still builds on the constructor's thread, the one exception.
+- Rejected: a build per consumer sharing a memo (keeps the multiplicity), and a structurally shared
+  `Project` (the clone is 0.14 ms on 1977 events and is now one per state).
+- Left: a generator value edit still asks `gen_sources` on the UI thread (found-defects row 190).
+  The record of the change: `openspec/changes/archive/2026-11-09-edit-without-rebuild/design.md`.
