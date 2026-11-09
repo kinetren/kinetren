@@ -820,3 +820,15 @@ dropped the history — a kept frame planned short and shown as "Loading".
 #### Scenario: A short loop under a heavy chain plays from what is kept
 - **PATH** open our showcase with the owner's chain (Camera ISP → Datamosh gop 66, 720 lines, search 64 → VHS Tape) on the longest footage event and a 0.7 s loop over it → the paused frame is shown → press Space → the first laps compose, then the strips over the loop turn bright → no frame is composed, no burst runs the effects, nothing is decoded → press Space → the paused frame inside the loop is there, no "Loading"
 - **TEST** t2153 live scenario `src/scripts/live/heavy_loop.py`
+
+### Requirement: The preview's video renderer is the shared build's
+The preview composer, prefetch and the UI's readers SHALL use the video renderer of the player's
+shared build; a video layer reused from the last build SHALL equal the freshly derived one (the plan
+key, the decode step and the stream stage included).
+Why: the UI thread built a `VideoRenderer` per edit (found-defects row 150, 19–36 ms on the owner's
+project), and prefetch built another.
+
+#### Scenario: The video side of an incremental build
+- **WHEN** the edits of t2004 are applied in turn
+- **THEN** the incremental video build's state text (every layer, the cameras, the stages, the nested reels) equals the fresh build's
+- **TEST** t2004 (`src/libs/kt-engine/tests/shared_build.rs`)

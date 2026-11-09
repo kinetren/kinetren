@@ -123,8 +123,11 @@ pub struct LoudnessMeter {
     sample_peak: f32,
     /// How many frames to keep computing interpolation after a “large” sample.
     tp_countdown: usize,
-    /// Tail for polyphase true-peak oversampling.
-    tp_tail: [[f32; TP_TAPS]; AUDIO_CHANNELS],
+    /// Tail for polyphase true-peak oversampling: a DOUBLED ring per channel (each sample written
+    /// at `pos` and `pos + TP_TAPS`), so the last `TP_TAPS` samples, oldest first, are the slice
+    /// `[pos, pos + TP_TAPS)` — no rotate of the tail per sample (kernel-specialization).
+    tp_ring: [[f32; 2 * TP_TAPS]; AUDIO_CHANNELS],
+    tp_pos: [usize; AUDIO_CHANNELS],
 }
 
 /// Length of the true-peak interpolator kernel per phase.
@@ -157,18 +160,28 @@ impl LoudnessMeter {
             peak: 0.0,
             sample_peak: 0.0,
             tp_countdown: 0,
-            tp_tail: [[0.0; TP_TAPS]; AUDIO_CHANNELS],
+            tp_ring: [[0.0; 2 * TP_TAPS]; AUDIO_CHANNELS],
+            tp_pos: [0; AUDIO_CHANNELS],
         }
     }
 
     /// Feed a piece of interleaved audio (f32, 48 kHz, 2 channels — invariant 1).
+    ///
+    /// At the CPU's level (`kt_plugin_api::fast!`, the same bytes): the export pass and every first
+    /// opening of a file run it over the whole material.
     pub fn feed(&mut self, data: &[f32]) {
+        kt_plugin_api::fast!(self.feed_at_level(data))
+    }
+
+    #[inline(always)]
+    fn feed_at_level(&mut self, data: &[f32]) {
+        let table = tp_table();
         for frame in data.chunks_exact(AUDIO_CHANNELS) {
             for (ch, &x) in frame.iter().enumerate() {
                 let (shelf, hp) = &mut self.filters[ch];
                 let y = hp.step(shelf.step(x as f64));
                 self.step_sum[ch] += y * y;
-                self.true_peak(ch, x);
+                self.true_peak(ch, x, table);
             }
             self.step_frames += 1;
             if self.step_frames >= self.frames_per_step {
@@ -215,10 +228,12 @@ impl LoudnessMeter {
     ///
     /// Without the gate the pass over a long file ran into this sum: indexing the material
     /// slowed several times over, and it runs on every project open.
-    fn true_peak(&mut self, ch: usize, x: f32) {
-        let tail = &mut self.tp_tail[ch];
-        tail.rotate_left(1);
-        tail[TP_TAPS - 1] = x;
+    #[inline(always)]
+    fn true_peak(&mut self, ch: usize, x: f32, table: &[[f64; TP_OVER]; TP_TAPS]) {
+        let pos = self.tp_pos[ch];
+        self.tp_ring[ch][pos] = x;
+        self.tp_ring[ch][pos + TP_TAPS] = x;
+        self.tp_pos[ch] = (pos + 1) % TP_TAPS;
         let a = x.abs();
         if a > self.sample_peak {
             self.sample_peak = a;
@@ -232,11 +247,12 @@ impl LoudnessMeter {
         if ch + 1 == AUDIO_CHANNELS {
             self.tp_countdown -= 1;
         }
-        let tail = self.tp_tail[ch];
+        let from = self.tp_pos[ch];
+        let tail = &self.tp_ring[ch][from..from + TP_TAPS];
         for phase in 0..TP_OVER {
             let mut acc = 0.0f64;
-            for (i, &s) in tail.iter().enumerate() {
-                acc += s as f64 * tp_kernel(i, phase);
+            for (&s, k) in tail.iter().zip(table) {
+                acc += s as f64 * k[phase];
             }
             self.peak = self.peak.max(acc.abs());
         }
@@ -308,10 +324,11 @@ fn loudness_range(short: &[f64]) -> f64 {
 }
 
 /// Polyphase interpolator kernel: Hann window on sinc. Computed once per
-/// (tap, phase) — the table is small, and the hot path has eight multiplications anyway.
-fn tp_kernel(tap: usize, phase: usize) -> f64 {
+/// (tap, phase) — the table is small, and the hot path has eight multiplications anyway. Fetched
+/// once per `feed`, not per tap.
+fn tp_table() -> &'static [[f64; TP_OVER]; TP_TAPS] {
     static TABLE: std::sync::OnceLock<[[f64; TP_OVER]; TP_TAPS]> = std::sync::OnceLock::new();
-    let t = TABLE.get_or_init(|| {
+    TABLE.get_or_init(|| {
         let mut t = [[0.0f64; TP_OVER]; TP_TAPS];
         let center = (TP_TAPS as f64 - 1.0) / 2.0;
         for (i, row) in t.iter_mut().enumerate() {
@@ -339,8 +356,7 @@ fn tp_kernel(tap: usize, phase: usize) -> f64 {
             }
         }
         t
-    });
-    t[tap][phase]
+    })
 }
 
 /// One-off measurement of a finished buffer.

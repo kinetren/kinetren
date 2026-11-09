@@ -285,6 +285,9 @@ fn path(run: &Run, l: &Life, o: &mut String) {
             trace::wait::DEVICE if w.dur > 1_000_000 => {
                 let _ = writeln!(o, "      device finishing the frame before: {}", ms(w.dur));
             }
+            trace::wait::BUILD => {
+                let _ = writeln!(o, "      waited for the shared build of the project's state: {}", ms(w.dur));
+            }
             _ => {}
         }
     }
@@ -517,6 +520,7 @@ fn waits(run: &Run, st: &Stretch, all: &BTreeMap<u64, Life>, o: &mut String) {
     let mut plan = 0;
     let mut lock = 0;
     let mut dev = 0;
+    let mut build_wait = 0;
     let mut cold = 0;
     for f in &st.frames {
         if let Some(l) = all.get(f) {
@@ -527,6 +531,7 @@ fn waits(run: &Run, st: &Stretch, all: &BTreeMap<u64, Life>, o: &mut String) {
                 match w.aux {
                     trace::wait::LOCK => lock += w.dur,
                     trace::wait::DEVICE => dev += w.dur,
+                    trace::wait::BUILD => build_wait += w.dur,
                     _ => {}
                 }
             }
@@ -544,6 +549,9 @@ fn waits(run: &Run, st: &Stretch, all: &BTreeMap<u64, Life>, o: &mut String) {
     if dev > 0 {
         rank.push((dev, "the device finishing earlier frames".into()));
     }
+    if build_wait > 0 {
+        rank.push((build_wait, "waiting for the shared build of an edit".into()));
+    }
     let warm: u64 = run.recs.iter().filter(|r| is(r, Ev::Warm) && r.end() > from && r.t < to).map(clip).sum();
     if warm > 0 {
         rank.push((warm, "pipeline warm-ups".into()));
@@ -551,7 +559,12 @@ fn waits(run: &Run, st: &Stretch, all: &BTreeMap<u64, Life>, o: &mut String) {
     let builds: u64 = run
         .recs
         .iter()
-        .filter(|r| (is(r, Ev::AudioBuild) || (is(r, Ev::Job) && r.aux == trace::job::VIDEO_BUILD)) && r.end() > from && r.t < to)
+        .filter(|r| {
+            (is(r, Ev::AudioBuild)
+                || (is(r, Ev::Job) && matches!(r.aux, trace::job::VIDEO_BUILD | trace::job::SHARED_BUILD)))
+                && r.end() > from
+                && r.t < to
+        })
         .map(clip)
         .sum();
     if builds > 0 {
@@ -803,6 +816,13 @@ pub fn during(run: &Run, from: u64, to: u64) -> String {
             let _ = writeln!(o, "    {k:<34} {n:>7}");
         }
     }
+    let builds: Vec<&&Rec> = inside.iter().filter(|r| is(r, Ev::Job) && r.aux == trace::job::SHARED_BUILD).collect();
+    if !builds.is_empty() {
+        let _ = writeln!(o, "  shared builds:");
+        for b in builds {
+            let _ = writeln!(o, "    {} version {}: {} events derived, {} held after it, {}", s(b.t), b.a, b.b, b.c, ms(b.dur));
+        }
+    }
     let unread = inside.iter().filter(|r| is(r, Ev::CacheEvict) && r.aux & trace::evict::UNREAD != 0).count();
     let thrash = inside.iter().filter(|r| is(r, Ev::CacheEvict) && r.aux & trace::evict::WANTED != 0).count();
     if unread > 0 {
@@ -832,6 +852,7 @@ fn job_name(aux: u32) -> &'static str {
         j::RECHECK_SHOWN => "recheck_kept",
         j::PEAKS => "peaks",
         j::EXPORT => "export",
+        j::SHARED_BUILD => "shared_build",
         _ => "?",
     }
 }

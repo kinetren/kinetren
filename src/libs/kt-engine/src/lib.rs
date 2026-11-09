@@ -6,12 +6,14 @@
 //! Ahead: M7 (export). Architecture and thread ownership — docs/architecture.md.
 
 pub mod audio;
+pub mod builds;
 pub mod export;
 pub mod export_pipeline;
 pub mod fetch;
 pub mod flight;
 pub mod mix;
 pub mod fxstore;
+pub mod incremental;
 pub mod compose_queue;
 pub mod player;
 pub mod prefetch;

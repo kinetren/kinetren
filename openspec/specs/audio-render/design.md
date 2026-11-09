@@ -127,3 +127,23 @@ The third — "the music drowns out the voice" (the most frequent live complaint
 - **t1935's "a rebuild outlasts the ring"** now comes from `hold_builds_for_tests`: its scene was slow only through the per-placement hash.
 
 The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.
+
+## An edit derives what it touched (edit-without-rebuild, 2026-11-09)
+
+- The player's builder keeps each event's derived audio clip and video layer from the last build
+  (`incremental::BuildMemo`). The key hashes the model event's Debug text (the input of `fp`) plus
+  every context value the builder passes in. A hit is a clone, never a recomputation, so a complete
+  key makes the memo invisible to the bytes. t2004 holds a whole incremental build's state text, its
+  sound and its scene hashes equal to a fresh build's across eight edits and an undo.
+- A per-event revision kept by the model was rejected: every command would have to bump the right
+  events, and a missed bump is a stale event no test sees; a content hash cannot miss.
+- `AudioRenderer` is shared by the render thread, prefetch and the probe, so it holds no render-time
+  `Cell`: `src_ends` is a `OnceLock`. The armed loop region is a thread-local keyed by the renderer, so
+  a nested reel's renderer and another thread see `None`, as when each had its own renderer.
+- `fp` is hashed through a `fmt::Write` adapter, with no `String` and the same digest: the kept final
+  mix keeps its keys.
+- Each reel instance is resolved once per build (`incremental::resolve` inside `revisions_scope`):
+  the audio build, the video build, the decode step and the generator sources each resolved every reel
+  (row 155).
+- What an edit still walks off the UI thread: the root's resolve (7.6 ms on haski) and the hash of
+  every event; an incremental build of an edited version is 20.5 ms against 31.6 fresh (row 192).

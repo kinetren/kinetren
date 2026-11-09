@@ -4248,7 +4248,13 @@ impl KtApp {
     /// in the application: there were eight of them, and the first edit
     /// inside a reel returned the root to the player (guard — t456c).
     pub(crate) fn push_project_to_player(&mut self) {
-        let p = self.player_project();
+        // the model's shared snapshot of this state at the root (edit-without-rebuild): the windows
+        // that publish from it and the player hold one copy, not one each; the player builds it on
+        // its own thread
+        let p = match self.model.editing() {
+            Some(_) => std::sync::Arc::new(self.model.reel_document()),
+            None => self.model.doc_arc(),
+        };
         self.player.set_project(p);
     }
 
@@ -8118,8 +8124,9 @@ pub struct SpacePress {
 }
 
 /// State of the perf panel: rolling graphs, counter deltas, the problem log.
-/// (cache epoch, model version, preview quality, the view's ticks)
-type CoverageStamp = (u64, u64, (u32, u32), (i64, i64), u64);
+/// (cache epoch, model version, preview quality, the view's ticks, the kept-moments stamp, the
+/// engine build the decode qualities come from — it lands after the edit, edit-without-rebuild)
+type CoverageStamp = (u64, u64, (u32, u32), (i64, i64), u64, u64);
 
 /// The coverage-poll cache of the timeline (item 1).
 #[derive(Default)]
@@ -8444,7 +8451,7 @@ impl KtApp {
         use kt_time::AUDIO_BURST_FRAMES;
         let q = self.player.preview_quality();
         let stamp =
-            (self.player.cache.epoch(), self.model_rev, (q.width, q.height), view, self.player.final_stamp());
+            (self.player.cache.epoch(), self.model_rev, (q.width, q.height), view, self.player.final_stamp(), self.player.built_seq());
         let throttled = self.player.transport.is_playing()
             && self
                 .coverage_cache

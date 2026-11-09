@@ -113,3 +113,8 @@ of every subsystem that waits or keeps, and the measurements are the change's de
 - Not usage telemetry either: nothing reads it but the person and the tool, nothing is sent.
 - Measured on the heavy showcase: a pause and an open effects window add 0 bytes; a UI frame is recorded
   only from 50 ms (a stall), so a pointer over a still place records nothing on a card.
+- After `edit-without-rebuild` (merged 2026-11-09) the renderers are built once per project version on
+  the player's `engine-build` thread: that build is a `Job` `SHARED_BUILD` record (its version, the
+  events it derived, the events its memo holds after it — the rest reused), a composite that waits for
+  it records a `FrameWait` `BUILD`, the prefetch thread's taking of a new build an `Invalidate`
+  `RENDERERS` with its seq. `AudioBuild` stays in the format for older files; nothing writes it now.

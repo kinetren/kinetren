@@ -257,6 +257,8 @@ pub mod wait {
     pub const DEVICE: u32 = 6;
     /// A nested reel's sub-composite is incomplete: `c` clip.
     pub const NEST: u32 = 7;
+    /// The shared build of the state asked for (`dur`): the compose thread waited for it.
+    pub const BUILD: u32 = 8;
 }
 
 /// `FrameExec.aux` bits.
@@ -347,6 +349,9 @@ pub mod job {
     pub const RECHECK_SHOWN: u32 = 9;
     pub const PEAKS: u32 = 10;
     pub const EXPORT: u32 = 11;
+    /// The player's shared build of a project version (`engine-build`): `id` its seq, `a` the
+    /// version, `b` the events it derived, `c` the events its memo holds after it (the rest reused).
+    pub const SHARED_BUILD: u32 = 12;
 }
 
 /// `Invalidate.aux`.
