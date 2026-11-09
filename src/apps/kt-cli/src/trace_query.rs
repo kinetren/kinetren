@@ -802,6 +802,9 @@ pub fn during(run: &Run, from: u64, to: u64) -> String {
             Ev::FrameDrop => format!("frame_drop:{}", r.aux),
             Ev::FrameDone => format!("frame_done:{}", if r.aux == 1 { "complete" } else { "incomplete" }),
             Ev::MixChunk => format!("mix_chunk:{}", r.aux),
+            Ev::SchedQueue | Ev::SchedRun | Ev::SchedCancel => sched_word(run, k, r),
+            Ev::SchedPause => format!("sched_{}", if r.aux == 1 { "pause" } else { "resume" }),
+            Ev::Block => format!("block:{}:{}", if r.a == kt_time::block::role::UI as u64 { "ui" } else { "render" }, kt_time::block::kind::name(r.aux)),
             _ => k.name().to_string(),
         };
         let e = by.entry(name).or_default();
@@ -836,6 +839,19 @@ pub fn during(run: &Run, from: u64, to: u64) -> String {
         }
     }
     o
+}
+
+/// A scheduler record named by its class and lane (one-scheduler): "sched_run:visible:thumbs".
+fn sched_word(run: &Run, k: Ev, r: &Rec) -> String {
+    let class = match k {
+        Ev::SchedCancel => "",
+        _ => kt_time::sched::Class::ALL.get(r.aux as usize).map_or("?", |c| c.name()),
+    };
+    if class.is_empty() {
+        format!("{}:{}", k.name(), run.name_of(r.a as u32))
+    } else {
+        format!("{}:{class}:{}", k.name(), run.name_of(r.a as u32))
+    }
 }
 
 fn job_name(aux: u32) -> &'static str {
@@ -941,6 +957,7 @@ pub fn chrome(run: &Run) -> String {
         let name = match k {
             Ev::ComputeJob | Ev::Warm | Ev::ColdDraw => format!("{}:{}", k.name(), run.name_of(r.aux)),
             Ev::Job => format!("job:{}", job_name(r.aux)),
+            Ev::SchedQueue | Ev::SchedRun | Ev::SchedCancel => sched_word(run, k, r),
             _ => k.name().to_string(),
         };
         let ts = r.t as f64 / 1e3;

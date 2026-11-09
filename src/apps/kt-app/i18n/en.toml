@@ -1094,6 +1094,7 @@ project_swaps = "project swaps"
 engine_builds = "engine builds"
 mix_replays = "audio blocks from the kept mix"
 composite_replays = "kept composites shown"
+sched_jobs = "background jobs"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]

@@ -9842,6 +9842,7 @@ impl KtApp {
             Work::EngineBuild => tr(k::perf::work::ENGINE_BUILDS),
             Work::MixReplay => tr(k::perf::work::MIX_REPLAYS),
             Work::CompositeReplay => tr(k::perf::work::COMPOSITE_REPLAYS),
+            Work::SchedJob => tr(k::perf::work::SCHED_JOBS),
         };
         if let Some(s) = crate::load_watch::last() {
             let cpu = format!("{:.0}", s.cpu);

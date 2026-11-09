@@ -1094,6 +1094,7 @@ project_swaps = "استبدالات المشروع"
 engine_builds = "بناءات المحرك"
 mix_replays = "كتل صوت من المزج المحفوظ"
 composite_replays = "تراكيب محفوظة معروضة"
+sched_jobs = "مهام في الخلفية"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]

@@ -47,10 +47,13 @@ pub enum Work {
     MixReplay,
     /// The preview showed a stored composite (cached-range-plays): no layer was composed.
     CompositeReplay,
+    /// The scheduler started a job (one-scheduler): a thumbnail batch, an effect cell, a poster, a
+    /// reel strip, an analysis, an index pass, a save, a media open.
+    SchedJob,
 }
 
 impl Work {
-    pub const ALL: [Work; 16] = [
+    pub const ALL: [Work; 17] = [
         Work::UiFrame,
         Work::Composite,
         Work::DeviceSubmit,
@@ -67,6 +70,7 @@ impl Work {
         Work::EngineBuild,
         Work::MixReplay,
         Work::CompositeReplay,
+        Work::SchedJob,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -87,6 +91,7 @@ impl Work {
             Work::EngineBuild => "engine_builds",
             Work::MixReplay => "mix_replays",
             Work::CompositeReplay => "composite_replays",
+            Work::SchedJob => "sched_jobs",
         }
     }
 }

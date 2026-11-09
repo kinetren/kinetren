@@ -1094,6 +1094,7 @@ project_swaps = "замены проекта"
 engine_builds = "сборки движка"
 mix_replays = "блоки звука из сохранённого микса"
 composite_replays = "показанные сохранённые композиты"
+sched_jobs = "фоновые задания"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]

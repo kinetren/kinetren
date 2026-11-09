@@ -1094,6 +1094,7 @@ project_swaps = "项目替换"
 engine_builds = "引擎构建"
 mix_replays = "来自已存混音的音频块"
 composite_replays = "已存合成的显示"
+sched_jobs = "后台任务"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]

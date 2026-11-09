@@ -130,10 +130,26 @@ pub enum Ev {
 
     /// The writer lost records to a full ring. `a` how many.
     Dropped = 90,
+
+    /// A job was posted to the scheduler (`sched`, one-scheduler). `id` the job, `aux` its
+    /// [`crate::sched::Class`], `a` its lane's [`name`], `cause` who posted it.
+    SchedQueue = 71,
+    /// A scheduled job ran (a span). `id` the job, `aux` its class, `a` its lane's name, `b` how long
+    /// it waited in the queue (µs), `c` its [`crate::sched::outcome`].
+    SchedRun = 72,
+    /// A queued or running job was cancelled. `id` the job, `aux` the [`crate::sched::why_cancel`]
+    /// reason, `a` its lane's name.
+    SchedCancel = 73,
+    /// The pausable classes paused (`aux` 1) or resumed (`aux` 0). `a` the [`crate::sched::why`]
+    /// mask after it, `b` jobs waiting in the paused classes.
+    SchedPause = 74,
+    /// A blocking call on a thread that must not wait (`block`, one-scheduler): `aux` its
+    /// [`crate::block::kind`], `a` the thread's [`crate::block::role`], `dur` how long it took.
+    Block = 75,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 34] = [
+    pub const ALL: [Ev; 39] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -168,6 +184,11 @@ impl Ev {
         Ev::Work,
         Ev::Load,
         Ev::Dropped,
+        Ev::SchedQueue,
+        Ev::SchedRun,
+        Ev::SchedCancel,
+        Ev::SchedPause,
+        Ev::Block,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -210,6 +231,11 @@ impl Ev {
             Ev::Work => "work",
             Ev::Load => "load",
             Ev::Dropped => "dropped",
+            Ev::SchedQueue => "sched_queue",
+            Ev::SchedRun => "sched_run",
+            Ev::SchedCancel => "sched_cancel",
+            Ev::SchedPause => "sched_pause",
+            Ev::Block => "block",
         }
     }
 }
