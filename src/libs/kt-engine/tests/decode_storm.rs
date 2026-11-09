@@ -617,3 +617,68 @@ fn t2151_the_slow_route_keeps_its_composites() {
     };
     assert!(!other.on_display, "a moment not kept still goes to the slow device: the replay timed no chain");
 }
+
+// ---- gpu-arbiter ---------------------------------------------------------------------------------
+
+/// A stop check that says stop from its `after`-th question on.
+fn stop_after(after: u32) -> impl Fn() -> bool + 'static {
+    let asked = std::sync::atomic::AtomicU32::new(0);
+    move || asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1 >= after
+}
+
+/// t2258: a frame's stream history run under the compose thread's stop check stops once the check
+/// says nobody wants the frame (a newer ask, an edit): the frame comes out incomplete, the stop is in
+/// the trace by its owner, the memo kept the positions computed before it, and the next composite
+/// resumes to the bytes of an uninterrupted one.
+#[test]
+fn t2258_the_preview_stops_a_history_it_left() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let t = Tick(5 * SEC);
+    let (plain, cache) = (renderer(&p, None), big_cache());
+    warm(&plain.layers_at(t, Q), &cache);
+    let (want, _) = kt_gpu::testkit::compose(&renderer(&p, None), &cache, t, Q);
+    let history = plain.layers_at(t, Q).len();
+    let items = trace::testing::capture(|| {
+        let (got, complete) =
+            kt_engine::stop_when(trace::stop::COMPOSE, stop_after(6), || kt_gpu::testkit::compose(&plain, &cache, t, Q));
+        assert!(!complete, "a history nobody wanted ran to its end");
+        drop(got);
+    });
+    let stops: Vec<Rec> = of(&items, Ev::StreamStop).into_iter().filter(|r| r.aux == trace::stop::COMPOSE).collect();
+    assert_eq!(stops.len(), 1, "the stop is not in the trace");
+    assert!(plain.layers_at(t, Q).len() < history, "nothing computed before the stop was kept");
+    let (got, complete) = kt_gpu::testkit::compose(&plain, &cache, t, Q);
+    assert!(complete);
+    assert_eq!(got, want, "the resumed history's frame differs from an uninterrupted one's");
+}
+
+/// t2259: the look-ahead's advance stops once the playhead leaves it: `stream_advance` under the
+/// prefetch thread's stop check returns "still pending" at the next position and says why in the
+/// trace; a later advance with no stop finishes it.
+#[test]
+fn t2259_the_look_ahead_stops_when_the_playhead_leaves() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let t = Tick(5 * SEC);
+    let (paced, cache) = (renderer(&p, Some(StreamPacing::preview(1 << 30))), big_cache());
+    warm(&renderer(&p, None).layers_at(t, Q), &cache);
+    let history = paced.layers_at(t, Q).len();
+    let items = trace::testing::capture(|| {
+        let pending = kt_engine::stop_when(trace::stop::PREFETCH, stop_after(4), || paced.stream_advance(&cache, t, Q));
+        assert!(pending, "a stopped advance said it was done");
+    });
+    assert_eq!(of(&items, Ev::StreamStop).iter().filter(|r| r.aux == trace::stop::PREFETCH).count(), 1);
+    let advances = of(&items, Ev::StreamAdvance);
+    assert!(advances.iter().any(|r| r.aux == trace::stream::STOPPED), "the advance's span does not say it stopped");
+    let left = paced.layers_at(t, Q).len();
+    assert!(left > 0 && left < history, "{left} of {history}: the stop came at the wrong place");
+    assert!(!paced.stream_advance(&cache, t, Q), "a free advance did not finish");
+    assert!(kt_gpu::testkit::compose(&paced, &cache, t, Q).1);
+}

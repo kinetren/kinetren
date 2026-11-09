@@ -34,7 +34,7 @@ use kt_model::{MediaId, Project};
 use kt_time::{AUDIO_CHANNELS, Tick};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Where an export's time goes (export-throughput D6): the BUSY nanoseconds of every stage,
@@ -220,26 +220,34 @@ fn lookahead_bytes(budget: usize) -> u64 {
     (pipe_cache_bytes(budget) - budget) as u64
 }
 
-/// The writer's progress, which also gates the decoder's look-ahead.
+/// The writer's progress, which also gates the decoder's look-ahead. It waits on the scheduler's
+/// gate (gpu-arbiter, row 271): the writer's progress and a halt notify it, and so does the person's
+/// cancel (the render window cancels a token, which notifies the gate) — no timer. A cancel flag set
+/// with no notify is seen at the writer's next frame.
 #[derive(Default)]
 struct Gate {
     written: Mutex<u64>,
-    cv: Condvar,
+    /// Bumped by every `set` and `wake`: what a waiter has not seen yet.
+    moved: std::sync::atomic::AtomicU64,
 }
 
 impl Gate {
     fn set(&self, n: u64) {
         *self.written.lock().unwrap() = n;
-        self.cv.notify_all();
+        self.wake();
     }
     fn wake(&self) {
-        self.cv.notify_all();
+        self.moved.fetch_add(1, Ordering::AcqRel);
+        kt_time::sched::notify_gate();
     }
     /// Wait until `ready(frames written)`, or the export halts.
     fn wait(&self, ready: &mut dyn FnMut(u64) -> bool, halted: &dyn Fn() -> bool) {
-        let mut w = self.written.lock().unwrap();
-        while !ready(*w) && !halted() {
-            w = self.cv.wait_timeout(w, std::time::Duration::from_millis(50)).unwrap().0;
+        loop {
+            let seen = self.moved.load(Ordering::Acquire);
+            if ready(*self.written.lock().unwrap()) || halted() {
+                return;
+            }
+            kt_time::sched::wait_gate(|| self.moved.load(Ordering::Acquire) == seen && !halted());
         }
     }
 }
@@ -391,6 +399,7 @@ pub(crate) fn run<S: ExportSink>(
         // --- audio: its own thread, the same renderer and stream as the serial pass ---
         let audio_halt = halt.clone();
         let audio = scope.spawn(move || {
+            let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
             let mark = std::cell::Cell::new(Instant::now());
             let busy = prof.map(|p| &p.audio_ns);
             render_raw_audio_range(
@@ -419,6 +428,7 @@ pub(crate) fn run<S: ExportSink>(
         let gate_ref = &gate;
         let chunks_ref = &chunks;
         let decode = scope.spawn(move || -> std::io::Result<()> {
+            let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
             let lookahead = lookahead_bytes(hooks.budget) as usize;
             // (end frame, keys held) of the chunks decoded and not yet written
             let mut ledger: std::collections::VecDeque<(u64, Vec<BurstKey>)> = Default::default();
@@ -456,6 +466,7 @@ pub(crate) fn run<S: ExportSink>(
             let pool_rx = rgba_pool_rx.clone();
             let engine = engines.get(n).cloned();
             worker_handles.push(scope.spawn(move || -> std::io::Result<()> {
+            let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
                 loop {
                     let idle = Instant::now();
                     let Ok(job) = jr.recv() else { break };
@@ -501,6 +512,7 @@ pub(crate) fn run<S: ExportSink>(
         // --- compose: one device on one thread (submit ahead, collect in order), or the
         //     dispatcher handing frames to the workers' devices round robin ---
         let compose = scope.spawn(move || -> std::io::Result<()> {
+            let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
             let mut pending: std::collections::VecDeque<(u64, u64)> = Default::default();
             let depth = gpu.as_ref().map_or(0, |g| g.readback_depth());
             let send = |i: u64, job: Job| job_txs[(i % workers as u64) as usize].send(job).is_ok();
@@ -734,6 +746,7 @@ fn decode_chunk(
             if let Some(keys) = jobs.remove(media) {
                 let media = *media;
                 handles.push(scope.spawn(move || {
+            let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
                     let mut held = Vec::new();
                     decode_requests(s, media, &keys, cache, Some(&mut held));
                     held

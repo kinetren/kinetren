@@ -326,3 +326,60 @@ fn t2300_the_ledger_is_in_the_trace_and_the_query_reads_it() {
     assert_eq!(out.matches("budget ").count(), 2, "{out}");
     assert!(out.contains("history   cap 356 MB"), "{out}");
 }
+
+/// Test t2263 (gpu-arbiter): `gpu` reports the ring by class — admissions and their waits, the pieces
+/// of a cut frame, a stopped history, compute jobs by class, and the display presents' wait.
+#[test]
+fn t2263_gpu_reports_the_ring_by_class() {
+    use kt_time::sched::Class;
+    let mut v = vec![
+        rec(Ev::GpuAdmit, 0, |r| {
+            r.id = 3;
+            r.aux = Class::Now as u32;
+            r.c = 1;
+            r.dur = 2 * MS;
+        }),
+        rec(Ev::GpuAdmit, 10 * MS, |r| {
+            r.id = 3;
+            r.aux = Class::Near as u32;
+            r.c = 1;
+            r.dur = 9 * MS;
+        }),
+        rec(Ev::StreamStop, 30 * MS, |r| {
+            r.id = 2;
+            r.aux = kt_time::trace::stop::PREFETCH;
+        }),
+        rec(Ev::ComputeJob, 40 * MS, |r| {
+            r.id = Class::Near as u64;
+            r.b = 5 * MS;
+        }),
+    ];
+    for i in 0..3 {
+        v.push(rec(Ev::GpuPiece, (50 + i) * MS, |r| {
+            r.id = 3;
+            r.aux = Class::Offline as u32;
+            r.a = i;
+        }));
+    }
+    for (i, d) in [4u64, 6, 30].into_iter().enumerate() {
+        v.push(rec(Ev::FrameWait, (100 + 10 * i as u64) * MS, |r| {
+            r.aux = wait::DEVICE;
+            r.dur = d * MS;
+        }));
+    }
+    let o = gpu(&run_of(v));
+    for want in [
+        "ring 3 (carries the display)",
+        "now",
+        "near",
+        "max 9.0 ms",
+        "offline",
+        "3 pieces cut",
+        "compute jobs near",
+        "stopped by prefetch: 1",
+        "display presents 3: device wait p50 6.0 ms",
+        "max 30.0 ms",
+    ] {
+        assert!(o.contains(want), "{want:?} missing:\n{o}");
+    }
+}

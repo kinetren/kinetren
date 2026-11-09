@@ -20,7 +20,8 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 #[path = "video_stream.rs"]
 mod stream;
 pub use stream::{
-    STREAM_MEMO_BASE, StreamPacing, memory_available, set_memory_probe, size_stream_memo, stream_memo, stream_memo_bytes,
+    STREAM_MEMO_BASE, StreamPacing, memory_available, set_memory_probe, size_stream_memo, stop_when, stopping, stream_memo,
+    stream_memo_bytes,
 };
 use stream::StreamStage;
 
@@ -1425,6 +1426,12 @@ impl VideoRenderer {
                     let mut span = kt_time::trace::span(kt_time::trace::Ev::StreamAdvance);
                     span.id(c.id.0).a(n as u64).b(needs as u64);
                     let short = !st.kernel().advance(&st.values, &cs, n, &self.stream_memo);
+                    if cs.stopped().is_some() {
+                        // nobody wants this advance any more: the rest of the stages neither
+                        span.aux(kt_time::trace::stream::STOPPED);
+                        cs.trace_stop(n);
+                        return true;
+                    }
                     pending |= short;
                     if kt_time::trace::on() {
                         let left = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();

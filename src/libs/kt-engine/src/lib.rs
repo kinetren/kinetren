@@ -46,7 +46,7 @@ pub use prefetch::{
 pub use transitions::TransMix;
 pub use transport::Transport;
 pub use video::{
-    NestKey, SourceFacts, StreamPacing, VideoRenderer, clip_source_addr, clip_source_addr_in,
+    NestKey, SourceFacts, StreamPacing, VideoRenderer, clip_source_addr, stop_when, clip_source_addr_in,
     content_hash, gen_salt, gen_source_addr, gen_source_addr_in, gen_sources, instance_content,
     nest_source_id, reel_chain_of_clip, resolve_cam3d, revisions_scope, video_cache_idx,
 };

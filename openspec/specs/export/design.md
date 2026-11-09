@@ -365,3 +365,15 @@ pairs: `openspec/changes/archive/2026-11-06-render-speed-no-card/design.md`.
   render window takes it on its job thread before it counts devices and `tight`, never on the UI thread.
 - **Measured** (our showcase, max RSS under a 12 GB cap): 1080p 8.43 → 7.07 GB at the same wall time;
   4K 4.76 → 4.96 GB (it runs tight in the cap; seven 4K frames were all its upload cache held).
+
+## A paused render waits on an event; a render's decoder settings are its own (gpu-arbiter, 2026-11-09)
+
+- Row 271: a paused export slept 40 ms in a loop and its pipeline's gate waited 50 ms at a time. Both
+  wait on the scheduler's gate now; the window's pause, resume and cancel already notify it (a token's
+  cancel notifies it). The pipeline gate's wake bumps a counter and notifies the same gate, so the
+  decode thread blocked on the look-ahead sees the person's cancel (without the timeout it would have
+  waited for workers that wait for it). t2261 counts the pause's looks: none in half a second paused.
+- Row 94: the render window set the process-wide decoder and RGBA thread counts around its opening, and
+  a preview source opened meanwhile on another thread took them. `kt_ffmpeg::with_decode_settings`
+  scopes them to the thread that opens the render's sources (a source reads them at its open and keeps
+  them for its reopens); kt-cli keeps the process-wide setters (one process, one render). t2262.

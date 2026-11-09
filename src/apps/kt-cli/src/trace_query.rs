@@ -9,6 +9,8 @@
 //! - `during <from> <to>` — what ran in a window;
 //! - `slow [n]` — the slowest frames and their critical path;
 //! - `frame <id>` — one frame's life;
+//! - `gpu` — the device rings (gpu-arbiter): admissions, waits, pieces and compute jobs by class,
+//!   device submits a second, stopped stream histories, the display's present latency;
 //! - `machine`, `dump [from to]` (JSON lines), `chrome <out.json>` (Perfetto / chrome://tracing).
 //!
 //! Times are seconds since the process started (`+193.201`), the clock of the text journal.
@@ -95,6 +97,7 @@ pub fn run(args: &[String]) -> i32 {
         },
         "machine" => machine(run),
         "memory" => memory(run),
+        "gpu" => gpu(run),
         "dump" => dump(run, arg(1), arg(2)),
         "chrome" => match rest.get(1) {
             Some(out) => match std::fs::write(out, chrome(run)) {
@@ -105,7 +108,7 @@ pub fn run(args: &[String]) -> i32 {
         },
         _ => {
             eprintln!(
-                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|machine|memory|dump [from to]|chrome <out.json>"
+                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|machine|memory|dump [from to]|chrome <out.json>"
             );
             return 2;
         }
@@ -206,6 +209,96 @@ pub fn summary(run: &Run) -> String {
         v.iter().map(|(k, n)| format!("{k}={n}")).collect::<Vec<_>>().join(", ")
     });
     let _ = writeln!(o, "  journal lines: {}", run.texts.len());
+    o
+}
+
+fn class_name(c: u64) -> &'static str {
+    kt_time::sched::Class::ALL.get(c as usize).map_or("?", |c| c.name())
+}
+
+/// The device rings (gpu-arbiter): who was admitted, who waited, what was cut, what the compute host
+/// ran, and how long the display's presents waited for the device.
+pub fn gpu(run: &Run) -> String {
+    let mut o = String::new();
+    let first = run.recs.first().map_or(0, |r| r.t);
+    let last = run.recs.iter().map(|r| r.end()).max().unwrap_or(0);
+    let span = (last.saturating_sub(first) as f64 / NS).max(1e-9);
+    let _ = writeln!(o, "-- device rings over {span:.1} s --");
+    // ring → class → (admissions, total wait, max wait, pieces)
+    type Admits = BTreeMap<u64, (u64, u64, u64, u64)>;
+    let mut rings: BTreeMap<u64, Admits> = BTreeMap::new();
+    let mut shown: HashSet<u64> = HashSet::new();
+    for r in &run.recs {
+        if is(r, Ev::GpuAdmit) {
+            let e = rings.entry(r.id).or_default().entry(r.aux as u64).or_default();
+            e.0 += 1;
+            e.1 += r.dur;
+            e.2 = e.2.max(r.dur);
+            if r.c == 1 {
+                shown.insert(r.id);
+            }
+        } else if is(r, Ev::GpuPiece) {
+            rings.entry(r.id).or_default().entry(r.aux as u64).or_default().3 += 1;
+        }
+    }
+    for (ring, classes) in &rings {
+        let _ = writeln!(o, "ring {ring}{}", if shown.contains(ring) { " (carries the display)" } else { "" });
+        for (c, (n, wait, max, pieces)) in classes {
+            let _ = writeln!(
+                o,
+                "  {:<10} {n:>6} admitted ({:.1}/s), waited {} (max {}), {pieces} pieces cut",
+                class_name(*c),
+                *n as f64 / span,
+                ms(*wait),
+                ms(*max)
+            );
+        }
+    }
+    let mut jobs: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::ComputeJob)) {
+        let e = jobs.entry(r.id).or_default();
+        e.0 += 1;
+        e.1 += r.b;
+    }
+    for (c, (n, dev)) in &jobs {
+        let _ = writeln!(o, "compute jobs {:<10} {n:>6} ({:.1}/s), device {}", class_name(*c), *n as f64 / span, ms(*dev));
+    }
+    let submits: u64 = run
+        .recs
+        .iter()
+        .filter(|r| is(r, Ev::Work) && r.aux == kt_time::work::Work::DeviceSubmit as u32)
+        .map(|r| r.a)
+        .sum();
+    if submits > 0 {
+        let _ = writeln!(o, "device submits {submits} ({:.1}/s, busy seconds only)", submits as f64 / span);
+    }
+    let mut stops: BTreeMap<u32, u64> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::StreamStop)) {
+        *stops.entry(r.aux).or_default() += 1;
+    }
+    for (who, n) in &stops {
+        let name = match *who {
+            trace::stop::COMPOSE => "compose",
+            trace::stop::PREFETCH => "prefetch",
+            trace::stop::JOB => "job",
+            _ => "?",
+        };
+        let _ = writeln!(o, "stream histories stopped by {name}: {n}");
+    }
+    let mut lat: Vec<u64> =
+        run.recs.iter().filter(|r| is(r, Ev::FrameWait) && r.aux == trace::wait::DEVICE).map(|r| r.dur).collect();
+    if !lat.is_empty() {
+        lat.sort_unstable();
+        let q = |f: f64| lat[((lat.len() - 1) as f64 * f) as usize];
+        let _ = writeln!(
+            o,
+            "display presents {}: device wait p50 {} p95 {} max {}",
+            lat.len(),
+            ms(q(0.5)),
+            ms(q(0.95)),
+            ms(*lat.last().unwrap())
+        );
+    }
     o
 }
 

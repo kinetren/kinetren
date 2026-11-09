@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Live scenario one-scheduler: background work pauses while playing and resumes on a pause.
 
-The owner agreed (kkt-26.11.08 H15, "Да") that thumbnails, analysis and the index pause during
+The owner agreed (kkt-26.11.08 H15, "Da" — yes) that thumbnails, analysis and the index pause during
 playback. The project is ours (`kt-cli showcase --heavy`): on opening its files are indexed (peaks)
 and its filmstrips ordered, so background work is pending when Space is pressed. A zoom during
 playback orders more thumbnails. The verdict is the scheduler's own counters, which the load watch

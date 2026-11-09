@@ -17,6 +17,39 @@ use kt_time::{FpsGrid, Tick};
 
 use super::{clip_base_quality, clip_frame_keys, video_cache_idx, VideoClip};
 
+/// A stop check: who set it and the check.
+type Stop = Option<(u32, Box<dyn Fn() -> bool>)>;
+
+thread_local! {
+    static STOP: std::cell::RefCell<Stop> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `body` with a stop check (gpu-arbiter, row 147): a stream stage this thread renders inside it
+/// stops between history positions once `check` says nobody wants the frame any more (its kernel
+/// keeps what it computed in the memo). `who` — a [`kt_time::trace::stop`] value for the trace. The
+/// compose thread, the prefetch thread and the reel/poster jobs set one; an export never does.
+pub fn stop_when<R>(who: u32, check: impl Fn() -> bool + 'static, body: impl FnOnce() -> R) -> R {
+    struct Restore(Stop);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let old = self.0.take();
+            STOP.with(|s| *s.borrow_mut() = old);
+        }
+    }
+    let _restore = Restore(STOP.with(|s| s.borrow_mut().replace((who, Box::new(check)))));
+    body()
+}
+
+/// This thread's stop check says stop (a pre-roll gives up between batches).
+pub fn stopping() -> bool {
+    stop_now().is_some()
+}
+
+/// Whether this thread's stop check says stop; `Some(who)` then.
+fn stop_now() -> Option<u32> {
+    STOP.with(|s| s.borrow().as_ref().and_then(|(who, check)| check().then_some(*who)))
+}
+
 /// The preview's ONE memo (design D3): the composer, the prefetch and the picker share it, so
 /// "what is still needed" and "what was computed" see the same entries. Each export owns its own.
 /// Its bound is `STREAM_MEMO_BASE` plus what the memory ledger grants the stream history
@@ -232,6 +265,8 @@ pub(super) struct ClipStream<'a> {
     end: i64,
     cache: Option<&'a BurstCache>,
     plan: Arc<PlanCell>,
+    /// The kernel asked `stop` and was told to: who stopped it, and before which position.
+    stopped: std::cell::Cell<Option<u32>>,
 }
 
 impl<'a> ClipStream<'a> {
@@ -246,7 +281,7 @@ impl<'a> ClipStream<'a> {
             None => ceil_div(clip.start.0 - clip.head_ext.0, step).min(cut),
         };
         let q = stream_quality(clip, st, quality);
-        ClipStream { clip, st, grid, q, step, first, cut, end, cache, plan: st.plan_cell(q) }
+        ClipStream { clip, st, grid, q, step, first, cut, end, cache, plan: st.plan_cell(q), stopped: Default::default() }
     }
 
     /// The position of a frame time.
@@ -333,7 +368,31 @@ impl StreamLayout for ClipStream<'_> {
     }
 }
 
+impl ClipStream<'_> {
+    /// The kernel was stopped (and by whom): its `None` is no missing frame.
+    pub fn stopped(&self) -> Option<u32> {
+        self.stopped.get()
+    }
+
+    /// Record a stop the kernel obeyed: the stage gave up position `n` of clip `clip`.
+    pub fn trace_stop(&self, n: i64) {
+        if let Some(who) = self.stopped.get() {
+            kt_time::trace::ev(kt_time::trace::Ev::StreamStop).id(self.clip.id.0).a(n as u64).aux(who).emit();
+        }
+    }
+}
+
 impl StreamInput for ClipStream<'_> {
+    fn stop(&self) -> bool {
+        match stop_now() {
+            Some(who) => {
+                self.stopped.set(Some(who));
+                true
+            }
+            None => false,
+        }
+    }
+
     fn with_frame(&self, side: Side, k: i64, f: &mut dyn FnMut(Rgba<'_>)) -> bool {
         let Some(cache) = self.cache else { return false };
         let Some((c, pts)) = self.at(side, k) else { return false };
@@ -410,7 +469,8 @@ pub(super) fn run(
     }
     let mut buf = Vec::new();
     let Some(out) = k.render(&st.values, &cs, n, memo, &mut buf) else {
-        span.aux(so::SOURCE_MISSING);
+        span.aux(if cs.stopped().is_some() { so::STOPPED } else { so::SOURCE_MISSING });
+        cs.trace_stop(n);
         return (None, 0);
     };
     drop(span);

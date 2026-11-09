@@ -149,6 +149,46 @@ impl Token {
     }
 }
 
+static FRAME_PERIOD_NS: AtomicU64 = AtomicU64::new(40_000_000);
+
+/// The preview's frame period (gpu-arbiter D3): the player sets it from its project's frame rate;
+/// a GPU ring holds at most half of it in front of the display.
+pub fn set_frame_period_ns(ns: u64) {
+    FRAME_PERIOD_NS.store(ns.max(1_000_000), Ordering::Relaxed);
+}
+
+/// See [`set_frame_period_ns`]; 40 ms (25 fps) until a player says otherwise.
+pub fn frame_period_ns() -> u64 {
+    FRAME_PERIOD_NS.load(Ordering::Relaxed)
+}
+
+thread_local! {
+    static CLASS: std::cell::Cell<Option<Class>> = const { std::cell::Cell::new(None) };
+}
+
+/// The class the work of this thread runs as (gpu-arbiter, D5): what a device's ring admits its
+/// submissions by. A scheduler job runs as its lane's class; the compose thread, the prefetch thread
+/// and an export set theirs. An untagged thread is [`Class::Background`]: an unknown long job must
+/// not pass the frame on screen.
+pub fn current_class() -> Class {
+    CLASS.with(|c| c.get()).unwrap_or(Class::Background)
+}
+
+/// Run as `class` until the guard drops (the previous class comes back).
+#[must_use = "the class holds while the guard lives"]
+pub fn with_class(class: Class) -> ClassGuard {
+    ClassGuard(CLASS.with(|c| c.replace(Some(class))))
+}
+
+/// See [`with_class`].
+pub struct ClassGuard(Option<Class>);
+
+impl Drop for ClassGuard {
+    fn drop(&mut self) {
+        CLASS.with(|c| c.set(self.0));
+    }
+}
+
 /// What a running job sees.
 pub struct Ctx {
     id: u64,
@@ -587,6 +627,8 @@ impl Sched {
             .a(trace::name(lane.name) as u64)
             .b(at.elapsed().as_micros() as u64);
         let _cause = trace::with_cause(id);
+        // the GPU and compute work the job submits is admitted as its lane's class (gpu-arbiter)
+        let _class = with_class(lane.class);
         let res = std::panic::catch_unwind(AssertUnwindSafe(|| match unit {
             Unit::Once(q) => {
                 (q.f)(&ctx);

@@ -851,6 +851,23 @@ struct Inner {
     /// Inside a barrier plugin's graph: its index in `plugin_barriers()`, so a host node there is
     /// named after it.
     host_owner: Option<usize>,
+    /// The ring of this device's adapter (gpu-arbiter): every submission but the present's is
+    /// admitted there by the caller's class.
+    arb: Arc<crate::arbiter::Ring>,
+    /// The device presents to a window (the editor's display): nobody may block-wait on it.
+    surface: bool,
+    /// This device shows the preview: its ring bounds what stands in front of it.
+    shows: Option<crate::arbiter::Registered>,
+    /// The frame being encoded is cut into pieces on its ring (`execute`, `submit`).
+    piece: Option<crate::arbiter::Piece>,
+}
+
+/// The non-blocking checks `wait_presented` made since the process started (gpu-arbiter D8, t2260).
+static PRESENT_CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// See [`PRESENT_CHECKS`].
+pub fn present_checks() -> u64 {
+    PRESENT_CHECKS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub struct GpuFxEngine {
@@ -1201,6 +1218,20 @@ impl GpuFxEngine {
         self.inner.lock().unwrap().refuse_next_growth = true;
     }
 
+    /// This engine shows the preview on a device with no window (the bench, gpu-arbiter): its ring
+    /// bounds what stands in front of its presents from now on.
+    pub fn register_display(&self) {
+        let mut g = self.inner.lock().unwrap();
+        if g.shows.is_none() {
+            g.shows = Some(g.arb.register_display());
+        }
+    }
+
+    /// The ring this engine's device runs on (gpu-arbiter).
+    pub fn ring(&self) -> Arc<crate::arbiter::Ring> {
+        self.inner.lock().unwrap().arb.clone()
+    }
+
     /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
     /// on waits until the process is gone.
     pub fn park(&self) {
@@ -1277,6 +1308,9 @@ impl GpuFxEngine {
         let max_dim = device.limits().max_texture_dimension_2d;
         let (names, owners) = plugin_pipe_names();
         let timer = Timer::new(&device, &queue, &info.name, names, owners);
+        let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(ai, &device));
+        // the editor's display device presents to its window (pipeline-prewarm D3: `keep` is it)
+        let shows = keep.then(|| arb.register_display());
         let engine = Arc::new(GpuFxEngine {
             info,
             compiled: c.clone(),
@@ -1311,6 +1345,10 @@ impl GpuFxEngine {
                 max_dim,
                 timer,
                 host_owner: None,
+                arb,
+                surface: keep,
+                shows,
+                piece: None,
             }),
         });
         // a grant the ledger takes back (an export claimed the room) drops the kept composites past
@@ -1530,19 +1568,42 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn wait_presented(&self) {
-        let (device, queue) = {
+        let (device, queue, expect) = {
             let g = self.inner.lock().unwrap();
-            (g.device.clone(), g.queue.clone())
+            (g.device.clone(), g.queue.clone(), g.timer.last_frame(Role::Preview))
         };
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // gpu-arbiter D8: a blocking wait would hold the device's lock against the window's present
+        // (the surface takes it for writing), and a 1 ms poll was row 272. The frame's work-done
+        // callback wakes the wait: any submission on the device (the UI's own frame) runs the maintain
+        // that fires it. Between those, a non-blocking check after the device time the timer measured
+        // for the last frame, then at waits that grow from a quarter of it: a few checks a frame.
+        let done = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let flag = done.clone();
-        queue.on_submitted_work_done(move || flag.store(true, std::sync::atomic::Ordering::Release));
-        // polled, not waited: a blocking poll can hold the driver's lock against the UI's submit
-        while !done.load(std::sync::atomic::Ordering::Acquire) {
+        queue.on_submitted_work_done(move || {
+            *flag.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            flag.1.notify_all();
+        });
+        let ms = std::time::Duration::from_millis(1);
+        let expect = if expect == 0 { 2 * ms } else { std::time::Duration::from_nanos(expect) };
+        let mut wait = expect.max(ms);
+        let mut next = (expect / 4).max(ms);
+        loop {
+            {
+                let g = done.0.lock().unwrap_or_else(|e| e.into_inner());
+                let (g, _) = done.1.wait_timeout_while(g, wait, |d| !*d).unwrap_or_else(|e| e.into_inner());
+                if *g {
+                    return;
+                }
+            }
+            PRESENT_CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if device.poll(wgpu::PollType::Poll).is_err() {
                 return;
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            if *done.0.lock().unwrap_or_else(|e| e.into_inner()) {
+                return;
+            }
+            wait = next;
+            next *= 2;
         }
     }
 
@@ -1641,6 +1702,7 @@ impl Inner {
         let meta = frame_meta(&jobs, (ow, oh));
         self.harvest();
         self.timer.begin();
+        self.piece = Some(crate::arbiter::Piece::begin(&self.arb, self.timer.last_frame(Role::Export)));
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
         self.timer.end(&mut enc, Role::Export, meta);
@@ -1682,6 +1744,9 @@ impl Inner {
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         let sub = self.queue.submit([enc.finish()]);
+        if let Some(p) = self.piece.take() {
+            p.end(&self.device, &self.queue, sub.clone(), self.surface);
+        }
         self.timer.submitted(&self.queue, Role::Export, meta);
         *slot.mapped.lock().unwrap() = None;
         let mapped = slot.mapped.clone();
@@ -2010,6 +2075,7 @@ impl Inner {
         let meta = frame_meta(&jobs, (ow, oh));
         self.harvest();
         self.timer.begin();
+        self.piece = Some(crate::arbiter::Piece::begin(&self.arb, self.timer.last_frame(Role::Offline)));
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
@@ -2056,7 +2122,10 @@ impl Inner {
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
-        self.queue.submit([enc.finish()]);
+        let sub = self.queue.submit([enc.finish()]);
+        if let Some(p) = self.piece.take() {
+            p.end(&self.device, &self.queue, sub, self.surface);
+        }
         self.timer.submitted(&self.queue, Role::Offline, meta);
         self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
         self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
@@ -2216,8 +2285,29 @@ impl Inner {
         }
     }
 
+    /// Before a pass of a frame being cut into pieces (gpu-arbiter D4): when the pass's measured
+    /// device time would take the piece past its ring's bound (or a higher class waits), the
+    /// encoder so far is submitted as a piece, waited for, and the frame goes on in a new one. The
+    /// passes, their order and their targets do not change; every uniform slot is the frame's own,
+    /// so a write after the cut never lands under an earlier piece.
+    fn cut_point(&mut self, enc: &mut wgpu::CommandEncoder, label: PassLabel) {
+        let Some(p) = self.piece.as_mut() else { return };
+        let next = self.timer.predict(label);
+        if p.due(next) {
+            let full = std::mem::replace(
+                enc,
+                self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") }),
+            );
+            kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+            let sub = self.queue.submit([full.finish()]);
+            p.cut(&self.device, &self.queue, sub, self.surface);
+        }
+        p.add(next);
+    }
+
     /// A transparent-black texture (the pool gives back dirty ones).
     fn clear_tex(&mut self, enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        self.cut_point(enc, PassLabel::Fixed("clear"));
         enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("kt-gpu clear"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2807,6 +2897,7 @@ impl Inner {
         t0: &wgpu::TextureView,
         u: &[u8; GEOM_UNIFORM_BYTES],
     ) {
+        self.cut_point(enc, PassLabel::Run(n));
         let offset = self.slot as u64 * SLOT;
         debug_assert!(self.slot + GEOM_SLOT_UNITS <= self.arena_slots, "uniform arena overflow (run)");
         self.slot += GEOM_SLOT_UNITS;
@@ -2857,6 +2948,7 @@ impl Inner {
         t0: &wgpu::TextureView,
         u: &GeomUniform,
     ) {
+        self.cut_point(enc, PassLabel::Fixed("geometry"));
         let offset = self.slot as u64 * SLOT;
         debug_assert!(
             self.slot + GEOM_SLOT_UNITS <= self.arena_slots,
@@ -2941,6 +3033,7 @@ impl Inner {
             (Which::Fixed(pipe), None) => PassLabel::Fixed(pipe.name()),
             (Which::Plugin(i), _) => PassLabel::Plugin(i),
         };
+        self.cut_point(enc, label);
         let offset = self.slot as u64 * SLOT;
         debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
         self.slot += 1;
