@@ -28,6 +28,7 @@ mod firstframe;
 mod fxcost;
 mod fusecost;
 mod showcase;
+mod streamcost;
 mod trace_query;
 mod wav;
 
@@ -1403,7 +1404,8 @@ fn run(args: &[String]) -> i32 {
     kt_ffmpeg::set_search_dirs(ffmpeg_user_choice(), download);
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     kt_plugins_builtin::install();
-    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    // the GPU's compute host, counting the bytes each job moves (`stream-cost`)
+    kt_plugin_api::compute::install(streamcost::open);
     // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
     kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
@@ -1696,6 +1698,33 @@ fn run(args: &[String]) -> i32 {
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(20);
             match editcost::run(&project, steps.max(1)) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        // What a stream stage costs over a range, lap after lap (stream-layout-per-build)
+        Some("stream-cost") => {
+            let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3)) else {
+                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH]");
+                return 2;
+            };
+            let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
+                eprintln!("from/to are seconds");
+                return 2;
+            };
+            let project = match load_project_resolved(input) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+            let size = opt("--size").and_then(|s| s.split_once('x')).and_then(|(w, h)| {
+                Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? })
+            });
+            let laps = opt("--laps").and_then(|s| s.parse::<usize>().ok()).unwrap_or(2);
+            match streamcost::run(&project, input, from, to, laps, size) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
