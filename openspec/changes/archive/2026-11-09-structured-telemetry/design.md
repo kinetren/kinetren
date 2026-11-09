@@ -176,4 +176,28 @@ and the processor (the `ComputeJob` and `StreamAdvance` records).
 
 ## Measurements
 
-(filled at the end of the change)
+All on this machine (llvmpipe/lavapipe, debug build `opt-level = 1`), our fixtures.
+
+**The heavy loop, `kt-cli preview heavy-loop.kt 4.8 5.5 --size 640x360 --loop 30 --trace DIR`**:
+
+| | before | after |
+|---|---|---|
+| V-fps (project 24) | 19.0 | 24.1 |
+| composite ms p50 / p95 | 13.4 / 24.9 | 0.3 / 0.5 |
+| plan per composite | 15.09 ms | 0.88 ms |
+| stream-stage runs / composites | 706 / 706 | 166 / 863 |
+| lap from which every frame is kept | 15 (16 s) | 6 (6.5 s) |
+| process CPU over 30 s | 89.3 s | 74.3 s |
+
+The live `heavy_loop` (the real window): every frame kept from lap 5 (3 s of play), the covered loop
+composes 1 frame in 6 s, decodes nothing, runs no audio effect; paused inside it the frame is there.
+
+**Cost at rest, live `idle` on the heavy showcase** (ten releases under Slowed, VHS Tape, Camera ISP):
+a 5 s pause adds 0 bytes to the trace; an open effects window, 0 bytes; the pointer over a still place
+adds ~1.4 KB/s on llvmpipe — its UI frames take 50 ms or more there and are recorded as stalls, plus the
+load watch's busy second (on a card a hover frame is short and records nothing). t2142: the writer makes
+no context switch while nothing is recorded.
+
+**What the trace showed of a cold paused frame** (`kt-cli trace loading`): 1.51 s waiting for the frame at
+4.8 s — the decodes of its 51-position history done in 110 ms, then one advance on the prefetch thread
+computing the positions one after another (1.41 s; `datamosh:search` ×36, 568 ms of device time).

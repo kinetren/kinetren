@@ -95,3 +95,21 @@ the program and its verdict (folded, mirrored, stays apart and why) is the chang
 - Not usage telemetry: nothing in `telemetry.rs` reads the journal, and the journal sends nothing.
 - English, as the render log: the file is the evidence handed over. Paths become file names.
 - Measured on the heavy showcase: 0 wake-ups and 0 bytes at rest (the change's design).
+
+## The structured trace (structured-telemetry, archived 2026-11-09)
+
+The owner, kkt-26.11.09 I5–I8: the journal said THAT work ran, never which frame asked for it or why it
+waited, so every complaint became a reproduction on our machine — the bench and the version bisect he
+refused. The trace records causes with ids and a tool asks the questions. The decisions, the class walk
+of every subsystem that waits or keeps, and the measurements are the change's design
+(`openspec/changes/archive/2026-11-09-structured-telemetry/design.md`).
+
+- `src/libs/kt-time/src/trace.rs` — the record, the ring, the writer, the files, the reader: std only,
+  because every crate that does the work depends on kt-time.
+- `src/apps/kt-cli/src/trace_query.rs` — `kt-cli trace`: the questions. A new question goes here, with a
+  test on a synthetic run; a new record goes into `Ev` (append only) and into the class walk.
+- `tele_journal::install` installs the trace beside the journal (`<data>/trace`); the journal's lines are
+  mirrored as text on the trace's clock; the panic hook flushes both.
+- Not usage telemetry either: nothing reads it but the person and the tool, nothing is sent.
+- Measured on the heavy showcase: a pause and an open effects window add 0 bytes; a UI frame is recorded
+  only from 50 ms (a stall), so a pointer over a still place records nothing on a card.

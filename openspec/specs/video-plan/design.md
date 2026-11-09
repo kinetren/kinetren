@@ -385,3 +385,21 @@ export devices, the compute host's device and pipes (row 64), every device's `ca
   `engine-build`, `offline-engine`, the shadow), the compute host's `open_device` and `prepare`
   (`compute-warm`); the frame paths are synchronous and stay as D6 left them. t2129 reproduces it: 1 of
   3 child exits died by SIGSEGV with the hook off, 9 of 9 clean with it.
+
+## A kept moment is reached without the work that made it (structured-telemetry, archived 2026-11-09)
+
+The owner, kkt-26.11.09 I8: "если хоть сто раз пройтись по небольшому куску - он все равно что-то loading
+делает". The trace of a heavy loop (Camera ISP → Datamosh → VHS Tape) showed the mechanism: the
+executor's kept composite was keyed by the full plan, and the full plan of a stream layer ran the stage
+to learn its key — where the stage's memo had dropped the history the plan came out short and the kept
+frame showed "Loading"; playing, held frames kept nothing for 16 s. Fixed as a class: a probe plan keys
+every stream stage by `StreamKernel::key` (inputs only) and the preview asks the kept composites first
+(`present_kept`); a re-decoded cache entry keeps its serial; the slow route keeps its composites on the
+display executor; the look-ahead skips kept moments. The walk (kept mix, frame blending, reels, pause,
+slow rate, loop, scrub, export, thumbnails) and the before/after numbers are in
+`openspec/changes/archive/2026-11-09-structured-telemetry/design.md`.
+
+- A kernel without `key` keeps the old path; a new input of a stream layer's picture must reach its
+  kernel's `key`, or a kept composite of another picture is shown.
+- The first visit of a paused frame still computes its history (found-defects 173): that is the
+  effect's cost, which the owner's next trace splits into device, wait and processor.

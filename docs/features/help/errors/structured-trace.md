@@ -1,18 +1,18 @@
 ---
 id: F-HLP-036
 title: A structured trace of one run — why a frame waited, answered by a query
-status: in-progress
+status: done
 priority: A
 cost: L
 category: help/errors
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, perfetto-2026, tracy-0.12, unreal-insights-5.6]
-we_have: partial
+we_have: yes
 crates: [kt-time, kt-engine, kt-gpu, kt-cache, kt-app, kt-cli]
 invariants: [4, 6, 11, 12]
 ui_rules: []
-round: null
-point: null
-tests: []
+round: "kkt-26.11.09"
+point: 8
+tests: [2140, 2141, 2142, 2143, 2144, 2145, 2146, 2147, 2148, 2149, 2150, 2151, 2152]
 depends_on: [F-HLP-035]
 trackers: []
 services: []
@@ -82,22 +82,7 @@ words carry the demand: "у тебя телеметрия должна быть 
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/telemetry/
-
-### What already exists
-
-`src/apps/kt-app/src/tele_journal.rs` — one text journal stamped at the event (F-HLP-035);
-`src/libs/kt-time/src/work.rs` — work counters; `src/libs/kt-gpu/src/pass_time.rs` — GPU pass time;
-`src/libs/kt-engine/src/flight.rs` — the playback black box. None carries a frame's id or a cause.
-
-### What is missing
-
-Typed records with ids across the compose thread, the decode worker, the prefetch thread, the
-stream stages, the compute host, the executor's memo and the audio render thread; a query tool.
-
-### What hinders
-
-Invariant 6: the audio callback records nothing, the render thread only into a lock-free ring.
-Invariant 12: nothing may wake at rest.
+Done by `structured-telemetry`: typed records in `<data>/trace` joined by ids across threads, read by `kt-cli trace`; the journal stays for people.
 
 ## Estimate
 
@@ -112,7 +97,7 @@ Invariant 12: nothing may wake at rest.
 
 ## Verdict
 
-Take: the owner refused benches and version bisects (kkt-26.11.09 I5–I8); a typed trace with ids and
+Taken (done, structured-telemetry): the owner refused benches and version bisects (kkt-26.11.09 I5–I8); a typed trace with ids and
 a query is the only way a run on his machine explains itself.
 
 TEST: src/libs/kt-time/src/trace.rs — t2140–t2143 hold the ring, the file and the cost at rest; the query's answers are t2146–t2149 in src/apps/kt-cli/src/trace_query.rs
