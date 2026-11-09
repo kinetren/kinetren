@@ -7906,6 +7906,55 @@ fn t1095_next_lesson_keeps_the_copy_without_a_question() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test t2305 (save-then-act, ui-reach; the live `lessons` walk red twice at lesson 4): "Next
+/// lesson" on an edited lesson copy opens the next lesson when the copy's write LANDS, with no
+/// question. The write runs on the save lane (one-scheduler), and opening right after posting it met
+/// the unsaved flags still up: "Unsaved work — Save and continue / Discard / Stay here" over the
+/// program's own copy. t1095 stayed green, because the harness took the save inside `save()`; here
+/// the answer comes in a later frame, as in the window.
+///
+/// - **PATH** finish lesson 1 → press Next lesson → no "Unsaved work" window in any frame → lesson 2
+///   opens once the copy is written → lesson 1's copy on disk keeps the region
+#[test]
+fn t2305_next_lesson_opens_when_the_copy_is_written() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let (mut h, dir) = lesson_at("t2305", 1, 4);
+    let path = h.state().project_path.clone().unwrap();
+    let r = kt_model::Region { start: Tick(20 * 90_000), end: Tick(30 * 90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.state_mut().toggle_loop();
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(1, 4));
+    assert!(h.state().dirty_content || h.state().dirty_ui, "the scene has nothing to lose — the test proves nothing");
+    crate::app::set_save_grace(Some(std::time::Duration::ZERO));
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::app::set_save_grace(None);
+        }
+    }
+    let _restore = Restore;
+    h.get_by_label(tr(k::lessons::NEXT)).click();
+    let deadline = kt_time::test_deadline();
+    loop {
+        h.step();
+        assert!(h.state().ask.is_none(), "Next lesson asked about the program's own lesson copy: {:?}", h.state().ask);
+        if h.state().saving.is_none() && h.state().after_save.is_none() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the copy's save never answered");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    h.step();
+    assert!(h.state().ask.is_none(), "Next lesson asked about the program's own lesson copy: {:?}", h.state().ask);
+    assert_eq!(h.state().start.lessons.lesson, 2, "lesson 2 did not open");
+    let kept = crate::app::KtApp::open(&path).expect("the lesson-1 copy reads").model.project().region;
+    assert_eq!(kept.map(|r| r.start), Some(r.start), "the lesson-1 copy lost its edits");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// t1219 (camera-isp-simulation 3.2; capability `video-fx`): the camera effect's window is its
 /// pipeline. A person adds "Camera ISP" from the picker by typing; the window shows the blocks of the
 /// chain in order (source, lens, sensor, the ISP's raw front, demosaic, lens correction, colour, YUV),

@@ -318,3 +318,141 @@ fn t2217_a_pending_recheck_of_kept_moments_asks_no_frame() {
         "the timeline asks for frames while kept moments are rechecked: {causes:?}"
     );
 }
+
+/// The save's answer is taken in a LATER frame, as in the live program (save-then-act): the harness
+/// otherwise waits the test's bound inside `save()`, and a caller acting on the flags right after it
+/// is green there and broken in the window. Restored when the test ends, red or green.
+struct LiveSaveGrace;
+
+impl LiveSaveGrace {
+    fn set() -> LiveSaveGrace {
+        crate::app::set_save_grace(Some(Duration::ZERO));
+        LiveSaveGrace
+    }
+}
+
+impl Drop for LiveSaveGrace {
+    fn drop(&mut self) {
+        crate::app::set_save_grace(None);
+    }
+}
+
+/// Frames until the save in flight has been taken (landed or failed): a consequence, not a clock.
+fn until_save_taken(h: &mut Harness<'static, KtApp>) {
+    let deadline = kt_time::test_deadline();
+    while h.state().saving.is_some() {
+        assert!(std::time::Instant::now() < deadline, "the save never answered");
+        std::thread::sleep(Duration::from_millis(1));
+        h.step();
+    }
+    h.step();
+}
+
+/// A project of the person's with an unsaved edit at `path` (a medium added, the asterisk up).
+fn dirty_named(path: &std::path::Path) -> Harness<'static, KtApp> {
+    let mut h = crate::layout_tests::harness();
+    let app = h.state_mut();
+    app.project_path = Some(path.to_path_buf());
+    app.model.apply(Command::AddMedia { id: kt_model::MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    h
+}
+
+fn media_on_disk(path: &std::path::Path) -> usize {
+    KtApp::open(path).map(|a| a.model.project().media.len()).unwrap_or(0)
+}
+
+/// Test t2306 (save-then-act, durability): "Save and continue" before opening another project opens
+/// it when the write has LANDED, and the work is in the file. Since one-scheduler the write runs on
+/// the save lane and `save()` returns with the asterisk still up: the answer checked the flags right
+/// after it, found them up and silently stayed — the person pressed "Save and continue" and nothing
+/// went on.
+///
+/// - **PATH** an edited project → Help › Welcome window… → a Recent card → "Unsaved work" → "Save and
+///   continue" → the window closes, the project stays on screen for the moment the write takes, then
+///   the chosen project opens; the first one's file holds the edit
+#[test]
+fn t2306_save_and_continue_goes_on_when_the_write_lands() {
+    crate::plugins::install();
+    let _grace = LiveSaveGrace::set();
+    let dir = std::env::temp_dir().join(format!("kt-t2306-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.kt");
+    let b = dir.join("b.kt");
+    let text = crate::app::project_text_of(&crate::lessons::lesson_project(), &Default::default(), Some(&dir));
+    crate::app::write_project_atomic(&b, &text).unwrap();
+    let mut h = dirty_named(&a);
+    h.step();
+    h.state_mut().start_go(crate::welcome::StartGo::Recent(b.clone()));
+    assert_eq!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::Start)));
+    h.state_mut().answer_ask(crate::app::Answer::Yes);
+    if h.state().saving.is_some() {
+        assert_eq!(h.state().project_path.as_deref(), Some(a.as_path()), "the open ran before the write landed");
+    }
+    until_save_taken(&mut h);
+    assert!(h.state().ask.is_none(), "the landed save asked again: {:?}", h.state().ask);
+    assert_eq!(h.state().project_path.as_deref(), Some(b.as_path()), "\"Save and continue\" saved and stayed");
+    assert_eq!(media_on_disk(&a), 1, "the edit is not in the first project's file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test t2307 (save-then-act, durability): a gesture that leaves the project while its Ctrl+S is
+/// still writing waits for that write instead of asking about work already being saved, and goes on
+/// when it lands.
+///
+/// - **PATH** an edited project → Ctrl+S → at once File › New → no "Unsaved work" window; the empty
+///   project opens when the write lands, the file holds the edit
+#[test]
+fn t2307_a_gesture_after_ctrl_s_waits_for_the_write() {
+    let _grace = LiveSaveGrace::set();
+    let dir = std::env::temp_dir().join(format!("kt-t2307-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.kt");
+    let mut h = dirty_named(&a);
+    h.step();
+    h.state_mut().save();
+    h.state_mut().new_project();
+    assert!(h.state().ask.is_none(), "asked about the work Ctrl+S is writing: {:?}", h.state().ask);
+    until_save_taken(&mut h);
+    assert!(h.state().ask.is_none(), "the landed save asked: {:?}", h.state().ask);
+    assert!(h.state().project_path.is_none(), "File › New did not go on after the write");
+    assert_eq!(media_on_disk(&a), 1, "the edit is not in the file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test t2308 (save-then-act, durability): a write that fails drops what waited for it — the
+/// project stays with its asterisk and the warning, whether the action came from "Save and
+/// continue" or met a Ctrl+S in flight.
+///
+/// - **PATH** an edited project whose folder cannot be written → File › New → "Save and continue" →
+///   a warning names the failed save, the project and its asterisk stay; Ctrl+S → File › New → the
+///   same warning, nothing opens
+#[test]
+fn t2308_a_failed_write_drops_what_waited_for_it() {
+    let _grace = LiveSaveGrace::set();
+    let mut h = dirty_named(&crate::layout_tests::unwritable_path("t2308"));
+    h.step();
+    let warns = |h: &Harness<'static, KtApp>| {
+        h.state().notices.iter().filter(|n| n.severity == crate::app::Severity::Warn).map(|n| n.repeats).sum::<u32>()
+    };
+    for via_ctrl_s in [false, true] {
+        let w0 = warns(&h);
+        if via_ctrl_s {
+            h.state_mut().save();
+            h.state_mut().new_project();
+        } else {
+            h.state_mut().new_project();
+            h.state_mut().answer_ask(crate::app::Answer::Yes);
+        }
+        until_save_taken(&mut h);
+        let st = h.state();
+        assert!(st.project_path.is_some(), "the failed write let File › New go on (Ctrl+S first: {via_ctrl_s})");
+        assert_eq!(st.model.project().media.len(), 1, "the work was discarded after a failed write");
+        assert!(st.dirty_content, "the asterisk went out on a failed write");
+        assert!(st.after_save.is_none(), "the action still waits after the write failed");
+        assert!(warns(&h) > w0, "the failed write said nothing");
+    }
+}

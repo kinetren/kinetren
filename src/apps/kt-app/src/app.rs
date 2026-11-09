@@ -412,6 +412,10 @@ pub struct KtApp {
     /// Ctrl+S in flight (one-scheduler, row 98): the write and its two fsyncs run on the save
     /// lane; the UI takes the outcome within `ANSWER_GRACE` or in a later frame.
     pub saving: Option<Saving>,
+    /// What waits for the save in flight (save-then-act): "Save and continue", "Next lesson", a
+    /// gesture that met a Ctrl+S still writing. Run by `take_saved` when the write LANDS; a failed,
+    /// refused or cancelled save drops it, so the work is never left behind unsaved.
+    pub after_save: Option<Pending>,
     /// Media gestures waiting for their file's open on the media lane (one-scheduler, row 148).
     pub media_asks: Vec<MediaAsk>,
     /// Project write guard (R.32): the model revision WRITTEN to disk
@@ -998,6 +1002,7 @@ impl KtApp {
             max_src_job: None,
             autosave_rx: None,
             saving: None,
+            after_save: None,
             media_asks: Vec::new(),
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -1299,6 +1304,7 @@ impl KtApp {
             max_src_job: None,
             autosave_rx: None,
             saving: None,
+            after_save: None,
             media_asks: Vec::new(),
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -4033,20 +4039,21 @@ impl KtApp {
     pub fn answer_ask(&mut self, ans: Answer) {
         let Some(a) = self.ask.take() else { return };
         match (a, ans) {
+            // the save goes on, and so does whatever waited for it (`after_save`)
             (Ask::SaveOverLock { .. }, Answer::Yes) => {
                 self.lock_override = true;
                 self.save();
             }
-            (Ask::SaveOverLock { .. }, _) => {}
+            // not written: what waited for the write must not go on without it
+            (Ask::SaveOverLock { .. }, _) => self.after_save = None,
             (Ask::Unsaved(_), Answer::Cancel) => {}
             (Ask::Unsaved(p), Answer::Yes) => {
-                self.save();
-                // the save may not have happened (Save-As was cancelled, the write was refused,
-                // the question about a busy project) — then we must not leave:
-                // exactly this is how “save and exit” differs from “exit”
-                if !self.dirty_content && !self.dirty_ui {
-                    self.proceed(p);
-                }
+                // the action runs when the write LANDS (`take_saved`), not after `save()` returns:
+                // the write is on the save lane (one-scheduler), and right after posting it the
+                // flags are still up — "Save and continue" then silently stayed (t2306). A save
+                // that does not happen (Save-As cancelled, the write refused, the busy project
+                // declined) drops the action: exactly this is how "save and exit" differs from "exit"
+                self.save_then(p);
             }
             // ABANDONED PROJECT: three answers, and all three DIFFERENT in meaning —
             // exactly why `Answer` has three of them rather than a `bool`
@@ -4165,6 +4172,13 @@ impl KtApp {
     pub fn guard_unsaved(&mut self, p: Pending) -> bool {
         if !self.dirty_content && !self.dirty_ui {
             return true;
+        }
+        // a Ctrl+S of exactly this revision is still writing: the work is not lost, it is landing.
+        // The action waits for the write instead of asking about work already being saved (t2307);
+        // a failed write drops it with its warning, and the asterisk stays
+        if self.saving.as_ref().is_some_and(|sv| sv.rev == self.model_rev) {
+            self.after_save = Some(p);
+            return false;
         }
         self.ask = Some(Ask::Unsaved(p));
         false
@@ -5868,7 +5882,9 @@ impl KtApp {
                     self.save_hint.as_deref(),
                     UNTITLED_PROJECT,
                 ) else {
-                    return; // the user changed their mind
+                    // the user changed their mind: nothing was written, so nothing waiting goes on
+                    self.after_save = None;
+                    return;
                 };
                 let p = if p.extension().is_none() {
                     p.with_extension(kt_model::project_file::EXTENSION)
@@ -5924,7 +5940,15 @@ impl KtApp {
             crate::wake::now();
         });
         self.saving = Some(Saving { path, rev, answer });
-        self.take_saved(ANSWER_GRACE);
+        self.take_saved(save_grace());
+    }
+
+    /// Save, then do `p` once the write has LANDED (save-then-act). Every path that saves and then
+    /// leaves the project goes through here: the write runs on the save lane, so `save()` returns
+    /// with the unsaved flags still up. A failed or cancelled save drops `p` — the work stays.
+    pub(crate) fn save_then(&mut self, p: Pending) {
+        self.after_save = Some(p);
+        self.save();
     }
 
     /// The outcome of a Ctrl+S, if it came within `grace`.
@@ -5957,13 +5981,26 @@ impl KtApp {
                 if self.model_rev == rev {
                     self.drop_own_recovery();
                 }
+                // what waited for this write goes on now. Through the guard again: an edit
+                // made while the file was written is unsaved, and that is asked about
+                if let Some(p) = self.after_save.take()
+                    && self.guard_unsaved(p)
+                {
+                    self.proceed(p);
+                    crate::wake::now();
+                }
             }
             // NOT written: the asterisk stays, the recovery file is intact —
-            // otherwise the person would consider the work saved (item 350)
+            // otherwise the person would consider the work saved (item 350).
+            // What waited for the write does not go on
             Ok(SaveOutcome::SkippedNewerOnDisk) => {
+                self.after_save = None;
                 self.note(tr(k::msg::SAVE_SKIPPED_NEWER));
             }
-            Err(e) => self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
+            Err(e) => {
+                self.after_save = None;
+                self.warn(crate::tf!(k::msg::SAVE_FAILED, e));
+            }
         }
     }
 
@@ -9832,6 +9869,24 @@ pub struct Saving {
 pub(crate) const ANSWER_GRACE: std::time::Duration =
     if cfg!(test) { kt_time::TEST_WAIT } else { std::time::Duration::from_millis(3) };
 
+thread_local! {
+    /// The UI thread's own grace for a save's answer, when set (save-then-act tests): the harness
+    /// waits `ANSWER_GRACE` = the test's bound, so a save always landed inside `save()` there and
+    /// a caller that acted on the flags right after it was green; zero makes the harness meet the
+    /// live program's later frame.
+    static SAVE_GRACE: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
+}
+
+fn save_grace() -> std::time::Duration {
+    SAVE_GRACE.with(|g| g.get()).unwrap_or(ANSWER_GRACE)
+}
+
+/// Set this thread's grace for a save's answer (`None` — `ANSWER_GRACE`). Tests only.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn set_save_grace(d: Option<std::time::Duration>) {
+    SAVE_GRACE.with(|g| g.set(d));
+}
+
 /// Ctrl+S's lane: class `Answer`, so it never waits behind background work or for playback.
 fn save_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
@@ -10550,7 +10605,9 @@ impl eframe::App for KtApp {
         if let Some((_, rx)) = self.autosave_rx.take() {
             let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
         }
-        // a Ctrl+S still writing finishes first: its outcome decides the asterisk below
+        // a Ctrl+S still writing finishes first: its outcome decides the asterisk below. What
+        // waited for it (an open, a lesson) has no window to happen in any more
+        self.after_save = None;
         self.take_saved(std::time::Duration::from_secs(30));
         // R.49 item 351: exit is NOT the moment to silently rewrite the user's project.
         // Unsaved work goes to the recovery file; saved work carries its own recovery file

@@ -234,3 +234,49 @@ the test bound under `cfg(test)`, as `COMPOSE_GRACE`) or in a later frame. A sav
 queued save of the same file (a global key let two tests cancel each other's). The asterisk clears
 only if no edit came while the file was written. `kt_time::block` counts what is left (t2236): the
 opening of a project still builds and opens on the UI thread (row 270).
+
+### Save-then-act: what waits for a save waits for its write (orch stage 9, 2026-11-09)
+
+The live `lessons` walk went red twice: "Next lesson" on an edited lesson copy called `save()` and
+then `start_go`, whose guard found the unsaved flags still up and asked "Unsaved work" over the
+program's own copy. The mechanism, a CLASS: since one-scheduler `save()` POSTS the write and returns;
+the flags fall only when `take_saved` takes the answer, within `ANSWER_GRACE` (3 ms) or in a later
+frame. Any caller that reads the flags, or leaves the project, right after `save()` acts before the
+write. The harness hid it: under `cfg(test)` the grace is the test's bound, so the answer always
+landed inside `save()` (t1095 green, the window red). The new tests set the UI thread's grace to zero
+(`app::set_save_grace`) and so meet the window's later frame.
+
+The rule: a caller that saves and then acts calls `save_then(p)`. The action is kept in
+`KtApp::after_save` and run by `take_saved` when the write reports `Wrote` — through `guard_unsaved`
+again, so an edit made during the write is asked about. `SkippedNewerOnDisk`, an error, a cancelled
+Save As and "Don't save" on the busy-project question drop it: a failed save never goes on to leave
+the work. Nothing waits on the UI thread (`kt_time::block` stays at zero, t2236). `on_exit` drops a
+waiting action before it takes the last answer: there is no window left to open anything in.
+
+Checked, every caller of `save()`/`save_as()` and every reader of the flags after a save:
+
+- `answer_ask(Ask::Unsaved(p), Yes)` — "Save and continue" before New, Open, Import older, a dropped
+  project, a start tile or recent card (`Pending::Start`), Quit. It checked the flags right after
+  `save()` and silently stayed (the action never ran in the window). Now `save_then(p)` (t2306).
+- `lessons.rs` "Next lesson" on a dirty sandbox — `save()` then `start_go`: the reported red. Now the
+  lesson goes into `start.pending` and `save_then(Pending::Start)` (t2305).
+- `guard_unsaved` itself — a gesture after a Ctrl+S still writing asked about work being saved. When the
+  save in flight is of the current revision the action now waits for it (t2307); a failure drops it.
+- `answer_ask(Ask::SaveOverLock, Yes)` — the second `save()` after the busy-project question: the
+  action waiting from "Save and continue" now survives the question and runs after this write;
+  "Don't save" drops it (before, it was lost either way).
+- Save As (`save_as`, menu and `Cmd::SaveAs`) — a cancelled dialog drops a waiting action; nothing
+  follows Save As itself.
+- Ctrl+S, the toolbar's save button, File › Save (`toolbar.rs`, `Cmd::Save`) — nothing follows them.
+- The window's close (`close_requested` → `guard_unsaved(Quit)`) — goes through the answer above; when
+  the write lands `quit_confirmed` is set and `wake::now` brings the frame that closes.
+- `on_exit` — already waits for a save in flight (`take_saved(30 s)`) before deciding the recovery
+  file; the window is gone, so it is not a UI wait.
+- Autosave (`autosave_rx`) — writes the recovery file and never clears the flags; it meets the save by
+  `write_project_guarded`'s revision guard, untouched.
+- `welcome.rs` start tiles, recent cards and Locate — through `start_go` → `guard_unsaved`, covered.
+- `bench_open` (the live rig's open) — saves nothing, asks nothing.
+- Render/export — saves nothing first; `open_lesson` writes a fresh lesson copy with
+  `write_project_atomic` before opening it (a new file, no flags involved).
+- Tests' helpers — the harness tests that `save()` and then read the file (t2236, t370, t815 …) stay
+  right: under `cfg(test)` the answer is taken inside `save()`.
