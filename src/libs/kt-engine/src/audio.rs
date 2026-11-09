@@ -1563,13 +1563,27 @@ impl AudioRenderer {
                             let weight = |k: i64| fade_weight(clip, f + k) * self.overlap_at(ci, f + k) * clip.gain;
                             let w0 = weight(k);
                             debug_assert!(!constant || weight(k + n - 1).to_bits() == w0.to_bits());
-                            for k in k..k + n {
-                                let w = if constant { w0 } else { weight(k) };
-                                let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
+                            let at = |k: i64| {
                                 let sk = if clip.reversed { within - k } else { within + k };
-                                let si = (sk as usize) * AUDIO_CHANNELS;
-                                for ch in 0..AUDIO_CHANNELS {
-                                    out[oi + ch] += b.data[si + ch] * w;
+                                (((f + k - range.start) as usize) * AUDIO_CHANNELS, (sk as usize) * AUDIO_CHANNELS)
+                            };
+                            if constant {
+                                // one multiply per sample, at the CPU's level (the same bytes)
+                                kt_plugin_api::fast!({
+                                    for k in k..k + n {
+                                        let (oi, si) = at(k);
+                                        for ch in 0..AUDIO_CHANNELS {
+                                            out[oi + ch] += b.data[si + ch] * w0;
+                                        }
+                                    }
+                                })
+                            } else {
+                                for k in k..k + n {
+                                    let w = weight(k);
+                                    let (oi, si) = at(k);
+                                    for ch in 0..AUDIO_CHANNELS {
+                                        out[oi + ch] += b.data[si + ch] * w;
+                                    }
                                 }
                             }
                             k += n;
@@ -1829,12 +1843,21 @@ impl AudioRenderer {
             let (run_end, constant) = if spec { self.weight_run(ci, f, to, Some(tail_end)) } else { (to, false) };
             let w0 = weight(f);
             debug_assert!(!constant || weight(run_end - 1).to_bits() == w0.to_bits());
-            for f in f..run_end {
-                let w = if constant { w0 } else { weight(f) };
-                let oi = ((f - range.start) as usize) * AUDIO_CHANNELS;
-                let bi = ((f - from) as usize) * AUDIO_CHANNELS;
-                for ch in 0..AUDIO_CHANNELS {
-                    out[oi + ch] += buf[bi + ch] * w;
+            let (o0, b0) = (((f - range.start) as usize) * AUDIO_CHANNELS, ((f - from) as usize) * AUDIO_CHANNELS);
+            let len = ((run_end - f) as usize) * AUDIO_CHANNELS;
+            if constant {
+                // one multiply per sample, at the CPU's level (the same bytes)
+                kt_plugin_api::fast!({
+                    for (o, s) in out[o0..o0 + len].iter_mut().zip(&buf[b0..b0 + len]) {
+                        *o += *s * w0;
+                    }
+                })
+            } else {
+                for (k, (o, s)) in out[o0..o0 + len].chunks_exact_mut(AUDIO_CHANNELS).zip(buf[b0..b0 + len].chunks_exact(AUDIO_CHANNELS)).enumerate() {
+                    let w = weight(f + k as i64);
+                    for (o, s) in o.iter_mut().zip(s) {
+                        *o += *s * w;
+                    }
                 }
             }
             f = run_end;

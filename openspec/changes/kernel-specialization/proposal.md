@@ -33,7 +33,7 @@ filters at the baseline level, like the peaks pyramid; the camera microphone's r
 - **The camera microphone's resampler** reads doubled rings instead of shifting its histories.
 - **One reference switch**: `kt_plugin_api::cpu::with_general` runs every kernel and the mixdown on this
   thread on its general path. Every specialized path is held byte for byte to it (t1981's pattern).
-- Tests t2170–t2179.
+- Tests t2170–t2176.
 
 ## Impact
 

@@ -5,7 +5,8 @@
 //! handles in all four curves, a fade from nothing and to nothing, two and three overlapping events,
 //! an overlaid transition, a reversed event, events with effects and a ringing tail — renders the
 //! bytes it rendered before the runs existed (digests printed on the tree before them), in bursts
-//! and in odd slices, on the specialized path AND inside `cpu::with_general`.
+//! and in odd slices, on the specialized path, inside `cpu::with_general` and on the baseline path
+//! (a constant run multiplies at the CPU's level, `fast!`).
 
 use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -183,7 +184,8 @@ fn t2173_mixdown_runs_keep_the_bytes() {
         return;
     }
     let general = kt_plugin_api::cpu::with_general(digests);
-    for (path, got) in [("specialized", got), ("general", general)] {
+    let baseline = kt_plugin_api::cpu::with_baseline(digests);
+    for (path, got) in [("specialized", got), ("general", general), ("baseline", baseline)] {
         assert_eq!(got.len(), DIGESTS.len(), "a case without a digest: {got:#x?}");
         for ((n, s, d), (wn, ws, wd)) in got.iter().zip(DIGESTS) {
             assert_eq!((n, s), (wn, ws));
@@ -373,4 +375,45 @@ fn t2171_every_kind_keeps_its_bytes_at_rest_and_moving() {
     check(&got, "specialized");
     check(&kt_plugin_api::cpu::with_general(kind_digests), "general");
     check(&kt_plugin_api::cpu::with_baseline(kind_digests), "baseline");
+}
+
+// ---- t2176: the specialized paths pay -------------------------------------------------------
+
+/// (kind, scenario, its sets, the stimulus' scale, the most the specialized path may cost as a share
+/// of the general one in the same run). The test profile measured 40 %, 54 % and 44 %; a bound
+/// past them by a margin still says "the variant is taken and it pays".
+#[rustfmt::skip]
+const PAYS: &[(&str, &str, &[(&str, f64)], f32, f64)] = &[
+    ("compressor", "quiet", &[], 0.01, 0.7),
+    ("filter", "rest", &[], 1.0, 0.8),
+    ("eq", "heavy at rest", &[("low_gain_db", 12.0), ("mid_gain_db", 12.0), ("high_gain_db", 12.0)], 1.0, 0.75),
+];
+
+#[test]
+fn t2176_the_specialized_paths_pay() {
+    kt_plugins_builtin::install();
+    let input = cost::stimulus(48_000);
+    let print = std::env::var("KT_PRINT_COST").is_ok();
+    let mut bad = Vec::new();
+    for &(tag, what, sets, scale, most) in PAYS {
+        let mut f = FxInstance::all().iter().find(|f| f.tag() == tag).expect(tag).clone();
+        for (k, v) in sets {
+            assert!(f.set_param(k, *v), "{tag} has no row {k}");
+        }
+        let stim: Vec<f32> = input.iter().map(|s| s * scale).collect();
+        let one = std::slice::from_ref(&f);
+        // alternately, the minimum of three: each run times the kind against the reference block by block
+        let (mut spec, mut general) = (f64::MAX, f64::MAX);
+        for _ in 0..3 {
+            spec = spec.min(cost::chain_cost(one, &stim, 5).ratio());
+            general = general.min(kt_plugin_api::cpu::with_general(|| cost::chain_cost(one, &stim, 5)).ratio());
+        }
+        let share = spec / general.max(1e-9);
+        if print {
+            println!("{tag:<18} {what:<14} general {general:>7.2} ref, specialized {spec:>7.2} ref ({:.0} %)", share * 100.0);
+        } else if share > most {
+            bad.push(format!("{tag} {what}: the specialized path costs {:.0} % of the general one, bound {:.0} %", share * 100.0, most * 100.0));
+        }
+    }
+    assert!(bad.is_empty(), "{bad:#?}");
 }
