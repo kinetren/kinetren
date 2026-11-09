@@ -249,8 +249,7 @@ impl Plugin for Datamosh {
         Some(self)
     }
     fn compute_shaders(&self) -> Vec<kt_plugin_api::compute::Shader> {
-        // every step of the encoder and the decoder reads three buffers and writes one
-        codec::shaders().into_iter().map(|t| kt_plugin_api::compute::Shader { text: t.into(), reads: 3, writes: 1 }).collect()
+        codec::shaders().into_iter().map(|(t, reads, writes)| kt_plugin_api::compute::Shader { text: t.into(), reads, writes }).collect()
     }
 }
 
@@ -284,7 +283,10 @@ impl StreamKernel for Datamosh {
             return if kt_plugin_api::compute::host().is_none() { pass_through(input, n, out) } else { None };
         };
         let (w, h) = input.size();
-        pic.to_rgba(w, h, out);
+        // the conversion back on the device; the CPU reference when the device just failed
+        if !codec::to_rgba_gpu(&pic, w, h, out) {
+            pic.to_rgba(w, h, out);
+        }
         Some(StreamOut { w: w.min(pic.w as u32), h: h.min(pic.h as u32), key })
     }
 }

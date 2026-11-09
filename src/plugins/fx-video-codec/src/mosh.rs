@@ -555,10 +555,13 @@ pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Optio
     plan(r, lay, n).chain(n).into_iter().rev().find(|c| memo.contains(c.2)).map(|c| c.0)
 }
 
-/// The source frame at `k` as padded planes; `None` — the host does not have it.
-fn source(input: &dyn StreamInput, side: Side, k: i64, w: usize, h: usize) -> Option<Planes> {
+/// The clean encoder's output for the source frame at `k` against `prev` (`None` — intra): the job
+/// converts the frame's RGBA to the padded planes itself. `None` — the host does not have the frame,
+/// or the device failed.
+fn encode_at(input: &dyn StreamInput, side: Side, k: i64, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
+    let (w, h) = padded(input);
     let mut out = None;
-    input.with_frame(side, k, &mut |f| out = Some(Planes::from_rgba(f.rgba, f.w, f.h, w, h)));
+    input.with_frame(side, k, &mut |f| out = codec::encode_rgba(f.rgba, f.w, f.h, w, h, prev, cfg));
     out
 }
 
@@ -567,7 +570,6 @@ fn source(input: &dyn StreamInput, side: Side, k: i64, w: usize, h: usize) -> Op
 fn clean_at(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p: i64) -> Option<Arc<Clean>> {
     let lay: &dyn StreamLayout = input;
     let gs = s.gop_start(lay, side, p)?;
-    let (w, h) = padded(lay);
     // back to a held entry or the GOP start
     let mut j = p;
     let mut prev: Option<Arc<Clean>> = None;
@@ -588,9 +590,8 @@ fn clean_at(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p:
     }
     let mut last = None;
     for q in j..=p {
-        let src = source(input, side, q, w, h)?;
         let cfg = s.at(q).cfg;
-        let c = Arc::new(codec::encode(&src, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
+        let c = Arc::new(encode_at(input, side, q, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
         let k = s.clean(lay, side, q)?;
         memo.put(k, c.clone(), clean_bytes(&c));
         prev = Some(c.clone());
@@ -720,8 +721,7 @@ fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Optio
                 match memo.get::<Planes>(ik) {
                     Some(x) => x,
                     None => {
-                        let src = source(input, Side::Main, p, w, h)?;
-                        let x = Arc::new(codec::encode(&src, None, &s.at(p).cfg)?.recon);
+                        let x = Arc::new(encode_at(input, Side::Main, p, None, &s.at(p).cfg)?.recon);
                         memo.put(ik, x.clone(), x.bytes());
                         x
                     }
