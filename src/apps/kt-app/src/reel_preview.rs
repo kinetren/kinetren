@@ -147,7 +147,6 @@ pub struct ReelPreviews {
     ready: HashMap<ReelKey, (Arc<ReelPreview>, Cell<u64>)>,
     clock: Cell<u64>,
     failed: HashMap<ReelKey, String>,
-    paused: bool,
     /// How many previews were ACTUALLY rendered (not taken from disk).
     renders: usize,
     /// What the current view shows: each live key and its row in the sidecar (`set_live`).
@@ -157,6 +156,13 @@ pub struct ReelPreviews {
 }
 
 type ReelBody = dyn FnOnce(crate::bg::BgCtl, crate::bg::BgSend<ReelPartial>) -> ReelDone + Send;
+
+/// The reel strips' lane (one-scheduler): class `Visible`, paused while playing or exporting by
+/// the scheduler's votes; one job at a time.
+pub fn lane() -> &'static kt_time::sched::LaneRef {
+    static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
+    L.get_or_init(|| kt_time::sched::Lane::new("reel-preview", kt_time::sched::Class::Visible))
+}
 
 impl ReelPreviews {
     /// Strip step: the smallest rung of the thumbnail ladder at which the frame count
@@ -290,15 +296,6 @@ impl ReelPreviews {
         self.running = None;
     }
 
-    /// Pause for the time of playback and rendering: real time matters more
-    /// than the picture on the strip (invariant 6).
-    pub fn set_paused(&mut self, on: bool) {
-        self.paused = on;
-        if let Some((_, j)) = &self.running {
-            j.set_paused(on);
-        }
-    }
-
     /// Advance the service: take the ready result, start the next one. `true` means something
     /// changed (a reason to redraw).
     pub fn poll(&mut self) -> bool {
@@ -320,6 +317,10 @@ impl ReelPreviews {
                 self.finish(key, done);
                 self.running = None;
                 any = true;
+            } else if self.running.as_ref().is_some_and(|(_, j)| !j.is_running()) {
+                // ended without a result (it panicked): the next one may start
+                self.running = None;
+                any = true;
             }
         }
         // one job at a time: offline reel rendering decodes files, and three
@@ -328,8 +329,9 @@ impl ReelPreviews {
             && let Some((key, body)) = self.queue.pop_front()
         {
             kt_time::work::bump(kt_time::work::Work::ReelJob);
-            let job = crate::bg::BgJob::spawn("reel-preview", body);
-            job.set_paused(self.paused);
+            // paused for the time of playback and rendering by the scheduler's votes: real time
+            // matters more than the picture on the strip (invariant 6)
+            let job = crate::bg::BgJob::on_lane(lane(), body);
             self.running = Some((key, job));
             any = true;
         }

@@ -479,6 +479,10 @@ fn t2144_a_frame_is_joined_to_the_decode_it_waited_for() {
     let (player, _ring) = mosh_player(CacheConfig::default());
     // the plain event before the mosh: one layer, one decode
     let t = Tick(SEC);
+    // the playhead stands past it, so the prefetch's window (which starts at the frame on screen)
+    // never orders that key first: since one-scheduler the quality set by `mosh_player` wakes the
+    // prefetch at once, and the test had relied on its first pass coming 100 ms later
+    player.seek(Tick(7 * SEC));
     let mut seq = 0;
     let items = trace::testing::capture(|| {
         seq = player.ask_preview(t, Some(SHOW));

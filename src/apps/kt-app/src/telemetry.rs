@@ -1183,6 +1183,8 @@ enum Msg {
     Start,
     Event(&'static str, Props),
     Flush(SyncSender<()>),
+    /// A counter moved while the sender slept with no timer (one-scheduler): arm the heartbeat.
+    Wake,
 }
 
 /// Pixels per point and the first monitor's logical size, from the first frame.
@@ -1203,6 +1205,9 @@ struct Shared {
     started: AtomicBool,
     closed: AtomicBool,
     counters: Counters,
+    /// The heartbeat found nothing new and the sender sleeps on its channel with no timer
+    /// (one-scheduler): the next activity sends `Msg::Wake`.
+    dormant: AtomicBool,
     /// The interface language at the last UI-side signal (the language is per thread).
     lang: Mutex<&'static str>,
     /// What the probe found, for every event after the start.
@@ -1308,6 +1313,7 @@ impl Telemetry {
                 started: AtomicBool::new(false),
                 closed: AtomicBool::new(false),
                 counters: Counters::default(),
+                dormant: AtomicBool::new(false),
                 lang: Mutex::new("en"),
                 os_version: Mutex::new(None),
                 last_beat: Mutex::new(Snapshot::default()),
@@ -1405,6 +1411,9 @@ impl Telemetry {
         if !self.shared.on() {
             return;
         }
+        if self.shared.dormant.swap(false, Ordering::AcqRel) {
+            self.enqueue(Msg::Wake);
+        }
         let c = &self.shared.counters;
         let one = |a: &AtomicU64| {
             a.fetch_add(1, Ordering::Relaxed);
@@ -1467,6 +1476,9 @@ impl Telemetry {
             }
         }
         s.counters.frame(s.now_ms(), playing, input);
+        if (playing || input) && s.dormant.swap(false, Ordering::AcqRel) {
+            self.enqueue(Msg::Wake);
+        }
     }
 
     /// A rare event: sent at once after the start, queued before it.
@@ -1549,7 +1561,20 @@ fn run(shared: Arc<Shared>, mut sink: Box<dyn Sink>, rx: Receiver<Msg>) {
     let mut next = shared.period;
     loop {
         let wait = next.saturating_sub(shared.clock.now());
-        match rx.recv_timeout(wait) {
+        // a quiet session sleeps on its channel with no timer (one-scheduler): the heartbeat woke
+        // every five minutes to find nothing; the next activity sends `Wake`
+        let got = if shared.dormant.load(Ordering::Acquire) {
+            rx.recv().map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)
+        } else {
+            rx.recv_timeout(wait)
+        };
+        match got {
+            Ok(Msg::Wake) => {
+                let now = shared.clock.now();
+                while next <= now {
+                    next += shared.period;
+                }
+            }
             Ok(Msg::Start) => send(shared.start_body()),
             Ok(Msg::Event(name, props)) => send(shared.body(name, props)),
             Ok(Msg::Flush(ack)) => {
@@ -1557,8 +1582,11 @@ fn run(shared: Arc<Shared>, mut sink: Box<dyn Sink>, rx: Receiver<Msg>) {
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 let now = shared.clock.now();
-                if let Some(p) = shared.beat(now.as_millis() as u64) {
-                    send(shared.body("app_heartbeat", p));
+                match shared.beat(now.as_millis() as u64) {
+                    Some(p) => send(shared.body("app_heartbeat", p)),
+                    // nothing changed since the last beat: sleep until something does
+                    None if shared.started.load(Ordering::Relaxed) => shared.dormant.store(true, Ordering::Release),
+                    None => {}
                 }
                 while next <= now {
                     next += shared.period;

@@ -658,6 +658,24 @@ impl Drop for Vote {
     }
 }
 
+/// Wait on the scheduler's gate (a condvar, no clock) while `still()` holds. The gate is notified by
+/// every resume, every token cancel and [`notify_gate`]: a holder whose own condition is a flag
+/// calls `notify_gate` when it changes the flag.
+pub fn wait_gate(still: impl Fn() -> bool) {
+    let s = sched();
+    let mut g = s.lock();
+    while still() {
+        g = s.gate.wait(g).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+/// Wake every [`wait_gate`] to look at its condition again.
+pub fn notify_gate() {
+    let s = sched();
+    let _g = s.lock();
+    s.gate.notify_all();
+}
+
 /// The `why` mask of the votes up now (0 = nothing paused).
 pub fn paused() -> u32 {
     sched().paused.load(Ordering::Acquire)

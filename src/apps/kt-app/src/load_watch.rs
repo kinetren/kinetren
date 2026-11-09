@@ -24,6 +24,10 @@ pub const REPORT_FILE: &str = "load-report.txt";
 const PERIOD: Duration = Duration::from_secs(1);
 /// Under a live scenario: the scenario's own limits read this often.
 const BENCH_PERIOD: Duration = Duration::from_millis(250);
+/// Seconds at rest after which the watch parks until a work counter moves (one-scheduler, row
+/// 122): it read `/proc/self/task` once a second at rest before. Any counted work — a UI frame
+/// included, so a mouse move — wakes it; the bench (`KT_GEOM_DUMP`) never parks it.
+const PARK_AFTER: u32 = 5;
 /// A spell of load: this share of one core, for this many samples in a row.
 const HOT_PERCENT: f32 = 100.0;
 const HOT_SAMPLES: usize = 3;
@@ -338,7 +342,17 @@ pub fn start() {
         let mut t0 = Instant::now();
         let (mut hot, mut written): (usize, Option<Instant>) = (0, None);
         let (mut busy, mut notes) = (false, NoteState::default());
+        let mut quiet = 0u32;
         loop {
+            if bench.is_none() && quiet >= PARK_AFTER {
+                work::park_until_work();
+                quiet = 0;
+                // the parked stretch is not a sample: the next second is measured from now
+                before = thread_ticks();
+                was = work::totals();
+                cost_was = crate::frame_cost::totals();
+                t0 = Instant::now();
+            }
             std::thread::sleep(period);
             let journal = crate::tele_journal::global();
             let at = journal.as_ref().map(|j| j.now());
@@ -365,6 +379,7 @@ pub fn start() {
                 }
             }
             hot = if s.cpu >= HOT_PERCENT { hot + 1 } else { 0 };
+            quiet = if s.at_rest() { quiet + 1 } else { 0 };
             *LAST.lock().unwrap() = Some(s);
             let due = hot >= HOT_SAMPLES && written.is_none_or(|t| t.elapsed() >= WRITE_EVERY);
             if due || WRITE.swap(false, Ordering::AcqRel) {

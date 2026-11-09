@@ -164,3 +164,92 @@ fn t1846_a_long_frame_says_which_stage_waited() {
     assert!(!wall.contains("centre"), "a stage under a millisecond is named: {wall}");
     assert!(!wall.contains("frame"), "the frame itself is not a stage of itself: {wall}");
 }
+
+/// A one-second stereo 48 kHz PCM WAV: a real file FFmpeg opens.
+fn write_wav(path: &std::path::Path) {
+    let frames = 48_000u32;
+    let data = frames * 4;
+    let mut b = Vec::with_capacity(44 + data as usize);
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + data).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&48_000u32.to_le_bytes());
+    b.extend_from_slice(&(48_000u32 * 4).to_le_bytes());
+    b.extend_from_slice(&4u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&data.to_le_bytes());
+    for i in 0..frames {
+        let v = (((i as f32) * 0.05).sin() * 8000.0) as i16;
+        b.extend_from_slice(&v.to_le_bytes());
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    std::fs::write(path, b).unwrap();
+}
+
+/// Test t2236 (one-scheduler, rows 98 and 148): the person's media and save gestures make no
+/// blocking call on the UI thread — a file brought onto the timeline, the same media placed again
+/// from the bin, Undo and Redo of its arrival (the player's source removed and raised again, a
+/// decoder joined), and Ctrl+S. The files open, the decoder joins and the write with its fsyncs
+/// run on the scheduler's lanes; every gesture still lands.
+#[test]
+fn t2236_media_and_save_gestures_block_nothing_on_the_ui_thread() {
+    use kt_time::Tick;
+    let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+    let dir = std::env::temp_dir().join(format!("kt-t2236-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let wav = dir.join("tone.wav");
+    write_wav(&wav);
+    h.step();
+    // the harness's frames run on this thread: it is the UI thread (`ui` marks it)
+    assert_eq!(kt_time::block::role_here(), kt_time::block::role::UI);
+    let before = kt_time::block::here();
+    let clips0 = h.state().model.project().clips.len();
+
+    h.state_mut().add_media_clip_at(&wav.to_string_lossy(), Tick(300_000), None);
+    h.step();
+    let media = h
+        .state()
+        .model
+        .project()
+        .media
+        .iter()
+        .find(|m| m.path.ends_with("tone.wav"))
+        .map(|m| m.id)
+        .expect("the brought-in file is in the project");
+    let clips1 = h.state().model.project().clips.len();
+    assert!(clips1 > clips0, "the file's clip did not land");
+
+    h.state_mut().place_media_at(media, Tick(500_000), None);
+    h.step();
+    assert!(h.state().model.project().clips.len() > clips1, "placing from the bin did not land");
+
+    // undo the placement and the arrival, then redo them: the source goes and comes back
+    for _ in 0..2 {
+        h.state_mut().undo();
+        h.step();
+    }
+    for _ in 0..2 {
+        h.state_mut().redo();
+        h.step();
+    }
+    assert!(h.state().model.project().media.iter().any(|m| m.id == media));
+
+    let path = dir.join("t2236.kt");
+    h.state_mut().project_path = Some(path.clone());
+    h.state_mut().save();
+    h.step();
+    assert!(path.exists(), "Ctrl+S wrote nothing");
+    assert!(!h.state().dirty_content, "a finished save left the asterisk");
+
+    let after = kt_time::block::here();
+    let named: Vec<String> = (0..kt_time::block::kind::COUNT)
+        .filter(|&k| after[k] != before[k])
+        .map(|k| format!("{} ×{}", kt_time::block::kind::name(k as u32), after[k] - before[k]))
+        .collect();
+    assert!(named.is_empty(), "the UI thread waited: {named:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

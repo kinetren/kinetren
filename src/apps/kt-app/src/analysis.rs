@@ -158,7 +158,9 @@ impl Analysis {
         let mut out = None;
         if let Some((kind, job)) = &mut self.running {
             job.poll();
-            if let Some(r) = job.done.take() {
+            // a job that ended without a result (it panicked) frees the gate
+            let r = job.done.take().or_else(|| (!job.is_running()).then(|| Err("the analysis job ended".to_string())));
+            if let Some(r) = r {
                 let kind = *kind;
                 if let Err(e) = &r {
                     self.failed.insert(kind, e.clone());
@@ -173,7 +175,7 @@ impl Analysis {
             && let Some(next) = self.queue.pop_front()
         {
             let job = match self.bodies.remove(&next) {
-                Some(body) => crate::bg::BgJob::spawn("analysis", body),
+                Some(body) => crate::bg::BgJob::on_lane(lane(), body),
                 None => spawn(next),
             };
             self.running = Some((next, job));
@@ -183,6 +185,14 @@ impl Analysis {
         }
         out
     }
+}
+
+/// The analysis lane (one-scheduler): class `Background`, so it pauses while playing or exporting
+/// (the owner's "Да", kkt-26.11.08 H15); one job at a time is the lane's own rule as well as the
+/// gate's.
+pub fn lane() -> &'static kt_time::sched::LaneRef {
+    static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
+    L.get_or_init(|| kt_time::sched::Lane::new("analysis", kt_time::sched::Class::Background))
 }
 
 /// Default task body — for kinds the subsystem can handle by itself.

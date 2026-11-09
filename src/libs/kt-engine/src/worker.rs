@@ -261,6 +261,8 @@ impl MediaWorker {
         }
         self.shared.cond.notify_all();
         if let Some(j) = self.join.take() {
+            // the decoder's last span: never on the UI or the render thread (one-scheduler)
+            let _w = kt_time::block::wait(kt_time::block::kind::JOIN);
             let _ = j.join();
         }
     }

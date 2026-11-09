@@ -6,7 +6,8 @@
 //! it steers nothing (invariant 11). It lives here because every crate that does the work depends
 //! on this one.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// One kind of job. Append only: the load report names them by [`Work::name`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,6 +107,32 @@ pub fn bump(w: Work) {
 #[inline]
 pub fn add(w: Work, n: u64) {
     COUNTS[w as usize].fetch_add(n, Ordering::Relaxed);
+    if PARKED.load(Ordering::Relaxed) {
+        wake_watcher();
+    }
+}
+
+/// A watcher parked until work moves (one-scheduler: the load watch at rest, row 122).
+static PARKED: AtomicBool = AtomicBool::new(false);
+static WATCHER: Mutex<Option<std::thread::Thread>> = Mutex::new(None);
+
+#[cold]
+fn wake_watcher() {
+    if PARKED.swap(false, Ordering::AcqRel)
+        && let Some(t) = WATCHER.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
+    {
+        t.unpark();
+    }
+}
+
+/// Park this thread until any counter moves: no clock. The counter that wakes it costs its
+/// bumper one relaxed load while nobody is parked.
+pub fn park_until_work() {
+    *WATCHER.lock().unwrap_or_else(|e| e.into_inner()) = Some(std::thread::current());
+    PARKED.store(true, Ordering::SeqCst);
+    while PARKED.load(Ordering::Acquire) {
+        std::thread::park();
+    }
 }
 
 /// The running total of one kind.
@@ -116,4 +143,29 @@ pub fn count(w: Work) -> u64 {
 /// The running totals, in the order of [`Work::ALL`].
 pub fn totals() -> [u64; Work::ALL.len()] {
     std::array::from_fn(|i| COUNTS[i].load(Ordering::Relaxed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test t2241 (one-scheduler, row 122): a watcher parked until work moves stays parked while
+    /// nothing is counted and wakes at the first count.
+    #[test]
+    fn t2241_a_parked_watcher_wakes_on_work_only() {
+        let woke = std::sync::Arc::new(AtomicBool::new(false));
+        let w = woke.clone();
+        let h = std::thread::spawn(move || {
+            park_until_work();
+            w.store(true, Ordering::Release);
+        });
+        while !PARKED.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!woke.load(Ordering::Acquire), "the watcher woke with nothing counted");
+        bump(Work::SchedJob);
+        h.join().unwrap();
+        assert!(woke.load(Ordering::Acquire));
+    }
 }

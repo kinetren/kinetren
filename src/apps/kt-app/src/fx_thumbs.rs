@@ -18,7 +18,7 @@
 use eframe::egui;
 use kt_model::{FxInstance, MediaId};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// The reference size of the computation is the size of the source thumbnail (`thumbs::THUMB_W/H`).
@@ -37,9 +37,6 @@ pub const MAX_READY_FX: usize = 256;
 /// once — but for the decode ORDERS: asking for the thumbnail
 /// of a missing frame before this deadline means paying for opening the file for a random click.
 pub const DECODE_GUARD: std::time::Duration = std::time::Duration::from_millis(800);
-/// The pause between renders when the system is busy (game, export): the queue is LIFO,
-/// so fresh cells are still first anyway.
-const BUSY_PAUSE: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// What to compute the thumbnail on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -159,29 +156,23 @@ impl JobQueue {
 }
 
 pub(crate) struct Shared {
-    cond: std::sync::Condvar,
     queue: Mutex<JobQueue>,
     ready: Mutex<HashMap<FxThumbKey, Arc<egui::ColorImage>>>,
     order: Mutex<VecDeque<FxThumbKey>>,
+    /// The UI frame each ready cell was last shown in (row 114): the cap never evicts a cell the
+    /// last two frames drew, or a gallery wider than the cap orders its cells round in a circle.
+    shown: Mutex<HashMap<FxThumbKey, u64>>,
     generation: AtomicU64,
-    /// The system is busy (game/export) — “slow down” (rule 12
-    /// of the checklist: background work does not get in the way).
-    busy: AtomicBool,
-    /// The owner has died — the thread must exit (the `bg.rs` doctrine:
-    /// the task and the service are shut down together with their owner).
-    stop: AtomicBool,
 }
 
 impl Shared {
     fn new() -> Arc<Shared> {
         Arc::new(Shared {
-            cond: std::sync::Condvar::new(),
             queue: Mutex::new(JobQueue::default()),
             ready: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
+            shown: Mutex::new(HashMap::new()),
             generation: AtomicU64::new(0),
-            busy: AtomicBool::new(false),
-            stop: AtomicBool::new(false),
         })
     }
 
@@ -191,11 +182,18 @@ impl Shared {
         if ready.insert(key, img).is_none() {
             order.push_back(key);
         }
-        while order.len() > MAX_READY_FX {
-            if let Some(old) = order.pop_front() {
-                ready.remove(&old);
-            }
+        let mut shown = self.shown.lock().unwrap();
+        crate::thumbs::evict_unshown(&mut order, MAX_READY_FX, &mut shown, |old| {
+            ready.remove(old);
+        });
+    }
+
+    fn get(&self, key: &FxThumbKey) -> Option<Arc<egui::ColorImage>> {
+        let got = self.ready.lock().unwrap().get(key).cloned();
+        if got.is_some() {
+            self.shown.lock().unwrap().insert(*key, crate::thumbs::frame_now());
         }
+        got
     }
 }
 
@@ -213,18 +211,18 @@ struct TexCache {
 pub struct FxThumbService {
     shared: Arc<Shared>,
     tex: std::cell::RefCell<TexCache>,
-    worker: Option<std::thread::JoinHandle<()>>,
+    /// The service's lane on the scheduler (one-scheduler): class `Visible`, so it pauses while
+    /// playing or exporting by the scheduler's votes (it slept 25 ms between cells then); no thread
+    /// of its own, no 1 s timer.
+    lane: kt_time::sched::LaneRef,
 }
 
 impl FxThumbService {
     pub fn start() -> FxThumbService {
         let shared = Shared::new();
         let sh = shared.clone();
-        let worker = std::thread::Builder::new()
-            .name("fxthumbs".into())
-            .spawn(move || worker(sh))
-            .expect("spawn fxthumbs");
-        FxThumbService { shared, tex: std::cell::RefCell::new(TexCache::default()), worker: Some(worker) }
+        let lane = kt_time::sched::Lane::service("fx-thumbs", kt_time::sched::Class::Visible, move |ctx| pump(&sh, ctx));
+        FxThumbService { shared, tex: std::cell::RefCell::new(TexCache::default()), lane }
     }
 
     /// Enqueue a request (dedup). Drawing is never blocked.
@@ -235,12 +233,12 @@ impl FxThumbService {
         let mut q = self.shared.queue.lock().unwrap();
         if q.push(job) {
             drop(q);
-            self.shared.cond.notify_one();
+            self.lane.kick();
         }
     }
 
     pub fn get(&self, key: &FxThumbKey) -> Option<Arc<egui::ColorImage>> {
-        self.shared.ready.lock().unwrap().get(key).cloned()
+        self.shared.get(key)
     }
 
     /// The current generation (carried by the requests).
@@ -253,7 +251,6 @@ impl FxThumbService {
     /// and reopening the picker usually asks for the same cells.
     pub fn bump_generation(&self) {
         self.shared.generation.fetch_add(1, Ordering::Relaxed);
-        self.shared.cond.notify_all();
     }
 
     /// The media stayed the same, but the PICTURE changed
@@ -286,11 +283,6 @@ impl FxThumbService {
             }
         }
         Some(id)
-    }
-
-    /// System busy state: playing or export in progress.
-    pub fn set_busy(&self, busy: bool) {
-        self.shared.busy.store(busy, Ordering::Relaxed);
     }
 
     /// Whether there are unfinished requests. The redraw
@@ -397,13 +389,11 @@ impl<'a> PickerCtx<'a> {
 
 impl Drop for FxThumbService {
     fn drop(&mut self) {
-        self.shared.stop.store(true, Ordering::Relaxed);
-        self.shared.cond.notify_all();
         // a frame on the device when the process exits kills it: LLVM goes down under llvmpipe's
-        // threads (gpu-render-hardening, D6, t1644)
-        if let Some(w) = self.worker.take() {
-            let _ = w.join();
-        }
+        // threads (gpu-render-hardening, D6, t1644): the lane closes and its running cell ends
+        self.lane.close();
+        let _join = kt_time::block::wait(kt_time::block::kind::JOIN);
+        self.lane.wait_idle(std::time::Instant::now() + std::time::Duration::from_secs(30));
     }
 }
 
@@ -465,26 +455,19 @@ pub(crate) fn render_job(job: &FxThumbJob) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied([CELL_W as usize, CELL_H as usize], &cell)
 }
 
-fn worker(shared: Arc<Shared>) {
+/// One run of the service: render cells newest first until the queue is empty (`Idle`) or the
+/// class pauses (`More`: run again on resume).
+fn pump(shared: &Shared, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
+    use kt_time::sched::Pump;
     loop {
-        if shared.stop.load(Ordering::Relaxed) {
-            return;
+        if ctx.cancelled() {
+            return Pump::Idle;
         }
-        let job = {
-            let mut q = shared.queue.lock().unwrap();
-            loop {
-                if shared.stop.load(Ordering::Relaxed) {
-                    return;
-                }
-                let cur = shared.generation.load(Ordering::Relaxed);
-                if let Some(job) = q.pop(cur) {
-                    break job;
-                }
-                let (guard, _t) =
-                    shared.cond.wait_timeout(q, std::time::Duration::from_secs(1)).unwrap();
-                q = guard;
-            }
-        };
+        if ctx.paused() {
+            return Pump::More;
+        }
+        let cur = shared.generation.load(Ordering::Relaxed);
+        let Some(job) = shared.queue.lock().unwrap().pop(cur) else { return Pump::Idle };
         if shared.ready.lock().unwrap().contains_key(&job.key) {
             continue;
         }
@@ -493,9 +476,7 @@ fn worker(shared: Arc<Shared>) {
         // (the key addresses exactly this picture), but computing
         // the next stale requests is not — pop() will drop them
         shared.publish(job.key, Arc::new(img));
-        if shared.busy.load(Ordering::Relaxed) {
-            std::thread::sleep(BUSY_PAUSE);
-        }
+        crate::wake::soon();
     }
 }
 
