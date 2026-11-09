@@ -884,6 +884,16 @@ class Live:
             return True
         if os.environ.get("KT_LIVE_DEBUG_WAIT"):
             print(f"      [TIMEOUT] {what}: {time.time() - _t0:.2f} s", file=sys.stderr)
+        if what.startswith("key"):
+            # a key the program never read names where the X server sent it (test-hygiene: Ctrl+F
+            # and Ctrl+Z in a freshly started program went nowhere under the full live run)
+            try:
+                f = probe.d.get_input_focus().focus
+                w = probe.window()
+                print(f"   note: {what} was not read; the X focus is {getattr(f, 'id', f)}, "
+                      f"the program's window {w.id}", flush=True)
+            except (Exception, SystemExit):
+                pass
         pause(
             0.25,
             "the program did not read the gesture in time: an event that egui legitimately "

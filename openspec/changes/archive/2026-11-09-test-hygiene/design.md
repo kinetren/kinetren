@@ -187,6 +187,8 @@ a second on a loaded machine for as long as the check took, competing with it. R
 | `generator` | proof run 1 | the undo's 20 attempts ran out | D10 `poll_step` |
 | `space_hold` | a quick run | the dump stood 17 s on the disk while the program played | D9 |
 | `formula` | proof run 5, 2 of 3 sets | the double click's two clicks read as two single clicks: the first on the event (seek 14.990), the second 50 ms later on empty space at its edge (seek 12.000) — the view or the zoom moved between them; cause NOT found | found-defects 254; the first try keeps the stand's journal and trace |
+| `readme_shots`, `generator` | proof run 6 | a key (Ctrl+F, Ctrl+Z) into a freshly started program never read, though the X server had named its window focused before the key | found-defects 255; `key()` prints where the X server sent an unread key |
+| `gpufx` | proof run 6 | "the picture stays on the device" read once under load | not examined (green on the retry, not one of this change's rows) |
 | `lessons` | proof run 5 | "Start the tour" clicked where the button had been: the welcome window re-centres for several frames after a resize | `_probe_rect` returns a rectangle that held in two dumps a frame apart |
 | `formula` | proof run 3, all three sets | the click on Done was read by a frame seconds after it was sent (a save's fsync held the UI 2–3.6 s, found-defects 252); measured from the send, the double click fell in egui's triple window, and a triple click on an event closes the window its double click opened | `click()` dates a click when the program has read it |
 | `morph` | proof run 3 | the brightness read right after the click | `app.until` |
@@ -211,6 +213,7 @@ a second on a loaded machine for as long as the check took, competing with it. R
 
 - Ctrl+S holds the UI thread for seconds on a busy disk (found-defects 252).
 - `formula`'s reopening double click is two single clicks under load (found-defects 254), cause not found.
+- A key into a freshly started program is lost under load (found-defects 255), cause not found.
 
 - `heavy_loop` lap 20 of the baseline: one moment composed because "layer 6 (source 5) is another
   stream frame" than the lap before: a Datamosh stage's output for one moment differed across laps.

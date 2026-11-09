@@ -35,9 +35,24 @@
 - [x] 5.1 `forms`, `stills`, `loop`, `readme_shots`, `unsaved`, `space_hold`, `fxpreset`
 - [x] 5.2 `heavy_loop`, `cached_range`: the trace's reasons; `idle.wait_quiet` asks the threads too
 
-## 6. Proof and records
+## 6. The bench's channel and gestures (from the proof runs)
 
-- [ ] 6.1 three full live sets in parallel with `cargo test --workspace`, three times, no lone-retry pass
-  for the listed scenarios
-- [ ] 6.2 `docs/found-defects.md`: closed rows leave, rows 250–251 added; `docs/engine-audit.md` row 12
-- [ ] 6.3 `cargo test` of kt-app, kt-engine, kt-cli; clippy; target-prune; archive
+- [x] 6.1 the dump and `ctl` on tmpfs (`_channel.py`); the stand's journal and trace kept with a red
+- [x] 6.2 `poll_step` waits for a frame the program draws by itself; `focus()` asks the X server; a
+  closing program and a stopped stand are gone when their window is; `_wait_ctl` waits while the
+  stand draws; a click is dated when read; `_probe_rect` takes a rectangle that held two dumps
+- [x] 6.3 scenarios red in the proof runs read consequences (idle, decode_storm, nestparam, stills,
+  generator, morphgrid, morph, gpu_record, lessons, track)
+
+## 7. The recheck of kept moments (product, rows 133, 170)
+
+- [x] 7.1 no frame polls `final_pending`; t2217 (red on the former code)
+
+## 8. Proof and records
+
+- [x] 8.1 six proof runs of three full live sets beside `cargo test --workspace`: the workshop green in
+  all; first-try reds 12–14 per proof at the start (and in the baseline), 4–5 in the last three; the
+  listed rows' scenarios green on the first try except `formula` (found-defects 254) and one
+  `readme_shots` key (found-defects 255)
+- [x] 8.2 `docs/found-defects.md`: closed rows leave, rows 250–255 added; `docs/engine-audit.md` row 12
+- [x] 8.3 `cargo test` (the proof runs' workspace runs); clippy; target-prune; archive
