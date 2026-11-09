@@ -453,3 +453,16 @@ their tests had ended.
   has an empty envelope, unread. The pass asks `stop` before every burst, and a stopped pass stores
   nothing, because a damaged header can promise hours of what is not there.
 
+
+## One scheduler for background work (one-scheduler, 2026-11-09)
+
+The services had a thread each, ten queue disciplines and seven timers at rest (`docs/engine-audit.md`
+§2b). They are lanes of `kt_time::sched` now: a producer's FIFO, one job at a time, so each keeps the
+order its thread gave it; a pool of a quarter of the cores (3 to 6) keeps one worker for the person's
+answers; a playing player and an export vote the visible and background classes paused (the owner's
+"Да", kkt-26.11.08 H15). Rejected: one priority queue of individual jobs — a service's own queue
+already knows its order (thumbs LIFO, posters replaced by file, effect cells by generation).
+Invariant 5: decoder owners stay threads; the thumbnail pump drops its open sources at the end of
+each run, because the next run may land on another worker. A ready LRU stamps what each UI frame
+drew and never evicts it (row 114). The class walk of every thread and timed wait, with each one's
+new home, is in `openspec/changes/archive/2026-11-09-one-scheduler/design.md`.

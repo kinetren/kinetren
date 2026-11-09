@@ -29,6 +29,6 @@
 
 ## 5. Proof and archive
 
-- [ ] 5.1 Live scenario `sched_pause`: play while thumbnails and analysis are pending; PATH line
-- [ ] 5.2 Trace of a pause and CPU at rest on the heavy showcase, before/after
+- [x] 5.1 Live scenario `sched_pause`: play while thumbnails and analysis are pending; PATH line
+- [x] 5.2 Trace of a pause and CPU at rest on the heavy showcase, before/after
 - [x] 5.3 The class walk in `design.md`; specs; What's new; found-defects rows; archive

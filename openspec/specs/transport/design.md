@@ -245,3 +245,15 @@ built: an FFT that allocates its scratch lazily must not do it in the callback. 
   `Project` (the clone is 0.14 ms on 1977 events and is now one per state).
 - Left: a generator value edit still asks `gen_sources` on the UI thread (found-defects row 190).
   The record of the change: `openspec/changes/archive/2026-11-09-edit-without-rebuild/design.md`.
+
+## A pause parks with no clock (one-scheduler, 2026-11-09)
+
+The render thread woke every 250 ms and prefetch every 100 ms on a pause "to pick up the tail".
+The tail is now two short passes after a pause; then both wait for `Wake`'s notify count to move
+from what they saw before their last look at the state, so a notify between the look and the wait
+is never lost. Every input either thread acts on notifies (play, pause, seek, rate, preview
+quality, loop region, a published build, a retune, a replaced source, the drop); the rate and the
+quality did not before (the timer covered them). t2144 had relied on prefetch's first pass coming
+100 ms after the quality was set; it stands the playhead past its frame now. The audio output
+stream itself still hands out silence at rest (cpal's pause does not stop it on ALSA/PipeWire):
+found-defects row 274.

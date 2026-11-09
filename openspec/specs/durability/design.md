@@ -224,3 +224,13 @@ message) under it; a lock keeps the first writer whole. The same mechanism, walk
 report has one owner by design (`OWNER`, the first signal wins); the supervisor appends its native
 section to a fresh panic report instead of replacing it; kt-cli's panics print to stderr, which
 keeps every one. t2089.
+
+## Ctrl+S and media gestures off the UI thread (one-scheduler, 2026-11-09)
+
+Ctrl+S wrote and synced twice on the UI thread (6.7 s on a busy disk, row 98); a file dropped on
+the timeline was opened twice there, and Undo of its arrival joined a decoder there (row 148). They
+run on the scheduler's `save` and `media` lanes; the UI takes the answer within `ANSWER_GRACE` (3 ms,
+the test bound under `cfg(test)`, as `COMPOSE_GRACE`) or in a later frame. A save supersedes only a
+queued save of the same file (a global key let two tests cancel each other's). The asterisk clears
+only if no edit came while the file was written. `kt_time::block` counts what is left (t2236): the
+opening of a project still builds and opens on the UI thread (row 270).
