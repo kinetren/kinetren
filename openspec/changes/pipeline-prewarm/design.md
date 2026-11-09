@@ -81,10 +81,12 @@ thread, and compiles there: the frame's submission waited behind 15 s of warm dr
   --warm-elsewhere`, an experiment kept in the instrument): warming on another device leaves the first
   frames 197 ms of excess in all, against 4056 ms with `MESA_SHADER_CACHE_DISABLE=true` — the gain is
   the driver's disk cache, and it needs the same adapter, backend and driver. **Vulkan only**: the
-  first live run had the shadow on GL too (the live check's `WGPU_BACKEND=gl`), and a second EGL device
-  opened and dropped on the worker thread left the watched device's context unusable — `BadAccess` at
-  its next call, a panic on the compose and export threads (render, renderregion and idle red). On GL
-  the worker warms the watched device alone, one pipeline at a time. The shadow lives for one
+  first live run had the shadow on GL too (the live check's `WGPU_BACKEND=gl`) on a tree where every GL
+  device still shared one EGL context; the shadow's extra device made the watched one fail with
+  `BadAccess` (render, renderregion and idle red). segv-crashes has since given each GL device an
+  instance of its own (merged here), and the GL shadow no longer breaks anything (t2128 green with it),
+  but its gain was measured on Vulkan only: on GL the worker warms the watched device alone, one
+  pipeline at a time. The shadow lives for one
   run of the worker and goes with it.
 
 After both: the showcase's first moment 13.3 s against 12.6 s before (the frame asked at once compiles
@@ -182,4 +184,12 @@ Release, llvmpipe 20.1.2 on Vulkan, 1080p, the machine shared (load 6–7), `kt-
 The disk tier on lavapipe: `PIPELINE_CACHE` is offered and the blob is 96 bytes — its header; lavapipe
 keeps no binaries there and Mesa's own disk cache serves it. A card's driver fills it.
 
-CPU at rest on the heavy showcase: the live scenario `idle` (D9).
+CPU at rest on the heavy showcase (live scenario `idle`, the real editor on llvmpipe GL under Xvfb):
+the program is quiet 9 s after opening (the warm-up included); a pause costs 2 % of a core (the load
+watch and the scenario's control thread), no counter moves, no `pipeline-warm` or `compute-warm` thread
+is left. The worker ends when its queue is empty and the player asks it again only when the project's
+set of effects changes (t2127).
+
+Live scenarios `render`, `renderregion`, `idle`, `gpufx`, `datamosh`: green (`idle` on its second, lone
+try — row 166, reds under load; `renderregion` once its stale crash file from this change's first runs
+was removed — row 165).

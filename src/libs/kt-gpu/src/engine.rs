@@ -1181,9 +1181,9 @@ impl GpuFxEngine {
                 ai.name
             )));
         }
-        // a shadow device (pipeline-prewarm D2b) for a watched software rasterizer on Vulkan only: on
-        // GL a second EGL device opened and dropped on the worker left the watched device's context
-        // unusable (`BadAccess` at its next call, the live check)
+        // a shadow device (pipeline-prewarm D2b) for a watched software rasterizer, on Vulkan: the gain
+        // (the driver's disk cache carrying the code over) was measured there; on GL each device needs
+        // an EGL instance of its own (segv-crashes), and the shadow's would buy nothing measured
         let shadow = info.software && !export && ai.backend == wgpu::Backend::Vulkan;
         let c = crate::compiled::for_device(&device, &queue, ai, keep && !compile_only, shadow)?;
         if compile_only {

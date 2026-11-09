@@ -38,6 +38,11 @@ behind it (16.0 s against 12.8 s).
 - **THEN** the frame draws nothing cold and creates no pipeline; once the worker settles the shape has its own pipeline, and the next frame gives the first frame's bytes
 - **TEST** t2121 (`src/libs/kt-gpu/tests/prewarm.rs`)
 
+#### Scenario: A prewarmed GL engine keeps composing
+- **WHEN** on the GL backend a software engine is prewarmed with every effect, composes a frame, and another engine opens and composes
+- **THEN** both frames compose, and the first draws nothing cold
+- **TEST** t2128 (`src/libs/kt-gpu/tests/prewarm_gl.rs`)
+
 #### Scenario: The player asks only when the reach changes
 - **WHEN** an executor arrives on a project with Glow on a track, the project is edited without a new effect, then a composition with VHS Tape inside is added
 - **THEN** the executor is asked once with Glow on arrival, not at the plain edit, and once more with Glow and VHS Tape

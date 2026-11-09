@@ -1,8 +1,9 @@
 //! t2128 (pipeline-prewarm D2b; capability `video-plan`): on the GL backend (the live check's
 //! `WGPU_BACKEND=gl`) a prewarmed software engine keeps composing on the caller's thread, and another
-//! engine opens after it. The first version opened a shadow device on GL too; dropping it on the warm
-//! worker left the watched device's EGL context unusable, and the next frame panicked with
-//! `BadAccess`. Its own test binary: the backend is chosen once per process. No GL adapter: skip.
+//! engine opens after it. The first version opened a shadow device on GL beside the watched one; on a
+//! tree where GL devices still shared one EGL context (before segv-crashes' `own_instance`) the next
+//! frame panicked with `BadAccess`, and the live render scenarios went red. Its own test binary: the
+//! backend is chosen once per process. No GL adapter: skip.
 
 use std::sync::Arc;
 
