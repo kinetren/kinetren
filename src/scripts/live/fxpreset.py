@@ -56,7 +56,9 @@ def open_fx_window(app, tag):
     app.double_click(app.x_at(3 * SEC), y)
     app.shot(f"{tag}-fx")
     d = app.screen_diff(before)
-    app.expect(d > 0.01, f"{tag}: FX window opened (the screen changed by {d:.1%})")
+    # the program's own word that the window is there (test-hygiene): a double click split by a
+    # slow frame into two single clicks selects the event, and that changed the screen by 1 % too
+    app.expect(app.until(lambda: app.has_probe("fx.done", tries=1)), f"{tag}: FX window opened (the screen changed by {d:.1%})")
 
 
 def main(out):

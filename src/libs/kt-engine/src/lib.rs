@@ -35,7 +35,7 @@ pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use flight::{FlightRecorder, Snap as FlightSnap};
 pub use fxstore::FxStateStore;
 pub use player::{
-    AudioShared, Player, VideoBackendStatus, VideoCost, callback_step, hold_builds_for_tests,
+    AudioShared, Player, VideoBackendStatus, VideoCost, callback_step, hold_builds_for_tests, hold_start_bursts_for_tests,
     lookahead_windows,
     reverse_frames, varispeed_fill,
 };

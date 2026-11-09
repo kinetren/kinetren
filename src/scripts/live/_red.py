@@ -10,6 +10,8 @@ NO_DISPLAY = True
 
 def main(out):
     os.makedirs(out, exist_ok=True)
+    # what a red try leaves: t2210 finds it in `first-try/` after the lone retry
+    open(os.path.join(out, "01-step-red.png"), "w").close()
     print("   FAIL stub scenario red always")
     return 1
 

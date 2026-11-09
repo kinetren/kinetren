@@ -368,8 +368,10 @@ class Shooter:
         for off in (5, 8, 3, 11):
             x = win["x"] + int(bin_["right"]) + off
             app.drag(x, y, x + int(width - (bin_["right"] - bin_["left"])), y)
-            now = app.geom()["bin"]
-            if now["right"] - now["left"] > bin_["right"] - bin_["left"] + 50:
+            # the width read as a consequence, from fresh dumps (test-hygiene): the dump right
+            # after the release can be one written before it landed
+            wide = lambda: app.geom()["bin"]["right"] - app.geom()["bin"]["left"] > bin_["right"] - bin_["left"] + 50  # noqa: E731
+            if app.until(wide, timeout=5.0):
                 return
         self.require(step, False, f"the bin panel widened (still {app.geom()['bin']})")
 

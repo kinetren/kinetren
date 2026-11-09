@@ -902,7 +902,9 @@ class Live:
         self.raise_once()
         # egui counts a click within 0.6 s of the click before last as the third of a triple, and
         # a triple is no double click: a click just before this gesture took it away, every time
-        while time.time() - self._clicked_at < TRIPLE_WINDOW + self._dt:
+        # the program widens egui's double-click window by its busy frame (test-hygiene), and the
+        # triple window is twice that: 2 × (0.3 + frame) after the click before last
+        while time.time() - self._clicked_at < TRIPLE_WINDOW + 3 * self._dt:
             _poll()
         # a frame AFTER the hover: the first click at the fresh position is otherwise lost
         # together with the input frame
@@ -1553,7 +1555,8 @@ class Live:
             "the program did not write the project after Ctrl+S, although there are edits; "
             f"its status line: “{g.get('status', '')}”, frame {g.get('frame')} (Ctrl+S at "
             f"{mark[0]}), input {g.get('input')} (at {mark[1]}), windows {g.get('windows')}, "
-            f"questions {asks}, clips {len(g.get('clips', []))}"
+            f"questions {asks}, clips {len(g.get('clips', []))}, a text field holds the keys: "
+            f"{g.get('keys_gated')}"
         )
 
     def project_text(self):

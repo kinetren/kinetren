@@ -1625,6 +1625,17 @@ pub fn hold_builds_for_tests(ms: u64) {
     BUILD_HOLD_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// How long the render thread stands after each burst of a START's pass (tests only, t2216): the
+/// render thread put off between two bursts on a loaded machine, made to happen on any machine.
+/// Zero in the product.
+static START_BURST_HOLD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Hold the render thread by `ms` after each burst of a start's pass (tests only).
+#[doc(hidden)]
+pub fn hold_start_bursts_for_tests(ms: u64) {
+    START_BURST_HOLD_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The sources the player raised and what it knows of them, shared by the UI thread (a file
 /// added, replaced, retuned) and the builder thread (the generator sources of a version).
 pub(crate) struct MediaParts {
@@ -1896,6 +1907,9 @@ fn audio_render_loop(ctx: RenderCtx) {
     let mut loop_armed = loop_arm_after_jump(render_head, last_region, 1);
     let mut last_effective_some = loop_armed && last_region.is_some();
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
+    // The first pass after a start, held back from the callback until it is whole (test-hygiene,
+    // found-defects 158). Allocated once, here: the loop allocates nothing.
+    let mut start_pass: Vec<f32> = Vec::with_capacity(RING_CAPACITY_FRAMES * AUDIO_CHANNELS);
     // “black box” counters (item 10): deltas per second, not absolutes
     let (mut last_ru, mut last_cu, mut last_warm) = (0u64, 0u64, 0u64);
     let mut warmups = 0u64;
@@ -2176,6 +2190,13 @@ fn audio_render_loop(ctx: RenderCtx) {
                 || (audio_missing
                     && start_wait.get_or_insert_with(std::time::Instant::now).elapsed()
                         < START_AUDIO_GRACE);
+            // THE START'S PASS IS HANDED OVER WHOLE (test-hygiene, found-defects 158). The callback
+            // primes on the first frames in the ring and from then on time runs; the pass pushed
+            // burst by burst, and a render thread put off between two bursts on a loaded machine
+            // (a pass of the 1974-event edit rendered live is 83 ms in debug) let the callback eat
+            // the first bursts and underrun before the ring had ever been full. Time stands before
+            // the first frame, so holding the pass costs no sync.
+            let whole_pass = starting && !hold;
             if !hold {
                 starting = false;
                 start_wait = None;
@@ -2196,7 +2217,9 @@ fn audio_render_loop(ctx: RenderCtx) {
             let (mut live_frames, mut kept_frames) = (0u64, 0u64);
             // we fill the ring: render_head is linear, loop mapping is inside
             // render_looped_with (the wrap does NOT bump the generation — FX live)
-            while !hold && producer.slots() >= chunk.len() {
+            let mut room = producer.slots();
+            let mut pass_bursts = 0;
+            while !hold && room >= chunk.len() {
                 let stats = if dir < 0 {
                     kt_time::work::bump(kt_time::work::Work::AudioRender);
                     // reverse (J4 v1.4): the block BEFORE render_head, the material is
@@ -2251,9 +2274,32 @@ fn audio_render_loop(ctx: RenderCtx) {
                     }
                 }
                 meters.fold(&chunk);
-                for &s in chunk.iter() {
-                    let _ = producer.push(s);
+                // the seam of t2216, a ring's worth of bursts: zero in the product
+                pass_bursts += 1;
+                let held_ms = if whole_pass && pass_bursts <= RING_CAPACITY_FRAMES / AUDIO_BURST_FRAMES {
+                    START_BURST_HOLD_MS.load(Ordering::Relaxed)
+                } else {
+                    0
+                };
+                if held_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(held_ms));
                 }
+                if whole_pass {
+                    start_pass.extend_from_slice(&chunk);
+                    room -= chunk.len();
+                } else {
+                    for &s in chunk.iter() {
+                        let _ = producer.push(s);
+                    }
+                    room = producer.slots();
+                }
+            }
+            if !start_pass.is_empty() {
+                // one commit: the callback sees nothing of the pass, then all of it
+                if let Ok(c) = producer.write_chunk_uninit(start_pass.len()) {
+                    c.fill_from_iter(start_pass.drain(..));
+                }
+                start_pass.clear();
             }
             if live_frames + kept_frames == 0 {
                 fill.cancel();

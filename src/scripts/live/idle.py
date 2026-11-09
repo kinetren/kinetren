@@ -91,18 +91,53 @@ class Meter:
         return {k: round(v) for k, v in self.threads.items() if k != "load-watch" and v >= UNCOUNTED_PERCENT}
 
 
+# the live bench's own threads: they answer the scenario, not the program's work
+BENCH_THREADS = ("load-watch", "live-ctl", "geom-dump")
+# what a thread at rest may take while the quiet is judged: below the "pause at 2 % of a core"
+QUIET_PERCENT = 5.0
+
+
+def wakes(app):
+    """What asked for the frames that read no input so far: {"file:line": count} (the dump's
+    `rest_wakes`, the bench only)."""
+    out = {}
+    for part in (app.geom().get("rest_wakes") or "").split(", "):
+        if "×" in part:
+            k, n = part.rsplit("×", 1)
+            out[k] = int(n)
+    return out
+
+
+def woke(app, before):
+    """The repaint causes of the frames with no input since `before` (a `wakes` reading)."""
+    now = wakes(app)
+    return {k: n - before.get(k, 0) for k, n in now.items() if n > before.get(k, 0)}
+
+
+def program_ticks(sample):
+    """The program's processor ticks so far, the bench's own threads left out."""
+    return sum(v for k, v in sample["ticks"].items() if k not in BENCH_THREADS)
+
+
 def wait_quiet(meter, step):
-    """Everything the opening started is over, and nothing runs."""
-    t0, last, since = time.time(), meter.read()["work"], time.time()
+    """Everything the opening started is over, and nothing runs: no counter moved AND no thread of
+    the program worked for QUIET_S (test-hygiene, found-defects 133/170). A job in flight moves its
+    counter only when it ends: on a loaded machine a reel preview or a recheck ran past three still
+    seconds, landed in the next window, and that window's "rest" saw its frames."""
+    first = meter.read()
+    t0, last, since, ticks0 = time.time(), first["work"], time.time(), program_ticks(first)
     while time.time() - t0 < QUIET_LIMIT_S:
         kt_live._poll(0.25)
-        now = meter.read()["work"]
-        if now != last:
-            last, since = now, time.time()
+        sample = meter.read()
+        now = sample["work"]
+        busy = (program_ticks(sample) - ticks0) / max(time.time() - since, 0.25)
+        if now != last or busy > QUIET_PERCENT:
+            last, since, ticks0 = now, time.time(), program_ticks(sample)
         elif time.time() - since >= QUIET_S:
             print(f"   {step}: quiet after {time.time() - t0:.0f} s")
             return
     raise Failure(f"{step}: still working after {QUIET_LIMIT_S:.0f} s of a pause: {last}")
+
 
 
 def sweep(app, a, b):
@@ -133,11 +168,11 @@ def main(out):
         # a screenshot's wait pokes the stand for a frame: that is the scenario's own work
         wait_quiet(meter, "after the screenshot")
 
-        t0 = trace_bytes(out)
+        t0, w0 = trace_bytes(out), wakes(app)
         work, cpu = meter.over(5.0)
         grew = trace_bytes(out) - t0
         print(f"   pause: {work}, {cpu:.0f} % of a core, threads {meter.threads}, trace +{grew} bytes")
-        app.expect(not work, f"a pause runs nothing, ran {work}")
+        app.expect(not work, f"a pause runs nothing, ran {work}; frames with no input were asked by: {woke(app, w0)}")
         app.expect(grew == 0, f"a pause records nothing in the trace: +{grew} bytes")
         app.expect(not meter.uncounted(work), f"a pause holds a thread no counter sees: {meter.uncounted(work)}")
 
@@ -168,8 +203,9 @@ def main(out):
             # events out, about every second frame. The limit is hover-static-load's to set.
             print(f"   over the {name}: {work.get('event_passes', 0)} event passes in {frames} frames")
             wait_quiet(meter, f"after the {name}")
+            w0 = wakes(app)
             work, cpu = meter.over(2.0)
-            app.expect(not work, f"after the {name}: rest again, ran {work}")
+            app.expect(not work, f"after the {name}: rest again, ran {work}; frames with no input were asked by: {woke(app, w0)}")
 
         # its effects: the chain of Slowed, VHS Tape and Camera ISP in the window
         app.click(x_reel, y_reel)

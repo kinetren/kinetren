@@ -164,3 +164,47 @@ fn t1846_a_long_frame_says_which_stage_waited() {
     assert!(!wall.contains("centre"), "a stage under a millisecond is named: {wall}");
     assert!(!wall.contains("frame"), "the frame itself is not a stage of itself: {wall}");
 }
+
+/// Test t2215 (test-hygiene, `ui_wait` at load 142): a long frame's note says how long the UI thread stood
+/// ready with no processor. `ui_wait` judged a frame's wall time, and at load 142 a frame of 10 ms of
+/// work stood 410 ms: the machine, not a lock. The reading grows when the thread competes for the
+/// cores, and does not when it sleeps.
+#[test]
+fn t2215_the_run_queue_wait_is_read_apart_from_a_sleep() {
+    use crate::frame_cost::run_delay_ns;
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    let slept0 = run_delay_ns();
+    std::thread::sleep(Duration::from_millis(50));
+    let slept = run_delay_ns() - slept0;
+    // every core busy several times over, and this thread among them
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spinners: Vec<_> = (0..cores * 4)
+        .map(|_| {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    std::hint::spin_loop();
+                }
+            })
+        })
+        .collect();
+    let q0 = run_delay_ns();
+    let deadline = kt_time::test_deadline();
+    let mut queued = 0;
+    while queued == 0 && std::time::Instant::now() < deadline {
+        // work, not a clock: a run of spins the scheduler shares out
+        for _ in 0..2_000_000 {
+            std::hint::spin_loop();
+        }
+        queued = run_delay_ns() - q0;
+    }
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    for s in spinners {
+        s.join().unwrap();
+    }
+    assert!(queued > 0, "competing for the cores, the thread's run-queue wait did not grow");
+    assert!(slept < 50_000_000, "a sleep is not a wait for a processor: {slept} ns");
+}

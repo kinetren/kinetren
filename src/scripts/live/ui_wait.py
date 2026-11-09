@@ -15,6 +15,7 @@ journal's notes of UI frames blocked for 100 ms or more are the verdict.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -65,11 +66,16 @@ def fx_of(app, clip_id):
 
 
 def blocked(journal, since):
-    """The UI frames the journal noted as blocked since `since`, in ms."""
+    """The UI frames the journal noted as blocked since `since`, in ms: the frame's wall time less
+    what the thread stood ready with no processor (test-hygiene, `ui_wait` at load 142). At load 142 a
+    frame of 10 ms of work stood 410 ms in the run queue; that is the machine, and a wait on a lock
+    or a file is still counted whole."""
     out = []
     for at, kind, text in records(journal):
         if at >= since and kind == "NOTE" and text.startswith("the UI thread was blocked for"):
-            out.append(int(text.split()[6]))
+            ms = int(text.split()[6])
+            m = re.search(r", (\d+) ms of it waiting for a processor", text)
+            out.append(ms - (int(m.group(1)) if m else 0))
     return out
 
 

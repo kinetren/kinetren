@@ -75,11 +75,13 @@ def main(out):
             # now the click waits for the READ input, and “the picture has settled” is
             # a separate wait, requested by whoever reads the dump directly
             # (the same goes for `conform.py`).
-            app.settle()
+            # ... and read as a CONSEQUENCE (test-hygiene): the dump that `settle` leaves may be
+            # one written before the collapse landed, and on a loaded machine it was
+            app.until(lambda: len(probes(app)) < before)
             folded = len(probes(app))
             app.expect(folded < before, f"the collapse hid the fields: was {before}, became {folded}")
             app.click_probe(grp, "group heading (back)")
-            app.settle()
+            app.until(lambda: len(probes(app)) >= before - 1)
             back = len(probes(app))
             app.expect(back >= before - 1, f"expansion brought the fields back: {back} against {before}")
         app.shot("fx-folded")

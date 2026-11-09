@@ -1278,7 +1278,7 @@ impl KtApp {
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"morphers\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"rest_wakes\":\"{}\",\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
              \"on_display\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
@@ -1311,6 +1311,10 @@ impl KtApp {
             // the asterisk and the number of morphers — for the live scenario of importing an old
             // version (R.67): “there are edits” and “the morphers arrived” are otherwise not visible.
             self.dirty_content,
+            // a text field holds the keyboard: the hotkeys are not read (found-defects 47)
+            self.key_clock.gated,
+            // who asked for the frames that read no input (the bench's rest checks name it)
+            crate::bench::rest_wakes().replace('"', "'"),
             self.model.project().morphers.len(),
             // the preview compose cost (morpher-event-grid-cost): what the panel shows, as numbers
             self.perf.compose_ms_last,

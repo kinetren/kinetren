@@ -24,6 +24,7 @@ Verdicts are written to <directory>/verdicts/<scenario> (“ok” or “fail”)
 scenario — to the common stream of the worker.
 """
 import contextlib
+import glob
 import json
 import os
 import re
@@ -217,7 +218,9 @@ class Bench:
         shutil.rmtree(os.path.join(self.dir, "xdg"), ignore_errors=True)
         os.makedirs(self.store, exist_ok=True)
         subprocess.run([KT_CLI, "new", self.blank, "--force"], check=True, capture_output=True)
-        for p in (self.ctl, self.geom):
+        # the dump's companions too (`.crash.json`, `.load.json`): a crash window of an
+        # earlier stand is not this one's (found-defects 165)
+        for p in [self.ctl, self.geom] + glob.glob(glob.escape(self.geom) + ".*"):
             if os.path.exists(p):
                 os.unlink(p)
         log = open(os.path.join(self.dir, "kt-app.log"), "a")
@@ -281,6 +284,53 @@ class Bench:
         self.proc = None
 
 
+FIRST_TRY = "first-try"
+
+
+def fresh_folder(scen_out, retry):
+    """The scenario's folder before a run: EMPTY, and on the lone retry the first try kept beside.
+
+    The folder used to keep what the earlier runs left (test-hygiene, found-defects 165):
+    `renderregion` read a `geom.json.crash.json` written by a build of the day before and went
+    red twice on a render that had finished. Only `store`, `xdg` and `slept.txt` were removed
+    (R.68, R.69); everything else a scenario writes is its own evidence of THIS run.
+    The lone retry (live-check.sh, `KT_LIVE_TRY=2`) rewrote the folder of the red first try,
+    and its screenshots, dumps and log survived only as lines in the run's output (row 163): the
+    first try moves to `<scenario>/first-try/`, and the retry starts in an empty folder too.
+    """
+    kept = None
+    if retry and os.path.isdir(scen_out):
+        kept = scen_out + ".first-try"
+        shutil.rmtree(kept, ignore_errors=True)
+        shutil.rmtree(os.path.join(scen_out, FIRST_TRY), ignore_errors=True)
+        os.rename(scen_out, kept)
+    else:
+        shutil.rmtree(scen_out, ignore_errors=True)
+    os.makedirs(scen_out, exist_ok=True)
+    if kept:
+        os.rename(kept, os.path.join(scen_out, FIRST_TRY))
+
+
+def run_scenario(name, scen_out, env):
+    """Run one scenario: its lines go to the worker's stream AND into its folder (`said.txt`), so
+    a red try keeps what it said next to its screenshots."""
+    with open(os.path.join(scen_out, "said.txt"), "w", encoding="utf-8") as said:
+        proc = subprocess.Popen(
+            [sys.executable, "-u", os.path.join(HERE, f"{name}.py"), scen_out],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            said.write(line)
+        return proc.wait()
+
+
 def main():
     display, out = sys.argv[1], os.path.abspath(sys.argv[2])
     names = sys.argv[3:]
@@ -295,21 +345,7 @@ def main():
             for name in names:
                 own = wants_own_process(name)
                 scen_out = os.path.join(out, name)
-                os.makedirs(scen_out, exist_ok=True)
-                # RUN STORAGE — CLEAN ON EACH RUN (R.68):
-                # a failed run leaves a recovery file and a working place in it, and a
-                # RERUN on its own starts from another run's state: a scenario that is
-                # green by itself turned red a second time in a row, and the
-                # “red only twice” mechanism stopped telling a flake
-                # from a defect.
-                for leftover in ("store", "xdg"):
-                    shutil.rmtree(os.path.join(scen_out, leftover), ignore_errors=True)
-                # and the sleep report (R.69): a failed scenario leaves no
-                # number of its own, or the run would add the cost of the PREVIOUS time
-                try:
-                    os.unlink(os.path.join(scen_out, "slept.txt"))
-                except OSError:
-                    pass
+                fresh_folder(scen_out, retry=os.environ.get("KT_LIVE_TRY") == "2")
                 env = dict(os.environ)
                 if own:
                     # two kinetren windows on one screen — that is aiming at someone else's
@@ -325,9 +361,7 @@ def main():
                     env["KT_AUTOSAVE_SECS"] = "600"
                 print(f"== {name} ==", flush=True)
                 started = time.time()
-                rc = subprocess.run(
-                    [sys.executable, os.path.join(HERE, f"{name}.py"), scen_out], env=env
-                ).returncode
+                rc = run_scenario(name, scen_out, env)
                 # SCENARIO COST — INTO THE SHARED TABLE: the next run uses it to
                 # spread scenarios across workers (balance.py). Without it
                 # one worker gets the longest scenario and holds the whole

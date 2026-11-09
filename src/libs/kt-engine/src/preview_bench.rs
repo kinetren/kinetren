@@ -98,6 +98,14 @@ pub struct BenchReport {
     pub video_decodes: u64,
     /// Callback underruns: periods the device found the ring empty.
     pub callback_underruns: u64,
+    /// Of them, those the bench's own device thread made (test-hygiene, found-defects 158): it woke
+    /// later than the ring lasts and pulled the missed periods back to back, so not even a full
+    /// ring could have covered them. A real device's callback is a realtime thread that does not
+    /// catch up; this one is an ordinary thread a loaded machine can put off for longer than the
+    /// ring.
+    pub device_stall_underruns: u64,
+    /// The longest the device thread woke past its period, in ms.
+    pub device_late_max_ms: f64,
     /// Bursts the audio render thread produced, and of them those it ran the effects for.
     pub audio_renders: u64,
     /// What the output device played, under `capture`.
@@ -131,10 +139,13 @@ fn output_clock(
     quantum: usize,
     stop: Arc<AtomicBool>,
     capture: bool,
-) -> std::thread::JoinHandle<Vec<f32>> {
+) -> std::thread::JoinHandle<(Vec<f32>, DeviceStalls)> {
     std::thread::spawn(move || {
         let mut played = Vec::new();
+        let mut stalls = DeviceStalls::default();
         let period = Duration::from_secs_f64(quantum as f64 / AUDIO_SAMPLE_RATE as f64);
+        // what a full ring covers: a wake later than this empties it whatever the render did
+        let ring_span = Duration::from_secs_f64((ring.buffer().capacity() / 2) as f64 / AUDIO_SAMPLE_RATE as f64);
         let mut next_at = Instant::now();
         let (mut prev, mut cur, mut primed, mut phase) = ((0.0, 0.0), (0.0, 0.0), false, 0.0);
         while !stop.load(Ordering::Acquire) {
@@ -142,6 +153,9 @@ fn output_clock(
             if let Some(d) = next_at.checked_duration_since(Instant::now()) {
                 std::thread::sleep(d);
             }
+            let late = Instant::now().saturating_duration_since(next_at);
+            stalls.late_max = stalls.late_max.max(late);
+            let under0 = player_shared.callback_underruns.load(Ordering::Relaxed);
             if player_shared.flush.swap(false, Ordering::AcqRel) {
                 while ring.pop().is_ok() {}
                 primed = false;
@@ -175,9 +189,19 @@ fn output_clock(
                 },
             );
             player_shared.consumed_frames.fetch_add(consumed, Ordering::AcqRel);
+            if late >= ring_span {
+                stalls.underruns += player_shared.callback_underruns.load(Ordering::Relaxed) - under0;
+            }
         }
-        played
+        (played, stalls)
     })
+}
+
+/// What the bench's device thread did to the sound by itself (`BenchReport::device_stall_underruns`).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DeviceStalls {
+    pub underruns: u64,
+    pub late_max: Duration,
 }
 
 /// Play `[from, to)` once. The player is left paused.
@@ -310,7 +334,10 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
     r.wall_s = started.elapsed().as_secs_f64();
     player.pause();
     stop.store(true, Ordering::Release);
-    r.played = clock.join().unwrap_or_default();
+    let (played, device) = clock.join().unwrap_or_default();
+    r.played = played;
+    r.device_stall_underruns = device.underruns;
+    r.device_late_max_ms = device.late_max.as_secs_f64() * 1e3;
     if o.loop_for.is_some() {
         player.set_loop_region(None);
     }

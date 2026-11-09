@@ -116,8 +116,11 @@ def main(out):
         app.step("outside-cursor", "click at 5 s: the cursor stands left of the region")
         app.key("space")
         jumped = app.wait_playhead(lambda t: t >= 6.4 * SEC, "Play jumped to the region start")
+        # the reads before Space took effect still stand at 5 s (test-hygiene: the first read came
+        # from a dump written before the press, twice under the full run); a play on from 5 s
+        # would pass through the 1.4 s between
         app.expect(
-            jumped[0] >= 6.4 * SEC,
+            all(t <= 5 * SEC + SEC // 20 or t >= 6.4 * SEC for t in jumped),
             f"Play from outside seeks to the region start, not plays on from 5 s: {jumped[:4]}",
         )
         app.step("outside-start", "Space: the region start shows, the sound starts")

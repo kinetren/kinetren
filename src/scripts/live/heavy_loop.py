@@ -82,6 +82,22 @@ def loading(app):
     return any(f["param"] == "preview.loading" for f in app.geom()["fields"])
 
 
+# the trace's reasons for a composite on a later lap that mean kept work was lost or redone
+REDONE = ("yet composed again", "evicted from the kept composites", "was decoded again", "no kept key")
+
+
+def recomposed(answer):
+    """The reasons of the `loop` answer, laps after the second, that compose again what was kept."""
+    out, lap = [], 0
+    for line in answer.splitlines():
+        head = line.split()
+        if head and head[0].isdigit() and len(line) - len(line.lstrip()) < 6:
+            lap = int(head[0])
+        elif lap >= 2 and any(r in line for r in REDONE):
+            out.append(f"lap {lap}: {line.strip()}")
+    return out
+
+
 def main(out):
     require_tools()
     proj, clip, at, end = build(out)
@@ -107,7 +123,13 @@ def main(out):
         work, cpu = meter.over(6.0)
         composed = work.get("composites", 0) - work.get("composite_replays", 0)
         print(f"   playing the covered loop: {work}, {cpu:.0f} % of a core")
-        app.expect(composed <= 2, f"a covered loop composes nothing: {composed} composed")
+        # WHAT WAS COMPOSED AND WHY, from the run's trace (test-hygiene). A display slower than the
+        # frame rate shows a different subset of the loop's frames each lap, and a moment never shown
+        # before is composed once, the first time it is (the trace says "for the first time (kept
+        # since)"): at load 140 that was 9 of 52 over 6 s, on correct code. What the owner's "passed a
+        # hundred times still did loading" forbids is composing again what was kept
+        again = recomposed(trace_answer(out, "loop"))
+        app.expect(not again, f"a covered loop composes nothing it kept: {composed} composed, again: {again}")
         app.expect(work.get("audio_renders", 0) <= 2, f"no burst runs the effects: {work}")
         app.expect(work.get("decoded", 0) == 0, f"nothing is decoded: {work}")
 

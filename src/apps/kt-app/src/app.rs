@@ -296,6 +296,9 @@ pub struct KtApp {
     pub marker_edge_from: i64,
     /// The Space press being held (item 3 round 16, R.72). None = not held.
     pub space_press: Option<SpacePress>,
+    /// The frame clock the key gestures are judged on (test-hygiene): when this frame began and
+    /// how long a busy frame takes.
+    pub key_clock: KeyClock,
     /// Current speed-up multiplier from holding Space (None = not speeding up). After a
     /// release during playback it stays set while it decays to 1× (USABILITY 3).
     pub space_boost: Option<f32>,
@@ -938,6 +941,7 @@ impl KtApp {
             gutter_jump_from: None,
             marker_edge_from: 0,
             space_press: None,
+            key_clock: KeyClock::default(),
             space_boost: None,
             space_held_s: 0.0,
             follow_playhead: false,
@@ -1236,6 +1240,7 @@ impl KtApp {
             gutter_jump_from: None,
             marker_edge_from: 0,
             space_press: None,
+            key_clock: KeyClock::default(),
             space_boost: None,
             space_held_s: 0.0,
             follow_playhead: false,
@@ -1673,8 +1678,13 @@ impl KtApp {
         // `eframe::App::ui`. Counting in `ui()` would mean “in the product there are frames,
         // in the test there are not” — the counter guard would check the wrong thing.
         crate::bench::tick();
+        self.key_clock.begin_frame();
         if crate::bench::enabled() {
-            crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
+            let events = ui.ctx().input(|i| i.events.len());
+            crate::bench::note_inputs(events as u64);
+            if events == 0 {
+                crate::bench::note_rest_frame(ui.ctx());
+            }
         }
         // Telemetry through its one door (telemetry-identify-activity, D5): the first frame
         // starts the session, every later one is a few atomics. The first-start notice once —
@@ -1756,6 +1766,7 @@ impl KtApp {
         if ctx.options(|o| o.zoom_with_keyboard) != ui_zoom {
             ctx.options_mut(|o| o.zoom_with_keyboard = ui_zoom);
         }
+        self.key_clock.widen_clicks(&ctx);
         self.handle_keys(&ctx);
         crate::window_shell::arm_esc(&ctx, self.shell_esc.take());
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
@@ -2445,6 +2456,8 @@ impl KtApp {
         if let Some(delay) = delay {
             ctx.request_repaint_after(delay);
         }
+        // the next frame follows this one at once: its gap is this frame's work, not a rest
+        self.key_clock.animating = delay.is_some_and(|d| d <= std::time::Duration::from_millis(33));
     }
 
     /// When something on a clock needs a frame while nothing moves: the earliest of them. A new
@@ -2786,7 +2799,7 @@ impl KtApp {
             self.shuttle_rate = None;
             if self.player.transport.is_playing() {
                 self.player.pause();
-                self.paused_at = Some(std::time::Instant::now());
+                self.paused_at = Some(self.key_clock.frame_at);
             }
             self.player.set_playback_rate(self.base_rate);
             return;
@@ -2921,7 +2934,12 @@ impl KtApp {
             self.player.set_playback_rate(self.base_rate);
         }
         let dt = ctx.input(|i| i.stable_dt);
-        let past = self.space_press.is_some_and(|p| p.at.elapsed().as_millis() >= SPACE_HOLD_MS);
+        // A HOLD IS PROVEN, never guessed (test-hygiene): this frame began SPACE_HOLD_MS after the
+        // frame that read the press, and its input brought no release (`handle_keys` ran first and
+        // took the press if it did). The frame's own start, not the clock now: a slow frame that
+        // read a tap's press and the next one its release are 600 ms apart on a loaded machine,
+        // and that tap was a "hold" which then did nothing at all.
+        let past = self.space_press.is_some_and(|p| self.key_clock.frame_at.duration_since(p.at).as_millis() >= SPACE_HOLD_MS);
         if let Some(press) = self.space_press.as_mut().filter(|_| past) {
             let reverse = press.reverse;
             if !press.held {
@@ -2988,17 +3006,19 @@ impl KtApp {
             }
             return;
         }
-        if press.at.elapsed().as_millis() < SPACE_HOLD_MS {
-            self.on_transport_toggle();
-        }
+        // not proven held is a tap, however late its release was read: a release read past the
+        // threshold by a slow frame did nothing before, neither a tap nor a hold
+        self.on_transport_toggle();
     }
 
     /// Single point Space/Play-Pause button (both go here).
     pub fn on_transport_toggle(&mut self) {
         let p = self.model.project();
         let region = p.region.map(|r| (r.start.0, r.end.0));
-        let pause_recent =
-            self.paused_at.map(|t| t.elapsed().as_millis() < DOUBLE_PAUSE_MS).unwrap_or(false);
+        // the two presses are read at frame starts, each up to a busy frame late: the window
+        // widens by the frame this machine takes now (test-hygiene; ~16 ms on a card)
+        let window = std::time::Duration::from_millis(DOUBLE_PAUSE_MS as u64) + self.key_clock.busy;
+        let pause_recent = self.paused_at.is_some_and(|t| self.key_clock.frame_at.saturating_duration_since(t) < window);
         match Self::transport_toggle(
             self.player.transport.is_playing(),
             pause_recent,
@@ -3008,7 +3028,7 @@ impl KtApp {
         ) {
             TransportAction::Pause => {
                 self.player.pause();
-                self.paused_at = Some(std::time::Instant::now());
+                self.paused_at = Some(self.key_clock.frame_at);
             }
             TransportAction::SeekStart(at) => {
                 self.player.seek(Tick(at));
@@ -7789,12 +7809,12 @@ impl KtApp {
         // nothing about them — we name them one by one. A new text field must appear
         // in this list;
         // the guards are t98 and t627.
-        if ctx.text_edit_focused()
+        self.key_clock.gated = ctx.text_edit_focused()
             || self.tc_edit.is_some()
             || self.speed_entry.is_some()
             // the key list is listening: the press is the key being assigned (control-layouts)
-            || self.start.controls_ui.capture.is_some()
-        {
+            || self.start.controls_ui.capture.is_some();
+        if self.key_clock.gated {
             return;
         }
         // We read SPACE from EVENTS, not key_pressed: the latter turns on
@@ -7802,37 +7822,42 @@ impl KtApp {
         // (item 3 of round 16). We only remember the press — the decision is made on
         // RELEASE: a short press = play/pause, a long one = acceleration.
         // The key is the style's (control-layouts): the machine itself stays one in every style.
+        //
+        // IN THE ORDER PRESSED (test-hygiene, found-defects 99/166): a slow frame reads two quick
+        // presses at once, down-up-down-up, and they were one press, so the double press that
+        // stops was a plain pause. Each press and release is handled where it stands.
         let play_key = self.start.controls.play_key();
-        let (space_down, space_up) = ctx.input(|i| {
-            let mut down = None;
-            let mut up = false;
+        let mut space = [None::<SpaceEdge>; 8];
+        let mut n = 0;
+        ctx.input(|i| {
             for e in &i.events {
                 if let egui::Event::Key { key, pressed, repeat, modifiers, .. } = e
                     && Some(*key) == play_key
+                    && !*repeat
+                    && n < space.len()
                 {
-                    if *pressed {
-                        if !*repeat {
-                            down = Some(modifiers.ctrl || modifiers.command);
-                        }
+                    space[n] = Some(if *pressed {
+                        SpaceEdge::Down { ctrl: modifiers.ctrl || modifiers.command }
                     } else {
-                        up = true;
-                    }
+                        SpaceEdge::Up
+                    });
+                    n += 1;
                 }
             }
-            (down, up)
         });
-        if let Some(ctrl) = space_down
-            && self.space_press.is_none()
-        {
-            self.space_press = Some(SpacePress {
-                at: std::time::Instant::now(),
-                from_pause: !self.player.transport.is_playing(),
-                reverse: ctrl,
-                held: false,
-            });
-        }
-        if space_up {
-            self.on_space_released();
+        for edge in space.into_iter().flatten() {
+            match edge {
+                SpaceEdge::Down { ctrl } if self.space_press.is_none() => {
+                    self.space_press = Some(SpacePress {
+                        at: self.key_clock.frame_at,
+                        from_pause: !self.player.transport.is_playing(),
+                        reverse: ctrl,
+                        held: false,
+                    });
+                }
+                SpaceEdge::Down { .. } => {}
+                SpaceEdge::Up => self.on_space_released(),
+            }
         }
         // MASK EDITING takes Enter, Backspace and Delete on the preview first (shape-masks)
         let (mask_del, mask_enter) = self.mask_keys(ctx);
@@ -7842,148 +7867,107 @@ impl KtApp {
         // (regression of item 21): `Controls::pressed` reads their events.
         use crate::controls::Cmd;
         let mut k = ctx.input(|i| self.start.controls.pressed(i));
-        let (esc, mut enter_nest) =
-            ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter) && !i.modifiers.any()));
-        // item 9 of round 11: it also works during playback (seek on the fly
-        // the player can do; the “only on pause” gate was over-caution)
-        if k.has(Cmd::GotoTimecode) {
-            self.tc_edit = Some(String::new());
-            self.tc_edit_focus = true;
-        }
-        if k.has(Cmd::Find) {
-            self.search_open = true;
-            self.search_focus = true;
-        }
-        if k.has(Cmd::FramePrev) {
-            self.frame_step(false);
-        }
-        if k.has(Cmd::FrameNext) {
-            self.frame_step(true);
-        }
-        // item 16 of round 8: to the stop points; item 2 of round 16: the jump that DRAGS the region
-        // edge. Three commands of one function: `nav_jump` is one body for the buttons too.
-        if k.has(Cmd::NavPrev) {
-            self.nav_jump(false, false, false);
-        }
-        if k.has(Cmd::NavNext) {
-            self.nav_jump(true, false, false);
-        }
-        if k.has(Cmd::ProjectStart) {
-            self.nav_jump(false, true, false);
-        }
-        if k.has(Cmd::ProjectEnd) {
-            self.nav_jump(true, true, false);
-        }
-        if k.has(Cmd::RegionPrev) {
-            self.nav_jump(false, false, true);
-        }
-        if k.has(Cmd::RegionNext) {
-            self.nav_jump(true, false, true);
-        }
-        if k.has(Cmd::ShuttleBack) {
-            self.shuttle_key(-1);
-        }
-        if k.has(Cmd::ShuttleStop) {
-            self.shuttle_key(0);
-        }
-        if k.has(Cmd::ShuttleForward) {
-            self.shuttle_key(1);
-        }
-        if k.has(Cmd::Split) {
-            self.cut_action();
-        }
+        // Esc and Enter as many times as pressed: two Esc close two windows
+        let (esc_n, enter_n) = ctx.input(|i| {
+            let enter = if i.modifiers.any() { 0 } else { i.num_presses(egui::Key::Enter) };
+            (i.num_presses(egui::Key::Escape), enter)
+        });
         if mask_del {
             k.remove(Cmd::Delete);
         }
-        if mask_enter {
-            enter_nest = false;
+        // EVERY PRESS, IN ORDER (test-hygiene, found-defects 99/166): a slow frame reads several
+        // keys at once, and a set of the frame's commands made → → → ← no step at all. A command
+        // that opens a window or writes the file runs once a frame; one that opens a text field
+        // ends the frame's keys, as the presses after it would have been typed into the field.
+        let mut once = [false; crate::controls::CMD_COUNT];
+        for cmd in k.iter() {
+            let window_like = matches!(
+                cmd,
+                Cmd::GotoTimecode | Cmd::Find | Cmd::Save | Cmd::SaveAs | Cmd::NewProject | Cmd::OpenProject | Cmd::Render
+            );
+            if window_like && std::mem::replace(&mut once[cmd as usize], true) {
+                continue;
+            }
+            match cmd {
+                // item 9 of round 11: it also works during playback (seek on the fly
+                // the player can do; the “only on pause” gate was over-caution)
+                Cmd::GotoTimecode => {
+                    self.tc_edit = Some(String::new());
+                    self.tc_edit_focus = true;
+                    break;
+                }
+                Cmd::Find => {
+                    self.search_open = true;
+                    self.search_focus = true;
+                    break;
+                }
+                Cmd::FramePrev => self.frame_step(false),
+                Cmd::FrameNext => self.frame_step(true),
+                // item 16 of round 8: to the stop points; item 2 of round 16: the jump that DRAGS the
+                // region edge. Three commands of one function: `nav_jump` is one body for the buttons too.
+                Cmd::NavPrev => self.nav_jump(false, false, false),
+                Cmd::NavNext => self.nav_jump(true, false, false),
+                Cmd::ProjectStart => self.nav_jump(false, true, false),
+                Cmd::ProjectEnd => self.nav_jump(true, true, false),
+                Cmd::RegionPrev => self.nav_jump(false, false, true),
+                Cmd::RegionNext => self.nav_jump(true, false, true),
+                Cmd::ShuttleBack => self.shuttle_key(-1),
+                Cmd::ShuttleStop => self.shuttle_key(0),
+                Cmd::ShuttleForward => self.shuttle_key(1),
+                Cmd::Split => self.cut_action(),
+                Cmd::Delete => self.delete_action(),
+                Cmd::Undo => self.undo(),
+                Cmd::Redo => self.redo(),
+                Cmd::Save => self.save(),
+                Cmd::Marker => self.marker_toggle_at_cursor(),
+                Cmd::TrackMute => {
+                    if let Some(id) = self.key_target_track() {
+                        self.toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
+                    }
+                }
+                Cmd::TrackSolo => {
+                    if let Some(id) = self.key_target_track() {
+                        self.toggle_track_badge(id, crate::timeline::TrackBadge::Solo);
+                    }
+                }
+                Cmd::RegionIn => self.set_region_edge_from_cursor(true),
+                Cmd::RegionOut => self.set_region_edge_from_cursor(false),
+                Cmd::Loop => self.toggle_loop(),
+                Cmd::MarkMoment => self.mark_moment(""),
+                Cmd::Copy => self.copy_selection(),
+                Cmd::Paste => self.paste_at_cursor(),
+                Cmd::RegionClear => self.clear_region(),
+                Cmd::ZoomIn => self.zoom_at_playhead(0.8),
+                Cmd::ZoomOut => self.zoom_at_playhead(1.25),
+                Cmd::ZoomFit => self.zoom_fit(),
+                Cmd::SelectTool => self.sel_tool = !self.sel_tool,
+                Cmd::SaveAs => self.save_as(),
+                Cmd::NewProject => self.new_project(),
+                Cmd::OpenProject => self.open_project_dialog(),
+                Cmd::Render => self.start_render(),
+                // the play key is read as press and release above; the rest are not keys of the
+                // timeline (UI zoom is egui's)
+                _ => {}
+            }
         }
-        if k.has(Cmd::Delete) {
-            self.delete_action();
-        }
-        if k.has(Cmd::Undo) {
-            self.undo();
-        }
-        if k.has(Cmd::Redo) {
-            self.redo();
-        }
-        if k.has(Cmd::Save) {
-            self.save();
-        }
-        if k.has(Cmd::Marker) {
-            self.marker_toggle_at_cursor();
-        }
-        if k.has(Cmd::TrackMute)
-            && let Some(id) = self.key_target_track()
-        {
-            self.toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
-        }
-        if k.has(Cmd::TrackSolo)
-            && let Some(id) = self.key_target_track()
-        {
-            self.toggle_track_badge(id, crate::timeline::TrackBadge::Solo);
-        }
-        if k.has(Cmd::RegionIn) {
-            self.set_region_edge_from_cursor(true);
-        }
-        if k.has(Cmd::RegionOut) {
-            self.set_region_edge_from_cursor(false);
-        }
-        if k.has(Cmd::Loop) {
-            self.toggle_loop();
-        }
-        if k.has(Cmd::MarkMoment) {
-            self.mark_moment("");
-        }
-        if esc && !self.mask_escape() {
-            self.escape_action();
+        for _ in 0..esc_n {
+            if !self.mask_escape() {
+                self.escape_action();
+            }
         }
         // Enter — a CASCADE on the selected nested item (R.56, item 451): the first
         // unfolds in place (the default mode, the keyboard twin
         // of a double click), the second on an already unfolded one — FULL ENTRY.
         // The quick gesture leads DEEPER, not a toggle: back — Esc,
         // which already cascades in the reverse direction anyway.
-        if enter_nest
-            && let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id))
-        {
-            match self.enter_pressed_on_nest(id) {
-                EnterOnNest::Expand => self.expand_in_place(id),
-                EnterOnNest::Enter => self.enter_nest(id),
-                EnterOnNest::NotANest => {}
+        for _ in 0..if mask_enter { 0 } else { enter_n } {
+            if let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id)) {
+                match self.enter_pressed_on_nest(id) {
+                    EnterOnNest::Expand => self.expand_in_place(id),
+                    EnterOnNest::Enter => self.enter_nest(id),
+                    EnterOnNest::NotANest => {}
+                }
             }
-        }
-        if k.has(Cmd::Copy) {
-            self.copy_selection();
-        }
-        if k.has(Cmd::Paste) {
-            self.paste_at_cursor();
-        }
-        if k.has(Cmd::RegionClear) {
-            self.clear_region();
-        }
-        if k.has(Cmd::ZoomIn) {
-            self.zoom_at_playhead(0.8);
-        }
-        if k.has(Cmd::ZoomOut) {
-            self.zoom_at_playhead(1.25);
-        }
-        if k.has(Cmd::ZoomFit) {
-            self.zoom_fit();
-        }
-        if k.has(Cmd::SelectTool) {
-            self.sel_tool = !self.sel_tool;
-        }
-        if k.has(Cmd::SaveAs) {
-            self.save_as();
-        }
-        if k.has(Cmd::NewProject) {
-            self.new_project();
-        }
-        if k.has(Cmd::OpenProject) {
-            self.open_project_dialog();
-        }
-        if k.has(Cmd::Render) {
-            self.start_render();
         }
     }
 
@@ -8110,10 +8094,86 @@ pub const SPACE_DECAY_SHARE: f32 = 0.25;
 /// Below this distance from the base the fall hands the exact base back to the player.
 pub const SPACE_DECAY_DONE: f32 = 0.005;
 
+/// One edge of the play key in a frame's input, in order.
+#[derive(Clone, Copy)]
+enum SpaceEdge {
+    Down { ctrl: bool },
+    Up,
+}
+
+/// The clock key gestures are judged on (test-hygiene, found-defects 99/166). egui hands a frame's
+/// events without their moments: a press read in a frame happened during the frame before it, so a
+/// gesture's length is known to a busy frame. `frame_at` is the start of this frame, `busy` the
+/// smoothed gap before a frame that the one before it asked for at once (playback, a held key, the
+/// frame after a gesture): the program's work, with no idle wait for input hidden in it.
+#[derive(Clone, Copy)]
+pub struct KeyClock {
+    pub frame_at: std::time::Instant,
+    pub busy: std::time::Duration,
+    /// The frame that ends asked for the next one at once.
+    pub animating: bool,
+    /// The last frame's hotkeys were gated by a text field (the live dump's `keys_gated`): a
+    /// Ctrl+S that writes nothing names it (found-defects 47).
+    pub gated: bool,
+    /// Widen egui's click windows (`widen_clicks`). Off in the harness: its frames step egui's
+    /// clock by a fixed `step_dt` while `busy` is the wall clock, so the two would not agree.
+    pub widen: bool,
+}
+
+impl Default for KeyClock {
+    fn default() -> KeyClock {
+        KeyClock {
+            frame_at: std::time::Instant::now(),
+            busy: std::time::Duration::ZERO,
+            animating: false,
+            gated: false,
+            widen: !cfg!(test),
+        }
+    }
+}
+
+impl KeyClock {
+    /// The ceiling of the widening: a frame longer than this is a stall, not a frame time.
+    const BUSY_MAX: std::time::Duration = std::time::Duration::from_millis(1000);
+
+    /// A frame begins.
+    pub fn begin_frame(&mut self) {
+        let now = std::time::Instant::now();
+        if self.animating {
+            let gap = now.duration_since(self.frame_at).min(Self::BUSY_MAX);
+            self.busy = (self.busy + gap) / 2;
+        }
+        self.frame_at = now;
+    }
+
+    /// egui judges a click and a double click by the frames that read them, too: two clicks a busy
+    /// frame apart were two single clicks, and a press and release two frames apart no click
+    /// (found-defects 166, `formula` and `lessons` under the full live run). Its windows widen
+    /// by the busy frame, as the double Space does; on a card that is ~16 ms.
+    pub fn widen_clicks(&self, ctx: &egui::Context) {
+        if !self.widen {
+            return;
+        }
+        let busy = self.busy.as_secs_f64();
+        let (double, click) = (DOUBLE_CLICK_S + busy, CLICK_HOLD_S + busy);
+        if ctx.options(|o| (o.input_options.max_double_click_delay - double).abs() > 0.002) {
+            ctx.options_mut(|o| {
+                o.input_options.max_double_click_delay = double;
+                o.input_options.max_click_duration = click;
+            });
+        }
+    }
+}
+
+/// egui's own windows of a double click and of a click (`InputOptions::default`).
+pub const DOUBLE_CLICK_S: f64 = 0.3;
+pub const CLICK_HOLD_S: f64 = 0.8;
+
 /// A Space press in progress (R.72). Read at the press and held for the whole gesture, so
 /// letting Ctrl go early does not turn the picture around.
 #[derive(Clone, Copy, Debug)]
 pub struct SpacePress {
+    /// The start of the frame that read the press.
     pub at: std::time::Instant,
     /// Started while paused: the release pauses again.
     pub from_pause: bool,
@@ -10196,6 +10256,7 @@ impl eframe::App for KtApp {
         // a decode on the UI thread) is seen here with an exact timestamp.
         let t0 = std::time::Instant::now();
         let at = crate::tele_journal::current().map(|j| j.now());
+        let queued0 = crate::frame_cost::run_delay_ns();
         self.draw_all(ui);
         let ms = t0.elapsed().as_millis();
         if ms >= 100
@@ -10205,10 +10266,14 @@ impl eframe::App for KtApp {
             // where it went, waits included (ui-never-waits): the stages' wall time
             let wall = crate::frame_cost::last_frame_wall();
             let at_stage = if wall.is_empty() { String::new() } else { format!(" ({wall} ms)") };
+            // and how much of it the thread stood ready with no processor: the machine's share
+            let queued = crate::frame_cost::run_delay_ns().saturating_sub(queued0) / 1_000_000;
             j.record_at(
                 at,
                 crate::tele_journal::Kind::Note,
-                &format!("the UI thread was blocked for {ms} ms inside one frame{at_stage}"),
+                &format!(
+                    "the UI thread was blocked for {ms} ms inside one frame{at_stage}, {queued} ms of it waiting for a processor"
+                ),
             );
         }
     }
@@ -10606,7 +10671,7 @@ impl KtApp {
             self.player.pause();
             // like a manual pause: double Space after an auto-pause = stop
             // to the start of the region (item 29 round 7)
-            self.paused_at = Some(std::time::Instant::now());
+            self.paused_at = Some(self.key_clock.frame_at);
         }
         egui::Panel::bottom("prev_controls").show(ui, |ui| {
             ui.add_space(3.0);

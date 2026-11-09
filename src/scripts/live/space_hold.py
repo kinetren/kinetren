@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from Xlib import X, XK  # noqa: E402
+import kt_live  # noqa: E402
 from kt_live import Live, probe, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
@@ -98,14 +99,18 @@ def main(out):
         after = app.playhead()
         app.wait_playhead(lambda t: t > after, "after the release it runs forward again")
 
-        # the double press: the second lands one frame after the first, not after the two a
-        # gesture's wait costs, or a busy machine's frames alone outlast the double-press window
-        app.key("space")
-        seen = app._input_now()
-        probe.key("space", pause=0.0, after=0.0)
-        app.until(lambda: app._input_now() > seen)
+        # the double press AS A PERSON MAKES IT: two taps 0.1 s apart, no wait between (test-hygiene).
+        # Waiting for the first to be read put two frames between them, and on a loaded machine two
+        # frames outlast the double-press window by themselves. Read by one slow frame or by two
+        # neighbouring ones, the program keeps them a double press (t2212, t2213)
+        app.raise_once()
+        mark = app.seen()
+        probe.key("space", pause=0.02, after=0.0)
+        kt_live.pause(0.1, "a person's double tap: the second press 0.1 s after the first")
+        probe.key("space", pause=0.02, after=0.0)
+        app.until(lambda: app._input_now() >= mark[1] + 4)
         app.wait_playhead(lambda t: t == 0, "two quick presses stop at the project start")
-        app.expect(not app.playing(), "two quick presses leave it stopped")
+        app.expect(app.until(lambda: not app.playing()), "two quick presses leave it stopped")
         app.step("double-press", "two quick presses: stopped at the start")
 
         # the frame step
