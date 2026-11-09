@@ -2,7 +2,7 @@
 //! the vectors, the residual at 16 bits a sample and the reconstruction at 8, and a decoder job reads
 //! back its picture at 8 — found-defects 135: a 32-bit word a sample), t2274 (the colour conversion
 //! on the device is the CPU reference to the byte, both ways, at sizes that pad and crop), t2276 (a
-//! loop the memo is sized for runs no job on its second lap).
+//! loop the memo is sized for runs no job on its second lap), t2278 (an advance converts no picture).
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use kt_plugin_api::generator::lowbias32;
 static UP: AtomicU64 = AtomicU64::new(0);
 static DOWN: AtomicU64 = AtomicU64::new(0);
 static JOBS: AtomicU64 = AtomicU64::new(0);
+static RGBA_JOBS: AtomicU64 = AtomicU64::new(0);
 /// The counters are the process's: one test at a time.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -25,6 +26,9 @@ impl ComputeHost for Counting {
         let up: usize = job.buffers.iter().map(|b| if let Init::Bytes(b) = b { b.len() } else { 0 }).sum();
         UP.fetch_add(up as u64, Relaxed);
         JOBS.fetch_add(1, Relaxed);
+        if job.steps.iter().any(|s| s.name.ends_with(":rgba")) {
+            RGBA_JOBS.fetch_add(1, Relaxed);
+        }
         let got = self.0.run(job)?;
         DOWN.fetch_add(got.iter().map(|v| v.len() as u64).sum(), Relaxed);
         Ok(got)
@@ -185,4 +189,30 @@ fn t2276_a_loop_the_memo_holds_computes_nothing_twice() {
     let (jobs_half, c, _) = laps(&kt_plugin_api::stream::StreamMemo::new(sized / 2), &s);
     assert!(jobs_half > 10, "half the memo keeps the loop too ({jobs_half} jobs): the test is not about the bound");
     assert_eq!(a, c, "the bytes do not depend on the memo");
+}
+
+/// t2278: the prefetch's advance fills the memo with the history and converts no picture; the frame
+/// then needs nothing, and its render (one conversion) gives the bytes of a cold render.
+#[test]
+fn t2278_an_advance_converts_no_picture() {
+    use kt_plugin_api::stream::{StreamKernel, StreamMemo};
+    let _one = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    if no_device() {
+        return;
+    }
+    let s = Loop { frames: (0..40).map(|k| frame(LW, LH, 5, 3 * k)).collect() };
+    let mut p = fx_video_codec::defaults();
+    p[fx_video_codec::rows::MOSH] = 1.0;
+    let k = fx_video_codec::Datamosh::new();
+    let memo = StreamMemo::new(64 << 20);
+    let r0 = RGBA_JOBS.load(Relaxed);
+    assert!(k.advance(&p, &s, 25, &memo));
+    assert_eq!(RGBA_JOBS.load(Relaxed), r0, "the advance converted a picture");
+    assert!(k.needs(&p, &s, 25, &memo).is_empty(), "the advance left the frame's history behind");
+    let (mut warm, mut cold) = (Vec::new(), Vec::new());
+    let j0 = JOBS.load(Relaxed);
+    k.render(&p, &s, 25, &memo, &mut warm).unwrap();
+    assert_eq!(JOBS.load(Relaxed) - j0, 1, "a held frame costs one conversion");
+    k.render(&p, &s, 25, &StreamMemo::new(64 << 20), &mut cold).unwrap();
+    assert_eq!(warm, cold);
 }

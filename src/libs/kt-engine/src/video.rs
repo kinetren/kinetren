@@ -1424,7 +1424,7 @@ impl VideoRenderer {
                     // the advance in the trace: from how far short, and whether a source frame stopped it
                     let mut span = kt_time::trace::span(kt_time::trace::Ev::StreamAdvance);
                     span.id(c.id.0).a(n as u64).b(needs as u64);
-                    let short = st.kernel().render(&st.values, &cs, n, &self.stream_memo, &mut Vec::new()).is_none();
+                    let short = !st.kernel().advance(&st.values, &cs, n, &self.stream_memo);
                     pending |= short;
                     if kt_time::trace::on() {
                         let left = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();

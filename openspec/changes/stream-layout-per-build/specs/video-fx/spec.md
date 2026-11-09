@@ -9,7 +9,8 @@ dependency chain per question gave. The host SHALL keep one compiled schedule pe
 stream size, made fresh with every build. The codec's compute jobs SHALL upload and read back 8-bit
 planes four samples to a word and the residual two 16-bit samples to a word; the conversion of the
 source frame into Y'CbCr 4:2:0 and of the decoded picture back to RGBA SHALL run on the compute device,
-to the bytes of the CPU reference. A dependency chain longer than 8192 frames keeps the intra-refresh
+to the bytes of the CPU reference, and an advance of the history (the prefetch, the export's
+pre-roll) SHALL convert no picture. A dependency chain longer than 8192 frames keeps the intra-refresh
 grid counted from its anchor (the walk cut such a chain at an anchor that moved with every frame).
 
 Why: found-defects 135, 144 and the engine audit's row 8 (mechanisms M2, M7): every question built a
@@ -30,3 +31,8 @@ every frame of its 2 s window; a 1080-line encoder job read 25 MB back, a word p
 - **WHEN** frames of 100×60, 64×48 and 37×21 are encoded from RGBA on the device and from the CPU-converted planes, decoded back to RGBA whole and cropped, and a 1280×720 encoder job and decoder job are counted
 - **THEN** packets, reconstructions and RGBA are byte-equal; the encoder reads back the vectors, 2 bytes a residual sample and 1 a reconstruction sample, and uploads the RGBA and the 8-bit reference; the decoder reads back 1 byte a sample
 - **TEST** t2273, t2274 (`src/plugins/fx-video-codec/tests/packed.rs`), t1239 (`src/plugins/fx-video-codec/tests/codec.rs`)
+
+#### Scenario: An advance converts no picture
+- **WHEN** the prefetch advances a mosh's history to a frame, then the frame is rendered
+- **THEN** the advance ran no conversion to RGBA, the frame then needs nothing, and its render costs one conversion job and gives the bytes of a cold render
+- **TEST** t2278 (`src/plugins/fx-video-codec/tests/packed.rs`)

@@ -152,6 +152,12 @@ pub trait StreamKernel: Send + Sync {
     fn key(&self, _p: &[f64], _lay: &dyn StreamLayout, _n: i64) -> Option<u64> {
         None
     }
+    /// Advance the history to frame `n` in the memo without producing its picture (the prefetch's
+    /// advance, the export's pre-roll: stream-layout-per-build — they threw the picture away);
+    /// `false` — a frame of the history is missing. By default `render` into a scratch buffer.
+    fn advance(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> bool {
+        self.render(p, input, n, memo, &mut Vec::new()).is_some()
+    }
     /// Produce frame `n` as RGBA (opaque) into `out`; `None` — a frame of the history is missing.
     /// Everything computed before the gap stays in the memo (progress is monotonic).
     fn render(

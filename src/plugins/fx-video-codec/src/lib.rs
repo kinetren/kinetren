@@ -274,6 +274,13 @@ impl StreamKernel for Datamosh {
         kt_plugin_api::compute::host()?;
         Some(mosh::key(mosh::Rows::from(p), lay, n))
     }
+    fn advance(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> bool {
+        if kt_plugin_api::compute::host().is_none() {
+            return self.render(p, input, n, memo, &mut Vec::new()).is_some();
+        }
+        // the history into the memo; no conversion of a picture nobody shows
+        mosh::render(mosh::Rows::from(p), input, n, memo).is_some()
+    }
     fn render(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo, out: &mut Vec<u8>) -> Option<StreamOut> {
         if kt_plugin_api::compute::host().is_none() {
             return pass_through(input, n, out);
