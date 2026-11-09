@@ -27,6 +27,7 @@ mod editcost;
 mod firstframe;
 mod fxcost;
 mod fusecost;
+mod passcost;
 mod gpushare;
 mod showcase;
 mod streamcost;
@@ -1542,6 +1543,7 @@ fn run(args: &[String]) -> i32 {
         Some("first-frame") => firstframe::run(args),
         // a chain of point-wise effects fused against unfused (fused-pointwise-runs)
         Some("fuse-cost") => fusecost::run(args),
+        Some("pass-cost") => passcost::run(args),
         Some("gpu-share") => gpushare::run(args),
         Some("trace") => trace_query::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)

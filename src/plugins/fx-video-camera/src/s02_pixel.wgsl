@@ -28,11 +28,11 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     begin(P.u1.x);
     TAB = P.u0;
     let p = vec2<i32>(floor(pos.xy));
-    let k = u32(KK());
+    let k = u32(KO());
     let sx = u32(p.x) / k;
     let sy = u32(p.y) / k;
     let fw = P.f0.x;
-    let lam_s = f32(v16(textureLoad(T0, p, 0))) * 6.1035156e-5 * fw;
+    let lam_s = f32(v16(at(i32(sx), i32(sy)))) * 6.1035156e-5 * fw;
     let seed_t = P.u1.y;
     let seed_f = P.u1.z;
     let dead_thr = u32(P.f1.x);

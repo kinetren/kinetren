@@ -17,16 +17,5 @@ Why: found-defects row 136 (gpu-pass-cost): behind a K× barrier every sensor pi
 
 #### Scenario: The sensor-grid form costs less on the device
 - **WHEN** the defaults run at K = 2 at 960×540 logical (1920×1080 frame) on a software device, both forms interleaved, minima of the pass timer
-- **THEN** the camera's passes together take at most 60 % of the frame-grid form's device time
+- **THEN** the camera's passes together take at most 60 % of the frame-grid form's device time (measured 0.40: 314.8 → 127.2 ms on llvmpipe)
 - **TEST** t2311 (`src/libs/kt-gpu/tests/camera_isp.rs`)
-
-### Requirement: Radial blur's spin rotations are computed once per frame
-In spin mode the radial blur SHALL compute its 16 rotations (sine and cosine of each tap's angle) once per
-frame on the device and read them per pixel, with the same arithmetic as the per-pixel form, so the frame
-is the same bytes on the same device; the zoom mode keeps its single pass.
-Why: found-defects row 137 (gpu-pass-cost): 16 `sin` and 16 `cos` per pixel, a set the whole frame shares.
-
-#### Scenario: Spin by a table is the per-pixel form's bytes
-- **WHEN** spin at amounts 0.05, 0.3, 1 and its maximum, centred and off-centre, on opaque and alpha frames, run in both forms on one device
-- **THEN** the frames are equal byte for byte
-- **TEST** t2312 (`src/libs/kt-gpu/tests/local_cost.rs`)

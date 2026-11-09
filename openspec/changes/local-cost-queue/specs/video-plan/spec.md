@@ -11,11 +11,11 @@ Why: found-defects row 138 (gpu-pass-cost): a bind group and a uniform write per
 thread.
 
 #### Scenario: Batched uniforms and reused bind groups keep the bytes
-- **WHEN** a chain of geometry, point-wise runs, barriers (blur, glow, Camera ISP, VHS Tape) and a transition is composed per frame, per piece with the arbiter cutting at every pass, and through the export ring, with the per-pass form and the batched form
+- **WHEN** a chain of geometry, point-wise runs, barriers (blur, glow, Camera ISP, VHS Tape) and a second layer are composed per frame and through the export ring (the arbiter's cut pieces: t2253, same bytes cut and uncut), with the per-pass form and the batched form
 - **THEN** every frame is equal byte for byte between the forms
 - **TEST** t2313 (`src/libs/kt-gpu/tests/local_cost.rs`)
 
-#### Scenario: The steady state creates no bind group
-- **WHEN** a heavy chain plays the same 24 frames twice after warm-up
-- **THEN** the second lap creates no bind group, and the cache holds no more entries than its bound
+#### Scenario: The steady state reuses its bind groups
+- **WHEN** a heavy two-layer chain plays 24 moments (four in turn, each with its own uploaded frames) twice
+- **THEN** the second lap reuses at least twice as many bind groups as it makes (measured 648 reused, 217 made: the misses are each moment's new uploads), and the cache never holds more than its bound
 - **TEST** t2314 (`src/libs/kt-gpu/tests/local_cost.rs`)

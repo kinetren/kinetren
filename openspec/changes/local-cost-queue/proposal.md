@@ -36,8 +36,8 @@ unit". The change walks every audio and video kernel for it (`design.md` lists w
 - Camera ISP at K > 1: the passes that work on the sensor's grid render at the sensor's size; the last pass
   of the graph expands to the frame. The pixel a pass computes is the same sensor pixel, read from the same
   texel value, so the frame is the same bytes; K² fewer fragments in every sensor pass.
-- Radial blur, spin mode: the 16 rotations of a frame computed once per frame, the pass reads them;
-  zoom mode unchanged.
+- Radial blur, spin mode (row 137): measured, not the cost — a table on the device costs more than the
+  trig it replaces, and a CPU table cannot keep the bytes; the pass stays (design D2).
 - The GPU executor: a frame's uniforms written in one write per submitted piece instead of one per pass;
   bind groups reused where the same textures meet the same layout again (bounded, never keeping a
   released texture alive past the frame that released it).
@@ -59,8 +59,8 @@ unit". The change walks every audio and video kernel for it (`design.md` lists w
 
 ### Modified Capabilities
 
-- `video-fx`: Camera ISP at K > 1 renders its sensor passes at the sensor's size; radial blur's spin
-  rotations per frame — both with the bytes of the previous form.
+- `video-fx`: Camera ISP at K > 1 renders its sensor passes at the sensor's size, with the bytes of the
+  previous form.
 - `video-plan`: the executor writes a frame's uniforms once per submitted piece and reuses bind groups;
   nothing created per frame after warm-up (t2023) still holds.
 - `audio-fx`: the local costs of the limiter, Pitch, VHS Tape's sound and Camera ISP's microphone removed

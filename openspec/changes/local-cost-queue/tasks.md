@@ -12,11 +12,11 @@
 
 ## 2. GPU local costs (rows 136, 137, 138)
 
-- [ ] 2.1 `kt-cli pass-cost` (a chain's passes by the pass timer, two forms interleaved, minima, same-bytes check)
-- [ ] 2.2 Camera ISP sensor-grid passes (136); t2310, t2311, t1217, t1430
-- [ ] 2.3 Radial blur spin table on the device (137); t2312, t181
-- [ ] 2.4 Uniform writes per piece and bind-group reuse (138); t2313, t2314, t2023, t2253
-- [ ] 2.5 Measure before/after; commit, target-prune
+- [x] 2.1 `kt-cli pass-cost` (a chain's passes by the pass timer, two forms interleaved, minima, same-bytes check)
+- [x] 2.2 Camera ISP sensor-grid passes (136); t2310, t2311, t1217, t1430
+- [x] 2.3 Radial blur spin table on the device (137) — measured more costly, rejected (design D2); t2312 not kept
+- [x] 2.4 Uniform writes per piece and bind-group reuse (138); t2313, t2314, t2023, t2253
+- [x] 2.5 Measure before/after; commit, target-prune
 
 ## 3. Row 118 and the class walk
 

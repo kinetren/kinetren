@@ -31,26 +31,42 @@ arithmetic, so the bytes are equal (t2310 compares the forms EXACT on the device
 Rejected: rendering the sensor passes at the sensor size and resampling at the end with the host's
 `Resample` — a bilinear resample changes the bytes (and the alpha path).
 
-### D2. Radial blur's spin table on the device (row 137)
+### D2. Radial blur's spin: no table (row 137) — measured, rejected
 
-The uniform of a barrier pass is 64 bytes of `u`/`f`: no room for 32 numbers plus the centre, and the
-geometry pass's 1024-byte layout belongs to geometry and point-wise runs. A CPU table (frozen `fsin`)
-would also change the bytes: the device's `sin` is not the frozen one. So the table is made ON THE DEVICE
-by a 32×1 `PassAt` that evaluates the same expression (`0.6·amount·(t − 0.5)`, `t = f32(i)/15`) and
-writes the f32 bits of each sine and cosine into a texel; the main pass reads them from `T1`. The plugin
-contract is unchanged (`PassAt`, `Save`, `Saved` exist since vhs-tape-simulation). Bytes: held by t2312
-on the device; a driver that folds `t` at compile time in one shader and divides at run time in the other
-could differ (WGSL division is not correctly rounded): the table pass takes `t` from a constant array.
+The per-pixel `sin`/`cos` are 4 ms of the 26 ms spin pass at 1080p on llvmpipe (zoom mode, the same 64
+texel loads a pixel and no trig: 22.4 ms; `kt-cli pass-cost`, release, minima of seven). The pass is
+its bilinear loads.
+- A table made on the device (a 32×1 word pass, read per tap from `T1`) kept the bytes (checked EXACT on
+  the device) and cost MORE: 26.2 → 27.4 + 0.4 ms. Two loads per tap cost more than the trig they
+  replace; on a card `sin`/`cos` are special-function units, cheaper still against a load.
+- A table in the uniform (computed on the CPU) cannot keep the bytes: the device's `sin` is not the
+  frozen one, and the bilinear weights move at rounding edges. The barrier uniform has no room for 32
+  numbers either; the 1024-byte layout belongs to geometry and runs.
+Row 137 closes as "not the cost"; the pass stays as it was.
 
-### D3. One uniform write per piece, bind groups reused (row 138)
+### D3. One uniform write per submission, bind groups reused (row 138)
 
-Each pass site writes its uniform with `queue.write_buffer` and creates a bind group. Writes are staged in
+Each pass site wrote its uniform with `queue.write_buffer` and created a bind group: 2.2 µs and 6.7 µs a
+pass on the composing thread (llvmpipe, release, a temporary timer in `pass_which`). Writes are staged in
 a frame-local byte vector covering the arena's used slots and flushed once before each submission
-(`cut_point`'s piece submit and the frame's own). Bind groups go into a small map keyed by (layout, the
-three views) — `wgpu::TextureView` is `Hash + Eq` by id — kept per engine, emptied of entries not used in
-the last frame at each top-level frame, and bounded (64): a released texture lives at most one frame more.
-The arena buffer is bound with a dynamic offset, so its slot is not in the key; a grown arena empties the
-map.
+(`cut_point`'s piece submit and every frame's own; `binds::Staged`). Bind groups go into a map keyed by
+(layout, the views) — `wgpu::TextureView` is `Hash + Eq` by id — kept per engine (`binds::BindCache`),
+emptied of entries the previous frame did not use at each top-level frame, and bounded (256): a texture
+its owner released lives at most until the next frame starts. The arena buffer is bound with a dynamic
+offset, so its slot is not in the key; a new arena empties the map. All four pass sites use it (ordinary,
+display, geometry, point-wise run). `GpuFxEngine::per_pass_binds(true)` keeps the old form for t2313 and
+`kt-cli pass-cost --form binds`.
+
+**Measured** (release, llvmpipe, a two-layer chain of eleven effects, minima of seven blocks): the
+composing thread's CPU time a frame 0.66 → 0.47 ms at 640×360 and 1.62 → 1.29 ms at 1080p (the readback
+included); the device time does not change; the same bytes. In a steady run three of four bind groups
+come back (t2314: 648 reused, 217 made over 24 moments; the misses are each moment's new uploads).
+
+### D1 measured
+
+`kt-cli pass-cost --fx camera_isp --k 2` (release, llvmpipe, a 1920×1080 frame behind K = 2): the
+camera's passes 388.8 → 120.7 ms, the frame 415.7 → 143.5 ms; the unprocessing (the frame's grid) and the
+last pass do not change; the same bytes. t2311 holds ≤ 60 % (0.40 in the test profile).
 
 ### D4. Audio (rows 210, 211, 311–314)
 
