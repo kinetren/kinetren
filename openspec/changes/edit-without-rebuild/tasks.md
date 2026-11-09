@@ -22,9 +22,9 @@
 - [x] 4.2 t2003 N edits of one event derive that event only; t2004 incremental = fresh (bytes, plans, scene hash)
 - [x] 4.3 t2005 one resolve per reel per build; t2006 a frame is composed by its state's renderer
 - [x] 4.4 t2008 the app hands the shared snapshot; t1875 updated (zero builds for region and meters)
-- [ ] 4.5 Live scenario t2007: a slider dragged in the effects window while playing
+- [x] 4.5 Live scenario t2007: a slider dragged in the effects window while playing
 
 ## 5. Contracts, numbers, check
-- [ ] 5.1 Spec deltas; design.md with the class walk; CLAUDE.md rules (kt-engine, kt-app)
-- [ ] 5.2 Release numbers before/after; found-defects rows 110, 111, 117, 150, 155; What's new
+- [x] 5.1 Spec deltas; design.md with the class walk; CLAUDE.md rules (kt-engine, kt-app)
+- [x] 5.2 Release numbers before/after; found-defects rows 110, 111, 117, 150, 155; What's new
 - [ ] 5.3 `cargo test` of the touched crates, clippy, live `cached_range`, `idle`, `audiofx`, target-prune

@@ -83,8 +83,9 @@ def main(out):
         app.key("space")
         app.until(lambda: app.playing(), timeout=10.0)
         app.expect(app.playing(), "playback started (no audio device?)")
-        # the first lap of heavy frames: let the start settle before measuring
-        kt_live.pause(2.0, "the start's first composites")
+        # the sound runs: the playhead has moved on from where Space was pressed
+        h0 = app.playhead()
+        app.expect(app.until(lambda: app.playhead() != h0, timeout=30.0), "the playhead moves after Space")
 
         # the pointer moving over the window, no edit: the frame's cost without a build
         a = meter.read()
@@ -98,7 +99,8 @@ def main(out):
         for k in range(4):
             x1 = fx - 160 if k % 2 == 0 else fx + 160
             app.drag(fx, fy, x1, fy, steps=10)
-        kt_live.pause(1.0, "the last step's build lands")
+        # one more second of playing after the last step, measured with the rest: its build lands
+        meter.over(1.0)
         g1, b = app.geom(), meter.read()
         drag_ms, drag_n = frame_ms(a, b)
         edits = b["work"].get("model_edits", 0) - a["work"].get("model_edits", 0)

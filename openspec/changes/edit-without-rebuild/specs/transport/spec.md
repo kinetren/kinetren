@@ -33,7 +33,14 @@ sources, which resolve every reel.
 #### Scenario: Edits through the app's doors
 - **WHEN** five steps of an effect's parameter go through `apply_coalesced`, a frame drawn after each
 - **THEN** each reaches the player, the UI thread builds, derives and resolves nothing, and the player holds the model's snapshot itself
+- **PATH** an event with VHS Tape, its effects window open → step the carrier-to-noise field five times: the value moves each time, the picture follows, the window answers at once
 - **TEST** t2008 (`src/apps/kt-app/src/input_work_tests.rs`)
+
+#### Scenario: A slider dragged in the effects window while a big project plays
+- **WHEN** the heavy showcase plays and the VHS Tape dark clip field of the composition's effects window is dragged to and fro four times
+- **THEN** there is no callback underrun, at most one shared build (two renderers) is built per edit, and a UI frame of the drag costs the UI thread within twice a hovering frame plus 10 ms
+- **PATH** the heavy showcase open → right click the composition → "Effects…" → click the VHS Tape slot: the deck face and its grid → scroll to "Dark clip" → Space: the picture plays → drag the field left and right four times: the value follows the pointer, the picture and the sound go on → Space: stopped, nothing runs
+- **TEST** t2007 live scenario `src/scripts/live/edit_drag.py`
 
 ### Requirement: A loop region change is not an edit
 A change of the loop region SHALL build nothing and move no project version: the region's head is

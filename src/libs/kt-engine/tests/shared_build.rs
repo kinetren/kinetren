@@ -422,9 +422,16 @@ fn t2006_a_frame_is_composed_by_its_states_renderer() {
     player.gate_builds(true);
     p.settings.fps = 30;
     player.set_project(p.clone());
-    let t = std::time::Instant::now();
-    player.ask_preview(Tick(5_000), None);
-    assert!(t.elapsed() < std::time::Duration::from_secs(1), "the ask waited");
+    // the ask returns while the build is still held: had it waited for the build, it would stand
+    // until the gate opens, and the gate opens only after
+    std::thread::scope(|s| {
+        let asked = s.spawn(|| player.ask_preview(Tick(5_000), None));
+        let deadline = kt_time::test_deadline();
+        while !asked.is_finished() {
+            assert!(std::time::Instant::now() < deadline, "the ask waited for the held build");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    });
     std::thread::sleep(std::time::Duration::from_millis(100));
     assert!(rec.seen.lock().unwrap().is_empty(), "a frame was composed by the old state's renderer");
     player.gate_builds(false);

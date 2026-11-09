@@ -21,9 +21,12 @@ fn cpu_s() -> f64 {
 
 /// The engine threads are done with what was handed over: the build count stands for a while.
 fn settle() {
-    let deadline = Instant::now() + Duration::from_secs(30);
     let (mut last, mut still) = (count(Work::EngineBuild), 0);
-    while still < 4 && Instant::now() < deadline {
+    // at most 750 polls (30 s of 40 ms): a tool's patience, not a measurement
+    for _ in 0..750 {
+        if still >= 4 {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(40));
         let now = count(Work::EngineBuild);
         still = if now == last { still + 1 } else { 0 };
