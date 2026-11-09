@@ -232,6 +232,9 @@ pub(crate) fn for_device(
 
 impl Compiled {
     fn compile(device: &Arc<wgpu::Device>, queue: &Arc<wgpu::Queue>, info: &wgpu::AdapterInfo, shadow: bool) -> Result<Compiled, GpuInitError> {
+        // an engine built on a thread (the editor's, the offline one, a shadow) compiles on the device:
+        // the exit waits for it (D10)
+        let _busy = crate::exit::busy().ok_or_else(|| GpuInitError::Unsupported("the process is exiting".into()))?;
         let src = sources();
         let cache = crate::pipeline_cache::DiskCache::open(device, info, "engine", src.hash());
         let pc = cache.as_ref().map(|c| c.get());
@@ -347,10 +350,12 @@ impl Compiled {
 
     /// Wait until no frame composes on the device: a software rasterizer runs every submission on
     /// one queue thread, so a warm draw submitted first is a draw the frame waits behind.
+    /// Returns early when the process is exiting: the exit waits for this thread (D10), and a frame
+    /// may never end then.
     fn wait_frames(&self) {
         let mut n = self.frames.lock().unwrap_or_else(|e| e.into_inner());
-        while *n > 0 {
-            n = self.frame_done.wait(n).unwrap_or_else(|e| e.into_inner());
+        while *n > 0 && !crate::exit::exiting() {
+            n = self.frame_done.wait_timeout(n, std::time::Duration::from_millis(50)).unwrap_or_else(|e| e.into_inner()).0;
         }
     }
 
@@ -464,15 +469,24 @@ impl Compiled {
     }
 
     fn run(self: Arc<Self>) {
+        // the exit waits for this guard (D10); the shadow, declared after it, goes first
+        let busy = crate::exit::busy();
         // opened at the first job of a run that wants it, dropped with the run
         let mut shadow: Option<Option<Compiled>> = None;
         let shadow_of = |me: &Compiled| -> Option<Compiled> { if me.shadow { me.open_shadow() } else { None } };
         loop {
-            let job = self.work.lock().unwrap_or_else(|e| e.into_inner()).queue.pop_front();
+            let job = if busy.is_none() || crate::exit::exiting() {
+                // the process is exiting: drop the queue, warm nothing more
+                self.work.lock().unwrap_or_else(|e| e.into_inner()).queue.clear();
+                None
+            } else {
+                self.work.lock().unwrap_or_else(|e| e.into_inner()).queue.pop_front()
+            };
             match job {
                 Some(Job::Slots(slots)) => {
                     if let Some(sh) = shadow.get_or_insert_with(|| shadow_of(&self)) {
-                        sh.warm_batch(&slots);
+                        // one pipeline a submission there too: the exit waits for one draw, not all (D10)
+                        sh.warm_slots(&slots);
                     }
                     self.warm_slots(&slots)
                 }
@@ -484,7 +498,7 @@ impl Compiled {
                 }
                 None => {
                     // the queue is empty: keep what was compiled, then end unless work came meanwhile
-                    if let Some(c) = &self.cache {
+                    if let (Some(c), false) = (&self.cache, crate::exit::exiting()) {
                         c.save();
                     }
                     let mut w = self.work.lock().unwrap_or_else(|e| e.into_inner());
@@ -506,6 +520,9 @@ impl Compiled {
                 continue;
             }
             self.wait_frames();
+            if crate::exit::exiting() {
+                return;
+            }
             self.warm_batch(&[i]);
         }
     }
@@ -538,7 +555,7 @@ impl Compiled {
             let failed = pollster::block_on(validation.pop()).is_some() | pollster::block_on(internal.pop()).is_some();
             (!failed).then_some(p)
         });
-        if let Some(p) = &pipe {
+        if let Some(p) = pipe.as_ref().filter(|_| !crate::exit::exiting()) {
             self.wait_frames();
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }

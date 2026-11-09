@@ -717,7 +717,10 @@ first, so the watched device's warm draws are loads from the driver's cache: a f
 behind a warm-up's compile. A
 geometry shape a frame meets without a warm pipeline of its own SHALL run the interpreter (the same
 bytes) while the worker compiles and warms the shape; a frame SHALL create no pipeline. An export
-SHALL prewarm every device it composes on and wait for the worker before its first frame. The pipelines
+SHALL prewarm every device it composes on and wait for the worker before its first frame. Background GPU work (the warm
+worker and its shadow device, the compute host's opening and preparation, an engine compiled on a
+thread) SHALL hold the process's exit: at `exit` it starts nothing more and the exit waits for the draw
+or compile in flight, so nothing is on the device when libLLVM's destructors run. The pipelines
 of the editor's display device SHALL be kept for the process (`new_kept`), so an engine built again
 for a project opened again takes them warm, and the editor SHALL build its engine on a thread.
 `kt_gpu::cold_draws()` counts a pipeline drawn or dispatched in a frame before it was warmed,
@@ -739,6 +742,11 @@ behind it (16.0 s against 12.8 s).
 - **WHEN** a frame meets a geometry shape (an affine series, a Pan3d, both) no frame met before, on an engine whose core is warm
 - **THEN** the frame draws nothing cold and creates no pipeline; once the worker settles the shape has its own pipeline, and the next frame gives the first frame's bytes
 - **TEST** t2121 (`src/libs/kt-gpu/tests/prewarm.rs`)
+
+#### Scenario: The process exits while a warm-up compiles
+- **WHEN** a process starts the warm-up of every effect and every compute shader on an empty Mesa cache and calls `exit` while the work is on the device, three times
+- **THEN** each exits with status 0: the exit stops the queues and waits for the draw or compile in flight (before: SIGSEGV, status 139, in libLLVM's destructors — row 172)
+- **TEST** t2129 (`src/libs/kt-gpu/tests/exit_while_warming.rs`)
 
 #### Scenario: A prewarmed GL engine keeps composing
 - **WHEN** on the GL backend a software engine is prewarmed with every effect, composes a frame, and another engine opens and composes

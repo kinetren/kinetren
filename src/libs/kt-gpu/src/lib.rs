@@ -12,6 +12,7 @@ pub mod reference;
 pub mod testkit;
 mod compiled;
 mod context;
+mod exit;
 mod engine;
 mod pipeline_cache;
 mod pool;
@@ -22,6 +23,7 @@ pub use context::{
     instances_created, power_preference_for,
 };
 pub use compiled::{cold_draws, pipelines_in_frame};
+pub use exit::background_gpu_work;
 pub use pipeline_cache::set_cache_dir;
 pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 

@@ -61,6 +61,8 @@ pub fn open() -> Result<Arc<dyn ComputeHost>, String> {
 }
 
 pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
+    // the prewarm opens it on its own thread at a project's opening: the exit waits (pipeline-prewarm D10)
+    let _busy = crate::exit::busy().ok_or("the process is exiting")?;
     // the process's one instance and opening lock (segv-crashes): see `context::instance`
     let g = crate::context::opening();
     let instance = crate::context::instance(&g, wgpu::Backends::PRIMARY);
@@ -186,6 +188,8 @@ impl ComputeDevice {
 
 impl ComputeHost for ComputeDevice {
     fn prepare(&self, shader: &Shader) -> Result<(), String> {
+        // on the compute-warm thread: the exit waits for it (pipeline-prewarm D10)
+        let _busy = crate::exit::busy().ok_or("the process is exiting")?;
         let (p, _) = self.pipe(&shader.text, shader.reads, shader.writes)?;
         if p.warm.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(());

@@ -140,6 +140,10 @@ is no picture, and an export refuses.
   (`new_for_export`) has no shadow: it settles before its first frame.
 - **`new_kept` only for the editor's display device**: `wgpu::Device` compares by its id inside its
   instance, so a device of another instance can equal one of ours; every other engine compiles its own.
+- **Background GPU work holds the exit** (`exit.rs`, row 172, t2129): a thread of ours that compiles or
+  draws off a frame takes `crate::exit::busy()` (refused once the process exits) and checks
+  `exit::exiting()` between steps; an `atexit` hook waits for the guards, so libLLVM's destructors never
+  run under a compile. A new background GPU thread takes the guard too.
 - **The disk tier** (`pipeline_cache.rs`): every pipeline descriptor passes `cache`; the folder is set by
   the program (`set_cache_dir`), never by a test. Lavapipe's blob is its 96-byte header.
 

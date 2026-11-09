@@ -373,3 +373,15 @@ export devices, the compute host's device and pipes (row 64), every device's `ca
 - **`wgpu::Device` equality is per instance**: only the editor's display device keeps its pipelines
   for the process (`new_kept`); a device of another instance can compare equal.
 - **The disk tier is speed only** (t2125); lavapipe's blob is its 96-byte header.
+- **Background GPU work holds the exit** (row 172, D10 of the change in spirit): gpu-render-hardening D6
+  says nothing may be on the device when the process exits — `exit` runs libLLVM's destructors under
+  llvmpipe's threads. The frames are synchronous and `on_exit` parks the offline engine, but the warm
+  worker, its shadow, `compute-warm` and the engine built on a thread are not: two kt-app tests slowed by a
+  loaded full run returned while a warm-up compiled and died by SIGSEGV after "ok". `kt_gpu::exit`: such
+  work holds a `Busy` guard; the first guard registers an `atexit` hook that stops the queues (the worker
+  drops its queue, `wait_frames` gives up) and waits for the guards. The worker warms one pipeline a
+  submission on the shadow too, so the exit waits for one draw, not a batch. Walked: the worker (guard for
+  its whole run, the shadow dropped first), the shadow's compiles, `Compiled::compile` (the editor's
+  `engine-build`, `offline-engine`, the shadow), the compute host's `open_device` and `prepare`
+  (`compute-warm`); the frame paths are synchronous and stay as D6 left them. t2129 reproduces it: 1 of
+  3 child exits died by SIGSEGV with the hook off, 9 of 9 clean with it.
