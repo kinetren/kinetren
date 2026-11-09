@@ -142,10 +142,15 @@ on every device an entry read by the frame being resolved is never evicted or re
 that frame (with a 256 MB budget that never happened; with fewer entries it would overwrite a layer's
 texture before its pass reads it). The spares (four a size) stay. Before/after peaks:
 
-| showcase export (max RSS) | before | after |
+| showcase export, max RSS (`/usr/bin/time`, `MemoryMax=12G`) | before | after |
 |---|---|---|
-| 1080p | (measured in 6.2) | |
-| 4K | (measured in 6.2) | |
+| 1080p, run back to back at one load | 8.43 GB (96.8 s) | 7.07 GB (98.1 s) |
+| 1080p, first runs (load 45 against 7) | 8.42 GB | 7.02 GB |
+| 4K (tight under the 12 GB cap: two decoder threads, half the cache) | 4.76 GB | 4.96 GB |
+
+At 1080p the upload caches of the export's devices held about a GB of frames already written. At
+4K a 256 MB upload cache held seven frames, so there was nothing to take back; the 4K render stays
+under 5 GB because it runs tight inside the cap (found-defects 85: measured now, on llvmpipe only).
 
 ### D8. A card's memory is learned from its first refusal
 
@@ -176,7 +181,10 @@ gpu-render-hardening D1 found auto no faster for a render). A/B of the preview, 
 So the editor sets the render's rule for the project's frame size when it opens a project
 (`build_player`), `kt-cli preview` does the same (`KT_DECODE_THREADS` keeps the A/B), and the render
 window restores the preview's count after opening its own sources instead of resetting it to auto.
-The owner's region A/B (V-fps with four against auto) is in tasks 5.2.
+On the owner's region (release, 240 s, 640×360) four threads against auto: V-fps 39.4 against 38.1
+(four ran at load 29, auto at load 3), peak RSS 3.99 against 4.38 GB, 6.6 against 7.1 cores; both
+all-kept from lap 10–11. The heavy showcase's loop is never kept on llvmpipe with either binary — its
+frames come out incomplete (found-defects 334) — so it measures the memory, not the kept loop.
 
 ### D9. Visible
 
