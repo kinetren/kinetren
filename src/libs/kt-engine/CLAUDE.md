@@ -59,6 +59,13 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **Nothing in the hot path may be O(the whole edit)** (R.43, item 305).
   `overlap_weight` went through ALL the clips FOR EACH FRAME, and the cost of a PLACE grew linearly with the size of the PROJECT: 7 events — 3.6 ms/s, the same 7 plus 2000 distant ones — 92 ms/s. The set of covering events changes only at boundaries, therefore it is computed once by a sweep (`LaneCover`), and per frame a binary search remains; the maps lie in an array BY TRACK NUMBER (a hash per frame cost 40 % on small projects). The order of indices in the set is ascending: `overlap_weight` takes "the first two" in exactly that order, and GOLDEN_AUDIO stands on this. Tests 292/293 guard it.
   The search itself gave 11.5× on the user's project (889 → 77 ms); on top stands the flag `overlaps` — for an event that overlaps nobody, the weight is identically 1.0, and the path is closed by one `bool`. It is free and helps where many events are active at once; on a real edit it is about 1 %. **Do not compare the share of total time between benches** — it has a different denominator (item 305).
+- **The mixdown weighs a constant run once** (kernel-specialization): `weight_run` splits an event's frames
+  at every regime boundary of `fade_weight · overlap_at · gain` (fade and overlaid windows, the lane
+  cover's bounds, the FX tail edge) and says whether the regime is a constant; a constant run takes the
+  weight once by the same expression and multiplies inside `fast!`, a ramp keeps the per-frame formula. A
+  new term in the weight is a new boundary in `weight_run`, or the run hands out a stale weight (t2173
+  holds the bytes on the specialized, general and baseline paths; a `debug_assert` compares the run's
+  last frame).
 - **In the tail of FX the warp is not computed** (R.43, item 304): beyond `gate_end` the dry signal is zeroed by the gate anyway, so a chunk lying entirely beyond it is skipped — byte-identical by construction, but without the resampler and without reading the source. Tests 294/295.
 - Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7).
 - **A split of a pitched event is ONE stream** (pitch-event-edges D3): `run_predecessors` marks for an

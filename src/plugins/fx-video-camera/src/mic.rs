@@ -31,6 +31,8 @@ const NS_N: usize = 512;
 const NS_HOP: usize = 256;
 /// Half the resampling filters' length (63 taps each, at 48 kHz).
 const RS_M: usize = 31;
+/// The resampler's history: the FIR's length.
+const HIST: usize = 2 * RS_M + 1;
 /// The look-ahead: the codec's window, the NS frame, two resampling filters.
 pub const LA: i64 = (2 * N + NS_N + 2 * RS_M) as i64;
 
@@ -293,8 +295,12 @@ struct Chan {
     ns: Ns,
     aa: Vec<f64>,
     ai: Vec<f64>,
+    /// The resampler's histories as DOUBLED rings (each sample at `hist_pos` and `hist_pos + HIST`):
+    /// the last `HIST` samples, oldest first, are `[hist_pos, hist_pos + HIST)` — no shift of 63
+    /// samples per sample (kernel-specialization).
     aa_hist: Vec<f64>,
     ai_hist: Vec<f64>,
+    hist_pos: usize,
     delay_rs: Delay,
     enc: Encoder,
     dec: Decoder,
@@ -336,8 +342,9 @@ impl MicSound {
             ns: Ns::new(),
             aa: sinc_lowpass(fc),
             ai: sinc_lowpass(fc),
-            aa_hist: vec![0.0; 2 * RS_M + 1],
-            ai_hist: vec![0.0; 2 * RS_M + 1],
+            aa_hist: vec![0.0; 2 * HIST],
+            ai_hist: vec![0.0; 2 * HIST],
+            hist_pos: 0,
             delay_rs: Delay::new(if m == 1 { 2 * RS_M } else { 1 }),
             enc: Encoder::new(kbps),
             dec: Decoder::new(0xC0DE),
@@ -481,9 +488,12 @@ impl AudioState for MicSound {
                     let rs = if m == 1 {
                         ch.delay_rs.run(s)
                     } else {
-                        ch.aa_hist.copy_within(1.., 0);
-                        ch.aa_hist[2 * RS_M] = s;
-                        let lo: f64 = ch.aa.iter().zip(&ch.aa_hist).map(|(h, x)| h * x).sum();
+                        let p = ch.hist_pos;
+                        ch.hist_pos = (p + 1) % HIST;
+                        let from = ch.hist_pos;
+                        ch.aa_hist[p] = s;
+                        ch.aa_hist[p + HIST] = s;
+                        let lo: f64 = ch.aa.iter().zip(&ch.aa_hist[from..from + HIST]).map(|(h, x)| h * x).sum();
                         // decimate: the device keeps every m-th sample; the player's interpolator
                         // sees zeros between them
                         let kept = if n.rem_euclid(m as i64) == 0 {
@@ -492,9 +502,9 @@ impl AudioState for MicSound {
                         } else {
                             0.0
                         };
-                        ch.ai_hist.copy_within(1.., 0);
-                        ch.ai_hist[2 * RS_M] = kept;
-                        ch.ai.iter().zip(&ch.ai_hist).map(|(h, x)| h * x).sum()
+                        ch.ai_hist[p] = kept;
+                        ch.ai_hist[p + HIST] = kept;
+                        ch.ai.iter().zip(&ch.ai_hist[from..from + HIST]).map(|(h, x)| h * x).sum()
                     };
                     outs[c] = if r.codec == 0 {
                         // AAC: the codec's frames, on the grid of the stream's start

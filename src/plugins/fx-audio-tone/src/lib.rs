@@ -92,6 +92,14 @@ impl AudioState for WidthNode {
             if self.width.value() == 1.0 && self.width.target == 1.0 {
                 return;
             }
+            // standing still: the same width every frame, ticked once (kernel-specialization)
+            if kt_plugin_api::cpu::specialized() && self.width.still() {
+                let w = self.width.value().clamp(0.0, 2.0);
+                for fr in buf.chunks_exact_mut(CH) {
+                    apply_width(fr, w);
+                }
+                return;
+            }
             for fr in buf.chunks_exact_mut(CH) {
                 let w = self.width.tick().clamp(0.0, 2.0);
                 apply_width(fr, w);
@@ -187,6 +195,7 @@ impl AudioKernel for Eq {
         Box::new(EqNode {
             params: std::array::from_fn(|i| SmoothedParam::with_ms(EqNode::DEFAULTS[i], 20.0)),
             bands: Default::default(),
+            tuned: None,
         })
     }
 }
@@ -196,6 +205,9 @@ struct EqNode {
     /// The seven smoothed EQ parameters (low_g, low_f, mid_g, mid_f, mid_q, high_g, high_f).
     params: [SmoothedParam; 7],
     bands: [[Biquad; 3]; CH],
+    /// The values the bands were last tuned for: a re-tune with the same bits is skipped
+    /// (kernel-specialization), six `sin_cos`+`pow` per 128 frames while the knobs rest.
+    tuned: Option<[u32; 7]>,
 }
 
 impl EqNode {
@@ -224,22 +236,23 @@ impl AudioState for EqNode {
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
         // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
         kt_plugin_api::fast!({
+            let spec = kt_plugin_api::cpu::specialized();
             for block in buf.chunks_mut(TUNE_STEP * CH) {
                 let mut v = [0f32; 7];
-                for _ in 0..block.len() / CH {
-                    for (dst, p) in v.iter_mut().zip(self.params.iter_mut()) {
-                        *dst = p.tick();
-                    }
+                let n = block.len() / CH;
+                for (dst, p) in v.iter_mut().zip(self.params.iter_mut()) {
+                    *dst = p.advance(n);
                 }
                 // all gains at zero — plain pass-through: the EQ is transparent byte-for-byte
                 if v[0] == 0.0 && v[2] == 0.0 && v[5] == 0.0 {
                     continue;
                 }
-                for ch in 0..CH {
-                    // the same numbers as the frequency response graph (R.48): the same constants
-                    self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
-                    self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
-                    self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
+                let key = v.map(f32::to_bits);
+                if spec && self.tuned == Some(key) {
+                    // the bands hold exactly the coefficients these values tune
+                } else {
+                    self.tuned = Some(key);
+                    self.tune_bands(&v);
                 }
                 for fr in block.chunks_exact_mut(CH) {
                     for (ch, s) in fr.iter_mut().enumerate() {
@@ -262,6 +275,17 @@ impl AudioState for EqNode {
         }
         for p in &mut self.params {
             p.reset_to_target();
+        }
+    }
+}
+
+impl EqNode {
+    fn tune_bands(&mut self, v: &[f32; 7]) {
+        for ch in 0..CH {
+            // the same numbers as the frequency response graph (R.48): the same constants
+            self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
+            self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
+            self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
         }
     }
 }
@@ -325,9 +349,10 @@ struct DistNode {
     tone: SmoothedParam,
     mix: SmoothedParam,
     lp: [f32; CH],
-    /// The drive as a level and the tone's one-pole coefficient (`Memo`: not three transcendental
-    /// functions per sample while the knobs rest).
-    drive_lin: Memo<f32>,
+    /// The drive as a level with its level compensation `1/√g`, and the tone's one-pole coefficient
+    /// (`Memo`: not three transcendental functions, a root and a division per sample while the knobs
+    /// rest).
+    drive_lin: Memo<(f32, f32)>,
     tone_alpha: Memo<f32>,
 }
 
@@ -351,15 +376,36 @@ impl AudioState for DistNode {
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
         // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
         kt_plugin_api::fast!({
+            let drive = |d: f32| {
+                let g = 10f32.fpowf(d / 20.0);
+                (g, 1.0 / g.sqrt())
+            };
+            // tone: one-pole LP 500..12000 Hz (exp-map)
+            let tone_alpha = |tone: f32| {
+                let f = 500.0 * (12_000.0f32 / 500.0).fpowf(tone);
+                1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).fexp()
+            };
+            // standing still: one set of values for the block (kernel-specialization)
+            let rest = kt_plugin_api::cpu::specialized() && self.drive_db.still() && self.tone.still() && self.mix.still();
+            if rest {
+                let (g, comp) = self.drive_lin.get(self.drive_db.value(), drive);
+                let alpha = self.tone_alpha.get(self.tone.value().clamp(0.0, 1.0), tone_alpha);
+                let k = self.mix.value().clamp(0.0, 1.0);
+                for fr in buf.chunks_exact_mut(CH) {
+                    for (ch, s) in fr.iter_mut().enumerate() {
+                        let dry = *s;
+                        let mut y = softclip(dry * g) * comp;
+                        self.lp[ch] += (y - self.lp[ch]) * alpha;
+                        y = self.lp[ch];
+                        *s = dry * (1.0 - k) + y * k;
+                    }
+                }
+                return;
+            }
             for fr in buf.chunks_exact_mut(CH) {
-                let g = self.drive_lin.get(self.drive_db.tick(), |d| 10f32.fpowf(d / 20.0));
-                let comp = 1.0 / g.sqrt();
+                let (g, comp) = self.drive_lin.get(self.drive_db.tick(), drive);
                 let tone = self.tone.tick().clamp(0.0, 1.0);
-                // tone: one-pole LP 500..12000 Hz (exp-map)
-                let alpha = self.tone_alpha.get(tone, |tone| {
-                    let f = 500.0 * (12_000.0f32 / 500.0).fpowf(tone);
-                    1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).fexp()
-                });
+                let alpha = self.tone_alpha.get(tone, tone_alpha);
                 let k = self.mix.tick().clamp(0.0, 1.0);
                 for (ch, s) in fr.iter_mut().enumerate() {
                     let dry = *s;
@@ -466,10 +512,17 @@ impl AudioState for CrushNode {
     fn process(&mut self, buf: &mut [f32], pos: i64, _key: Option<&[f32]>) {
         // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
         kt_plugin_api::fast!({
+            // standing still: the values ticked once for the block (kernel-specialization)
+            let rest = kt_plugin_api::cpu::specialized() && self.bits.still() && self.rate_hz.still() && self.mix.still();
             for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
-                let bits = self.bits.tick().clamp(1.0, 16.0);
-                let rate = self.rate_hz.tick().clamp(500.0, 48_000.0) as f64;
-                let k = self.mix.tick().clamp(0.0, 1.0);
+                let (bits, rate, k) = if rest {
+                    (self.bits.value(), self.rate_hz.value(), self.mix.value())
+                } else {
+                    (self.bits.tick(), self.rate_hz.tick(), self.mix.tick())
+                };
+                let bits = bits.clamp(1.0, 16.0);
+                let rate = rate.clamp(500.0, 48_000.0) as f64;
+                let k = k.clamp(0.0, 1.0);
                 let q = self.steps.get(bits, |b| (2f32).fpowf(b - 1.0));
                 let p = pos + i as i64;
                 // the hold grid is tied to the clip’s POSITION, not to a counter
@@ -557,6 +610,7 @@ impl AudioKernel for Filter {
             cutoff: SmoothedParam::with_ms(800.0, 20.0),
             q: SmoothedParam::with_ms(0.707, 20.0),
             bq: Default::default(),
+            tuned: None,
         })
     }
 }
@@ -569,6 +623,9 @@ struct FilterNode {
     cutoff: SmoothedParam,
     q: SmoothedParam,
     bq: [Biquad; CH],
+    /// What the biquads were last tuned for (`Biquad::tune_key`): a re-tune with the same bits is
+    /// skipped (kernel-specialization).
+    tuned: Option<[u32; 4]>,
 }
 
 impl FilterNode {
@@ -605,15 +662,17 @@ impl AudioState for FilterNode {
         // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
         kt_plugin_api::fast!({
             let kind = self.kind();
+            let spec = kt_plugin_api::cpu::specialized();
             for block in buf.chunks_mut(TUNE_STEP * CH) {
-                let mut f = 0.0;
-                let mut q = 0.0;
-                for _ in 0..block.len() / CH {
-                    f = self.cutoff.tick();
-                    q = self.q.tick();
-                }
-                for b in &mut self.bq {
-                    b.tune(&kind, f, q, 0.0);
+                let n = block.len() / CH;
+                let f = self.cutoff.advance(n);
+                let q = self.q.advance(n);
+                let key = Biquad::tune_key(&kind, f, q, 0.0);
+                if !(spec && self.tuned == Some(key)) {
+                    self.tuned = Some(key);
+                    for b in &mut self.bq {
+                        b.tune(&kind, f, q, 0.0);
+                    }
                 }
                 for fr in block.chunks_exact_mut(CH) {
                     for (ch, s) in fr.iter_mut().enumerate() {

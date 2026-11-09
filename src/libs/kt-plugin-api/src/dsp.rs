@@ -65,6 +65,35 @@ impl SmoothedParam {
     pub fn value(&self) -> f32 {
         self.current
     }
+
+    /// Whether the smoother stands still (kernel-specialization): a tick would leave the value's
+    /// bits as they are. A tick is a pure function of the value, the target and the coefficient, so
+    /// a tick that changes nothing changes nothing again until the target moves — every later tick
+    /// gives these bits. Not "value == target": a one-pole glide can stop a few ulps short of its
+    /// target (the step rounds to nothing), and −0 ticks to +0.
+    #[inline]
+    pub fn still(&self) -> bool {
+        (self.current + (self.target - self.current) * self.alpha).to_bits() == self.current.to_bits()
+    }
+
+    /// The value after `n ≥ 1` ticks: the ticks stop at the first that changes nothing (the rest
+    /// would not either, `still`). Inside `cpu::with_general` every tick runs.
+    #[inline]
+    pub fn advance(&mut self, n: usize) -> f32 {
+        if !crate::cpu::specialized() {
+            for _ in 0..n {
+                self.tick();
+            }
+            return self.current;
+        }
+        for _ in 0..n {
+            let was = self.current.to_bits();
+            if self.tick().to_bits() == was {
+                break;
+            }
+        }
+        self.current
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +277,21 @@ impl Biquad {
         let num = b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * c1 + 2.0 * b0 * b2 * c2;
         let den = 1.0 + a1 * a1 + a2 * a2 + 2.0 * (a1 + a1 * a2) * c1 + 2.0 * a2 * c2;
         10.0 * (num.max(1e-30) / den.max(1e-30)).flog10()
+    }
+
+    /// The coefficients of a biquad tuned by these inputs are these inputs' function alone: the key
+    /// a node keeps to skip a re-tune whose inputs did not move (kernel-specialization). Bits, so a
+    /// skipped re-tune is the re-tune to the bit.
+    pub fn tune_key(kind: &BiquadKind, freq_hz: f32, q: f32, gain_db: f32) -> [u32; 4] {
+        let k = match kind {
+            BiquadKind::Lowpass => 0,
+            BiquadKind::Highpass => 1,
+            BiquadKind::Bandpass => 2,
+            BiquadKind::LowShelf => 3,
+            BiquadKind::Peak => 4,
+            BiquadKind::HighShelf => 5,
+        };
+        [k, freq_hz.to_bits(), q.to_bits(), gain_db.to_bits()]
     }
 
     #[inline]
