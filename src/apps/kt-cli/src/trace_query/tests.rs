@@ -246,3 +246,51 @@ fn t2149_window_frame_and_exports() {
     assert!(evs.iter().any(|e| e["name"] == "thread_name" && e["args"]["name"] == "prefetch"));
     assert!(evs.iter().any(|e| e["name"] == "compute_job:datamosh:search" && e["ph"] == "X"));
 }
+
+/// Test t2243 (one-scheduler): `during` names what the scheduler did in the window — each job by
+/// its class and lane, a pause and a resume, a cancel, and a blocking call on the UI thread.
+#[test]
+fn t2243_during_names_scheduled_jobs_pauses_and_blocking_calls() {
+    use kt_time::sched::Class;
+    let mut run = run_of(vec![
+        rec(Ev::SchedQueue, 10 * MS, |r| {
+            r.id = 5;
+            r.aux = Class::Visible as u32;
+            r.a = 41;
+        }),
+        rec(Ev::SchedRun, 11 * MS, |r| {
+            r.id = 5;
+            r.aux = Class::Visible as u32;
+            r.a = 41;
+            r.dur = 30 * MS;
+        }),
+        rec(Ev::SchedPause, 50 * MS, |r| {
+            r.aux = 1;
+            r.a = kt_time::sched::why::PLAYING as u64;
+        }),
+        rec(Ev::SchedCancel, 60 * MS, |r| {
+            r.id = 6;
+            r.aux = kt_time::sched::why_cancel::CLOSED;
+            r.a = 42;
+        }),
+        rec(Ev::SchedPause, 90 * MS, |r| r.aux = 0),
+        rec(Ev::Block, 95 * MS, |r| {
+            r.aux = kt_time::block::kind::FSYNC;
+            r.a = kt_time::block::role::UI as u64;
+            r.dur = 7 * MS;
+        }),
+    ]);
+    run.names.insert(41, "thumbs".into());
+    run.names.insert(42, "analysis".into());
+    let o = during(&run, 0, 200 * MS);
+    for want in [
+        "sched_queue:visible:thumbs",
+        "sched_run:visible:thumbs",
+        "sched_pause",
+        "sched_resume",
+        "sched_cancel:analysis",
+        "block:ui:fsync",
+    ] {
+        assert!(o.contains(want), "{want} missing in:\n{o}");
+    }
+}

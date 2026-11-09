@@ -1951,6 +1951,32 @@ mod tests {
         assert_eq!(ev[1]["properties"]["undos"], 1);
     }
 
+    /// Test t2242 (one-scheduler): a quiet session's sender sleeps on its channel with no timer —
+    /// after a beat with nothing new it is dormant — and the next activity re-arms the heartbeat,
+    /// which then carries it.
+    #[test]
+    fn t2242_a_quiet_session_sleeps_until_activity() {
+        let rec = Recording::default();
+        let t = Telemetry::new(on(), new_uuid(), Box::new(rec.clone()))
+            .with_key("phc_test")
+            .with_heartbeat(Duration::from_millis(40));
+        frame(&t, false);
+        t.signal(Signal::Undo);
+        wait_for(&rec, 2);
+        let deadline = kt_time::test_deadline();
+        while !t.shared.dormant.load(Ordering::Acquire) {
+            assert!(std::time::Instant::now() < deadline, "the sender never went to sleep");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(rec.events().len(), 2, "a dormant sender sent something");
+        t.signal(Signal::Redo);
+        wait_for(&rec, 3);
+        let ev = rec.events();
+        assert_eq!(ev[2]["event"], "app_heartbeat");
+        assert_eq!(ev[2]["properties"]["redos"], 1, "the activity that woke it is in the beat");
+    }
+
     /// A project with the person's names everywhere a careless hook would look (t837).
     fn secret_project() -> kt_model::Project {
         let mut p = empty_model().project().clone();

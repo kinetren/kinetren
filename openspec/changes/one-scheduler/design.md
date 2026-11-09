@@ -97,7 +97,7 @@ time, never a red.
 | audio render on a pause | 250 ms | two 100 ms tail passes (the block the callback was handing out when the pause came), then parked with no clock |
 | prefetch on a pause | 100 ms | a pass while playing, while a stream stage lacks history, or after a state change; else parked |
 | index service | `recv_timeout(200 ms)` | a pump, kicked by `enqueue` |
-| media watchdog | `sleep(900 ms)` | a pump poked on events: the opening, focus gained or lost, play/stop, input at most once a second |
+| media watchdog | `sleep(900 ms)` | a pump poked on events: the opening, focus gained or lost, play/stop; never a pointer move (a hover runs no job) |
 | load watch | 1 s | parks after 5 quiet seconds; any counted work (a UI frame included) wakes it; never parks on the bench |
 | effect cells | 1 s wait, 25 ms sleep while busy | a pump; the pause is the scheduler's |
 | thumbnails | 2 s wait (row 174) | a pump |

@@ -26,7 +26,7 @@ QUIET_S = 3.0
 # what a pointer passing over static things must not cause at all
 NOT_ON_HOVER = (
     "composites", "device_submits", "decode_requests", "decoded", "thumb_orders", "fx_thumbs",
-    "reel_jobs", "prefetch_passes", "model_edits", "project_swaps", "engine_builds",
+    "reel_jobs", "prefetch_passes", "model_edits", "project_swaps", "engine_builds", "sched_jobs",
 )
 # input-without-work: a thread holding this share of a core while no counter moves is work nobody
 # counts (the owner's report: "at rest" at 196 %, prefetch and the audio render rebuilding the
@@ -43,6 +43,38 @@ def trace_bytes(out):
         return sum(os.path.getsize(os.path.join(d, f)) for f in os.listdir(d))
     except OSError:
         return 0
+
+
+# one-scheduler: the threads that must not wake at all on a settled pause (the load watch keeps its
+# bench sampling under KT_GEOM_DUMP, so it is not among them)
+NO_WAKE_THREADS = (
+    "prefetch", "audio-render", "engine-build", "sched-", "index-service", "media-watchdog", "thumbs",
+    "fxthumbs", "kt-posters", "preview-compose", "trace-writer",
+)
+
+
+def editor_pid(app):
+    """The editor process: the child of the supervisor this scenario started."""
+    p = app.proc.pid
+    try:
+        kids = open(f"/proc/{p}/task/{p}/children").read().split()
+    except OSError:
+        return p
+    return int(kids[0]) if kids else p
+
+
+def wakes(pid):
+    """Context switches per thread name: a timer at rest shows here whatever the counters say."""
+    out = {}
+    for t in os.listdir(f"/proc/{pid}/task"):
+        try:
+            name = open(f"/proc/{pid}/task/{t}/comm").read().strip()
+            st = open(f"/proc/{pid}/task/{t}/status").read()
+        except OSError:
+            continue
+        n = sum(int(l.split(":")[1]) for l in st.splitlines() if "ctxt_switches" in l)
+        out[f"{name}#{t}"] = n
+    return out
 
 
 class Meter:
@@ -139,6 +171,14 @@ def main(out):
         print(f"   pause: {work}, {cpu:.0f} % of a core, threads {meter.threads}, trace +{grew} bytes")
         app.expect(not work, f"a pause runs nothing, ran {work}")
         app.expect(grew == 0, f"a pause records nothing in the trace: +{grew} bytes")
+        pid = editor_pid(app)
+        w0 = wakes(pid)
+        kt_live._poll(5.0)
+        w1 = wakes(pid)
+        woke = {k: v - w0.get(k, 0) for k, v in w1.items() if v - w0.get(k, 0) > 0}
+        print(f"   pause, 5 s: threads that woke {woke}")
+        ours = {k: v for k, v in woke.items() if k.split("#")[0].startswith(NO_WAKE_THREADS)}
+        app.expect(not ours, f"a pause wakes our threads on a clock: {ours}")
         app.expect(not meter.uncounted(work), f"a pause holds a thread no counter sees: {meter.uncounted(work)}")
 
         g = app.geom()

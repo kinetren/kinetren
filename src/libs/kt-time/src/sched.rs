@@ -380,6 +380,15 @@ impl Lane {
         self.cancel_queued(why_cancel::CLOSED);
     }
 
+    /// Wait until the lane is idle, with no bound: an owner's drop waiting for its running job (a
+    /// frame on the device must end before the process does).
+    pub fn wait_until_idle(&self) {
+        let mut st = self.st();
+        while st.running || !st.once.is_empty() || (st.pump_due && st.pump.is_some() && !st.closed) {
+            st = self.idle.wait(st).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
     /// Nothing queued, due or running.
     pub fn is_idle(&self) -> bool {
         let st = self.st();

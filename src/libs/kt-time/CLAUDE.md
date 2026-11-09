@@ -19,6 +19,15 @@ The time model of the whole engine. Zero dependencies (except serde).
   `journal`) locks and allocates — never from the render thread's loop; nothing records at rest (a
   hover UI frame must not); a thread that does work for a frame sets `with_cause(frame)`. The questions
   live in `kt-cli trace` (`apps/kt-cli/src/trace_query.rs`), not here.
+- **`sched` is the one executor of background work** (one-scheduler, capabilities `media-index`,
+  `telemetry`, t2230–t2234): classes in a fixed order, lanes (FIFO, one job at a time; one-shot or a
+  pump), a pool of a quarter of the cores (3 to 6) that keeps one worker for `Answer`, pause votes
+  (`Vote`, dropped with their owner), tokens, per-class counters, `SchedQueue/Run/Cancel/Pause`
+  records. Workers and checkpoints wait on condvars: nothing here may wake on a clock. Std only.
+- **`block` counts blocking calls on the threads that must not wait** (t2235): the UI and the audio
+  render thread mark themselves; a call that can stand on the disk or a build opens `wait(kind)`.
+- **`work::park_until_work`** parks a watcher until any counter moves; `add` pays one relaxed load
+  while nobody is parked (t2241).
 - Negative ticks are valid (floor semantics via `div_euclid`) — indexing down to zero relies on them.
 - **Subtlety**: the 48 kHz frames ↔ ticks are mutually exact only for frames that are multiples of 8 (ticks that are multiples of 15): `from_audio_frames(f).to_audio_frames() == f` ⇔ `f % 8 == 0`. Clip boundaries live in ticks; the engine floors them into frames once (kt-engine::AudioRenderer). In tests that set clip boundaries in frames, use multiples of 8 — otherwise the seam would drift by 1 sample (see tests/audio_engine.rs).
 

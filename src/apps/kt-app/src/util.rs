@@ -296,26 +296,16 @@ pub(crate) fn pyramid_to_peaks(p: kt_media::index::PeakPyramid) -> Peaks {
 pub struct WatchdogHandle {
     /// Its lane (one-scheduler): one stat pass per poke, closed with the handle. It slept 900 ms
     /// in a loop before, at rest too: a file that comes back or goes is now noticed at the next
-    /// event that can follow it — the project opening, the window getting focus (a drive plugged
-    /// in and the person back at the program), play or stop, and input at most once a second.
+    /// event that can follow it — the project opening, the window getting or losing focus (a file
+    /// copied back in a file manager, a drive plugged in and the person back at the program), play
+    /// or stop. Not a pointer move: a hover over a still place runs no job (idle-cpu).
     lane: kt_time::sched::LaneRef,
-    last: Mutex<Option<std::time::Instant>>,
 }
 
 impl WatchdogHandle {
     /// Look at the files now (coalesced with a look already due).
     pub fn poke(&self) {
-        *self.last.lock().unwrap() = Some(std::time::Instant::now());
         self.lane.kick();
-    }
-
-    /// Look at them on input, at most once a second: a frame of input is not a clock, and at
-    /// rest none comes.
-    pub fn poke_on_input(&self) {
-        let due = self.last.lock().unwrap().is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
-        if due {
-            self.poke();
-        }
     }
 
     /// Wait for the poked look (tests).
@@ -355,7 +345,7 @@ pub fn spawn_media_watchdog(
         }
         kt_time::sched::Pump::Idle
     });
-    let handle = WatchdogHandle { lane, last: Mutex::new(None) };
+    let handle = WatchdogHandle { lane };
     handle.poke();
     (set, handle)
 }

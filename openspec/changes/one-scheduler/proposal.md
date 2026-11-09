@@ -32,7 +32,7 @@ decoder on media gestures) and 174 (the thumbnail worker wakes every 2 s) are in
   index, the media watch, autosave and Ctrl+S, the sources reopened when a file returns, the max
   source size, the poster loader. Each loses its thread and its timer.
 - **Timers at rest go**: the audio render thread's 250 ms and prefetch's 100 ms on a pause, the
-  index's 200 ms, the watchdog's 900 ms (now event-driven: open, focus, play/stop, input), the load
+  index's 200 ms, the watchdog's 900 ms (now event-driven: open, focus, play/stop), the load
   watch's second (it parks after a quiet stretch and re-arms on work or input), the thumbnails' 2 s,
   the effect cells' 1 s and 25 ms, `BgCtl`'s 30 ms pause poll, telemetry's heartbeat on a quiet
   session.

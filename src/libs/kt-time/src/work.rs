@@ -162,8 +162,12 @@ mod tests {
         while !PARKED.load(Ordering::Acquire) {
             std::thread::yield_now();
         }
+        // other tests of this binary count work too: the watcher may wake, but only for a count
+        let before = totals();
         std::thread::sleep(std::time::Duration::from_millis(300));
-        assert!(!woke.load(Ordering::Acquire), "the watcher woke with nothing counted");
+        if woke.load(Ordering::Acquire) {
+            assert_ne!(totals(), before, "the watcher woke with nothing counted");
+        }
         bump(Work::SchedJob);
         h.join().unwrap();
         assert!(woke.load(Ordering::Acquire));

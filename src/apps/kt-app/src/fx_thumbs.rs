@@ -393,7 +393,7 @@ impl Drop for FxThumbService {
         // threads (gpu-render-hardening, D6, t1644): the lane closes and its running cell ends
         self.lane.close();
         let _join = kt_time::block::wait(kt_time::block::kind::JOIN);
-        self.lane.wait_idle(std::time::Instant::now() + std::time::Duration::from_secs(30));
+        self.lane.wait_until_idle();
     }
 }
 

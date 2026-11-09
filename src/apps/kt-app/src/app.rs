@@ -4823,16 +4823,13 @@ impl KtApp {
     }
 
     /// The media watch looks at the files on events (one-scheduler): the window gets or loses
-    /// focus, playback starts or stops, and on input at most once a second. Nothing at rest.
+    /// focus, playback starts or stops. Nothing at rest, nothing on a pointer move.
     fn poke_media_watch(&mut self, ctx: &egui::Context) {
         let Some(w) = &self.watchdog else { return };
-        let (input, focus) = ctx.input(|i| (!i.events.is_empty(), i.viewport().focused));
-        let seen = (focus, self.player.transport.is_playing());
+        let seen = (ctx.input(|i| i.viewport().focused), self.player.transport.is_playing());
         if seen != self.watch_seen {
             self.watch_seen = seen;
             w.poke();
-        } else if input {
-            w.poke_on_input();
         }
     }
 
@@ -5884,7 +5881,14 @@ impl KtApp {
         let rev = self.model_rev;
         let (answer, reply) = kt_time::sched::Answer::new();
         let target = path.clone();
-        save_lane().post_keyed(1, kt_time::sched::Token::new(), move |_| {
+        // the newest save of the SAME file replaces a queued one; another file's save is its own
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            path.hash(&mut h);
+            h.finish() | 1
+        };
+        save_lane().post_keyed(key, kt_time::sched::Token::new(), move |_| {
             let out = project_text_of(&project, &retained, target.parent());
             // under the watchdog: the background autosave must not overwrite our record
             // with its older snapshot (R.32)

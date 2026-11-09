@@ -319,11 +319,22 @@ fn bench_dump(path: &str, totals: &[u64], ticks: &std::collections::BTreeMap<Str
     let (frames, ns) = crate::frame_cost::totals();
     let stages: Vec<String> =
         crate::frame_cost::Stage::ALL.iter().zip(ns).map(|(st, n)| format!("\"{}\":{n}", st.name())).collect();
+    // the scheduler (one-scheduler): per class started/done/cancelled, what waits, the pause mask
+    let st = kt_time::sched::stats();
+    let classes: Vec<String> = kt_time::sched::Class::ALL
+        .iter()
+        .zip(st.classes)
+        .map(|(c, n)| format!("\"{}\":[{},{},{},{}]", c.name(), n.queued, n.started, n.done, n.cancelled))
+        .collect();
     let json = format!(
-        "{{\"work\":{{{}}},\"ticks\":{{{}}},\"frame\":{{\"frames\":{frames},\"ns\":{{{}}}}}}}\n",
+        "{{\"work\":{{{}}},\"ticks\":{{{}}},\"frame\":{{\"frames\":{frames},\"ns\":{{{}}}}},\"sched\":{{\"paused\":{},\"running\":{},\"waiting\":{},\"classes\":{{{}}}}}}}\n",
         work.join(","),
         threads.join(","),
-        stages.join(",")
+        stages.join(","),
+        st.paused,
+        st.running,
+        st.waiting,
+        classes.join(",")
     );
     let tmp = format!("{path}.tmp");
     if std::fs::write(&tmp, json).is_ok() {
