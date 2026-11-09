@@ -252,6 +252,7 @@ fn t2236_media_and_save_gestures_block_nothing_on_the_ui_thread() {
         .collect();
     assert!(named.is_empty(), "the UI thread waited: {named:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
 
 /// Test t2215 (test-hygiene, `ui_wait` at load 142): a long frame's note says how long the UI thread stood
 /// ready with no processor. `ui_wait` judged a frame's wall time, and at load 142 a frame of 10 ms of

@@ -65,7 +65,7 @@ def editor_pid(app):
     return int(kids[0]) if kids else p
 
 
-def wakes(pid):
+def thread_wakes(pid):
     """Context switches per thread name: a timer at rest shows here whatever the counters say."""
     out = {}
     for t in os.listdir(f"/proc/{pid}/task"):
@@ -209,12 +209,12 @@ def main(out):
         app.expect(not work, f"a pause runs nothing, ran {work}; frames with no input were asked by: {woke(app, w0)}")
         app.expect(grew == 0, f"a pause records nothing in the trace: +{grew} bytes")
         pid = editor_pid(app)
-        w0 = wakes(pid)
+        tw0 = thread_wakes(pid)
         kt_live._poll(5.0)
-        w1 = wakes(pid)
-        woke = {k: v - w0.get(k, 0) for k, v in w1.items() if v - w0.get(k, 0) > 0}
-        print(f"   pause, 5 s: threads that woke {woke}")
-        ours = {k: v for k, v in woke.items() if k.split("#")[0].startswith(NO_WAKE_THREADS)}
+        tw1 = thread_wakes(pid)
+        woken = {k: v - tw0.get(k, 0) for k, v in tw1.items() if v - tw0.get(k, 0) > 0}
+        print(f"   pause, 5 s: threads that woke {woken}")
+        ours = {k: v for k, v in woken.items() if k.split("#")[0].startswith(NO_WAKE_THREADS)}
         app.expect(not ours, f"a pause wakes our threads on a clock: {ours}")
         app.expect(not meter.uncounted(work), f"a pause holds a thread no counter sees: {meter.uncounted(work)}")
 
