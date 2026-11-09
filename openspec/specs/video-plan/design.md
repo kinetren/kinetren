@@ -421,3 +421,33 @@ over every family and core node, D-measure).
   constant, a property of the layout.
 - Measured on llvmpipe at 1080p: a chain of k stages moves 16.6 MB instead of k × 16.6 MB; device
   time 9.3 → 2.2 ms for six stages. The heavy showcase holds one two-stage run and does not change.
+
+## One ring per physical queue (gpu-arbiter, 2026-11-09)
+
+The mechanism (M5 of `docs/engine-audit.md`): a resource two subsystems share had no owner that ordered
+them, so whoever submitted first held the other for as long as its own unit lasted. A hardware card
+runs every `wgpu::Device` we open on it through one graphics ring: a 300 ms offline submission stood in
+front of the display's frame (row 149), and the compute host ran the look-ahead's Datamosh jobs before
+the frame on screen (row 134). llvmpipe hides it — every device has a queue thread of its own — so the
+bench and t2254 put the display, the offline engine and the compute host on ONE device.
+
+- **A ring per card, a ring per software device** (`kt_gpu::arbiter`). Admission by the caller's class
+  (`kt_time::sched::current_class`); a ring with a display holds at most half a frame period of
+  predicted device time in flight, a general rule; a lower-class frame or compute job is cut where the
+  pass timer's MEASURED times say the piece would pass it. Rejected: one ring per `wgpu::Device` (the
+  defect itself), one per process (llvmpipe's independent queues would wait for each other), cutting by
+  pass count (a resample and a Camera ISP pass differ 100×), preempting (wgpu cannot).
+- **No piece waits for its submitter to come back**: completion is a work-done callback, and a waiter
+  completes the oldest piece by a blocking wait on that piece's device — never on a device with a
+  window, whose present takes the device's lock for writing (wgpu-core 30: `poll(Wait)` holds the snatch
+  lock for reading, `Surface::present` takes it for writing). The export's ring of three frames would
+  otherwise deadlock on its own collect.
+- **The present is waited for without a fixed-period poll** (row 272): the frame's work-done callback,
+  a check after the device time the timer measured for the last preview frame, then growing waits.
+- Measured on one llvmpipe device, 1080p, display + the VHS cut offline + a Datamosh look-ahead
+  (`kt-cli gpu-share` on `showcase --mosh`): display wait p50/p95/max 32/322/764 → 27/50/73 ms,
+  63 → 193 presents in 8 s, offline 4.38 → 4.50 frames/s. Bytes unchanged (t2253, t1239).
+- Left (found-defects 290–294): the offline engine's `inner` mutex still holds a whole frame; a GL
+  display with no PCI ids may merge two cards' rings; predictions are per label, not per size.
+
+The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/design.md`.

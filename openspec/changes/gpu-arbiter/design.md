@@ -163,13 +163,45 @@ it; kt-cli keeps the process-wide setters (one process, one render).
 
 ### D11. The bench
 
-`kt-cli gpu-share <project.kt> [--seconds N] [--arbiter on|off|both]`: one headless device; a display
-engine (`register_display`) presents a light plan of the project every frame period and measures each
-present's latency; an offline engine on the same device composes the heaviest moment continuously as
-class offline; a compute host on the same device advances the project's Datamosh history as class
-near. Reported from the trace: present latency p50/p95/max, admissions and waits per class, pieces.
-`kt-cli showcase --mosh` lays a Datamosh on the montage of the showcase. Test t2254 runs a small
-version and compares the two modes inside one run (the limit IS the check; listed in t1671's list).
+`kt-cli gpu-share <project.kt> [--seconds N] [--arbiter on|off|both] [--display S] [--offline S]
+[--mosh S] [--size WxH] [--check]`: one headless device; a display engine (`register_display`)
+presents 50 frames of the project from `--display` (a range with no stream stage: the bench refuses
+one, the display would compute a history instead of presenting), one every frame period, and records
+each present's device wait as a `FrameWait`; an offline engine on the same device composes the
+moment at `--offline` again and again (class offline); a compute host on the same device advances the
+Datamosh history from `--mosh` on (class near). `kt-cli showcase --mosh` lays a Datamosh on the styled
+montage cuts of the showcase. Test t2254 runs a synthetic version (VHS Tape + Camera ISP at 1080p and a
+spinning compute job) and compares the two modes inside one run; its clock reads are a comparison of
+two runs, not a bound of a wait (t1671 does not list it).
+
+### D-measure. Before and after (release kt-cli, llvmpipe, machine load 30–110 from other sessions)
+
+- **Baseline, before any code** (`kt-cli preview` of `showcase --mosh` 10–17 s, `--trace`): 93 compute
+  jobs in 7 s, every one on the prefetch thread (13.3/s); the compose thread ran none (the pacing keeps
+  histories off it). V-fps 0.7 at load 82 — a load figure, not the program's.
+- **Row 149 on ONE device** (`kt-cli gpu-share` on `showcase --mosh`: display 30 s, offline the VHS
+  Tape cut at 76 s, look-ahead from the Datamosh at 11.2 s; 1080p; 8 s each, after a 2 s warm lap):
+
+  | | display device wait p50 / p95 / max | presents in 8 s | offline frames/s | history positions/s | pieces |
+  |---|---|---|---|---|---|
+  | arbiter off | 32.1 / 322.1 / 763.7 ms | 63 | 4.38 | 2.9 | 0 |
+  | arbiter on | 26.6 / 50.3 / 73.3 ms | 193 | 4.50 | 26.6 | 395 |
+
+  The offline frames keep their rate: a piece waiting for the one before costs a wake-up, and the
+  display's frames slip in between. The look-ahead ran faster with the rings (its jobs no longer sat
+  behind whole offline frames). `kt-cli trace … gpu` over the same run: ring 1 carries the display;
+  near 273 admitted, waits max 55 ms; offline 716 admitted, 639 pieces cut.
+- **Synthetic, in the test** (t2254: VHS Tape + Camera ISP at 1080p offline, a spinning compute job,
+  4 s each, load ~90): display wait p50 328 → 93 ms, p95 772 → 208, max 1018 → 229 ms; 8 → 40 frames.
+- **A heavy frame cut**: t2253 cut VHS Tape + Camera ISP at 1080p into 22 pieces at a 20 ms bound,
+  same bytes.
+- **The present's wait** (t2260): 19 checks over 10 presents of 107 ms each (was a poll a millisecond:
+  ~1000).
+- **Row 134**: the same preview run after: 12.3 jobs/s with the rings, 12.9 without (`KT_GPU_ARBITER=off`),
+  all class near — the rings order the look-ahead behind the frame on screen and stop a history the
+  playhead left, but the count is the stage's own (two jobs a position); fewer submits are
+  `stream-layout-per-build`'s (packed jobs). V-fps 20.1 vs 19.8.
+- **Rest**: live `idle`, `sched_pause`, `heavy_loop`, `ui_wait` (section 5 of tasks).
 
 ## Risks / Trade-offs
 

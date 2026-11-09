@@ -16,11 +16,11 @@ compute jobs): in live `ui_wait` the preview's thread held 4 cores for seconds a
 - **TEST** t2257 (`src/plugins/fx-video-codec/tests/stop.rs`)
 
 #### Scenario: The preview stops a history it left
-- **WHEN** the compose thread runs a frame whose stream history is long, and a new ask for another moment arrives
-- **THEN** the history stops before its end, the old frame is reported incomplete, and the new ask is composed next
-- **TEST** t2258 (`src/libs/kt-engine/tests/stream_stage.rs`)
+- **WHEN** a frame's long stream history runs under the compose thread's stop check, and the check turns true (a newer ask, an edit)
+- **THEN** the history stops before its end, the frame is incomplete, the stop is traced as the compose thread's, the memo keeps what was computed, and the next composite resumes to the bytes of an uninterrupted one
+- **TEST** t2258 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 #### Scenario: The look-ahead stops when the playhead leaves
-- **WHEN** the prefetch thread advances a long history and the transport seeks elsewhere
-- **THEN** the advance stops at the next position, and the trace marks the advance stopped
-- **TEST** t2259 (`src/libs/kt-engine/tests/stream_stage.rs`)
+- **WHEN** the prefetch thread's advance of a long history runs under its stop check, and the check turns true (a seek, an edit)
+- **THEN** the advance stops at the next position, says it is still pending, and the trace marks the advance stopped; a later advance finishes it
+- **TEST** t2259 (`src/libs/kt-engine/tests/decode_storm.rs`)

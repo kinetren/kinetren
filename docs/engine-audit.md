@@ -163,7 +163,7 @@ GPU job, an fsync, a build, a lock held through a build, or a file open. The def
 | row 98: Ctrl+S writes and syncs twice on the UI thread | 6.7 s at load 76 | **open** |
 | row 148: source opens and decoder joins on media gestures (UI thread) | — | **open** |
 | rows 111 and 117: the first probe build on the UI thread | 412 ms | **open** |
-| row 147: a composite the UI has left runs to its end (no cancellation point in `StreamKernel::render`) | 4 cores for seconds after a pause | **open**, needs a plugin-API change |
+| row 147: a composite the UI has left runs to its end (no cancellation point in `StreamKernel::render`) | 4 cores for seconds after a pause | closed: `StreamInput::stop`, the compose, prefetch and pre-roll stop checks (`gpu-arbiter`, t2257–t2259) |
 | rows 105 and 112: interface stalls of 10–30 s at 0 % processor | — | **open**, one cause removed (geometry dump) |
 | rows 99 and 100: two Space presses or an Esc inside one slow frame | — | **open**: inputs judged on the frame clock |
 
@@ -194,7 +194,7 @@ circle.
 | idle-cpu D1: the preview service evicted a live reel release and ordered it again | 236 % of a core against 46 %; 66 submits/s | closed: previews settle (t1830) |
 | media-index t69: an unpublished failure made the UI order again every frame | opens grow with FPS | closed |
 | row 114: thumbnail and effect-cell caps go round (384 / 256) | — | **open** |
-| row 134: ~45 GPU submits/s from Datamosh jobs prefetch runs far ahead | 35–49 submits/s | **open**: `gpu-arbiter` and the stream pacing; his next journal confirms |
+| row 134: ~45 GPU submits/s from Datamosh jobs prefetch runs far ahead | 35–49 submits/s; 12–13 jobs/s on our mosh showcase, all the look-ahead's, with and without the rings | ordered (near behind now) and stopped when left by `gpu-arbiter`; the count is two jobs per history position — **open** for `stream-layout-per-build` |
 | row 143: the Datamosh memo (256 MB) holds ~20 positions at 1080 lines | a long loop recomputes history every lap | **open** |
 | `thumbs` queue is LIFO and unbounded, with no pause while playing (code map A2) | — | **open**, not measured |
 
@@ -212,10 +212,10 @@ the same cache with their own rules. Separately, there are ten queue disciplines
 | preview D1: one moment decoded once per size | 42 654 → 10 934 pictures, 661 → 113 reopens | closed |
 | preview D5: the Playback request for the frame on screen stood behind the window | 38 026 underrun frames at 50–53 s → 0 | closed |
 | sidecar `open_gate`: twelve openers, one to three failed after 5.7–6.2 s; t872 SIGBUS deleted a live file | — | closed |
-| compute host: jobs from prefetch, compose, reel/poster pre-roll and export on one queue, no priority, no lock across a job (code map §4) | each poll waits for the other's work | **open** |
-| offline device shared by the slow preview route, fx-thumbs, reel strips and posters under one `inner` mutex (code map §4, inference) | not measured | **open** |
-| row 149: on his RADV the display and offline devices share one graphics ring; one long submission holds the display | — | **open** |
-| row 94: render jobs set the process-global `DECODE_THREADS` / `RGBA_THREADS`; a preview source opened meanwhile takes them | — | **open** |
+| compute host: jobs from prefetch, compose, reel/poster pre-roll and export on one queue, no priority, no lock across a job (code map §4) | each poll waits for the other's work | closed: jobs admitted by the caller's class, cut between dispatches while a higher class waits (`gpu-arbiter`, t2255) |
+| offline device shared by the slow preview route, fx-thumbs, reel strips and posters under one `inner` mutex (code map §4, inference) | not measured | the ring part closed (`gpu-arbiter`); the mutex stays: row 290 |
+| row 149: on his RADV the display and offline devices share one graphics ring; one long submission holds the display | reproduced on ONE llvmpipe device (t2254) | closed: one ring per card, lower classes cut into measured pieces (`gpu-arbiter`, t2250–t2254) |
+| row 94: render jobs set the process-global `DECODE_THREADS` / `RGBA_THREADS`; a preview source opened meanwhile takes them | — | closed: settings scoped to the render's opening thread (`gpu-arbiter`, t2262) |
 | gpu-render-hardening: each extra device +1.3 GB at 1080p; "eight devices took 6 GB more and gained nothing" | — | closed: ceiling cores/8, 2–4 |
 
 Why architectural: every resource added since v1 got its own owner and its own queue. The resources
