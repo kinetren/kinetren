@@ -22,6 +22,11 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   `StreamKernel` names the HISTORY frame N reads and renders N as a pure function of it, keeping
   results only in the host-owned `StreamMemo` (bounded, keyed by addresses). Refused (t1240): the
   class without a stream kernel, a stream kernel on another class, any GPU side on a stream plugin.
+- **A stream kernel asks `StreamInput::stop()` before each history position it computes**
+  (gpu-arbiter, row 147) and on `true` returns `None` with what it computed in the memo: the host says
+  so when nobody wants the frame (the preview moved, the playhead left, a job was cancelled; never an
+  export). A new stream kernel's history loop asks it too, or a frame the UI left runs to its end
+  (t2257).
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media).

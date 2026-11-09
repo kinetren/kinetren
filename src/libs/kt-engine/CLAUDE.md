@@ -91,6 +91,17 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The preview composes on its own thread** (`compose_queue`, ui-never-waits): the UI asks (`ask_preview`) and takes (`take_composed`); the newest ask replaces a waiting one; a frame of a state the model has left is dropped; a chain whose executor time passes `SLOW_CHAIN` goes to the offline device. The renderer is an `Arc` behind a mutex: clone the pointer, never hold the lock through a plan. The kept moments' recheck runs there too (`recheck_shown`).
 - **A guard taken inside an expression lives to the end of the statement.** `X::new(&lock.lock().unwrap().clone())` holds the lock through the build, and `if let Some(w) = map.write().unwrap().remove(k) { w.shutdown() }` joins under the guard. Clone, or take out, in a statement of its own (ui-never-waits: the UI's edits waited 412 ms for the audio render thread's build).
 - **The preview presents** (preview-throughput D2). `Player::present_preview` ends in the executor's display target with no readback.
+- **A stream history stops when nobody wants it** (gpu-arbiter): `video_stream::stop_when(who, check,
+  body)` sets this thread's stop check, which the host's `ClipStream::stop` answers to the kernel; the
+  compose thread checks a newer ask for another moment, an edit and its end, the prefetch thread the
+  transport's generation and the project version, a reel/poster job its cancel flag. A stopped run is
+  `StreamStop` in the trace and reads as incomplete, never kept; `stream_preroll` gives up between
+  batches. An export sets none. t2258, t2259.
+- **Every thread that submits GPU or compute work runs as a class** (`kt_time::sched::with_class`,
+  gpu-arbiter): the compose thread now (its kept-moment recheck near), the prefetch thread near, a media
+  worker by the span's priority (a generator's compute frame), the export and every pipeline thread
+  offline. kt-gpu's rings admit by it. The player sets `sched::set_frame_period_ns` from its project:
+  the rings' bound is half of it.
 - **A kept moment is reached without the work that made it** (structured-telemetry, kkt-26.11.09 I8;
   t2145, t2150, t2151). `compose_via` asks `show_kept` FIRST: a probe plan (`VideoRenderer::probe_plan`)
   keys every stream stage by `StreamKernel::key` without running it, and a key the display's executor

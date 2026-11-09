@@ -80,6 +80,14 @@ pub trait StreamInput: StreamLayout {
     fn with_region(&self, _k: i64, _f: &mut dyn FnMut(&[u8])) -> bool {
         false
     }
+    /// Nobody wants the frame being rendered any more (gpu-arbiter, row 147): the preview moved to
+    /// another moment, an edit replaced the state, the playhead left a look-ahead, a job was
+    /// cancelled. A kernel asks it before each history position it computes and, on `true`, returns
+    /// `None` with what it computed kept in the memo — a later render resumes there and gives the
+    /// same bytes. An export never stops.
+    fn stop(&self) -> bool {
+        false
+    }
 }
 
 /// What a render produced: the size of `out` and the identity of the bytes (the host puts it into

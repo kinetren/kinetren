@@ -467,6 +467,10 @@ fn clean_at(keys: &mut Keys, input: &dyn StreamInput, memo: &StreamMemo, side: S
     }
     let mut last = None;
     for q in j..=p {
+        // the host left the frame: what is encoded stays in the memo (gpu-arbiter, row 147)
+        if input.stop() {
+            return None;
+        }
         let src = source(input, side, q, w, h)?;
         let cfg = keys.s.at(q).cfg;
         let c = Arc::new(codec::encode(&src, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
@@ -592,6 +596,11 @@ fn broken(s: &Sched, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Opti
         }
     }
     for i in start..chain.len() {
+        // before each position: the host may have left the frame (gpu-arbiter, row 147); every
+        // position computed so far is in the memo
+        if input.stop() {
+            return None;
+        }
         let (k, node) = chain[i];
         let pic: Arc<Planes> = match node {
             Node::Base => Arc::new(Planes::grey(w, h)),

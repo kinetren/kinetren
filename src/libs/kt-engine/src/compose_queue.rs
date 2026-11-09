@@ -166,6 +166,9 @@ pub(crate) fn spawn(composer: Arc<Composer>, parts: PreviewParts) -> std::thread
 const RECHECK_PER_PASS: usize = 8;
 
 fn run(c: Arc<Composer>, parts: PreviewParts) {
+    // the frame the person looks at: its stage runs and slow-route frames come first on every ring
+    // (gpu-arbiter D5); the kept-moment recheck between frames runs as near
+    let _class = kt_time::sched::with_class(kt_time::sched::Class::Now);
     let mut route = Route::default();
     let mut checked_gen = u64::MAX;
     loop {
@@ -197,7 +200,17 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
         let via = slow.filter(|_| display.is_some() && route.through_slow(ask.versions.0));
         let timed = via.is_some();
         let mut on_display = display.is_some() && via.is_none();
-        let out = match display.filter(|_| on_display) {
+        // a stream history this frame runs stops once nobody wants the frame (gpu-arbiter, row 147):
+        // a newer ask for another moment, an edit, the composer's end
+        let left = {
+            let (c, (pv, cv), t, versions) = (c.clone(), parts.version_cells(), ask.t, ask.versions);
+            move || {
+                c.stop.load(Ordering::Acquire)
+                    || (pv.load(Ordering::Acquire), cv.load(Ordering::Acquire)) != versions
+                    || c.ask.lock().unwrap().as_ref().is_some_and(|a| a.t != t)
+            }
+        };
+        let out = crate::video::stop_when(kt_time::trace::stop::COMPOSE, left, || match display.filter(|_| on_display) {
             Some(o) => {
                 let r = parts.compose(ask.t, Target::Display(o));
                 let w = Instant::now();
@@ -211,7 +224,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
                 r
             }
             None => parts.compose_via(via.as_ref(), display, ask.t, Target::Bytes(&mut rgba)),
-        };
+        });
         let spent = t0.elapsed();
         // the executor's own time: the plan (a stream stage's kernel included) holds no queue
         let plan = out.as_ref().map_or(0, |o| o.4);
@@ -268,6 +281,7 @@ fn wake(c: &Composer) {
 
 /// One pass of `recheck_shown`, yielding to a frame that is asked meanwhile.
 fn recheck(c: &Composer, parts: &PreviewParts, checked_gen: &mut u64) {
+    let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
     let id = kt_time::trace::next_id();
     let _cause = kt_time::trace::with_cause(id);
     let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);

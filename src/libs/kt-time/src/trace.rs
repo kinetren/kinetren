@@ -89,9 +89,21 @@ pub enum Ev {
     StreamAdvance = 21,
     /// The stream memo evicted an entry. `id` its key, `a` bytes, `cause` the key put.
     StreamMemoEvict = 22,
+    /// A stream history stopped because nobody wanted its frame any more (gpu-arbiter). `id` clip,
+    /// `a` the position it stopped before, `aux` [`stop`] who stopped it.
+    StreamStop = 23,
 
-    /// A compute job ran (a span). `aux` kernel [`name`], `a` dispatches.
+    /// A compute job ran (a span). `aux` kernel [`name`], `a` dispatches, `b` device time (ns),
+    /// `c` the wait for its buffers (ns), `id` the caller's [`crate::sched::Class`] (gpu-arbiter).
     ComputeJob = 30,
+    /// A ring admitted a submission (gpu-arbiter; a span: the wait). `id` the ring, `aux` the
+    /// [`crate::sched::Class`], `a` the device time it predicted (ns), `b` the device time in flight
+    /// before it (ns), `c` 1 when the ring carries a display.
+    GpuAdmit = 31,
+    /// A frame or a compute job was cut into a piece on a ring with a display (gpu-arbiter). `id` the
+    /// ring, `a` the piece's index in its frame, `b` its predicted device time (ns), `c` passes in it,
+    /// `aux` the class.
+    GpuPiece = 32,
 
     /// The executor kept a composite. `id` key, `a` bytes held after it.
     MemoStore = 40,
@@ -149,7 +161,7 @@ pub enum Ev {
 }
 
 impl Ev {
-    pub const ALL: [Ev; 39] = [
+    pub const ALL: [Ev; 42] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -168,7 +180,10 @@ impl Ev {
         Ev::StreamRun,
         Ev::StreamAdvance,
         Ev::StreamMemoEvict,
+        Ev::StreamStop,
         Ev::ComputeJob,
+        Ev::GpuAdmit,
+        Ev::GpuPiece,
         Ev::MemoStore,
         Ev::MemoEvict,
         Ev::Warm,
@@ -216,6 +231,9 @@ impl Ev {
             Ev::StreamAdvance => "stream_advance",
             Ev::StreamMemoEvict => "stream_memo_evict",
             Ev::ComputeJob => "compute_job",
+            Ev::GpuAdmit => "gpu_admit",
+            Ev::GpuPiece => "gpu_piece",
+            Ev::StreamStop => "stream_stop",
             Ev::MemoStore => "memo_store",
             Ev::MemoEvict => "memo_evict",
             Ev::Warm => "warm",
@@ -245,6 +263,16 @@ pub mod ask {
     pub const PRESENT: u32 = 1;
     pub const PLAYING: u32 = 2;
     pub const RETRY: u32 = 4;
+}
+
+/// `StreamStop.aux`: who no longer wanted the frame.
+pub mod stop {
+    /// The preview's compose thread: a newer ask or an edit replaced the frame.
+    pub const COMPOSE: u32 = 1;
+    /// The prefetch thread: the playhead or the project left the advance.
+    pub const PREFETCH: u32 = 2;
+    /// A scheduled job (a reel strip, a poster) was cancelled.
+    pub const JOB: u32 = 3;
 }
 
 /// `FrameDrop.aux`.
@@ -324,6 +352,8 @@ pub mod stream {
     pub const SOURCE_MISSING: u32 = 4;
     pub const DONE: u32 = 5;
     pub const CANCELLED: u32 = 6;
+    /// Nobody wanted the frame any more: the history stopped (gpu-arbiter).
+    pub const STOPPED: u32 = 7;
 }
 
 /// `Play.aux`.

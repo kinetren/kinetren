@@ -27,6 +27,7 @@ mod editcost;
 mod firstframe;
 mod fxcost;
 mod fusecost;
+mod gpushare;
 mod showcase;
 mod trace_query;
 mod wav;
@@ -1403,7 +1404,10 @@ fn run(args: &[String]) -> i32 {
     kt_ffmpeg::set_search_dirs(ffmpeg_user_choice(), download);
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     kt_plugins_builtin::install();
-    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    // the bench puts the compute host on its own shared device (gpu-arbiter)
+    if args.first().map(String::as_str) != Some("gpu-share") {
+        kt_plugin_api::compute::install(kt_gpu::compute::open);
+    }
     // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
     kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
@@ -1529,6 +1533,7 @@ fn run(args: &[String]) -> i32 {
         Some("first-frame") => firstframe::run(args),
         // a chain of point-wise effects fused against unfused (fused-pointwise-runs)
         Some("fuse-cost") => fusecost::run(args),
+        Some("gpu-share") => gpushare::run(args),
         Some("trace") => trace_query::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)
         Some("fx-cost") => {

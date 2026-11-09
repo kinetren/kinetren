@@ -1185,6 +1185,11 @@ impl PreviewParts {
         }
     }
 
+    /// The cells `versions` reads, for a check that outlives a borrow (a stream stop, gpu-arbiter).
+    pub(crate) fn version_cells(&self) -> (Arc<AtomicU64>, Arc<AtomicU64>) {
+        (self.project_version.clone(), self.content_version.clone())
+    }
+
     pub(crate) fn versions(&self) -> (u64, u64) {
         (self.project_version.load(Ordering::Acquire), self.content_version.load(Ordering::Acquire))
     }
@@ -2645,6 +2650,8 @@ fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std
 /// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).
 fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &BurstCache) -> VideoRenderer {
     let mut vr = VideoRenderer::new_with_facts(p, facts);
+    // the GPU rings bound what stands in front of the display by this project's frame (gpu-arbiter D3)
+    kt_time::sched::set_frame_period_ns(vr.grid.frame_step().max(1) as u64 * 1_000_000_000 / kt_time::TICK_HZ as u64);
     vr.set_stream_pacing(Some(crate::StreamPacing::preview(cache.max_video_bytes())));
     vr
 }
@@ -2666,6 +2673,8 @@ fn prefetch_loop(
     mix: crate::mix::MixCoverage,
     kept_moments: Shown,
 ) {
+    // its stream advances and decodes are the look-ahead (gpu-arbiter D5)
+    let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
     // the renderers are the player's shared build (edit-without-rebuild): this thread builds
     // none; it notes when it takes a new one
     let mut taken: Option<u64> = None;
@@ -2790,7 +2799,20 @@ fn prefetch_loop(
         let kept = |t: Tick| kept_now.contains(&t.0);
         stream_pending = video.has_stream_stages() && {
             let ahead = if transport.is_playing() { stream_ahead_frames(video, t0, q, interval) } else { 0 };
-            stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
+            // the advance stops once the playhead or the project leaves it (gpu-arbiter, row 147):
+            // what it computed stays in the memo, and the next pass starts from where the playhead is
+            let left = {
+                let (transport, stop, version) = (transport.clone(), stop.clone(), project_version.clone());
+                let (generation, at) = (transport.generation(), project_version.load(Ordering::Acquire));
+                move || {
+                    stop.load(Ordering::Acquire)
+                        || transport.generation() != generation
+                        || version.load(Ordering::Acquire) != at
+                }
+            };
+            crate::video::stop_when(kt_time::trace::stop::PREFETCH, left, || {
+                stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
+            })
         };
         let missing = video_prefetch_pass_except(video, &cache, t0, q, region_ticks, &kept);
         pass_span.b(missing.len() as u64).c(stream_pending as u64);

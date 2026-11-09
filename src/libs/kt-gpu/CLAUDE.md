@@ -296,3 +296,25 @@ is no picture, and an export refuses.
   byte in `.r`, keyed by its hash with the top bit set) into `FxOp::MaskAlpha` (`mask.wgsl`,
   PIPE_COUNT 8) or `FxOp::MaskMix` (the coverage branch of `layer_mix.wgsl`, T2). A mask adds no
   divergence: masks alone agree EXACT (t1274).
+
+## One ring per physical queue (gpu-arbiter)
+
+- **Every submission but the display's present is admitted by its ring** (`arbiter.rs`): the devices of
+  one hardware card share one ring whatever their backend; a software rasterizer's device is a ring of
+  its own (its own queue thread). The waiting submission of the highest `kt_time::sched::Class` goes
+  first; the class is the caller thread's (`sched::current_class`: compose now, prefetch near, export
+  offline, a lane's job its lane's class, untagged background). A new thread that submits GPU or
+  compute work sets its class.
+- **A ring with a display bounds its flight** (half the preview's frame period); a lower-class frame or
+  compute job is cut at pass/dispatch boundaries by the pass timer's last MEASURED time of each label
+  (`Timer::predict`, `ComputeDevice::last`); an unmeasured pass ends its piece. A new pass site calls
+  `self.cut_point(enc, label)` before writing its uniform, or it is never cut. A compute ring is bounded
+  too and cuts while a higher class waits. Same passes, same order, same bytes (t2253).
+- **A piece's completion frees the ring by a work-done callback**; a waiter completes the oldest piece by
+  a blocking wait on THAT piece's device, never on a device with a surface (the window's present takes
+  the device's lock for writing). So no piece waits for its own submitter to come back (the export's
+  ring of three would deadlock).
+- **`wait_presented` never polls on a fixed period**: the work-done callback, a check after the
+  measured device time, then waits growing from a quarter of it (`present_checks`, t2260).
+- `KT_GPU_ARBITER=off` (or `arbiter::set_enabled(false)`) admits everything and cuts nothing: an A/B of
+  a run; `kt-cli gpu-share` runs both on ONE device (t2254), `kt-cli trace gpu` reads the records.

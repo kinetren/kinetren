@@ -580,7 +580,7 @@ pub fn render_reel_preview(
             return Err(CANCELLED.into());
         }
         let t = video.grid.align_floor(Tick(i as i64 * step));
-        compose_offline_frame(&mut video, &mut src, &cache, t, q, &mut buf);
+        compose_offline_frame(&ctl, &mut video, &mut src, &cache, t, q, &mut buf);
         if buf.len() == (q.width * q.height * 4) as usize
             && let Some(j) = crate::thumbs::encode_thumb_jpeg(q.width, q.height, buf.clone())
         {
@@ -649,6 +649,7 @@ pub fn render_reel_preview(
 /// One frame of the offline path at `t`: decode what the plan wants into the job's own cache,
 /// then compose. Shared by the reel strip and the project poster — one body (rule 17).
 fn compose_offline_frame(
+    ctl: &crate::bg::BgCtl,
     video: &mut kt_engine::VideoRenderer,
     src: &mut HashMap<MediaId, Box<dyn kt_media::MediaSource>>,
     cache: &kt_cache::BurstCache,
@@ -660,7 +661,14 @@ fn compose_offline_frame(
     // over each, every other layer with it (decode-request-storm): read at once, the history lost
     // its front before the composite came, and the poster stayed black
     if video.has_stream_stages() {
-        kt_engine::stream_preroll(video, cache, src, t, q);
+        // a cancelled job's history stops between positions (gpu-arbiter, row 147)
+        let cancelled = ctl.cancel_flag().clone();
+        let stop = move || cancelled.load(std::sync::atomic::Ordering::Acquire);
+        kt_engine::stop_when(kt_time::trace::stop::JOB, stop, || kt_engine::stream_preroll(video, cache, src, t, q));
+        if ctl.cancel_flag().load(std::sync::atomic::Ordering::Acquire) {
+            buf.clear();
+            return;
+        }
     }
     let mut per_src: HashMap<(MediaId, Quality), Vec<Tick>> = HashMap::new();
     for (media, pts, dq) in
@@ -743,6 +751,6 @@ pub fn render_poster(
     let q = Quality { width: POSTER_W, height: POSTER_H };
     let t = video.grid.align_floor(at);
     let mut buf = Vec::new();
-    compose_offline_frame(&mut video, &mut src, &cache, t, q, &mut buf);
+    compose_offline_frame(ctl, &mut video, &mut src, &cache, t, q, &mut buf);
     (buf.len() == (q.width * q.height * 4) as usize).then_some(buf)
 }

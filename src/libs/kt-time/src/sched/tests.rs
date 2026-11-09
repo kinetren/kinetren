@@ -309,3 +309,28 @@ fn t2234_every_job_and_pause_is_traced() {
     let p: Vec<u32> = recs.iter().filter(|r| r.kind() == Some(Ev::SchedPause)).map(|r| r.aux).collect();
     assert!(p.windows(2).any(|w| w == [1, 0]), "pause and resume: {p:?}");
 }
+
+/// Test t2256 (gpu-arbiter, D5): a thread's class follows its work — a scheduled job runs as its
+/// lane's class, a block set by `with_class` as its own and the thread's class comes back after it,
+/// a fresh thread is background.
+#[test]
+fn t2256_a_threads_class_follows_its_work() {
+    let lane = Lane::open("t2256:visible", Class::Visible);
+    let seen = Arc::new(Mutex::new(None));
+    let s = seen.clone();
+    lane.post(move |_| *s.lock().unwrap() = Some(current_class()));
+    assert!(lane.wait_idle(crate::test_deadline()));
+    assert_eq!(*seen.lock().unwrap(), Some(Class::Visible), "a job runs as its lane's class");
+
+    std::thread::spawn(|| {
+        assert_eq!(current_class(), Class::Background, "an untagged thread is background");
+        let _now = with_class(Class::Now);
+        {
+            let _near = with_class(Class::Near);
+            assert_eq!(current_class(), Class::Near);
+        }
+        assert_eq!(current_class(), Class::Now, "the outer class comes back");
+    })
+    .join()
+    .unwrap();
+}

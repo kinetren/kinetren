@@ -29,7 +29,7 @@ pub enum Role {
 }
 
 /// What a pass is, resolved to its name only when its time is summed.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum PassLabel {
     Fixed(&'static str),
     /// A plugin's own pass: its index in the engine's plugin pipes.
@@ -79,6 +79,12 @@ pub(crate) struct Timer {
     pending: VecDeque<Pending>,
     /// The frame being encoded is timed (its labels count).
     on: bool,
+    /// The device time each pass took the last time it was measured (gpu-arbiter D4): where a long
+    /// frame is cut into pieces. Bounded by the engine's labels.
+    last: HashMap<PassLabel, u64>,
+    /// The device time of the last measured frame by role (`Role as usize`): a frame's admission
+    /// claim, the preview's wait (gpu-arbiter D8). Without timestamps, submit to done.
+    last_frame: Arc<[std::sync::atomic::AtomicU64; 3]>,
 }
 
 impl Timer {
@@ -127,6 +133,8 @@ impl Timer {
             free,
             pending: VecDeque::new(),
             on: false,
+            last: HashMap::new(),
+            last_frame: Arc::new(Default::default()),
         }
     }
 
@@ -142,6 +150,16 @@ impl Timer {
     /// `harvest` as a sample for the shape's trial.
     pub fn probe(&mut self, p: crate::runs::Probe) {
         self.probe_next = Some(p);
+    }
+
+    /// The device time `label` took when last measured; `None` — never measured.
+    pub fn predict(&self, label: PassLabel) -> Option<u64> {
+        self.last.get(&label).copied()
+    }
+
+    /// The device time of the last measured frame of `role`; 0 — none yet.
+    pub fn last_frame(&self, role: Role) -> u64 {
+        self.last_frame[role as usize].load(Ordering::Relaxed)
     }
 
     /// The timestamp writes of the next pass, or `None` (no timestamps, no room).
@@ -202,9 +220,10 @@ impl Timer {
     /// After the submit: the frame's map is asked; without timestamps, the submit-to-done time.
     pub fn submitted(&mut self, queue: &wgpu::Queue, role: Role, meta: FrameMeta) {
         if self.set.is_none() {
-            let (at, adapter) = (Instant::now(), self.adapter.clone());
+            let (at, adapter, last) = (Instant::now(), self.adapter.clone(), self.last_frame.clone());
             queue.on_submitted_work_done(move || {
                 let ns = at.elapsed().as_nanos() as u64;
+                last[role as usize].store(ns, Ordering::Relaxed);
                 with_agg(|a| {
                     a.note_frame(&adapter, false, role, meta);
                     a.frame_ns += ns;
@@ -262,6 +281,14 @@ impl Timer {
                     .enumerate()
                     .map(|(i, l)| (self.name(*l), ns(ticks[2 * i + 1].saturating_sub(ticks[2 * i]))))
                     .collect();
+                let mut sum = 0;
+                for (i, l) in p.labels.iter().enumerate() {
+                    let d = ns(ticks[2 * i + 1].saturating_sub(ticks[2 * i]));
+                    self.last.insert(*l, d);
+                    sum += d;
+                }
+                // the passes' own time: a frame cut in pieces spans the gaps between them too
+                self.last_frame[p.role as usize].store(sum, Ordering::Relaxed);
                 let first = ticks.iter().step_by(2).copied().min().unwrap_or(0);
                 let last = ticks.iter().skip(1).step_by(2).copied().max().unwrap_or(0);
                 let span = ns(last.saturating_sub(first));

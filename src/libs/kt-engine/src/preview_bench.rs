@@ -182,6 +182,8 @@ fn output_clock(
 
 /// Play `[from, to)` once. The player is left paused.
 pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -> BenchReport {
+    // this thread composes the frames on screen, as the app's compose thread does (gpu-arbiter D5)
+    let _class = kt_time::sched::with_class(kt_time::sched::Class::Now);
     let stop = Arc::new(AtomicBool::new(false));
     let clock = output_clock(
         player.shared.clone(),
