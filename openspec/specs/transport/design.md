@@ -245,3 +245,26 @@ built: an FFT that allocates its scratch lazily must not do it in the callback. 
   `Project` (the clone is 0.14 ms on 1977 events and is now one per state).
 - Left: a generator value edit still asks `gen_sources` on the UI thread (found-defects row 190).
   The record of the change: `openspec/changes/archive/2026-11-09-edit-without-rebuild/design.md`.
+
+## A pause parks with no clock (one-scheduler, 2026-11-09)
+
+The render thread woke every 250 ms and prefetch every 100 ms on a pause "to pick up the tail".
+The tail is now two short passes after a pause; then both wait for `Wake`'s notify count to move
+from what they saw before their last look at the state, so a notify between the look and the wait
+is never lost. Every input either thread acts on notifies (play, pause, seek, rate, preview
+quality, loop region, a published build, a retune, a replaced source, the drop); the rate and the
+quality did not before (the timer covered them). t2144 had relied on prefetch's first pass coming
+100 ms after the quality was set; it stands the playhead past its frame now. The audio output
+stream itself still hands out silence at rest (cpal's pause does not stop it on ALSA/PipeWire):
+found-defects row 274.
+
+A clock read across the park is a stall that never was (orch stage 9, t2303). `StallWatch` measured
+"the head stood still" from its last look, and the last look before a play was the one before the
+park: seconds old. Every play after a second of rest pushed a STALL of the rest's length, the bell
+said "playback froze" and the Diagnostics window got its red line (the live `diagnostics` read one row
+more and its graphs grew less). The wait now starts at the first PLAYING look. Checked for the same
+mechanism (a duration measured from a look that a park can make old): the render thread's snapshot
+deltas (`push_snap`) carry counts, not a rate, so a long gap only sums them; the start grace
+(`start_wait`) is reset on every start; prefetch's pass interval (`last_pass`, `stream_ahead_frames`)
+is read across a pause too, but it was before the park as well (paused passes that skip leave it
+unstamped) and its result is capped by the stream memo's room: noted, not changed here.

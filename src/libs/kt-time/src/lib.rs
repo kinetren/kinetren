@@ -8,7 +8,10 @@
 // mingw's round/roundf get the half boundary wrong (windows-build, t198)
 #[cfg(all(windows, target_env = "gnu"))]
 mod libm_fix;
+pub mod block;
 pub mod cost;
+pub mod mem;
+pub mod sched;
 pub mod trace;
 pub mod work;
 

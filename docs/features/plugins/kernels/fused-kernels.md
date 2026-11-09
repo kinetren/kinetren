@@ -12,7 +12,7 @@ invariants: [7, 11]
 ui_rules: []
 round: null
 point: null
-tests: []
+tests: [t2190, t2191, t2192, t2193]
 depends_on: [F-EXT-004]
 trackers: []
 services: []
@@ -140,6 +140,10 @@ CAPABILITY: openspec/specs/video-plan/
   execute as one `geom_fused.wgsl` pass, specialized per program shape (`geom_specialized`,
   `src/libs/kt-gpu/src/engine.rs:1036`, render-speed-no-card D4: 14 → 7 ms on the warp shape).
 - **Barriers.** Barrier plugins declare their GPU pass graph (`plugin-api-barriers`).
+- **Fused point-wise runs** (fused-pointwise-runs, 2026-11-09). Two or more fusable point-wise stages
+  at a barrier position are one `PlanOp::PointRun` (`src/libs/kt-fx/src/plan.rs`), run as one
+  generated pass per run shape (`src/libs/kt-gpu/src/runs.rs`), byte-equal to the parts because each
+  stage keeps its rounding; the switch and the cap are a trial by the pass timer on the device.
 - **No pipeline cache.** Every `create_*_pipeline` passes `cache: None` (`engine.rs:1250`, `:1281`,
   `:1333`, `:2680`; `src/libs/kt-gpu/src/compute.rs:147`, `:301`). Each new device (the offline
   device, each export device) compiles everything again.

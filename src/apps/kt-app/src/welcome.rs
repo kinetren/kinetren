@@ -296,18 +296,14 @@ struct PosterQueue {
 fn poster_queue() -> &'static (std::sync::Mutex<PosterQueue>, std::sync::Condvar) {
     static Q: std::sync::OnceLock<(std::sync::Mutex<PosterQueue>, std::sync::Condvar)> =
         std::sync::OnceLock::new();
-    Q.get_or_init(|| {
-        std::thread::Builder::new()
-            .name("kt-posters".into())
-            .spawn(poster_worker)
-            .expect("spawn the poster worker");
-        Default::default()
-    })
+    Q.get_or_init(Default::default)
 }
 
-fn poster_pause() -> &'static std::sync::Arc<std::sync::atomic::AtomicBool> {
-    static P: std::sync::OnceLock<std::sync::Arc<std::sync::atomic::AtomicBool>> = std::sync::OnceLock::new();
-    P.get_or_init(Default::default)
+/// The posters' lane (one-scheduler): class `Background`, paused while playing or exporting by
+/// the scheduler's votes; its pump drains the queue and goes idle. It outlives every app.
+fn poster_lane() -> &'static kt_time::sched::LaneRef {
+    static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
+    L.get_or_init(|| kt_time::sched::Lane::service("posters", kt_time::sched::Class::Background, poster_pump))
 }
 
 /// Queue a poster. The service outlives `KtApp` on purpose: a poster is queued when a project
@@ -319,11 +315,8 @@ pub fn request_poster(job: PosterJob) {
     q.jobs.retain(|j| j.out != job.out);
     q.jobs.push_back(job);
     cv.notify_all();
-}
-
-/// Playback pauses the job (invariant 6: the offline path does not take time from real time).
-pub fn set_posters_paused(on: bool) {
-    poster_pause().store(on, std::sync::atomic::Ordering::Release);
+    drop(q);
+    poster_lane().kick();
 }
 
 /// Wait until the queue is empty and nothing renders; `false` on the timeout. On exit and in
@@ -348,23 +341,29 @@ pub fn posters_done() -> u64 {
     poster_queue().0.lock().unwrap_or_else(|e| e.into_inner()).done
 }
 
-fn poster_worker() {
-    // the queue's initializer spawned us and does not wait for us: this call blocks only
-    // until that initializer returns
+/// One run of the poster service: render queued posters until none is left (`Idle`) or the class
+/// pauses (`More`).
+fn poster_pump(ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
+    use kt_time::sched::Pump;
     let (m, cv) = poster_queue();
     loop {
+        if ctx.cancelled() {
+            return Pump::Idle;
+        }
+        if ctx.paused() {
+            return Pump::More;
+        }
         let job = {
             let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
-            while q.jobs.is_empty() {
-                q = cv.wait(q).unwrap_or_else(|e| e.into_inner());
-            }
+            let Some(job) = q.jobs.pop_front() else { return Pump::Idle };
             q.busy = true;
-            q.jobs.pop_front()
+            job
         };
-        if let Some(job) = job {
+        {
             let mut _span = kt_time::trace::span(kt_time::trace::Ev::Job);
             _span.aux(kt_time::trace::job::POSTER);
-            let ctl = crate::bg::BgCtl::from_flags(Default::default(), poster_pause().clone());
+            let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), Default::default())
+                .in_class(kt_time::sched::Class::Background);
             if let Some(rgba) = crate::reel_preview::render_poster(&ctl, &job.project, job.base.as_deref(), job.at) {
                 write_poster(&job.out, rgba);
             }
@@ -1098,7 +1097,7 @@ mod tests {
     fn probe_poster_render_time() {
         crate::plugins::install();
         let p = crate::lessons::lesson_project();
-        let ctl = crate::bg::BgCtl::from_flags(Default::default(), Default::default());
+        let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), Default::default());
         let at = crate::reel_preview::poster_moment(&p, kt_time::Tick(0));
         let mut best = std::time::Duration::MAX;
         let mut cold = None;

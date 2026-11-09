@@ -307,6 +307,9 @@ pub struct BurstCache {
     /// nobody waiting to one atomic read.
     next_insert: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     next_armed: std::sync::atomic::AtomicBool,
+    /// Its accounts in the process's memory ledger (memory-ledger): decoded frames, video and audio,
+    /// the configured budgets as their bases.
+    accounts: [kt_time::mem::Account; 2],
 }
 
 impl BurstCache {
@@ -330,7 +333,17 @@ impl BurstCache {
             stats: StatCounters::default(),
             next_insert: Mutex::new(None),
             next_armed: std::sync::atomic::AtomicBool::new(false),
+            accounts: [
+                kt_time::mem::open(kt_time::mem::Tenant::Frames, config.max_video_bytes as u64),
+                kt_time::mem::open(kt_time::mem::Tenant::Frames, config.max_audio_bytes as u64),
+            ],
         }
+    }
+
+    /// What it holds, to the memory ledger.
+    fn report(&self, inner: &Inner) {
+        self.accounts[0].set(inner.video_bytes as u64);
+        self.accounts[1].set(inner.audio_bytes as u64);
     }
 
     /// Call `f` after the next insertion, on the inserting thread: how a paused preview waits for
@@ -573,6 +586,7 @@ impl BurstCache {
             .insert_range(key.idx, key.idx + span);
 
         self.evict_over_budget(&mut inner, key.trace_id());
+        self.report(&inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
         drop(inner);
         if self.next_armed.load(Ordering::Acquire) && self.next_armed.swap(false, Ordering::AcqRel) {
@@ -704,6 +718,7 @@ impl BurstCache {
             }
         }
         self.evict_over_budget(&mut inner, 0);
+        self.report(&inner);
     }
 
     /// The bytes of the entries held at least once: each counted once, however many hold it.
@@ -736,6 +751,7 @@ impl BurstCache {
             }
         }
         inner.coverage.retain(|(s, _), _| *s != source);
+        self.report(&inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
     }
 

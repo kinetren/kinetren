@@ -1058,6 +1058,7 @@ graph_decode = "Actividad de FFmpeg (/s)"
 graph_churn = "Rotación de caché (/s)"
 cache_occupancy = "Uso de la caché de vídeo: {0}% ({1} / {2} MB)"
 no_read_drops = "| no-read drops total: {0}"
+memory_ledger = "Memoria: compuestos {0} · historial {1} · fotogramas {2} · dispositivo {3} · espacio {4} MB"
 log_title = "Diario de telemetría"
 log_clear = "Limpiar"
 graph_reset = "Reiniciar las gráficas"
@@ -1094,6 +1095,7 @@ project_swaps = "cambios de proyecto"
 engine_builds = "construcciones del motor"
 mix_replays = "bloques de audio de la mezcla guardada"
 composite_replays = "composiciones guardadas mostradas"
+sched_jobs = "trabajos en segundo plano"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]

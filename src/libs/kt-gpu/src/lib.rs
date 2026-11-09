@@ -5,6 +5,7 @@
 //! kt-cli). The CPU composite is deleted (compute-kernels-render); the stored frames of its last
 //! output are the reference, and the conformance is tests/parity.rs (tolerances, t181/t182/t183).
 
+pub mod arbiter;
 pub mod compute;
 pub mod memory;
 pub mod pass_time;
@@ -16,6 +17,7 @@ mod exit;
 mod engine;
 mod pipeline_cache;
 mod pool;
+pub mod runs;
 mod warm;
 
 pub use context::{trace_device, 
@@ -25,7 +27,7 @@ pub use context::{trace_device,
 pub use compiled::{cold_draws, pipelines_in_frame};
 pub use exit::background_gpu_work;
 pub use pipeline_cache::set_cache_dir;
-pub use engine::{DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
+pub use engine::{present_checks, DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
 /// Textures, buffers and pipelines the engine and the compute host created since the process
 /// started (gpu-pass-cost): after warm-up a frame creates none (t2023). Bind groups and command

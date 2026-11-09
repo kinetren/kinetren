@@ -453,3 +453,38 @@ their tests had ended.
   has an empty envelope, unread. The pass asks `stop` before every burst, and a stopped pass stores
   nothing, because a damaged header can promise hours of what is not there.
 
+
+## One scheduler for background work (one-scheduler, 2026-11-09)
+
+The services had a thread each, ten queue disciplines and seven timers at rest (`docs/engine-audit.md`
+§2b). They are lanes of `kt_time::sched` now: a producer's FIFO, one job at a time, so each keeps the
+order its thread gave it; a pool of a quarter of the cores (3 to 6) keeps one worker for the person's
+answers; a playing player and an export vote the visible and background classes paused (the owner's
+"Да", kkt-26.11.08 H15). Rejected: one priority queue of individual jobs — a service's own queue
+already knows its order (thumbs LIFO, posters replaced by file, effect cells by generation).
+Invariant 5: decoder owners stay threads; the thumbnail pump drops its open sources at the end of
+each run, because the next run may land on another worker. A ready LRU stamps what each UI frame
+drew and never evicts it (row 114). The class walk of every thread and timed wait, with each one's
+new home, is in `openspec/changes/archive/2026-11-09-one-scheduler/design.md`.
+
+## One memory ledger over the caches (memory-ledger, 2026-11-09)
+
+- **Why one ledger:** ten keepers each picked a constant (decoded frames 512 + 64 MB, present memo 512,
+  stream memo 256 or a quarter of the free memory, mix 64, per device upload 256, transient 128,
+  readback 64, compute 1 GiB) and nobody saw the sum. `kt_time::mem` keeps per tenant kind the bytes
+  held (atomics, any thread may report), the bases, the wants and the grants; growth comes from half
+  of (available + growth held) — adding back what the ledger already holds keeps the budget from
+  shrinking as the memos fill. The other half covers what is not counted: frames inside FFmpeg, the
+  driver, an export's devices started later, other programs.
+- **Order of value:** kept composites (a hit is one display pass), stream history (saves the codec,
+  the rest of the chain runs), decoded frames (saves a decode). Taking back goes the other way, through
+  hooks called after the lock and never for the asker (a keeper asks under its own lock).
+- **Claims:** an export grants nothing above the bases while it runs, so it counts its devices on the
+  room the preview gave back; holds are never touched.
+- **The preview's decoders** were opened with libavcodec's automatic thread count, a thread per core;
+  each frame thread keeps its own pictures, and the heavy showcase held 4.4 GB in 160 decoder threads
+  six seconds in. They now take a render's rule (`memory::decode_threads`). Heavy showcase preview:
+  peak 9.9 → 6.3 GB, 15.3 → 11.7 cores, 23 247 → 0 underrun frames, the same decode time a picture;
+  his region: V-fps 38.1 (auto) against 39.4 (four).
+- **Left:** the bases themselves (found-defects 330), the kept mix's cycle (331), `Inner::past`
+  duplicates (335).

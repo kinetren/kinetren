@@ -1058,6 +1058,7 @@ graph_decode = "نشاط FFmpeg (/ث)"
 graph_churn = "دوران الذاكرة (/ث)"
 cache_occupancy = "استخدام ذاكرة الفيديو: {0}% ({1} / {2} MB)"
 no_read_drops = "| مجموع no-read drops: {0}"
+memory_ledger = "الذاكرة: المركبة {0} · السجل {1} · الإطارات {2} · الجهاز {3} · المساحة {4} MB"
 log_title = "سجل القياس عن بعد"
 log_clear = "مسح"
 graph_reset = "تصفير الرسوم"
@@ -1094,6 +1095,7 @@ project_swaps = "استبدالات المشروع"
 engine_builds = "بناءات المحرك"
 mix_replays = "كتل صوت من المزج المحفوظ"
 composite_replays = "تراكيب محفوظة معروضة"
+sched_jobs = "مهام في الخلفية"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]

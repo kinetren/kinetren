@@ -23,6 +23,11 @@ pub fn set_decode_threads(n: u32) {
 
 static DECODE_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
+/// The threads a video decoder opened now takes (0 — auto).
+pub fn decode_threads_set() -> u32 {
+    DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The threads that convert the pictures of a multi-size span to RGBA (render-speed-no-card D2): 1
 /// converts on the decoder's own thread. A render sets it; the conversion took four times the
 /// decoding on the showcase, and it held the render back wherever the composite was cheap.
@@ -32,17 +37,79 @@ pub fn set_rgba_threads(n: u32) {
 
 static RGBA_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
+/// A render's own decoder settings (gpu-arbiter, row 94): the threads of a video decoder (0 — auto)
+/// and of the RGBA conversion of a span.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecodeSettings {
+    pub decode_threads: u32,
+    pub rgba_threads: u32,
+}
+
+thread_local! {
+    static SCOPED: std::cell::Cell<Option<DecodeSettings>> = const { std::cell::Cell::new(None) };
+}
+
+/// Open sources inside `f` with `s` (gpu-arbiter, row 94): a source reads its settings when it is
+/// opened, on the opening thread, and keeps them for its reopens. The render window opened its sources
+/// between two process-wide sets, and a preview source opened meanwhile on another thread took the
+/// render's settings (or the reset ones the render then got); scoped to the thread, nobody else's
+/// opening sees them.
+pub fn with_decode_settings<R>(s: DecodeSettings, f: impl FnOnce() -> R) -> R {
+    struct Restore(Option<DecodeSettings>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPED.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(SCOPED.with(|c| c.replace(Some(s))));
+    f()
+}
+
 #[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn rgba_threads() -> usize {
-    RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed).max(1) as usize
+    match SCOPED.with(|c| c.get()) {
+        Some(s) => s.rgba_threads.max(1) as usize,
+        None => RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed).max(1) as usize,
+    }
 }
 
 /// What the `threads` option of a video decoder says.
 #[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn decode_threads() -> String {
-    match DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed) {
+    let n = match SCOPED.with(|c| c.get()) {
+        Some(s) => s.decode_threads,
+        None => DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed),
+    };
+    match n {
         0 => "auto".to_string(),
         n => n.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    /// Test t2262 (gpu-arbiter, row 94): a render's settings hold for the thread that opens its
+    /// sources, inside its scope only; another thread opening at the same time takes the defaults.
+    #[test]
+    fn t2262_a_renders_decoder_settings_are_its_own() {
+        let render = DecodeSettings { decode_threads: 3, rgba_threads: 5 };
+        let (inside_tx, inside_rx) = std::sync::mpsc::channel();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
+        let h = std::thread::spawn(move || {
+            with_decode_settings(render, || {
+                inside_tx.send((decode_threads(), rgba_threads())).unwrap();
+                // the other thread asks while this scope is open
+                go_rx.recv().unwrap();
+            });
+            (decode_threads(), rgba_threads())
+        });
+        assert_eq!(inside_rx.recv().unwrap(), ("3".to_string(), 5));
+        let other = std::thread::spawn(|| (decode_threads(), rgba_threads())).join().unwrap();
+        assert_eq!(other, ("auto".to_string(), 1), "another thread's open took the render's settings");
+        go_tx.send(()).unwrap();
+        assert_eq!(h.join().unwrap(), ("auto".to_string(), 1), "the settings outlived the render's scope");
     }
 }
 

@@ -1,6 +1,8 @@
 //! The compute host (compute-kernels): `kt_plugin_api::compute` on a device of its own. The
 //! interface's device may be GL, which has no compute, so this one asks for Vulkan, DX12 or Metal
-//! whatever `WGPU_BACKEND` says. WARP is refused, as the engine refuses it. Jobs are serialised.
+//! whatever `WGPU_BACKEND` says. WARP is refused, as the engine refuses it. Jobs are admitted by
+//! their caller's class on the device's ring (gpu-arbiter): the frame on screen before the
+//! look-ahead, and a job cut between dispatches while a higher class waits.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -29,13 +31,20 @@ struct Pool {
 }
 
 pub struct ComputeDevice {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    /// The ring of its adapter (gpu-arbiter), registered as a compute host while it lives.
+    arb: Arc<crate::arbiter::Ring>,
+    _on_ring: crate::arbiter::Registered,
+    /// The device time each dispatch took when last measured, by its name (where a job is cut).
+    last: Mutex<HashMap<String, u64>>,
     adapter: String,
     /// A timestamp pair per dispatch (gpu-pass-cost), where the adapter has them.
     stamps: Option<(wgpu::QuerySet, wgpu::Buffer)>,
     pipes: Mutex<HashMap<(String, usize, usize), Arc<Pipe>>>,
     pool: Mutex<Pool>,
+    /// The pool's free buffers, to the memory ledger (memory-ledger).
+    account: kt_time::mem::Account,
     /// The disk tier of its pipelines (pipeline-prewarm D7), where the device has one.
     cache: Option<crate::pipeline_cache::DiskCache>,
 }
@@ -97,16 +106,57 @@ pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
     });
     let info = adapter.get_info();
     crate::context::trace_device("compute", &info, &device);
-    let cache = crate::pipeline_cache::DiskCache::open(&device, &info, "compute", declared_hash());
-    Ok(Arc::new(ComputeDevice {
-        device,
-        queue,
-        adapter: info.name,
-        stamps,
-        pipes: Mutex::new(HashMap::new()),
-        pool: Mutex::default(),
-        cache,
-    }))
+    Ok(ComputeDevice::with(Arc::new(device), Arc::new(queue), &info, stamps))
+}
+
+impl ComputeDevice {
+    fn with(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        info: &wgpu::AdapterInfo,
+        stamps: Option<(wgpu::QuerySet, wgpu::Buffer)>,
+    ) -> Arc<ComputeDevice> {
+        let cache = crate::pipeline_cache::DiskCache::open(&device, info, "compute", declared_hash());
+        let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(info, &device));
+        Arc::new(ComputeDevice {
+            _on_ring: arb.register_compute(),
+            arb,
+            last: Mutex::new(HashMap::new()),
+            device,
+            queue,
+            adapter: info.name.clone(),
+            stamps,
+            pipes: Mutex::new(HashMap::new()),
+            pool: Mutex::default(),
+            account: kt_time::mem::open(kt_time::mem::Tenant::Compute, POOL_BYTES),
+            cache,
+        })
+    }
+
+    /// A compute host on an engine's own device (the bench `kt-cli gpu-share`, gpu-arbiter): the
+    /// display, the offline work and the compute jobs on ONE queue, as a card's ring runs them.
+    pub fn on_context(ctx: &crate::GpuContext) -> Arc<ComputeDevice> {
+        let stamps = ctx.device.features().contains(wgpu::Features::TIMESTAMP_QUERY).then(|| {
+            let set = ctx.device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("kt-gpu compute time"),
+                ty: wgpu::QueryType::Timestamp,
+                count: STAMPS,
+            });
+            let buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kt-gpu compute time resolve"),
+                size: STAMPS as u64 * 8,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            (set, buf)
+        });
+        ComputeDevice::with(ctx.device.clone(), ctx.queue.clone(), &ctx.adapter_info, stamps)
+    }
+
+    /// The ring it runs on.
+    pub fn ring(&self) -> &Arc<crate::arbiter::Ring> {
+        &self.arb
+    }
 }
 
 impl ComputeDevice {
@@ -116,6 +166,7 @@ impl ComputeDevice {
         let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(b) = pool.free.get_mut(&(size, usage.bits())).and_then(Vec::pop) {
             pool.bytes -= size;
+            self.account.set(pool.bytes);
             return (b, true);
         }
         drop(pool);
@@ -131,6 +182,7 @@ impl ComputeDevice {
                 pool.free.entry((b.size(), b.usage().bits())).or_default().push(b);
             }
         }
+        self.account.set(pool.bytes);
     }
 
     /// What the pool holds now.
@@ -231,9 +283,17 @@ impl ComputeHost for ComputeDevice {
         // the job in the trace: its kernel, dispatches, the device time and the wait for its buffers;
         // its cause is the caller's (a frame's stream stage, a prefetch advance)
         let mut span = kt_time::trace::span(kt_time::trace::Ev::ComputeJob);
+        let class = kt_time::sched::current_class();
         if kt_time::trace::on() {
-            span.aux(job.steps.first().map_or(0, |s| kt_time::trace::name(s.name))).a(job.steps.len() as u64);
+            span.aux(job.steps.first().map_or(0, |s| kt_time::trace::name(s.name)))
+                .a(job.steps.len() as u64)
+                .id(class as u64);
         }
+        // what each dispatch took when last measured: the job's claim on the ring and its cuts
+        let predicted: Vec<Option<u64>> = {
+            let last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            job.steps.iter().map(|s| last.get(s.name).copied()).collect()
+        };
         let pipes = job
             .steps
             .iter()
@@ -272,7 +332,18 @@ impl ComputeHost for ComputeDevice {
             .collect();
         let mut uniforms = Vec::with_capacity(job.steps.len());
         let timed = self.stamps.as_ref().map_or(0, |_| job.steps.len().min(STAMPS as usize / 2));
+        let claim = if predicted.iter().all(Option::is_some) { predicted.iter().flatten().sum() } else { 0 };
+        let mut piece = crate::arbiter::Piece::begin(&self.arb, claim);
         for (i, (s, p)) in job.steps.iter().zip(&pipes).enumerate() {
+            // a dispatch past the ring's bound, or a higher class waiting, ends the piece: the
+            // buffers stay on the device, the next piece goes on with them (gpu-arbiter D4)
+            if piece.due(predicted[i]) {
+                let full = std::mem::replace(&mut enc, d.create_command_encoder(&Default::default()));
+                kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+                let sub = self.queue.submit([full.finish()]);
+                piece.cut(&self.device, &self.queue, sub, false);
+            }
+            piece.add(predicted[i]);
             let (uniform, _) = self.take(s.uniform.len() as u64, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
             self.queue.write_buffer(&uniform, 0, s.uniform);
             let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }];
@@ -314,7 +385,8 @@ impl ComputeHost for ComputeDevice {
         });
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         let submitted = std::time::Instant::now();
-        self.queue.submit([enc.finish()]);
+        let sub = self.queue.submit([enc.finish()]);
+        let _flight = piece.end(&self.device, &self.queue, sub, false);
         if let Some(e) = pollster::block_on(scope.pop()) {
             return Err(format!("compute job refused: {e}"));
         }
@@ -360,6 +432,15 @@ impl ComputeHost for ComputeDevice {
                         .map(|(i, s)| (s.name, (ticks[2 * i + 1].saturating_sub(ticks[2 * i]) as f64 * period) as u64))
                         .collect();
                     crate::pass_time::note_job(&self.adapter, ds.iter().map(|d| d.1).sum(), &ds);
+                    let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+                    for (name, ns) in &ds {
+                        match last.get_mut(*name) {
+                            Some(v) => *v = *ns,
+                            None => {
+                                last.insert(name.to_string(), *ns);
+                            }
+                        }
+                    }
                     span.b(ds.iter().map(|d| d.1).sum());
                 }
                 self.give([st]);

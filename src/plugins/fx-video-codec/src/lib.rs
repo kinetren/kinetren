@@ -249,8 +249,7 @@ impl Plugin for Datamosh {
         Some(self)
     }
     fn compute_shaders(&self) -> Vec<kt_plugin_api::compute::Shader> {
-        // every step of the encoder and the decoder reads three buffers and writes one
-        codec::shaders().into_iter().map(|t| kt_plugin_api::compute::Shader { text: t.into(), reads: 3, writes: 1 }).collect()
+        codec::shaders().into_iter().map(|(t, reads, writes)| kt_plugin_api::compute::Shader { text: t.into(), reads, writes }).collect()
     }
 }
 
@@ -275,6 +274,13 @@ impl StreamKernel for Datamosh {
         kt_plugin_api::compute::host()?;
         Some(mosh::key(mosh::Rows::from(p), lay, n))
     }
+    fn advance(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> bool {
+        if kt_plugin_api::compute::host().is_none() {
+            return self.render(p, input, n, memo, &mut Vec::new()).is_some();
+        }
+        // the history into the memo; no picture nobody shows
+        mosh::render(mosh::Rows::from(p), input, n, memo).is_some()
+    }
     fn render(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo, out: &mut Vec<u8>) -> Option<StreamOut> {
         if kt_plugin_api::compute::host().is_none() {
             return pass_through(input, n, out);
@@ -284,6 +290,8 @@ impl StreamKernel for Datamosh {
             return if kt_plugin_api::compute::host().is_none() { pass_through(input, n, out) } else { None };
         };
         let (w, h) = input.size();
+        // the conversion back stays here: a job of its own would wait behind the frame's other passes
+        // on the device (stream-layout-per-build D4: 1.6 → 9.8 ms a stage run on llvmpipe)
         pic.to_rgba(w, h, out);
         Some(StreamOut { w: w.min(pic.w as u32), h: h.min(pic.h as u32), key })
     }

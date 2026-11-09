@@ -613,7 +613,7 @@ fn t1651_the_compute_shaders_compile_on_d3d12() {
         eprintln!("skipped: no D3D12 adapter");
         return;
     };
-    for text in codec::shaders() {
+    for (text, _, _) in codec::shaders() {
         kt_gpu::compute::compile(&ctx, text).unwrap_or_else(|e| panic!("{e}"));
     }
 }

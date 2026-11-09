@@ -246,3 +246,140 @@ fn t2149_window_frame_and_exports() {
     assert!(evs.iter().any(|e| e["name"] == "thread_name" && e["args"]["name"] == "prefetch"));
     assert!(evs.iter().any(|e| e["name"] == "compute_job:datamosh:search" && e["ph"] == "X"));
 }
+
+/// Test t2243 (one-scheduler): `during` names what the scheduler did in the window — each job by
+/// its class and lane, a pause and a resume, a cancel, and a blocking call on the UI thread.
+#[test]
+fn t2243_during_names_scheduled_jobs_pauses_and_blocking_calls() {
+    use kt_time::sched::Class;
+    let mut run = run_of(vec![
+        rec(Ev::SchedQueue, 10 * MS, |r| {
+            r.id = 5;
+            r.aux = Class::Visible as u32;
+            r.a = 41;
+        }),
+        rec(Ev::SchedRun, 11 * MS, |r| {
+            r.id = 5;
+            r.aux = Class::Visible as u32;
+            r.a = 41;
+            r.dur = 30 * MS;
+        }),
+        rec(Ev::SchedPause, 50 * MS, |r| {
+            r.aux = 1;
+            r.a = kt_time::sched::why::PLAYING as u64;
+        }),
+        rec(Ev::SchedCancel, 60 * MS, |r| {
+            r.id = 6;
+            r.aux = kt_time::sched::why_cancel::CLOSED;
+            r.a = 42;
+        }),
+        rec(Ev::SchedPause, 90 * MS, |r| r.aux = 0),
+        rec(Ev::Block, 95 * MS, |r| {
+            r.aux = kt_time::block::kind::FSYNC;
+            r.a = kt_time::block::role::UI as u64;
+            r.dur = 7 * MS;
+        }),
+    ]);
+    run.names.insert(41, "thumbs".into());
+    run.names.insert(42, "analysis".into());
+    let o = during(&run, 0, 200 * MS);
+    for want in [
+        "sched_queue:visible:thumbs",
+        "sched_run:visible:thumbs",
+        "sched_pause",
+        "sched_resume",
+        "sched_cancel:analysis",
+        "block:ui:fsync",
+    ] {
+        assert!(o.contains(want), "{want} missing in:\n{o}");
+    }
+}
+
+/// t2300 (memory-ledger): the ledger's sizings and the grants they changed are records, and
+/// `trace memory` prints both sizings and the stream tenant's last cap.
+#[test]
+fn t2300_the_ledger_is_in_the_trace_and_the_query_reads_it() {
+    use kt_time::mem::{Ledger, Tenant};
+    const MB: u64 = 1 << 20;
+    let l: &'static Ledger = Box::leak(Box::new(Ledger::new()));
+    l.set_probe(|| Some(2000 * MB));
+    let kept = l.open(Tenant::Kept, 0);
+    let hist = l.open(Tenant::History, 256 * MB);
+    let items = kt_time::trace::testing::capture(|| {
+        hist.want(800 * MB);
+        kept.want(900 * MB); // takes back the stream grant
+        kept.want(900 * MB); // the same: nothing
+    });
+    // this ledger's records only: other tests of the process record their own
+    let mine: Vec<Rec> = kt_time::trace::testing::recs(&items)
+        .into_iter()
+        .filter(|r| matches!(r.kind(), Some(Ev::MemBudget | Ev::MemGrant)))
+        .collect();
+    let budgets: Vec<_> = mine.iter().filter(|r| is(r, Ev::MemBudget)).collect();
+    assert_eq!(budgets.len(), 2, "two sizings: {mine:?}");
+    let grants: Vec<_> = mine.iter().filter(|r| is(r, Ev::MemGrant)).collect();
+    assert!(grants.iter().any(|r| r.aux == Tenant::History as u32 && r.b == 356 * MB), "the stream grant taken back");
+    // the first sizing names every growing tenant, the second the composites' new grant; the third,
+    // unchanged, writes nothing
+    assert_eq!(grants.iter().filter(|r| r.aux == Tenant::Kept as u32).count(), 2, "the unchanged sizing wrote nothing");
+    let out = memory(&run_of(mine));
+    assert_eq!(out.matches("budget ").count(), 2, "{out}");
+    assert!(out.contains("history   cap 356 MB"), "{out}");
+}
+
+/// Test t2263 (gpu-arbiter): `gpu` reports the ring by class — admissions and their waits, the pieces
+/// of a cut frame, a stopped history, compute jobs by class, and the display presents' wait.
+#[test]
+fn t2263_gpu_reports_the_ring_by_class() {
+    use kt_time::sched::Class;
+    let mut v = vec![
+        rec(Ev::GpuAdmit, 0, |r| {
+            r.id = 3;
+            r.aux = Class::Now as u32;
+            r.c = 1;
+            r.dur = 2 * MS;
+        }),
+        rec(Ev::GpuAdmit, 10 * MS, |r| {
+            r.id = 3;
+            r.aux = Class::Near as u32;
+            r.c = 1;
+            r.dur = 9 * MS;
+        }),
+        rec(Ev::StreamStop, 30 * MS, |r| {
+            r.id = 2;
+            r.aux = kt_time::trace::stop::PREFETCH;
+        }),
+        rec(Ev::ComputeJob, 40 * MS, |r| {
+            r.id = Class::Near as u64;
+            r.b = 5 * MS;
+        }),
+    ];
+    for i in 0..3 {
+        v.push(rec(Ev::GpuPiece, (50 + i) * MS, |r| {
+            r.id = 3;
+            r.aux = Class::Offline as u32;
+            r.a = i;
+        }));
+    }
+    for (i, d) in [4u64, 6, 30].into_iter().enumerate() {
+        v.push(rec(Ev::FrameWait, (100 + 10 * i as u64) * MS, |r| {
+            r.aux = wait::DEVICE;
+            r.dur = d * MS;
+        }));
+    }
+    let o = gpu(&run_of(v));
+    for want in [
+        "ring 3 (carries the display)",
+        "now",
+        "near",
+        "max 9.0 ms",
+        "offline",
+        "3 pieces cut",
+        "compute jobs near",
+        "stopped by prefetch: 1",
+        "display presents 3: device wait p50 6.0 ms",
+        "max 30.0 ms",
+    ] {
+        assert!(o.contains(want), "{want:?} missing:\n{o}");
+    }
+}

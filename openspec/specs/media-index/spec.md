@@ -948,3 +948,93 @@ per minute of audio).
 - **WHEN** material past full scale with a NaN, infinities and negative zeros is folded whole and in chunks of 1, 777 and 1 024 frames, and on the baseline path
 - **THEN** the pyramid's digest equals the one printed before the change
 - **TEST** t2175 (`src/libs/kt-media/tests/peak_acc.rs`)
+
+### Requirement: Background work runs on one scheduler and pauses while playing
+Every background service — file thumbnails, effect cells, posters, composition strips, offline
+analysis, the index, the media watch, autosave — and every job that answers a person's gesture (a
+save, a media open, a decoder released) SHALL run as a job on one scheduler: job classes in a fixed
+order (now, answer, near, visible, background, offline), each producer on its own lane (its own
+order, one job at a time), a pool sized from this machine's cores at run time (a quarter of them, 3
+to 6) that always keeps one worker for the person's answers, cancellation by tokens (a lane closes
+with its owner), per-class counters. While a player plays or an export runs, the visible and
+background classes SHALL start nothing and a running job SHALL wait at its next checkpoint; they
+resume when playback stops. A worker with nothing to run SHALL park with no clock. A ready LRU of
+thumbnails or effect cells SHALL never evict what the last two UI frames drew. Decoder owners stay
+threads of their own (invariant 5); a lane's job drops any source it opened before it ends.
+Why: the owner, kkt-26.11.08 H15 (the scheduler may pause thumbnails, analysis and the index while
+playing): "Да"; `docs/engine-audit.md` §2b counted about ten queue disciplines and seven timers at
+rest; a filmstrip wider than its cap ordered its own pictures round in a circle (row 114).
+
+#### Scenario: Lanes are FIFO one at a time, classes run in order, an answer never waits
+- **WHEN** sixty jobs go to one lane; a pump is kicked many times over its own queue; the pool's capped slots are held while a visible, a background and an answer job are queued
+- **THEN** the lane runs them in order, never two at once; the kicks coalesce; the answer runs at once, then visible before background when a slot frees
+- **TEST** t2230 (`src/libs/kt-time/src/sched/tests.rs`)
+
+#### Scenario: Playing pauses the background classes
+- **WHEN** a visible job runs to a checkpoint while a player's vote is up, and visible and background jobs are queued meanwhile
+- **THEN** the checkpoint waits and nothing starts while an answer job runs; when the vote drops all of them run
+- **TEST** t2231 (`src/libs/kt-time/src/sched/tests.rs`)
+
+#### Scenario: Cancellation, supersede, a panic
+- **WHEN** a lane closes with a job running and one queued; five keyed saves are queued behind a held one; a token is cancelled while its job waits at a paused checkpoint; a job panics
+- **THEN** the running job sees the close and the queued one never runs; only the newest save runs; the checkpoint releases; the next job of the panicked lane runs
+- **TEST** t2232 (`src/libs/kt-time/src/sched/tests.rs`)
+
+#### Scenario: The cap never evicts what is on screen
+- **WHEN** ten pictures stand under a cap of four and six of them were drawn this frame; then two frames pass
+- **THEN** only the four undrawn are evicted; after the frames move on the cap holds, oldest first
+- **TEST** t2237 (`src/apps/kt-app/src/thumbs.rs`)
+
+#### Scenario: Thumbnails wait out playback
+- **WHEN** a thumbnail is asked while a player plays
+- **THEN** it is not made while playing, it is made after, and the service has no thread of its own
+- **TEST** t2238 (`src/apps/kt-app/src/thumbs.rs`)
+
+#### Scenario: A person plays while thumbnails and waveforms are pending
+- **WHEN** the heavy showcase project has just opened (its files being indexed, its filmstrips ordered), Space starts playback, the timeline is zoomed with Ctrl+wheel, then Space stops it
+- **THEN** while playing the background classes are paused, work waits and no visible or background job starts; after the pause they resume and everything drains
+- **PATH** open the heavy project → the filmstrips and waveforms start filling in; press Space → it plays, the filmstrips stop filling in; Ctrl+wheel over the timeline → the view zooms, the new thumbnails wait; press Space → playback stops and the waiting thumbnails and waveforms fill in
+- **TEST** live `sched_pause` (`src/scripts/live/sched_pause.py`)
+
+### Requirement: One memory ledger over every cache that holds pictures, mixes or device buffers
+Every cache that holds decoded frames, kept composites, stream history, a kept final mix or device
+buffers (the burst cache, the present memo, the stream memo, the kept mix, the upload, readback and
+transient pools, the compute pool) SHALL report the bytes it holds to one ledger of the process, under
+its tenant kind. Each tenant SHALL keep its base — the working set it was proven with — whatever the
+ledger says. What a tenant wants above its base SHALL be granted from ONE growth budget: half of what
+the process could still take beyond its bases, measured at run time when a want changes (the memory
+available now, a control group's limit included, plus the growth the tenants already hold). Grants
+SHALL go in a fixed order of value — kept composites, then stream history, then decoded frames — each
+up to its want; taking back SHALL go the reverse way, and a tenant whose grant shrinks SHALL drop what
+it no longer may hold at once. With the memory unknown nothing above the bases SHALL be granted. A hold
+of an offline job SHALL stay stronger than any cap. No grant, cap or eviction SHALL change a byte of a
+frame or a mix (invariant 11), and the ledger SHALL do nothing at rest: it acts only when a want, a
+claim or a tenant's size changes.
+Why: found-defects 310, M9 of `docs/engine-audit.md` — ten caches each picked their own constant, and
+nobody saw the sum or took back a byte where it was worth least; the owner (kkt-26.11.08 H13): no
+limit tuned for one machine.
+
+#### Scenario: Grants follow the order of value within the budget
+- **WHEN** the kept composites, the stream history and the decoded frames each want more than their bases, with plenty of memory, with memory for part of it, and with the memory unknown
+- **THEN** with plenty each gets its want; with part, the kept composites are granted first, the stream history gets what is left and the decoded frames nothing; unknown — every cap is its base; the bases are never cut, and the sum of grants never passes half of the memory available plus the growth held
+- **TEST** t2290 (`src/libs/kt-time/src/mem.rs`)
+
+#### Scenario: A higher want takes back the lowest grant first, and only a change acts
+- **WHEN** the stream history holds its grant, then the kept composites' want rises past what is left, then the same wants are asked again
+- **THEN** the stream history's cap drops and its owner is told at once, the kept composites' does not move down; asking the same wants again changes no cap, tells no owner and writes no record
+- **TEST** t2291 (`src/libs/kt-time/src/mem.rs`)
+
+### Requirement: The preview's decoders take a render's threads
+A video decoder the editor opens for a project's preview SHALL take the threads a render of that
+project's frame size takes by the memory measured when the project opens (four, two when the memory is
+tight), not libavcodec's automatic count. A render opening its own sources SHALL leave the preview's
+count as it found it.
+Why: memory-ledger's class walk — the automatic count is a thread per core, and each frame thread
+holds its own pictures: on our heavy showcase five VP9 and one VP8 decoders ran 160 threads and held
+4.4 GB before anything was cached; the preview peaked at 9.9 GB against 6.3 GB with four threads, at
+the same decode time per picture and with no underruns instead of 23 247 frames of them.
+
+#### Scenario: Opening a project sets the render's rule
+- **WHEN** the decoders' count is auto and a project is opened in the editor
+- **THEN** the count a decoder opened now takes is four or two
+- **TEST** t2302 (`src/apps/kt-app/src/diag_tests.rs`)

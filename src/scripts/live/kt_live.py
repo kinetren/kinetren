@@ -35,6 +35,12 @@ KT_APP = os.environ.get("KT_LIVE_APP") or os.path.join(RUST, "target", "debug", 
 # already running program — it is set up by `scripts/live/worker.py`. Without the variable
 # each scenario starts its own process, as before R.68.
 BENCH = os.environ.get("KT_LIVE_BENCH")
+
+
+# the program's dump and the bench's command file on tmpfs (test-hygiene)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _channel import channel_dir, keep_channel  # noqa: E402,F401
+
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
 
 # ui-probe.py — the ready-made mouse/keyboard driver (python3-xlib + XTest);
@@ -239,8 +245,23 @@ def poll_step(seconds=0.25):
     for anything (so after R.68 several scenarios “went silent”: each has
     its own polling loop with its own step). This is a legitimate sleep: there is nothing to wait for here —
     the APPEARANCE itself is checked.
+
+    AN ATTEMPT IS ALSO A FRAME OF THE PROGRAM (test-hygiene): twenty attempts of a fixed step were
+    a clock limit wherever the frame estimate they stretch by was stale, and under load the picture
+    changed after the last of them (`stills`, `generator`). With a program running, each step also
+    waits for a frame the program draws BY ITSELF (no poke: a scenario that counts frames after a
+    gesture, `morphgrid`, must not count the bench's), or a few steps more if it draws none.
     """
     time.sleep(stretched(seconds))
+    app = _CURRENT[0]
+    # a process of our own that has ended draws nothing: the loop asking whether it is gone polls only
+    running = app is not None and (not app.own or (app.proc is not None and app.proc.poll() is None))
+    if running:
+        app.wait_frame(1, what="a frame between two attempts", soft=True, timeout=stretched(3 * seconds), poke=False)
+
+
+# the Live inside whose `with` a scenario runs: `poll_step` waits for its frames
+_CURRENT = [None]
 
 
 class Live:
@@ -301,11 +322,12 @@ class Live:
         env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
         # the program itself reports the timeline geometry — we aim exactly,
         # not “roughly at the bottom third” (R.27)
-        self.geom_path = os.path.join(self.out, "geom.json")
+        self.chan = channel_dir(self.out, fresh=True)
+        self.geom_path = os.path.join(self.chan, "geom.json")
         env["KT_GEOM_DUMP"] = self.geom_path
         # its own channel of the stand even for “its own process” (R.68): it removes the dump
         # throttling, and the wait for a frame works the same everywhere
-        self.ctl_path = os.path.join(self.out, "ctl")
+        self.ctl_path = os.path.join(self.chan, "ctl")
         env["KT_LIVE_CTL"] = self.ctl_path
         # a process of its own has its own storage (R.68): otherwise the scenario sees
         # the workplace of the previous one. The run of `nestpreview` was green
@@ -344,6 +366,7 @@ class Live:
             # green scenarios red — a “flake” that never existed)
             self.__exit__(None, None, None)
             raise
+        _CURRENT[0] = self
         return self
 
     def _attach_bench(self):
@@ -356,8 +379,9 @@ class Live:
         class “green, because they looked in the wrong place”, from which Kinetren has already
         suffered.
         """
-        self.geom_path = os.path.join(BENCH, "geom.json")
-        self.ctl_path = os.path.join(BENCH, "ctl")
+        self.chan = channel_dir(BENCH)
+        self.geom_path = os.path.join(self.chan, "geom.json")
+        self.ctl_path = os.path.join(self.chan, "ctl")
         # THE ENVIRONMENT THAT IS READ AT PROCESS START cannot be handed to the stand:
         # the program is already running. Silently ignoring it is not allowed —
         # the scenario would check not what it thinks; so the mismatch is
@@ -405,6 +429,7 @@ class Live:
             self._raised = False
             self.wait_frame(3, what="relayout after the window geometry is restored", soft=True)
             self.settle()
+        _CURRENT[0] = self
         return self
 
     def wait_loaded(self, timeout=30.0):
@@ -462,14 +487,25 @@ class Live:
             self._ctl("noop")
 
     def _wait_ctl(self, seq, timeout=30.0):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        """Wait for the stand to execute command `seq`. `timeout` is how long it may stand WITHOUT A
+        FRAME (test-hygiene): opening a scenario's project after a heavy one took the stand past a
+        fixed 30 s under the full live run, drawing all the while, and three scenarios went red
+        on a program that was alive and working. A stand that draws is waited for up to the ten
+        minutes of a test's guard."""
+        give_up = time.time() + 600.0
+        frame, still_since = -1, time.time()
+        while time.time() < give_up:
             try:
                 with open(self.geom_path) as f:
-                    if int(json.load(f).get("bench_done", 0)) >= seq:
-                        return
+                    g = json.load(f)
+                if int(g.get("bench_done", 0)) >= seq:
+                    return
+                if int(g.get("frame", 0)) != frame:
+                    frame, still_since = int(g.get("frame", 0)), time.time()
             except (OSError, ValueError):
                 pass
+            if time.time() - still_since > stretched(timeout):
+                break
             _poll(0.05)
         raise Failure(f"the stand did not execute the command {seq} — is the program alive? {self.out}")
 
@@ -497,6 +533,9 @@ class Live:
             pass
 
     def __exit__(self, *exc):
+        _CURRENT[0] = None
+        if getattr(self, "chan", None):
+            keep_channel(self.chan, self.out)
         self._report_sleep()
         if self.own and self.proc and self.proc.poll() is None:
             self.proc.terminate()
@@ -504,6 +543,18 @@ class Live:
                 self.proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+            # THE WINDOW GONE TOO (test-hygiene): the editor is the supervisor's child and dies after
+            # it, and on a loaded machine its window stood on while the next program of the same
+            # scenario started. `probe.window()` takes the first window of the class: the next
+            # step focused and measured the dying one, and its Ctrl+F and its drag went nowhere
+            # (`readme_shots` under the full live run)
+            deadline = time.time() + stretched(10.0)
+            while time.time() < deadline:
+                try:
+                    probe.window()
+                except SystemExit:
+                    break
+                _poll(0.05)
         # THE VERDICT DOES NOT DEPEND ON THE SCENARIO AUTHOR’S MEMORY (R.67). `expect`
         # accumulates divergences, but the return code is given by `done()` — and seven of
         # the fifty scenarios never called it: `curvesrc` printed FAIL
@@ -653,7 +704,7 @@ class Live:
             _poll()
         return False
 
-    def wait_frame(self, n=1, timeout=None, what="frame after the gesture", soft=False):
+    def wait_frame(self, n=1, timeout=None, what="frame after the gesture", soft=False, poke=True):
         """Wait until the program draws another `n` frames.
 
         This replaces fixed pauses: a gesture always produces input, input
@@ -676,7 +727,8 @@ class Live:
             if self._frame_now() >= target:
                 self._note_frame_gap((time.time() - started) / max(n, 1))
                 return True
-            self._poke()
+            if poke:
+                self._poke()
             _poll()
         if soft:
             return False
@@ -832,6 +884,16 @@ class Live:
             return True
         if os.environ.get("KT_LIVE_DEBUG_WAIT"):
             print(f"      [TIMEOUT] {what}: {time.time() - _t0:.2f} s", file=sys.stderr)
+        if what.startswith("key"):
+            # a key the program never read names where the X server sent it (test-hygiene: Ctrl+F
+            # and Ctrl+Z in a freshly started program went nowhere under the full live run)
+            try:
+                f = probe.d.get_input_focus().focus
+                w = probe.window()
+                print(f"   note: {what} was not read; the X focus is {getattr(f, 'id', f)}, "
+                      f"the program's window {w.id}", flush=True)
+            except (Exception, SystemExit):
+                pass
         pause(
             0.25,
             "the program did not read the gesture in time: an event that egui legitimately "
@@ -872,8 +934,12 @@ class Live:
         mark = self.seen()
         probe.button(True, pause=0.0)
         probe.button(False, pause=0.0)
-        self._clicked_at = time.time()
         self._after_gesture(mark, "click")
+        # the click's moment for egui is the frame that READ it, and on a loaded machine that
+        # frame came seconds after the send (a save's fsync held the UI): measured from the send,
+        # the next double click fell inside egui's triple window, and a triple click on an event
+        # closes the effects window its double click opened (`formula` in all three proof sets)
+        self._clicked_at = time.time()
         if mods:
             self._mods(mods, False)
 
@@ -902,7 +968,16 @@ class Live:
         self.raise_once()
         # egui counts a click within 0.6 s of the click before last as the third of a triple, and
         # a triple is no double click: a click just before this gesture took it away, every time
-        while time.time() - self._clicked_at < TRIPLE_WINDOW + self._dt:
+        # the program widens egui's double-click window by its busy frame (test-hygiene), and the
+        # triple window is twice that: the program publishes the window it set (`double_click_s`)
+        triple = 2 * float(self.geom().get("double_click_s", TRIPLE_WINDOW / 2))
+        if time.time() - self._clicked_at < max(TRIPLE_WINDOW, triple) + self._dt:
+            # the click before may still be unread (a save held a frame 6.9 s under the full run):
+            # two frames drawn from now have read it, so its stamp is no later than now
+            self.wait_frame(2, what="the click before is read", soft=True)
+            self._clicked_at = max(self._clicked_at, time.time())
+            triple = 2 * float(self.geom().get("double_click_s", TRIPLE_WINDOW / 2))
+        while time.time() - self._clicked_at < max(TRIPLE_WINDOW, triple) + self._dt:
             _poll()
         # a frame AFTER the hover: the first click at the fresh position is otherwise lost
         # together with the input frame
@@ -921,8 +996,8 @@ class Live:
             probe.button(False, pause=0.0)
             pause(0.01, "egui stamps a click with its frame: the events of a double click stay inside one frame, a hair apart so that the server keeps them apart (measured 12 of 12)")
         probe.d.sync()
-        self._clicked_at = time.time()
         self._after_gesture(mark, "triple click" if n == 3 else "double click")
+        self._clicked_at = time.time()
 
     def drag(self, x0, y0, x1, y1, steps=6, mods=()):
         """Drag LIKE A HUMAN: hover → press → nudge a little → move
@@ -989,6 +1064,18 @@ class Live:
         except Exception:
             pass
         self._raised = True
+        # THE FOCUS IS ASKED OF THE X SERVER (test-hygiene): keys go to the focused window, and on a
+        # loaded machine the focus landed after the next key, so `decode_storm`'s Space went nowhere
+        # (no PLAY in the run's journal). The server says which window has it.
+        deadline = time.time() + stretched(5.0)
+        while time.time() < deadline:
+            try:
+                f = probe.d.get_input_focus().focus
+                if getattr(f, "id", f) == w.id:
+                    return
+            except Exception:
+                break
+            _poll(0.02)
         # lifting a window is the work of the window manager, not of the program:
         # it has no input event of its own here, so there is nothing to wait for
         pause(
@@ -1197,12 +1284,17 @@ class Live:
         # the probe gave up sooner than the program managed to open the menu.
         self.wait_frame(2, what="fresh probe dump", soft=True)
         deadline = time.time() + max(8.0, 40.0 * self._dt)
+        last = None
         while time.time() < deadline:
             f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
-            if f:
+            # THE SAME RECTANGLE IN TWO DUMPS A FRAME APART (test-hygiene): a window that re-centres
+            # after a resize moves for several frames, and `lessons` clicked "Start the tour" where
+            # the button had been (the journal: the Welcome window, then nothing)
+            if f and last and all(abs(f[k] - last[k]) < 1.0 for k in ("x", "y", "w", "h")):
                 return f
+            last = f
             self.wait_frame(1, what=f"frame while waiting for a widget {name}", soft=True)
-        return None
+        return last
 
     def double_click_probe(self, name, what=None):
         """Double click on a widget from the geometry dump."""
@@ -1553,7 +1645,8 @@ class Live:
             "the program did not write the project after Ctrl+S, although there are edits; "
             f"its status line: “{g.get('status', '')}”, frame {g.get('frame')} (Ctrl+S at "
             f"{mark[0]}), input {g.get('input')} (at {mark[1]}), windows {g.get('windows')}, "
-            f"questions {asks}, clips {len(g.get('clips', []))}"
+            f"questions {asks}, clips {len(g.get('clips', []))}, a text field holds the keys: "
+            f"{g.get('keys_gated')}"
         )
 
     def project_text(self):

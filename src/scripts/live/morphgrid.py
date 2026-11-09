@@ -62,6 +62,9 @@ def main(out):
         # --- 1. paused at 12×30: the panel names the cost, and it is one cell ----------
         app.click(app.x_at(2 * SEC), app.ruler_y())
         app.settle()
+        # the composite of the new place, read as a consequence (test-hygiene): the dump after
+        # `settle` could still be the one before the click
+        app.until(lambda: app.geom()["compose"]["subsamples"] > 0)
         c = app.geom()["compose"]
         app.expect(c["ms"] > 0, f"the panel's compose time is measured: {c}")
         app.expect(

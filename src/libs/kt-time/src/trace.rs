@@ -89,9 +89,27 @@ pub enum Ev {
     StreamAdvance = 21,
     /// The stream memo evicted an entry. `id` its key, `a` bytes, `cause` the key put.
     StreamMemoEvict = 22,
+    /// A stream kernel compiled positions of its schedule (a span; stream-layout-per-build). `a` the
+    /// first position compiled, `b` one past the last, `c` the positions the schedule holds after it.
+    StreamPlan = 23,
+    /// The preview sized its stream memo (stream-layout-per-build). `a` the bound in bytes, `b` the
+    /// loop's positions (0 — no loop), `c` the memory available then, in MB (0 — unknown).
+    StreamMemoCap = 24,
+    /// A stream history stopped because nobody wanted its frame any more (gpu-arbiter). `id` clip,
+    /// `a` the position it stopped before, `aux` [`stop`] who stopped it.
+    StreamStop = 25,
 
-    /// A compute job ran (a span). `aux` kernel [`name`], `a` dispatches.
+    /// A compute job ran (a span). `aux` kernel [`name`], `a` dispatches, `b` device time (ns),
+    /// `c` the wait for its buffers (ns), `id` the caller's [`crate::sched::Class`] (gpu-arbiter).
     ComputeJob = 30,
+    /// A ring admitted a submission (gpu-arbiter; a span: the wait). `id` the ring, `aux` the
+    /// [`crate::sched::Class`], `a` the device time it predicted (ns), `b` the device time in flight
+    /// before it (ns), `c` 1 when the ring carries a display.
+    GpuAdmit = 31,
+    /// A frame or a compute job was cut into a piece on a ring with a display (gpu-arbiter). `id` the
+    /// ring, `a` the piece's index in its frame, `b` its predicted device time (ns), `c` passes in it,
+    /// `aux` the class.
+    GpuPiece = 32,
 
     /// The executor kept a composite. `id` key, `a` bytes held after it.
     MemoStore = 40,
@@ -130,10 +148,35 @@ pub enum Ev {
 
     /// The writer lost records to a full ring. `a` how many.
     Dropped = 90,
+
+    /// A job was posted to the scheduler (`sched`, one-scheduler). `id` the job, `aux` its
+    /// [`crate::sched::Class`], `a` its lane's [`name`], `cause` who posted it.
+    SchedQueue = 71,
+    /// A scheduled job ran (a span). `id` the job, `aux` its class, `a` its lane's name, `b` how long
+    /// it waited in the queue (µs), `c` its [`crate::sched::outcome`].
+    SchedRun = 72,
+    /// A queued or running job was cancelled. `id` the job, `aux` the [`crate::sched::why_cancel`]
+    /// reason, `a` its lane's name.
+    SchedCancel = 73,
+    /// The pausable classes paused (`aux` 1) or resumed (`aux` 0). `a` the [`crate::sched::why`]
+    /// mask after it, `b` jobs waiting in the paused classes.
+    SchedPause = 74,
+    /// A blocking call on a thread that must not wait (`block`, one-scheduler): `aux` its
+    /// [`crate::block::kind`], `a` the thread's [`crate::block::role`], `dur` how long it took.
+    Block = 75,
+
+    /// The memory ledger sized its growth budget (`mem`, memory-ledger). `a` the growth budget in
+    /// bytes, `b` what is granted, `c` the memory available then in MB (0 — unknown), `aux` the
+    /// claims held (an export takes the growth while it runs).
+    MemBudget = 91,
+    /// A tenant's cap changed at a sizing, or a device refused its growth (memory-ledger). `aux` the
+    /// [`crate::mem::Tenant`], `a` its want, `b` its new cap, `c` the bytes it holds, `id` 1 — a
+    /// device refusal set the cap.
+    MemGrant = 92,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 34] = [
+    pub const ALL: [Ev; 46] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -152,7 +195,12 @@ impl Ev {
         Ev::StreamRun,
         Ev::StreamAdvance,
         Ev::StreamMemoEvict,
+        Ev::StreamPlan,
+        Ev::StreamMemoCap,
+        Ev::StreamStop,
         Ev::ComputeJob,
+        Ev::GpuAdmit,
+        Ev::GpuPiece,
         Ev::MemoStore,
         Ev::MemoEvict,
         Ev::Warm,
@@ -168,6 +216,13 @@ impl Ev {
         Ev::Work,
         Ev::Load,
         Ev::Dropped,
+        Ev::SchedQueue,
+        Ev::SchedRun,
+        Ev::SchedCancel,
+        Ev::SchedPause,
+        Ev::Block,
+        Ev::MemBudget,
+        Ev::MemGrant,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -194,7 +249,12 @@ impl Ev {
             Ev::StreamRun => "stream_run",
             Ev::StreamAdvance => "stream_advance",
             Ev::StreamMemoEvict => "stream_memo_evict",
+            Ev::StreamPlan => "stream_plan",
+            Ev::StreamMemoCap => "stream_memo_cap",
             Ev::ComputeJob => "compute_job",
+            Ev::GpuAdmit => "gpu_admit",
+            Ev::GpuPiece => "gpu_piece",
+            Ev::StreamStop => "stream_stop",
             Ev::MemoStore => "memo_store",
             Ev::MemoEvict => "memo_evict",
             Ev::Warm => "warm",
@@ -210,6 +270,13 @@ impl Ev {
             Ev::Work => "work",
             Ev::Load => "load",
             Ev::Dropped => "dropped",
+            Ev::SchedQueue => "sched_queue",
+            Ev::SchedRun => "sched_run",
+            Ev::SchedCancel => "sched_cancel",
+            Ev::SchedPause => "sched_pause",
+            Ev::Block => "block",
+            Ev::MemBudget => "mem_budget",
+            Ev::MemGrant => "mem_grant",
         }
     }
 }
@@ -219,6 +286,16 @@ pub mod ask {
     pub const PRESENT: u32 = 1;
     pub const PLAYING: u32 = 2;
     pub const RETRY: u32 = 4;
+}
+
+/// `StreamStop.aux`: who no longer wanted the frame.
+pub mod stop {
+    /// The preview's compose thread: a newer ask or an edit replaced the frame.
+    pub const COMPOSE: u32 = 1;
+    /// The prefetch thread: the playhead or the project left the advance.
+    pub const PREFETCH: u32 = 2;
+    /// A scheduled job (a reel strip, a poster) was cancelled.
+    pub const JOB: u32 = 3;
 }
 
 /// `FrameDrop.aux`.
@@ -298,6 +375,8 @@ pub mod stream {
     pub const SOURCE_MISSING: u32 = 4;
     pub const DONE: u32 = 5;
     pub const CANCELLED: u32 = 6;
+    /// Nobody wanted the frame any more: the history stopped (gpu-arbiter).
+    pub const STOPPED: u32 = 7;
 }
 
 /// `Play.aux`.

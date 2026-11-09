@@ -128,7 +128,7 @@ pub const COMMANDS: &[(Cmd, Group, Text)] = &[
 ];
 
 /// The number of commands: one past the highest frozen number.
-const CMD_COUNT: usize = 37;
+pub(crate) const CMD_COUNT: usize = 37;
 
 fn cmd_from(code: u8) -> Option<Cmd> {
     COMMANDS.iter().map(|c| c.0).find(|c| *c as u8 == code)
@@ -811,21 +811,44 @@ impl Choice {
     }
 }
 
-/// The commands pressed this frame.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
-pub struct CmdSet(u64);
+/// The commands pressed this frame, IN THE ORDER PRESSED (test-hygiene, found-defects 99/166).
+/// A set kept one of each: a slow frame read → → → ← together, and the frame step moved by
+/// 0 instead of 2; three Ctrl+Z were one undo. A fixed array: the frame path allocates nothing
+/// (invariant 12), and a frame that reads more presses than it holds keeps the first ones.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Pressed {
+    cmds: [Option<Cmd>; Pressed::CAP],
+    len: usize,
+}
 
-impl CmdSet {
+impl Default for Pressed {
+    fn default() -> Pressed {
+        Pressed { cmds: [None; Pressed::CAP], len: 0 }
+    }
+}
+
+impl Pressed {
+    const CAP: usize = 32;
+
     pub fn add(&mut self, cmd: Cmd) {
-        self.0 |= 1 << cmd as u8;
+        if self.len < Self::CAP {
+            self.cmds[self.len] = Some(cmd);
+            self.len += 1;
+        }
     }
 
-    pub fn has(self, cmd: Cmd) -> bool {
-        self.0 & 1 << cmd as u8 != 0
-    }
-
+    /// Drops every press of `cmd`.
     pub fn remove(&mut self, cmd: Cmd) {
-        self.0 &= !(1 << cmd as u8);
+        for c in &mut self.cmds[..self.len] {
+            if *c == Some(cmd) {
+                *c = None;
+            }
+        }
+    }
+
+    /// The presses in order.
+    pub fn iter(&self) -> impl Iterator<Item = Cmd> + '_ {
+        self.cmds[..self.len].iter().flatten().copied()
     }
 }
 
@@ -920,8 +943,8 @@ impl Controls {
     /// The commands of this frame, from the same events the old `key_pressed` read: an autorepeat
     /// IS a press here (a held arrow keeps stepping). egui-winit turns Ctrl+C, Ctrl+V and Ctrl+X
     /// into their own events (item 21), so those come back to the chord a person pressed.
-    pub fn pressed(&self, i: &egui::InputState) -> CmdSet {
-        let mut set = CmdSet::default();
+    pub fn pressed(&self, i: &egui::InputState) -> Pressed {
+        let mut set = Pressed::default();
         for e in &i.events {
             let chord = match e {
                 // what was held when THIS key went down: `i.modifiers` is the state at the end of

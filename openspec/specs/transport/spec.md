@@ -103,16 +103,27 @@ region MUST NOT rebuild the engine. Why: inconsistent membership conditions gave
 - **TEST** t167b (`src/libs/kt-engine/tests/loop_fx.rs`)
 
 ### Requirement: When paused the player is quiet; edits to the media composition on the fly do not disturb transport
-Pause SHALL park the render and prefetch threads (a safety timeout, ≤ 8 passes/s),
-rebuilding the renderers without an edit of the model MUST NOT happen, pause→resume MUST NOT
+Pause SHALL park the render and prefetch threads with no clock: after the pause's tail (at most
+two short passes that take the block the callback was handing out when the pause came) neither
+thread makes a pass until something it acts on changes — play, pause, a seek, a rate, the preview
+quality, a loop region, a published build, a retuned or replaced source, the player's drop — and
+each of those wakes it; a change between a thread's last look and its park is never lost.
+Rebuilding the renderers without an edit of the model MUST NOT happen, pause→resume MUST NOT
 deadlock. The addition and the substitution of sources SHALL survive coverage, the playhead and the
 generation, and a substitution SHALL clear the cache of the old source and recompute the decode scale
-step on the fly. Why: at pause the system lagged even with an empty project, and after a file returned, the preview showed the placeholder for a long time.
+step on the fly. Why: at pause the system lagged even with an empty project, and after a file returned,
+the preview showed the placeholder for a long time; then the parked threads still woke four and ten
+times a second on a pause (one-scheduler: "the program at rest costs nothing").
 
 #### Scenario: Pause — parking of the threads
 - **WHEN** the player stands on pause for a second; then an edit of the model; then resume
 - **THEN** ≤ 8 render passes, zero prefetch rebuilds; the edit wakes exactly one rebuild; after resume the ring fills again
 - **TEST** t20 (`src/libs/kt-engine/tests/player_dynamic.rs`)
+
+#### Scenario: A pause costs nothing and every input wakes it
+- **WHEN** a paused player has settled; then a seek; then fifty seeks in a burst; then play and pause
+- **THEN** over a second and a half neither the render nor the prefetch thread passes; the seek wakes both; after the burst the prefetch's last pass saw the last seek; play wakes the render thread and the pause parks it again
+- **TEST** t2240 (`src/libs/kt-engine/tests/player_dynamic.rs`)
 
 #### Scenario: Adding media incrementally
 - **WHEN** a new file is added on a warm cache
@@ -386,6 +397,12 @@ loop pass of one freeze, so the counter overstated it and flooded the 512-entry 
 - **PATH** there is no gesture: the freeze is produced by the test player → the bell gets one red entry "playback froze at 00:01:02"
 - **TEST** t1625 (`src/libs/kt-engine/tests/flight_stall.rs`), t1626 (`src/apps/kt-app/src/layout_tests.rs`)
 
+#### Scenario: A play after a rest is no freeze
+- **WHEN** the render thread looked at the transport paused, parked for 3.5 s, and the play woke it with the head not yet moved
+- **THEN** no stall is recorded: the wait for a freeze starts at the first playing look; a head that then stands a second is still one stall
+- **PATH** there is no gesture: pause, wait, press Space → Diagnostics shows no "playback froze" line and the bell gets no entry
+- **TEST** t2303 (`src/libs/kt-engine/tests/flight_stall.rs`)
+
 ### Requirement: "Freeze frame here" holds the frame at the playhead and continues after it
 The event's menu SHALL have the command "Insert frame hold (freeze frame)" for the event under the
 playhead. The name follows the industry: Premiere's "Insert Frame Hold Segment", Resolve's "Freeze
@@ -629,3 +646,25 @@ bars would mark a moment "plays without work" by the old plan's key.
 - **WHEN** the builder is held, the project's frame rate changes from 25 to 30 and a frame at 5000 ticks is asked
 - **THEN** the ask returns at once, nothing is composed while the build is held, and after the release the frame is composed on the 30 fps grid (3000 ticks)
 - **TEST** t2006 (`src/libs/kt-engine/tests/shared_build.rs`)
+
+### Requirement: Space read by a slow frame keeps its meaning
+The play key's presses and releases SHALL be handled in the order a frame read them. A hold SHALL be
+proven: a frame that began `SPACE_HOLD_MS` after the frame that read the press finds no release in its
+input; a release of a press never proven held is a tap. The double-press window SHALL be measured
+between frame starts and widen by the busy frame the program measures.
+Why: under the full live run `space_hold` read its two quick presses as one (a pause, not the stop at
+the start), and a tap whose release a slow frame read past the threshold did nothing at all, neither a
+tap nor a hold (found-defects 99, 166). The program cannot tell 150 ms from 450 ms inside a 450 ms
+frame; it can keep from deciding against the person on that.
+
+#### Scenario: A tap read late and two presses in one frame
+- **WHEN** the press is read by one frame and its release by a frame 400 ms later; then one frame reads
+  two presses
+- **THEN** the tap plays (no boost); the two presses stop at the project start
+- **TEST** t2212 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: The double press on busy frames
+- **WHEN** playback runs on frames 450 ms apart and the second press is read 450 ms after the first; then
+  on fast frames a second press comes 2 s after the pause
+- **THEN** the first pair stops at the project start; the second press resumes
+- **TEST** t2213 (`src/apps/kt-app/src/layout_tests.rs`); live `space_hold`

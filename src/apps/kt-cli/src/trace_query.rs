@@ -9,6 +9,8 @@
 //! - `during <from> <to>` — what ran in a window;
 //! - `slow [n]` — the slowest frames and their critical path;
 //! - `frame <id>` — one frame's life;
+//! - `gpu` — the device rings (gpu-arbiter): admissions, waits, pieces and compute jobs by class,
+//!   device submits a second, stopped stream histories, the display's present latency;
 //! - `machine`, `dump [from to]` (JSON lines), `chrome <out.json>` (Perfetto / chrome://tracing).
 //!
 //! Times are seconds since the process started (`+193.201`), the clock of the text journal.
@@ -94,6 +96,8 @@ pub fn run(args: &[String]) -> i32 {
             None => "usage: kt-cli trace [dir] frame <id>\n".into(),
         },
         "machine" => machine(run),
+        "memory" => memory(run),
+        "gpu" => gpu(run),
         "dump" => dump(run, arg(1), arg(2)),
         "chrome" => match rest.get(1) {
             Some(out) => match std::fs::write(out, chrome(run)) {
@@ -104,13 +108,60 @@ pub fn run(args: &[String]) -> i32 {
         },
         _ => {
             eprintln!(
-                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|machine|dump [from to]|chrome <out.json>"
+                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|machine|memory|dump [from to]|chrome <out.json>"
             );
             return 2;
         }
     };
     print!("{out}");
     0
+}
+
+/// The memory ledger over the run (memory-ledger): every sizing with the grants it changed, then
+/// each tenant's last cap and bytes.
+fn memory(run: &Run) -> String {
+    use kt_time::mem::Tenant;
+    let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
+    let mut o = String::new();
+    let mut last: std::collections::BTreeMap<u32, (u64, u64, u64)> = Default::default();
+    for r in &run.recs {
+        match kind(r) {
+            Some(Ev::MemBudget) => {
+                let _ = writeln!(
+                    o,
+                    "{:>9}  budget {} of growth, {} granted, {} available{}",
+                    s(r.t),
+                    mb(r.a),
+                    mb(r.b),
+                    if r.c == 0 { "unknown".to_string() } else { format!("{} MB", r.c) },
+                    if r.aux > 0 { format!(", claimed by {} export(s)", r.aux) } else { String::new() }
+                );
+            }
+            Some(Ev::MemGrant) => {
+                let name = Tenant::from_u32(r.aux).map_or("?", Tenant::name);
+                let _ = writeln!(
+                    o,
+                    "{:>9}    {name:<9} want {} → cap {}, holds {}{}",
+                    s(r.t),
+                    mb(r.a),
+                    mb(r.b),
+                    mb(r.c),
+                    if r.id == 1 { "  (the device refused its growth)" } else { "" }
+                );
+                last.insert(r.aux, (r.a, r.b, r.c));
+            }
+            _ => {}
+        }
+    }
+    if o.is_empty() {
+        return "no memory ledger records in this run\n".into();
+    }
+    let _ = writeln!(o, "last:");
+    for (t, (want, cap, held)) in &last {
+        let name = Tenant::from_u32(*t).map_or("?", Tenant::name);
+        let _ = writeln!(o, "  {name:<9} cap {}, holds {}, wants {}", mb(*cap), mb(*held), mb(*want));
+    }
+    o
 }
 
 /// The program's trace directory: `KINETREN_DATA_DIR`, else the data directory.
@@ -158,6 +209,96 @@ pub fn summary(run: &Run) -> String {
         v.iter().map(|(k, n)| format!("{k}={n}")).collect::<Vec<_>>().join(", ")
     });
     let _ = writeln!(o, "  journal lines: {}", run.texts.len());
+    o
+}
+
+fn class_name(c: u64) -> &'static str {
+    kt_time::sched::Class::ALL.get(c as usize).map_or("?", |c| c.name())
+}
+
+/// The device rings (gpu-arbiter): who was admitted, who waited, what was cut, what the compute host
+/// ran, and how long the display's presents waited for the device.
+pub fn gpu(run: &Run) -> String {
+    let mut o = String::new();
+    let first = run.recs.first().map_or(0, |r| r.t);
+    let last = run.recs.iter().map(|r| r.end()).max().unwrap_or(0);
+    let span = (last.saturating_sub(first) as f64 / NS).max(1e-9);
+    let _ = writeln!(o, "-- device rings over {span:.1} s --");
+    // ring → class → (admissions, total wait, max wait, pieces)
+    type Admits = BTreeMap<u64, (u64, u64, u64, u64)>;
+    let mut rings: BTreeMap<u64, Admits> = BTreeMap::new();
+    let mut shown: HashSet<u64> = HashSet::new();
+    for r in &run.recs {
+        if is(r, Ev::GpuAdmit) {
+            let e = rings.entry(r.id).or_default().entry(r.aux as u64).or_default();
+            e.0 += 1;
+            e.1 += r.dur;
+            e.2 = e.2.max(r.dur);
+            if r.c == 1 {
+                shown.insert(r.id);
+            }
+        } else if is(r, Ev::GpuPiece) {
+            rings.entry(r.id).or_default().entry(r.aux as u64).or_default().3 += 1;
+        }
+    }
+    for (ring, classes) in &rings {
+        let _ = writeln!(o, "ring {ring}{}", if shown.contains(ring) { " (carries the display)" } else { "" });
+        for (c, (n, wait, max, pieces)) in classes {
+            let _ = writeln!(
+                o,
+                "  {:<10} {n:>6} admitted ({:.1}/s), waited {} (max {}), {pieces} pieces cut",
+                class_name(*c),
+                *n as f64 / span,
+                ms(*wait),
+                ms(*max)
+            );
+        }
+    }
+    let mut jobs: BTreeMap<u64, (u64, u64)> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::ComputeJob)) {
+        let e = jobs.entry(r.id).or_default();
+        e.0 += 1;
+        e.1 += r.b;
+    }
+    for (c, (n, dev)) in &jobs {
+        let _ = writeln!(o, "compute jobs {:<10} {n:>6} ({:.1}/s), device {}", class_name(*c), *n as f64 / span, ms(*dev));
+    }
+    let submits: u64 = run
+        .recs
+        .iter()
+        .filter(|r| is(r, Ev::Work) && r.aux == kt_time::work::Work::DeviceSubmit as u32)
+        .map(|r| r.a)
+        .sum();
+    if submits > 0 {
+        let _ = writeln!(o, "device submits {submits} ({:.1}/s, busy seconds only)", submits as f64 / span);
+    }
+    let mut stops: BTreeMap<u32, u64> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::StreamStop)) {
+        *stops.entry(r.aux).or_default() += 1;
+    }
+    for (who, n) in &stops {
+        let name = match *who {
+            trace::stop::COMPOSE => "compose",
+            trace::stop::PREFETCH => "prefetch",
+            trace::stop::JOB => "job",
+            _ => "?",
+        };
+        let _ = writeln!(o, "stream histories stopped by {name}: {n}");
+    }
+    let mut lat: Vec<u64> =
+        run.recs.iter().filter(|r| is(r, Ev::FrameWait) && r.aux == trace::wait::DEVICE).map(|r| r.dur).collect();
+    if !lat.is_empty() {
+        lat.sort_unstable();
+        let q = |f: f64| lat[((lat.len() - 1) as f64 * f) as usize];
+        let _ = writeln!(
+            o,
+            "display presents {}: device wait p50 {} p95 {} max {}",
+            lat.len(),
+            ms(q(0.5)),
+            ms(q(0.95)),
+            ms(*lat.last().unwrap())
+        );
+    }
     o
 }
 
@@ -802,6 +943,9 @@ pub fn during(run: &Run, from: u64, to: u64) -> String {
             Ev::FrameDrop => format!("frame_drop:{}", r.aux),
             Ev::FrameDone => format!("frame_done:{}", if r.aux == 1 { "complete" } else { "incomplete" }),
             Ev::MixChunk => format!("mix_chunk:{}", r.aux),
+            Ev::SchedQueue | Ev::SchedRun | Ev::SchedCancel => sched_word(run, k, r),
+            Ev::SchedPause => format!("sched_{}", if r.aux == 1 { "pause" } else { "resume" }),
+            Ev::Block => format!("block:{}:{}", if r.a == kt_time::block::role::UI as u64 { "ui" } else { "render" }, kt_time::block::kind::name(r.aux)),
             _ => k.name().to_string(),
         };
         let e = by.entry(name).or_default();
@@ -836,6 +980,19 @@ pub fn during(run: &Run, from: u64, to: u64) -> String {
         }
     }
     o
+}
+
+/// A scheduler record named by its class and lane (one-scheduler): "sched_run:visible:thumbs".
+fn sched_word(run: &Run, k: Ev, r: &Rec) -> String {
+    let class = match k {
+        Ev::SchedCancel => "",
+        _ => kt_time::sched::Class::ALL.get(r.aux as usize).map_or("?", |c| c.name()),
+    };
+    if class.is_empty() {
+        format!("{}:{}", k.name(), run.name_of(r.a as u32))
+    } else {
+        format!("{}:{class}:{}", k.name(), run.name_of(r.a as u32))
+    }
 }
 
 fn job_name(aux: u32) -> &'static str {
@@ -941,6 +1098,7 @@ pub fn chrome(run: &Run) -> String {
         let name = match k {
             Ev::ComputeJob | Ev::Warm | Ev::ColdDraw => format!("{}:{}", k.name(), run.name_of(r.aux)),
             Ev::Job => format!("job:{}", job_name(r.aux)),
+            Ev::SchedQueue | Ev::SchedRun | Ev::SchedCancel => sched_word(run, k, r),
             _ => k.name().to_string(),
         };
         let ts = r.t as f64 / 1e3;

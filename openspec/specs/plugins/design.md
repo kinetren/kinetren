@@ -155,3 +155,15 @@ effect). Measurements, the migration estimate and the owner's questions: F-EXT-0
 - The AAC codec, the noise suppressor's frame and pitch's grains through the same door measured no
   gain and were not kept. `math::powf_neg_half` is `powf(x, −0.5)` to the bit, checked on all
   2 139 095 040 positive finite floats (t1982).
+
+## A stream history stops when nobody wants it (gpu-arbiter, 2026-11-09)
+
+Row 147: a composite the UI had left ran its stream history to the end — up to 300 frames of compute
+jobs; in live `ui_wait` the preview's thread held 4 cores for seconds after a pause. The plugin API grew
+by one defaulted method, `StreamInput::stop`; the kernel asks it before each history position and
+returns `None` with what it computed in the memo, so a later render resumes there with the same bytes
+(the memo is speed only, invariant 11; t2257). Who answers is the host's caller: the compose thread (a
+newer ask, an edit), the prefetch thread (the transport's generation, the project version), a reel or
+poster job (its cancel). An export never stops. Rejected: a token passed into `render` (a signature
+change for every kernel), stopping inside a compute job (the device cannot be interrupted; a position
+is one or two jobs).

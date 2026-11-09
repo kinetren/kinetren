@@ -635,3 +635,79 @@ of one header line; H4: "debug сборка как-то обильно пада�
 - **WHEN** a child faults with no supervisor gathering it and the next start absorbs the raw report
 - **THEN** `kt-app-crash.txt` exists with the summary and the run's journal lines, the raw report is gone, and the report is taken unmarked (the bell announces it)
 - **TEST** t2085 (`src/apps/kt-app/src/supervisor.rs`)
+
+### Requirement: The person's media and save gestures make no blocking call on the UI thread
+Ctrl+S SHALL write the project — its text, the write and both fsyncs — on the scheduler's save lane;
+the UI SHALL take the outcome within a few milliseconds or in a later frame, and the unsaved mark
+SHALL clear only if no edit came while the file was written; a save in flight is finished before
+the program exits. A file brought onto the timeline, a card placed from the bin, Undo and Redo of a
+media's arrival and a file that came back SHALL open their file, swap or release a decoder on the
+media lane, and the gesture lands when it answers. Autosave writes on a background lane that waits
+out playback. On these gestures the UI thread SHALL make no blocking call.
+Why: `found-defects.md` row 98 (Ctrl+S stood 6.7 s on a busy disk) and row 148 (the UI thread opened
+files and joined a decoder on media gestures); the owner: "No interface action waits".
+
+#### Scenario: Media and save gestures block nothing
+- **WHEN** a real file is brought onto the timeline, placed again from the bin, its arrival undone twice and redone twice, and the project saved with Ctrl+S
+- **THEN** every gesture lands (the clips, the media, the file on disk, no unsaved mark) and the UI thread counted no blocking call; one inline open on the UI thread turns it red
+- **TEST** t2236 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+
+### Requirement: An action that waits for a save goes on when the write lands
+Every path that saves and then leaves the project — "Save and continue" of the unsaved-work question
+before New, Open, Import, a dropped project, a start tile or a recent card, and quitting; "Next lesson"
+on an edited lesson copy — SHALL run its action when the save's write has LANDED, never right after
+posting it, and never by waiting on the UI thread. A gesture that leaves the project while a Ctrl+S of
+the same revision is still writing SHALL wait for that write instead of asking about work being saved.
+A save that fails, is skipped for a newer file on disk, is cancelled (Save As) or is declined (the busy
+project) SHALL drop the waiting action: the project stays with its unsaved mark. An edit made while
+the file was written is asked about again before the action goes on.
+Why: one-scheduler moved the write onto the save lane, so `save()` returns with the unsaved flags still
+up. The live `lessons` walk met "Unsaved work" over the program's own lesson copy after "Next lesson"
+(red twice), and "Save and continue" silently stayed on the project; the harness took the answer inside
+`save()` and was green.
+
+#### Scenario: Next lesson opens when the copy is written
+- **WHEN** lesson 1's copy carries an edit and the save's answer comes in a later frame, and the person presses Next lesson
+- **THEN** no frame shows the unsaved-work question, lesson 2 opens once the write lands, and lesson 1's copy on disk holds the edit; the code that opened the next lesson right after posting the save turns it red
+- **PATH** finish lesson 1 → press Next lesson → no "Unsaved work" window → lesson 2 opens once the copy is written
+- **TEST** t2305 (`src/apps/kt-app/src/reach_tests.rs`)
+
+#### Scenario: Save and continue goes on after the write
+- **WHEN** an edited project answers "Save and continue" before opening a recent project, the answer of the save coming in a later frame
+- **THEN** the project stays while the write is in flight, then the chosen project opens with no second question, and the first project's file holds the edit
+- **PATH** an edited project → a Recent card → "Unsaved work" → "Save and continue" → the chosen project opens once the write lands
+- **TEST** t2306 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+
+#### Scenario: A gesture after Ctrl+S waits for its write
+- **WHEN** Ctrl+S is still writing and the person chooses File › New
+- **THEN** no unsaved-work question is asked, the empty project opens when the write lands, and the file holds the edit
+- **PATH** an edited project → Ctrl+S → at once File › New → no "Unsaved work" window → the empty project once the write lands
+- **TEST** t2307 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+
+#### Scenario: A failed write drops what waited for it
+- **WHEN** the project's folder cannot be written and File › New follows "Save and continue", or follows a Ctrl+S in flight
+- **THEN** the write's failure is warned, nothing opens, the work and its unsaved mark stay, and nothing is left waiting
+- **PATH** an edited project in an unwritable folder → File › New → "Save and continue" → a warning, the project stays with its asterisk
+- **TEST** t2308 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+### Requirement: A live try starts clean and a red try keeps its evidence
+Before each try of a scenario the live bench SHALL empty the scenario's folder, so nothing an earlier
+run left reaches this one, and the stand SHALL drop its dump's companions (`.crash.json`, `.load.json`)
+when it starts. The lone rerun of a red scenario SHALL keep the red try whole in
+`<scenario>/first-try/`, and every try SHALL keep the lines it printed in its folder (`said.txt`); the
+report names where the first try is. The program's geometry dump and the bench's command file
+SHALL live on tmpfs, emptied when a program starts, and be copied beside the screenshots when the
+scenario ends; a red scenario of the stand gets the stand's journal and trace beside it.
+Why: `renderregion` went red twice on a `geom.json.crash.json` a build of the day before had left
+(found-defects 165), and the rerun overwrote the red try's screenshots, dumps and log, so a red that went
+green alone left nothing to read (found-defects 163). On the working disk a write of the dump stood
+10–20 s while builds synced it, and `space_hold` read a head standing still for 17 s of a playback
+that ran.
+
+#### Scenario: A stale file does not reach the run, and the retry keeps the first try
+- **WHEN** a run of `_flaky` (red the first time) and `_red` (red always) starts on folders holding a
+  file of an earlier run
+- **THEN** the earlier file is gone before the first try; `_flaky` passes on the retry; both folders hold
+  the first try in `first-try/` (its mark, its lines, its screenshot) beside the retry's own, and the
+  report names `first-try`
+- **TEST** t2210 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-check.sh` on stand-in
+  scenarios; without Xvfb the test is skipped with the named reason)

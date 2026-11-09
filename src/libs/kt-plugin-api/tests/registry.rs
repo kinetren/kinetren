@@ -33,11 +33,12 @@ fn video(class: VideoClass, gpu: Gpu) -> Decl {
 }
 
 const TAP: &str = "fn tap_x(c: vec4<f32>) -> vec4<f32> { return c; }";
+const TAP_POSTERIZE: &str = "fn tap_posterize(c: vec4<f32>) -> vec4<f32> { return c; }";
 
 #[test]
 fn t972_incompatible_declarations_are_refused_by_name() {
     let mut reg = Registry::new();
-    reg.register(plugin("posterize", Media::VideoFx, video(VideoClass::PointWise, Gpu::Wgsl(TAP))))
+    reg.register(plugin("posterize", Media::VideoFx, video(VideoClass::PointWise, Gpu::Wgsl(TAP_POSTERIZE))))
         .expect("the first posterize registers");
     // the look-ahead of the last two cases: 48 frames per ms of the passport's `time_ms`
     fn ms_frames(p: &ParamValues, _c: &dyn kt_plugin_api::SlotCurves) -> i64 {
@@ -48,7 +49,7 @@ fn t972_incompatible_declarations_are_refused_by_name() {
     }
     let cases: Vec<(Arc<dyn Plugin>, &str, &str)> = vec![
         (
-            plugin("posterize", Media::VideoFx, video(VideoClass::PointWise, Gpu::Wgsl(TAP))),
+            plugin("posterize", Media::VideoFx, video(VideoClass::PointWise, Gpu::Wgsl(TAP_POSTERIZE))),
             "posterize",
             "an id registered twice",
         ),
@@ -220,4 +221,42 @@ fn t1645_a_shader_generator_with_no_device_is_transparent() {
     let f = kt_plugin_api::generator::shader_frame("test", "fn pixel(x: u32, y: u32) -> u32 { return 0xffffffffu; }", 4, 3, [0, 0], [[0.0; 4]; 4]);
     assert_eq!(f.len(), 48);
     assert!(f.iter().all(|&b| b == 0), "no device, no picture");
+}
+
+/// t2194 (fused-pointwise-runs; capability `plugins`): a point-wise tap is pasted into generated
+/// passes, so its WGSL must define `tap_<id>` and read only its arguments — refused by name otherwise;
+/// a pure one registers and fuses, the same with a barrier kernel would not (asked by `fuses_in_runs`).
+#[test]
+fn t2194_a_tap_that_is_not_a_pure_point_function_is_refused() {
+    let mut reg = Registry::new();
+    let cases: Vec<(&'static str, &'static str, &str)> = vec![
+        ("tap_missing", "fn tap_other(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> { return v; }", "does not define its tap_<id>"),
+        (
+            "tap_reads",
+            "fn tap_tap_reads(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> { return vec4<f32>(textureLoad(T0, vec2<i32>(c), 0)); }",
+            "reads a texture",
+        ),
+        (
+            "tap_uniform",
+            "fn tap_tap_uniform(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> { return v * P.f0; }",
+            "uniform P",
+        ),
+    ];
+    for (id, wgsl, why) in cases {
+        let err = reg
+            .register(plugin(id, Media::VideoFx, video(VideoClass::PointWise, Gpu::Wgsl(wgsl))))
+            .expect_err(&format!("{id} must be refused ({why})"));
+        assert_eq!(err.id, id, "the refusal names the plugin");
+        assert!(err.reason.contains(why), "{id}: the refusal does not name the reason: {err}");
+    }
+    // a name that merely ends in P (`QP.x`, `rgbP.y`) is not the host's uniform
+    let pure = "fn tap_pure(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> { let rgbP = v; return rgbP.xyzw * a.y; }";
+    reg.register(plugin("pure", Media::VideoFx, video(VideoClass::PointWise, Gpu::Wgsl(pure)))).expect("a pure tap registers");
+    let p = reg.get(Family::Fx, "pure").unwrap();
+    assert!(kt_plugin_api::fuses_in_runs(&**p), "a pure point-wise tap fuses");
+    assert!(kt_plugin_api::impure_tap("pure", pure).is_none());
+    let geo = plugin("geo_x", Media::VideoFx, video(VideoClass::Geometry, Gpu::Primitives));
+    assert!(!kt_plugin_api::fuses_in_runs(&*geo), "geometry never fuses into a point-wise run");
+    let audio = plugin("audio_x", Media::AudioFx, Decl::default());
+    assert!(!kt_plugin_api::fuses_in_runs(&*audio), "audio never fuses");
 }

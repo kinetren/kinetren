@@ -238,6 +238,8 @@ fn render_raw_video_profiled(
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
     let gpu = backends.video_gpu.as_ref().ok_or_else(|| std::io::Error::other("no video device"))?;
+    // while it runs the preview's memos keep only their bases (memory-ledger D6)
+    let _room = kt_time::mem::claim();
     let mut stats = ExportStats::default();
     let mut src: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
@@ -452,6 +454,10 @@ impl IncompleteRuns {
 /// ends it too. Every offline path with its own sources runs it before a composite — the export,
 /// and the reel strip and project poster (decode-request-storm: they read the whole history into a
 /// 16–64 MB cache at once, which dropped its front before the composite read it).
+/// Times a paused export's wait found the pause still on (t2261): once when it paused, once more per
+/// wake that was not its resume — with a timer it was every 40 ms.
+pub static PAUSE_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn stream_preroll(
     video: &VideoRenderer,
     cache: &BurstCache,
@@ -461,6 +467,10 @@ pub fn stream_preroll(
 ) {
     let mut last: Option<Vec<(MediaId, Tick, Quality)>> = None;
     loop {
+        // a job that set a stop check and was cancelled reads no more of the history (gpu-arbiter)
+        if crate::video::stopping() {
+            return;
+        }
         let missing: Vec<(MediaId, Tick, Quality)> = video
             .layers_at(t, quality)
             .into_iter()
@@ -570,28 +580,38 @@ pub fn export_mp4_with_backends(
     if backends.video_gpu.is_none() {
         return Err(ExportError::NoDevice("no Vulkan, DX12 or Metal device".into()));
     }
+    // every ring admits the export's frames and compute jobs last (gpu-arbiter D5); the pipeline's
+    // threads take the class again
+    let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
     // compile what the project reaches on every device before the first frame (pipeline-prewarm
     // D5): the same work, but no frame worker stands in a compiler while the ring waits for it
     {
         let ids: Vec<String> = crate::prewarm::effect_ids(project).into_iter().map(String::from).collect();
         let execs: Vec<&Arc<dyn VideoGpuExec>> = backends.video_gpu.iter().chain(&backends.video_gpu_more).collect();
+        let runs = crate::prewarm::run_list(&crate::prewarm::run_shapes(project));
         for e in &execs {
             e.prewarm(&ids);
+            e.prewarm_runs(&runs);
         }
         crate::prewarm::compute(&ids);
         for e in &execs {
             e.settle_prewarm();
         }
     }
-    // pause (port of v1 waitWhilePaused): cooperative wait of 40 ms,
-    // cancellable; checked on every frame/chunk via the progress wrappers
+    // pause (port of v1 waitWhilePaused): cancellable, checked on every frame/chunk via the progress
+    // wrappers; it waits on the scheduler's gate, which the window's pause, resume and cancel notify
+    // (gpu-arbiter, row 271: it slept 40 ms in a loop)
     let wait_paused = {
         let pause = pause.clone();
         let cancel = cancel.clone();
         move || {
-            while pause.load(Ordering::Acquire) && !cancel.load(Ordering::Acquire) {
-                std::thread::sleep(std::time::Duration::from_millis(40));
-            }
+            kt_time::sched::wait_gate(|| {
+                let held = pause.load(Ordering::Acquire) && !cancel.load(Ordering::Acquire);
+                if held {
+                    PAUSE_WAITS.fetch_add(1, Ordering::Relaxed);
+                }
+                held
+            });
         }
     };
     let (ow, oh) = opts.resolution.unwrap_or((project.settings.width, project.settings.height));

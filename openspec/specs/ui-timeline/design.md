@@ -282,6 +282,15 @@ rebuild.
   in a closure (only with accessibility on): the render window's speed chart is found by it (t956).
 - **"Economy UI" is one switch, in View.** The box repeated it; the owner's item 13 is this class
   ("the checkbox in the window AND duplicated in View"). Its hint moved onto the View item.
+- **The window opens at its floors where the screen has the room** (orch stage 9, t2304). The
+  fixed 720-point default fell under the floors as rows were added (telemetry-journal's six journal
+  lines outside the scroll, memory-ledger's line): on the owner's working size the third graph
+  opened under the fold, and a corner drag first paid off the shortfall, so the graphs took 9
+  points of a 140-point drag instead of their quarter (the live `diagnostics` went red). In egui's
+  sizing pass of a window it never laid out, the body claims the instruments + the graphs at
+  their floor + six journal lines (as measured in that pass), down to 48 points above the screen's
+  bottom as a fitting body does; egui's `Resize` then opens the window at that height. A size the
+  person gave, or egui remembers, is never touched; the 720 stays the least default.
 
 ## The toolbar overflow (windows-fill-their-area, archived 2026-11-01)
 

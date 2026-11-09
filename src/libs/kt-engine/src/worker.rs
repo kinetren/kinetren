@@ -261,6 +261,8 @@ impl MediaWorker {
         }
         self.shared.cond.notify_all();
         if let Some(j) = self.join.take() {
+            // the decoder's last span: never on the UI or the render thread (one-scheduler)
+            let _w = kt_time::block::wait(kt_time::block::kind::JOIN);
             let _ = j.join();
         }
     }
@@ -452,6 +454,13 @@ fn worker_loop(
                 read_audio(source, source_id, cache, stats, &mut failed_audio, idx);
             }
             Job::VideoSpan { keys, generation_of_span, prio_of_span } => {
+                // a generator's frame computes on the GPU: the frame on screen as now, the
+                // look-ahead as near (gpu-arbiter D5)
+                let _class = kt_time::sched::with_class(if prio_of_span == Priority::Playback {
+                    kt_time::sched::Class::Now
+                } else {
+                    kt_time::sched::Class::Near
+                });
                 cursor_video = keys.iter().map(|k| k.pts).max().unwrap_or(cursor_video);
                 let missing: Vec<SpanKey> = keys
                     .into_iter()

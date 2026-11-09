@@ -84,6 +84,28 @@ pub(crate) fn note_inputs(n: u64) {
     }
 }
 
+/// What asked for the frames that read no input, by egui's repaint cause (test-hygiene, found-defects
+/// 133/170): a "rest" that saw frames names who woke it. The bench only: the product never asks.
+static REST_WAKES: std::sync::Mutex<Vec<(&'static str, u32, u64)>> = std::sync::Mutex::new(Vec::new());
+
+/// A frame read no input: count the repaint causes that ran it.
+pub(crate) fn note_rest_frame(ctx: &eframe::egui::Context) {
+    let mut wakes = REST_WAKES.lock().unwrap_or_else(|p| p.into_inner());
+    for c in ctx.repaint_causes() {
+        match wakes.iter_mut().find(|w| w.0 == c.file && w.1 == c.line) {
+            Some(w) => w.2 += 1,
+            None => wakes.push((c.file, c.line, 1)),
+        }
+    }
+}
+
+/// The counts of [`note_rest_frame`], for the dump: `file:line×n` by count.
+pub(crate) fn rest_wakes() -> String {
+    let mut wakes = REST_WAKES.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    wakes.sort_by_key(|w| std::cmp::Reverse(w.2));
+    wakes.iter().map(|(f, l, n)| format!("{}:{l}×{n}", f.rsplit('/').next().unwrap_or(f))).collect::<Vec<_>>().join(", ")
+}
+
 pub(crate) fn inputs() -> u64 {
     INPUTS.load(Ordering::Relaxed)
 }

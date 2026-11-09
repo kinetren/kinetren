@@ -17,6 +17,9 @@ Cache of bursts + coverage. Without FFmpeg/audio hardware.
   `invalidate_source` forgets a source's, and an overwrite of a present entry gets a new serial. A path
   that puts NEW bytes at an old address must invalidate the source first.
 - Evictions go into the trace with the key's parts and the insert that pushed them out (`trace_evict`).
+- **The cache reports to the memory ledger** (memory-ledger): two `Frames` accounts (video, audio) with
+  the configured budgets as bases; every path that changes `video_bytes`/`audio_bytes` ends in
+  `report`. Holds stay stronger than any cap.
 - **A hold is a counted pin for a job that reads ahead of its use** (export-pipeline-determinism):
   `hold_video` answers "present" and holds in one step, `insert_video_held` holds with the insert, each
   hold needs its `release_video`. LRU's order is not the order of need: a read refreshes an entry that

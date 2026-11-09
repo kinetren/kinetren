@@ -3819,6 +3819,45 @@ fn t801_red_scenario_is_rerun_alone() {
     );
 }
 
+/// t2210 (test-hygiene, found-defects 163 and 165): a run starts in an EMPTY scenario folder, and the
+/// lone retry keeps the red first try beside its own. `renderregion` went red twice on a
+/// `geom.json.crash.json` a build of the day before had left; and the retry overwrote the first
+/// try's screenshots, dumps and log, so a red that went green alone left nothing to read.
+#[test]
+fn t2210_a_run_starts_clean_and_the_retry_keeps_the_first_try() {
+    let root = workspace_root();
+    if let Some(why) = live_check_available(&root) {
+        eprintln!("t2210 skipped: {why}");
+        return;
+    }
+    let out = root.join("target/live-guard-t2210");
+    // what an earlier run left: `_flaky` goes red on it, so the first try must not see it
+    std::fs::create_dir_all(out.join("_flaky")).unwrap();
+    std::fs::write(out.join("_flaky/stale.mark"), "").unwrap();
+    std::fs::create_dir_all(out.join("_red")).unwrap();
+    std::fs::write(out.join("_red/first-try-of-yesterday"), "").unwrap();
+    let (ok, said) = run_live_check(&root, "target/live-guard-t2210", "2", ":88", &["_flaky", "_red"]);
+    assert!(!ok, "a run with an always-red scenario must be red:\n{said}");
+    assert!(
+        said.contains("PASSED ON THE SECOND TRY") && said.contains("_flaky"),
+        "a file of an earlier run reached the first try, or the retry lost the first try:\n{said}"
+    );
+    assert!(!out.join("_flaky/stale.mark").exists(), "the folder was not emptied before the run");
+    // the retry's folder holds the first try whole: its mark, what it said, its screenshot
+    assert!(out.join("_flaky/first-try/already-ran").exists(), "the first try's files are gone");
+    let first = std::fs::read_to_string(out.join("_flaky/first-try/said.txt")).unwrap_or_default();
+    assert!(first.contains("red the first time"), "the first try's lines are not kept: {first:?}");
+    let retry = std::fs::read_to_string(out.join("_flaky/said.txt")).unwrap_or_default();
+    assert!(retry.contains("green the second time"), "the retry's lines are not in its folder: {retry:?}");
+    assert!(out.join("_red/first-try/01-step-red.png").exists(), "a red-twice scenario lost its first try");
+    assert!(out.join("_red/01-step-red.png").exists(), "the retry left no screenshot");
+    assert!(
+        !out.join("_red/first-try/first-try-of-yesterday").exists() && !out.join("_red/first-try-of-yesterday").exists(),
+        "an earlier run's file survived into this run's folders"
+    );
+    assert!(said.contains("first-try"), "the report does not say where the first try is:\n{said}");
+}
+
 /// t802 (R.68): the workers do not see each other — their own screen and their own storage.
 ///
 /// This is precisely the closed cause of the ban on “two threads”: two kt-app on one
@@ -7861,6 +7900,55 @@ fn t1095_next_lesson_keeps_the_copy_without_a_question() {
     h.step();
     h.step();
     assert!(h.state().ask.is_none(), "Next lesson asked about the program's own lesson copy");
+    assert_eq!(h.state().start.lessons.lesson, 2, "lesson 2 did not open");
+    let kept = crate::app::KtApp::open(&path).expect("the lesson-1 copy reads").model.project().region;
+    assert_eq!(kept.map(|r| r.start), Some(r.start), "the lesson-1 copy lost its edits");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test t2305 (save-then-act, ui-reach; the live `lessons` walk red twice at lesson 4): "Next
+/// lesson" on an edited lesson copy opens the next lesson when the copy's write LANDS, with no
+/// question. The write runs on the save lane (one-scheduler), and opening right after posting it met
+/// the unsaved flags still up: "Unsaved work — Save and continue / Discard / Stay here" over the
+/// program's own copy. t1095 stayed green, because the harness took the save inside `save()`; here
+/// the answer comes in a later frame, as in the window.
+///
+/// - **PATH** finish lesson 1 → press Next lesson → no "Unsaved work" window in any frame → lesson 2
+///   opens once the copy is written → lesson 1's copy on disk keeps the region
+#[test]
+fn t2305_next_lesson_opens_when_the_copy_is_written() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    let (mut h, dir) = lesson_at("t2305", 1, 4);
+    let path = h.state().project_path.clone().unwrap();
+    let r = kt_model::Region { start: Tick(20 * 90_000), end: Tick(30 * 90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.state_mut().toggle_loop();
+    h.step();
+    h.step();
+    assert!(h.state().start.store.tour.is_done(1, 4));
+    assert!(h.state().dirty_content || h.state().dirty_ui, "the scene has nothing to lose — the test proves nothing");
+    crate::app::set_save_grace(Some(std::time::Duration::ZERO));
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::app::set_save_grace(None);
+        }
+    }
+    let _restore = Restore;
+    h.get_by_label(tr(k::lessons::NEXT)).click();
+    let deadline = kt_time::test_deadline();
+    loop {
+        h.step();
+        assert!(h.state().ask.is_none(), "Next lesson asked about the program's own lesson copy: {:?}", h.state().ask);
+        if h.state().saving.is_none() && h.state().after_save.is_none() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the copy's save never answered");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    h.step();
+    assert!(h.state().ask.is_none(), "Next lesson asked about the program's own lesson copy: {:?}", h.state().ask);
     assert_eq!(h.state().start.lessons.lesson, 2, "lesson 2 did not open");
     let kept = crate::app::KtApp::open(&path).expect("the lesson-1 copy reads").model.project().region;
     assert_eq!(kept.map(|r| r.start), Some(r.start), "the lesson-1 copy lost its edits");

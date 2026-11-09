@@ -20002,6 +20002,148 @@ fn t1621_hold_from_pause_plays_only_while_held() {
     assert!(h.state().player.transport.playhead() >= at - Tick(100));
 }
 
+/// Several keys read in ONE frame, as a busy machine reads them (test-hygiene, found-defects 99/166).
+#[cfg(test)]
+fn keys_in_one_frame(h: &mut Harness<'static, KtApp>, keys: &[(egui::Modifiers, egui::Key)]) {
+    for (modifiers, key) in keys {
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::Key {
+                key: *key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: *modifiers,
+            });
+        }
+    }
+    h.step();
+}
+
+/// Test t2211 (test-hygiene, found-defects 99/166): every key a slow frame reads runs, in order.
+/// The frame's commands were a set: under the full live run `space_hold` read → → → ← in one frame
+/// and the head did not move at all (+1 −1), and two Ctrl+Z read together undid one edit.
+#[test]
+fn t2211_keys_read_in_one_frame_all_run_in_order() {
+    use egui::{Key, Modifiers};
+    use kt_time::Tick;
+    let mut h = r72_transport_scene();
+    let grid = h.state().player.video_grid();
+    let at = grid.frame_start(30);
+    h.state().player.seek(at);
+    h.step();
+    let none = Modifiers::default();
+    keys_in_one_frame(&mut h, &[(none, Key::ArrowRight), (none, Key::ArrowRight), (none, Key::ArrowRight), (none, Key::ArrowLeft)]);
+    let head = h.state().player.transport.playhead();
+    assert_eq!(grid.frame_index(head + Tick(2)), 32, "→ → → ← in one frame must be +2 frames: {at:?} → {head:?}");
+
+    // two edits, then Ctrl+Z twice in one frame: both are undone
+    let start = |h: &Harness<'static, KtApp>| h.state().model.project().clips[0].start;
+    let was = start(&h);
+    for to in [Tick(90_000), Tick(180_000)] {
+        assert!(h.state_mut().apply(kt_model::Command::MoveClip { id: kt_model::ClipId(1), new_start: to, new_lane: 0 }));
+        h.step();
+    }
+    assert_eq!(start(&h), Tick(180_000), "scene: two moves");
+    keys_in_one_frame(&mut h, &[(Modifiers::CTRL, Key::Z), (Modifiers::CTRL, Key::Z)]);
+    assert_eq!(start(&h), was, "two Ctrl+Z in one frame must undo two edits");
+}
+
+/// Test t2212 (test-hygiene, found-defects 166): Space read by a slow frame keeps its meaning.
+/// Two quick presses read together were one press (a pause, not the stop at the start), and a
+/// tap whose release a frame read past the hold threshold did nothing at all: not proven a hold,
+/// and no longer a tap.
+#[test]
+fn t2212_space_read_by_a_slow_frame_keeps_its_meaning() {
+    use egui::{Key, Modifiers};
+    use kt_time::Tick;
+    let none = Modifiers::default();
+    let mut h = r72_transport_scene();
+    h.state().player.seek(Tick(900_000));
+    h.step();
+    // a tap: the press in one frame, its release in a frame 400 ms later (a frame of a loaded machine)
+    h.key_down(Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    h.key_up(Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "a tap read across a slow frame did nothing");
+    assert!(h.state().space_boost.is_none(), "a tap read late is not a hold");
+
+    // two quick presses in one frame: the stop at the project start
+    keys_in_one_frame(&mut h, &[(none, Key::Space), (none, Key::Space)]);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "two presses in one frame must leave it stopped");
+    assert_eq!(h.state().player.transport.playhead(), Tick(0), "two presses in one frame are the double press");
+}
+
+/// Test t2213 (test-hygiene, found-defects 166): the double press is judged by the frame the machine
+/// takes. On frames of 450 ms the second press of a quick pair is read a frame after the first,
+/// and the program cannot tell its 150 ms from 450; the window widens by the busy frame it measured.
+/// On fast frames a press 2 s later is a resume, as it always was.
+#[test]
+fn t2213_the_double_press_window_counts_the_busy_frame() {
+    use egui::Key;
+    use kt_time::Tick;
+    let mut h = r72_transport_scene();
+    h.state().player.seek(Tick(900_000));
+    h.state_mut().on_play();
+    h.step();
+    // a loaded machine: frames 450 ms apart while playing
+    for _ in 0..4 {
+        std::thread::sleep(std::time::Duration::from_millis(450));
+        h.step();
+    }
+    assert!(h.state().key_clock.busy >= std::time::Duration::from_millis(300), "scene: frames must be busy: {:?}", h.state().key_clock.busy);
+    h.key_press(Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the first press must pause");
+    std::thread::sleep(std::time::Duration::from_millis(450));
+    h.key_press(Key::Space);
+    h.step();
+    h.step();
+    assert_eq!(h.state().player.transport.playhead(), Tick(0), "a quick pair on busy frames must stop at the start");
+
+    // fast frames: a second press 2 s after the pause resumes
+    let mut h = r72_transport_scene();
+    h.state().player.seek(Tick(900_000));
+    h.state_mut().on_play();
+    for _ in 0..4 {
+        h.step();
+    }
+    h.key_press(Key::Space);
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "the first press must pause");
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    h.key_press(Key::Space);
+    h.step();
+    h.step();
+    assert!(h.state().player.transport.is_playing(), "a press 2 s after the pause must resume");
+    assert_ne!(h.state().player.transport.playhead(), Tick(0), "a press 2 s after the pause is not the double");
+}
+
+/// Test t2214 (test-hygiene, found-defects 166): egui's click windows widen by the busy frame. egui
+/// stamps a click with the frame that read it; on frames of 450 ms the two clicks of a double click
+/// read in neighbouring frames were 450 ms apart, two single clicks (`formula`, `lessons` under the
+/// full live run). The harness keeps egui's windows (its clock is a fixed step); the live app widens.
+#[test]
+fn t2214_click_windows_widen_by_the_busy_frame() {
+    use crate::app::{CLICK_HOLD_S, DOUBLE_CLICK_S};
+    let mut h = harness();
+    h.step();
+    let opts = |h: &Harness<'static, KtApp>| {
+        h.ctx.options(|o| (o.input_options.max_double_click_delay, o.input_options.max_click_duration))
+    };
+    assert_eq!(opts(&h), (DOUBLE_CLICK_S, CLICK_HOLD_S), "the harness keeps egui's windows");
+    h.state_mut().key_clock.widen = true;
+    h.state_mut().key_clock.busy = std::time::Duration::from_millis(450);
+    h.state_mut().key_clock.animating = false;
+    h.step();
+    let (double, click) = opts(&h);
+    assert!((double - (DOUBLE_CLICK_S + 0.45)).abs() < 0.01, "the double click window: {double}");
+    assert!((click - (CLICK_HOLD_S + 0.45)).abs() < 0.01, "the click window: {click}");
+}
+
 /// USABILITY 2: "if I hold Ctrl+space we rewind in reverse". During playback the release
 /// returns straight to the forward base: a smooth way through zero would pass a freeze.
 #[test]

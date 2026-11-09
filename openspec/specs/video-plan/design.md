@@ -403,3 +403,92 @@ slow rate, loop, scrub, export, thumbnails) and the before/after numbers are in
   kernel's `key`, or a kept composite of another picture is shown.
 - The first visit of a paused frame still computes its history (found-defects 173): that is the
   effect's cost, which the owner's next trace splits into device, wait and processor.
+
+## Point-wise runs as one generated pass (fused-pointwise-runs, 2026-11-09)
+
+Full record: `openspec/changes/archive/2026-11-09-fused-pointwise-runs/design.md` (D1 the class walk
+over every family and core node, D-measure).
+- The plan names `PlanOp::PointRun`; which stage fuses is the plugin contract's `fuses_in_runs`
+  (point-wise, `tap_<id>`, no barrier kernel). Noise and greenscreen run a kernel of their own at a
+  barrier position and end a run; geometry keeps its own series fusion.
+- The generated pass rounds and clamps after every stage exactly as the stage's own pass stores it:
+  fused = unfused byte for byte (stricter than the owner's ≤ 1 LSB per boundary, H16). Rejected:
+  keeping the intermediate in f32 — posterize would move a whole level across a rounding, and a
+  run-time switch between two programs giving different bytes breaks invariant 11 and the kept
+  composites.
+- The cap and the switch are a trial on the device (pass timer, interleaved, minima of five; a slower
+  fused pass is split in halves); no timestamps → fused. The uniform's room (32 stages) is the only
+  constant, a property of the layout.
+- Measured on llvmpipe at 1080p: a chain of k stages moves 16.6 MB instead of k × 16.6 MB; device
+  time 9.3 → 2.2 ms for six stages. The heavy showcase holds one two-stage run and does not change.
+
+## One ring per physical queue (gpu-arbiter, 2026-11-09)
+
+The mechanism (M5 of `docs/engine-audit.md`): a resource two subsystems share had no owner that ordered
+them, so whoever submitted first held the other for as long as its own unit lasted. A hardware card
+runs every `wgpu::Device` we open on it through one graphics ring: a 300 ms offline submission stood in
+front of the display's frame (row 149), and the compute host ran the look-ahead's Datamosh jobs before
+the frame on screen (row 134). llvmpipe hides it — every device has a queue thread of its own — so the
+bench and t2254 put the display, the offline engine and the compute host on ONE device.
+
+- **A ring per card, a ring per software device** (`kt_gpu::arbiter`). Admission by the caller's class
+  (`kt_time::sched::current_class`); a ring with a display holds at most half a frame period of
+  predicted device time in flight, a general rule; a lower-class frame or compute job is cut where the
+  pass timer's MEASURED times say the piece would pass it. Rejected: one ring per `wgpu::Device` (the
+  defect itself), one per process (llvmpipe's independent queues would wait for each other), cutting by
+  pass count (a resample and a Camera ISP pass differ 100×), preempting (wgpu cannot).
+- **No piece waits for its submitter to come back**: completion is a work-done callback, and a waiter
+  completes the oldest piece by a blocking wait on that piece's device — never on a device with a
+  window, whose present takes the device's lock for writing (wgpu-core 30: `poll(Wait)` holds the snatch
+  lock for reading, `Surface::present` takes it for writing). The export's ring of three frames would
+  otherwise deadlock on its own collect.
+- **The present is waited for without a fixed-period poll** (row 272): the frame's work-done callback,
+  a check after the device time the timer measured for the last preview frame, then growing waits.
+- Measured on one llvmpipe device, 1080p, display + the VHS cut offline + a Datamosh look-ahead
+  (`kt-cli gpu-share` on `showcase --mosh`): display wait p50/p95/max 32/322/764 → 27/50/73 ms,
+  63 → 193 presents in 8 s, offline 4.38 → 4.50 frames/s. Bytes unchanged (t2253, t1239).
+- Left (found-defects 290–294): the offline engine's `inner` mutex still holds a whole frame; a GL
+  display with no PCI ids may merge two cards' rings; predictions are per label, not per size.
+
+The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/design.md`.
+
+## The preview's stream memo sized by the loop (stream-layout-per-build, archived 2026-11-09)
+
+- **What hurt:** a constant 256 MB held about 20 positions at 1080 lines, so a loop over a Datamosh
+  recomputed its codec history every lap (found-defects 143).
+- **Decision:** `stream_memo_bytes` — the loop's pictures (half the stage's RGBA frame a position,
+  every position and an eighth) over the 256 MB working set, within a quarter of the memory the process
+  can still take, measured at run time by a probe the host injects (`kt_gpu::memory::available`, which
+  honours a control group's limit); sized only when the loop or the stage's size changes, so rest
+  reads nothing. The encoder's per-frame state is a transient entry: past the newest four it goes
+  before any picture (it was three quarters of a position's bytes, and only the next frame's encoder
+  reads it).
+- **Measured:** the owner's region (667 positions at 720 lines) held in 1577 MB; laps 2 and 3 of
+  `kt-cli stream-cost --loop` run no job (t2276 holds the rule on a small stream).
+- **Left:** the present memo of kept composites is the same kind of constant (512 MB): found-defects 310 — closed by memory-ledger (below).
+
+## One memory ledger; the present memo sized by the loop (memory-ledger, 2026-11-09)
+
+- **What hurt:** found-defects 310 — the present memo was a constant 512 MB (582 composites at
+  640×360, 60 at 1080p); the owner's `problem_region_26_11_09` is 665 frames, so its laps composed
+  again forever (laps 14–21 still made ~52 frames each), and an LRU over a cycle longer than itself
+  evicts exactly what the next lap reads first.
+- **Decision:** one ledger (`kt_time::mem`, media-index) grants growth above the proven bases from
+  half of (available + growth held), measured at run time, in the order kept composites → stream
+  history → decoded frames. The player's prefetch thread tells the display's executor the loop's
+  moments (`keep_loop`); the executor wants them at the size it presents plus an eighth. A loop the
+  memo cannot hold keeps a part (no admission over a composite shown within a lap of presents; `get`
+  stamps only hits so the stamp counts presents). The stream memo's want (stream-layout-per-build) is
+  granted after the composites'.
+- **A card's memory is learned, not set:** wgpu does not tell a device's memory, backend extensions are
+  not portable; past its base on a non-CPU device the memo creates the next frame's texture under an
+  out-of-memory scope, and a refusal bounds its growth at three quarters of what it held.
+- **Row 119:** held end to end by t2294 (the serial return of structured-telemetry, through the
+  executor). The heavy showcase's laps still blame "decoded again" for frames incomplete on the lap
+  before (found-defects 334).
+- **Measured** (release, his region, 640×360, 240 s, same load): composed 1935 → 1172, shown from kept
+  5407 → 8943, every lap from 10 on composes nothing; V-fps 28.9 → 40.4; 11.8 → 6.5 cores.
+- **Rejected:** one LRU across all caches by value per byte (a lock across crates; the value of a byte
+  is stable by kind, so the fixed order chooses the same); a timer re-measuring memory (rest costs
+  nothing); cutting the bases on a small machine (they feed the prefetch window, the stream pacing
+  and the export chunks — found-defects 330).

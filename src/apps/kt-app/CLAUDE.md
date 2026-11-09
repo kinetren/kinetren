@@ -59,9 +59,30 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - The edges of a transition — apply_coalesced(SetTransition); a roll of the joint — a batch of trims (the window moves with the joint by itself, do not touch the offsets). The reconcile of transitions in the model is executed ONCE per batch — do not call it from individual mutations.
 - The M gesture: region + cursor inside → marked_range by the region / toggle; outside — a point (the user's wording, item 142). The range strip lives on the time caption row; the end is grabbed on the flag strip; snap/stop — both edges.
 
+## Background work is a job on the scheduler (one-scheduler)
+
+- **A new background thing is a lane, not a thread** (`kt_time::sched`): a service with its own
+  queue is a pump (`Lane::service` + `kick` on every request), a one-off is `post`, a finite task
+  with progress is `BgJob::on_lane`. Pick the class: `Answer` for what a person waits for (a save,
+  a media open), `Visible` for what is on screen (thumbnails, effect cells, reel strips),
+  `Background` for the rest (posters, analysis, the index, the media watch, autosave). Visible and
+  background pause while a player plays or an export runs; a job's loop asks `ctx.paused()` (a
+  pump returns `More`) or `checkpoint()`/`BgCtl::should_stop` (waits on the gate). No `sleep`, no
+  `wait_timeout`, no `recv_timeout` in a service: at rest nothing wakes.
+  `BgJob::spawn` (a thread of its own) is kept for work that may hold a thread for as long as the
+  outside world likes: an export, a download, the X clipboard.
+- **The UI thread posts and reads** (`kt_time::block`, t2236): `draw_all` marks it; a file open
+  (`open_source_indexed`), an fsync (`write_project_guarded`), a decoder join, a renderer build
+  count there. A gesture that needs a file opens it on the `media` lane and lands in `take_media`;
+  the answer is taken within `ANSWER_GRACE` (3 ms; the test's bound under `cfg(test)`, so a harness
+  test sees the gesture land in its frame).
+- **A pointer move starts no job**: the media watch is poked on the opening, a focus change and
+  play/stop only (live `idle` counts `sched_jobs` among what a hover must not cause).
+
 ## Writing the project to disk (R.31–R.32)
 
-- Periodic autosave runs IN THE BACKGROUND (serialization + writing in a separate thread): a synchronous write from `eframe::App::save` every 30 s dropped the FPS to zero (item 197). `App::save` is left cheap, the final write is in `on_exit`.
+- **Ctrl+S writes on the `save` lane** (one-scheduler, row 98): the text, the write and both fsyncs; `take_saved` applies the outcome, and the asterisk clears only if no edit came while the file was written. A new save path posts there too, never writes on the UI thread.
+- Periodic autosave runs IN THE BACKGROUND (serialization + writing on the `autosave` lane, which waits out playback): a synchronous write from `eframe::App::save` every 30 s dropped the FPS to zero (item 197). `App::save` is left cheap, the final write is in `on_exit`.
 - **All edits of the model from the UI go through the wrappers of `KtApp`** — `apply`, `apply_batch`, `apply_batch_restoring`, `apply_coalesced` (item 200). A direct call `self.model.apply*` bypassing them does not move `model_rev`, and on it hang both the gate of the background autosave ("the revision is the same — the asterisk is cleared") and the frame caches (coverage, names, paths). The symptom of the defect: FX edits after taking a snapshot looked saved and were lost on exit. Live paths (drag, the window session) send a command ONLY when the value has really changed — otherwise the revision grows every frame of a gesture and needlessly resets the caches. Since input-without-work the model enforces it too: a command whose result equals the canon is no edit (`TimelineModel::revision` stays, no undo step), and the doors then bump nothing and hand the player nothing (t1873, t1874). A live drag that hands the player a project itself (the level line) does so only on a frame where the value moved (t1876).
 - **`on_region_changed` does NOT call `Player::set_project`** (R.43 item 296). The region and `loop_enabled` are a "convenience", the engine does not read them from the project at all: the loop arrives separately via `set_loop_region`. `set_project` was a clone of the whole project plus a rebuild of both renderers, that is, a stop of the audio render thread: on an edit with 1961 events every shift of the region boundary emptied the ring and gave callback underruns. Since edit-without-rebuild it is one shared build off the UI thread, still a whole version: a convenience must not ask it. The edits of the CONTENT are conveyed to the player (`apply`/`apply_batch`). The guard — t286.
 - **All writes of the project go through `write_project_guarded`** (item 199): the background write compares the model revision with the last written one and cancels itself if a newer one is already on disk. Without this the asynchronous autosave overwrote a fresh Ctrl+S with its stale snapshot — edits were lost. A new write path must go through the same function.
@@ -218,7 +239,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **The base frame: the exact thumbnail → the media poster → the built-in sample.** There are no empty cells. A NESTED clip has no frame and cannot have one (the reel has no file of its own, item 395) — so the sample at once. For effects visible only through transparency (`DropShadow`), the sample is given with transparent margins — on an opaque frame the shadow is identical by construction; on a REAL frame of the event we do not substitute, there passthrough is honest.
 - **The moment is frozen only during PLAYBACK.** On pause the strip follows the cursor (it is motionless — the picture is stable), during playback it stays at the last value: recomputing dozens of cells at every clock quantum is pointless, and a flickering strip is worse than a slightly stale one.
 - **The mis-click guard of 800 ms watches the DECODE ORDERS, not the render** (the owner's request "try to do it a second later (in case it was a mis-click)"): the render from ready frames and the sample goes at once, it is cheap. The countdown starts from the opening of the FX window.
-- **Busyness and redraw.** `set_busy(playing || export is running)` every frame; a busy worker sleeps 25 ms between renders (rule 12). The gate `request_repaint_after` hangs on "the work is ALIVE" (`pending()`), not on "the picker is open": an open menu has no right to keep 60 fps while idle (defect t38).
+- **Busyness and redraw.** The service is a lane of the scheduler (class `Visible`, one-scheduler): a player playing or an export running pauses it by their votes, nothing in the frame sets it (it slept 25 ms between renders by a per-frame `set_busy` before). The gate `request_repaint_after` hangs on "the work is ALIVE" (`pending()`), not on "the picker is open": an open menu has no right to keep 60 fps while idle (defect t38).
 - **Editing the generator's parameters invalidates the cells too** — `FxThumbService::invalidate_media` stands next to `ThumbService::retune_media`: the cell key remembers `ThumbKey`, and that does not depend on the parameters (the twin defect of item 412).
 - **The cache of egui textures lives IN THE SERVICE, not in `KtApp`** — and this is not a matter of taste: the FX and morpher windows hold `&self.model` inside the ui closures (the morpher also calls its methods via `&self`), and a `&mut` to an application field does not fit there. `RefCell`, not `Mutex`: only the UI thread touches the textures.
 - **The strength axis (item 433): a drag over a cell leads a blend of the neighboring points of the row** `[template, variant₀, …]`, the release adds what is shown, and a click WITHOUT movement is still exactly the named variant (t254). The count is from the CENTER of the cell by the absolute pointer position, not by accumulating `drag_delta`; on the release frame `dragged()` is already false, so `drag_stopped()` is read too. The axis is QUANTIZED (8 steps per interval): each position is its own recipe and its own render. "The main parameter" for a kind is deliberately NOT declared — two curated points are blended, and the useful range need not be invented (the analysis — item 433).
@@ -232,7 +253,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 * **The request is placed BEFORE the draw loop and by key** — therefore scrolling and zooming do not generate orders (invariant 8), and a repeated request is removed by dedup.
 * **A release an event shows is never evicted** (idle-cpu, t1830). `set_live` tells the service what the view shows; `MAX_REELS_READY` bounds only the rest. A seventh release once went round: the cap evicted one, the frame asked for it, its job evicted the next, one job per UI frame, on a pause, driven by the mouse. `wants` answers before a request clones the document.
 * **One sidecar row per release, not per reel** (`reel_row`, t1831): an instance without overrides keeps the reel's id, a set of overrides has a negative row of its own. One row let the releases overwrite each other, and all but the last rendered on every opening.
-* **Pausing is mandatory:** the offline render decodes files, and during playback it would take the CPU away from real time (invariant 6).
+* **Pausing is mandatory:** the offline render decodes files, and during playback it would take the CPU away from real time (invariant 6). Its jobs run on the `reel-preview` lane (class `Visible`), which the scheduler pauses by the player's and the export's votes (one-scheduler); nothing in the frame sets a pause.
 * **The frames go out BEFORE the peaks:** the audio of the reel is computed for longer, and until then the waveform is honestly empty. The mini-map remained a placeholder.
 * **The moment of the frame — the same map "event tick → material"** as for a file (t549): a slowed or mirrored instance is paged through correctly, and a second formula for this was not created.
 * **`VideoRenderer`/`AudioRenderer` in kt-app are created only by the render dialog and this service** — the guard t602.
@@ -362,6 +383,9 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   `Live.__enter__` does not call `__exit__`, and a forgotten program keeps running at hundreds of percent CPU, turning software rendering into a slideshow. The symptom —
   "suddenly ALL scenarios turned red at once": before looking for a regression in the
   code, look at `ps` and `uptime`.
+- **A red first try keeps its evidence** (test-hygiene): the worker empties a scenario's folder before
+  a try, and the lone retry keeps the red try in `<scenario>/first-try/` with its `said.txt`, dumps,
+  screenshots and trace. Read it before calling a red noise.
 - **The playback tempo is measured on the RELEASE build, and one must sample more often than the length of the region** (R.43, item 299). Two traps, both caught on the user's project: a probe once per second on a region of 0.89 s gives progress MODULO the region length (1.0 − 0.891 = 0.109, that is "0.13×" at an honest
   1.0×); and the debug build cannot keep up resampling three simultaneous chains
   "reverse + slowed" and honestly runs at 0.34× where the release runs at 1.00×. Debug
@@ -378,6 +402,16 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   (the meters falling), and at a frame step past 0.1 s the wait burned its deadline.
   `poll_step` and `wait_playhead` stretch with the frame time (`stretched`), so a loop that counts
   attempts is not a clock limit in disguise.
+- **Input is judged by frame starts, never by when a frame happened to handle it** (test-hygiene).
+  egui hands a frame's events without their moments: on a 600 ms frame several keys arrive at once.
+  `Controls::pressed` keeps them in order (`Pressed`) and `handle_keys` runs every press; Space's
+  edges run in order, a hold is proven by a frame that began `SPACE_HOLD_MS` after the read and saw no
+  release, and an unproven release is a tap. A window measured between two reads (the double press,
+  egui's double click and click) widens by `KeyClock::busy`, the smoothed gap before a frame the one
+  before asked for at once. A new gesture with a time window measures it on `key_clock.frame_at` and
+  widens it the same way (t2211–t2214).
+- **A live "rest" names who woke it** (`bench::rest_wakes`, the dump's `rest_wakes`): frames with no
+  input counted by egui's repaint cause, the bench only. A new rest check prints `idle.woke`.
 - **A hotkey chord is what was held when its key went down**, read from `Event::Key`, not from
   `i.modifiers`, the state at the frame's end: a stalled frame made Ctrl+S a bare S, a split (t1672).
 - **A gesture in a live scenario is released WITH A PAUSE** (item 216): between the last pointer movement and the button release — 0.35 s, otherwise in software rendering the application does not manage to process the last position and the gesture runs PARTIALLY. This is exactly what for years looked like "live scenarios are flaky".
@@ -991,8 +1025,8 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
 - **The between-projects records are written tmp + rename WITHOUT fsync** (`StartStore::write`):
   they are conveniences, and two fsyncs per open stalled t985 for 90 s on a busy disk — the same
   would stall the UI thread on every open.
-- **Posters (D5) are a SERVICE that outlives every app** (`welcome::request_poster`, one thread,
-  coalesced by file, paused while playing): a poster is queued exactly when a project CLOSES,
+- **Posters (D5) are a SERVICE that outlives every app** (`welcome::request_poster`, the `posters`
+  lane of the scheduler, coalesced by file, paused while playing by the votes): a poster is queued exactly when a project CLOSES,
   i.e. when its app is replaced. The frame comes from `reel_preview::render_poster` (the offline
   path's one body with the reel strip, t602) into `<store>/posters/<xxh3>.png`, never next to
   the project. `on_exit` waits for it within 3 s.

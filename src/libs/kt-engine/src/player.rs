@@ -107,19 +107,37 @@ impl Meters {
 /// busy loop (item 1: 500 wake-ups/s from audio-render + a clone of the Project every
 /// 100 ms of prefetch warmed the system even with an empty project).
 pub struct Wake {
-    lock: Mutex<()>,
+    /// How many notifies so far: a parked thread waits for it to move, so a notify that lands
+    /// between its last look at the state and its wait is never lost.
+    lock: Mutex<u64>,
     cv: std::sync::Condvar,
 }
 
 impl Wake {
     fn notify(&self) {
-        let _g = self.lock.lock().unwrap();
+        let mut g = self.lock.lock().unwrap();
+        *g = g.wrapping_add(1);
         self.cv.notify_all();
+    }
+
+    /// The notify count now: taken before a thread looks at the state it may park on.
+    fn seen(&self) -> u64 {
+        *self.lock.lock().unwrap()
     }
 
     fn wait_timeout(&self, d: std::time::Duration) {
         let g = self.lock.lock().unwrap();
         let _ = self.cv.wait_timeout(g, d).unwrap();
+    }
+
+    /// Park until a notify, with no clock (one-scheduler: a pause costs nothing). Every event that
+    /// changes what a parked thread would do notifies: play, pause, seek, a rate, a quality, a loop
+    /// region, a published build, a retuned or replaced source, the player's drop.
+    fn wait_since(&self, seen: u64) {
+        let mut g = self.lock.lock().unwrap();
+        while *g == seen {
+            g = self.cv.wait(g).unwrap();
+        }
     }
 }
 
@@ -136,6 +154,10 @@ pub struct LoopStats {
 }
 
 pub struct Player {
+    /// The scheduler's pause vote (one-scheduler, the owner's "Да", kkt-26.11.08 H15): while this
+    /// player plays, thumbnails, effect cells, posters, reel strips, analysis and the index start
+    /// nothing; dropped with the player.
+    bg_pause: kt_time::sched::Vote,
     pub cache: Arc<BurstCache>,
     /// “Black box” of playback (R.28, item 10): a compact ring of
     /// transport events and counters — floating bugs are caught with it.
@@ -189,7 +211,7 @@ pub struct Player {
     /// Counter of raised decoder threads (guard t500/t502).
     worker_spawns: Arc<AtomicU64>,
     /// The effect ids of the project last handed to the prewarm (pipeline-prewarm D5).
-    reach: Arc<Mutex<std::collections::BTreeSet<&'static str>>>,
+    reach: Arc<Mutex<crate::prewarm::Reach>>,
     /// The UI's audio renderer and FX states (meters on a pause), synced by the builder thread.
     levels_probe: Arc<Probe>,
     pub loop_stats: Arc<LoopStats>,
@@ -266,7 +288,7 @@ impl Player {
         let natives: Natives = Arc::new(std::sync::RwLock::new(nat));
         let video_gpu = Arc::new(Mutex::new(VideoGpuState::default()));
         let model_dirty = Arc::new(AtomicBool::new(true));
-        let wake = Arc::new(Wake { lock: Mutex::new(()), cv: std::sync::Condvar::new() });
+        let wake = Arc::new(Wake { lock: Mutex::new(0), cv: std::sync::Condvar::new() });
         let project_version = Arc::new(AtomicU64::new(0));
         let content_version = Arc::new(AtomicU64::new(0));
         let worker_spawns = Arc::new(AtomicU64::new(0));
@@ -359,12 +381,13 @@ impl Player {
             let shared_p = shared.clone();
             let mix_p = mix_coverage.clone();
             let shown_p = shown.clone();
+            let gpu_p = video_gpu.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, builds, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p,
+                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p, gpu_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -403,6 +426,7 @@ impl Player {
             std::thread::Builder::new().name("engine-build".into()).spawn(move || build_loop(ctx)).expect("spawn the engine builder")
         };
         let player = Player {
+            bg_pause: kt_time::sched::Vote::new(kt_time::sched::why::PLAYING),
             cache,
             natives,
             flight,
@@ -465,22 +489,23 @@ impl Player {
     /// the set changed (pipeline-prewarm D5): an effect added compiles beside, before its first
     /// frame. Both return at once; a project whose set did not change asks nothing.
     fn prewarm_reach(&self, p: &Project) {
-        let ids = crate::prewarm::effect_ids(p);
+        let now = crate::prewarm::Reach { ids: crate::prewarm::effect_ids(p), runs: crate::prewarm::run_shapes(p) };
         {
             let mut last = self.reach.lock().unwrap();
-            if *last == ids {
+            if *last == now {
                 return;
             }
-            *last = ids;
+            *last = now;
         }
         self.prewarm_now();
     }
 
     fn prewarm_now(&self) {
-        let ids: Vec<String> = self.reach.lock().unwrap().iter().map(|s| s.to_string()).collect();
+        let (ids, runs) = self.reach.lock().unwrap().lists();
         let exec = self.video_gpu.lock().unwrap().exec.clone();
         if let Some(e) = exec {
             e.prewarm(&ids);
+            e.prewarm_runs(&runs);
         }
         crate::prewarm::compute(&ids);
     }
@@ -533,6 +558,8 @@ impl Player {
         self.shared
             .playback_rate
             .store(rate.clamp(-ENGINE_RATE_MAX, ENGINE_RATE_MAX).to_bits(), Ordering::Release);
+        // a parked render thread meets a new direction now, not at the next play
+        self.wake.notify();
     }
 
     pub fn playback_rate(&self) -> f32 {
@@ -541,6 +568,8 @@ impl Player {
 
     pub fn set_preview_quality(&self, q: Quality) {
         *self.preview_quality.lock().unwrap() = q;
+        // a parked prefetch warms the new size
+        self.wake.notify();
     }
 
     pub fn preview_quality(&self) -> Quality {
@@ -565,12 +594,14 @@ impl Player {
     pub fn play(&self) {
         self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
         self.transport.set_playing(true);
+        self.bg_pause.set(true);
         self.wake.notify();
     }
 
     pub fn pause(&self) {
         self.flight.push(crate::flight::Ev::Pause, self.transport.playhead_frames(), 0);
         self.transport.set_playing(false);
+        self.bg_pause.set(false);
         self.wake.notify();
     }
 
@@ -836,6 +867,13 @@ impl Player {
         self.media.remove_media(media);
     }
 
+    /// The player's sources as a handle a job can carry (one-scheduler, row 148): adding,
+    /// replacing and removing a source joins the old decoder's thread, which the UI thread must not
+    /// wait for. The same bodies as `add_media`/`replace_media`/`remove_media`.
+    pub fn sources(&self) -> Sources {
+        Sources { media: self.media.clone(), builds: self.builds.clone() }
+    }
+
     /// Decode qualities of video clips at the current preview Quality (R.46,
     /// item 322): the warmth bars must ask coverage about THEM, and
     /// not about Quality — otherwise a warmed clip is shown as cold.
@@ -926,6 +964,8 @@ impl Player {
         }
         // a new executor has warmed nothing of this project yet
         self.prewarm_now();
+        // and has not been told the loop to keep (the prefetch thread tells it)
+        self.wake.notify();
     }
 
     /// Status of the video backend for the notice/performance panel.
@@ -988,8 +1028,9 @@ impl Player {
         move |exec| {
             // the slow chains of this project compose there: warm them as on the main device
             if let Some(e) = &exec {
-                let ids: Vec<String> = reach.lock().unwrap().iter().map(|s| s.to_string()).collect();
+                let (ids, runs) = reach.lock().unwrap().lists();
                 e.prewarm(&ids);
+                e.prewarm_runs(&runs);
             }
             composer.set_slow(exec)
         }
@@ -1145,6 +1186,11 @@ impl PreviewParts {
         if let Some(e) = exec {
             e.wait_presented();
         }
+    }
+
+    /// The cells `versions` reads, for a check that outlives a borrow (a stream stop, gpu-arbiter).
+    pub(crate) fn version_cells(&self) -> (Arc<AtomicU64>, Arc<AtomicU64>) {
+        (self.project_version.clone(), self.content_version.clone())
     }
 
     pub(crate) fn versions(&self) -> (u64, u64) {
@@ -1625,8 +1671,42 @@ pub fn hold_builds_for_tests(ms: u64) {
     BUILD_HOLD_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// How long the render thread stands after each burst of a START's pass (tests only, t2216): the
+/// render thread put off between two bursts on a loaded machine, made to happen on any machine.
+/// Zero in the product.
+static START_BURST_HOLD_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Hold the render thread by `ms` after each burst of a start's pass (tests only).
+#[doc(hidden)]
+pub fn hold_start_bursts_for_tests(ms: u64) {
+    START_BURST_HOLD_MS.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The sources the player raised and what it knows of them, shared by the UI thread (a file
 /// added, replaced, retuned) and the builder thread (the generator sources of a version).
+/// See [`Player::sources`].
+#[derive(Clone)]
+pub struct Sources {
+    media: Arc<MediaParts>,
+    builds: Arc<crate::builds::Builds>,
+}
+
+impl Sources {
+    pub fn add_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        self.media.add_media(media, source);
+        self.builds.refresh();
+    }
+
+    pub fn replace_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        self.media.replace_media(media, source);
+        self.builds.refresh();
+    }
+
+    pub fn remove_media(&self, media: kt_model::MediaId) {
+        self.media.remove_media(media);
+    }
+}
+
 pub(crate) struct MediaParts {
     workers: Workers,
     natives: Natives,
@@ -1839,6 +1919,8 @@ fn build_loop(ctx: BuildCtx) {
 }
 
 fn audio_render_loop(ctx: RenderCtx) {
+    // this thread must not wait: a blocking call here is counted (one-scheduler)
+    kt_time::block::mark(kt_time::block::role::RENDER);
     let RenderCtx {
         mut producer,
         cache,
@@ -1896,10 +1978,16 @@ fn audio_render_loop(ctx: RenderCtx) {
     let mut loop_armed = loop_arm_after_jump(render_head, last_region, 1);
     let mut last_effective_some = loop_armed && last_region.is_some();
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
+    // The first pass after a start, held back from the callback until it is whole (test-hygiene,
+    // found-defects 158). Allocated once, here: the loop allocates nothing.
+    let mut start_pass: Vec<f32> = Vec::with_capacity(RING_CAPACITY_FRAMES * AUDIO_CHANNELS);
     // “black box” counters (item 10): deltas per second, not absolutes
     let (mut last_ru, mut last_cu, mut last_warm) = (0u64, 0u64, 0u64);
     let mut warmups = 0u64;
     let mut last_snap_ms = 0u64;
+    // timed passes left after a pause or a parked wake (`PAUSE_TAIL_PASSES`)
+    let mut tail_passes = 0u32;
+    let mut seen = wake.seen();
     let mut stall = crate::flight::StallWatch::new(render_head);
 
     while !stop.load(Ordering::Acquire) {
@@ -2176,6 +2264,13 @@ fn audio_render_loop(ctx: RenderCtx) {
                 || (audio_missing
                     && start_wait.get_or_insert_with(std::time::Instant::now).elapsed()
                         < START_AUDIO_GRACE);
+            // THE START'S PASS IS HANDED OVER WHOLE (test-hygiene, found-defects 158). The callback
+            // primes on the first frames in the ring and from then on time runs; the pass pushed
+            // burst by burst, and a render thread put off between two bursts on a loaded machine
+            // (a pass of the 1974-event edit rendered live is 83 ms in debug) let the callback eat
+            // the first bursts and underrun before the ring had ever been full. Time stands before
+            // the first frame, so holding the pass costs no sync.
+            let whole_pass = starting && !hold;
             if !hold {
                 starting = false;
                 start_wait = None;
@@ -2196,7 +2291,9 @@ fn audio_render_loop(ctx: RenderCtx) {
             let (mut live_frames, mut kept_frames) = (0u64, 0u64);
             // we fill the ring: render_head is linear, loop mapping is inside
             // render_looped_with (the wrap does NOT bump the generation — FX live)
-            while !hold && producer.slots() >= chunk.len() {
+            let mut room = producer.slots();
+            let mut pass_bursts = 0;
+            while !hold && room >= chunk.len() {
                 let stats = if dir < 0 {
                     kt_time::work::bump(kt_time::work::Work::AudioRender);
                     // reverse (J4 v1.4): the block BEFORE render_head, the material is
@@ -2251,9 +2348,32 @@ fn audio_render_loop(ctx: RenderCtx) {
                     }
                 }
                 meters.fold(&chunk);
-                for &s in chunk.iter() {
-                    let _ = producer.push(s);
+                // the seam of t2216, a ring's worth of bursts: zero in the product
+                pass_bursts += 1;
+                let held_ms = if whole_pass && pass_bursts <= RING_CAPACITY_FRAMES / AUDIO_BURST_FRAMES {
+                    START_BURST_HOLD_MS.load(Ordering::Relaxed)
+                } else {
+                    0
+                };
+                if held_ms > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(held_ms));
                 }
+                if whole_pass {
+                    start_pass.extend_from_slice(&chunk);
+                    room -= chunk.len();
+                } else {
+                    for &s in chunk.iter() {
+                        let _ = producer.push(s);
+                    }
+                    room = producer.slots();
+                }
+            }
+            if !start_pass.is_empty() {
+                // one commit: the callback sees nothing of the pass, then all of it
+                if let Ok(c) = producer.write_chunk_uninit(start_pass.len()) {
+                    c.fill_from_iter(start_pass.drain(..));
+                }
+                start_pass.clear();
             }
             if live_frames + kept_frames == 0 {
                 fill.cancel();
@@ -2274,11 +2394,20 @@ fn audio_render_loop(ctx: RenderCtx) {
             // time — a four-fold margin; 2 ms were 500 wake-ups/s and
             // heated the CPU on weak machines (item 1 of round 5)
             std::thread::sleep(std::time::Duration::from_millis(8));
+            tail_passes = 0;
+        } else if consumed > 0 || tail_passes < PAUSE_TAIL_PASSES {
+            // pause: the callback that was running when the pause came may still hand out a
+            // block; its frames are picked up by a short pass or two, then the thread parks
+            tail_passes += 1;
+            wake.wait_timeout(std::time::Duration::from_millis(100));
         } else {
-            // pause: park until play/seek/edit (a safety timeout —
-            // to pick up the “tail” consumed after the callback stops)
-            wake.wait_timeout(std::time::Duration::from_millis(250));
+            // parked until play/seek/rate/region/build: no clock at rest (one-scheduler; it woke
+            // every 250 ms before)
+            mix.store.publish(&mix_coverage);
+            wake.wait_since(seen);
+            tail_passes = 0;
         }
+        seen = wake.seen();
     }
 }
 
@@ -2523,6 +2652,11 @@ pub fn lookahead_windows(
 /// the most the frames ahead may take.
 const STREAM_AHEAD_MIN: usize = 4;
 
+/// Timed passes the audio render thread makes after a pause (or a wake on a pause) before it parks
+/// with no clock: the callback that was running when the pause came may hand out one more block,
+/// and the playhead must take it (one-scheduler).
+const PAUSE_TAIL_PASSES: u32 = 2;
+
 /// Advance the stream stages at the frame on screen and, while playing, at the frames after it
 /// (wrapping in the loop region), stopping at the first that still lacks source frames. `ahead` —
 /// how many frames after it. `true` — something is still pending.
@@ -2553,6 +2687,52 @@ fn stream_advance_ahead(
     false
 }
 
+/// Size the preview's stream memo by the loop it must keep (stream-layout-per-build, found-defects
+/// 143): a position keeps the stage's picture — half the stage's RGBA frame at most (Datamosh's
+/// Y'CbCr 4:2:0 is 3/8 of it) — every position of the loop region, within a quarter of the memory
+/// available — measured only when the loop or the stage's size changes (`last`), so a pass that
+/// changes neither reads nothing.
+fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, last: &mut Option<(usize, Option<usize>)>) {
+    let frame = video.stream_frame_bytes(t, q);
+    if frame == 0 {
+        return;
+    }
+    let step = video.grid.frame_step().max(1);
+    let positions = region.map(|(s, e)| ((e - s).max(0) / step) as usize + 1);
+    let now = (frame / 2, positions);
+    if *last == Some(now) {
+        return;
+    }
+    *last = Some(now);
+    crate::video::size_stream_memo(now.0, positions);
+}
+
+/// Tell the display's executor the loop region's moments when they or the executor change
+/// (memory-ledger D4): it keeps every composite of the loop within what the memory ledger grants.
+/// On this thread, not the UI's: the executor's lock may stand behind a composite.
+fn tell_loop(
+    video_gpu: &Mutex<VideoGpuState>,
+    builds: &crate::builds::Builds,
+    loop_region: &Mutex<Option<(i64, i64)>>,
+    told: &mut Option<(Option<usize>, usize)>,
+) {
+    let exec = {
+        let g = video_gpu.lock().unwrap();
+        if g.poisoned.is_some() { None } else { g.exec.clone().filter(|e| e.can_present()) }
+    };
+    let Some(exec) = exec else { return };
+    let step = builds.latest().video.grid.frame_step().max(1);
+    let moments = (*loop_region.lock().unwrap()).map(|(s, e)| {
+        let (s, e) = (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0);
+        ((e - s).max(0) / step) as usize + 1
+    });
+    let now = (moments, Arc::as_ptr(&exec) as *const () as usize);
+    if *told != Some(now) {
+        *told = Some(now);
+        exec.keep_loop(moments);
+    }
+}
+
 /// The frames ahead for a pass interval of `interval` (see `STREAM_AHEAD_MIN`).
 fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std::time::Duration) -> usize {
     let fps = kt_time::TICK_HZ as f64 / video.grid.frame_step().max(1) as f64;
@@ -2565,6 +2745,8 @@ fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std
 /// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).
 fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &BurstCache) -> VideoRenderer {
     let mut vr = VideoRenderer::new_with_facts(p, facts);
+    // the GPU rings bound what stands in front of the display by this project's frame (gpu-arbiter D3)
+    kt_time::sched::set_frame_period_ns(vr.grid.frame_step().max(1) as u64 * 1_000_000_000 / kt_time::TICK_HZ as u64);
     vr.set_stream_pacing(Some(crate::StreamPacing::preview(cache.max_video_bytes())));
     vr
 }
@@ -2585,7 +2767,10 @@ fn prefetch_loop(
     shared: Arc<AudioShared>,
     mix: crate::mix::MixCoverage,
     kept_moments: Shown,
+    video_gpu: Arc<Mutex<VideoGpuState>>,
 ) {
+    // its stream advances and decodes are the look-ahead (gpu-arbiter D5)
+    let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
     // the renderers are the player's shared build (edit-without-rebuild): this thread builds
     // none; it notes when it takes a new one
     let mut taken: Option<u64> = None;
@@ -2609,11 +2794,26 @@ fn prefetch_loop(
     let mut stream_pending = false;
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
+    let mut memo_sized: Option<(usize, Option<usize>)> = None;
+    // the loop the display's executor was told to keep, and which executor (memory-ledger D4)
+    let mut loop_told: Option<(Option<usize>, usize)> = None;
+    // the last pass was skipped: nothing moved (one-scheduler: then the thread parks with no clock)
+    let mut skipped = false;
+    let mut seen = wake.seen();
     while !stop.load(Ordering::Acquire) {
-        wake.wait_timeout(std::time::Duration::from_millis(100));
+        // playing, a stream stage short of history (the decoder fills it, nothing notifies) or a
+        // state that just moved: a pass every 100 ms; else park until something notifies (it woke
+        // every 100 ms on a pause before)
+        if transport.is_playing() || stream_pending || !skipped {
+            wake.wait_timeout(std::time::Duration::from_millis(100));
+        } else {
+            wake.wait_since(seen);
+        }
+        seen = wake.seen();
         if stop.load(Ordering::Acquire) {
             return;
         }
+        tell_loop(&video_gpu, &builds, &loop_region, &mut loop_told);
         {
             let state = (
                 transport.playhead_frames(),
@@ -2625,8 +2825,10 @@ fn prefetch_loop(
                 builds.built_seq(),
             );
             if !transport.is_playing() && last_state == Some(state) && !stream_pending {
+                skipped = true;
                 continue;
             }
+            skipped = false;
             last_state = Some(state);
         }
         loop_stats.prefetch_passes.fetch_add(1, Ordering::Relaxed);
@@ -2695,9 +2897,25 @@ fn prefetch_loop(
             kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect()
         };
         let kept = |t: Tick| kept_now.contains(&t.0);
+        if video.has_stream_stages() {
+            size_stream_memo(video, t0, q, region_ticks, &mut memo_sized);
+        }
         stream_pending = video.has_stream_stages() && {
             let ahead = if transport.is_playing() { stream_ahead_frames(video, t0, q, interval) } else { 0 };
-            stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
+            // the advance stops once the playhead or the project leaves it (gpu-arbiter, row 147):
+            // what it computed stays in the memo, and the next pass starts from where the playhead is
+            let left = {
+                let (transport, stop, version) = (transport.clone(), stop.clone(), project_version.clone());
+                let (generation, at) = (transport.generation(), project_version.load(Ordering::Acquire));
+                move || {
+                    stop.load(Ordering::Acquire)
+                        || transport.generation() != generation
+                        || version.load(Ordering::Acquire) != at
+                }
+            };
+            crate::video::stop_when(kt_time::trace::stop::PREFETCH, left, || {
+                stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
+            })
         };
         let missing = video_prefetch_pass_except(video, &cache, t0, q, region_ticks, &kept);
         pass_span.b(missing.len() as u64).c(stream_pending as u64);

@@ -31,6 +31,8 @@ pub static RENDERER_BUILDS: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 pub(crate) fn count_renderer_build() {
     cost::add(Cost::RendererBuild, 1);
+    // a whole renderer on the UI or the render thread is a wait (one-scheduler): counted there
+    drop(kt_time::block::wait(kt_time::block::kind::BUILD));
     RENDERER_BUILDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 

@@ -118,3 +118,10 @@ of every subsystem that waits or keeps, and the measurements are the change's de
   events it derived, the events its memo holds after it — the rest reused), a composite that waits for
   it records a `FrameWait` `BUILD`, the prefetch thread's taking of a new build an `Invalidate`
   `RENDERERS` with its seq. `AudioBuild` stays in the format for older files; nothing writes it now.
+
+## The rings in the trace (gpu-arbiter, 2026-11-09)
+
+`GpuAdmit` (a span: the wait; class, prediction, flight before it, display flag), `GpuPiece`,
+`StreamStop`, and the caller's class in `ComputeJob.id`. `kt-cli trace gpu` answers row 134's question —
+did the look-ahead's submissions fall — by class, and the display's present wait. The bench records each
+of its presents as a `FrameWait` with `wait::DEVICE`, as the compose thread does.

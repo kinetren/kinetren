@@ -22,6 +22,11 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   `StreamKernel` names the HISTORY frame N reads and renders N as a pure function of it, keeping
   results only in the host-owned `StreamMemo` (bounded, keyed by addresses). Refused (t1240): the
   class without a stream kernel, a stream kernel on another class, any GPU side on a stream plugin.
+- **A stream kernel asks `StreamInput::stop()` before each history position it computes**
+  (gpu-arbiter, row 147) and on `true` returns `None` with what it computed in the memo: the host says
+  so when nobody wants the frame (the preview moved, the playhead left, a job was cancelled; never an
+  export). A new stream kernel's history loop asks it too, or a frame the UI left runs to its end
+  (t2257).
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media).
@@ -75,6 +80,10 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   variant keeps its general path, which `cpu::with_general` forces on a thread (read once per block):
   t2171 holds every kind on the specialized, general and baseline paths to digests printed before, t2176
   checks that a variant is still taken and pays. A new variant gets a row in both.
+- **`fuses_in_runs` is the ONE answer to "does this stage fuse into a point-wise run"**
+  (fused-pointwise-runs): `PointWise`, `Gpu::Wgsl`, no barrier kernel. A point-wise tap is pasted
+  into generated passes, so `register` refuses a WGSL without `fn tap_<id>(` or one that reads a
+  texture or the host's `P` (`impure_tap`, t2194); t2195 pins the built-in list.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.

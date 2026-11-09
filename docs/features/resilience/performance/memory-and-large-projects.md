@@ -12,7 +12,7 @@ invariants: [4, 5, 8, 9, 12]
 ui_rules: [12, 19]
 round: null
 point: null
-tests: []
+tests: [t2290, t2291, t2292, t2293, t2297, t2299, t2301]
 depends_on: []
 trackers: [mlt, shotcut, kde-bugzilla, kde-invent, pitivi, olive, otio]
 checked: 2026-09-08
@@ -364,6 +364,16 @@ and thereby moves the diagnosis from the developer to the user — but moving th
 makes it a mockery. The second thing to close before a complaint, not after: the t116 matrix does not reach 4K, and it is precisely there that the
 batch arithmetic again hits the budget — the "black render" class from item 116
 is not cancelled, it has been pushed to a resolution that we do not check.
+
+**2026-11-09, change `memory-ledger` (capability `media-index`, CAPABILITY: media-index, video-plan,
+export).** The engine half moved from "a number per cache" to one ledger: every keeper reports its
+bytes, growth above the proven bases comes from half of the memory the process may still take
+(measured at run time, a cgroup's limit included) in the order kept composites → stream history →
+decoded frames, a loop's composites are kept whole within it, an export takes the growth back while it
+runs, and the Diagnostics window shows the ledger (kept, history, frames, device, room). That answers
+the first half of the open part above the way Premiere and After Effects do — by subtraction from what
+the machine has — without a setting; a lever in the interface is still not there, and the bases are
+still the old numbers (found-defects 330). The 4K black-render question is unchanged.
 
 ## Sources
 

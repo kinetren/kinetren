@@ -968,3 +968,51 @@ and nothing ran in parallel within a source.
 - **THEN** the chunks follow each other over every frame, some hold several, and none of several frames
   passes the limit
 - **TEST** t1767 (`src/libs/kt-engine/src/export_pipeline.rs`)
+
+### Requirement: An export's device keeps no upload past the frames in flight
+A device that composes an export SHALL keep an uploaded source frame only while a frame in flight
+(the readback ring's) or the frame being built still reads it, so a source frame used by consecutive
+frames is uploaded once and nothing older stays. A texture a frame being built reads SHALL NOT be
+reused for another upload of the same frame, on any device. The frames written SHALL NOT change.
+Why: found-defects 10, 85, 96 — each export device kept a 256 MB upload cache for frames an export
+uploads once; at 1080p that is 31 frames per device, on three or four devices.
+
+#### Scenario: Uploads past the ring are dropped, the bytes stay
+- **WHEN** twenty-four consecutive frames are composed once each on an export device and on a preview device with its full upload cache, each frame twice in a row on the export device
+- **THEN** after every frame the export device holds at most the uploads of the frames in flight and the frame being built, the frame read again at once uploads nothing, the frames are byte for byte the preview device's, and the preview device holds more
+- **TEST** t2298 (`src/libs/kt-gpu/tests/export_ring.rs`)
+
+### Requirement: An export claims the preview's growth while it runs
+While an export runs in the process, the memory ledger SHALL grant no tenant anything above its base:
+the preview's kept composites and stream history drop to their bases when the export starts, and are
+granted their wants again when the last export ends. The export's own holds and caches are untouched.
+Why: an export started from the editor sized its devices and its tight mode on the memory the preview's
+grown memos had left (found-defects 10).
+
+#### Scenario: The export takes the room and gives it back
+- **WHEN** the preview's present memo and stream memo hold grants above their bases and an export runs
+- **THEN** during the export both caps are their bases and the memos hold no more; after it every grant is back and the export's frames are the same as with no grants
+- **TEST** t2299 (`src/libs/kt-engine/tests/memory_ledger.rs`)
+
+### Requirement: A paused export waits on an event
+While the render window's Pause holds, the export's frame loop and its pipeline's gate SHALL wait on a
+condition that the pause, the resume, the cancel and the writer notify, never on a timer.
+Why: row 271 — a paused export slept 40 ms and its pipeline waited 50 ms in a loop.
+
+#### Scenario: A paused export does not wake until resumed
+- **WHEN** an export is paused for half a second and resumed
+- **THEN** its pause wait wakes at most once (the resume) and the export finishes with the same frames
+- **TEST** t2261 (`src/libs/kt-engine/tests/export_pause.rs`)
+
+### Requirement: A render's decoder settings are its own
+A render SHALL open its sources with the decoder thread and RGBA thread counts it chose for its size and
+the free memory; a source opened at the same time by anyone else (the preview, a thumbnail) SHALL take
+the process's defaults. The settings are scoped to the thread that opens the render's sources, not set
+process-wide.
+Why: row 94 — the render window set the process-wide counts around its opening, and a second decoder
+of a file opened meanwhile took the render's settings, or reset ones.
+
+#### Scenario: Another thread's open takes the defaults
+- **WHEN** a thread opens inside a render's settings while another thread asks at the same time, and the first asks again after its scope
+- **THEN** the first sees the render's counts inside, the other and the first after it see the defaults
+- **TEST** t2262 (`src/libs/kt-ffmpeg/src/lib.rs`)

@@ -93,6 +93,24 @@ fn full_frame(h: &mut Harness<'_, KtApp>) {
     h.step();
 }
 
+/// Ten frames' processor time of each scene, the cheapest of seven rounds, the scenes' rounds
+/// INTERLEAVED (test-hygiene, found-defects 126). Measured one scene after the other, the two
+/// numbers came from different moments of a loaded machine: at load ~60 t1914 read 8.5 ms against
+/// 4.2 ms on correct code. Taken in turns, each scene's quietest round meets the other's.
+fn frame_costs(scenes: &mut [&mut Harness<'_, KtApp>]) -> Vec<u64> {
+    let mut best = vec![u64::MAX; scenes.len()];
+    for _ in 0..7 {
+        for (h, b) in scenes.iter_mut().zip(best.iter_mut()) {
+            let t0 = thread_ns();
+            for _ in 0..10 {
+                full_frame(h);
+            }
+            *b = (*b).min(thread_ns() - t0);
+        }
+    }
+    best
+}
+
 fn visits_per_frame(h: &mut Harness<'_, KtApp>) -> u64 {
     let v0 = visits();
     for _ in 0..8 {
@@ -129,23 +147,11 @@ fn t1912_what_is_outside_the_view_adds_no_work_to_a_frame() {
 /// bin question, a speed map per event for the tails).
 #[test]
 fn t1913_a_frames_processor_time_does_not_follow_the_project() {
-    let cost = |h: &mut Harness<'_, KtApp>| -> u64 {
-        // the cheapest of three rounds: a round a page fault or a cache miss hit is not the frame
-        (0..3)
-            .map(|_| {
-                let t0 = thread_ns();
-                for _ in 0..10 {
-                    full_frame(h);
-                }
-                thread_ns() - t0
-            })
-            .min()
-            .unwrap()
-    };
     let mut small = scene(0, 30);
     let mut big = scene(20_000, 30);
     let mut files = scene(0, 1000);
-    let (a, b, c) = (cost(&mut small), cost(&mut big), cost(&mut files));
+    let costs = frame_costs(&mut [&mut small, &mut big, &mut files]);
+    let (a, b, c) = (costs[0], costs[1], costs[2]);
     assert!(
         (b as f64) < (a as f64) * 1.5,
         "ten frames cost {:.1} ms with 20000 events outside the view against {:.1} ms without",
@@ -169,18 +175,6 @@ fn t1913_a_frames_processor_time_does_not_follow_the_project() {
 /// frame into a false edit, which `input-without-work` removed).
 #[test]
 fn t1914_an_open_window_does_not_follow_the_project() {
-    let cost = |h: &mut Harness<'_, KtApp>| -> u64 {
-        (0..3)
-            .map(|_| {
-                let t0 = thread_ns();
-                for _ in 0..10 {
-                    full_frame(h);
-                }
-                thread_ns() - t0
-            })
-            .min()
-            .unwrap()
-    };
     let open = |h: &mut Harness<'_, KtApp>| {
         h.state_mut().open_fx_editor(ClipId(1));
         h.state_mut().open_project_settings();
@@ -193,7 +187,8 @@ fn t1914_an_open_window_does_not_follow_the_project() {
     let mut big = scene(20_000, 30);
     open(&mut small);
     open(&mut big);
-    let (a, b) = (cost(&mut small), cost(&mut big));
+    let costs = frame_costs(&mut [&mut small, &mut big]);
+    let (a, b) = (costs[0], costs[1]);
     assert!(
         (b as f64) < (a as f64) * 1.5,
         "with the windows open ten frames cost {:.1} ms with 20000 events outside the view against {:.1} ms",

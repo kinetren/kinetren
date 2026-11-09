@@ -256,6 +256,13 @@ enum FxOp {
         /// A positioned kernel (D11.1): `b.zw` = the pass's frame size, set at execution.
         positioned: bool,
     },
+    /// A point-wise RUN (fused-pointwise-runs): the stages in chain order and how this frame runs
+    /// them — `pieces` is filled by `Inner::bind_runs` before the arena is sized (empty: every stage
+    /// its own pass).
+    TapRun {
+        stages: Vec<crate::runs::Stage>,
+        pieces: Vec<RunPiece>,
+    },
     /// Merged geometry series (R.44): the program of inverse mappings is built in
     /// kt-fx, one pass, a 1024 B uniform.
     /// EventGrid always takes this path (the mosaic of the former 2 passes is removed).
@@ -321,9 +328,22 @@ fn coverage_frame(c: &kt_fx::mask::Coverage) -> (Arc<kt_media::VideoFrame>, u64)
     (Arc::new(f), key)
 }
 
+/// A piece of a point-wise run as one frame runs it: `stages[a..b]` fused by `pipe` or as their own
+/// passes; `probe` — the shape whose trial times it (fused-pointwise-runs).
+struct RunPiece {
+    a: usize,
+    b: usize,
+    fused: Option<wgpu::RenderPipeline>,
+    probe: Option<(u32, bool)>,
+}
+
 impl FxOp {
     fn passes(&self) -> u32 {
         match self {
+            FxOp::TapRun { stages, pieces } if pieces.is_empty() => stages.len() as u32,
+            FxOp::TapRun { pieces, .. } => {
+                pieces.iter().map(|p| if p.fused.is_some() { 1 } else { (p.b - p.a) as u32 }).sum()
+            }
             // every node is a pass but `Save` (the arena prediction stays exact)
             FxOp::PluginBarrier { nodes, .. } => {
                 nodes.iter().filter(|n| !matches!(n, kt_plugin_api::barrier::Node::Save(_))).count() as u32
@@ -345,6 +365,10 @@ impl FxOp {
             FxOp::GeomFused { .. } => GEOM_SLOT_UNITS,
             // the tile pass (a geometry uniform) and the replicate pass (one slot)
             FxOp::GeomTile { .. } => GEOM_SLOT_UNITS + 1,
+            FxOp::TapRun { pieces, .. } if !pieces.is_empty() => pieces
+                .iter()
+                .map(|p| if p.fused.is_some() { GEOM_SLOT_UNITS } else { (p.b - p.a) as u32 })
+                .sum(),
             _ => self.passes(),
         }
     }
@@ -466,7 +490,7 @@ fn chain_ops(
     for op in plan.ops {
         // where this op starts in the chain; the mask points standing there come first
         let span = match &op {
-            kt_fx::plan::PlanOp::Run { i, j, .. } => Some((*i, *j)),
+            kt_fx::plan::PlanOp::Run { i, j, .. } | kt_fx::plan::PlanOp::PointRun { i, j, .. } => Some((*i, *j)),
             kt_fx::plan::PlanOp::Barrier { idx, .. } | kt_fx::plan::PlanOp::Mix { idx } => {
                 Some((*idx, *idx + 1))
             }
@@ -557,6 +581,20 @@ fn chain_ops(
                     }
                 }
             },
+            kt_fx::plan::PlanOp::PointRun { i, j, .. } => {
+                // the run's fusable stages; the transparent slots between them run nothing
+                let stages: Vec<crate::runs::Stage> = fx[i..j]
+                    .iter()
+                    .filter(|f| kt_fx::plan::fuses_in_runs(f))
+                    .map(|f| {
+                        let t = kt_fx::geom::PluginTap::of(f).expect("a fusable stage is a tap");
+                        let g = t.gpu();
+                        let idx = plugin_taps().iter().position(|(id, _)| *id == t.id).expect("assembled at engine creation");
+                        crate::runs::Stage { idx, f: [0.0, g[0], g[1], g[2], g[3], g[4], g[5], g[6]], positioned: t.positioned }
+                    })
+                    .collect();
+                ops.push(FxOp::TapRun { stages, pieces: Vec::new() });
+            }
             kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
                 f @ FxInstance::Plugin(slot) if kt_fx::video::plugin_barrier(f).is_some() => {
                     // a barrier plugin (plugin-api-barriers): its graph against the frame here; an empty
@@ -774,6 +812,10 @@ struct Inner {
     c: Arc<crate::compiled::Compiled>,
     /// t1766: the interpreter for every shape.
     geom_interpret: bool,
+    /// How point-wise runs run (fused-pointwise-runs): the device's trial, or forced either way.
+    fuse: crate::runs::FuseRuns,
+    /// Tells the pieces of point-wise runs apart in the timer's probes.
+    run_serial: u32,
     arena: wgpu::Buffer,
     arena_slots: u32,
     slot: u32,
@@ -781,6 +823,11 @@ struct Inner {
     upload: UploadCache,
     readback: ReadbackCache,
     present_memo: PresentMemo,
+    /// The device's textures are not the process's memory (not a CPU rasterizer): the present memo's
+    /// growth is checked against the device's refusal (memory-ledger D8).
+    memo_guard: bool,
+    /// Tests: the next growth of the present memo is refused as a device would.
+    refuse_next_growth: bool,
     /// What the last `execute` ran (morpher-event-grid-cost, D1).
     last_cost: kt_fx::video::FrameCost,
     /// Where the last `execute` spent its time (preview-throughput).
@@ -804,6 +851,23 @@ struct Inner {
     /// Inside a barrier plugin's graph: its index in `plugin_barriers()`, so a host node there is
     /// named after it.
     host_owner: Option<usize>,
+    /// The ring of this device's adapter (gpu-arbiter): every submission but the present's is
+    /// admitted there by the caller's class.
+    arb: Arc<crate::arbiter::Ring>,
+    /// The device presents to a window (the editor's display): nobody may block-wait on it.
+    surface: bool,
+    /// This device shows the preview: its ring bounds what stands in front of it.
+    shows: Option<crate::arbiter::Registered>,
+    /// The frame being encoded is cut into pieces on its ring (`execute`, `submit`).
+    piece: Option<crate::arbiter::Piece>,
+}
+
+/// The non-blocking checks `wait_presented` made since the process started (gpu-arbiter D8, t2260).
+static PRESENT_CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// See [`PRESENT_CHECKS`].
+pub fn present_checks() -> u64 {
+    PRESENT_CHECKS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub struct GpuFxEngine {
@@ -1125,6 +1189,49 @@ impl GpuFxEngine {
         Self::build(ctx, false, true, false).map(|e| e.expect("an engine"))
     }
 
+    /// The present memo now: (composites, bytes, bound) — tests and `kt-cli`.
+    pub fn present_memo_stats(&self) -> (usize, u64, u64) {
+        let g = self.inner.lock().unwrap();
+        (g.present_memo.len(), g.present_memo.bytes(), g.present_memo.cap())
+    }
+
+    /// The uploads held now (tests).
+    pub fn uploads_held(&self) -> usize {
+        self.inner.lock().unwrap().upload.held()
+    }
+
+    /// Tests: the present memo's base (the product's is 512 MB), set before it keeps anything.
+    #[doc(hidden)]
+    pub fn set_present_base_for_tests(&self, bytes: u64) {
+        let mut g = self.inner.lock().unwrap();
+        let hook = g.present_memo.take_on_shrink();
+        g.present_memo = PresentMemo::new(bytes);
+        if let Some(h) = hook {
+            g.present_memo.set_on_shrink(h);
+        }
+    }
+
+    /// Tests: the next growth of the present memo past its base is refused, as a device out of memory
+    /// would refuse it.
+    #[doc(hidden)]
+    pub fn refuse_next_growth_for_tests(&self) {
+        self.inner.lock().unwrap().refuse_next_growth = true;
+    }
+
+    /// This engine shows the preview on a device with no window (the bench, gpu-arbiter): its ring
+    /// bounds what stands in front of its presents from now on.
+    pub fn register_display(&self) {
+        let mut g = self.inner.lock().unwrap();
+        if g.shows.is_none() {
+            g.shows = Some(g.arb.register_display());
+        }
+    }
+
+    /// The ring this engine's device runs on (gpu-arbiter).
+    pub fn ring(&self) -> Arc<crate::arbiter::Ring> {
+        self.inner.lock().unwrap().arb.clone()
+    }
+
     /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
     /// on waits until the process is gone.
     pub fn park(&self) {
@@ -1201,7 +1308,10 @@ impl GpuFxEngine {
         let max_dim = device.limits().max_texture_dimension_2d;
         let (names, owners) = plugin_pipe_names();
         let timer = Timer::new(&device, &queue, &info.name, names, owners);
-        Ok(Some(Arc::new(GpuFxEngine {
+        let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(ai, &device));
+        // the editor's display device presents to its window (pipeline-prewarm D3: `keep` is it)
+        let shows = keep.then(|| arb.register_display());
+        let engine = Arc::new(GpuFxEngine {
             info,
             compiled: c.clone(),
             shown: Mutex::new((None, None)),
@@ -1210,13 +1320,18 @@ impl GpuFxEngine {
                 queue,
                 c,
                 geom_interpret: false,
+                fuse: crate::runs::FuseRuns::from_env(),
+                run_serial: 0,
                 arena,
                 arena_slots,
                 slot: 0,
                 pool: TexturePool::new(TRANSIENT_BUDGET),
-                upload: UploadCache::new(UPLOAD_BUDGET),
+                // an export's device keeps what its frames in flight read (memory-ledger D7)
+                upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(RING as u64)),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
+                memo_guard: ai.device_type != wgpu::DeviceType::Cpu,
+                refuse_next_growth: false,
                 last_cost: Default::default(),
                 last_stages: Default::default(),
                 display: None,
@@ -1230,8 +1345,23 @@ impl GpuFxEngine {
                 max_dim,
                 timer,
                 host_owner: None,
+                arb,
+                surface: keep,
+                shows,
+                piece: None,
             }),
-        })))
+        });
+        // a grant the ledger takes back (an export claimed the room) drops the kept composites past
+        // it at once, under the engine's lock, from the claiming thread (memory-ledger D6)
+        let weak = Arc::downgrade(&engine);
+        engine.inner.lock().unwrap().present_memo.set_on_shrink(Arc::new(move |_| {
+            if let Some(e) = weak.upgrade() {
+                let mut g = e.inner.lock().unwrap_or_else(|p| p.into_inner());
+                let Inner { present_memo, pool, .. } = &mut *g;
+                present_memo.evict_to_cap(pool);
+            }
+        }));
+        Ok(Some(engine))
     }
 }
 
@@ -1350,6 +1480,28 @@ impl GpuFxEngine {
         self.inner.lock().unwrap().geom_interpret = on;
     }
 
+    /// How point-wise runs run on this engine (fused-pointwise-runs): `Measured` in the product;
+    /// `Always`/`Never` for the tests and `kt-cli fuse-cost`.
+    pub fn fuse_runs(&self, mode: crate::runs::FuseRuns) {
+        self.inner.lock().unwrap().fuse = mode;
+    }
+
+    /// Point-wise run shapes with a warm pass of their own, and how many the trial kept fused and split.
+    pub fn run_shapes(&self) -> (usize, usize, usize) {
+        self.compiled.runs_ready()
+    }
+
+    /// Compile and warm on the device's worker the point-wise run shapes `runs` (plugin ids in chain
+    /// order). Returns at once; shapes asked before are skipped, a run of an unassembled id is ignored.
+    pub fn prewarm_point_runs(&self, runs: &[Vec<String>]) {
+        let taps = plugin_taps();
+        let keys: Vec<Vec<u16>> = runs
+            .iter()
+            .filter_map(|r| r.iter().map(|id| taps.iter().position(|(t, _)| t == id).map(|i| i as u16)).collect())
+            .collect();
+        self.compiled.prewarm_runs(keys);
+    }
+
     /// t1766: how many program shapes have a pass of their own so far.
     pub fn geometry_shapes(&self) -> usize {
         self.inner.lock().unwrap().c.shapes_ready()
@@ -1359,6 +1511,10 @@ impl GpuFxEngine {
 impl VideoGpuExec for GpuFxEngine {
     fn prewarm(&self, ids: &[String]) {
         self.prewarm_effects(ids);
+    }
+
+    fn prewarm_runs(&self, runs: &[Vec<String>]) {
+        self.prewarm_point_runs(runs);
     }
 
     fn settle_prewarm(&self) {
@@ -1412,19 +1568,42 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn wait_presented(&self) {
-        let (device, queue) = {
+        let (device, queue, expect) = {
             let g = self.inner.lock().unwrap();
-            (g.device.clone(), g.queue.clone())
+            (g.device.clone(), g.queue.clone(), g.timer.last_frame(Role::Preview))
         };
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // gpu-arbiter D8: a blocking wait would hold the device's lock against the window's present
+        // (the surface takes it for writing), and a 1 ms poll was row 272. The frame's work-done
+        // callback wakes the wait: any submission on the device (the UI's own frame) runs the maintain
+        // that fires it. Between those, a non-blocking check after the device time the timer measured
+        // for the last frame, then at waits that grow from a quarter of it: a few checks a frame.
+        let done = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let flag = done.clone();
-        queue.on_submitted_work_done(move || flag.store(true, std::sync::atomic::Ordering::Release));
-        // polled, not waited: a blocking poll can hold the driver's lock against the UI's submit
-        while !done.load(std::sync::atomic::Ordering::Acquire) {
+        queue.on_submitted_work_done(move || {
+            *flag.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            flag.1.notify_all();
+        });
+        let ms = std::time::Duration::from_millis(1);
+        let expect = if expect == 0 { 2 * ms } else { std::time::Duration::from_nanos(expect) };
+        let mut wait = expect.max(ms);
+        let mut next = (expect / 4).max(ms);
+        loop {
+            {
+                let g = done.0.lock().unwrap_or_else(|e| e.into_inner());
+                let (g, _) = done.1.wait_timeout_while(g, wait, |d| !*d).unwrap_or_else(|e| e.into_inner());
+                if *g {
+                    return;
+                }
+            }
+            PRESENT_CHECKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if device.poll(wgpu::PollType::Poll).is_err() {
                 return;
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
+            if *done.0.lock().unwrap_or_else(|e| e.into_inner()) {
+                return;
+            }
+            wait = next;
+            next *= 2;
         }
     }
 
@@ -1461,6 +1640,14 @@ impl VideoGpuExec for GpuFxEngine {
         self.inner.lock().unwrap().keep(key, w, h, rgba);
     }
 
+    fn keep_loop(&self, moments: Option<usize>) {
+        let mut g = self.inner.lock().unwrap();
+        let Inner { present_memo, pool, .. } = &mut *g;
+        present_memo.keep_loop(moments);
+        // a smaller want is its own: no hook tells it, it drops what it may no longer hold now
+        present_memo.evict_to_cap(pool);
+    }
+
     fn readback_depth(&self) -> usize {
         RING
     }
@@ -1490,6 +1677,7 @@ impl Inner {
         let ticket = self.next_ticket;
         self.next_ticket += 1;
         self.last_cost = Default::default();
+        self.upload.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1512,8 +1700,9 @@ impl Inner {
         }
         self.slot = 0;
         let meta = frame_meta(&jobs, (ow, oh));
-        self.timer.harvest(&self.device);
+        self.harvest();
         self.timer.begin();
+        self.piece = Some(crate::arbiter::Piece::begin(&self.arb, self.timer.last_frame(Role::Export)));
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
         self.timer.end(&mut enc, Role::Export, meta);
@@ -1555,6 +1744,9 @@ impl Inner {
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         let sub = self.queue.submit([enc.finish()]);
+        if let Some(p) = self.piece.take() {
+            p.end(&self.device, &self.queue, sub.clone(), self.surface);
+        }
         self.timer.submitted(&self.queue, Role::Export, meta);
         *slot.mapped.lock().unwrap() = None;
         let mapped = slot.mapped.clone();
@@ -1600,7 +1792,7 @@ impl Inner {
             }
         }
         slot.buf.unmap();
-        self.timer.harvest(&self.device);
+        self.harvest();
         Ok(f.complete)
     }
 
@@ -1623,6 +1815,7 @@ impl Inner {
             return Ok(true);
         }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
+        self.upload.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1645,7 +1838,7 @@ impl Inner {
             self.ensure_present_targets(ow, oh, o.glow);
             let display = self.display.as_ref().unwrap().view.clone();
             let meta = frame_meta(&jobs, (ow, oh));
-            self.timer.harvest(&self.device);
+            self.harvest();
             self.timer.begin();
             let mut enc = self
                 .device
@@ -1678,8 +1871,7 @@ impl Inner {
                 // a later frame writing the accumulator is ordered after this one on the queue;
                 // a complete one is kept whole for the next lap (cached-range-plays)
                 if complete {
-                    self.present_memo.insert(key, result, &mut self.pool);
-                    self.last_stages.stored = true;
+                    self.last_stages.stored = self.memo_keep(key, result);
                 } else {
                     self.pool.release(result);
                 }
@@ -1707,7 +1899,7 @@ impl Inner {
         self.slot = 0;
         let display = self.display.as_ref().unwrap().view.clone();
         let meta = FrameMeta { out: (ow, oh), ..Default::default() };
-        self.timer.harvest(&self.device);
+        self.harvest();
         self.timer.begin();
         let mut enc =
             self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
@@ -1741,7 +1933,27 @@ impl Inner {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
-        self.present_memo.insert(key, tex, &mut self.pool);
+        self.memo_keep(key, tex);
+    }
+
+    /// Keep a complete composite in the present memo; false — not kept. Past its base on a device
+    /// whose memory is its own, the texture the next frame will need instead is created first under
+    /// an out-of-memory check: a refusal keeps nothing and bounds the memo (memory-ledger D8).
+    fn memo_keep(&mut self, key: u64, t: Tex) -> bool {
+        let refused = std::mem::take(&mut self.refuse_next_growth);
+        if (self.memo_guard || refused) && self.present_memo.grows_past_base(t.w, t.h) {
+            let scope = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+            let spare = create_tex(&self.device, t.w, t.h, "kt-gpu transient");
+            let failed = pollster::block_on(scope.pop()).is_some();
+            if failed || refused {
+                drop(spare);
+                self.pool.release(t);
+                self.present_memo.refuse(&mut self.pool);
+                return false;
+            }
+            self.pool.release(spare);
+        }
+        self.present_memo.insert(key, t, &mut self.pool)
     }
 
     /// The display target at the frame's size (a new texture is a new generation for the UI),
@@ -1831,6 +2043,7 @@ impl Inner {
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
 
         // --- resolve: presence/size ---
+        self.upload.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1860,8 +2073,9 @@ impl Inner {
 
         // --- encode ---
         let meta = frame_meta(&jobs, (ow, oh));
-        self.timer.harvest(&self.device);
+        self.harvest();
         self.timer.begin();
+        self.piece = Some(crate::arbiter::Piece::begin(&self.arb, self.timer.last_frame(Role::Offline)));
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
@@ -1908,7 +2122,10 @@ impl Inner {
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
-        self.queue.submit([enc.finish()]);
+        let sub = self.queue.submit([enc.finish()]);
+        if let Some(p) = self.piece.take() {
+            p.end(&self.device, &self.queue, sub, self.surface);
+        }
         self.timer.submitted(&self.queue, Role::Offline, meta);
         self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
         self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
@@ -1941,7 +2158,7 @@ impl Inner {
         }
         staging.unmap();
         // the frame's timestamps came back with its readback
-        self.timer.harvest(&self.device);
+        self.harvest();
 
         self.pool.release(result);
         if let Some(key) = key {
@@ -2068,8 +2285,29 @@ impl Inner {
         }
     }
 
+    /// Before a pass of a frame being cut into pieces (gpu-arbiter D4): when the pass's measured
+    /// device time would take the piece past its ring's bound (or a higher class waits), the
+    /// encoder so far is submitted as a piece, waited for, and the frame goes on in a new one. The
+    /// passes, their order and their targets do not change; every uniform slot is the frame's own,
+    /// so a write after the cut never lands under an earlier piece.
+    fn cut_point(&mut self, enc: &mut wgpu::CommandEncoder, label: PassLabel) {
+        let Some(p) = self.piece.as_mut() else { return };
+        let next = self.timer.predict(label);
+        if p.due(next) {
+            let full = std::mem::replace(
+                enc,
+                self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") }),
+            );
+            kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+            let sub = self.queue.submit([full.finish()]);
+            p.cut(&self.device, &self.queue, sub, self.surface);
+        }
+        p.add(next);
+    }
+
     /// A transparent-black texture (the pool gives back dirty ones).
     fn clear_tex(&mut self, enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        self.cut_point(enc, PassLabel::Fixed("clear"));
         enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("kt-gpu clear"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2160,6 +2398,52 @@ impl Inner {
     /// None — no frame starvation; Some((chain, fits, complete)) — the chain
     /// is ready, `fits` = the final size matched Quality, `complete` —
     /// the completeness of the SUBTREE (an ordinary layer is always true).
+    /// How this frame runs each point-wise run of `ops` (fused-pointwise-runs): pieces of at most
+    /// `MAX_RUN_STAGES`, each fused where its shape is warm and its trial (or the engine's mode) says
+    /// so, split into halves where the trial found the fused pass slower, its parts otherwise. Decided
+    /// before the arena is sized, so the slot count stays exact.
+    fn bind_runs(&mut self, ops: &mut [FxOp]) {
+        for op in ops.iter_mut() {
+            if let FxOp::TapRun { stages, pieces } = op {
+                pieces.clear();
+                let mut a = 0;
+                while a < stages.len() {
+                    let b = (a + crate::runs::MAX_RUN_STAGES).min(stages.len());
+                    self.run_pieces(stages, a, b, pieces);
+                    a = b;
+                }
+            }
+        }
+    }
+
+    fn run_pieces(&self, stages: &[crate::runs::Stage], a: usize, b: usize, out: &mut Vec<RunPiece>) {
+        use crate::compiled::RunUse;
+        use crate::runs::FuseRuns;
+        if b - a < 2 || self.fuse == FuseRuns::Never {
+            out.push(RunPiece { a, b, fused: None, probe: None });
+            return;
+        }
+        let key: Vec<u16> = stages[a..b].iter().map(|s| s.idx as u16).collect();
+        match self.c.run_use(&key, self.fuse == FuseRuns::Measured) {
+            RunUse::Own(probe) => out.push(RunPiece { a, b, fused: None, probe: probe.map(|id| (id, false)) }),
+            RunUse::Fused { pipe, id, probe } => {
+                out.push(RunPiece { a, b, fused: Some(pipe), probe: probe.then_some((id, true)) })
+            }
+            RunUse::Split => {
+                let m = a + (b - a) / 2;
+                self.run_pieces(stages, a, m, out);
+                self.run_pieces(stages, m, b, out);
+            }
+        }
+    }
+
+    /// The timestamps that came back, the run trials' samples handed to the device's shapes.
+    fn harvest(&mut self) {
+        for s in self.timer.harvest(&self.device) {
+            self.c.note_run(s);
+        }
+    }
+
     fn resolve_chain(
         &mut self,
         src: &LayerSrc<'_>,
@@ -2183,6 +2467,7 @@ impl Inner {
             let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
                 // the sub-composite always has alpha (see below)
                 chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true, &src.masks);
+            self.bind_runs(&mut ops);
             if fit.is_some() {
                 ops.insert(
                     0,
@@ -2204,7 +2489,7 @@ impl Inner {
         if frame.width > self.max_dim || frame.height > self.max_dim {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
-        let (ops, (fw, fh), ha, ha_known, (mw, mh)) = chain_ops(
+        let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) = chain_ops(
             &src.fx,
             frame.width,
             frame.height,
@@ -2218,6 +2503,7 @@ impl Inner {
             frame.has_alpha,
             &src.masks,
         );
+        self.bind_runs(&mut ops);
         // The K×-gaps of the plan (item 314) MUST fit within the device texture limit;
         // if they do not, a clean TooLarge (the plan gets no picture)
         if mw > self.max_dim || mh > self.max_dim {
@@ -2517,6 +2803,46 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
+                FxOp::TapRun { stages, pieces } => {
+                    debug_assert!(!pieces.is_empty(), "a run reaches the encoder bound");
+                    for p in pieces {
+                        let serial = self.run_serial;
+                        self.run_serial = self.run_serial.wrapping_add(1);
+                        let probe = |_: bool| p.probe.map(|(shape, fused)| crate::runs::Probe { shape, fused, piece: serial, px: w as u64 * h as u64 });
+                        if let Some(pipe) = &p.fused {
+                            let dst = self.pool.acquire(&self.device, w, h);
+                            if let Some(pr) = probe(true) {
+                                self.timer.probe(pr);
+                            }
+                            let u = crate::runs::uniform(&stages[p.a..p.b], w, h);
+                            self.pass_run(enc, pipe, p.b - p.a, &dst.view, &view, &u);
+                            if let Some(t) = owned.take() {
+                                self.pool.release(t);
+                            }
+                            view = dst.view.clone();
+                            owned = Some(dst);
+                            continue;
+                        }
+                        for st in &stages[p.a..p.b] {
+                            let dst = self.pool.acquire(&self.device, w, h);
+                            let mut f = st.f;
+                            if st.positioned {
+                                f[6] = w as f32;
+                                f[7] = h as f32;
+                            }
+                            if let Some(pr) = probe(false) {
+                                self.timer.probe(pr);
+                            }
+                            let u = UniformData { f, ..Default::default() };
+                            self.pass_which(enc, Which::Plugin(st.idx), &dst.view, &view, &dummy, &dummy, u);
+                            if let Some(t) = owned.take() {
+                                self.pool.release(t);
+                            }
+                            view = dst.view.clone();
+                            owned = Some(dst);
+                        }
+                    }
+                }
                 FxOp::GeomFused { prog } => {
                     debug_assert_eq!((prog.in_w, prog.in_h), (w, h), "geom run input dims");
                     let dst = self.pool.acquire(&self.device, prog.out_w, prog.out_h);
@@ -2559,6 +2885,60 @@ impl Inner {
         (view, retired)
     }
 
+    /// A point-wise run's generated pass (fused-pointwise-runs): the geometry pass's layout, its
+    /// 1024-byte uniform (4 arena slots); warm by construction (`Compiled::run_use` hands out only
+    /// pipelines the worker drew).
+    fn pass_run(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        pipe: &wgpu::RenderPipeline,
+        n: usize,
+        target: &wgpu::TextureView,
+        t0: &wgpu::TextureView,
+        u: &[u8; GEOM_UNIFORM_BYTES],
+    ) {
+        self.cut_point(enc, PassLabel::Run(n));
+        let offset = self.slot as u64 * SLOT;
+        debug_assert!(self.slot + GEOM_SLOT_UNITS <= self.arena_slots, "uniform arena overflow (run)");
+        self.slot += GEOM_SLOT_UNITS;
+        self.queue.write_buffer(&self.arena, offset, u);
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.c.geom_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.arena,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
+            ],
+        });
+        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    // SAFETY: the fullscreen triangle of `vs` writes every pixel of the target
+                    load: wgpu::LoadOp::DontCare(unsafe { wgpu::LoadOpDontCare::enabled() }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: self.timer.pass(PassLabel::Run(n)),
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        rp.set_pipeline(pipe);
+        rp.set_bind_group(0, &bg, &[offset as u32]);
+        rp.draw(0..3, 0..1);
+    }
+
     /// The merged geometry-series pass: GEOM_UNIFORM_BYTES uniform (4 arena slots),
     /// its own layout; the rest of the mechanics is as in `pass`.
     fn pass_geom(
@@ -2568,6 +2948,7 @@ impl Inner {
         t0: &wgpu::TextureView,
         u: &GeomUniform,
     ) {
+        self.cut_point(enc, PassLabel::Fixed("geometry"));
         let offset = self.slot as u64 * SLOT;
         debug_assert!(
             self.slot + GEOM_SLOT_UNITS <= self.arena_slots,
@@ -2652,6 +3033,7 @@ impl Inner {
             (Which::Fixed(pipe), None) => PassLabel::Fixed(pipe.name()),
             (Which::Plugin(i), _) => PassLabel::Plugin(i),
         };
+        self.cut_point(enc, label);
         let offset = self.slot as u64 * SLOT;
         debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
         self.slot += 1;

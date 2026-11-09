@@ -609,17 +609,30 @@ impl KtApp {
             },
             ..Default::default()
         };
-        let opts_thread = opts.clone();
+        let mut opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
-            // the render's sources decode with the threads of a render; the preview's stay on auto
+            // an export pauses the background classes while it runs (one-scheduler): its vote is
+            // down when the body returns, whatever the window does after
+            let export_vote = kt_time::sched::Vote::new(kt_time::sched::why::EXPORT);
+            export_vote.set(true);
+            // and takes back the preview's memory growth before it counts its devices and its tight
+            // mode (memory-ledger D6): here, not on the UI thread — the preview's memo drops its
+            // composites under its engine's lock
+            let _room = kt_time::mem::claim();
+            // the render's sources decode with the threads of a render, set for this thread's opening
+            // only: a preview source opened meanwhile keeps the preview's (gpu-arbiter, row 94;
+            // memory-ledger D11)
             let (rw, rh) = opts_thread.resolution.unwrap_or(proj_res);
-            kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(kt_gpu::memory::available(), rw, rh));
-            kt_ffmpeg::set_rgba_threads(kt_gpu::memory::rgba_threads(kt_gpu::memory::available(), rw, rh));
-            let (a, _) = open_all(&project, base.as_deref());
-            let (v, _) = open_all(&project, base.as_deref());
-            kt_ffmpeg::set_decode_threads(0);
-            kt_ffmpeg::set_rgba_threads(1);
+            let free = kt_gpu::memory::available();
+            opts_thread.tight = kt_gpu::memory::tight(free, rw, rh);
+            let settings = kt_ffmpeg::DecodeSettings {
+                decode_threads: kt_gpu::memory::decode_threads(free, rw, rh),
+                rgba_threads: kt_gpu::memory::rgba_threads(free, rw, rh),
+            };
+            let ((a, _), (v, _)) = kt_ffmpeg::with_decode_settings(settings, || {
+                (open_all(&project, base.as_deref()), open_all(&project, base.as_deref()))
+            });
             // R.29: its own headless devices per job (the UI queue does not share time with the
             // export); with no engine the export fails, and the window says why (D4)
             let mut engines = match crate::app::export_video_gpu(rw, rh) {

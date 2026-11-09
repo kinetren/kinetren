@@ -19,11 +19,15 @@ NO_DISPLAY = True
 
 def main(out):
     os.makedirs(out, exist_ok=True)
-    mark = os.path.join(out, "already-ran")
-    if os.path.exists(mark):
+    # the folder is emptied before every try (test-hygiene): the first try's mark is found
+    # where the retry keeps it, `first-try/` — which is also what t2210 asks of the runner
+    if os.path.exists(os.path.join(out, "first-try", "already-ran")):
         print("   ok   stub scenario green the second time")
         return 0
-    open(mark, "w").close()
+    if os.path.exists(os.path.join(out, "stale.mark")):
+        print("   FAIL a file of an earlier run is still in the folder")
+        return 1
+    open(os.path.join(out, "already-ran"), "w").close()
     print("   FAIL stub scenario red the first time")
     return 1
 

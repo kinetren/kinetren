@@ -29,13 +29,15 @@ pub enum Role {
 }
 
 /// What a pass is, resolved to its name only when its time is summed.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum PassLabel {
     Fixed(&'static str),
     /// A plugin's own pass: its index in the engine's plugin pipes.
     Plugin(usize),
     /// A host node inside a barrier plugin's graph: the plugin's index among the barriers, the node.
     Host(usize, &'static str),
+    /// A point-wise run's generated pass (fused-pointwise-runs): how many stages it holds.
+    Run(usize),
 }
 
 /// A frame's facts beside its passes.
@@ -50,6 +52,8 @@ pub(crate) struct FrameMeta {
 struct Pending {
     buf: wgpu::Buffer,
     labels: Vec<PassLabel>,
+    /// The passes of trying run shapes: (label index, probe).
+    probes: Vec<(u32, crate::runs::Probe)>,
     untimed: u32,
     role: Role,
     meta: FrameMeta,
@@ -67,11 +71,20 @@ pub(crate) struct Timer {
     names: Vec<String>,
     owners: Vec<String>,
     labels: Vec<PassLabel>,
+    /// The next pass belongs to a trying run shape (`probe`), and the probed passes of this frame.
+    probe_next: Option<crate::runs::Probe>,
+    probes: Vec<(u32, crate::runs::Probe)>,
     untimed: u32,
     free: Vec<wgpu::Buffer>,
     pending: VecDeque<Pending>,
     /// The frame being encoded is timed (its labels count).
     on: bool,
+    /// The device time each pass took the last time it was measured (gpu-arbiter D4): where a long
+    /// frame is cut into pieces. Bounded by the engine's labels.
+    last: HashMap<PassLabel, u64>,
+    /// The device time of the last measured frame by role (`Role as usize`): a frame's admission
+    /// claim, the preview's wait (gpu-arbiter D8). Without timestamps, submit to done.
+    last_frame: Arc<[std::sync::atomic::AtomicU64; 3]>,
 }
 
 impl Timer {
@@ -114,23 +127,48 @@ impl Timer {
             names,
             owners,
             labels: Vec::new(),
+            probe_next: None,
+            probes: Vec::new(),
             untimed: 0,
             free,
             pending: VecDeque::new(),
             on: false,
+            last: HashMap::new(),
+            last_frame: Arc::new(Default::default()),
         }
     }
 
     /// A new frame begins encoding.
     pub fn begin(&mut self) {
         self.labels.clear();
+        self.probes.clear();
         self.untimed = 0;
         self.on = self.set.is_some() && self.pending.len() < PENDING_MAX;
     }
 
+    /// The next pass is a trying run shape's (fused-pointwise-runs): its time comes back from
+    /// `harvest` as a sample for the shape's trial.
+    pub fn probe(&mut self, p: crate::runs::Probe) {
+        self.probe_next = Some(p);
+    }
+
+    /// The device time `label` took when last measured; `None` — never measured.
+    pub fn predict(&self, label: PassLabel) -> Option<u64> {
+        self.last.get(&label).copied()
+    }
+
+    /// The device time of the last measured frame of `role`; 0 — none yet.
+    pub fn last_frame(&self, role: Role) -> u64 {
+        self.last_frame[role as usize].load(Ordering::Relaxed)
+    }
+
     /// The timestamp writes of the next pass, or `None` (no timestamps, no room).
     pub fn pass(&mut self, label: PassLabel) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        let probe = self.probe_next.take();
         let i = self.slot(label)?;
+        if let Some(p) = probe {
+            self.probes.push((i, p));
+        }
         Some(wgpu::RenderPassTimestampWrites {
             query_set: self.set.as_ref()?,
             beginning_of_pass_write_index: Some(2 * i),
@@ -162,6 +200,7 @@ impl Timer {
         // `begin` timed the frame only with fewer than PENDING_MAX waiting: a buffer is free
         let Some(buf) = self.free.pop() else {
             self.labels.clear();
+            self.probes.clear();
             return;
         };
         let n = self.labels.len() as u32 * 2;
@@ -170,6 +209,7 @@ impl Timer {
         self.pending.push_back(Pending {
             buf,
             labels: std::mem::take(&mut self.labels),
+            probes: std::mem::take(&mut self.probes),
             untimed: self.untimed,
             role,
             meta,
@@ -180,9 +220,10 @@ impl Timer {
     /// After the submit: the frame's map is asked; without timestamps, the submit-to-done time.
     pub fn submitted(&mut self, queue: &wgpu::Queue, role: Role, meta: FrameMeta) {
         if self.set.is_none() {
-            let (at, adapter) = (Instant::now(), self.adapter.clone());
+            let (at, adapter, last) = (Instant::now(), self.adapter.clone(), self.last_frame.clone());
             queue.on_submitted_work_done(move || {
                 let ns = at.elapsed().as_nanos() as u64;
+                last[role as usize].store(ns, Ordering::Relaxed);
                 with_agg(|a| {
                     a.note_frame(&adapter, false, role, meta);
                     a.frame_ns += ns;
@@ -203,7 +244,8 @@ impl Timer {
     /// The frames whose timestamps are back, oldest first, into the process-wide sum. Never waits:
     /// a non-blocking poll runs the callbacks of maps that finished (the preview never waits on its
     /// own, so without it a map would wait for someone else's submit).
-    pub fn harvest(&mut self, device: &wgpu::Device) {
+    pub fn harvest(&mut self, device: &wgpu::Device) -> Vec<crate::runs::Sample> {
+        let mut samples = Vec::new();
         if self.pending.iter().any(|p| p.state.is_some()) {
             let _ = device.poll(wgpu::PollType::Poll);
         }
@@ -225,12 +267,28 @@ impl Timer {
                     continue;
                 }
                 let ns = |t: u64| (t as f64 * self.period_ns) as u64;
+                if !p.probes.is_empty() {
+                    let timed: Vec<(crate::runs::Probe, u64)> = p
+                        .probes
+                        .iter()
+                        .map(|&(i, pr)| (pr, ns(ticks[2 * i as usize + 1].saturating_sub(ticks[2 * i as usize]))))
+                        .collect();
+                    samples.extend(crate::runs::pieces(&timed));
+                }
                 let passes: Vec<(String, u64)> = p
                     .labels
                     .iter()
                     .enumerate()
                     .map(|(i, l)| (self.name(*l), ns(ticks[2 * i + 1].saturating_sub(ticks[2 * i]))))
                     .collect();
+                let mut sum = 0;
+                for (i, l) in p.labels.iter().enumerate() {
+                    let d = ns(ticks[2 * i + 1].saturating_sub(ticks[2 * i]));
+                    self.last.insert(*l, d);
+                    sum += d;
+                }
+                // the passes' own time: a frame cut in pieces spans the gaps between them too
+                self.last_frame[p.role as usize].store(sum, Ordering::Relaxed);
                 let first = ticks.iter().step_by(2).copied().min().unwrap_or(0);
                 let last = ticks.iter().skip(1).step_by(2).copied().max().unwrap_or(0);
                 let span = ns(last.saturating_sub(first));
@@ -249,12 +307,14 @@ impl Timer {
             }
             self.free.push(p.buf);
         }
+        samples
     }
 
     fn name(&self, l: PassLabel) -> String {
         match l {
             PassLabel::Fixed(s) => s.to_string(),
             PassLabel::Plugin(i) => self.names.get(i).cloned().unwrap_or_else(|| format!("plugin {i}")),
+            PassLabel::Run(n) => format!("pointwise:run{n}"),
             PassLabel::Host(owner, node) => {
                 format!("{}:{node}", self.owners.get(owner).map_or("plugin", String::as_str))
             }

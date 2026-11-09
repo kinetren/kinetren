@@ -26,7 +26,10 @@
 mod editcost;
 mod firstframe;
 mod fxcost;
+mod fusecost;
+mod gpushare;
 mod showcase;
+mod streamcost;
 mod trace_query;
 mod wav;
 
@@ -1053,6 +1056,12 @@ fn preview_run(
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
+    // the preview's decoders take a render's threads (memory-ledger D11), as the editor opens them;
+    // `KT_DECODE_THREADS=N` overrides it for an A/B (0 — libavcodec's auto)
+    let threads = std::env::var("KT_DECODE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+        kt_gpu::memory::decode_threads(kt_gpu::memory::available(), project.settings.width, project.settings.height)
+    });
+    kt_ffmpeg::set_decode_threads(threads);
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
         let mut db = kt_media::index::MediaIndexDb::open(
@@ -1402,7 +1411,12 @@ fn run(args: &[String]) -> i32 {
     kt_ffmpeg::set_search_dirs(ffmpeg_user_choice(), download);
     // the built-in plugin set, before any project is read (plugin-api-stage1, D6)
     kt_plugins_builtin::install();
-    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    // the GPU's compute host, counting the bytes each job moves (`stream-cost`); the gpu-share bench
+    // puts it on its own shared device (gpu-arbiter)
+    if args.first().map(String::as_str) != Some("gpu-share") {
+        kt_plugin_api::compute::install(streamcost::open);
+    }
+    kt_engine::video::set_memory_probe(kt_gpu::memory::available);
     // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
     kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
@@ -1526,6 +1540,9 @@ fn run(args: &[String]) -> i32 {
         Some("showcase") => showcase::run(args, force),
         // what the first frame of each video effect costs against its warm frames (pipeline-prewarm)
         Some("first-frame") => firstframe::run(args),
+        // a chain of point-wise effects fused against unfused (fused-pointwise-runs)
+        Some("fuse-cost") => fusecost::run(args),
+        Some("gpu-share") => gpushare::run(args),
         Some("trace") => trace_query::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)
         Some("fx-cost") => {
@@ -1693,6 +1710,34 @@ fn run(args: &[String]) -> i32 {
                 .and_then(|s| s.parse::<usize>().ok())
                 .unwrap_or(20);
             match editcost::run(&project, steps.max(1)) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        // What a stream stage costs over a range, lap after lap (stream-layout-per-build)
+        Some("stream-cost") => {
+            let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3)) else {
+                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop]");
+                return 2;
+            };
+            let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
+                eprintln!("from/to are seconds");
+                return 2;
+            };
+            let project = match load_project_resolved(input) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+            let size = opt("--size").and_then(|s| s.split_once('x')).and_then(|(w, h)| {
+                Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? })
+            });
+            let laps = opt("--laps").and_then(|s| s.parse::<usize>().ok()).unwrap_or(2);
+            let sized = args.iter().any(|a| a == "--loop");
+            match streamcost::run(&project, input, from, to, laps, size, sized) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

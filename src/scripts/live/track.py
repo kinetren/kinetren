@@ -26,7 +26,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, color_media, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, color_media, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -100,12 +100,9 @@ def main(out):
         app.shot("locked")
         after = app.live_clips()
         app.expect(before == after, f"the locked track did not hand the event over to the drag: {before} → {after}")
-        status = ""
-        for _ in range(12):
-            status = app.geom().get("status", "")
-            if "V2" in status or "v2" in status:
-                break
-            poll_step(0.2)
+        # the refusal read as a consequence (test-hygiene); it stands 6 s in the status line
+        app.until(lambda: "v2" in app.geom().get("status", "").lower(), timeout=10.0)
+        status = app.geom().get("status", "")
         app.expect(
             "V2" in status or "v2" in status,
             f"the refusal names the track and the place where to remove the lock: “{status}”",

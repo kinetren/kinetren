@@ -179,6 +179,9 @@ again, the remaining rows of the order table in `docs/engine-audit.md` as slots 
 `one-scheduler`, `gpu-arbiter` (both after `structured-telemetry` merges, so its trace can judge
 them), `stream-layout-per-build`, `memory-ledger`, `fused-pointwise-runs`, the local cost queue
 (row 128 only on his word), test hygiene. Stages and finish.sh as usual; master by a merge commit.
+"не надо меня ждать - запускай сам по мере завершения все сам" (same day): no card waits for his click.
+A turn an executor's notice started cannot start a session (the app refuses), so the start goes as
+a card AND is made with its `proposal_id` on the first turn that can — his reply or the next notice.
 
 ## Current plan (2026-11-06)
 

@@ -47,28 +47,47 @@ impl<P> BgSend<P> {
 /// The levers that the task MUST poll itself.
 #[derive(Clone)]
 pub struct BgCtl {
-    cancel: Arc<AtomicBool>,
+    cancel: kt_time::sched::Token,
+    /// The same cancel as a flag, for the engine's offline paths that take one.
+    flag: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
+    /// The scheduler class the task runs in (one-scheduler): a pausable one also waits while
+    /// a player plays or an export runs. `None` — a task on a thread of its own.
+    class: Option<kt_time::sched::Class>,
 }
 
 impl BgCtl {
     /// Levers owned by a SERVICE rather than a `BgJob` (the poster service of the welcome
     /// window outlives every app; welcome-window-and-tour D5).
-    pub fn from_flags(cancel: Arc<AtomicBool>, pause: Arc<AtomicBool>) -> BgCtl {
-        BgCtl { cancel, pause }
+    pub fn from_flags(cancel: kt_time::sched::Token, pause: Arc<AtomicBool>) -> BgCtl {
+        BgCtl { cancel, flag: Arc::new(AtomicBool::new(false)), pause, class: None }
+    }
+
+    /// The same levers inside a scheduled job of `class`.
+    pub fn in_class(mut self, class: kt_time::sched::Class) -> BgCtl {
+        self.class = Some(class);
+        self
+    }
+
+    fn held(&self) -> bool {
+        !self.cancel.is_cancelled()
+            && (self.pause.load(Ordering::Acquire)
+                || self.class.is_some_and(|c| c.pausable() && kt_time::sched::paused() != 0))
     }
 
     /// “Is it time to finish”. Also WAITS until the pause is lifted: a pause is not
-    /// a stop, and the one asking about cancellation must still respect it.
+    /// a stop, and the one asking about cancellation must still respect it. The wait is the
+    /// scheduler's gate (a condvar): it polled every 30 ms before one-scheduler.
     pub fn should_stop(&self) -> bool {
-        while self.pause.load(Ordering::Acquire) && !self.cancel.load(Ordering::Acquire) {
-            std::thread::sleep(std::time::Duration::from_millis(30));
+        if self.held() {
+            kt_time::sched::wait_gate(|| self.held());
         }
-        self.cancel.load(Ordering::Acquire)
+        self.cancel.is_cancelled()
     }
 
+    /// The cancel as a flag (set together with the token by `BgJob::cancel` and its `Drop`).
     pub fn cancel_flag(&self) -> &Arc<AtomicBool> {
-        &self.cancel
+        &self.flag
     }
 
     pub fn pause_flag(&self) -> &Arc<AtomicBool> {
@@ -80,53 +99,86 @@ impl BgCtl {
 pub struct BgJob<P, R> {
     prog_rx: std::sync::mpsc::Receiver<P>,
     done_rx: std::sync::mpsc::Receiver<R>,
-    cancel: Arc<AtomicBool>,
+    cancel: kt_time::sched::Token,
+    flag: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
+    /// The task ended without a result (its job was cancelled before it ran).
+    gone: bool,
     /// The last progress step received.
     pub progress: Option<P>,
     /// The result. `Some` — the task is finished.
     pub done: Option<R>,
 }
 
+fn job_kind(name: &str) -> u32 {
+    match name {
+        "reel-preview" => kt_time::trace::job::REEL_PREVIEW,
+        n if n.starts_with("analysis") => kt_time::trace::job::ANALYSIS,
+        n if n.starts_with("render") || n.starts_with("export") => kt_time::trace::job::EXPORT,
+        _ => 0,
+    }
+}
+
 impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
-    /// Start. `body` gets the levers and the “progress sender”.
+    /// Start on a thread of its own: an export (its own devices and pool, the `Offline` class of
+    /// the scheduler as a vote), a clipboard read, a download — work that may hold its thread for
+    /// as long as the outside world likes. `body` gets the levers and the “progress sender”.
     pub fn spawn<F>(name: &str, body: F) -> BgJob<P, R>
     where
         F: FnOnce(BgCtl, BgSend<P>) -> R + Send + 'static,
     {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let pause = Arc::new(AtomicBool::new(false));
-        let (prog_tx, prog_rx) = std::sync::mpsc::channel();
-        let (done_tx, done_rx) = std::sync::mpsc::channel();
-        let ctl = BgCtl { cancel: cancel.clone(), pause: pause.clone() };
+        let (job, ctl, prog_tx, done_tx) = Self::parts(None);
+        let kind = job_kind(name);
         std::thread::Builder::new()
             .name(name.to_string())
             .spawn(move || {
-                // the job in the trace (structured-telemetry): its kind from its thread's name
+                // the job in the trace (structured-telemetry): its kind from its name
                 let r = {
                     let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
                     let name = std::thread::current().name().unwrap_or("").to_string();
-                    span.aux(match name.as_str() {
-                        "reel-preview" => kt_time::trace::job::REEL_PREVIEW,
-                        n if n.starts_with("analysis") => kt_time::trace::job::ANALYSIS,
-                        n if n.starts_with("render") || n.starts_with("export") => kt_time::trace::job::EXPORT,
-                        _ => 0,
-                    })
-                    .a(kt_time::trace::name(&name) as u64);
+                    span.aux(kind).a(kt_time::trace::name(&name) as u64);
                     body(ctl, BgSend(prog_tx))
                 };
                 let _ = done_tx.send(r);
                 crate::wake::now();
             })
             .expect("spawn background job");
-        BgJob {
-            prog_rx,
-            done_rx,
-            cancel,
-            pause,
-            progress: None,
-            done: None,
-        }
+        job
+    }
+
+    /// Start as a job on a scheduler lane (one-scheduler): no thread of its own; a pausable lane
+    /// holds it while playing; dropping the `BgJob` cancels it, queued or running.
+    pub fn on_lane<F>(lane: &kt_time::sched::LaneRef, body: F) -> BgJob<P, R>
+    where
+        F: FnOnce(BgCtl, BgSend<P>) -> R + Send + 'static,
+    {
+        let (job, ctl, prog_tx, done_tx) = Self::parts(Some(lane.class()));
+        let kind = job_kind(lane.name());
+        let lane_name = lane.name();
+        lane.post_keyed(0, job.cancel.clone(), move |_ctx| {
+            let r = {
+                let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
+                span.aux(kind).a(kt_time::trace::name(lane_name) as u64);
+                body(ctl, BgSend(prog_tx))
+            };
+            let _ = done_tx.send(r);
+            crate::wake::now();
+        });
+        job
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn parts(
+        class: Option<kt_time::sched::Class>,
+    ) -> (BgJob<P, R>, BgCtl, std::sync::mpsc::Sender<P>, std::sync::mpsc::Sender<R>) {
+        let cancel = kt_time::sched::Token::new();
+        let pause = Arc::new(AtomicBool::new(false));
+        let (prog_tx, prog_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let flag = Arc::new(AtomicBool::new(false));
+        let ctl = BgCtl { cancel: cancel.clone(), flag: flag.clone(), pause: pause.clone(), class };
+        let job = BgJob { prog_rx, done_rx, cancel, flag, pause, gone: false, progress: None, done: None };
+        (job, ctl, prog_tx, done_tx)
     }
 
     /// Collect everything that has arrived. `true` — something changed (a reason to redraw a frame).
@@ -136,9 +188,16 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
             any = true;
             self.progress = Some(p);
         }
-        if let Ok(r) = self.done_rx.try_recv() {
-            any = true;
-            self.done = Some(r);
+        match self.done_rx.try_recv() {
+            Ok(r) => {
+                any = true;
+                self.done = Some(r);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) if !self.gone && self.done.is_none() => {
+                any = true;
+                self.gone = true;
+            }
+            Err(_) => {}
         }
         any
     }
@@ -152,9 +211,16 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
             any = true;
             visit(p);
         }
-        if let Ok(r) = self.done_rx.try_recv() {
-            any = true;
-            self.done = Some(r);
+        match self.done_rx.try_recv() {
+            Ok(r) => {
+                any = true;
+                self.done = Some(r);
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) if !self.gone && self.done.is_none() => {
+                any = true;
+                self.gone = true;
+            }
+            Err(_) => {}
         }
         any
     }
@@ -163,20 +229,22 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
     /// that must keep the repaint going: otherwise a window left on screen after
     /// completion would heat the system round the clock (a repeat of the t38 defect).
     pub fn is_running(&self) -> bool {
-        self.done.is_none()
+        self.done.is_none() && !self.gone
     }
 
     pub fn cancel(&self) {
-        self.cancel.store(true, Ordering::Release);
+        self.flag.store(true, Ordering::Release);
+        self.cancel.cancel(kt_time::sched::why_cancel::ASKED);
     }
 
     /// Was the task asked to stop (an export's "cancelled" outcome, not "failed").
     pub fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Acquire)
+        self.cancel.is_cancelled()
     }
 
     pub fn set_paused(&self, on: bool) {
         self.pause.store(on, Ordering::Release);
+        kt_time::sched::notify_gate();
     }
 
     pub fn is_paused(&self) -> bool {
@@ -187,8 +255,10 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
 impl<P, R> Drop for BgJob<P, R> {
     fn drop(&mut self) {
         // the task was forgotten — the task must finish
-        self.cancel.store(true, Ordering::Release);
+        self.flag.store(true, Ordering::Release);
+        self.cancel.cancel(kt_time::sched::why_cancel::ASKED);
         self.pause.store(false, Ordering::Release);
+        kt_time::sched::notify_gate();
     }
 }
 

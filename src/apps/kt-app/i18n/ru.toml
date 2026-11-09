@@ -1058,6 +1058,7 @@ graph_decode = "FFmpeg-активность (/с)"
 graph_churn = "Кэш-чёрн (/с)"
 cache_occupancy = "Занятость видео-кэша: {0}% ({1} / {2} МБ)"
 no_read_drops = "| no-read drops всего: {0}"
+memory_ledger = "Память: готовые {0} · история {1} · кадры {2} · устройство {3} · место {4} МБ"
 log_title = "Журнал телеметрии"
 log_clear = "Очистить"
 graph_reset = "Сброс графиков"
@@ -1094,6 +1095,7 @@ project_swaps = "замены проекта"
 engine_builds = "сборки движка"
 mix_replays = "блоки звука из сохранённого микса"
 composite_replays = "показанные сохранённые композиты"
+sched_jobs = "фоновые задания"
 
 # Transitions (R.33 C4): kind, its parameters and audio curve.
 [trn]

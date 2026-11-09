@@ -24,6 +24,7 @@ Verdicts are written to <directory>/verdicts/<scenario> (“ok” or “fail”)
 scenario — to the common stream of the worker.
 """
 import contextlib
+import glob
 import json
 import os
 import re
@@ -33,6 +34,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from _channel import channel_dir, keep_channel  # noqa: E402
 RUST = os.path.abspath(os.path.join(HERE, "..", ".."))
 KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
@@ -144,6 +147,18 @@ class Screen:
         return False
 
 
+def ui_probe():
+    """The mouse and keyboard driver (`ui-probe.py`), loaded once the X server is up."""
+    if not hasattr(ui_probe, "mod"):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("ui_probe", os.path.join(RUST, "scripts", "ui-probe.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        ui_probe.mod = mod
+    return ui_probe.mod
+
+
 class Bench:
     """One kt-app of the worker: in it the scenarios open their projects one after another."""
 
@@ -154,8 +169,10 @@ class Bench:
         # frames. This is what looked like “parallelism paints everything”.
         self.dir = os.path.join(out, "bench" + display.replace(":", ""))
         os.makedirs(self.dir, exist_ok=True)
-        self.ctl = os.path.join(self.dir, "ctl")
-        self.geom = os.path.join(self.dir, "geom.json")
+        # the dump and the command file on tmpfs (test-hygiene, `kt_live.channel_dir`)
+        self.chan = channel_dir(self.dir)
+        self.ctl = os.path.join(self.chan, "ctl")
+        self.geom = os.path.join(self.chan, "geom.json")
         self.store = os.path.join(self.dir, "store")
         self.blank = os.path.join(self.dir, "blank.kt")
         self.proc = None
@@ -217,7 +234,9 @@ class Bench:
         shutil.rmtree(os.path.join(self.dir, "xdg"), ignore_errors=True)
         os.makedirs(self.store, exist_ok=True)
         subprocess.run([KT_CLI, "new", self.blank, "--force"], check=True, capture_output=True)
-        for p in (self.ctl, self.geom):
+        # the dump's companions too (`.crash.json`, `.load.json`): a crash window of an
+        # earlier stand is not this one's (found-defects 165)
+        for p in [self.ctl, self.geom] + glob.glob(glob.escape(self.geom) + ".*"):
             if os.path.exists(p):
                 os.unlink(p)
         log = open(os.path.join(self.dir, "kt-app.log"), "a")
@@ -242,13 +261,7 @@ class Bench:
         # the dump: the form-contract scenario (R.66) sets the window low, and the
         # next one must get it back. The egui canvas size is in POINTS, and restoring
         # from it shrank the window on every run.
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location(
-            "ui_probe", os.path.join(RUST, "scripts", "ui-probe.py")
-        )
-        probe = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(probe)
+        probe = ui_probe()
         # GEOMETRY IS CAPTURED WHEN IT HAS SETTLED: the window manager
         # maximizes the window NOT instantly, and a snapshot right after the first
         # frames recorded the window BEFORE it was maximized. Every next scenario
@@ -279,6 +292,80 @@ class Bench:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self.proc = None
+        # THE STAND'S WINDOW GONE TOO (test-hygiene): the editor is the supervisor's child and dies
+        # after it; a scenario of its own process that starts meanwhile finds the stand's window
+        # first, focuses it, and its Space goes nowhere (`cached_range`: no PLAY in its journal)
+        probe = ui_probe()
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            try:
+                probe.window()
+            except SystemExit:
+                return
+            time.sleep(0.05)
+
+
+FIRST_TRY = "first-try"
+
+
+def fresh_folder(scen_out, retry):
+    """The scenario's folder before a run: EMPTY, and on the lone retry the first try kept beside.
+
+    The folder used to keep what the earlier runs left (test-hygiene, found-defects 165):
+    `renderregion` read a `geom.json.crash.json` written by a build of the day before and went
+    red twice on a render that had finished. Only `store`, `xdg` and `slept.txt` were removed
+    (R.68, R.69); everything else a scenario writes is its own evidence of THIS run.
+    The lone retry (live-check.sh, `KT_LIVE_TRY=2`) rewrote the folder of the red first try,
+    and its screenshots, dumps and log survived only as lines in the run's output (row 163): the
+    first try moves to `<scenario>/first-try/`, and the retry starts in an empty folder too.
+    """
+    kept = None
+    if retry and os.path.isdir(scen_out):
+        kept = scen_out + ".first-try"
+        shutil.rmtree(kept, ignore_errors=True)
+        shutil.rmtree(os.path.join(scen_out, FIRST_TRY), ignore_errors=True)
+        os.rename(scen_out, kept)
+    else:
+        shutil.rmtree(scen_out, ignore_errors=True)
+    os.makedirs(scen_out, exist_ok=True)
+    if kept:
+        os.rename(kept, os.path.join(scen_out, FIRST_TRY))
+
+
+def keep_stand_evidence(bench, scen_out):
+    """A red scenario that ran in the stand: the stand's journal and trace are its run's too, and
+    the stand's next start wipes them (test-hygiene). Copied beside the screenshots."""
+    data = os.path.join(bench.dir, "xdg", "kinetren")
+    for name in ("telemetry-journal.log", "trace"):
+        src = os.path.join(data, name)
+        dst = os.path.join(scen_out, "stand-" + name)
+        try:
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            elif os.path.exists(src):
+                shutil.copy2(src, dst)
+        except OSError:
+            pass
+
+
+def run_scenario(name, scen_out, env):
+    """Run one scenario: its lines go to the worker's stream AND into its folder (`said.txt`), so
+    a red try keeps what it said next to its screenshots."""
+    with open(os.path.join(scen_out, "said.txt"), "w", encoding="utf-8") as said:
+        proc = subprocess.Popen(
+            [sys.executable, "-u", os.path.join(HERE, f"{name}.py"), scen_out],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        for line in proc.stdout:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            said.write(line)
+        return proc.wait()
 
 
 def main():
@@ -295,21 +382,7 @@ def main():
             for name in names:
                 own = wants_own_process(name)
                 scen_out = os.path.join(out, name)
-                os.makedirs(scen_out, exist_ok=True)
-                # RUN STORAGE — CLEAN ON EACH RUN (R.68):
-                # a failed run leaves a recovery file and a working place in it, and a
-                # RERUN on its own starts from another run's state: a scenario that is
-                # green by itself turned red a second time in a row, and the
-                # “red only twice” mechanism stopped telling a flake
-                # from a defect.
-                for leftover in ("store", "xdg"):
-                    shutil.rmtree(os.path.join(scen_out, leftover), ignore_errors=True)
-                # and the sleep report (R.69): a failed scenario leaves no
-                # number of its own, or the run would add the cost of the PREVIOUS time
-                try:
-                    os.unlink(os.path.join(scen_out, "slept.txt"))
-                except OSError:
-                    pass
+                fresh_folder(scen_out, retry=os.environ.get("KT_LIVE_TRY") == "2")
                 env = dict(os.environ)
                 if own:
                     # two kinetren windows on one screen — that is aiming at someone else's
@@ -325,9 +398,7 @@ def main():
                     env["KT_AUTOSAVE_SECS"] = "600"
                 print(f"== {name} ==", flush=True)
                 started = time.time()
-                rc = subprocess.run(
-                    [sys.executable, os.path.join(HERE, f"{name}.py"), scen_out], env=env
-                ).returncode
+                rc = run_scenario(name, scen_out, env)
                 # SCENARIO COST — INTO THE SHARED TABLE: the next run uses it to
                 # spread scenarios across workers (balance.py). Without it
                 # one worker gets the longest scenario and holds the whole
@@ -338,6 +409,9 @@ def main():
                 except OSError:
                     pass
                 ok = rc == 0
+                if not ok and not own:
+                    keep_stand_evidence(bench, scen_out)
+                    keep_channel(bench.chan, scen_out)
                 with open(os.path.join(verdicts, name), "w") as f:
                     f.write("ok" if ok else "fail")
                 if ok:

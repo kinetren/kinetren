@@ -67,6 +67,37 @@ pub fn thread_ns() -> u64 {
     START.get_or_init(std::time::Instant::now).elapsed().as_nanos() as u64
 }
 
+/// How long the calling thread has stood ready to run with no processor, in nanoseconds (Linux:
+/// the second field of `/proc/thread-self/schedstat`; elsewhere 0). A long frame's wall time is
+/// its work, its waits and this: on a loaded machine a frame of 10 ms of work stood 410 ms, and
+/// only this tells the machine from a lock (test-hygiene, `ui_wait` at load 142).
+pub fn run_delay_ns() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::{Read, Seek};
+        thread_local! {
+            static FILE: std::cell::RefCell<Option<std::fs::File>> =
+                std::cell::RefCell::new(std::fs::File::open("/proc/thread-self/schedstat").ok());
+        }
+        return FILE.with(|f| {
+            let mut f = f.borrow_mut();
+            let Some(f) = f.as_mut() else { return 0 };
+            let mut buf = [0u8; 96];
+            if f.seek(std::io::SeekFrom::Start(0)).is_err() {
+                return 0;
+            }
+            let n = f.read(&mut buf).unwrap_or(0);
+            std::str::from_utf8(&buf[..n])
+                .ok()
+                .and_then(|t| t.split_whitespace().nth(1))
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0)
+        });
+    }
+    #[allow(unreachable_code)]
+    0
+}
+
 /// A stage being measured: its time is added when it drops.
 pub struct Span {
     stage: Stage,

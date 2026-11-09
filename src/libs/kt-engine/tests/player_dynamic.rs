@@ -173,7 +173,7 @@ fn t20_paused_player_is_quiescent() {
 
     assert!(
         render_delta <= 8,
-        "when paused the render thread must park (safety timeout 250 ms), \
+        "when paused the render thread must park (with no clock since one-scheduler), \
          and not spin: {render_delta} passes in 1 s (previously ~500)"
     );
     assert_eq!(rebuild_delta, 0, "prefetch must not rebuild renderers without model edits");
@@ -185,6 +185,66 @@ fn t20_paused_player_is_quiescent() {
         assert!(std::time::Instant::now() < deadline, "after set_project prefetch must rebuild the graphs");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+}
+
+/// Test t2240 (one-scheduler): a pause costs nothing. Once settled, the render thread and the
+/// prefetch thread make no pass at all for a second and a half (they woke every 250 ms and 100 ms
+/// before); a seek, a play and a pause each wake them, and a seek right before a park is not lost.
+#[test]
+fn t2240_a_paused_player_parks_with_no_clock() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let project = base_project();
+    let (player, _consumer) = Player::new(project, vec![(MediaId(1), synth())]);
+    let passes = |p: &Player| (p.loop_stats.render_passes.load(Relaxed), p.loop_stats.prefetch_passes.load(Relaxed));
+    let settle = |p: &Player| {
+        // the pause's tail passes (two of 100 ms) and the prefetch's last pass end, then nothing
+        let deadline = kt_time::test_deadline();
+        loop {
+            let a = passes(p);
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            if passes(p) == a {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "the paused player never parked");
+        }
+    };
+    settle(&player);
+    let quiet = passes(&player);
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert_eq!(passes(&player), quiet, "a paused player passed with nothing to do");
+
+    // a seek wakes both threads at once, and they park again
+    player.seek(Tick(90_000 * 3));
+    let deadline = kt_time::test_deadline();
+    while passes(&player).0 == quiet.0 || passes(&player).1 == quiet.1 {
+        assert!(std::time::Instant::now() < deadline, "a seek on a pause woke nothing");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    settle(&player);
+    // seeks in a burst, each landing while the threads are about to park: the last one is seen
+    for k in 0..50 {
+        player.seek(Tick(90_000 * 4 + k * 1500));
+    }
+    let want = player.transport.playhead_frames();
+    let deadline = kt_time::test_deadline();
+    loop {
+        let st = player.loop_stats.prefetch_passes.load(Relaxed);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if player.loop_stats.prefetch_passes.load(Relaxed) == st {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline);
+    }
+    assert_eq!(player.transport.playhead_frames(), want);
+    // play and pause wake it
+    let before = passes(&player).0;
+    player.play();
+    while passes(&player).0 < before + 5 {
+        assert!(std::time::Instant::now() < deadline, "play did not wake the render thread");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    player.pause();
+    settle(&player);
 }
 
 /// Pause → resume: the render wakes up and the ring fills again

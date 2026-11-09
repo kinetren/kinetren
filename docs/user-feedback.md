@@ -2824,3 +2824,12 @@ Registry: `docs/ktprompts/kkt-26.11.09-index.md` (I1–I4). His files: `fails/26
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |
 | **One claim sent twice (R.43)** | **2** | the first attempt fixed the symptoms: there was nothing to look at in the model. `kt-cli probe` appeared; for the complaint "sound from another event" it is run FIRST |
+
+## 2026-11-09 — the table goes on without him (`kkt-26.11.09` I11)
+
+"не надо меня ждать - запускай сам по мере завершения все сам". The stage-8 report asked him to
+click three cards; he does not want to be the trigger. The orchestrator starts every next row of the
+`docs/engine-audit.md` order table itself as executors finish (≤3 at once), and a card proposed on
+an event turn is started on the first turn that allows it. Started now: `one-scheduler`,
+`fused-pointwise-runs`, `test-hygiene`.
+

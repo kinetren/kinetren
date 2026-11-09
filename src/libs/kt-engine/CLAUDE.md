@@ -91,6 +91,17 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The preview composes on its own thread** (`compose_queue`, ui-never-waits): the UI asks (`ask_preview`) and takes (`take_composed`); the newest ask replaces a waiting one; a frame of a state the model has left is dropped; a chain whose executor time passes `SLOW_CHAIN` goes to the offline device. The renderer is an `Arc` behind a mutex: clone the pointer, never hold the lock through a plan. The kept moments' recheck runs there too (`recheck_shown`).
 - **A guard taken inside an expression lives to the end of the statement.** `X::new(&lock.lock().unwrap().clone())` holds the lock through the build, and `if let Some(w) = map.write().unwrap().remove(k) { w.shutdown() }` joins under the guard. Clone, or take out, in a statement of its own (ui-never-waits: the UI's edits waited 412 ms for the audio render thread's build).
 - **The preview presents** (preview-throughput D2). `Player::present_preview` ends in the executor's display target with no readback.
+- **A stream history stops when nobody wants it** (gpu-arbiter): `video_stream::stop_when(who, check,
+  body)` sets this thread's stop check, which the host's `ClipStream::stop` answers to the kernel; the
+  compose thread checks a newer ask for another moment, an edit and its end, the prefetch thread the
+  transport's generation and the project version, a reel/poster job its cancel flag. A stopped run is
+  `StreamStop` in the trace and reads as incomplete, never kept; `stream_preroll` gives up between
+  batches. An export sets none. t2258, t2259.
+- **Every thread that submits GPU or compute work runs as a class** (`kt_time::sched::with_class`,
+  gpu-arbiter): the compose thread now (its kept-moment recheck near), the prefetch thread near, a media
+  worker by the span's priority (a generator's compute frame), the export and every pipeline thread
+  offline. kt-gpu's rings admit by it. The player sets `sched::set_frame_period_ns` from its project:
+  the rings' bound is half of it.
 - **A kept moment is reached without the work that made it** (structured-telemetry, kkt-26.11.09 I8;
   t2145, t2150, t2151). `compose_via` asks `show_kept` FIRST: a probe plan (`VideoRenderer::probe_plan`)
   keys every stream stage by `StreamKernel::key` without running it, and a key the display's executor
@@ -99,10 +110,22 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   replay does not re-time the route; the prefetch thread skips kept moments (`video_prefetch_pass_except`,
   `stream_advance_ahead`). A new input of a stream layer's picture must reach its kernel's `key`, or a
   kept composite of another picture is shown; a kernel without `key` keeps the old path (the stage runs).
+- **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
+  display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
+  the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
+  stream history's want after the kept composites'. Both export bodies hold `kt_time::mem::claim()`
+  while they run, and the render window takes one before it counts devices and `tight` (on its job
+  thread). t2294, t2296, t2297, t2299.
 - **The preview frame's life is in the trace** (capability `telemetry`): the compose thread sets the
   frame's id as its cause, so its decode requests, stream runs and compute jobs carry it; a new thing a
   composite waits for records a `FrameWait`, a new keeper records its store and eviction.
 - **Past its bytes the look-ahead asks the first frame of each cut** (`jumps_to`, `CUT_LEAD_KEYS`, D3): reaching it takes a decoder the same time however near it is asked. t1528.
+- **A start's first pass reaches the ring whole** (test-hygiene, t2216): the callback primes on the
+  first frames in the ring and runs the clock from then on, so the pass after a start is collected in
+  `start_pass` and committed with one `write_chunk_uninit`. Pushed burst by burst, a render thread put
+  off between two bursts let the device eat them (t1935's underruns at load 192, the bench's device on
+  time). `preview_bench` prints how late its device thread woke (`device_late_max_ms`): a red tells the
+  bench from the render.
 - **A start waits for its sound** (cold-start-audio). The fill loop renders a whole ring in one pass, so at a start (`starting`: opening, a seek, a change of direction, a loop flip) `audio_render` holds it until the bursts of the ring plus the look-ahead margin are cached, at most `START_AUDIO_GRACE`. Time stands before the first frame, so this costs no sync (invariant 6); the limit keeps a dead source from stopping playback (t1537, t1538). A new way to move the render head sets `starting` too.
 - Audio of a span's own priority is read between its chunks (t1529): audio has its own demuxer, so the video cursor does not move.
 - `preview_bench::play_range` is the real player against a wall-clock output device and a display loop with `draw_preview`'s counts: `kt-cli preview` on footage, t1524 on a model decoder. Measure the preview with it, and with the footage in /dev/shm: on a busy disk two runs differ by hundreds of incomplete composites.
@@ -219,6 +242,7 @@ in the source's state and arrive through the retune lane.
 - **The level of the event (R.28, item 174)**: `VideoClip.opacity_k` (0..4096) is multiplied by the layer's alpha right where the fades live — an ordinary layer through `scale_alpha_into`, a solo fade is multiplied, in a dissolve pair the levels are blended by the same weight as the picture. 1.0 is an identity, GOLDEN is intact.
 - **"Black box" (R.28, item 175)**: `flight::FlightRecorder` — a ring of 512 records, written ONLY by the render thread (it does not enter the callback, invariant No. 6). Deduplication of consecutive ones, a snapshot of deltas once a second and only if they are non-zero, a separate event `STALL` (playing, but the playhead stands still). The dump — `Player::flight.dump()`.
 - The prefetch thread skips passes when idle (a pause + the state has not changed); the audio render sleeps 8 ms during play (the ring's margin is fourfold) — 2 ms gave 500 wake-ups per second (item 53).
+- **A pause parks both with no clock** (one-scheduler, t2240): after the pause's two tail passes the render thread, and after one skipped pass the prefetch thread, wait for `Wake`'s notify count to move (`seen` before looking at the state, `wait_since` after), so a notify between the look and the wait is never lost. **A new input either thread acts on notifies `wake`** (play, pause, seek, rate, preview quality, loop region, a published build, a retune or a replaced source, the drop), or a paused player never sees it. The player's `bg_pause` vote pauses the scheduler's visible and background classes while it plays. `Player::sources()` hands a job the add/replace/remove bodies: their decoder join never runs on the UI thread.
 - **Transitions of R.51 (items 396–401)**: the inversion (`TransitionEvent.invert`) is executed by the PLAN — `apply_invert` in video.rs (swap of the sides + k→4096−k before the kernel); the kernels/WGSL/cache keys are untouched, and any assembly of a `Dissolve` pair MUST go through the helper. An overlaid transition: the window = the overlap zone (`TransitionEvent::window`), attached in audio `build_reel` and in video by `reel.transitions()` (NOT by the root — a transition inside a nested reel would otherwise silently disappear, the defect of R.50 closed in item 399); the overlap window mutes the built-in equal-power through `fade_*_excl` + `overlap_at` → 1.0. Volumetric kinds: `trans_ext` (the f64 homographies → f32) — the single source of ext; it is not in the cache keys (a function of the already hashed mode/p/k). The directional kernels are guarded by the closed-form t459 on ramps: t224 holds the kernels to stored frames and is blind to a defect those frames already hold.
 
 ## The sub-mix of a nested reel — a producer with pre-roll (R.50 item 387, R.55 item 440)

@@ -86,6 +86,20 @@ is no picture, and an export refuses.
   kt-fx/src/{geom,plan}.rs, in the same commit (t181 geo/tap/k2 cases,
   t309 s2 cases, FrameTol::GEOM).
 - **`PresentMemo` keeps what the preview presented** (cached-range-plays): plan key → the integer composite on the device, complete frames only, 512 MB. `present` asks it FIRST and on a hit runs the display pass alone (`GpuStages.replayed`). preview-throughput D2 had moved the preview off the readback memo, and a covered range was composed again every lap. A new input to a frame must reach `plan_key`, or both memos show a stale picture.
+- **The present memo is sized by the loop and the machine** (memory-ledger, t2292, t2293, t2295): its
+  base is 512 MB; told of a loop (`VideoGpuExec::keep_loop`, the player's prefetch thread) it wants every
+  moment of it at the size it presents plus an eighth, and its cap is the base plus the ledger's
+  `Kept` grant. A loop it cannot hold keeps a part: a composite is not admitted over one shown within
+  a lap of presents (`get` stamps only a hit, so the stamp counts presents). Past its base on a
+  device that is not a CPU rasterizer, `memo_keep` creates the next frame's texture under an
+  out-of-memory scope first; a refusal keeps nothing and bounds the growth at three quarters of what it
+  held. Its account opens at the first keep or loop: an engine that never presents has none. A grant
+  taken back (an export's claim) evicts at once through the hook set in `build`, which takes `inner`.
+- **An export's device keeps the uploads its frames in flight read** (memory-ledger D7, t2298):
+  `UploadCache::begin_frame` at every top-level `resolve_plan`; `new_for_export` drops what no frame of
+  the last `RING` read. On every device an upload the frame being resolved reads is never evicted or
+  reused as a spare within it (a reused spare is rewritten before the frame's passes read it).
+  Upload, readback, transient and compute pools report to the ledger.
 - **The kept composites are reached by key alone** (structured-telemetry): `present_kept(key)` shows one
   with no plan (the engine's probe plan found the key), `keep(key, bytes)` writes a composite another
   device made (the slow route) into the memo; stores and evictions go into the trace, and
@@ -152,6 +166,24 @@ is no picture, and an export refuses.
   run under a compile. A new background GPU thread takes the guard too.
 - **The disk tier** (`pipeline_cache.rs`): every pipeline descriptor passes `cache`; the folder is set by
   the program (`set_cache_dir`), never by a test. Lavapipe's blob is its 96-byte header.
+
+## Point-wise runs (fused-pointwise-runs)
+
+- **A `PlanOp::PointRun` is ONE generated pass** (`runs.rs`): the stages' `tap_<id>` texts pasted
+  into a text built per run SHAPE (the stages' indices in `plugin_taps()`), on the geometry pass's
+  layout (1024-byte uniform, two vec4 a stage: 32 stages a piece, `MAX_RUN_STAGES`). Each stage is
+  rounded and clamped as its own pass stores it, so fused and unfused are the same bytes (t2190); keep
+  that rounding — it is what lets the trial switch forms at run time without moving a kept or exported
+  frame (invariant 11), and posterize would move a whole level without it.
+- **`FxOp::TapRun.pieces` is decided before the arena is sized** (`Inner::bind_runs`, in
+  `resolve_chain`): `passes`/`slot_units` read the pieces, so the slot count stays exact. A shape is a
+  `Compiled` run shape like a geometry shape: pending → its parts (the frame never compiles), warm →
+  the trial (`runs::Trial`: interleaved forms, the pass timer's `probe`, minima of five; slower fused
+  → split in halves, each tried; no timestamps → fused). `fuse_runs(FuseRuns::{Always, Never})` forces
+  a form for tests and `kt-cli fuse-cost`; `KT_FUSE_RUNS=never|always` sets an engine's mode at its
+  creation, for an A/B of a project through `kt-cli preview`/`pause-scan`. t2190, t2192, t2193, t2197.
+- A new point-wise plugin needs no code here: `fuses_in_runs` (kt-plugin-api) admits it, and its
+  `tap_<id>` must read only its arguments (the registry refuses a texture or `P` read, t2194).
 
 ## The export's readback ring (export-throughput D5)
 
@@ -278,3 +310,25 @@ is no picture, and an export refuses.
   byte in `.r`, keyed by its hash with the top bit set) into `FxOp::MaskAlpha` (`mask.wgsl`,
   PIPE_COUNT 8) or `FxOp::MaskMix` (the coverage branch of `layer_mix.wgsl`, T2). A mask adds no
   divergence: masks alone agree EXACT (t1274).
+
+## One ring per physical queue (gpu-arbiter)
+
+- **Every submission but the display's present is admitted by its ring** (`arbiter.rs`): the devices of
+  one hardware card share one ring whatever their backend; a software rasterizer's device is a ring of
+  its own (its own queue thread). The waiting submission of the highest `kt_time::sched::Class` goes
+  first; the class is the caller thread's (`sched::current_class`: compose now, prefetch near, export
+  offline, a lane's job its lane's class, untagged background). A new thread that submits GPU or
+  compute work sets its class.
+- **A ring with a display bounds its flight** (half the preview's frame period); a lower-class frame or
+  compute job is cut at pass/dispatch boundaries by the pass timer's last MEASURED time of each label
+  (`Timer::predict`, `ComputeDevice::last`); an unmeasured pass ends its piece. A new pass site calls
+  `self.cut_point(enc, label)` before writing its uniform, or it is never cut. A compute ring is bounded
+  too and cuts while a higher class waits. Same passes, same order, same bytes (t2253).
+- **A piece's completion frees the ring by a work-done callback**; a waiter completes the oldest piece by
+  a blocking wait on THAT piece's device, never on a device with a surface (the window's present takes
+  the device's lock for writing). So no piece waits for its own submitter to come back (the export's
+  ring of three would deadlock).
+- **`wait_presented` never polls on a fixed period**: the work-done callback, a check after the
+  measured device time, then waits growing from a quarter of it (`present_checks`, t2260).
+- `KT_GPU_ARBITER=off` (or `arbiter::set_enabled(false)`) admits everything and cuts nothing: an A/B of
+  a run; `kt-cli gpu-share` runs both on ONE device (t2254), `kt-cli trace gpu` reads the records.

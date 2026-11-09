@@ -885,11 +885,16 @@ impl crate::app::KtApp {
         if let Some((n, fresh)) = go {
             // "Next lesson" leaves the program's OWN copy: its edits are kept without a question
             // (the live walk met "Unsaved work" about the sandbox there). "Start over" still
-            // asks — it discards them (t988)
+            // asks — it discards them (t988). The next lesson opens when the copy's write LANDS
+            // (save-then-act): the write is on the save lane, and opening right after posting it
+            // met the flags still up and asked anyway (t2305)
+            let go = crate::welcome::StartGo::Lesson { lesson: n, fresh };
             if !fresh && self.project_path.as_deref().is_some_and(is_sandbox) && (self.dirty_content || self.dirty_ui) {
-                self.save();
+                self.start.pending = Some(go);
+                self.save_then(crate::app::Pending::Start);
+            } else {
+                self.start_go(go);
             }
-            self.start_go(crate::welcome::StartGo::Lesson { lesson: n, fresh });
         }
     }
 

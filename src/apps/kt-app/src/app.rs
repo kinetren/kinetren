@@ -85,10 +85,6 @@ pub struct Notice {
     pub details: Option<String>,
 }
 
-/// The result of the background reopening: media, a name for the message and the source
-/// (None — the file did not open again, the placeholder stays).
-pub type ReopenedMedia = (MediaId, String, Option<Box<dyn kt_media::MediaSource>>);
-
 /// Window “what to name the inserted thing” (R.35 item 4).
 /// Auto-ducking dialog (R.48, item 341): on which track to measure pauses and
 /// how much to attenuate. A snapshot, not a live sidechain — therefore this is an
@@ -296,6 +292,9 @@ pub struct KtApp {
     pub marker_edge_from: i64,
     /// The Space press being held (item 3 round 16, R.72). None = not held.
     pub space_press: Option<SpacePress>,
+    /// The frame clock the key gestures are judged on (test-hygiene): when this frame began and
+    /// how long a busy frame takes.
+    pub key_clock: KeyClock,
     /// Current speed-up multiplier from holding Space (None = not speeding up). After a
     /// release during playback it stays set while it decays to 1× (USABILITY 3).
     pub space_boost: Option<f32>,
@@ -410,6 +409,15 @@ pub struct KtApp {
     /// Background autosave (R.31 item 2): (snapshot rev, result). The UI thread
     /// no longer writes the file itself — it only serializes the snapshot and waits for the result.
     pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<SaveOutcome>>)>,
+    /// Ctrl+S in flight (one-scheduler, row 98): the write and its two fsyncs run on the save
+    /// lane; the UI takes the outcome within `ANSWER_GRACE` or in a later frame.
+    pub saving: Option<Saving>,
+    /// What waits for the save in flight (save-then-act): "Save and continue", "Next lesson", a
+    /// gesture that met a Ctrl+S still writing. Run by `take_saved` when the write LANDS; a failed,
+    /// refused or cancelled save drops it, so the work is never left behind unsaved.
+    pub after_save: Option<Pending>,
+    /// Media gestures waiting for their file's open on the media lane (one-scheduler, row 148).
+    pub media_asks: Vec<MediaAsk>,
     /// Project write guard (R.32): the model revision WRITTEN to disk
     /// last. The background autosave must check against it before replacing the
     /// file — otherwise it would overwrite a newer Ctrl+S with its stale snapshot
@@ -500,9 +508,6 @@ pub struct KtApp {
     /// Media for which a placeholder now stands (R.33 item 10): the file did not
     /// open when the project loaded. Empties when the file returns.
     pub placeholder_media: std::collections::HashSet<MediaId>,
-    /// Reopening of a returned file runs in the background (FFmpeg opening
-    /// is blocking — in the UI thread it is a noticeable pause).
-    pub reopen_rx: Option<std::sync::mpsc::Receiver<ReopenedMedia>>,
     /// Internal clipboard (block of clips+transitions, rebased to zero).
     pub clipboard: kt_model::ops::ClipBlock,
     /// Passthrough remainders of an imported exchange file (foreign fields/schemas/
@@ -527,11 +532,13 @@ pub struct KtApp {
     pub env_fit: Option<crate::envclip::FitDialog>,
     /// FX chain/slot buffer.
     pub fx_clipboard: Option<kt_model::ops::FxChainBlock>,
-    /// Media whose files are now unavailable (watchdog, 900 ms).
+    /// Media whose files are now unavailable (the media watch, looked at on events).
     pub offline: Arc<Mutex<std::collections::HashSet<MediaId>>>,
     /// Drop stops the watchdog thread (reopening without leaks).
     #[allow(dead_code)]
     pub watchdog: Option<crate::util::WatchdogHandle>,
+    /// What the media watch saw last: (window focus, playing) — a change of either pokes it.
+    watch_seen: (Option<bool>, bool),
     pub meter: crate::meters::MeterState,
     pub smooth_scaling: bool,
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
@@ -840,6 +847,14 @@ impl KtApp {
         // that is, for an open project never, and the tail past the end of the file
         // would not differ from anything else.
         let mut lens: Vec<(MediaId, kt_time::Tick)> = Vec::new();
+        // the preview's decoders take a render's threads, by the memory measured now (memory-ledger
+        // D11): libavcodec's auto is a thread per core, and a project of five VP9 files then held
+        // 4.4 GB of frames in its decoders before anything was cached
+        kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(
+            kt_gpu::memory::available(),
+            project.settings.width,
+            project.settings.height,
+        ));
         for m in &project.media {
             let label = crate::util::media_label(&m.path);
             let (src, err) = crate::util::open_source_or_placeholder(
@@ -938,6 +953,7 @@ impl KtApp {
             gutter_jump_from: None,
             marker_edge_from: 0,
             space_press: None,
+            key_clock: KeyClock::default(),
             space_boost: None,
             space_held_s: 0.0,
             follow_playhead: false,
@@ -985,6 +1001,9 @@ impl KtApp {
             max_src_cache: None,
             max_src_job: None,
             autosave_rx: None,
+            saving: None,
+            after_save: None,
+            media_asks: Vec::new(),
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -1020,7 +1039,6 @@ impl KtApp {
             live_opacity: None,
             status: None,
             placeholder_media: Default::default(),
-            reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained: kt_otio::Retained::default(),
             env_read: None,
@@ -1028,6 +1046,7 @@ impl KtApp {
             fx_clipboard: None,
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
             watchdog: None,
+            watch_seen: (None, false),
             meter: Default::default(),
             smooth_scaling: true,
             glow_texture: None,
@@ -1236,6 +1255,7 @@ impl KtApp {
             gutter_jump_from: None,
             marker_edge_from: 0,
             space_press: None,
+            key_clock: KeyClock::default(),
             space_boost: None,
             space_held_s: 0.0,
             follow_playhead: false,
@@ -1283,6 +1303,9 @@ impl KtApp {
             max_src_cache: None,
             max_src_job: None,
             autosave_rx: None,
+            saving: None,
+            after_save: None,
+            media_asks: Vec::new(),
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -1318,7 +1341,6 @@ impl KtApp {
             live_opacity: None,
             status: None,
             placeholder_media: err.iter().map(|(id, _, _)| *id).collect(),
-            reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained,
             env_read: None,
@@ -1326,6 +1348,7 @@ impl KtApp {
             fx_clipboard: None,
             offline,
             watchdog: Some(watchdog),
+            watch_seen: (None, false),
             meter: Default::default(),
             smooth_scaling: true,
             glow_texture: None,
@@ -1666,6 +1689,8 @@ impl KtApp {
     /// layout harness test can call it (rule item 9 round 8: layout and
     /// interactions are checked by egui_kittest, not only by a screenshot).
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
+        // the UI thread posts jobs and reads answers: a blocking call on it is counted (one-scheduler)
+        kt_time::block::mark(kt_time::block::role::UI);
         // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load report read it
         let _frame_cost = crate::frame_cost::span(crate::frame_cost::Stage::Frame);
         // LIVE BENCH COUNTERS (R.68) sit here, not in `ui()`: a frame is
@@ -1673,8 +1698,13 @@ impl KtApp {
         // `eframe::App::ui`. Counting in `ui()` would mean “in the product there are frames,
         // in the test there are not” — the counter guard would check the wrong thing.
         crate::bench::tick();
+        self.key_clock.begin_frame();
         if crate::bench::enabled() {
-            crate::bench::note_inputs(ui.ctx().input(|i| i.events.len()) as u64);
+            let events = ui.ctx().input(|i| i.events.len());
+            crate::bench::note_inputs(events as u64);
+            if events == 0 {
+                crate::bench::note_rest_frame(ui.ctx());
+            }
         }
         // Telemetry through its one door (telemetry-identify-activity, D5): the first frame
         // starts the session, every later one is a few atomics. The first-start notice once —
@@ -1756,6 +1786,7 @@ impl KtApp {
         if ctx.options(|o| o.zoom_with_keyboard) != ui_zoom {
             ctx.options_mut(|o| o.zoom_with_keyboard = ui_zoom);
         }
+        self.key_clock.widen_clicks(&ctx);
         self.handle_keys(&ctx);
         crate::window_shell::arm_esc(&ctx, self.shell_esc.take());
         // Speed-up by holding Space — EXACTLY once per frame (handle_keys when
@@ -1918,7 +1949,6 @@ impl KtApp {
         // the static outline of the tour step's panel target, on the panels' own layer
         self.draw_lesson_outline(&ctx);
         // the poster job sleeps while something plays (invariant 6)
-        crate::welcome::set_posters_paused(self.player.transport.is_playing() || self.render_job.is_some());
 
         // autosave (port of autosaveTimer): an unnamed project — into the
         // recovery file ~/.local/share/kinetren/ (item 20, v1).
@@ -1950,18 +1980,17 @@ impl KtApp {
             self.autosave_rx = Some((snap_rev, rx));
             let guard = self.recovery_rev.clone();
             self.recovery_written = Some(target.clone());
-            std::thread::Builder::new()
-                .name("autosave".into())
-                .spawn(move || {
-                    let out = project_text_of(&project, &retained, target.parent());
-                    // replacing the file — under the guard: if while we
-                    // were serializing a MORE RECENT snapshot landed on disk
-                    // (Ctrl+S), we do not write our stale one at all
-                    let _ = tx.send(write_project_guarded(&guard, &target, snap_rev, &out));
-                    crate::wake::now();
-                })
-                .ok();
+            // on the autosave lane (one-scheduler): class `Background`, so it waits out playback
+            autosave_lane().post(move |_| {
+                let out = project_text_of(&project, &retained, target.parent());
+                // replacing the file — under the guard: if while we
+                // were serializing a MORE RECENT snapshot landed on disk
+                // (Ctrl+S), we do not write our stale one at all
+                let _ = tx.send(write_project_guarded(&guard, &target, snap_rev, &out));
+                crate::wake::now();
+            });
         }
+        self.poke_media_watch(ui.ctx());
         self.poll_returned_sources();
         self.poll_env_clipboard();
         // Offline analysis: take the finished, start the next one (item 372).
@@ -1970,14 +1999,12 @@ impl KtApp {
         if let Some((kind, rev, res)) = self.analysis.poll(crate::analysis::spawn_default) {
             self.on_analysis_done(kind, rev, res);
         }
-        if self.analysis.is_running() {
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
-        }
+        // a running analysis wakes the UI itself (its progress `wake::soon`, its end `wake::now`):
+        // a 120 ms repaint here held 8 frames a second through every pause of it (one-scheduler)
         // Preview of reels (R.56, item 452). Pause is not courtesy: an offline render of the
         // reel decodes files, and during playback it would take the processor
-        // away from real time (invariant 6).
-        self.reel_previews
-            .set_paused(self.player.transport.is_playing() || self.render_job.is_some());
+        // away from real time (invariant 6). The scheduler pauses its lane by the player's and the
+        // export's votes (one-scheduler).
         if self.reel_previews.poll() {
             // a finished preview is a picture to show, NOT an edit: `dirty_ui` here made every
             // project with a reel ask "save your changes?" untouched and leave a recovery file
@@ -2001,6 +2028,8 @@ impl KtApp {
                 self.warn(crate::tf!(k::msg::INDEX_FAILED, e));
             }
         }
+        self.take_saved(std::time::Duration::ZERO);
+        self.take_media(std::time::Duration::ZERO);
         if let Some((snap_rev, rx)) = &self.autosave_rx
             && let Ok(res) = rx.try_recv()
         {
@@ -2419,7 +2448,6 @@ impl KtApp {
             || self.render_job.is_some();
         // “slow down when busy” (rule 12): picker thumbnails are
         // computed in their own thread, and during playback/export it must yield
-        self.fx_thumbs.set_busy(self.player.transport.is_playing() || self.render_job.is_some());
         // ...and while it has unfinished requests — we ask for frames, otherwise the
         // ready cell appears only on the next input. The gate hangs on
         // “work is ALIVE”, not on “picker is open”: an open menu has
@@ -2445,6 +2473,8 @@ impl KtApp {
         if let Some(delay) = delay {
             ctx.request_repaint_after(delay);
         }
+        // the next frame follows this one at once: its gap is this frame's work, not a rest
+        self.key_clock.animating = delay.is_some_and(|d| d <= std::time::Duration::from_millis(33));
     }
 
     /// When something on a clock needs a frame while nothing moves: the earliest of them. A new
@@ -2786,7 +2816,7 @@ impl KtApp {
             self.shuttle_rate = None;
             if self.player.transport.is_playing() {
                 self.player.pause();
-                self.paused_at = Some(std::time::Instant::now());
+                self.paused_at = Some(self.key_clock.frame_at);
             }
             self.player.set_playback_rate(self.base_rate);
             return;
@@ -2921,7 +2951,12 @@ impl KtApp {
             self.player.set_playback_rate(self.base_rate);
         }
         let dt = ctx.input(|i| i.stable_dt);
-        let past = self.space_press.is_some_and(|p| p.at.elapsed().as_millis() >= SPACE_HOLD_MS);
+        // A HOLD IS PROVEN, never guessed (test-hygiene): this frame began SPACE_HOLD_MS after the
+        // frame that read the press, and its input brought no release (`handle_keys` ran first and
+        // took the press if it did). The frame's own start, not the clock now: a slow frame that
+        // read a tap's press and the next one its release are 600 ms apart on a loaded machine,
+        // and that tap was a "hold" which then did nothing at all.
+        let past = self.space_press.is_some_and(|p| self.key_clock.frame_at.duration_since(p.at).as_millis() >= SPACE_HOLD_MS);
         if let Some(press) = self.space_press.as_mut().filter(|_| past) {
             let reverse = press.reverse;
             if !press.held {
@@ -2988,17 +3023,19 @@ impl KtApp {
             }
             return;
         }
-        if press.at.elapsed().as_millis() < SPACE_HOLD_MS {
-            self.on_transport_toggle();
-        }
+        // not proven held is a tap, however late its release was read: a release read past the
+        // threshold by a slow frame did nothing before, neither a tap nor a hold
+        self.on_transport_toggle();
     }
 
     /// Single point Space/Play-Pause button (both go here).
     pub fn on_transport_toggle(&mut self) {
         let p = self.model.project();
         let region = p.region.map(|r| (r.start.0, r.end.0));
-        let pause_recent =
-            self.paused_at.map(|t| t.elapsed().as_millis() < DOUBLE_PAUSE_MS).unwrap_or(false);
+        // the two presses are read at frame starts, each up to a busy frame late: the window
+        // widens by the frame this machine takes now (test-hygiene; ~16 ms on a card)
+        let window = std::time::Duration::from_millis(DOUBLE_PAUSE_MS as u64) + self.key_clock.busy;
+        let pause_recent = self.paused_at.is_some_and(|t| self.key_clock.frame_at.saturating_duration_since(t) < window);
         match Self::transport_toggle(
             self.player.transport.is_playing(),
             pause_recent,
@@ -3008,7 +3045,7 @@ impl KtApp {
         ) {
             TransportAction::Pause => {
                 self.player.pause();
-                self.paused_at = Some(std::time::Instant::now());
+                self.paused_at = Some(self.key_clock.frame_at);
             }
             TransportAction::SeekStart(at) => {
                 self.player.seek(Tick(at));
@@ -3089,13 +3126,12 @@ impl KtApp {
             };
         }
         let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new().name("max-source-size".into()).spawn(move || {
+        // on the media lane (one-scheduler): it opened a thread of its own per ask
+        media_lane().post(move |_| {
             let _ = tx.send(max_source_resolution_of(&paths, db.as_deref()));
             crate::wake::now();
         });
-        if spawned.is_ok() {
-            self.max_src_job = Some((key, rx));
-        }
+        self.max_src_job = Some((key, rx));
         known
     }
 
@@ -4003,20 +4039,21 @@ impl KtApp {
     pub fn answer_ask(&mut self, ans: Answer) {
         let Some(a) = self.ask.take() else { return };
         match (a, ans) {
+            // the save goes on, and so does whatever waited for it (`after_save`)
             (Ask::SaveOverLock { .. }, Answer::Yes) => {
                 self.lock_override = true;
                 self.save();
             }
-            (Ask::SaveOverLock { .. }, _) => {}
+            // not written: what waited for the write must not go on without it
+            (Ask::SaveOverLock { .. }, _) => self.after_save = None,
             (Ask::Unsaved(_), Answer::Cancel) => {}
             (Ask::Unsaved(p), Answer::Yes) => {
-                self.save();
-                // the save may not have happened (Save-As was cancelled, the write was refused,
-                // the question about a busy project) — then we must not leave:
-                // exactly this is how “save and exit” differs from “exit”
-                if !self.dirty_content && !self.dirty_ui {
-                    self.proceed(p);
-                }
+                // the action runs when the write LANDS (`take_saved`), not after `save()` returns:
+                // the write is on the save lane (one-scheduler), and right after posting it the
+                // flags are still up — "Save and continue" then silently stayed (t2306). A save
+                // that does not happen (Save-As cancelled, the write refused, the busy project
+                // declined) drops the action: exactly this is how "save and exit" differs from "exit"
+                self.save_then(p);
             }
             // ABANDONED PROJECT: three answers, and all three DIFFERENT in meaning —
             // exactly why `Answer` has three of them rather than a `bool`
@@ -4135,6 +4172,13 @@ impl KtApp {
     pub fn guard_unsaved(&mut self, p: Pending) -> bool {
         if !self.dirty_content && !self.dirty_ui {
             return true;
+        }
+        // a Ctrl+S of exactly this revision is still writing: the work is not lost, it is landing.
+        // The action waits for the write instead of asking about work already being saved (t2307);
+        // a failed write drops it with its warning, and the asterisk stays
+        if self.saving.as_ref().is_some_and(|sv| sv.rev == self.model_rev) {
+            self.after_save = Some(p);
+            return false;
         }
         self.ask = Some(Ask::Unsaved(p));
         false
@@ -4703,6 +4747,7 @@ impl KtApp {
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let db = self.index_db_path();
+        let mut opens = Vec::new();
         for (id, path) in &cur {
             let known = self.media_paths.get(id).cloned();
             if known.as_deref() == Some(path.as_str()) {
@@ -4727,36 +4772,38 @@ impl KtApp {
                 self.fx_thumbs.invalidate_media(*id);
                 continue;
             }
-            let label = crate::util::media_label(path);
-            let (src, err) =
-                crate::util::open_source_or_placeholder(&resolved, db.as_deref(), &label);
-            let opened = err.is_none();
-            if let Some(e) = err {
-                self.note(e);
-            }
-            // MATERIAL LENGTH — comes from whoever opened the source (R.63 item 2).
-            // The model does not obtain it (law P), and without it the right trim
-            // has no stop: this is exactly how an event slides past the end of the file and
-            // “sounds like silence”. A placeholder does not know its own length — its
-            // passport is empty, and no limit will appear.
-            if opened {
-                let d = src.info().duration;
-                if d.0 > 0 {
-                    self.model.note_media_length(*id, d);
-                }
-            }
-            if known.is_some() {
-                self.player.replace_media(*id, src);
-            } else {
-                self.player.add_media(*id, src);
-            }
+            // the file's open and the decoder's swap on the media lane (one-scheduler, row 148)
+            opens.push((*id, resolved.clone(), crate::util::media_label(path), known.is_some()));
             self.thumbs.add_media(*id, resolved);
             self.thumbs.invalidate_media(*id);
         }
         let gone: Vec<MediaId> =
             self.media_paths.keys().filter(|id| !cur.contains_key(id)).copied().collect();
-        for id in gone {
-            self.player.remove_media(id);
+        if !opens.is_empty() || !gone.is_empty() {
+            let sources = self.player.sources();
+            let (answer, reply) = kt_time::sched::Answer::new();
+            media_lane().post(move |_| {
+                let mut done = Vec::new();
+                for (id, resolved, label, known) in opens {
+                    let (src, err) = crate::util::open_source_or_placeholder(&resolved, db.as_deref(), &label);
+                    // MATERIAL LENGTH — comes from whoever opened the source (R.63 item 2).
+                    // A placeholder does not know its own length — its passport is empty.
+                    let len = if err.is_none() { Some(src.info().duration).filter(|d| d.0 > 0) } else { None };
+                    if known {
+                        sources.replace_media(id, src);
+                    } else {
+                        sources.add_media(id, src);
+                    }
+                    done.push((id, len, err));
+                }
+                for id in gone {
+                    sources.remove_media(id);
+                }
+                reply.send(MediaDone::Synced(done));
+                crate::wake::now();
+            });
+            self.media_asks.push(MediaAsk { answer, then: MediaThen::Sync });
+            self.take_media(ANSWER_GRACE);
         }
         self.media_paths = cur;
         self.sync_gen_sources();
@@ -4817,25 +4864,22 @@ impl KtApp {
         self.open_generator_editor(id);
     }
 
-    pub(crate) fn poll_returned_sources(&mut self) {
-        if let Some(rx) = self.reopen_rx.take() {
-            let mut ready = Vec::new();
-            while let Ok(msg) = rx.try_recv() {
-                ready.push(msg);
-            }
-            if ready.is_empty() {
-                self.reopen_rx = Some(rx); // still opening — we wait
-            }
-            for (id, label, src) in ready {
-                // did not open again — the placeholder stays, there is nothing to complain about
-                if let Some(s) = src {
-                    self.player.replace_media(id, s);
-                    self.placeholder_media.remove(&id);
-                    self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
-                }
-            }
+    /// The media watch looks at the files on events (one-scheduler): the window gets or loses
+    /// focus, playback starts or stops. Nothing at rest, nothing on a pointer move.
+    fn poke_media_watch(&mut self, ctx: &egui::Context) {
+        let Some(w) = &self.watchdog else { return };
+        let seen = (ctx.input(|i| i.viewport().focused), self.player.transport.is_playing());
+        if seen != self.watch_seen {
+            self.watch_seen = seen;
+            w.poke();
         }
-        if self.placeholder_media.is_empty() || self.reopen_rx.is_some() {
+    }
+
+    pub(crate) fn poll_returned_sources(&mut self) {
+        // one look at a time: a look in flight answers through `take_media`
+        if self.placeholder_media.is_empty()
+            || self.media_asks.iter().any(|a| matches!(a.then, MediaThen::Returned))
+        {
             return;
         }
         let offline = self.offline.lock().unwrap().clone();
@@ -4852,18 +4896,23 @@ impl KtApp {
         if back.is_empty() {
             return;
         }
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.reopen_rx = Some(rx);
-        std::thread::Builder::new()
-            .name("reopen-media".into())
-            .spawn(move || {
-                for (id, label, path) in back {
-                    let src = open_source_indexed(&path, db.as_deref()).ok();
-                    let _ = tx.send((id, label, src));
-                    crate::wake::now();
+        // the file opens and its placeholder's decoder is swapped (a join) on the media lane
+        // (one-scheduler, row 148); it had a thread of its own and swapped on the UI thread
+        let sources = self.player.sources();
+        let (answer, reply) = kt_time::sched::Answer::new();
+        media_lane().post(move |_| {
+            let mut ok = Vec::new();
+            for (id, label, path) in back {
+                // did not open again — the placeholder stays, there is nothing to complain about
+                if let Ok(src) = open_source_indexed(&path, db.as_deref()) {
+                    sources.replace_media(id, src);
+                    ok.push((id, label));
                 }
-            })
-            .ok();
+            }
+            reply.send(MediaDone::Returned(ok));
+            crate::wake::now();
+        });
+        self.media_asks.push(MediaAsk { answer, then: MediaThen::Returned });
     }
 
     /// Region by a range marker + selection of its events (R.33 item 8): ONE
@@ -5833,7 +5882,9 @@ impl KtApp {
                     self.save_hint.as_deref(),
                     UNTITLED_PROJECT,
                 ) else {
-                    return; // the user changed their mind
+                    // the user changed their mind: nothing was written, so nothing waiting goes on
+                    self.after_save = None;
+                    return;
                 };
                 let p = if p.extension().is_none() {
                     p.with_extension(kt_model::project_file::EXTENSION)
@@ -5866,15 +5917,58 @@ impl KtApp {
         }
         let ui = Some(self.ui_state());
         self.model.set_ui_state(ui);
-        let out = self.project_text(&self.model.document(), path.parent());
-        // under the watchdog: the background autosave must not overwrite our record
-        // with its older snapshot (R.32)
-        match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
+        // the text and the write — with its two fsyncs — on the save lane (one-scheduler, row 98:
+        // 6.7 s of a frozen interface on a busy disk); the newest Ctrl+S replaces a queued one
+        let project = self.model.document();
+        let retained = self.retained.clone();
+        let guard = self.saved_rev.clone();
+        let rev = self.model_rev;
+        let (answer, reply) = kt_time::sched::Answer::new();
+        let target = path.clone();
+        // the newest save of the SAME file replaces a queued one; another file's save is its own
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            path.hash(&mut h);
+            h.finish() | 1
+        };
+        save_lane().post_keyed(key, kt_time::sched::Token::new(), move |_| {
+            let out = project_text_of(&project, &retained, target.parent());
+            // under the watchdog: the background autosave must not overwrite our record
+            // with its older snapshot (R.32)
+            reply.send(write_project_guarded(&guard, &target, rev, &out));
+            crate::wake::now();
+        });
+        self.saving = Some(Saving { path, rev, answer });
+        self.take_saved(save_grace());
+    }
+
+    /// Save, then do `p` once the write has LANDED (save-then-act). Every path that saves and then
+    /// leaves the project goes through here: the write runs on the save lane, so `save()` returns
+    /// with the unsaved flags still up. A failed or cancelled save drops `p` — the work stays.
+    pub(crate) fn save_then(&mut self, p: Pending) {
+        self.after_save = Some(p);
+        self.save();
+    }
+
+    /// The outcome of a Ctrl+S, if it came within `grace`.
+    pub(crate) fn take_saved(&mut self, grace: std::time::Duration) {
+        let Some(sv) = &self.saving else { return };
+        let res = match sv.answer.take_within(grace) {
+            Some(r) => r,
+            None if sv.answer.abandoned() => Err(std::io::Error::other("the save job ended")),
+            None => return,
+        };
+        let Some(Saving { path, rev, .. }) = self.saving.take() else { return };
+        match res {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
                 crate::telemetry::signal(crate::telemetry::Signal::Saved);
                 crate::tele_journal::project_act("project saved", Some(&path));
-                self.dirty_content = false;
-                self.dirty_ui = false;
+                // an edit made while the file was written is not in it: its asterisk stays
+                if self.model_rev == rev {
+                    self.dirty_content = false;
+                    self.dirty_ui = false;
+                }
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
                 self.warn_if_dir_unsynced(dir_synced);
                 self.save_workspace();
@@ -5884,14 +5978,29 @@ impl KtApp {
                 // the work went into the project — OUR OWN recovery is no longer
                 // needed. We remove exactly our own (R.49, item 351): someone else’s nearby —
                 // is the unsaved work of another copy of the program.
-                self.drop_own_recovery();
+                if self.model_rev == rev {
+                    self.drop_own_recovery();
+                }
+                // what waited for this write goes on now. Through the guard again: an edit
+                // made while the file was written is unsaved, and that is asked about
+                if let Some(p) = self.after_save.take()
+                    && self.guard_unsaved(p)
+                {
+                    self.proceed(p);
+                    crate::wake::now();
+                }
             }
             // NOT written: the asterisk stays, the recovery file is intact —
-            // otherwise the person would consider the work saved (item 350)
+            // otherwise the person would consider the work saved (item 350).
+            // What waited for the write does not go on
             Ok(SaveOutcome::SkippedNewerOnDisk) => {
+                self.after_save = None;
                 self.note(tr(k::msg::SAVE_SKIPPED_NEWER));
             }
-            Err(e) => self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
+            Err(e) => {
+                self.after_save = None;
+                self.warn(crate::tf!(k::msg::SAVE_FAILED, e));
+            }
         }
     }
 
@@ -6435,24 +6544,53 @@ impl KtApp {
     }
 
     pub fn add_media_clip_at(&mut self, path: &str, at: Tick, lane_hint: Option<(ClipKind, u32)>) {
-        let path = &Self::absolute_media_path(path);
+        let path = Self::absolute_media_path(path);
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let resolved = resolve_media_path(base.as_deref(), &path);
+        // the file opens on the media lane (one-scheduler, row 148: FFmpeg's probe and the sidecar
+        // stood on the UI thread, twice — once for the clip's length, once for the player); the
+        // gesture lands when it answers (`take_media`)
+        let db = self.index_db_path();
+        let (answer, reply) = kt_time::sched::Answer::new();
+        let r = resolved.clone();
+        media_lane().post(move |_| {
+            reply.send(MediaDone::Opened(open_source_indexed(&r, db.as_deref())));
+            crate::wake::now();
+        });
+        self.media_asks.push(MediaAsk { answer, then: MediaThen::AddClip { path, resolved, at, lane_hint } });
+        self.take_media(ANSWER_GRACE);
+    }
+
+    /// The second half of `add_media_clip_at`: the file opened.
+    fn add_media_clip_opened(
+        &mut self,
+        path: String,
+        resolved: String,
+        at: Tick,
+        lane_hint: Option<(ClipKind, u32)>,
+        opened: Result<Box<dyn kt_media::MediaSource>, String>,
+    ) {
+        let src = match opened {
+            Ok(s) => s,
+            Err(e) => {
+                self.note(format!("{path}: {e}"));
+                return;
+            }
+        };
         let media_id = MediaId(self.next_media_id());
+        let info = src.info().clone();
         // the sync snapshot — BEFORE apply: we raise the source ourselves below (R.52)
-        self.media_paths.insert(media_id, path.to_string());
-        if !self.apply(Command::AddMedia { id: media_id, path: path.to_string() }) {
+        self.media_paths.insert(media_id, path.clone());
+        let mut cmds = vec![Command::AddMedia { id: media_id, path: path.clone() }];
+        cmds.extend(self.clip_cmds_for(media_id, &info, at, lane_hint));
+        if !self.apply_batch(cmds) {
             self.media_paths.remove(&media_id);
             return;
         }
-        self.place_media_at(media_id, at, lane_hint);
         // Incrementally: a new worker on the shared cache. Recreating the player
         // here reset the WHOLE warmed cache (item 27) and broke the deltas of the
-        // perf counters (item 24: “10^19 evictions/s”).
-        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let resolved = resolve_media_path(base.as_deref(), path);
-        match open_source_indexed(&resolved, self.index_db_path().as_deref()) {
-            Ok(src) => self.player.add_media(media_id, src),
-            Err(e) => self.note(format!("{path}: {e}")),
-        }
+        // perf counters (item 24: “10^19 evictions/s”). A new id: no decoder to join.
+        self.player.add_media(media_id, src);
         self.thumbs.add_media(media_id, resolved.clone());
         // in the index DB — the resolved path (item 150: a raw relative path
         // gave the file a SECOND media_id in the cache next to the resolved one)
@@ -6461,6 +6599,56 @@ impl KtApp {
             vec![(media_id, resolved.clone())],
         );
         self.note(crate::tf!(k::msg::ADDED, path));
+    }
+
+    /// Media gestures whose file answered within `grace` land now (one-scheduler).
+    pub(crate) fn take_media(&mut self, grace: std::time::Duration) {
+        if self.media_asks.is_empty() {
+            return;
+        }
+        let asks = std::mem::take(&mut self.media_asks);
+        let mut left = Vec::new();
+        for ask in asks {
+            let done = match ask.answer.take_within(grace) {
+                Some(d) => d,
+                None if ask.answer.abandoned() => continue,
+                None => {
+                    left.push(ask);
+                    continue;
+                }
+            };
+            match (ask.then, done) {
+                (MediaThen::Sync, MediaDone::Synced(done)) => {
+                    for (id, len, err) in done {
+                        if let Some(e) = err {
+                            self.note(e);
+                        }
+                        if let Some(d) = len {
+                            self.model.note_media_length(id, d);
+                        }
+                    }
+                }
+                (MediaThen::AddClip { path, resolved, at, lane_hint }, MediaDone::Opened(o)) => {
+                    self.add_media_clip_opened(path, resolved, at, lane_hint, o)
+                }
+                (MediaThen::Place { media_id, path, at, lane_hint }, MediaDone::Info(info)) => match info {
+                    Ok(info) => {
+                        let cmds = self.clip_cmds_for(media_id, &info, at, lane_hint);
+                        self.apply_batch(cmds);
+                    }
+                    Err(e) => self.note(format!("{path}: {e}")),
+                },
+                (MediaThen::Returned, MediaDone::Returned(back)) => {
+                    for (id, label) in back {
+                        self.placeholder_media.remove(&id);
+                        self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
+                    }
+                }
+                _ => {}
+            }
+        }
+        left.append(&mut self.media_asks);
+        self.media_asks = left;
     }
 
     /// Clip(s) of existing media at the cursor (a click in the bin).
@@ -6555,15 +6743,17 @@ impl KtApp {
         };
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let resolved = resolve_media_path(base.as_deref(), &path);
-        let info = match open_source_indexed(&resolved, self.index_db_path().as_deref()) {
-            Ok(s) => s.info().clone(),
-            Err(e) => {
-                self.note(format!("{path}: {e}"));
-                return;
-            }
-        };
-        let cmds = self.clip_cmds_for(media_id, &info, at, lane_hint);
-        self.apply_batch(cmds);
+        // the file's passport from the media lane (one-scheduler, row 148); the clips land when it
+        // answers
+        let db = self.index_db_path();
+        let (answer, reply) = kt_time::sched::Answer::new();
+        media_lane().post(move |_| {
+            let info = open_source_indexed(&resolved, db.as_deref()).map(|s| s.info().clone());
+            reply.send(MediaDone::Info(info));
+            crate::wake::now();
+        });
+        self.media_asks.push(MediaAsk { answer, then: MediaThen::Place { media_id, path, at, lane_hint } });
+        self.take_media(ANSWER_GRACE);
     }
 
     /// Commands “put clip(s) of this media at the point”. Moved out of
@@ -7789,12 +7979,12 @@ impl KtApp {
         // nothing about them — we name them one by one. A new text field must appear
         // in this list;
         // the guards are t98 and t627.
-        if ctx.text_edit_focused()
+        self.key_clock.gated = ctx.text_edit_focused()
             || self.tc_edit.is_some()
             || self.speed_entry.is_some()
             // the key list is listening: the press is the key being assigned (control-layouts)
-            || self.start.controls_ui.capture.is_some()
-        {
+            || self.start.controls_ui.capture.is_some();
+        if self.key_clock.gated {
             return;
         }
         // We read SPACE from EVENTS, not key_pressed: the latter turns on
@@ -7802,37 +7992,42 @@ impl KtApp {
         // (item 3 of round 16). We only remember the press — the decision is made on
         // RELEASE: a short press = play/pause, a long one = acceleration.
         // The key is the style's (control-layouts): the machine itself stays one in every style.
+        //
+        // IN THE ORDER PRESSED (test-hygiene, found-defects 99/166): a slow frame reads two quick
+        // presses at once, down-up-down-up, and they were one press, so the double press that
+        // stops was a plain pause. Each press and release is handled where it stands.
         let play_key = self.start.controls.play_key();
-        let (space_down, space_up) = ctx.input(|i| {
-            let mut down = None;
-            let mut up = false;
+        let mut space = [None::<SpaceEdge>; 8];
+        let mut n = 0;
+        ctx.input(|i| {
             for e in &i.events {
                 if let egui::Event::Key { key, pressed, repeat, modifiers, .. } = e
                     && Some(*key) == play_key
+                    && !*repeat
+                    && n < space.len()
                 {
-                    if *pressed {
-                        if !*repeat {
-                            down = Some(modifiers.ctrl || modifiers.command);
-                        }
+                    space[n] = Some(if *pressed {
+                        SpaceEdge::Down { ctrl: modifiers.ctrl || modifiers.command }
                     } else {
-                        up = true;
-                    }
+                        SpaceEdge::Up
+                    });
+                    n += 1;
                 }
             }
-            (down, up)
         });
-        if let Some(ctrl) = space_down
-            && self.space_press.is_none()
-        {
-            self.space_press = Some(SpacePress {
-                at: std::time::Instant::now(),
-                from_pause: !self.player.transport.is_playing(),
-                reverse: ctrl,
-                held: false,
-            });
-        }
-        if space_up {
-            self.on_space_released();
+        for edge in space.into_iter().flatten() {
+            match edge {
+                SpaceEdge::Down { ctrl } if self.space_press.is_none() => {
+                    self.space_press = Some(SpacePress {
+                        at: self.key_clock.frame_at,
+                        from_pause: !self.player.transport.is_playing(),
+                        reverse: ctrl,
+                        held: false,
+                    });
+                }
+                SpaceEdge::Down { .. } => {}
+                SpaceEdge::Up => self.on_space_released(),
+            }
         }
         // MASK EDITING takes Enter, Backspace and Delete on the preview first (shape-masks)
         let (mask_del, mask_enter) = self.mask_keys(ctx);
@@ -7842,148 +8037,107 @@ impl KtApp {
         // (regression of item 21): `Controls::pressed` reads their events.
         use crate::controls::Cmd;
         let mut k = ctx.input(|i| self.start.controls.pressed(i));
-        let (esc, mut enter_nest) =
-            ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter) && !i.modifiers.any()));
-        // item 9 of round 11: it also works during playback (seek on the fly
-        // the player can do; the “only on pause” gate was over-caution)
-        if k.has(Cmd::GotoTimecode) {
-            self.tc_edit = Some(String::new());
-            self.tc_edit_focus = true;
-        }
-        if k.has(Cmd::Find) {
-            self.search_open = true;
-            self.search_focus = true;
-        }
-        if k.has(Cmd::FramePrev) {
-            self.frame_step(false);
-        }
-        if k.has(Cmd::FrameNext) {
-            self.frame_step(true);
-        }
-        // item 16 of round 8: to the stop points; item 2 of round 16: the jump that DRAGS the region
-        // edge. Three commands of one function: `nav_jump` is one body for the buttons too.
-        if k.has(Cmd::NavPrev) {
-            self.nav_jump(false, false, false);
-        }
-        if k.has(Cmd::NavNext) {
-            self.nav_jump(true, false, false);
-        }
-        if k.has(Cmd::ProjectStart) {
-            self.nav_jump(false, true, false);
-        }
-        if k.has(Cmd::ProjectEnd) {
-            self.nav_jump(true, true, false);
-        }
-        if k.has(Cmd::RegionPrev) {
-            self.nav_jump(false, false, true);
-        }
-        if k.has(Cmd::RegionNext) {
-            self.nav_jump(true, false, true);
-        }
-        if k.has(Cmd::ShuttleBack) {
-            self.shuttle_key(-1);
-        }
-        if k.has(Cmd::ShuttleStop) {
-            self.shuttle_key(0);
-        }
-        if k.has(Cmd::ShuttleForward) {
-            self.shuttle_key(1);
-        }
-        if k.has(Cmd::Split) {
-            self.cut_action();
-        }
+        // Esc and Enter as many times as pressed: two Esc close two windows
+        let (esc_n, enter_n) = ctx.input(|i| {
+            let enter = if i.modifiers.any() { 0 } else { i.num_presses(egui::Key::Enter) };
+            (i.num_presses(egui::Key::Escape), enter)
+        });
         if mask_del {
             k.remove(Cmd::Delete);
         }
-        if mask_enter {
-            enter_nest = false;
+        // EVERY PRESS, IN ORDER (test-hygiene, found-defects 99/166): a slow frame reads several
+        // keys at once, and a set of the frame's commands made → → → ← no step at all. A command
+        // that opens a window or writes the file runs once a frame; one that opens a text field
+        // ends the frame's keys, as the presses after it would have been typed into the field.
+        let mut once = [false; crate::controls::CMD_COUNT];
+        for cmd in k.iter() {
+            let window_like = matches!(
+                cmd,
+                Cmd::GotoTimecode | Cmd::Find | Cmd::Save | Cmd::SaveAs | Cmd::NewProject | Cmd::OpenProject | Cmd::Render
+            );
+            if window_like && std::mem::replace(&mut once[cmd as usize], true) {
+                continue;
+            }
+            match cmd {
+                // item 9 of round 11: it also works during playback (seek on the fly
+                // the player can do; the “only on pause” gate was over-caution)
+                Cmd::GotoTimecode => {
+                    self.tc_edit = Some(String::new());
+                    self.tc_edit_focus = true;
+                    break;
+                }
+                Cmd::Find => {
+                    self.search_open = true;
+                    self.search_focus = true;
+                    break;
+                }
+                Cmd::FramePrev => self.frame_step(false),
+                Cmd::FrameNext => self.frame_step(true),
+                // item 16 of round 8: to the stop points; item 2 of round 16: the jump that DRAGS the
+                // region edge. Three commands of one function: `nav_jump` is one body for the buttons too.
+                Cmd::NavPrev => self.nav_jump(false, false, false),
+                Cmd::NavNext => self.nav_jump(true, false, false),
+                Cmd::ProjectStart => self.nav_jump(false, true, false),
+                Cmd::ProjectEnd => self.nav_jump(true, true, false),
+                Cmd::RegionPrev => self.nav_jump(false, false, true),
+                Cmd::RegionNext => self.nav_jump(true, false, true),
+                Cmd::ShuttleBack => self.shuttle_key(-1),
+                Cmd::ShuttleStop => self.shuttle_key(0),
+                Cmd::ShuttleForward => self.shuttle_key(1),
+                Cmd::Split => self.cut_action(),
+                Cmd::Delete => self.delete_action(),
+                Cmd::Undo => self.undo(),
+                Cmd::Redo => self.redo(),
+                Cmd::Save => self.save(),
+                Cmd::Marker => self.marker_toggle_at_cursor(),
+                Cmd::TrackMute => {
+                    if let Some(id) = self.key_target_track() {
+                        self.toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
+                    }
+                }
+                Cmd::TrackSolo => {
+                    if let Some(id) = self.key_target_track() {
+                        self.toggle_track_badge(id, crate::timeline::TrackBadge::Solo);
+                    }
+                }
+                Cmd::RegionIn => self.set_region_edge_from_cursor(true),
+                Cmd::RegionOut => self.set_region_edge_from_cursor(false),
+                Cmd::Loop => self.toggle_loop(),
+                Cmd::MarkMoment => self.mark_moment(""),
+                Cmd::Copy => self.copy_selection(),
+                Cmd::Paste => self.paste_at_cursor(),
+                Cmd::RegionClear => self.clear_region(),
+                Cmd::ZoomIn => self.zoom_at_playhead(0.8),
+                Cmd::ZoomOut => self.zoom_at_playhead(1.25),
+                Cmd::ZoomFit => self.zoom_fit(),
+                Cmd::SelectTool => self.sel_tool = !self.sel_tool,
+                Cmd::SaveAs => self.save_as(),
+                Cmd::NewProject => self.new_project(),
+                Cmd::OpenProject => self.open_project_dialog(),
+                Cmd::Render => self.start_render(),
+                // the play key is read as press and release above; the rest are not keys of the
+                // timeline (UI zoom is egui's)
+                _ => {}
+            }
         }
-        if k.has(Cmd::Delete) {
-            self.delete_action();
-        }
-        if k.has(Cmd::Undo) {
-            self.undo();
-        }
-        if k.has(Cmd::Redo) {
-            self.redo();
-        }
-        if k.has(Cmd::Save) {
-            self.save();
-        }
-        if k.has(Cmd::Marker) {
-            self.marker_toggle_at_cursor();
-        }
-        if k.has(Cmd::TrackMute)
-            && let Some(id) = self.key_target_track()
-        {
-            self.toggle_track_badge(id, crate::timeline::TrackBadge::Mute);
-        }
-        if k.has(Cmd::TrackSolo)
-            && let Some(id) = self.key_target_track()
-        {
-            self.toggle_track_badge(id, crate::timeline::TrackBadge::Solo);
-        }
-        if k.has(Cmd::RegionIn) {
-            self.set_region_edge_from_cursor(true);
-        }
-        if k.has(Cmd::RegionOut) {
-            self.set_region_edge_from_cursor(false);
-        }
-        if k.has(Cmd::Loop) {
-            self.toggle_loop();
-        }
-        if k.has(Cmd::MarkMoment) {
-            self.mark_moment("");
-        }
-        if esc && !self.mask_escape() {
-            self.escape_action();
+        for _ in 0..esc_n {
+            if !self.mask_escape() {
+                self.escape_action();
+            }
         }
         // Enter — a CASCADE on the selected nested item (R.56, item 451): the first
         // unfolds in place (the default mode, the keyboard twin
         // of a double click), the second on an already unfolded one — FULL ENTRY.
         // The quick gesture leads DEEPER, not a toggle: back — Esc,
         // which already cascades in the reverse direction anyway.
-        if enter_nest
-            && let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id))
-        {
-            match self.enter_pressed_on_nest(id) {
-                EnterOnNest::Expand => self.expand_in_place(id),
-                EnterOnNest::Enter => self.enter_nest(id),
-                EnterOnNest::NotANest => {}
+        for _ in 0..if mask_enter { 0 } else { enter_n } {
+            if let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id)) {
+                match self.enter_pressed_on_nest(id) {
+                    EnterOnNest::Expand => self.expand_in_place(id),
+                    EnterOnNest::Enter => self.enter_nest(id),
+                    EnterOnNest::NotANest => {}
+                }
             }
-        }
-        if k.has(Cmd::Copy) {
-            self.copy_selection();
-        }
-        if k.has(Cmd::Paste) {
-            self.paste_at_cursor();
-        }
-        if k.has(Cmd::RegionClear) {
-            self.clear_region();
-        }
-        if k.has(Cmd::ZoomIn) {
-            self.zoom_at_playhead(0.8);
-        }
-        if k.has(Cmd::ZoomOut) {
-            self.zoom_at_playhead(1.25);
-        }
-        if k.has(Cmd::ZoomFit) {
-            self.zoom_fit();
-        }
-        if k.has(Cmd::SelectTool) {
-            self.sel_tool = !self.sel_tool;
-        }
-        if k.has(Cmd::SaveAs) {
-            self.save_as();
-        }
-        if k.has(Cmd::NewProject) {
-            self.new_project();
-        }
-        if k.has(Cmd::OpenProject) {
-            self.open_project_dialog();
-        }
-        if k.has(Cmd::Render) {
-            self.start_render();
         }
     }
 
@@ -8110,10 +8264,91 @@ pub const SPACE_DECAY_SHARE: f32 = 0.25;
 /// Below this distance from the base the fall hands the exact base back to the player.
 pub const SPACE_DECAY_DONE: f32 = 0.005;
 
+/// One edge of the play key in a frame's input, in order.
+#[derive(Clone, Copy)]
+enum SpaceEdge {
+    Down { ctrl: bool },
+    Up,
+}
+
+/// The clock key gestures are judged on (test-hygiene, found-defects 99/166). egui hands a frame's
+/// events without their moments: a press read in a frame happened during the frame before it, so a
+/// gesture's length is known to a busy frame. `frame_at` is the start of this frame, `busy` the
+/// smoothed gap before a frame that the one before it asked for at once (playback, a held key, the
+/// frame after a gesture): the program's work, with no idle wait for input hidden in it.
+#[derive(Clone, Copy)]
+pub struct KeyClock {
+    pub frame_at: std::time::Instant,
+    pub busy: std::time::Duration,
+    /// The frame that ends asked for the next one at once.
+    pub animating: bool,
+    /// The last frame's hotkeys were gated by a text field (the live dump's `keys_gated`): a
+    /// Ctrl+S that writes nothing names it (found-defects 47).
+    pub gated: bool,
+    /// Widen egui's click windows (`widen_clicks`). Off in the harness: its frames step egui's
+    /// clock by a fixed `step_dt` while `busy` is the wall clock, so the two would not agree.
+    pub widen: bool,
+    /// egui's double-click window as last set (the live dump's `double_click_s`): a scenario's next
+    /// double click waits out twice it after the click before, or it is egui's triple.
+    pub double_s: f64,
+}
+
+impl Default for KeyClock {
+    fn default() -> KeyClock {
+        KeyClock {
+            frame_at: std::time::Instant::now(),
+            busy: std::time::Duration::ZERO,
+            animating: false,
+            gated: false,
+            widen: !cfg!(test),
+            double_s: DOUBLE_CLICK_S,
+        }
+    }
+}
+
+impl KeyClock {
+    /// The ceiling of the widening: a frame longer than this is a stall, not a frame time.
+    const BUSY_MAX: std::time::Duration = std::time::Duration::from_millis(1000);
+
+    /// A frame begins.
+    pub fn begin_frame(&mut self) {
+        let now = std::time::Instant::now();
+        if self.animating {
+            let gap = now.duration_since(self.frame_at).min(Self::BUSY_MAX);
+            self.busy = (self.busy + gap) / 2;
+        }
+        self.frame_at = now;
+    }
+
+    /// egui judges a click and a double click by the frames that read them, too: two clicks a busy
+    /// frame apart were two single clicks, and a press and release two frames apart no click
+    /// (found-defects 166, `formula` and `lessons` under the full live run). Its windows widen
+    /// by the busy frame, as the double Space does; on a card that is ~16 ms.
+    pub fn widen_clicks(&mut self, ctx: &egui::Context) {
+        if !self.widen {
+            return;
+        }
+        let busy = self.busy.as_secs_f64();
+        let (double, click) = (DOUBLE_CLICK_S + busy, CLICK_HOLD_S + busy);
+        self.double_s = double;
+        if ctx.options(|o| (o.input_options.max_double_click_delay - double).abs() > 0.002) {
+            ctx.options_mut(|o| {
+                o.input_options.max_double_click_delay = double;
+                o.input_options.max_click_duration = click;
+            });
+        }
+    }
+}
+
+/// egui's own windows of a double click and of a click (`InputOptions::default`).
+pub const DOUBLE_CLICK_S: f64 = 0.3;
+pub const CLICK_HOLD_S: f64 = 0.8;
+
 /// A Space press in progress (R.72). Read at the press and held for the whole gesture, so
 /// letting Ctrl go early does not turn the picture around.
 #[derive(Clone, Copy, Debug)]
 pub struct SpacePress {
+    /// The start of the frame that read the press.
     pub at: std::time::Instant,
     /// Started while paused: the release pauses again.
     pub from_pause: bool,
@@ -8526,7 +8761,7 @@ impl KtApp {
             if *self.coverage_cache.final_runs != fin {
                 self.coverage_cache.final_runs = Arc::new(fin);
             }
-            // a finite run of frames after an edit until every kept moment is checked
+            // kept moments left to check after an edit: the preview's thread wakes the UI per pass
             self.coverage_cache.final_pending = pending;
             if pending {
                 self.coverage_cache.stamp = None;
@@ -9587,6 +9822,83 @@ pub enum SaveOutcome {
     SkippedNewerOnDisk,
 }
 
+/// A media gesture waiting for its file (one-scheduler, row 148).
+pub struct MediaAsk {
+    answer: kt_time::sched::Answer<MediaDone>,
+    then: MediaThen,
+}
+
+/// What lands when the file answers.
+enum MediaThen {
+    /// `sync_media_sources`: note the lengths and the errors.
+    Sync,
+    /// `add_media_clip_at`: the media, its clips and its source.
+    AddClip { path: String, resolved: String, at: Tick, lane_hint: Option<(ClipKind, u32)> },
+    /// `place_media_at`: the clips.
+    Place { media_id: MediaId, path: String, at: Tick, lane_hint: Option<(ClipKind, u32)> },
+    /// `poll_returned_sources`: the files that came back.
+    Returned,
+}
+
+/// What the media lane answers.
+enum MediaDone {
+    Synced(Vec<(MediaId, Option<Tick>, Option<String>)>),
+    Opened(Result<Box<dyn kt_media::MediaSource>, String>),
+    Info(Result<kt_media::MediaInfo, String>),
+    Returned(Vec<(MediaId, String)>),
+}
+
+/// The media gestures' lane: class `Answer` (the person waits for the clip), one open at a time
+/// in the order asked.
+fn media_lane() -> &'static kt_time::sched::LaneRef {
+    static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
+    L.get_or_init(|| kt_time::sched::Lane::open("media", kt_time::sched::Class::Answer))
+}
+
+/// A Ctrl+S in flight (one-scheduler).
+pub struct Saving {
+    path: PathBuf,
+    rev: u64,
+    answer: kt_time::sched::Answer<std::io::Result<SaveOutcome>>,
+}
+
+/// How long the UI thread waits for a job's answer inside the frame that asked (one-scheduler):
+/// a small save lands in the same frame, a slow disk in a later one. The harness waits the
+/// test's bound, so a test reads the file right after `save()` (as `COMPOSE_GRACE` composes in
+/// its frame).
+pub(crate) const ANSWER_GRACE: std::time::Duration =
+    if cfg!(test) { kt_time::TEST_WAIT } else { std::time::Duration::from_millis(3) };
+
+thread_local! {
+    /// The UI thread's own grace for a save's answer, when set (save-then-act tests): the harness
+    /// waits `ANSWER_GRACE` = the test's bound, so a save always landed inside `save()` there and
+    /// a caller that acted on the flags right after it was green; zero makes the harness meet the
+    /// live program's later frame.
+    static SAVE_GRACE: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
+}
+
+fn save_grace() -> std::time::Duration {
+    SAVE_GRACE.with(|g| g.get()).unwrap_or(ANSWER_GRACE)
+}
+
+/// Set this thread's grace for a save's answer (`None` — `ANSWER_GRACE`). Tests only.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn set_save_grace(d: Option<std::time::Duration>) {
+    SAVE_GRACE.with(|g| g.set(d));
+}
+
+/// Ctrl+S's lane: class `Answer`, so it never waits behind background work or for playback.
+fn save_lane() -> &'static kt_time::sched::LaneRef {
+    static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
+    L.get_or_init(|| kt_time::sched::Lane::open("save", kt_time::sched::Class::Answer))
+}
+
+/// The autosave's lane: class `Background`, it waits out playback and an export.
+fn autosave_lane() -> &'static kt_time::sched::LaneRef {
+    static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
+    L.get_or_init(|| kt_time::sched::Lane::open("autosave", kt_time::sched::Class::Background))
+}
+
 pub fn write_project_guarded(
     guard: &std::sync::Mutex<u64>,
     path: &std::path::Path,
@@ -9600,6 +9912,7 @@ pub fn write_project_guarded(
     if *last > rev {
         return Ok(SaveOutcome::SkippedNewerOnDisk);
     }
+    let _w = kt_time::block::wait(kt_time::block::kind::FSYNC);
     let w = kt_otio::write_atomic(path, json)?;
     *last = rev;
     Ok(SaveOutcome::Wrote { dir_synced: w.dir_synced })
@@ -9842,6 +10155,7 @@ impl KtApp {
             Work::EngineBuild => tr(k::perf::work::ENGINE_BUILDS),
             Work::MixReplay => tr(k::perf::work::MIX_REPLAYS),
             Work::CompositeReplay => tr(k::perf::work::COMPOSITE_REPLAYS),
+            Work::SchedJob => tr(k::perf::work::SCHED_JOBS),
         };
         if let Some(s) = crate::load_watch::last() {
             let cpu = format!("{:.0}", s.cpu);
@@ -10001,6 +10315,9 @@ impl KtApp {
         }
         let mut open = self.perf.diag_open;
         let default_h = (ctx.content_rect().height() - 60.0).clamp(320.0, 720.0);
+        // egui has never laid this window out (no remembered size): its first frame is the
+        // invisible sizing pass, in which the body may claim the height its floors need
+        let first = egui::AreaState::load(ctx, egui::Id::new("kt_diag")).is_none();
         let shown = crate::window_shell::Shell::new(
             egui::Id::new("kt_diag"),
             tr(k::win::DIAG_TITLE),
@@ -10014,6 +10331,7 @@ impl KtApp {
                 // the telemetry journal holds the lower part OUTSIDE the scroll, so it is on screen at
                 // every window height — the owner had to make the window taller to see the log at
                 // all (kkt-26.11.07b line 17, found-defects 109).
+                let body_top = ui.cursor().top();
                 let body_h = ui.available_height();
                 let body_h = if body_h.is_finite() { body_h } else { default_h };
                 let line_h = ui.text_style_height(&egui::TextStyle::Monospace) + ui.spacing().item_spacing.y;
@@ -10070,6 +10388,25 @@ impl KtApp {
                         3.0,
                         col,
                     );
+                    // where the memory went (memory-ledger): the ledger's counters, read here only
+                    {
+                        use kt_time::mem::Tenant;
+                        let m = kt_time::mem::snapshot();
+                        let mb = |b: u64| format!("{}", b >> 20);
+                        let device: u64 = [Tenant::Upload, Tenant::Readback, Tenant::Transient, Tenant::Compute]
+                            .iter()
+                            .map(|t| m.used(*t))
+                            .sum();
+                        let room = Tenant::ALL.iter().map(|t| m.base(*t)).sum::<u64>() + m.budget;
+                        ui.weak(crate::tf!(
+                            k::perf::MEMORY_LEDGER,
+                            mb(m.used(Tenant::Kept)),
+                            mb(m.used(Tenant::History)),
+                            mb(m.used(Tenant::Frames)),
+                            mb(device),
+                            mb(room)
+                        ));
+                    }
                     ui.add_space(6.0);
                     // the three graphs share what the scrolling part has left: a larger window
                     // shows larger graphs (D2); the floor keeps them readable, the part scrolls
@@ -10097,6 +10434,25 @@ impl KtApp {
                     });
                 ui.separator();
                 self.draw_journal_pane(ui);
+                // The window OPENS at its floors where the screen has the room (t2304): the
+                // instruments, the three graphs at their floor and the journal's six lines. The
+                // fixed default (720) fell under them as rows were added (the memory line, a stall
+                // line), so the third graph opened under the fold and a corner drag first paid off
+                // that shortfall: the graphs did not take their quarter of the growth (D2). Only in
+                // egui's sizing pass of a window it never laid out: the window then grows to what
+                // the body took (egui's Resize), once, before it is first seen; a size the person
+                // gave is never touched.
+                if first && ui.is_sizing_pass() {
+                    let floor = self.perf.diag_used + 3.0 * (GRAPH_MIN_H + per_graph) + ui.spacing().interact_size.y;
+                    let need = head_h + floor + JOURNAL_MIN_LINES * line_h;
+                    // down to the screen's bottom edge, as a fitting window body (`fill_scroll`)
+                    let room = ctx.content_rect().bottom() - body_top - 48.0;
+                    let took = ui.min_rect().bottom() - body_top;
+                    let want = need.min(room);
+                    if want > took {
+                        ui.allocate_space(egui::vec2(0.0, want - took));
+                    }
+                }
             });
         if shown.closed() {
             open = false;
@@ -10196,6 +10552,7 @@ impl eframe::App for KtApp {
         // a decode on the UI thread) is seen here with an exact timestamp.
         let t0 = std::time::Instant::now();
         let at = crate::tele_journal::current().map(|j| j.now());
+        let queued0 = crate::frame_cost::run_delay_ns();
         self.draw_all(ui);
         let ms = t0.elapsed().as_millis();
         if ms >= 100
@@ -10205,10 +10562,14 @@ impl eframe::App for KtApp {
             // where it went, waits included (ui-never-waits): the stages' wall time
             let wall = crate::frame_cost::last_frame_wall();
             let at_stage = if wall.is_empty() { String::new() } else { format!(" ({wall} ms)") };
+            // and how much of it the thread stood ready with no processor: the machine's share
+            let queued = crate::frame_cost::run_delay_ns().saturating_sub(queued0) / 1_000_000;
             j.record_at(
                 at,
                 crate::tele_journal::Kind::Note,
-                &format!("the UI thread was blocked for {ms} ms inside one frame{at_stage}"),
+                &format!(
+                    "the UI thread was blocked for {ms} ms inside one frame{at_stage}, {queued} ms of it waiting for a processor"
+                ),
             );
         }
     }
@@ -10244,6 +10605,10 @@ impl eframe::App for KtApp {
         if let Some((_, rx)) = self.autosave_rx.take() {
             let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
         }
+        // a Ctrl+S still writing finishes first: its outcome decides the asterisk below. What
+        // waited for it (an open, a lesson) has no window to happen in any more
+        self.after_save = None;
+        self.take_saved(std::time::Duration::from_secs(30));
         // R.49 item 351: exit is NOT the moment to silently rewrite the user's project.
         // Unsaved work goes to the recovery file; saved work carries its own recovery file
         // away with it, so that the next start does not offer
@@ -10606,7 +10971,7 @@ impl KtApp {
             self.player.pause();
             // like a manual pause: double Space after an auto-pause = stop
             // to the start of the region (item 29 round 7)
-            self.paused_at = Some(std::time::Instant::now());
+            self.paused_at = Some(self.key_clock.frame_at);
         }
         egui::Panel::bottom("prev_controls").show(ui, |ui| {
             ui.add_space(3.0);

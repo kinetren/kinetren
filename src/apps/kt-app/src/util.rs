@@ -32,6 +32,8 @@ pub fn open_source_indexed(
     if let Some(r) = kt_media::factory::open_pseudo(path) {
         return r;
     }
+    // a file: FFmpeg's probe and the sidecar — never on the UI thread (one-scheduler, row 148)
+    let _w = kt_time::block::wait(kt_time::block::kind::FILE_OPEN);
     let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(p).ok());
     kt_media::factory::open_indexed(path, db.as_mut())
 }
@@ -97,6 +99,9 @@ pub struct IndexService {
     stop: Arc<std::sync::atomic::AtomicBool>,
     /// What went wrong (read by the UI). Not `let _ =`.
     pub errors: Arc<Mutex<Vec<String>>>,
+    /// Its lane on the scheduler (one-scheduler): class `Background` (paused while playing, the
+    /// owner's "Да"), closed with the service. It polled its channel every 200 ms before.
+    lane: kt_time::sched::LaneRef,
 }
 
 struct IndexTask {
@@ -110,6 +115,12 @@ impl Drop for IndexService {
     }
 }
 
+/// What the index pump keeps between runs: the channel and the sidecar of the last path.
+struct IndexState {
+    rx: std::sync::mpsc::Receiver<IndexTask>,
+    db: Option<(PathBuf, kt_media::index::MediaIndexDb)>,
+}
+
 impl IndexService {
     pub fn start(
         out: Arc<Mutex<HashMap<MediaId, Peaks>>>,
@@ -120,57 +131,55 @@ impl IndexService {
         let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let stop_t = stop.clone();
         let err_t = errors.clone();
-        std::thread::Builder::new()
-            .name("index-service".into())
-            .spawn(move || {
-                let mut db: Option<(PathBuf, kt_media::index::MediaIndexDb)> = None;
-                while !stop_t.load(std::sync::atomic::Ordering::Acquire) {
-                    // waiting for a job, but waking up to check the stop flag
-                    let task = match rx.recv_timeout(std::time::Duration::from_millis(200)) {
-                        Ok(t) => t,
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                        // the channel is closed — the owner died, we leave
-                        Err(_) => break,
-                    };
-                    // the DB is reopened only when the path has changed: on
-                    // each added media there is no point in reopening
-                    if db.as_ref().map(|(p, _)| p) != task.db_path.as_ref() {
-                        db = task.db_path.as_ref().and_then(|p| {
-                            match kt_media::index::MediaIndexDb::open(p) {
-                                Ok(d) => Some((p.clone(), d)),
-                                Err(e) => {
-                                    err_t.lock().unwrap().push(format!("{}: {e}", p.display()));
-                                    None
-                                }
-                            }
-                        });
+        let state = Mutex::new(IndexState { rx, db: None });
+        let lane = kt_time::sched::Lane::service("index", kt_time::sched::Class::Background, move |ctx| {
+            use kt_time::sched::Pump;
+            let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+            let IndexState { rx, db } = &mut *st;
+            let stopped = || stop_t.load(std::sync::atomic::Ordering::Acquire) || ctx.cancelled();
+            // one task per run: a project's list is one task, and a pause is seen between files
+            // and inside a file (`checkpoint`)
+            let Ok(task) = rx.try_recv() else { return Pump::Idle };
+            // the DB is reopened only when the path has changed: on
+            // each added media there is no point in reopening
+            if db.as_ref().map(|(p, _)| p) != task.db_path.as_ref() {
+                *db = task.db_path.as_ref().and_then(|p| {
+                    let _w = kt_time::block::wait(kt_time::block::kind::SIDECAR);
+                    match kt_media::index::MediaIndexDb::open(p) {
+                        Ok(d) => Some((p.clone(), d)),
+                        Err(e) => {
+                            err_t.lock().unwrap().push(format!("{}: {e}", p.display()));
+                            None
+                        }
                     }
-                    for (id, path) in task.media {
-                        if stop_t.load(std::sync::atomic::Ordering::Acquire) {
-                            return;
+                });
+            }
+            for (id, path) in task.media {
+                if stopped() {
+                    return Pump::Idle;
+                }
+                if out.lock().unwrap().contains_key(&id) {
+                    continue;
+                }
+                let stop_here = || stop_t.load(std::sync::atomic::Ordering::Acquire) || ctx.checkpoint();
+                match build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_here) {
+                    Ok(Some((p, l))) => {
+                        out.lock().unwrap().insert(id, p);
+                        if let Some(l) = l {
+                            loud.lock().unwrap().insert(id, l);
                         }
-                        if out.lock().unwrap().contains_key(&id) {
-                            continue;
-                        }
-                        match build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_t) {
-                            Ok(Some((p, l))) => {
-                                out.lock().unwrap().insert(id, p);
-                                if let Some(l) = l {
-                                    loud.lock().unwrap().insert(id, l);
-                                }
-                                crate::wake::soon();
-                            }
-                            Ok(None) => {}
-                            Err(e) => {
-                                err_t.lock().unwrap().push(format!("{path}: {e}"));
-                                crate::wake::now();
-                            }
-                        }
+                        crate::wake::soon();
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        err_t.lock().unwrap().push(format!("{path}: {e}"));
+                        crate::wake::now();
                     }
                 }
-            })
-            .expect("spawn index service");
-        IndexService { tx, stop, errors }
+            }
+            Pump::More
+        });
+        IndexService { tx, stop, errors, lane }
     }
 
     /// Queue the media. The service is dead — not a disaster: the waveforms
@@ -180,6 +189,7 @@ impl IndexService {
             return;
         }
         let _ = self.tx.send(IndexTask { db_path, media });
+        self.lane.kick();
     }
 
     /// Take the accumulated errors (the UI shows them once).
@@ -198,9 +208,9 @@ type PeaksAndLoudness = (Peaks, Option<(f64, f64, f64)>);
 fn build_peaks(
     path: &str,
     db: Option<&mut kt_media::index::MediaIndexDb>,
-    stop: &Arc<std::sync::atomic::AtomicBool>,
+    stop: &dyn Fn() -> bool,
 ) -> Result<Option<PeaksAndLoudness>, String> {
-    let stopped = || stop.load(std::sync::atomic::Ordering::Acquire);
+    let stopped = || stop();
     let from_source = |path: &str, measure: bool| -> Result<Option<PeaksAndLoudness>, String> {
         let mut s = open_source(path).map_err(|e| e.to_string())?;
         let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
@@ -236,7 +246,7 @@ fn build_peaks(
     let (mid, status) = db.ensure_media(Path::new(path)).map_err(|e| e.to_string())?;
     let complete =
         db.is_complete(mid).unwrap_or(false) && status == kt_media::index::MediaEntryStatus::Reused;
-    if !complete && !stop.load(std::sync::atomic::Ordering::Acquire) {
+    if !complete && !stop() {
         // a separate short-lived source — not the playback decoders;
         // the batch index is persisted as a side effect (test 34)
         let mut src = kt_media::ffmpeg::FfmpegSource::open_indexed(path, Some(db))
@@ -279,18 +289,25 @@ pub(crate) fn pyramid_to_peaks(p: kt_media::index::PeakPyramid) -> Peaks {
         .collect()
 }
 
-/// Watchdog of media file availability (port of mediaSourceProbeTimer 900 ms):
-/// the offline set is read by the UI (clip tint); it runs in its own thread.
-/// The watchdog handle: Drop stops the thread (before, when the project was reopened
-/// the old watchdogs lived forever — a thread leak, item 1).
+/// Watchdog of media file availability (the v1 port polled every 900 ms, mediaSourceProbeTimer):
+/// the offline set is read by the UI (clip tint). Since one-scheduler it is a lane looked at on
+/// events, never on a clock. The handle: Drop closes the lane (before, when the project was
+/// reopened the old watchdogs lived forever — a thread leak, item 1).
 pub struct WatchdogHandle {
-    stop: Arc<std::sync::atomic::AtomicBool>,
+    /// Its lane (one-scheduler): one stat pass per poke, closed with the handle. It slept 900 ms
+    /// in a loop before, at rest too: a file that comes back or goes is now noticed at the next
+    /// event that can follow it — the project opening, the window getting or losing focus (a file
+    /// copied back in a file manager, a drive plugged in and the person back at the program), play
+    /// or stop. Not a pointer move: a hover over a still place runs no job (idle-cpu).
+    lane: kt_time::sched::LaneRef,
 }
 
-impl Drop for WatchdogHandle {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Release);
+impl WatchdogHandle {
+    /// Look at the files now (coalesced with a look already due).
+    pub fn poke(&self) {
+        self.lane.kick();
     }
+
 }
 
 pub fn spawn_media_watchdog(
@@ -306,29 +323,26 @@ pub fn spawn_media_watchdog(
         .map(|m| (m.id, resolve_media_path(base, &m.path)))
         .collect();
     let out = set.clone();
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let stop_t = stop.clone();
-    std::thread::Builder::new()
-        .name("media-watchdog".into())
-        .spawn(move || {
-            while !stop_t.load(std::sync::atomic::Ordering::Acquire) {
-                let mut offline = std::collections::HashSet::new();
-                for (id, p) in &paths {
-                    if !Path::new(p).exists() {
-                        offline.insert(*id);
-                    }
-                }
-                let mut set = out.lock().unwrap();
-                if *set != offline {
-                    *set = offline;
-                    crate::wake::now();
-                }
-                drop(set);
-                std::thread::sleep(std::time::Duration::from_millis(900));
+    let lane = kt_time::sched::Lane::service("media-watch", kt_time::sched::Class::Background, move |ctx| {
+        let mut offline = std::collections::HashSet::new();
+        for (id, p) in &paths {
+            if ctx.cancelled() {
+                return kt_time::sched::Pump::Idle;
             }
-        })
-        .expect("spawn media watchdog");
-    (set, WatchdogHandle { stop })
+            if !Path::new(p).exists() {
+                offline.insert(*id);
+            }
+        }
+        let mut set = out.lock().unwrap();
+        if *set != offline {
+            *set = offline;
+            crate::wake::now();
+        }
+        kt_time::sched::Pump::Idle
+    });
+    let handle = WatchdogHandle { lane };
+    handle.poke();
+    (set, handle)
 }
 
 /// Timecode “hh:mm:ss.mls Fkk” (item 19 round 6, test 63) — the top line.

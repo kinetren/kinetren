@@ -68,6 +68,46 @@ pub(crate) fn decode_thumb_jpeg(jpeg: &[u8]) -> Option<egui::ColorImage> {
 /// LRU of ready textures (port of kMaxPreviewCacheEntries=384).
 pub const MAX_READY: usize = 384;
 
+/// The UI frame now: the process's count of UI frames (`Work::UiFrame`), a clock that stands
+/// still at rest.
+pub(crate) fn frame_now() -> u64 {
+    kt_time::work::count(kt_time::work::Work::UiFrame)
+}
+
+/// Trim an LRU `order` to `cap`, oldest first, but never a key shown in the last two UI frames
+/// (row 114): a filmstrip or a gallery that shows more than the cap evicted a picture it drew this
+/// frame, ordered it again the next, and went round in a circle. Past the cap only what is on
+/// screen stays, so the overflow is bounded by what one frame draws.
+pub(crate) fn evict_unshown<K: Copy + Eq + std::hash::Hash>(
+    order: &mut VecDeque<K>,
+    cap: usize,
+    shown: &mut HashMap<K, u64>,
+    evict: impl FnMut(&K),
+) {
+    evict_unshown_at(order, cap, shown, frame_now(), evict)
+}
+
+/// [`evict_unshown`] at the UI frame `now`.
+fn evict_unshown_at<K: Copy + Eq + std::hash::Hash>(
+    order: &mut VecDeque<K>,
+    cap: usize,
+    shown: &mut HashMap<K, u64>,
+    now: u64,
+    mut evict: impl FnMut(&K),
+) {
+    let mut kept = 0;
+    while order.len() > cap && kept < order.len() {
+        let Some(old) = order.pop_front() else { break };
+        if shown.get(&old).is_some_and(|f| f + 2 > now) {
+            order.push_back(old);
+            kept += 1;
+            continue;
+        }
+        shown.remove(&old);
+        evict(&old);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ThumbKey {
     pub media: MediaId,
@@ -213,7 +253,6 @@ struct Shared {
     /// Explicit PENDING requests for a duration (the worker removes them by publishing
     /// the result — success or failure).
     probe: Mutex<std::collections::HashSet<MediaId>>,
-    cond: std::sync::Condvar,
     /// LIFO + dedup by key; the second element of the pair is the near-search tolerance in the DB
     /// (ticks): 0 = only the exact key (timeline), >0 — scrubbing the bin may
     /// show the nearest ready thumb (item 14 round 7). ThumbKey is not extended —
@@ -221,6 +260,8 @@ struct Shared {
     queue: Mutex<ThumbQueue>,
     ready: Mutex<HashMap<ThumbKey, Arc<egui::ColorImage>>>,
     order: Mutex<VecDeque<ThumbKey>>, // for LRU eviction of ready
+    /// The UI frame each ready thumb was last drawn in (row 114, [`evict_unshown`]).
+    shown: Mutex<HashMap<ThumbKey, u64>>,
     /// Negative cache: keys for which opening/decoding/encoding failed.
     failed: Mutex<HashSet<ThumbKey>>,
     /// Posters: the moment of the most informative frame of the media (item 4 round 9).
@@ -248,6 +289,10 @@ struct Shared {
 
 pub struct ThumbService {
     shared: Arc<Shared>,
+    /// The service's lane on the scheduler (one-scheduler): a request kicks its pump, which drains
+    /// the queue and goes idle; it pauses while playing (class `Visible`) and closes with the
+    /// service. No thread of its own, no timer.
+    lane: kt_time::sched::LaneRef,
 }
 
 impl ThumbService {
@@ -255,10 +300,10 @@ impl ThumbService {
         let shared = Arc::new(Shared {
             durations: Mutex::new(HashMap::new()),
             probe: Mutex::new(std::collections::HashSet::new()),
-            cond: std::sync::Condvar::new(),
             queue: Mutex::new((VecDeque::new(), HashSet::new())),
             ready: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
+            shown: Mutex::new(HashMap::new()),
             failed: Mutex::new(HashSet::new()),
             posters: Mutex::new(HashMap::new()),
             poster_jobs: Mutex::new(std::collections::VecDeque::new()),
@@ -282,11 +327,18 @@ impl ThumbService {
         *shared.media.lock().unwrap() = media;
         let db_path = project_path.map(|p| p.with_extension("ktindex.db"));
         let sh = shared.clone();
-        std::thread::Builder::new()
-            .name("thumbs".into())
-            .spawn(move || worker(sh, db_path))
-            .expect("spawn thumbs");
-        ThumbService { shared }
+        let state = Mutex::new(WorkerState { db_path, db: None, db_ids: HashMap::new() });
+        let lane = kt_time::sched::Lane::service("thumbs", kt_time::sched::Class::Visible, move |ctx| {
+            let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+            pump(&sh, &mut st, ctx)
+        });
+        ThumbService { shared, lane }
+    }
+
+    /// Wait until the service has nothing to do (tests and live probes).
+    #[cfg(test)]
+    pub(crate) fn wait_idle(&self) -> bool {
+        self.lane.wait_idle(kt_time::test_deadline())
     }
 
     /// How many requests are waiting for the worker — for the guard “scroll/zoom does not request
@@ -331,7 +383,7 @@ impl ThumbService {
         self.shared.kinds.lock().unwrap().remove(&id);
         self.shared.drop_sources.lock().unwrap().insert(id);
         self.invalidate_media(id);
-        self.shared.cond.notify_all();
+        self.lane.kick();
     }
 
     pub fn request(&self, key: ThumbKey) {
@@ -354,12 +406,16 @@ impl ThumbService {
             }
             q.0.push_back((key, tol)); // pop_back = LIFO: the fresh ones first
             drop(q);
-            self.shared.cond.notify_one();
+            self.lane.kick();
         }
     }
 
     pub fn get(&self, key: &ThumbKey) -> Option<Arc<egui::ColorImage>> {
-        self.shared.ready.lock().unwrap().get(key).cloned()
+        let got = self.shared.ready.lock().unwrap().get(key).cloned();
+        if got.is_some() {
+            self.shared.shown.lock().unwrap().insert(*key, frame_now());
+        }
+        got
     }
 
     /// Key state: Failed should NOT be re-requested (the bin must not
@@ -383,7 +439,7 @@ impl ThumbService {
         let mut jobs = self.shared.poster_jobs.lock().unwrap();
         if !jobs.contains(&id) {
             jobs.push_back(id);
-            self.shared.cond.notify_one();
+            self.lane.kick();
         }
         None
     }
@@ -407,18 +463,37 @@ impl ThumbService {
             return *d;
         }
         if self.shared.probe.lock().unwrap().insert(id) {
-            self.shared.cond.notify_one();
+            self.lane.kick();
         }
         None
     }
 }
 
-fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
-    let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(&p).ok());
-    // LRU of open sources (item 1 round 7: previously clear() at >2)
+/// What the pump keeps between its runs: the sidecar (opened at the first run) and its media ids.
+/// The open SOURCES are not kept: a run may land on another worker of the pool, and a decoder
+/// instance lives on the one thread that opened it (invariant 5) — a run opens what it needs and
+/// drops it when it ends.
+struct WorkerState {
+    db_path: Option<PathBuf>,
+    db: Option<Option<kt_media::index::MediaIndexDb>>,
+    db_ids: HashMap<MediaId, i64>,
+}
+
+/// One run of the service: drain the queue (thumbs LIFO, then probes and posters), stop at a pause
+/// (`More`: the scheduler runs it again on resume) or when nothing is left (`Idle`).
+fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
+    use kt_time::sched::Pump;
+    let WorkerState { db_path, db, db_ids } = st;
+    let mut db = db.get_or_insert_with(|| db_path.as_ref().and_then(|p| kt_media::index::MediaIndexDb::open(p).ok()));
+    // LRU of open sources (item 1 round 7: previously clear() at >2), for this run only
     let mut sources: SourceLru<Box<dyn kt_media::MediaSource>> = SourceLru::new(MAX_OPEN_SOURCES);
-    let mut db_ids: HashMap<MediaId, i64> = HashMap::new();
     loop {
+        if ctx.cancelled() {
+            return Pump::Idle;
+        }
+        if ctx.paused() {
+            return Pump::More;
+        }
         // discard sources whose parameters were reconfigured (item 412):
         // otherwise the worker would keep drawing with the old GeneratorSource
         {
@@ -428,24 +503,20 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 db_ids.remove(&id);
             }
         }
-        // condvar instead of 33 wakeups/s on an empty queue (item 1);
-        // probe requests wake the loop even WITHOUT keys in the queue (item 1 round 7 —
-        // otherwise they starve when the failed filter empties the queue)
+        // probe requests run even WITHOUT keys in the queue (item 1 round 7 — otherwise they
+        // starve when the failed filter empties the queue); nothing at all — the run ends, and
+        // the next request kicks the lane (no timer: row 174)
         let next = {
             let mut q = shared.queue.lock().unwrap();
-            loop {
-                if let Some(kt) = q.0.pop_back() {
-                    q.1.remove(&kt.0);
-                    break Some(kt);
-                }
-                if !shared.probe.lock().unwrap().is_empty()
-                    || !shared.poster_jobs.lock().unwrap().is_empty()
-                {
-                    break None;
-                }
-                let (guard, _timeout) =
-                    shared.cond.wait_timeout(q, std::time::Duration::from_secs(2)).unwrap();
-                q = guard;
+            if let Some(kt) = q.0.pop_back() {
+                q.1.remove(&kt.0);
+                Some(kt)
+            } else if !shared.probe.lock().unwrap().is_empty()
+                || !shared.poster_jobs.lock().unwrap().is_empty()
+            {
+                None
+            } else {
+                return Pump::Idle;
             }
         };
         // duration requests (bin scrubbing): the packet index makes
@@ -486,7 +557,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
         if let Some(pid) = poster_job
             && !shared.posters.lock().unwrap().contains_key(&pid)
         {
-            let found = find_poster(&shared, &mut db, &mut sources, pid);
+            let found = find_poster(shared, db, &mut sources, pid);
             shared.posters.lock().unwrap().insert(pid, found);
             crate::wake::soon();
         }
@@ -504,7 +575,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             continue;
         }
         let Some(path) = shared.media.lock().unwrap().get(&key.media).cloned() else {
-            fail(&shared, key); // unknown media: do not request forever
+            fail(shared, key); // unknown media: do not request forever
             continue;
         };
         let path = &path;
@@ -553,7 +624,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                     None => {
                         // NOT a dummy source (item 1 round 7): an honest failure
                         shared.durations.lock().unwrap().entry(key.media).or_insert(None);
-                        fail(&shared, key);
+                        fail(shared, key);
                         continue;
                     }
                 }
@@ -587,7 +658,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 ok = true;
             }
             if !ok {
-                fail(&shared, key); // negative cache: without an eternal seek+reopen
+                fail(shared, key); // negative cache: without an eternal seek+reopen
                 continue;
             }
         }
@@ -597,7 +668,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             // a sidecar JPEG that does not decode is a failure, not a key that every frame orders
             // again (input-without-work)
             Some(None) => {
-                fail(&shared, key);
+                fail(shared, key);
                 continue;
             }
             None => None,
@@ -607,11 +678,10 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             let mut order = shared.order.lock().unwrap();
             ready.insert(key, Arc::new(ci));
             order.push_back(key);
-            while order.len() > MAX_READY {
-                if let Some(old) = order.pop_front() {
-                    ready.remove(&old);
-                }
-            }
+            let mut shown = shared.shown.lock().unwrap();
+            evict_unshown(&mut order, MAX_READY, &mut shown, |old| {
+                ready.remove(old);
+            });
             crate::wake::soon();
         }
     }
@@ -889,6 +959,58 @@ mod key_tests {
     /// which `gen:` does not have: the worker goes straight to the factory source).
     /// The service gives the look (video without audio), “no duration” (0) and
     /// a real thumb of the given color.
+    /// Test t2237 (one-scheduler, row 114): past the cap the LRU evicts what the last two UI
+    /// frames did not draw, never what they did: a filmstrip wider than the cap ordered its own
+    /// pictures again every frame, in a circle. Once the frames move on, the cap holds again.
+    #[test]
+    fn t2237_the_cap_never_evicts_what_is_on_screen() {
+        let mut order: VecDeque<u32> = (0..10).collect();
+        let mut shown: HashMap<u32, u64> = (0..6).map(|k| (k, 100)).collect();
+        let mut gone = Vec::new();
+        evict_unshown_at(&mut order, 4, &mut shown, 101, |k| gone.push(*k));
+        gone.sort();
+        assert_eq!(gone, vec![6, 7, 8, 9], "a key drawn this frame was evicted, or an undrawn one kept");
+        assert_eq!(order.len(), 6, "what is on screen stays past the cap");
+        // two frames later nothing of it is on screen: the cap holds, oldest first
+        evict_unshown_at(&mut order, 4, &mut shown, 103, |k| gone.push(*k));
+        assert_eq!(order.len(), 4);
+        assert_eq!(&gone[4..], &[0, 1]);
+    }
+
+    /// Test t2238 (one-scheduler): the thumbnail service has no thread of its own; while a player
+    /// plays its lane starts nothing (the owner's "Да", H15), and the request is served on resume.
+    #[test]
+    fn t2238_thumbnails_pause_while_playing_and_resume() {
+        crate::plugins::install();
+        let mut project = kt_model::Project::new(kt_model::ProjectSettings {
+            fps: 30,
+            width: 640,
+            height: 360,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: false,
+        });
+        let id = MediaId(1);
+        project.media.push(kt_model::MediaRef::new(id, "gen:solid:c=2288ff"));
+        let svc = ThumbService::start(&project, None);
+        let key = ThumbKey { media: id, t: 0 };
+        let playing = kt_time::sched::Vote::new(kt_time::sched::why::PLAYING);
+        playing.set(true);
+        svc.request(key);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(matches!(svc.state(&key), ThumbState::Missing), "a thumbnail was made while playing");
+        drop(playing);
+        assert!(svc.wait_idle(), "the lane never ran after the pause");
+        assert!(matches!(svc.state(&key), ThumbState::Ready(_)), "the request was lost across the pause");
+        #[cfg(target_os = "linux")]
+        for e in std::fs::read_dir("/proc/self/task").into_iter().flatten().flatten() {
+            let comm = std::fs::read_to_string(e.path().join("comm")).unwrap_or_default();
+            assert_ne!(comm.trim(), "thumbs", "a thumbnail thread of its own is back");
+        }
+    }
+
     #[test]
     fn t476_generator_thumbs_without_a_file() {
         crate::plugins::install();

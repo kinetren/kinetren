@@ -52,3 +52,26 @@ fn t1625_one_freeze_is_one_record() {
     f.clear();
     assert_eq!(f.stalls().0, 2);
 }
+
+/// Test 2303 (orch stage 9): a play after a rest is no freeze. The render thread parks on a pause
+/// with no clock (one-scheduler), so its last look before the play is seconds old; the watch
+/// counted the rest as standing and every play after a second of pause said "playback froze" (the
+/// live `diagnostics` read the extra row in the Diagnostics window).
+#[test]
+fn t2303_a_play_after_a_parked_pause_is_no_freeze() {
+    let f = FlightRecorder::new();
+    let mut w = StallWatch::new(0);
+    // the last look before the park: paused at the start
+    assert_eq!(w.tick(1_000, false, 1.0, 0), None);
+    // 3.5 s later the play wakes the thread: the head has not moved yet, by right
+    let t = run(&mut w, &f, 4_562, 5_400, 1.0, 0);
+    assert_eq!(stalls(&f), 0, "the rest before a play is not a freeze");
+    // a real freeze after the play is still one
+    run(&mut w, &f, t, t + 1_500, 1.0, 0);
+    assert_eq!(stalls(&f), 1, "a head that stands a second into the play is a freeze");
+    // the watch as built, then a play: its first look starts the wait
+    let f = FlightRecorder::new();
+    let mut w = StallWatch::new(0);
+    run(&mut w, &f, 10_000, 10_900, 1.0, 0);
+    assert_eq!(stalls(&f), 0, "the first playing look starts the wait, not the thread's start");
+}

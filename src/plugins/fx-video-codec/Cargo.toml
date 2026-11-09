@@ -13,3 +13,5 @@ kt-plugin-api = { workspace = true }
 [dev-dependencies]
 # the compute host for the encoder (compute-kernels)
 kt-gpu = { workspace = true }
+# the trace records of a compile (stream-layout-per-build)
+kt-time = { workspace = true }

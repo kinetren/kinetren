@@ -651,6 +651,12 @@ squeezed the bin all the time, and diagnosing a slow spot meant looking in two p
   stretch to the new height, the log stays at the bottom; leave the mouse → nothing moves
 - **TEST** t1147 (`src/apps/kt-app/src/diag_tests.rs`)
 
+#### Scenario: Diagnostics opens at its floors
+- **WHEN** the Diagnostics window opens for the first time (egui knows no size of it) on a screen with the room
+- **THEN** it opens tall enough for the instruments, the three graphs at their floor and the journal's six lines: the third graph ends above the journal's head row, and a corner drag gives each graph a quarter of the growth
+- **PATH** click the gauge button → the window shows the Performance rows, the memory line, all three graphs whole and the journal under them, nothing under a fold; drag its corner down → each graph grows by a quarter of what the window grew
+- **TEST** t2304 (`src/apps/kt-app/src/diag_tests.rs`)
+
 #### Scenario: An open Diagnostics window does not heat an idle program
 - **WHEN** the Diagnostics window is open and nothing plays or moves
 - **THEN** the frame asks for its next repaint no sooner than the idle tick (≥ 100 ms) and the
@@ -1617,3 +1623,43 @@ or where: "АГЕНТЫ НЕ ДУМАЛИ" about the tool he has to bring the pr
 - **WHEN** two readings of the totals are taken around some frames
 - **THEN** the per-frame average of every stage is their difference over the frames, and no frame gives no number
 - **TEST** live `ui_frame` (`src/scripts/live/ui_frame.py`)
+
+### Requirement: The Diagnostics window shows where the memory went
+Under the cache occupancy bar the Diagnostics window SHALL show one line of the memory ledger: the
+kept composites, the stream history, the decoded frames and the device buffers in megabytes, and the
+room the machine gives (the bases and the growth budget). It SHALL read the ledger's counters only and
+SHALL ask no repaint of its own.
+Why: found-defects 310 and F-RES-011 — the occupancy bar showed the decoded frames alone, so a loop
+that was not kept whole gave no sign of which memory had run out.
+
+#### Scenario: The ledger line is painted
+- **WHEN** the Diagnostics window is open while the present memo and the burst cache hold bytes
+- **THEN** a line names the kept composites, the history, the frames and the device buffers with their megabytes and the room, under the occupancy bar
+- **PATH** open View → Diagnostics… → under the cache occupancy bar a "Memory" line reads kept, history, frames, device and the room in MB; play a loop → the kept number grows lap by lap
+- **TEST** t2301 (`src/apps/kt-app/src/diag_tests.rs`)
+### Requirement: Keys and clicks a slow frame reads keep their meaning
+Every command key a frame reads SHALL run, once per press, in the order pressed; a command that opens a
+window or writes the file runs once a frame, and one that opens a text field ends the frame's keys. Esc
+and Enter run once per press. egui's double-click and click windows SHALL widen by the busy frame the
+program measures (`KeyClock::busy`, the smoothed gap before a frame the previous one asked for at once);
+the harness keeps egui's windows, its clock being a fixed step.
+Why: under the full live run a slow frame read → → → ← together and the head did not move (a set of the
+frame's commands: +1 −1), two Ctrl+Z undid one edit, and a double click whose two clicks were read a
+600 ms frame apart was two single clicks (`formula`, `lessons`, `forms`; found-defects 99, 166). egui
+stamps an input with the frame that read it: a gesture's length is known to a busy frame.
+
+#### Scenario: Several keys in one frame
+- **WHEN** one frame reads → → → ← with the head on a frame boundary; then one frame reads Ctrl+Z twice
+  after two edits
+- **THEN** the head is two frames on; both edits are undone
+- **PATH** the cursor stands on a frame → the person taps → three times and ← once quickly → the cursor
+  is two frames on, whatever the machine's frame time; two quick Ctrl+Z → both edits are gone
+- **TEST** t2211 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: The click windows widen by the busy frame
+- **WHEN** the program has measured frames of 450 ms
+- **THEN** egui's double-click window is 0.3 s + 0.45 s and its click window 0.8 s + 0.45 s; in the
+  harness both stay egui's
+- **PATH** on a loaded machine the person double-clicks an event → its effects window opens, as on a
+  free machine
+- **TEST** t2214 (`src/apps/kt-app/src/layout_tests.rs`); live `formula`, `lessons`, `forms`

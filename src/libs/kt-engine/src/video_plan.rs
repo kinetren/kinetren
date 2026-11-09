@@ -335,10 +335,17 @@ pub trait VideoGpuExec: Send + Sync {
     /// Keep under `key` a complete composite another executor made (the slow-chain device's
     /// bytes), so the moment plays without work on the next lap.
     fn keep(&self, _key: u64, _w: u32, _h: u32, _rgba: &[u8]) {}
+    /// The loop the preview plays: `Some(moments)` — keep every composite of it (the executor asks the
+    /// memory ledger for them at the size it presents, memory-ledger D4), `None` — no loop.
+    fn keep_loop(&self, _moments: Option<usize>) {}
     /// Compile, off the caller's thread, what the effects `ids` reach on this executor, so their
     /// first frame does not (pipeline-prewarm D5). Returns at once and never waits for a frame;
     /// frames before it is done behave as before it was asked.
     fn prewarm(&self, _ids: &[String]) {}
+    /// Compile, off the caller's thread, the point-wise run shapes a project reaches (plugin ids in
+    /// chain order, fused-pointwise-runs), so a run's first frame runs its generated pass. Returns at
+    /// once; until a shape is ready its frames run the stages' own passes (the same bytes).
+    fn prewarm_runs(&self, _runs: &[Vec<String>]) {}
     /// Wait until what `prewarm` started is done (an export before its first frame).
     fn settle_prewarm(&self) {}
 }

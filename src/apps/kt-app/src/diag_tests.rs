@@ -156,6 +156,7 @@ fn t1146_diagnostics_carries_every_line_and_three_graphs() {
         k::perf::V_SKIPPED,
         k::perf::COMPOSE,
         k::perf::CACHE_OCCUPANCY,
+        k::perf::MEMORY_LEDGER,
         k::perf::LOG_TITLE,
     ] {
         assert!(has(&head(key)), "the window lacks the line “{}…”", head(key));
@@ -442,4 +443,82 @@ fn t1969_a_mark_from_the_button_and_from_the_key() {
     let said = h.state().notices.back().map(|n| n.text.clone()).unwrap_or_default();
     let head = tr(k::msg::MOMENT_MARKED).split('{').next().unwrap_or_default().to_string();
     assert!(said.starts_with(&head), "the program does not say the moment is marked: {said:?}");
+}
+
+/// t2301 (memory-ledger): under the cache occupancy bar the window names where the memory went —
+/// the kept composites, the history, the frames, the device buffers — and the room, in MB.
+#[test]
+fn t2301_the_ledger_line_is_painted_under_the_occupancy_bar() {
+    let held = kt_time::mem::open(kt_time::mem::Tenant::Kept, 0);
+    held.set(3 << 20);
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+    let win = diag_rect(&h).expect("the Diagnostics window is drawn");
+    let inside = texts_in(&h, win);
+    let line = |key| inside.iter().find(|(t, _)| t.starts_with(&head(key))).cloned();
+    let (occ, occ_rect) = line(k::perf::CACHE_OCCUPANCY).expect("the occupancy line");
+    let (mem, mem_rect) = line(k::perf::MEMORY_LEDGER).unwrap_or_else(|| panic!("no ledger line under “{occ}”: {inside:?}"));
+    assert!(mem_rect.top() > occ_rect.bottom() + 4.0, "the ledger line is under the occupancy bar: {occ_rect:?} {mem_rect:?}");
+    let kept: u64 = mem
+        .trim_start_matches(&head(k::perf::MEMORY_LEDGER))
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("the kept composites' MB first: {mem}"));
+    assert!(kept >= 3, "the kept composites held: {mem}");
+    let unit = tr(k::perf::MEMORY_LEDGER).rsplit('}').next().unwrap_or_default().trim().to_string();
+    assert!(mem.ends_with(&unit), "the room in the catalog's unit “{unit}”: {mem}");
+    drop(held);
+}
+
+/// t2304 (orch stage 9): the Diagnostics window opens at its floors where the screen has the room —
+/// the instruments, the three graphs at their floor and the journal's six lines — so the third
+/// graph is not under the fold, and a corner drag gives each graph its quarter of the growth (D2).
+/// The fixed 720-point default fell under the floors as rows were added: the live `diagnostics`
+/// drag first paid off the shortfall and the graphs grew 9 points of 140.
+#[test]
+fn t2304_diagnostics_opens_at_its_floors() {
+    let mut h = crate::layout_tests::harness();
+    h.set_size(egui::vec2(1440.0, 1100.0));
+    h.step();
+    // the rows a working program has and a bare harness does not: the UI frame's two lines and the
+    // journal button's stall count (the live run's rows put the floors past the fixed default)
+    {
+        let app = h.state_mut();
+        app.perf.frame_ms = Some([0.5; crate::frame_cost::Stage::ALL.len()]);
+        app.player.flight.push(kt_engine::flight::Ev::Stall, 1_500, 0);
+        app.perf.diag_open = true;
+    }
+    for _ in 0..3 {
+        h.step();
+    }
+    let win = diag_rect(&h).expect("the Diagnostics window is drawn");
+    let churn = probe("diag.graph.churn");
+    let mark = probe("diag.mark");
+    assert!(
+        churn.bottom() < mark.top(),
+        "the third graph opens under the fold: graph {churn:?}, journal head {mark:?}, window {win:?}"
+    );
+    assert!(win.bottom() <= 1100.0, "the window leaves the screen: {win:?}");
+    let before: Vec<f32> = ["diag.graph.quality", "diag.graph.decode", "diag.graph.churn"].iter().map(|g| probe(g).height()).collect();
+    drag_corner(&mut h, egui::vec2(100.0, 100.0));
+    let after_win = diag_rect(&h).unwrap();
+    let grown = after_win.height() - win.height();
+    assert!(grown > 60.0, "the corner drag did not enlarge the window: {win:?} → {after_win:?}");
+    for (i, g) in ["diag.graph.quality", "diag.graph.decode", "diag.graph.churn"].iter().enumerate() {
+        let d = probe(g).height() - before[i];
+        assert!(d >= 0.25 * grown - 2.0, "{g} took {d:.1} of {grown:.1}: a graph takes a quarter of the growth");
+    }
+}
+
+/// t2302 (memory-ledger D11): opening a project gives its preview decoders a render's threads by the
+/// memory measured then, not libavcodec's auto (a thread per core).
+#[test]
+fn t2302_the_preview_decoders_take_a_renders_threads() {
+    kt_ffmpeg::set_decode_threads(0);
+    let _h = crate::layout_tests::harness();
+    let n = kt_ffmpeg::decode_threads_set();
+    assert!(n == 2 || n == 4, "a render's rule, not auto: {n}");
 }

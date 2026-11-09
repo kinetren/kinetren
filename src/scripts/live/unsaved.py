@@ -44,6 +44,9 @@ def main(out):
         y = app.lane_y("video", 0)
         x0 = app.x_at(src.mid())
         app.drag(x0, y, x0 + 160.0, y)
+        # the consequence from fresh dumps (test-hygiene): the dump right after the release can
+        # be one written before the batch landed
+        app.until(lambda: app.live_clips() and max(s for s, _ in app.live_clips()) > src.start)
         app.shot("moved")
         moved = app.live_clips()
         app.expect(

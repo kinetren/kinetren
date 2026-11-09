@@ -245,12 +245,12 @@ Why: the cache is quality-exact; a clip with a step, warmed properly, would look
 - **TEST** live scenario `src/scripts/live/cached_range.py`
 
 ### Requirement: Memoization of the composite and its key
-A composed frame SHALL be memoized in the preview as a function of the whole plan, keyed by the plan key: on the readback path in the executor's readback memo, on the display path in the executor's present memo (`PresentMemo`), where presenting a held key runs only the display pass (`GpuStages.replayed`, the work row `composite_replays`). Only complete frames are kept; the present memo is bounded (512 MB), least recently shown first. The key SHALL include the hash of the chain with its
+A composed frame SHALL be memoized in the preview as a function of the whole plan, keyed by the plan key: on the readback path in the executor's readback memo, on the display path in the executor's present memo (`PresentMemo`), where presenting a held key runs only the display pass (`GpuStages.replayed`, the work row `composite_replays`). Only complete frames are kept. The present memo SHALL keep its 512 MB base and, while a loop region is set, SHALL want every composite of the region at the size it presents, plus an eighth; the memory ledger grants that want before any other tenant's growth (media-index). Without a loop or a grant it is bounded by its base, least recently shown first. The key SHALL include the hash of the chain with its
 curves, the geometry of the clip, the resolved camera (it is selected per frame and is not visible to
 a static hash), the masks of the frame, the decode step of the input, the parameters of the
 transition kind, the step of the reel and the blend flag. Export MUST NOT memoize (each t is
 composed once).
-Why: any parameter that affects the bytes and is not in the key is a stale value, which shows up as "did not apply". preview-throughput D2 moved the preview to the display path, which had no memo: a covered range was composed again on every lap — 16 V-fps on the owner's project (kkt-26.11.07b, line 3).
+Why: any parameter that affects the bytes and is not in the key is a stale value, which shows up as "did not apply". preview-throughput D2 moved the preview to the display path, which had no memo: a covered range was composed again on every lap — 16 V-fps on the owner's project (kkt-26.11.07b, line 3). found-defects 310: the constant 512 MB held 582 composites at 640×360 and 60 at 1080p, and the owner's region is 665 frames, so its laps composed again every time (memory-ledger).
 
 #### Scenario: The step is in the key
 - **WHEN** one clip at one Quality is composed from input 1× and from input 2×
@@ -266,6 +266,16 @@ Why: any parameter that affects the bytes and is not in the key is a stale value
 - **WHEN** ten moments are presented twice, then one event's level changes and they are presented again
 - **THEN** the second presents are kept composites with nothing composed and the same picture; after the edit exactly the moments of the edited event compose again
 - **TEST** t1934 (`src/libs/kt-gpu/tests/preview_display.rs`)
+
+#### Scenario: A granted loop is kept whole past the base
+- **WHEN** the present memo's base holds ten composites, a loop of thirty moments is announced and granted, and the loop is presented three times
+- **THEN** the second and third laps compose nothing and show every moment from the kept composites, the same pictures as the first; the memo holds the thirty past its base; the loop cleared, it is back at its base at once
+- **TEST** t2292 (`src/libs/kt-gpu/tests/preview_display.rs`)
+
+#### Scenario: The player asks for the loop's composites
+- **WHEN** a loop region is set on a playing player with a display executor, the preview size changes, and the region is cleared
+- **THEN** the executor is told the region's moment count each time it changes, its want in the ledger is the region's composites at the presented size plus an eighth, and with no region the want is the base
+- **TEST** t2296 (`src/libs/kt-engine/tests/memory_ledger.rs`)
 
 ### Requirement: The mapping "tick → source frame" is one function for all consumers
 The choice of the source frame (reverse, stretch by the integral of the signed speed,
@@ -832,3 +842,206 @@ project), and prefetch built another.
 - **WHEN** the edits of t2004 are applied in turn
 - **THEN** the incremental video build's state text (every layer, the cameras, the stages, the nested reels) equals the fresh build's
 - **TEST** t2004 (`src/libs/kt-engine/tests/shared_build.rs`)
+
+### Requirement: A run of point-wise stages is one generated pass
+`plan_chain` SHALL emit `PlanOp::PointRun { i, j, res_scale }` for two or more consecutive chain
+stages at a barrier position that each fuse in runs (`kt_plugin_api::fuses_in_runs`: class
+`PointWise`, a `tap_<id>` WGSL, no barrier kernel); audio slots, stream stages and identity Geometry
+nodes between them are transparent. An active geometry step, a barrier, a point-wise plugin with a
+barrier kernel of its own (noise, greenscreen), a layer-strength slot and a stop (a strength snapshot,
+a mask point) SHALL end a run; a lone stage SHALL stay a `Barrier` op. A run takes the resolution its
+first stage would have taken as a barrier (the K× rule unchanged).
+
+The GPU executor SHALL run a `PointRun` as ONE pass generated for the run's shape (the sequence of
+its plugin ids): one texel load, each stage's `tap_<id>` in chain order with the stage's numbers from
+the pass's uniform, the stage's rounding and clamp to 0…255 after each stage — what the stage's own
+pass stores — and one store. A run longer than the uniform's room (`MAX_RUN_STAGES` = 32) SHALL be
+cut into pieces of that room. A shape's pipeline SHALL be compiled and warmed on the device's warm
+worker (a frame never compiles); until it is warm, and wherever the executor splits it, the stages
+SHALL run as their own passes. A warm shape SHALL be tried against its own passes on interleaved
+frames, timed by the pass timer; when the fused pass is slower per pixel than the sum of its parts
+(minima of the tries) it SHALL be split into two halves, each tried again. On a device without
+timestamps a warm shape SHALL run fused. The player SHALL hand the run shapes a project reaches to
+the executor's `prewarm_runs` with its effect ids.
+
+The fused and the own-pass forms SHALL give frames within 1 LSB per former boundary (the owner's
+agreement, H16); on the reference software adapter they are byte-equal, so the measured switch never
+moves a stored or exported frame.
+Why: engine-audit M7, row 10: each point-wise effect read and wrote the whole frame (8 bytes a pixel,
+2–3 ms at 1080p on llvmpipe, gpu-pass-cost D2). Measured after: design D-measure.
+
+#### Scenario: The plan names runs and ends them where the class says
+- **WHEN** chains of point-wise, geometry, barrier, noise/greenscreen, audio, strength and mask stages are planned, with and without stops and at K×
+- **THEN** every two or more consecutive fusable stages form one `PointRun`, a lone one stays a `Barrier`, every other class ends a run, and the K of a run is the K its first stage had
+- **TEST** t2191 (`src/libs/kt-fx/tests/point_runs.rs`)
+
+#### Scenario: Fused equals unfused over every pair and a long run
+- **WHEN** every ordered pair of fusable point-wise plugins (defaults and a tuned value set), a six-stage run, a 40-stage run (over the room) and a run inside a strength slot and beside a geometry series compose at 1080p fused, and again with fusion off
+- **THEN** each frame is within 1 LSB per former boundary of its unfused frame, and on a software adapter byte-equal; the fused frame runs one pass per run piece
+- **TEST** t2190 (`src/libs/kt-gpu/tests/fused_runs.rs`)
+
+#### Scenario: A run shape compiles beside its frame
+- **WHEN** a frame meets a run shape no frame met, on an engine whose core and effects are warm
+- **THEN** the frame runs the own passes, draws nothing cold and creates no pipeline; after the worker settles the shape is ready and the next frame runs one pass with the first frame's bytes; a shape handed to `prewarm_runs` is ready before its first frame
+- **TEST** t2192 (`src/libs/kt-gpu/tests/fused_runs.rs`)
+
+#### Scenario: The switch is measured on the device
+- **WHEN** a trial records fused passes slower than the sum of their parts for a four-stage shape, then its halves faster
+- **THEN** the shape is split into the two halves, each half is tried and kept fused; with faster fused tries the whole shape stays fused; with no timestamps it is fused at once
+- **TEST** t2193 (`src/libs/kt-gpu/src/runs.rs`)
+
+#### Scenario: Preview and export agree on a run
+- **WHEN** a project with a point-wise run is exported and the same moment composed for the preview, on a fused engine and on one with fusion off
+- **THEN** the four frames are byte-equal on a software adapter
+- **TEST** t2197 (`src/libs/kt-gpu/tests/fused_runs.rs`)
+
+#### Scenario: The player prewarms the project's run shapes
+- **WHEN** a project's track holds Color Grade, Posterize and Vignette, then a clip a run of two inside a strength slot, then an edit adds nothing
+- **THEN** `run_shapes` gives the three-stage and the two-stage shape, and the executor is asked for the runs again only when the set changed
+- **TEST** t2196 (`src/libs/kt-engine/tests/prewarm_reach.rs`)
+
+### Requirement: One arbiter per ring orders every device's submissions by class
+Every device the program opens (the display's, the offline engine's, the export's, the compute host's)
+SHALL register on the ring of its adapter: the devices of one hardware adapter share one ring whatever
+their backend; a software rasterizer's device is a ring of its own. Every submission except the
+display's present SHALL be admitted by its ring, the waiting submission of the highest class first
+(`now`, `answer`, `near`, `visible`, `background`, `offline`), and no submission of a class is admitted
+while one of a higher class waits. The class is the one its caller runs as (the compose thread: now;
+the prefetch thread: near; a scheduler job: its lane's class; an export: offline); an untagged thread
+is background. Admission changes timing only: the passes, their order and their bytes do not change
+(invariant 11).
+Why: `docs/engine-audit.md` M5, rows 134 and 149: the devices of one card share its ring and the
+compute host ran whoever submitted first, so the frame on screen waited behind look-ahead and offline
+work.
+
+#### Scenario: The highest waiting class is admitted first
+- **WHEN** a ring holds a piece in flight and an offline, a near and a now submission wait for it
+- **THEN** the now submission is admitted when the piece completes, then the near, then the offline, whatever order they came in
+- **TEST** t2250 (`src/libs/kt-gpu/src/arbiter.rs`)
+
+#### Scenario: Devices of one card share a ring; a software device does not
+- **WHEN** two hardware adapters' facts name the same card on Vulkan and on GL, and two llvmpipe devices are opened
+- **THEN** the two hardware devices register on one ring, and each llvmpipe device on a ring of its own
+- **TEST** t2252 (`src/libs/kt-gpu/src/arbiter.rs`)
+
+#### Scenario: A thread's class follows its work
+- **WHEN** a scheduler lane of class visible runs a job, a thread sets class near for a block, and a fresh thread asks
+- **THEN** the job sees visible, the block near and the thread outside it its own, the fresh thread background
+- **TEST** t2256 (`src/libs/kt-time/src/sched/tests.rs`)
+
+### Requirement: A ring that carries a display holds at most one bounded piece in front of it
+On a ring that carries the editor's display device the device time of admitted, uncompleted
+submissions SHALL stay under the ring's bound, except that one piece is always admitted on an idle
+ring. The bound is half a frame period of the preview's project (20 ms at 25 fps), a general rule; a
+lower-class frame or compute job longer than it SHALL be cut at pass (dispatch) boundaries into pieces
+whose device time, as the pass timer measured those passes on this machine, stays under the bound (a
+pass longer than the bound is a piece of its own; a pass never measured ends its piece). A piece
+waits for the completion of the one before. A ring with no display neither bounds nor cuts: an
+export's ring of frames and a software device keep their pipelining. The cut frame's bytes SHALL equal
+the uncut frame's.
+Why: row 149 — on a real card the display and the offline device share the graphics ring, and one
+long submission held the display. Reproduced on llvmpipe by running the preview and the offline work
+on ONE device.
+
+#### Scenario: The in-flight bound applies only with a display
+- **WHEN** a ring with a display holds pieces whose predicted time reaches the bound, and the same pieces wait on a ring without one
+- **THEN** the displayed ring admits the next only when the earlier completes (one piece always fits an idle ring), the other admits them all
+- **TEST** t2251 (`src/libs/kt-gpu/src/arbiter.rs`)
+
+#### Scenario: A long frame is cut on a displayed ring with the same bytes
+- **WHEN** a heavy chain (VHS Tape, Camera ISP) is executed twice at 1080p by an offline engine on a device that also carries a display, once warm with its passes measured
+- **THEN** the measured run is submitted in more than one piece, no piece but a single pass predicted over the bound, and its bytes equal the uncut run's
+- **TEST** t2253 (`src/libs/kt-gpu/tests/arbiter.rs`)
+
+#### Scenario: The display's latency on a shared device is bounded
+- **WHEN** the preview presents a light frame every frame period on one device while an offline heavy chain and a Datamosh history run on the same device, with the arbiter and without it
+- **THEN** with it the display's frame waits for at most one piece (its latency stays below the offline frame's own device time); without it the display waits for whole offline frames
+- **TEST** t2254 (`src/libs/kt-gpu/tests/arbiter.rs`), bench `kt-cli gpu-share`
+
+#### Scenario: The compute host admits the frame on screen first
+- **WHEN** a near-class Datamosh job runs on the compute host and a near and a now job wait
+- **THEN** the now job is admitted next, and every job's admission is in the trace with its class
+- **TEST** t2255 (`src/libs/kt-gpu/tests/arbiter.rs`)
+
+### Requirement: The preview's present waits without polling the device
+`wait_presented` SHALL NOT poll the display device on a fixed short period: it sleeps on the frame's
+work-done callback for the device time the pass timer measured for the frame (any submission on the
+device fires the callback early), then checks once, and waits again for half the remaining guess, at
+least a millisecond. A blocking wait on the display device stays forbidden (the surface's present
+waits for its lock).
+Why: row 272 — the present was waited for by a poll every millisecond.
+
+#### Scenario: A present is waited for by a few checks
+- **WHEN** the preview presents frames of a measured chain on a device and waits for each
+- **THEN** each wait ends after the frame completed, with at most a few non-blocking checks (none per millisecond of device time)
+- **TEST** t2260 (`src/libs/kt-gpu/tests/arbiter.rs`)
+
+### Requirement: The preview's stream memo is sized by the loop and the machine
+The preview's stream memo SHALL start at 256 MB and, while a loop region is set over a stream stage,
+SHALL want what that loop keeps — the stage's picture a position (half the stage's RGBA
+frame), every position of the region plus an eighth, over the 256 MB working set — and never above a
+quarter of the memory the process can still take, measured at run time when the loop or the stage's
+size changes. The memory ledger SHALL grant that want after the kept composites' (media-index), and the
+memo's bound SHALL be its base plus its grant. The codec's per-frame working state (the clean encoder's) SHALL be evicted before the
+pictures, past the newest few entries the next frame reads. With no loop, or with
+the memory unknown, it SHALL be 256 MB; a smaller bound SHALL drop the least recently used entries at
+once. The sizing SHALL be a trace record.
+
+Why: found-defects 143 — at 1080 lines 256 MB held about 20 positions, so a longer loop recomputed its
+codec history every lap; a constant fits one machine only. memory-ledger: the memo's quarter and the
+present memo's growth were two budgets that did not see each other.
+
+#### Scenario: The bound follows the loop within the machine
+- **WHEN** the bound is asked with no loop, with a loop needing less than the base, with one needing more on a machine with plenty and with little memory, and with the memory unknown
+- **THEN** it is the base, the base plus the short loop's pictures, the base plus the loop's pictures, a quarter of the memory (not below the base), and the base; sizing the preview's memo sets its bound, drops what a smaller bound does not hold, and leaves a `stream_memo_cap` record
+- **TEST** t2275 (`src/libs/kt-engine/tests/stream_memo.rs`)
+
+#### Scenario: A loop the sized memo holds computes nothing on its second lap
+- **WHEN** a mosh is advanced over a loop of positions twice, with a memo sized for that loop and with one that holds half of it
+- **THEN** the second lap of the sized memo runs no encoder or decoder job and gives the same frames; the half memo recomputes
+- **TEST** t2276 (`src/plugins/fx-video-codec/tests/packed.rs`)
+
+#### Scenario: The kept composites come before the history
+- **WHEN** the stream memo is sized for a loop while the kept composites want most of the growth budget, then the composites' want drops
+- **THEN** the memo's bound is its base plus what the composites left, never above its own want; when the composites want less, the memo is granted its want again at its next sizing
+- **TEST** t2297 (`src/libs/kt-engine/tests/stream_memo.rs`)
+
+### Requirement: A loop longer than the present memo keeps a part of it
+When the present memo cannot hold the loop it was told of, a new composite SHALL NOT be admitted over
+a kept one that the current lap has shown or will still show (one shown within the loop's length of
+presents); it SHALL be admitted over one older than that, least recent first. Without a loop the memo
+SHALL stay least recently shown first.
+Why: an LRU over a cycle longer than itself evicts exactly the moment the next lap reads first, so a
+loop one frame too long for the memo kept nothing; with this rule it keeps what fits, lap after lap.
+
+#### Scenario: A loop three times the memo keeps a third
+- **WHEN** a memo holding ten composites is told of a loop of thirty moments with no grant, and the loop is presented three times
+- **THEN** the second and third laps each show ten moments from the kept composites and compose twenty; without the loop told, the second lap shows none from them
+- **TEST** t2293 (`src/libs/kt-gpu/tests/preview_display.rs`)
+
+### Requirement: A frame decoded again finds its kept composite
+A moment whose decoded frames were evicted from the burst cache and decoded again with the same bytes
+SHALL be presented from its kept composite: the re-decoded entries take back their serials, so the
+plan key is the one the composite was kept under.
+Why: found-defects 119 — a frame evicted and decoded again missed its kept composite and was composed
+again; the serial return of structured-telemetry (t2152) fixed the cache, and this holds it end to end.
+
+#### Scenario: Evicted, decoded again, replayed
+- **WHEN** a moment is presented and kept, its frame is pushed out of a small burst cache by other frames, the same frame is decoded into it again, and the moment is presented again
+- **THEN** the second present is a replay of the kept composite: nothing is composed and the picture is the same
+- **TEST** t2294 (`src/libs/kt-engine/tests/memory_ledger.rs`)
+
+### Requirement: A device's refusal bounds the present memo
+On a device whose textures are not the process's own memory as the ledger counts it, the present memo
+SHALL create the texture its growth needs under an out-of-memory check before keeping a composite past
+its base. A refusal SHALL keep the composite unkept, SHALL bound the memo's growth at three quarters of
+what it holds then (dropping the rest at once, so the device has room for its frames), SHALL be a trace
+record, and SHALL NOT poison the device or lose the frame on screen.
+Why: the memo's grant is measured in the process's memory; a card's own memory is not readable through
+the graphics API, so it is learned at run time from the device's first refusal, never set as a
+constant for one card.
+
+#### Scenario: A refused growth is learned
+- **WHEN** a memo holding twenty composites past its base meets a refusal at the next keep
+- **THEN** that composite is shown but not kept, the memo holds fifteen past its base, later keeps never pass that bound, the frame on screen is complete and the device is not poisoned
+- **TEST** t2295 (`src/libs/kt-gpu/tests/preview_display.rs`)
