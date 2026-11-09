@@ -99,6 +99,12 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   replay does not re-time the route; the prefetch thread skips kept moments (`video_prefetch_pass_except`,
   `stream_advance_ahead`). A new input of a stream layer's picture must reach its kernel's `key`, or a
   kept composite of another picture is shown; a kernel without `key` keeps the old path (the stage runs).
+- **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
+  display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
+  the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
+  stream history's want after the kept composites'. Both export bodies hold `kt_time::mem::claim()`
+  while they run, and the render window takes one before it counts devices and `tight` (on its job
+  thread). t2294, t2296, t2297, t2299.
 - **The preview frame's life is in the trace** (capability `telemetry`): the compose thread sets the
   frame's id as its cause, so its decode requests, stream runs and compute jobs carry it; a new thing a
   composite waits for records a `FrameWait`, a new keeper records its store and eviction.

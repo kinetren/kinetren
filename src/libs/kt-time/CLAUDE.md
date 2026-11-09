@@ -28,6 +28,15 @@ The time model of the whole engine. Zero dependencies (except serde).
   render thread mark themselves; a call that can stand on the disk or a build opens `wait(kind)`.
 - **`work::park_until_work`** parks a watcher until any counter moves; `add` pays one relaxed load
   while nobody is parked (t2241).
+- **`mem` is the memory ledger** (memory-ledger, capability `media-index`, t2290, t2291): a keeper of
+  pictures, mixes or device buffers opens an `Account` of its `Tenant` with its BASE (never cut) and
+  reports `set(bytes)` (atomics: no lock, any thread). Growth above the bases is granted from ONE
+  budget, half of (available + growth held), in `Tenant`'s order — kept composites, stream history,
+  decoded frames; unknown memory or a live `Claim` (an export) grants nothing. A grant that shrinks
+  calls the kind's `on_shrink` hooks after the lock and never for the kind that asked: a keeper asks
+  under its own lock, and its hook takes it. A sizing runs only when a want or a claim changes, and
+  records `mem_budget`/`mem_grant` only when something moved. A new cache that holds pictures, mixes
+  or device buffers opens an account; one that can use more than its base asks a want.
 - Negative ticks are valid (floor semantics via `div_euclid`) — indexing down to zero relies on them.
 - **Subtlety**: the 48 kHz frames ↔ ticks are mutually exact only for frames that are multiples of 8 (ticks that are multiples of 15): `from_audio_frames(f).to_audio_frames() == f` ⇔ `f % 8 == 0`. Clip boundaries live in ticks; the engine floors them into frames once (kt-engine::AudioRenderer). In tests that set clip boundaries in frames, use multiples of 8 — otherwise the seam would drift by 1 sample (see tests/audio_engine.rs).
 

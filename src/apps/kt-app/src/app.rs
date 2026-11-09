@@ -10256,6 +10256,25 @@ impl KtApp {
                         3.0,
                         col,
                     );
+                    // where the memory went (memory-ledger): the ledger's counters, read here only
+                    {
+                        use kt_time::mem::Tenant;
+                        let m = kt_time::mem::snapshot();
+                        let mb = |b: u64| format!("{}", b >> 20);
+                        let device: u64 = [Tenant::Upload, Tenant::Readback, Tenant::Transient, Tenant::Compute]
+                            .iter()
+                            .map(|t| m.used(*t))
+                            .sum();
+                        let room = Tenant::ALL.iter().map(|t| m.base(*t)).sum::<u64>() + m.budget;
+                        ui.weak(crate::tf!(
+                            k::perf::MEMORY_LEDGER,
+                            mb(m.used(Tenant::Kept)),
+                            mb(m.used(Tenant::History)),
+                            mb(m.used(Tenant::Frames)),
+                            mb(device),
+                            mb(room)
+                        ));
+                    }
                     ui.add_space(6.0);
                     // the three graphs share what the scrolling part has left: a larger window
                     // shows larger graphs (D2); the floor keeps them readable, the part scrolls

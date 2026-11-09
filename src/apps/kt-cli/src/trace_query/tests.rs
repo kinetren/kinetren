@@ -294,3 +294,35 @@ fn t2243_during_names_scheduled_jobs_pauses_and_blocking_calls() {
         assert!(o.contains(want), "{want} missing in:\n{o}");
     }
 }
+
+/// t2300 (memory-ledger): the ledger's sizings and the grants they changed are records, and
+/// `trace memory` prints both sizings and the stream tenant's last cap.
+#[test]
+fn t2300_the_ledger_is_in_the_trace_and_the_query_reads_it() {
+    use kt_time::mem::{Ledger, Tenant};
+    const MB: u64 = 1 << 20;
+    let l: &'static Ledger = Box::leak(Box::new(Ledger::new()));
+    l.set_probe(|| Some(2000 * MB));
+    let kept = l.open(Tenant::Kept, 0);
+    let hist = l.open(Tenant::History, 256 * MB);
+    let items = kt_time::trace::testing::capture(|| {
+        hist.want(800 * MB);
+        kept.want(900 * MB); // takes back the stream grant
+        kept.want(900 * MB); // the same: nothing
+    });
+    // this ledger's records only: other tests of the process record their own
+    let mine: Vec<Rec> = kt_time::trace::testing::recs(&items)
+        .into_iter()
+        .filter(|r| matches!(r.kind(), Some(Ev::MemBudget | Ev::MemGrant)))
+        .collect();
+    let budgets: Vec<_> = mine.iter().filter(|r| is(r, Ev::MemBudget)).collect();
+    assert_eq!(budgets.len(), 2, "two sizings: {mine:?}");
+    let grants: Vec<_> = mine.iter().filter(|r| is(r, Ev::MemGrant)).collect();
+    assert!(grants.iter().any(|r| r.aux == Tenant::History as u32 && r.b == 356 * MB), "the stream grant taken back");
+    // the first sizing names every growing tenant, the second the composites' new grant; the third,
+    // unchanged, writes nothing
+    assert_eq!(grants.iter().filter(|r| r.aux == Tenant::Kept as u32).count(), 2, "the unchanged sizing wrote nothing");
+    let out = memory(&run_of(mine));
+    assert_eq!(out.matches("budget ").count(), 2, "{out}");
+    assert!(out.contains("history   cap 356 MB"), "{out}");
+}

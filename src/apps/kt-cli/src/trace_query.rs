@@ -94,6 +94,7 @@ pub fn run(args: &[String]) -> i32 {
             None => "usage: kt-cli trace [dir] frame <id>\n".into(),
         },
         "machine" => machine(run),
+        "memory" => memory(run),
         "dump" => dump(run, arg(1), arg(2)),
         "chrome" => match rest.get(1) {
             Some(out) => match std::fs::write(out, chrome(run)) {
@@ -104,13 +105,60 @@ pub fn run(args: &[String]) -> i32 {
         },
         _ => {
             eprintln!(
-                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|machine|dump [from to]|chrome <out.json>"
+                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|machine|memory|dump [from to]|chrome <out.json>"
             );
             return 2;
         }
     };
     print!("{out}");
     0
+}
+
+/// The memory ledger over the run (memory-ledger): every sizing with the grants it changed, then
+/// each tenant's last cap and bytes.
+fn memory(run: &Run) -> String {
+    use kt_time::mem::Tenant;
+    let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
+    let mut o = String::new();
+    let mut last: std::collections::BTreeMap<u32, (u64, u64, u64)> = Default::default();
+    for r in &run.recs {
+        match kind(r) {
+            Some(Ev::MemBudget) => {
+                let _ = writeln!(
+                    o,
+                    "{:>9}  budget {} of growth, {} granted, {} available{}",
+                    s(r.t),
+                    mb(r.a),
+                    mb(r.b),
+                    if r.c == 0 { "unknown".to_string() } else { format!("{} MB", r.c) },
+                    if r.aux > 0 { format!(", claimed by {} export(s)", r.aux) } else { String::new() }
+                );
+            }
+            Some(Ev::MemGrant) => {
+                let name = Tenant::from_u32(r.aux).map_or("?", Tenant::name);
+                let _ = writeln!(
+                    o,
+                    "{:>9}    {name:<9} want {} → cap {}, holds {}{}",
+                    s(r.t),
+                    mb(r.a),
+                    mb(r.b),
+                    mb(r.c),
+                    if r.id == 1 { "  (the device refused its growth)" } else { "" }
+                );
+                last.insert(r.aux, (r.a, r.b, r.c));
+            }
+            _ => {}
+        }
+    }
+    if o.is_empty() {
+        return "no memory ledger records in this run\n".into();
+    }
+    let _ = writeln!(o, "last:");
+    for (t, (want, cap, held)) in &last {
+        let name = Tenant::from_u32(*t).map_or("?", Tenant::name);
+        let _ = writeln!(o, "  {name:<9} cap {}, holds {}, wants {}", mb(*cap), mb(*held), mb(*want));
+    }
+    o
 }
 
 /// The program's trace directory: `KINETREN_DATA_DIR`, else the data directory.

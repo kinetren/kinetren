@@ -86,6 +86,20 @@ is no picture, and an export refuses.
   kt-fx/src/{geom,plan}.rs, in the same commit (t181 geo/tap/k2 cases,
   t309 s2 cases, FrameTol::GEOM).
 - **`PresentMemo` keeps what the preview presented** (cached-range-plays): plan key → the integer composite on the device, complete frames only, 512 MB. `present` asks it FIRST and on a hit runs the display pass alone (`GpuStages.replayed`). preview-throughput D2 had moved the preview off the readback memo, and a covered range was composed again every lap. A new input to a frame must reach `plan_key`, or both memos show a stale picture.
+- **The present memo is sized by the loop and the machine** (memory-ledger, t2292, t2293, t2295): its
+  base is 512 MB; told of a loop (`VideoGpuExec::keep_loop`, the player's prefetch thread) it wants every
+  moment of it at the size it presents plus an eighth, and its cap is the base plus the ledger's
+  `Kept` grant. A loop it cannot hold keeps a part: a composite is not admitted over one shown within
+  a lap of presents (`get` stamps only a hit, so the stamp counts presents). Past its base on a
+  device that is not a CPU rasterizer, `memo_keep` creates the next frame's texture under an
+  out-of-memory scope first; a refusal keeps nothing and bounds the growth at three quarters of what it
+  held. Its account opens at the first keep or loop: an engine that never presents has none. A grant
+  taken back (an export's claim) evicts at once through the hook set in `build`, which takes `inner`.
+- **An export's device keeps the uploads its frames in flight read** (memory-ledger D7, t2298):
+  `UploadCache::begin_frame` at every top-level `resolve_plan`; `new_for_export` drops what no frame of
+  the last `RING` read. On every device an upload the frame being resolved reads is never evicted or
+  reused as a spare within it (a reused spare is rewritten before the frame's passes read it).
+  Upload, readback, transient and compute pools report to the ledger.
 - **The kept composites are reached by key alone** (structured-telemetry): `present_kept(key)` shows one
   with no plan (the engine's probe plan found the key), `keep(key, bytes)` writes a composite another
   device made (the slow route) into the memo; stores and evictions go into the trace, and

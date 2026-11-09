@@ -9,8 +9,8 @@ Why: found-defects 10, 85, 96 — each export device kept a 256 MB upload cache 
 uploads once; at 1080p that is 31 frames per device, on three or four devices.
 
 #### Scenario: Uploads past the ring are dropped, the bytes stay
-- **WHEN** a project whose frames each read eight distinct source frames is exported on an export device and on a preview device with a full upload cache
-- **THEN** the export device holds at most the uploads of the frames in flight after every frame, a source frame read by two consecutive frames is uploaded once, and the frames written are byte for byte the preview device's
+- **WHEN** twenty-four consecutive frames are composed once each on an export device and on a preview device with its full upload cache, each frame twice in a row on the export device
+- **THEN** after every frame the export device holds at most the uploads of the frames in flight and the frame being built, the frame read again at once uploads nothing, the frames are byte for byte the preview device's, and the preview device holds more
 - **TEST** t2298 (`src/libs/kt-gpu/tests/export_ring.rs`)
 
 ### Requirement: An export claims the preview's growth while it runs

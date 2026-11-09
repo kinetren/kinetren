@@ -60,6 +60,8 @@ pub struct MixStore {
     budget_units: usize,
     /// Something the bars show changed since the last `publish`.
     changed: bool,
+    /// Its account in the memory ledger (memory-ledger): the kept mix, its budget as the base.
+    account: kt_time::mem::Account,
 }
 
 impl Default for MixStore {
@@ -76,7 +78,13 @@ impl MixStore {
             stamp: 0,
             budget_units: (budget_bytes / (UNIT_SAMPLES * 4)).max(2),
             changed: false,
+            account: kt_time::mem::open(kt_time::mem::Tenant::Mix, budget_bytes as u64),
         }
+    }
+
+    /// What it holds, to the memory ledger (atomics: the render thread may).
+    fn report(&self) {
+        self.account.set((self.units.len() * UNIT_SAMPLES * 4) as u64);
     }
 
     pub fn len(&self) -> usize {
@@ -201,6 +209,7 @@ impl MixStore {
                         let Some((_, oldest)) = self.order.pop_first() else { break };
                         self.units.remove(&oldest);
                     }
+                    self.report();
                 }
             }
             f = to;
@@ -219,6 +228,7 @@ impl MixStore {
             keep
         });
         self.changed |= self.units.len() != before;
+        self.report();
         let dropped = (before - self.units.len()) as u64;
         kt_time::trace::ev(kt_time::trace::Ev::Invalidate).aux(kt_time::trace::inval::MIX_STORE).b(dropped).emit();
     }
@@ -238,6 +248,7 @@ impl MixStore {
             k
         });
         self.changed |= self.units.len() != before;
+        self.report();
     }
 
     pub fn clear(&mut self) {
@@ -249,6 +260,7 @@ impl MixStore {
         self.changed |= !self.units.is_empty();
         self.units.clear();
         self.order.clear();
+        self.report();
     }
 
     /// The timeline frame runs each context holds, merged and sorted.

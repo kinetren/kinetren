@@ -156,6 +156,7 @@ fn t1146_diagnostics_carries_every_line_and_three_graphs() {
         k::perf::V_SKIPPED,
         k::perf::COMPOSE,
         k::perf::CACHE_OCCUPANCY,
+        k::perf::MEMORY_LEDGER,
         k::perf::LOG_TITLE,
     ] {
         assert!(has(&head(key)), "the window lacks the line “{}…”", head(key));
@@ -442,4 +443,32 @@ fn t1969_a_mark_from_the_button_and_from_the_key() {
     let said = h.state().notices.back().map(|n| n.text.clone()).unwrap_or_default();
     let head = tr(k::msg::MOMENT_MARKED).split('{').next().unwrap_or_default().to_string();
     assert!(said.starts_with(&head), "the program does not say the moment is marked: {said:?}");
+}
+
+/// t2301 (memory-ledger): under the cache occupancy bar the window names where the memory went —
+/// the kept composites, the history, the frames, the device buffers — and the room, in MB.
+#[test]
+fn t2301_the_ledger_line_is_painted_under_the_occupancy_bar() {
+    let held = kt_time::mem::open(kt_time::mem::Tenant::Kept, 0);
+    held.set(3 << 20);
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+    let win = diag_rect(&h).expect("the Diagnostics window is drawn");
+    let inside = texts_in(&h, win);
+    let line = |key| inside.iter().find(|(t, _)| t.starts_with(&head(key))).cloned();
+    let (occ, occ_rect) = line(k::perf::CACHE_OCCUPANCY).expect("the occupancy line");
+    let (mem, mem_rect) = line(k::perf::MEMORY_LEDGER).unwrap_or_else(|| panic!("no ledger line under “{occ}”: {inside:?}"));
+    assert!(mem_rect.top() > occ_rect.bottom() + 4.0, "the ledger line is under the occupancy bar: {occ_rect:?} {mem_rect:?}");
+    let kept: u64 = mem
+        .trim_start_matches(&head(k::perf::MEMORY_LEDGER))
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("the kept composites' MB first: {mem}"));
+    assert!(kept >= 3, "the kept composites held: {mem}");
+    let unit = tr(k::perf::MEMORY_LEDGER).rsplit('}').next().unwrap_or_default().trim().to_string();
+    assert!(mem.ends_with(&unit), "the room in the catalog's unit “{unit}”: {mem}");
+    drop(held);
 }
