@@ -5,7 +5,7 @@
 - [x] 1.1 Before-digests of the curved/switched forms printed on the base tree; t2315 written red-free on the base
 - [x] 1.2 Limiter ratio memo (210) — measured 3 % slower, reverted; row closed as no cost; t1981, t2315
 - [x] 1.3 Camera mic: µ-law constant + level table (211, t2316), suppressor window table and kept buffers, rows by index (312); t1981, t2315
-- [x] 1.4 VHS sound: FIR cosine table, dropout cache by law and stepped, deck kept on unread rows (311); t1981, t2315
+- [x] 1.4 VHS sound: FIR cosine table, dropout cache by law and stepped (311; the Deck copy stays, measured cheap); t1981, t2315
 - [x] 1.5 Pitch WSOLA window table and candidate list (313); t1981, t2315
 - [x] 1.6 Codec scratch, no clones, Datamosh/mic callers (314); t2317, t1981, t2315
 - [x] 1.7 Measure before/after (`kt-cli fx-cost`, `kt-cli probe --time` on the heavy showcase, release); commit, target-prune
