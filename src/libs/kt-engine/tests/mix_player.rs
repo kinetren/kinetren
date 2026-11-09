@@ -83,6 +83,10 @@ fn player(p: &Project) -> (Player, rtrb::Consumer<f32>) {
 /// and edits during the play do not stop the sound: the renderer is rebuilt off the render thread.
 #[test]
 fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
+    // the run's structured trace, on demand: what the render thread did when the sound stopped
+    if let Some(d) = std::env::var_os("KT_TEST_TRACE") {
+        kt_time::trace::install(kt_time::trace::Config::new(Some(d.into()), "t1935"));
+    }
     let p = big_project(2000);
     // every rebuild outlasts the ring, on any machine (the seam in `spawn_renderer_build`)
     kt_engine::hold_builds_for_tests(BUILD_HOLD_MS);
@@ -128,9 +132,10 @@ fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
         let kept = kt_time::work::count(kt_time::work::Work::MixReplay) - kept0;
         let swap_ms = player.loop_stats.max_swap_us.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1e3;
         eprintln!(
-            "build {build:?}, live {live}, kept {kept}, callback underruns {}, render underruns {}, \
-             longest swap on the render thread {swap_ms:.1} ms",
-            r.callback_underruns, r.underruns
+            "build {build:?}, live {live}, kept {kept}, callback underruns {} ({} of them the bench's \
+             device thread woke past the ring, latest {:.0} ms late), render underruns {}, longest \
+             swap on the render thread {swap_ms:.1} ms",
+            r.callback_underruns, r.device_stall_underruns, r.device_late_max_ms, r.underruns
         );
         // the first lap is linear play, the second the lap; every later one comes from the store
         let lap = (to.to_audio_frames() - from.to_audio_frames()) / kt_time::AUDIO_BURST_FRAMES as i64 + 1;
@@ -139,6 +144,7 @@ fn t1935_covered_loop_replays_and_edits_do_not_stop_the_sound() {
         // renders does not
         assert!(kept as i64 >= lap, "the loop plays from the kept mix: {live} live, {kept} kept");
         assert!(build > std::time::Duration::from_millis(400), "scene guard: a rebuild must outlast the ring, took {build:?}");
+        kt_time::trace::flush();
         assert_eq!(r.callback_underruns, 0, "the sound stopped (a rebuild took {build:?})");
         assert_eq!(r.underruns, 0);
         // the bars learn what the store holds

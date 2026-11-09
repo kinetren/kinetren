@@ -116,7 +116,7 @@ def main(out):
         ry = app.ruler_y()
         app.drag(app.x_at(20 * S), ry, app.x_at(30 * S), ry)
         app.click_probe("tb.loop", "the outlined loop button")
-        app.expect(closed(1, 4, 5.0), "the loop step closed with the window still open (item 2)")
+        app.expect(closed(1, 4), "the loop step closed with the window still open (item 2)")
         app.expect(app.has_probe("win.fx"), "the window is still open")
         app.expect(app.has_probe("lessons.result"), "the panel says what the loop does now")
         app.step("l1-loop", "region + loop: step 4 checked at once, the window still open, the result line")

@@ -383,6 +383,9 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   `Live.__enter__` does not call `__exit__`, and a forgotten program keeps running at hundreds of percent CPU, turning software rendering into a slideshow. The symptom —
   "suddenly ALL scenarios turned red at once": before looking for a regression in the
   code, look at `ps` and `uptime`.
+- **A red first try keeps its evidence** (test-hygiene): the worker empties a scenario's folder before
+  a try, and the lone retry keeps the red try in `<scenario>/first-try/` with its `said.txt`, dumps,
+  screenshots and trace. Read it before calling a red noise.
 - **The playback tempo is measured on the RELEASE build, and one must sample more often than the length of the region** (R.43, item 299). Two traps, both caught on the user's project: a probe once per second on a region of 0.89 s gives progress MODULO the region length (1.0 − 0.891 = 0.109, that is "0.13×" at an honest
   1.0×); and the debug build cannot keep up resampling three simultaneous chains
   "reverse + slowed" and honestly runs at 0.34× where the release runs at 1.00×. Debug
@@ -399,6 +402,16 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   (the meters falling), and at a frame step past 0.1 s the wait burned its deadline.
   `poll_step` and `wait_playhead` stretch with the frame time (`stretched`), so a loop that counts
   attempts is not a clock limit in disguise.
+- **Input is judged by frame starts, never by when a frame happened to handle it** (test-hygiene).
+  egui hands a frame's events without their moments: on a 600 ms frame several keys arrive at once.
+  `Controls::pressed` keeps them in order (`Pressed`) and `handle_keys` runs every press; Space's
+  edges run in order, a hold is proven by a frame that began `SPACE_HOLD_MS` after the read and saw no
+  release, and an unproven release is a tap. A window measured between two reads (the double press,
+  egui's double click and click) widens by `KeyClock::busy`, the smoothed gap before a frame the one
+  before asked for at once. A new gesture with a time window measures it on `key_clock.frame_at` and
+  widens it the same way (t2211–t2214).
+- **A live "rest" names who woke it** (`bench::rest_wakes`, the dump's `rest_wakes`): frames with no
+  input counted by egui's repaint cause, the bench only. A new rest check prints `idle.woke`.
 - **A hotkey chord is what was held when its key went down**, read from `Event::Key`, not from
   `i.modifiers`, the state at the frame's end: a stalled frame made Ctrl+S a bare S, a split (t1672).
 - **A gesture in a live scenario is released WITH A PAUSE** (item 216): between the last pointer movement and the button release — 0.35 s, otherwise in software rendering the application does not manage to process the last position and the gesture runs PARTIALLY. This is exactly what for years looked like "live scenarios are flaky".

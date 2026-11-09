@@ -88,6 +88,9 @@ def main(out):
         app.shot("outside")
         before = app.brightness(app.preview_center())
         app.click(app.x_at(int(4.5 * SEC)), app.ruler_y())
+        # the picture of the new place, read as a consequence (test-hygiene): a bare read right
+        # after the click is the frame of the place before (80, the solid's own brightness)
+        app.until(lambda: app.brightness(app.preview_center()) < 12)
         app.shot("inside")
         inside = app.brightness(app.preview_center())
         app.click(app.x_at(7 * SEC), app.ruler_y())

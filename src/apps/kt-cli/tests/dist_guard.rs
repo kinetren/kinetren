@@ -1194,6 +1194,15 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         // the output ring is the yardstick of audio after a jump, and the video must follow it
         ("libs/kt-engine/tests/video_stall.rs", "from_millis(250)"),
         ("libs/kt-engine/tests/video_stall.rs", "from_millis(900)"),
+        // a call that waits for the black hole takes the whole request timeout: the bound IS that
+        // wait, and correct code takes milliseconds (test-hygiene)
+        ("apps/kt-app/src/telemetry.rs", "enqueue blocked"),
+        ("apps/kt-app/src/telemetry.rs", "exit held"),
+        ("apps/kt-app/src/update_check.rs", "start or exit held"),
+        // the test thread's own processor time, two scenes' rounds interleaved, the cheapest of
+        // seven: a ratio of the frame's cost, judged against what the machine gave both (t1913, t1914)
+        ("apps/kt-app/src/frame_cost_tests.rs", "let t0 = thread_ns();"),
+        ("apps/kt-app/src/frame_cost_tests.rs", "*b = (*b).min(thread_ns() - t0);"),
     ];
     fn walk(d: &Path, out: &mut Vec<PathBuf>) {
         for e in std::fs::read_dir(d).unwrap().flatten() {
@@ -1215,12 +1224,32 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         let at = l.find(bound).map(|i| i + bound.len()).or(l.find(elapsed).map(|i| i + elapsed.len()));
         at.is_some_and(|i| l[i..].trim_start_matches("std::time::").starts_with("Duration::from_"))
     };
+    // test-hygiene: in TEST code any bound on `.elapsed()` but the ten-minute guard, and any
+    // processor-time reading, is a clock in the check too (t1914 read `thread_ns` and split 8.5 ms
+    // against 4.2 ms under load; the telemetry bounds were constants, not `Duration::from_`)
+    let test_clock = |l: &str| {
+        let bounded = [".elapsed() < ", ".elapsed() <= "].iter().any(|p| {
+            l.find(p).is_some_and(|i| {
+                let rhs = l[i + p.len()..].trim_start_matches("kt_time::");
+                !rhs.starts_with("TEST_WAIT") && !rhs.starts_with("test_deadline")
+            })
+        });
+        bounded || (l.contains("thread_ns()") && !l.trim_start().starts_with("//") && !l.contains("use "))
+    };
     let mut seen = Vec::new();
     let mut bad = Vec::new();
     for f in files {
         let rel = f.strip_prefix(&src).unwrap().to_string_lossy().replace('\\', "/");
         let text = std::fs::read_to_string(&f).unwrap();
-        for (n, l) in text.lines().enumerate().filter(|(_, l)| clock(l)) {
+        // the guard's own patterns are not clocks
+        if rel.ends_with("kt-cli/tests/dist_guard.rs") {
+            continue;
+        }
+        // test code: a file of tests, or what follows a file's first `#[cfg(test)]`
+        let whole = rel.contains("/tests/") || rel.ends_with("_tests.rs");
+        let from = if whole { 0 } else { text.lines().position(|l| l.starts_with("#[cfg(test)]")).unwrap_or(usize::MAX) };
+        let hit = |n: usize, l: &str| clock(l) || (n >= from && test_clock(l));
+        for (n, l) in text.lines().enumerate().filter(|(n, l)| hit(*n, l)) {
             match LIMIT_IS_THE_CHECK.iter().find(|(p, w)| *p == rel && l.contains(w)) {
                 Some(e) => seen.push(*e),
                 None => bad.push(format!("{rel}:{}: {}", n + 1, l.trim())),

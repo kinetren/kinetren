@@ -1278,7 +1278,7 @@ impl KtApp {
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"morphers\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
              \"on_display\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
@@ -1311,6 +1311,12 @@ impl KtApp {
             // the asterisk and the number of morphers — for the live scenario of importing an old
             // version (R.67): “there are edits” and “the morphers arrived” are otherwise not visible.
             self.dirty_content,
+            // a text field holds the keyboard: the hotkeys are not read (found-defects 47)
+            self.key_clock.gated,
+            // egui's double-click window as the program widened it: a gesture waits out twice it
+            self.key_clock.double_s,
+            // who asked for the frames that read no input (the bench's rest checks name it)
+            crate::bench::rest_wakes().replace('"', "'"),
             self.model.project().morphers.len(),
             // the preview compose cost (morpher-event-grid-cost): what the panel shows, as numbers
             self.perf.compose_ms_last,
@@ -2406,10 +2412,12 @@ impl KtApp {
         // one pass of coverage polls per frame, for the events in view (cache by epoch, item 1);
         // Arc-snapshot — a pointer clone, not a map (item 1 of v1.4)
         let coverage_snapshot = self.coverage_runs(&events, (view_t0, view_t1));
+        // kept moments still being rechecked after an edit: the preview's thread wakes the UI after
+        // each pass of the check (`compose_queue::recheck`), so a frame here asks for nothing. Asking
+        // every frame for the next one spun the UI at ~150 frames a second "at rest" for as long as
+        // the check took: seconds on a loaded machine, beside the very check it waited for
+        // (test-hygiene, found-defects 133/170, live `edit_drag`, `cached_range`, `idle`)
         let final_snapshot = self.coverage_cache.final_runs.clone();
-        if self.coverage_cache.final_pending {
-            ui.ctx().request_repaint();
-        }
 
         // ---- global cache strips (port: cyan=audio, green=video) --------
         {

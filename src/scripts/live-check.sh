@@ -20,7 +20,8 @@
 #     ./scripts/live-check.sh handles fade   # only the named ones
 #     KT_LIVE_WORKERS=1 ./scripts/live-check.sh   # strictly one by one, no re-runs
 #
-# Screenshots and logs — target/live-out/<scenario>/.
+# Screenshots and logs — target/live-out/<scenario>/, emptied before each run; a lone retry keeps
+# the red first try in target/live-out/<scenario>/first-try/ (test-hygiene).
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -156,7 +157,9 @@ for name in "${reds[@]}"; do
     # `|| true`: the worker returns the scenario’s exit code, and `set -e` on it silently
     # aborted the WHOLE re-run — the report lost both “passed the second time” and
     # “red twice” (caught by test t801)
-    run_worker 0 "$name" || true
+    # KT_LIVE_TRY=2: the worker keeps the first try's folder as `<scenario>/first-try/`
+    # (test-hygiene, found-defects 163): the red evidence is what the retry used to overwrite
+    KT_LIVE_TRY=2 run_worker 0 "$name" || true
     if [ "$(cat "$verdicts/$name" 2> /dev/null || echo fail)" != ok ]; then
         again+=("$name")
     fi
@@ -165,7 +168,7 @@ done
 for name in "${reds[@]}"; do
     case " ${again[*]} " in
         *" $name "*) ;;
-        *) echo "PASSED ON THE SECOND TRY (alone): $name — analyze the scenario" ;;
+        *) echo "PASSED ON THE SECOND TRY (alone): $name — analyze the scenario (first try: $out/$name/first-try)" ;;
     esac
 done
 
@@ -173,5 +176,5 @@ if [ ${#again[@]} -eq 0 ]; then
     echo "live scenarios: green (some on the second try)"
     exit 0
 fi
-echo "RED TWICE: ${again[*]} (screenshots: target/live-out/<scenario>)" >&2
+echo "RED TWICE: ${again[*]} (screenshots: $out/<scenario>, the first try in <scenario>/first-try)" >&2
 exit 1

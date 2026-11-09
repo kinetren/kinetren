@@ -16,7 +16,8 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import kt_live  # noqa: E402
 from kt_live import Live, require_tools  # noqa: E402
-from idle import Meter, wait_quiet  # noqa: E402
+from idle import Meter, wait_quiet, wakes, woke  # noqa: E402
+from heavy_loop import recomposed, trace_answer  # noqa: E402
 from readme_shots import fixture_sources  # noqa: E402
 
 OWN_PROCESS = True
@@ -69,7 +70,10 @@ def main(out):
         composed = work.get("composites", 0) - work.get("composite_replays", 0)
         print(f"   playing the covered loop: {work}, {cpu:.0f} % of a core, V-fps {vfps:.1f} of {fps}")
         app.expect(work.get("composite_replays", 0) > 0, f"kept composites are shown: {work}")
-        app.expect(composed <= 2, f"a covered range composes nothing: {composed} composed")
+        # judged by the trace's reasons, as in `heavy_loop` (test-hygiene): a display slower than
+        # the frame rate composes, once each, the moments it shows for the first time
+        again = recomposed(trace_answer(out, "loop"))
+        app.expect(not again, f"a covered range composes nothing it kept: {composed} composed, again: {again}")
         app.expect(work.get("mix_replays", 0) > 0, f"the kept mix is heard: {work}")
         app.expect(work.get("audio_renders", 0) <= 2, f"no burst runs the effects: {work}")
         app.expect(work.get("decoded", 0) == 0, f"nothing is decoded: {work}")
@@ -83,9 +87,10 @@ def main(out):
         app.key("space")
         app.until(lambda: not app.playing(), timeout=10.0)
         wait_quiet(meter, "after stopping")
+        w0 = wakes(app)
         work, cpu = meter.over(4.0)
         print(f"   pause after the loop: {work}, {cpu:.0f} % of a core")
-        app.expect(not work, f"a pause runs nothing, ran {work}")
+        app.expect(not work, f"a pause runs nothing, ran {work}; frames with no input were asked by: {woke(app, w0)}")
         app.step("paused", "stopped: nothing runs")
         return app.done()
 

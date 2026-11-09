@@ -3819,6 +3819,45 @@ fn t801_red_scenario_is_rerun_alone() {
     );
 }
 
+/// t2210 (test-hygiene, found-defects 163 and 165): a run starts in an EMPTY scenario folder, and the
+/// lone retry keeps the red first try beside its own. `renderregion` went red twice on a
+/// `geom.json.crash.json` a build of the day before had left; and the retry overwrote the first
+/// try's screenshots, dumps and log, so a red that went green alone left nothing to read.
+#[test]
+fn t2210_a_run_starts_clean_and_the_retry_keeps_the_first_try() {
+    let root = workspace_root();
+    if let Some(why) = live_check_available(&root) {
+        eprintln!("t2210 skipped: {why}");
+        return;
+    }
+    let out = root.join("target/live-guard-t2210");
+    // what an earlier run left: `_flaky` goes red on it, so the first try must not see it
+    std::fs::create_dir_all(out.join("_flaky")).unwrap();
+    std::fs::write(out.join("_flaky/stale.mark"), "").unwrap();
+    std::fs::create_dir_all(out.join("_red")).unwrap();
+    std::fs::write(out.join("_red/first-try-of-yesterday"), "").unwrap();
+    let (ok, said) = run_live_check(&root, "target/live-guard-t2210", "2", ":88", &["_flaky", "_red"]);
+    assert!(!ok, "a run with an always-red scenario must be red:\n{said}");
+    assert!(
+        said.contains("PASSED ON THE SECOND TRY") && said.contains("_flaky"),
+        "a file of an earlier run reached the first try, or the retry lost the first try:\n{said}"
+    );
+    assert!(!out.join("_flaky/stale.mark").exists(), "the folder was not emptied before the run");
+    // the retry's folder holds the first try whole: its mark, what it said, its screenshot
+    assert!(out.join("_flaky/first-try/already-ran").exists(), "the first try's files are gone");
+    let first = std::fs::read_to_string(out.join("_flaky/first-try/said.txt")).unwrap_or_default();
+    assert!(first.contains("red the first time"), "the first try's lines are not kept: {first:?}");
+    let retry = std::fs::read_to_string(out.join("_flaky/said.txt")).unwrap_or_default();
+    assert!(retry.contains("green the second time"), "the retry's lines are not in its folder: {retry:?}");
+    assert!(out.join("_red/first-try/01-step-red.png").exists(), "a red-twice scenario lost its first try");
+    assert!(out.join("_red/01-step-red.png").exists(), "the retry left no screenshot");
+    assert!(
+        !out.join("_red/first-try/first-try-of-yesterday").exists() && !out.join("_red/first-try-of-yesterday").exists(),
+        "an earlier run's file survived into this run's folders"
+    );
+    assert!(said.contains("first-try"), "the report does not say where the first try is:\n{said}");
+}
+
 /// t802 (R.68): the workers do not see each other — their own screen and their own storage.
 ///
 /// This is precisely the closed cause of the ban on “two threads”: two kt-app on one
