@@ -139,6 +139,13 @@ trace (`stand-*`): the stand's next start wipes them.
 - `poll_step` waits for a frame the program draws by itself, never a poked one: `morphgrid` counts
   the frames after Stop.
 
+### D11. No frame polls for the recheck of kept moments (product)
+
+`draw_timeline` asked for the next frame on every frame while `final_pending` (kept moments presented
+before an edit, not yet checked against the new plan). The compose thread's `recheck` already wakes
+the UI after each pass that changed something or left work, so the poll only spun the UI: 150 frames
+a second on a loaded machine for as long as the check took, competing with it. Removed; t2217.
+
 ## The walk (what was checked, and found)
 
 ### Rows of `docs/found-defects.md`
@@ -154,7 +161,7 @@ trace (`stand-*`): the stand's next start wipes them.
 | 101 | `space_hold` (above) and `readme_shots` (the bin width read from a stale dump; a double click) | D4, D8 |
 | 47 | not reproduced in five finish logs nor three loaded live sets; the last guess (a text field holds the keys) is now in the dump (`keys_gated`) and in the red's message, the window's opening is proven by its probe | diagnostics, D8; stays open with its next step named |
 | 126 | two scenes timed one after the other at different moments of a loaded machine | D6 |
-| 133, 170 | "quiet" judged on counters while a job was in flight: a reel preview or a recheck that ends past three still seconds lands in the "rest" window | `wait_quiet` asks the threads too; not reproduced in this change's runs, so the cause is the likeliest one, not a proven one |
+| 133, 170 | frames "at rest" with no input and no work: the timeline's busy repaint while kept moments were rechecked (found in `edit_drag`'s kept first try, D11); "quiet" was also judged on counters while a job was in flight | the busy repaint removed (t2217); `wait_quiet` asks the threads too; rest checks print the window's repaint causes |
 | 158 | a start's pass handed to the callback burst by burst (product) | D7, t2216 |
 
 ### Live scenarios red on the first try
@@ -182,6 +189,9 @@ trace (`stand-*`): the stand's next start wipes them.
 | `formula` | proof run 3, all three sets | the click on Done was read by a frame seconds after it was sent (a save's fsync held the UI 2–3.6 s, found-defects 252); measured from the send, the double click fell in egui's triple window, and a triple click on an event closes the window its double click opened | `click()` dates a click when the program has read it |
 | `morph` | proof run 3 | the brightness read right after the click | `app.until` |
 | `gpu_record` | proof run 3 | the first second's composite took the slow-chain route (counted "offline") | a second of the playback counts preview frames |
+| `edit_drag` "a pause after the drag runs nothing" | proof run 4 | **product**: while kept moments were rechecked after an edit, the timeline asked for the next frame on every frame (`final_pending`): 39 frames a quarter second with no input and no work counter, llvmpipe at 370 %, for as long as the check took; the preview's thread already wakes the UI after each pass. The same frames are the likeliest cause of rows 133 and 170 | the busy repaint removed; t2217 (red on the former code) |
+| `lessons` | proof run 4 | the loop step's close waited an explicit 5 s | the default consequence wait |
+| `track` | proof run 4 | the refusal was not in the status line; "before == after" passes on a drag that never registered, and the cause is not established | the status read as a consequence; the first try keeps the stand's journal for the next red |
 
 ### Workshop tests with a clock or a sleep
 
@@ -198,7 +208,6 @@ trace (`stand-*`): the stand's next start wipes them.
 ### Found, not fixed
 
 - Ctrl+S holds the UI thread for seconds on a busy disk (found-defects 252).
-- Frames at ~100 a second with no input beside the index service, unverified (found-defects 253).
 
 - `heavy_loop` lap 20 of the baseline: one moment composed because "layer 6 (source 5) is another
   stream frame" than the lap before: a Datamosh stage's output for one moment differed across laps.

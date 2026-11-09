@@ -208,3 +208,24 @@ fn t2215_the_run_queue_wait_is_read_apart_from_a_sleep() {
     assert!(queued > 0, "competing for the cores, the thread's run-queue wait did not grow");
     assert!(slept < 50_000_000, "a sleep is not a wait for a processor: {slept} ns");
 }
+
+/// Test t2217 (test-hygiene, found-defects 133/170): kept moments still being rechecked after an edit
+/// ask the UI for no frame of its own; the preview's thread wakes it after each pass. The timeline
+/// asked for the next frame on every frame while the check was pending: on a loaded machine the UI
+/// ran ~150 frames a second "at rest" for seconds (live `edit_drag`: 39 frames a quarter second with no
+/// input and no work counter), beside the very check it waited for.
+#[test]
+fn t2217_a_pending_recheck_of_kept_moments_asks_no_frame() {
+    let mut h = crate::layout_tests::harness();
+    for _ in 0..3 {
+        h.step();
+    }
+    h.state_mut().coverage_cache.final_pending = true;
+    h.step();
+    h.step();
+    let causes: Vec<(&'static str, u32)> = h.ctx.repaint_causes().iter().map(|c| (c.file, c.line)).collect();
+    assert!(
+        !causes.iter().any(|(f, _)| f.ends_with("timeline.rs")),
+        "the timeline asks for frames while kept moments are rechecked: {causes:?}"
+    );
+}

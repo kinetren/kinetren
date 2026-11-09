@@ -961,6 +961,12 @@ class Live:
         # the program widens egui's double-click window by its busy frame (test-hygiene), and the
         # triple window is twice that: the program publishes the window it set (`double_click_s`)
         triple = 2 * float(self.geom().get("double_click_s", TRIPLE_WINDOW / 2))
+        if time.time() - self._clicked_at < max(TRIPLE_WINDOW, triple) + self._dt:
+            # the click before may still be unread (a save held a frame 6.9 s under the full run):
+            # two frames drawn from now have read it, so its stamp is no later than now
+            self.wait_frame(2, what="the click before is read", soft=True)
+            self._clicked_at = max(self._clicked_at, time.time())
+            triple = 2 * float(self.geom().get("double_click_s", TRIPLE_WINDOW / 2))
         while time.time() - self._clicked_at < max(TRIPLE_WINDOW, triple) + self._dt:
             _poll()
         # a frame AFTER the hover: the first click at the fresh position is otherwise lost

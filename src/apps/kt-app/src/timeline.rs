@@ -2412,10 +2412,12 @@ impl KtApp {
         // one pass of coverage polls per frame, for the events in view (cache by epoch, item 1);
         // Arc-snapshot — a pointer clone, not a map (item 1 of v1.4)
         let coverage_snapshot = self.coverage_runs(&events, (view_t0, view_t1));
+        // kept moments still being rechecked after an edit: the preview's thread wakes the UI after
+        // each pass of the check (`compose_queue::recheck`), so a frame here asks for nothing. Asking
+        // every frame for the next one spun the UI at ~150 frames a second "at rest" for as long as
+        // the check took: seconds on a loaded machine, beside the very check it waited for
+        // (test-hygiene, found-defects 133/170, live `edit_drag`, `cached_range`, `idle`)
         let final_snapshot = self.coverage_cache.final_runs.clone();
-        if self.coverage_cache.final_pending {
-            ui.ctx().request_repaint();
-        }
 
         // ---- global cache strips (port: cyan=audio, green=video) --------
         {

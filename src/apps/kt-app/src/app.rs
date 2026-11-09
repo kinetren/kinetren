@@ -8591,7 +8591,7 @@ impl KtApp {
             if *self.coverage_cache.final_runs != fin {
                 self.coverage_cache.final_runs = Arc::new(fin);
             }
-            // a finite run of frames after an edit until every kept moment is checked
+            // kept moments left to check after an edit: the preview's thread wakes the UI per pass
             self.coverage_cache.final_pending = pending;
             if pending {
                 self.coverage_cache.stamp = None;
