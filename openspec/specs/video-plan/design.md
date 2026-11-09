@@ -403,3 +403,21 @@ slow rate, loop, scrub, export, thumbnails) and the before/after numbers are in
   kernel's `key`, or a kept composite of another picture is shown.
 - The first visit of a paused frame still computes its history (found-defects 173): that is the
   effect's cost, which the owner's next trace splits into device, wait and processor.
+
+## Point-wise runs as one generated pass (fused-pointwise-runs, 2026-11-09)
+
+Full record: `openspec/changes/archive/2026-11-09-fused-pointwise-runs/design.md` (D1 the class walk
+over every family and core node, D-measure).
+- The plan names `PlanOp::PointRun`; which stage fuses is the plugin contract's `fuses_in_runs`
+  (point-wise, `tap_<id>`, no barrier kernel). Noise and greenscreen run a kernel of their own at a
+  barrier position and end a run; geometry keeps its own series fusion.
+- The generated pass rounds and clamps after every stage exactly as the stage's own pass stores it:
+  fused = unfused byte for byte (stricter than the owner's ≤ 1 LSB per boundary, H16). Rejected:
+  keeping the intermediate in f32 — posterize would move a whole level across a rounding, and a
+  run-time switch between two programs giving different bytes breaks invariant 11 and the kept
+  composites.
+- The cap and the switch are a trial on the device (pass timer, interleaved, minima of five; a slower
+  fused pass is split in halves); no timestamps → fused. The uniform's room (32 stages) is the only
+  constant, a property of the layout.
+- Measured on llvmpipe at 1080p: a chain of k stages moves 16.6 MB instead of k × 16.6 MB; device
+  time 9.3 → 2.2 ms for six stages. The heavy showcase holds one two-stage run and does not change.

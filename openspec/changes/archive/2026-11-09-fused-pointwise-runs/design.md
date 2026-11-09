@@ -146,3 +146,13 @@ each: a frame there costs 1059–1073 ms of device time, of which Camera ISP and
 V-fps 0.2 either way. The run's two passes are 4.3–5.7 ms of it — the change cannot be seen on this
 project, and the measurement says so instead of claiming a gain. (Only two frames of the range were
 composed, both before the shape was warm, so both forms ran the parts there.)
+
+`kt-cli pause-scan heavy.kt 13`, interleaved measured / never / measured (load 21 → 28): the moments
+at 52, 65 (the run's event), 78 and 91 s settle alike in both forms (65 s: 1207 / 1258 / 1412 ms);
+one "never complete" at 52 s in the last run follows the load (a 1.9 s composite there), it came in
+neither of the two runs before it.
+
+**At rest** (live `idle`, the heavy showcase in the real program): paused 2 % of a core, the effects
+window open and paused 1 %, the trace grows by 0 bytes — a run shape adds no work at rest (its trial
+lives only in frames).
+
