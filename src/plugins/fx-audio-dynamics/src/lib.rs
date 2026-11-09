@@ -152,7 +152,15 @@ impl AudioState for GainNode {
     fn process(&mut self, buf: &mut [f32], _pos: i64, _key: Option<&[f32]>) {
         // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
         kt_plugin_api::fast!({
-            if self.gain_auto {
+            // a flat stretch of a curve: the smoother stands still, the level is one multiply
+            // (kernel-specialization)
+            let spec = kt_plugin_api::cpu::specialized();
+            if self.gain_auto && spec && self.auto_gain.still() {
+                let g = self.auto_gain.value();
+                for s in buf.iter_mut() {
+                    *s *= g;
+                }
+            } else if self.gain_auto {
                 for f in buf.chunks_exact_mut(CH) {
                     let g = self.auto_gain.tick();
                     for s in f.iter_mut() {
@@ -164,7 +172,15 @@ impl AudioState for GainNode {
                     *s *= self.static_gain;
                 }
             }
-            if self.pan_auto {
+            if self.pan_auto && spec && self.auto_pan_l.still() && self.auto_pan_r.still() {
+                let (l, r) = (self.auto_pan_l.value(), self.auto_pan_r.value());
+                for f in buf.chunks_exact_mut(CH) {
+                    f[0] *= l;
+                    if CH > 1 {
+                        f[1] *= r;
+                    }
+                }
+            } else if self.pan_auto {
                 for f in buf.chunks_exact_mut(CH) {
                     let (l, r) = (self.auto_pan_l.tick(), self.auto_pan_r.tick());
                     f[0] *= l;
@@ -547,6 +563,7 @@ impl AudioKernel for Compressor {
             makeup_db: SmoothedParam::with_ms(0.0, 20.0),
             env: EnvFollower::new(10.0, 150.0),
             makeup_lin: Memo::default(),
+            below: Memo::default(),
         })
     }
 }
@@ -560,6 +577,17 @@ struct CompNode {
     env: EnvFollower,
     /// The make-up gain as a level (`Memo`: not a `pow` per sample).
     makeup_lin: Memo<f32>,
+    /// The envelope level under which the threshold is surely not reached (`below_threshold`).
+    below: Memo<f32>,
+}
+
+/// An envelope under this level is surely below the threshold `thr_db` (kernel-specialization):
+/// the level of the threshold 0.0087 dB lower. There `20·log10(env) − thr ≤ 0` by a margin a
+/// thousand times the rounding of the `f32` functions, so the reduction is exactly zero and the
+/// gain is `10^(−0/20) · makeup = makeup` to the bit — the `log10` and the `pow` are skipped. t2172
+/// checks the floats just under the level for every threshold of the passport's grid and beyond.
+pub fn below_threshold(thr_db: f32) -> f32 {
+    10f32.fpowf(thr_db / 20.0) * 0.999
 }
 
 impl AudioState for CompNode {
@@ -594,6 +622,7 @@ impl AudioState for CompNode {
     fn process(&mut self, buf: &mut [f32], _pos: i64, key: Option<&[f32]>) {
         // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
         kt_plugin_api::fast!({
+            let spec = kt_plugin_api::cpu::specialized();
             for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
                 let thr = self.threshold_db.tick();
                 let ratio = self.ratio.tick().max(1.0);
@@ -605,10 +634,14 @@ impl AudioState for CompNode {
                         .map_or(0.0, |kf| kf.iter().fold(0f32, |m, s| m.max(s.abs()))),
                 };
                 let env = self.env.tick(peak).max(1e-6);
-                let env_db = 20.0 * env.flog10();
-                let over = (env_db - thr).max(0.0);
-                let gr_db = over * (1.0 - 1.0 / ratio);
-                let g = 10f32.fpowf(-gr_db / 20.0) * makeup;
+                let g = if spec && env < self.below.get(thr, below_threshold) {
+                    makeup
+                } else {
+                    let env_db = 20.0 * env.flog10();
+                    let over = (env_db - thr).max(0.0);
+                    let gr_db = over * (1.0 - 1.0 / ratio);
+                    10f32.fpowf(-gr_db / 20.0) * makeup
+                };
                 for s in fr.iter_mut() {
                     *s *= g;
                 }

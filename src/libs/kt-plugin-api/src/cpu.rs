@@ -53,6 +53,25 @@ pub fn run_fast<R>(f: impl FnOnce() -> R) -> R {
 
 thread_local! {
     static BASELINE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static GENERAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a kernel may take its "stands still" variant (kernel-specialization): a re-tune skipped
+/// while its inputs are equal, a constant-parameter block, the compressor below its threshold, the
+/// mixdown's constant-weight runs. Each variant is the general path's bytes by construction; this
+/// switch is how the tests prove it (t2171–t2173). Read once per block, never per sample.
+#[inline]
+pub fn specialized() -> bool {
+    !GENERAL.get()
+}
+
+/// Run `f` with every kernel and the mixdown on this thread on their GENERAL path: no "stands
+/// still" variant (the reference of t2171–t2173).
+pub fn with_general<R>(f: impl FnOnce() -> R) -> R {
+    let was = GENERAL.replace(true);
+    let r = f();
+    GENERAL.set(was);
+    r
 }
 
 /// Run `f` with every kernel it calls on this thread on the baseline path, whatever the CPU (the

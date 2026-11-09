@@ -1420,6 +1420,67 @@ impl AudioRenderer {
         }
     }
 
+    /// The run of frames from `f` (before `to`) over which the weight's formula stays in one regime
+    /// (kernel-specialization): no fade window, overlaid window, overlap boundary or FX-tail edge
+    /// (`tail_end`, the FX path's `clip.end + clip.tail_ext`) starts or ends inside it. `true` when
+    /// that regime's weight is a constant — outside the windows, before a fade-in, under one or three
+    /// and more overlapping events — so `fade_weight · overlap_at · gain` taken at `f` is the weight
+    /// of every frame of the run, to the bit; `false` for a ramp, which keeps the per-frame formula.
+    fn weight_run(&self, ci: usize, f: i64, to: i64, tail_end: Option<i64>) -> (i64, bool) {
+        let c = &self.clips[ci];
+        let mut end = to;
+        let mut cut = |b: i64| {
+            if b > f && b < end {
+                end = b;
+            }
+        };
+        let mut constant = true;
+        if let Some(e) = tail_end {
+            cut(e);
+        }
+        let inside = |w: Option<(i64, i64)>| w.is_some_and(|(w0, w1)| f >= w0 && f < w1);
+        if tail_end.is_none_or(|e| f < e) {
+            // `fade_weight`'s branches: a fade-in up to its end (a constant `rise(0)` before its
+            // start), else a fade-out inside its window, else 1
+            if let Some((w0, w1)) = c.fade_in {
+                cut(w0);
+                cut(w1);
+                if f < w1 && (f >= w0 || w1 <= w0) {
+                    constant = false;
+                }
+            }
+            if let Some((w0, w1)) = c.fade_out {
+                cut(w0);
+                cut(w1);
+                if !c.fade_in.is_some_and(|(_, w1)| f < w1) && f >= w0 && f < w1 {
+                    constant = false;
+                }
+            }
+        }
+        // `overlap_at`'s branches: an overlaid window is 1, else the overlap of the lane's cover
+        for (excl, w) in [(c.fade_in_excl, c.fade_in), (c.fade_out_excl, c.fade_out)] {
+            if let (true, Some((w0, w1))) = (excl, w) {
+                cut(w0);
+                cut(w1);
+            }
+        }
+        let excl = (c.fade_in_excl && inside(c.fade_in)) || (c.fade_out_excl && inside(c.fade_out));
+        if !excl
+            && self.overlap_layers
+            && self.overlaps[ci]
+            && let Some(m) = self.covers.get(c.lane as usize)
+        {
+            if let Some(&b) = m.bounds.get(m.bounds.partition_point(|&b| b <= f)) {
+                cut(b);
+            }
+            // two events cross-fade by their progress; one and three or more weigh a constant
+            if m.at(f).len() == 2 {
+                constant = false;
+            }
+        }
+        (end, constant)
+    }
+
     fn render_plain_clip(
         &self,
         ci: usize,
@@ -1438,6 +1499,7 @@ impl AudioRenderer {
             let mut f = from;
             let mut cursor: Option<(i64, Arc<AudioBurst>)> = None; // (burst idx, data)
             let clip_len = clip.end - clip.start;
+            let spec = kt_plugin_api::cpu::specialized();
             // END OF MATERIAL (R.63 item 2) — the same edge as its start
             // above: beyond it there is no source, and silence there is not an underrun.
             let material_end = fetcher.material_end_frames(clip.media);
@@ -1489,15 +1551,28 @@ impl AudioRenderer {
                 };
                 match burst {
                     Some(b) => {
-                        for k in 0..take {
-                            let w =
-                                fade_weight(clip, f + k) * self.overlap_at(ci, f + k) * clip.gain;
-                            let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
-                            let sk = if clip.reversed { within - k } else { within + k };
-                            let si = (sk as usize) * AUDIO_CHANNELS;
-                            for ch in 0..AUDIO_CHANNELS {
-                                out[oi + ch] += b.data[si + ch] * w;
+                        let mut k = 0;
+                        while k < take {
+                            // a run of one weight regime (kernel-specialization)
+                            let (run_end, constant) = if spec {
+                                self.weight_run(ci, f + k, f + take, None)
+                            } else {
+                                (f + take, false)
+                            };
+                            let n = run_end - (f + k);
+                            let weight = |k: i64| fade_weight(clip, f + k) * self.overlap_at(ci, f + k) * clip.gain;
+                            let w0 = weight(k);
+                            debug_assert!(!constant || weight(k + n - 1).to_bits() == w0.to_bits());
+                            for k in k..k + n {
+                                let w = if constant { w0 } else { weight(k) };
+                                let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
+                                let sk = if clip.reversed { within - k } else { within + k };
+                                let si = (sk as usize) * AUDIO_CHANNELS;
+                                for ch in 0..AUDIO_CHANNELS {
+                                    out[oi + ch] += b.data[si + ch] * w;
+                                }
                             }
+                            k += n;
                         }
                     }
                     // a missing burst in the HANDLE zone (beyond the media edge) —
@@ -1741,19 +1816,28 @@ impl AudioRenderer {
         }
         stats.underruns += pull_underruns;
         stats.warmup_misses += warmup_misses;
-        for k in 0..count as i64 {
-            let f = from + k;
-            // weights act on the body and handles (transition windows); in the
-            // FX tail zone (past the material) — 1.0: the reverb rings out under
-            // its neighbours without weighting.
-            let w = if f < clip.end + clip.tail_ext { fade_weight(clip, f) } else { 1.0 }
-                * self.overlap_at(ci, f)
-                * clip.gain;
-            let oi = ((f - range.start) as usize) * AUDIO_CHANNELS;
-            let bi = (k as usize) * AUDIO_CHANNELS;
-            for ch in 0..AUDIO_CHANNELS {
-                out[oi + ch] += buf[bi + ch] * w;
+        // weights act on the body and handles (transition windows); in the
+        // FX tail zone (past the material) — 1.0: the reverb rings out under
+        // its neighbours without weighting.
+        let tail_end = clip.end + clip.tail_ext;
+        let weight =
+            |f: i64| if f < tail_end { fade_weight(clip, f) } else { 1.0 } * self.overlap_at(ci, f) * clip.gain;
+        let spec = kt_plugin_api::cpu::specialized();
+        let mut f = from;
+        while f < to {
+            // a run of one weight regime (kernel-specialization): a constant weight is taken once
+            let (run_end, constant) = if spec { self.weight_run(ci, f, to, Some(tail_end)) } else { (to, false) };
+            let w0 = weight(f);
+            debug_assert!(!constant || weight(run_end - 1).to_bits() == w0.to_bits());
+            for f in f..run_end {
+                let w = if constant { w0 } else { weight(f) };
+                let oi = ((f - range.start) as usize) * AUDIO_CHANNELS;
+                let bi = ((f - from) as usize) * AUDIO_CHANNELS;
+                for ch in 0..AUDIO_CHANNELS {
+                    out[oi + ch] += buf[bi + ch] * w;
+                }
             }
+            f = run_end;
         }
         // the earlier laps' echo at the weight of the tail zone it lies in (1.0 · the clip gain)
         if let Some(sum) = laps_out {

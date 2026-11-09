@@ -864,13 +864,28 @@ impl PeakAcc {
             self.level0 = vec![Vec::new(); AUDIO_CHANNELS];
             self.block = vec![(i16::MAX, i16::MIN); AUDIO_CHANNELS];
         }
-        for f in 0..data.len() / AUDIO_CHANNELS {
-            for (ch, b) in self.block.iter_mut().enumerate() {
-                let v = (data[f * AUDIO_CHANNELS + ch].clamp(-1.0, 1.0) * 32767.0) as i16;
-                b.0 = b.0.min(v);
-                b.1 = b.1.max(v);
+        kt_plugin_api::fast!(self.push_at_level(data))
+    }
+
+    /// The fold at the CPU's level (kernel-specialization): a block's run of frames into a
+    /// fixed-size array, the block pushed at its end. Integer min/max — the same values in any
+    /// grouping (t2175).
+    #[inline(always)]
+    fn push_at_level(&mut self, data: &[f32]) {
+        let mut rest = &data[..data.len() / AUDIO_CHANNELS * AUDIO_CHANNELS];
+        while !rest.is_empty() {
+            let n = (PEAK_BLOCK_FRAMES - self.in_block).min(rest.len() / AUDIO_CHANNELS);
+            let mut b: [(i16, i16); AUDIO_CHANNELS] = std::array::from_fn(|ch| self.block[ch]);
+            for fr in rest[..n * AUDIO_CHANNELS].chunks_exact(AUDIO_CHANNELS) {
+                for (b, &x) in b.iter_mut().zip(fr) {
+                    let v = (x.clamp(-1.0, 1.0) * 32767.0) as i16;
+                    b.0 = b.0.min(v);
+                    b.1 = b.1.max(v);
+                }
             }
-            self.in_block += 1;
+            self.block.copy_from_slice(&b);
+            rest = &rest[n * AUDIO_CHANNELS..];
+            self.in_block += n;
             if self.in_block == PEAK_BLOCK_FRAMES {
                 for ch in 0..AUDIO_CHANNELS {
                     self.level0[ch].push(self.block[ch]);
