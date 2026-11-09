@@ -22,7 +22,21 @@ the early laps are frames composed while the stream stage showed a held frame (s
 they converge as the stream memo holds the history.
 
 Export peaks (`/usr/bin/time` max RSS, `kt-cli export … libx264 --time`, our showcase, under
-`MemoryMax=12G`): recorded in the table of D7 after the runs.
+`MemoryMax=12G`): the table of D7.
+
+After (same command, release `kt-cli` of this change), and the base binary run again right after it
+at the same load (load average 7–11) for a fair pair:
+
+| 240 s over his region, 640×360 | base | memory-ledger |
+|---|---|---|
+| composed / shown from kept | 1935 / 5407 | 1172 / 8943 |
+| laps 14–21: made a lap | 47–58 | 0 (every lap from 10 on) |
+| V-fps, incomplete | 28.9, 313 | 40.4, 326 |
+| process CPU | 11.8 cores | 6.5 cores |
+| ledger (`kt-cli trace memory`) | — | growth budget 5.4 GB of 10.8 GB free; kept 659 MB cap, stream 1576 MB cap |
+
+The heavy showcase (`showcase --heavy`, 30–60 s at 640×360) could not be looped under the 12 GB cap
+with either binary: both were killed by the OOM killer within 48–87 s. That led to D11.
 
 ## The mechanism (the class)
 
@@ -143,6 +157,27 @@ unkept, sets the memo's device limit to three quarters of what it holds (evictin
 frame's own transients find room), records `mem_grant` with the limit, and leaves the device usable
 (an OOM is a scoped error, not a loss). A test hook forces the refusal (t2295).
 
+### D11. The preview's decoders take a render's threads (found by the class walk)
+
+The heavy showcase's preview held 4.4 GB of anonymous memory 6 s after it started, with nothing cached
+yet: 160 FFmpeg frame threads (`av:vp9:df` ×128, `av:vp8:df` ×32) — libavcodec's automatic count, a
+thread per core, for every decoder of the preview, each frame thread keeping its own pictures. The
+render already sized its decoders by memory (`memory::decode_threads`: four, two when tight;
+gpu-render-hardening D1 found auto no faster for a render). A/B of the preview, same 30 s, same load
+(`KT_DECODE_THREADS` on `kt-cli preview`):
+
+| heavy showcase preview, 30 s | auto | four |
+|---|---|---|
+| peak RSS | 9.9 GB | 6.3 GB |
+| decode time a picture | 3.6 ms | 3.9 ms |
+| process CPU | 15.3 cores | 11.7 cores |
+| render underruns | 23 247 frames | 0 |
+
+So the editor sets the render's rule for the project's frame size when it opens a project
+(`build_player`), `kt-cli preview` does the same (`KT_DECODE_THREADS` keeps the A/B), and the render
+window restores the preview's count after opening its own sources instead of resetting it to auto.
+The owner's region A/B (V-fps with four against auto) is in tasks 5.2.
+
 ### D9. Visible
 
 - Trace (appended after the highest kind, 90): `MemBudget = 91` (`a` growth budget, `b` granted,
@@ -177,7 +212,8 @@ the player: a small cache evicts the frame, the same frame is inserted again, th
 | sidecar DB (index, peaks, thumbnails, reel tier), posters, pipeline disk cache, trace files | disk | outside: disk, not memory |
 | peak pyramid | per media length | outside: it is drawn every frame, not evicted; grows with the project |
 | warp memo (2^18 points), mask memo (16) | counts | outside: small math memos |
-| decoders (preview workers, export) | threads by `memory::decode_threads` | outside: frames inside FFmpeg; the half the budget leaves covers them |
+| decoders of a render | `memory::decode_threads` by the memory | unchanged |
+| decoders of the preview | libavcodec's auto: a thread per core | **fixed** (D11): a render's rule by the memory when the project opens |
 | export device count | `engines_for(available)` | unchanged; meets the room the claim gives back |
 | undo history (80 clones), flight ring, audio ring | counts | outside: model and fixed rings |
 

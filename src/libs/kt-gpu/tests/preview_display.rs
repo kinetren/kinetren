@@ -257,7 +257,10 @@ fn t2292_a_granted_loop_is_kept_whole_past_the_base() {
         assert_eq!((made, kept), (0, 30), "the lap composes nothing");
         assert_eq!(pics, first, "the same pictures");
     }
+    // the loop cleared: back to the base at once
     gpu.keep_loop(None);
+    let (len, bytes, cap) = gpu.present_memo_stats();
+    assert_eq!((len, cap), (10, 10 * ONE), "the base at once: {bytes}");
     kt_time::mem::set_probe(|| None);
 }
 

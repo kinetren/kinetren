@@ -622,12 +622,14 @@ impl KtApp {
             let _room = kt_time::mem::claim();
             let (rw, rh) = opts_thread.resolution.unwrap_or(proj_res);
             opts_thread.tight = kt_gpu::memory::tight(kt_gpu::memory::available(), rw, rh);
-            // the render's sources decode with the threads of a render; the preview's stay on auto
+            // the render's sources decode with the threads of a render at its size; the preview's
+            // keep theirs (memory-ledger D11)
+            let preview_threads = kt_ffmpeg::decode_threads_set();
             kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(kt_gpu::memory::available(), rw, rh));
             kt_ffmpeg::set_rgba_threads(kt_gpu::memory::rgba_threads(kt_gpu::memory::available(), rw, rh));
             let (a, _) = open_all(&project, base.as_deref());
             let (v, _) = open_all(&project, base.as_deref());
-            kt_ffmpeg::set_decode_threads(0);
+            kt_ffmpeg::set_decode_threads(preview_threads);
             kt_ffmpeg::set_rgba_threads(1);
             // R.29: its own headless devices per job (the UI queue does not share time with the
             // export); with no engine the export fails, and the window says why (D4)

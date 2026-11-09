@@ -25,7 +25,7 @@ Why: any parameter that affects the bytes and is not in the key is a stale value
 
 #### Scenario: A granted loop is kept whole past the base
 - **WHEN** the present memo's base holds ten composites, a loop of thirty moments is announced and granted, and the loop is presented three times
-- **THEN** the second and third laps compose nothing and show every moment from the kept composites, the same pictures as the first; the memo holds the thirty past its base
+- **THEN** the second and third laps compose nothing and show every moment from the kept composites, the same pictures as the first; the memo holds the thirty past its base; the loop cleared, it is back at its base at once
 - **TEST** t2292 (`src/libs/kt-gpu/tests/preview_display.rs`)
 
 #### Scenario: The player asks for the loop's composites

@@ -27,3 +27,18 @@ limit tuned for one machine.
 - **WHEN** the stream history holds its grant, then the kept composites' want rises past what is left, then the same wants are asked again
 - **THEN** the stream history's cap drops and its owner is told at once, the kept composites' does not move down; asking the same wants again changes no cap, tells no owner and writes no record
 - **TEST** t2291 (`src/libs/kt-time/src/mem.rs`)
+
+### Requirement: The preview's decoders take a render's threads
+A video decoder the editor opens for a project's preview SHALL take the threads a render of that
+project's frame size takes by the memory measured when the project opens (four, two when the memory is
+tight), not libavcodec's automatic count. A render opening its own sources SHALL leave the preview's
+count as it found it.
+Why: memory-ledger's class walk — the automatic count is a thread per core, and each frame thread
+holds its own pictures: on our heavy showcase five VP9 and one VP8 decoders ran 160 threads and held
+4.4 GB before anything was cached; the preview peaked at 9.9 GB against 6.3 GB with four threads, at
+the same decode time per picture and with no underruns instead of 23 247 frames of them.
+
+#### Scenario: Opening a project sets the render's rule
+- **WHEN** the decoders' count is auto and a project is opened in the editor
+- **THEN** the count a decoder opened now takes is four or two
+- **TEST** t2302 (`src/apps/kt-app/src/diag_tests.rs`)

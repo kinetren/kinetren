@@ -840,6 +840,14 @@ impl KtApp {
         // that is, for an open project never, and the tail past the end of the file
         // would not differ from anything else.
         let mut lens: Vec<(MediaId, kt_time::Tick)> = Vec::new();
+        // the preview's decoders take a render's threads, by the memory measured now (memory-ledger
+        // D11): libavcodec's auto is a thread per core, and a project of five VP9 files then held
+        // 4.4 GB of frames in its decoders before anything was cached
+        kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(
+            kt_gpu::memory::available(),
+            project.settings.width,
+            project.settings.height,
+        ));
         for m in &project.media {
             let label = crate::util::media_label(&m.path);
             let (src, err) = crate::util::open_source_or_placeholder(

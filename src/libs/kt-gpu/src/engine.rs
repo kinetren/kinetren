@@ -1580,7 +1580,11 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn keep_loop(&self, moments: Option<usize>) {
-        self.inner.lock().unwrap().present_memo.keep_loop(moments);
+        let mut g = self.inner.lock().unwrap();
+        let Inner { present_memo, pool, .. } = &mut *g;
+        present_memo.keep_loop(moments);
+        // a smaller want is its own: no hook tells it, it drops what it may no longer hold now
+        present_memo.evict_to_cap(pool);
     }
 
     fn readback_depth(&self) -> usize {

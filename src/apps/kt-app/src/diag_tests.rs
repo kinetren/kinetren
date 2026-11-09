@@ -472,3 +472,13 @@ fn t2301_the_ledger_line_is_painted_under_the_occupancy_bar() {
     assert!(mem.ends_with(&unit), "the room in the catalog's unit “{unit}”: {mem}");
     drop(held);
 }
+
+/// t2302 (memory-ledger D11): opening a project gives its preview decoders a render's threads by the
+/// memory measured then, not libavcodec's auto (a thread per core).
+#[test]
+fn t2302_the_preview_decoders_take_a_renders_threads() {
+    kt_ffmpeg::set_decode_threads(0);
+    let _h = crate::layout_tests::harness();
+    let n = kt_ffmpeg::decode_threads_set();
+    assert!(n == 2 || n == 4, "a render's rule, not auto: {n}");
+}

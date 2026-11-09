@@ -1055,6 +1055,12 @@ fn preview_run(
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
+    // the preview's decoders take a render's threads (memory-ledger D11), as the editor opens them;
+    // `KT_DECODE_THREADS=N` overrides it for an A/B (0 — libavcodec's auto)
+    let threads = std::env::var("KT_DECODE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+        kt_gpu::memory::decode_threads(kt_gpu::memory::available(), project.settings.width, project.settings.height)
+    });
+    kt_ffmpeg::set_decode_threads(threads);
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
         let mut db = kt_media::index::MediaIndexDb::open(

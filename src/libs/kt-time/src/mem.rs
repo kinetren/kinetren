@@ -81,6 +81,7 @@ impl Tenant {
 }
 
 type Hook = Arc<dyn Fn(u64) + Send + Sync>;
+type Probe = Box<dyn Fn() -> Option<u64> + Send + Sync>;
 
 #[derive(Default)]
 struct Kind {
@@ -102,7 +103,7 @@ struct State {
 pub struct Ledger {
     kinds: [Kind; KINDS],
     state: Mutex<State>,
-    probe: Mutex<Option<Box<dyn Fn() -> Option<u64> + Send + Sync>>>,
+    probe: Mutex<Option<Probe>>,
     next_id: AtomicU64,
 }
 
