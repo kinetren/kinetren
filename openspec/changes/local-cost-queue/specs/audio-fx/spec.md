@@ -5,7 +5,8 @@ An audio kernel SHALL NOT recompute per sample, per grain or per chunk a value t
 larger unit, nor allocate per unit, where computing it once is exact and measurably cheaper: the camera
 microphone's µ-law denominator once and its 128 expansion
 levels as a table, its noise suppressor's window as a table and its spectrum in kept buffers, its rows by
-index; Pitch's WSOLA window as a table and its candidate offsets without a list per grain; VHS Tape's sound
+a map built once, its anti-alias filter only on the samples it keeps; the warp's sinc table once per
+(length, oversampling, cutoff), not per seek; Pitch's WSOLA window as a table and its candidate offsets without a list per grain; VHS Tape's sound
 designs its linear-track filter from a table of the design's cosines and keeps its dropout starts while
 their law stands, stepping them a cell at a time. The limiter's per-sample `ceil/thr` stays: a memo of
 it measured 3 % slower (the division is off the loop's critical path). Every audio kind keeps the bytes it gave before, at its defaults, at heavy settings, with curves on

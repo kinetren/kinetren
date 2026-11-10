@@ -20,11 +20,11 @@
 
 ## 3. Row 118 and the class walk
 
-- [ ] 3.1 The first lap on the heavy showcase through the trace (`kt-cli preview`, `kt-cli trace`); local fixes or rows 350+
-- [ ] 3.2 Class walk across every kernel; list into design.md; rows 350–369 for what is left
-- [ ] 3.3 Live `idle` and `heavy_loop` (rest costs nothing); t1217, t2023, the touched capabilities' TEST lines, clippy
+- [x] 3.1 The first lap on the heavy showcase through the trace (`kt-cli preview`, `kt-cli trace`); local fixes or rows 350+
+- [x] 3.2 Class walk across every kernel; list into design.md; rows 350–369 for what is left
+- [x] 3.3 Live `idle` and `heavy_loop` (rest costs nothing); t1217, t2023, the touched capabilities' TEST lines, clippy
 
 ## 4. Close
 
-- [ ] 4.1 found-defects rows removed/added, engine-audit row 11 marked done with the numbers, crate CLAUDE.md notes
+- [x] 4.1 found-defects rows removed/added, engine-audit row 11 marked done with the numbers, crate CLAUDE.md notes
 - [ ] 4.2 Archive (specs merged, design "why" into capability design.md); commit, target-prune (finish.sh is the orchestrator's)

@@ -106,19 +106,59 @@ millisecond is ~1 % of the sound's work. Datamosh's clones were small against it
 showcase's audio (no tape or camera sound halves in it) renders 104 s in 458 ms either way
 (`kt-cli probe … --time`): nothing of this row reaches it.
 
-### D5. Row 118
+### D5. Row 118 — nothing local left on the heavy showcase
 
-Measured on the heavy showcase with the structured trace; what is local to the composite path is fixed
-here (D1–D3 are its candidates), the remainder written down. Filled in during apply.
+`kt-cli preview heavy.kt 20 30 --size 640x360` (release, footage in /dev/shm, the base and this change's
+binaries run interleaved twice): V-fps 1.0–2.5 either way, ~420–530 of ~450–550 composites incomplete,
+`trace loading` ranks the decoded frames and the cold pipelines first; the passes there are the
+simulations' own (VHS Tape's 4 fsc grid, fourteen passes; Camera ISP at K = 1, which D1 does not touch).
+The composing thread's encode is 0.10–0.15 ms a composite either way. What is local to the composite
+path is D1 and D3; the first lap of this window is the decoder's. Row 118 stays open with that verdict.
+
+### D6. More of the class, taken where the bytes stay and it pays
+
+- The camera microphone's anti-alias FIR (63 products a sample per channel) runs only on the samples the
+  device keeps (1 in 3 or 6 at 16 and 8 kHz); its output was read only there.
+- Camera ISP's `ix(name)` is a map built once: `Plan::new` asks ~69 names a frame and the microphone ~30
+  a chunk, each a scan of ~98 names. (The microphone's own index table from stage 1 went with it.)
+- The warp's sinc table (`kt-fx/src/audio/sinc.rs`) is memoized by (length, oversampling, cutoff bits),
+  bounded at 32: a warp is built at every seek, fresh entry and lap entry of a warped event, and the
+  table took 0.2–0.8 ms (release; 16 384 × three `fcos` and one `fsin` at 128 × 128) on the render
+  thread each time; a hit costs ~0.1 µs.
+All three are the same function of the same arguments: t1981, t2171, t2315, t1067, t4 hold the bytes.
 
 ## Class walk (what was checked)
 
-Filled in during apply: every audio kind's `process`/`set_targets`, every video barrier's graph and WGSL,
-the generators, the transitions, the executor's pass sites.
+Mechanism: a kernel computes per element (sample, grain, pixel, chunk, frame, pass) a value constant
+over a larger unit, or allocates per unit. Walked by reading (an Explore sweep, then each finding read):
+- **Audio kernels**: every `process`/`set_targets`/`apply` of `fx-audio-dynamics` (gain, gate,
+  limiter, compressor — memoized already), `fx-audio-tone` (filter, EQ, width, distortion, bitcrusher),
+  `fx-audio-modulation` (tremolo, auto pan, vibrato, chorus, flanger, phaser, delay, Slowed+Reverb,
+  pitch WSOLA and vocoder), VHS Tape's sound, Camera ISP's microphone, Datamosh's sound, the audio
+  generators, the volume transitions; `kt-plugin-api` `dsp` and `audio_codec`; `kt-fx` audio (warp,
+  sinc, nodes, loudness); `kt-engine` audio mixdown and `mix.rs`.
+- **Video**: every barrier's graph builder (Rust, per frame) and WGSL (blur family, stylize, distort,
+  color, tape, camera, codec), the generators' and transitions' WGSL, `composite.wgsl`, `geom_fused.wgsl`,
+  `resample.wgsl`, the executor's per-frame code in `kt-gpu/src/engine.rs`.
+- **Fixed here**: rows 136, 138, 211, 311–314 and D6. **Closed by measurement**: 137, 210.
+- **Found and left** (rows 350–365 of `docs/found-defects.md`): the warp's per-chunk buffers (350), the
+  chain's dry/twin chunk copies (351), the mixdown's per-call scratch (352), the mic's polyphase zeros
+  (353), the simulations' per-chunk row clones (354), the EQ/filter's per-channel re-tune (355), the delay
+  lines' `% len` per sample (356), VHS sound's per-sub-sample divisions (357), the mic's gust hashes
+  (358), the vocoder's zero-fill (359), the noise generator's row hashes (360), the composite's repeated
+  `textureDimensions` (361), Camera's unprocessing `pow` per tap (362), per-pixel math of per-frame
+  constants in transitions and Camera (363, would move bytes), the executor's small per-frame allocations
+  (364), the simulations' per-frame plan vectors (365).
+- **Clean**: gain, gate, limiter, compressor (memoized), width, distortion, bitcrusher, tremolo, auto
+  pan, vibrato and flanger (their per-sample `fsin` is the effect), delay, Slowed+Reverb, the WSOLA search,
+  `dsp::Memo`/`SmoothedParam`/`Biquad`/`EnvFollower`/Freeverb's process, the codec's tables, the loudness
+  meter, `render_plain_clip`, `weight_run`, `mix.rs`; WGSL of halftone, edges, the distort warps (their
+  trig depends on position), Camera's s02/s04/s05/s07/s09/s10 loops, the codec, `geom_fused`, `resample`.
 
 ## Risks / Trade-offs
 
-- [The device evaluates the table's `sin` differently from the in-pass `sin`] → t2312 on llvmpipe; a
-  device where it differs falls inside `FrameTol::BILINEAR` of the stored frames (t181).
+- [A memo grows without bound] → the sinc memo keeps 32 tables, the bind cache 256 groups and a frame.
+- [A timing test reads another test's passes] → the pass timer is process-wide; t2311 holds its file's
+  lock (red at 0.81 beside t2310, 0.33–0.34 alone).
 - [A cached bind group keeps a texture alive] → one frame at most, bounded entries; memory-ledger's
   accounts see the release a frame late at worst.

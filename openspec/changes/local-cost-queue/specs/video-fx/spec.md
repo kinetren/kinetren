@@ -17,5 +17,5 @@ Why: found-defects row 136 (gpu-pass-cost): behind a K× barrier every sensor pi
 
 #### Scenario: The sensor-grid form costs less on the device
 - **WHEN** the defaults run at K = 2 at 960×540 logical (1920×1080 frame) on a software device, both forms interleaved, minima of the pass timer
-- **THEN** the camera's passes together take at most 60 % of the frame-grid form's device time (measured 0.40: 314.8 → 127.2 ms on llvmpipe)
+- **THEN** the camera's passes together take at most 60 % of the frame-grid form's device time (measured 0.33–0.34 in the test profile, 388.8 → 120.7 ms at release through `kt-cli pass-cost`)
 - **TEST** t2311 (`src/libs/kt-gpu/tests/camera_isp.rs`)

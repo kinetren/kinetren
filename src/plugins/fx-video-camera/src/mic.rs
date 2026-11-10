@@ -64,41 +64,9 @@ pub struct MicRows {
     pub seed: u32,
 }
 
-/// The rows the microphone reads.
-const ROWS: [&str; 17] = [
-    "mic_channels",
-    "mic_scene_spl",
-    "mic_wind",
-    "mic_port_d",
-    "mic_port_l",
-    "mic_front_v",
-    "mic_self_noise",
-    "mic_aop",
-    "mic_hpf",
-    "mic_agc",
-    "mic_agc_target",
-    "mic_agc_max",
-    "mic_ns",
-    "mic_ns_strength",
-    "mic_codec",
-    "mic_kbps",
-    "sensor_seed",
-];
-
-/// The passport index of a microphone row (local-cost-queue, row 312: a chunk's `set_targets` and
-/// `MicRows::from` asked ~30 names of a 98-row passport by a linear scan).
-fn ix(name: &str) -> usize {
-    static IX: std::sync::OnceLock<[usize; 17]> = std::sync::OnceLock::new();
-    let t = IX.get_or_init(|| ROWS.map(crate::ix));
-    match ROWS.iter().position(|n| *n == name) {
-        Some(k) => t[k],
-        None => crate::ix(name),
-    }
-}
-
 impl MicRows {
     pub fn from(v: &[f64]) -> MicRows {
-        let g = |n: &str| v[ix(n)];
+        let g = |n: &str| v[crate::ix(n)];
         let pick = |n: &str, hi: usize| (g(n).round().max(0.0) as usize).min(hi);
         MicRows {
             stereo: pick("mic_channels", 1) == 1,
@@ -459,11 +427,11 @@ impl AudioState for MicSound {
     fn set_targets(&mut self, c: &dyn kt_plugin_api::SlotCurves, s: f64) {
         let mut v = self.v.clone();
         for row in ["mic_scene_spl", "mic_wind", "mic_port_d", "mic_port_l", "mic_front_v", "mic_hpf"] {
-            let i = ix(row);
+            let i = crate::ix(row);
             v[i] = c.value(row, v[i], s);
         }
         for row in ["mic_self_noise", "mic_aop", "mic_agc_target", "mic_agc_max", "mic_ns_strength"] {
-            let i = ix(row);
+            let i = crate::ix(row);
             v[i] = c.value(row, v[i], s);
         }
         let r = MicRows::from(&v);
@@ -551,10 +519,12 @@ impl AudioState for MicSound {
                         let from = ch.hist_pos;
                         ch.aa_hist[p] = s;
                         ch.aa_hist[p + HIST] = s;
-                        let lo: f64 = ch.aa.iter().zip(&ch.aa_hist[from..from + HIST]).map(|(h, x)| h * x).sum();
                         // decimate: the device keeps every m-th sample; the player's interpolator
-                        // sees zeros between them
+                        // sees zeros between them. The anti-alias filter's output is read only for a
+                        // kept sample, so it is computed only there (local-cost-queue: 63 products a
+                        // sample, of which 2/3 or 5/6 went unread)
                         let kept = if n.rem_euclid(m as i64) == 0 {
+                            let lo: f64 = ch.aa.iter().zip(&ch.aa_hist[from..from + HIST]).map(|(h, x)| h * x).sum();
                             let q = if r.codec == 2 { mulaw(lo) } else { (lo * 32_767.0).round() / 32_767.0 };
                             q * m as f64
                         } else {

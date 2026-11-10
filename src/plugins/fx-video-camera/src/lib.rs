@@ -260,12 +260,13 @@ fn names() -> &'static [&'static str] {
     })
 }
 
-/// The index of a row by its name (a typo is a panic in every test).
+/// The index of a row by its name (a typo is a panic in every test). By a map built once
+/// (local-cost-queue): `Plan::new` asks ~69 names a frame and the microphone ~30 a chunk, and a scan of
+/// the ~98 names was thousands of string compares each time.
 pub fn ix(name: &str) -> usize {
-    names()
-        .iter()
-        .position(|n| *n == name)
-        .unwrap_or_else(|| panic!("camera_isp has no row {name}"))
+    static MAP: std::sync::OnceLock<std::collections::HashMap<&'static str, usize>> = std::sync::OnceLock::new();
+    let map = MAP.get_or_init(|| names().iter().enumerate().map(|(i, n)| (*n, i)).collect());
+    *map.get(name).unwrap_or_else(|| panic!("camera_isp has no row {name}"))
 }
 
 /// The picker's presets (design: only physical settings). Indices of choice rows are their keys'.

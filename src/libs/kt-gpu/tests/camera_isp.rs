@@ -13,6 +13,14 @@ use kt_model::FxInstance;
 use kt_time::Tick;
 
 const W: u32 = 96;
+
+/// The tests of this file one at a time: the pass timer is process-wide, so a parallel test's camera
+/// passes would land in t2311's sums (red at 0.81 beside t2310, 0.40 alone).
+static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock() -> std::sync::MutexGuard<'static, ()> {
+    ONE.lock().unwrap_or_else(|e| e.into_inner())
+}
 const H: u32 = 54;
 
 fn frame(alpha: bool) -> Arc<VideoFrame> {
@@ -82,6 +90,7 @@ fn run_frame(
 
 #[test]
 fn t1217_the_gpu_graph_agrees_with_the_cpu_kernel() {
+    let _one = lock();
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let reg = kt_plugin_api::installed().expect("installed");
@@ -132,6 +141,7 @@ fn t1217_the_gpu_graph_agrees_with_the_cpu_kernel() {
 /// an average along the edge keeps, and it does not depend on where a stage samples.
 #[test]
 fn t1430_the_frame_edges_are_picture_not_smears() {
+    let _one = lock();
     kt_plugins_builtin::install();
     let engine = test_engine();
     let reg = kt_plugin_api::installed().expect("installed");
@@ -226,6 +236,7 @@ fn t1430_the_frame_edges_are_picture_not_smears() {
 #[test]
 #[ignore]
 fn camera_isp_gpu_cost_per_1080p_frame() {
+    let _one = lock();
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let (w, h) = (1920u32, 1080u32);
@@ -317,6 +328,7 @@ fn at_k(cam: &FxInstance, k: u32, w: u32, h: u32) -> (Vec<FxInstance>, u32) {
 /// on the same device — the defaults, every preset, every layout × demosaic, opaque and alpha, K 2–4.
 #[test]
 fn t2310_the_sensor_grid_form_is_the_frame_grid_forms_bytes() {
+    let _one = lock();
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let reg = kt_plugin_api::installed().expect("installed");
@@ -375,6 +387,7 @@ fn t2310_the_sensor_grid_form_is_the_frame_grid_forms_bytes() {
 /// sums, the forms interleaved, minima of five blocks. Skipped where the device has no timestamps.
 #[test]
 fn t2311_the_sensor_grid_form_costs_less() {
+    let _one = lock();
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };
     let (w, h) = (960u32, 540u32);
