@@ -946,6 +946,7 @@ video_fx_gpu_lost = "Se perdió el renderizador de vídeo en GPU ({0}) — sin i
 flight_saved = "Registro de reproducción guardado: {0}"
 moment_marked = "Momento marcado en el diario de telemetría: {0}"
 stall_at = "La reproducción se detuvo en {0}: la imagen o el sonido no llegaron a tiempo"
+audio_device = "Dispositivo de sonido: {0}"
 
 media_missing = "{0}: fuente no disponible, se muestra un marcador ({1})"
 media_missing_count = "fuentes no disponibles: {0}"

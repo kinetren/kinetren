@@ -11,15 +11,15 @@
 - [x] 2.4 Class walk (design D4): key branches reset (t2375), a reel's move pre-rolls its stages (t2376)
 
 ## 3. The output device opens on Play (row 274)
-- [ ] 3.1 `Player::wake()` public; the output thread parks on it
-- [ ] 3.2 `audio_out`: the output thread, `ReturnOnDrop`, open on play, close after rest, flush while closed
-- [ ] 3.3 Trace `device_open`/`device_close`/`device_error`; the error to the bell
-- [ ] 3.4 Tests t2380–t2384 with a device double (open on play, close at rest and park, the ring survives, a flush while closed, an open error retried)
-- [ ] 3.5 Live `idle`: the audio threads judged (no wake on a pause); `sched_pause`, `loop`, `space_hold` green
-- [ ] 3.6 Measure open → first callback here (trace of the live run)
+- [x] 3.1 `Player::wake()` public; the output thread parks on it
+- [x] 3.2 `audio_out`: the output thread, `ReturnOnDrop`, open on play, close after rest, flush while closed
+- [x] 3.3 Trace `device_open`/`device_close`/`device_error`; the error to the bell
+- [x] 3.4 Tests t2380–t2384 with a device double (open on play, close at rest and park, the ring survives, a flush while closed, an open error retried — on the next Play counted, D7)
+- [x] 3.5 Live `idle`: the audio threads judged (no wake on a pause); `sched_pause`, `loop`, `space_hold` green
+- [x] 3.6 Measure open → first callback here (trace of the live run)
 
 ## 4. Contracts
-- [ ] 4.1 kt-engine and kt-app CLAUDE.md; root CLAUDE.md invariant 2/6 lines
-- [ ] 4.2 found-defects: 390 and 274 leave; rows 420–439 for what is left
-- [ ] 4.3 What's new lines; registry rows J1, J6
+- [x] 4.1 kt-engine and kt-app CLAUDE.md; root CLAUDE.md invariant 2/6 lines
+- [x] 4.2 found-defects: 390 and 274 leave; rows 420–439 for what is left
+- [x] 4.3 What's new lines; registry rows J1, J6
 - [ ] 4.4 Tests of the specs, `cargo test` of what changed, clippy, target-prune

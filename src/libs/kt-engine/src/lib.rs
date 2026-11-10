@@ -38,7 +38,7 @@ pub use player::{
     AudioShared, Player, Sources, VideoBackendStatus, VideoCost, callback_step, hold_builds_for_tests,
     hold_start_bursts_for_tests,
     lookahead_windows,
-    reverse_frames, varispeed_fill,
+    reverse_frames, varispeed_fill, Wake,
 };
 pub use prefetch::{
     PREFETCH_VIDEO_LOOKAHEAD_TICKS, prefetch_audio_pass, simulate_video_playback,

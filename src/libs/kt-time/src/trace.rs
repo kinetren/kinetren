@@ -399,6 +399,13 @@ pub mod play {
     /// A start holds before its first frame: `b` 1 — the renderer is being built, 2 — its sound
     /// is not cached yet.
     pub const START_HOLD: u32 = 12;
+    /// The sound device opened on Play (kept-mix-settle D7): `b` µs the open took, `c` µs from the
+    /// open's start to its first callback (0 — none came within a second after the open returned).
+    pub const DEVICE_OPEN: u32 = 13;
+    /// The sound device closed at rest: `b` ms it stood open.
+    pub const DEVICE_CLOSE: u32 = 14;
+    /// The sound device failed to open at Play, or reported an error while open.
+    pub const DEVICE_ERROR: u32 = 15;
 }
 
 /// `MixChunk.aux`.

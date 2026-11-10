@@ -1035,6 +1035,9 @@ fn play_name(aux: u32) -> &'static str {
         p::REPEATS => "repeats",
         p::RATE => "rate",
         p::START_HOLD => "start_hold",
+        p::DEVICE_OPEN => "device_open",
+        p::DEVICE_CLOSE => "device_close",
+        p::DEVICE_ERROR => "device_error",
         _ => "?",
     }
 }

@@ -116,4 +116,17 @@ notifies), so the first callback after an open never drops the new start's pass.
 ### D7. Measured, traced, reported
 
 `play` records with aux `device_open` (`b` the open's µs, `c` open → first callback µs),
-`device_close`, `device_error`. An open error reaches the bell once per Play. Numbers: see tasks 4.x.
+`device_close`, `device_error`. An open error reaches the bell once per Play (`post_audio_errors`,
+an atomic until there is one). A failed open is retried on the NEXT Play, counted
+(`AudioShared::plays`), not on seeing a pause: a pause and a Play between two looks of the thread
+woke it once, it never saw the pause, and the retry never came (t2383 hung on exactly that before
+the counter). With no device the clock stands, and the stall bell (R.72 M5) fires as for any stall.
+
+Measured here (llvmpipe workshop, PipeWire through ALSA; the `device_open` records of the live
+`idle`, `sched_pause` and `space_hold` runs): the open takes 7–20 ms (6.8, 9.9, 19.3 ms) and the
+first callback follows 0.1–0.3 ms after it returns; the stream stood open 2.3–49 s per play and
+closed a second after the pause. Under the parallel live run at load ~30 two opens took 4.7 s and
+23.4 s (time stood that long after Space; `space_hold`'s first try red, alone green):
+found-defects 425. After a play and a pause the live `idle` counts no wake of `audio-output`,
+`cpal_alsa_out`, `pw-data-loop` or `alsa-pipewire` in 5 s — the threads are gone; before, the open
+device woke 119 + 235 + 8 times in the same 5 s.

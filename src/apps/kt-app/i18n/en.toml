@@ -946,6 +946,7 @@ video_fx_gpu_lost = "GPU video renderer lost ({0}) — the picture is off until 
 flight_saved = "Playback journal saved: {0}"
 moment_marked = "Moment marked in the telemetry journal: {0}"
 stall_at = "Playback froze at {0}: picture or sound did not arrive in time"
+audio_device = "Sound device: {0}"
 
 media_missing = "{0}: source unavailable, a placeholder is shown ({1})"
 media_missing_count = "sources unavailable: {0}"

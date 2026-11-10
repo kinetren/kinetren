@@ -72,6 +72,9 @@ pub struct AudioShared {
     /// with the latency it tells a WASAPI-sized buffer from a PipeWire quantum,
     /// loop-play-latency-hold). One relaxed store per callback.
     pub callback_frames: AtomicI64,
+    /// Presses of Play so far: the sound device's thread tries an open that failed again on the
+    /// next one, though a pause and a Play may come between two of its looks (kept-mix-settle D7).
+    pub plays: AtomicU64,
 }
 
 /// Peak levels of what goes into the ring (f32 bits; the UI does dB,
@@ -114,18 +117,18 @@ pub struct Wake {
 }
 
 impl Wake {
-    fn notify(&self) {
+    pub fn notify(&self) {
         let mut g = self.lock.lock().unwrap();
         *g = g.wrapping_add(1);
         self.cv.notify_all();
     }
 
     /// The notify count now: taken before a thread looks at the state it may park on.
-    fn seen(&self) -> u64 {
+    pub fn seen(&self) -> u64 {
         *self.lock.lock().unwrap()
     }
 
-    fn wait_timeout(&self, d: std::time::Duration) {
+    pub fn wait_timeout(&self, d: std::time::Duration) {
         let g = self.lock.lock().unwrap();
         let _ = self.cv.wait_timeout(g, d).unwrap();
     }
@@ -133,7 +136,7 @@ impl Wake {
     /// Park until a notify, with no clock (one-scheduler: a pause costs nothing). Every event that
     /// changes what a parked thread would do notifies: play, pause, seek, a rate, a quality, a loop
     /// region, a published build, a retuned or replaced source, the player's drop.
-    fn wait_since(&self, seen: u64) {
+    pub fn wait_since(&self, seen: u64) {
         let mut g = self.lock.lock().unwrap();
         while *g == seen {
             g = self.cv.wait(g).unwrap();
@@ -268,6 +271,7 @@ impl Player {
             latency_smooth: AtomicI64::new(0),
             callback_frames: AtomicI64::new(0),
             output_latency_frames: AtomicI64::new(0),
+            plays: AtomicU64::new(0),
         });
         let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
         let master_gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
@@ -591,8 +595,16 @@ impl Player {
         (w.project.settings.width, w.project.settings.height)
     }
 
+    /// The notify count the render and prefetch threads park on: every input they act on moves it
+    /// (play, pause, a seek, a rate, a region, a build, the drop). The sound device's thread parks on
+    /// it too, so it opens on Play with no clock of its own (kept-mix-settle D5).
+    pub fn wake(&self) -> Arc<Wake> {
+        self.wake.clone()
+    }
+
     pub fn play(&self) {
         self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
+        self.shared.plays.fetch_add(1, Ordering::AcqRel);
         self.transport.set_playing(true);
         self.bg_pause.set(true);
         self.wake.notify();

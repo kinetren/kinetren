@@ -180,7 +180,8 @@ fn t2370_a_partly_kept_loop_keeps_the_continuous_laps() {
         assert!(out[o..o + CH] == *lap1(pos), "frame {fr} is not the kept second lap's");
     }
     let runs = mix.store.runs();
-    assert_eq!(runs.laps, vec![(region, vec![region.0..region.1])], "the lap is kept");
+    let whole: Vec<std::ops::Range<i64>> = std::iter::once(region.0..region.1).collect();
+    assert_eq!(runs.laps, vec![(region, whole)], "the lap is kept");
 }
 
 /// t2371: a chunk the source starved is not kept, and neither is any chunk within the settle
