@@ -16,7 +16,7 @@
 use crate::audio::AudioRenderer;
 use crate::fetch::CacheFetcher;
 use crate::fxstore::FxStateStore;
-use crate::prefetch::{prefetch_audio_pass, video_prefetch_pass_except};
+use crate::prefetch::{prefetch_audio_pass, size_frames_cache, video_prefetch_pass_sized};
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
 use crate::video_plan::{GpuBackendInfo, GpuExecError, PresentOptions, VideoGpuExec};
@@ -72,6 +72,9 @@ pub struct AudioShared {
     /// with the latency it tells a WASAPI-sized buffer from a PipeWire quantum,
     /// loop-play-latency-hold). One relaxed store per callback.
     pub callback_frames: AtomicI64,
+    /// Presses of Play so far: the sound device's thread tries an open that failed again on the
+    /// next one, though a pause and a Play may come between two of its looks (kept-mix-settle D7).
+    pub plays: AtomicU64,
 }
 
 /// Peak levels of what goes into the ring (f32 bits; the UI does dB,
@@ -114,18 +117,18 @@ pub struct Wake {
 }
 
 impl Wake {
-    fn notify(&self) {
+    pub fn notify(&self) {
         let mut g = self.lock.lock().unwrap();
         *g = g.wrapping_add(1);
         self.cv.notify_all();
     }
 
     /// The notify count now: taken before a thread looks at the state it may park on.
-    fn seen(&self) -> u64 {
+    pub fn seen(&self) -> u64 {
         *self.lock.lock().unwrap()
     }
 
-    fn wait_timeout(&self, d: std::time::Duration) {
+    pub fn wait_timeout(&self, d: std::time::Duration) {
         let g = self.lock.lock().unwrap();
         let _ = self.cv.wait_timeout(g, d).unwrap();
     }
@@ -133,7 +136,7 @@ impl Wake {
     /// Park until a notify, with no clock (one-scheduler: a pause costs nothing). Every event that
     /// changes what a parked thread would do notifies: play, pause, seek, a rate, a quality, a loop
     /// region, a published build, a retuned or replaced source, the player's drop.
-    fn wait_since(&self, seen: u64) {
+    pub fn wait_since(&self, seen: u64) {
         let mut g = self.lock.lock().unwrap();
         while *g == seen {
             g = self.cv.wait(g).unwrap();
@@ -268,6 +271,7 @@ impl Player {
             latency_smooth: AtomicI64::new(0),
             callback_frames: AtomicI64::new(0),
             output_latency_frames: AtomicI64::new(0),
+            plays: AtomicU64::new(0),
         });
         let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
         let master_gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
@@ -591,8 +595,16 @@ impl Player {
         (w.project.settings.width, w.project.settings.height)
     }
 
+    /// The notify count the render and prefetch threads park on: every input they act on moves it
+    /// (play, pause, a seek, a rate, a region, a build, the drop). The sound device's thread parks on
+    /// it too, so it opens on Play with no clock of its own (kept-mix-settle D5).
+    pub fn wake(&self) -> Arc<Wake> {
+        self.wake.clone()
+    }
+
     pub fn play(&self) {
         self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
+        self.shared.plays.fetch_add(1, Ordering::AcqRel);
         self.transport.set_playing(true);
         self.bg_pause.set(true);
         self.wake.notify();
@@ -1832,7 +1844,7 @@ impl MediaParts {
 /// player's wants, when it exists — the generator sync reads the newest project.
 fn build_version(
     media: &MediaParts,
-    cache: &BurstCache,
+    cache: &Arc<BurstCache>,
     project: &Arc<Project>,
     version: u64,
     seq: u64,
@@ -2036,8 +2048,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             start_wait = None;
             last_generation = generation;
             store.reset_all(); // pre-roll at the next read
-            mix.fx_reset();
             render_head = transport.playhead_frames();
+            mix.fx_reset(&renderer, render_head);
             shared.consumed_frames.store(0, Ordering::Release);
             flight.push(crate::flight::Ev::Seek, render_head, 0);
         }
@@ -2061,8 +2073,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             starting = true;
             start_wait = None;
             store.reset_all();
-            mix.fx_reset();
             render_head = transport.playhead_frames();
+            mix.fx_reset(&renderer, render_head);
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
         }
@@ -2092,8 +2104,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             // system (the armed render_head leads the playhead by laps).
             flight.push(crate::flight::Ev::Reset, transport.playhead_frames(), 0);
             store.reset_all();
-            mix.fx_reset();
             render_head = transport.playhead_frames();
+            mix.fx_reset(&renderer, render_head);
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
             starting = true;
@@ -2768,11 +2780,13 @@ fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std
 }
 
 /// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).
-fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &BurstCache) -> VideoRenderer {
+fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &Arc<BurstCache>) -> VideoRenderer {
     let mut vr = VideoRenderer::new_with_facts(p, facts);
     // the GPU rings bound what stands in front of the display by this project's frame (gpu-arbiter D3)
     kt_time::sched::set_frame_period_ns(vr.grid.frame_step().max(1) as u64 * 1_000_000_000 / kt_time::TICK_HZ as u64);
     vr.set_stream_pacing(Some(crate::StreamPacing::preview(cache.max_video_bytes())));
+    // the cap the memory ledger moves after this build (frames-cache-growth)
+    vr.set_stream_cap(cache.video_cap_reader());
     vr
 }
 
@@ -2822,6 +2836,8 @@ fn prefetch_loop(
     let mut memo_sized: Option<(usize, Option<usize>, usize)> = None;
     // the loop the display's executor was told to keep, and which executor (memory-ledger D4)
     let mut loop_told: Option<(Option<usize>, usize)> = None;
+    // what the decoded-frame cache was sized for (frames-cache-growth)
+    let mut frames_sized = crate::prefetch::FramesSizing::default();
     // the last pass was skipped: nothing moved (one-scheduler: then the thread parks with no clock)
     let mut skipped = false;
     let mut seen = wake.seen();
@@ -2942,7 +2958,9 @@ fn prefetch_loop(
                 stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
             })
         };
-        let missing = video_prefetch_pass_except(video, &cache, t0, q, region_ticks, &kept);
+        let (missing, window) = video_prefetch_pass_sized(video, &cache, t0, q, region_ticks, &kept);
+        // the cache asks the memory ledger for what this window and the loop need at this quality
+        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, &mut frames_sized);
         pass_span.b(missing.len() as u64).c(stream_pending as u64);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue

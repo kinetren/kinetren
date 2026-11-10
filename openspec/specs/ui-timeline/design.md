@@ -423,3 +423,14 @@ ceiling; it now uses the shared body.
   piece of work, not done.
 - The notes `docs/features/ui/*` (keys, layouts, the system file dialog,
   clip colours, the viewer's on-screen controls) — status "candidate", not part of the contract.
+
+## The memory numbers say what they count (frames-cache-growth, 2026-11-10)
+
+"cache: 39/535 MB" was audio/video, read by the owner as used/limit (found-defects 397). The status bar
+now has "frames: held/bound MB" and "memory: P MB" with one hint; Diagnostics' first row, which
+duplicated the occupancy line, says "Program P MB · rest R" with a hint naming the rest (decoders,
+graphics driver, interface — no counter of their own). A separate "Program" line was tried and dropped:
+it put the instruments past the window's fixed 720-point opening height, and the window opened short and
+grew by itself a frame later (t918, t1147; the shell's sizing pass is row 442). The caches' line is one
+line whatever its numbers. Rejected: one long "video V / cap · audio A · program P" item — t128 holds
+the status items to 190 points in every language.

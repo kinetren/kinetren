@@ -443,5 +443,11 @@ impl FxStateStore {
         for p in self.tracks.values_mut() {
             p.reset();
         }
+        // a sidechain key branch (R.65) is a stream through the same chains: left as it was, it
+        // went on across the jump as a seam and rang the old place into the new one's detector
+        // (kept-mix-settle, the class walk)
+        for k in self.keys.values_mut() {
+            k.reset_all();
+        }
     }
 }

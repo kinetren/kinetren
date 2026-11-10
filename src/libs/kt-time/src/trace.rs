@@ -173,20 +173,31 @@ pub enum Ev {
     /// [`crate::mem::Tenant`], `a` its want, `b` its new cap, `c` the bytes it holds, `id` 1 — a
     /// device refusal set the cap.
     MemGrant = 92,
+    /// The preview's decoded-frame cache was sized (frames-cache-growth). `a` its cap now in bytes,
+    /// `b` the look-ahead window's peak bytes, `c` the loop region's frames in bytes (0 — no loop),
+    /// `aux` the preview quality's height.
+    FramesCap = 93,
+    /// The process's memory in a busy second when it moved (frames-cache-growth). `a` its resident
+    /// bytes (0 — unknown), `b` what the ledger's tenants hold together, `c` the memory available in
+    /// MB (0 — unknown).
+    MemSample = 94,
+    /// A tenant's bytes in a busy second when they moved (frames-cache-growth). `aux` the
+    /// [`crate::mem::Tenant`], `a` the bytes it holds, `b` its cap (bases plus grant).
+    MemUsed = 95,
 
     /// A compute job's submission and its run on the device, on this trace's clock
     /// (stream-history-on-device, found-defects 398): `a` when it was submitted, `b` when its first
     /// dispatch started on the device, `c` when its last timed dispatch ended (0 — unknown), `aux` the
     /// calibration's error in µs (`u32::MAX` — the device gives no timestamps, `u32::MAX - 1` — not calibrated: `b`/`c` are 0), `id`
     /// the caller's [`crate::sched::Class`]. The record's own time is when the job's buffers came back.
-    GpuStart = 93,
+    GpuStart = 96,
     /// One submission of a stream history walk (stream-history-on-device): `a` its first position,
     /// `b` the positions in it, `c` the pictures read back, `aux` the checkpoints it kept.
-    StreamWalk = 94,
+    StreamWalk = 97,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 48] = [
+    pub const ALL: [Ev; 51] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -233,6 +244,9 @@ impl Ev {
         Ev::Block,
         Ev::MemBudget,
         Ev::MemGrant,
+        Ev::FramesCap,
+        Ev::MemSample,
+        Ev::MemUsed,
         Ev::GpuStart,
         Ev::StreamWalk,
     ];
@@ -289,6 +303,9 @@ impl Ev {
             Ev::Block => "block",
             Ev::MemBudget => "mem_budget",
             Ev::MemGrant => "mem_grant",
+            Ev::FramesCap => "frames_cap",
+            Ev::MemSample => "mem_sample",
+            Ev::MemUsed => "mem_used",
             Ev::GpuStart => "gpu_start",
             Ev::StreamWalk => "stream_walk",
         }
@@ -415,6 +432,13 @@ pub mod play {
     /// A start holds before its first frame: `b` 1 — the renderer is being built, 2 — its sound
     /// is not cached yet.
     pub const START_HOLD: u32 = 12;
+    /// The sound device opened on Play (kept-mix-settle D7): `b` µs the open took, `c` µs from the
+    /// open's start to its first callback (0 — none came within a second after the open returned).
+    pub const DEVICE_OPEN: u32 = 13;
+    /// The sound device closed at rest: `b` ms it stood open.
+    pub const DEVICE_CLOSE: u32 = 14;
+    /// The sound device failed to open at Play, or reported an error while open.
+    pub const DEVICE_ERROR: u32 = 15;
 }
 
 /// `MixChunk.aux`.
@@ -429,6 +453,21 @@ pub mod mix {
     pub const ALREADY: u32 = 4;
     /// Rendered live outside the store (reverse, offline, no store).
     pub const OUTSIDE: u32 = 5;
+    /// Not a chunk: the effects were brought back to where the store took over before the next
+    /// live chunk (kept-mix-settle): `a` the chunk's head, `b` the frames rendered and discarded,
+    /// `c` how — [`WARM_CONTINUED`], [`WARM_WINDOW`] or [`WARM_SEEK`].
+    pub const WARM: u32 = 6;
+    /// Rendered live, not kept: within the settle length after a reset the effects could not warm
+    /// (a starved pre-roll or chunk, a track stage after a seek), so it is not what a continuous
+    /// play gives; `c` why it was live, as for the others.
+    pub const UNSETTLED: u32 = 7;
+    /// The effects went on from where they stopped through the replayed frames: the kept chunks
+    /// are the continuous play's, byte for byte.
+    pub const WARM_CONTINUED: u64 = 1;
+    /// Too far for that: reset, and played through the settle length before the chunk.
+    pub const WARM_WINDOW: u64 = 2;
+    /// Nothing heard there keeps a state: a reset is all it takes.
+    pub const WARM_SEEK: u64 = 3;
 }
 
 /// `Job.aux`.

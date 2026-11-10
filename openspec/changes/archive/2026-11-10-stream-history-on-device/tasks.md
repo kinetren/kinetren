@@ -3,13 +3,13 @@
 ## 1. Arbiter and the GPU start record (392, 398)
 
 - [x] 1.1 `Piece::cut` submits and admits the next piece by the next pass's prediction (D6); t2356, t2253, t2250–t2255
-- [x] 1.2 Compute host calibration and `GpuStart` (93) record; `kt-cli trace gpu` start delay per class (D7); t2357, t2362
+- [x] 1.2 Compute host calibration and `GpuStart` (96; 93 before the merge with frames-cache-growth) record; `kt-cli trace gpu` start delay per class (D7); t2357, t2362
 - [x] 1.3 Commit, target-prune
 
 ## 2. The batched walk on the device (391)
 
 - [x] 2.1 Shaders: vector edit (table, loss) and residual drop; t2352
-- [x] 2.2 `walk.rs`: the recorder, batches, readback rule by `shown_from`, continuation entries; per-position reference kept for tests; `StreamWalk` (94) record; t2350, t2351, t2363, t1239, t2270–t2278
+- [x] 2.2 `walk.rs`: the recorder, batches, readback rule by `shown_from`, continuation entries; per-position reference kept for tests; `StreamWalk` (97) record; t2350, t2351, t2363, t1239, t2270–t2278
 - [x] 2.3 kt-cli stream-cost prints positions/s, readbacks and jobs; measure before/after
 - [x] 2.4 Commit, target-prune
 

@@ -548,6 +548,9 @@ pub struct VideoRenderer {
     /// `StreamPacing::hold` as the player last set it: an atomic, because the preview's thread
     /// composes on a renderer shared with the UI thread (ui-never-waits).
     stream_hold: std::sync::atomic::AtomicBool,
+    /// The player's decoded-frame cache bound (frames-cache-growth): the pacing's order is a
+    /// quarter of it as it is NOW — the ledger moves the cap after this shared build was made.
+    stream_cap: Option<Arc<dyn Fn() -> usize + Send + Sync>>,
 }
 
 /// Source frame(s) for moment `t`: the main one and, in “blend” mode,
@@ -1363,6 +1366,7 @@ impl VideoRenderer {
             stream_pacing: None,
             stream_held: Default::default(),
             stream_hold: Default::default(),
+            stream_cap: None,
         }
     }
 
@@ -1378,8 +1382,25 @@ impl VideoRenderer {
     fn pacing(&self) -> Option<StreamPacing> {
         self.stream_pacing.map(|mut p| {
             p.hold = self.stream_hold.load(std::sync::atomic::Ordering::Relaxed);
+            if let Some(cap) = &self.stream_cap {
+                p.order_bytes = StreamPacing::preview(cap()).order_bytes;
+            }
             p
         })
+    }
+
+    /// The bytes the stream stages' order takes now (`None` — not paced).
+    pub fn stream_order_bytes(&self) -> Option<usize> {
+        self.pacing().map(|p| p.order_bytes)
+    }
+
+    /// Pace the stream stages by a cache whose bound moves (frames-cache-growth): the order reads
+    /// `cap` when it is made, a quarter of it, as [`StreamPacing::preview`] says.
+    pub fn set_stream_cap(&mut self, cap: Arc<dyn Fn() -> usize + Send + Sync>) {
+        for sub in self.nests.values_mut() {
+            sub.set_stream_cap(cap.clone());
+        }
+        self.stream_cap = Some(cap);
     }
 
     /// Whether the last `frame_plan` showed a stream layer's late frame: such a composite is not
@@ -1583,7 +1604,7 @@ impl VideoRenderer {
                     let st = c.stream.as_deref().expect("checked");
                     let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
                     let needs = st.kernel().needs(&st.values, &cs, cs.pos(t), &self.stream_memo);
-                    match self.stream_pacing {
+                    match self.pacing() {
                         Some(p) => cs.order(cs.window(&needs, p.order_bytes), out),
                         None => cs.order(&needs, out),
                     }

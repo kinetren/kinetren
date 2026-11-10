@@ -15,6 +15,7 @@ pub fn install() -> &'static Arc<Registry> {
     kt_plugin_api::compute::install(kt_gpu::compute::open);
     // the memory the preview's stream memo may grow into (stream-layout-per-build)
     kt_engine::video::set_memory_probe(kt_gpu::memory::available);
+    kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
     reg
 }
 

@@ -300,6 +300,8 @@ pub(crate) fn journal_second(j: &crate::tele_journal::Journal, at: crate::tele_j
         for (i, n) in s.work.iter().enumerate().filter(|(_, n)| **n > 0) {
             kt_time::trace::ev(kt_time::trace::Ev::Work).at(t).aux(i as u32).a(*n as u64).emit();
         }
+        // the process's memory and each tenant's bytes, when they moved (frames-cache-growth)
+        kt_time::mem::sample();
         // the device's second beside the processor's (gpu-pass-cost)
         if let Some(g) = &s.gpu {
             j.record_at(at, Kind::Gpu, &g.line());

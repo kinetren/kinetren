@@ -87,7 +87,7 @@ the display (t2253).
 The compute host writes a timestamp in an empty submission at its first job and when its calibration is
 older than 10 s, brackets it by `trace::now_ns()` before the submit and after the wait, and keeps the
 narrowest of the last few brackets: `cpu = (gpu − g0)·period + mid`, error = half the bracket. Each job
-records `GpuStart` (93): submitted, device start, device end, error; a device without `TIMESTAMP_QUERY`
+records `GpuStart` (96; 93 before the merge with frames-cache-growth): submitted, device start, device end, error; a device without `TIMESTAMP_QUERY`
 records `aux = u32::MAX`. Lavapipe's clock is CLOCK_MONOTONIC already; the calibration does not assume
 it.
 

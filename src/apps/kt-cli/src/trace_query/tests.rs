@@ -327,6 +327,46 @@ fn t2300_the_ledger_is_in_the_trace_and_the_query_reads_it() {
     assert!(out.contains("history   cap 356 MB"), "{out}");
 }
 
+/// t2396 (frames-cache-growth): `trace memory` prints the frames cache's sizings, each tenant's bytes
+/// at the last busy second, the process's peak with the part the caches held and the rest named, and
+/// the frames cache's evictions a second.
+#[test]
+fn t2396_memory_names_the_frames_cap_and_the_whole_process() {
+    use kt_time::mem::Tenant;
+    const MB: u64 = 1 << 20;
+    const S: u64 = 1_000_000_000;
+    let mut v = vec![
+        rec(Ev::FramesCap, S, |r| {
+            r.a = 1600 * MB;
+            r.b = 200 * MB;
+            r.c = 1200 * MB;
+            r.aux = 720;
+        }),
+        rec(Ev::MemSample, 2 * S, |r| {
+            r.a = 3000 * MB;
+            r.b = 1000 * MB;
+        }),
+        rec(Ev::MemSample, 3 * S, |r| {
+            r.a = 4700 * MB;
+            r.b = 2500 * MB;
+        }),
+        rec(Ev::MemUsed, 3 * S, |r| {
+            r.aux = Tenant::Frames as u32;
+            r.a = 1500 * MB;
+            r.b = 1664 * MB;
+        }),
+    ];
+    for i in 0..5 {
+        v.push(rec(Ev::CacheEvict, 4 * S + i, |_| {}));
+    }
+    v.push(rec(Ev::CacheEvict, 5 * S, |_| {}));
+    let out = memory(&run_of(v));
+    assert!(out.contains("frames cache 720 lines: cap 1600 MB, window 200 MB, loop 1200 MB"), "{out}");
+    assert!(out.contains("frames    holds 1500 MB of cap 1664 MB"), "{out}");
+    assert!(out.contains("process peak 4700 MB") && out.contains("the caches 2500 MB, the rest 2200 MB"), "{out}");
+    assert!(out.contains("frames cache evictions: 6 in 2 seconds with any, at most 5 in one"), "{out}");
+}
+
 /// Test t2263 (gpu-arbiter): `gpu` reports the ring by class — admissions and their waits, the pieces
 /// of a cut frame, a stopped history, compute jobs by class, and the display presents' wait.
 #[test]

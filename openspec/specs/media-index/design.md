@@ -488,3 +488,24 @@ new home, is in `openspec/changes/archive/2026-11-09-one-scheduler/design.md`.
   his region: V-fps 38.1 (auto) against 39.4 (four).
 - **Left:** the bases themselves (found-defects 330), the kept mix's cycle (331), `Inner::past`
   duplicates (335).
+
+## The decoded-frame cache grows by the ledger (frames-cache-growth, 2026-11-10)
+
+The owner's run (kkt-26.11.10 J4, found-defects 396): the frames cap stood at 576 MB for a whole run
+while ~21 GB of growth budget was free, a loop evicted on every lap, and the preview quality changed
+nothing — memory-ledger had given the kind a slot but no want, and every reader of the budget read the
+configured constant.
+
+- **The player's cache asks** (`BurstCache::want_video`): twice its look-ahead window (the window takes
+  half the cap), or the loop region's frames plus an eighth plus the window, at the preview quality and
+  decode step, rounded to 64 MiB, asked by the prefetch thread only when that moves
+  (`size_frames_cache`). A cache that never asks keeps its base: the ledger has one want per kind.
+- **The bound is read at use**: base + min(the kind's grant, its own want), from the ledger's atomics.
+  The ledger tells keepers only of a shrink; a cap kept in the cache never saw a claim's growth come
+  back (the first draft, caught by t2390). The shrink hook evicts at once; the asker evicts for its own
+  lower want; holds and pins stay stronger.
+- **Every reader reads the cap**: the look-ahead's half, the span room's half, the stream pacing's
+  quarter (through `video_cap_reader`, a renderer build outliving the cap it was made with).
+- Measured (release, 12 GB cgroup): his region's evictions 3.5–3.7 k → 0.85–1.3 k per 120 s; the heavy
+  showcase loop at 640×360 OOM-killed on the base twice, kept whole from its fourth lap with the change.
+  The class walk (MixStore row 331, bases row 330, the probe tool row 440) is in the archived change.

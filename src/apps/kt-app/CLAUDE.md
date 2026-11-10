@@ -4,6 +4,10 @@
 
 UI invariants earned through the rounds 4–5 (details and test numbers — items 38–94). Violating any of them is a performance or UX regression.
 
+## The sound device (kept-mix-settle, transport)
+
+- **The device opens on Play and closes a second after the play stopped** (`audio_out`, found-defects 274): the `audio-output` thread owns the `cpal::Stream` (not `Send`, a blocking open), parks on `Player::wake()` with no clock, and drops the stream after `CLOSE_AFTER_REST`. The UI thread never opens a device. The ring's consumer lives in the callback's `Sink` and comes back to the thread when cpal drops it (`Sink`'s `Drop` sends it): nothing in the callback locks or allocates (invariant 6, t2384 counts). While closed the thread does a seek's flush itself (t2382). An open error goes to the bell through `post_audio_errors` once a frame (an atomic until there is one). A new `Device` (a backend, a test double) only implements `open`: the callback body is `Sink::fill`, one for all.
+
 ## Redraw and frame cost (items 38–40, 53, 57)
 
 - **At rest no frame is asked for at all** (idle-cpu; the tick of 4 Hz is gone). A background thread that has something to show calls `wake::now()` or, for a stream of small results, `wake::soon()`; a state on a clock adds its moment to `KtApp::rest_wake`. New code that polls a result inside the frame with neither of these shows it only when the mouse moves. The Diagnostics window alone samples on a clock, twice a second.

@@ -884,13 +884,8 @@ impl KtApp {
         if let Some(sink) = crate::tele_journal::flight_sink() {
             player.flight.set_sink(sink);
         }
-        let audio = match audio_out::start(ring, player.shared.clone(), player.transport.clone()) {
-            Ok(a) => Some(a),
-            Err(e) => {
-                eprintln!("audio output unavailable: {e}");
-                None
-            }
-        };
+        // the device opens on Play and closes at rest (kept-mix-settle D5); its errors reach the bell
+        let audio = Some(audio_out::start(ring, &player));
         (player, audio, missing, lens)
     }
 
@@ -1798,6 +1793,7 @@ impl KtApp {
         // the preview is detached is called twice, item 3 round 16).
         self.tick_space_boost(&ctx);
         self.post_stalls();
+        self.post_audio_errors();
         self.handle_drops(&ctx);
         self.hover_hint = None;
         self.no_resize_rects.clear();
@@ -3077,6 +3073,15 @@ impl KtApp {
         let fps = self.model.project().settings.fps;
         let at = crate::util::format_timecode(Tick::from_audio_frames(head), fps);
         self.warn(crate::tf!(k::msg::STALL_AT, at));
+    }
+
+    /// A sound device that did not open at Play, or failed while open, goes to the bell (its
+    /// thread opens it on Play, kept-mix-settle D5): the clock stands with no device, and the
+    /// stall alone would not say why.
+    fn post_audio_errors(&mut self) {
+        if let Some(e) = self.audio.as_ref().and_then(|a| a.take_error()) {
+            self.warn(crate::tf!(k::msg::AUDIO_DEVICE, e));
+        }
     }
 
     /// Start playback from the current position (resume semantics, item 15).
@@ -7759,11 +7764,18 @@ impl KtApp {
         let s = self.model.project().settings.clone();
         let rows: [(String, String); 5] = [
             (
-                crate::tf!(
-                    k::perf::CACHE_MB,
-                    format!("{:.0}", self.player.cache.audio_bytes() as f64 / 1e6),
-                    format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6)
-                ),
+                // the whole program and what no cache counts (frames-cache-growth, found-defects
+                // 397): "Cache A/V" here was audio/video, read as used/limit, and the decoded
+                // frames against their bound are the occupancy line under the rows
+                {
+                    let caches: u64 = kt_time::mem::snapshot().used.iter().sum();
+                    let rss = self.perf.resident();
+                    crate::tf!(
+                        k::perf::CACHE_MB,
+                        rss.map_or("?".to_string(), |r| format!("{}", r >> 20)),
+                        rss.map_or("?".to_string(), |r| format!("{}", r.saturating_sub(caches) >> 20))
+                    )
+                },
                 // WHAT THESE TWO NUMBERS ARE (R.43, item 289): the left — misses of the
                 // RENDERER (the cache did not give a burst), the right — starvation of the
                 // CALLBACK (the ring is empty). The user read them as
@@ -7816,16 +7828,24 @@ impl KtApp {
         // ui.columns divides the AVAILABLE width in half and requires no minimum —
         // Grid with Extend inflated the panel by content and ate the preview
         // (a regression of item 3 of round 7.1; the same defect that item 18 of round 6 fixed)
+        let mut program: Option<egui::Response> = None;
         ui.columns(2, |cols| {
             for c in cols.iter_mut() {
                 c.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 c.spacing_mut().item_spacing.y = 1.0;
             }
-            for (a, b) in rows {
-                cols[0].weak(a);
+            for (i, (a, b)) in rows.into_iter().enumerate() {
+                let r = cols[0].weak(a);
+                if i == 0 {
+                    program = Some(r);
+                }
                 cols[1].weak(b);
             }
         });
+        if let Some(r) = program {
+            crate::widgets::field_probe::note("diag.memory", r.rect);
+            self.hint(r, tr(k::perf::PROGRAM_HINT));
+        }
         if let Some(g) = &self.gpu_info {
             ui.weak(format!("GPU: {g}"));
         }
@@ -7953,11 +7973,22 @@ impl KtApp {
             }
             // item 22 of round 7: cache/underruns after the region
             ui.separator();
-            ui.weak(crate::tf!(
+            // what they count, said (frames-cache-growth, found-defects 397): the decoded frames
+            // held against the bound the ledger grants them now, then all the program holds — the
+            // "39/535" before was audio/video and read as used/limit
+            let frames = ui.weak(crate::tf!(
                 k::perf::CACHE_SHORT,
-                format!("{:.0}", self.player.cache.audio_bytes() as f64 / 1e6),
-                format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6),
+                format!("{}", self.player.cache.video_bytes() >> 20),
+                format!("{}", self.player.cache.max_video_bytes() >> 20),
             ));
+            crate::widgets::field_probe::note("status.frames", frames.rect);
+            self.hint(frames, tr(k::perf::CACHE_HINT));
+            // always there ("?" while unknown), so the bar's items never shift when the probe answers
+            ui.separator();
+            let rss = self.perf.resident().map_or("?".to_string(), |r| format!("{}", r >> 20));
+            let mem = ui.weak(crate::tf!(k::perf::MEM_SHORT, rss));
+            crate::widgets::field_probe::note("status.memory", mem.rect);
+            self.hint(mem, tr(k::perf::CACHE_HINT));
             ui.separator();
             // callback starvation — these are FRAMES that were not there at the output;
             // in milliseconds one can see how much silence accumulated (R.43 item 290)
@@ -9669,6 +9700,20 @@ pub struct PerfState {
     play: Option<(std::time::Instant, [u64; 5])>,
     /// What the instruments above the graphs took last frame (the window's split, D5).
     diag_used: f32,
+
+    /// The process's resident memory and when it was read (frames-cache-growth): the status bar and
+    /// Diagnostics read it at most once a second, and only in frames that are drawn anyway.
+    resident: (Option<std::time::Instant>, Option<u64>),
+}
+
+impl PerfState {
+    /// The process's resident memory, read again when the last reading is a second old.
+    pub fn resident(&mut self) -> Option<u64> {
+        if self.resident.0.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
+            self.resident = (Some(std::time::Instant::now()), kt_time::mem::resident());
+        }
+        self.resident.1
+    }
 }
 
 impl PerfState {
@@ -9730,6 +9775,7 @@ impl PerfState {
             video_cells_skipped: 0,
             video_rollbacks: 0,
             diag_open: false,
+            resident: (None, None),
             probe_set: false,
             journal_view: Vec::new(),
             journal_gen: None,
@@ -10408,7 +10454,8 @@ impl KtApp {
                     self.draw_perf_section(ui);
                     ui.separator();
                     // video cache occupancy from the REAL limit (in v1 the limit constant
-                    // was duplicated by hand and was off by a factor of 384)
+                    // was duplicated by hand and was off by a factor of 384); the limit is the
+                    // bound the memory ledger grants now (frames-cache-growth)
                     let used = self.player.cache.video_bytes() as f64;
                     let limit = self.player.cache.max_video_bytes() as f64;
                     let occ = if limit > 0.0 { (used / limit * 100.0).min(100.0) } else { 0.0 };
@@ -10416,8 +10463,8 @@ impl KtApp {
                         ui.weak(crate::tf!(
                             k::perf::CACHE_OCCUPANCY,
                             format!("{occ:.0}"),
-                            format!("{:.0}", used / 1e6),
-                            format!("{:.0}", limit / 1e6)
+                            format!("{:.0}", used / (1u64 << 20) as f64),
+                            format!("{:.0}", limit / (1u64 << 20) as f64)
                         ));
                         let cache = self.player.cache.stats();
                         ui.weak(crate::tf!(k::perf::NO_READ_DROPS, cache.unused_evictions));
@@ -10450,14 +10497,20 @@ impl KtApp {
                             .map(|t| m.used(*t))
                             .sum();
                         let room = Tenant::ALL.iter().map(|t| m.base(*t)).sum::<u64>() + m.budget;
-                        ui.weak(crate::tf!(
+                        // one line whatever the numbers: wrapped, a figure gaining a digit made the
+                        // window grow by itself (t918); truncated, the whole text is on hover
+                        ui.add(egui::Label::new(egui::RichText::new(crate::tf!(
                             k::perf::MEMORY_LEDGER,
                             mb(m.used(Tenant::Kept)),
                             mb(m.used(Tenant::History)),
                             mb(m.used(Tenant::Frames)),
+                            mb(m.used(Tenant::Mix)),
                             mb(device),
                             mb(room)
-                        ));
+                        )).weak()).truncate());
+                        // the whole process (frames-cache-growth, found-defects 397): what the caches
+                        // hold is a part of it, and the rest has no counter of its own — it is named
+
                     }
                     ui.add_space(6.0);
                     // the three graphs share what the scrolling part has left: a larger window

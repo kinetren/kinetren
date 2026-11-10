@@ -1418,6 +1418,7 @@ fn run(args: &[String]) -> i32 {
         kt_plugin_api::compute::install(streamcost::open);
     }
     kt_engine::video::set_memory_probe(kt_gpu::memory::available);
+    kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
     // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
     kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {

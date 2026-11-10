@@ -105,6 +105,9 @@ pub struct Ledger {
     state: Mutex<State>,
     probe: Mutex<Option<Probe>>,
     next_id: AtomicU64,
+    /// What the last [`Ledger::sample`] wrote, in MB: each kind's bytes, then the process's resident
+    /// memory and the kinds' sum.
+    sampled: Mutex<Option<[u64; KINDS + 2]>>,
 }
 
 /// What [`snapshot`] reads: per kind (bytes held, bases, grant), the growth budget of the last sizing.
@@ -160,7 +163,44 @@ impl Ledger {
             state: Mutex::new(State::default()),
             probe: Mutex::new(None),
             next_id: AtomicU64::new(1),
+            sampled: Mutex::new(None),
         }
+    }
+
+    /// One busy second's memory (frames-cache-growth): a `mem_sample` record when the process's
+    /// `resident` bytes or the kinds' sum moved by a MB since the last sample, a `mem_used` record for
+    /// each kind whose bytes moved by a MB. The caller samples once per busy second and never at
+    /// rest; an unchanged second writes nothing. The records written.
+    pub fn sample(&self, resident: Option<u64>) -> usize {
+        let snap = self.snapshot();
+        let sum: u64 = snap.used.iter().sum();
+        let mut now = [0u64; KINDS + 2];
+        for (i, u) in snap.used.iter().enumerate() {
+            now[i] = u >> 20;
+        }
+        now[KINDS] = resident.unwrap_or(0) >> 20;
+        now[KINDS + 1] = sum >> 20;
+        let mut last = self.sampled.lock().unwrap_or_else(|p| p.into_inner());
+        let was = last.unwrap_or([u64::MAX; KINDS + 2]);
+        let mut wrote = 0;
+        if now[KINDS..] != was[KINDS..] {
+            let avail = self.available().map_or(0, |a| a >> 20);
+            crate::trace::ev(crate::trace::Ev::MemSample).a(resident.unwrap_or(0)).b(sum).c(avail).emit();
+            wrote += 1;
+        }
+        for t in Tenant::ALL {
+            let i = t as usize;
+            if now[i] != was[i] {
+                crate::trace::ev(crate::trace::Ev::MemUsed)
+                    .aux(t as u32)
+                    .a(snap.used[i])
+                    .b(snap.base[i] + snap.grant[i])
+                    .emit();
+                wrote += 1;
+            }
+        }
+        *last = Some(now);
+        wrote
     }
 
     /// How the ledger learns the memory the process can still take (the host injects it; `None` —
@@ -321,6 +361,11 @@ impl Account {
         self.ledger.want(self.tenant, extra)
     }
 
+    /// The want of this kind above its bases now (whoever of its keepers asked it).
+    pub fn wanted(&self) -> u64 {
+        self.ledger.wanted(self.tenant)
+    }
+
     /// Call `hook` with the kind's new grant when a sizing shrinks it (not when this kind asked).
     pub fn on_shrink(&self, hook: impl Fn(u64) + Send + Sync + 'static) {
         let mut s = self.ledger.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -371,6 +416,23 @@ pub fn set_probe(probe: fn() -> Option<u64>) {
 /// The memory available now, by the process's probe.
 pub fn available() -> Option<u64> {
     ledger().available()
+}
+
+static RESIDENT: OnceLock<fn() -> Option<u64>> = OnceLock::new();
+
+/// How the process learns its own resident memory (the host injects `kt_gpu::memory::resident`).
+pub fn set_resident_probe(probe: fn() -> Option<u64>) {
+    let _ = RESIDENT.set(probe);
+}
+
+/// The process's resident memory now, by the host's probe; `None` — unknown.
+pub fn resident() -> Option<u64> {
+    RESIDENT.get().and_then(|p| p())
+}
+
+/// One busy second's memory records of the process's ledger ([`Ledger::sample`]).
+pub fn sample() -> usize {
+    ledger().sample(resident())
 }
 
 /// The process's ledger now.
@@ -501,5 +563,45 @@ mod tests {
         // a dropped account leaves the base and its hook
         drop(hist);
         assert_eq!(l.snapshot().base(Tenant::History), 0);
+    }
+
+    /// t2395 (frames-cache-growth): a busy second's sample writes the process's memory and each
+    /// tenant's bytes only when they moved; an unchanged second writes nothing.
+    #[test]
+    fn t2395_a_memory_sample_writes_only_what_moved() {
+        let _one = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        let l = test_ledger(Some(4000 * MB));
+        let frames = l.open(Tenant::Frames, 512 * MB);
+        let mix = l.open(Tenant::Mix, 64 * MB);
+        let count = |items: &[crate::trace::Item]| {
+            let recs = crate::trace::testing::recs(items);
+            let of = |e| recs.iter().filter(|r| r.kind() == Some(e)).cloned().collect::<Vec<_>>();
+            (of(crate::trace::Ev::MemSample), of(crate::trace::Ev::MemUsed))
+        };
+        frames.set(300 * MB);
+        mix.set(10 * MB);
+        let items = crate::trace::testing::capture(|| {
+            l.sample(Some(2000 * MB));
+        });
+        let (proc_, used) = count(&items);
+        assert_eq!(proc_.len(), 1, "the first sample names the process");
+        assert_eq!((proc_[0].a, proc_[0].b), (2000 * MB, 310 * MB));
+        assert_eq!(proc_[0].c, 4000, "the memory available in MB");
+        let f = used.iter().find(|r| r.aux == Tenant::Frames as u32).expect("the frames' bytes");
+        assert_eq!((f.a, f.b), (300 * MB, 512 * MB), "bytes held and the cap");
+        // nothing moved: nothing written (a sample at rest would be a record a second)
+        let items = crate::trace::testing::capture(|| {
+            assert_eq!(l.sample(Some(2000 * MB)), 0);
+        });
+        let (proc_, used) = count(&items);
+        assert!(proc_.is_empty() && used.is_empty());
+        // the frames moved: their record alone, and the process's for the sum
+        frames.set(500 * MB);
+        let items = crate::trace::testing::capture(|| {
+            l.sample(Some(2000 * MB));
+        });
+        let (proc_, used) = count(&items);
+        assert_eq!(proc_.len(), 1);
+        assert_eq!(used.iter().map(|r| r.aux).collect::<Vec<_>>(), vec![Tenant::Frames as u32]);
     }
 }

@@ -68,5 +68,5 @@ GPU job that waits per job or per piece.
   (`StreamLayout::shown_from`, `StreamKernel::walk_from`, `StreamMemo` pinned tier and view),
   `kt-gpu` (arbiter `Piece::cut`, compute host's start record and calibration), `kt-engine`
   (`video_stream.rs`, player's prefetch, `Composed.held`), `kt-app` (V-fps, held/s, marker, i18n),
-  `kt-time` (trace events 93, 94), `kt-cli` (stream-cost prints positions/s and readbacks).
+  `kt-time` (trace events 96, 97), `kt-cli` (stream-cost prints positions/s and readbacks).
 - No file format change; no OTIO export change.

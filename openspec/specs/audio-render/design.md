@@ -11,7 +11,7 @@ The third — "the music drowns out the voice" (the most frequent live complaint
 ## Decisions and why
 
 - **The whole path is f32 48 kHz/2ch; the boundaries are floored to frames once.** The only way in which FX and the mix do not know about the file, and tick↔sample is exact (capability `time-model`). The BS.1770 coefficients are written out exactly for 48 kHz — a rare case where an invariant coincided with the standard to the letter.
-- **FX state belongs to one thread, without mutexes; prefetch warms only the pre-FX source.** The chain's output is a streaming automaton: the tail depends on the entire history, so a kept output is a RECORDING of one play, not a function of the place. The owner chose to keep it anyway (cached-range-plays, kkt-26.11.07b, "вариант А"): a covered range keeps the sound it was first heard with, as a prerender does in VEGAS, and plays with no decode and no effect run. What that costs and how it stays right: the key is the scene hash of the events heard in the burst (an edit drops exactly what it determines), linear play and loop laps are kept apart, and leaving the store is a seek (the FX state did not run while the store played). Measured on his project: 911 of 950 bursts of a 20 s loop came from the store.
+- **FX state belongs to one thread, without mutexes; prefetch warms only the pre-FX source.** The chain's output is a streaming automaton: the tail depends on the entire history, so a kept output is a RECORDING of one play, not a function of the place. The owner chose to keep it anyway (cached-range-plays, kkt-26.11.07b, "вариант А"): a covered range keeps the sound it was first heard with, as a prerender does in VEGAS, and plays with no decode and no effect run. What that costs and how it stays right: the key is the scene hash of the events heard in the burst (an edit drops exactly what it determines), linear play and loop laps are kept apart, and leaving the store brings the FX state back to the continuous play before anything is kept (kept-mix-settle: through the replayed frames when they are within the chains' settle length, else a reset and a discarded play of the settle length through the same path, a loop's wrap included). A reset alone pre-rolled each event from the timeline, so a loop lap was kept with the timeline before the region as its past instead of the lap before it, and replayed on every lap (his trace kkt-26.11.10 J1, found-defects 390): on his event the kept lap matched the continuous play in 742 of 15606 samples, now in all. Measured on his project: 911 of 950 bursts of a 20 s loop came from the store.
 - **Chain diff by clip id and structure fingerprint; parameters are smoothed; buffers are cleared only in `reset`.** Otherwise a model edit would tear the reverb tail. The fingerprint knows only the kinds of slots, so the store MUST also convey the GEOMETRY (entry point, length, handles) — and it conveys it with a seam, not a seek.
 - **Two kinds of break.** A real seek (the player does `reset`) — a pre-roll into the void; a position break during continuous output — a seam, where the resampler and the reverb live on. A pre-roll on every lap of the loop cost ≈1.25 s per chain and was the cause of "the computer is noisy"; misses of the pre-roll are not audible, so they are counted separately.
 - **Underruns in frames.** Frames are comparable to the length of the event and the output delay; bursts are not comparable to anything. Starvation of the callback is shown to the user as milliseconds of silence.
@@ -147,3 +147,22 @@ The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-b
   (row 155).
 - What an edit still walks off the UI thread: the root's resolve (7.6 ms on haski) and the hash of
   every event; an incremental build of an edited version is 20.5 ms against 31.6 fresh (row 192).
+
+## kept-mix-settle (2026-11-10)
+
+- **Warm, do not just stop keeping.** Not keeping until the chain settles would leave the live sound
+  after an exit wrong for the settle length and keep bytes that never equal the continuous play (a
+  warp's resampler phase never converges: −28 dB for ever on his event). The engine already warms by
+  playing (a seek's `hard_seek`, a reel's move); the exit does the same: continued through the
+  replayed frames when short (exact), a window of the settle length when long.
+- **The settle length is local and asked of the timeline frames** (`settle_frames`): a renderer-wide
+  maximum would make a 10 s delay anywhere cost every exit 10 s; the unfolded loop head found nothing
+  past the first lap (t2372).
+- **What cannot be warmed is not kept for the settle length** (`keep_from`): a starved chunk or
+  warm-up, a track stage after a seek (it has no pre-roll; giving it one changes every such seek's and
+  export range's bytes — found-defects 420).
+- **The class walk** (stored audio next to a freshly started state): the key branches were not reset
+  by a seek (t2375), a reel's move did not pre-roll its track stages (t2376); loop laps, reverse,
+  export, the probe renderer checked and unaffected; a fresh track chain ≠ a reset one (row 421); the
+  list is in the archived change's design D4.
+

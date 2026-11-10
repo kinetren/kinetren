@@ -51,8 +51,11 @@ NO_WAKE_THREADS = (
     "prefetch", "audio-render", "engine-build", "sched-", "index-service", "media-watchdog", "thumbs",
     "fxthumbs", "kt-posters", "preview-compose", "trace-writer",
 )
-# the audio output (cpal's ALSA worker, PipeWire's data loop) hands out silence on a pause: its
-# wakes are printed, not judged (found-defects row 274)
+# the sound output (kept-mix-settle D5, found-defects 274): its thread opens the device on Play and
+# closes it a second after the play stopped, so on a pause after a play neither it nor what the device
+# brings into the process (cpal's ALSA worker, PipeWire's data loop) wakes; before, the open device
+# woke ~24 and ~48 times a second handing out silence
+AUDIO_THREADS = ("audio-output", "cpal_alsa_out", "pw-data-loop", "alsa-pipewire")
 
 
 def editor_pid(app):
@@ -217,6 +220,27 @@ def main(out):
         ours = {k: v for k, v in woken.items() if k.split("#")[0].startswith(NO_WAKE_THREADS)}
         app.expect(not ours, f"a pause wakes our threads on a clock: {ours}")
         app.expect(not meter.uncounted(work), f"a pause holds a thread no counter sees: {meter.uncounted(work)}")
+
+        # a play, then a pause: the device closes after its rest and nothing of the sound wakes
+        h0 = app.playhead()
+        app.key("space")
+        app.until(lambda: app.playing(), timeout=10.0)
+        app.wait_playhead(lambda t: abs(t - h0) > 90_000, "the play sounds a second", timeout=30.0)
+        app.key("space")
+        app.until(lambda: not app.playing(), timeout=10.0)
+        app.step("played", "played a moment and paused: the sound device closes after a second")
+        # the device closes a second after the pause: what it brought into the process goes with it
+        app.until(lambda: not any(k.split("#")[0].startswith(AUDIO_THREADS[1:]) for k in thread_wakes(pid)), timeout=10.0)
+        wait_quiet(meter, "after the play")
+        tw0 = thread_wakes(pid)
+        kt_live._poll(5.0)
+        tw1 = thread_wakes(pid)
+        woken = {k: v - tw0.get(k, 0) for k, v in tw1.items() if v - tw0.get(k, 0) > 0}
+        print(f"   pause after a play, 5 s: threads that woke {woken}")
+        # the sound's threads only: the engine's are judged on the pause above, and right after a
+        # play under load a late composite or a trace flush may still land once
+        sound = {k: v for k, v in woken.items() if k.split("#")[0].startswith(AUDIO_THREADS)}
+        app.expect(not sound, f"a pause after a play wakes the sound: {sound}")
 
         g = app.geom()
         win = kt_live.geometry()
