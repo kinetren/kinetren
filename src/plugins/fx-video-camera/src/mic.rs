@@ -161,10 +161,18 @@ fn sinc_lowpass(fc: f64) -> Vec<f64> {
 /// G.711 µ-law: compress a sample in [−1, 1] to its 8-bit code and back (the segment law).
 pub fn mulaw(x: f64) -> f64 {
     const MU: f64 = 255.0;
+    // log10(1 + µ) once and the 128 expansion levels `(1 + µ)^(i/127) − 1` as a table (local-cost-queue,
+    // row 211): the code `round(c·127)` is the level's index, and `q = i/127` is the same division
+    static T: std::sync::OnceLock<(f64, [f64; 128])> = std::sync::OnceLock::new();
+    let (den, levels) = T.get_or_init(|| ((1.0 + MU).flog10(), std::array::from_fn(|i| (1.0 + MU).fpowf(i as f64 / 127.0) - 1.0)));
     let s = x.clamp(-1.0, 1.0);
-    let c = (1.0 + MU * s.abs()).flog10() / (1.0 + MU).flog10();
-    let q = (c * 127.0).round() / 127.0;
-    s.signum() * ((1.0 + MU).fpowf(q) - 1.0) / MU
+    let c = (1.0 + MU * s.abs()).flog10() / den;
+    let i = (c * 127.0).round();
+    if !(0.0..=127.0).contains(&i) {
+        // a NaN sample: the formula's own answer
+        return s.signum() * ((1.0 + MU).fpowf(i / 127.0) - 1.0) / MU;
+    }
+    s.signum() * levels[i as usize] / MU
 }
 
 /// A delay line of fixed length.
@@ -199,6 +207,15 @@ struct Ns {
     min_prev: Vec<f64>,
     frames: u64,
     gain: Vec<f64>,
+    /// The frame's spectrum, kept (local-cost-queue, row 312: not two vectors per 256 samples).
+    re: Vec<f64>,
+    im: Vec<f64>,
+}
+
+/// The suppressor's sqrt-Hann window, built once (it was 2 × 512 `fsin` per 256 samples).
+fn ns_window() -> &'static [f64; NS_N] {
+    static W: std::sync::OnceLock<[f64; NS_N]> = std::sync::OnceLock::new();
+    W.get_or_init(|| std::array::from_fn(|n| (std::f64::consts::PI * (n as f64 + 0.5) / NS_N as f64).fsin()))
 }
 
 /// The suppressor's transform, built once.
@@ -223,6 +240,8 @@ impl Ns {
             min_prev: vec![f64::MAX; NS_BINS],
             frames: 0,
             gain: vec![1.0; NS_BINS],
+            re: vec![0.0; NS_N],
+            im: vec![0.0; NS_N],
         }
     }
 
@@ -240,10 +259,12 @@ impl Ns {
     }
 
     fn frame(&mut self, strength: f64, on: bool) {
-        let pi = std::f64::consts::PI;
-        let win = |n: usize| (pi * (n as f64 + 0.5) / NS_N as f64).fsin();
-        let mut re: Vec<f64> = (0..NS_N).map(|n| self.inbuf[n] * win(n)).collect();
-        let mut im = vec![0.0; NS_N];
+        let win = ns_window();
+        let (mut re, mut im) = (std::mem::take(&mut self.re), std::mem::take(&mut self.im));
+        for n in 0..NS_N {
+            re[n] = self.inbuf[n] * win[n];
+        }
+        im.fill(0.0);
         let fft = ns_fft();
         fft.run(&mut re, &mut im, false);
         // the noise floor: the minimum of the smoothed power over the last two windows
@@ -255,7 +276,8 @@ impl Ns {
         }
         self.frames += 1;
         if self.frames.is_multiple_of(NS_WIN) {
-            self.min_prev = std::mem::replace(&mut self.min_now, vec![f64::MAX; NS_BINS]);
+            std::mem::swap(&mut self.min_prev, &mut self.min_now);
+            self.min_now.fill(f64::MAX);
         }
         let over = 1.0 + 3.0 * strength;
         let floor = 10f64.fpowf(-(6.0 + 24.0 * strength) / 20.0);
@@ -279,8 +301,9 @@ impl Ns {
             *v = 0.0;
         }
         for (n, r) in re.iter().enumerate() {
-            self.outbuf[n] += r / NS_N as f64 * win(n);
+            self.outbuf[n] += r / NS_N as f64 * win[n];
         }
+        (self.re, self.im) = (re, im);
     }
 }
 
@@ -306,6 +329,8 @@ struct Chan {
     dec: Decoder,
     block: Vec<f64>,
     fresh: Vec<f64>,
+    /// A decoded frame, kept (row 314).
+    pcm: Vec<f64>,
     out: std::collections::VecDeque<f64>,
     delay_codec: Delay,
 }
@@ -350,6 +375,7 @@ impl MicSound {
             dec: Decoder::new(0xC0DE),
             block: vec![0.0; 2 * N],
             fresh: Vec::with_capacity(N),
+            pcm: vec![0.0; N],
             out: std::collections::VecDeque::new(),
             delay_codec: Delay::new(if r.codec == 0 { 1 } else { 2 * N }),
         }
@@ -493,10 +519,12 @@ impl AudioState for MicSound {
                         let from = ch.hist_pos;
                         ch.aa_hist[p] = s;
                         ch.aa_hist[p + HIST] = s;
-                        let lo: f64 = ch.aa.iter().zip(&ch.aa_hist[from..from + HIST]).map(|(h, x)| h * x).sum();
                         // decimate: the device keeps every m-th sample; the player's interpolator
-                        // sees zeros between them
+                        // sees zeros between them. The anti-alias filter's output is read only for a
+                        // kept sample, so it is computed only there (local-cost-queue: 63 products a
+                        // sample, of which 2/3 or 5/6 went unread)
                         let kept = if n.rem_euclid(m as i64) == 0 {
+                            let lo: f64 = ch.aa.iter().zip(&ch.aa_hist[from..from + HIST]).map(|(h, x)| h * x).sum();
                             let q = if r.codec == 2 { mulaw(lo) } else { (lo * 32_767.0).round() / 32_767.0 };
                             q * m as f64
                         } else {
@@ -526,10 +554,9 @@ impl AudioState for MicSound {
                             ch.fresh.clear();
                             // the finest step: −96 dB of a line's range, the rate control does the rest
                             let pkt = ch.enc.encode(&ch.block, false, 1e-3, bw, false);
-                            let bits = pkt.payload.v.clone();
-                            let mut out = vec![0f64; N];
-                            ch.dec.decode(&pkt, &bits, Damage { residual: 1.0, ..Default::default() }, bw, false, 0, &mut out);
-                            ch.out.extend(out);
+                            let dmg = Damage { residual: 1.0, ..Default::default() };
+                            ch.dec.decode(&pkt, &pkt.payload.v, dmg, bw, false, 0, &mut ch.pcm);
+                            ch.out.extend(ch.pcm.iter().copied());
                         }
                     }
                 }

@@ -137,8 +137,18 @@ is no picture, and an export refuses.
   when the device lags is a per-frame creation on a loaded machine (the timer made a read buffer whenever
   the earlier maps had not come back; t2023 red under a full `nextest`, t2025). Make the bounded set up
   front and skip the work past it.
+- **A pass writes its uniform through `stage` and binds through `bind_main`/`bind_geom`**
+  (local-cost-queue, row 138; `binds.rs`): the bytes wait in `Staged` and go into the arena in one
+  write right before a submission, so a NEW `queue.submit` of an encoder holding passes calls
+  `self.staged.flush` first, or its passes read last frame's uniforms. Bind groups are kept a frame by
+  (layout, views) and dropped at the next top-level frame when unused; a new arena clears them.
+  `per_pass_binds(true)` is the old form (t2313), `kt-cli pass-cost --form binds` measures it.
 - **Rank passes with the instrument, minima of repeats, interleaved A/B** (the machine is shared): llvmpipe
   compiles a pipeline variant at its first draw, so a run of two frames measures the compiler.
+  `kt-cli pass-cost --fx … [--k K]` does it for a chain: each pass label's device time in the
+  specialized form and under `cpu::with_general` (a barrier's graph before its fix), and the same-bytes
+  check. Before replacing per-pixel math by a table, measure what it is of the pass: radial blur's 32
+  `sin`/`cos` were 4 of 26 ms, and two table loads a tap cost more (local-cost-queue D2).
 
 ## A frame never compiles (pipeline-prewarm)
 

@@ -246,8 +246,8 @@ sense; each timer is a local fix.
 | row 129: Compressor takes log per sample | 4 reference kernels, ~0.2 % | **open** |
 | gpu-pass-cost: Camera ISP re-queried `textureDimensions` and divided per neighbour | 115–129 → 92–97 ms a frame (llvmpipe) | closed (t1217) |
 | gpu-pass-cost: VHS head read re-queried the width per clamp | −10 % | closed |
-| row 137: radial blur spin computes 16 sin/cos per pixel | (22.8 ms the pass) | **open** |
-| row 136: Camera ISP behind a K× barrier computes every sensor pixel k² times | — | **open** |
+| row 137: radial blur spin computes 16 sin/cos per pixel | 4 of 26 ms the pass (1080p llvmpipe); a device table cost more (27.8 ms), a CPU table moves bytes | closed: not the cost (local-cost-queue D2) |
+| row 136: Camera ISP behind a K× barrier computes every sensor pixel k² times | K = 2, 1080p frame: camera passes 388.8 → 120.7 ms | closed: sensor passes at the sensor's size, same bytes (t2310, t2311) |
 | render-speed-no-card D3: a VHS loop llvmpipe could not unroll | s7 32.3 → 10.4 ms, s1 11.0 → 5.1 | closed |
 | slowed-reverb-bimodal-cost: the test stimulus matched per sample | 104 vs 415 ms per 10 s; every older `synth:` benchmark inflated | closed (t991) |
 
@@ -261,7 +261,7 @@ audio kernels, and −25 % on one GPU simulation.
 |---|---|---|
 | preview D2: premultiply into a new allocation each frame | (part of 11–17 ms) | closed |
 | gpu-pass-cost: no resource after warm-up (t2023); pass timer buffers grew with device lag (t2025) | — | closed |
-| row 138: a bind group and a uniform write per pass on the composing thread | ≈ µs a pass (CPU) | **open** |
+| row 138: a bind group and a uniform write per pass on the composing thread | 6.7 + 2.2 µs a pass (llvmpipe); composing thread 1.62 → 1.29 ms a 1080p frame | closed: uniforms staged per submission, bind groups kept a frame (t2313, t2314) |
 | row 139: a new geometry shape compiles its pipeline inside the frame | a hitch; llvmpipe `glow:resample` 2 s at its first draw | closed: the interpreter runs the frame, the shape compiles beside (pipeline-prewarm, t2121) |
 | row 64: the first Datamosh frame — device open + shader compile, no disk cache | 6.6 s under load; 62–209 ms open + 247–690 ms intra with an empty Mesa cache | closed: prewarm at project open, compute shaders named and prepared (pipeline-prewarm, t2120, t2122) |
 | export memory: glibc's dynamic mmap threshold | 16.2 / 14.9 GB → 7.3 GB | closed (t1458) |
@@ -598,7 +598,7 @@ journal from one machine.
 | 8 | `stream-layout-per-build` — **done** 2026-11-09 | M2, M7 | the Datamosh schedule compiled once per build (video and sound halves); packed readbacks (row 135); colour conversion inside the compute pass; the memo against loop length (row 143); an advance converts no picture. Measured (release, his relinked region, 720 lines, `kt-cli stream-cost`, same load): the stage's thread 10.4–17.2 → 4.3–4.4 ms a frame, readback 18.3 → 6.2 MB a frame, the prefetch's 2 s window question 12–20 → 2.2–3.6 ms; a loop of the region (667 positions) held in a 1.6 GB memo, laps 2 and 3 run no job; t1239's bytes unchanged | M | medium: t1239's pinned bytes | t1239, t2040–t2045, t2270–t2278 |
 | 9 | `memory-ledger` (scheduler stage 3) — **done** 2026-11-09 | M9 | one ledger (`kt_time::mem`) across BurstCache, PresentMemo, StreamMemo, MixStore and the pools; growth above the bases from half of (available + held), cgroup-aware, in the order kept composites → history → frames; the present memo sized by the loop (row 310), a loop it cannot hold keeps a part, a card's refusal bounds it; an export claims the growth; export devices keep only the uploads in flight; row 119 held. Measured (release, his relinked region, 640×360, 240 s, same load): laps 14–21 composed ~52 frames each → laps 10–21 compose none; composed 1935 → 1172, kept shown 5407 → 8943, V-fps 28.9 → 40.4, 11.8 → 6.5 cores | M | medium: eviction order is correctness for export (holds stay) | t1600–t1605, t1934, t1570, t2290–t2301 |
 | 10 | `fused-pointwise-runs` (JIT, shaders) — **done** 2026-11-09 | M7 | point-wise runs as one generated WGSL pass per run shape, prewarmed; each stage keeps its own pass's rounding, so fused = unfused byte for byte (stricter than the owner's ≤ 1 LSB per boundary, H16) and the run-time trial (pass timer, interleaved, minima) may split a slower fused pass in halves without moving a frame. Measured on llvmpipe at 1080p: the chain's bytes k × 16.6 → 16.6 MB, device 3.1/4.7/7.2/7.5/9.3 → 1.8/1.8/2.3/2.1/2.2 ms for 2–6 stages; the heavy showcase holds one two-stage run in ~1070 ms frames — no visible change there | L | medium: plugin API | t2190–t2197 |
-| 11 | local cost queue | M7, M9 | rows 136, 137, 138, 118, 119; row 128 only on the owner's word | S each | low | t1217, t2023 |
+| 11 | `local-cost-queue` — **done** 2026-11-10 | M7, M8, M9 | Camera ISP's sensor passes at the sensor's size behind K× (row 136); uniforms staged per submission and bind groups kept a frame (138); audio: VHS sound's FIR cosine table and stepped dropout cache (311), the camera mic's window/µ-law tables and kept buffers (211, 312), WSOLA's window table (313), the codec without per-frame scratch (314). Measured (release, llvmpipe, minima, same bytes): camera at K = 2 388.8 → 120.7 ms; the composing thread 1.62 → 1.29 ms a 1080p frame; VHS sound with a curved head 42.9 → 36.1, camera mic 29 → 25, WSOLA 19.9 → 19.0 reference kernels. Closed by measurement, not changed: 137 (the trig is 4 of 26 ms; a table costs more), 210 (a memo is 3 % slower). 118: the heavy showcase's first lap is decode-bound, nothing local left; 119 held by memory-ledger; 128 the owner's | S each | low | t1217, t2023, t2310–t2317 |
 | 12 | `test-hygiene` — **done** 2026-11-09 | M11 | rows 47, 99, 101, 126, 133, 158, 163, 165, 166, 170: the bench keeps a red try (`first-try/`) and starts clean; keys and clicks read by a slow frame keep their meaning (a frame's commands were a set; Space and egui's double click judged by frame times); a start's audio pass reaches the ring whole (t1935's underruns were the product's, its trace showed the device on time); t1671 sees processor clocks; scenarios read consequences. rows 133, 170: the timeline polled for the recheck of kept moments every frame (product, t2217). Row 47 not reproduced: its red now names its cause | S | low | t1671, t2210–t2217 |
 
 **Order and why:**
@@ -635,8 +635,8 @@ journal from one machine.
 | M4 ordered faster than consumed | **114**, **134**, **143**, **16** (loop freeze on wine, unverified) |
 | M5 no arbiter | **149**, **94**, **72** (render time on a busy machine), **52** (llvmpipe `queue.submit` 30 ms in a window) |
 | M6 work at rest | **122**, **140** |
-| M7 per-element constants | **128** (owner), **129**, **136**, **137**, **96** (VHS s5 22 ms, alpha composite 9 ms), **145** (Datamosh encoder on llvmpipe), **135** (32-bit readback), 37, 42, 43 (closed) |
-| M8 allocation / compile in the frame | **64**, **138**, **139**, **96** (two upload copies) |
+| M7 per-element constants | **128** (owner), **129**, **96** (VHS s5 22 ms, alpha composite 9 ms), **145** (Datamosh encoder on llvmpipe), **135** (32-bit readback), 37, 42, 43, 136, 137, 210, 211, 311–314 (closed) |
+| M8 allocation / compile in the frame | **64**, **139**, **96** (two upload copies), 138 (closed) |
 | M9 cache key / budget | **118**, **119**, **10**, **85**, **143**, **12** (gallery near a cut) |
 | M10 not measured | **108**, **53**, **55** (RGBA one thread per file), **56** (cold disk), **86** (blending on the CPU, not measured), **93** (preview on VHS unsteady, cause unknown), **68** (hardware encode unproven) |
 | M11 wall-clock tests | **126**, **101**, **106**, **141**, **146**, **133**, **89**, 130 (closed), **70**, **102**, **31**, **32** (build/CI time) |

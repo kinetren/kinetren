@@ -464,3 +464,20 @@ next editor:
   converts on the CPU in about a millisecond.
 - **Measured** (release, the owner's region at 720 lines, same load): the stage's thread 10.4–17.2 →
   4.3–4.4 ms a frame; readback 18.3 → 6.2 MB a frame; the window question 12–20 → 2.2–3.6 ms.
+
+## Camera ISP's sensor grid behind K× (local-cost-queue, archived 2026-11-10)
+
+- **What hurt** (found-defects 136): every pass after the unprocessing computes per SENSOR pixel and
+  reads its input at the block's top-left texel, so behind a K× barrier a block's K² fragments computed
+  one value K² times — 388.8 ms of a 415.7 ms frame at K = 2 on llvmpipe.
+- **Decision:** at K > 1 those passes are `Node::PassAt` at ⌈frame/K⌉; only the last pass (and the
+  unprocessing, the frame's own grid) render at the frame's size. Two bits of the flags word (6: the
+  input is on the sensor grid, 7: the output is) tell a pass its grids; `at` reads texel (sx, sy) of a
+  sensor-sized input; a sensor-grid fragment takes its alpha at its block's top-left frame pixel, the
+  texel the old form's next pass read. Integer addressing only, so the bytes are the old form's (t2310,
+  EXACT on the device, K 2–4, every preset and layout); `cpu::with_general` builds the old graph.
+  Measured: camera passes 388.8 → 120.7 ms (`kt-cli pass-cost --fx camera_isp --k 2`, release).
+- **Rejected — radial blur's spin by a table** (found-defects 137): its 32 `sin`/`cos` a pixel are 4 of
+  the pass's 26 ms at 1080p (zoom mode, the same loads and no trig: 22.4 ms). A table made on the device
+  kept the bytes and cost more (two loads a tap: 27.8 ms); a table from the CPU cannot keep them (the
+  device's `sin` is not the frozen one). Measure what a computation is of its pass before tabling it.

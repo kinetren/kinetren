@@ -15,8 +15,8 @@ use rubato::sinc_interpolator::SincInterpolator;
 use std::f32::consts::PI;
 
 pub(crate) struct FrozenSinc {
-    /// `sincs[sub][tap]`, `tap < len`, as rubato's table
-    sincs: Vec<Vec<f32>>,
+    /// `sincs[sub][tap]`, `tap < len`, as rubato's table (shared: `sincs_of`)
+    sincs: std::sync::Arc<Vec<Vec<f32>>>,
     len: usize,
     nbr_sincs: usize,
     avx: bool,
@@ -29,7 +29,7 @@ impl FrozenSinc {
         let len = 8 * sinc_len.div_ceil(8);
         let f_cutoff = if ratio >= 1.0 { f_cutoff } else { f_cutoff * ratio as f32 };
         FrozenSinc {
-            sincs: make_sincs(len, oversampling, f_cutoff),
+            sincs: sincs_of(len, oversampling, f_cutoff),
             len,
             nbr_sincs: oversampling,
             avx: avx_fma(),
@@ -94,6 +94,29 @@ impl SincInterpolator<f32> for FrozenSinc {
     fn nbr_sincs(&self) -> usize {
         self.nbr_sincs
     }
+}
+
+/// The table of (length, oversampling, cutoff), built once and shared (local-cost-queue): a warp is
+/// built at every seek, fresh entry and lap entry of a warped event, and the table took 16 384 × (three
+/// `fcos`, one `fsin`) each time. The same function of the same arguments: the same bytes. Bounded:
+/// past `KEEP` tables (a speed curve that slows varies the cutoff) the memo starts over.
+fn sincs_of(npoints: usize, factor: usize, f_cutoff: f32) -> std::sync::Arc<Vec<Vec<f32>>> {
+    type Memo = std::collections::HashMap<(usize, usize, u32), std::sync::Arc<Vec<Vec<f32>>>>;
+    const KEEP: usize = 32;
+    static MEMO: std::sync::Mutex<Option<Memo>> = std::sync::Mutex::new(None);
+    let key = (npoints, factor, f_cutoff.to_bits());
+    if let Some(t) = MEMO.lock().unwrap().get_or_insert_with(Memo::new).get(&key) {
+        return t.clone();
+    }
+    // built outside the lock: two threads may build the same table, both the same bytes
+    let t = std::sync::Arc::new(make_sincs(npoints, factor, f_cutoff));
+    let mut g = MEMO.lock().unwrap();
+    let m = g.get_or_insert_with(Memo::new);
+    if m.len() >= KEEP {
+        m.clear();
+    }
+    m.insert(key, t.clone());
+    t
 }
 
 /// rubato's `make_sincs::<f32>(npoints, factor, f_cutoff, BlackmanHarris2)`, its operations in its

@@ -167,3 +167,10 @@ newer ask, an edit), the prefetch thread (the transport's generation, the projec
 poster job (its cancel). An export never stops. Rejected: a token passed into `render` (a signature
 change for every kernel), stopping inside a compute job (the device cannot be interrupted; a position
 is one or two jobs).
+
+## The audio codec allocates nothing per frame (local-cost-queue, archived 2026-11-10)
+
+`dct4`/`mdct`/`imdct` scratch on the stack, predictors updated without copying the prediction, a reset
+zeroed in place (it allocated four vectors at every random-access point), the payload allocated once at
+the size the rate control measured; Datamosh's sound and the camera microphone decode `&pkt.payload.v`
+into kept buffers. t2317 counts the allocations (one a frame, the payload) and holds the decoded digest.

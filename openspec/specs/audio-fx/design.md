@@ -309,3 +309,19 @@ build of kt-app running beside them; the printed ratios at load 57–101 equal t
 
 - **What hurt**: `param_integral` walked the frequency curve from its first point per sample (row 152); a formula layer on the frequency is a point per frame. Measured on a 57 s event: the live render 364 → 38 ms for 8 s.
 - **Decision**: `ParamIntegral` (plugin API) keeps the running sum before each non-empty segment, added exactly as the walk adds a whole segment (`hi = t1`, the same `v_hi` expression), and reads by halving: the walk's bits (t2107), O(log points) a sample (t2108). An unsorted list reads through the walk.
+
+## Per-block constants computed once (local-cost-queue, archived 2026-11-10)
+
+- **What hurt** (found-defects 211, 311, 312, 313): windows and tables rebuilt per grain or chunk — VHS
+  Tape's linear-track FIR redesign took 33 × 256 `fcos` per curved chunk, the camera microphone's
+  suppressor 1 024 `fsin` per 256 samples and its anti-alias FIR ran on samples it drops, WSOLA's window
+  1 024 `fcos` per grain, the warp's sinc table 16 384 × four transcendental functions per seek.
+- **Decision:** static tables of the same function of the same arguments, kept buffers, a dropout cache
+  keyed by its law and stepped a cell at a time, the anti-alias FIR only on kept samples, the sinc table
+  memoized by (length, oversampling, cutoff). The bytes are held by t1981, t2171 and t2315 (curved and
+  switched forms, digests printed before) on both CPU paths; t2316 holds the µ-law table to the formula.
+  Measured in reference kernels: VHS sound with a curved head 42.9 → 36.1, camera mic 28–30 → 22–25, WSOLA
+  19.9 → 19.0.
+- **Rejected — the limiter's `ceil/thr` memo** (found-defects 210): measured 1.17 → 1.20 reference kernels;
+  the division is off the loop's critical path.
+- What the class walk left is found-defects 350–360.

@@ -11,14 +11,31 @@ var<private> FDIM: vec2<i32>;
 var<private> SDIM: vec2<i32>;
 var<private> KSC: i32;
 var<private> PERIOD: i32;
+// the grids at K > 1 (local-cost-queue, row 136): SIN — the input is on the sensor's grid (a texel is a
+// sensor pixel), SOUT — so is the output (a fragment is a sensor pixel, not one of its K² frame pixels)
+var<private> SIN: bool;
+var<private> SOUT: bool;
 
 // every pass's first line: its flags, then the sizes the helpers read
 fn begin(fl: u32) {
     FL = fl;
-    KSC = max(i32(FL & 255u), 1);
+    KSC = max(i32(FL & 63u), 1);
     PERIOD = i32((FL >> 8u) & 15u);
-    FDIM = vec2<i32>(textureDimensions(T0));
-    SDIM = (FDIM + vec2<i32>(KSC - 1)) / KSC;
+    SIN = ((FL >> 6u) & 1u) == 1u;
+    SOUT = ((FL >> 7u) & 1u) == 1u;
+    let d0 = vec2<i32>(textureDimensions(T0));
+    if (SIN) {
+        SDIM = d0;
+        FDIM = d0 * KSC;
+    } else {
+        FDIM = d0;
+        SDIM = (FDIM + vec2<i32>(KSC - 1)) / KSC;
+    }
+}
+
+// frame pixels per output fragment along an axis: K on the frame's grid, 1 on the sensor's
+fn KO() -> i32 {
+    return select(KSC, 1, SOUT);
 }
 
 fn nh(v: u32) -> u32 {
@@ -65,8 +82,11 @@ fn sdims() -> vec2<i32> {
 
 // the previous pass at sensor pixel (sx, sy), clamped
 fn at(sx: i32, sy: i32) -> vec4<u32> {
-    let d = fdims();
     let s = sdims();
+    if (SIN) {
+        return textureLoad(T0, vec2<i32>(clamp(sx, 0, s.x - 1), clamp(sy, 0, s.y - 1)), 0);
+    }
+    let d = fdims();
     let k = KK();
     let x = min(clamp(sx, 0, s.x - 1) * k, d.x - 1);
     let y = min(clamp(sy, 0, s.y - 1) * k, d.y - 1);
@@ -205,8 +225,10 @@ fn dye_nir(code: u32) -> f32 {
     }
 }
 
+// the source's alpha at the output's frame pixel; a sensor-grid fragment takes its block's top-left
+// one, the texel the frame-grid form's next pass reads
 fn src_alpha(p: vec2<i32>) -> u32 {
-    return textureLoad(T1, p, 0).a;
+    return textureLoad(T1, select(p, p * KSC, SOUT), 0).a;
 }
 
 fn isign(v: i32) -> i32 {

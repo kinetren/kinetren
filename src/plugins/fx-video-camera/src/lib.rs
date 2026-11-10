@@ -260,12 +260,13 @@ fn names() -> &'static [&'static str] {
     })
 }
 
-/// The index of a row by its name (a typo is a panic in every test).
+/// The index of a row by its name (a typo is a panic in every test). By a map built once
+/// (local-cost-queue): `Plan::new` asks ~69 names a frame and the microphone ~30 a chunk, and a scan of
+/// the ~98 names was thousands of string compares each time.
 pub fn ix(name: &str) -> usize {
-    names()
-        .iter()
-        .position(|n| *n == name)
-        .unwrap_or_else(|| panic!("camera_isp has no row {name}"))
+    static MAP: std::sync::OnceLock<std::collections::HashMap<&'static str, usize>> = std::sync::OnceLock::new();
+    let map = MAP.get_or_init(|| names().iter().enumerate().map(|(i, n)| (*n, i)).collect());
+    *map.get(name).unwrap_or_else(|| panic!("camera_isp has no row {name}"))
 }
 
 /// The picker's presets (design: only physical settings). Indices of choice rows are their keys'.
@@ -438,6 +439,11 @@ pub mod pass {
     pub const CHROMA: usize = 10;
     pub const VIEW: usize = 11;
 }
+
+/// A pass's input is on the sensor's grid: a texel is a sensor pixel (local-cost-queue, row 136).
+pub const SENSOR_IN: u32 = 1 << 6;
+/// A pass's output is on the sensor's grid: rendered at ⌈frame/K⌉, a fragment is a sensor pixel.
+pub const SENSOR_OUT: u32 = 1 << 7;
 
 /// How the view pass reads the texel it shows.
 pub mod fmt {
@@ -793,9 +799,10 @@ impl Plan {
         }
     }
 
-    /// The flags word the passes share: K in bits 0..7, the period in 8..11, then one bit each.
+    /// The flags word the passes share: K in bits 0..5, the grids in 6 and 7 (`SENSOR_IN`,
+    /// `SENSOR_OUT`, set per pass by `gpu_values`), the period in 8..11, then one bit each.
     pub fn flags(&self) -> u32 {
-        self.k.min(255)
+        self.k.min(63)
             | (self.period << 8)
             | (self.optics as u32) << 12
             | (self.noise as u32) << 13
@@ -1005,7 +1012,11 @@ impl Plan {
     /// One pass's uniforms (`u`, `f`), the mirror of what its WGSL reads — the ONE text of the
     /// packing; the model in the tests reads the plan directly.
     pub fn uniforms(&self, pass_ix: usize) -> ([u32; 8], [f32; 8]) {
-        let fl = self.flags();
+        self.uniforms_fl(pass_ix, self.flags())
+    }
+
+    /// `uniforms` with the flags word `fl` (the plan's, plus a pass's grid bits).
+    pub fn uniforms_fl(&self, pass_ix: usize, fl: u32) -> ([u32; 8], [f32; 8]) {
         let t = self.sensor_tab;
         let it = self.isp_tab;
         match pass_ix {
@@ -1168,12 +1179,31 @@ impl BarrierKernel for CameraIsp {
 
     /// The passes of `Plan::passes`: the first reads the source, each next one the previous (and
     /// the source for its alpha).
+    ///
+    /// At K > 1 a pass that works on the sensor's grid renders at ⌈frame/K⌉ (local-cost-queue, row
+    /// 136): every pass after the unprocessing computes per sensor pixel and reads its input at the
+    /// block's top-left texel, so its K² fragments of a block were one value computed K² times. The
+    /// graph's last pass stays at the frame's size and reads the sensor-sized input at the pixel's
+    /// sensor position: the same values, the same bytes. `cpu::with_general` keeps the frame-grid form
+    /// (the reference of t2310).
     fn gpu_values(&self, p: &[f64], g: &GpuCtx, out: &mut Vec<Node>) {
         let c = Plan::new(p, g.res_scale, g.burst_index);
-        for (i, ps) in c.passes().into_iter().enumerate() {
-            let (u, f) = c.uniforms(ps);
+        let passes = c.passes();
+        let sensor = c.k > 1 && kt_plugin_api::cpu::specialized();
+        let (sw, sh) = (g.w.div_ceil(c.k), g.h.div_ceil(c.k));
+        let mut prev_sensor = false;
+        for (i, &ps) in passes.iter().enumerate() {
+            let on_sensor = sensor && i + 1 < passes.len() && ps != pass::UNPROCESS;
+            let fl = c.flags() | if prev_sensor { SENSOR_IN } else { 0 } | if on_sensor { SENSOR_OUT } else { 0 };
+            let (u, f) = c.uniforms_fl(ps, fl);
             let first = if i == 0 { Slot::Src } else { Slot::Prev };
-            out.push(Node::Pass { shader: ps as u8, inputs: [first, Slot::Src, Slot::None], u, f });
+            let inputs = [first, Slot::Src, Slot::None];
+            out.push(if on_sensor {
+                Node::PassAt { shader: ps as u8, inputs, u, f, w: sw, h: sh }
+            } else {
+                Node::Pass { shader: ps as u8, inputs, u, f }
+            });
+            prev_sensor = on_sensor;
         }
     }
 }

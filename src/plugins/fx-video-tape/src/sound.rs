@@ -130,6 +130,18 @@ pub fn linear_response(f: f64, v: f64, v_sp: f64, gap: f64, spacing: f64) -> f64
 /// window), designed once per configuration. Frozen cosines: the same taps on every platform.
 pub fn design_linear(v: f64, v_sp: f64, gap: f64, spacing: f64) -> [f32; 2 * LIN_M + 1] {
     const K: usize = 256;
+    // the design's cosines and window are the same for every design (local-cost-queue, row 311: a
+    // curved gap, spacing or bias redesigns per chunk, and these were 33 × 256 `fcos` of it)
+    type Tab = ([[f64; K]; LIN_M + 1], [f64; LIN_M + 1]);
+    static T: std::sync::OnceLock<Box<Tab>> = std::sync::OnceLock::new();
+    let (cos, win) = &**T.get_or_init(|| {
+        Box::new((
+            std::array::from_fn(|k| {
+                std::array::from_fn(|j| (std::f64::consts::PI * (j as f64 + 0.5) * k as f64 / K as f64).fcos())
+            }),
+            std::array::from_fn(|k| 0.5 + 0.5 * (std::f64::consts::PI * k as f64 / (LIN_M as f64 + 1.0)).fcos()),
+        ))
+    });
     let mut resp = [0f64; K];
     for (j, r) in resp.iter_mut().enumerate() {
         let f = (j as f64 + 0.5) / K as f64 * FS * 0.5;
@@ -138,10 +150,10 @@ pub fn design_linear(v: f64, v_sp: f64, gap: f64, spacing: f64) -> [f32; 2 * LIN
     let mut h = [0f32; 2 * LIN_M + 1];
     for k in 0..=LIN_M {
         let mut acc = 0.0;
-        for (j, r) in resp.iter().enumerate() {
-            acc += r * (std::f64::consts::PI * (j as f64 + 0.5) * k as f64 / K as f64).fcos();
+        for (r, c) in resp.iter().zip(&cos[k]) {
+            acc += r * c;
         }
-        let w = 0.5 + 0.5 * (std::f64::consts::PI * k as f64 / (LIN_M as f64 + 1.0)).fcos();
+        let w = win[k];
         let v = (acc / K as f64 * w) as f32;
         h[LIN_M + k] = v;
         h[LIN_M - k] = v;
@@ -375,7 +387,7 @@ pub struct TapeSound {
     /// The cached words and line reads: (frame, words), ((frame, y), read).
     words: Option<(i64, Box<[u32; WORDS]>)>,
     /// The dropout starts of each linear track around the current cell (`linear_dropout_cached`).
-    drops: [(Option<i64>, Vec<f64>); 2],
+    drops: [DropCache; 2],
     line: Option<((i64, u32), LineRead)>,
     shelf: (f32, f32, f32),
     dolby_a: f32,
@@ -398,7 +410,7 @@ impl TapeSound {
             w: 0,
             lin_pend: 0,
             pend_drive: 0.0,
-            drops: [(None, Vec::new()), (None, Vec::new())],
+            drops: Default::default(),
             words: None,
             line: None,
             shelf: shelf_coefs(),
@@ -510,19 +522,39 @@ impl TapeSound {
     /// a long dropout at EP looks 33 cells back, three hashes each, for every sample of each
     /// track; the starts change once a millisecond. The same answer by construction: every start
     /// `linear_dropout` would test is tested here with the same numbers.
+    ///
+    /// The starts are kept by the law that made them and stepped a cell at a time (local-cost-queue,
+    /// row 311): a new cell adds its start and drops the one that left the window, where the walk took
+    /// `back` + 1 hashes; a curve that moves rows the law does not read keeps them. The set of starts
+    /// is the walk's, and `any` does not depend on their order.
     fn linear_dropout_cached(&mut self, d: &DropLaw, t: f64, k: u32) -> f32 {
         let c0 = (t / DROP_CELL).floor() as i64;
         let cache = &mut self.drops[k as usize];
-        if cache.0 != Some(c0) {
-            cache.0 = Some(c0);
-            cache.1.clear();
-            for c in (c0 - d.back)..=c0 {
-                if let Some(s) = d.start(c, k) {
-                    cache.1.push(s);
+        let law = d.key();
+        match cache.at {
+            Some((l, c)) if l == law && c == c0 => {}
+            Some((l, c)) if l == law && c < c0 && c0 - c <= d.back => {
+                for cell in c + 1..=c0 {
+                    if let Some(s) = d.start(cell, k) {
+                        cache.starts.push_back((cell, s));
+                    }
                 }
+                while cache.starts.front().is_some_and(|&(cell, _)| cell < c0 - d.back) {
+                    cache.starts.pop_front();
+                }
+                cache.at = Some((law, c0));
+            }
+            _ => {
+                cache.starts.clear();
+                for cell in (c0 - d.back)..=c0 {
+                    if let Some(s) = d.start(cell, k) {
+                        cache.starts.push_back((cell, s));
+                    }
+                }
+                cache.at = Some((law, c0));
             }
         }
-        if cache.1.iter().any(|&s| t >= s && t < s + d.dur) { d.depth } else { 0.0 }
+        if cache.starts.iter().any(|&(_, s)| t >= s && t < s + d.dur) { d.depth } else { 0.0 }
     }
 
     /// Put the transfer curve over the entries recorded while nobody read the linear track, with
@@ -553,6 +585,14 @@ impl Default for TapeSound {
     }
 }
 
+/// The dropout starts of one linear track around the current cell (`linear_dropout_cached`): the law's
+/// key and the cell they are for, and (cell, start) of the cells `[c0 − back, c0]` that hold one.
+#[derive(Clone, Default)]
+struct DropCache {
+    at: Option<((u64, u32, u32, i64), i64)>,
+    starts: std::collections::VecDeque<(i64, f64)>,
+}
+
 /// The cell of the linear track's dropout field (s).
 const DROP_CELL: f64 = 0.001;
 
@@ -567,6 +607,11 @@ struct DropLaw {
 }
 
 impl DropLaw {
+    /// Everything the starts and the test depend on, as bits.
+    fn key(&self) -> (u64, u32, u32, i64) {
+        (self.dur.to_bits(), self.depth.to_bits(), self.p.to_bits(), self.back)
+    }
+
     /// The start (s) of cell `c`'s dropout on track `k`, if it has one.
     #[inline]
     fn start(&self, c: i64, k: u32) -> Option<f64> {
@@ -625,7 +670,6 @@ impl AudioState for TapeSound {
             self.v = v;
             self.words = None;
             self.line = None;
-            self.drops = Default::default();
             self.refresh_linear();
         }
     }

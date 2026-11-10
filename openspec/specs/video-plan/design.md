@@ -492,3 +492,17 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
   is stable by kind, so the fixed order chooses the same); a timer re-measuring memory (rest costs
   nothing); cutting the bases on a small machine (they feed the prefetch window, the stream pacing
   and the export chunks — found-defects 330).
+
+## Uniforms and bind groups per frame (local-cost-queue, archived 2026-11-10)
+
+- **What hurt** (found-defects 138): every pass wrote its uniform with `queue.write_buffer` (2.2 µs) and
+  created a bind group (6.7 µs) on the composing thread (llvmpipe, release).
+- **Decision:** `kt-gpu/src/binds.rs` — the uniform bytes are staged and written once right before each
+  submission (a cut piece flushes before it goes); bind groups are kept by (layout, views), dropped at
+  the next top-level frame when unused, bounded at 256, cleared with a new arena. A released texture lives
+  at most until the next frame starts. The same bytes per frame and through the readback ring (t2313);
+  three of four bind groups come back in a steady run (t2314). Measured: the composing thread 1.62 → 1.29
+  ms a 1080p frame of an eleven-effect chain, 0.66 → 0.47 ms at 640×360; the device time unchanged.
+- **Row 118** (the first loop pass composes every frame): on the heavy showcase's first lap nothing local
+  to the composite path is left — it is decode-bound (V-fps 1–2.5 before and after); the row stays open
+  for the decode work.
