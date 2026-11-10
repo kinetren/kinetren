@@ -380,4 +380,7 @@ pub struct GpuStages {
     pub stored: bool,
     /// Pipelines drawn in this frame before they were warm (a compile inside the frame).
     pub cold: u32,
+    /// A stream layer showed its stage's held frame, not this moment's (the player sets it;
+    /// stream-history-on-device): the preview says it is catching up, V-fps does not count it.
+    pub stream_held: bool,
 }

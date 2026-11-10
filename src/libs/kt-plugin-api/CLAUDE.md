@@ -27,6 +27,13 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   so when nobody wants the frame (the preview moved, the playhead left, a job was cancelled; never an
   export). A new stream kernel's history loop asks it too, or a frame the UI left runs to its end
   (t2257).
+- **A stream kernel's history walk keeps what the host shows and sparse checkpoints**
+  (stream-history-on-device): `StreamLayout::shown_from` is the host's view (the loop's start or the
+  frame on screen; `None` — every position, an export), `StreamMemo::put_pinned` keeps a checkpoint
+  outside the LRU (the pinned tier holds at most half the bound and thins by rank), and
+  `StreamKernel::checkpoints` tells the host how many a walk keeps, for the memo's sizing. Datamosh
+  walks in batches on the device (`fx-video-codec` `walk.rs`); `mosh::render_reference` is the
+  per-position walk the batches are held to (t2350).
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media).

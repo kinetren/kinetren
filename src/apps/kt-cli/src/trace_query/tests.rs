@@ -412,3 +412,23 @@ fn t2362_gpu_tells_a_late_start_from_a_late_signal() {
         assert!(o.contains(want), "{want:?} missing:\n{o}");
     }
 }
+
+/// Test t2364 (stream-history-on-device, found-defects 394): `loop` counts, per lap, the stream history
+/// positions the walks computed and how many were distinct.
+#[test]
+fn t2364_loop_counts_the_history_walked_and_distinct() {
+    let mut run = looped();
+    let b = lap_bounds(&run);
+    let (a0, _, _, _) = b[0];
+    // lap 0: two batches over 0..40 and a re-walk of 20..30
+    for (at, first, n) in [(1, 0u64, 32u64), (2, 32, 8), (3, 20, 10)] {
+        run.recs.push(rec(Ev::StreamWalk, a0 + at * MS, |r| {
+            r.a = first;
+            r.b = n;
+        }));
+    }
+    run.recs.sort_by_key(|r| r.t);
+    assert_eq!(walked_in(&run, b[0].0, b[0].1), (50, 40));
+    let out = laps(&run);
+    assert!(out.contains("history: 50 positions walked, 40 distinct;"), "{out}");
+}

@@ -506,3 +506,19 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
 - **Row 118** (the first loop pass composes every frame): on the heavy showcase's first lap nothing local
   to the composite path is left — it is decode-bound (V-fps 1–2.5 before and after); the row stays open
   for the decode work.
+
+## Pieces against the time in flight; the history's view and checkpoints (stream-history-on-device, archived 2026-11-10)
+
+- **What hurt:** `Piece::cut` waited for each lower-class piece to finish and admitted the next by the
+  whole bound — so it waited for the display's own frame too (~45 % of a 720-line walk, row 392).
+  The prefetch advanced one frame at a time ahead of the playhead: a submission per position.
+- **Decision:** a cut submits the piece and admits the next by its first pass's measured time; only
+  a full bound or a higher class waits (t2356, t2253 holds). `stream_advance_run` walks each stage to
+  the frame on screen first and then to the run's last moment that is not kept; the player tells the
+  memo its view (the loop's start while the playhead is inside it, else the frame on screen). The
+  memo's want adds two pictures per checkpoint of the walk from the chain's anchor to the region's end
+  (`StreamKernel::checkpoints`); the pinned tier holds at most half the bound and thins by rank.
+- **Found while measuring:** walking the frame on screen in one batch with the frames ahead raised
+  incomplete composites 1 → 51 in a minute's loop; the frame on screen now comes back first.
+- **A held frame says so:** `GpuStages.stream_held` → `Composed.held`; the app counts it apart and
+  draws "Catching up…" (ui-timeline).

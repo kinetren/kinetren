@@ -722,3 +722,26 @@ fn t2360_frames_ahead_are_one_walk() {
         m = Tick(m.0 + STEP);
     }
 }
+
+/// t2361 (stream-history-on-device): a composite that shows a stage's held frame says so; once the
+/// history caught up the composite of the moment's own frame does not.
+#[test]
+fn t2361_the_composite_says_it_held() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let t = Tick(5 * SEC);
+    let behind = Tick(t.0 - 10 * STEP);
+    let (vr, cache) = (renderer(&p, Some(StreamPacing { order_bytes: 1 << 30, compose_steps: 2, hold: true })), big_cache());
+    let plain = renderer(&p, None);
+    warm(&plain.layers_at(t, Q), &cache);
+    assert!(!vr.stream_advance(&cache, behind, Q), "the history up to ten frames behind");
+    let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(vr.stream_held(), "the frame ten positions ahead of the history showed a held picture");
+    let _ = complete;
+    assert!(!vr.stream_advance(&cache, t, Q));
+    let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(complete && !vr.stream_held(), "the moment's own frame is not held");
+}

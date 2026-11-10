@@ -370,6 +370,8 @@ pub mod show {
     pub const COMPLETE: u32 = 1;
     pub const NEW: u32 = 2;
     pub const ON_DISPLAY: u32 = 4;
+    /// The picture was a stream stage's held frame (stream-history-on-device).
+    pub const HELD: u32 = 8;
 }
 
 /// `CacheEvict.aux` bits.

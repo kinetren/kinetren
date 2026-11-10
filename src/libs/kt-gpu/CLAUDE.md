@@ -338,6 +338,13 @@ is no picture, and an export refuses.
   a blocking wait on THAT piece's device, never on a device with a surface (the window's present takes
   the device's lock for writing). So no piece waits for its own submitter to come back (the export's
   ring of three would deadlock).
+- **A cut piece does not wait for itself** (stream-history-on-device, t2356): `Piece::cut` submits and
+  admits the next piece by its first pass's prediction against the time in flight; only a full bound or
+  a higher class waits. A cut display-device piece is completed by non-blocking polls in `admit`.
+- **A compute job records when it ran on the device on the trace's clock** (`GpuStart`, D7 of
+  stream-history-on-device, t2357): a calibration (an empty submission's timestamp bracketed by the CPU
+  clock, the narrowest of three, again after 10 s) made only while the trace records. `STAMPS` is 2048: a
+  batched Datamosh job carries hundreds of dispatches, and an untimed one is never predicted.
 - **`wait_presented` never polls on a fixed period**: the work-done callback, a check after the
   measured device time, then waits growing from a quarter of it (`present_checks`, t2260).
 - `KT_GPU_ARBITER=off` (or `arbiter::set_enabled(false)`) admits everything and cuts nothing: an A/B of

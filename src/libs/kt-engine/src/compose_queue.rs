@@ -45,6 +45,9 @@ pub struct Composed {
     /// The picture is on the executor's display target; else in `rgba`.
     pub on_display: bool,
     pub rgba: Vec<u8>,
+    /// A stream layer showed its stage's held frame (stream-history-on-device): not a new picture of
+    /// the moment asked.
+    pub held: bool,
 }
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -231,6 +234,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
         let exec = spent.saturating_sub(Duration::from_nanos(plan));
         // a kept composite was shown on the display: it timed no chain (structured-telemetry)
         let replayed = out.as_ref().is_some_and(|o| o.5.replayed);
+        let held = out.as_ref().is_some_and(|o| o.5.stream_held);
         if replayed {
             on_display = display.is_some();
         } else if timed {
@@ -258,7 +262,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
             .aux(complete as u32)
             .lasted(spent.as_nanos() as u64)
             .emit();
-        let frame = Composed { seq: ask.seq, t: ask.t, quality, complete, on_display, rgba };
+        let frame = Composed { seq: ask.seq, t: ask.t, quality, complete, on_display, rgba, held };
         if let Some(old) = c.done.lock().unwrap().replace(frame) {
             kt_time::trace::ev(kt_time::trace::Ev::FrameDrop).id(old.seq).aux(kt_time::trace::drop::UNTAKEN).emit();
             c.give_back(old.rgba);

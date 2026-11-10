@@ -1329,11 +1329,12 @@ impl PreviewParts {
         };
         match done {
             Ok(complete) => {
-                let stages = exec.last_stages();
+                let mut stages = exec.last_stages();
                 if stages.replayed {
                     kt_time::work::bump(kt_time::work::Work::CompositeReplay);
                 }
                 let held = video.stream_held();
+                stages.stream_held = held;
                 {
                     use trace::exec as x;
                     let flags = if complete { x::COMPLETE } else { 0 }

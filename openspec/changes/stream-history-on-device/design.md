@@ -98,6 +98,30 @@ small catalog string in the preview's top-left corner over the picture (a `paint
 backing), drawn while `preview_held` is set — no repaint of its own: it changes only when a composite
 lands. The owner's Loading decisions stay: the scrim is for an incomplete frame after 180 ms.
 
+### D9. Found while measuring
+- The compute host timed only the first 32 dispatches of a job (`STAMPS` 64): a batched walk has
+  hundreds, so its device time was undercounted and its later dispatches were never predicted (the
+  arbiter could not cut there). `STAMPS` is 2048.
+- The prefetch's run walked the frame on screen in the same batch as the frames ahead: incomplete
+  composites rose 1 → 51 in a minute's loop. `stream_advance_run` walks to the frame on screen first,
+  then to the run's end; a walk also closes its batch at the view (`shown_from`). Incomplete went to 0.
+- A checkpoint is pinned even where it is shown (the LRU may drop what is shown): t2353 caught it.
+
+## Measured (release, llvmpipe — no card on this machine)
+
+| What | Before | After | How |
+|---|---|---|---|
+| problem region 4419.91–4422 s, per-frame advance | 297 jobs, 57.2 ms a frame, 20.4 positions/s, 11.0 MB up / 6.7 MB back a frame | 126 jobs, 26.6 ms a frame, 43.9 positions/s, 7.3 / 3.0 MB | `kt-cli stream-cost h.kt 4419.91 4422 --laps 2 --loop` on his relinked copy |
+| a 191-position walk (showcase mosh cut, 70.0–70.4 s) | 391 jobs, 3.9 s, 49 positions/s, 26 MB up / 16 MB back a frame | 14 jobs (13.6 positions a job), 3.6 s, 53 positions/s, 11 / 4.3 MB | `kt-cli stream-cost m.kt 70.0 70.4 --laps 2 --drop-lru` |
+| device share of that walk | 1.26 s of 3.9 s | 1.34 s of 3.6 s (2.5× wall over timed dispatches: lavapipe's per-pass barriers, row 400) | `kt-cli trace … gpu` |
+| re-walk after the LRU lost the history | the whole walk (183 positions) | 6 positions, 1 job, 0.06 s | lap 2 of `--drop-lru` |
+| preview loop 4425–4427 s at 640×360, 60 s | V-fps 38.8, 239 compute jobs, incomplete 1 | V-fps 37.9, 17 jobs, incomplete 0 | `kt-cli preview h.kt 4425 4427 --size 640x360 --loop 60` (the loop is VHS + Camera ISP bound) |
+| compute start delay | not recordable | near p50 7.5 ms, run p50 299 ms, buffers after end p50 5.9 ms | `kt-cli trace … gpu` |
+
+On a card the device work of a position is ~0.2 ms against a 46 ms round trip in his trace, so the
+walk was ~99 % waiting: one wait per batch of up to 32 positions should bring it near the device's own
+speed — unmeasured here (row 406); his next trace's `trace gpu` lines say it.
+
 ## The class walk
 
 Mechanism: a dependent sequence of device work waits for the device per step, and its intermediate

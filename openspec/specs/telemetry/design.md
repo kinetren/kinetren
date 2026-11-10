@@ -125,3 +125,15 @@ of every subsystem that waits or keeps, and the measurements are the change's de
 `StreamStop`, and the caller's class in `ComputeJob.id`. `kt-cli trace gpu` answers row 134's question —
 did the look-ahead's submissions fall — by class, and the display's present wait. The bench records each
 of its presents as a `FrameWait` with `wait::DEVICE`, as the compose thread does.
+
+## When a job ran on the device (stream-history-on-device, archived 2026-11-10)
+
+- **What hurt:** a 46 ms round trip for a 0.2 ms job could be a late start (a queue behind other work)
+  or a late completion signal; the trace had no device time on the CPU clock (row 398).
+- **Decision:** `gpu_start` (93) per compute job: submitted, device start, device end on the trace's
+  clock, mapped through a calibration — an empty submission's timestamp bracketed by the CPU clock
+  before the submit and after the wait, the narrowest of three, again after 10 s, only while the trace
+  records. `trace gpu` prints per class the start delay, the run and the wait for the buffers after the
+  end. `stream_walk` (94) per batch of a history walk; `trace loop` counts positions walked and distinct
+  per lap. The timestamp set grew to 2048 stamps: a batched job has hundreds of dispatches, and the
+  32 timed before undercounted its device time.

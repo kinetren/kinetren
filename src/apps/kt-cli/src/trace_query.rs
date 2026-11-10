@@ -846,6 +846,20 @@ pub fn lap_bounds(run: &Run) -> Vec<(u64, u64, u64, u64)> {
     out
 }
 
+/// The stream history positions the walks of `[a, b)` computed (`stream_walk`: a batch's first
+/// position and its count) and how many of them were distinct.
+pub fn walked_in(run: &Run, a: u64, b: u64) -> (u64, usize) {
+    let mut all = 0;
+    let mut seen = HashSet::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::StreamWalk) && r.t >= a && r.t < b) {
+        all += r.b;
+        for k in 0..r.b {
+            seen.insert(r.a.wrapping_add(k));
+        }
+    }
+    (all, seen.len())
+}
+
 pub fn laps(run: &Run) -> String {
     let all = lives(run);
     let bounds = lap_bounds(run);
@@ -890,9 +904,13 @@ pub fn laps(run: &Run) -> String {
             *why.entry(w).or_default() += 1;
         }
         let why = why.iter().map(|(k, v)| format!("{k} ×{v}")).collect::<Vec<_>>().join(", ");
+        // the stream history walked in the lap: positions computed and how many of them distinct
+        // (stream-history-on-device, found-defects 394: his run computed 1413 for 618)
+        let (walked, distinct) = walked_in(run, a, b);
+        let walk = if walked > 0 { format!("  history: {walked} positions walked, {distinct} distinct;") } else { String::new() };
         let _ = writeln!(
             o,
-            "{:>4} {:>9} {:>7} {:>6} {:>6} {:>6} {:>6}  {rep}/{} {why}",
+            "{:>4} {:>9} {:>7} {:>6} {:>6} {:>6} {:>6} {walk} {rep}/{} {why}",
             n,
             s(a),
             format!("{:.2}s", (b - a) as f64 / NS),

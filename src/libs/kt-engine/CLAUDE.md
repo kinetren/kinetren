@@ -37,6 +37,10 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   only two positions short — paused it reports incomplete, playing it shows the stage's latest held frame
   (`StreamKernel::held`) and is not kept as the moment's composite (`stream_held`). The UI thread never computes a
   history. The reel strip and the poster call `stream_preroll`. Tests t2042–t2045.
+  **The prefetch advances a run of frames as one walk** (stream-history-on-device): `stream_advance_run`
+  walks each stage to the frame on screen first, then to the run's last moment that is not kept;
+  `set_stream_view` tells the memo the loop's start (playhead inside it) or the frame on screen, and the
+  memo's want adds the walk's checkpoints (`size_stream_memo_walk`). t2355, t2360.
 - **Frame blending (R.37 C5, "Frames: blending")** is done in the COMMON code of the plan (`layer_src` → `blend_frames`), not in the executor, which receives an already blended pre-FX frame (invariant No. 7). The kernel is `dissolve_into`, integer and scalar. A blended frame carries its base frame's serial, so kt-gpu's upload key takes the pair and the weight (t250).
   - A PAIR is decided by ONE function `clip_frame_keys`; `layers_at` MUST return BOTH pts, otherwise prefetch warms one frame while the plan asks for two — an eternal miss. With R.56 it also has a second entry — `blend_footage`, inherited from the attachment above (item 448): the reel itself has no pairs, its leaves blend.
   - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.
