@@ -27,4 +27,4 @@
 ## 4. Close
 
 - [x] 4.1 found-defects rows removed/added, engine-audit row 11 marked done with the numbers, crate CLAUDE.md notes
-- [ ] 4.2 Archive (specs merged, design "why" into capability design.md); commit, target-prune (finish.sh is the orchestrator's)
+- [x] 4.2 Archive (specs merged, design "why" into capability design.md); commit, target-prune (finish.sh is the orchestrator's)
