@@ -26,7 +26,7 @@ Why: found-defects 391 — one advance per frame made every position its own sub
 #### Scenario: Frames ahead are one walk
 - **WHEN** a mosh is advanced from the frame on screen through eight frames ahead
 - **THEN** the history is computed by at most ⌈9 / batch⌉ + 1 jobs, and every one of the nine frames then needs nothing
-- **TEST** t2360 (`src/libs/kt-engine/tests/stream_memo.rs`)
+- **TEST** t2360 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 ### Requirement: A held stream frame is shown as catching up
 A composite that shows a stream stage's held frame (playing, the stage behind the playhead) SHALL say

@@ -265,7 +265,9 @@ pub fn gpu(run: &Run) -> String {
     }
     // when the jobs ran on the device, on the CPU clock (found-defects 398): the wait before the
     // device started a job, its run, and the wait for its buffers after it ended
-    let mut starts: BTreeMap<u64, (Vec<u64>, Vec<u64>, Vec<u64>, u64, u32)> = BTreeMap::new();
+    // class → (start delays, runs, waits after the end, jobs with no timestamps, the worst error µs)
+    type Starts = (Vec<u64>, Vec<u64>, Vec<u64>, u64, u32);
+    let mut starts: BTreeMap<u64, Starts> = BTreeMap::new();
     for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
         let e = starts.entry(r.id).or_default();
         if r.aux >= u32::MAX - 1 || r.b == 0 {

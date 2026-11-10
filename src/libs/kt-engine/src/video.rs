@@ -20,8 +20,8 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 #[path = "video_stream.rs"]
 mod stream;
 pub use stream::{
-    STREAM_MEMO_BASE, StreamPacing, memory_available, set_memory_probe, size_stream_memo, stop_when, stopping, stream_memo,
-    stream_memo_bytes,
+    STREAM_MEMO_BASE, StreamPacing, memory_available, set_memory_probe, size_stream_memo, size_stream_memo_walk, stop_when, stopping,
+    stream_memo, stream_memo_bytes, stream_memo_bytes_walk,
 };
 use stream::StreamStage;
 
@@ -1415,31 +1415,11 @@ impl VideoRenderer {
         let mut pending = false;
         for c in self.clips.iter().filter(|c| c.active_at(t)) {
             match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
-                (Some(st), None) => {
-                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache));
-                    let n = cs.pos(t);
-                    let needs = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
-                    if needs == 0 {
-                        continue;
-                    }
-                    // the advance in the trace: from how far short, and whether a source frame stopped it
-                    let mut span = kt_time::trace::span(kt_time::trace::Ev::StreamAdvance);
-                    span.id(c.id.0).a(n as u64).b(needs as u64);
-                    let short = !st.kernel().advance(&st.values, &cs, n, &self.stream_memo);
-                    if cs.stopped().is_some() {
-                        // nobody wants this advance any more: the rest of the stages neither
-                        span.aux(kt_time::trace::stream::STOPPED);
-                        cs.trace_stop(n);
+                (Some(_), None) => {
+                    pending |= self.stream_advance_clip(cache, c, t, quality);
+                    // nobody wants this advance any more: the rest of the stages neither
+                    if stream::stopping() {
                         return true;
-                    }
-                    pending |= short;
-                    if kt_time::trace::on() {
-                        let left = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
-                        span.c(needs.saturating_sub(left) as u64).aux(if short {
-                            kt_time::trace::stream::SOURCE_MISSING
-                        } else {
-                            kt_time::trace::stream::DONE
-                        });
                     }
                 }
                 (_, Some(sub)) => {
@@ -1449,6 +1429,88 @@ impl VideoRenderer {
             }
         }
         pending
+    }
+
+    /// Advance the stream stages over a run of moments `from ..= to` (no wrap) as ONE walk per stage
+    /// (stream-history-on-device, found-defects 391): each stage active at `from` walks to its last
+    /// position in the run, a stage that starts inside the run walks to `to`. The walk reaches `from`
+    /// first. `true` — a stage was left short.
+    pub fn stream_advance_run(&self, cache: &BurstCache, from: Tick, to: Tick, quality: Quality) -> bool {
+        let step = self.grid.frame_step().max(1);
+        let mut pending = false;
+        let mut done: Vec<kt_model::ClipId> = Vec::new();
+        for c in self.clips.iter().filter(|c| c.active_at(from) && c.stream.is_some() && c.nest.is_none()) {
+            // the run's last moment inside this event
+            let last = Tick(to.0.min(self.grid.align_floor(Tick(c.end.0 - 1)).0).max(from.0));
+            pending |= self.stream_advance_clip(cache, c, last, quality);
+            if stream::stopping() {
+                return true;
+            }
+            done.push(c.id);
+        }
+        if to.0 > from.0 {
+            for c in self.clips.iter().filter(|c| c.active_at(to) && c.stream.is_some() && c.nest.is_none() && !done.contains(&c.id)) {
+                pending |= self.stream_advance_clip(cache, c, to, quality);
+            }
+        }
+        // a reel's stages: per moment, as before
+        if self.clips.iter().any(|c| c.nest.is_some() && (c.active_at(from) || c.active_at(to))) {
+            let mut t = from;
+            while t.0 <= to.0 {
+                for c in self.clips.iter().filter(|c| c.active_at(t)) {
+                    if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
+                        pending |= sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality));
+                    }
+                }
+                t = Tick(t.0 + step);
+            }
+        }
+        pending
+    }
+
+    /// One stage's advance to moment `t` (the body of `stream_advance`).
+    fn stream_advance_clip(&self, cache: &BurstCache, c: &VideoClip, t: Tick, quality: Quality) -> bool {
+        let Some(st) = &c.stream else { return false };
+        let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache)).with_view(&self.stream_memo);
+        let n = cs.pos(t);
+        let needs = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
+        if needs == 0 {
+            return false;
+        }
+        let mut span = kt_time::trace::span(kt_time::trace::Ev::StreamAdvance);
+        span.id(c.id.0).a(n as u64).b(needs as u64);
+        let short = !st.kernel().advance(&st.values, &cs, n, &self.stream_memo);
+        if cs.stopped().is_some() {
+            span.aux(kt_time::trace::stream::STOPPED);
+            cs.trace_stop(n);
+            return true;
+        }
+        if kt_time::trace::on() {
+            let left = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
+            span.c(needs.saturating_sub(left) as u64).aux(if short { kt_time::trace::stream::SOURCE_MISSING } else { kt_time::trace::stream::DONE });
+        }
+        short
+    }
+
+    /// Tell the stream memo the moment the host shows from (stream-history-on-device D4); `None` —
+    /// every position is shown (the default).
+    pub fn set_stream_view(&self, from: Option<Tick>) {
+        self.stream_memo.set_view(from.map(|t| t.0));
+    }
+
+    /// The checkpoints the stream stages active at `t` keep for a walk of `t`'s history (the memo's
+    /// sizing); the largest over the stages.
+    pub fn stream_checkpoints(&self, t: Tick, quality: Quality) -> usize {
+        self.clips
+            .iter()
+            .filter(|c| c.active_at(t) && c.nest.is_none())
+            .filter_map(|c| {
+                let st = c.stream.as_ref()?;
+                let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+                Some(st.kernel().checkpoints(&st.values, &cs, cs.pos(t)))
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     /// The largest frame (RGBA bytes) a stream stage active at `t` orders (decode-request-storm:

@@ -2670,18 +2670,40 @@ fn stream_advance_ahead(
     kept: &dyn Fn(Tick) -> bool,
 ) -> bool {
     let step = video.grid.frame_step().max(1);
-    let mut t = video.grid.align_floor(shown);
+    let t = video.grid.align_floor(shown);
     let inside = region.is_some_and(|(s, e)| s <= t.0 && t.0 < e);
+    // what the walks keep: the loop region from its start while the playhead is in it, else from the
+    // frame on screen (stream-history-on-device D4)
+    video.set_stream_view(Some(match region.filter(|_| inside) {
+        Some((s, _)) => video.grid.align_floor(Tick(s)),
+        None => t,
+    }));
+    // the moments ahead in runs that do not wrap: each run is ONE walk per stage, to its last moment
+    // that is not kept (found-defects 391: one walk per frame was a submission per position)
+    let mut runs: Vec<(Tick, Tick)> = Vec::new();
+    let mut m = t;
+    let mut run: Option<(Tick, Tick)> = None;
     for _ in 0..=ahead {
         // a kept moment needs no history (structured-telemetry)
-        if !kept(t) && video.stream_advance(cache, t, q) {
-            return true;
+        if !kept(m) {
+            run = Some(match run {
+                Some((a, _)) => (a, m),
+                None => (m, m),
+            });
         }
-        t = Tick(t.0 + step);
-        if let Some((s, e)) = region.filter(|_| inside)
-            && t.0 >= e
-        {
-            t = video.grid.align_floor(Tick(s));
+        let next = Tick(m.0 + step);
+        let wraps = region.filter(|_| inside).is_some_and(|(_, e)| next.0 >= e);
+        if wraps {
+            runs.extend(run.take());
+            m = video.grid.align_floor(Tick(region.map_or(0, |r| r.0)));
+        } else {
+            m = next;
+        }
+    }
+    runs.extend(run);
+    for (from, to) in runs {
+        if video.stream_advance_run(cache, from, to, q) {
+            return true;
         }
     }
     false
@@ -2692,19 +2714,21 @@ fn stream_advance_ahead(
 /// Y'CbCr 4:2:0 is 3/8 of it) — every position of the loop region, within a quarter of the memory
 /// available — measured only when the loop or the stage's size changes (`last`), so a pass that
 /// changes neither reads nothing.
-fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, last: &mut Option<(usize, Option<usize>)>) {
+fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, last: &mut Option<(usize, Option<usize>, usize)>) {
     let frame = video.stream_frame_bytes(t, q);
     if frame == 0 {
         return;
     }
     let step = video.grid.frame_step().max(1);
     let positions = region.map(|(s, e)| ((e - s).max(0) / step) as usize + 1);
-    let now = (frame / 2, positions);
+    // the walk from the chain's anchor to the region's end keeps its checkpoints too (found-defects 394)
+    let checkpoints = region.map_or(0, |(_, e)| video.stream_checkpoints(video.grid.align_floor(Tick(e - 1)), q));
+    let now = (frame / 2, positions, checkpoints);
     if *last == Some(now) {
         return;
     }
     *last = Some(now);
-    crate::video::size_stream_memo(now.0, positions);
+    crate::video::size_stream_memo_walk(now.0, positions, checkpoints);
 }
 
 /// Tell the display's executor the loop region's moments when they or the executor change
@@ -2794,7 +2818,7 @@ fn prefetch_loop(
     let mut stream_pending = false;
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
-    let mut memo_sized: Option<(usize, Option<usize>)> = None;
+    let mut memo_sized: Option<(usize, Option<usize>, usize)> = None;
     // the loop the display's executor was told to keep, and which executor (memory-ledger D4)
     let mut loop_told: Option<(Option<usize>, usize)> = None;
     // the last pass was skipped: nothing moved (one-scheduler: then the thread parks with no clock)

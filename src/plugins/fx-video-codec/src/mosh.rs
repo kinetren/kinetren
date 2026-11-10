@@ -449,7 +449,7 @@ impl Plan {
     }
 
     /// The clean encoder's GOP start of `p` on a side.
-    fn gop_start(&self, lay: &dyn StreamLayout, side: Side, p: i64) -> Option<i64> {
+    pub(crate) fn gop_start(&self, lay: &dyn StreamLayout, side: Side, p: i64) -> Option<i64> {
         match (side, self.pos(p)) {
             (Side::Main, Some(x)) => x.gs[0],
             (Side::Second, Some(x)) => x.gs[1],
@@ -460,7 +460,7 @@ impl Plan {
 
     /// The clean encoder's key at `p` on a side (positions before the stream: hashed from its GOP
     /// start, the rows at the stream's first, as before).
-    fn clean(&self, lay: &dyn StreamLayout, side: Side, p: i64) -> Option<u64> {
+    pub(crate) fn clean(&self, lay: &dyn StreamLayout, side: Side, p: i64) -> Option<u64> {
         if let Some(x) = self.pos(p) {
             return x.clean[side as usize];
         }
@@ -472,23 +472,30 @@ impl Plan {
         Some(h)
     }
 
-    fn intra(&self, lay: &dyn StreamLayout, p: i64) -> u64 {
+    pub(crate) fn intra(&self, lay: &dyn StreamLayout, p: i64) -> u64 {
         self.intra_key(lay, p, self.at(p))
     }
 }
 
-fn clean_bytes(c: &Clean) -> usize {
+/// The key of the clean encoder's reconstruction alone at a position (stream-history-on-device D4):
+/// what the next position's encoder reads, kept without the packet. It stands for the position only
+/// as a REFERENCE: the position's own packet needs the whole entry.
+pub fn recon_key(clean: u64) -> u64 {
+    mix(clean, 0x7ec0_7ec0)
+}
+
+pub(crate) fn clean_bytes(c: &Clean) -> usize {
     c.recon.bytes() * 3 + c.pkt.mv.len() * 4
 }
 
 /// The padded plane size of a layout.
-fn padded(lay: &dyn StreamLayout) -> (usize, usize) {
+pub(crate) fn padded(lay: &dyn StreamLayout) -> (usize, usize) {
     let (w, h) = lay.size();
     (codec::pad16(w.max(16)), codec::pad16(h.max(16)))
 }
 
 /// The layout's schedule compiled up to `n`.
-fn plan(r: Rows, lay: &dyn StreamLayout, n: i64) -> Arc<Plan> {
+pub(crate) fn plan(r: Rows, lay: &dyn StreamLayout, n: i64) -> Arc<Plan> {
     let p = Plan::of(r, lay);
     p.ensure(lay, n);
     p
@@ -510,6 +517,8 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
         while j >= gs {
             match s.clean(lay, side, j) {
                 Some(k) if memo.contains(k) => break,
+                // a reference kept alone serves the position after it (stream-history-on-device)
+                Some(k) if j < p && memo.contains(recon_key(k)) => break,
                 _ => {}
             }
             out.insert((side, j));
@@ -572,14 +581,21 @@ fn clean_at(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p:
     let gs = s.gop_start(lay, side, p)?;
     // back to a held entry or the GOP start
     let mut j = p;
-    let mut prev: Option<Arc<Clean>> = None;
+    let mut prev: Option<Planes> = None;
     loop {
         let k = s.clean(lay, side, j)?;
         if let Some(c) = memo.get::<Clean>(k) {
             if j == p {
                 return Some(c);
             }
-            prev = Some(c);
+            prev = Some(c.recon.clone());
+            j += 1;
+            break;
+        }
+        if j < p
+            && let Some(r) = memo.get::<Planes>(recon_key(k))
+        {
+            prev = Some((*r).clone());
             j += 1;
             break;
         }
@@ -595,18 +611,18 @@ fn clean_at(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p:
             return None;
         }
         let cfg = s.at(q).cfg;
-        let c = Arc::new(encode_at(input, side, q, if q == gs { None } else { prev.as_ref().map(|c| &c.recon) }, &cfg)?);
+        let c = Arc::new(encode_at(input, side, q, if q == gs { None } else { prev.as_ref() }, &cfg)?);
         let k = s.clean(lay, side, q)?;
         // the encoder's state is read by the next frame's encoder; the loop keeps the pictures
         memo.put_transient(k, c.clone(), clean_bytes(&c));
-        prev = Some(c.clone());
+        prev = Some(c.recon.clone());
         last = Some(c);
     }
     last
 }
 
 /// Swap, scale, rotate — rounded to integer pels.
-fn transform(r: &Rows, v: (i16, i16)) -> (i16, i16) {
+pub fn transform(r: &Rows, v: (i16, i16)) -> (i16, i16) {
     let (mut x, mut y) = (v.0 as f64, v.1 as f64);
     if r.swap {
         std::mem::swap(&mut x, &mut y);
@@ -680,6 +696,19 @@ fn region_blend(broken: &Planes, clean: &Planes, cov: &[u8], size: (u32, u32)) -
 /// Frame `n` of the broken stream as planes plus its key; `None` — a frame of the history is
 /// missing (everything computed before the gap stays in the memo).
 pub fn render(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
+    render_with(r, input, n, memo, crate::walk::broken)
+}
+
+/// `render` by the per-position walk (two jobs and a wait a position, every position kept): the
+/// reference the batched walk is held to (t2350).
+#[doc(hidden)]
+pub fn render_reference(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
+    render_with(r, input, n, memo, broken)
+}
+
+type Broken = fn(&Plan, &dyn StreamInput, i64, &StreamMemo) -> Option<(Arc<Planes>, u64)>;
+
+fn render_with(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo, broken: Broken) -> Option<(Arc<Planes>, u64)> {
     let lay: &dyn StreamLayout = input;
     let s = plan(r, lay, n);
     let (pic, key) = broken(&s, input, n, memo)?;
@@ -698,7 +727,7 @@ pub fn render(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Op
     Some((Arc::new(region_blend(&pic, &clean.recon, &cov, lay.size())), mix(key, rid)))
 }
 
-/// The broken decoder's picture at `n` and its key.
+/// The broken decoder's picture at `n` and its key, position by position (the reference).
 fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
     let lay: &dyn StreamLayout = input;
     let r = s.r;

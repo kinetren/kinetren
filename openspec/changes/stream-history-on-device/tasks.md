@@ -8,16 +8,16 @@
 
 ## 2. The batched walk on the device (391)
 
-- [ ] 2.1 Shaders: vector edit (table, loss) and residual drop; t2352
-- [ ] 2.2 `walk.rs`: the recorder, batches, readback rule by `shown_from`, continuation entries; per-position reference kept for tests; `StreamWalk` (94) record; t2350, t2351, t2363, t1239, t2270–t2278
+- [x] 2.1 Shaders: vector edit (table, loss) and residual drop; t2352
+- [x] 2.2 `walk.rs`: the recorder, batches, readback rule by `shown_from`, continuation entries; per-position reference kept for tests; `StreamWalk` (94) record; t2350, t2351, t2363, t1239, t2270–t2278
 - [ ] 2.3 kt-cli stream-cost prints positions/s, readbacks and jobs; measure before/after
 - [ ] 2.4 Commit, target-prune
 
 ## 3. Memo covers the walk (394, 395 re-walk)
 
-- [ ] 3.1 `StreamMemo` pinned tier (rank thinning) and view; t2354
-- [ ] 3.2 Checkpoints in the walk; `needs`/`clean_at` accept recon-only entries; t2353
-- [ ] 3.3 `StreamKernel::walk_from`, sizing adds the checkpoint tier; player sets the view; prefetch advances a run as one walk; t2355, t2360, t2275, t2276
+- [x] 3.1 `StreamMemo` pinned tier (rank thinning) and view; t2354
+- [x] 3.2 Checkpoints in the walk; `needs`/`clean_at` accept recon-only entries; t2353
+- [x] 3.3 `StreamKernel::walk_from`, sizing adds the checkpoint tier; player sets the view; prefetch advances a run as one walk; t2355, t2360, t2275, t2276
 - [ ] 3.4 Commit, target-prune
 
 ## 4. V-fps and the marker (393, item 6)

@@ -23,6 +23,10 @@ static JOB_CPU_NS: AtomicU64 = AtomicU64::new(0);
 static ENCODES: AtomicU64 = AtomicU64::new(0);
 static DECODES: AtomicU64 = AtomicU64::new(0);
 static OTHER: AtomicU64 = AtomicU64::new(0);
+/// Dispatches of the codec's clean encoder and of its decoders, three planes each
+/// (stream-history-on-device: a job carries many positions now).
+static ENC_STEPS: AtomicU64 = AtomicU64::new(0);
+static DEC_STEPS: AtomicU64 = AtomicU64::new(0);
 
 /// The process's compute device, counting what each job moves (kt-cli's only host; a pass-through).
 struct Counting(Arc<dyn ComputeHost>);
@@ -39,6 +43,8 @@ impl ComputeHost for Counting {
             &OTHER
         };
         kind.fetch_add(1, Relaxed);
+        ENC_STEPS.fetch_add(job.steps.iter().filter(|s| s.name.ends_with(":residual")).count() as u64, Relaxed);
+        DEC_STEPS.fetch_add(job.steps.iter().filter(|s| s.name.ends_with(":decode")).count() as u64, Relaxed);
         let (t, c) = (Instant::now(), thread_cpu_ns());
         let got = self.0.run(job);
         JOB_NS.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
@@ -82,6 +88,17 @@ struct Snap {
     enc: u64,
     dec: u64,
     other: u64,
+    enc_steps: u64,
+    dec_steps: u64,
+}
+
+impl Snap {
+    /// Positions the broken decoder computed (its P-frames: decoder dispatches beyond the clean
+    /// encoder's own reconstruction) and the clean encoder's positions.
+    fn positions(&self) -> (u64, u64) {
+        let enc = self.enc_steps / 3;
+        (self.dec_steps / 3 - enc.min(self.dec_steps / 3), enc)
+    }
 }
 
 fn snap() -> Snap {
@@ -93,6 +110,8 @@ fn snap() -> Snap {
         enc: ENCODES.load(Relaxed),
         dec: DECODES.load(Relaxed),
         other: OTHER.load(Relaxed),
+        enc_steps: ENC_STEPS.load(Relaxed),
+        dec_steps: DEC_STEPS.load(Relaxed),
     }
 }
 
@@ -106,6 +125,8 @@ fn since(a: Snap) -> Snap {
         enc: b.enc - a.enc,
         dec: b.dec - a.dec,
         other: b.other - a.other,
+        enc_steps: b.enc_steps - a.enc_steps,
+        dec_steps: b.dec_steps - a.dec_steps,
     }
 }
 
@@ -171,7 +192,9 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
         let mut needs_ms: Vec<f64> = Vec::new();
         let s0 = snap();
         let mut t = t0;
+        let mut first_frame: Option<(u64, Snap)> = None;
         while t < t1 {
+            let (w0, f0) = (wall, snap());
             let mut tries = 0;
             loop {
                 let fed = feed(t);
@@ -192,6 +215,9 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
                 let c = thread_cpu_ns();
                 let _ = video.wanted_frames(kt_time::TickRange::new(t, Tick(t.0 + window.0)), q);
                 needs_ms.push((thread_cpu_ns() - c) as f64 / 1e6);
+            }
+            if frames == 0 {
+                first_frame = Some((wall - w0, since(f0)));
             }
             frames += 1;
             t = Tick(t.0 + step);
@@ -228,6 +254,22 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
             d.up as f64 / jobs / 1e6,
             d.down as f64 / jobs / 1e6
         );
+        let jobs_n = d.enc + d.dec + d.other;
+        let (broken, clean) = d.positions();
+        println!(
+            "    history: {broken} positions decoded, {clean} encoded, in {jobs_n} jobs ({:.1} positions a job); {:.1} positions/s of advance",
+            broken as f64 / jobs_n.max(1) as f64,
+            broken as f64 / (wall as f64 / 1e9).max(1e-9)
+        );
+        if let Some((w, f0)) = first_frame {
+            let (b, _) = f0.positions();
+            println!(
+                "    first frame (the walk from the chain's anchor): {b} positions in {:.2} s ({:.1}/s), {} jobs",
+                w as f64 / 1e9,
+                b as f64 / (w as f64 / 1e9).max(1e-9),
+                f0.enc + f0.dec + f0.other
+            );
+        }
         println!("    prefetch window question (2 s, `wanted_frames`): p50 {med:.2} ms, max {max:.2} ms ({} asked)", needs_ms.len());
     }
     println!("  memo holds {} MB of {} MB", memo.bytes() >> 20, memo.bytes_cap() >> 20);
