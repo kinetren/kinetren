@@ -97,6 +97,7 @@ interleaved twice; the renderer's own cost is in every figure, ~2.3 reference ke
 | VHS Tape sound, curved gap/spacing/bias | 42.6–43.2 | 36.0–36.3 |
 | VHS Tape sound, curved dropouts | 34.6–35.2 | 34.9–35.1 |
 | camera mic, AAC / 16 kHz / µ-law / curved | 28.4–29.4 / 27.3–27.6 / 29.1 / 28.9–29.1 | 25.5 / 24.2–24.6 / 25.1–25.2 / 25.5–25.9 |
+| … with D6 (anti-alias FIR on kept samples), re-measured | 28.8–29.4 / 27.6–28.2 / 29.6–29.8 / 29.2–29.6 | 25.1–25.7 / 22.2 / 22.2–22.5 / 24.9–25.3 |
 | Pitch WSOLA, fixed / curved | 19.9 / 20.0–20.1 | 19.0–19.3 / 18.8–19.0 |
 | Datamosh sound, predicting | 7.2–7.3 | 7.2–7.3 |
 | limiter, curved | 9.3–9.4 | 9.4 |
