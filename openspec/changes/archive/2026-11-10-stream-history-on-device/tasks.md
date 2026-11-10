@@ -32,4 +32,4 @@
 - [x] 5.1 Release, llvmpipe, his relinked copy: positions/s playing and paused, device share, computed vs distinct per lap, a jump's re-walk; `trace loop`/`gpu` before/after; what to expect on a card
 - [x] 5.2 Live `idle`, `heavy_loop`, `datamosh`; workspace tests of touched crates, clippy
 - [x] 5.3 found-defects rows removed/added (400+), whats-new line, crate CLAUDE.md notes
-- [ ] 5.4 Archive (specs merged, design "why" into capability design.md); commit, target-prune
+- [x] 5.4 Archive (specs merged, design "why" into capability design.md); commit, target-prune
