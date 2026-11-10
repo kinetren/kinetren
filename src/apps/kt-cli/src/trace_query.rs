@@ -467,7 +467,7 @@ fn lives(run: &Run) -> BTreeMap<u64, Life> {
 fn stream_word(aux: u32) -> &'static str {
     match aux {
         trace::stream::RENDERED => "rendered",
-        trace::stream::HELD => "held (playing: the latest frame it had)",
+        trace::stream::HELD => "held (builds before catch-up-shows-loading: the latest frame it had)",
         trace::stream::SHORT => "short of history",
         trace::stream::SOURCE_MISSING => "a source frame missing",
         trace::stream::DONE => "advanced to the frame",
@@ -613,6 +613,9 @@ pub struct Stretch {
     pub tick: u64,
     pub frames: Vec<u64>,
     pub shown: bool,
+    /// The positions a stream stage still lacked when the scrim came (the `loading` record's `b`,
+    /// catch-up-shows-loading); 0 — another wait, or a trace without the scrim's records.
+    pub catching_up: u64,
 }
 
 /// The stretches: the UI's own "Loading" records when there are any; else from the first ask of a
@@ -637,7 +640,7 @@ pub fn stretches(run: &Run, min: u64) -> Vec<Stretch> {
                 if let Some(c) = cur.take() {
                     out.push(c);
                 }
-                cur = Some(Stretch { from: l.start(), to: l.end(), tick: l.tick, frames: vec![l.id], shown: l.complete() });
+                cur = Some(Stretch { from: l.start(), to: l.end(), tick: l.tick, frames: vec![l.id], shown: l.complete(), catching_up: 0 });
             }
         }
     }
@@ -651,18 +654,18 @@ pub fn stretches(run: &Run, min: u64) -> Vec<Stretch> {
             match (r.aux, on) {
                 (1, None) => on = Some(r),
                 (0, Some(a)) => {
-                    v.push((a.t, r.t));
+                    v.push((a.t, r.t, a.b));
                     on = None;
                 }
                 _ => {}
             }
         }
         if let Some(a) = on {
-            v.push((a.t, run.recs.last().map_or(a.t, |r| r.t)));
+            v.push((a.t, run.recs.last().map_or(a.t, |r| r.t), a.b));
         }
         return v
             .into_iter()
-            .map(|(a, b)| {
+            .map(|(a, b, catching_up)| {
                 let inside: Vec<&Stretch> = out.iter().filter(|x| x.to >= a && x.from <= b).collect();
                 Stretch {
                     from: a.saturating_sub(180_000_000),
@@ -670,6 +673,7 @@ pub fn stretches(run: &Run, min: u64) -> Vec<Stretch> {
                     tick: inside.last().map_or(0, |x| x.tick),
                     frames: inside.iter().flat_map(|x| x.frames.clone()).collect(),
                     shown: true,
+                    catching_up,
                 }
             })
             .collect();
@@ -831,6 +835,9 @@ pub fn loading(run: &Run, from: Option<u64>, to: Option<u64>) -> String {
             st.frames.len(),
             if st.shown { "then shown" } else { "never shown (left)" }
         );
+        if st.catching_up > 0 {
+            let _ = writeln!(o, "  the stream history was catching up: {} positions short when Loading came", st.catching_up);
+        }
         let _ = writeln!(o, "  where the time went, ranked:");
         waits(run, st, &all, &mut o);
         if let Some(l) = st.frames.iter().rev().filter_map(|f| all.get(f)).find(|l| l.complete()).or(st.frames.last().and_then(|f| all.get(f))) {

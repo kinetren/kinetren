@@ -4,6 +4,8 @@
 //! paced order is the earliest of the history), t2043 (a composite does not compute a history; the
 //! advance does, to the same bytes), t2044 (a short loop over a cut mosh whose history does not fit
 //! the cache plays, every decoded frame read).
+//! catch-up-shows-loading: t2410–t2414 (a frame behind its history is incomplete and says how far,
+//! never a held picture with later stages over it; an export composes from its own positions).
 //!
 //! The owner's journal (kkt-26.11.08, release 360b50e6): after he selected Datamosh, 1570 decode
 //! requests a second while paused, 15–100 frames decoded, every one dropped before it was read, and
@@ -344,10 +346,10 @@ fn t2042_the_paced_order_is_the_earliest_of_the_history() {
     let q = whole[0].2;
     let frame = q.width as usize * q.height as usize * 4;
     for n in [1usize, 7, 30] {
-        let paced = renderer(&p, Some(StreamPacing { order_bytes: n * frame, compose_steps: 2, hold: false })).layers_at(t, Q);
+        let paced = renderer(&p, Some(StreamPacing { order_bytes: n * frame, compose_steps: 2 })).layers_at(t, Q);
         assert_eq!(paced, whole[..n], "{n} frames of budget: the first {n} of the history");
     }
-    let tiny = renderer(&p, Some(StreamPacing { order_bytes: 1, compose_steps: 2, hold: false })).layers_at(t, Q);
+    let tiny = renderer(&p, Some(StreamPacing { order_bytes: 1, compose_steps: 2 })).layers_at(t, Q);
     assert_eq!(tiny, whole[..1], "a budget below one frame still asks one");
 }
 
@@ -723,25 +725,223 @@ fn t2360_frames_ahead_are_one_walk() {
     }
 }
 
-/// t2361 (stream-history-on-device): a composite that shows a stage's held frame says so; once the
-/// history caught up the composite of the moment's own frame does not.
+// ---- catch-up-shows-loading -------------------------------------------------------------------
+
+/// The mosh project with VHS Tape after Datamosh on the event and as its track's stage: the stages the
+/// owner saw laid over a held picture (kkt-26.11.10b K5).
+fn mosh_vhs_project() -> Project {
+    let mut p = mosh_project();
+    p.clips[1].fx.push(FxInstance::plugin("vhs_tape").expect("vhs_tape is built in"));
+    // the first video track (a new project may carry default tracks)
+    match p.tracks.iter_mut().find(|t| t.kind == LaneKind::Video) {
+        Some(t) => t.fx.push(FxInstance::plugin("vhs_tape").unwrap()),
+        None => {
+            let mut track = Track::new(TrackId(1), LaneKind::Video);
+            track.fx.push(FxInstance::plugin("vhs_tape").unwrap());
+            p.tracks.push(track);
+        }
+    }
+    p.validate().unwrap();
+    p
+}
+
+/// Every source a plan's layers read a picture of, through reels and track stages.
+fn sources_with_picture(plan: &FramePlan<'_>) -> Vec<kt_cache::SourceId> {
+    use kt_engine::video_plan::{LayerInput, LayerSrc, PlanLayer};
+    fn walk(src: &LayerSrc<'_>, out: &mut Vec<kt_cache::SourceId>) {
+        match &src.input {
+            LayerInput::Frame(Some(_)) => out.push(src.source),
+            LayerInput::Frame(None) => {}
+            LayerInput::Nest(n) => {
+                for l in &n.plan.layers {
+                    layer(l, out);
+                }
+            }
+        }
+    }
+    fn layer(l: &PlanLayer<'_>, out: &mut Vec<kt_cache::SourceId>) {
+        match l {
+            PlanLayer::One { src, .. } => walk(src, out),
+            PlanLayer::Dissolve { a, b, .. } => {
+                walk(a, out);
+                walk(b, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for l in &plan.layers {
+        layer(l, &mut out);
+    }
+    out
+}
+
+/// A renderer whose history of the frame at `t` stands ten positions behind it, every source frame
+/// cached; and the unpaced renderer's bytes of `t`.
+fn behind(p: &Project, t: Tick) -> (VideoRenderer, BurstCache, Vec<u8>) {
+    let (vr, cache) = (renderer(p, Some(StreamPacing::preview(1 << 30))), big_cache());
+    let plain = renderer(p, None);
+    warm(&plain.layers_at(t, Q), &cache);
+    let (want, complete) = kt_gpu::testkit::compose(&plain, &cache, t, Q);
+    assert!(complete, "scene guard: the unpaced frame composes");
+    assert!(!vr.stream_advance(&cache, Tick(t.0 - 10 * STEP), Q), "the history up to ten frames behind");
+    (vr, cache, want)
+}
+
+/// t2410 (catch-up-shows-loading, found-defects 403): a frame whose stream stage lacks more positions
+/// than a composite computes is incomplete, its layer has no picture and the renderer says how far
+/// the history is behind; there is no held picture of an earlier position. After the catch-up the
+/// frame is the unpaced renderer's.
 #[test]
-fn t2361_the_composite_says_it_held() {
+fn t2410_a_frame_behind_its_history_is_loading_not_a_held_picture() {
     let _g = serial();
     if no_device() {
         return;
     }
     let p = mosh_project();
     let t = Tick(5 * SEC);
-    let behind = Tick(t.0 - 10 * STEP);
-    let (vr, cache) = (renderer(&p, Some(StreamPacing { order_bytes: 1 << 30, compose_steps: 2, hold: true })), big_cache());
-    let plain = renderer(&p, None);
-    warm(&plain.layers_at(t, Q), &cache);
-    assert!(!vr.stream_advance(&cache, behind, Q), "the history up to ten frames behind");
+    let (vr, cache, want) = behind(&p, t);
+    let mosh = kt_engine::source_id(MediaId(2));
+    {
+        let plan = vr.frame_plan(&cache, t, Q);
+        assert!(!sources_with_picture(&plan).contains(&mosh), "the mosh layer got a picture of another position");
+    }
+    assert!(vr.stream_short() >= 8, "the frame lacks the ten positions ({})", vr.stream_short());
     let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
-    assert!(vr.stream_held(), "the frame ten positions ahead of the history showed a held picture");
-    let _ = complete;
+    assert!(!complete, "a frame short of its history is incomplete");
     assert!(!vr.stream_advance(&cache, t, Q));
-    let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
-    assert!(complete && !vr.stream_held(), "the moment's own frame is not held");
+    let (got, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(complete && vr.stream_short() == 0, "the caught-up frame is complete and nothing is short");
+    assert_eq!(got, want, "the moment's own picture");
+}
+
+/// t2411 (catch-up-shows-loading, kkt-26.11.10b K5): VHS Tape after Datamosh and VHS Tape as the
+/// track's stage never run over another position's mosh: the short frame has no mosh picture anywhere
+/// in its plan and is incomplete; the caught-up frame is the unpaced renderer's bytes.
+#[test]
+fn t2411_vhs_is_never_laid_over_another_positions_mosh() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_vhs_project();
+    let t = Tick(5 * SEC);
+    let (vr, cache, want) = behind(&p, t);
+    let mosh = kt_engine::source_id(MediaId(2));
+    {
+        let plan = vr.frame_plan(&cache, t, Q);
+        assert!(
+            plan.layers.iter().any(|l| matches!(l, kt_engine::video_plan::PlanLayer::One { src, .. } if src.input.nest().is_some())),
+            "scene guard: the track stage is a sub-composite"
+        );
+        assert!(!sources_with_picture(&plan).contains(&mosh), "a stage got another position's mosh");
+    }
+    assert!(vr.stream_short() >= 8, "the track stage's sub-plan reports the shortage ({})", vr.stream_short());
+    assert!(!kt_gpu::testkit::compose(&vr, &cache, t, Q).1, "the short frame is incomplete");
+    assert!(!vr.stream_advance(&cache, t, Q));
+    let (got, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(complete);
+    assert_eq!(got, want, "VHS over the moment's own mosh");
+}
+
+/// t2412 (catch-up-shows-loading): an export composes every frame from its own positions — the
+/// serial export of a range of the mosh with VHS Tape after it equals the unpaced renderer's frames
+/// at each moment, none short.
+#[test]
+fn t2412_an_export_composes_every_frame_from_its_own_positions() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_vhs_project();
+    let (from, to) = (Tick(5 * SEC), Tick(5 * SEC + 4 * STEP));
+    let counts = Arc::new(Mutex::new(Counts::default()));
+    let sources: Vec<(MediaId, Box<dyn MediaSource>)> = vec![
+        (MediaId(1), Box::new(GopSource::new(Duration::ZERO, counts.clone()))),
+        (MediaId(2), Box::new(GopSource::new(Duration::ZERO, counts))),
+    ];
+    let mut frames: Vec<Vec<u8>> = Vec::new();
+    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    kt_gpu::testkit::render_range(&p, sources, Q, Some((from, to)), &cancel, |_| {}, |f| {
+        frames.push(f.to_vec());
+        Ok(())
+    })
+    .expect("export");
+    assert_eq!(frames.len(), 4, "four frames in the range");
+    let (plain, cache) = (renderer(&p, None), big_cache());
+    for (i, got) in frames.iter().enumerate() {
+        let t = Tick(from.0 + i as i64 * STEP);
+        warm(&plain.layers_at(t, Q), &cache);
+        let (want, complete) = kt_gpu::testkit::compose(&plain, &cache, t, Q);
+        assert!(complete && plain.stream_short() == 0, "frame {i}: the unpaced renderer is never short");
+        assert!(*got == want, "frame {i}: the export's frame is not the moment's own");
+    }
+}
+
+/// t2413 (catch-up-shows-loading): a reel holding the mosh reports its catch-up to the root: the root
+/// composite is incomplete with the inner positions short, then complete with nothing short.
+#[test]
+fn t2413_a_reel_reports_its_catch_up_to_the_root() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let inner = mosh_project();
+    let mut p = inner.clone();
+    p.clips.clear();
+    let mut seq = Sequence::new(MediaId(100), "mosh reel");
+    seq.clips = inner.clips.clone();
+    p.sequences.push(seq);
+    p.clips.push(clip(10, 100, 0, 8 * SEC, vec![]));
+    p.validate().unwrap();
+    let t = Tick(5 * SEC);
+    let (vr, cache, want) = behind(&p, t);
+    assert!(!kt_gpu::testkit::compose(&vr, &cache, t, Q).1, "the root frame is incomplete");
+    assert!(vr.stream_short() >= 8, "the reel's shortage reaches the root ({})", vr.stream_short());
+    assert!(!vr.stream_advance(&cache, t, Q));
+    let (got, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(complete && vr.stream_short() == 0);
+    assert_eq!(got, want);
+}
+
+/// t2414 (catch-up-shows-loading): a playing player answers a frame whose history cannot advance with
+/// an incomplete composite that says how far it is behind; a kept moment is answered complete at once,
+/// with nothing to catch up, without its history.
+#[test]
+fn t2414_the_player_answers_the_catch_up_and_a_kept_moment_at_once() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let gate = Arc::new(Gate::default());
+    let counts = Arc::new(Mutex::new(Counts::default()));
+    let gated = |c: &Arc<Mutex<Counts>>| {
+        let mut s = GopSource::new(Duration::from_millis(1), c.clone());
+        s.gate = Some(gate.clone());
+        Box::new(s) as Box<dyn MediaSource>
+    };
+    let sources = vec![(MediaId(1), gated(&counts)), (MediaId(2), gated(&counts))];
+    let (player, _ring) =
+        Player::with_cache(mosh_project(), sources, CacheConfig { max_audio_bytes: 16 << 20, max_video_bytes: 256 << 20 });
+    player.set_preview_quality(Q);
+    player.set_video_gpu(Some(kt_gpu::testkit::engine()));
+    let t = Tick(5 * SEC);
+    player.seek(t);
+    player.play();
+    // the decoders stand: the history cannot move, the composite is short whatever the timing
+    player.ask_preview(t, Some(SHOW));
+    let done = player.take_composed(Duration::from_secs(600)).expect("a composite");
+    assert!(!done.complete, "a frame short of its history is incomplete while playing");
+    assert!(done.catching_up > 2, "it says how far the history is behind ({})", done.catching_up);
+    gate.release();
+    player.pause();
+    present_until_complete(&player, t);
+    kt_engine::video::stream_memo().clear();
+    for m in [1, 2] {
+        player.cache.invalidate_source(kt_engine::source_id(MediaId(m)));
+    }
+    player.play();
+    player.ask_preview(t, Some(SHOW));
+    let done = player.take_composed(Duration::from_secs(600)).expect("a composite");
+    assert!(done.complete && done.catching_up == 0, "the kept moment shows at once ({})", done.catching_up);
+    player.pause();
 }

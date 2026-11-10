@@ -36,7 +36,7 @@ Why: kkt-26.11.10b K2 — "catchung up надпись ну очевидно мо
 
 #### Scenario: The scrim names the catch-up
 - **WHEN** the app takes an incomplete composite whose stream stage lacks 37 positions and 180 ms pass, then an incomplete composite with nothing short, then a complete one, then sits at rest
-- **THEN** the scrim's text is "Loading — catching up: 37", then "Loading", then no scrim; nothing is written in the preview's corner; at rest no frame is asked for
+- **THEN** the scrim's text is "Loading — catching up: 37" at the picture's centre, then "Loading", then no scrim; nothing is written in the preview's corner (the rest's cost: live `idle`)
 - **PATH** play over a Datamosh event whose history is behind → the picture dims and "Loading — catching up: N" stands in the preview's centre, N falling as the history walks → the scrim goes when the moment's own picture lands
 - **TEST** t2415 (`src/apps/kt-app/src/layout_tests.rs`)
 

@@ -13,6 +13,12 @@ preview drew "Catching up…" in its corner. The owner's run of stage 10 (`kkt-2
 - K5: "при кэтчинге - у меня vhs tape будто бы накладывается в этот момент актуальный … либо есть кадр
   либо нет, зачем накладывать эффект если предыдущий не готов?".
 
+His answer to the diagnosis (`kkt-26.11.11` L2): "я не вижу смысла чтобы эффекты брали предыдущие картинки
+и накладывались дальше - это пустая трата времени и ресурсов которая все замедляет" — no stage runs over a
+previous picture anywhere, and a held composite is never stored (found-defects 483: in his stage-10 trace
+248 of 920 kept-composite stores were held frames, under keys no moment asks again, while the kept tier
+stood full at 658/659 MB).
+
 K5 is the held frame's own consequence, read from the code: `layer_src` gave the held picture (position
 f) to the layer, `fx` was the clip's chain resolved at the moment asked, so the event's VHS Tape (its
 noise, tracking and tape state are functions of the moment) ran at t over the mosh of f; the track's
@@ -42,6 +48,11 @@ the compiled schedule's answers to it (the held position is part of what the sch
 Rejected: keep the hold outside a loop while playing. Outside a loop the held picture is the stage's
 latest, possibly seconds behind, and VHS still runs over it at the moment asked — K5 is not a loop
 question.
+
+Row 483 closes with it: a held composite was complete, so the display's executor kept it in its
+present memo (`PresentMemo` keeps every complete composite) though the player did not note it as the
+moment's. A short frame is incomplete now, and an incomplete composite is never kept (t2410 asserts the
+frame incomplete; the memo keeps complete ones only, `kt-gpu` engine `present`).
 
 ### D2. A short frame says how short
 `video_stream::run` returns `(None, 0)` when its frame lacks more than `compose_steps` positions (as it

@@ -34,9 +34,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   once ran the decoder through it while the stage read only at composites, and LRU dropped its front — the frame
   never came); the prefetch thread advances the stages (`stream_advance_ahead`: the frame on screen and, playing,
   the frames ahead to the next pass) and keeps passing on a pause while one is pending; a composite runs a stage
-  only two positions short — paused it reports incomplete, playing it shows the stage's latest held frame
-  (`StreamKernel::held`) and is not kept as the moment's composite (`stream_held`). The UI thread never computes a
-  history. The reel strip and the poster call `stream_preroll`. Tests t2042–t2045.
+  only two positions short — further short it reports the frame incomplete, playing or paused, and
+  `stream_short` says how many positions the history lacks (the preview writes it under Loading). No
+  picture of another position stands in: the stages after the stream (the event's VHS Tape, the track's
+  and the reel's stages) ran over the held frame at the moment asked (catch-up-shows-loading, t2410,
+  t2411). The UI thread never computes a history. The reel strip and the poster call `stream_preroll`. Tests t2042–t2045.
   **The prefetch advances a run of frames as one walk** (stream-history-on-device): `stream_advance_run`
   walks each stage to the frame on screen first, then to the run's last moment that is not kept;
   `set_stream_view` tells the memo the loop's start (playhead inside it) or the frame on screen, and the
@@ -46,7 +48,8 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.
   - `LayerBlend` remains in the layer as METADATA (the neighbour + the weight) — they are needed by the `ReadbackCache` key in kt-gpu: the same two frames with a different weight give a different picture.
   - `max_concurrent_layers` counts a blending layer as TWO frames: otherwise the export chunk evicts the neighbour before the composition, the starvation branch fires, and the EXPORT BYTES depend on the timing of the cache.
-  - Starvation of either side — the one available at full weight, as for a `Dissolve` pair.
+  - Starvation of either side — the layer has NO picture and the frame is incomplete (catch-up-shows-loading
+    D5, t2418): the other side at full weight was a stand-in the chain ran over, reported complete.
 - **The axis of the mirror of a reversed event = the actually consumed `used` (R.43, item 292).** `chain_source_window_ext(..).end` is the BOUNDARY "beyond — silence", and it includes `WARP_SOURCE_MARGIN_FRAMES` = 8192 frames of resampler margin; it cannot be the axis: mirroring from it, a slowed mirrored event reads material 170.7 ms beyond its own end, while the video anchors to `ClipWarp::used` without a margin, and A/V diverge. Both quantities live separately in `SrcWindow`; the axis is computed by `kt_fx::chain_source_used`, and the SAME axis MUST stand in the mirror branch of `wanted_audio_bursts` — otherwise an eternal cache miss (rule item 13). Test 282.
 - **`FxStateStore` carries the GEOMETRY, not only the parameters (R.43, item 293).** `chain_fingerprint` knows only the KINDS of slots, therefore a trim/cut/punch-out/re-anchoring of a morph piece changes `source_in` with the same id and the same chain structure — and the processor went on reading from the old anchor ("sound from another event"). `set_src_in` moves the anchor with a SEAM, not a seek: the output stays continuous, the reverb rings out (invariant No. 3). Test 283.
 - **Underruns are counted in FRAMES on both paths (R.43, item 289).** Before this the path without FX counted frames, and the path with FX counted burst misses: the same starvation gave numbers differing by a factor of 1024. The new counter is in frames, they are comparable with the length of an event and with the output latency. Test 280.

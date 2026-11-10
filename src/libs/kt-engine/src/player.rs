@@ -1254,9 +1254,6 @@ impl PreviewParts {
         if waited >= 1_000_000 {
             trace::ev(Ev::FrameWait).id(frame).aux(trace::wait::BUILD).lasted(waited).emit();
         }
-        // playing, a stream stage short of its frame shows its latest one; paused, the frame itself
-        // is waited for (decode-request-storm)
-        video.set_stream_hold(self.transport.is_playing());
         let aligned = video.grid.align_floor(t);
         let mut target = target;
         // A KEPT MOMENT IS SHOWN BEFORE ANYTHING IS ASKED (structured-telemetry, kkt-26.11.09 I8: "если
@@ -1345,14 +1342,13 @@ impl PreviewParts {
                 if stages.replayed {
                     kt_time::work::bump(kt_time::work::Work::CompositeReplay);
                 }
-                let held = video.stream_held();
-                stages.stream_held = held;
+                // a stream stage short of its frame left it incomplete: how far its history is behind
+                stages.stream_short = video.stream_short();
                 {
                     use trace::exec as x;
                     let flags = if complete { x::COMPLETE } else { 0 }
                         | if stages.replayed { x::MEMO_HIT } else { 0 }
                         | if stages.stored { x::MEMO_STORED } else { 0 }
-                        | if held { x::STREAM_HELD } else { 0 }
                         | if via.is_some() { x::SLOW } else { 0 };
                     exec_span.id(frame).a(key.unwrap_or(0)).b(stages.cold as u64).aux(flags);
                 }
@@ -1361,7 +1357,7 @@ impl PreviewParts {
                 // lap shows it from there (structured-telemetry)
                 let kept_by = match (&target, via) {
                     (Target::Display(_), _) => Some(exec.clone()),
-                    (Target::Bytes(out), Some(_)) if complete && !held => {
+                    (Target::Bytes(out), Some(_)) if complete => {
                         let display = self.display_exec();
                         if let (Some(d), Some(key)) = (&display, exec.present_key(&plan)) {
                             d.keep(key, plan.out_w, plan.out_h, out);
@@ -1372,7 +1368,6 @@ impl PreviewParts {
                 };
                 // what the executor keeps for this moment, for the bars (cached-range-plays)
                 if complete
-                    && !held
                     && let Some(e) = kept_by
                     && let Some(key) = e.present_key(&plan)
                 {
