@@ -22,4 +22,4 @@
 - [x] 4.1 kt-engine and kt-app CLAUDE.md; root CLAUDE.md invariant 2/6 lines
 - [x] 4.2 found-defects: 390 and 274 leave; rows 420–439 for what is left
 - [x] 4.3 What's new lines; registry rows J1, J6
-- [ ] 4.4 Tests of the specs, `cargo test` of what changed, clippy, target-prune
+- [x] 4.4 Tests of the specs, `cargo test` of what changed, clippy, target-prune
