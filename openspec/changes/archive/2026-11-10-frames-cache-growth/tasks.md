@@ -4,7 +4,7 @@
 
 - [x] 1.1 Release `kt-cli` of the base; his region at 1280×720, 120 s loop, `--trace`: V-fps, frame
   evictions, frames cap, peak RSS (design "Measured")
-- [ ] 1.2 The heavy showcase loop with the base binary (same measures)
+- [x] 1.2 The heavy showcase loop with the base binary (same measures)
 
 ## 2. The cache asks (found-defects 396)
 
@@ -24,7 +24,7 @@
 
 ## 4. Verification
 
-- [ ] 4.1 Tests of the touched crates (nextest), clippy
-- [ ] 4.2 After numbers: his region and the heavy showcase, release, same commands as 1.x
-- [ ] 4.3 Live `diagnostics`, `idle`, `heavy_loop` with screenshots of the new numbers
-- [ ] 4.4 found-defects (396, 397 leave; rows 440–441), What's new, specs merged on archive
+- [x] 4.1 Tests of the touched crates (nextest), clippy
+- [x] 4.2 After numbers: his region and the heavy showcase, release, same commands as 1.x
+- [x] 4.3 Live `diagnostics`, `idle`, `heavy_loop` with screenshots of the new numbers
+- [x] 4.4 found-defects (396, 397 leave; rows 440–441), What's new, specs merged on archive
