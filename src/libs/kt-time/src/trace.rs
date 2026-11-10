@@ -173,10 +173,20 @@ pub enum Ev {
     /// [`crate::mem::Tenant`], `a` its want, `b` its new cap, `c` the bytes it holds, `id` 1 — a
     /// device refusal set the cap.
     MemGrant = 92,
+
+    /// A compute job's submission and its run on the device, on this trace's clock
+    /// (stream-history-on-device, found-defects 398): `a` when it was submitted, `b` when its first
+    /// dispatch started on the device, `c` when its last timed dispatch ended (0 — unknown), `aux` the
+    /// calibration's error in µs (`u32::MAX` — the device gives no timestamps, `u32::MAX - 1` — not calibrated: `b`/`c` are 0), `id`
+    /// the caller's [`crate::sched::Class`]. The record's own time is when the job's buffers came back.
+    GpuStart = 93,
+    /// One submission of a stream history walk (stream-history-on-device): `a` its first position,
+    /// `b` the positions in it, `c` the pictures read back, `aux` the checkpoints it kept.
+    StreamWalk = 94,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 46] = [
+    pub const ALL: [Ev; 48] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -223,6 +233,8 @@ impl Ev {
         Ev::Block,
         Ev::MemBudget,
         Ev::MemGrant,
+        Ev::GpuStart,
+        Ev::StreamWalk,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -277,6 +289,8 @@ impl Ev {
             Ev::Block => "block",
             Ev::MemBudget => "mem_budget",
             Ev::MemGrant => "mem_grant",
+            Ev::GpuStart => "gpu_start",
+            Ev::StreamWalk => "stream_walk",
         }
     }
 }

@@ -2376,7 +2376,7 @@ impl Inner {
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.staged.flush(&self.queue, &self.arena);
             let sub = self.queue.submit([full.finish()]);
-            p.cut(&self.device, &self.queue, sub, self.surface);
+            p.cut(&self.device, &self.queue, sub, self.surface, next);
         }
         p.add(next);
     }

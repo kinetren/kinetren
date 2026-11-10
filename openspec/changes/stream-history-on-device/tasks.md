@@ -2,9 +2,9 @@
 
 ## 1. Arbiter and the GPU start record (392, 398)
 
-- [ ] 1.1 `Piece::cut` submits and admits the next piece by the next pass's prediction (D6); t2356, t2253, t2250–t2255
-- [ ] 1.2 Compute host calibration and `GpuStart` (93) record; `kt-cli trace gpu` start delay per class (D7); t2357, t2362
-- [ ] 1.3 Commit, target-prune
+- [x] 1.1 `Piece::cut` submits and admits the next piece by the next pass's prediction (D6); t2356, t2253, t2250–t2255
+- [x] 1.2 Compute host calibration and `GpuStart` (93) record; `kt-cli trace gpu` start delay per class (D7); t2357, t2362
+- [x] 1.3 Commit, target-prune
 
 ## 2. The batched walk on the device (391)
 

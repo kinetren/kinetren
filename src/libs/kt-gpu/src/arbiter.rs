@@ -14,8 +14,9 @@
 //!   number of one machine.
 //! - **Pieces** ([`Piece`]): a lower-class frame on a displayed ring is cut at pass boundaries where
 //!   the passes' device time, as the pass timer MEASURED them on this machine, would pass the bound;
-//!   on any bounded ring it is cut at the next boundary while a higher class waits. A piece waits for
-//!   the one before. The passes, their order and their targets do not change: the same bytes
+//!   on any bounded ring it is cut at the next boundary while a higher class waits. A piece is submitted
+//!   and the next is admitted against the time in flight, never after a wait for the piece itself
+//!   (stream-history-on-device, found-defects 392). The passes, their order and their targets do not change: the same bytes
 //!   (invariant 11).
 //! - **No submitter has to come back to free its piece**: a piece's completion is a work-done
 //!   callback, and a waiter completes the oldest piece itself by a blocking wait on that piece's
@@ -209,15 +210,28 @@ impl Ring {
             st.waiting[class as usize] += 1;
             while !self.admissible(&st, class, ns) {
                 // the oldest piece with a device nobody's present waits on: complete it here
-                let oldest = st.flight.iter().find(|f| !f.done.load(Ordering::Acquire)).and_then(|f| {
-                    f.sub.as_ref().filter(|s| !s.2).map(|s| (s.0.clone(), s.1.clone(), f.done.clone()))
-                });
+                let oldest = st
+                    .flight
+                    .iter()
+                    .find(|f| !f.done.load(Ordering::Acquire))
+                    .and_then(|f| f.sub.as_ref().map(|s| (s.0.clone(), s.1.clone(), s.2, f.done.clone())));
                 match oldest {
-                    Some((device, sub, done)) => {
+                    Some((device, sub, false, done)) => {
                         drop(st);
                         let _ = device.poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None });
                         done.store(true, Ordering::Release);
                         st = self.lock();
+                    }
+                    // a piece on a device with a surface (a cut display frame, which no longer waits
+                    // for its own pieces): nobody may block on it, so its callback is driven by
+                    // non-blocking polls, as `Submitted::wait` drives it
+                    Some((device, _, true, _)) => {
+                        drop(st);
+                        let _ = device.poll(wgpu::PollType::Poll);
+                        st = self.lock();
+                        if enabled() && !self.admissible(&st, class, ns) {
+                            st = self.cv.wait_timeout(st, std::time::Duration::from_millis(2)).unwrap_or_else(|e| e.into_inner()).0;
+                        }
                     }
                     None => st = self.cv.wait(st).unwrap_or_else(|e| e.into_inner()),
                 }
@@ -379,8 +393,12 @@ impl Piece {
         self.passes += 1;
     }
 
-    /// The current piece was submitted as `sub`: wait for it, then admit the next.
-    pub fn cut(&mut self, device: &Arc<wgpu::Device>, queue: &wgpu::Queue, sub: wgpu::SubmissionIndex, surface: bool) {
+    /// The current piece was submitted as `sub`: it leaves the flight when the device finishes it, and
+    /// the next piece, whose first pass is predicted at `next`, is admitted against the device time
+    /// still in flight (stream-history-on-device D6). Nothing waits for the piece itself: the
+    /// admission waits only while the ring's bound is full or a higher class waits (found-defects 392:
+    /// a wait per piece was ~45 % of a Datamosh walk).
+    pub fn cut(&mut self, device: &Arc<wgpu::Device>, queue: &wgpu::Queue, sub: wgpu::SubmissionIndex, surface: bool, next: Option<u64>) {
         trace::ev(Ev::GpuPiece)
             .id(self.ring.id)
             .aux(self.class as u32)
@@ -391,12 +409,12 @@ impl Piece {
         PIECES.fetch_add(1, Ordering::Relaxed);
         self.note_over();
         if let Some(t) = self.ticket.take() {
-            t.submitted(device, queue, sub, self.acc, surface).wait();
+            drop(t.submitted(device, queue, sub, self.acc, surface));
         }
         self.index += 1;
         self.acc = 0;
         self.passes = 0;
-        self.ticket = Some(self.ring.admit(self.class, bound()));
+        self.ticket = Some(self.ring.admit(self.class, claim_after_cut(&self.ring, next)));
     }
 
     fn note_over(&self) {
@@ -424,6 +442,15 @@ impl Piece {
     pub fn pieces(&self) -> u32 {
         self.index + 1
     }
+}
+
+/// What the piece after a cut claims on `ring`: its first pass's measured time, capped by the bound
+/// on a bounded ring; an unmeasured pass claims the whole bound, as the first piece of an unmeasured
+/// frame does. The whole bound for every next piece meant waiting until nothing else was in flight —
+/// the display's own frame included.
+fn claim_after_cut(ring: &Ring, next: Option<u64>) -> u64 {
+    let claim = next.unwrap_or(bound());
+    if ring.bounded() { claim.min(bound()) } else { claim }
 }
 
 static PIECES: AtomicU64 = AtomicU64::new(0);
@@ -510,6 +537,55 @@ mod tests {
         let y = shown.admit(Class::Offline, bound() / 2);
         assert_eq!(shown.in_flight_ns(), bound());
         drop((x, y));
+    }
+
+    /// Test t2356 (stream-history-on-device, found-defects 392): the piece after a cut claims its
+    /// first pass's predicted time, so it is admitted while the earlier piece and the display's frame
+    /// are still in flight when they fit the bound together; one that does not fit waits for them.
+    #[test]
+    fn t2356_a_cut_goes_on_while_the_bound_has_room() {
+        let r = ring();
+        let _d = r.register_display();
+        let b = bound();
+        // the display's frame and the earlier piece, both submitted and not yet done
+        let display = r.admit(Class::Now, b * 3 / 10);
+        let earlier = r.admit(Class::Offline, b * 3 / 10);
+        let claim = claim_after_cut(&r, Some(b / 5));
+        assert_eq!(claim, b / 5);
+        let admitted = Arc::new(AtomicBool::new(false));
+        let h = {
+            let (r2, admitted) = (r.clone(), admitted.clone());
+            std::thread::spawn(move || {
+                let t = r2.admit(Class::Offline, claim);
+                admitted.store(true, Ordering::Release);
+                t
+            })
+        };
+        let deadline = kt_time::test_deadline();
+        while !admitted.load(Ordering::Acquire) {
+            assert!(std::time::Instant::now() < deadline, "the next piece waited although it fits the bound");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let next = h.join().unwrap();
+        assert_eq!(r.in_flight_ns(), b * 3 / 10 * 2 + b / 5, "the three are in flight together");
+        drop(next);
+        // the claim before the fix — the whole bound — would have waited for both
+        let unmeasured = claim_after_cut(&r, None);
+        assert_eq!(unmeasured, b);
+        let waited = Arc::new(AtomicBool::new(false));
+        let h = {
+            let (r2, waited) = (r.clone(), waited.clone());
+            std::thread::spawn(move || {
+                let t = r2.admit(Class::Offline, unmeasured);
+                waited.store(true, Ordering::Release);
+                drop(t);
+            })
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!waited.load(Ordering::Acquire), "a whole-bound piece was admitted past the bound");
+        drop((display, earlier));
+        h.join().unwrap();
+        assert!(waited.load(Ordering::Acquire));
     }
 
     /// Test t2252: devices of one card share a ring whatever their backend; a card that names no

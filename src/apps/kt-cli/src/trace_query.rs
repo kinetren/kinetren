@@ -263,6 +263,43 @@ pub fn gpu(run: &Run) -> String {
     for (c, (n, dev)) in &jobs {
         let _ = writeln!(o, "compute jobs {:<10} {n:>6} ({:.1}/s), device {}", class_name(*c), *n as f64 / span, ms(*dev));
     }
+    // when the jobs ran on the device, on the CPU clock (found-defects 398): the wait before the
+    // device started a job, its run, and the wait for its buffers after it ended
+    let mut starts: BTreeMap<u64, (Vec<u64>, Vec<u64>, Vec<u64>, u64, u32)> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
+        let e = starts.entry(r.id).or_default();
+        if r.aux >= u32::MAX - 1 || r.b == 0 {
+            e.3 += 1;
+            continue;
+        }
+        e.0.push(r.b.saturating_sub(r.a));
+        e.1.push(r.c.saturating_sub(r.b));
+        e.2.push(r.t.saturating_sub(r.c));
+        e.4 = e.4.max(r.aux);
+    }
+    for (c, (late, run_, signal, unknown, err)) in &mut starts {
+        let q = |v: &mut Vec<u64>, f: f64| {
+            v.sort_unstable();
+            v.get(((v.len().max(1) - 1) as f64 * f) as usize).copied().unwrap_or(0)
+        };
+        let n = late.len();
+        if n > 0 {
+            let _ = writeln!(
+                o,
+                "  {:<10} {n:>6} on the device: start after submit p50 {} p95 {}, run p50 {}, buffers after end p50 {} p95 {} (clock error ≤ {} µs)",
+                class_name(*c),
+                ms(q(late, 0.5)),
+                ms(q(late, 0.95)),
+                ms(q(run_, 0.5)),
+                ms(q(signal, 0.5)),
+                ms(q(signal, 0.95)),
+                err
+            );
+        }
+        if *unknown > 0 {
+            let _ = writeln!(o, "  {:<10} {unknown:>6} with no device timestamps", class_name(*c));
+        }
+    }
     let submits: u64 = run
         .recs
         .iter()

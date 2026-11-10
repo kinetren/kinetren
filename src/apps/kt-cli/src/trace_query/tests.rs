@@ -383,3 +383,32 @@ fn t2263_gpu_reports_the_ring_by_class() {
         assert!(o.contains(want), "{want:?} missing:\n{o}");
     }
 }
+
+/// Test t2362 (stream-history-on-device, found-defects 398): `gpu` tells a late start from a late
+/// signal: per class, how long a compute job waited before the device started it, its run on the
+/// device and the wait for its buffers after it ended; a device with no timestamps is said so.
+#[test]
+fn t2362_gpu_tells_a_late_start_from_a_late_signal() {
+    use kt_time::sched::Class;
+    let mut v = Vec::new();
+    // near: submitted at 0, started 40 ms later, ran 1 ms, buffers back 2 ms after the end
+    for i in 0..3u64 {
+        let base = i * 100 * MS;
+        v.push(rec(Ev::GpuStart, base + 43 * MS, |r| {
+            r.id = Class::Near as u64;
+            r.a = base;
+            r.b = base + 40 * MS;
+            r.c = base + 41 * MS;
+            r.aux = 12;
+        }));
+    }
+    v.push(rec(Ev::GpuStart, 900 * MS, |r| {
+        r.id = Class::Now as u64;
+        r.a = 899 * MS;
+        r.aux = u32::MAX;
+    }));
+    let o = gpu(&run_of(v));
+    for want in ["near", "3 on the device: start after submit p50 40.0 ms", "run p50 1.0 ms", "buffers after end p50 2.0 ms", "≤ 12 µs", "1 with no device timestamps"] {
+        assert!(o.contains(want), "{want:?} missing:\n{o}");
+    }
+}

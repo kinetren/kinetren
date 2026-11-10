@@ -30,6 +30,20 @@ struct Pool {
     bytes: u64,
 }
 
+/// How the device's timestamps map onto the trace's clock (found-defects 398): a timestamp written by
+/// an otherwise empty submission lies between the CPU clock before the submission and after its
+/// completion; the narrowest of the recent brackets is kept, its half-width is the error.
+#[derive(Default)]
+struct Calibration {
+    /// (device ticks, trace ns at the bracket's middle, half-width ns, when it was made).
+    best: Option<(u64, u64, u64, std::time::Instant)>,
+    /// Its own query pair and buffers, made at the first calibration.
+    set: Option<(wgpu::QuerySet, wgpu::Buffer, wgpu::Buffer)>,
+}
+
+/// A calibration older than this is made again (the device's clock drifts against the CPU's).
+const CALIBRATION_AGE: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub struct ComputeDevice {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
@@ -41,6 +55,9 @@ pub struct ComputeDevice {
     adapter: String,
     /// A timestamp pair per dispatch (gpu-pass-cost), where the adapter has them.
     stamps: Option<(wgpu::QuerySet, wgpu::Buffer)>,
+    /// The device's timestamps against the trace's clock (stream-history-on-device D7), made while the
+    /// trace records.
+    calib: Mutex<Calibration>,
     pipes: Mutex<HashMap<(String, usize, usize), Arc<Pipe>>>,
     pool: Mutex<Pool>,
     /// The pool's free buffers, to the memory ledger (memory-ledger).
@@ -127,6 +144,7 @@ impl ComputeDevice {
             adapter: info.name.clone(),
             stamps,
             pipes: Mutex::new(HashMap::new()),
+            calib: Mutex::default(),
             pool: Mutex::default(),
             account: kt_time::mem::open(kt_time::mem::Tenant::Compute, POOL_BYTES),
             cache,
@@ -239,6 +257,81 @@ impl ComputeDevice {
     }
 }
 
+impl ComputeDevice {
+    /// Bracket a device timestamp by the trace's clock (D7): while the trace records, at the first job
+    /// and when the calibration is older than `CALIBRATION_AGE`; three brackets the first time, the
+    /// narrowest kept. One empty submission and a wait each — never at rest (no job, no calibration).
+    fn calibrate(&self) {
+        if self.stamps.is_none() || !kt_time::trace::on() {
+            return;
+        }
+        let mut c = self.calib.lock().unwrap_or_else(|e| e.into_inner());
+        if c.best.is_some_and(|b| b.3.elapsed() < CALIBRATION_AGE) {
+            return;
+        }
+        let d = &self.device;
+        if c.set.is_none() {
+            crate::created();
+            let set = d.create_query_set(&wgpu::QuerySetDescriptor { label: Some("kt-gpu compute calibration"), ty: wgpu::QueryType::Timestamp, count: 1 });
+            let resolve = d.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kt-gpu compute calibration resolve"),
+                size: 8,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let read = d.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kt-gpu compute calibration read"),
+                size: 8,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            c.set = Some((set, resolve, read));
+        }
+        let tries = if c.best.is_none() { 3 } else { 1 };
+        let mut best: Option<(u64, u64, u64, std::time::Instant)> = None;
+        for _ in 0..tries {
+            let Some((set, resolve, read)) = c.set.as_ref() else { return };
+            let mut enc = d.create_command_encoder(&Default::default());
+            drop(enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("kt-gpu compute calibration"),
+                timestamp_writes: Some(wgpu::ComputePassTimestampWrites { query_set: set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: None }),
+            }));
+            enc.resolve_query_set(set, 0..1, resolve, 0);
+            enc.copy_buffer_to_buffer(resolve, 0, read, 0, 8);
+            let before = kt_time::trace::now_ns();
+            self.queue.submit([enc.finish()]);
+            let (tx, rx) = std::sync::mpsc::channel();
+            read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+            if d.poll(wgpu::PollType::wait_indefinitely()).is_err() {
+                return;
+            }
+            let after = kt_time::trace::now_ns();
+            if !matches!(rx.recv(), Ok(Ok(()))) {
+                return;
+            }
+            let g = read.slice(..).get_mapped_range().map(|m| u64::from_le_bytes(m[..8].try_into().unwrap())).unwrap_or(0);
+            read.unmap();
+            let half = (after - before) / 2;
+            if g != 0 && best.is_none_or(|b| half < b.2) {
+                best = Some((g, before + half, half, std::time::Instant::now()));
+            }
+        }
+        if best.is_some() {
+            c.best = best;
+        }
+    }
+
+    /// A device timestamp on the trace's clock, and the error; `None` — no calibration.
+    fn to_trace_ns(&self, ticks: u64) -> Option<(u64, u64)> {
+        let (g0, mid, half, _) = self.calib.lock().unwrap_or_else(|e| e.into_inner()).best?;
+        let period = self.queue.get_timestamp_period() as f64;
+        let ns = mid as f64 + (ticks as f64 - g0 as f64) * period;
+        Some((ns.max(0.0) as u64, half))
+    }
+}
+
 impl ComputeHost for ComputeDevice {
     fn prepare(&self, shader: &Shader) -> Result<(), String> {
         // on the compute-warm thread: the exit waits for it (pipeline-prewarm D10)
@@ -289,6 +382,7 @@ impl ComputeHost for ComputeDevice {
                 .a(job.steps.len() as u64)
                 .id(class as u64);
         }
+        self.calibrate();
         // what each dispatch took when last measured: the job's claim on the ring and its cuts
         let predicted: Vec<Option<u64>> = {
             let last = self.last.lock().unwrap_or_else(|e| e.into_inner());
@@ -341,7 +435,7 @@ impl ComputeHost for ComputeDevice {
                 let full = std::mem::replace(&mut enc, d.create_command_encoder(&Default::default()));
                 kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
                 let sub = self.queue.submit([full.finish()]);
-                piece.cut(&self.device, &self.queue, sub, false);
+                piece.cut(&self.device, &self.queue, sub, false, predicted[i]);
             }
             piece.add(predicted[i]);
             let (uniform, _) = self.take(s.uniform.len() as u64, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
@@ -385,6 +479,7 @@ impl ComputeHost for ComputeDevice {
         });
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         let submitted = std::time::Instant::now();
+        let submitted_ns = kt_time::trace::now_ns();
         let sub = self.queue.submit([enc.finish()]);
         let _flight = piece.end(&self.device, &self.queue, sub, false);
         if let Some(e) = pollster::block_on(scope.pop()) {
@@ -432,6 +527,18 @@ impl ComputeHost for ComputeDevice {
                         .map(|(i, s)| (s.name, (ticks[2 * i + 1].saturating_sub(ticks[2 * i]) as f64 * period) as u64))
                         .collect();
                     crate::pass_time::note_job(&self.adapter, ds.iter().map(|d| d.1).sum(), &ds);
+                    // when the job ran on the device, on the trace's clock (found-defects 398)
+                    if kt_time::trace::on() {
+                        let start = self.to_trace_ns(ticks[0]);
+                        let end = self.to_trace_ns(ticks[2 * timed - 1]);
+                        kt_time::trace::ev(kt_time::trace::Ev::GpuStart)
+                            .id(class as u64)
+                            .a(submitted_ns)
+                            .b(start.map_or(0, |s| s.0))
+                            .c(end.map_or(0, |e| e.0))
+                            .aux(start.map_or(u32::MAX - 1, |s| (s.1 / 1000).min(u32::MAX as u64 - 2) as u32))
+                            .emit();
+                    }
                     let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
                     for (name, ns) in &ds {
                         match last.get_mut(*name) {
@@ -445,7 +552,13 @@ impl ComputeHost for ComputeDevice {
                 }
                 self.give([st]);
             }
-            None => crate::pass_time::note_job(&self.adapter, waited, &[]),
+            None => {
+                crate::pass_time::note_job(&self.adapter, waited, &[]);
+                // the device gives no timestamps: the record says so
+                if kt_time::trace::on() {
+                    kt_time::trace::ev(kt_time::trace::Ev::GpuStart).id(class as u64).a(submitted_ns).aux(u32::MAX).emit();
+                }
+            }
         }
         self.give(bufs.into_iter().chain(uniforms).chain(staging));
         Ok(out)
