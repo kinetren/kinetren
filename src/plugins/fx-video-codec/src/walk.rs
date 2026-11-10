@@ -197,7 +197,8 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
             }
         }
         walk.positions += 1;
-        if walk.positions >= MAX_BATCH || walk.b.bytes >= BATCH_BYTES {
+        // the frame on screen comes back with its own history, not after the frames ahead of it
+        if walk.positions >= MAX_BATCH || walk.b.bytes >= BATCH_BYTES || (walk.view == Some(k) && k != n) {
             walk.flush()?;
         }
     }

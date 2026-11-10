@@ -1442,7 +1442,12 @@ impl VideoRenderer {
         for c in self.clips.iter().filter(|c| c.active_at(from) && c.stream.is_some() && c.nest.is_none()) {
             // the run's last moment inside this event
             let last = Tick(to.0.min(self.grid.align_floor(Tick(c.end.0 - 1)).0).max(from.0));
-            pending |= self.stream_advance_clip(cache, c, last, quality);
+            // the frame on screen first: its batch comes back before the frames ahead are walked
+            let short = self.stream_advance_clip(cache, c, from, quality);
+            pending |= short;
+            if !short && last.0 > from.0 && !stream::stopping() {
+                pending |= self.stream_advance_clip(cache, c, last, quality);
+            }
             if stream::stopping() {
                 return true;
             }

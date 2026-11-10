@@ -1,4 +1,4 @@
-//! `kt-cli stream-cost <p.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop]` (stream-layout-per-build):
+//! `kt-cli stream-cost <p.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop] [--drop-lru]` (stream-layout-per-build):
 //! what a stream stage (Datamosh) costs over a range, lap after lap, the way the prefetch thread
 //! advances it: the source frames are decoded into a cache FIRST (never timed), then each frame of the
 //! range is advanced (`VideoRenderer::stream_advance`) and measured — the advancing thread's processor
@@ -130,7 +130,8 @@ fn since(a: Snap) -> Snap {
     }
 }
 
-pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: usize, size: Option<kt_media::Quality>, sized: bool) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: usize, size: Option<kt_media::Quality>, sized: bool, drop_lru: bool) -> Result<(), String> {
     let mut fetcher = crate::open_sources(project, path, false, None)?;
     let mut facts = kt_engine::SourceFacts::default();
     for m in &project.media {
@@ -188,6 +189,12 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
     };
     let window = Tick(2 * kt_time::TICK_HZ);
     for lap in 0..laps.max(1) {
+        // `--drop-lru`: the memo's LRU lost the history before this lap (an eviction, a jump away and
+        // back): only the pinned checkpoints stay (stream-history-on-device)
+        if drop_lru && lap > 0 {
+            memo.drop_unpinned();
+            println!("  (the memo's LRU dropped before lap {}: {} MB of checkpoints stay)", lap + 1, memo.pinned_bytes() >> 20);
+        }
         let (mut frames, mut stage_cpu, mut wall, mut stuck) = (0u64, 0u64, 0u64, 0u64);
         let mut needs_ms: Vec<f64> = Vec::new();
         let s0 = snap();

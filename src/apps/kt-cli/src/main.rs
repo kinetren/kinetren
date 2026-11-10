@@ -1722,7 +1722,7 @@ fn run(args: &[String]) -> i32 {
         // What a stream stage costs over a range, lap after lap (stream-layout-per-build)
         Some("stream-cost") => {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3)) else {
-                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop]");
+                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop] [--drop-lru]");
                 return 2;
             };
             let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
@@ -1739,7 +1739,7 @@ fn run(args: &[String]) -> i32 {
             });
             let laps = opt("--laps").and_then(|s| s.parse::<usize>().ok()).unwrap_or(2);
             let sized = args.iter().any(|a| a == "--loop");
-            match streamcost::run(&project, input, from, to, laps, size, sized) {
+            match streamcost::run(&project, input, from, to, laps, size, sized, args.iter().any(|a| a == "--drop-lru")) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

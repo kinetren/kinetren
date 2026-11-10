@@ -17,8 +17,10 @@ struct Pipe {
     warm: std::sync::atomic::AtomicBool,
 }
 
-/// Timestamps of one job: a pair per dispatch; dispatches past the room run untimed.
-const STAMPS: u32 = 64;
+/// Timestamps of one job: a pair per dispatch; dispatches past the room run untimed. A batched
+/// history walk (stream-history-on-device) carries hundreds of dispatches: an untimed one is never
+/// predicted, and the arbiter cannot cut there.
+const STAMPS: u32 = 2048;
 
 /// What the pool keeps at most: a job of a 4K frame fits many times over.
 const POOL_BYTES: u64 = 1 << 30;
