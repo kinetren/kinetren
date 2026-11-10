@@ -19,7 +19,7 @@ pollster.workspace = true
 xxhash-rust.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [dev-dependencies]
 # t1652: the generators' shaders on D3D12 (gpu-render-hardening; dev only)

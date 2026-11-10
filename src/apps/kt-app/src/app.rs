@@ -7737,10 +7737,12 @@ impl KtApp {
         let s = self.model.project().settings.clone();
         let rows: [(String, String); 5] = [
             (
+                // the decoded frames against their bound now (frames-cache-growth): audio/video
+                // here before, read as used/limit
                 crate::tf!(
                     k::perf::CACHE_MB,
-                    format!("{:.0}", self.player.cache.audio_bytes() as f64 / 1e6),
-                    format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6)
+                    format!("{}", self.player.cache.video_bytes() >> 20),
+                    format!("{}", self.player.cache.max_video_bytes() >> 20)
                 ),
                 // WHAT THESE TWO NUMBERS ARE (R.43, item 289): the left — misses of the
                 // RENDERER (the cache did not give a burst), the right — starvation of the
@@ -7926,11 +7928,22 @@ impl KtApp {
             }
             // item 22 of round 7: cache/underruns after the region
             ui.separator();
-            ui.weak(crate::tf!(
+            // what they count, said (frames-cache-growth, found-defects 397): the decoded frames
+            // held against the bound the ledger grants them now, then all the program holds — the
+            // "39/535" before was audio/video and read as used/limit
+            let frames = ui.weak(crate::tf!(
                 k::perf::CACHE_SHORT,
-                format!("{:.0}", self.player.cache.audio_bytes() as f64 / 1e6),
-                format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6),
+                format!("{}", self.player.cache.video_bytes() >> 20),
+                format!("{}", self.player.cache.max_video_bytes() >> 20),
             ));
+            crate::widgets::field_probe::note("status.frames", frames.rect);
+            self.hint(frames, tr(k::perf::CACHE_HINT));
+            if let Some(rss) = self.perf.resident() {
+                ui.separator();
+                let mem = ui.weak(crate::tf!(k::perf::MEM_SHORT, format!("{}", rss >> 20)));
+                crate::widgets::field_probe::note("status.memory", mem.rect);
+                self.hint(mem, tr(k::perf::CACHE_HINT));
+            }
             ui.separator();
             // callback starvation — these are FRAMES that were not there at the output;
             // in milliseconds one can see how much silence accumulated (R.43 item 290)
@@ -9617,6 +9630,19 @@ pub struct PerfState {
     play: Option<(std::time::Instant, [u64; 5])>,
     /// What the instruments above the graphs took last frame (the window's split, D5).
     diag_used: f32,
+    /// The process's resident memory and when it was read (frames-cache-growth): the status bar and
+    /// Diagnostics read it at most once a second, and only in frames that are drawn anyway.
+    resident: (Option<std::time::Instant>, Option<u64>),
+}
+
+impl PerfState {
+    /// The process's resident memory, read again when the last reading is a second old.
+    pub fn resident(&mut self) -> Option<u64> {
+        if self.resident.0.is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1)) {
+            self.resident = (Some(std::time::Instant::now()), kt_time::mem::resident());
+        }
+        self.resident.1
+    }
 }
 
 impl PerfState {
@@ -9675,6 +9701,7 @@ impl PerfState {
             video_cells_skipped: 0,
             video_rollbacks: 0,
             diag_open: false,
+            resident: (None, None),
             probe_set: false,
             journal_view: Vec::new(),
             journal_gen: None,
@@ -10356,7 +10383,8 @@ impl KtApp {
                     self.draw_perf_section(ui);
                     ui.separator();
                     // video cache occupancy from the REAL limit (in v1 the limit constant
-                    // was duplicated by hand and was off by a factor of 384)
+                    // was duplicated by hand and was off by a factor of 384); the limit is the
+                    // bound the memory ledger grants now (frames-cache-growth)
                     let used = self.player.cache.video_bytes() as f64;
                     let limit = self.player.cache.max_video_bytes() as f64;
                     let occ = if limit > 0.0 { (used / limit * 100.0).min(100.0) } else { 0.0 };
@@ -10364,8 +10392,8 @@ impl KtApp {
                         ui.weak(crate::tf!(
                             k::perf::CACHE_OCCUPANCY,
                             format!("{occ:.0}"),
-                            format!("{:.0}", used / 1e6),
-                            format!("{:.0}", limit / 1e6)
+                            format!("{:.0}", used / (1u64 << 20) as f64),
+                            format!("{:.0}", limit / (1u64 << 20) as f64)
                         ));
                         let cache = self.player.cache.stats();
                         ui.weak(crate::tf!(k::perf::NO_READ_DROPS, cache.unused_evictions));
@@ -10403,9 +10431,22 @@ impl KtApp {
                             mb(m.used(Tenant::Kept)),
                             mb(m.used(Tenant::History)),
                             mb(m.used(Tenant::Frames)),
+                            mb(m.used(Tenant::Mix)),
                             mb(device),
                             mb(room)
                         ));
+                        // the whole process (frames-cache-growth, found-defects 397): what the caches
+                        // hold is a part of it, and the rest has no counter of its own — it is named
+                        if let Some(rss) = self.perf.resident() {
+                            let caches: u64 = Tenant::ALL.iter().map(|t| m.used(*t)).sum();
+                            let line = ui.weak(crate::tf!(
+                                k::perf::MEMORY_PROCESS,
+                                mb(rss),
+                                mb(caches),
+                                mb(rss.saturating_sub(caches))
+                            ));
+                            crate::widgets::field_probe::note("diag.memory", line.rect);
+                        }
                     }
                     ui.add_space(6.0);
                     // the three graphs share what the scrolling part has left: a larger window

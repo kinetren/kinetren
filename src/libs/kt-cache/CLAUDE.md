@@ -20,6 +20,12 @@ Cache of bursts + coverage. Without FFmpeg/audio hardware.
 - **The cache reports to the memory ledger** (memory-ledger): two `Frames` accounts (video, audio) with
   the configured budgets as bases; every path that changes `video_bytes`/`audio_bytes` ends in
   `report`. Holds stay stronger than any cap.
+- **The player's cache grows by the ledger** (frames-cache-growth, t2390–t2392): `want_video(total)` asks
+  the `Frames` want; the bound is `max_video_bytes()` = base + min(the kind's grant, its own want), READ AT
+  USE — the ledger tells a keeper only of a shrink, so a cached cap never saw a claim's growth come back.
+  The shrink hook (set at the first want, a `Weak`) evicts at once; the asker evicts for its own lower
+  want. A cache that never asks keeps its base. Every reader of the budget calls `max_video_bytes()` (or
+  `video_cap_reader()` when it outlives the call), never the config.
 - **A hold is a counted pin for a job that reads ahead of its use** (export-pipeline-determinism):
   `hold_video` answers "present" and holds in one step, `insert_video_held` holds with the insert, each
   hold needs its `release_video`. LRU's order is not the order of need: a read refreshes an entry that

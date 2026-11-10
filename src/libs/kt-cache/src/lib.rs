@@ -9,7 +9,7 @@
 
 use kt_media::{AudioBurst, Quality, VideoFrame};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -310,10 +310,20 @@ pub struct BurstCache {
     /// Its accounts in the process's memory ledger (memory-ledger): decoded frames, video and audio,
     /// the configured budgets as their bases.
     accounts: [kt_time::mem::Account; 2],
+    /// What this cache asked above its base; 0 — it never asked (an export's, a reel strip's cache),
+    /// and its cap is its base whatever the kind's grant.
+    video_want: AtomicU64,
+    /// The shrink hook is set at the first want (it needs the cache's `Arc`).
+    hooked: AtomicBool,
 }
 
 impl BurstCache {
     pub fn new(config: CacheConfig) -> BurstCache {
+        BurstCache::with_ledger(config, kt_time::mem::ledger())
+    }
+
+    /// A cache reporting to `ledger` (tests make their own; the program has one).
+    pub fn with_ledger(config: CacheConfig, ledger: &'static kt_time::mem::Ledger) -> BurstCache {
         BurstCache {
             config,
             inner: Mutex::new(Inner {
@@ -334,10 +344,62 @@ impl BurstCache {
             next_insert: Mutex::new(None),
             next_armed: std::sync::atomic::AtomicBool::new(false),
             accounts: [
-                kt_time::mem::open(kt_time::mem::Tenant::Frames, config.max_video_bytes as u64),
-                kt_time::mem::open(kt_time::mem::Tenant::Frames, config.max_audio_bytes as u64),
+                ledger.open(kt_time::mem::Tenant::Frames, config.max_video_bytes as u64),
+                ledger.open(kt_time::mem::Tenant::Frames, config.max_audio_bytes as u64),
             ],
+            video_want: AtomicU64::new(0),
+            hooked: AtomicBool::new(false),
         }
+    }
+
+    /// Ask the memory ledger for a video bound of `total` bytes (frames-cache-growth): what the
+    /// preview's look-ahead and loop need at the current quality. Below the base it asks nothing.
+    /// The cap becomes the base plus the grant; a lower cap evicts at once, here for this cache's
+    /// own want and through the ledger's shrink hook when a claim or a higher tenant takes the
+    /// growth back. Holds and pins stay stronger than any cap. The new cap.
+    ///
+    /// One cache of the process asks — the player's: the ledger keeps one want per kind.
+    pub fn want_video(self: &Arc<Self>, total: usize) -> usize {
+        if !self.hooked.swap(true, Ordering::AcqRel) {
+            let weak = Arc::downgrade(self);
+            self.accounts[0].on_shrink(move |_| {
+                if let Some(c) = weak.upgrade() {
+                    c.fit_cap();
+                }
+            });
+        }
+        let extra = total.saturating_sub(self.config.max_video_bytes) as u64;
+        self.video_want.store(extra, Ordering::Relaxed);
+        self.accounts[0].want(extra);
+        self.fit_cap();
+        self.max_video_bytes()
+    }
+
+    /// Evict what the cap no longer lets it hold (a grant taken back, a lower want of its own).
+    fn fit_cap(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.video_bytes <= self.max_video_bytes() {
+            return;
+        }
+        let before = inner.map.len();
+        self.evict_over_budget(&mut inner, 0);
+        self.report(&inner);
+        if inner.map.len() != before {
+            self.epoch.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    /// The video bound as a reader that outlives a call (the stream pacing of a shared renderer
+    /// build): it reads the cap as the ledger moves it, and the base once the cache is gone.
+    pub fn video_cap_reader(self: &Arc<Self>) -> Arc<dyn Fn() -> usize + Send + Sync> {
+        let weak = Arc::downgrade(self);
+        let base = self.config.max_video_bytes;
+        Arc::new(move || weak.upgrade().map_or(base, |c| c.max_video_bytes()))
+    }
+
+    /// The configured video budget: the base the cap never goes below.
+    pub fn video_base(&self) -> usize {
+        self.config.max_video_bytes
     }
 
     /// What it holds, to the memory ledger.
@@ -410,9 +472,14 @@ impl BurstCache {
         }
     }
 
-    /// The video budget (for the budget-aware lookahead of prefetch).
+    /// The video bound now: the base plus the ledger's grant (frames-cache-growth). The look-ahead
+    /// takes half of it, the decoder's span room half, the stream pacing a quarter.
     pub fn max_video_bytes(&self) -> usize {
-        self.config.max_video_bytes
+        // read at use: a grant given back after a claim reaches the cache with no hook (the ledger
+        // tells only a shrink); this cache takes at most its own want of the kind's grant
+        let grant = self.accounts[0].cap() - self.accounts[0].base();
+        let own = grant.min(self.video_want.load(Ordering::Relaxed));
+        self.config.max_video_bytes.saturating_add(usize::try_from(own).unwrap_or(usize::MAX))
     }
 
     pub fn get_audio(&self, source: SourceId, idx: i64) -> Option<Arc<AudioBurst>> {
@@ -613,9 +680,8 @@ impl BurstCache {
         // Go from the oldest; pinned and held ones are skipped. If everything is — the budget
         // may be exceeded, and this is deliberate (a pin is stronger than the budget).
         let mut cursor = 0u64;
-        while inner.audio_bytes > self.config.max_audio_bytes
-            || inner.video_bytes > self.config.max_video_bytes
-        {
+        let video_cap = self.max_video_bytes();
+        while inner.audio_bytes > self.config.max_audio_bytes || inner.video_bytes > video_cap {
             let Some((&recency, &key)) = inner.lru.range(cursor..).next() else {
                 break;
             };
@@ -760,6 +826,17 @@ impl BurstCache {
     }
     pub fn video_bytes(&self) -> usize {
         self.inner.lock().unwrap().video_bytes
+    }
+}
+
+impl Drop for BurstCache {
+    /// A cache that asked gives its want back: the next player's cache asks its own.
+    /// A want another cache has asked since is left standing.
+    fn drop(&mut self) {
+        let own = self.video_want.load(Ordering::Relaxed);
+        if own > 0 && self.accounts[0].wanted() == own {
+            self.accounts[0].want(0);
+        }
     }
 }
 
@@ -1207,5 +1284,119 @@ mod serial_tests {
         c.insert_video(s, q, 0, frame());
         let after = c.get_video_stamped(s, q, 0).unwrap().1;
         assert!(after != first && after != over, "after the source changed the address is new bytes");
+    }
+}
+
+#[cfg(test)]
+mod growth_tests {
+    use super::*;
+    use kt_time::Tick;
+
+    fn frame(bytes: usize) -> Arc<VideoFrame> {
+        Arc::new(VideoFrame {
+            pts: Tick(0),
+            width: 4,
+            height: (bytes / 16) as u32,
+            rgba: vec![0u8; bytes].into_boxed_slice(),
+            has_alpha: false,
+        })
+    }
+
+    fn ledger_with(available: u64) -> &'static kt_time::mem::Ledger {
+        let l: &'static kt_time::mem::Ledger = Box::leak(Box::new(kt_time::mem::Ledger::new()));
+        l.set_probe(move || Some(available));
+        l
+    }
+
+    /// t2390 (frames-cache-growth, found-defects 396): with memory to spare the player's cache grows
+    /// past its base for a loop whose frames exceed it, and a lap evicts nothing; a claim (an export)
+    /// takes the growth back at once — evicting down to the base, holds kept — and its end gives it
+    /// back; a lower want (a smaller preview quality) shrinks the cap in the asking call.
+    #[test]
+    fn t2390_the_cache_grows_for_its_loop_and_gives_back_to_a_claim() {
+        let bytes = 1usize << 20;
+        let base = 16 * bytes;
+        let l = ledger_with(1 << 30); // 512 MB of growth
+        let cache = Arc::new(BurstCache::with_ledger(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: base }, l));
+        let src = SourceId(1);
+        let lap = |c: &BurstCache| {
+            for idx in 0..40 {
+                if c.get_video(src, None, idx).is_none() {
+                    c.insert_video(src, None, idx, frame(bytes));
+                }
+            }
+        };
+        // the base alone: a loop of 40 frames over 16 evicts on every lap
+        lap(&cache);
+        let before = cache.stats().evictions;
+        lap(&cache);
+        assert!(cache.stats().evictions - before >= 24, "the base cannot hold the loop: the test's premise");
+
+        let want = 40 * bytes + 40 * bytes / 8;
+        let cap = cache.want_video(want);
+        assert_eq!(cap, want, "granted in full: the memory is there");
+        assert_eq!(cache.max_video_bytes(), want, "the readers of the budget read the cap");
+        assert_eq!(cache.video_cap_reader()(), want);
+        lap(&cache);
+        let settled = cache.stats().evictions;
+        lap(&cache);
+        lap(&cache);
+        assert_eq!(cache.stats().evictions, settled, "a lap of a loop that fits evicts nothing");
+
+        // an export's claim: the growth goes at once, evicted down to the base; a hold stays
+        assert!(cache.hold_video(src, None, 39));
+        let claim = l.claim();
+        assert_eq!(cache.max_video_bytes(), base, "the claim took the growth back");
+        assert!(cache.video_bytes() <= base, "evicted at once, not at the next insert: {}", cache.video_bytes());
+        assert!(cache.contains_video(src, None, 39), "a hold is stronger than any cap");
+        drop(claim);
+        assert_eq!(cache.max_video_bytes(), want, "the claim gone, the grant is back");
+        cache.release_video([BurstKey { source: src, kind: BurstKind::video(None), idx: 39 }]);
+
+        // a smaller want (a lower preview quality): the cap and the bytes follow in the call
+        lap(&cache);
+        assert_eq!(cache.want_video(20 * bytes), 20 * bytes);
+        assert!(cache.video_bytes() <= 20 * bytes, "the asker evicts itself: no hook tells it");
+        // below the base nothing is asked, and the base is never cut
+        assert_eq!(cache.want_video(bytes), base);
+    }
+
+    /// t2391 (frames-cache-growth): a cache that never asks keeps its base whatever the kind's grant
+    /// (an export's, a reel strip's, a poster's cache beside the player's).
+    #[test]
+    fn t2391_a_cache_that_never_asks_stays_at_its_base() {
+        let l = ledger_with(1 << 30);
+        let player = Arc::new(BurstCache::with_ledger(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 20 }, l));
+        let job = BurstCache::with_ledger(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 20 }, l);
+        assert_eq!(player.want_video(64 << 20), 64 << 20);
+        assert_eq!(job.max_video_bytes(), 1 << 20, "the kind's grant is the asker's alone");
+        for idx in 0..4 {
+            job.insert_video(SourceId(2), None, idx, frame(1 << 20));
+        }
+        assert_eq!(job.video_bytes(), 1 << 20, "it evicts against its base");
+    }
+
+    /// t2392 (frames-cache-growth): a dropped cache gives its want back, unless another cache has
+    /// asked since (a project reopened: the new player's cache asks before the old one goes); unknown
+    /// memory grants nothing.
+    #[test]
+    fn t2392_a_dropped_cache_gives_its_want_back() {
+        let l = ledger_with(1 << 30);
+        let cfg = CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 20 };
+        let old = Arc::new(BurstCache::with_ledger(cfg, l));
+        old.want_video(64 << 20);
+        drop(old);
+        assert_eq!(l.wanted(kt_time::mem::Tenant::Frames), 0, "the want went with the cache");
+        let old = Arc::new(BurstCache::with_ledger(cfg, l));
+        old.want_video(64 << 20);
+        let new = Arc::new(BurstCache::with_ledger(cfg, l));
+        new.want_video(32 << 20);
+        drop(old);
+        assert_eq!(l.wanted(kt_time::mem::Tenant::Frames), 31 << 20, "the newer want stands");
+        assert_eq!(new.max_video_bytes(), 32 << 20);
+
+        let blind: &'static kt_time::mem::Ledger = Box::leak(Box::new(kt_time::mem::Ledger::new()));
+        let c = Arc::new(BurstCache::with_ledger(cfg, blind));
+        assert_eq!(c.want_video(64 << 20), 1 << 20, "unknown memory: the base");
     }
 }

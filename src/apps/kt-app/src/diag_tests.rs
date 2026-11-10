@@ -522,3 +522,62 @@ fn t2302_the_preview_decoders_take_a_renders_threads() {
     let n = kt_ffmpeg::decode_threads_set();
     assert!(n == 2 || n == 4, "a render's rule, not auto: {n}");
 }
+
+/// t2397 (frames-cache-growth, found-defects 397): the status bar says what its numbers count — the
+/// decoded frames held against the bound they may grow to now, then all the memory the program holds
+/// — where "cache: 39/535 MB" was audio/video and read as used/limit.
+#[test]
+fn t2397_the_status_bar_says_frames_against_their_bound_and_the_program() {
+    kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
+    let mut h = crate::layout_tests::harness();
+    h.step();
+    h.step();
+    let all = texts_in(&h, egui::Rect::EVERYTHING);
+    let frames = all
+        .iter()
+        .find(|(t, _)| t.starts_with(&head(k::perf::CACHE_SHORT)))
+        .unwrap_or_else(|| panic!("no frames item in the status bar: {all:?}"))
+        .0
+        .clone();
+    let cap = h.state().player.cache.max_video_bytes() >> 20;
+    let want = crate::tf!(k::perf::CACHE_SHORT, h.state().player.cache.video_bytes() >> 20, cap);
+    assert_eq!(frames, want, "held / the bound now, in MB");
+    let mem = all
+        .iter()
+        .find(|(t, _)| t.starts_with(&head(k::perf::MEM_SHORT)))
+        .unwrap_or_else(|| panic!("no program memory in the status bar: {all:?}"))
+        .0
+        .clone();
+    let mb: u64 = mem
+        .trim_start_matches(&head(k::perf::MEM_SHORT))
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("the program's MB: {mem}"));
+    assert!(mb > 10, "the process holds more than the frames: {mem}");
+}
+
+/// t2398 (frames-cache-growth): Diagnostics names the whole process under the caches' line — its
+/// memory, what the ledger's tenants hold of it and the rest, named as the decoders, the driver and
+/// the interface.
+#[test]
+fn t2398_diagnostics_names_the_whole_process() {
+    kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+    let win = diag_rect(&h).expect("the Diagnostics window is drawn");
+    let inside = texts_in(&h, win);
+    let line = |key| inside.iter().find(|(t, _)| t.starts_with(&head(key))).cloned();
+    let (_, caches) = line(k::perf::MEMORY_LEDGER).expect("the caches' line");
+    let (text, process) = line(k::perf::MEMORY_PROCESS).unwrap_or_else(|| panic!("no process line: {inside:?}"));
+    assert!(process.top() > caches.top(), "the process line follows the caches': {caches:?} {process:?}");
+    let nums: Vec<u64> = text
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    assert!(nums.len() >= 3, "the program, the caches and the rest: {text}");
+    assert_eq!(nums[0], nums[1] + nums[2], "the rest is the program less the caches: {text}");
+}

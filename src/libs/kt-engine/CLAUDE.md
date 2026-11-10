@@ -116,6 +116,12 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   stream history's want after the kept composites'. Both export bodies hold `kt_time::mem::claim()`
   while they run, and the render window takes one before it counts devices and `tight` (on its job
   thread). t2294, t2296, t2297, t2299.
+- **The frames cache is sized by the look-ahead and the loop** (frames-cache-growth, t2393, t2394): the
+  prefetch pass returns its WHOLE window's bytes (`video_prefetch_pass_sized`), and `size_frames_cache`
+  on the prefetch thread asks twice the window, or the loop region's frames + an eighth + the window,
+  rounded to 64 MiB, only when that moves (a new quality, region or build recounts the loop). The stream
+  pacing reads the cap through `VideoRenderer::set_stream_cap` (a shared build outlives the cap it was
+  made with); a new reader of the cache's budget calls `max_video_bytes()` at use.
 - **The preview frame's life is in the trace** (capability `telemetry`): the compose thread sets the
   frame's id as its cause, so its decode requests, stream runs and compute jobs carry it; a new thing a
   composite waits for records a `FrameWait`, a new keeper records its store and eviction.

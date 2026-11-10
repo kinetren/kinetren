@@ -16,7 +16,7 @@
 use crate::audio::AudioRenderer;
 use crate::fetch::CacheFetcher;
 use crate::fxstore::FxStateStore;
-use crate::prefetch::{prefetch_audio_pass, video_prefetch_pass_except};
+use crate::prefetch::{prefetch_audio_pass, size_frames_cache, video_prefetch_pass_sized};
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
 use crate::video_plan::{GpuBackendInfo, GpuExecError, PresentOptions, VideoGpuExec};
@@ -1831,7 +1831,7 @@ impl MediaParts {
 /// player's wants, when it exists — the generator sync reads the newest project.
 fn build_version(
     media: &MediaParts,
-    cache: &BurstCache,
+    cache: &Arc<BurstCache>,
     project: &Arc<Project>,
     version: u64,
     seq: u64,
@@ -2743,11 +2743,13 @@ fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std
 }
 
 /// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).
-fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &BurstCache) -> VideoRenderer {
+fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &Arc<BurstCache>) -> VideoRenderer {
     let mut vr = VideoRenderer::new_with_facts(p, facts);
     // the GPU rings bound what stands in front of the display by this project's frame (gpu-arbiter D3)
     kt_time::sched::set_frame_period_ns(vr.grid.frame_step().max(1) as u64 * 1_000_000_000 / kt_time::TICK_HZ as u64);
     vr.set_stream_pacing(Some(crate::StreamPacing::preview(cache.max_video_bytes())));
+    // the cap the memory ledger moves after this build (frames-cache-growth)
+    vr.set_stream_cap(cache.video_cap_reader());
     vr
 }
 
@@ -2797,6 +2799,8 @@ fn prefetch_loop(
     let mut memo_sized: Option<(usize, Option<usize>)> = None;
     // the loop the display's executor was told to keep, and which executor (memory-ledger D4)
     let mut loop_told: Option<(Option<usize>, usize)> = None;
+    // what the decoded-frame cache was sized for (frames-cache-growth)
+    let mut frames_sized = crate::prefetch::FramesSizing::default();
     // the last pass was skipped: nothing moved (one-scheduler: then the thread parks with no clock)
     let mut skipped = false;
     let mut seen = wake.seen();
@@ -2917,7 +2921,9 @@ fn prefetch_loop(
                 stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
             })
         };
-        let missing = video_prefetch_pass_except(video, &cache, t0, q, region_ticks, &kept);
+        let (missing, window) = video_prefetch_pass_sized(video, &cache, t0, q, region_ticks, &kept);
+        // the cache asks the memory ledger for what this window and the loop need at this quality
+        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, &mut frames_sized);
         pass_span.b(missing.len() as u64).c(stream_pending as u64);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue

@@ -173,10 +173,21 @@ pub enum Ev {
     /// [`crate::mem::Tenant`], `a` its want, `b` its new cap, `c` the bytes it holds, `id` 1 — a
     /// device refusal set the cap.
     MemGrant = 92,
+    /// The preview's decoded-frame cache was sized (frames-cache-growth). `a` its cap now in bytes,
+    /// `b` the look-ahead window's peak bytes, `c` the loop region's frames in bytes (0 — no loop),
+    /// `aux` the preview quality's height.
+    FramesCap = 93,
+    /// The process's memory in a busy second when it moved (frames-cache-growth). `a` its resident
+    /// bytes (0 — unknown), `b` what the ledger's tenants hold together, `c` the memory available in
+    /// MB (0 — unknown).
+    MemSample = 94,
+    /// A tenant's bytes in a busy second when they moved (frames-cache-growth). `aux` the
+    /// [`crate::mem::Tenant`], `a` the bytes it holds, `b` its cap (bases plus grant).
+    MemUsed = 95,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 46] = [
+    pub const ALL: [Ev; 49] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -223,6 +234,9 @@ impl Ev {
         Ev::Block,
         Ev::MemBudget,
         Ev::MemGrant,
+        Ev::FramesCap,
+        Ev::MemSample,
+        Ev::MemUsed,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -277,6 +291,9 @@ impl Ev {
             Ev::Block => "block",
             Ev::MemBudget => "mem_budget",
             Ev::MemGrant => "mem_grant",
+            Ev::FramesCap => "frames_cap",
+            Ev::MemSample => "mem_sample",
+            Ev::MemUsed => "mem_used",
         }
     }
 }

@@ -253,9 +253,15 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
     let mut gen_lap = (player.transport.generation(), 0u64);
     let mut next_vsync = Instant::now();
     let mut seen_under = under0;
+    // the process's memory a second, as the app's load watch samples a busy second (frames-cache-growth)
+    let mut sampled = Instant::now();
     loop {
         next_vsync += frame;
         let ui0 = Instant::now();
+        if sampled.elapsed() >= Duration::from_secs(1) {
+            sampled = Instant::now();
+            kt_time::mem::sample();
+        }
         let (t, lap) = player.video_playhead_lap();
         if sounding.is_none() && player.transport.playhead_frames() != head0 {
             sounding = Some(Instant::now());

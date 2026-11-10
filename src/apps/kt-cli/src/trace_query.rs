@@ -117,15 +117,41 @@ pub fn run(args: &[String]) -> i32 {
     0
 }
 
-/// The memory ledger over the run (memory-ledger): every sizing with the grants it changed, then
-/// each tenant's last cap and bytes.
+/// The memory ledger over the run (memory-ledger): every sizing with the grants it changed, the
+/// preview's decoded-frame cache sizings and the process's memory a busy second (frames-cache-growth),
+/// then each tenant's last cap and bytes, the frames cache's evictions a second and the peak of the
+/// process.
 fn memory(run: &Run) -> String {
     use kt_time::mem::Tenant;
     let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
     let mut o = String::new();
     let mut last: std::collections::BTreeMap<u32, (u64, u64, u64)> = Default::default();
+    // (peak resident, its moment, the ledger's sum then)
+    let mut peak: Option<(u64, u64, u64)> = None;
+    let mut used: std::collections::BTreeMap<u32, (u64, u64)> = Default::default();
+    let mut evicts: std::collections::BTreeMap<u64, u64> = Default::default();
     for r in &run.recs {
         match kind(r) {
+            Some(Ev::CacheEvict) => *evicts.entry(r.t / 1_000_000_000).or_default() += 1,
+            Some(Ev::FramesCap) => {
+                let _ = writeln!(
+                    o,
+                    "{:>9}    frames cache {} lines: cap {}, window {}, loop {}",
+                    s(r.t),
+                    r.aux,
+                    mb(r.a),
+                    mb(r.b),
+                    if r.c == 0 { "none".to_string() } else { mb(r.c) }
+                );
+            }
+            Some(Ev::MemSample) => {
+                if r.a > 0 && peak.is_none_or(|p| r.a > p.0) {
+                    peak = Some((r.a, r.t, r.b));
+                }
+            }
+            Some(Ev::MemUsed) => {
+                used.insert(r.aux, (r.a, r.b));
+            }
             Some(Ev::MemBudget) => {
                 let _ = writeln!(
                     o,
@@ -153,13 +179,35 @@ fn memory(run: &Run) -> String {
             _ => {}
         }
     }
-    if o.is_empty() {
+    if o.is_empty() && peak.is_none() && used.is_empty() {
         return "no memory ledger records in this run\n".into();
     }
     let _ = writeln!(o, "last:");
     for (t, (want, cap, held)) in &last {
         let name = Tenant::from_u32(*t).map_or("?", Tenant::name);
         let _ = writeln!(o, "  {name:<9} cap {}, holds {}, wants {}", mb(*cap), mb(*held), mb(*want));
+    }
+    if !used.is_empty() {
+        let _ = writeln!(o, "bytes at the last busy second:");
+        for (t, (held, cap)) in &used {
+            let name = Tenant::from_u32(*t).map_or("?", Tenant::name);
+            let _ = writeln!(o, "  {name:<9} holds {} of cap {}", mb(*held), mb(*cap));
+        }
+    }
+    if let Some((rss, t, caches)) = peak {
+        let _ = writeln!(
+            o,
+            "process peak {} at {}: the caches {}, the rest {} (decoders, driver, interface)",
+            mb(rss),
+            s(t),
+            mb(caches),
+            mb(rss.saturating_sub(caches))
+        );
+    }
+    if !evicts.is_empty() {
+        let n: u64 = evicts.values().sum();
+        let worst = evicts.values().max().copied().unwrap_or(0);
+        let _ = writeln!(o, "frames cache evictions: {n} in {} seconds with any, at most {worst} in one", evicts.len());
     }
     o
 }
