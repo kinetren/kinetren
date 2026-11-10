@@ -405,3 +405,36 @@ fn t995_a_host_reference_row_routes_without_engine_code() {
     assert_ne!(new, speech_d, "a new track inherited the dead key's id — the key now listens to it");
     assert_eq!(pd.track(music_d).unwrap().fx[0].sidechain_key(), Some(speech_d), "the dead key was rewritten");
 }
+
+/// t2375 (kept-mix-settle, the class walk): a seek resets the key branch too. The key track's own
+/// chain (a delay here) and its events' processors live in the target's key branch; left as they
+/// were, they went on across the jump as a seam and rang the old place into the new place's
+/// detector. Two seeks to one place sound the same whatever was played before them.
+#[test]
+fn t2375_a_seek_resets_the_key_branch() {
+    install();
+    let (mut p, _, speech) = scene(true);
+    p.track_mut(speech).unwrap().fx = vec![FxInstance::plugin_with("delay", &[40.0, 0.8, 1.0, 0.0]).unwrap()];
+    p.validate().unwrap();
+    let r = AudioRenderer::new(&p);
+    let at = 7 * D - D / 2;
+    // `before`: the bursts played before the seek
+    let after_seek = |before: std::ops::Range<i64>| {
+        let mut buf = vec![0f32; D as usize * CH];
+        let mut store = FxStateStore::default();
+        r.sync_fx(&mut store);
+        let mut f = sources();
+        for i in before {
+            r.render_frames_with(&mut f, &mut store, i * D, &mut buf);
+        }
+        store.reset_all();
+        let mut out = Vec::new();
+        for i in 0..3 {
+            r.render_frames_with(&mut f, &mut store, at + i * D, &mut buf);
+            out.extend_from_slice(&buf);
+        }
+        out
+    };
+    // through line 1, the key's delay ringing / far past everything, nothing ringing
+    assert!(after_seek(0..4) == after_seek(11..12), "the key branch carried the old place across the seek");
+}

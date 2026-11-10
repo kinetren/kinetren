@@ -413,6 +413,21 @@ pub mod mix {
     pub const ALREADY: u32 = 4;
     /// Rendered live outside the store (reverse, offline, no store).
     pub const OUTSIDE: u32 = 5;
+    /// Not a chunk: the effects were brought back to where the store took over before the next
+    /// live chunk (kept-mix-settle): `a` the chunk's head, `b` the frames rendered and discarded,
+    /// `c` how — [`WARM_CONTINUED`], [`WARM_WINDOW`] or [`WARM_SEEK`].
+    pub const WARM: u32 = 6;
+    /// Rendered live, not kept: within the settle length after a reset the effects could not warm
+    /// (a starved pre-roll or chunk, a track stage after a seek), so it is not what a continuous
+    /// play gives; `c` why it was live, as for the others.
+    pub const UNSETTLED: u32 = 7;
+    /// The effects went on from where they stopped through the replayed frames: the kept chunks
+    /// are the continuous play's, byte for byte.
+    pub const WARM_CONTINUED: u64 = 1;
+    /// Too far for that: reset, and played through the settle length before the chunk.
+    pub const WARM_WINDOW: u64 = 2;
+    /// Nothing heard there keeps a state: a reset is all it takes.
+    pub const WARM_SEEK: u64 = 3;
 }
 
 /// `Job.aux`.

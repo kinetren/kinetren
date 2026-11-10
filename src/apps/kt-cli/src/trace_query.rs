@@ -836,12 +836,18 @@ pub fn laps(run: &Run) -> String {
         let kept = frames.iter().filter(|l| l.exec.is_some_and(|e| e.aux & trace::exec::MEMO_HIT != 0)).count();
         let made = frames.iter().filter(|l| l.exec.is_some_and(|e| e.aux & trace::exec::MEMO_HIT == 0)).count();
         let inc = frames.iter().filter(|l| l.done.is_some_and(|d| d.aux == 0)).count();
-        let mix: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::MixChunk) && r.t >= a && r.t < b).collect();
+        let lap_recs = run.recs.iter().filter(|r| is(r, Ev::MixChunk) && r.t >= a && r.t < b);
+        // a warm-up after an effects reset is not a chunk of its own (kept-mix-settle)
+        let (warms, mix): (Vec<&Rec>, Vec<&Rec>) = lap_recs.partition(|r| r.aux == trace::mix::WARM);
         let rep = mix.iter().filter(|r| r.aux == trace::mix::REPLAY).count();
         let mut why: BTreeMap<&str, usize> = BTreeMap::new();
+        if !warms.is_empty() {
+            why.insert("effects warmed after the store", warms.len());
+        }
         for r in mix.iter().filter(|r| r.aux != trace::mix::REPLAY) {
             let w = match (r.c & 0xff, r.aux) {
                 (_, trace::mix::NOT_CLEAN) => "not clean (starved/pre-roll)",
+                (_, trace::mix::UNSETTLED) => "not kept: effects still settling",
                 (1, _) if r.c >> 8 == 1 => "lap context never kept",
                 (1, _) => "never kept/evicted",
                 (2, _) => "scene changed",

@@ -2035,8 +2035,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             start_wait = None;
             last_generation = generation;
             store.reset_all(); // pre-roll at the next read
-            mix.fx_reset();
             render_head = transport.playhead_frames();
+            mix.fx_reset(&renderer, render_head);
             shared.consumed_frames.store(0, Ordering::Release);
             flight.push(crate::flight::Ev::Seek, render_head, 0);
         }
@@ -2060,8 +2060,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             starting = true;
             start_wait = None;
             store.reset_all();
-            mix.fx_reset();
             render_head = transport.playhead_frames();
+            mix.fx_reset(&renderer, render_head);
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
         }
@@ -2091,8 +2091,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             // system (the armed render_head leads the playhead by laps).
             flight.push(crate::flight::Ev::Reset, transport.playhead_frames(), 0);
             store.reset_all();
-            mix.fx_reset();
             render_head = transport.playhead_frames();
+            mix.fx_reset(&renderer, render_head);
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
             starting = true;

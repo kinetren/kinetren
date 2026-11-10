@@ -1007,6 +1007,40 @@ impl AudioRenderer {
         h.digest()
     }
 
+    /// How long the chains heard in the timeline frames `range` must run before what they give
+    /// is what a continuous play gives (kept-mix-settle): an event's chain its seek pre-roll and
+    /// look-ahead (`max(tail, MIN_PREROLL) + look-ahead`, as `hard_seek` warms it), a track stage its
+    /// tail and look-ahead. 0 — nothing heard there keeps a state.
+    pub fn settle_frames(&self, range: std::ops::Range<i64>) -> i64 {
+        let mut w = 0i64;
+        for i in self.active_clips(&range) {
+            let c = &self.clips[i];
+            if !c.fx.is_empty() {
+                let tail = kt_fx::chain_tail(&c.fx, &c.auto).to_audio_frames().max(kt_fx::MIN_PREROLL_FRAMES);
+                w = w.max(tail + kt_fx::chain_lookahead(&c.fx, &c.auto));
+            }
+            if self.stage_of(c.lane).is_some() {
+                w = w.max(self.stage_reach.0 + self.stage_reach.1);
+            }
+        }
+        w
+    }
+
+    /// How long after a seek to `head` the chains WITHOUT a seek pre-roll stay cold
+    /// (kept-mix-settle): a track stage starts from silence, so while the events of its lane in
+    /// its reach before `head` would still ring in it, what plays is not what a continuous play
+    /// gives. An event's chain pre-rolls itself (`hard_seek`); a reel's stream moves from its
+    /// block boundary minus its pre-roll. 0 — every chain heard there is warm at once.
+    pub fn cold_after_seek(&self, head: i64) -> i64 {
+        let (tail, la) = self.stage_reach;
+        if self.stages.is_empty() || tail + la == 0 {
+            return 0;
+        }
+        let before = head - tail - la..head;
+        let rings = self.active_clips(&before).into_iter().any(|i| self.stage_of(self.clips[i].lane).is_some());
+        if rings { tail + la } else { 0 }
+    }
+
     /// Distribute the events into per-second buckets. An event goes into each
     /// bucket that its FULL span touches — the body, the left “handle” and
     /// the FX tail: exactly what the filter in `render_frames_with` checks.
@@ -1095,6 +1129,9 @@ impl AudioRenderer {
                 tail = tail.max(sub.reel_preroll_bursts() as i64 * AUDIO_BURST_FRAMES as i64);
             }
         }
+        // a track stage of the reel rings too, and only the move's pre-roll warms it: without it a
+        // reel whose events are dry started its track's reverb cold at every move (kept-mix-settle)
+        tail = tail.max(self.stage_reach.0 + self.stage_reach.1);
         if tail <= 0 {
             return 0;
         }

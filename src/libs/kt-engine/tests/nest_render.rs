@@ -1947,3 +1947,44 @@ fn t1937_reel_placements_build_state_only_where_they_sound() {
     r.render_frames_with(&mut f, &mut store, 10 * 48_000 * 600, &mut far);
     assert_eq!(store.nest_streams(), 0, "a stream far from its placement is released");
 }
+
+/// t2376 (kept-mix-settle, the class walk): a reel's move pre-rolls its track stages. A reel whose
+/// events are dry but whose track has a delay had no pre-roll at all, so a seek into its echo
+/// started the stage cold — silence where continuous play rings. Now the move starts its tail before,
+/// and the seek gives the continuous play's bytes (a delay with no feedback forgets exactly).
+#[test]
+fn t2376_a_reel_move_prerolls_its_track_stage() {
+    kt_plugins_builtin::install();
+    let mut p = base();
+    let mut s = Sequence::new(MediaId(100), "Echo");
+    let half = Tick(45_000);
+    s.clips.push(ev(2, ClipKind::Audio, 0, Tick(8 * 90_000), half, 1));
+    s.ensure_tracks(kt_model::LaneKind::Audio, 1);
+    s.track_at_mut(kt_model::LaneKind::Audio, 0).unwrap().fx =
+        vec![FxInstance::plugin_with("delay", &[600.0, 0.0, 1.0, 0.0]).unwrap()];
+    p.sequences.push(s);
+    let mut inst = ev(10, ClipKind::Audio, 0, Tick(0), Tick(10 * 90_000), 100);
+    inst.source_in = Tick(0);
+    p.clips.push(inst);
+    p.ensure_tracks(kt_model::LaneKind::Audio, 1);
+    p.validate().expect("legal");
+    let r = AudioRenderer::new(&p);
+    // 0.5 s past the dry event's end, past a block boundary of the reel's stream (8.875 s): only
+    // the echo sounds, and a move without a pre-roll starts after its input
+    let at = 9 * 48_000i64;
+    let n = 2048usize;
+    let mut cont = vec![0f32; (at as usize + n) * CH];
+    let mut store = FxStateStore::default();
+    r.sync_fx(&mut store);
+    let mut f = direct();
+    for (i, c) in cont.chunks_mut(1024 * CH).enumerate() {
+        r.render_frames_with(&mut f, &mut store, i as i64 * 1024, c);
+    }
+    let mut seek = vec![0f32; n * CH];
+    let mut fresh = FxStateStore::default();
+    r.sync_fx(&mut fresh);
+    r.render_frames_with(&mut direct(), &mut fresh, at, &mut seek);
+    let tail = &cont[at as usize * CH..];
+    assert!(tail.iter().any(|v| v.abs() > 1e-3), "scene guard: the echo sounds there");
+    assert!(seek[..] == tail[..], "a seek into the reel's echo plays what continuous play does");
+}
