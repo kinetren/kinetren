@@ -20851,3 +20851,50 @@ fn t1636_empty_rows_carry_no_captions() {
     let items = menu_labels(&mut h);
     assert!(items.iter().any(|l| l == tr(k::tl::lane::ADD_MORPHER_HERE)), "the action left the menu: {items:?}");
 }
+
+/// Test t2358 (stream-history-on-device, found-defects 393): V-fps counts new pictures of the moment
+/// asked; a composite that shows a held stream frame is counted apart. A second of held composites of
+/// advancing moments is V-fps 0; a second of complete new moments counts them and holds nothing.
+#[test]
+fn t2358_every_frame_held_is_v_fps_0() {
+    let mut h = harness();
+    let perf = &mut h.state_mut().perf;
+    perf.video_second(1.0);
+    for _ in 0..30 {
+        if perf.take_composite(true, true) {
+            perf.video_frames_shown += 1;
+        }
+    }
+    assert_eq!(perf.video_second(1.0), 0.0, "a held stream frame is no new picture");
+    assert_eq!(perf.vheld, 30.0, "the held frames are counted apart");
+    for _ in 0..30 {
+        if perf.take_composite(true, false) {
+            perf.video_frames_shown += 1;
+        }
+    }
+    // the same moment again is no new picture either
+    assert!(!perf.take_composite(false, false));
+    assert_eq!(perf.video_second(1.0), 30.0);
+    assert_eq!(perf.vheld, 0.0);
+}
+
+/// Test t2359 (stream-history-on-device): a held stream frame on screen draws the "catching up" note
+/// over the picture, never the Loading scrim; a frame of the moment's own removes it.
+#[test]
+fn t2359_a_held_frame_says_it_is_catching_up() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
+    let (mut h, _clip) = harness_geom_ctl();
+    assert!(h.state().texture.is_some(), "scene guard: the preview has a picture");
+    let note = tr(k::perf::CATCHING_UP).to_string();
+    let loading = tr(k::perf::LOADING).to_string();
+    let drawn = |h: &Harness<'static, KtApp>, t: &str| crate::reach_tests::painted_texts(h).iter().any(|p| p.src == t);
+    h.state_mut().preview_held = true;
+    h.step();
+    assert!(drawn(&h, &note), "the held frame says it is catching up");
+    assert!(!drawn(&h, &loading), "a held frame is not the Loading scrim");
+    h.state_mut().preview_held = false;
+    h.step();
+    assert!(!drawn(&h, &note), "the moment's own frame removes the note");
+}

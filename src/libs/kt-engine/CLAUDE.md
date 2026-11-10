@@ -37,6 +37,10 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   only two positions short — paused it reports incomplete, playing it shows the stage's latest held frame
   (`StreamKernel::held`) and is not kept as the moment's composite (`stream_held`). The UI thread never computes a
   history. The reel strip and the poster call `stream_preroll`. Tests t2042–t2045.
+  **The prefetch advances a run of frames as one walk** (stream-history-on-device): `stream_advance_run`
+  walks each stage to the frame on screen first, then to the run's last moment that is not kept;
+  `set_stream_view` tells the memo the loop's start (playhead inside it) or the frame on screen, and the
+  memo's want adds the walk's checkpoints (`size_stream_memo_walk`). t2355, t2360.
 - **Frame blending (R.37 C5, "Frames: blending")** is done in the COMMON code of the plan (`layer_src` → `blend_frames`), not in the executor, which receives an already blended pre-FX frame (invariant No. 7). The kernel is `dissolve_into`, integer and scalar. A blended frame carries its base frame's serial, so kt-gpu's upload key takes the pair and the weight (t250).
   - A PAIR is decided by ONE function `clip_frame_keys`; `layers_at` MUST return BOTH pts, otherwise prefetch warms one frame while the plan asks for two — an eternal miss. With R.56 it also has a second entry — `blend_footage`, inherited from the attachment above (item 448): the reel itself has no pairs, its leaves blend.
   - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.
@@ -51,7 +55,8 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **A covered range keeps its final mix** (cached-range-plays, the owner's "вариант А"; it reverses R.43 item 302 "the output of audio FX is not cached and cannot be"). `MixPlay::render` is the player's forward render: a chunk `MixStore` holds whole at the current `AudioRenderer::scene_hash` is handed out (`mix_replays`), anything else renders live and is kept when clean. The rules that make it right:
   - the scene is the fingerprints (`AudioClip.fp`) of every event ACTIVE in the burst — body, handles, tail — widened by the track stages' reach; a new thing that changes an event's sound must reach `fp` (it hashes the model event's Debug plus what the renderer derives), or the store replays a stale mix;
   - linear play and loop laps are separate contexts (`MixCtx`): a lap after the first carries the previous lap's ringing; the first recording of a frame stays;
-  - after a replayed chunk the FX state is stale: the next live chunk resets it, so it pre-rolls exactly as a seek there (t1932). Do not try to "continue" the processors past a replay;
+  - after a replayed chunk the FX state is stale; before the next live chunk it is BROUGHT BACK (kept-mix-settle): through the replayed frames themselves when they are within `settle_frames` (the continuous play, byte for byte, t2370), else a reset and a discarded play of the settle length through `render_chunk` — the loop's wrap included, so a lap rings the lap before it, not the timeline before the region (t2372, t1932). A reset alone recorded a lap with the wrong past and replayed it every lap (found-defects 390). `settle_frames` is asked of the TIMELINE frames (`pieces` folds the head): the unfolded head finds nothing past the first lap;
+  - what cannot be warmed keeps nothing for the settle length (`keep_from`): a starved chunk or warm-up, a track stage after a seek (`cold_after_seek`, a stage has no pre-roll — t2371, t2373). `fx_reset(renderer, head)` takes the seek's head;
   - the store is cleared when a source comes or goes; offline paths never see it.
   `kt-cli probe … --time` still measures the LIVE cost of a place (it never uses the store); `kt-cli preview --loop` shows what the player does on the second lap.
 - **The audio render thread never builds a renderer** (the player's `engine-build` thread does, edit-without-rebuild): `AudioRenderer::new` took 412 ms on the owner's 1974-event project against a 341 ms ring, and 5–7 s in a loaded test run. During playback the old renderer plays until the new one is published; a build asked on a pause holds the next start (`build_holds_start`, time stands before the first frame). The opening's build is the first model. **The swap costs what the edit changed** (t1940): `sync_fx_since` skips every event whose `AudioClip.fp` is unchanged, a reel's pre-roll is computed once per build (`preroll_bursts`), and the old renderer is dropped on another thread; `LoopStats::max_swap_us` reports the longest swap (0.6 ms at load 48, was 244–425 ms).
@@ -67,7 +72,8 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   holds the bytes on the specialized, general and baseline paths; a `debug_assert` compares the run's
   last frame).
 - **In the tail of FX the warp is not computed** (R.43, item 304): beyond `gate_end` the dry signal is zeroed by the gate anyway, so a chunk lying entirely beyond it is skipped — byte-identical by construction, but without the resampler and without reading the source. Tests 294/295.
-- Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7).
+- Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7). `reset_all` reaches EVERY stream through a chain: events, their laps, track stages, reels' sub-mix streams and the sidechain key branches (t2375: a key branch left out rang the old place into the detector). A reel's pre-roll counts its own track stages (t2376). A new state the render thread keeps joins `reset_all` and, when it rings, a pre-roll.
+- `Player::wake()` is public: kt-app's `audio-output` thread parks on it and opens the sound device on Play (kept-mix-settle D5). Every input that should open or close the device notifies it already (play, pause, seek).
 - **A split of a pitched event is ONE stream** (pitch-event-edges D3): `run_predecessors` marks for an
   event the one it continues (same track, abutting, the next material frame, both chains read across
   edges with the same structure and look-ahead, no reverse/overlap/transition at the join, no tail
@@ -116,6 +122,12 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   stream history's want after the kept composites'. Both export bodies hold `kt_time::mem::claim()`
   while they run, and the render window takes one before it counts devices and `tight` (on its job
   thread). t2294, t2296, t2297, t2299.
+- **The frames cache is sized by the look-ahead and the loop** (frames-cache-growth, t2393, t2394): the
+  prefetch pass returns its WHOLE window's bytes (`video_prefetch_pass_sized`), and `size_frames_cache`
+  on the prefetch thread asks twice the window, or the loop region's frames + an eighth + the window,
+  rounded to 64 MiB, only when that moves (a new quality, region or build recounts the loop). The stream
+  pacing reads the cap through `VideoRenderer::set_stream_cap` (a shared build outlives the cap it was
+  made with); a new reader of the cache's budget calls `max_video_bytes()` at use.
 - **The preview frame's life is in the trace** (capability `telemetry`): the compose thread sets the
   frame's id as its cause, so its decode requests, stream runs and compute jobs carry it; a new thing a
   composite waits for records a `FrameWait`, a new keeper records its store and eviction.

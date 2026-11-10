@@ -80,8 +80,15 @@ pub const STREAM_MEMO_BASE: usize = 256 << 20;
 /// machine has `available` when it is sized (measured at run time; unknown — `base`), nor below `base`.
 /// The memory ledger then grants it after the kept composites (`size_stream_memo`).
 pub fn stream_memo_bytes(base: usize, per_position: usize, loop_positions: Option<usize>, available: Option<u64>) -> usize {
+    stream_memo_bytes_walk(base, per_position, loop_positions, 0, available)
+}
+
+/// `stream_memo_bytes` with the walk's checkpoint tier (stream-history-on-device, found-defects 394):
+/// a walk from the chain's anchor to the loop's end keeps `checkpoints` checkpoints, two pictures each,
+/// outside the LRU; without them a re-walk after an eviction or a jump starts at the anchor again.
+pub fn stream_memo_bytes_walk(base: usize, per_position: usize, loop_positions: Option<usize>, checkpoints: usize, available: Option<u64>) -> usize {
     let (Some(n), Some(free)) = (loop_positions, available) else { return base };
-    let want = per_position.saturating_mul(n + n / 8 + 2).saturating_add(base);
+    let want = per_position.saturating_mul(n + n / 8 + 2 + 2 * checkpoints).saturating_add(base);
     want.min(usize::try_from(free / 4).unwrap_or(usize::MAX)).max(base)
 }
 
@@ -89,8 +96,13 @@ pub fn stream_memo_bytes(base: usize, per_position: usize, loop_positions: Optio
 /// its want by the memory available now, granted by the memory ledger after the kept composites';
 /// the bound set, with a `stream_memo_cap` record.
 pub fn size_stream_memo(per_position: usize, loop_positions: Option<usize>) -> usize {
+    size_stream_memo_walk(per_position, loop_positions, 0)
+}
+
+/// `size_stream_memo` with the walk's checkpoints (`stream_memo_bytes_walk`).
+pub fn size_stream_memo_walk(per_position: usize, loop_positions: Option<usize>, checkpoints: usize) -> usize {
     let free = memory_available();
-    let want = stream_memo_bytes(STREAM_MEMO_BASE, per_position, loop_positions, free);
+    let want = stream_memo_bytes_walk(STREAM_MEMO_BASE, per_position, loop_positions, checkpoints, free);
     let memo = stream_memo();
     let grant = memo.account().want((want - STREAM_MEMO_BASE) as u64);
     let cap = STREAM_MEMO_BASE.saturating_add(usize::try_from(grant).unwrap_or(usize::MAX));
@@ -267,6 +279,8 @@ pub(super) struct ClipStream<'a> {
     plan: Arc<PlanCell>,
     /// The kernel asked `stop` and was told to: who stopped it, and before which position.
     stopped: std::cell::Cell<Option<u32>>,
+    /// The tick the host shows from (the memo's view, stream-history-on-device D4).
+    view: Option<i64>,
 }
 
 impl<'a> ClipStream<'a> {
@@ -281,7 +295,13 @@ impl<'a> ClipStream<'a> {
             None => ceil_div(clip.start.0 - clip.head_ext.0, step).min(cut),
         };
         let q = stream_quality(clip, st, quality);
-        ClipStream { clip, st, grid, q, step, first, cut, end, cache, plan: st.plan_cell(q), stopped: Default::default() }
+        ClipStream { clip, st, grid, q, step, first, cut, end, cache, plan: st.plan_cell(q), stopped: Default::default(), view: None }
+    }
+
+    /// The host's view, as the memo holds it (a tick): a walk keeps the pictures from there on.
+    pub fn with_view(mut self, memo: &StreamMemo) -> Self {
+        self.view = memo.view();
+        self
     }
 
     /// The position of a frame time.
@@ -358,6 +378,9 @@ impl StreamLayout for ClipStream<'_> {
     }
     fn plan_cell(&self) -> Option<&PlanCell> {
         Some(&self.plan)
+    }
+    fn shown_from(&self) -> Option<i64> {
+        self.view.map(|t| self.pos(Tick(t)))
     }
     fn ident(&self, side: Side, k: i64) -> u64 {
         let Some((c, pts)) = self.at(side, k) else { return 0 };
@@ -440,7 +463,7 @@ pub(super) fn run(
     pts: Tick,
 ) -> (Option<Arc<VideoFrame>>, u64) {
     use kt_time::trace::{self, stream as so, Ev};
-    let cs = ClipStream::new(clip, st, grid, quality, Some(cache));
+    let cs = ClipStream::new(clip, st, grid, quality, Some(cache)).with_view(memo);
     let k = st.kernel();
     let mut n = cs.pos(t);
     // the stage's run in the trace: the position, what the memo still lacked, and what came out

@@ -1637,6 +1637,7 @@ that was not kept whole gave no sign of which memory had run out.
 - **THEN** a line names the kept composites, the history, the frames and the device buffers with their megabytes and the room, under the occupancy bar
 - **PATH** open View → Diagnostics… → under the cache occupancy bar a "Memory" line reads kept, history, frames, device and the room in MB; play a loop → the kept number grows lap by lap
 - **TEST** t2301 (`src/apps/kt-app/src/diag_tests.rs`)
+
 ### Requirement: Keys and clicks a slow frame reads keep their meaning
 Every command key a frame reads SHALL run, once per press, in the order pressed; a command that opens a
 window or writes the file runs once a frame, and one that opens a text field ends the frame's keys. Esc
@@ -1663,3 +1664,55 @@ stamps an input with the frame that read it: a gesture's length is known to a bu
 - **PATH** on a loaded machine the person double-clicks an event → its effects window opens, as on a
   free machine
 - **TEST** t2214 (`src/apps/kt-app/src/layout_tests.rs`); live `formula`, `lessons`, `forms`
+
+### Requirement: The memory numbers say what they count and name the whole process
+The status bar SHALL show the decoded frames held against the bound they may grow to now, and the
+program's resident memory, with a hint saying what each is; it SHALL NOT show a pair a person reads as
+used/limit when it is two different caches. The Diagnostics window SHALL show the decoded frames'
+occupancy of their bound now, the caches' line (kept composites, history, frames, the kept mix, device
+buffers, the room) on one line whatever its numbers, and the program's memory with the rest no cache
+counts, the rest named by its hint as the decoders, the graphics driver and the interface. The process's
+memory SHALL be read at most once a second, in frames drawn anyway, and no figure appearing or growing
+a digit SHALL change the window's height.
+Why: found-defects 397 — "cache: 39/535 MB" was audio/video and read as used/limit, Diagnostics said
+"100 % (535/537)" of a bound that never moved, and 4.7 GB of the program were named nowhere
+(kkt-26.11.10 J4).
+
+#### Scenario: The status bar says frames against their bound and the program
+- **WHEN** the editor is open with a project
+- **THEN** the status bar shows "frames: V/cap MB" with the cache's bytes and its bound now, and "memory: P MB" with the process's resident memory
+- **PATH** look at the status bar → "frames: 0/512 MB · memory: 600 MB"; hover either → the hint says the frames are decoded frames against the bound that grows with the loop and quality, and the memory is all the program holds; play a loop → the bound grows past 512
+- **TEST** t2397 (`src/apps/kt-app/src/diag_tests.rs`)
+
+#### Scenario: Diagnostics names the whole process
+- **WHEN** the Diagnostics window is open
+- **THEN** the first performance row gives the program's memory and the rest, the rest a part of it; hovering it, the status line names the rest as the decoders, the graphics driver and the interface; the caches' line stands under the rows
+- **PATH** open View → Diagnostics… → the first row reads "Program 7254 MB · rest 897"; hover it → the status line: "Program: all the memory it holds. Rest: what no cache counts (decoders, graphics driver, interface)…"; under the occupancy bar "Caches: kept … · mix … · room … MB"
+- **TEST** t2398 (`src/apps/kt-app/src/diag_tests.rs`)
+
+### Requirement: V-fps counts new pictures of the moment asked
+The performance panel's V-fps SHALL count the shown frames that are a new picture of the moment the
+preview asked for; a frame that shows a stream stage's held picture SHALL NOT count, and SHALL be
+counted apart as "held" frames a second, shown next to V-fps in the Diagnostics window while non-zero.
+The trace's `frame_show` record SHALL carry the held flag.
+Why: found-defects 393 — his trace: 114 shows in 6 s (19/s), 111 of them a held stream frame, 45
+distinct pictures, all from the history before his loop; the counter said 20 where "at most 5 are new".
+
+#### Scenario: Every frame held is V-fps 0
+- **WHEN** the app takes a second of composites of advancing moments that all show a held stream frame, then a second of complete new moments
+- **THEN** the first second's V-fps is 0 and its held count is the composites taken; the second's V-fps counts them and held is 0
+- **PATH** play over a Datamosh event whose history is behind → the toolbar reads 0 vfps, Diagnostics shows the held frames a second and the preview's marker; when the history catches up → the vfps rise and the marker goes
+- **TEST** t2358 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: The preview marks a held stream frame
+While the frame on screen is a held stream frame, the preview SHALL draw a small "catching up" marker in
+its corner, without dimming the picture; the Loading scrim keeps its own rule (an incomplete frame
+past 180 ms). The marker SHALL not ask for frames at rest.
+Why: kkt-26.11.10 J2 — a held frame looked like playback; the Loading scrim was decided by the owner for
+a frame with no picture (the flicker "black frame ↔ Loading", items 14–15 of round 14) and stays for that.
+
+#### Scenario: The marker follows the held flag
+- **WHEN** the app takes a held composite, then a complete one, then sits at rest
+- **THEN** the marker is drawn over the first and not over the second, the scrim over neither, and at rest no frame is asked for
+- **PATH** play over a Datamosh event whose history is behind → a small "catching up" note in the preview's corner over the moving picture; it goes when the picture is the moment's own
+- **TEST** t2359 (`src/apps/kt-app/src/layout_tests.rs`)

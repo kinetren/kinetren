@@ -327,6 +327,46 @@ fn t2300_the_ledger_is_in_the_trace_and_the_query_reads_it() {
     assert!(out.contains("history   cap 356 MB"), "{out}");
 }
 
+/// t2396 (frames-cache-growth): `trace memory` prints the frames cache's sizings, each tenant's bytes
+/// at the last busy second, the process's peak with the part the caches held and the rest named, and
+/// the frames cache's evictions a second.
+#[test]
+fn t2396_memory_names_the_frames_cap_and_the_whole_process() {
+    use kt_time::mem::Tenant;
+    const MB: u64 = 1 << 20;
+    const S: u64 = 1_000_000_000;
+    let mut v = vec![
+        rec(Ev::FramesCap, S, |r| {
+            r.a = 1600 * MB;
+            r.b = 200 * MB;
+            r.c = 1200 * MB;
+            r.aux = 720;
+        }),
+        rec(Ev::MemSample, 2 * S, |r| {
+            r.a = 3000 * MB;
+            r.b = 1000 * MB;
+        }),
+        rec(Ev::MemSample, 3 * S, |r| {
+            r.a = 4700 * MB;
+            r.b = 2500 * MB;
+        }),
+        rec(Ev::MemUsed, 3 * S, |r| {
+            r.aux = Tenant::Frames as u32;
+            r.a = 1500 * MB;
+            r.b = 1664 * MB;
+        }),
+    ];
+    for i in 0..5 {
+        v.push(rec(Ev::CacheEvict, 4 * S + i, |_| {}));
+    }
+    v.push(rec(Ev::CacheEvict, 5 * S, |_| {}));
+    let out = memory(&run_of(v));
+    assert!(out.contains("frames cache 720 lines: cap 1600 MB, window 200 MB, loop 1200 MB"), "{out}");
+    assert!(out.contains("frames    holds 1500 MB of cap 1664 MB"), "{out}");
+    assert!(out.contains("process peak 4700 MB") && out.contains("the caches 2500 MB, the rest 2200 MB"), "{out}");
+    assert!(out.contains("frames cache evictions: 6 in 2 seconds with any, at most 5 in one"), "{out}");
+}
+
 /// Test t2263 (gpu-arbiter): `gpu` reports the ring by class — admissions and their waits, the pieces
 /// of a cut frame, a stopped history, compute jobs by class, and the display presents' wait.
 #[test]
@@ -382,4 +422,53 @@ fn t2263_gpu_reports_the_ring_by_class() {
     ] {
         assert!(o.contains(want), "{want:?} missing:\n{o}");
     }
+}
+
+/// Test t2362 (stream-history-on-device, found-defects 398): `gpu` tells a late start from a late
+/// signal: per class, how long a compute job waited before the device started it, its run on the
+/// device and the wait for its buffers after it ended; a device with no timestamps is said so.
+#[test]
+fn t2362_gpu_tells_a_late_start_from_a_late_signal() {
+    use kt_time::sched::Class;
+    let mut v = Vec::new();
+    // near: submitted at 0, started 40 ms later, ran 1 ms, buffers back 2 ms after the end
+    for i in 0..3u64 {
+        let base = i * 100 * MS;
+        v.push(rec(Ev::GpuStart, base + 43 * MS, |r| {
+            r.id = Class::Near as u64;
+            r.a = base;
+            r.b = base + 40 * MS;
+            r.c = base + 41 * MS;
+            r.aux = 12;
+        }));
+    }
+    v.push(rec(Ev::GpuStart, 900 * MS, |r| {
+        r.id = Class::Now as u64;
+        r.a = 899 * MS;
+        r.aux = u32::MAX;
+    }));
+    let o = gpu(&run_of(v));
+    for want in ["near", "3 on the device: start after submit p50 40.0 ms", "run p50 1.0 ms", "buffers after end p50 2.0 ms", "≤ 12 µs", "1 with no device timestamps"] {
+        assert!(o.contains(want), "{want:?} missing:\n{o}");
+    }
+}
+
+/// Test t2364 (stream-history-on-device, found-defects 394): `loop` counts, per lap, the stream history
+/// positions the walks computed and how many were distinct.
+#[test]
+fn t2364_loop_counts_the_history_walked_and_distinct() {
+    let mut run = looped();
+    let b = lap_bounds(&run);
+    let (a0, _, _, _) = b[0];
+    // lap 0: two batches over 0..40 and a re-walk of 20..30
+    for (at, first, n) in [(1, 0u64, 32u64), (2, 32, 8), (3, 20, 10)] {
+        run.recs.push(rec(Ev::StreamWalk, a0 + at * MS, |r| {
+            r.a = first;
+            r.b = n;
+        }));
+    }
+    run.recs.sort_by_key(|r| r.t);
+    assert_eq!(walked_in(&run, b[0].0, b[0].1), (50, 40));
+    let out = laps(&run);
+    assert!(out.contains("history: 50 positions walked, 40 distinct;"), "{out}");
 }

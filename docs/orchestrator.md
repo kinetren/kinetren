@@ -183,6 +183,17 @@ them), `stream-layout-per-build`, `memory-ledger`, `fused-pointwise-runs`, the l
 A turn an executor's notice started cannot start a session (the app refuses), so the start goes as
 a card AND is made with its `proposal_id` on the first turn that can — his reply or the next notice.
 
+## No questions, no runaway processes (2026-11-10)
+
+"Ты долго очень по хуйне меня спрашиваешь и жгешь cpu какими-то debug тестами... ОПЯТЬ нету никакой
+защиты от долгих вычислений.. оно там часов 10 жжёт CPU уже..." An orphan `kt_time` test binary,
+left by an executor whose worktree was removed, ran 21 hours at a full core.
+- A diagnosed defect of his run is fixed without asking him first; only a look/behaviour he set is a
+  question. Report what started.
+- Tests run under nextest (`.config/nextest.toml` kills past 15 min) or `timeout`; an executor checks
+  `ps` for its worktree's processes before its report; the orchestrator checks `ps` for
+  `target/*/deps/*` older than an hour at every merge and before removing a worktree.
+
 ## Current plan (2026-11-06)
 
 Stage closed: `finish.sh` at kt26.11.07-677c2f5b, master there: 1588 of 1588, 79 of 79 live, 578 s. It

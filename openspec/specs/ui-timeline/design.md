@@ -404,6 +404,16 @@ ceiling; it now uses the shared body.
   did that since R.38, so a track reorder died with no symptom but "nothing happens". The proposal
   called the gesture working: nothing had ever tested it. One release, one `match` (t1637).
 
+## V-fps counts new pictures; a held frame says it is catching up (stream-history-on-device, archived 2026-11-10)
+
+- **What hurt:** V-fps counted every tick change; his trace: 114 shows in 6 s, 111 a held stream frame,
+  45 distinct pictures, the counter at 20 where "at most 5 are new" (row 393). A held frame looked like
+  playback and nothing said otherwise.
+- **Decision:** a composite that shows a held stream frame is no new picture (`PerfState::take_composite`);
+  held frames a second show next to V-shown in Diagnostics while non-zero; the preview draws a small
+  "Catching up…" note in its corner over the moving picture. The Loading scrim keeps the owner's rule
+  (an incomplete frame after 180 ms): the note is not a scrim and asks for no frame of its own.
+
 ## Deferred
 
 - `lane_names` live in `Project.ui`, and `swap_reel` does not swap them — the full entry
@@ -413,3 +423,14 @@ ceiling; it now uses the shared body.
   piece of work, not done.
 - The notes `docs/features/ui/*` (keys, layouts, the system file dialog,
   clip colours, the viewer's on-screen controls) — status "candidate", not part of the contract.
+
+## The memory numbers say what they count (frames-cache-growth, 2026-11-10)
+
+"cache: 39/535 MB" was audio/video, read by the owner as used/limit (found-defects 397). The status bar
+now has "frames: held/bound MB" and "memory: P MB" with one hint; Diagnostics' first row, which
+duplicated the occupancy line, says "Program P MB · rest R" with a hint naming the rest (decoders,
+graphics driver, interface — no counter of their own). A separate "Program" line was tried and dropped:
+it put the instruments past the window's fixed 720-point opening height, and the window opened short and
+grew by itself a frame later (t918, t1147; the shell's sizing pass is row 442). The caches' line is one
+line whatever its numbers. Rejected: one long "video V / cap · audio A · program P" item — t128 holds
+the status items to 190 points in every language.

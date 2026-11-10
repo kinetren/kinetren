@@ -6,6 +6,7 @@
 //! output are the reference, and the conformance is tests/parity.rs (tolerances, t181/t182/t183).
 
 pub mod arbiter;
+mod binds;
 pub mod compute;
 pub mod memory;
 pub mod pass_time;

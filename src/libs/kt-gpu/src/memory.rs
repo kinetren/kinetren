@@ -80,3 +80,60 @@ pub fn available() -> Option<u64> {
         None
     }
 }
+
+/// The process's resident memory (frames-cache-growth): what the status bar and the trace name as the
+/// program's, of which the memory ledger's tenants are a part. No allocation: the status bar reads it.
+pub fn resident() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Read;
+        let mut f = std::fs::File::open("/proc/self/status").ok()?;
+        let mut buf = [0u8; 4096];
+        let mut n = 0;
+        while n < buf.len() {
+            match f.read(&mut buf[n..]) {
+                Ok(0) => break,
+                Ok(k) => n += k,
+                Err(_) => return None,
+            }
+        }
+        let text = std::str::from_utf8(&buf[..n]).ok()?;
+        let kb = text.lines().find_map(|l| l.strip_prefix("VmRSS:"))?;
+        let kb: u64 = kb.trim().strip_suffix("kB")?.trim().parse().ok()?;
+        Some(kb * 1024)
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::ProcessStatus::{K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+        // SAFETY: a zeroed plain struct with its length passed, for this process's pseudo-handle
+        unsafe {
+            let mut c: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
+            let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+            (K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, size) != 0).then_some(c.WorkingSetSize as u64)
+        }
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// t2399 (frames-cache-growth): the process's resident memory is read where the platform says it,
+    /// and it moves with what the process touches.
+    #[test]
+    fn t2399_the_resident_memory_is_read() {
+        if !cfg!(any(target_os = "linux", windows)) {
+            assert_eq!(super::resident(), None);
+            return;
+        }
+        let before = super::resident().expect("the platform names it");
+        assert!(before > 1 << 20, "a process holds more than a MB: {before}");
+        let touched = std::hint::black_box(vec![1u8; 64 << 20]);
+        let after = super::resident().expect("the platform names it");
+        assert!(after >= before + (48 << 20), "64 MB touched: {before} → {after}");
+        drop(touched);
+    }
+}

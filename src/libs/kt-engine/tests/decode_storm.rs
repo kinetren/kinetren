@@ -682,3 +682,66 @@ fn t2259_the_look_ahead_stops_when_the_playhead_leaves() {
     assert!(!paced.stream_advance(&cache, t, Q), "a free advance did not finish");
     assert!(kt_gpu::testkit::compose(&paced, &cache, t, Q).1);
 }
+
+// ---- stream-history-on-device ---------------------------------------------------------------------
+
+/// t2360 (found-defects 391): the frames ahead of the one on screen are one walk — the history from the
+/// chain's anchor and the nine frames come in at most a submission per batch, and every one of the
+/// nine then needs nothing.
+#[test]
+fn t2360_frames_ahead_are_one_walk() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let t = Tick(5 * SEC);
+    let to = Tick(t.0 + 8 * STEP);
+    let (vr, cache) = (renderer(&p, Some(StreamPacing::preview(1 << 30))), big_cache());
+    let plain = renderer(&p, None);
+    let mut m = t;
+    while m.0 <= to.0 {
+        warm(&plain.layers_at(m, Q), &cache);
+        m = Tick(m.0 + STEP);
+    }
+    vr.set_stream_view(Some(t));
+    let items = trace::testing::capture(|| {
+        assert!(!vr.stream_advance_run(&cache, t, to, Q), "every frame was cached");
+    });
+    let walks = of(&items, Ev::StreamWalk);
+    let positions: u64 = walks.iter().map(|r| r.b).sum();
+    assert!(positions >= 9, "the walk covered the nine frames ({positions})");
+    assert!(
+        walks.len() as u64 <= positions.div_ceil(32) + 1, // the codec's batch, `fx_video_codec::walk::MAX_BATCH`
+        "{} submissions for {positions} positions",
+        walks.len()
+    );
+    let mut m = t;
+    while m.0 <= to.0 {
+        assert!(vr.layers_at(m, Q).is_empty(), "the frame at {} still needs its history", m.0);
+        m = Tick(m.0 + STEP);
+    }
+}
+
+/// t2361 (stream-history-on-device): a composite that shows a stage's held frame says so; once the
+/// history caught up the composite of the moment's own frame does not.
+#[test]
+fn t2361_the_composite_says_it_held() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let t = Tick(5 * SEC);
+    let behind = Tick(t.0 - 10 * STEP);
+    let (vr, cache) = (renderer(&p, Some(StreamPacing { order_bytes: 1 << 30, compose_steps: 2, hold: true })), big_cache());
+    let plain = renderer(&p, None);
+    warm(&plain.layers_at(t, Q), &cache);
+    assert!(!vr.stream_advance(&cache, behind, Q), "the history up to ten frames behind");
+    let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(vr.stream_held(), "the frame ten positions ahead of the history showed a held picture");
+    let _ = complete;
+    assert!(!vr.stream_advance(&cache, t, Q));
+    let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(complete && !vr.stream_held(), "the moment's own frame is not held");
+}

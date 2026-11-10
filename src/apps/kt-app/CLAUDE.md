@@ -4,6 +4,10 @@
 
 UI invariants earned through the rounds 4–5 (details and test numbers — items 38–94). Violating any of them is a performance or UX regression.
 
+## The sound device (kept-mix-settle, transport)
+
+- **The device opens on Play and closes a second after the play stopped** (`audio_out`, found-defects 274): the `audio-output` thread owns the `cpal::Stream` (not `Send`, a blocking open), parks on `Player::wake()` with no clock, and drops the stream after `CLOSE_AFTER_REST`. The UI thread never opens a device. The ring's consumer lives in the callback's `Sink` and comes back to the thread when cpal drops it (`Sink`'s `Drop` sends it): nothing in the callback locks or allocates (invariant 6, t2384 counts). While closed the thread does a seek's flush itself (t2382). An open error goes to the bell through `post_audio_errors` once a frame (an atomic until there is one). A new `Device` (a backend, a test double) only implements `open`: the callback body is `Sink::fill`, one for all.
+
 ## Redraw and frame cost (items 38–40, 53, 57)
 
 - **At rest no frame is asked for at all** (idle-cpu; the tick of 4 Hz is gone). A background thread that has something to show calls `wake::now()` or, for a stream of small results, `wake::soon()`; a state on a clock adds its moment to `KtApp::rest_wake`. New code that polls a result inside the frame with neither of these shows it only when the mouse moves. The Diagnostics window alone samples on a clock, twice a second.
@@ -15,7 +19,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **No allocations/clones of structures in draw paths per frame.** Snapshots for a frame are `Arc` clones of the caches by revision (coverage/names/paths, model_rev / cache.epoch). The preview composition buffer is reused (`compose_preview_into`); the glow mip is rebuilt every 4th new frame.
 - **Thousands of painter primitives = a mesh.** The waveform was 2 `line_segment` per PIXEL; the glow of the meters — ~310 tessellated ellipses per frame. Both are a single `Mesh` (t40).
 - **`cache.epoch()` changes on EVERY insertion** — during playback this is a storm. Any UI cache invalidated by epoch must be throttled during playback (coverage bars — no more often than 4 Hz; otherwise 60 polls/s under the cache mutex, contention with the decoders).
-- **Honest metrics before the fix**: V-fps (the NEW frames shown) and "V-skipped cells" in the performance panel. It is they that diagnosed the 24 fps quantum ceiling from the user's machine. "FPS" is the UI frames — it says NOTHING about the video.
+- **Honest metrics before the fix**: V-fps (the NEW frames shown) and "V-skipped cells" in the performance panel. A composite that shows a stream stage's HELD frame is no new picture (`PerfState::take_composite`, t2358): it is counted apart (held/s next to V-shown in Diagnostics) and the preview draws "Catching up…" over it (`preview_held`, t2359), never the Loading scrim. It is they that diagnosed the 24 fps quantum ceiling from the user's machine. "FPS" is the UI frames — it says NOTHING about the video.
 - **The performance panel is the "Performance" section of the Diagnostics window** (diagnostics-three-graphs, kkt-26.11.01 item 14), not a box of the left column; the column is the bin's. Its three graphs (`graphs::RollingGraph`) are BUILT once per sample (one mesh for the lines, cached galleys) and only re-painted on other frames: anything that changes the picture goes through `push`/`clear` (they bump the generation), never through `draw` — the auto-scale once stepped per draw and ran at the UI frame rate (t1149).
 
 ## Preview key on pause (R.53 item 415, R.62 t722b)

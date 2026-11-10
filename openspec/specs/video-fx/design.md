@@ -464,3 +464,44 @@ next editor:
   converts on the CPU in about a millisecond.
 - **Measured** (release, the owner's region at 720 lines, same load): the stage's thread 10.4–17.2 →
   4.3–4.4 ms a frame; readback 18.3 → 6.2 MB a frame; the window question 12–20 → 2.2–3.6 ms.
+
+## Camera ISP's sensor grid behind K× (local-cost-queue, archived 2026-11-10)
+
+- **What hurt** (found-defects 136): every pass after the unprocessing computes per SENSOR pixel and
+  reads its input at the block's top-left texel, so behind a K× barrier a block's K² fragments computed
+  one value K² times — 388.8 ms of a 415.7 ms frame at K = 2 on llvmpipe.
+- **Decision:** at K > 1 those passes are `Node::PassAt` at ⌈frame/K⌉; only the last pass (and the
+  unprocessing, the frame's own grid) render at the frame's size. Two bits of the flags word (6: the
+  input is on the sensor grid, 7: the output is) tell a pass its grids; `at` reads texel (sx, sy) of a
+  sensor-sized input; a sensor-grid fragment takes its alpha at its block's top-left frame pixel, the
+  texel the old form's next pass read. Integer addressing only, so the bytes are the old form's (t2310,
+  EXACT on the device, K 2–4, every preset and layout); `cpu::with_general` builds the old graph.
+  Measured: camera passes 388.8 → 120.7 ms (`kt-cli pass-cost --fx camera_isp --k 2`, release).
+- **Rejected — radial blur's spin by a table** (found-defects 137): its 32 `sin`/`cos` a pixel are 4 of
+  the pass's 26 ms at 1080p (zoom mode, the same loads and no trig: 22.4 ms). A table made on the device
+  kept the bytes and cost more (two loads a tap: 27.8 ms); a table from the CPU cannot keep them (the
+  device's `sin` is not the frozen one). Measure what a computation is of its pass before tabling it.
+
+## The datamosh's history walks on the device in batches (stream-history-on-device, archived 2026-11-10)
+
+- **What hurt:** one thread advanced the history position by position as two compute jobs, each a
+  submit, a blocking wait and a readback: in the owner's trace (kkt-26.11.10 J2/J3) 46 ms of round
+  trip for 0.2 ms of device work, 7.5 positions/s playing, the device busy 12 % of the walk
+  (found-defects 391); the walk from the chain's anchor was evicted and walked again (1413 positions
+  computed, 618 distinct, row 394).
+- **Decision:** `walk.rs` replays `mosh::broken`'s algorithm symbolically into a `codec::Batch`: the
+  clean encoder, the vector edit, the residual drop and the decoder are steps of ONE job over buffers
+  kept on the device; a buffer a step wrote is handed out again once no live value reads it (an upload
+  or a read never is: `write_buffer` lands before the submission, reads are copied at its end). A batch
+  closes at 32 positions, 192 MB of buffers, a missing frame, a stop or the host's view. What comes
+  back: the frame asked, positions at or after `StreamLayout::shown_from`, every 16th position as a
+  pinned checkpoint (the reference and the clean encoder's reconstruction), the resume state.
+- **The vector edit stays exact:** WGSL has no portable f64, so the CPU tables `mosh::transform` for all
+  129² vectors the search can give and the device looks them up; loss is `lowbias32` in integers with
+  `h < ⌈loss·2³²⌉` (t2352). The per-position walk is kept as `render_reference` (t2350).
+- **Rejected — resident buffers across jobs** (handles in the compute door): every batch ends with one
+  wait anyway; the continuation state is a plane set (row 401).
+- **Measured** (release, llvmpipe): the owner's region 297 → 126 jobs, 57 → 27 ms a frame; a
+  191-position walk 391 → 14 jobs, uploads 26 → 11 MB and readback 16 → 4.3 MB a frame, 49 → 53
+  positions/s (device-bound on a software device, row 400); a re-walk after the LRU lost the history
+  183 → 6 positions.

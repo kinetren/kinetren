@@ -190,3 +190,35 @@ fn t1483_the_looks_set_the_microphone() {
     let wrong = look("fxreg.var.wrong_cfa_phase");
     assert!(wrong.codec == 0 && wrong.wind == 0.0);
 }
+
+/// t2316 (local-cost-queue, row 211): the tabled µ-law is the formula to the bit — every sample on a
+/// 2²⁰-step grid of [−1.1, 1.1], each level's boundary neighbourhood and ±0.
+#[test]
+fn t2316_the_mulaw_table_is_the_formula() {
+    fn formula(x: f64) -> f64 {
+        const MU: f64 = 255.0;
+        let s = x.clamp(-1.0, 1.0);
+        let c = (1.0 + MU * s.abs()).flog10() / (1.0 + MU).flog10();
+        let q = (c * 127.0).round() / 127.0;
+        s.signum() * ((1.0 + MU).fpowf(q) - 1.0) / MU
+    }
+    let mut xs: Vec<f64> = (0..=(1u32 << 20)).map(|i| -1.1 + 2.2 * i as f64 / (1u32 << 20) as f64).collect();
+    // the samples where the code changes: c·127 = i + ½ → |s| = (256^((i+½)/127) − 1)/255, and a few
+    // ulps around each
+    for i in 0..127 {
+        let b = ((256f64).fpowf((i as f64 + 0.5) / 127.0) - 1.0) / 255.0;
+        let mut x = b;
+        for _ in 0..8 {
+            x = f64::from_bits(x.to_bits() - 1);
+        }
+        for _ in 0..17 {
+            xs.extend([x, -x]);
+            x = f64::from_bits(x.to_bits() + 1);
+        }
+    }
+    xs.extend([0.0, -0.0, 1.0, -1.0, f64::MIN_POSITIVE, 1e-300]);
+    for x in xs {
+        assert_eq!(mulaw(x).to_bits(), formula(x).to_bits(), "µ-law of {x:e}");
+    }
+    assert!(mulaw(f64::NAN).is_nan() && formula(f64::NAN).is_nan());
+}

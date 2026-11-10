@@ -88,6 +88,7 @@ const FILES: &[&str] = &[
     "src/apps/kt-cli/tests/cli.rs",
     "src/plugins/fx-video-tape/tests/physics.rs",
     "src/libs/kt-engine/tests/pitch_edges.rs",
+    "src/libs/kt-gpu/tests/camera_isp.rs",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
@@ -1206,6 +1207,9 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         // the window the display's latencies are sampled over while the other classes load the
         // ring: a fixed span of presents, not a wait for something to happen (gpu-arbiter, t2254)
         ("libs/kt-gpu/tests/arbiter.rs", "while start.elapsed() < run {"),
+        // the output thread measures the first callback after an open; past a second the play goes
+        // on and the open is reported as it is (kept-mix-settle, D7): the bound IS the measurement
+        ("apps/kt-app/src/audio_out.rs", "let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);"),
     ];
     fn walk(d: &Path, out: &mut Vec<PathBuf>) {
         for e in std::fs::read_dir(d).unwrap().flatten() {

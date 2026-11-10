@@ -27,6 +27,13 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   so when nobody wants the frame (the preview moved, the playhead left, a job was cancelled; never an
   export). A new stream kernel's history loop asks it too, or a frame the UI left runs to its end
   (t2257).
+- **A stream kernel's history walk keeps what the host shows and sparse checkpoints**
+  (stream-history-on-device): `StreamLayout::shown_from` is the host's view (the loop's start or the
+  frame on screen; `None` — every position, an export), `StreamMemo::put_pinned` keeps a checkpoint
+  outside the LRU (the pinned tier holds at most half the bound and thins by rank), and
+  `StreamKernel::checkpoints` tells the host how many a walk keeps, for the memo's sizing. Datamosh
+  walks in batches on the device (`fx-video-codec` `walk.rs`); `mosh::render_reference` is the
+  per-position walk the batches are held to (t2350).
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media).
@@ -63,6 +70,12 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   Rice-coded lines, a bit reservoir, a concealing decoder; frozen math, the same bytes everywhere.
   The predictor stays inside its stability triangle and the decoder inside its range: a broken
   stream smears and saturates, it never runs away (fed the wrong history it reached 56 000).
+  A frame allocates only its packet's payload, once at the size the rate control measured: the
+  transforms' scratch is on the stack, a reset zeroes in place (t2317). A caller decodes
+  `&pkt.payload.v` and keeps its own buffers.
+- **A barrier's general form stays reachable** (local-cost-queue): a graph that a fix specialized
+  (Camera ISP's sensor-grid passes at K > 1) builds its former graph under `cpu::with_general`, so the
+  two are compared EXACT on the device (t2310) and timed by `kt-cli pass-cost`.
 - **An audio state's block runs at the CPU's level** (audio-fx-cost): `process` wraps its body in
   `kt_plugin_api::fast!({ … })` — the same text compiled again with AVX2, taken where the CPU has it,
   the same bytes (t1981 on both paths, `KT_SIMD=0` / `cpu::with_baseline` force the baseline). The

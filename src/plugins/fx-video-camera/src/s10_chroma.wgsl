@@ -5,7 +5,7 @@
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     begin(P.u0.x);
     let p = vec2<i32>(floor(pos.xy));
-    let k = KK();
+    let k = KO();
     let sx = p.x / k;
     let sy = p.y / k;
     let s = sdims();

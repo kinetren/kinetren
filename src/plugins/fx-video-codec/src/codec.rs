@@ -10,6 +10,7 @@
 
 use kt_plugin_api::compute::{self, Buf, Init, Job, Step};
 use kt_plugin_api::math::FrozenMath;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Three 8-bit planes; `w`/`h` are the PADDED luma size (multiples of 16), chroma is half.
@@ -160,14 +161,23 @@ fn dct_basis() -> &'static [u8] {
 
 /// Every compute shader of the codec, as the device receives it, with the buffers a step of it reads
 /// and writes.
-pub fn shaders() -> [(&'static str, usize, usize); 4] {
+pub fn shaders() -> [(&'static str, usize, usize); 6] {
     [
         (CONVERT, 1, 3),
-        (include_str!("wgsl/search.wgsl"), 3, 1),
+        (SEARCH, 3, 1),
         (residual_shader(), 3, 1),
-        (include_str!("wgsl/decode.wgsl"), 3, 1),
+        (DECODE, 3, 1),
+        (VECTORS, 2, 2),
+        (DROP, 2, 1),
     ]
 }
+
+const SEARCH: &str = include_str!("wgsl/search.wgsl");
+const DECODE: &str = include_str!("wgsl/decode.wgsl");
+/// The broken decoder's vector edit (stream-history-on-device D3).
+const VECTORS: &str = include_str!("wgsl/vectors.wgsl");
+/// The residual of lost blocks zeroed (stream-history-on-device D3).
+const DROP: &str = include_str!("wgsl/drop.wgsl");
 
 const CONVERT: &str = include_str!("wgsl/convert.wgsl");
 
@@ -199,6 +209,16 @@ fn unpack16(v: &[u8]) -> Vec<i16> {
 fn decode_uniforms(w: u32, h: u32, bs: u32, gain_q8: i32, intra: bool) -> [Vec<u8>; 3] {
     let u = |pw: u32, ph: u32, shift: u32| {
         uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), bs.to_le_bytes(), shift.to_le_bytes(), gain_q8.to_le_bytes(), (w / bs).to_le_bytes(), (intra as u32).to_le_bytes(), [0; 4]])
+    };
+    [u(w, h, 0), u(w / 2, h / 2, 1), u(w / 2, h / 2, 1)]
+}
+
+/// The residual's uniforms of the three planes (the DCT basis as their table).
+fn residual_uniforms(w: u32, h: u32, bs: u32, q: f32, intra: bool) -> [Vec<u8>; 3] {
+    let u = |pw: u32, ph: u32, shift: u32| {
+        let mut u = uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), bs.to_le_bytes(), shift.to_le_bytes(), q.to_le_bytes(), (w / bs).to_le_bytes(), (intra as u32).to_le_bytes(), [0; 4]]);
+        u.extend_from_slice(dct_basis());
+        u
     };
     [u(w, h, 0), u(w / 2, h / 2, 1), u(w / 2, h / 2, 1)]
 }
@@ -308,12 +328,7 @@ pub fn encode_from(src: Source<'_>, prev: Option<&Planes>, cfg: &Cfg) -> Option<
         Source::Planes(_) => None,
     };
     let search_u = uniform(&[w.to_le_bytes(), h.to_le_bytes(), bs.to_le_bytes(), cfg.search.max(0).to_le_bytes()]);
-    let residual_u = |pw: u32, ph: u32, shift: u32| {
-        let mut u = uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), bs.to_le_bytes(), shift.to_le_bytes(), q.to_le_bytes(), bw.to_le_bytes(), (prev.is_none() as u32).to_le_bytes(), [0; 4]]);
-        u.extend_from_slice(dct_basis());
-        u
-    };
-    let us = [residual_u(w, h, 0), residual_u(w / 2, h / 2, 1), residual_u(w / 2, h / 2, 1)];
+    let us = residual_uniforms(w, h, bs, q, prev.is_none());
     let search = include_str!("wgsl/search.wgsl");
     let groups = [bw.div_ceil(8), bh.div_ceil(8), 1];
     let mut steps = Vec::new();
@@ -376,4 +391,410 @@ pub fn drop_block_residual(res: &mut Residual, w: usize, bs: usize, i: usize) {
         res.cb[o..o + cs].fill(0);
         res.cr[o..o + cs].fill(0);
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// the batched walk's device program (stream-history-on-device D1)
+// ---------------------------------------------------------------------------------------------
+
+/// Three planes inside a [`Batch`]: the job's buffer indices (luma, Cb, Cr).
+pub type Dev3 = [usize; 3];
+
+/// A clean encoder's output inside a batch: its reconstruction, its vectors (`None` — intra, zero
+/// vectors) and its residual.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DevClean {
+    pub recon: Dev3,
+    pub mv: Option<usize>,
+    pub res: Dev3,
+}
+
+/// The macroblock loss of one position, in the integers the device computes it with (D3): a block
+/// is lost when its hash is below `thr`, or always (`all`, loss 1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Loss {
+    pub thr: u32,
+    pub all: bool,
+    pub seed: u32,
+    pub k: u32,
+    /// The search range: a lost block's random vector lies within it.
+    pub rr: i32,
+}
+
+impl Loss {
+    /// `h < loss · 2³²` for an integer `h` is `h < ⌈loss · 2³²⌉`; from 2³² on every block is lost.
+    pub fn of(loss: f64, seed: u32, k: i64, rr: i32) -> Option<Loss> {
+        if loss <= 0.0 {
+            return None;
+        }
+        let l = (loss * 4_294_967_296.0).ceil();
+        let all = l >= 4_294_967_296.0;
+        Some(Loss { thr: if all { u32::MAX } else { l as u32 }, all, seed, k: k as u32, rr })
+    }
+}
+
+/// The search range of the vector table: every vector the search gives lies within it (the search
+/// clamps to its range, at most 64 px).
+pub const TABLE_RANGE: i32 = 64;
+
+enum Init0 {
+    Bytes(Vec<u8>),
+    Zero(u64),
+}
+
+struct StepRec {
+    name: &'static str,
+    shader: &'static str,
+    uniform: Vec<u8>,
+    read: Vec<Buf>,
+    write: Vec<Buf>,
+    groups: [u32; 3],
+}
+
+/// One submission of a history walk: the codec's steps over many positions, their buffers on the
+/// device between positions (D1). A buffer a step writes is handed out again once the walk says it
+/// is no longer live (`sweep`); an upload, a shared zero buffer and a buffer read back never are
+/// (`write_buffer` lands before the whole submission; reads are copied at its end).
+pub struct Batch {
+    w: usize,
+    h: usize,
+    bufs: Vec<Init0>,
+    fixed: Vec<bool>,
+    free: HashMap<u64, Vec<usize>>,
+    in_use: Vec<usize>,
+    zeros: HashMap<u64, usize>,
+    steps: Vec<StepRec>,
+    reads: Vec<usize>,
+    read_at: HashMap<usize, usize>,
+    /// Bytes uploaded and allocated: the device memory the batch holds.
+    pub bytes: usize,
+}
+
+fn words(v: &[u8]) -> Vec<u8> {
+    packed(v).into_owned()
+}
+
+impl Batch {
+    /// A batch for padded planes `w`×`h`.
+    pub fn new(w: usize, h: usize) -> Batch {
+        Batch {
+            w,
+            h,
+            bufs: Vec::new(),
+            fixed: Vec::new(),
+            free: HashMap::new(),
+            in_use: Vec::new(),
+            zeros: HashMap::new(),
+            steps: Vec::new(),
+            reads: Vec::new(),
+            read_at: HashMap::new(),
+            bytes: 0,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.steps.is_empty() && self.reads.is_empty()
+    }
+
+    pub fn steps(&self) -> usize {
+        self.steps.len()
+    }
+
+    fn size(&self, id: usize) -> u64 {
+        match &self.bufs[id] {
+            Init0::Bytes(b) => b.len() as u64,
+            Init0::Zero(n) => *n,
+        }
+    }
+
+    fn alloc(&mut self, n: u64) -> usize {
+        if let Some(id) = self.free.get_mut(&n).and_then(Vec::pop) {
+            self.in_use.push(id);
+            return id;
+        }
+        self.bufs.push(Init0::Zero(n));
+        self.fixed.push(false);
+        self.bytes += n as usize;
+        let id = self.bufs.len() - 1;
+        self.in_use.push(id);
+        id
+    }
+
+    fn zero(&mut self, n: u64) -> usize {
+        if let Some(&id) = self.zeros.get(&n) {
+            return id;
+        }
+        self.bufs.push(Init0::Zero(n));
+        self.fixed.push(true);
+        self.bytes += n as usize;
+        let id = self.bufs.len() - 1;
+        self.zeros.insert(n, id);
+        id
+    }
+
+    /// Bytes the device receives with the submission.
+    pub fn upload(&mut self, v: Vec<u8>) -> usize {
+        self.bytes += v.len();
+        self.bufs.push(Init0::Bytes(v));
+        self.fixed.push(true);
+        self.bufs.len() - 1
+    }
+
+    pub fn upload_planes(&mut self, p: &Planes) -> Dev3 {
+        [self.upload(words(&p.y)), self.upload(words(&p.cb)), self.upload(words(&p.cr))]
+    }
+
+    /// A clean packet held on the host: its vectors (32-bit pairs) and its residual.
+    pub fn upload_packet(&mut self, pkt: &Packet) -> (Option<usize>, Dev3) {
+        let mv = (!pkt.intra).then(|| {
+            self.upload(pkt.mv.iter().flat_map(|v| [(v.0 as i32).to_le_bytes(), (v.1 as i32).to_le_bytes()].concat()).collect())
+        });
+        (mv, [self.upload(pack16(&pkt.res.y)), self.upload(pack16(&pkt.res.cb)), self.upload(pack16(&pkt.res.cr))])
+    }
+
+    fn planes(&mut self) -> Dev3 {
+        let (y, c) = ((self.w * self.h) as u64, (self.w * self.h / 4) as u64);
+        [self.alloc(y), self.alloc(c), self.alloc(c)]
+    }
+
+    fn residual(&mut self) -> Dev3 {
+        let (y, c) = ((self.w * self.h * 2) as u64, (self.w * self.h / 2) as u64);
+        [self.alloc(y), self.alloc(c), self.alloc(c)]
+    }
+
+    fn mv_bytes(&self, bs: usize) -> u64 {
+        ((self.w / bs) * (self.h / bs) * 8) as u64
+    }
+
+    /// Zero vectors for block size `bs` (an intra packet of the second input carries no motion).
+    pub fn zero_mv(&mut self, bs: usize) -> usize {
+        let n = self.mv_bytes(bs);
+        self.zero(n)
+    }
+
+    fn step(&mut self, name: &'static str, shader: &'static str, uniform: Vec<u8>, read: &[usize], write: &[usize], groups: [u32; 3]) {
+        self.steps.push(StepRec {
+            name,
+            shader,
+            uniform,
+            read: read.iter().map(|&i| Buf(i)).collect(),
+            write: write.iter().map(|&i| Buf(i)).collect(),
+            groups,
+        });
+    }
+
+    /// Bring buffers back with the submission; their index in `run`'s answer. A buffer read is never
+    /// handed out again.
+    pub fn read(&mut self, id: usize) -> usize {
+        if let Some(&i) = self.read_at.get(&id) {
+            return i;
+        }
+        self.fixed[id] = true;
+        self.reads.push(id);
+        self.read_at.insert(id, self.reads.len() - 1);
+        self.reads.len() - 1
+    }
+
+    pub fn read3(&mut self, d: Dev3) -> [usize; 3] {
+        [self.read(d[0]), self.read(d[1]), self.read(d[2])]
+    }
+
+    /// Where a buffer read comes in `run`'s answer.
+    pub fn read_index(&self, id: usize) -> usize {
+        self.read_at.get(&id).copied().unwrap_or(usize::MAX)
+    }
+
+    pub fn read_index3(&self, d: Dev3) -> [usize; 3] {
+        [self.read_index(d[0]), self.read_index(d[1]), self.read_index(d[2])]
+    }
+
+    /// Whether `id` comes back.
+    pub fn is_read(&self, id: usize) -> bool {
+        self.read_at.contains_key(&id)
+    }
+
+    /// Hand out again every buffer a step wrote that is neither `live` nor read.
+    pub fn sweep(&mut self, live: &dyn Fn(usize) -> bool) {
+        let mut keep = Vec::with_capacity(self.in_use.len());
+        for id in std::mem::take(&mut self.in_use) {
+            if self.fixed[id] || live(id) {
+                if !self.fixed[id] {
+                    keep.push(id);
+                }
+            } else {
+                let n = self.size(id);
+                self.free.entry(n).or_default().push(id);
+            }
+        }
+        self.in_use = keep;
+    }
+
+    /// The source frame `sw`×`sh` as RGBA into the padded planes (`Planes::from_rgba` on the device).
+    pub fn convert(&mut self, rgba: Vec<u8>, sw: u32, sh: u32) -> Dev3 {
+        let (w, h) = (self.w as u32, self.h as u32);
+        let src = self.upload(rgba);
+        let out = self.planes();
+        let u = uniform(&[sw.to_le_bytes(), sh.to_le_bytes(), w.to_le_bytes(), h.to_le_bytes()]);
+        self.step("datamosh:convert", CONVERT, u, &[src], &out, [(w / 8).div_ceil(8), (h / 2).div_ceil(8), 1]);
+        out
+    }
+
+    /// The clean encoder at one position: `cur` against `prev` (`None` — an intra frame). The steps of
+    /// `encode_from`, in its order, on the batch's buffers.
+    pub fn encode(&mut self, cur: Dev3, prev: Option<Dev3>, cfg: &Cfg) -> DevClean {
+        let (w, h, bs) = (self.w as u32, self.h as u32, cfg.bs as u32);
+        let (bw, bh) = (w / bs, h / bs);
+        let groups = [bw.div_ceil(8), bh.div_ceil(8), 1];
+        let zero_mv = self.zero_mv(cfg.bs);
+        let rf = match prev {
+            Some(p) => p,
+            None => {
+                let z = self.zero(16);
+                [z, z, z]
+            }
+        };
+        let mv = match prev {
+            Some(p) => {
+                let su = uniform(&[w.to_le_bytes(), h.to_le_bytes(), bs.to_le_bytes(), cfg.search.max(0).to_le_bytes()]);
+                let n = self.mv_bytes(cfg.bs);
+                let (m1, m2) = (self.alloc(n), self.alloc(n));
+                self.step("datamosh:search", SEARCH, su.clone(), &[cur[0], p[0], zero_mv], &[m1], groups);
+                self.step("datamosh:search", SEARCH, su, &[cur[0], p[0], m1], &[m2], groups);
+                Some(m2)
+            }
+            None => None,
+        };
+        let mvb = mv.unwrap_or(zero_mv);
+        let res = self.residual();
+        let us = residual_uniforms(w, h, bs, cfg.qstep() as f32, prev.is_none());
+        for (i, u) in us.into_iter().enumerate() {
+            let (pw, ph) = if i == 0 { (w, h) } else { (w / 2, h / 2) };
+            self.step("datamosh:residual", residual_shader(), u, &[cur[i], rf[i], mvb], &[res[i]], [pw / 8, ph / 8, 1]);
+        }
+        let recon = self.planes();
+        let ds = decode_uniforms(w, h, bs, 256, prev.is_none());
+        for (i, u) in ds.into_iter().enumerate() {
+            self.step("datamosh:decode", DECODE, u, &[rf[i], mvb, res[i]], &[recon[i]], groups);
+        }
+        DevClean { recon, mv, res }
+    }
+
+    /// The broken decoder's vector edit: `src` through the table (`None` — the identity) and the loss.
+    /// Returns the edited vectors and the lost blocks' marks (`None` — no loss).
+    pub fn edit(&mut self, src: usize, bs: usize, table: Option<usize>, loss: Option<Loss>) -> (usize, Option<usize>) {
+        let n = ((self.w / bs) * (self.h / bs)) as u32;
+        let mv = self.alloc(self.mv_bytes(bs));
+        let lost = self.alloc(n as u64 * 4);
+        let table_buf = match table {
+            Some(t) => t,
+            None => self.zero(16),
+        };
+        let flags = table.is_some() as u32 | loss.map_or(0, |l| 2 | if l.all { 4 } else { 0 });
+        let l = loss.unwrap_or(Loss { thr: 0, all: false, seed: 0, k: 0, rr: 0 });
+        let u = uniform(&[
+            n.to_le_bytes(),
+            flags.to_le_bytes(),
+            l.thr.to_le_bytes(),
+            l.seed.to_le_bytes(),
+            l.k.to_le_bytes(),
+            l.rr.to_le_bytes(),
+            TABLE_RANGE.to_le_bytes(),
+            [0; 4],
+        ]);
+        self.step("datamosh:vectors", VECTORS, u, &[src, table_buf], &[mv, lost], [n.div_ceil(64), 1, 1]);
+        (mv, loss.map(|_| lost))
+    }
+
+    /// The residual with the lost blocks' samples zeroed, a copy (the packet's own stays intact).
+    pub fn drop_lost(&mut self, res: Dev3, lost: usize, bs: usize) -> Dev3 {
+        let out = self.residual();
+        let mw = (self.w / bs) as u32;
+        for i in 0..3 {
+            let (pw, ph, shift) = if i == 0 { (self.w as u32, self.h as u32, 0) } else { (self.w as u32 / 2, self.h as u32 / 2, 1) };
+            let u = uniform(&[pw.to_le_bytes(), ph.to_le_bytes(), ((bs as u32) >> shift).to_le_bytes(), mw.to_le_bytes()]);
+            self.step("datamosh:drop", DROP, u, &[res[i], lost], &[out[i]], [(pw * ph / 2).div_ceil(64), 1, 1]);
+        }
+        out
+    }
+
+    /// A P-frame of the decoder: the prediction from `rf` by `mv` plus `gain` × `res`.
+    pub fn decode(&mut self, rf: Dev3, mv: usize, res: Dev3, bs: usize, gain_q8: i32) -> Dev3 {
+        let (w, h, b) = (self.w as u32, self.h as u32, bs as u32);
+        let groups = [(w / b).div_ceil(8), (h / b).div_ceil(8), 1];
+        let out = self.planes();
+        for (i, u) in decode_uniforms(w, h, b, gain_q8, false).into_iter().enumerate() {
+            self.step("datamosh:decode", DECODE, u, &[rf[i], mv, res[i]], &[out[i]], groups);
+        }
+        out
+    }
+
+    /// Submit the batch and wait once; the buffers read, in `read`'s order. `None` — no device, or
+    /// it failed (`compute::fail` says why).
+    pub fn run(&self) -> Option<Vec<Vec<u8>>> {
+        let host = compute::host()?;
+        let inits: Vec<Init<'_>> = self
+            .bufs
+            .iter()
+            .map(|b| match b {
+                Init0::Bytes(v) => Init::Bytes(v),
+                Init0::Zero(n) => Init::Zero(*n),
+            })
+            .collect();
+        let steps: Vec<Step<'_>> = self
+            .steps
+            .iter()
+            .map(|s| Step { name: s.name, shader: s.shader, uniform: &s.uniform, read: &s.read, write: &s.write, groups: s.groups })
+            .collect();
+        let reads: Vec<Buf> = self.reads.iter().map(|&i| Buf(i)).collect();
+        match host.run(&Job { buffers: &inits, steps: &steps, reads: &reads }) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                compute::fail(e);
+                None
+            }
+        }
+    }
+
+    /// Planes from three buffers `run` brought back.
+    pub fn planes_of(&self, got: &[Vec<u8>], at: [usize; 3]) -> Planes {
+        let take = |i: usize, n: usize| {
+            let mut v = got.get(at[i]).cloned().unwrap_or_default();
+            v.truncate(n);
+            v
+        };
+        let (y, c) = (self.w * self.h, self.w * self.h / 4);
+        Planes { w: self.w, h: self.h, y: take(0, y), cb: take(1, c), cr: take(2, c) }
+    }
+
+    /// A clean output from the buffers `run` brought back (vectors, residual, reconstruction).
+    pub fn clean_of(&self, got: &[Vec<u8>], mv: Option<usize>, res: [usize; 3], recon: [usize; 3], bs: usize) -> Clean {
+        let intra = mv.is_none();
+        let mv: Vec<(i16, i16)> = match mv {
+            Some(i) => got
+                .get(i)
+                .map(|v| v.chunks_exact(8).map(|c| (i32::from_le_bytes([c[0], c[1], c[2], c[3]]) as i16, i32::from_le_bytes([c[4], c[5], c[6], c[7]]) as i16)).collect())
+                .unwrap_or_default(),
+            None => vec![(0, 0); (self.w / bs) * (self.h / bs)],
+        };
+        let r = |i: usize| unpack16(got.get(res[i]).map_or(&[][..], |v| &v[..]));
+        Clean {
+            recon: self.planes_of(got, recon),
+            pkt: Packet { intra, mv, res: Residual { y: r(0), cb: r(1), cr: r(2) } },
+        }
+    }
+}
+
+/// The vector edit's table for `(swap, scale, rotate)`: every vector of ±`TABLE_RANGE` through `edit`,
+/// row-major by y then x, as 32-bit pairs (D3).
+pub fn vector_table(edit: impl Fn((i16, i16)) -> (i16, i16)) -> Vec<u8> {
+    let r = TABLE_RANGE;
+    let mut out = Vec::with_capacity(((2 * r + 1) * (2 * r + 1) * 8) as usize);
+    for y in -r..=r {
+        for x in -r..=r {
+            let v = edit((x as i16, y as i16));
+            out.extend_from_slice(&(v.0 as i32).to_le_bytes());
+            out.extend_from_slice(&(v.1 as i32).to_le_bytes());
+        }
+    }
+    out
 }

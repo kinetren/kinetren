@@ -2833,3 +2833,18 @@ click three cards; he does not want to be the trigger. The orchestrator starts e
 an event turn is started on the first turn that allows it. Started now: `one-scheduler`,
 `fused-pointwise-runs`, `test-hygiene`.
 
+## 2026-11-10 — his run of stage 9 (release 87f6f38d, `kkt-26.11.10`)
+
+1. A 230 ms loop starts with silence again on `rendereg` with effects (not on `зацикленность_18`,
+   not on `problem_region_26_11_09`).
+2. `problem_region_26_11_09` at 720 lines: the preview hangs without "Loading", little processor
+   load, some places move and others not; a small region moves only after many laps; V-fps says 20
+   where at most 5 frames are new ("they are spread over time").
+3. A pause shows "Loading" and then computes the region properly, still with little load — "as if
+   it computed in real time with sleeps".
+4. The cache numbers make no sense to him: 39/535 MB in the status bar, 100 % (535/537) in
+   Diagnostics, 4.7 GB taken by the program, and the quality setting barely changes them.
+5. Decided: the sound device opens on Play (row 274).
+
+Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offered to him.
+

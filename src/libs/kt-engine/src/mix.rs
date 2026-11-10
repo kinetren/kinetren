@@ -14,9 +14,10 @@
 //!   region. Each is replayed only where it was recorded.
 //! - **The first recording stays**: a frame already held is not overwritten, so a range keeps one
 //!   sound, the one it was first heard with.
-//! - **Leaving the store continues as a seek does** ([`MixPlay`]): a chunk the store cannot hand
-//!   out whole is rendered live after the FX state is reset, so its first read pre-rolls as after
-//!   a seek to it — byte for byte what a seek there plays.
+//! - **Leaving the store goes on as the continuous play** ([`MixPlay`], kept-mix-settle): before a
+//!   chunk the store cannot hand out whole the effects are brought back — through the replayed
+//!   frames when they are short, else a reset and a discarded play of their settle length through
+//!   the same path (a loop's wrap included) — and a chunk the effects could not warm for is not kept.
 //! - Bounded ([`MIX_BUDGET_BYTES`]), least recently heard first; what is evicted leaves the bars.
 
 use crate::audio::{AudioRenderer, RenderStats};
@@ -374,12 +375,32 @@ pub fn pieces(head: i64, n: i64, region: Option<(i64, i64)>) -> Vec<(MixCtx, i64
 
 /// The forward render of the player through the store: what it holds is handed out, what it
 /// does not is rendered live and kept.
-#[derive(Default)]
+///
+/// **A kept chunk is what a continuous play gives** (kept-mix-settle, found-defects 390). The FX
+/// state does not run while the store plays, so the live chunk after a replayed run first brings
+/// it back: through the replayed frames themselves when they are within the settle length
+/// ([`AudioRenderer::settle_frames`]) — the state goes on exactly as if nothing had been replayed —
+/// else by a reset and a discarded play of the settle length before the chunk, through the same
+/// path, so in a loop lap the warm-up runs through the wrap and rings the previous lap, not the
+/// timeline before the region. A reset alone pre-rolled each event from the timeline: a lap kept
+/// that way rang the wrong past and was replayed on every lap. What could not warm (a starved
+/// source in a pre-roll or a chunk, a track stage after a seek) keeps nothing until the settle
+/// length has run.
 pub struct MixPlay {
     pub store: MixStore,
-    /// The FX state did not render the previous chunk (it came from the store): the next live
-    /// chunk starts as after a seek.
-    fx_stale: bool,
+    /// Where the FX state stopped: the head of the first chunk handed out from the store since it
+    /// last rendered, and the region it was handed out under. `None` — it rendered the previous
+    /// chunk, or a seek reset it.
+    stale_at: Option<(i64, Option<(i64, i64)>)>,
+    /// A chunk whose head is before this is not kept: the effects have not run their settle length
+    /// since what they could not warm.
+    keep_from: i64,
+}
+
+impl Default for MixPlay {
+    fn default() -> Self {
+        MixPlay { store: MixStore::default(), stale_at: None, keep_from: i64::MIN }
+    }
 }
 
 /// What one chunk took.
@@ -388,12 +409,37 @@ pub struct ChunkOutcome {
     pub stats: RenderStats,
     /// Handed out from the store: no decode, no effect ran.
     pub replayed: bool,
+    /// Frames rendered and discarded before it to bring the effects back (kept-mix-settle).
+    pub warmed: i64,
+}
+
+/// The settle length of the chains heard in the output frames `[head, head + n)`: the render head
+/// is folded into an armed loop, so it is asked of the timeline frames it plays.
+fn settle_at(renderer: &AudioRenderer, region: Option<(i64, i64)>, head: i64, n: i64) -> i64 {
+    pieces(head, n, region).iter().map(|&(_, tl, m)| renderer.settle_frames(tl..tl + m)).max().unwrap_or(0)
+}
+
+/// One chunk of the forward stream at the render head, as the player renders it: folded into an
+/// armed loop from its start on, linear before it.
+fn render_chunk(
+    renderer: &AudioRenderer,
+    fetcher: &mut dyn AudioFetcher,
+    fx: &mut FxStateStore,
+    region: Option<(i64, i64)>,
+    head: i64,
+    out: &mut [f32],
+) -> RenderStats {
+    match region {
+        Some((rs, re)) if re > rs && head >= rs => renderer.render_looped_with(fetcher, fx, rs..re, head, out),
+        _ => renderer.render_frames_with(fetcher, fx, head, out),
+    }
 }
 
 impl MixPlay {
     /// One chunk of the forward stream at the render head `head` into `out`: from the store when
     /// it holds all of it at the current scenes, else rendered live (`render_frames_with` or,
-    /// under an armed loop, `render_looped_with`) and kept when nothing in it was missing.
+    /// under an armed loop, `render_looped_with`) and kept when nothing in it was missing and the
+    /// effects have settled.
     pub fn render(
         &mut self,
         renderer: &AudioRenderer,
@@ -413,9 +459,11 @@ impl MixPlay {
                 self.store.read(ctx, tl, &mut out[done..done + len], &scene);
                 done += len;
             }
-            self.fx_stale = true;
+            if self.stale_at.is_none() {
+                self.stale_at = Some((head, region));
+            }
             kt_time::trace::ev(kt_time::trace::Ev::MixChunk).a(head as u64).b(n as u64).aux(kt_time::trace::mix::REPLAY).emit();
-            return ChunkOutcome { stats: RenderStats::default(), replayed: true };
+            return ChunkOutcome { stats: RenderStats::default(), replayed: true, warmed: 0 };
         }
         // why the chunk is live: the first piece the store could not hand out, and its context
         let why = if kt_time::trace::on() {
@@ -427,18 +475,18 @@ impl MixPlay {
         } else {
             0
         };
-        if std::mem::take(&mut self.fx_stale) {
-            // the processors stand where the store took over: going on from there as a seek does
-            fx.reset_all();
-        }
-        let stats = match region {
-            Some((rs, re)) if re > rs && head >= rs => {
-                renderer.render_looped_with(fetcher, fx, rs..re, head, out)
-            }
-            _ => renderer.render_frames_with(fetcher, fx, head, out),
+        let warmed = match self.stale_at.take() {
+            Some((at, was)) => self.warm(renderer, fetcher, fx, region, head, n, at, was),
+            None => 0,
         };
+        let stats = render_chunk(renderer, fetcher, fx, region, head, out);
         let clean = stats.underruns == 0 && stats.warmup_misses == 0;
-        if clean {
+        if !clean {
+            // what the effects took in here is a hole: it rings on for their settle length
+            self.keep_from = self.keep_from.max(head + n + settle_at(renderer, region, head, n));
+        }
+        let keep = clean && head >= self.keep_from;
+        if keep {
             let mut done = 0usize;
             for &(ctx, tl, m) in &parts {
                 let len = m as usize * AUDIO_CHANNELS;
@@ -452,10 +500,66 @@ impl MixPlay {
                 .a(head as u64)
                 .b(n as u64)
                 .c(why)
-                .aux(if clean { mix::KEPT } else { mix::NOT_CLEAN })
+                .aux(if keep {
+                    mix::KEPT
+                } else if clean {
+                    mix::UNSETTLED
+                } else {
+                    mix::NOT_CLEAN
+                })
                 .emit();
         }
-        ChunkOutcome { stats, replayed: false }
+        ChunkOutcome { stats, replayed: false, warmed }
+    }
+
+    /// Bring the effects back before the live chunk at `head` (`n` frames): they stopped at `at`
+    /// under `was`. Returns the frames rendered and discarded.
+    #[allow(clippy::too_many_arguments)]
+    fn warm(
+        &mut self,
+        renderer: &AudioRenderer,
+        fetcher: &mut dyn AudioFetcher,
+        fx: &mut FxStateStore,
+        region: Option<(i64, i64)>,
+        head: i64,
+        n: i64,
+        at: i64,
+        was: Option<(i64, i64)>,
+    ) -> i64 {
+        use kt_time::trace::mix;
+        let settle = settle_at(renderer, region, head, n);
+        let (from, how) = if settle == 0 {
+            fx.reset_all();
+            (head, mix::WARM_SEEK)
+        } else if was == region && at <= head && head - at <= settle {
+            // the state stands at `at`: going on from there through the replayed frames is the
+            // continuous play itself
+            (at, mix::WARM_CONTINUED)
+        } else {
+            // a reset, then the settle length before the chunk on the player's chunk grid
+            fx.reset_all();
+            (head - (settle + n - 1) / n * n, mix::WARM_WINDOW)
+        };
+        let mut scratch = vec![0f32; n as usize * AUDIO_CHANNELS];
+        let mut h = from;
+        let mut starved = false;
+        while h < head {
+            let m = (head - h).min(n);
+            let st = render_chunk(renderer, fetcher, fx, region, h, &mut scratch[..m as usize * AUDIO_CHANNELS]);
+            starved |= st.underruns > 0 || st.warmup_misses > 0;
+            h += m;
+        }
+        if starved {
+            // the warm-up read silence where the source was missing: what follows is not settled
+            self.keep_from = self.keep_from.max(head + settle);
+        }
+        kt_time::trace::ev(kt_time::trace::Ev::MixChunk)
+            .a(head as u64)
+            .b((head - from) as u64)
+            .c(how)
+            .aux(mix::WARM)
+            .emit();
+        head - from
     }
 
     /// The renderer changed (an edit): drop what it would render differently.
@@ -463,8 +567,12 @@ impl MixPlay {
         self.store.retain_valid(&|k| renderer.scene_hash(k * UNIT..(k + 1) * UNIT));
     }
 
-    /// A seek or a change of direction reset the FX state: it is no longer behind the store.
-    pub fn fx_reset(&mut self) {
-        self.fx_stale = false;
+    /// A seek (or a change of direction, a loop flip) reset the FX state and moved the render head
+    /// to `head`: the state is no longer behind the store, and what plays from here is a play from
+    /// a seek. A track stage has no pre-roll, so while its lane's events still ring in it the
+    /// chunks are not kept ([`AudioRenderer::cold_after_seek`]).
+    pub fn fx_reset(&mut self, renderer: &AudioRenderer, head: i64) {
+        self.stale_at = None;
+        self.keep_from = head + renderer.cold_after_seek(head);
     }
 }

@@ -98,6 +98,20 @@ pub fn video_prefetch_wants_except(
     max_video_bytes: usize,
     kept: &dyn Fn(Tick) -> bool,
 ) -> Vec<(MediaId, Tick, Quality)> {
+    wants_sized(video, t0, q, region_ticks, max_video_bytes, kept).0
+}
+
+/// What one pass asks, and the bytes of its WHOLE window: every key of every moment of the
+/// look-ahead at its decode size, counted once and not cut by the budget — what the cache must
+/// hold for the window to fit its half (frames-cache-growth).
+fn wants_sized(
+    video: &VideoRenderer,
+    t0: Tick,
+    q: Quality,
+    region_ticks: Option<(i64, i64)>,
+    max_video_bytes: usize,
+    kept: &dyn Fn(Tick) -> bool,
+) -> (Vec<(MediaId, Tick, Quality)>, usize) {
     let step = video.grid.frame_step().max(1);
     let share = max_video_bytes / 2;
     let mut out: Vec<(MediaId, Tick, Quality)> = Vec::new();
@@ -107,6 +121,8 @@ pub fn video_prefetch_wants_except(
     let mut full = false;
     let mut leads = 0usize;
     let mut before: Vec<(MediaId, Tick, Quality)> = Vec::new();
+    let mut counted = std::collections::HashSet::new();
+    let mut window = 0usize;
     for r in lookahead_windows(t0.0, PREFETCH_VIDEO_LOOKAHEAD_TICKS, region_ticks) {
         let mut t = video.grid.align_floor(Tick(r.start));
         while t.0 < r.end {
@@ -116,6 +132,11 @@ pub fn video_prefetch_wants_except(
                 continue;
             }
             let layers = video.layers_at(t, q);
+            for k in &layers {
+                if counted.insert(*k) {
+                    window += frame_bytes(k.2);
+                }
+            }
             // a source slower than the project grid repeats its frame, and a blended
             // pair shares a side with the next tick: a key is counted once
             let frame: Vec<_> = layers.iter().filter(|k| !seen.contains(*k)).copied().collect();
@@ -127,10 +148,10 @@ pub fn video_prefetch_wants_except(
                 bytes += frame.iter().map(|(_, _, dq)| frame_bytes(*dq)).sum::<usize>();
                 seen.extend(frame.iter().copied());
                 out.extend(frame);
-            } else {
+            } else if leads < CUT_LEAD_KEYS {
                 for k in frame.into_iter().filter(|k| jumps_to(k, &before, step)) {
                     if leads == CUT_LEAD_KEYS {
-                        return out;
+                        break;
                     }
                     leads += 1;
                     seen.insert(k);
@@ -141,7 +162,93 @@ pub fn video_prefetch_wants_except(
             t = Tick(t.0 + step);
         }
     }
-    out
+    (out, window)
+}
+
+/// The bytes of every frame the loop region `[s, e)` (ticks) asks at the preview quality `q`, each
+/// key once at its decode size; the count stops past `stop` (a loop the machine cannot hold is not
+/// walked to its end).
+pub fn loop_frame_bytes(video: &VideoRenderer, q: Quality, (s, e): (i64, i64), stop: usize) -> usize {
+    let step = video.grid.frame_step().max(1);
+    let mut seen = std::collections::HashSet::new();
+    let mut bytes = 0usize;
+    let mut t = video.grid.align_floor(Tick(s));
+    while t.0 < e && bytes <= stop {
+        for k in video.layers_at(t, q) {
+            if seen.insert(k) {
+                bytes += frame_bytes(k.2);
+            }
+        }
+        t = Tick(t.0 + step);
+    }
+    bytes
+}
+
+/// The rounding of the decoded-frame cache's want: a window that moves a little asks nothing new.
+const WANT_STEP: usize = 64 << 20;
+
+/// The decoded-frame cache's bound for a look-ahead `window` of bytes and a loop of `loop_bytes`
+/// (frames-cache-growth): the window takes half the cap, so twice the window; a loop keeps every
+/// frame of its region plus an eighth (what the plan reads meanwhile: a blended pair's other side,
+/// a cut's first frames) and the window's room besides. Rounded up to [`WANT_STEP`].
+pub fn frames_cache_want(window: usize, loop_bytes: Option<usize>) -> usize {
+    let need = match loop_bytes {
+        Some(l) => l.saturating_add(l / 8).saturating_add(window).max(window.saturating_mul(2)),
+        None => window.saturating_mul(2),
+    };
+    need.div_ceil(WANT_STEP).saturating_mul(WANT_STEP)
+}
+
+/// The preview quality, the loop region (ticks) and the build a sizing is for.
+type SizingKey = (Quality, Option<(i64, i64)>, u64);
+
+/// What the player sized its decoded-frame cache for last ([`size_frames_cache`]).
+#[derive(Debug, Default)]
+pub struct FramesSizing {
+    key: Option<SizingKey>,
+    /// The largest window a pass of this key counted.
+    window: usize,
+    /// The loop's frames at this key.
+    loop_bytes: Option<usize>,
+    /// The bound last asked.
+    asked: usize,
+}
+
+/// Ask the ledger for what the player's look-ahead and loop need (frames-cache-growth): called by
+/// the prefetch thread after each pass with the bytes of its whole window. A new quality, loop
+/// region or build counts the loop's frames again and forgets the window's peak; the ledger is
+/// asked only when the rounded want moves, and the sizing is a `frames_cap` record. The cap now.
+pub fn size_frames_cache(
+    video: &VideoRenderer,
+    cache: &std::sync::Arc<BurstCache>,
+    q: Quality,
+    region_ticks: Option<(i64, i64)>,
+    build: u64,
+    window: usize,
+    sizing: &mut FramesSizing,
+) -> usize {
+    let key = (q, region_ticks, build);
+    if sizing.key != Some(key) {
+        sizing.key = Some(key);
+        sizing.window = 0;
+        // a loop past what the machine has now cannot be held: its count stops there
+        let stop = kt_time::mem::available().map_or(usize::MAX, |a| usize::try_from(a).unwrap_or(usize::MAX));
+        sizing.loop_bytes = region_ticks.map(|r| loop_frame_bytes(video, q, r, stop));
+    }
+    sizing.window = sizing.window.max(window);
+    let want = frames_cache_want(sizing.window, sizing.loop_bytes);
+    if want == sizing.asked {
+        return cache.max_video_bytes();
+    }
+    sizing.asked = want;
+    let cap = cache.want_video(want);
+    kt_time::trace::ev(kt_time::trace::Ev::FramesCap)
+        .a(cap as u64)
+        .b(sizing.window as u64)
+        .c(sizing.loop_bytes.unwrap_or(0) as u64)
+        .aux(q.height)
+        .emit();
+    cap
 }
 
 /// Keys past the window's bytes that one pass may still ask: two sizes at each of three cuts.
@@ -181,14 +288,27 @@ pub fn video_prefetch_pass_except(
     region_ticks: Option<(i64, i64)>,
     kept: &dyn Fn(Tick) -> bool,
 ) -> Vec<(MediaId, Tick, Quality)> {
-    let wants = video_prefetch_wants_except(video, t0, q, region_ticks, cache.max_video_bytes(), kept);
+    video_prefetch_pass_sized(video, cache, t0, q, region_ticks, kept).0
+}
+
+/// [`video_prefetch_pass_except`], and the bytes of the pass's whole window (the player sizes its
+/// cache by them, [`size_frames_cache`]).
+pub fn video_prefetch_pass_sized(
+    video: &VideoRenderer,
+    cache: &BurstCache,
+    t0: Tick,
+    q: Quality,
+    region_ticks: Option<(i64, i64)>,
+    kept: &dyn Fn(Tick) -> bool,
+) -> (Vec<(MediaId, Tick, Quality)>, usize) {
+    let (wants, window) = wants_sized(video, t0, q, region_ticks, cache.max_video_bytes(), kept);
     let key = |&(m, pts, dq): &(MediaId, Tick, Quality)| BurstKey {
         source: source_id(m),
         kind: BurstKind::video(Some(dq)),
         idx: video_cache_idx(pts),
     };
     cache.refresh(wants.iter().rev().map(key));
-    wants.into_iter().filter(|w| !cache.contains(key(w))).collect()
+    (wants.into_iter().filter(|w| !cache.contains(key(w))).collect(), window)
 }
 
 /// Play `[from, to)` against `cache` with an INFINITELY FAST decoder (diagnostics and

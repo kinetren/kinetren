@@ -125,3 +125,25 @@ of every subsystem that waits or keeps, and the measurements are the change's de
 `StreamStop`, and the caller's class in `ComputeJob.id`. `kt-cli trace gpu` answers row 134's question —
 did the look-ahead's submissions fall — by class, and the display's present wait. The bench records each
 of its presents as a `FrameWait` with `wait::DEVICE`, as the compose thread does.
+
+## The process's memory in the trace (frames-cache-growth, 2026-11-10)
+
+The owner's 4.7 GB had no record (found-defects 397): the ledger accounted 1.4–3.7 GB and nothing said
+what the rest was. `frames_cap` (93) names each sizing of the preview's frames cache; `mem_sample` (94)
+and `mem_used` (95) come from `kt_time::mem::sample`, called once per BUSY second (the load watch's
+busy second, `kt-cli preview`'s display loop) and writing only what moved by a MB — so a rest writes
+nothing. The resident memory comes from the host (`kt_gpu::memory::resident`: VmRSS through a stack
+buffer; `K32GetProcessMemoryInfo`, so no new DLL import). `trace memory` prints the peak with the caches'
+part and the rest.
+
+## When a job ran on the device (stream-history-on-device, archived 2026-11-10)
+
+- **What hurt:** a 46 ms round trip for a 0.2 ms job could be a late start (a queue behind other work)
+  or a late completion signal; the trace had no device time on the CPU clock (row 398).
+- **Decision:** `gpu_start` (96) per compute job: submitted, device start, device end on the trace's
+  clock, mapped through a calibration — an empty submission's timestamp bracketed by the CPU clock
+  before the submit and after the wait, the narrowest of three, again after 10 s, only while the trace
+  records. `trace gpu` prints per class the start delay, the run and the wait for the buffers after the
+  end. `stream_walk` (97) per batch of a history walk; `trace loop` counts positions walked and distinct
+  per lap. The timestamp set grew to 2048 stamps: a batched job has hundreds of dispatches, and the
+  32 timed before undercounted its device time.

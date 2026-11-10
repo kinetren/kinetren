@@ -37,6 +37,9 @@ The time model of the whole engine. Zero dependencies (except serde).
   under its own lock, and its hook takes it. A sizing runs only when a want or a claim changes, and
   records `mem_budget`/`mem_grant` only when something moved. A new cache that holds pictures, mixes
   or device buffers opens an account; one that can use more than its base asks a want.
+  `Ledger::sample` (frames-cache-growth, t2395) writes `mem_sample` (the process's resident memory by
+  the host's `set_resident_probe`) and `mem_used` per tenant only for what moved by a MB; the caller
+  samples once per BUSY second (the app's load watch, `kt-cli preview`), never at rest.
 - Negative ticks are valid (floor semantics via `div_euclid`) — indexing down to zero relies on them.
 - **Subtlety**: the 48 kHz frames ↔ ticks are mutually exact only for frames that are multiples of 8 (ticks that are multiples of 15): `from_audio_frames(f).to_audio_frames() == f` ⇔ `f % 8 == 0`. Clip boundaries live in ticks; the engine floors them into frames once (kt-engine::AudioRenderer). In tests that set clip boundaries in frames, use multiples of 8 — otherwise the seam would drift by 1 sample (see tests/audio_engine.rs).
 

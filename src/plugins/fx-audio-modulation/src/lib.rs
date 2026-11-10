@@ -1004,8 +1004,8 @@ impl PitchNode {
         let r = self.ratio_at(start);
         let off = self.best_offset(start, r);
         let base = (start + off) as f64;
-        for k in 0..PITCH_GRAIN {
-            let w = hann(k, PITCH_GRAIN);
+        let win = grain_window();
+        for (k, &w) in win.iter().enumerate() {
             let src = base + k as f64 * r;
             for ch in 0..CH {
                 let v = self.ring_frac(src, ch) * w;
@@ -1018,13 +1018,9 @@ impl PitchNode {
     /// greater score wins — so on a tie the smaller shift remains
     /// (determinism without dependence on the traversal order).
     fn best_offset(&self, start: i64, r: f64) -> i64 {
-        let mut cands: Vec<i64> = vec![0];
-        let mut d = PITCH_SEARCH_STEP;
-        while d <= PITCH_SEARCH {
-            cands.push(-d);
-            cands.push(d);
-            d += PITCH_SEARCH_STEP;
-        }
+        // 0, −s, s, −2s, 2s, … ±PITCH_SEARCH: the order a tie is decided by, with no list per grain
+        let n = PITCH_SEARCH / PITCH_SEARCH_STEP;
+        let cands = (0..=2 * n).map(|i| if i == 0 { 0 } else { (i + 1) / 2 * PITCH_SEARCH_STEP * if i % 2 == 1 { -1 } else { 1 } });
         let overlap = PITCH_HOP as usize;
         let mut best = 0i64;
         let mut best_score = f64::NEG_INFINITY;
@@ -1219,6 +1215,12 @@ impl AudioState for PitchNode {
     fn reset(&mut self) {
         self.reset_state();
     }
+}
+
+/// The WSOLA grain's window, built once (local-cost-queue, row 313: it was 1 024 `fcos` per grain).
+fn grain_window() -> &'static [f32; PITCH_GRAIN] {
+    static W: std::sync::OnceLock<[f32; PITCH_GRAIN]> = std::sync::OnceLock::new();
+    W.get_or_init(|| std::array::from_fn(|k| hann(k, PITCH_GRAIN)))
 }
 
 /// Hann window with 50 % overlap: the sum of two adjacent windows ≡ 1.

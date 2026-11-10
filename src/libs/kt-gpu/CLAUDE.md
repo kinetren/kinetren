@@ -137,8 +137,18 @@ is no picture, and an export refuses.
   when the device lags is a per-frame creation on a loaded machine (the timer made a read buffer whenever
   the earlier maps had not come back; t2023 red under a full `nextest`, t2025). Make the bounded set up
   front and skip the work past it.
+- **A pass writes its uniform through `stage` and binds through `bind_main`/`bind_geom`**
+  (local-cost-queue, row 138; `binds.rs`): the bytes wait in `Staged` and go into the arena in one
+  write right before a submission, so a NEW `queue.submit` of an encoder holding passes calls
+  `self.staged.flush` first, or its passes read last frame's uniforms. Bind groups are kept a frame by
+  (layout, views) and dropped at the next top-level frame when unused; a new arena clears them.
+  `per_pass_binds(true)` is the old form (t2313), `kt-cli pass-cost --form binds` measures it.
 - **Rank passes with the instrument, minima of repeats, interleaved A/B** (the machine is shared): llvmpipe
   compiles a pipeline variant at its first draw, so a run of two frames measures the compiler.
+  `kt-cli pass-cost --fx … [--k K]` does it for a chain: each pass label's device time in the
+  specialized form and under `cpu::with_general` (a barrier's graph before its fix), and the same-bytes
+  check. Before replacing per-pixel math by a table, measure what it is of the pass: radial blur's 32
+  `sin`/`cos` were 4 of 26 ms, and two table loads a tap cost more (local-cost-queue D2).
 
 ## A frame never compiles (pipeline-prewarm)
 
@@ -328,6 +338,13 @@ is no picture, and an export refuses.
   a blocking wait on THAT piece's device, never on a device with a surface (the window's present takes
   the device's lock for writing). So no piece waits for its own submitter to come back (the export's
   ring of three would deadlock).
+- **A cut piece does not wait for itself** (stream-history-on-device, t2356): `Piece::cut` submits and
+  admits the next piece by its first pass's prediction against the time in flight; only a full bound or
+  a higher class waits. A cut display-device piece is completed by non-blocking polls in `admit`.
+- **A compute job records when it ran on the device on the trace's clock** (`GpuStart`, D7 of
+  stream-history-on-device, t2357): a calibration (an empty submission's timestamp bracketed by the CPU
+  clock, the narrowest of three, again after 10 s) made only while the trace records. `STAMPS` is 2048: a
+  batched Datamosh job carries hundreds of dispatches, and an untimed one is never predicted.
 - **`wait_presented` never polls on a fixed period**: the work-done callback, a check after the
   measured device time, then waits growing from a quarter of it (`present_checks`, t2260).
 - `KT_GPU_ARBITER=off` (or `arbiter::set_enabled(false)`) admits everything and cuts nothing: an A/B of

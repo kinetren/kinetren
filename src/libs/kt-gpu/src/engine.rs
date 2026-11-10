@@ -819,6 +819,11 @@ struct Inner {
     arena: wgpu::Buffer,
     arena_slots: u32,
     slot: u32,
+    /// The frames' bind groups and the uniform bytes waiting for the submission (row 138).
+    binds: crate::binds::BindCache,
+    staged: crate::binds::Staged,
+    /// t2313: a write and a bind group per pass, as before row 138.
+    per_pass: bool,
     pool: TexturePool,
     upload: UploadCache,
     readback: ReadbackCache,
@@ -1325,6 +1330,9 @@ impl GpuFxEngine {
                 arena,
                 arena_slots,
                 slot: 0,
+                binds: Default::default(),
+                staged: Default::default(),
+                per_pass: false,
                 pool: TexturePool::new(TRANSIENT_BUDGET),
                 // an export's device keeps what its frames in flight read (memory-ledger D7)
                 upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(RING as u64)),
@@ -1473,6 +1481,17 @@ impl GpuFxEngine {
         let mut inner = self.inner.lock().unwrap();
         let complete = inner.execute(plan, out, false)?;
         Ok((complete, inner.last_cost))
+    }
+
+    /// t2313: a uniform write and a new bind group per pass (the form before local-cost-queue).
+    pub fn per_pass_binds(&self, on: bool) {
+        self.inner.lock().unwrap().per_pass = on;
+    }
+
+    /// Bind groups made and reused, and held now (t2314).
+    pub fn bind_stats(&self) -> (u64, u64, usize) {
+        let g = self.inner.lock().unwrap();
+        (g.binds.made, g.binds.reused, g.binds.len())
     }
 
     /// t1766: run every fused pass through the interpreter.
@@ -1678,6 +1697,7 @@ impl Inner {
         self.next_ticket += 1;
         self.last_cost = Default::default();
         self.upload.begin_frame();
+        self.binds.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1697,6 +1717,7 @@ impl Inner {
                 mapped_at_creation: false,
             });
             self.arena_slots = slots;
+            self.binds.clear();
         }
         self.slot = 0;
         let meta = frame_meta(&jobs, (ow, oh));
@@ -1743,6 +1764,7 @@ impl Inner {
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+        self.staged.flush(&self.queue, &self.arena);
         let sub = self.queue.submit([enc.finish()]);
         if let Some(p) = self.piece.take() {
             p.end(&self.device, &self.queue, sub.clone(), self.surface);
@@ -1816,6 +1838,7 @@ impl Inner {
         }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
         self.upload.begin_frame();
+        self.binds.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1833,6 +1856,7 @@ impl Inner {
                     mapped_at_creation: false,
                 });
                 self.arena_slots = slots;
+            self.binds.clear();
             }
             self.slot = 0;
             self.ensure_present_targets(ow, oh, o.glow);
@@ -1879,6 +1903,7 @@ impl Inner {
             self.timer.end(&mut enc, Role::Preview, meta);
             let submit = Instant::now();
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+            self.staged.flush(&self.queue, &self.arena);
             self.queue.submit([enc.finish()]);
             self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
             self.timer.submitted(&self.queue, Role::Preview, meta);
@@ -1910,6 +1935,7 @@ impl Inner {
         }
         self.timer.end(&mut enc, Role::Preview, meta);
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+        self.staged.flush(&self.queue, &self.arena);
         self.queue.submit([enc.finish()]);
         self.timer.submitted(&self.queue, Role::Preview, meta);
         self.last_stages.replayed = true;
@@ -1982,25 +2008,9 @@ impl Inner {
         debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
         self.slot += 1;
         let u = UniformData { u: [sw, sh, tw, th, 0, 0, 0, 0], ..Default::default() };
-        self.queue.write_buffer(&self.arena, offset, &u.bytes());
+        self.stage(offset, &u.bytes());
         let dummy = self.dummy.view.clone();
-        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.c.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.arena,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(128),
-                    }),
-                },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(src) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&dummy) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&dummy) },
-            ],
-        });
+        let bg = self.bind_main(src, &dummy, &dummy);
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2044,6 +2054,7 @@ impl Inner {
 
         // --- resolve: presence/size ---
         self.upload.begin_frame();
+        self.binds.begin_frame();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -2068,6 +2079,7 @@ impl Inner {
                 mapped_at_creation: false,
             });
             self.arena_slots = slots;
+            self.binds.clear();
         }
         self.slot = 0;
 
@@ -2122,6 +2134,7 @@ impl Inner {
             wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+        self.staged.flush(&self.queue, &self.arena);
         let sub = self.queue.submit([enc.finish()]);
         if let Some(p) = self.piece.take() {
             p.end(&self.device, &self.queue, sub, self.surface);
@@ -2285,11 +2298,73 @@ impl Inner {
         }
     }
 
+    /// A pass's uniform bytes at arena `offset`: staged for the next submission (row 138).
+    fn stage(&mut self, offset: u64, data: &[u8]) {
+        if self.per_pass {
+            self.queue.write_buffer(&self.arena, offset, data);
+        } else {
+            self.staged.put(offset, data);
+        }
+    }
+
+    /// An ordinary pass's bind group over three textures, kept across frames (row 138).
+    fn bind_main(&mut self, t0: &wgpu::TextureView, t1: &wgpu::TextureView, t2: &wgpu::TextureView) -> wgpu::BindGroup {
+        let (device, layout, arena) = (&self.device, &self.c.layout, &self.arena);
+        if self.per_pass {
+            self.binds.clear();
+        }
+        self.binds.get(crate::binds::Layout::Main, [Some(t0), Some(t1), Some(t2)], || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: arena,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(128),
+                        }),
+                    },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(t1) },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(t2) },
+                ],
+            })
+        })
+    }
+
+    /// The geometry pass's (and a point-wise run's) bind group over its input, kept across frames.
+    fn bind_geom(&mut self, t0: &wgpu::TextureView) -> wgpu::BindGroup {
+        let (device, layout, arena) = (&self.device, &self.c.geom_layout, &self.arena);
+        if self.per_pass {
+            self.binds.clear();
+        }
+        self.binds.get(crate::binds::Layout::Geom, [Some(t0), None, None], || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: arena,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
+                        }),
+                    },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
+                ],
+            })
+        })
+    }
+
     /// Before a pass of a frame being cut into pieces (gpu-arbiter D4): when the pass's measured
     /// device time would take the piece past its ring's bound (or a higher class waits), the
     /// encoder so far is submitted as a piece, waited for, and the frame goes on in a new one. The
     /// passes, their order and their targets do not change; every uniform slot is the frame's own,
-    /// so a write after the cut never lands under an earlier piece.
+    /// so a write after the cut never lands under an earlier piece. The staged uniforms of the
+    /// piece go into the arena right before it is submitted.
     fn cut_point(&mut self, enc: &mut wgpu::CommandEncoder, label: PassLabel) {
         let Some(p) = self.piece.as_mut() else { return };
         let next = self.timer.predict(label);
@@ -2299,8 +2374,9 @@ impl Inner {
                 self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") }),
             );
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+            self.staged.flush(&self.queue, &self.arena);
             let sub = self.queue.submit([full.finish()]);
-            p.cut(&self.device, &self.queue, sub, self.surface);
+            p.cut(&self.device, &self.queue, sub, self.surface, next);
         }
         p.add(next);
     }
@@ -2901,22 +2977,8 @@ impl Inner {
         let offset = self.slot as u64 * SLOT;
         debug_assert!(self.slot + GEOM_SLOT_UNITS <= self.arena_slots, "uniform arena overflow (run)");
         self.slot += GEOM_SLOT_UNITS;
-        self.queue.write_buffer(&self.arena, offset, u);
-        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.c.geom_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.arena,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
-            ],
-        });
+        self.stage(offset, u);
+        let bg = self.bind_geom(t0);
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2955,32 +3017,15 @@ impl Inner {
             "uniform arena overflow (geom)"
         );
         self.slot += GEOM_SLOT_UNITS;
-        self.queue.write_buffer(&self.arena, offset, &u.bytes());
+        self.stage(offset, &u.bytes());
         // a shape without a warm pipeline of its own runs the interpreter, the same bytes (t1766),
         // while the device's worker compiles it (pipeline-prewarm D4): a frame never compiles
         let shaped = if self.geom_interpret { None } else { self.c.shape(u.h) };
         if shaped.is_none() {
             self.c.drawn(Slot::Geom);
         }
+        let bg = self.bind_geom(t0);
         let pipe = shaped.as_ref().unwrap_or(&self.c.geom_pipe);
-        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.c.geom_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.arena,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(t0),
-                },
-            ],
-        });
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3037,33 +3082,8 @@ impl Inner {
         let offset = self.slot as u64 * SLOT;
         debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
         self.slot += 1;
-        self.queue.write_buffer(&self.arena, offset, &u.bytes());
-        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &self.c.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.arena,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(128),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(t0),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(t1),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(t2),
-                },
-            ],
-        });
+        self.stage(offset, &u.bytes());
+        let bg = self.bind_main(t0, t1, t2);
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

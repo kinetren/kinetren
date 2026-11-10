@@ -1,3 +1,9 @@
+# A runaway test dies (owner, 2026-11-10: a kt-time test binary left by an executor burned a core for
+# 21 hours — "ОПЯТЬ нету никакой защиты от долгих вычислений"). A test's own waits end at
+# kt_time::test_deadline() (ten minutes); past fifteen nextest kills it and the run reports it.
+[profile.default]
+slow-timeout = { period = "60s", terminate-after = 15 }
+
 # The long tests start first (change ci-speedup, D5): the run does not end on one long test while
 # the other cores idle. Measured in the CI run of 9e1f1a45, the longest on either runner; every
 # test named here exists (dist-check.py, t1422). The default profile, so finish.sh and CI get it
@@ -9,3 +15,10 @@ priority = 20
 [[profile.default.overrides]]
 filter = 'test(t918_) | test(t923_) | test(t290_) | test(t1185_) | test(t947_) | test(t1113_)'
 priority = 10
+
+# A ratio of device time on a software device is a ratio of processor time: under a full parallel
+# run t2311 read 0.63 where alone it reads 0.33 (finish.sh 2026-11-10). It runs with the machine.
+[[profile.default.overrides]]
+filter = 'test(t2311_)'
+threads-required = 'num-cpus'
+

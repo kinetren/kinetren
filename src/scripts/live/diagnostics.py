@@ -56,6 +56,20 @@ def main(out):
         )
         app.step("diagnostics-open", "Diagnostics: Performance rows, occupancy, three graphs, the log")
 
+        # --- 2b. the memory numbers say what they count (frames-cache-growth, found-defects 397):
+        # the status bar's frames against their bound and the program's memory, each with its hint;
+        # Diagnostics names the whole process under the caches' line ----------------------------
+        app.expect(app.has_probe("diag.memory"), "Diagnostics names the program's memory, the caches and the rest")
+        app.expect(app.has_probe("status.frames") and app.has_probe("status.memory"),
+                   "the status bar shows the frames against their bound and the program's memory")
+        before = app.geom().get("status", "")
+        app.hover_probe("status.frames", "the status bar's frames")
+        app.until(lambda: app.geom().get("status", "") != before)
+        said = app.geom().get("status", "")
+        app.expect(bool(said) and said != before, f"hovering the frames says what they count: {said!r}")
+        app.step("memory-numbers", "the status bar: frames held/bound and the program's memory; "
+                 "Diagnostics: the caches' line and the program's memory with the rest named")
+
         # --- 3. playback runs the graphs --------------------------------------------------------
         app.key("space")
         # three seconds of playback: the sampler pushes six samples into every graph

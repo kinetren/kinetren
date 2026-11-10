@@ -109,10 +109,10 @@ fn play(
     (out, replayed)
 }
 
-/// A seek: the player resets the FX state and tells the store.
-fn seek(mix: &mut MixPlay, fx: &mut FxStateStore) {
+/// A seek to `head`: the player resets the FX state and tells the store.
+fn seek(mix: &mut MixPlay, r: &AudioRenderer, fx: &mut FxStateStore, head: i64) {
     fx.reset_all();
-    mix.fx_reset();
+    mix.fx_reset(r, head);
 }
 
 /// t1930: a covered range plays again with no source read and no effect run, and it sounds as
@@ -128,7 +128,7 @@ fn t1930_covered_range_replays_without_work() {
     let (first, replayed) = play(&mut mix, &r, &mut f, &mut fx, None, 0, 60);
     assert_eq!(replayed, 0, "nothing was held the first time");
     assert!(f.reads > 0);
-    seek(&mut mix, &mut fx);
+    seek(&mut mix, &r, &mut fx, 0);
     let reads = f.reads;
     let (again, replayed) = play(&mut mix, &r, &mut f, &mut fx, None, 0, 60);
     assert_eq!(replayed, 60, "every chunk of the covered range came from the store");
@@ -178,15 +178,16 @@ fn t1931_parameter_change_drops_only_its_range() {
     // what lies past B's tail, with nothing sounding, is held still
     assert!(after.iter().any(|r| r.end == chunks as i64 * BURST) || b_end >= chunks as i64 * BURST);
     // a second play renders B's range live and replays the rest
-    seek(&mut mix, &mut fx);
+    seek(&mut mix, &r, &mut fx, 0);
     let mut fx2 = FxStateStore::new();
     r2.sync_fx(&mut fx2);
     let (_, replayed) = play(&mut mix, &r2, &mut f, &mut fx2, None, 0, chunks);
     assert!(replayed > 0 && replayed < chunks, "replayed {replayed} of {chunks}");
 }
 
-/// t1932: where the store ends the play continues exactly as a seek to that chunk does — the
-/// chunks after it equal a live render that started there, byte for byte.
+/// t1932: where the store ends the play goes on as a continuous play (kept-mix-settle): the effects
+/// are brought back by a discarded play of their settle length before the chunk, so the chunks
+/// after it equal a live render that started that far before, byte for byte.
 #[test]
 fn t1932_kept_to_live_boundary_is_a_seek_byte_for_byte() {
     let p = project(vec![
@@ -200,16 +201,26 @@ fn t1932_kept_to_live_boundary_is_a_seek_byte_for_byte() {
     let mut mix = MixPlay::default();
     let kept = 40usize;
     let (first, _) = play(&mut mix, &r, &mut f, &mut fx, None, 0, kept);
-    seek(&mut mix, &mut fx);
+    seek(&mut mix, &r, &mut fx, 0);
     let (out, replayed) = play(&mut mix, &r, &mut f, &mut fx, None, 0, kept + 40);
     assert_eq!(replayed, kept);
     let cut = kept * AUDIO_BURST_FRAMES * CH;
     assert!(out[..cut] == first[..], "the kept part is the first recording");
+    let h = kept as i64 * BURST;
+    let settle = r.settle_frames(h..h + BURST);
+    assert!(settle > 0 && settle < h, "the chains keep a state shorter than the kept run: {settle}");
+    let from = h - (settle + BURST - 1) / BURST * BURST;
     let mut fx2 = FxStateStore::new();
     r.sync_fx(&mut fx2);
-    let mut live = vec![0f32; out.len() - cut];
-    r.render_frames_with(&mut Counting::new(), &mut fx2, kept as i64 * BURST, &mut live);
-    assert!(out[cut..] == live[..], "after the kept part the play is a seek to its end");
+    let mut live = vec![0f32; (out.len() - cut) + (h - from) as usize * CH];
+    let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * CH];
+    let mut f2 = Counting::new();
+    for (i, o) in live.chunks_exact_mut(AUDIO_BURST_FRAMES * CH).enumerate() {
+        r.render_frames_with(&mut f2, &mut fx2, from + i as i64 * BURST, &mut chunk);
+        o.copy_from_slice(&chunk);
+    }
+    let warm = (h - from) as usize * CH;
+    assert!(out[cut..] == live[warm..], "after the kept part the play is a play from its settle length before");
     // the junction is no click: its step is within the material's own
     let step = |s: &[f32], i: usize| (s[i] - s[i - CH]).abs();
     let own = (CH..out.len()).filter(|i| *i != cut).map(|i| step(&out, i)).fold(0f32, f32::max);

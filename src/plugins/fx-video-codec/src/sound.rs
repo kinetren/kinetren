@@ -133,6 +133,10 @@ pub struct MoshSound {
     /// placement (stream-layout-per-build): a codec frame used to build it, and walk a gate's run
     /// back reading the curves at every position, per 1024 samples.
     plan: OnceLock<Arc<Plan>>,
+    /// A frame's received bits and decoded samples, kept (local-cost-queue, row 314: a packet clone,
+    /// a payload clone and two vectors per 1024-sample frame). Scratch: a clone starts its own.
+    bits: Vec<bool>,
+    pcm: [Vec<f64>; 2],
 }
 
 impl Clone for MoshSound {
@@ -152,6 +156,8 @@ impl Clone for MoshSound {
             packets: self.packets.clone(),
             deleted: self.deleted.clone(),
             plan: self.plan.clone(),
+            bits: Vec::new(),
+            pcm: [vec![0.0; N], vec![0.0; N]],
         }
     }
 }
@@ -175,6 +181,8 @@ impl MoshSound {
             packets: VecDeque::new(),
             deleted: VecDeque::new(),
             plan: OnceLock::new(),
+            bits: Vec::new(),
+            pcm: [vec![0.0; N], vec![0.0; N]],
         }
     }
 
@@ -264,21 +272,23 @@ impl MoshSound {
         }
         let seed = self.v[crate::rows::SEED] as u32;
         let src = fs.repeat.unwrap_or(n);
-        let mut out = [vec![0f64; N], vec![0f64; N]];
-        for (c, o) in out.iter_mut().enumerate() {
-            let found = self.packets.iter().rev().find(|(m, _)| *m == src).map(|(_, p)| p[c].clone());
+        for c in 0..2 {
+            let found = self.packets.iter().rposition(|(m, _)| *m == src);
             let mut dmg = Damage { residual: fs.residual, freeze: fs.freeze, ..Default::default() };
-            let pkt = match found {
-                Some(p) => p,
+            let at = match found {
+                Some(i) => i,
                 None => {
                     dmg.lost = true;
-                    self.packets.back().map(|(_, p)| p[c].clone()).expect("this frame's packet")
+                    self.packets.len().checked_sub(1).expect("this frame's packet")
                 }
             };
+            let pkt = &self.packets[at].1[c];
             // the packet slots the frame's main data lives in: deleted → lost; hit by `loss` → bits flipped
             let slot = self.enc[c].slot.max(1);
             let (b0, b1) = (pkt.begin, pkt.begin + pkt.payload.v.len());
-            let mut bits = pkt.payload.v.clone();
+            let bits = &mut self.bits;
+            bits.clear();
+            bits.extend_from_slice(&pkt.payload.v);
             for j in (b0 / slot)..=(b1.saturating_sub(1) / slot) {
                 let j = j as i64;
                 // the stream's packet j is audio frame j of this channel's stream counted from its
@@ -302,10 +312,10 @@ impl MoshSound {
                 dmg.lost = true;
                 dmg.no_reset = true;
             }
-            self.dec[c].decode(&pkt, &bits, dmg, bw, predict, n as u64, o);
+            self.dec[c].decode(pkt, bits, dmg, bw, predict, n as u64, &mut self.pcm[c]);
         }
         // the decoded frame n completes the samples [(n−1)N, nN)
-        for (c, o) in out.iter().enumerate() {
+        for (c, o) in self.pcm.iter().enumerate() {
             // the decoder's PCM saturates at full scale
             self.out[c].extend(o.iter().map(|x| x.clamp(-1.0, 1.0) as f32));
         }

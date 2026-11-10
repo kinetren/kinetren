@@ -12,6 +12,7 @@
 pub mod codec;
 pub mod mosh;
 pub mod sound;
+pub mod walk;
 
 use std::sync::Arc;
 
@@ -268,6 +269,10 @@ impl StreamKernel for Datamosh {
     }
     fn held(&self, p: &[f64], lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
         mosh::held(mosh::Rows::from(p), lay, n, memo)
+    }
+    fn checkpoints(&self, p: &[f64], lay: &dyn StreamLayout, n: i64) -> usize {
+        let anchor = mosh::plan(mosh::Rows::from(p), lay, n).chain(n).first().map_or(n, |c| c.0);
+        walk::checkpoints(anchor, n)
     }
     fn key(&self, p: &[f64], lay: &dyn StreamLayout, n: i64) -> Option<u64> {
         // with no device `render` passes the source through under its own key

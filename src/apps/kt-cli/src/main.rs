@@ -27,6 +27,7 @@ mod editcost;
 mod firstframe;
 mod fxcost;
 mod fusecost;
+mod passcost;
 mod gpushare;
 mod showcase;
 mod streamcost;
@@ -1417,6 +1418,7 @@ fn run(args: &[String]) -> i32 {
         kt_plugin_api::compute::install(streamcost::open);
     }
     kt_engine::video::set_memory_probe(kt_gpu::memory::available);
+    kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
     // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
     kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
@@ -1542,6 +1544,7 @@ fn run(args: &[String]) -> i32 {
         Some("first-frame") => firstframe::run(args),
         // a chain of point-wise effects fused against unfused (fused-pointwise-runs)
         Some("fuse-cost") => fusecost::run(args),
+        Some("pass-cost") => passcost::run(args),
         Some("gpu-share") => gpushare::run(args),
         Some("trace") => trace_query::run(args),
         // what one instance of every audio effect costs against real time (audio-fx-cost)
@@ -1720,7 +1723,7 @@ fn run(args: &[String]) -> i32 {
         // What a stream stage costs over a range, lap after lap (stream-layout-per-build)
         Some("stream-cost") => {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3)) else {
-                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop]");
+                eprintln!("usage: kt-cli stream-cost <in.kt> <from_s> <to_s> [--laps N] [--size WxH] [--loop] [--drop-lru]");
                 return 2;
             };
             let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
@@ -1737,7 +1740,7 @@ fn run(args: &[String]) -> i32 {
             });
             let laps = opt("--laps").and_then(|s| s.parse::<usize>().ok()).unwrap_or(2);
             let sized = args.iter().any(|a| a == "--loop");
-            match streamcost::run(&project, input, from, to, laps, size, sized) {
+            match streamcost::run(&project, input, from, to, laps, size, sized, args.iter().any(|a| a == "--drop-lru")) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");

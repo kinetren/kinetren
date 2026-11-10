@@ -117,15 +117,41 @@ pub fn run(args: &[String]) -> i32 {
     0
 }
 
-/// The memory ledger over the run (memory-ledger): every sizing with the grants it changed, then
-/// each tenant's last cap and bytes.
+/// The memory ledger over the run (memory-ledger): every sizing with the grants it changed, the
+/// preview's decoded-frame cache sizings and the process's memory a busy second (frames-cache-growth),
+/// then each tenant's last cap and bytes, the frames cache's evictions a second and the peak of the
+/// process.
 fn memory(run: &Run) -> String {
     use kt_time::mem::Tenant;
     let mb = |b: u64| format!("{:.0} MB", b as f64 / (1u64 << 20) as f64);
     let mut o = String::new();
     let mut last: std::collections::BTreeMap<u32, (u64, u64, u64)> = Default::default();
+    // (peak resident, its moment, the ledger's sum then)
+    let mut peak: Option<(u64, u64, u64)> = None;
+    let mut used: std::collections::BTreeMap<u32, (u64, u64)> = Default::default();
+    let mut evicts: std::collections::BTreeMap<u64, u64> = Default::default();
     for r in &run.recs {
         match kind(r) {
+            Some(Ev::CacheEvict) => *evicts.entry(r.t / 1_000_000_000).or_default() += 1,
+            Some(Ev::FramesCap) => {
+                let _ = writeln!(
+                    o,
+                    "{:>9}    frames cache {} lines: cap {}, window {}, loop {}",
+                    s(r.t),
+                    r.aux,
+                    mb(r.a),
+                    mb(r.b),
+                    if r.c == 0 { "none".to_string() } else { mb(r.c) }
+                );
+            }
+            Some(Ev::MemSample) => {
+                if r.a > 0 && peak.is_none_or(|p| r.a > p.0) {
+                    peak = Some((r.a, r.t, r.b));
+                }
+            }
+            Some(Ev::MemUsed) => {
+                used.insert(r.aux, (r.a, r.b));
+            }
             Some(Ev::MemBudget) => {
                 let _ = writeln!(
                     o,
@@ -153,13 +179,35 @@ fn memory(run: &Run) -> String {
             _ => {}
         }
     }
-    if o.is_empty() {
+    if o.is_empty() && peak.is_none() && used.is_empty() {
         return "no memory ledger records in this run\n".into();
     }
     let _ = writeln!(o, "last:");
     for (t, (want, cap, held)) in &last {
         let name = Tenant::from_u32(*t).map_or("?", Tenant::name);
         let _ = writeln!(o, "  {name:<9} cap {}, holds {}, wants {}", mb(*cap), mb(*held), mb(*want));
+    }
+    if !used.is_empty() {
+        let _ = writeln!(o, "bytes at the last busy second:");
+        for (t, (held, cap)) in &used {
+            let name = Tenant::from_u32(*t).map_or("?", Tenant::name);
+            let _ = writeln!(o, "  {name:<9} holds {} of cap {}", mb(*held), mb(*cap));
+        }
+    }
+    if let Some((rss, t, caches)) = peak {
+        let _ = writeln!(
+            o,
+            "process peak {} at {}: the caches {}, the rest {} (decoders, driver, interface)",
+            mb(rss),
+            s(t),
+            mb(caches),
+            mb(rss.saturating_sub(caches))
+        );
+    }
+    if !evicts.is_empty() {
+        let n: u64 = evicts.values().sum();
+        let worst = evicts.values().max().copied().unwrap_or(0);
+        let _ = writeln!(o, "frames cache evictions: {n} in {} seconds with any, at most {worst} in one", evicts.len());
     }
     o
 }
@@ -262,6 +310,45 @@ pub fn gpu(run: &Run) -> String {
     }
     for (c, (n, dev)) in &jobs {
         let _ = writeln!(o, "compute jobs {:<10} {n:>6} ({:.1}/s), device {}", class_name(*c), *n as f64 / span, ms(*dev));
+    }
+    // when the jobs ran on the device, on the CPU clock (found-defects 398): the wait before the
+    // device started a job, its run, and the wait for its buffers after it ended
+    // class → (start delays, runs, waits after the end, jobs with no timestamps, the worst error µs)
+    type Starts = (Vec<u64>, Vec<u64>, Vec<u64>, u64, u32);
+    let mut starts: BTreeMap<u64, Starts> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
+        let e = starts.entry(r.id).or_default();
+        if r.aux >= u32::MAX - 1 || r.b == 0 {
+            e.3 += 1;
+            continue;
+        }
+        e.0.push(r.b.saturating_sub(r.a));
+        e.1.push(r.c.saturating_sub(r.b));
+        e.2.push(r.t.saturating_sub(r.c));
+        e.4 = e.4.max(r.aux);
+    }
+    for (c, (late, run_, signal, unknown, err)) in &mut starts {
+        let q = |v: &mut Vec<u64>, f: f64| {
+            v.sort_unstable();
+            v.get(((v.len().max(1) - 1) as f64 * f) as usize).copied().unwrap_or(0)
+        };
+        let n = late.len();
+        if n > 0 {
+            let _ = writeln!(
+                o,
+                "  {:<10} {n:>6} on the device: start after submit p50 {} p95 {}, run p50 {}, buffers after end p50 {} p95 {} (clock error ≤ {} µs)",
+                class_name(*c),
+                ms(q(late, 0.5)),
+                ms(q(late, 0.95)),
+                ms(q(run_, 0.5)),
+                ms(q(signal, 0.5)),
+                ms(q(signal, 0.95)),
+                err
+            );
+        }
+        if *unknown > 0 {
+            let _ = writeln!(o, "  {:<10} {unknown:>6} with no device timestamps", class_name(*c));
+        }
     }
     let submits: u64 = run
         .recs
@@ -807,6 +894,20 @@ pub fn lap_bounds(run: &Run) -> Vec<(u64, u64, u64, u64)> {
     out
 }
 
+/// The stream history positions the walks of `[a, b)` computed (`stream_walk`: a batch's first
+/// position and its count) and how many of them were distinct.
+pub fn walked_in(run: &Run, a: u64, b: u64) -> (u64, usize) {
+    let mut all = 0;
+    let mut seen = HashSet::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::StreamWalk) && r.t >= a && r.t < b) {
+        all += r.b;
+        for k in 0..r.b {
+            seen.insert(r.a.wrapping_add(k));
+        }
+    }
+    (all, seen.len())
+}
+
 pub fn laps(run: &Run) -> String {
     let all = lives(run);
     let bounds = lap_bounds(run);
@@ -836,12 +937,18 @@ pub fn laps(run: &Run) -> String {
         let kept = frames.iter().filter(|l| l.exec.is_some_and(|e| e.aux & trace::exec::MEMO_HIT != 0)).count();
         let made = frames.iter().filter(|l| l.exec.is_some_and(|e| e.aux & trace::exec::MEMO_HIT == 0)).count();
         let inc = frames.iter().filter(|l| l.done.is_some_and(|d| d.aux == 0)).count();
-        let mix: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::MixChunk) && r.t >= a && r.t < b).collect();
+        let lap_recs = run.recs.iter().filter(|r| is(r, Ev::MixChunk) && r.t >= a && r.t < b);
+        // a warm-up after an effects reset is not a chunk of its own (kept-mix-settle)
+        let (warms, mix): (Vec<&Rec>, Vec<&Rec>) = lap_recs.partition(|r| r.aux == trace::mix::WARM);
         let rep = mix.iter().filter(|r| r.aux == trace::mix::REPLAY).count();
         let mut why: BTreeMap<&str, usize> = BTreeMap::new();
+        if !warms.is_empty() {
+            why.insert("effects warmed after the store", warms.len());
+        }
         for r in mix.iter().filter(|r| r.aux != trace::mix::REPLAY) {
             let w = match (r.c & 0xff, r.aux) {
                 (_, trace::mix::NOT_CLEAN) => "not clean (starved/pre-roll)",
+                (_, trace::mix::UNSETTLED) => "not kept: effects still settling",
                 (1, _) if r.c >> 8 == 1 => "lap context never kept",
                 (1, _) => "never kept/evicted",
                 (2, _) => "scene changed",
@@ -851,9 +958,13 @@ pub fn laps(run: &Run) -> String {
             *why.entry(w).or_default() += 1;
         }
         let why = why.iter().map(|(k, v)| format!("{k} ×{v}")).collect::<Vec<_>>().join(", ");
+        // the stream history walked in the lap: positions computed and how many of them distinct
+        // (stream-history-on-device, found-defects 394: his run computed 1413 for 618)
+        let (walked, distinct) = walked_in(run, a, b);
+        let walk = if walked > 0 { format!("  history: {walked} positions walked, {distinct} distinct;") } else { String::new() };
         let _ = writeln!(
             o,
-            "{:>4} {:>9} {:>7} {:>6} {:>6} {:>6} {:>6}  {rep}/{} {why}",
+            "{:>4} {:>9} {:>7} {:>6} {:>6} {:>6} {:>6} {walk} {rep}/{} {why}",
             n,
             s(a),
             format!("{:.2}s", (b - a) as f64 / NS),
@@ -1029,6 +1140,9 @@ fn play_name(aux: u32) -> &'static str {
         p::REPEATS => "repeats",
         p::RATE => "rate",
         p::START_HOLD => "start_hold",
+        p::DEVICE_OPEN => "device_open",
+        p::DEVICE_CLOSE => "device_close",
+        p::DEVICE_ERROR => "device_error",
         _ => "?",
     }
 }
