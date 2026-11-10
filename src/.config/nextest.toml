@@ -15,3 +15,10 @@ priority = 20
 [[profile.default.overrides]]
 filter = 'test(t918_) | test(t923_) | test(t290_) | test(t1185_) | test(t947_) | test(t1113_)'
 priority = 10
+
+# A ratio of device time on a software device is a ratio of processor time: under a full parallel
+# run t2311 read 0.63 where alone it reads 0.33 (finish.sh 2026-11-10). It runs with the machine.
+[[profile.default.overrides]]
+filter = 'test(t2311_)'
+threads-required = 'num-cpus'
+
