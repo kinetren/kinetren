@@ -7737,13 +7737,18 @@ impl KtApp {
         let s = self.model.project().settings.clone();
         let rows: [(String, String); 5] = [
             (
-                // the decoded frames against their bound now (frames-cache-growth): audio/video
-                // here before, read as used/limit
-                crate::tf!(
-                    k::perf::CACHE_MB,
-                    format!("{}", self.player.cache.video_bytes() >> 20),
-                    format!("{}", self.player.cache.max_video_bytes() >> 20)
-                ),
+                // the whole program and what no cache counts (frames-cache-growth, found-defects
+                // 397): "Cache A/V" here was audio/video, read as used/limit, and the decoded
+                // frames against their bound are the occupancy line under the rows
+                {
+                    let caches: u64 = kt_time::mem::snapshot().used.iter().sum();
+                    let rss = self.perf.resident();
+                    crate::tf!(
+                        k::perf::CACHE_MB,
+                        rss.map_or("?".to_string(), |r| format!("{}", r >> 20)),
+                        rss.map_or("?".to_string(), |r| format!("{}", r.saturating_sub(caches) >> 20))
+                    )
+                },
                 // WHAT THESE TWO NUMBERS ARE (R.43, item 289): the left — misses of the
                 // RENDERER (the cache did not give a burst), the right — starvation of the
                 // CALLBACK (the ring is empty). The user read them as
@@ -7791,16 +7796,24 @@ impl KtApp {
         // ui.columns divides the AVAILABLE width in half and requires no minimum —
         // Grid with Extend inflated the panel by content and ate the preview
         // (a regression of item 3 of round 7.1; the same defect that item 18 of round 6 fixed)
+        let mut program: Option<egui::Response> = None;
         ui.columns(2, |cols| {
             for c in cols.iter_mut() {
                 c.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
                 c.spacing_mut().item_spacing.y = 1.0;
             }
-            for (a, b) in rows {
-                cols[0].weak(a);
+            for (i, (a, b)) in rows.into_iter().enumerate() {
+                let r = cols[0].weak(a);
+                if i == 0 {
+                    program = Some(r);
+                }
                 cols[1].weak(b);
             }
         });
+        if let Some(r) = program {
+            crate::widgets::field_probe::note("diag.memory", r.rect);
+            self.hint(r, tr(k::perf::PROGRAM_HINT));
+        }
         if let Some(g) = &self.gpu_info {
             ui.weak(format!("GPU: {g}"));
         }
@@ -7938,12 +7951,12 @@ impl KtApp {
             ));
             crate::widgets::field_probe::note("status.frames", frames.rect);
             self.hint(frames, tr(k::perf::CACHE_HINT));
-            if let Some(rss) = self.perf.resident() {
-                ui.separator();
-                let mem = ui.weak(crate::tf!(k::perf::MEM_SHORT, format!("{}", rss >> 20)));
-                crate::widgets::field_probe::note("status.memory", mem.rect);
-                self.hint(mem, tr(k::perf::CACHE_HINT));
-            }
+            // always there ("?" while unknown), so the bar's items never shift when the probe answers
+            ui.separator();
+            let rss = self.perf.resident().map_or("?".to_string(), |r| format!("{}", r >> 20));
+            let mem = ui.weak(crate::tf!(k::perf::MEM_SHORT, rss));
+            crate::widgets::field_probe::note("status.memory", mem.rect);
+            self.hint(mem, tr(k::perf::CACHE_HINT));
             ui.separator();
             // callback starvation — these are FRAMES that were not there at the output;
             // in milliseconds one can see how much silence accumulated (R.43 item 290)
@@ -9630,6 +9643,7 @@ pub struct PerfState {
     play: Option<(std::time::Instant, [u64; 5])>,
     /// What the instruments above the graphs took last frame (the window's split, D5).
     diag_used: f32,
+
     /// The process's resident memory and when it was read (frames-cache-growth): the status bar and
     /// Diagnostics read it at most once a second, and only in frames that are drawn anyway.
     resident: (Option<std::time::Instant>, Option<u64>),
@@ -10426,7 +10440,9 @@ impl KtApp {
                             .map(|t| m.used(*t))
                             .sum();
                         let room = Tenant::ALL.iter().map(|t| m.base(*t)).sum::<u64>() + m.budget;
-                        ui.weak(crate::tf!(
+                        // one line whatever the numbers: wrapped, a figure gaining a digit made the
+                        // window grow by itself (t918); truncated, the whole text is on hover
+                        ui.add(egui::Label::new(egui::RichText::new(crate::tf!(
                             k::perf::MEMORY_LEDGER,
                             mb(m.used(Tenant::Kept)),
                             mb(m.used(Tenant::History)),
@@ -10434,19 +10450,10 @@ impl KtApp {
                             mb(m.used(Tenant::Mix)),
                             mb(device),
                             mb(room)
-                        ));
+                        )).weak()).truncate());
                         // the whole process (frames-cache-growth, found-defects 397): what the caches
                         // hold is a part of it, and the rest has no counter of its own — it is named
-                        if let Some(rss) = self.perf.resident() {
-                            let caches: u64 = Tenant::ALL.iter().map(|t| m.used(*t)).sum();
-                            let line = ui.weak(crate::tf!(
-                                k::perf::MEMORY_PROCESS,
-                                mb(rss),
-                                mb(caches),
-                                mb(rss.saturating_sub(caches))
-                            ));
-                            crate::widgets::field_probe::note("diag.memory", line.rect);
-                        }
+
                     }
                     ui.add_space(6.0);
                     // the three graphs share what the scrolling part has left: a larger window

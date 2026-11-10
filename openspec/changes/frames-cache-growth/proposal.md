@@ -31,10 +31,11 @@ The owner's run of stage 9 (`kkt-26.11.10` J4, his trace `fails/26.11.10/trace`)
 - **What reads the budget reads the cap**: the look-ahead's half, the decoder's span room and the
   stream pacing's quarter follow the cap as it moves (the pacing through a shared value read at use,
   the renderers being shared builds).
-- **The numbers say what they count**: the status bar reads "frames V / cap MB · audio A MB · program
-  P MB", Diagnostics shows the decoded frames against their cap now, and one more line: the program's
-  resident memory, what the ledger's tenants hold of it, and the rest named as the decoders, the
-  graphics driver and the interface. Five catalogs.
+- **The numbers say what they count**: the status bar reads "frames: V/cap MB" and "memory: P MB"
+  with a hint; Diagnostics shows the decoded frames against their cap now, the caches' line with the
+  kept mix, and its first row "Program P MB · rest R" (the program's resident memory and what no cache
+  counts, the rest named by its hint as the decoders, the graphics driver and the interface). Five
+  catalogs.
 - **The trace carries memory**: `frames_cap` (the preview cache's cap, the window's and the loop's
   bytes, the quality), `mem_sample` (the process's resident memory, the ledger's sum, the memory
   available) and `mem_used` (a tenant's bytes and cap) — written once per busy second when a number

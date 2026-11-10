@@ -557,9 +557,9 @@ fn t2397_the_status_bar_says_frames_against_their_bound_and_the_program() {
     assert!(mb > 10, "the process holds more than the frames: {mem}");
 }
 
-/// t2398 (frames-cache-growth): Diagnostics names the whole process under the caches' line — its
-/// memory, what the ledger's tenants hold of it and the rest, named as the decoders, the driver and
-/// the interface.
+/// t2398 (frames-cache-growth): Diagnostics names the whole process — the program's memory and the
+/// rest no cache counts, in the first performance row, whose hint names the rest as the decoders, the
+/// driver and the interface — with the caches' line under the occupancy bar.
 #[test]
 fn t2398_diagnostics_names_the_whole_process() {
     kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
@@ -570,14 +570,20 @@ fn t2398_diagnostics_names_the_whole_process() {
     let win = diag_rect(&h).expect("the Diagnostics window is drawn");
     let inside = texts_in(&h, win);
     let line = |key| inside.iter().find(|(t, _)| t.starts_with(&head(key))).cloned();
+    let (text, row) = line(k::perf::CACHE_MB).unwrap_or_else(|| panic!("no program row: {inside:?}"));
     let (_, caches) = line(k::perf::MEMORY_LEDGER).expect("the caches' line");
-    let (text, process) = line(k::perf::MEMORY_PROCESS).unwrap_or_else(|| panic!("no process line: {inside:?}"));
-    assert!(process.top() > caches.top(), "the process line follows the caches': {caches:?} {process:?}");
+    assert!(caches.top() > row.top(), "the caches' line is under the rows: {row:?} {caches:?}");
     let nums: Vec<u64> = text
         .split(|c: char| !c.is_ascii_digit())
         .filter(|s| !s.is_empty())
         .filter_map(|s| s.parse().ok())
         .collect();
-    assert!(nums.len() >= 3, "the program, the caches and the rest: {text}");
-    assert_eq!(nums[0], nums[1] + nums[2], "the rest is the program less the caches: {text}");
+    assert_eq!(nums.len(), 2, "the program and the rest: {text}");
+    assert!(nums[0] > 10 && nums[1] <= nums[0], "the rest is a part of the program: {text}");
+    // the hint names the rest
+    let probe = crate::widgets::field_probe::rect_of("diag.memory").expect("the row publishes its place");
+    h.event(egui::Event::PointerMoved(probe.center()));
+    h.step();
+    h.step();
+    assert_eq!(h.state().status_line_shown.0, tr(k::perf::PROGRAM_HINT), "the hint names the rest");
 }

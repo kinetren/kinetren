@@ -91,13 +91,20 @@ bound, not an allocation — the prefetch skips kept moments, so the cache holds
   never what a person asks about; Diagnostics keeps them inside "frames" of the caches' line. Two items,
   not one long "video V / cap · audio A", because t128 holds the status bar's items to 190 points in
   every language.
-- Performance row: "Frames V/cap MB" (it was the same audio/video pair).
-- Occupancy: "Decoded frames: N% of their bound (V / cap MB)", in MiB like the rest.
-- The caches' line gains the kept mix ("Caches: kept · history · frames · mix · device · room").
-- A new line: "Program: P MB — caches C, the rest R (decoders, graphics driver, interface)". The rest
-  has no counter of its own (FFmpeg's pictures, the driver, egui, the code), so it is named, not
-  invented. On a discrete card the device tenants live in its memory, not in the process's; the line
-  then understates the rest (row 441).
+- Performance row: its first cell was "Cache A/V MB", the same audio/video pair. It now says "Program
+  P MB · rest R": the process's resident memory and what no ledger tenant counts, with a hint naming
+  the rest (the decoders inside FFmpeg, the graphics driver, the interface — they have no counter of
+  their own, so the rest is named, not invented). The decoded frames against their bound are the
+  occupancy line right under the rows: "Decoded frames: N% of their bound (V / cap MB)", in MiB.
+- The caches' line gains the kept mix ("Caches: kept · history · frames · mix · device · room") and is
+  one line whatever its numbers (truncated, the whole text on hover).
+- No line was added to Diagnostics: a "Program …" line under the caches' line made the instruments
+  one line taller than the window's fixed 720-point opening height, and the window then opened short
+  and grew by itself a frame later (t918, t1147 red). egui does not keep the size of the shell's
+  sizing pass for the first visible frame; fixing that is the shell's business (row 442), so the row
+  that duplicated the occupancy line took the program's figures instead.
+- On a discrete card the device tenants live in its memory, not the process's, and the rest then
+  reads low by them (row 441).
 - The process's memory is `kt_gpu::memory::resident` (Linux `/proc/self/status` VmRSS through a stack
   buffer, Windows `K32GetProcessMemoryInfo` from kernel32, so no new DLL in the imports), injected as
   `kt_time::mem::set_resident_probe`; the UI reads it at most once a second, only in frames drawn
@@ -116,7 +123,34 @@ evictions a second (t2396).
 
 ## Measured
 
-(filled at the end of the change)
+Release `kt-cli` of the base `28caeb4f` against this change, llvmpipe, each run under `MemoryMax=12G`
+(the cgroup is the "memory available" the ledger sees: about 5 GB of growth budget once the process
+holds 7 GB), pairs back to back while other sessions loaded the machine. `kt-cli --trace DIR preview …
+--loop S`, `trace memory`, `trace loop`, `/usr/bin/time -v`.
+
+**His region** (`problem_region_26_11_09`, 1280×720, 120 s of looping; 2113 MB of frames a lap at
+the codec and decode sizes it asks):
+
+| pair, new / base (load at start) | V-fps | frame evictions (worst second) | abandoned | last lap kept / shown | peak RSS |
+|---|---|---|---|---|---|
+| 1: new (18) / base (6–60) | 10.7 / 6.2 (and 10.1 at load 6) | 1312 (308) / 3651 (127) | 501 / 2433 | 179 / 219 — 65 / 112 | 7.3 / 5.3 GB |
+| 2: new (49) / base (10) | 4.3 / 6.0 | 1037 (439) / 3675 (114) | 272 / 2452 | 39 / 116 — 61 / 109 | 6.5 / 5.2 GB |
+| 3: new (16.5) / base (26.5) | 10.4 / 8.7 | 854 (334) / 3521 (134) | 137 / 2032 | 190 / 237 — 137 / 177 | 7.4 / 5.6 GB |
+
+The frames cap rises in the first lap (2.4–2.8 GB) and then settles at 2.0–2.2 GB as the kept
+composites take their grant first (they want 2.1 GB, the history 1.3 GB): inside 12 GB the budget is
+just short of the loop's 2.1 GB plus its window, so the evictions that stay fall in the first ~25
+seconds and in the run's last second (the loop cleared, the want drops to the window). V-fps on this
+region follows the load more than anything (the composites are the work, on llvmpipe sharing its cores
+with other sessions' builds); at comparable load (pair 3) the change shows 10.4 against 8.7.
+`trace memory` at the peak: the program 7.3 GB, the caches 6.4 GB, the rest 0.9 GB.
+
+**The heavy showcase** (`kt-cli showcase --heavy`, 20–30 s at 640×360, 90 s of looping; 2.3 GB of
+frames a lap): the base was OOM-killed under 12 GB both times, after 68 and 70 s, having evicted
+10 030 and 9 570 frames (up to 424 a second) and kept no composite in any lap (every frame was composed
+again, 600 a lap). The change ran to the end: frames cap 3.4 GB, no eviction while the loop played,
+from the fourth lap 185 of 190 moments shown from kept composites, V-fps 13.5, peak RSS 6.0 GB. At 1280×720
+both binaries were OOM-killed under 12 GB (memory-ledger saw the same for the base, row 334).
 
 ## The class walk: sizes derived from a constant instead of the ledger's grant
 
