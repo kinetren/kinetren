@@ -881,13 +881,8 @@ impl KtApp {
         if let Some(sink) = crate::tele_journal::flight_sink() {
             player.flight.set_sink(sink);
         }
-        let audio = match audio_out::start(ring, player.shared.clone(), player.transport.clone()) {
-            Ok(a) => Some(a),
-            Err(e) => {
-                eprintln!("audio output unavailable: {e}");
-                None
-            }
-        };
+        // the device opens on Play and closes at rest (kept-mix-settle D5); its errors reach the bell
+        let audio = Some(audio_out::start(ring, &player));
         (player, audio, missing, lens)
     }
 
@@ -1793,6 +1788,7 @@ impl KtApp {
         // the preview is detached is called twice, item 3 round 16).
         self.tick_space_boost(&ctx);
         self.post_stalls();
+        self.post_audio_errors();
         self.handle_drops(&ctx);
         self.hover_hint = None;
         self.no_resize_rects.clear();
@@ -3072,6 +3068,15 @@ impl KtApp {
         let fps = self.model.project().settings.fps;
         let at = crate::util::format_timecode(Tick::from_audio_frames(head), fps);
         self.warn(crate::tf!(k::msg::STALL_AT, at));
+    }
+
+    /// A sound device that did not open at Play, or failed while open, goes to the bell (its
+    /// thread opens it on Play, kept-mix-settle D5): the clock stands with no device, and the
+    /// stall alone would not say why.
+    fn post_audio_errors(&mut self) {
+        if let Some(e) = self.audio.as_ref().and_then(|a| a.take_error()) {
+            self.warn(crate::tf!(k::msg::AUDIO_DEVICE, e));
+        }
     }
 
     /// Start playback from the current position (resume semantics, item 15).

@@ -946,6 +946,7 @@ video_fx_gpu_lost = "GPU 视频渲染器已丢失（{0}）— 重启前没有画
 flight_saved = "播放日志已保存：{0}"
 moment_marked = "已在遥测日志中标记此刻：{0}"
 stall_at = "播放在 {0} 处卡住：画面或声音未及时到达"
+audio_device = "声音设备：{0}"
 
 media_missing = "{0}：素材不可用，显示占位画面（{1}）"
 media_missing_count = "不可用素材：{0}"

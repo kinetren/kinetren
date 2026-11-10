@@ -268,3 +268,18 @@ deltas (`push_snap`) carry counts, not a rate, so a long gap only sums them; the
 (`start_wait`) is reset on every start; prefetch's pass interval (`last_pass`, `stream_ahead_frames`)
 is read across a pause too, but it was before the park as well (paused passes that skip leave it
 unstamped) and its result is capped by the stream memo's room: noted, not changed here.
+
+## The sound device opens on Play (kept-mix-settle, 2026-11-10)
+
+- On a pause the open device woke cpal's ALSA worker ~24 and PipeWire's data loop ~48 times a second
+  handing out silence (found-defects 274); `pause()` did not stop them on this backend. The owner
+  decided to open on Play (kkt-26.11.10 J6). `cpal::Stream` is not `Send` and its open blocks, so a
+  thread of its own (`audio-output`) owns it and parks on the player's wake; the UI never opens it.
+- The ring's consumer lives in the callback while open and returns through the callback state's
+  `Drop` when cpal drops it: no lock in the callback. While closed the thread does a seek's flush.
+- A failed open is retried on the next Play by count (`AudioShared::plays`): a pause and a Play
+  between two looks woke the thread once and the retry never came (t2383 hung on it).
+- The rest before closing is 1 s: the device buffer has played out long before, and a Space released
+  and pressed again within it does not reopen. Measured here: an open 7–20 ms, the first callback
+  0.1–0.3 ms after; under a parallel live run at load ~30, 4.7 s and 23.4 s (found-defects 425).
+
