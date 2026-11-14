@@ -221,3 +221,36 @@ fn t2299_the_export_takes_the_room_and_gives_it_back() {
     kt_engine::video::size_stream_memo(1 << 20, None);
     kt_time::mem::set_probe(|| None);
 }
+
+static AVAIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// t2458 (class-walk-revision): a re-sizing after the memo filled keeps its cap — the want is measured
+/// against the ledger's room (available plus the growth already held), not the bare available. The
+/// memo's own growth took the machine's free memory, so a later sizing (a new checkpoint count, a stage
+/// of another size) asked less and the memo, the asker, evicted what it had just kept. The decoded-frame
+/// cache's loop count stopped at the same bare available (`size_frames_cache`).
+#[test]
+fn t2458_a_resizing_after_the_memo_filled_keeps_its_cap() {
+    let _g = ONE.lock().unwrap_or_else(|p| p.into_inner());
+    use std::sync::atomic::Ordering;
+    kt_time::mem::set_probe(|| Some(AVAIL.load(Ordering::Relaxed)));
+    let base = kt_engine::video::STREAM_MEMO_BASE;
+    // a machine with just room for the loop and one checkpoint more: a quarter of it is the clamp
+    let per = 1usize << 20;
+    let want = base + per * (400 + 400 / 8 + 2 + 2);
+    let total = 4 * (want as u64 + (16 << 20));
+    AVAIL.store(total, Ordering::Relaxed);
+    let cap = kt_engine::video::size_stream_memo_walk(per, Some(400), 0);
+    assert_eq!(cap, base + per * (400 + 400 / 8 + 2), "scene guard: the memo is granted its loop ({} MB)", cap >> 20);
+    // the memo fills to its cap, and the machine has that much less free
+    let memo = kt_engine::video::stream_memo();
+    memo.account().set(cap as u64);
+    AVAIL.store(total - (cap - base) as u64, Ordering::Relaxed);
+    assert_eq!(kt_time::mem::room(), Some(total), "the room counts the growth held");
+    // a re-sizing of the same loop with one checkpoint more
+    let again = kt_engine::video::size_stream_memo_walk(per, Some(400), 1);
+    assert!(again >= cap, "the memo asked less than it holds: {} MB after {} MB", again >> 20, cap >> 20);
+    memo.account().set(0);
+    kt_engine::video::size_stream_memo(1 << 20, None);
+    kt_time::mem::set_probe(|| None);
+}

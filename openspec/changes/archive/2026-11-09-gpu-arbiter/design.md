@@ -220,3 +220,9 @@ two runs, not a bound of a wait (t1671 does not list it).
 
 None that change what is built. The bound's rule (half a frame period) is a general rule the owner
 may want to revisit; it is a constant in one place.
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

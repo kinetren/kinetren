@@ -564,6 +564,14 @@ pub fn render_reel_preview(
         facts.observe(m, s.info());
         src.insert(m, s);
     }
+    // the generators' per-event sources, as the poster raises them (not in `open`: the audio pass
+    // opens them itself). Without them a cell a generator shows was incomplete, and since only a
+    // complete composite is kept (catch-up-shows-loading D6) it stayed empty (class-walk-revision)
+    for (addr, state) in kt_engine::gen_sources(p) {
+        let s = kt_media::factory::open_gen(&state);
+        facts.observe(addr, s.info());
+        src.insert(addr, s);
+    }
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: 64 << 20,
@@ -622,21 +630,7 @@ pub fn render_reel_preview(
     if ctl.should_stop() {
         return Err(CANCELLED.into());
     }
-    let mut acc = kt_media::index::PeakAcc::default();
-    let cancel = ctl.cancel_flag().clone();
-    kt_engine::export::render_raw_audio_range(
-        p,
-        open(),
-        None,
-        &cancel,
-        |_| {},
-        |chunk| {
-            acc.push(chunk);
-            Ok(())
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    let pyramid = acc.finish();
+    let pyramid = reel_envelope(&ctl, p, open(), |_| {})?;
 
     // --- ENVELOPE to disk --------------------------------------------
     // In its own transaction, to the row with the same key: the frames are already there.
@@ -646,6 +640,36 @@ pub fn render_reel_preview(
         warn_db_once("write peaks", &e);
     }
     Ok((crate::util::pyramid_to_peaks(pyramid), ReelOrigin::Rendered))
+}
+
+/// The reel's envelope: an offline audio render of the whole reel into a peak pyramid. Per chunk it
+/// asks `should_stop`, so a player that starts playing pauses it as it pauses the frames (one-scheduler's
+/// vote; it ran to its end on a pool worker before, class-walk-revision); `chunk` sees each chunk's
+/// frame count after that wait.
+pub(crate) fn reel_envelope(
+    ctl: &crate::bg::BgCtl,
+    p: &Project,
+    sources: Vec<(MediaId, Box<dyn kt_media::MediaSource>)>,
+    mut chunk: impl FnMut(u64),
+) -> Result<kt_media::index::PeakPyramid, String> {
+    let mut acc = kt_media::index::PeakAcc::default();
+    let cancel = ctl.cancel_flag().clone();
+    kt_engine::export::render_raw_audio_range(
+        p,
+        sources,
+        None,
+        &cancel,
+        |n| {
+            let _ = ctl.should_stop();
+            chunk(n);
+        },
+        |c| {
+            acc.push(c);
+            Ok(())
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(acc.finish())
 }
 
 /// One frame of the offline path at `t`: decode what the plan wants into the job's own cache,
@@ -831,5 +855,79 @@ mod tests {
         let px = super::render_poster(&ctl, &missing, None, Tick(45_000)).expect("a poster of a project with a missing file");
         let colours = px.chunks(4).map(|c| (c[0], c[1], c[2])).collect::<std::collections::HashSet<_>>().len();
         assert!(colours > 2, "the poster is flat ({colours} colours): the placeholder was not composed");
+    }
+
+    /// Test t2455 (class-walk-revision): a reel strip's cell a generator shows has its picture — the
+    /// strip raises the generators' per-event sources, as the poster does. Since only a complete
+    /// offline composite is kept (catch-up-shows-loading D6) such a cell was empty: the plan's
+    /// generator layer had no source.
+    #[test]
+    fn t2455_a_strip_cell_a_generator_shows_has_its_picture() {
+        crate::plugins::install();
+        if kt_gpu::offline_engine().is_none() {
+            eprintln!("skipped: no offline device");
+            return;
+        }
+        let mut p = one_clip("synth:1");
+        p.media[0].path = "gen:solid".into();
+        p.clips[0].r#gen = Some(GeneratorKind::solid(255, 136, 0));
+        p.clips[0].fx.clear();
+        p.validate().unwrap();
+        let key = super::ReelKey { seq: MediaId(77), hash: 1 };
+        let mut job: crate::bg::BgJob<super::ReelPartial, super::ReelDone> =
+            crate::bg::BgJob::spawn("t2455", move |ctl, send| {
+                super::render_reel_preview(ctl, send, key, &p, None, None, super::ReelRow { row: 77, keep: &[] })
+            });
+        let deadline = kt_time::test_deadline();
+        while job.done.is_none() {
+            assert!(std::time::Instant::now() < deadline, "the strip job never ended");
+            job.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let strip = job.progress.take().expect("the frames went out");
+        let cell = strip.frames.first().and_then(|f| f.clone()).expect("the first cell is empty");
+        let lit = cell.pixels.iter().filter(|c| c.r() > 200 && c.g() > 100 && c.b() < 60).count();
+        assert!(lit * 2 > cell.pixels.len(), "the cell is not the generator's orange ({lit} of {})", cell.pixels.len());
+    }
+
+    /// Test t2454 (class-walk-revision): the reel's envelope waits at each chunk while its job is
+    /// held — a player that starts playing pauses it as it pauses the frames. Its offline audio render
+    /// checked only the cancel, so it ran to its end on a pool worker during playback.
+    #[test]
+    fn t2454_the_envelope_waits_while_its_job_is_held() {
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+        crate::plugins::install();
+        let pause = std::sync::Arc::new(AtomicBool::new(false));
+        let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), pause.clone());
+        let p = one_clip("synth:1");
+        let sources: Vec<(MediaId, Box<dyn kt_media::MediaSource>)> =
+            vec![(MediaId(1), crate::util::open_source_or_placeholder("synth:1", None, "synth").0)];
+        let (calls, released) = (std::sync::Arc::new(AtomicU32::new(0)), std::sync::Arc::new(AtomicBool::new(false)));
+        let worker = {
+            let (calls, released, pause) = (calls.clone(), released.clone(), pause.clone());
+            std::thread::spawn(move || {
+                let mut late = false;
+                super::reel_envelope(&ctl, &p, sources, |_| {
+                    match calls.fetch_add(1, Ordering::SeqCst) {
+                        // the first chunk: the job is held from here on
+                        0 => pause.store(true, Ordering::SeqCst),
+                        1 => late = !released.load(Ordering::SeqCst),
+                        _ => {}
+                    }
+                })
+                .expect("the envelope rendered");
+                late
+            })
+        };
+        let deadline = kt_time::test_deadline();
+        while calls.load(Ordering::SeqCst) == 0 {
+            assert!(std::time::Instant::now() < deadline, "the envelope never started");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        released.store(true, Ordering::SeqCst);
+        pause.store(false, Ordering::SeqCst);
+        kt_time::sched::notify_gate();
+        assert!(!worker.join().unwrap(), "a chunk ran while the job was held");
+        assert!(calls.load(Ordering::SeqCst) > 2, "scene guard: the reel is several chunks long");
     }
 }

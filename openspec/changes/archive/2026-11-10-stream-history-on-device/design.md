@@ -154,3 +154,9 @@ Left: rows 400+ in `docs/found-defects.md`.
   memo — the marker and Loading say what the preview is doing instead.
 - Pinned tier shares the memo's bound: a loop that needs the whole bound loses checkpoints first (they
   thin, never vanish while one fits).
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

@@ -2664,19 +2664,15 @@ impl KtApp {
                     r.request_focus();
                     self.search_focus = false;
                 }
+                // every press a slow frame read moves a row (test-hygiene D2; class-walk-revision)
                 let (up, down, enter) = ui.input(|i| {
                     (
-                        i.key_pressed(egui::Key::ArrowUp),
-                        i.key_pressed(egui::Key::ArrowDown),
+                        i.num_presses(egui::Key::ArrowUp),
+                        i.num_presses(egui::Key::ArrowDown),
                         i.key_pressed(egui::Key::Enter),
                     )
                 });
-                if down {
-                    self.search_sel = (self.search_sel + 1).min(hits.len().saturating_sub(1));
-                }
-                if up {
-                    self.search_sel = self.search_sel.saturating_sub(1);
-                }
+                self.search_sel = search_step(self.search_sel, down, up, hits.len());
                 ui.separator();
                 // the finds fill the window: an enlarged search shows more of them (item 12)
                 crate::widgets::window_fill(ui, |ui| {
@@ -6046,8 +6042,8 @@ impl KtApp {
             self.ask = Some(Ask::SaveOverLock { pid });
             return;
         }
-        let ui = Some(self.ui_state());
-        self.model.set_ui_state(ui);
+        let ui = self.ui_state();
+        self.model.set_ui_state(Some(ui.clone()));
         // the text and the write — with its two fsyncs — on the save lane (one-scheduler, row 98:
         // 6.7 s of a frozen interface on a busy disk); the newest Ctrl+S replaces a queued one
         let project = self.model.document();
@@ -6070,7 +6066,7 @@ impl KtApp {
             reply.send(write_project_guarded(&guard, &target, rev, &out));
             crate::wake::now();
         });
-        self.saving = Some(Saving { path, rev, answer });
+        self.saving = Some(Saving { path, rev, ui, answer });
         self.take_saved(save_grace());
     }
 
@@ -6090,7 +6086,7 @@ impl KtApp {
             None if sv.answer.abandoned() => Err(std::io::Error::other("the save job ended")),
             None => return,
         };
-        let Some(Saving { path, rev, .. }) = self.saving.take() else { return };
+        let Some(Saving { path, rev, ui, .. }) = self.saving.take() else { return };
         match res {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
                 crate::telemetry::signal(crate::telemetry::Signal::Saved);
@@ -6098,7 +6094,7 @@ impl KtApp {
                 // an edit made while the file was written is not in it: its asterisk stays
                 if self.model_rev == rev {
                     self.dirty_content = false;
-                    self.dirty_ui = false;
+                    self.dirty_ui = self.dirty_ui && self.ui_state() != ui;
                 }
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
                 self.warn_if_dir_unsynced(dir_synced);
@@ -7295,15 +7291,14 @@ impl KtApp {
         // play/pause; a double = detach/attach. It also works in the separate preview
         // window (a double click there returns the preview back).
         {
-            let pending_ms = self.preview_click_at.map(|t| t.elapsed().as_millis());
-            let (action, op) = preview_click_step(
-                pending_ms,
-                resp.clicked(),
-                resp.double_clicked(),
-                PREVIEW_CLICK_DELAY_MS,
-            );
+            // judged by frame starts and egui's widened double-click window (test-hygiene D3/D4;
+            // class-walk-revision): a busy frame no longer fires the single before the double lands
+            let at = self.key_clock.frame_at;
+            let delay = preview_click_delay_ms(&self.key_clock);
+            let pending_ms = self.preview_click_at.map(|t| at.saturating_duration_since(t).as_millis());
+            let (action, op) = preview_click_step(pending_ms, resp.clicked(), resp.double_clicked(), delay);
             match op {
-                PendingOp::Arm => self.preview_click_at = Some(std::time::Instant::now()),
+                PendingOp::Arm => self.preview_click_at = Some(at),
                 PendingOp::Clear => self.preview_click_at = None,
                 PendingOp::Keep => {}
             }
@@ -7317,7 +7312,7 @@ impl KtApp {
             }
             if let Some(t0) = self.preview_click_at {
                 // wait for the window to expire without input
-                let left = PREVIEW_CLICK_DELAY_MS.saturating_sub(t0.elapsed().as_millis());
+                let left = delay.saturating_sub(t0.elapsed().as_millis());
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(left as u64 + 5));
             }
         }
@@ -9307,6 +9302,12 @@ pub enum PendingOp {
 
 pub const PREVIEW_CLICK_DELAY_MS: u128 = 300;
 
+/// How long the preview's single click waits for a second one: egui's double-click window as the
+/// key clock last widened it, never under the base delay.
+pub fn preview_click_delay_ms(clock: &KeyClock) -> u128 {
+    ((clock.double_s * 1000.0).ceil() as u128).max(PREVIEW_CLICK_DELAY_MS)
+}
+
 pub fn preview_click_step(
     pending_ms: Option<u128>,
     clicked: bool,
@@ -9324,6 +9325,11 @@ pub fn preview_click_step(
         Some(ms) if ms >= delay_ms => (PreviewClick::TogglePlay, PendingOp::Clear),
         _ => (PreviewClick::None, PendingOp::Keep),
     }
+}
+
+/// The search window's row after `down` and `up` presses of one frame, inside `n` hits.
+pub fn search_step(sel: usize, down: usize, up: usize, n: usize) -> usize {
+    (sel + down).min(n.saturating_sub(1)).saturating_sub(up)
 }
 
 pub fn preview_detached_next(detached: bool, toggle: bool, close_requested: bool) -> bool {
@@ -10138,6 +10144,9 @@ fn media_lane() -> &'static kt_time::sched::LaneRef {
 pub struct Saving {
     path: PathBuf,
     rev: u64,
+    /// The view state the file holds: a bin or view edit made while it was written is not in it
+    /// (`dirty_ui` moves no `model_rev`; class-walk-revision).
+    ui: kt_model::UiState,
     answer: kt_time::sched::Answer<std::io::Result<SaveOutcome>>,
 }
 
@@ -10935,6 +10944,9 @@ impl eframe::App for KtApp {
     }
 
     fn on_exit(&mut self) {
+        // Closed while playing: the player's vote would hold the autosave and the poster jobs
+        // this close waits for (Background lanes), each for its whole bound (class-walk-revision)
+        self.player.pause();
         // The final save on exit — synchronous here is fine (the window is already gone).
         // First we wait for the background autosave: its rename must not
         // overwrite our fresher snapshot with the stale one.
