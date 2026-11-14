@@ -659,22 +659,25 @@ pub fn build(src: &[Source], heavy: bool) -> Project {
 }
 
 /// Datamosh at the head of every styled montage cut on a file (gpu-arbiter's bench): a stream
-/// history the look-ahead and the frame on screen both ask of the compute host.
-fn add_mosh(p: &mut Project) {
+/// history the look-ahead and the frame on screen both ask of the compute host. `behind` — after the
+/// cut's first look instead (stream-input-order: the owner's camera_isp → datamosh), so every
+/// history position runs that look first.
+fn add_mosh(p: &mut Project, behind: bool) {
     let files: std::collections::HashSet<MediaId> = p.media.iter().filter(|m| !m.path.contains("://")).map(|m| m.id).collect();
     for c in p.clips.iter_mut().filter(|c| c.kind == ClipKind::Video && !c.fx.is_empty() && files.contains(&c.media) && c.r#gen.is_none() && c.fx.iter().all(|f| f.tag() != "blur")) {
-        c.fx.insert(0, look("datamosh", "fxreg.var.mosh_cut"));
+        c.fx.insert(usize::from(behind), look("datamosh", "fxreg.var.mosh_cut"));
     }
 }
 
-/// `kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh] [--force]`. `--heavy` lays Slowed, VHS
+/// `kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh|--mosh-behind] [--force]`. `--heavy` lays Slowed, VHS
 /// Tape and Camera ISP over both instances of the reel: the project of the idle-load guard (idle-cpu).
-/// `--mosh` puts Datamosh at the head of every styled montage cut (gpu-arbiter).
+/// `--mosh` puts Datamosh at the head of every styled montage cut (gpu-arbiter), `--mosh-behind` after
+/// its first look (stream-input-order).
 pub fn run(args: &[String], force: bool) -> i32 {
     let out = args.get(1).filter(|a| !a.starts_with("--"));
     let dir = args.iter().position(|a| a == "--sources").and_then(|i| args.get(i + 1));
     let (Some(out), Some(dir)) = (out, dir) else {
-        eprintln!("usage: kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh] [--force]");
+        eprintln!("usage: kt-cli showcase <out.kt> --sources <dir> [--heavy] [--mosh|--mosh-behind] [--force]");
         return 2;
     };
     let src = match scan(dir) {
@@ -685,8 +688,9 @@ pub fn run(args: &[String], force: bool) -> i32 {
         }
     };
     let mut p = build(&src, args.iter().any(|a| a == "--heavy"));
-    if args.iter().any(|a| a == "--mosh") {
-        add_mosh(&mut p);
+    let behind = args.iter().any(|a| a == "--mosh-behind");
+    if behind || args.iter().any(|a| a == "--mosh") {
+        add_mosh(&mut p, behind);
     }
     if let Err(e) = p.validate() {
         eprintln!("showcase project is invalid: {e:?}");

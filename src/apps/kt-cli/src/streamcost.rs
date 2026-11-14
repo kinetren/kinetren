@@ -90,6 +90,8 @@ struct Snap {
     other: u64,
     enc_steps: u64,
     dec_steps: u64,
+    /// Frames the slots in front of a stream stage ran on (stream-input-order).
+    front: u64,
 }
 
 impl Snap {
@@ -112,6 +114,7 @@ fn snap() -> Snap {
         other: OTHER.load(Relaxed),
         enc_steps: ENC_STEPS.load(Relaxed),
         dec_steps: DEC_STEPS.load(Relaxed),
+        front: kt_engine::video::front_runs(),
     }
 }
 
@@ -127,6 +130,7 @@ fn since(a: Snap) -> Snap {
         other: b.other - a.other,
         enc_steps: b.enc_steps - a.enc_steps,
         dec_steps: b.dec_steps - a.dec_steps,
+        front: b.front - a.front,
     }
 }
 
@@ -267,9 +271,10 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
         let jobs_n = d.enc + d.dec + d.other;
         let (broken, clean) = d.positions();
         println!(
-            "    history: {broken} positions decoded, {clean} encoded, in {jobs_n} jobs ({:.1} positions a job); {:.1} positions/s of advance",
+            "    history: {broken} positions decoded, {clean} encoded, in {jobs_n} jobs ({:.1} positions a job); {:.1} positions/s of advance; the slots in front ran on {} frames",
             broken as f64 / jobs_n.max(1) as f64,
-            broken as f64 / (wall as f64 / 1e9).max(1e-9)
+            broken as f64 / (wall as f64 / 1e9).max(1e-9),
+            d.front
         );
         if let Some((w, f0)) = first_frame {
             let (b, _) = f0.positions();

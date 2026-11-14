@@ -29,6 +29,13 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   `stream_memo()`; an export sets its own (`set_stream_memo`) and pre-rolls before each frame (`stream_preroll` in
   export.rs: decode the earliest missing frames in budget-bounded batches, `stream_advance`, until nothing is missing).
   Tests t1241/t1242/t1248.
+  **The slots IN FRONT of the stage feed it** (stream-input-order, row 484): `StreamStage::front` (picture slots
+  before the stream slot, not the leading Geometry node) run on every main-stream frame in `ClipStream::with_frame`
+  through the executor the host injects (`install_stream_front`; kt-gpu `stream_front_engine`), and `layer_src`
+  replaces them by the identity geometry after the stage (`after_chain`) — never run twice, indices kept. `ident`
+  names the front (`front_key`, the position when curved): an edit in front re-walks the history, one after does
+  not. No front executor → the frame is missing, never the decoded picture. A new path that builds a stream input
+  goes through `ClipStream` or names the front itself. t2470–t2472.
   **The live preview PACES the stage** (decode-request-storm, `StreamPacing`, set by the player on its renderers
   only): the order is the earliest history positions that fit a quarter of the cache (a whole history ordered at
   once ran the decoder through it while the stage read only at composites, and LRU dropped its front — the frame

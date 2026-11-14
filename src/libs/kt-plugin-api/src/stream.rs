@@ -45,8 +45,9 @@ pub trait StreamLayout {
     fn end(&self) -> i64;
     /// The first position of the second input's event active at `k`; `None` — no event there.
     fn second_start(&self, k: i64) -> Option<i64>;
-    /// The ADDRESS of the source frame at `k`, hashed: the media, the source pts, the size and the
-    /// source's revision. 0 — there is no frame at `k` on this side. A memo key is built from
+    /// The ADDRESS of the source frame at `k`, hashed: the media, the source pts, the size, the
+    /// source's revision and whatever the host runs on it before the kernel reads it (the chain's
+    /// slots in front of the stage, stream-input-order). 0 — there is no frame at `k` on this side. A memo key is built from
     /// addresses alone, so "what is still needed" is answered without reading a frame.
     fn ident(&self, side: Side, k: i64) -> u64;
     /// The slot's rows AT position `k`, its curves applied (positions before the cut read the

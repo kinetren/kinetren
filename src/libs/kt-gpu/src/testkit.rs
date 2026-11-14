@@ -25,7 +25,14 @@ static ENGINE: OnceLock<Option<Arc<GpuFxEngine>>> = OnceLock::new();
 pub fn no_gpu<R>(install: impl FnOnce() -> R) -> bool {
     install();
     kt_plugin_api::compute::install(crate::compute::open);
+    kt_engine::video::install_stream_front(front);
     ENGINE.get_or_init(crate::test_engine).is_none()
+}
+
+/// The slots in front of a stream stage run on the test engine's sibling (stream-input-order).
+fn front() -> Option<Arc<dyn VideoGpuExec>> {
+    static F: std::sync::OnceLock<Option<Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
+    F.get_or_init(|| ENGINE.get().cloned().flatten().map(|e| e.sibling())).clone().map(|e| e as _)
 }
 
 pub fn engine() -> Arc<GpuFxEngine> {

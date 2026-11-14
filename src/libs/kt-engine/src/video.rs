@@ -20,8 +20,8 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 #[path = "video_stream.rs"]
 mod stream;
 pub use stream::{
-    STREAM_MEMO_BASE, StreamPacing, memory_available, set_memory_probe, size_stream_memo, size_stream_memo_walk, stop_when, stopping,
-    stream_memo, stream_memo_bytes, stream_memo_bytes_walk,
+    OpenFrontExec, STREAM_MEMO_BASE, StreamPacing, front_runs, front_slots as stream_front_slots, install_stream_front, prewarm_stream_front, memory_available, set_memory_probe, size_stream_memo,
+    size_stream_memo_walk, stop_when, stopping, stream_memo, stream_memo_bytes, stream_memo_bytes_walk,
 };
 use stream::StreamStage;
 
@@ -1182,7 +1182,7 @@ impl VideoRenderer {
                 // the model's slot indices do not move, and the engine's chain is
                 // one sequence, as in Vegas.
                 let (fx, auto) = materialize_lead(c, fx, auto);
-                let stream = StreamStage::of(&fx).map(Box::new);
+                let stream = StreamStage::of(&fx, &auto).map(Box::new);
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
                 let content = nest.map(|(_, h)| h).unwrap_or(0);
                 let fx_hash = fx_chain_hash(
@@ -2104,7 +2104,7 @@ fn layer_src<'a>(
     // automation (R.30): curves are resolved HERE, once per frame —
     // the executor receives already computed parameters (the chain is cloned
     // only with live curves)
-    let fx: std::borrow::Cow<'_, [kt_model::FxInstance]> = match &clip.auto_plan {
+    let mut fx: std::borrow::Cow<'_, [kt_model::FxInstance]> = match &clip.auto_plan {
         Some(plan) => {
             let mut owned = clip.fx.clone();
             plan.apply(&mut owned, mat);
@@ -2113,6 +2113,13 @@ fn layer_src<'a>(
         // zero cost: a clip without curves BORROWS its chain
         None => std::borrow::Cow::Borrowed(&clip.fx[..]),
     };
+    // the slots in front of a stream stage ran on its input (stream-input-order): not again after it
+    if streamed.is_some()
+        && let Some(st) = clip.stream.as_deref()
+        && !st.front.is_empty()
+    {
+        stream::after_chain(fx.to_mut(), &st.front);
+    }
     let cam3d = resolve_cam3d(&clip.fx, ctx.cameras, t, quality.width, ctx.project_size.0);
     debug_assert!(
         src_scale == 1

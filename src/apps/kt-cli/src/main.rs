@@ -1445,6 +1445,8 @@ fn run(args: &[String]) -> i32 {
         kt_plugin_api::compute::install(streamcost::open);
     }
     kt_engine::video::set_memory_probe(kt_gpu::memory::available);
+    // the slots in front of a stream stage run on the offline device (stream-input-order)
+    kt_engine::video::install_stream_front(kt_gpu::stream_front_engine);
     kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
     // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
     kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));

@@ -548,7 +548,11 @@ impl Player {
     /// the set changed (pipeline-prewarm D5): an effect added compiles beside, before its first
     /// frame. Both return at once; a project whose set did not change asks nothing.
     fn prewarm_reach(&self, p: &Project) {
-        let now = crate::prewarm::Reach { ids: crate::prewarm::effect_ids(p), runs: crate::prewarm::run_shapes(p) };
+        let now = crate::prewarm::Reach {
+            ids: crate::prewarm::effect_ids(p),
+            runs: crate::prewarm::run_shapes(p),
+            front: crate::prewarm::has_stream_front(p),
+        };
         {
             let mut last = self.reach.lock().unwrap();
             if *last == now {
@@ -561,10 +565,14 @@ impl Player {
 
     fn prewarm_now(&self) {
         let (ids, runs) = self.reach.lock().unwrap().lists();
+        let front = self.reach.lock().unwrap().front;
         let exec = self.video_gpu.lock().unwrap().exec.clone();
         if let Some(e) = exec {
             e.prewarm(&ids);
             e.prewarm_runs(&runs);
+        }
+        if front {
+            crate::video::prewarm_stream_front(ids.clone(), runs.clone());
         }
         crate::prewarm::compute(&ids);
     }

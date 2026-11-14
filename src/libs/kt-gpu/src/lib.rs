@@ -167,11 +167,20 @@ pub fn side_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
 
 static SIDE: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
 
+/// The engine of the slots in front of a stream stage (stream-input-order): the offline engine's
+/// sibling, so a history walk's front runs wait on no composite's lock. What
+/// `kt_engine::video::install_stream_front` takes. `None` — no device.
+pub fn stream_front_engine() -> Option<std::sync::Arc<dyn kt_engine::VideoGpuExec>> {
+    FRONT.get_or_init(|| offline_engine().map(|e| e.sibling())).clone().map(|e| e as _)
+}
+
+static FRONT: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
+
 /// The process is about to exit: wait for the offline engine's frame on the device and let no other
 /// start. A frame on the device at exit kills the process: libLLVM's destructors run under
 /// llvmpipe's threads (gpu-render-hardening, D6).
 pub fn park_offline_engine() {
-    for e in [SIDE.get(), OFFLINE.get()].into_iter().flatten().flatten() {
+    for e in [SIDE.get(), FRONT.get(), OFFLINE.get()].into_iter().flatten().flatten() {
         e.park();
     }
 }
