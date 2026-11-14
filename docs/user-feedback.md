@@ -2848,3 +2848,25 @@ an event turn is started on the first turn that allows it. Started now: `one-sch
 
 Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offered to him.
 
+## 2026-11-10 — his run of stage 10 (`kkt-26.11.10b`)
+
+- Decided: while the history catches up inside a loop, Loading is shown (found-defects 403), and the
+  "catching up" label is written where Loading is.
+- `problem_region_26_11_09`: catching up with 3 GB of cache and little processor, "lazy or one core";
+  from about the tenth lap all at once. He asks why there is no spec on using the machine.
+- He asks whether the fixes checked the same problem elsewhere.
+- VHS Tape seems laid over a frame Datamosh has not made: "либо есть кадр либо нет".
+- Toggling VHS Tape after loading switches at once: how long are stale frames kept, are they erased.
+- Is `load-report.txt` needed if the trace has everything.
+- "Ответь, я почитаю и будем всё добивать по производительности, мне надоело."
+- Future: Datamosh keyframes placed by hand; the same rule for other effects.
+
+## 2026-11-11 — requests after the stage-10 diagnosis (`kkt-26.11.11`)
+
+- No effect takes a previous picture and is laid on further: "пустая трата времени и ресурсов которая
+  все замедляет". A stage either has its own input or the frame is Loading.
+- The fixes must be checked in the other places too: "может где забыли еще".
+- Computing ahead is welcome, and the processor should take part in the same computations: "почему и
+  нет".
+- These are requests, registered as such.
+

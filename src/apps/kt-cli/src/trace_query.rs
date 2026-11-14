@@ -266,6 +266,70 @@ fn class_name(c: u64) -> &'static str {
 
 /// The device rings (gpu-arbiter): who was admitted, who waited, what was cut, what the compute host
 /// ran, and how long the display's presents waited for the device.
+/// A gap between two pieces longer than this is a lull of the work, not a piece's wait (D6).
+const PIECE_GAP_MAX: u64 = 100_000_000;
+
+/// How the device was fed (gpu-throughput D6, found-defects 480, 486): per class, the compute jobs'
+/// admission waits against their wall; over all pieces with device timestamps, the device's idle time
+/// between consecutive pieces and how many were submitted before the earlier one ended; the executors.
+fn gpu_flow(run: &Run) -> String {
+    let mut o = String::new();
+    let mut wall: BTreeMap<u64, u64> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::ComputeJob)) {
+        *wall.entry(r.id).or_default() += r.dur;
+    }
+    let mut admit: BTreeMap<u64, u64> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuAdmit)) {
+        *admit.entry(r.aux as u64).or_default() += r.dur;
+    }
+    for (c, w) in wall.iter().filter(|(_, w)| **w > 0) {
+        let a = admit.get(c).copied().unwrap_or(0);
+        let _ = writeln!(o, "  {:<10} admission waits {} of the compute jobs' wall {} ({:.0} %)", class_name(*c), ms(a), ms(*w), a as f64 * 100.0 / *w as f64);
+    }
+    let mut pieces: Vec<(u64, u64, u64)> = run
+        .recs
+        .iter()
+        .filter(|r| is(r, Ev::GpuStart) && r.aux < u32::MAX - 1 && r.b > 0 && r.c >= r.b)
+        .map(|r| (r.b, r.c, r.a))
+        .collect();
+    pieces.sort_unstable();
+    if pieces.len() > 1 {
+        let (mut idle, mut unfed, mut ahead, mut pairs) = (0u64, 0u64, 0usize, 0usize);
+        for w in pieces.windows(2) {
+            let ((_, end, _), (start, _, submit)) = (w[0], w[1]);
+            let gap = start.saturating_sub(end);
+            if gap > PIECE_GAP_MAX {
+                continue;
+            }
+            pairs += 1;
+            idle += gap;
+            if submit < end {
+                ahead += 1;
+            } else {
+                unfed += gap;
+            }
+        }
+        let busy: u64 = pieces.iter().map(|p| p.1 - p.0).sum();
+        let _ = writeln!(
+            o,
+            "  pieces on the device {}: busy {}, idle between consecutive pieces {} (gaps under {}), {} of it with nothing queued, {ahead} of {pairs} submitted before the earlier ended",
+            pieces.len(),
+            ms(busy),
+            ms(idle),
+            ms(PIECE_GAP_MAX),
+            ms(unfed)
+        );
+    }
+    let (mut device, mut cpu) = (0u64, 0u64);
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuExec)) {
+        if r.aux == 0 { device += 1 } else { cpu += 1 }
+    }
+    if device + cpu > 0 {
+        let _ = writeln!(o, "  executors: device {device} pieces, processor {cpu}");
+    }
+    o
+}
+
 pub fn gpu(run: &Run) -> String {
     let mut o = String::new();
     let first = run.recs.first().map_or(0, |r| r.t);
@@ -316,6 +380,13 @@ pub fn gpu(run: &Run) -> String {
     // class → (start delays, runs, waits after the end, jobs with no timestamps, the worst error µs)
     type Starts = (Vec<u64>, Vec<u64>, Vec<u64>, u64, u32);
     let mut starts: BTreeMap<u64, Starts> = BTreeMap::new();
+    // a job's pieces are recorded together when its buffers came back (gpu-throughput D6): only its
+    // last piece's end says how long the buffers took after the device
+    let mut last_end: HashMap<(u64, u64), u64> = HashMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
+        let e = last_end.entry((r.t, r.id)).or_default();
+        *e = (*e).max(r.c);
+    }
     for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
         let e = starts.entry(r.id).or_default();
         if r.aux >= u32::MAX - 1 || r.b == 0 {
@@ -324,7 +395,9 @@ pub fn gpu(run: &Run) -> String {
         }
         e.0.push(r.b.saturating_sub(r.a));
         e.1.push(r.c.saturating_sub(r.b));
-        e.2.push(r.t.saturating_sub(r.c));
+        if last_end.get(&(r.t, r.id)) == Some(&r.c) {
+            e.2.push(r.t.saturating_sub(r.c));
+        }
         e.4 = e.4.max(r.aux);
     }
     for (c, (late, run_, signal, unknown, err)) in &mut starts {
@@ -350,6 +423,7 @@ pub fn gpu(run: &Run) -> String {
             let _ = writeln!(o, "  {:<10} {unknown:>6} with no device timestamps", class_name(*c));
         }
     }
+    o.push_str(&gpu_flow(run));
     let submits: u64 = run
         .recs
         .iter()
@@ -434,6 +508,11 @@ fn lives(run: &Run) -> BTreeMap<u64, Life> {
     let frame_ids: HashSet<u64> = run.recs.iter().filter(|r| is(r, Ev::FrameAsk)).map(|r| r.id).collect();
     for r in &run.recs {
         let Some(k) = kind(r) else { continue };
+        // a composite nobody asked to show (the loop fill's, scheduler-followups D5) is not a frame
+        // of the display: its plan, run and layers carry its job's id
+        if matches!(k, Ev::FramePlan | Ev::FrameExec | Ev::FrameLayer | Ev::FrameWait) && !frame_ids.contains(&r.id) {
+            continue;
+        }
         match k {
             Ev::FrameAsk => {
                 let l = m.entry(r.id).or_default();
@@ -467,7 +546,7 @@ fn lives(run: &Run) -> BTreeMap<u64, Life> {
 fn stream_word(aux: u32) -> &'static str {
     match aux {
         trace::stream::RENDERED => "rendered",
-        trace::stream::HELD => "held (playing: the latest frame it had)",
+        trace::stream::HELD => "held (builds before catch-up-shows-loading: the latest frame it had)",
         trace::stream::SHORT => "short of history",
         trace::stream::SOURCE_MISSING => "a source frame missing",
         trace::stream::DONE => "advanced to the frame",
@@ -613,6 +692,9 @@ pub struct Stretch {
     pub tick: u64,
     pub frames: Vec<u64>,
     pub shown: bool,
+    /// The positions a stream stage still lacked when the scrim came (the `loading` record's `b`,
+    /// catch-up-shows-loading); 0 — another wait, or a trace without the scrim's records.
+    pub catching_up: u64,
 }
 
 /// The stretches: the UI's own "Loading" records when there are any; else from the first ask of a
@@ -637,7 +719,7 @@ pub fn stretches(run: &Run, min: u64) -> Vec<Stretch> {
                 if let Some(c) = cur.take() {
                     out.push(c);
                 }
-                cur = Some(Stretch { from: l.start(), to: l.end(), tick: l.tick, frames: vec![l.id], shown: l.complete() });
+                cur = Some(Stretch { from: l.start(), to: l.end(), tick: l.tick, frames: vec![l.id], shown: l.complete(), catching_up: 0 });
             }
         }
     }
@@ -651,18 +733,18 @@ pub fn stretches(run: &Run, min: u64) -> Vec<Stretch> {
             match (r.aux, on) {
                 (1, None) => on = Some(r),
                 (0, Some(a)) => {
-                    v.push((a.t, r.t));
+                    v.push((a.t, r.t, a.b));
                     on = None;
                 }
                 _ => {}
             }
         }
         if let Some(a) = on {
-            v.push((a.t, run.recs.last().map_or(a.t, |r| r.t)));
+            v.push((a.t, run.recs.last().map_or(a.t, |r| r.t), a.b));
         }
         return v
             .into_iter()
-            .map(|(a, b)| {
+            .map(|(a, b, catching_up)| {
                 let inside: Vec<&Stretch> = out.iter().filter(|x| x.to >= a && x.from <= b).collect();
                 Stretch {
                     from: a.saturating_sub(180_000_000),
@@ -670,6 +752,7 @@ pub fn stretches(run: &Run, min: u64) -> Vec<Stretch> {
                     tick: inside.last().map_or(0, |x| x.tick),
                     frames: inside.iter().flat_map(|x| x.frames.clone()).collect(),
                     shown: true,
+                    catching_up,
                 }
             })
             .collect();
@@ -831,6 +914,9 @@ pub fn loading(run: &Run, from: Option<u64>, to: Option<u64>) -> String {
             st.frames.len(),
             if st.shown { "then shown" } else { "never shown (left)" }
         );
+        if st.catching_up > 0 {
+            let _ = writeln!(o, "  the stream history was catching up: {} positions short when Loading came", st.catching_up);
+        }
         let _ = writeln!(o, "  where the time went, ranked:");
         waits(run, st, &all, &mut o);
         if let Some(l) = st.frames.iter().rev().filter_map(|f| all.get(f)).find(|l| l.complete()).or(st.frames.last().and_then(|f| all.get(f))) {
@@ -961,7 +1047,18 @@ pub fn laps(run: &Run) -> String {
         // the stream history walked in the lap: positions computed and how many of them distinct
         // (stream-history-on-device, found-defects 394: his run computed 1413 for 618)
         let (walked, distinct) = walked_in(run, a, b);
-        let walk = if walked > 0 { format!("  history: {walked} positions walked, {distinct} distinct;") } else { String::new() };
+        let mut walk = if walked > 0 { format!("  history: {walked} positions walked, {distinct} distinct;") } else { String::new() };
+        // the loop fill's composites below the display (scheduler-followups D5): not the display's
+        // frames, so not in the columns
+        let fills: Vec<&Rec> = run
+            .recs
+            .iter()
+            .filter(|r| is(r, Ev::Job) && r.aux == trace::job::LOOP_FILL && r.t >= a && r.t < b)
+            .collect();
+        if !fills.is_empty() {
+            let kept = fills.iter().filter(|r| r.b == 0).count();
+            let _ = write!(walk, "  fill: {kept} kept of {} composed;", fills.len());
+        }
         let _ = writeln!(
             o,
             "{:>4} {:>9} {:>7} {:>6} {:>6} {:>6} {:>6} {walk} {rep}/{} {why}",
@@ -1121,6 +1218,7 @@ fn job_name(aux: u32) -> &'static str {
         j::PEAKS => "peaks",
         j::EXPORT => "export",
         j::SHARED_BUILD => "shared_build",
+        j::LOOP_FILL => "loop_fill",
         _ => "?",
     }
 }

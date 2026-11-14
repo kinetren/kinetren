@@ -27,6 +27,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::time::{Duration, Instant};
 
 use kt_time::sched::Class;
 use kt_time::trace::{self, Ev};
@@ -83,6 +84,14 @@ impl RingKey {
 struct Flight {
     id: u64,
     ns: u64,
+    class: Class,
+    /// The display's present (counted, never admitted: gpu-throughput D1).
+    display: bool,
+    /// When it was submitted; `None` — admitted, still being encoded.
+    at: Option<Instant>,
+    /// Its time is a guess (a pass never measured, gpu-throughput D1b): it never drains by the clock,
+    /// only by its completion — on a loaded machine the clock says nothing about a guess.
+    guess: bool,
     /// Its device and submission once submitted; a device with a surface is never waited on.
     sub: Option<(Arc<wgpu::Device>, wgpu::SubmissionIndex, bool)>,
     done: Arc<AtomicBool>,
@@ -93,6 +102,44 @@ struct State {
     flight: Vec<Flight>,
     waiting: [u32; Class::ALL.len()],
     next: u64,
+    /// When the display last submitted a present.
+    last_display: Option<Instant>,
+}
+
+/// Lower-class pieces of one ring uncompleted at once at most (gpu-throughput D1): one running, one
+/// queued behind it and one being encoded. A prediction far below the real time cannot pile more in
+/// front of the display.
+pub const AHEAD_PIECES: usize = 3;
+
+/// The ring's queue as predicted at `now` (gpu-throughput D1): it drains in submission order, each
+/// flight's predicted time after the one before (a flight still being encoded is taken as submitted
+/// now; one past its predicted end and not done has half its time left).
+struct Drain {
+    /// When the whole queue is predicted done.
+    end: Instant,
+    /// When the display's last present in flight is predicted done.
+    display_end: Option<Instant>,
+}
+
+fn drain(st: &State, now: Instant, skip_display: bool) -> Drain {
+    let mut end: Option<Instant> = None;
+    let mut display_end = None;
+    for f in st.flight.iter().filter(|f| !f.done.load(Ordering::Acquire) && !(skip_display && f.display)) {
+        let ns = Duration::from_nanos(f.ns);
+        let at = f.at.unwrap_or(now);
+        let start = end.map_or(at, |e| e.max(at));
+        let mut e = start + ns;
+        if f.guess {
+            e = e.max(now + ns);
+        } else if e <= now {
+            e = now + ns / 2;
+        }
+        end = Some(e);
+        if f.display {
+            display_end = Some(e);
+        }
+    }
+    Drain { end: end.map_or(now, |e| e.max(now)), display_end }
 }
 
 pub struct Ring {
@@ -100,6 +147,8 @@ pub struct Ring {
     key: RingKey,
     displays: AtomicU32,
     computes: AtomicU32,
+    /// Engines that compose the preview's frame off the display's device (the slow-chain route).
+    previews: AtomicU32,
     st: Mutex<State>,
     cv: Condvar,
 }
@@ -127,6 +176,7 @@ pub fn ring_for(key: RingKey) -> Arc<Ring> {
         key,
         displays: AtomicU32::new(0),
         computes: AtomicU32::new(0),
+        previews: AtomicU32::new(0),
         st: Mutex::default(),
         cv: Condvar::new(),
     });
@@ -134,13 +184,34 @@ pub fn ring_for(key: RingKey) -> Arc<Ring> {
     r
 }
 
-/// A display or a compute host registered on a ring, while it lives.
-pub struct Registered(Arc<Ring>, bool);
+/// A display, a compute host or a preview's slow route registered on a ring, while it lives.
+pub struct Registered(Arc<Ring>, Holder);
+
+#[derive(Clone, Copy)]
+enum Holder {
+    Display,
+    Compute,
+    Preview,
+}
+
+impl Ring {
+    fn count(&self, h: Holder) -> &AtomicU32 {
+        match h {
+            Holder::Display => &self.displays,
+            Holder::Compute => &self.computes,
+            Holder::Preview => &self.previews,
+        }
+    }
+
+    fn register(self: &Arc<Self>, h: Holder) -> Registered {
+        self.count(h).fetch_add(1, Ordering::AcqRel);
+        Registered(self.clone(), h)
+    }
+}
 
 impl Drop for Registered {
     fn drop(&mut self) {
-        let c = if self.1 { &self.0.displays } else { &self.0.computes };
-        c.fetch_sub(1, Ordering::AcqRel);
+        self.0.count(self.1).fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -156,23 +227,33 @@ impl Ring {
     /// The editor's display device (or the bench's) runs on this ring: from now on the ring bounds
     /// what it holds in front of it.
     pub fn register_display(self: &Arc<Self>) -> Registered {
-        self.displays.fetch_add(1, Ordering::AcqRel);
-        Registered(self.clone(), true)
+        self.register(Holder::Display)
     }
 
     /// A compute host runs on this ring: the frame on screen and the look-ahead meet here.
     pub fn register_compute(self: &Arc<Self>) -> Registered {
-        self.computes.fetch_add(1, Ordering::AcqRel);
-        Registered(self.clone(), false)
+        self.register(Holder::Compute)
+    }
+
+    /// The preview's slow-chain frames compose on a device of this ring (scheduler-followups D6):
+    /// a software device's ring then bounds and cuts as a display's does, so the frame the person
+    /// waits for stands behind one piece of side work at most.
+    pub fn register_preview(self: &Arc<Self>) -> Registered {
+        self.register(Holder::Preview)
     }
 
     pub fn has_display(&self) -> bool {
         self.displays.load(Ordering::Acquire) > 0
     }
 
-    /// The ring bounds its flight: it carries a display or a compute host.
+    /// A frame the person waits for is shown from this ring: a display or the slow route.
+    pub fn fronts(&self) -> bool {
+        self.has_display() || self.previews.load(Ordering::Acquire) > 0
+    }
+
+    /// The ring bounds its flight: it carries a display, the slow route or a compute host.
     pub fn bounded(&self) -> bool {
-        enabled() && (self.has_display() || self.computes.load(Ordering::Acquire) > 0)
+        enabled() && (self.fronts() || self.computes.load(Ordering::Acquire) > 0)
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -185,15 +266,47 @@ impl Ring {
         st.waiting[..class as usize].iter().any(|&n| n > 0)
     }
 
-    fn admissible(&self, st: &State, class: Class, ns: u64) -> bool {
+    /// When the display's next present is expected: a frame period after its last while it presents,
+    /// else now (a press of Play may come at any moment).
+    fn display_next(&self, st: &State, now: Instant) -> Instant {
+        let period = Duration::from_nanos(kt_time::sched::frame_period_ns());
+        match st.last_display {
+            Some(t) if now.saturating_duration_since(t) < 2 * period => (t + period).max(now),
+            _ => now,
+        }
+    }
+
+    /// Whether a submission of `class` predicted at `ns` may go now; `Err` — how long until the
+    /// prediction alone makes room (`None` — only a completion will).
+    fn admissible(&self, st: &State, class: Class, ns: u64, now: Instant) -> Result<(), Option<Duration>> {
         if st.waiting[..class as usize].iter().any(|&n| n > 0) {
-            return false;
+            return Err(None);
         }
-        let live: Vec<&Flight> = st.flight.iter().filter(|f| !f.done.load(Ordering::Acquire)).collect();
-        if live.is_empty() || !self.bounded() {
-            return true;
+        let live = |f: &&Flight| !f.done.load(Ordering::Acquire);
+        // one piece always fits an idle ring; the frame on screen's work counts no display present
+        // (its own frames) as busy
+        let idle = !st.flight.iter().any(|f| live(&f) && (class != Class::Now || !f.display));
+        if !self.bounded() || idle {
+            return Ok(());
         }
-        live.iter().map(|f| f.ns).sum::<u64>() + ns <= bound()
+        let bound = Duration::from_nanos(bound());
+        let ns = Duration::from_nanos(ns);
+        if class == Class::Now {
+            // one bound of predicted time ahead of it
+            let d = drain(st, now, true);
+            let left = d.end.saturating_duration_since(now);
+            return if left + ns <= bound { Ok(()) } else { Err(Some(left + ns - bound)) };
+        }
+        // a lower class: never more than AHEAD_PIECES uncompleted, and what it leaves in front of
+        // the display's next present within the bound (gpu-throughput D1)
+        if st.flight.iter().filter(|f| live(f) && f.class != Class::Now).count() >= AHEAD_PIECES {
+            return Err(None);
+        }
+        let d = drain(st, now, false);
+        let reference = if self.has_display() { self.display_next(st, now).max(d.display_end.unwrap_or(now)) } else { now };
+        let fits_by = reference + bound;
+        let ends = d.end + ns;
+        if ends <= fits_by { Ok(()) } else { Err(Some(ends - fits_by)) }
     }
 
     /// Wait until a submission of `class` predicted at `ns` of device time may go. The returned
@@ -205,35 +318,73 @@ impl Ring {
         let done = Arc::new(AtomicBool::new(false));
         let mut st = self.lock();
         st.flight.retain(|f| !f.done.load(Ordering::Acquire));
-        span.b(st.flight.iter().map(|f| f.ns).sum());
-        if enabled() && !self.admissible(&st, class, ns) {
+        let now = Instant::now();
+        span.b(drain(&st, now, false).end.saturating_duration_since(now).as_nanos() as u64);
+        if enabled() && self.admissible(&st, class, ns, now).is_err() {
             st.waiting[class as usize] += 1;
-            while !self.admissible(&st, class, ns) {
-                // the oldest piece with a device nobody's present waits on: complete it here
+            loop {
+                if self.admissible(&st, class, ns, Instant::now()).is_ok() {
+                    break;
+                }
+                // a completion the device holds is noticed only by a poll: drive every device with
+                // flights, never blocking
+                let devices: Vec<Arc<wgpu::Device>> = st
+                    .flight
+                    .iter()
+                    .filter(|f| !f.done.load(Ordering::Acquire))
+                    .filter_map(|f| f.sub.as_ref().map(|s| s.0.clone()))
+                    .fold(Vec::new(), |mut v, d| {
+                        if !v.iter().any(|x: &Arc<wgpu::Device>| Arc::ptr_eq(x, &d)) {
+                            v.push(d);
+                        }
+                        v
+                    });
+                drop(st);
+                for d in &devices {
+                    let _ = d.poll(wgpu::PollType::Poll);
+                }
+                st = self.lock();
+                st.flight.retain(|f| !f.done.load(Ordering::Acquire));
+                let wait = match self.admissible(&st, class, ns, Instant::now()) {
+                    Ok(()) => break,
+                    Err(w) => w,
+                };
+                // the oldest piece with a device nobody's present waits on is completed here: its
+                // completion is the room, seen the moment it comes (gpu-throughput D1b). A timer
+                // saw it only at its own next wake, and on a loaded machine the device stood idle
+                // between pieces meanwhile (t2436 red under a full run)
                 let oldest = st
                     .flight
                     .iter()
-                    .find(|f| !f.done.load(Ordering::Acquire))
-                    .and_then(|f| f.sub.as_ref().map(|s| (s.0.clone(), s.1.clone(), s.2, f.done.clone())));
-                match oldest {
-                    Some((device, sub, false, done)) => {
+                    .find(|f| !f.done.load(Ordering::Acquire) && f.sub.as_ref().is_some_and(|s| !s.2))
+                    .and_then(|f| f.sub.as_ref().map(|s| (s.0.clone(), s.1.clone(), f.done.clone())));
+                match (oldest, wait) {
+                    // bounded by the instant the prediction makes room, if it does (a guess never
+                    // does): whichever comes first, the completion or the predicted fit
+                    (Some((device, sub, done)), w) if !st.waiting[..class as usize].iter().any(|&n| n > 0) => {
                         drop(st);
-                        let _ = device.poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None });
-                        done.store(true, Ordering::Release);
-                        st = self.lock();
-                    }
-                    // a piece on a device with a surface (a cut display frame, which no longer waits
-                    // for its own pieces): nobody may block on it, so its callback is driven by
-                    // non-blocking polls, as `Submitted::wait` drives it
-                    Some((device, _, true, _)) => {
-                        drop(st);
-                        let _ = device.poll(wgpu::PollType::Poll);
-                        st = self.lock();
-                        if enabled() && !self.admissible(&st, class, ns) {
-                            st = self.cv.wait_timeout(st, std::time::Duration::from_millis(2)).unwrap_or_else(|e| e.into_inner()).0;
+                        let w = w.map(|w| w.clamp(Duration::from_micros(250), Duration::from_millis(20)));
+                        let t0 = Instant::now();
+                        match device.poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: w }) {
+                            Ok(_) => done.store(true, Ordering::Release),
+                            // a backend that cannot wait with a timeout answers at once: sleep instead
+                            Err(_) => {
+                                if let Some(w) = w.filter(|w| t0.elapsed() < *w / 2) {
+                                    std::thread::sleep(w);
+                                }
+                            }
                         }
+                        st = self.lock();
                     }
-                    None => st = self.cv.wait(st).unwrap_or_else(|e| e.into_inner()),
+                    // the prediction makes room by itself (no piece to wait on: a surface device's,
+                    // or one still being encoded): sleep until then, or a completion
+                    (_, Some(w)) => {
+                        let w = w.clamp(Duration::from_micros(250), Duration::from_millis(20));
+                        st = self.cv.wait_timeout(st, w).unwrap_or_else(|e| e.into_inner()).0;
+                    }
+                    // a piece on a device with a surface (driven by polls above), one still being
+                    // encoded, or a higher class waiting
+                    (_, None) => st = self.cv.wait_timeout(st, Duration::from_millis(2)).unwrap_or_else(|e| e.into_inner()).0,
                 }
                 st.flight.retain(|f| !f.done.load(Ordering::Acquire));
             }
@@ -241,11 +392,25 @@ impl Ring {
             // a lower class may have been held only by this one
             self.cv.notify_all();
         }
+        let ticket = self.push(&mut st, class, ns, false, done);
+        drop(st);
+        ticket
+    }
+
+    fn push(self: &Arc<Self>, st: &mut State, class: Class, ns: u64, display: bool, done: Arc<AtomicBool>) -> Ticket {
         st.next += 1;
         let id = st.next;
-        st.flight.push(Flight { id, ns, sub: None, done: done.clone() });
-        drop(st);
+        st.flight.push(Flight { id, ns, class, display, at: None, guess: false, sub: None, done: done.clone() });
         Ticket { ring: self.clone(), id, done, class, submitted: false }
+    }
+
+    /// The display's present predicted at `ns` goes into the flight with no wait (gpu-throughput D1):
+    /// the lower classes see it. Submit it with [`Ticket::submitted`] (`surface` true).
+    pub fn note_display(self: &Arc<Self>, ns: u64) -> Ticket {
+        let mut st = self.lock();
+        st.flight.retain(|f| !f.done.load(Ordering::Acquire));
+        st.last_display = Some(Instant::now());
+        self.push(&mut st, Class::Now, ns, true, Arc::new(AtomicBool::new(false)))
     }
 
     fn finish(&self, id: u64) {
@@ -269,7 +434,17 @@ impl Ring {
         if passes == 0 || !enabled() {
             return false;
         }
-        (self.has_display() && acc + next.unwrap_or(u64::MAX / 4) > bound()) || (self.bounded() && self.higher_waits(class))
+        // a slow-route ring cuts only what stands in front of the route's frame: that frame itself
+        // keeps the device's pipelining (scheduler-followups D6)
+        let front = self.has_display() || (class != Class::Now && self.previews.load(Ordering::Acquire) > 0);
+        (front && acc + next.unwrap_or(u64::MAX / 4) > self.piece_limit(class)) || (self.bounded() && self.higher_waits(class))
+    }
+
+    /// What one piece of `class` holds at most: on a ring that fronts the person's frame a lower
+    /// class's piece is half the bound, so one runs while the next is queued in front of that frame
+    /// (gpu-throughput D1).
+    pub fn piece_limit(&self, class: Class) -> u64 {
+        if self.fronts() && class != Class::Now { bound() / 2 } else { bound() }
     }
 }
 
@@ -290,13 +465,21 @@ impl Ticket {
     /// The submission went to `queue` as `sub`: it leaves the flight when the device finishes it.
     /// `ns` — what the piece actually holds (the admission predicted before encoding). `surface` —
     /// the device presents to a window, so nobody may block-wait on it.
-    pub fn submitted(mut self, device: &Arc<wgpu::Device>, queue: &wgpu::Queue, sub: wgpu::SubmissionIndex, ns: u64, surface: bool) -> Submitted {
+    pub fn submitted(self, device: &Arc<wgpu::Device>, queue: &wgpu::Queue, sub: wgpu::SubmissionIndex, ns: u64, surface: bool) -> Submitted {
+        self.submitted_as(device, queue, sub, ns, surface, false)
+    }
+
+    /// [`Ticket::submitted`]; `guess` — `ns` is a guess (a pass never measured): it drains only by
+    /// its completion (gpu-throughput D1b).
+    pub fn submitted_as(mut self, device: &Arc<wgpu::Device>, queue: &wgpu::Queue, sub: wgpu::SubmissionIndex, ns: u64, surface: bool, guess: bool) -> Submitted {
         self.submitted = true;
         {
             let mut st = self.ring.lock();
             if let Some(f) = st.flight.iter_mut().find(|f| f.id == self.id) {
                 f.sub = Some((device.clone(), sub.clone(), surface));
                 f.ns = ns;
+                f.at = Some(Instant::now());
+                f.guess = guess;
             }
         }
         let (ring, id) = (Arc::downgrade(&self.ring), self.id);
@@ -363,6 +546,8 @@ pub struct Piece {
     acc: u64,
     passes: u32,
     index: u32,
+    /// A pass of the current piece was never measured: its time is a guess (D1b).
+    guess: bool,
 }
 
 impl Piece {
@@ -372,9 +557,9 @@ impl Piece {
         let class = kt_time::sched::current_class();
         // a frame never measured claims the whole bound
         let ns = if ns == 0 { bound() } else { ns };
-        let claim = if ring.bounded() { ns.min(bound()) } else { ns };
+        let claim = if ring.bounded() { ns.min(ring.piece_limit(class)) } else { ns };
         let ticket = ring.admit(class, claim);
-        Piece { ring: ring.clone(), class, ticket: Some(ticket), acc: 0, passes: 0, index: 0 }
+        Piece { ring: ring.clone(), class, ticket: Some(ticket), acc: 0, passes: 0, index: 0, guess: false }
     }
 
     pub fn class(&self) -> Class {
@@ -389,6 +574,7 @@ impl Piece {
 
     /// A pass predicted at `next` joins the piece (an unmeasured one counts as the whole bound).
     pub fn add(&mut self, next: Option<u64>) {
+        self.guess |= next.is_none();
         self.acc += next.unwrap_or(bound());
         self.passes += 1;
     }
@@ -407,24 +593,32 @@ impl Piece {
             .c(self.passes as u64)
             .emit();
         PIECES.fetch_add(1, Ordering::Relaxed);
+        self.note_exec();
         self.note_over();
         if let Some(t) = self.ticket.take() {
-            drop(t.submitted(device, queue, sub, self.acc, surface));
+            drop(t.submitted_as(device, queue, sub, self.acc, surface, self.guess));
         }
         self.index += 1;
         self.acc = 0;
+        self.guess = false;
         self.passes = 0;
-        self.ticket = Some(self.ring.admit(self.class, claim_after_cut(&self.ring, next)));
+        self.ticket = Some(self.ring.admit(self.class, claim_after_cut(&self.ring, self.class, next)));
+    }
+
+    /// The piece goes to the device (gpu-throughput D6).
+    fn note_exec(&self) {
+        trace::ev(Ev::GpuExec).id(self.ring.id).aux(0).a(self.index as u64).b(self.acc).c(self.passes as u64).emit();
     }
 
     fn note_over(&self) {
-        if self.passes > 1 && self.acc > bound() && self.ring.has_display() {
+        if self.passes > 1 && self.acc > self.ring.piece_limit(self.class) && self.ring.fronts() {
             OVER.fetch_add(1, Ordering::Relaxed);
         }
     }
 
     /// The frame's last submission: it leaves the flight when the device finishes it.
     pub fn end(mut self, device: &Arc<wgpu::Device>, queue: &wgpu::Queue, sub: wgpu::SubmissionIndex, surface: bool) -> Option<Submitted> {
+        self.note_exec();
         if self.index > 0 {
             self.note_over();
             trace::ev(Ev::GpuPiece)
@@ -435,7 +629,8 @@ impl Piece {
                 .c(self.passes as u64)
                 .emit();
         }
-        self.ticket.take().map(|t| t.submitted(device, queue, sub, self.acc, surface))
+        let guess = self.guess;
+        self.ticket.take().map(|t| t.submitted_as(device, queue, sub, self.acc, surface, guess))
     }
 
     /// How many pieces the frame was cut into so far.
@@ -448,9 +643,9 @@ impl Piece {
 /// on a bounded ring; an unmeasured pass claims the whole bound, as the first piece of an unmeasured
 /// frame does. The whole bound for every next piece meant waiting until nothing else was in flight —
 /// the display's own frame included.
-fn claim_after_cut(ring: &Ring, next: Option<u64>) -> u64 {
+fn claim_after_cut(ring: &Ring, class: Class, next: Option<u64>) -> u64 {
     let claim = next.unwrap_or(bound());
-    if ring.bounded() { claim.min(bound()) } else { claim }
+    if ring.bounded() { claim.min(ring.piece_limit(class)) } else { claim }
 }
 
 static PIECES: AtomicU64 = AtomicU64::new(0);
@@ -550,7 +745,7 @@ mod tests {
         // the display's frame and the earlier piece, both submitted and not yet done
         let display = r.admit(Class::Now, b * 3 / 10);
         let earlier = r.admit(Class::Offline, b * 3 / 10);
-        let claim = claim_after_cut(&r, Some(b / 5));
+        let claim = claim_after_cut(&r, Class::Offline, Some(b / 5));
         assert_eq!(claim, b / 5);
         let admitted = Arc::new(AtomicBool::new(false));
         let h = {
@@ -569,9 +764,9 @@ mod tests {
         let next = h.join().unwrap();
         assert_eq!(r.in_flight_ns(), b * 3 / 10 * 2 + b / 5, "the three are in flight together");
         drop(next);
-        // the claim before the fix — the whole bound — would have waited for both
-        let unmeasured = claim_after_cut(&r, None);
-        assert_eq!(unmeasured, b);
+        // an unmeasured pass claims a whole lower-class piece: half the bound (gpu-throughput D1)
+        let unmeasured = claim_after_cut(&r, Class::Offline, None);
+        assert_eq!(unmeasured, b / 2);
         let waited = Arc::new(AtomicBool::new(false));
         let h = {
             let (r2, waited) = (r.clone(), waited.clone());
@@ -582,10 +777,130 @@ mod tests {
             })
         };
         std::thread::sleep(Duration::from_millis(50));
-        assert!(!waited.load(Ordering::Acquire), "a whole-bound piece was admitted past the bound");
+        assert!(!waited.load(Ordering::Acquire), "a half-bound piece was admitted past the bound");
         drop((display, earlier));
         h.join().unwrap();
         assert!(waited.load(Ordering::Acquire));
+    }
+
+    /// Marks a ticket submitted at `at` without a device (the drain's clock).
+    fn submitted_at(r: &Ring, t: &Ticket, at: Instant) {
+        if let Some(f) = r.lock().flight.iter_mut().find(|f| f.id == t.id) {
+            f.at = Some(at);
+        }
+    }
+
+    /// Test t2430 (gpu-throughput, found-defects 480): on a displayed ring with no display traffic a
+    /// lower class keeps pieces queued while their predicted drain fits the bound — more than one
+    /// uncompleted at once — and never more than `AHEAD_PIECES`.
+    #[test]
+    fn t2430_a_lower_class_keeps_a_piece_queued_while_one_runs() {
+        let r = ring();
+        let _d = r.register_display();
+        let b = bound();
+        let held: Vec<Ticket> = (0..AHEAD_PIECES).map(|_| r.admit(Class::Near, b / 4)).collect();
+        assert_eq!(r.in_flight_ns(), AHEAD_PIECES as u64 * b / 4, "pieces that fit together were not admitted together");
+        let admitted = Arc::new(AtomicBool::new(false));
+        let h = {
+            let (r2, admitted) = (r.clone(), admitted.clone());
+            std::thread::spawn(move || {
+                let t = r2.admit(Class::Near, b / 4);
+                admitted.store(true, Ordering::Release);
+                drop(t);
+            })
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(!admitted.load(Ordering::Acquire), "more than {AHEAD_PIECES} lower pieces uncompleted");
+        let mut held = held;
+        drop(held.remove(0));
+        h.join().unwrap();
+        assert!(admitted.load(Ordering::Acquire));
+    }
+
+    /// Test t2431 (gpu-throughput, found-defects 480): a waiter is admitted when the predicted drain
+    /// makes room, with no completion: an earlier piece submitted at the whole bound and never done
+    /// lets a half-bound piece in once half of it has passed.
+    #[test]
+    fn t2431_a_waiter_is_admitted_when_the_drain_makes_room() {
+        let r = ring();
+        let _d = r.register_display();
+        let b = bound();
+        let earlier = r.admit(Class::Near, b);
+        let start = Instant::now();
+        submitted_at(&r, &earlier, start);
+        let t = r.admit(Class::Near, b / 2);
+        let waited = start.elapsed();
+        assert!(!earlier.done.load(Ordering::Acquire), "the earlier piece completed");
+        assert!(waited >= Duration::from_nanos(b * 45 / 100), "admitted after {waited:?}, before the drain made room");
+        drop((t, earlier));
+    }
+
+    /// Test t2441 (gpu-throughput D1b, t2435 red under a full run): a piece whose time is a guess (a pass
+    /// never measured) never makes room by the clock — a waiter behind it is admitted only when it
+    /// completes, however long that takes on a loaded machine.
+    #[test]
+    fn t2441_a_guess_never_drains_by_the_clock() {
+        let r = ring();
+        let _d = r.register_display();
+        let b = bound();
+        let earlier = r.admit(Class::Near, b);
+        if let Some(f) = r.lock().flight.iter_mut().find(|f| f.id == earlier.id) {
+            f.at = Some(Instant::now());
+            f.guess = true;
+        }
+        let admitted = Arc::new(AtomicBool::new(false));
+        let h = {
+            let (r2, admitted) = (r.clone(), admitted.clone());
+            std::thread::spawn(move || {
+                let t = r2.admit(Class::Near, b / 2);
+                admitted.store(true, Ordering::Release);
+                drop(t);
+            })
+        };
+        // twice the guessed time: a measured piece would have drained long ago
+        std::thread::sleep(Duration::from_nanos(2 * b) + Duration::from_millis(20));
+        assert!(!admitted.load(Ordering::Acquire), "a guessed piece made room by the clock");
+        drop(earlier);
+        h.join().unwrap();
+        assert!(admitted.load(Ordering::Acquire));
+    }
+
+    /// Test t2433 (gpu-throughput D1), the ring's part: the display's present goes into the flight
+    /// with no wait; a lower class may queue what drains before the display's NEXT present plus the
+    /// bound (a period away while it presents), not more; a display behind its frames holds lower
+    /// work only for the bound past its own frame's end.
+    #[test]
+    fn t2433_the_display_is_counted_never_admitted() {
+        let r = ring();
+        let _d = r.register_display();
+        let b = bound();
+        let period = Duration::from_nanos(kt_time::sched::frame_period_ns());
+        // a lower piece holds the bound, the display's present still goes at once
+        let low = r.admit(Class::Near, b);
+        let shown = r.note_display(b / 4);
+        assert_eq!(r.in_flight_ns(), b + b / 4, "the present is not in the flight");
+        drop(low);
+        let now = Instant::now();
+        submitted_at(&r, &shown, now);
+        {
+            let st = r.lock();
+            // the next present is a period away: two bounds of lower work drain before it plus the bound
+            assert!(r.display_next(&st, now) >= now + period / 2);
+            let room = (period + Duration::from_nanos(b)).as_nanos() as u64 - b / 4;
+            assert!(r.admissible(&st, Class::Near, room - 1_000_000, now).is_ok(), "room in front of the next present refused");
+            assert!(r.admissible(&st, Class::Near, room + 1_000_000, now).is_err(), "more than the room admitted");
+        }
+        drop(shown);
+        // the display behind: its frame ends long past its next present
+        let late = r.note_display(8 * b);
+        submitted_at(&r, &late, Instant::now());
+        let st = r.lock();
+        let now = Instant::now();
+        let end = drain(&st, now, false).display_end.unwrap();
+        assert!(end > r.display_next(&st, now));
+        assert!(r.admissible(&st, Class::Near, b - 1000, now).is_ok(), "a piece behind the display's late frame was refused");
+        drop(st);
+        drop(late);
     }
 
     /// Test t2252: devices of one card share a ring whatever their backend; a card that names no

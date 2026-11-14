@@ -523,6 +523,17 @@ fn t2302_the_preview_decoders_take_a_renders_threads() {
     assert!(n == 2 || n == 4, "a render's rule, not auto: {n}");
 }
 
+/// t2440 (gpu-throughput D4, found-defects 485): opening a project gives its preview sources a render's
+/// conversion threads by the memory measured then, not one.
+#[test]
+fn t2440_the_preview_sources_convert_on_a_renders_threads() {
+    kt_ffmpeg::set_rgba_threads(1);
+    let _h = crate::layout_tests::harness();
+    let n = kt_ffmpeg::rgba_threads_set();
+    let want = kt_gpu::memory::rgba_threads(kt_gpu::memory::available(), 1280, 720);
+    assert!(n == 4 || (n == 1 && want == 1), "a render's rule, not one: {n}");
+}
+
 /// t2397 (frames-cache-growth, found-defects 397): the status bar says what its numbers count — the
 /// decoded frames held against the bound they may grow to now, then all the memory the program holds
 /// — where "cache: 39/535 MB" was audio/video and read as used/limit.

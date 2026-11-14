@@ -184,3 +184,9 @@ both binaries were OOM-killed under 12 GB (memory-ledger saw the same for the ba
   `Drop` leaves a newer want standing.
 - `max_video_bytes()` is two relaxed atomic loads more per read; it is read per pass and per span, not
   per frame of a decode.
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

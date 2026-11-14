@@ -19,6 +19,7 @@ mod engine;
 mod pipeline_cache;
 mod pool;
 pub mod runs;
+pub mod seeds;
 mod warm;
 
 pub use context::{trace_device, 
@@ -156,11 +157,21 @@ pub fn offline_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
 
 static OFFLINE: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
 
+/// The engine of effect cells, reel strips and project posters: the offline engine's sibling, on
+/// its device with its compiled pipelines but its own frame state and lock (scheduler-followups
+/// D6, row 290). The offline engine itself is the preview's slow-chain route, so the frame a person
+/// waits for never stands behind a cell's whole composite on a lock. `None` — no device.
+pub fn side_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
+    SIDE.get_or_init(|| offline_engine().map(|e| e.sibling())).clone()
+}
+
+static SIDE: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
+
 /// The process is about to exit: wait for the offline engine's frame on the device and let no other
 /// start. A frame on the device at exit kills the process: libLLVM's destructors run under
 /// llvmpipe's threads (gpu-render-hardening, D6).
 pub fn park_offline_engine() {
-    if let Some(Some(e)) = OFFLINE.get() {
+    for e in [SIDE.get(), OFFLINE.get()].into_iter().flatten().flatten() {
         e.park();
     }
 }

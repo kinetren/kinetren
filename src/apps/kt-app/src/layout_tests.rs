@@ -6735,16 +6735,22 @@ fn t503_gesture_frame_touches_no_media_paths() {
     let gesture = 4242u64;
     // one gesture, 60 frames — a second of dragging a level of an event
     let before = h.state().media_sync_builds;
+    // the harness sets its model wholesale, so its first edit gives the model's media their sources
+    // (the snapshot is the opened project's, scheduler-followups D2): counted from after that frame
+    let mut spawns = 0;
     for i in 0..60 {
         let app = h.state_mut();
         let db = -6.0 + i as f32 * 0.1;
         assert!(app.apply_coalesced(Command::SetGain { id: ClipId(1), gain_db: db }, gesture));
         h.step();
+        if i == 0 {
+            spawns = h.state().player.worker_spawns();
+        }
     }
     let builds = h.state().media_sync_builds - before;
     assert!(builds <= 60, "the path map was rebuilt more often than the model changed: {builds}");
     // the media set did not change even once — there was no reason to touch the sources
-    assert_eq!(h.state().player.worker_spawns(), 0, "the level gesture raised the sources");
+    assert_eq!(h.state().player.worker_spawns(), spawns, "the level gesture raised the sources");
 }
 
 /// Test 504 (R.53, item 413): a pseudo-path does NOT open the sidecar DB. A generator
@@ -20852,49 +20858,120 @@ fn t1636_empty_rows_carry_no_captions() {
     assert!(items.iter().any(|l| l == tr(k::tl::lane::ADD_MORPHER_HERE)), "the action left the menu: {items:?}");
 }
 
-/// Test t2358 (stream-history-on-device, found-defects 393): V-fps counts new pictures of the moment
-/// asked; a composite that shows a held stream frame is counted apart. A second of held composites of
-/// advancing moments is V-fps 0; a second of complete new moments counts them and holds nothing.
+/// Test t2358 (stream-history-on-device, found-defects 393; catch-up-shows-loading): V-fps counts
+/// complete new pictures of the moment asked. A second of incomplete composites of advancing moments
+/// is V-fps 0; a second of complete new moments counts them; the same moment again is no new picture.
 #[test]
-fn t2358_every_frame_held_is_v_fps_0() {
+fn t2358_only_complete_new_pictures_count() {
     let mut h = harness();
     let perf = &mut h.state_mut().perf;
     perf.video_second(1.0);
-    for _ in 0..30 {
-        if perf.take_composite(true, true) {
-            perf.video_frames_shown += 1;
-        }
-    }
-    assert_eq!(perf.video_second(1.0), 0.0, "a held stream frame is no new picture");
-    assert_eq!(perf.vheld, 30.0, "the held frames are counted apart");
     for _ in 0..30 {
         if perf.take_composite(true, false) {
             perf.video_frames_shown += 1;
         }
     }
-    // the same moment again is no new picture either
-    assert!(!perf.take_composite(false, false));
+    assert_eq!(perf.video_second(1.0), 0.0, "an incomplete composite is no new picture");
+    for _ in 0..30 {
+        if perf.take_composite(true, true) {
+            perf.video_frames_shown += 1;
+        }
+    }
+    assert!(!perf.take_composite(false, true), "the same moment again is no new picture");
     assert_eq!(perf.video_second(1.0), 30.0);
-    assert_eq!(perf.vheld, 0.0);
 }
 
-/// Test t2359 (stream-history-on-device): a held stream frame on screen draws the "catching up" note
-/// over the picture, never the Loading scrim; a frame of the moment's own removes it.
+/// Test t2415 (catch-up-shows-loading, kkt-26.11.10b K2): while the frame on screen is short of its
+/// stream history, the Loading scrim writes the catch-up where it writes Loading — in its place, the
+/// preview's centre — and nothing is written in the preview's corner; another incomplete frame keeps
+/// plain Loading; a complete one has no scrim (the rest's cost is the live `idle` scenario's).
+///
+/// The test sets the state of the frame on screen and draws until a frame lands no composite: an
+/// answer to an earlier ask is the program's own news and overwrites that state. Under a full
+/// workspace load the harness's last ask outlived its 5 s grace (or the deferred build moved a
+/// version and asked again), its answer landed in the frame meant to show the catch-up, and the test
+/// read "Loading" (finish.sh of stage 11). The scene asks again without waiting for the answer, so an
+/// answer may land at any frame after it, or within that very frame: the test does not depend on
+/// when, only on drawing until a frame lands nothing (a guard that the ask was still pending was a
+/// timing assumption of its own, red under load in stage 11's third finish.sh).
 #[test]
-fn t2359_a_held_frame_says_it_is_catching_up() {
+fn t2415_loading_names_the_catch_up_where_it_is_written() {
     if crate::layout_tests::no_device() {
         return;
     }
     let (mut h, _clip) = harness_geom_ctl();
     assert!(h.state().texture.is_some(), "scene guard: the preview has a picture");
-    let note = tr(k::perf::CATCHING_UP).to_string();
+    // an ask the frame does not wait for: a version moved; its answer lands whenever it lands
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
+    h.state_mut().preview_project = u64::MAX;
+    h.step();
+    h.state_mut().compose_grace = crate::app::COMPOSE_GRACE;
+    // the frame on screen: incomplete a second ago, `n` positions short (`complete` — the frame is
+    // whole), no retry due; drawn again until a frame lands nothing
+    let show = |h: &mut Harness<'static, KtApp>, n: u64, complete: bool| {
+        let deadline = kt_time::test_deadline();
+        loop {
+            {
+                let app = h.state_mut();
+                let k = app.preview_key.expect("a frame on screen");
+                app.preview_key = Some((k.0, k.1, complete));
+                app.incomplete_since = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+                app.preview_catching_up = n;
+                app.compose_retry_gap = crate::app::COMPOSE_RETRY_MAX * 2;
+                app.compose_retry_epoch = app.player.cache.epoch();
+            }
+            let before = h.state().composites;
+            h.step();
+            if h.state().composites == before && h.state().preview_asked.is_none() {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "the preview never stood still");
+        }
+    };
+    let catching = crate::tf!(k::perf::LOADING_CATCHING_UP, 37);
     let loading = tr(k::perf::LOADING).to_string();
-    let drawn = |h: &Harness<'static, KtApp>, t: &str| crate::reach_tests::painted_texts(h).iter().any(|p| p.src == t);
-    h.state_mut().preview_held = true;
-    h.step();
-    assert!(drawn(&h, &note), "the held frame says it is catching up");
-    assert!(!drawn(&h, &loading), "a held frame is not the Loading scrim");
-    h.state_mut().preview_held = false;
-    h.step();
-    assert!(!drawn(&h, &note), "the moment's own frame removes the note");
+    let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h);
+    show(&mut h, 37, false);
+    let img = h.state().preview_img_rect;
+    let at = texts(&h).into_iter().find(|t| t.src == catching).expect("the scrim names the catch-up");
+    assert!(
+        (at.rect.center() - img.center()).length() < 4.0,
+        "the catch-up is written where Loading is, the picture's centre ({:?} vs {:?})",
+        at.rect.center(),
+        img.center()
+    );
+    assert!(!texts(&h).iter().any(|t| t.src == loading), "one text in Loading's place");
+    assert!(
+        !texts(&h).iter().any(|t| img.contains(t.rect.left_top()) && (t.rect.left_top() - img.left_top()).length() < 40.0),
+        "nothing is written in the preview's corner"
+    );
+    show(&mut h, 0, false);
+    assert!(texts(&h).iter().any(|t| t.src == loading), "another incomplete frame keeps plain Loading");
+    assert!(!texts(&h).iter().any(|t| t.src == catching));
+    show(&mut h, 0, true);
+    assert!(!texts(&h).iter().any(|t| t.src == loading || t.src == catching), "a complete frame has no scrim");
+}
+
+/// Test t2457 (class-walk-revision): two more gestures measured between reads count the busy frame
+/// and every press, as test-hygiene made the rest. The preview's single click waited a fixed 300 ms
+/// from when its frame happened to run: on 450 ms frames the play fired before egui's widened double
+/// click landed, so a double click played AND detached. The search window's arrows read one press a
+/// frame: ↓↓↓ in one slow frame moved one row.
+#[test]
+fn t2457_preview_click_and_search_arrows_count_the_busy_frame() {
+    use crate::app::{KeyClock, PendingOp, PreviewClick, preview_click_delay_ms, preview_click_step, search_step};
+    let busy = KeyClock { double_s: crate::app::DOUBLE_CLICK_S + 0.4, ..KeyClock::default() };
+    let delay = preview_click_delay_ms(&busy);
+    assert_eq!(delay, 700, "the single click waits egui's widened double-click window");
+    assert_eq!(
+        preview_click_step(Some(350), false, false, delay),
+        (PreviewClick::None, PendingOp::Keep),
+        "a frame 350 ms after the click on a busy machine played before the double could land"
+    );
+    assert_eq!(preview_click_step(Some(700), false, false, delay).0, PreviewClick::TogglePlay);
+    assert_eq!(preview_click_delay_ms(&KeyClock::default()), crate::app::PREVIEW_CLICK_DELAY_MS, "an idle machine keeps the base delay");
+    assert_eq!(search_step(0, 3, 0, 10), 3, "three ↓ in one frame move three rows");
+    assert_eq!(search_step(5, 0, 2, 10), 3);
+    assert_eq!(search_step(8, 4, 0, 10), 9, "clamped to the last hit");
+    assert_eq!(search_step(0, 1, 0, 0), 0, "no hits");
 }

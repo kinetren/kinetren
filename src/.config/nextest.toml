@@ -22,3 +22,11 @@ priority = 10
 filter = 'test(t2311_)'
 threads-required = 'num-cpus'
 
+
+# On a software device "the next piece is queued before the earlier one ends" is a race of the walk's
+# submitting thread against the device's own threads on the same processor: under a full parallel run
+# t2436 read 16 and 62 of 159 queued ahead where alone it reads 159 (stage 11, gpu-throughput D1b). The
+# arbiter's own share — no idle with nothing queued — holds under load; the race runs with the machine.
+[[profile.default.overrides]]
+filter = 'test(t2436_)'
+threads-required = 'num-cpus'

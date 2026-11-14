@@ -64,7 +64,7 @@ pub trait StreamLayout {
     /// Where the kernel keeps what it COMPILED from this layout (stream-layout-per-build): its
     /// schedule, the rows per position, the content keys. The host gives one cell per stage, build
     /// and stream size, and drops it with the build, so the kernel compiles once and every later
-    /// question (`needs`, `held`, `key`, `render`) reads it. `None` — no cell: the kernel compiles per
+    /// question (`needs`, `key`, `render`) reads it. `None` — no cell: the kernel compiles per
     /// call, to the same values.
     fn plan_cell(&self) -> Option<&PlanCell> {
         None
@@ -104,7 +104,16 @@ pub fn compiling(from: i64, to: i64, f: impl FnOnce() -> usize) {
 /// `stream_walk` record — its first position, its positions, the pictures it brought back and the
 /// checkpoints it kept.
 pub fn walked(first: i64, positions: usize, reads: u64, checkpoints: u32) {
+    WALKED.fetch_add(positions as u64, std::sync::atomic::Ordering::Relaxed);
     kt_time::trace::ev(kt_time::trace::Ev::StreamWalk).a(first as u64).b(positions as u64).c(reads).aux(checkpoints).emit();
+}
+
+static WALKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// History positions every walk of the process computed so far: the host's sign of progress
+/// (gpu-throughput D3 — a look-ahead that computed nothing over several passes stops retrying).
+pub fn positions_walked() -> u64 {
+    WALKED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl std::fmt::Debug for PlanCell {
@@ -165,12 +174,6 @@ pub trait StreamKernel: Send + Sync {
     /// memo by the walk, not only by its loop). 0 — the kernel keeps none.
     fn checkpoints(&self, _p: &[f64], _lay: &dyn StreamLayout, _n: i64) -> usize {
         0
-    }
-    /// The latest position at or before `n` on `n`'s own stream whose output the memo holds — the
-    /// picture a live preview shows while the stage is still computing its way to `n` (a late
-    /// frame, as a late decode shows its last one); `None` — none, or the kernel does not say.
-    fn held(&self, _p: &[f64], _lay: &dyn StreamLayout, _n: i64, _memo: &StreamMemo) -> Option<i64> {
-        None
     }
     /// The key `render` would return for frame `n` (structured-telemetry), from the rows and the
     /// addresses alone: nothing computed, the memo not read. The host finds a kept composite of the

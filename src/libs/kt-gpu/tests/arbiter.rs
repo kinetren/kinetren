@@ -231,50 +231,55 @@ fn t2254_the_displays_latency_on_a_shared_device_is_bounded() {
 }
 
 /// Test t2255: on the compute host's ring the frame on screen's job is admitted before a waiting
-/// look-ahead job, whatever came first.
+/// look-ahead job, whatever came first. The ring is held by an admitted piece never submitted (it
+/// never drains) until both wait, and the order is the arbiter's own: its admission records. A long
+/// job as the holder and the order the jobs finished in were the machine's (stage 11: under the full
+/// run the holder ended before the frame's job came to wait, or the frame's thread recorded late).
 #[test]
 fn t2255_the_compute_host_admits_the_frame_on_screen_first() {
+    use kt_time::trace::{self, Ev};
     let _one = lock();
     let Some(ctx) = context() else { return };
     let host = ComputeDevice::on_context(&ctx);
     spin(&*host, "test:short", 1000, 1).unwrap();
-    let order = Arc::new(Mutex::new(Vec::new()));
-    let long = {
-        let host = host.clone();
-        std::thread::spawn(move || {
-            let _class = with_class(Class::Near);
-            spin(&*host, "test:long", 20_000_000, 1).unwrap();
-        })
-    };
     let ring = host.ring().clone();
     let deadline = kt_time::test_deadline();
-    while ring.in_flight_ns() == 0 {
-        assert!(Instant::now() < deadline, "the long job never went in flight");
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    let mut hs = Vec::new();
-    for c in [Class::Near, Class::Now] {
-        let (host, order) = (host.clone(), order.clone());
-        hs.push(std::thread::spawn(move || {
-            let _class = with_class(c);
-            // never measured: each claims the whole bound, so one runs at a time; the look-ahead's
-            // is long, so the order they finish in is the order they were admitted in
-            match c {
-                Class::Now => spin(&*host, "test:now", 1000, 1).unwrap(),
-                _ => spin(&*host, "test:near-long", 5_000_000, 1).unwrap(),
-            };
-            order.lock().unwrap().push(c);
-        }));
-        while !ring.higher_waits(Class::Offline) || (c == Class::Now && !ring.higher_waits(Class::Near)) {
-            assert!(Instant::now() < deadline, "{c:?} never waited");
-            std::thread::sleep(Duration::from_millis(1));
+    let held = Mutex::new(0u64);
+    let items = trace::testing::capture(|| {
+        let holder = ring.admit(Class::Near, arbiter::bound());
+        *held.lock().unwrap() = trace::now_ns();
+        let mut hs = Vec::new();
+        for c in [Class::Near, Class::Now] {
+            let host = host.clone();
+            hs.push(std::thread::spawn(move || {
+                let _class = with_class(c);
+                // never measured: each claims the whole bound
+                match c {
+                    Class::Now => spin(&*host, "test:now", 1000, 1).unwrap(),
+                    _ => spin(&*host, "test:near-long", 5_000_000, 1).unwrap(),
+                };
+            }));
+            while !ring.higher_waits(Class::Offline) || (c == Class::Now && !ring.higher_waits(Class::Near)) {
+                assert!(Instant::now() < deadline, "{c:?} never waited");
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
-    }
-    long.join().unwrap();
-    for h in hs {
-        h.join().unwrap();
-    }
-    assert_eq!(*order.lock().unwrap(), vec![Class::Now, Class::Near], "the look-ahead's job went first");
+        drop(holder);
+        for h in hs {
+            h.join().unwrap();
+        }
+    });
+    // when each waiter was admitted: its admission span's end (the holder's came before `since`)
+    let since = *held.lock().unwrap();
+    let mut admitted: Vec<(u64, u32)> = trace::testing::recs(&items)
+        .into_iter()
+        .filter(|r| r.kind() == Some(Ev::GpuAdmit) && r.id == ring.id() && r.t >= since)
+        .filter(|r| r.aux == Class::Now as u32 || r.aux == Class::Near as u32)
+        .map(|r| (r.t + r.dur, r.aux))
+        .collect();
+    admitted.sort_unstable();
+    let order: Vec<u32> = admitted.iter().map(|a| a.1).collect();
+    assert_eq!(order, vec![Class::Now as u32, Class::Near as u32], "the look-ahead's job was admitted first (waiting admissions by when they ended)");
 }
 
 /// Test t2260: a present is waited for by a few non-blocking checks, not one a millisecond.
@@ -299,4 +304,132 @@ fn t2260_a_present_is_waited_for_by_a_few_checks() {
     let checks = kt_gpu::present_checks() - checks;
     eprintln!("t2260: {checks} checks over {n} presents, {:.1} ms a frame", ms(spent) / n as f64);
     assert!(checks <= 4 * n, "{checks} checks for {n} presents of {:.1} ms each", ms(spent) / n as f64);
+}
+
+/// The offline device as the program has it: the slow route's engine serving the preview, and its
+/// sibling for effect cells, reel strips and posters.
+fn slow_and_side() -> Option<(Arc<GpuFxEngine>, Arc<GpuFxEngine>)> {
+    kt_plugins_builtin::install();
+    let ctx = context()?;
+    let slow = GpuFxEngine::new(ctx).expect("offline engine");
+    slow.serve_preview();
+    slow.settle();
+    let side = slow.sibling();
+    Some((slow, side))
+}
+
+/// Test t2338 (scheduler-followups D6): the side engine is made from the offline engine's compiled
+/// set (it compiles nothing) and composes the same bytes.
+#[test]
+fn t2338_the_side_engine_shares_the_compiled_pipelines() {
+    let _one = lock();
+    let Some((slow, side)) = slow_and_side() else { return };
+    assert!(side.shares_compiled(&slow), "the sibling compiled a set of its own");
+    let fx = heavy();
+    let f = frame(3);
+    let p = plan(&f, &fx, 31);
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    slow.execute_once(&p, &mut a).expect("slow");
+    side.execute_once(&p, &mut b).expect("side");
+    assert!(a == b, "the sibling's frame differs from its engine's");
+}
+
+/// Test t2337 (scheduler-followups D6, row 290): side work on the offline device holds the slow
+/// route's frame for one piece at most. With the side engine's lock held (a cell mid-composite) a
+/// slow-route frame composes; with heavy side frames running at class background, the route's
+/// frames wait less than one heavy frame takes, the heavy frames are cut, and both kinds of frame
+/// keep their solo bytes.
+#[test]
+fn t2337_side_work_holds_the_slow_route_for_one_piece() {
+    let _one = lock();
+    let Some((slow, side)) = slow_and_side() else { return };
+    arbiter::set_enabled(true);
+    let fx = heavy();
+    let (fh, fl) = (frame(5), frame(6));
+    let heavy_p = plan(&fh, &fx, 41);
+    let light_p = plan(&fl, &[], 42);
+    // solo: the bytes, and the heavy frame's own time once its passes are measured
+    let (mut heavy_solo, mut light_solo) = (Vec::new(), Vec::new());
+    {
+        let _c = with_class(Class::Background);
+        for _ in 0..2 {
+            side.execute_once(&heavy_p, &mut heavy_solo).expect("heavy");
+        }
+    }
+    let t0 = Instant::now();
+    {
+        let _c = with_class(Class::Background);
+        side.execute_once(&heavy_p, &mut heavy_solo).expect("heavy");
+    }
+    let heavy_time = t0.elapsed();
+    {
+        let _c = with_class(Class::Now);
+        slow.execute_once(&light_p, &mut light_solo).expect("light");
+    }
+
+    // a cell holds the side engine's lock: the route's frame does not wait for it
+    {
+        let held = side.hold();
+        let done = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _c = with_class(Class::Now);
+                let mut out = Vec::new();
+                slow.execute_once(&light_p, &mut out).expect("light beside a held cell");
+                assert!(out == light_solo, "the route's frame changed beside a held cell");
+                done.store(true, Ordering::Release);
+            });
+            let deadline = kt_time::test_deadline();
+            while !done.load(Ordering::Acquire) {
+                assert!(Instant::now() < deadline, "the route's frame waited for the side engine's lock");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+        drop(held);
+    }
+
+    // heavy side frames run; the route's frames wait one piece, not a heavy frame. `on`: the
+    // engine the heavy frames compose on (the former arrangement: the route's own)
+    let route_waits = |on: &Arc<GpuFxEngine>| {
+        let stop = AtomicBool::new(false);
+        let mut waits = Vec::new();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _c = with_class(Class::Background);
+                let mut out = Vec::new();
+                while !stop.load(Ordering::Acquire) {
+                    on.execute_once(&heavy_p, &mut out).expect("heavy beside the route");
+                    assert!(out == heavy_solo, "a cut heavy frame changed its bytes");
+                }
+            });
+            let _c = with_class(Class::Now);
+            let mut out = Vec::new();
+            // the heavy frame is on the device before the route asks
+            std::thread::sleep(heavy_time / 4);
+            for _ in 0..6 {
+                let t = Instant::now();
+                slow.execute_once(&light_p, &mut out).expect("light beside heavy");
+                waits.push(t.elapsed());
+                assert!(out == light_solo, "the route's frame changed beside heavy work");
+                std::thread::sleep(heavy_time / 3);
+            }
+            stop.store(true, Ordering::Release);
+        });
+        waits
+    };
+    // before (row 290): cells, strips and posters on the route's own engine
+    let before = route_waits(&slow);
+    let cuts0 = arbiter::pieces_cut();
+    let waits = route_waits(&side);
+    let cuts = arbiter::pieces_cut() - cuts0;
+    let worst = waits.iter().max().copied().unwrap_or_default();
+    let round = |w: &[Duration]| w.iter().map(|d| ms(*d).round()).collect::<Vec<_>>();
+    eprintln!(
+        "t2337: heavy frame {:.1} ms; route frames beside heavy work on its own engine {:?} ms, on the side engine {:?} ms, {cuts} cuts",
+        ms(heavy_time),
+        round(&before),
+        round(&waits)
+    );
+    assert!(cuts > 0, "no heavy side frame was cut on the route's ring");
+    assert!(worst < heavy_time, "a route frame waited {:.1} ms, a whole heavy frame is {:.1} ms", ms(worst), ms(heavy_time));
 }

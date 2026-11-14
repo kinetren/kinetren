@@ -1690,29 +1690,55 @@ Why: found-defects 397 — "cache: 39/535 MB" was audio/video and read as used/l
 - **PATH** open View → Diagnostics… → the first row reads "Program 7254 MB · rest 897"; hover it → the status line: "Program: all the memory it holds. Rest: what no cache counts (decoders, graphics driver, interface)…"; under the occupancy bar "Caches: kept … · mix … · room … MB"
 - **TEST** t2398 (`src/apps/kt-app/src/diag_tests.rs`)
 
-### Requirement: V-fps counts new pictures of the moment asked
-The performance panel's V-fps SHALL count the shown frames that are a new picture of the moment the
-preview asked for; a frame that shows a stream stage's held picture SHALL NOT count, and SHALL be
-counted apart as "held" frames a second, shown next to V-fps in the Diagnostics window while non-zero.
-The trace's `frame_show` record SHALL carry the held flag.
+### Requirement: V-fps counts complete new pictures of the moment asked
+The performance panel's V-fps SHALL count the shown frames that are a complete new picture of the moment
+the preview asked for; an incomplete composite (a frame still loading, a stream stage catching up) SHALL
+NOT count, whether or not it is drawn.
 Why: found-defects 393 — his trace: 114 shows in 6 s (19/s), 111 of them a held stream frame, 45
-distinct pictures, all from the history before his loop; the counter said 20 where "at most 5 are new".
+distinct pictures; the counter said 20 where "at most 5 are new". Since catch-up-shows-loading no held
+frame is shown, so there is no held count either.
 
-#### Scenario: Every frame held is V-fps 0
-- **WHEN** the app takes a second of composites of advancing moments that all show a held stream frame, then a second of complete new moments
-- **THEN** the first second's V-fps is 0 and its held count is the composites taken; the second's V-fps counts them and held is 0
-- **PATH** play over a Datamosh event whose history is behind → the toolbar reads 0 vfps, Diagnostics shows the held frames a second and the preview's marker; when the history catches up → the vfps rise and the marker goes
+#### Scenario: Only complete new pictures count
+- **WHEN** the app takes a second of incomplete composites of advancing moments, then a second of complete new moments, then the last moment again
+- **THEN** the first second's V-fps is 0, the second's counts the composites, and the repeated moment is no new picture
+- **PATH** play over a Datamosh event whose history is behind → the toolbar reads 0 vfps and the preview says "Loading — catching up: N"; when the history catches up → the vfps rise and the scrim goes
 - **TEST** t2358 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: The preview marks a held stream frame
-While the frame on screen is a held stream frame, the preview SHALL draw a small "catching up" marker in
-its corner, without dimming the picture; the Loading scrim keeps its own rule (an incomplete frame
-past 180 ms). The marker SHALL not ask for frames at rest.
-Why: kkt-26.11.10 J2 — a held frame looked like playback; the Loading scrim was decided by the owner for
-a frame with no picture (the flicker "black frame ↔ Loading", items 14–15 of round 14) and stays for that.
+### Requirement: Loading names a stream catch-up where it is written
+While the frame on screen is incomplete because a stream stage's history is behind, the Loading scrim
+(the owner's rule: an incomplete frame past 180 ms, the last full picture dimmed under it) SHALL write,
+in the place and style of "Loading", "Loading — catching up: N", N the positions the history still lacks
+for the frame asked, updated as composites land; any other incomplete frame keeps plain "Loading". No
+marker SHALL be drawn in the preview's corner. The text SHALL ask for no frame at rest.
+Why: kkt-26.11.10b K2 — "catchung up надпись ну очевидно можно в том же месте где loading писать".
 
-#### Scenario: The marker follows the held flag
-- **WHEN** the app takes a held composite, then a complete one, then sits at rest
-- **THEN** the marker is drawn over the first and not over the second, the scrim over neither, and at rest no frame is asked for
-- **PATH** play over a Datamosh event whose history is behind → a small "catching up" note in the preview's corner over the moving picture; it goes when the picture is the moment's own
-- **TEST** t2359 (`src/apps/kt-app/src/layout_tests.rs`)
+#### Scenario: The scrim names the catch-up
+- **WHEN** the app takes an incomplete composite whose stream stage lacks 37 positions and 180 ms pass, then an incomplete composite with nothing short, then a complete one, then sits at rest
+- **THEN** the scrim's text is "Loading — catching up: 37" at the picture's centre, then "Loading", then no scrim; nothing is written in the preview's corner (the rest's cost: live `idle`)
+- **PATH** play over a Datamosh event whose history is behind → the picture dims and "Loading — catching up: N" stands in the preview's centre, N falling as the history walks → the scrim goes when the moment's own picture lands
+- **TEST** t2415 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A person plays into a Datamosh region that is catching up
+- **PATH** open the showcase with its mosh cut → the preview stands before the cut → press Space → the cut's frames are not ready: the preview dims with "Loading — catching up: N" in its centre and no corner note → the history catches up and the mosh plays → pause on an uncomputed moment further on → the same Loading text, then the picture
+- **WHEN** the live scenario runs on our fixtures
+- **THEN** the screenshots of each step are saved, the dump's Loading text names the catch-up while the stream is behind, and no corner marker is drawn
+- **TEST** t2416 live `datamosh.py` (`src/scripts/live/datamosh.py`, via `src/scripts/live-check.sh`)
+
+### Requirement: Every press of a slow frame counts outside the key table too
+A gesture that reads keys outside `handle_keys` SHALL count every press a frame read (the mask pen's
+Backspace/Delete, the search window's arrows), and the preview's deferred single click SHALL wait
+egui's widened double-click window measured from frame starts.
+Why: class-walk-revision — test-hygiene made `handle_keys` and egui's windows count the busy frame;
+these three gestures kept one press a frame and a fixed 300 ms from when the frame ran.
+
+#### Scenario: Two Backspaces in one frame take two pen points
+- **WHEN** the pen has three points and one frame reads two Backspaces
+- **THEN** one point is left
+- **PATH** the picture's menu → Mask → Pen → three clicks on the picture → Backspace twice quickly on a busy machine → one point is left
+- **TEST** t2456 (`src/apps/kt-app/src/mask_tests.rs`)
+
+#### Scenario: The preview click and the search arrows count the busy frame
+- **WHEN** egui's double-click window is widened by a 400 ms busy frame, or three ↓ are read in one frame of the search window
+- **THEN** the single click has not played 350 ms after it, and the selection moves three rows
+- **PATH** a busy machine → a double click on the preview → the preview detaches, playback does not toggle; Ctrl+F → ↓↓↓ quickly → the third find is selected
+- **TEST** t2457 (`src/apps/kt-app/src/layout_tests.rs`)

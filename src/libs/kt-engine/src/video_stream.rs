@@ -101,7 +101,8 @@ pub fn size_stream_memo(per_position: usize, loop_positions: Option<usize>) -> u
 
 /// `size_stream_memo` with the walk's checkpoints (`stream_memo_bytes_walk`).
 pub fn size_stream_memo_walk(per_position: usize, loop_positions: Option<usize>, checkpoints: usize) -> usize {
-    let free = memory_available();
+    // the room, not the bare available: the memo's own growth is memory it may keep (class-walk-revision)
+    let free = kt_time::mem::room();
     let want = stream_memo_bytes_walk(STREAM_MEMO_BASE, per_position, loop_positions, checkpoints, free);
     let memo = stream_memo();
     let grant = memo.account().want((want - STREAM_MEMO_BASE) as u64);
@@ -140,21 +141,17 @@ pub struct StreamPacing {
     pub order_bytes: usize,
     /// A composite runs the stage only when its frame lacks at most this many positions (a step
     /// of playback, a skipped frame or two); a longer history is advanced by the prefetch thread
-    /// (`VideoRenderer::stream_advance`) and the composite reports the frame incomplete — the UI
-    /// thread never computes a history.
+    /// (`VideoRenderer::stream_advance`) and the composite reports the frame incomplete, playing or
+    /// paused — the UI thread never computes a history, and no picture of another position stands
+    /// in for the frame (catch-up-shows-loading: the stages after the stream ran over it).
     pub compose_steps: usize,
-    /// While playing, a frame further short shows the latest the stage holds on its stream (a late
-    /// frame of the layer, as a late decode shows its last one) instead of none: when the stage is
-    /// slower than real time the playhead never meets its frontier, and the picture stood. Off on a
-    /// pause, where the frame itself is waited for. The player sets it per composite.
-    pub hold: bool,
 }
 
 impl StreamPacing {
     /// The preview's pacing for a cache of `max_video_bytes`: a quarter of it for the history (the
     /// look-ahead takes half, the span being decoded the rest).
     pub fn preview(max_video_bytes: usize) -> StreamPacing {
-        StreamPacing { order_bytes: max_video_bytes / 4, compose_steps: 2, hold: false }
+        StreamPacing { order_bytes: max_video_bytes / 4, compose_steps: 2 }
     }
 }
 
@@ -447,7 +444,9 @@ pub(super) fn key_only(
 }
 
 /// Run the stage for frame time `t`: the decoded picture fitted to `dq` (opaque) and its key;
-/// `(None, 0)` — a frame of the history is missing (starvation; the order asks for it).
+/// `(None, 0)` — a frame of the history is missing (starvation; the order asks for it), or, paced, the
+/// history lacks more positions than a composite computes: `short` then keeps the most positions a
+/// stage of the plan still lacks (the preview writes them under Loading).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     clip: &VideoClip,
@@ -455,17 +454,18 @@ pub(super) fn run(
     grid: &FpsGrid,
     cache: &BurstCache,
     memo: &StreamMemo,
+    view: bool,
     pacing: Option<StreamPacing>,
-    held: &std::sync::atomic::AtomicBool,
     quality: Quality,
     dq: Quality,
     t: Tick,
     pts: Tick,
 ) -> (Option<Arc<VideoFrame>>, u64) {
     use kt_time::trace::{self, stream as so, Ev};
-    let cs = ClipStream::new(clip, st, grid, quality, Some(cache)).with_view(memo);
+    let cs = ClipStream::new(clip, st, grid, quality, Some(cache));
+    let cs = if view { cs.with_view(memo) } else { cs };
     let k = st.kernel();
-    let mut n = cs.pos(t);
+    let n = cs.pos(t);
     // the stage's run in the trace: the position, what the memo still lacked, and what came out
     let mut span = trace::span(Ev::StreamRun);
     span.id(clip.id.0).a(n as u64).c(n as u64);
@@ -474,22 +474,14 @@ pub(super) fn run(
     if let Some(p) = pacing
         && needs > p.compose_steps
     {
-        // the history is the prefetch thread's (`stream_advance`); playing, the layer shows the
-        // latest frame the stage holds, a frame it can give without computing anything
-        match k.held(&st.values, &cs, n, memo).filter(|&f| p.hold && k.needs(&st.values, &cs, f, memo).is_empty()) {
-            Some(f) => {
-                n = f;
-                held.store(true, std::sync::atomic::Ordering::Relaxed);
-                span.aux(so::HELD).c(f as u64);
-            }
-            None => {
-                span.aux(so::SHORT);
-                return (None, 0);
-            }
-        }
-    } else {
-        span.aux(so::RENDERED);
+        // the history is the prefetch thread's (`stream_advance`); the frame is incomplete, playing or
+        // paused: a picture of another position would have the later stages (the event's VHS Tape, the
+        // track's and the reel's stages) run over it at this moment (kkt-26.11.10b K5, found-defects 403)
+        crate::video::note_stream_short(needs as u64);
+        span.aux(so::SHORT);
+        return (None, 0);
     }
+    span.aux(so::RENDERED);
     let mut buf = Vec::new();
     let Some(out) = k.render(&st.values, &cs, n, memo, &mut buf) else {
         span.aux(if cs.stopped().is_some() { so::STOPPED } else { so::SOURCE_MISSING });

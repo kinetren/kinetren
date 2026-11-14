@@ -962,14 +962,8 @@ impl crate::app::KtApp {
                 self.start.made_from = Some(id);
                 self.start.welcome.open = false;
             }
-            StartGo::Recent(path) => match crate::app::KtApp::open(&path) {
-                Ok(mut app) => {
-                    app.claim_project(&path);
-                    self.replace_with(app);
-                    self.start.welcome.open = false;
-                }
-                Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
-            },
+            // read on the media lane; the welcome window closes when it lands (scheduler-followups D3)
+            StartGo::Recent(path) => self.ask_open(path, crate::app::OpenThen::Recent, None),
             StartGo::Lesson { lesson, fresh } => {
                 self.start.welcome.open = false;
                 self.open_lesson(lesson, fresh);

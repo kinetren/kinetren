@@ -85,6 +85,10 @@ pub(crate) struct Timer {
     /// The device time of the last measured frame by role (`Role as usize`): a frame's admission
     /// claim, the preview's wait (gpu-arbiter D8). Without timestamps, submit to done.
     last_frame: Arc<[std::sync::atomic::AtomicU64; 3]>,
+    /// The device's key in the pass-time seeds (gpu-throughput D2); `None` — not seeded.
+    seed_key: Option<Arc<str>>,
+    /// The output pixels of the last frame ended: the work units a seed is asked for.
+    units: u64,
 }
 
 impl Timer {
@@ -135,7 +139,20 @@ impl Timer {
             on: false,
             last: HashMap::new(),
             last_frame: Arc::new(Default::default()),
+            seed_key: None,
+            units: 0,
         }
+    }
+
+    /// Predict a pass never measured in this process from the times this device measured before
+    /// (gpu-throughput D2), and keep what is measured for the next process.
+    pub fn seed_as(&mut self, key: String) {
+        self.seed_key = Some(key.into());
+    }
+
+    /// The device's key in the seeds, if seeded (a sibling engine takes it).
+    pub fn seed_key(&self) -> Option<String> {
+        self.seed_key.as_deref().map(String::from)
     }
 
     /// A new frame begins encoding.
@@ -154,7 +171,11 @@ impl Timer {
 
     /// The device time `label` took when last measured; `None` — never measured.
     pub fn predict(&self, label: PassLabel) -> Option<u64> {
-        self.last.get(&label).copied()
+        self.last.get(&label).copied().or_else(|| {
+            // a run shape's number is this process's own: never seeded
+            let key = self.seed_key.as_ref().filter(|_| !matches!(label, PassLabel::Run(_)))?;
+            crate::seeds::predict(key, &self.name(label), self.units)
+        })
     }
 
     /// The device time of the last measured frame of `role`; 0 — none yet.
@@ -196,6 +217,7 @@ impl Timer {
             return;
         }
         self.on = false;
+        self.units = meta.out.0 as u64 * meta.out.1 as u64;
         let (Some(set), Some(resolve)) = (&self.set, &self.resolve) else { return };
         // `begin` timed the frame only with fewer than PENDING_MAX waiting: a buffer is free
         let Some(buf) = self.free.pop() else {
@@ -282,8 +304,15 @@ impl Timer {
                     .map(|(i, l)| (self.name(*l), ns(ticks[2 * i + 1].saturating_sub(ticks[2 * i]))))
                     .collect();
                 let mut sum = 0;
+                let units = p.meta.out.0 as u64 * p.meta.out.1 as u64;
                 for (i, l) in p.labels.iter().enumerate() {
                     let d = ns(ticks[2 * i + 1].saturating_sub(ticks[2 * i]));
+                    // the seeds hear a pass when it is new or moved by a quarter: not every frame
+                    if let Some(key) = self.seed_key.as_ref().filter(|_| !matches!(l, PassLabel::Run(_)))
+                        && self.last.get(l).is_none_or(|&o| d.abs_diff(o) > o / 4)
+                    {
+                        crate::seeds::note(key, &self.name(*l), units, d);
+                    }
                     self.last.insert(*l, d);
                     sum += d;
                 }

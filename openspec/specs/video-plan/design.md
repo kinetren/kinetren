@@ -522,3 +522,112 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
   incomplete composites 1 → 51 in a minute's loop; the frame on screen now comes back first.
 - **A held frame says so:** `GpuStages.stream_held` → `Composed.held`; the app counts it apart and
   draws "Catching up…" (ui-timeline).
+
+## No stage over a stand-in; Loading names the catch-up (catch-up-shows-loading, archived 2026-11-11)
+
+- **What hurt** (kkt-26.11.10b K1/K2/K5, kkt-26.11.11 L2, found-defects 403, 483): playing, a frame whose
+  stream history was behind showed the stage's latest HELD picture, and every later stage ran over it at
+  the moment asked — the event's VHS Tape, the track's and the reel's stages: "либо есть кадр либо нет".
+  The composite was complete, so the display's present memo stored it under a key no moment asks again
+  (his stage-10 trace: 248 of 920 stores). The owner: effects taking previous pictures are "пустая трата
+  времени и ресурсов".
+- **Decision:** no held frame anywhere (`StreamPacing::hold`, `StreamKernel::held` in the contract,
+  `stream_held`, `Composed.held` gone). A frame short of more than `compose_steps` is incomplete playing or
+  paused; `VideoRenderer::stream_short` (max over the plan, reels and track stages included) →
+  `GpuStages.stream_short` → `Composed.catching_up`; the Loading scrim writes "Loading — catching up: N" in
+  Loading's place. The first picture of a fresh preview is still presented incomplete under the scrim (the
+  owner's round-14 rule; row 461 asks him).
+- **The class walk** (a stage given an input that is not its own position): the stream stage (fixed), a
+  blended frame pair lacking a side (took the other at full weight and reported complete — now no picture,
+  incomplete; t2418), the reel strip and the poster (kept incomplete offline composites — now only complete
+  ones, a missing file is its placeholder; t2419). Checked and not the class: a transition pair's missing
+  half (already incomplete, never presented, t137), decode misses (exact keys), the slow route (a late
+  complete picture of its own moment), kept composites (keyed by the stage's own key), the freeze frame
+  (the person's own edit), the stream's sound (its own position). The FX picker's cell over a stream slot
+  is a look question (row 460). The full table is in the archived change's design.md.
+- **Measured** (release, llvmpipe): his relinked copy's 30 s loop over the problem region — 29 held
+  composites shown and 27 stored before, 0 and 0 after; 10.3 → 9.1 cores (127 VHS runs instead of 154).
+  The red-on-old guard is t2414 (the player set the hold while playing).
+
+## The loop fill and the slow route's own engine (scheduler-followups, 2026-11-14, found-defects 251, 290)
+
+- **The loop fill (251).** A display slower than the frames shows a different subset each lap and keeps
+  only what it shows. A `near` service composes the loop's unkept, fully decoded moments ahead of the
+  playhead on the side engine and keeps them on the display's executor, as the slow route does. It
+  asks no decode, and it starts nothing while the display composes a frame of its own: on a software
+  rasterizer the two share the processor, and the first version (no gate) only moved work off the
+  display's frames — all-kept at lap 17 against 16, V-fps 16.6 against 19.5. With the gate: all-kept
+  from lap 9 against 18, V-fps 20.6 against 18.4 (heavy showcase, 2 s loop, release, llvmpipe).
+  `stream_short` (the held flag before it) is per thread: two threads plan on one renderer.
+- **The slow route's own engine (290).** The offline engine's lock is held a whole frame, so the
+  slow-route frame waited behind an effect cell or a poster. Cells, strips, posters and the fill compose
+  on `side_engine()`, a `sibling` that shares the device, queue, ring and compiled pipelines but not the
+  lock; `serve_preview` makes the offline ring bound and cut lower classes. t2337: the route's frame
+  beside heavy side frames waited 119–153 ms on the shared engine, 3–26 ms after.
+- **Rejected:** composing fill moments on the compose thread (no time between asks on a slow display);
+  decoding for the fill (it would compete with the look-ahead for the frame on screen); a second
+  headless device for side work (a device and its pipelines against an arena and pools).
+- `kt-cli trace loop` counted the fill's composites as the display's frames; `lives` now takes only
+  frames the display asked for, and a lap names the fill apart.
+
+## The ring's drain, cold passes, the history ahead, the machine-use rule (gpu-throughput, archived 2026-11-14)
+
+His stage-10 trace (kkt-26.11.10b K3, iGPU): a Datamosh walk spent 96–98 % of its wall in admission, 16 ms
+on the device a position in 106 ms; each piece waited for the earlier one's completion, which stood behind
+the display's own uncounted 32.5 ms composite. The class: work a person waits for runs serially while the
+device or the cores stand idle. Full record: `openspec/changes/archive/2026-11-14-gpu-throughput/design.md`.
+
+- **Admission by the predicted drain** (D1): flights carry predicted ns and submit instants; the ring drains
+  them as a FIFO (an overrun flight keeps half its time); a lower class is admitted while the drain plus its
+  claim ends within the bound past the later of the display's next present and the end of its frame in
+  flight; at most three lower flights uncompleted; a lower piece is half the bound so one runs while the
+  next is queued. The display's present is counted, never admitted. Rejected: a larger bound (the owner's
+  latency limit), counting the display without a time model (only more waits).
+- **What it cannot do:** a display that composes heavy chains every frame saturates the device; the walk
+  then gets about one bound a display frame (row 491).
+- **Cold passes** (D2): pass and dispatch times on disk (adapter + driver, label, work units), scaled by work;
+  a compute job learns from its own pieces' timestamps while it runs. A cache: it moves cuts, never bytes.
+- **The history ahead** (D3): a far part at class background — the loop to its end and round (playing or
+  paused inside it), else a quarter of the memo while playing; `FAR_STALLS` passes with nothing walked stop
+  the retries until the state moves, so a paused prefetch thread cannot pass forever.
+- **The processor** (D4): only where its bytes are the device's, or by a choice that does not follow the load
+  (invariant 11). Done: the preview's span conversion on a render's threads. Rejected: a CPU twin of the
+  codec's f32 DCT (WGSL division is 2.5 ULP, drivers contract multiply-adds), of Camera ISP and VHS (no CPU
+  kernel since compute-kernels-render), the Datamosh conversion on the CPU (3 % of a position's device
+  time), the paired audio halves off the render thread (invariant 2).
+- **Class walk:** the prefetch walk, the compose thread's stage, the slow route's ISP/VHS composites, Loading
+  on a pause, render/export (row 490: a stream stage keeps the serial export), thumbnails/strips/posters,
+  the decoder's conversion, pipeline warm, analysis lanes. Every caller of `Ring::admit`/`Piece` takes the
+  new admission unchanged; `present`/`present_kept` count the display.
+
+### Admission under load (stage 11, D1b)
+
+finish.sh on the merged stage-11 tree failed t2435 ("a cold walk was cut at nearly every dispatch: 34 of
+64") and t2436 ("16 of 159 submitted before the earlier ended") under the full parallel run; each passed
+alone. Both were the arbiter, not the tests: (1) an unmeasured pass's claim — the whole bound, a guess —
+drained by the clock like a measured time, so a loaded machine (a software device's time is processor time)
+let the next piece in before the guessed piece's timestamps were back, and the walk learned nothing; (2) a
+waiter whose claim waited on the drain slept on a timer and noticed a completion only at its next wake.
+Now a guessed flight drains only by its completion, and a waiter completes the oldest piece of a device
+without a surface by a blocking wait on that piece, seeing the room the moment it comes (the timer stays
+only for surface devices and pieces still being encoded). The waiter's blocking wait is bounded by the instant the prediction makes room (a
+guess has none): whichever comes first. Unbounded, it threw away the clock's room whenever a measured piece
+was longer than half the bound (under load: 11 of 159 queued ahead). t2436 now holds the idle the arbiter
+owns — after a piece whose successor was not yet submitted — and reports the idle behind a piece already
+queued: under 48 busy loops on 32 threads all 159 pieces were queued ahead and still 27 % of the span was
+idle, the software device's queue thread waiting for the processor. `trace gpu` prints both. t2435's "34 of
+64" was not the guess at all: under the full run a dispatch's device time on a software device passed half
+the bound, so the measured times themselves called for those cuts (alongside 48 busy loops a guess-free
+variant cut for an unmeasured dispatch 4 times, this code 3). The test now holds what the arbiter owns — at
+most one cut a name before an unmeasured dispatch (`compute::guess_cuts`; with no learning every dispatch
+is one) — and stays in the parallel run. t2436's "queued ahead" is a race of the submitting thread against
+the software device's threads on one processor (16 and 62 of 159 under full runs, 159 alone): it runs with
+the machine (`threads-required = 'num-cpus'`, as t2311), and its idle with nothing queued is held.
+
+The stage-11 rerun then failed t2255 ("the look-ahead's job went first") under the full run, green alone.
+The test, not the arbiter: its holder was a real long GPU job, which on a loaded machine could end before
+the frame's thread came to wait, and its order was the order the jobs' threads recorded their ends, which a
+descheduled thread reverses. It now holds the ring with an admitted piece never submitted (it never drains)
+until both wait, and reads the order from the arbiter's admission records. Under 64 busy loops on 32
+threads the old form failed 2 of 8, the new 0 of 18; with the class rule turned off the new form is red.
+

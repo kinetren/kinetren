@@ -77,6 +77,10 @@ pub struct BenchReport {
     pub compose_ms: Percentiles,
     /// Why composites came out incomplete: (moment, the media whose frame was missing).
     pub starved: Vec<(Tick, MissingLayers)>,
+    /// Incomplete composites whose stream history was behind: (moment, positions short). Such a
+    /// frame misses no decode, so `starved` names nothing for it (catch-up-shows-loading's consumers,
+    /// class-walk-revision).
+    pub catching_up: Vec<(Tick, u64)>,
     /// (moment, hash of its bytes), under `hash_frames`.
     pub frames: Vec<(Tick, u64)>,
     /// When audio went missing: (moment, frames of underrun since the last UI frame).
@@ -316,6 +320,9 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
             r.incomplete += u64::from(!c);
             if !c {
                 r.starved.push((Tick(k), player.missing_layers(Tick(k))));
+                if cost.stages.stream_short > 0 {
+                    r.catching_up.push((Tick(k), cost.stages.stream_short));
+                }
             }
             key = Some((k, c));
         }

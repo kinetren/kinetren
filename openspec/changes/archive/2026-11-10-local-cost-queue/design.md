@@ -163,3 +163,9 @@ over a larger unit, or allocates per unit. Walked by reading (an Explore sweep, 
   lock (red at 0.81 beside t2310, 0.33–0.34 alone).
 - [A cached bind group keeps a texture alive] → one frame at most, bounded entries; memory-ledger's
   accounts see the release a frame late at worst.
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

@@ -60,7 +60,8 @@ pub enum Ev {
     FrameDone = 6,
     /// The UI took a frame. `id` frame, `a` tick, `aux` [`show`] flags.
     FrameShow = 7,
-    /// The preview's "Loading" scrim came (`aux` 1) or went (`aux` 0). `a` the tick on screen.
+    /// The preview's "Loading" scrim came (`aux` 1) or went (`aux` 0). `a` the tick on screen, `b` the
+    /// positions a stream stage of the frame still lacked (0 — another wait; catch-up-shows-loading).
     Loading = 8,
     /// One layer of a composed frame's plan: `id` frame, `a` source, `b` cache index, `c` its
     /// content (a decode's serial, a stream stage's key), `aux` the layer's place.
@@ -194,10 +195,14 @@ pub enum Ev {
     /// One submission of a stream history walk (stream-history-on-device): `a` its first position,
     /// `b` the positions in it, `c` the pictures read back, `aux` the checkpoints it kept.
     StreamWalk = 97,
+    /// Who ran a piece of device work (gpu-throughput D6, found-defects 486): `aux` 0 the device, 1 the
+    /// processor; `id` the ring; `a` the piece's index in its frame or job; `b` its predicted device time
+    /// (ns); `c` its passes or dispatches; `cause` the caller's.
+    GpuExec = 98,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 51] = [
+    pub const ALL: [Ev; 52] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -249,6 +254,7 @@ impl Ev {
         Ev::MemUsed,
         Ev::GpuStart,
         Ev::StreamWalk,
+        Ev::GpuExec,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -308,6 +314,7 @@ impl Ev {
             Ev::MemUsed => "mem_used",
             Ev::GpuStart => "gpu_start",
             Ev::StreamWalk => "stream_walk",
+            Ev::GpuExec => "gpu_exec",
         }
     }
 }
@@ -356,6 +363,7 @@ pub mod wait {
     /// A stream stage lacks history: `a` position, `b` positions needed, `c` clip.
     pub const STREAM_SHORT: u32 = 2;
     /// Playing, a stream stage showed its latest held frame: `a` position, `b` held, `c` clip.
+    /// Builds before catch-up-shows-loading only: nothing writes it now, older traces read.
     pub const STREAM_HELD: u32 = 3;
     /// A stream stage found a source frame missing: `a` position, `c` clip.
     pub const STREAM_SOURCE: u32 = 4;
@@ -376,7 +384,8 @@ pub mod exec {
     pub const MEMO_HIT: u32 = 2;
     /// The composite was kept for the next lap.
     pub const MEMO_STORED: u32 = 4;
-    /// A stream stage showed a held frame: not the moment's own picture, not kept as it.
+    /// A stream stage showed a held frame: not the moment's own picture, not kept as it. Builds
+    /// before catch-up-shows-loading only.
     pub const STREAM_HELD: u32 = 8;
     /// Composed on the slow-chain device.
     pub const SLOW: u32 = 16;
@@ -387,7 +396,8 @@ pub mod show {
     pub const COMPLETE: u32 = 1;
     pub const NEW: u32 = 2;
     pub const ON_DISPLAY: u32 = 4;
-    /// The picture was a stream stage's held frame (stream-history-on-device).
+    /// The picture was a stream stage's held frame (stream-history-on-device; builds before
+    /// catch-up-shows-loading only).
     pub const HELD: u32 = 8;
 }
 
@@ -403,6 +413,7 @@ pub mod evict {
 /// `StreamRun.aux` / `StreamAdvance.aux`.
 pub mod stream {
     pub const RENDERED: u32 = 1;
+    /// Builds before catch-up-shows-loading only (a held frame shown while playing).
     pub const HELD: u32 = 2;
     pub const SHORT: u32 = 3;
     pub const SOURCE_MISSING: u32 = 4;
@@ -486,6 +497,10 @@ pub mod job {
     /// The player's shared build of a project version (`engine-build`): `id` its seq, `a` the
     /// version, `b` the events it derived, `c` the events its memo holds after it (the rest reused).
     pub const SHARED_BUILD: u32 = 12;
+    /// The loop fill's composite of a moment (scheduler-followups D5): `id` the job (the cause of
+    /// its records), `a` the moment's tick, `b` the outcome — 0 kept, 1 incomplete (a stream stage short
+    /// of its frame included), 3 the display's memo did not keep it.
+    pub const LOOP_FILL: u32 = 13;
 }
 
 /// `Invalidate.aux`.

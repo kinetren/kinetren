@@ -284,6 +284,52 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
     assert_ne!(n, out, "and it differs from mixing");
 }
 
+/// Test t2418 (catch-up-shows-loading D5): a blended layer lacking a side of its pair has no
+/// picture — neither side stands in at full weight with the chain run over it — and the frame is
+/// incomplete; with both sides it is the blend.
+#[test]
+fn t2418_a_frame_pair_lacking_a_side_is_incomplete() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    kt_plugins_builtin::install();
+    use kt_media::MediaSource;
+    use kt_media::synthetic::{AudioPattern, SyntheticSource};
+    let p = project(
+        vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[0.5, 0.0, 85.0, 0.32, 0.58, 0.95, 0.0, 1.0, 1.0]).unwrap()],
+        vec![],
+        false,
+    );
+    let vr = VideoRenderer::new(&p);
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
+    let t = Tick(STEP); // midway between the source frames at SEC and SEC + STEP
+    let mut with = |pts: &[i64]| {
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        for &k in pts {
+            let f = synth.read_video_frame(Tick(k), Some(q)).unwrap();
+            cache.insert_video(kt_engine::source_id(MediaId(1)), Some(q), kt_engine::video_cache_idx(Tick(k)), std::sync::Arc::new(f));
+        }
+        cache
+    };
+    let both = with(&[SEC, SEC + STEP]);
+    {
+        let plan = vr.frame_plan(&both, t, q);
+        let blended = plan.layers.iter().any(|l| {
+            matches!(l, kt_engine::video_plan::PlanLayer::One { src, .. } if src.blend.is_some() && src.input.frame().is_some())
+        });
+        assert!(blended, "scene guard: the layer is a blended pair with a picture");
+    }
+    assert!(kt_gpu::testkit::compose(&vr, &both, t, q).1, "both sides: complete");
+    for (name, cache) in [("the neighbour", with(&[SEC])), ("the base frame", with(&[SEC + STEP]))] {
+        let plan = vr.frame_plan(&cache, t, q);
+        let pictured = plan.layers.iter().any(|l| matches!(l, kt_engine::video_plan::PlanLayer::One { src, .. } if src.input.frame().is_some()));
+        assert!(!pictured, "{name} missing: the other side stood in at full weight");
+        drop(plan);
+        assert!(!kt_gpu::testkit::compose(&vr, &cache, t, q).1, "{name} missing: the frame is incomplete");
+    }
+}
+
 /// Test 250b: prefetch warms BOTH frames of the pair. If it does not warm them, the second
 /// is never requested, and the layer starves forever.
 #[test]

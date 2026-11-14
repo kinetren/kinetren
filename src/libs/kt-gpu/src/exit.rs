@@ -24,6 +24,9 @@ extern "C" fn at_exit() {
     while *n > 0 {
         n = DONE.wait(n).unwrap_or_else(|e| e.into_inner());
     }
+    drop(n);
+    // the pass times measured since the last write (gpu-throughput D2)
+    crate::seeds::flush();
 }
 
 /// The process is exiting: background GPU work starts nothing more.

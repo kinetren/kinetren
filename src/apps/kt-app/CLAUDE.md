@@ -19,7 +19,7 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 - **No allocations/clones of structures in draw paths per frame.** Snapshots for a frame are `Arc` clones of the caches by revision (coverage/names/paths, model_rev / cache.epoch). The preview composition buffer is reused (`compose_preview_into`); the glow mip is rebuilt every 4th new frame.
 - **Thousands of painter primitives = a mesh.** The waveform was 2 `line_segment` per PIXEL; the glow of the meters — ~310 tessellated ellipses per frame. Both are a single `Mesh` (t40).
 - **`cache.epoch()` changes on EVERY insertion** — during playback this is a storm. Any UI cache invalidated by epoch must be throttled during playback (coverage bars — no more often than 4 Hz; otherwise 60 polls/s under the cache mutex, contention with the decoders).
-- **Honest metrics before the fix**: V-fps (the NEW frames shown) and "V-skipped cells" in the performance panel. A composite that shows a stream stage's HELD frame is no new picture (`PerfState::take_composite`, t2358): it is counted apart (held/s next to V-shown in Diagnostics) and the preview draws "Catching up…" over it (`preview_held`, t2359), never the Loading scrim. It is they that diagnosed the 24 fps quantum ceiling from the user's machine. "FPS" is the UI frames — it says NOTHING about the video.
+- **Honest metrics before the fix**: V-fps (the NEW frames shown) and "V-skipped cells" in the performance panel. Only a COMPLETE composite of a new moment is a new picture (`PerfState::take_composite`, t2358). A frame short of its stream history is incomplete (no held picture since catch-up-shows-loading), and the Loading scrim writes "Loading — catching up: N" in Loading's own place (`preview_catching_up`, t2415). It is they that diagnosed the 24 fps quantum ceiling from the user's machine. "FPS" is the UI frames — it says NOTHING about the video.
 - **The performance panel is the "Performance" section of the Diagnostics window** (diagnostics-three-graphs, kkt-26.11.01 item 14), not a box of the left column; the column is the bin's. Its three graphs (`graphs::RollingGraph`) are BUILT once per sample (one mesh for the lines, cached galleys) and only re-painted on other frames: anything that changes the picture goes through `push`/`clear` (they bump the generation), never through `draw` — the auto-scale once stepped per draw and ran at the UI frame rate (t1149).
 
 ## Preview key on pause (R.53 item 415, R.62 t722b)
@@ -82,6 +82,16 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   test sees the gesture land in its frame).
 - **A pointer move starts no job**: the media watch is poked on the opening, a focus change and
   play/stop only (live `idle` counts `sched_jobs` among what a hover must not cause).
+- **Opening a project stands nothing** (scheduler-followups, row 270, t2330, t2332, live `open_heavy`).
+  Every UI open path posts `ask_open(path, OpenThen::…)`: the file is read (and a lesson's copy
+  written) on the `media` lane, `take_opening` parses it in a frame and swaps the app; the lock is
+  claimed after the swap (`claim_project_later`). `build_player` makes `Player::new_deferred` (its
+  first version is built on its own thread) with NO source: `begin_load` sets the sync snapshot to
+  the project's media and posts `load_sources` (the opens, the lengths and the missing-file notices
+  land as `MediaThen::Load`). The lane is FIFO, so an edit's sync during the load runs after it.
+  `replace_with` releases the closed app on an `app-drop` thread (its player joins threads and
+  decoders) after dropping its lock in place. `KtApp::open` stays synchronous for the start and tests.
+  `set_media_grace`/`hold_loads_for_tests` are the tests' seams for a load in flight.
 
 ## Writing the project to disk (R.31–R.32)
 
@@ -258,6 +268,9 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
 * **A release an event shows is never evicted** (idle-cpu, t1830). `set_live` tells the service what the view shows; `MAX_REELS_READY` bounds only the rest. A seventh release once went round: the cap evicted one, the frame asked for it, its job evicted the next, one job per UI frame, on a pause, driven by the mouse. `wants` answers before a request clones the document.
 * **One sidecar row per release, not per reel** (`reel_row`, t1831): an instance without overrides keeps the reel's id, a set of overrides has a negative row of its own. One row let the releases overwrite each other, and all but the last rendered on every opening.
 * **Pausing is mandatory:** the offline render decodes files, and during playback it would take the CPU away from real time (invariant 6). Its jobs run on the `reel-preview` lane (class `Visible`), which the scheduler pauses by the player's and the export's votes (one-scheduler); nothing in the frame sets a pause.
+* **An offline frame is kept only COMPLETE** (catch-up-shows-loading D6, t2419): `compose_offline_frame`
+  drops an incomplete composite (a layer absent, the stages after it run over the rest), and the strip and
+  the poster open a missing file as its placeholder, as the editor does, so they show what the preview shows.
 * **The frames go out BEFORE the peaks:** the audio of the reel is computed for longer, and until then the waveform is honestly empty. The mini-map remained a placeholder.
 * **The moment of the frame — the same map "event tick → material"** as for a file (t549): a slowed or mirrored instance is paged through correctly, and a second formula for this was not created.
 * **`VideoRenderer`/`AudioRenderer` in kt-app are created only by the render dialog and this service** — the guard t602.
@@ -353,6 +366,11 @@ The rules above were written down — and did not work: the R.38 mechanism turne
 ## Layout testing rule (requirement of item 9 of R.8)
 
 - Any change to layout or interactive behaviour is accompanied by a harness test in `apps/kt-app/src/layout_tests.rs` (egui_kittest runs real frames without a window or GPU): panel width, dragging the separator, the cursor on the edge, sending `BeginResize`, button clickability, "the preview did not collapse".
+- **A harness test that SETS the preview's state draws until a frame lands no composite** (t2415): the
+  compose thread answers asks on its own clock, and an answer to an earlier ask (its 5 s grace outlived
+  under a full workspace load, or a version the deferred build moved) lands in the next frame and
+  overwrites `preview_key`/`preview_catching_up` — the program's news, not the test's state. Set, step,
+  and repeat while `composites` moved or `preview_asked` is set; read only then.
 - **In the harness, the button release is sent as an EXPLICIT event.** `Harness::drop_at` puts into the queue BOTH ButtonRelease AND PointerGone, and `step()` runs one frame FOR EACH event — `output()` after it shows the frame already without the command. When checking a `ViewportCommand` from a click (Close/Minimized), send `Event::PointerButton{pressed:false}` by hand and collect the commands after THAT frame (t101).
 - **The harness is NOT proof that the feature works for the user** (lesson of item 7 of R.11). The meters panel width limit was green in t97, and yet "the panel stretches over half the window" in the live window: the user was launching a DIFFERENT binary (`target/debug/kinetren` — since 2026-10-22 this is what the kt-app package's binary is called — it is not rebuilt by `cargo test`, which builds a separate test binary). Before saying "done", build what the user launches and check by hand or by script.
 - **Live scenarios — `scripts/live-check.sh`** (R.27, item 161): Xvfb + openbox +
@@ -424,7 +442,9 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   position. Waiting "until two reads match" is not enough: it will settle on the stale value.
   One must wait for a CHANGE (`differs_from`), and black must not be counted as a frame at that moment —
   this means "the composite is not yet complete".
-- **`x_at` handles only what is ON SCREEN** (R.37). The view follows the cursor, and a moment that was visible at the start of the scenario drifts past the edge by the middle: `x_at` returns a negative x, the click goes past the window, and the view check "cursor > X" passes by itself, which hides it. The target moment must first be brought into view (Home) and one must CONVINCE oneself via `view_start` from the geometry dump. This is exactly how the `loop` step "checked" a stale pixel for three rounds.
+- **`x_at` handles only what is ON SCREEN** (R.37). The view follows the cursor, and a moment that was visible at the start of the scenario drifts past the edge by the middle: `x_at` returns a negative x, the click goes past the window, and the view check "cursor > X" passes by itself, which hides it. The target moment must first be brought into view (Home) and one must CONVINCE oneself via `view_start` from the geometry dump. This is exactly how the `loop` step "checked" a stale pixel for three rounds. **A press outside the program's window is refused** (`Live._inside`, datamosh under load): the
+  window manager took the focus, and every key after it went elsewhere ("key ctrl+z was not read; the X
+  focus is …") — the red named the key, not the click.
 - **Manual live checking — `scripts/ui-probe.py`** (python3-xlib + XTest): finds the window, moves the real mouse, presses keys, takes a screenshot, prints panel boundaries by a row of pixels. This is how the meters limit (90 px), the left column limit (420 px) and the timecode mask were verified. The drag there is done in three steps — see the next item.
 - A screenshot is a supplement, not proof: all three earlier breakages "looked" perfectly fine in the picture.
 - Debugging "who ate the click" — `KT_DEBUG_HITS=1` (egui's built-in highlighting).

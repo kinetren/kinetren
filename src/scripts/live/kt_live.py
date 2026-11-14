@@ -907,6 +907,19 @@ class Live:
         self._at = (x, y)
         probe.move(x, y, pause=pause)
 
+    def _inside(self, x, y, what):
+        """A press goes only into the program's window. A point computed for a moment that is not on
+        screen (`x_at` of a time the view has scrolled past) lands outside it: the window manager
+        then takes the focus, the press acts on the desktop, and every key after it goes elsewhere
+        ("key ctrl+z was not read; the X focus is …" — `datamosh` under load, stage 11). Refused
+        with the reason instead: a red names the scenario's own defect, not a later key."""
+        win = geometry()
+        if not (win["x"] <= x < win["x"] + win["w"] and win["y"] <= y < win["y"] + win["h"]):
+            raise RuntimeError(
+                f"{what} at ({x}, {y}) is outside the program's window {win}: a point for something "
+                f"not on screen (bring it into view first)"
+            )
+
     def _arrive(self, x, y):
         """The pointer over the target, and READ, before a button goes down (test-stability).
 
@@ -914,6 +927,7 @@ class Live:
         press that land in one slow frame press what the pointer was over before it moved: the
         click is lost with no trace, a menu does not open, and a scenario red on a "lost" click
         was green alone. A move to the same point gives no event, and there is nothing to read."""
+        self._inside(x, y, "a press")
         if self._at == (x, y):
             return
         seen = self._input_now()
@@ -928,6 +942,7 @@ class Live:
         # stayed on top, item 199) is closed by the stand: the process is one, and a scenario with
         # “its own process” gets a screen to itself.
         self.raise_once()
+        self._inside(x, y, "a press")
         if mods:
             self._mods(mods, True)
         self._arrive(x, y)
@@ -981,6 +996,7 @@ class Live:
             _poll()
         # a frame AFTER the hover: the first click at the fresh position is otherwise lost
         # together with the input frame
+        self._inside(x, y, "a double click")
         mark = self.seen()
         self._move(x, y, pause=0.0)
         self._after_gesture(mark, "hover before the double click")
@@ -1009,6 +1025,7 @@ class Live:
         R.69: “a frame must pass” is exactly the wait for a FRAME, not for the clock;
         each step waits for the program to read the movement."""
         self.raise_once()
+        self._inside(x0, y0, "a drag's press")
         if mods:
             self._mods(mods, True)
         mark = self.seen()
@@ -1375,6 +1392,7 @@ class Live:
     def wheel(self, x, y, ticks=3):
         """Mouse wheel over a point (ticks > 0 — down). XTest: buttons 4/5."""
         self.raise_once()
+        self._inside(x, y, "a wheel")
         mark = self.seen()
         self._move(x, y, pause=0.0)
         btn = 5 if ticks > 0 else 4

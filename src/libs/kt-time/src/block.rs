@@ -94,6 +94,16 @@ impl Drop for Wait {
     }
 }
 
+/// Run `f`, a call that opens a guard but is bounded by construction (a build of an empty
+/// project), as not a wait: the role is lifted for its length.
+pub fn bounded<R>(f: impl FnOnce() -> R) -> R {
+    let r = role_here();
+    mark(role::NONE);
+    let out = f();
+    mark(r);
+    out
+}
+
 /// Blocking calls made on THIS thread so far, by [`kind`].
 pub fn here() -> [u64; kind::COUNT] {
     HERE.with(|h| h.get())

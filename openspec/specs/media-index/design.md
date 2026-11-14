@@ -509,3 +509,10 @@ configured constant.
 - Measured (release, 12 GB cgroup): his region's evictions 3.5–3.7 k → 0.85–1.3 k per 120 s; the heavy
   showcase loop at 640×360 OOM-killed on the base twice, kept whole from its fourth lap with the change.
   The class walk (MixStore row 331, bases row 330, the probe tool row 440) is in the archived change.
+
+## The preview converts on a render's threads (gpu-throughput, archived 2026-11-14)
+
+render-speed-no-card D2 left the preview's sources converting a span on the decoder's own thread only
+because the count is read when a source opens. The split is by pictures, so the bytes do not move (t1765);
+the preview now takes the render's count by the memory measured when the project opens (t2440), part of the
+owner's "и процессор тоже" (kkt-26.11.11 L4).

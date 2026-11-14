@@ -418,6 +418,9 @@ pub struct KtApp {
     pub after_save: Option<Pending>,
     /// Media gestures waiting for their file's open on the media lane (one-scheduler, row 148).
     pub media_asks: Vec<MediaAsk>,
+    /// A project file being read on the media lane (scheduler-followups D3, row 270): the window
+    /// keeps the project it shows until the text answers.
+    pub opening: Option<Opening>,
     /// Project write guard (R.32): the model revision WRITTEN to disk
     /// last. The background autosave must check against it before replacing the
     /// file — otherwise it would overwrite a newer Ctrl+S with its stale snapshot
@@ -682,9 +685,9 @@ pub struct KtApp {
     /// When the preview first became incomplete (the “Loading” scrim — after 180 ms,
     /// as in v1, so it does not flicker on quick misses; item 14).
     pub incomplete_since: Option<std::time::Instant>,
-    /// The picture on screen is a stream stage's held frame (stream-history-on-device): the preview
-    /// says it is catching up.
-    pub preview_held: bool,
+    /// The positions a stream stage of the frame on screen still lacks (0 — none): the Loading scrim
+    /// writes the catch-up where it writes Loading (catch-up-shows-loading, kkt-26.11.10b K2).
+    pub preview_catching_up: u64,
     /// Last attempt of a composite of an incomplete frame (retry throttling, item 1).
     pub last_compose_retry: std::time::Instant,
     /// The ask on its way to the preview's thread: its number and (tick, size, content, project).
@@ -820,58 +823,29 @@ impl KtApp {
                 // the device a slow chain moves to: building it takes seconds, and until it
                 // stands everything composes on the display's device
                 let slow = self.player.slow_gpu_setter();
+                let fill = self.player.fill_gpu_setter();
                 let _ = std::thread::Builder::new().name("offline-engine".into()).spawn(move || {
-                    slow(kt_gpu::offline_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+                    // the slow route has the offline engine to itself (effect cells, reel strips
+                    // and posters compose on its sibling), and its ring bounds what stands in front
+                    // of the route's frame (scheduler-followups D6, row 290)
+                    slow(kt_gpu::offline_engine().map(|e| {
+                        e.serve_preview();
+                        e as std::sync::Arc<dyn kt_engine::VideoGpuExec>
+                    }));
+                    // a playing loop's unshown moments compose on the side engine, below the
+                    // display (scheduler-followups D5, row 251)
+                    fill(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
                 });
             }
             Err(e) => self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, e)),
         }
     }
 
-    /// Player + list of UNAVAILABLE media (id, name, error). An unavailable
-    /// file gets a placeholder and moves on: the project opens, the preview
-    /// and render work (R.33 item 10). Previously all errors were lost here
-    /// except the last one, and the clip stayed with no source at all — the preview
-    /// showed an eternal “Loading”.
-    fn build_player(
-        project: &Project,
-        base: Option<&Path>,
-        index_db: Option<&Path>,
-    ) -> (
-        Player,
-        Option<audio_out::AudioOutput>,
-        Vec<(MediaId, String, String)>,
-        Vec<(MediaId, kt_time::Tick)>,
-    ) {
-        let mut sources = Vec::new();
-        let mut missing = Vec::new();
-        // MEDIA LENGTHS (R.63 item 2): only the one who opened the source knows them, and at START
-        // that is here. Without this the model would learn them only at the next path change —
-        // that is, for an open project never, and the tail past the end of the file
-        // would not differ from anything else.
-        let mut lens: Vec<(MediaId, kt_time::Tick)> = Vec::new();
-        // the preview's decoders take a render's threads, by the memory measured now (memory-ledger
-        // D11): libavcodec's auto is a thread per core, and a project of five VP9 files then held
-        // 4.4 GB of frames in its decoders before anything was cached
-        kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(
-            kt_gpu::memory::available(),
-            project.settings.width,
-            project.settings.height,
-        ));
-        for m in &project.media {
-            let label = crate::util::media_label(&m.path);
-            let (src, err) = crate::util::open_source_or_placeholder(
-                &resolve_media_path(base, &m.path),
-                index_db,
-                &label,
-            );
-            if let Some(e) = err {
-                missing.push((m.id, label, e));
-            }
-            lens.push((m.id, src.info().duration));
-            sources.push((m.id, src));
-        }
-        let (player, ring) = Player::new(project.clone(), sources);
+    /// The player of a project, with no source yet (scheduler-followups D1, row 270): its first
+    /// version is built on its own thread and its sources open on the media lane
+    /// (`load_sources`), so making it never stands on the UI thread.
+    fn build_player(project: &Project) -> (Player, Option<audio_out::AudioOutput>) {
+        let (player, ring) = Player::new_deferred(project.clone());
         // the harness has no window device: the offline engine composes its frames
         if cfg!(test) {
             crate::plugins::install();
@@ -886,7 +860,50 @@ impl KtApp {
         }
         // the device opens on Play and closes at rest (kept-mix-settle D5); its errors reach the bell
         let audio = Some(audio_out::start(ring, &player));
-        (player, audio, missing, lens)
+        (player, audio)
+    }
+
+    /// Open the project's sources on the media lane and hand them to the player (row 270): an
+    /// unavailable file gets a placeholder and the project opens all the same, the preview and the
+    /// render work (R.33 item 10). The answer lands in `take_media` (`MediaThen::Load`): the
+    /// placeholders, one bell line per missing file and their count, the measured lengths. The lane
+    /// is FIFO, so a sync an edit posts during the load runs after it.
+    fn load_sources(&mut self) {
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let db = self.index_db_path();
+        let doc = self.model.doc();
+        let media: Vec<(MediaId, String, String)> = doc
+            .media
+            .iter()
+            .map(|m| (m.id, resolve_media_path(base.as_deref(), &m.path), crate::util::media_label(&m.path)))
+            .collect();
+        let (w, h) = (doc.settings.width, doc.settings.height);
+        let sources = self.player.sources();
+        let (answer, reply) = kt_time::sched::Answer::new();
+        media_lane().post(move |_| {
+            wait_load_hold();
+            // the preview's decoders take a render's threads, by the memory measured now (memory-ledger
+            // D11): libavcodec's auto is a thread per core, and a project of five VP9 files then held
+            // 4.4 GB of frames in its decoders before anything was cached
+            let available = kt_gpu::memory::available();
+            kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(available, w, h));
+            // and convert a span's pictures on a render's threads (gpu-throughput D4): the same bytes, and
+            // a Loading or a history's decode no longer converts on the decoder's one thread
+            kt_ffmpeg::set_rgba_threads(kt_gpu::memory::rgba_threads(available, w, h));
+            let mut done = Vec::new();
+            for (id, resolved, label) in media {
+                let (src, err) = crate::util::open_source_or_placeholder(&resolved, db.as_deref(), &label);
+                // MEDIA LENGTHS (R.63 item 2): only the one who opened the source knows them
+                let len = src.info().duration;
+                sources.add_media(id, src);
+                done.push((id, label, err, len));
+            }
+            reply.send(MediaDone::Loaded(done));
+            crate::wake::now();
+        });
+        self.media_asks.push(MediaAsk { answer, then: MediaThen::Load });
+        // a small project lands in this frame; the harness waits its bound, so a test sees it
+        self.take_media(media_grace());
     }
 
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
@@ -901,7 +918,7 @@ impl KtApp {
         crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::New, &project));
         crate::tele_journal::project_act("project new", None);
         let project2 = project.clone();
-        let (player, audio, _, _) = Self::build_player(&project, None, None);
+        let (player, audio) = Self::build_player(&project);
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let loudness_map: Arc<Mutex<crate::util::LoudnessMap>> =
             Arc::new(Mutex::new(Default::default()));
@@ -1002,6 +1019,7 @@ impl KtApp {
             saving: None,
             after_save: None,
             media_asks: Vec::new(),
+            opening: None,
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -1107,7 +1125,7 @@ impl KtApp {
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
-            preview_held: false,
+            preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
             compose_grace: COMPOSE_GRACE,
@@ -1136,11 +1154,28 @@ impl KtApp {
         if let Some(e) = startup_error {
             app.refuse(e);
         }
+        app.begin_load();
         app
     }
 
+    /// The sync snapshot is the project's media as the load job opens them, then the job: an edit
+    /// during the load diffs against what is being opened (scheduler-followups D2).
+    fn begin_load(&mut self) {
+        self.media_paths = self.model.doc().media.iter().map(|m| (m.id, m.path.clone())).collect();
+        self.media_synced = true;
+        // the first sync still runs once (the generator snapshot)
+        self.media_synced_rev = u64::MAX;
+        self.load_sources();
+    }
+
     pub(crate) fn open(path: &Path) -> Result<KtApp, String> {
-        let (project, retained, notices) = load_project_file(path)?;
+        let text = read_project_text(path)?;
+        Self::open_text(path, text)
+    }
+
+    /// The body of an Open once its file is read: parse, then the app (it opens nothing).
+    fn open_text(path: &Path, text: String) -> Result<KtApp, String> {
+        let (project, retained, notices) = parse_project_text(path, text)?;
         crate::telemetry::signal(crate::telemetry::Signal::ProjectOpened(OpenHow::Open, &project));
         crate::tele_journal::project_act("project opened", Some(path));
         Self::open_loaded(path, project, retained, notices)
@@ -1152,8 +1187,15 @@ impl KtApp {
     /// the edit flag raised and a hint “save as `<name>.kt` next to it”;
     /// the source file is never touched by the import. A project file does not go here —
     /// it has the “Open” door.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn open_older(path: &Path) -> Result<KtApp, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let text = read_project_text(path)?;
+        Self::import_text(path, &text)
+    }
+
+    /// The body of the import once its file is read.
+    fn import_text(path: &Path, text: &str) -> Result<KtApp, String> {
+        let text = text.to_string();
         // version — for the notification: the legacy file carries its own, our envelope — kt.v,
         // a foreign file — 0
         let version = match kt_otio::detect(&text) {
@@ -1197,8 +1239,7 @@ impl KtApp {
     ) -> Result<KtApp, String> {
         crate::plugins::install();
         let base = path.parent();
-        let (player, audio, err, media_lens) =
-            Self::build_player(&project, base, Some(&path.with_extension("ktindex.db")));
+        let (player, audio) = Self::build_player(&project);
         let (offline, watchdog) = spawn_media_watchdog(&project, base);
         let thumbs_svc = crate::thumbs::ThumbService::start(&project, Some(path.to_path_buf()));
         let peaks = Arc::new(Mutex::new(HashMap::new()));
@@ -1305,6 +1346,7 @@ impl KtApp {
             saving: None,
             after_save: None,
             media_asks: Vec::new(),
+            opening: None,
             clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
@@ -1339,7 +1381,7 @@ impl KtApp {
             live_gain: None,
             live_opacity: None,
             status: None,
-            placeholder_media: err.iter().map(|(id, _, _)| *id).collect(),
+            placeholder_media: Default::default(),
             clipboard: kt_model::ops::ClipBlock::default(),
             retained,
             env_read: None,
@@ -1410,7 +1452,7 @@ impl KtApp {
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
-            preview_held: false,
+            preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
             compose_grace: COMPOSE_GRACE,
@@ -1461,15 +1503,6 @@ impl KtApp {
             let clips: Vec<String> = clips.iter().map(|c| c.to_string()).collect();
             app.warn(crate::tf!(k::msg::PLUGIN_MISSING, id, clips.join(", ")));
         }
-        // unavailable sources: EACH on a separate line in the bell and a
-        // counter in the status. The project is open meanwhile, the edit is intact; instead of
-        // frames there are placeholders with file names (R.33 item 10)
-        for (_, label, e) in &err {
-            app.warn(crate::tf!(k::msg::MEDIA_MISSING, label, e));
-        }
-        if !err.is_empty() {
-            app.note(crate::tf!(k::msg::MEDIA_MISSING_COUNT, err.len()));
-        }
         // KT_PREVIEW_SIZE=WxH — the preview's size without the menu (measurements)
         if let Some((w, h)) = std::env::var("KT_PREVIEW_SIZE")
             .ok()
@@ -1508,12 +1541,6 @@ impl KtApp {
         // R.49 item 360: the user’s workspace is stronger than what lies in a
         // foreign file. An empty store (first launch after the move)
         // keeps the values from the file — migration without a single line of code.
-        // measured media lengths — INTO THE MODEL (R.63 item 2): the trim’s stop and the
-        // tail hatching depend on them. Outside undo and without an asterisk: this is a
-        // fact about the file, not an edit.
-        for (id, d) in media_lens {
-            app.model.note_media_length(id, d);
-        }
         app.workspace = crate::user_store::load_workspace();
         // showing the frame — a property of the workspace (R.67): the default is on,
         // switching it off is remembered between launches.
@@ -1527,6 +1554,7 @@ impl KtApp {
             app.view_start = v.view_start.max(-40.0 * app.ticks_per_px);
             app.player.seek(Tick(v.cursor.max(0)));
         }
+        app.begin_load();
         Ok(app)
     }
 
@@ -2031,6 +2059,7 @@ impl KtApp {
         }
         self.take_saved(std::time::Duration::ZERO);
         self.take_media(std::time::Duration::ZERO);
+        self.take_opening(std::time::Duration::ZERO);
         if let Some((snap_rev, rx)) = &self.autosave_rx
             && let Ok(res) = rx.try_recv()
         {
@@ -2543,7 +2572,12 @@ impl KtApp {
         } else {
             let _ = crate::widgets::hint_sink::take();
         }
-        let mode = if self.dnd_hover.is_some() { Some(tr(k::hint::DROP_HERE)) } else { None };
+        // a project file being read says so (scheduler-followups D3): the window still shows the
+        // project it had
+        let opening = self.opening.as_ref().map(|o| {
+            crate::tf!(k::hint::OPENING, o.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+        });
+        let mode = if self.dnd_hover.is_some() { Some(tr(k::hint::DROP_HERE)) } else { opening.as_deref() };
         let status =
             self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
         let blocked = self
@@ -2634,19 +2668,15 @@ impl KtApp {
                     r.request_focus();
                     self.search_focus = false;
                 }
+                // every press a slow frame read moves a row (test-hygiene D2; class-walk-revision)
                 let (up, down, enter) = ui.input(|i| {
                     (
-                        i.key_pressed(egui::Key::ArrowUp),
-                        i.key_pressed(egui::Key::ArrowDown),
+                        i.num_presses(egui::Key::ArrowUp),
+                        i.num_presses(egui::Key::ArrowDown),
                         i.key_pressed(egui::Key::Enter),
                     )
                 });
-                if down {
-                    self.search_sel = (self.search_sel + 1).min(hits.len().saturating_sub(1));
-                }
-                if up {
-                    self.search_sel = self.search_sel.saturating_sub(1);
-                }
+                self.search_sel = search_step(self.search_sel, down, up, hits.len());
                 ui.separator();
                 // the finds fill the window: an enlarged search shows more of them (item 12)
                 crate::widgets::window_fill(ui, |ui| {
@@ -3439,7 +3469,13 @@ impl KtApp {
     /// unsaved work.
     pub fn restore_recovery(&mut self, i: usize) {
         let Some(c) = self.recovery_offer.get(i).cloned() else { return };
-        match load_project_file(&c.path) {
+        // the file is read on the media lane (scheduler-followups D3)
+        self.ask_open(c.path.clone(), OpenThen::Recovery(c), None);
+    }
+
+    /// The body of `restore_recovery` once its file is read.
+    fn restore_recovery_text(&mut self, c: RecoveryCandidate, text: String) {
+        match parse_project_text(&c.path, text) {
             Ok((project, retained, notices)) => {
                 // THE EDITOR IS BUILT FROM THE RECOVERY, as an Open builds it (render-crash-and-
                 // recovery D6). Swapping only the model left the player with the previous
@@ -3469,7 +3505,7 @@ impl KtApp {
                 self.replace_with(app);
                 if let Some(p) = c.for_project.clone() {
                     // after the swap: the replaced editor's lock on the same file is gone
-                    self.claim_project(&p);
+                    self.claim_project_later(&p);
                 }
                 // the work is IN THE EDITOR and nowhere else: the asterisk stays lit until
                 // the user presses Ctrl+S
@@ -4114,30 +4150,106 @@ impl KtApp {
     /// a second copy of the program on the same file was not detected.
     fn open_dropped_now(&mut self) {
         let Some((path, _)) = self.pending_drop.take() else { return };
-        match KtApp::open(&path) {
-            Ok(mut app) => {
-                app.claim_project(&path);
-                self.replace_with(app);
+        self.ask_open(path, OpenThen::Open, None);
+    }
+
+    /// Read a project file on the media lane and land it as `then` says (scheduler-followups D3,
+    /// row 270): the file, a lesson's copy written first (`write`: fresh, text) and nothing else
+    /// stand there; the window keeps the project it shows and says what it opens. A newer open
+    /// replaces one in flight. A small file lands in this frame.
+    pub(crate) fn ask_open(&mut self, path: PathBuf, then: OpenThen, write: Option<(bool, String)>) {
+        let p = path.clone();
+        let (answer, reply) = kt_time::sched::Answer::new();
+        media_lane().post(move |_| {
+            if let Some((fresh, text)) = write
+                && (fresh || !p.exists())
+            {
+                if let Some(d) = p.parent() {
+                    let _ = std::fs::create_dir_all(d);
+                }
+                if let Err(e) = write_project_atomic(&p, &text) {
+                    reply.send(Err(ReadFail::Write(e.to_string())));
+                    crate::wake::now();
+                    return;
+                }
             }
-            Err(e) => self.warn(format!("{}: {e}", path.display())),
+            reply.send(read_project_text(&p).map_err(ReadFail::Read));
+            crate::wake::now();
+        });
+        self.opening = Some(Opening { path, then, answer });
+        self.take_opening(media_grace());
+    }
+
+    /// The project file in flight, when it answered within `grace`: parsed and landed.
+    pub(crate) fn take_opening(&mut self, grace: std::time::Duration) {
+        let Some(o) = &self.opening else { return };
+        let Some(done) = o.answer.take_within(grace) else {
+            if o.answer.abandoned() {
+                self.opening = None;
+            }
+            return;
+        };
+        let Some(Opening { path, then, .. }) = self.opening.take() else { return };
+        let text = match done {
+            Ok(t) => t,
+            Err(ReadFail::Write(e)) => return self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
+            Err(ReadFail::Read(e)) => {
+                return match then {
+                    OpenThen::Insert(_) => self.warn(format!("{}: {e}", path.display())),
+                    OpenThen::Recovery(c) => self.warn(crate::tf!(k::msg::RECOVERY_FAILED, c.path.display(), e)),
+                    OpenThen::Open => self.warn(format!("{}: {e}", path.display())),
+                    _ => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
+                };
+            }
+        };
+        match then {
+            OpenThen::Import => match Self::import_text(&path, &text) {
+                Ok(app) => self.replace_with(app),
+                Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
+            },
+            OpenThen::Insert(target) => match parse_project_text(&path, text) {
+                Ok((p, _, notices)) => self.insert_project_as_sequence(&path, target, p, notices),
+                Err(e) => self.warn(format!("{}: {e}", path.display())),
+            },
+            OpenThen::Recovery(c) => self.restore_recovery_text(c, text),
+            then => match Self::open_text(&path, text) {
+                Ok(app) => {
+                    if matches!(then, OpenThen::Rig) {
+                        self.recovery_on_drop = false;
+                        self.drop_own_recovery();
+                    }
+                    self.replace_with(app);
+                    self.claim_project_later(&path);
+                    match then {
+                        OpenThen::Recent => self.start.welcome.open = false,
+                        OpenThen::Lesson(n) => self.lesson_opened(n),
+                        _ => {}
+                    }
+                }
+                Err(e) if matches!(then, OpenThen::Open) => self.warn(format!("{}: {e}", path.display())),
+                Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
+            },
         }
     }
 
-    /// Insert the abandoned project as a COMPOSITION into the current edit (R.55, C6).
+    /// Insert the abandoned project as a COMPOSITION into the current edit (R.55, C6): its file is
+    /// read on the media lane.
     fn insert_dropped_as_sequence(&mut self) {
         let Some((path, target)) = self.pending_drop.take() else { return };
-        let src = match load_project_file(&path) {
-            Ok((p, _, notices)) => {
-                for n in notices {
-                    self.warn(n);
-                }
-                p
-            }
-            Err(e) => {
-                self.warn(format!("{}: {e}", path.display()));
-                return;
-            }
-        };
+        self.ask_open(path, OpenThen::Insert(target), None);
+    }
+
+    /// The body of the insert once the dropped file is read.
+    fn insert_project_as_sequence(
+        &mut self,
+        path: &Path,
+        target: Option<(Tick, (ClipKind, u32))>,
+        src: Project,
+        notices: Vec<String>,
+    ) {
+        for n in notices {
+            self.warn(n);
+        }
         let name = kt_model::unique_name(
             &self.model.project().sequences.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
             path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().trim(),
@@ -4201,9 +4313,28 @@ impl KtApp {
         // the old lock is released BEFORE taking the new one: otherwise “Save as…”
         // to the same file would refuse against itself
         self.project_lock = None;
+        self.take_lock(crate::project_lock::acquire(path));
+    }
+
+    /// Claim the project's lock on the media lane (an open, scheduler-followups D3): the lock file
+    /// opens and is written there, and its state lands in `take_media`.
+    pub(crate) fn claim_project_later(&mut self, path: &Path) {
+        self.project_lock = None;
+        let p = path.to_path_buf();
+        let (answer, reply) = kt_time::sched::Answer::new();
+        media_lane().post(move |_| {
+            reply.send(MediaDone::Locked(crate::project_lock::acquire(&p)));
+            crate::wake::now();
+        });
+        self.media_asks.push(MediaAsk { answer, then: MediaThen::Lock });
+        self.take_media(media_grace());
+    }
+
+    fn take_lock(&mut self, state: crate::project_lock::LockState) {
+        self.project_lock = None;
         self.lock_holder = None;
         self.lock_override = false;
-        match crate::project_lock::acquire(path) {
+        match state {
             crate::project_lock::LockState::Owned(l) => self.project_lock = Some(l),
             crate::project_lock::LockState::Busy { pid } => {
                 self.lock_holder = Some(pid);
@@ -4309,7 +4440,7 @@ impl KtApp {
             Some(_) => std::sync::Arc::new(self.model.reel_document()),
             None => self.model.doc_arc(),
         };
-        self.player.set_project(p);
+        self.player.set_project_at(p, self.model.revision());
     }
 
     pub fn apply(&mut self, cmd: Command) -> bool {
@@ -4813,7 +4944,7 @@ impl KtApp {
                 crate::wake::now();
             });
             self.media_asks.push(MediaAsk { answer, then: MediaThen::Sync });
-            self.take_media(ANSWER_GRACE);
+            self.take_media(media_grace());
         }
         self.media_paths = cur;
         self.sync_gen_sources();
@@ -5791,7 +5922,11 @@ impl KtApp {
     pub(crate) fn replace_with(&mut self, mut app: KtApp) {
         self.queue_poster();
         std::mem::swap(&mut app.start, &mut self.start);
-        *self = app;
+        let mut old = std::mem::replace(self, app);
+        // its lock goes at once (a close): the new project's claim, posted after the swap, must
+        // not meet the closed one's on the same file
+        old.project_lock = None;
+        release(old);
         self.note_recent();
     }
 
@@ -5841,15 +5976,7 @@ impl KtApp {
             m.reset_areas();
         });
         ctx.stop_dragging();
-        match Self::open(path) {
-            Ok(mut app) => {
-                self.recovery_on_drop = false;
-                self.drop_own_recovery();
-                app.claim_project(path);
-                self.replace_with(app);
-            }
-            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
-        }
+        self.ask_open(path.to_path_buf(), OpenThen::Rig, None);
     }
 
     fn open_project_dialog_now(&mut self) {
@@ -5860,13 +5987,7 @@ impl KtApp {
         ) else {
             return;
         };
-        match Self::open(&p) {
-            Ok(mut app) => {
-                app.claim_project(&p);
-                self.replace_with(app);
-            }
-            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
-        }
+        self.ask_open(p, OpenThen::Open, None);
     }
 
     /// Menu File → Save As…: the dialog is forced (save() without
@@ -5925,8 +6046,8 @@ impl KtApp {
             self.ask = Some(Ask::SaveOverLock { pid });
             return;
         }
-        let ui = Some(self.ui_state());
-        self.model.set_ui_state(ui);
+        let ui = self.ui_state();
+        self.model.set_ui_state(Some(ui.clone()));
         // the text and the write — with its two fsyncs — on the save lane (one-scheduler, row 98:
         // 6.7 s of a frozen interface on a busy disk); the newest Ctrl+S replaces a queued one
         let project = self.model.document();
@@ -5949,7 +6070,7 @@ impl KtApp {
             reply.send(write_project_guarded(&guard, &target, rev, &out));
             crate::wake::now();
         });
-        self.saving = Some(Saving { path, rev, answer });
+        self.saving = Some(Saving { path, rev, ui, answer });
         self.take_saved(save_grace());
     }
 
@@ -5969,7 +6090,7 @@ impl KtApp {
             None if sv.answer.abandoned() => Err(std::io::Error::other("the save job ended")),
             None => return,
         };
-        let Some(Saving { path, rev, .. }) = self.saving.take() else { return };
+        let Some(Saving { path, rev, ui, .. }) = self.saving.take() else { return };
         match res {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
                 crate::telemetry::signal(crate::telemetry::Signal::Saved);
@@ -5977,7 +6098,7 @@ impl KtApp {
                 // an edit made while the file was written is not in it: its asterisk stays
                 if self.model_rev == rev {
                     self.dirty_content = false;
-                    self.dirty_ui = false;
+                    self.dirty_ui = self.dirty_ui && self.ui_state() != ui;
                 }
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
                 self.warn_if_dir_unsynced(dir_synced);
@@ -6568,7 +6689,7 @@ impl KtApp {
             crate::wake::now();
         });
         self.media_asks.push(MediaAsk { answer, then: MediaThen::AddClip { path, resolved, at, lane_hint } });
-        self.take_media(ANSWER_GRACE);
+        self.take_media(media_grace());
     }
 
     /// The second half of `add_media_clip_at`: the file opened.
@@ -6648,6 +6769,27 @@ impl KtApp {
                     }
                     Err(e) => self.note(format!("{path}: {e}")),
                 },
+                (MediaThen::Load, MediaDone::Loaded(done)) => {
+                    // unavailable sources: EACH on a separate line in the bell and a counter in
+                    // the status. The project is open meanwhile, the edit is intact; instead of
+                    // frames there are placeholders with file names (R.33 item 10)
+                    let mut missing = 0;
+                    for (id, label, err, len) in done {
+                        if let Some(e) = err {
+                            self.placeholder_media.insert(id);
+                            self.warn(crate::tf!(k::msg::MEDIA_MISSING, label, e));
+                            missing += 1;
+                        }
+                        // measured media lengths — INTO THE MODEL (R.63 item 2): the trim’s stop
+                        // and the tail hatching depend on them. Outside undo and without an
+                        // asterisk: this is a fact about the file, not an edit.
+                        self.model.note_media_length(id, len);
+                    }
+                    if missing > 0 {
+                        self.note(crate::tf!(k::msg::MEDIA_MISSING_COUNT, missing));
+                    }
+                }
+                (MediaThen::Lock, MediaDone::Locked(state)) => self.take_lock(state),
                 (MediaThen::Returned, MediaDone::Returned(back)) => {
                     for (id, label) in back {
                         self.placeholder_media.remove(&id);
@@ -6763,7 +6905,7 @@ impl KtApp {
             crate::wake::now();
         });
         self.media_asks.push(MediaAsk { answer, then: MediaThen::Place { media_id, path, at, lane_hint } });
-        self.take_media(ANSWER_GRACE);
+        self.take_media(media_grace());
     }
 
     /// Commands “put clip(s) of this media at the point”. Moved out of
@@ -7029,11 +7171,10 @@ impl KtApp {
         }
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(true);
         if let Some(done) = self.take_composed() {
-            // a NEW picture of the moment asked: a held stream frame is the stage's latest picture
-            // behind the playhead, not this moment's (found-defects 393: V-fps counted every tick
-            // change, 19/s where 7.5 pictures a second were new)
-            let new_frame = self.perf.take_composite(self.preview_key.map(|k| k.0) != Some(done.t.0), done.held);
-            self.preview_held = done.held;
+            // a NEW picture of the moment asked: complete, and of another moment than the one on
+            // screen (found-defects 393: V-fps counted every tick change)
+            let new_frame = self.perf.take_composite(self.preview_key.map(|k| k.0) != Some(done.t.0), done.complete);
+            self.preview_catching_up = done.catching_up;
             let shown_any = self.texture.is_some() || self.preview_on_display;
             let (cq, c, on_display) = (done.quality, done.complete, done.on_display);
             complete = c;
@@ -7110,8 +7251,7 @@ impl KtApp {
                 use kt_time::trace::{self, show};
                 let flags = if c { show::COMPLETE } else { 0 }
                     | if new_frame { show::NEW } else { 0 }
-                    | if on_display { show::ON_DISPLAY } else { 0 }
-                    | if done.held { show::HELD } else { 0 };
+                    | if on_display { show::ON_DISPLAY } else { 0 };
                 trace::ev(trace::Ev::FrameShow).id(done.seq).a(done.t.0 as u64).aux(flags).emit();
             }
             // the last composite's bytes stay readable; the buffer before them goes back for reuse
@@ -7155,15 +7295,14 @@ impl KtApp {
         // play/pause; a double = detach/attach. It also works in the separate preview
         // window (a double click there returns the preview back).
         {
-            let pending_ms = self.preview_click_at.map(|t| t.elapsed().as_millis());
-            let (action, op) = preview_click_step(
-                pending_ms,
-                resp.clicked(),
-                resp.double_clicked(),
-                PREVIEW_CLICK_DELAY_MS,
-            );
+            // judged by frame starts and egui's widened double-click window (test-hygiene D3/D4;
+            // class-walk-revision): a busy frame no longer fires the single before the double lands
+            let at = self.key_clock.frame_at;
+            let delay = preview_click_delay_ms(&self.key_clock);
+            let pending_ms = self.preview_click_at.map(|t| at.saturating_duration_since(t).as_millis());
+            let (action, op) = preview_click_step(pending_ms, resp.clicked(), resp.double_clicked(), delay);
             match op {
-                PendingOp::Arm => self.preview_click_at = Some(std::time::Instant::now()),
+                PendingOp::Arm => self.preview_click_at = Some(at),
                 PendingOp::Clear => self.preview_click_at = None,
                 PendingOp::Keep => {}
             }
@@ -7177,7 +7316,7 @@ impl KtApp {
             }
             if let Some(t0) = self.preview_click_at {
                 // wait for the window to expire without input
-                let left = PREVIEW_CLICK_DELAY_MS.saturating_sub(t0.elapsed().as_millis());
+                let left = delay.saturating_sub(t0.elapsed().as_millis());
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(left as u64 + 5));
             }
         }
@@ -7309,28 +7448,24 @@ impl KtApp {
             // the scrim's coming and going in the trace: `kt-cli trace loading` asks exactly this
             if LOADING_TRACED.swap(show_overlay, std::sync::atomic::Ordering::Relaxed) != show_overlay {
                 let at = self.preview_key.map_or(0, |k| k.0);
-                kt_time::trace::ev(kt_time::trace::Ev::Loading).aux(show_overlay as u32).a(at as u64).emit();
-            }
-            // a held stream frame: the picture moves, the stage behind it is catching up — a light
-            // note in the corner, never the scrim (stream-history-on-device; the scrim stays the
-            // owner's rule for a frame with no picture)
-            if self.preview_held && !show_overlay {
-                let text = tr(k::perf::CATCHING_UP);
-                let font = egui::FontId::proportional(11.0);
-                let galley = painter.layout_no_wrap(text.to_string(), font, egui::Color32::from_gray(225));
-                let at = img_rect.left_top() + egui::vec2(6.0, 6.0);
-                let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(4.0, 2.0));
-                painter.rect_filled(back, 3.0, egui::Color32::from_black_alpha(110));
-                painter.galley(at, galley, egui::Color32::from_gray(225));
+                kt_time::trace::ev(kt_time::trace::Ev::Loading).aux(show_overlay as u32).a(at as u64).b(self.preview_catching_up).emit();
             }
             if show_overlay {
                 // the README's hero waits for a frame without it (a picture mid-load is not one)
                 crate::widgets::field_probe::note("preview.loading", img_rect);
                 painter.rect_filled(img_rect, 2.0, egui::Color32::from_black_alpha(140));
+                // a stream stage behind the frame: the catch-up is written where Loading is, in its
+                // place and style (kkt-26.11.10b K2: "в том же месте где loading писать")
+                let text = if self.preview_catching_up > 0 {
+                    crate::widgets::field_probe::note("preview.catching_up", img_rect);
+                    crate::tf!(k::perf::LOADING_CATCHING_UP, self.preview_catching_up)
+                } else {
+                    tr(k::perf::LOADING).to_string()
+                };
                 painter.text(
                     img_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    tr(k::perf::LOADING),
+                    text,
                     egui::FontId::proportional(16.0),
                     egui::Color32::from_gray(230),
                 );
@@ -7810,12 +7945,7 @@ impl KtApp {
                 crate::tf!(k::perf::CALLBACK_FRAMES, self.player.shared.callback_frames.load(ord)),
             ),
             (
-                // held stream frames apart from the new pictures, while there are any (found-defects 393)
-                if self.perf.vheld > 0.0 {
-                    format!("{} · {}", crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown), crate::tf!(k::perf::V_HELD, self.perf.vheld.round() as u64))
-                } else {
-                    crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown)
-                },
+                crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown),
                 // short caption: in a narrow column the long line was cut with an ellipsis
                 // and the rollback counter could not be seen
                 crate::tf!(
@@ -9176,6 +9306,12 @@ pub enum PendingOp {
 
 pub const PREVIEW_CLICK_DELAY_MS: u128 = 300;
 
+/// How long the preview's single click waits for a second one: egui's double-click window as the
+/// key clock last widened it, never under the base delay.
+pub fn preview_click_delay_ms(clock: &KeyClock) -> u128 {
+    ((clock.double_s * 1000.0).ceil() as u128).max(PREVIEW_CLICK_DELAY_MS)
+}
+
 pub fn preview_click_step(
     pending_ms: Option<u128>,
     clicked: bool,
@@ -9193,6 +9329,11 @@ pub fn preview_click_step(
         Some(ms) if ms >= delay_ms => (PreviewClick::TogglePlay, PendingOp::Clear),
         _ => (PreviewClick::None, PendingOp::Keep),
     }
+}
+
+/// The search window's row after `down` and `up` presses of one frame, inside `n` hits.
+pub fn search_step(sel: usize, down: usize, up: usize, n: usize) -> usize {
+    (sel + down).min(n.saturating_sub(1)).saturating_sub(up)
 }
 
 pub fn preview_detached_next(detached: bool, toggle: bool, close_requested: bool) -> bool {
@@ -9630,21 +9771,16 @@ pub fn preview_key_tick(grid: kt_time::FpsGrid, t: Tick) -> i64 {
 
 impl PerfState {
     /// A composite the preview took: whether it is a NEW picture of the moment asked (`moment` — its
-    /// tick differs from the one on screen). A held stream frame is not (found-defects 393); it is
-    /// counted apart.
-    pub fn take_composite(&mut self, moment: bool, held: bool) -> bool {
-        if held {
-            self.video_frames_held += 1;
-        }
-        moment && !held
+    /// tick differs from the one on screen) — a complete one: an incomplete composite (a frame still
+    /// loading, a stream catching up) is no picture of the moment (found-defects 393).
+    pub fn take_composite(&mut self, moment: bool, complete: bool) -> bool {
+        moment && complete
     }
 
-    /// The video counters' second: V-fps (new pictures shown) and held frames a second over `dt`.
+    /// The video counters' second: V-fps (new pictures shown) over `dt`.
     pub fn video_second(&mut self, dt: f32) -> f32 {
         self.vfps = self.video_frames_shown.saturating_sub(self.last_video_shown) as f32 / dt;
         self.last_video_shown = self.video_frames_shown;
-        self.vheld = self.video_frames_held.saturating_sub(self.last_video_held) as f32 / dt;
-        self.last_video_held = self.video_frames_held;
         self.vfps
     }
 }
@@ -9665,10 +9801,6 @@ pub struct PerfState {
     /// shown in the timecode of the toolbar).
     pub vfps: f32,
     last_video_shown: u64,
-    /// Composites that showed a held stream frame (not a new picture), and their rate a second.
-    pub video_frames_held: u64,
-    pub vheld: f32,
-    last_video_held: u64,
     /// Skipped cells of the frame grid during playback (jitter diagnostics).
     pub video_cells_skipped: u64,
     /// Backward rollbacks of the display key (item 14, round 14): the counter must not be
@@ -9769,9 +9901,6 @@ impl PerfState {
             frame_cost_was: crate::frame_cost::totals(),
             vfps: 0.0,
             last_video_shown: 0,
-            video_frames_held: 0,
-            vheld: 0.0,
-            last_video_held: 0,
             video_cells_skipped: 0,
             video_rollbacks: 0,
             diag_open: false,
@@ -9929,6 +10058,14 @@ pub struct MediaAsk {
     then: MediaThen,
 }
 
+impl MediaAsk {
+    /// An opened project's source load (tests).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn is_load(&self) -> bool {
+        matches!(self.then, MediaThen::Load)
+    }
+}
+
 /// What lands when the file answers.
 enum MediaThen {
     /// `sync_media_sources`: note the lengths and the errors.
@@ -9939,6 +10076,10 @@ enum MediaThen {
     Place { media_id: MediaId, path: String, at: Tick, lane_hint: Option<(ClipKind, u32)> },
     /// `poll_returned_sources`: the files that came back.
     Returned,
+    /// `load_sources`: an opened project's sources (row 270).
+    Load,
+    /// `claim_project_later`: the project's lock.
+    Lock,
 }
 
 /// What the media lane answers.
@@ -9947,6 +10088,53 @@ enum MediaDone {
     Opened(Result<Box<dyn kt_media::MediaSource>, String>),
     Info(Result<kt_media::MediaInfo, String>),
     Returned(Vec<(MediaId, String)>),
+    /// Per source: its id, label, the error of a placeholder, its length.
+    Loaded(Vec<(MediaId, String, Option<String>, Tick)>),
+    Locked(crate::project_lock::LockState),
+}
+
+/// A project file read on the media lane (scheduler-followups D3).
+pub struct Opening {
+    path: PathBuf,
+    then: OpenThen,
+    answer: kt_time::sched::Answer<Result<String, ReadFail>>,
+}
+
+/// What a read project file becomes.
+pub(crate) enum OpenThen {
+    /// File › Open, a dropped project: the app, its lock.
+    Open,
+    /// A recent card or a start tile: the same, and the welcome window closes.
+    Recent,
+    /// The live rig's open (R.68): the replaced project leaves no recovery behind.
+    Rig,
+    /// A lesson's copy (written first when asked), then the lesson's state.
+    Lesson(u32),
+    /// File › Import older…
+    Import,
+    /// A dropped project inserted as a composition.
+    Insert(Option<(Tick, (ClipKind, u32))>),
+    /// A recovery file restored into the editor.
+    Recovery(RecoveryCandidate),
+}
+
+/// Why a project file did not come.
+pub(crate) enum ReadFail {
+    /// The lesson's copy could not be written.
+    Write(String),
+    Read(String),
+}
+
+/// Release a closed project off the UI thread (scheduler-followups D4, row 270): its player joins
+/// the build, render and prefetch threads and each decoder's last span, and its recovery write (an
+/// unsaved project the rig leaves) is a write. A thread of its own, not a lane: a decoder's last
+/// span takes as long as the disk likes, and the next open's media job must not wait behind it.
+fn release(old: KtApp) {
+    let spawned = std::thread::Builder::new().name("app-drop".into()).spawn(move || drop(old));
+    if let Err(e) = spawned {
+        // no thread to be had: the release stands here, as it did before
+        crate::journal::log("WARN", &format!("the closed project was released on the UI thread: {e}"));
+    }
 }
 
 /// The media gestures' lane: class `Answer` (the person waits for the clip), one open at a time
@@ -9960,6 +10148,9 @@ fn media_lane() -> &'static kt_time::sched::LaneRef {
 pub struct Saving {
     path: PathBuf,
     rev: u64,
+    /// The view state the file holds: a bin or view edit made while it was written is not in it
+    /// (`dirty_ui` moves no `model_rev`; class-walk-revision).
+    ui: kt_model::UiState,
     answer: kt_time::sched::Answer<std::io::Result<SaveOutcome>>,
 }
 
@@ -9976,6 +10167,43 @@ thread_local! {
     /// a caller that acted on the flags right after it was green; zero makes the harness meet the
     /// live program's later frame.
     static SAVE_GRACE: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
+}
+
+thread_local! {
+    /// The same for a project's open and its sources (scheduler-followups tests): zero makes the
+    /// harness meet the live program's later frame, the load in flight.
+    static MEDIA_GRACE: std::cell::Cell<Option<std::time::Duration>> = const { std::cell::Cell::new(None) };
+}
+
+fn media_grace() -> std::time::Duration {
+    MEDIA_GRACE.with(|g| g.get()).unwrap_or(ANSWER_GRACE)
+}
+
+/// Set this thread's grace for an open's and its sources' answers (`None` — `ANSWER_GRACE`).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn set_media_grace(d: Option<std::time::Duration>) {
+    MEDIA_GRACE.with(|g| g.set(d));
+}
+
+/// A test seam: an opened project's source load waits while this is held (zero in the product).
+static LOAD_HOLD: (std::sync::Mutex<bool>, std::sync::Condvar) = (std::sync::Mutex::new(false), std::sync::Condvar::new());
+static LOAD_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn hold_loads_for_tests(on: bool) {
+    LOAD_HELD.store(on, std::sync::atomic::Ordering::Release);
+    *LOAD_HOLD.0.lock().unwrap() = on;
+    LOAD_HOLD.1.notify_all();
+}
+
+fn wait_load_hold() {
+    if !LOAD_HELD.load(std::sync::atomic::Ordering::Acquire) {
+        return;
+    }
+    let mut g = LOAD_HOLD.0.lock().unwrap();
+    while *g {
+        g = LOAD_HOLD.1.wait(g).unwrap();
+    }
 }
 
 fn save_grace() -> std::time::Duration {
@@ -10086,10 +10314,26 @@ pub fn project_text_of(
 /// Reading a PROJECT file from disk for open() (R.70): only its own format.
 /// Exchange and legacy files are rejected with the name of the import item (rule 19),
 /// a file of a future version — with its version number and without a partial read.
+/// Read and parse a project file at once (tests; the UI reads on the media lane).
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn load_project_file(
     path: &Path,
 ) -> Result<(Project, kt_otio::Retained, Vec<String>), String> {
-    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    parse_project_text(path, read_project_text(path)?)
+}
+
+/// Read a project file. Counted as a file open on a thread that must not wait (one-scheduler):
+/// the UI's open paths read it on the media lane (scheduler-followups D3).
+pub(crate) fn read_project_text(path: &Path) -> Result<String, String> {
+    let _w = kt_time::block::wait(kt_time::block::kind::FILE_OPEN);
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+/// Parse a project file's text (CPU only: the media paths resolve against its folder by text).
+pub(crate) fn parse_project_text(
+    path: &Path,
+    text: String,
+) -> Result<(Project, kt_otio::Retained, Vec<String>), String> {
     // An empty file is not “broken JSON” but a known outcome of a power loss before
     // R.49: the rename reached the journal before the data. The raw serde string
     // (“EOF while parsing a value at line 1 column 0”) says nothing about this,
@@ -10704,6 +10948,9 @@ impl eframe::App for KtApp {
     }
 
     fn on_exit(&mut self) {
+        // Closed while playing: the player's vote would hold the autosave and the poster jobs
+        // this close waits for (Background lanes), each for its whole bound (class-walk-revision)
+        self.player.pause();
         // The final save on exit — synchronous here is fine (the window is already gone).
         // First we wait for the background autosave: its rename must not
         // overwrite our fresher snapshot with the stale one.
@@ -11153,10 +11400,7 @@ impl KtApp {
     /// on the source: after import the document is unnamed, and it does not yet
     /// have a project file.
     pub(crate) fn import_older_path(&mut self, p: &Path) {
-        match Self::open_older(p) {
-            Ok(app) => self.replace_with(app),
-            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
-        }
+        self.ask_open(p.to_path_buf(), OpenThen::Import, None);
     }
 
     /// File → Export → OpenTimelineIO… (R.70): a SEPARATE named action,

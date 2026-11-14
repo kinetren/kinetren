@@ -45,9 +45,9 @@ pub struct Composed {
     /// The picture is on the executor's display target; else in `rgba`.
     pub on_display: bool,
     pub rgba: Vec<u8>,
-    /// A stream layer showed its stage's held frame (stream-history-on-device): not a new picture of
-    /// the moment asked.
-    pub held: bool,
+    /// The positions a stream stage of the frame still lacks (0 — none): the frame is incomplete, and
+    /// the preview writes "catching up" where it writes Loading (catch-up-shows-loading).
+    pub catching_up: u64,
 }
 
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -234,7 +234,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
         let exec = spent.saturating_sub(Duration::from_nanos(plan));
         // a kept composite was shown on the display: it timed no chain (structured-telemetry)
         let replayed = out.as_ref().is_some_and(|o| o.5.replayed);
-        let held = out.as_ref().is_some_and(|o| o.5.stream_held);
+        let catching_up = out.as_ref().map_or(0, |o| o.5.stream_short);
         if replayed {
             on_display = display.is_some();
         } else if timed {
@@ -262,7 +262,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
             .aux(complete as u32)
             .lasted(spent.as_nanos() as u64)
             .emit();
-        let frame = Composed { seq: ask.seq, t: ask.t, quality, complete, on_display, rgba, held };
+        let frame = Composed { seq: ask.seq, t: ask.t, quality, complete, on_display, rgba, catching_up };
         if let Some(old) = c.done.lock().unwrap().replace(frame) {
             kt_time::trace::ev(kt_time::trace::Ev::FrameDrop).id(old.seq).aux(kt_time::trace::drop::UNTAKEN).emit();
             c.give_back(old.rgba);

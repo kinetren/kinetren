@@ -560,6 +560,8 @@ pub fn key(r: Rows, lay: &dyn StreamLayout, n: i64) -> u64 {
 }
 
 /// The latest position of `n`'s chain whose broken picture the memo holds (decode-request-storm).
+/// No host asks it since catch-up-shows-loading (a frame short of its history is incomplete, never
+/// shown from an earlier position); it stays one of the compiled schedule's answers t2270 pins.
 pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
     plan(r, lay, n).chain(n).into_iter().rev().find(|c| memo.contains(c.2)).map(|c| c.0)
 }

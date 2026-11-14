@@ -863,6 +863,8 @@ struct Inner {
     surface: bool,
     /// This device shows the preview: its ring bounds what stands in front of it.
     shows: Option<crate::arbiter::Registered>,
+    /// This engine composes the preview's slow-chain frames (`serve_preview`): the ring bounds too.
+    serves: Option<crate::arbiter::Registered>,
     /// The frame being encoded is cut into pieces on its ring (`execute`, `submit`).
     piece: Option<crate::arbiter::Piece>,
 }
@@ -1301,7 +1303,51 @@ impl GpuFxEngine {
         if compile_only {
             return Ok(None);
         }
+        let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(ai, &device));
+        let memo_guard = ai.device_type != wgpu::DeviceType::Cpu;
+        Ok(Some(Self::assemble(device, queue, info, c, arb, memo_guard, keep, export, Some(crate::seeds::device_key(ai)))))
+    }
 
+    /// An engine on this one's device and queue with its compiled pipelines, and its own frame
+    /// state and lock (arena, pools, memos): work of another class composes beside this engine's
+    /// frames without waiting for its lock (scheduler-followups D6, row 290). Its submissions go to
+    /// the same ring. Nothing is compiled.
+    pub fn sibling(&self) -> Arc<GpuFxEngine> {
+        let (device, queue, arb, memo_guard, seed) = {
+            let g = self.inner.lock().unwrap();
+            (g.device.clone(), g.queue.clone(), g.arb.clone(), g.memo_guard, g.timer.seed_key())
+        };
+        Self::assemble(device, queue, self.info.clone(), self.compiled.clone(), arb, memo_guard, false, false, seed)
+    }
+
+    /// This engine's device shows the preview's frame from now on (the slow-chain route,
+    /// scheduler-followups D6): its ring bounds what stands in front of that frame and cuts a
+    /// lower-class frame while it waits, as a display's ring does. Idempotent.
+    pub fn serve_preview(&self) {
+        let mut g = self.inner.lock().unwrap();
+        if g.serves.is_none() {
+            g.serves = Some(g.arb.register_preview());
+        }
+    }
+
+    /// The same compiled set as `other` (tests: a sibling compiles nothing).
+    #[doc(hidden)]
+    pub fn shares_compiled(&self, other: &GpuFxEngine) -> bool {
+        Arc::ptr_eq(&self.compiled, &other.compiled)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        info: GpuBackendInfo,
+        c: Arc<crate::compiled::Compiled>,
+        arb: Arc<crate::arbiter::Ring>,
+        memo_guard: bool,
+        keep: bool,
+        export: bool,
+        seed_key: Option<String>,
+    ) -> Arc<GpuFxEngine> {
         let arena_slots = 256u32;
         let arena = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kt-gpu uniforms"),
@@ -1312,8 +1358,10 @@ impl GpuFxEngine {
         let dummy = create_tex(&device, 1, 1, "kt-gpu dummy");
         let max_dim = device.limits().max_texture_dimension_2d;
         let (names, owners) = plugin_pipe_names();
-        let timer = Timer::new(&device, &queue, &info.name, names, owners);
-        let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(ai, &device));
+        let mut timer = Timer::new(&device, &queue, &info.name, names, owners);
+        if let Some(k) = seed_key {
+            timer.seed_as(k);
+        }
         // the editor's display device presents to its window (pipeline-prewarm D3: `keep` is it)
         let shows = keep.then(|| arb.register_display());
         let engine = Arc::new(GpuFxEngine {
@@ -1338,7 +1386,7 @@ impl GpuFxEngine {
                 upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(RING as u64)),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
-                memo_guard: ai.device_type != wgpu::DeviceType::Cpu,
+                memo_guard,
                 refuse_next_growth: false,
                 last_cost: Default::default(),
                 last_stages: Default::default(),
@@ -1356,6 +1404,7 @@ impl GpuFxEngine {
                 arb,
                 surface: keep,
                 shows,
+                serves: None,
                 piece: None,
             }),
         });
@@ -1369,7 +1418,7 @@ impl GpuFxEngine {
                 present_memo.evict_to_cap(pool);
             }
         }));
-        Ok(Some(engine))
+        engine
     }
 }
 
@@ -1512,11 +1561,14 @@ impl GpuFxEngine {
 
     /// Compile and warm on the device's worker the point-wise run shapes `runs` (plugin ids in chain
     /// order). Returns at once; shapes asked before are skipped, a run of an unassembled id is ignored.
+    /// A run longer than `MAX_RUN_STAGES` is warmed as the pieces a frame cuts it into (`bind_runs`):
+    /// the whole run is no key any frame asks (class-walk-revision).
     pub fn prewarm_point_runs(&self, runs: &[Vec<String>]) {
         let taps = plugin_taps();
         let keys: Vec<Vec<u16>> = runs
             .iter()
-            .filter_map(|r| r.iter().map(|id| taps.iter().position(|(t, _)| t == id).map(|i| i as u16)).collect())
+            .filter_map(|r| r.iter().map(|id| taps.iter().position(|(t, _)| t == id).map(|i| i as u16)).collect::<Option<Vec<u16>>>())
+            .flat_map(|k| k.chunks(crate::runs::MAX_RUN_STAGES).map(<[u16]>::to_vec).collect::<Vec<_>>())
             .collect();
         self.compiled.prewarm_runs(keys);
     }
@@ -1904,7 +1956,11 @@ impl Inner {
             let submit = Instant::now();
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.staged.flush(&self.queue, &self.arena);
-            self.queue.submit([enc.finish()]);
+            // counted on the ring, never admitted (gpu-throughput D1)
+            let ns = self.timer.last_frame(Role::Preview);
+            let ticket = self.arb.note_display(ns);
+            let sub = self.queue.submit([enc.finish()]);
+            drop(ticket.submitted(&self.device, &self.queue, sub, ns, self.surface));
             self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
             self.timer.submitted(&self.queue, Role::Preview, meta);
         }
@@ -1936,7 +1992,10 @@ impl Inner {
         self.timer.end(&mut enc, Role::Preview, meta);
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.staged.flush(&self.queue, &self.arena);
-        self.queue.submit([enc.finish()]);
+        let ns = self.timer.predict(PassLabel::Fixed("display")).unwrap_or(0) * if o.glow { 2 } else { 1 };
+        let ticket = self.arb.note_display(ns);
+        let sub = self.queue.submit([enc.finish()]);
+        drop(ticket.submitted(&self.device, &self.queue, sub, ns, self.surface));
         self.timer.submitted(&self.queue, Role::Preview, meta);
         self.last_stages.replayed = true;
         true

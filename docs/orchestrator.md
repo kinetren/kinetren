@@ -72,6 +72,14 @@ Every brief carries the standing rules, because executors start fresh:
   the wait's own command line contains the pattern, so it matches itself and never ends
   (2026-11-09: `pipeline-prewarm` stood on `until ! pgrep -f "cargo test --workspace"`; the
   orchestrator fell into the same trap the day before);
+- **the CALLERS walk, asked by name** (class-walk-revision, owner kkt-26.11.11 L3: "надо проверять по
+  другим местам может где забыли еще"): beside the places that have the mechanism, the design lists
+  every caller, consumer and sibling path of what the change moves, found by grep of its functions,
+  types, constants, flags and trace kinds across `src/` — code that waits for a result now delivered
+  later, reads a value now sized elsewhere, holds a second copy of a constant, goes around the new
+  scheduler/ledger/arbiter, keys a cache without what now determines it, ignores a stop/held/reset
+  flag, or is a tool measuring the old behaviour. A walk of threads or tenants alone missed eleven
+  times in stages 9–10 (`docs/engine-audit.md`, "Class-walk revision 2026-11");
 - do not merge into `master`; report ONCE, in Russian, when done (no interim notes); a question
   for the owner goes into that report, addressed to the orchestrator, which carries it; the report
   ends with "Найдено, не исправлено" (see "What executors find and leave").
