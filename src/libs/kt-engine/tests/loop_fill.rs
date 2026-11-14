@@ -54,14 +54,26 @@ fn kept(player: &Player, moments: &[Tick]) -> usize {
     moments.iter().filter(|t| runs.iter().any(|r| r.start <= t.0 && t.0 < r.end)).count()
 }
 
-/// Wait for `n` more prefetch passes (each kicks the fill while a loop plays).
-fn passes(player: &Player, n: u64) {
-    let p0 = player.loop_stats.prefetch_passes.load(Ordering::Relaxed);
+/// The prefetch passes made so far.
+fn pass_count(player: &Player) -> u64 {
+    player.loop_stats.prefetch_passes.load(Ordering::Relaxed)
+}
+
+/// Wait until `n` passes more than `p0` were made. `p0` is read BEFORE what causes the passes: on a
+/// pause a seek owes exactly one, and under load it lands before a count read after the seek, which
+/// then waits for a pass nothing will ever ask (t2335 stood 600 s that way).
+fn passes_since(player: &Player, p0: u64, n: u64) {
     let deadline = kt_time::test_deadline();
-    while player.loop_stats.prefetch_passes.load(Ordering::Relaxed) < p0 + n {
+    while pass_count(player) < p0 + n {
         assert!(std::time::Instant::now() < deadline, "the prefetch thread stopped passing");
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
+}
+
+/// Wait for `n` more prefetch passes while a loop plays (each kicks the fill; playing, they keep
+/// coming every 100 ms).
+fn passes(player: &Player, n: u64) {
+    passes_since(player, pass_count(player), n);
 }
 
 /// Test t2334: a loop of 24 moments plays, the display presents every fourth; without a fill
@@ -120,8 +132,9 @@ fn t2335_the_fill_rests_with_the_player() {
     let near = |s: kt_time::sched::Stats| s.classes[kt_time::sched::Class::Near as usize].started;
     let started0 = near(kt_time::sched::stats());
     for t in moments.iter().step_by(6) {
+        let p0 = pass_count(&player);
         player.seek(*t);
-        passes(&player, 1);
+        passes_since(&player, p0, 1);
     }
     assert_eq!(near(kt_time::sched::stats()), started0, "the fill ran on a pause");
     assert_eq!(player.fill_kept(), 0, "the fill kept moments on a pause");
