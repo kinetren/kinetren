@@ -567,15 +567,28 @@ fn preview_cell(
     // show on it as they are, and a checkerboard of tiles would
     // give thousands of primitives on opening (invariant No. 12)
     p.rect_filled(img_rect, 2.0, crate::theme::EXTREME);
-    if let Some(ctx) = preview.as_deref_mut()
-        && let Some(tex) = ctx.texture(ui.ctx(), shown)
-    {
-        p.image(
-            tex,
-            img_rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
+    if let Some(ctx) = preview.as_deref_mut() {
+        match ctx.texture(ui.ctx(), shown) {
+            Some(tex) => {
+                p.image(
+                    tex,
+                    img_rect,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+            // the effect in its place is not computed yet: Loading, never a stand-in picture
+            // (chain-everywhere, the owner's п.1 and п.2 of 2026-11-14)
+            None => {
+                p.text(
+                    img_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    tr(k::perf::LOADING),
+                    egui::TextStyle::Small.resolve(ui.style()),
+                    ui.visuals().weak_text_color(),
+                );
+            }
+        }
     }
     let stroke = if resp.hovered() || pick.is_some() { crate::theme::ACCENT } else { frame };
     p.rect_stroke(img_rect, 2.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
