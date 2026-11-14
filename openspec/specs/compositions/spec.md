@@ -710,3 +710,36 @@ the root's resolve is 7 ms on the owner's project.
 - **WHEN** the generator sources, the audio and the video renderer of a project with a reel placed twice are built apart, then in one scope
 - **THEN** apart they resolve at least six times, in one scope twice (the root and the reel)
 - **TEST** t2005 (`src/libs/kt-engine/tests/shared_build.rs`)
+
+### Requirement: An offline frame job keeps its own stream history and waits out a hold inside a frame
+The reel strip's and the poster's renderer SHALL keep its stream stages' history in a memo of its own,
+as an export does, never the preview's. Its stream pre-roll SHALL stop when its job is held (a playback
+or an export's vote), not only when it is cancelled, keeping what it computed; the job SHALL wait the
+hold out between the pre-roll's batches, never inside a device job, and SHALL go on from the memo after
+it; a cancel while held SHALL end it.
+Why: stream-memo-budget (rows 519, 514) — the jobs kept `VideoRenderer::new`'s default memo, sized for
+the player's loop and not counting them, so a strip of a Datamosh evicted the player's history; and the
+pre-roll's stop check answered only the cancel, so the history batches inside one frame ran on through
+playback while the frame loop around them waited.
+
+#### Scenario: The job's renderer has its own memo
+- **WHEN** a plain renderer and an offline job's renderer are built for one project
+- **THEN** the plain one shares the preview's memo; the job's does not, and holds the export's bound
+- **TEST** t2493 (`src/apps/kt-app/src/reel_preview.rs`)
+
+#### Scenario: The pre-roll stops on a hold and goes on after it
+- **WHEN** a pre-roll's job becomes held during its first run and is released by another thread; separately, a job is cancelled while held
+- **THEN** the stages' stop check answers the hold during that run; the pre-roll runs a second time, never while still held; the cancelled one runs once
+- **TEST** t2494 (`src/apps/kt-app/src/reel_preview.rs`)
+### Requirement: A reel strip row carries the version of what its cells hold
+The disk tier's strip row key SHALL be (reel, edit, media fingerprint mixed with `STRIP_ROW_VERSION`). A row
+written under another version SHALL be a miss, rendered again once and replaced. The version SHALL move
+whenever what a strip's cell holds changes for the same edit and media.
+Why: found-defects 524 — builds between catch-up-shows-loading D6 and t2455's fix wrote rows whose generator
+cells were empty, and the key (reel, edit, media) never moved for them; treating a row with an empty cell as a
+miss would re-render a reel whose cell is legitimately empty at every opening.
+
+#### Scenario: A row of an older version is a miss
+- **WHEN** a strip row is written under the media fingerprint alone (the version before), then under the current key
+- **THEN** the first is not read back under the current key; the second is
+- **TEST** t2519 (`src/apps/kt-app/src/reel_preview.rs`)

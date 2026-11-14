@@ -478,9 +478,20 @@ pub(crate) fn run<S: ExportSink>(
                             let e = engine.as_ref().expect("only a worker with an engine composes");
                             let plan = video_ref.frame_plan(cache_ref, t, quality);
                             ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
-                            let complete = e
+                            let mut complete = e
                                 .execute_once(&plan, &mut buf)
                                 .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                            // the chunk holds every frame it could decode (each asked alone again):
+                            // an incomplete frame is composed again before it is written (gpu-leftovers D5)
+                            for _ in 0..crate::export::RETRIES {
+                                if complete {
+                                    break;
+                                }
+                                let plan = video_ref.frame_plan(cache_ref, t, quality);
+                                complete = e
+                                    .execute_once(&plan, &mut buf)
+                                    .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                            }
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                             if let Some(p) = prof {
                                 let s = e.last_stages();
@@ -521,8 +532,17 @@ pub(crate) fn run<S: ExportSink>(
                 let mark = Instant::now();
                 let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
                 span.aux(kt_time::trace::job::EXPORT_FRAME).a(i);
-                let complete =
+                let mut complete =
                     gpu.collect(ticket, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                // composed again before it is written (gpu-leftovers D5)
+                for _ in 0..crate::export::RETRIES {
+                    if complete {
+                        break;
+                    }
+                    let plan = video_ref.frame_plan(cache_ref, frame_tick(i), quality);
+                    complete =
+                        gpu.execute_once(&plan, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                }
                 ExportProfile::add(prof.map(|p| &p.readback_ns), mark);
                 Ok(send(i, Job::Convert { t: frame_tick(i), rgba: buf, complete }))
             };
@@ -562,9 +582,18 @@ pub(crate) fn run<S: ExportSink>(
                     let plan = video_ref.frame_plan(cache_ref, t, quality);
                     if depth == 0 {
                         let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
-                        let complete = gpu
+                        let mut complete = gpu
                             .execute_once(&plan, &mut buf)
                             .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                        for _ in 0..crate::export::RETRIES {
+                            if complete {
+                                break;
+                            }
+                            let plan = video_ref.frame_plan(cache_ref, t, quality);
+                            complete = gpu
+                                .execute_once(&plan, &mut buf)
+                                .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                        }
                         ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                         if !send(i, Job::Convert { t, rgba: buf, complete }) {
                             return Ok(());

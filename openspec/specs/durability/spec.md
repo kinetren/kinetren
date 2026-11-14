@@ -762,6 +762,7 @@ Ctrl+S on a base before the save lane; proved again on the current tree.
 - **WHEN** a background thread writes and fsyncs a large file in a loop in the project's directory while Ctrl+S is pressed in a harness app with zero answer grace
 - **THEN** the save call returns without waiting, the UI thread counted no blocking call, and a later frame takes the landed write and clears the asterisk
 - **TEST** t2333 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+
 ### Requirement: A landed save clears only what the file holds
 When Ctrl+S's write lands, the view-state asterisk SHALL clear only if the view state now equals the
 one the file was written with.
@@ -785,3 +786,17 @@ bound (5 s, 3 s) with the jobs never started.
 - **THEN** the playing vote is down when the close has run
 - **PATH** an edited project playing for over a minute → the window's cross → the window goes at once; the recovery file holds the edit
 - **TEST** t2453 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+
+### Requirement: The insurance autosave reaches the recovery file while playing
+An autosave due after two intervals of playback or a gesture SHALL run on a lane no pause vote holds,
+off the audio and the interface threads, so the recovery file holds the edit while the playback goes on.
+An autosave posted on a pause and then held by a playback for another interval SHALL be taken by that
+lane; the write SHALL happen once, by whichever lane starts it first.
+Why: stream-memo-budget (row 513) — the "write anyway after two intervals" gate posted the job on the
+Background lane the player's vote holds, so nothing reached the recovery file until a pause: a crash
+during a long playback lost every edit since it began.
+
+#### Scenario: Written while playing
+- **WHEN** an edited project plays past two autosave intervals; separately, an autosave is posted with a playback's vote raised and stays held for another interval
+- **THEN** the recovery file holds the edit while the vote is still up, in both cases
+- **TEST** t2495 (`src/apps/kt-app/src/ui_wait_tests.rs`)

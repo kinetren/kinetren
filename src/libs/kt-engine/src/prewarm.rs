@@ -32,6 +32,9 @@ fn lanes(out: &mut BTreeSet<&'static str>, clips: &[ClipEvent], tracks: &[Track]
 pub struct Reach {
     pub ids: BTreeSet<&'static str>,
     pub runs: BTreeSet<Vec<&'static str>>,
+    /// A stream stage has a slot in front of it (stream-input-order): those slots run on the
+    /// front's own device, which compiles them too.
+    pub front: bool,
 }
 
 impl Reach {
@@ -49,6 +52,15 @@ pub fn effect_ids(p: &Project) -> BTreeSet<&'static str> {
         lanes(&mut out, &s.clips, &s.tracks, &s.morphers);
     }
     out
+}
+
+/// Whether a chain of `p` holds a picture slot in front of a stream slot (stream-input-order).
+pub fn has_stream_front(p: &Project) -> bool {
+    let front = |fx: &[kt_model::FxInstance]| {
+        fx.iter().position(|f| f.is_stream()).is_some_and(|i| !crate::video::stream_front_slots(&fx[..i]).is_empty())
+    };
+    p.clips.iter().chain(p.sequences.iter().flat_map(|s| &s.clips)).any(|c| front(&c.fx))
+        || p.morphers.iter().any(|m| front(&m.patch.video_fx))
 }
 
 /// The point-wise run shapes `p` reaches (fused-pointwise-runs): each run of two or more fusable

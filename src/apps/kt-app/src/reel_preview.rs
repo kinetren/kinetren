@@ -471,6 +471,20 @@ pub fn media_fingerprint(p: &Project, base: Option<&std::path::Path>) -> u64 {
     h.digest()
 }
 
+/// The version of what a strip row holds (gpu-leftovers D6, found-defects 524): builds between
+/// catch-up-shows-loading D6 and t2455's fix wrote rows whose generator cells were empty, and the key
+/// (reel, edit, media) never moves for them. A row written under another version is a miss, rendered
+/// again once. Move it whenever what a strip's cell holds changes for the same edit and media.
+pub const STRIP_ROW_VERSION: u64 = 2;
+
+/// The third part of a strip row's key: the media fingerprint and the row version.
+pub fn strip_key(p: &Project, base: Option<&std::path::Path>) -> u64 {
+    if STRIP_ROW_VERSION == 1 {
+        return media_fingerprint(p, base);
+    }
+    media_fingerprint(p, base) ^ STRIP_ROW_VERSION.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 /// A write error to the sidecar is a CACHE error: the preview still arrives, and the
 /// log gets one line, not one line per reel.
 fn warn_db_once(what: &str, e: &dyn std::fmt::Display) {
@@ -501,7 +515,7 @@ pub fn render_reel_preview(
     disk: ReelRow<'_>,
 ) -> ReelDone {
     let seq_row = disk.row;
-    let fp = media_fingerprint(p, base);
+    let fp = strip_key(p, base);
     // an opening that fails is a cache miss (the reel renders anew) — but not a SILENT one:
     // a lost disk tier must be visible in the log (t640/t795 under load showed a re-render
     // with no word on why)
@@ -576,7 +590,7 @@ pub fn render_reel_preview(
         max_audio_bytes: 1,
         max_video_bytes: 64 << 20,
     });
-    let mut video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
+    let mut video = offline_renderer(p, &facts);
     let n = ((end.0 + step - 1) / step).max(1) as usize;
     let mut frames: Vec<Option<Arc<egui::ColorImage>>> = vec![None; n.min(MAX_FRAMES_PER_REEL)];
     let mut jpegs: Vec<Option<Vec<u8>>> = vec![None; frames.len()];
@@ -672,6 +686,29 @@ pub(crate) fn reel_envelope(
     Ok(acc.finish())
 }
 
+/// The renderer of an offline frame job (the reel strip, the poster): its stream stages keep their
+/// history in a memo of their own, as an export's do (stream-memo-budget, found-defects 519) — the
+/// preview's is sized for the player's loop and does not count them, so they evicted its history.
+pub(crate) fn offline_renderer(p: &Project, facts: &kt_engine::video::SourceFacts) -> kt_engine::VideoRenderer {
+    let mut video = kt_engine::VideoRenderer::new_with_facts(p, facts);
+    video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(kt_engine::export::EXPORT_STREAM_MEMO_BYTES)));
+    video
+}
+
+/// Run `run`, an offline job's stream pre-roll, under a stop check that answers its cancel AND its
+/// hold (found-defects 514): a held job's stages stop between history positions, keeping what they
+/// computed, the job waits out the vote here — between the pre-roll's batches, not inside a device
+/// job — and runs it again from the memo.
+pub(crate) fn preroll_under(ctl: &crate::bg::BgCtl, mut run: impl FnMut()) {
+    loop {
+        let held = ctl.clone();
+        kt_engine::stop_when(kt_time::trace::stop::JOB, move || held.is_cancelled() || held.is_held(), &mut run);
+        if !ctl.is_held() || ctl.should_stop() {
+            return;
+        }
+    }
+}
+
 /// One frame of the offline path at `t`: decode what the plan wants into the job's own cache,
 /// then compose. Shared by the reel strip and the project poster — one body (rule 17).
 pub(crate) fn compose_offline_frame(
@@ -687,11 +724,11 @@ pub(crate) fn compose_offline_frame(
     // over each, every other layer with it (decode-request-storm): read at once, the history lost
     // its front before the composite came, and the poster stayed black
     if video.has_stream_stages() {
-        // a cancelled job's history stops between positions (gpu-arbiter, row 147)
-        let cancelled = ctl.cancel_flag().clone();
-        let stop = move || cancelled.load(std::sync::atomic::Ordering::Acquire);
-        kt_engine::stop_when(kt_time::trace::stop::JOB, stop, || kt_engine::stream_preroll(video, cache, src, t, q));
-        if ctl.cancel_flag().load(std::sync::atomic::Ordering::Acquire) {
+        // a cancelled job's history stops between positions (gpu-arbiter, row 147), and so does a held
+        // one (found-defects 514): the stages keep what they computed, the job waits out the vote here,
+        // between the pre-roll's batches and not inside a device job, and goes on from the memo
+        preroll_under(ctl, || kt_engine::stream_preroll(video, cache, src, t, q));
+        if ctl.is_cancelled() {
             buf.clear();
             return;
         }
@@ -777,7 +814,7 @@ pub fn render_poster(
         max_audio_bytes: 1,
         max_video_bytes: 16 << 20,
     });
-    let mut video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
+    let mut video = offline_renderer(p, &facts);
     let q = Quality { width: POSTER_W, height: POSTER_H };
     let t = video.grid.align_floor(at);
     let mut buf = Vec::new();
@@ -890,6 +927,60 @@ mod tests {
         assert!(lit * 2 > cell.pixels.len(), "the cell is not the generator's orange ({lit} of {})", cell.pixels.len());
     }
 
+    /// Test t2493 (stream-memo-budget, found-defects 519): the reel strip's and the poster's renderer
+    /// keeps its stream history in a memo of its own, as an export does: the preview's is sized for
+    /// the player's loop, and a strip of a Datamosh filled it, evicting the player's history.
+    #[test]
+    fn t2493_an_offline_frame_job_has_its_own_stream_memo() {
+        crate::plugins::install();
+        let p = one_clip("synth:1");
+        let preview = kt_engine::VideoRenderer::new(&p);
+        assert!(preview.shares_stream_memo(kt_engine::video::stream_memo()), "scene guard: a plain renderer shares the preview's");
+        let job = super::offline_renderer(&p, &Default::default());
+        assert!(!job.shares_stream_memo(kt_engine::video::stream_memo()), "the job's renderer fills the preview's memo");
+        assert_eq!(job.stream_memo_cap(), kt_engine::export::EXPORT_STREAM_MEMO_BYTES);
+    }
+
+    /// Test t2494 (stream-memo-budget, found-defects 514): the stream pre-roll of a reel strip or a
+    /// poster stops when its job is held, not only when it is cancelled, waits out the hold between
+    /// batches, and goes on after it. Its stop check answered only the cancel, so the batches inside
+    /// one frame ran on through playback.
+    #[test]
+    fn t2494_the_offline_preroll_waits_while_its_job_is_held() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let pause = std::sync::Arc::new(AtomicBool::new(false));
+        let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), pause.clone());
+        let mut runs = Vec::new();
+        let mut releaser = None;
+        super::preroll_under(&ctl, || {
+            // what the run sees when it starts, then what its stages' stop check says once held
+            let started_held = pause.load(Ordering::SeqCst);
+            if runs.is_empty() {
+                pause.store(true, Ordering::SeqCst);
+                let pause = pause.clone();
+                releaser = Some(std::thread::spawn(move || {
+                    pause.store(false, Ordering::SeqCst);
+                    kt_time::sched::notify_gate();
+                }));
+            }
+            runs.push((started_held, kt_engine::video::stopping()));
+        });
+        releaser.unwrap().join().unwrap();
+        assert_eq!(runs.len(), 2, "the pre-roll did not run again after the hold: {runs:?}");
+        assert_eq!(runs[0], (false, true), "the stages' stop check did not answer the hold: {runs:?}");
+        assert!(!runs[1].0, "the pre-roll ran again while still held: {runs:?}");
+        // a cancel while held ends it without another run
+        let token = kt_time::sched::Token::new();
+        let ctl = crate::bg::BgCtl::from_flags(token.clone(), pause.clone());
+        let mut n = 0;
+        super::preroll_under(&ctl, || {
+            n += 1;
+            pause.store(true, Ordering::SeqCst);
+            token.cancel(0);
+        });
+        assert_eq!(n, 1, "a cancelled job's pre-roll ran again");
+    }
+
     /// Test t2454 (class-walk-revision): the reel's envelope waits at each chunk while its job is
     /// held — a player that starts playing pauses it as it pauses the frames. Its offline audio render
     /// checked only the cancel, so it ran to its end on a pool worker during playback.
@@ -929,5 +1020,39 @@ mod tests {
         kt_time::sched::notify_gate();
         assert!(!worker.join().unwrap(), "a chunk ran while the job was held");
         assert!(calls.load(Ordering::SeqCst) > 2, "scene guard: the reel is several chunks long");
+    }
+}
+
+#[cfg(test)]
+mod strip_key_tests {
+    /// Test t2519 (gpu-leftovers D6, found-defects 524): a strip row written under the key before
+    /// `STRIP_ROW_VERSION` (its generator cells empty) is a miss, so the reel renders again once; a row
+    /// written under the current key is a hit.
+    #[test]
+    fn t2519_a_strip_row_of_an_older_version_is_a_miss() {
+        use kt_model::*;
+        let p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 320,
+            height: 180,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: false,
+        });
+        let dir = std::env::temp_dir().join(format!("kt-t2519-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut db = kt_media::index::MediaIndexDb::open(&dir.join("index.db")).unwrap();
+        let old = super::media_fingerprint(&p, None);
+        let now = super::strip_key(&p, None);
+        assert_ne!(old, now, "the row version is part of the key");
+        db.put_reel_frames(9, 77, old, 90_000, 90_000, &[None]).unwrap();
+        assert!(db.reel_preview(9, 77, now).unwrap().is_none(), "a row of the older version was read back");
+        db.put_reel_frames(9, 77, now, 90_000, 90_000, &[Some(&[1u8, 2, 3][..])]).unwrap();
+        assert!(db.reel_preview(9, 77, now).unwrap().is_some(), "a row of this version is a hit");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

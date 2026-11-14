@@ -330,3 +330,141 @@ fn t1246_a_reset_key_ends_the_mosh_on_the_beat() {
     }
     assert_eq!(frame(&p, beat + 2), last);
 }
+
+/// Shot B's chain: `posterize` at `front` levels IN FRONT of the mosh, the mosh, and `posterize` at
+/// `after` levels after it (stream-input-order, found-defects 484: the owner's camera_isp → datamosh
+/// → vhs_tape).
+fn project_order(front: Option<f64>, after: Option<f64>) -> Project {
+    let mut p = project(true);
+    let poster = |levels: f64| {
+        let mut f = FxInstance::plugin("posterize").expect("posterize is built in");
+        assert!(f.set_param("levels", levels));
+        f
+    };
+    let b = p.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap();
+    if let Some(l) = front {
+        b.fx.insert(0, poster(l));
+    }
+    if let Some(l) = after {
+        b.fx.push(poster(l));
+    }
+    p.validate().unwrap();
+    p
+}
+
+/// Shot B's texture with `posterize` already run over each frame, by the test engine at the size asked:
+/// what the stream must read when the slot stands in front of the mosh.
+struct Baked {
+    tex: Tex,
+    levels: f64,
+}
+
+impl MediaSource for Baked {
+    fn info(&self) -> &MediaInfo {
+        self.tex.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
+        self.tex.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, pts: Tick, quality: Option<Quality>) -> Result<VideoFrame, MediaError> {
+        use kt_engine::VideoGpuExec as _;
+        let f = Arc::new(self.tex.read_video_frame(pts, quality)?);
+        let mut slot = FxInstance::plugin("posterize").unwrap();
+        slot.set_param("levels", self.levels);
+        let chain = [slot];
+        let plan = kt_engine::chain_plan(f.clone(), &chain, 1, 0.0, pts, None);
+        let mut out = vec![];
+        assert!(kt_gpu::testkit::engine().execute_once(&plan, &mut out).unwrap());
+        Ok(VideoFrame { pts, width: f.width, height: f.height, rgba: out.into_boxed_slice(), has_alpha: false })
+    }
+    fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
+        self.tex.keyframe_before(pts)
+    }
+}
+
+/// Warm what the order names, shot A from `a`, shot B from `b`.
+fn warm_from(vr: &VideoRenderer, cache: &BurstCache, t: Tick, a: &mut dyn MediaSource, b: &mut dyn MediaSource) {
+    for (m, pts, q) in vr.layers_at(t, Q) {
+        let s: &mut dyn MediaSource = if m == MediaId(1) { &mut *a } else { &mut *b };
+        let f = s.read_video_frame(pts, Some(q)).unwrap();
+        cache.insert_video(kt_engine::source_id(m), Some(q), kt_engine::video_cache_idx(pts), Arc::new(f));
+    }
+}
+
+/// t2470 (found-defects 484): a slot in front of a stream stage feeds it — the frame of the chain
+/// posterize → datamosh is the mosh of a posterized stream (the same bytes as sources posterized
+/// before decoding: the history in the event before is read through the slot too), and posterize does not run again after the stage; the old order (the slot run
+/// over the mosh's output) is another picture.
+#[test]
+fn t2470_a_slot_in_front_feeds_the_stream() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let frame = |p: &Project, a: &mut dyn MediaSource, b: &mut dyn MediaSource| {
+        let (vr, c) = (renderer(p), big_cache());
+        warm_from(&vr, &c, t, a, b);
+        let (f, complete) = kt_gpu::testkit::compose(&vr, &c, t, Q);
+        assert!(complete, "one warm-up of what the order names completes the frame");
+        f
+    };
+    let runs = kt_engine::video::front_runs();
+    let ordered = frame(&project_order(Some(3.0), None), &mut Tex::new(1, 0), &mut Tex::new(2, 2));
+    assert!(kt_engine::video::front_runs() > runs, "the slot in front ran on the stream's frames");
+    let baked = frame(
+        &project_order(None, None),
+        &mut Baked { tex: Tex::new(1, 0), levels: 3.0 },
+        &mut Baked { tex: Tex::new(2, 2), levels: 3.0 },
+    );
+    assert_eq!(ordered, baked, "the stream reads shot B through the slot in front of it");
+    let old = frame(&project_order(None, Some(3.0)), &mut Tex::new(1, 0), &mut Tex::new(2, 2));
+    assert_ne!(ordered, old, "the slot in front is not the slot after the stage");
+}
+
+/// t2471 (found-defects 484): the history names what feeds it — an edit of a slot in front of the
+/// stage makes the order ask the whole history again, an edit of a slot after it asks nothing new.
+#[test]
+fn t2471_an_edit_in_front_invalidates_the_history_one_after_does_not() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let memo = Arc::new(StreamMemo::new(256 << 20));
+    let build = |p: &Project| {
+        let mut vr = VideoRenderer::new(p);
+        vr.set_stream_memo(memo.clone());
+        vr
+    };
+    let shot_b = |vr: &VideoRenderer| vr.layers_at(t, Q).iter().filter(|(m, ..)| *m == MediaId(2)).count();
+    let first = build(&project_order(Some(3.0), Some(5.0)));
+    let cache = big_cache();
+    warm(&first, &cache, t);
+    assert!(kt_gpu::testkit::compose(&first, &cache, t, Q).1);
+    assert_eq!(shot_b(&first), 0, "the memo holds the history");
+    assert_eq!(shot_b(&build(&project_order(Some(3.0), Some(4.0)))), 0, "a slot after the stage feeds nothing");
+    assert!(shot_b(&build(&project_order(Some(4.0), Some(5.0)))) >= 7, "a slot in front feeds the whole history");
+}
+
+/// t2472 (found-defects 484): an export reads the stream through the slot in front too — in pieces
+/// (each a fresh renderer, memo and cache) it equals one go, and it is not the export of the old order.
+#[test]
+fn t2472_an_export_runs_the_slot_in_front_of_the_stream() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let p = project_order(Some(3.0), None);
+    let whole = export(&p, (30, 42));
+    let mut parts = export(&p, (30, 36));
+    parts.extend(export(&p, (36, 42)));
+    assert!(parts == whole, "the pieces differ from the whole");
+    assert!(whole != export(&project_order(None, Some(3.0)), (30, 42)), "the export runs the person's order");
+}

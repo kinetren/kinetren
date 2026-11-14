@@ -66,14 +66,33 @@ struct RunShape {
 /// The run shapes by their stage indices, and their keys by id.
 type RunTable = (HashMap<Vec<u16>, RunShape>, Vec<Vec<u16>>);
 
-/// How a frame runs one piece of a point-wise run (`Compiled::run_use`).
+/// How a frame runs one piece of a point-wise run (`Compiled::run_use`). The frame's OUTPUT form is
+/// a function of the shape's state alone (gpu-leftovers D2, found-defects 510): its own passes until
+/// the verdict, then the verdict; a trial never changes what a frame shows.
 pub(crate) enum RunUse {
-    /// The stages' own passes; `Some(id)` — timed for the trial of that shape.
-    Own(Option<u32>),
-    /// The shape's generated pass; `probe` — timed for its trial.
-    Fused { pipe: wgpu::RenderPipeline, id: u32, probe: bool },
+    /// The stages' own passes.
+    Own,
+    /// The shape's generated pass.
+    Fused(wgpu::RenderPipeline),
+    /// The own passes give the frame, and the fused pass runs beside them into a scratch target,
+    /// each timed for the shape `id`'s trial.
+    Trial { pipe: wgpu::RenderPipeline, id: u32 },
     /// The trial split the shape: its two halves are asked in turn.
     Split,
+}
+
+/// Every device's run forms, by revision (gpu-leftovers D2): it moves whenever a shape's output form
+/// changes anywhere in the process, and the memo keys carry it, so a composite kept in one form is
+/// never served for a frame that now runs in the other.
+static FORMS: AtomicU64 = AtomicU64::new(0);
+
+/// The run forms' revision now.
+pub fn forms_revision() -> u64 {
+    FORMS.load(Ordering::Acquire)
+}
+
+fn forms_moved() {
+    FORMS.fetch_add(1, Ordering::AcqRel);
 }
 
 #[derive(Default)]
@@ -469,17 +488,20 @@ impl Compiled {
         let (map, ids) = &mut *runs;
         if let Some(r) = map.get_mut(key) {
             return match &r.pipe {
-                Shape::Pending | Shape::Ready(None) => RunUse::Own(None),
+                Shape::Pending | Shape::Ready(None) => RunUse::Own,
                 Shape::Ready(Some(p)) => {
                     let t = r.trial.get_or_insert_with(|| crate::runs::Trial::new(self.timed));
                     match (trial, t.verdict) {
-                        (false, _) | (true, crate::runs::Verdict::Fused) => RunUse::Fused { pipe: p.clone(), id: r.id, probe: false },
+                        (false, _) | (true, crate::runs::Verdict::Fused) => RunUse::Fused(p.clone()),
                         (true, crate::runs::Verdict::Split) => RunUse::Split,
                         (true, crate::runs::Verdict::Trying) => {
-                            if t.next_fused() {
-                                RunUse::Fused { pipe: p.clone(), id: r.id, probe: true }
+                            // counts the asks: a trial whose samples never come back ends fused
+                            t.next_fused();
+                            if t.verdict == crate::runs::Verdict::Trying {
+                                RunUse::Trial { pipe: p.clone(), id: r.id }
                             } else {
-                                RunUse::Own(Some(r.id))
+                                forms_moved();
+                                RunUse::Fused(p.clone())
                             }
                         }
                     }
@@ -491,7 +513,36 @@ impl Compiled {
         map.insert(key.to_vec(), RunShape { id, pipe: Shape::Pending, trial: None });
         drop(runs);
         self.enqueue(Job::Run(key.to_vec()));
-        RunUse::Own(None)
+        RunUse::Own
+    }
+
+    /// The SETTLED form of a run shape (gpu-leftovers D3): its generated pass whenever the device
+    /// compiles it, compiled here in the frame when the worker has not yet; `None` — the device refuses
+    /// the text. No trial and no timing: an export's frame is a function of its plan and its device.
+    pub(crate) fn run_settled(&self, key: &[u16]) -> Option<wgpu::RenderPipeline> {
+        {
+            let runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(RunShape { pipe: Shape::Ready(p), .. }) = runs.0.get(key) {
+                return p.clone();
+            }
+        }
+        crate::compiled::in_frame();
+        let pipe = self.run_pipe(key);
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let (map, ids) = &mut *runs;
+        match map.get_mut(key) {
+            Some(r) => match &r.pipe {
+                Shape::Ready(p) => return p.clone(),
+                Shape::Pending => r.pipe = Shape::Ready(pipe.clone()),
+            },
+            None => {
+                let id = ids.len() as u32;
+                ids.push(key.to_vec());
+                map.insert(key.to_vec(), RunShape { id, pipe: Shape::Ready(pipe.clone()), trial: None });
+            }
+        }
+        forms_moved();
+        pipe
     }
 
     /// A timed piece of a trying shape: device ns over its pixels.
@@ -503,6 +554,9 @@ impl Compiled {
         if let Some(t) = r.trial.as_mut() {
             let before = t.verdict;
             t.note(p.fused, ns as f64 / p.px.max(1) as f64);
+            if t.verdict != before {
+                forms_moved();
+            }
             if t.verdict != before && kt_time::trace::on() {
                 let (f, o) = t.minima();
                 let n = kt_time::trace::name(&format!(
@@ -691,17 +745,22 @@ impl Compiled {
     /// A run shape's generated pass (fused-pointwise-runs): compiled on the geometry pass's layout,
     /// warmed by one draw after the frames composing now. A text the device refuses leaves the shape
     /// to its parts.
-    fn compile_run(&self, key: &[u16]) {
+    /// A run shape's generated pipeline, compiled now; `None` — the device refuses its text.
+    fn run_pipe(&self, key: &[u16]) -> Option<wgpu::RenderPipeline> {
         let taps = plugin_taps();
         let ids: Option<Vec<&str>> = key.iter().map(|&i| taps.get(i as usize).map(|t| t.0)).collect();
-        let pipe = ids.and_then(|ids| {
+        ids.and_then(|ids| {
             let text = crate::runs::run_text(&ids, &taps);
             let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
             let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
             let p = render_pipe(&self.device, &self.geom_pipe_layout, self.cache.as_ref().map(|c| c.get()), "point_run", text, FORMAT);
             let failed = pollster::block_on(validation.pop()).is_some() | pollster::block_on(internal.pop()).is_some();
             (!failed).then_some(p)
-        });
+        })
+    }
+
+    fn compile_run(&self, key: &[u16]) {
+        let pipe = self.run_pipe(key);
         if let Some(p) = pipe.as_ref().filter(|_| !crate::exit::exiting()) {
             let mut span = kt_time::trace::span(kt_time::trace::Ev::Warm);
             span.aux(kt_time::trace::name("pointwise:run"));
@@ -711,6 +770,8 @@ impl Compiled {
         let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         let (map, ids) = &mut *runs;
         match map.get_mut(key) {
+            // a settled frame compiled it first: that pipeline stands
+            Some(RunShape { pipe: Shape::Ready(_), .. }) => return,
             Some(r) => r.pipe = Shape::Ready(pipe),
             // a shadow device compiles what its device was asked: the shape is new here
             None => {
@@ -719,6 +780,8 @@ impl Compiled {
                 map.insert(key.to_vec(), RunShape { id, pipe: Shape::Ready(pipe), trial: None });
             }
         }
+        // a frame asking the shape from now runs another form (fused, or its trial)
+        forms_moved();
     }
 
     fn compile_shape(&self, h: [u32; 4]) {

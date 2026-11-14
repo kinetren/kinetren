@@ -104,13 +104,48 @@ pub fn size_stream_memo_walk(per_position: usize, loop_positions: Option<usize>,
     // the room, not the bare available: the memo's own growth is memory it may keep (class-walk-revision)
     let free = kt_time::mem::room();
     let want = stream_memo_bytes_walk(STREAM_MEMO_BASE, per_position, loop_positions, checkpoints, free);
+    size_to(want, loop_positions.unwrap_or(0), free)
+}
+
+/// What the stream stages over a loop keep (`VideoRenderer::stream_want`, stream-memo-budget): each
+/// stage's positions in the region at its own picture size, reels included.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamWant {
+    /// The positions the stages show in the region, summed over the stages.
+    pub positions: usize,
+    /// Their pictures: each stage's positions × its picture (half its RGBA frame).
+    pub lap_bytes: usize,
+    /// The largest picture of a stage.
+    pub per_position: usize,
+    /// The checkpoint tiers of the stages' walks to their last position in the region, two pictures each.
+    pub checkpoint_bytes: usize,
+}
+
+/// The preview memo's want for a loop the stages keep `want` of (stream-memo-budget, found-defects
+/// 518): the loop's pictures plus an eighth, the two the next frame reads and the checkpoint tiers, on
+/// top of `base`, within a quarter of the memory `available`, never below `base`. `None` — no loop.
+pub fn stream_memo_want(base: usize, want: Option<&StreamWant>, available: Option<u64>) -> usize {
+    let (Some(w), Some(free)) = (want, available) else { return base };
+    let bytes = w.lap_bytes + w.lap_bytes / 8 + 2 * w.per_position + w.checkpoint_bytes;
+    bytes.saturating_add(base).min(usize::try_from(free / 4).unwrap_or(usize::MAX)).max(base)
+}
+
+/// Size the preview's memo for the loop the stages keep `want` of (`None` — no loop), as
+/// `size_stream_memo` does.
+pub fn size_stream_memo_want(want: Option<&StreamWant>) -> usize {
+    let free = kt_time::mem::room();
+    size_to(stream_memo_want(STREAM_MEMO_BASE, want, free), want.map_or(0, |w| w.positions), free)
+}
+
+/// Ask the ledger for `want`, set the preview memo's bound to what it grants, and record it.
+fn size_to(want: usize, loop_positions: usize, free: Option<u64>) -> usize {
     let memo = stream_memo();
     let grant = memo.account().want((want - STREAM_MEMO_BASE) as u64);
     let cap = STREAM_MEMO_BASE.saturating_add(usize::try_from(grant).unwrap_or(usize::MAX));
     memo.set_cap(cap);
     kt_time::trace::ev(kt_time::trace::Ev::StreamMemoCap)
         .a(cap as u64)
-        .b(loop_positions.unwrap_or(0) as u64)
+        .b(loop_positions as u64)
         .c(free.map_or(0, |f| f >> 20))
         .emit();
     cap
@@ -169,6 +204,17 @@ pub(super) struct StreamStage {
     pub values: Vec<f64>,
     pub before: Option<Box<VideoClip>>,
     pub second: Vec<VideoClip>,
+    /// The slots IN FRONT of the stage that act on the picture (stream-input-order, row 484): run on
+    /// every frame of the main stream before the kernel reads it, in the order the person built.
+    /// Indices into the clip's materialized chain; the leading Geometry node is not one (it places
+    /// the event's picture on the canvas — it stays after the stage, with `lead`).
+    pub front: Vec<usize>,
+    /// What determines the front's output besides the frame: its slots and their curves hashed;
+    /// an edit of a slot in front changes the stream's addresses, so the history is computed again
+    /// (an edit of a slot after the stage does not touch it).
+    pub front_key: u64,
+    /// A slot in front has curves: its output depends on the position too.
+    pub front_curved: bool,
     /// The kernel's compiled schedule per stream size (stream-layout-per-build): made fresh by
     /// `link_stages` on every build, so a neighbour's edit (the event before, the second input) can
     /// never leave a stale one; shared by the composer, the prefetch and the picker of the build.
@@ -187,21 +233,31 @@ impl std::fmt::Debug for StreamStage {
 }
 
 impl StreamStage {
-    /// The stage of a chain: the first active `Stream` slot whose plugin is registered.
-    pub fn of(fx: &[kt_model::FxInstance]) -> Option<StreamStage> {
-        fx.iter().enumerate().find_map(|(slot, f)| match f {
-            kt_model::FxInstance::Plugin(p) if f.is_stream() => p
-                .plugin()
-                .map(|plugin| StreamStage {
-                    plugin,
-                    slot,
-                    values: p.values.clone(),
-                    before: None,
-                    second: vec![],
-                    plans: Default::default(),
-                }),
+    /// The stage of a chain: the first active `Stream` slot whose plugin is registered; `auto` —
+    /// the chain's raw curves (they name the front's key).
+    pub fn of(fx: &[kt_model::FxInstance], auto: &[Vec<kt_model::ParamCurve>]) -> Option<StreamStage> {
+        let mut st = fx.iter().enumerate().find_map(|(slot, f)| match f {
+            kt_model::FxInstance::Plugin(p) if f.is_stream() => p.plugin().map(|plugin| StreamStage {
+                plugin,
+                slot,
+                values: p.values.clone(),
+                before: None,
+                second: vec![],
+                front: vec![],
+                front_key: 0,
+                front_curved: false,
+                plans: Default::default(),
+            }),
             _ => None,
-        })
+        })?;
+        st.front = front_slots(&fx[..st.slot]);
+        if !st.front.is_empty() {
+            let curves: Vec<_> = st.front.iter().map(|&i| auto.get(i).map(|c| &c[..]).unwrap_or(&[])).collect();
+            let slots: Vec<_> = st.front.iter().map(|&i| &fx[i]).collect();
+            st.front_curved = curves.iter().any(|c| !c.is_empty());
+            st.front_key = xxhash_rust::xxh3::xxh3_64(format!("{slots:?}|{curves:?}").as_bytes()).max(1);
+        }
+        Some(st)
     }
 
     pub fn kernel(&self) -> &'static dyn StreamKernel {
@@ -220,6 +276,115 @@ impl StreamStage {
     }
 }
 
+/// The slots of `head` (the chain before a stream slot) that change the picture: not audio, not a
+/// layer strength, not an identity geometry, not the leading Geometry node (stream-input-order).
+pub fn front_slots(head: &[kt_model::FxInstance]) -> Vec<usize> {
+    (0..head.len())
+        .filter(|&i| !head[i].is_lead_geometry() && kt_fx::video::has_video_fx(&head[i..=i]))
+        .collect()
+}
+
+/// The chain the layer runs AFTER its stream stage: the slots in front of it ran on the stream's
+/// input (`front`), so here each is the identity geometry (transparent to the planner; the
+/// indices masks and layer strengths name stay as they are).
+pub(super) fn after_chain(fx: &mut [kt_model::FxInstance], front: &[usize]) {
+    for &i in front {
+        if let Some(f) = fx.get_mut(i) {
+            *f = identity_slot();
+        }
+    }
+}
+
+fn identity_slot() -> kt_model::FxInstance {
+    kt_model::FxInstance::Geometry {
+        lead: false,
+        crop_l: 0.0,
+        crop_t: 0.0,
+        crop_r: 0.0,
+        crop_b: 0.0,
+        pos_x: 0.0,
+        pos_y: 0.0,
+        zoom: 1.0,
+        rot: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+    }
+}
+
+/// How the engine opens the executor of the slots in front of a stream stage (the host injects it,
+/// as `kt_plugin_api::compute::install`: kt-engine knows only the trait). `None` — no device.
+pub type OpenFrontExec = fn() -> Option<Arc<dyn crate::video_plan::VideoGpuExec>>;
+
+static FRONT_OPEN: OnceLock<OpenFrontExec> = OnceLock::new();
+static FRONT_EXEC: OnceLock<Option<Arc<dyn crate::video_plan::VideoGpuExec>>> = OnceLock::new();
+
+/// Name how the process opens the front's executor, once; it opens at the first stream frame that
+/// has a slot in front (a project with none never opens it).
+pub fn install_stream_front(open: OpenFrontExec) {
+    let _ = FRONT_OPEN.set(open);
+}
+
+/// Compile what the project reaches on the front's device, on a thread of its own (opening the
+/// device takes up to seconds): the first walk of a history then compiles nothing (pipeline-prewarm).
+pub fn prewarm_stream_front(ids: Vec<String>, runs: Vec<Vec<String>>) {
+    if FRONT_OPEN.get().is_none() {
+        return;
+    }
+    let _ = std::thread::Builder::new().name("front-prewarm".into()).spawn(move || {
+        if let Some(e) = front_exec() {
+            e.prewarm(&ids);
+            e.prewarm_runs(&runs);
+        }
+    });
+}
+
+fn front_exec() -> Option<&'static Arc<dyn crate::video_plan::VideoGpuExec>> {
+    let open = FRONT_OPEN.get()?;
+    FRONT_EXEC.get_or_init(open).as_ref()
+}
+
+/// The front's outputs by stream address (`ClipStream::ident`, which names the front): a re-walk
+/// after the codec memo dropped a position, or the prefetch and the composer reading the same
+/// position, runs the slots once. Bounded; the bytes do not depend on it (invariant 11).
+struct FrontMemo {
+    items: std::collections::VecDeque<(u64, u32, u32, Arc<[u8]>)>,
+    bytes: usize,
+}
+
+const FRONT_MEMO_BYTES: usize = 64 << 20;
+
+static FRONT_MEMO: std::sync::Mutex<FrontMemo> =
+    std::sync::Mutex::new(FrontMemo { items: std::collections::VecDeque::new(), bytes: 0 });
+
+/// How many times the slots in front ran (tests and `kt-cli stream-cost`).
+pub fn front_runs() -> u64 {
+    FRONT_RUNS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static FRONT_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn front_memo_get(id: u64) -> Option<(u32, u32, Arc<[u8]>)> {
+    let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    let i = g.items.iter().position(|e| e.0 == id)?;
+    let e = g.items.remove(i)?;
+    let out = (e.1, e.2, e.3.clone());
+    g.items.push_back(e);
+    Some(out)
+}
+
+fn front_memo_put(id: u64, w: u32, h: u32, rgba: Arc<[u8]>) {
+    let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
+    if g.items.iter().any(|e| e.0 == id) {
+        return;
+    }
+    g.bytes += rgba.len();
+    g.items.push_back((id, w, h, rgba));
+    while g.bytes > FRONT_MEMO_BYTES {
+        let Some(e) = g.items.pop_front() else { break };
+        g.bytes -= e.3.len();
+    }
+}
+
 /// Fill each stage's event before and second input (after the composition sort).
 pub(super) fn link_stages(clips: &mut [VideoClip]) {
     let snapshot: Vec<VideoClip> = clips.to_vec();
@@ -232,6 +397,11 @@ pub(super) fn link_stages(clips: &mut [VideoClip]) {
         let Some(st) = c.stream.as_mut() else { continue };
         // this build's own schedules: the stage may be the last build's, copied (edit-without-rebuild)
         st.plans = Default::default();
+        // curves in front are sampled by the event's placement: it joins the front's key
+        if st.front_curved {
+            let place = format!("{}|{}|{}|{}", c.start.0, c.end.0, c.source_in.0, c.reversed);
+            st.front_key = mix(st.front_key, xxhash_rust::xxh3::xxh3_64(place.as_bytes()));
+        }
         let k = st.kernel();
         if k.before(&st.values) > 0 {
             st.before = snapshot
@@ -384,11 +554,59 @@ impl StreamLayout for ClipStream<'_> {
         let mut h = mix(0x5754_7245_414d, c.media.0);
         h = mix(h, pts.0 as u64);
         h = mix(h, ((self.q.width as u64) << 32) | self.q.height as u64);
-        mix(h, c.src_rev).max(1)
+        h = mix(h, c.src_rev);
+        // the slots in front feed the main stream: they are part of what the kernel reads
+        if side == Side::Main && !self.st.front.is_empty() {
+            h = mix(h, self.st.front_key);
+            if self.st.front_curved {
+                h = mix(h, k as u64);
+            }
+        }
+        h.max(1)
     }
 }
 
 impl ClipStream<'_> {
+    /// The main stream's frame at `k` through the slots in front of the stage (stream-input-order):
+    /// their rows at the position's material time, run by the injected executor at the stream's
+    /// size. `None` — no device, or the executor refused the plan: the frame is missing, never the
+    /// decoded picture standing in for it.
+    fn front(&self, k: i64, fr: Arc<VideoFrame>) -> Option<(u32, u32, Arc<[u8]>)> {
+        let id = self.ident(Side::Main, k);
+        if let Some(hit) = front_memo_get(id) {
+            return Some(hit);
+        }
+        let exec = front_exec()?;
+        let clip = self.clip;
+        let t = Tick((k * self.step).max(clip.start.0));
+        let mat = kt_model::clip_material_at(clip.source_in, clip.start, clip.end - clip.start, clip.reversed, self.step, t);
+        let slots: Vec<kt_model::FxInstance> = self
+            .st
+            .front
+            .iter()
+            .filter_map(|&i| {
+                let mut s = clip.fx.get(i)?.clone();
+                if let Some(plan) = &clip.auto_plan {
+                    plan.apply_slot(i, &mut s, mat);
+                }
+                Some(s)
+            })
+            .collect();
+        let u = (t.0 - clip.start.0) as f64 / (clip.end.0 - clip.start.0).max(1) as f64;
+        let (w, h) = (fr.width, fr.height);
+        let plan = crate::video_plan::chain_plan(fr, &slots, self.st.front_key, u.clamp(0.0, 1.0), t, None);
+        let mut out = Vec::new();
+        FRONT_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        match exec.execute_once(&plan, &mut out) {
+            Ok(true) if out.len() == (w * h * 4) as usize => {
+                let rgba: Arc<[u8]> = out.into();
+                front_memo_put(id, w, h, rgba.clone());
+                Some((w, h, rgba))
+            }
+            _ => None,
+        }
+    }
+
     /// The kernel was stopped (and by whom): its `None` is no missing frame.
     pub fn stopped(&self) -> Option<u32> {
         self.stopped.get()
@@ -416,13 +634,14 @@ impl StreamInput for ClipStream<'_> {
     fn with_frame(&self, side: Side, k: i64, f: &mut dyn FnMut(Rgba<'_>)) -> bool {
         let Some(cache) = self.cache else { return false };
         let Some((c, pts)) = self.at(side, k) else { return false };
-        match cache.get_video(SourceId(c.media.0), Some(self.q), video_cache_idx(pts)) {
-            Some(fr) => {
-                f(Rgba { w: fr.width, h: fr.height, rgba: &fr.rgba });
-                true
-            }
-            None => false,
+        let Some(fr) = cache.get_video(SourceId(c.media.0), Some(self.q), video_cache_idx(pts)) else { return false };
+        if side == Side::Main && !self.st.front.is_empty() {
+            let Some((w, h, rgba)) = self.front(k, fr) else { return false };
+            f(Rgba { w, h, rgba: &rgba });
+            return true;
         }
+        f(Rgba { w: fr.width, h: fr.height, rgba: &fr.rgba });
+        true
     }
 }
 

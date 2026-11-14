@@ -90,6 +90,8 @@ struct Snap {
     other: u64,
     enc_steps: u64,
     dec_steps: u64,
+    /// Frames the slots in front of a stream stage ran on (stream-input-order).
+    front: u64,
 }
 
 impl Snap {
@@ -112,6 +114,7 @@ fn snap() -> Snap {
         other: OTHER.load(Relaxed),
         enc_steps: ENC_STEPS.load(Relaxed),
         dec_steps: DEC_STEPS.load(Relaxed),
+        front: kt_engine::video::front_runs(),
     }
 }
 
@@ -127,6 +130,7 @@ fn since(a: Snap) -> Snap {
         other: b.other - a.other,
         enc_steps: b.enc_steps - a.enc_steps,
         dec_steps: b.dec_steps - a.dec_steps,
+        front: b.front - a.front,
     }
 }
 
@@ -149,13 +153,13 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
     let t1 = Tick::from_secs_f64(to);
     let memo = kt_engine::video::stream_memo();
     if sized {
-        // the player's sizing for this range as its loop region
-        let positions = ((t1.0 - t0.0).max(0) / video.grid.frame_step().max(1)) as usize + 1;
-        let per = video.stream_frame_bytes(t0, q) / 2;
-        // the player's sizing with the walk's checkpoints (`player::size_stream_memo`): without them
-        // the tool reported a memo the program does not build (class-walk-revision)
-        let checkpoints = video.stream_checkpoints(video.grid.align_floor(Tick(t1.0 - 1)), q);
-        let cap = kt_engine::video::size_stream_memo_walk(per, Some(positions), checkpoints);
+        // the player's sizing for this range as its loop region (`player::size_stream_memo`): every
+        // stage's own positions at its own size, reels included, and their walks' checkpoints
+        // (stream-memo-budget: a tool that sizes otherwise reports a memo the program does not build)
+        let want = video.stream_want(t0, Tick(t1.0 + 1), q);
+        let cap = kt_engine::video::size_stream_memo_want(Some(&want).filter(|w| w.positions > 0));
+        memo.keep_loop(want.positions > 0);
+        let (positions, checkpoints) = (want.positions, want.checkpoint_bytes / (2 * want.per_position.max(1)));
         let room = kt_time::mem::room().unwrap_or(0);
         println!("  memo sized for a loop of {positions} positions, {checkpoints} checkpoints: {} MB (room {} MB)", cap >> 20, room >> 20);
     }
@@ -192,6 +196,10 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
     };
     let window = Tick(2 * kt_time::TICK_HZ);
     for lap in 0..laps.max(1) {
+        // a lap as the player marks it when its loop comes round (stream-memo-budget)
+        if lap > 0 {
+            memo.lap();
+        }
         // `--drop-lru`: the memo's LRU lost the history before this lap (an eviction, a jump away and
         // back): only the pinned checkpoints stay (stream-history-on-device)
         if drop_lru && lap > 0 {
@@ -267,9 +275,10 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
         let jobs_n = d.enc + d.dec + d.other;
         let (broken, clean) = d.positions();
         println!(
-            "    history: {broken} positions decoded, {clean} encoded, in {jobs_n} jobs ({:.1} positions a job); {:.1} positions/s of advance",
+            "    history: {broken} positions decoded, {clean} encoded, in {jobs_n} jobs ({:.1} positions a job); {:.1} positions/s of advance; the slots in front ran on {} frames",
             broken as f64 / jobs_n.max(1) as f64,
-            broken as f64 / (wall as f64 / 1e9).max(1e-9)
+            broken as f64 / (wall as f64 / 1e9).max(1e-9),
+            d.front
         );
         if let Some((w, f0)) = first_frame {
             let (b, _) = f0.positions();

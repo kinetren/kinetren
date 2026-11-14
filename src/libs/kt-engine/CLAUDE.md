@@ -29,6 +29,13 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   `stream_memo()`; an export sets its own (`set_stream_memo`) and pre-rolls before each frame (`stream_preroll` in
   export.rs: decode the earliest missing frames in budget-bounded batches, `stream_advance`, until nothing is missing).
   Tests t1241/t1242/t1248.
+  **The slots IN FRONT of the stage feed it** (stream-input-order, row 484): `StreamStage::front` (picture slots
+  before the stream slot, not the leading Geometry node) run on every main-stream frame in `ClipStream::with_frame`
+  through the executor the host injects (`install_stream_front`; kt-gpu `stream_front_engine`), and `layer_src`
+  replaces them by the identity geometry after the stage (`after_chain`) — never run twice, indices kept. `ident`
+  names the front (`front_key`, the position when curved): an edit in front re-walks the history, one after does
+  not. No front executor → the frame is missing, never the decoded picture. A new path that builds a stream input
+  goes through `ClipStream` or names the front itself. t2470–t2472.
   **The live preview PACES the stage** (decode-request-storm, `StreamPacing`, set by the player on its renderers
   only): the order is the earliest history positions that fit a quarter of the cache (a whole history ordered at
   once ran the decoder through it while the stage read only at composites, and LRU dropped its front — the frame
@@ -136,7 +143,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
-  stream history's want after the kept composites'. Both export bodies hold `kt_time::mem::claim()`
+  stream history's want after the kept composites' — by `VideoRenderer::stream_want`, every stream
+  stage over the loop at its own size, reels included, once per build/loop/quality, and tells the memo
+  the loop (`stream_keep_loop`) and each lap (`stream_lap`, the shown moment going back while playing):
+  a loop History cannot hold keeps a part (stream-memo-budget, t2490–t2492). An offline frame job (strip,
+  poster) builds its renderer with a memo of its own, never the preview's (t2493). Both export bodies hold `kt_time::mem::claim()`
   while they run, and the render window takes one before it counts devices and `tight` (on its job
   thread). t2294, t2296, t2297, t2299.
 - **The frames cache is sized by the look-ahead and the loop** (frames-cache-growth, t2393, t2394): the
@@ -257,6 +268,11 @@ in the source's state and arrive through the retune lane.
   change of chunks or of the look-ahead is checked under `MemoryMax=3G` more than once: one such run
   passed and the next was killed.
 - A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.
+- **An incomplete frame is composed again before it is written** (gpu-leftovers D5, found-defects 522):
+  `decode_requests` asks a key its span dropped alone up to `export::RETRIES` times in both exports, and
+  every compose site (serial loop, pipeline workers, the ring's `collect`, `depth == 0`) composes an
+  incomplete frame again up to `RETRIES` times (the serial one decoding what it lacks first). A new compose
+  site in an export does the same. Exports compose through `execute_once` (no memo, the settled run form).
 - The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer.
 
 ## Tests

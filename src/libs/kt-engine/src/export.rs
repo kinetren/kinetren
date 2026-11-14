@@ -320,9 +320,30 @@ fn render_raw_video_profiled(
             let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
             span.aux(kt_time::trace::job::EXPORT_FRAME).a(t.0 as u64);
             let plan = video.frame_plan(&cache, t, quality);
-            let complete = gpu
-                .execute_into(&plan, &mut frame_buf)
+            // composed once, no memo, its runs in the settled form (gpu-leftovers D3)
+            let mut complete = gpu
+                .execute_once(&plan, &mut frame_buf)
                 .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+            // an incomplete frame is not written as it came (gpu-leftovers D5, found-defects 522): what
+            // it lacks is decoded alone and the frame composed again; only what the input cannot give
+            // twice in a row is written without its layer and named below
+            for _ in 0..RETRIES {
+                if complete {
+                    break;
+                }
+                for (media, keys) in chunk_requests(&video, (t, Tick(t.0 + step)), quality, |m| src.contains_key(&m), |sid, dq, idx| {
+                    cache.get_video(sid, Some(dq), idx).is_some()
+                }) {
+                    let s = src.get_mut(&media).unwrap();
+                    for key in keys {
+                        decode_requests(s, media, &[key], &cache, None);
+                    }
+                }
+                let plan = video.frame_plan(&cache, t, quality);
+                complete = gpu
+                    .execute_once(&plan, &mut frame_buf)
+                    .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+            }
             ExportProfile::add(profile.map(|p| &p.compose_ns), mark);
             if !complete {
                 let absent = video.absent_layers(&cache, t, quality);
@@ -336,6 +357,10 @@ fn render_raw_video_profiled(
     }
     Ok(stats)
 }
+
+/// How often an export composes an incomplete frame again before it writes it without its layer
+/// (gpu-leftovers D5): the same answer twice from the same cache is the input's.
+pub(crate) const RETRIES: usize = 2;
 
 /// One chunk's decode requests per source (export-throughput D7): the frames the chunk names
 /// and the cache lacks, as (key, decode quality) ordered by key — one forward pass per source
@@ -371,8 +396,7 @@ pub(crate) fn chunk_requests(
 /// Decode one source's requests into the cache. What counts as lost is decided at the frame, by what
 /// it lacked: a span that failed may still give all its frames. With `held` (the pipelined export) each frame is inserted held and its key noted: only a frame that
 /// really arrived has a hold to give back. And a frame the span did not give is asked again alone,
-/// before anything composes it: a failed span drops every key after the failure, and the serial
-/// export gets those back from its pre-roll (`stream_preroll`), which a pipeline stage cannot run.
+/// before anything composes it, in both exports: a failed span drops every key after the failure.
 pub(crate) fn decode_requests(
     s: &mut Box<dyn MediaSource>,
     media: MediaId,
@@ -381,7 +405,6 @@ pub(crate) fn decode_requests(
     mut held: Option<&mut Vec<kt_cache::BurstKey>>,
 ) {
     let sid = source_id(media);
-    let retry = held.is_some();
     let mut arrived = std::collections::HashSet::new();
     let mut insert = |k: Tick, dq: Quality, frame: kt_media::VideoFrame, arrived: &mut std::collections::HashSet<(Tick, Quality)>| {
         let idx = video_cache_idx(k);
@@ -395,10 +418,15 @@ pub(crate) fn decode_requests(
         }
     };
     let _ = s.read_video_span_qualities(keys, &mut |k, dq, frame| insert(k, dq, frame, &mut arrived));
-    if retry {
-        for &(k, dq) in keys.iter().filter(|key| !arrived.contains(key)).collect::<Vec<_>>() {
+    // a frame the span did not give is asked alone, up to `RETRIES` times (gpu-leftovers D5): a read
+    // that fails once is not the input's verdict
+    for &(k, dq) in keys.iter().filter(|key| !arrived.contains(key)).collect::<Vec<_>>() {
+        for _ in 0..RETRIES {
             let mut again = std::collections::HashSet::new();
             let _ = s.read_video_span(&[k], Some(dq), &mut |k, frame| insert(k, dq, frame, &mut again));
+            if again.contains(&(k, dq)) {
+                break;
+            }
         }
     }
 }
