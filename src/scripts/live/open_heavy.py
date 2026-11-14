@@ -85,18 +85,23 @@ def main(out):
         app.step("menu", "the File menu answers while the showcase loads")
         app.key("Escape")
 
-        # until the picture: Loading over an empty place, never a picture under it (a fresh project
-        # holds no full frame of its own, so any picture under Loading is a partial one)
+        # until the picture: Loading over an empty place, never a picture. A partial picture is a
+        # picture on screen while no complete composite has been taken: both are read from ONE dump,
+        # at the instant it was written. The `fields` list cannot say it: it gathers every frame since
+        # the last dump, so "Loading" of one frame and the picture of the next met in one read (stage
+        # 13's first try counted one look with a single, complete composite)
         partial = []
 
         def came():
-            l, f = loading(app), has_field(app, "preview.frame")
-            if l and f:
+            g = app.geom()
+            c = g.get("compose", {})
+            if c.get("picture") and not c.get("complete_taken"):
                 partial.append(time.time() - opened_at)
-            return f and not l
+            names = {f["param"] for f in g["fields"]}
+            return c.get("picture") and "preview.loading" not in names
 
         app.expect(app.until(came, timeout=300.0), "the showcase's picture never came")
-        app.expect(not partial, f"a picture was drawn under Loading before the first full one: {len(partial)} looks")
+        app.expect(not partial, f"a picture was on screen before any complete composite came: {len(partial)} looks")
         app.step("picture", "the preview shows the showcase's picture; before it the place was empty under Loading")
         kt_live._poll(0.3)
         work1 = meter.read()

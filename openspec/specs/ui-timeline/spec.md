@@ -1763,7 +1763,7 @@ was presented incomplete, `show_incomplete: !shown_any`, because the scrim was d
 #### Scenario: A person opens the heavy showcase
 - **PATH** a small project is open → File › Open… → the heavy showcase → the timeline shows its events, the preview's place is empty under Loading → the picture lands, whole
 - **WHEN** the live scenario polls the preview while the fresh project loads
-- **THEN** no picture is ever drawn under Loading before the first full one (the old build drew 29 looks of a partial picture on one run); the open's work and the pause after it are printed
+- **THEN** no picture is ever on screen before a complete composite was taken, both read from the geometry dump's `compose.picture` and `compose.complete_taken` at the one instant it was written (the dump's `fields` gather every frame since the last dump and cannot say it); the old build drew 29 looks of a partial picture on one run; the open's work and the pause after it are printed
 - **TEST** t2534 live `open_heavy.py` (`src/scripts/live/open_heavy.py`, via `src/scripts/live-check.sh`)
 
 ### Requirement: The meter under the cursor shows no level of a partial mix

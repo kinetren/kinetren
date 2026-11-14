@@ -756,6 +756,9 @@ pub struct KtApp {
     pub(crate) event_passes: u64,
     /// How many composites this app asked for (`perf.compose_n` is reset per sample).
     pub(crate) composites: u64,
+    /// The complete composites taken since this project opened (no-partial-picture): a picture on
+    /// screen while it is zero would be a partial one; the geometry dump publishes both at one instant.
+    pub(crate) complete_composites: u64,
     pub reel_hash_cache: (Option<u64>, Arc<HashMap<ClipId, crate::reel_preview::ReelKey>>),
     /// The start, the Guide and the tour (welcome-window-and-tour): the state that lives
     /// BETWEEN projects. `replace_with` carries it across the in-place rebuild of File → New/Open.
@@ -1150,6 +1153,7 @@ impl KtApp {
             event_paint: None,
             event_passes: 0,
             composites: 0,
+            complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
         };
@@ -1478,6 +1482,7 @@ impl KtApp {
             event_paint: None,
             event_passes: 0,
             composites: 0,
+            complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
         };
@@ -7211,6 +7216,7 @@ impl KtApp {
             self.perf.compose_sum_ns += cost.compose_ns;
             self.perf.compose_n += 1;
             self.composites += 1;
+            self.complete_composites += u64::from(done.complete);
             let rgba = done.rgba;
             // we hold the last FULL frame: an incomplete composite does not overwrite the
             // picture (the flicker “black frame ↔ Loading”, item 14/15), and with none shown yet
