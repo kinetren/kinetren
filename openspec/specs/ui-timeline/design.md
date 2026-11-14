@@ -447,3 +447,8 @@ the status items to 190 points in every language.
 - **V-fps:** `take_composite(moment, complete)` — only a complete composite of a new moment is a new
   picture (t2358). The `loading` trace record carries the positions short in `b`; `kt-cli trace
   loading` says so per stretch (t2417).
+- **t2415 under load** (stage 11's finish.sh, 2026-11-14): the test set the frame on screen's state and
+  read one frame; under a full workspace load the harness's last ask outlived its 5 s grace and its answer
+  landed in that frame (`catching_up` 0, "Loading"). The answer is the program's own news: the test now
+  sets the state and draws until a frame lands no composite, and its scene leaves an ask pending so the
+  race always happens (reproduced red on the old body: composites 3 → 4, the scrim read "Loading").

@@ -20885,6 +20885,12 @@ fn t2358_only_complete_new_pictures_count() {
 /// stream history, the Loading scrim writes the catch-up where it writes Loading — in its place, the
 /// preview's centre — and nothing is written in the preview's corner; another incomplete frame keeps
 /// plain Loading; a complete one has no scrim (the rest's cost is the live `idle` scenario's).
+///
+/// The test sets the state of the frame on screen and draws until a frame lands no composite: an
+/// answer to an earlier ask is the program's own news and overwrites that state. Under a full
+/// workspace load the harness's last ask outlived its 5 s grace (or the deferred build moved a
+/// version and asked again), its answer landed in the frame meant to show the catch-up, and the test
+/// read "Loading" (finish.sh of stage 11). The scene leaves such an ask pending on purpose.
 #[test]
 fn t2415_loading_names_the_catch_up_where_it_is_written() {
     if crate::layout_tests::no_device() {
@@ -20892,21 +20898,40 @@ fn t2415_loading_names_the_catch_up_where_it_is_written() {
     }
     let (mut h, _clip) = harness_geom_ctl();
     assert!(h.state().texture.is_some(), "scene guard: the preview has a picture");
-    // the frame on screen came out incomplete a second ago, and no retry is due
-    let short = |h: &mut Harness<'static, KtApp>, n: u64| {
-        let app = h.state_mut();
-        let k = app.preview_key.expect("a frame on screen");
-        app.preview_key = Some((k.0, k.1, false));
-        app.incomplete_since = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
-        app.preview_catching_up = n;
-        app.compose_retry_gap = crate::app::COMPOSE_RETRY_MAX * 2;
-        app.compose_retry_epoch = app.player.cache.epoch();
+    // an ask whose answer is still to land: a version moved, and the frame did not wait for it
+    h.state_mut().compose_grace = std::time::Duration::ZERO;
+    h.state_mut().preview_project = u64::MAX;
+    h.step();
+    h.state_mut().compose_grace = crate::app::COMPOSE_GRACE;
+    assert!(h.state().preview_asked.is_some(), "scene guard: an ask is pending");
+    // the frame on screen: incomplete a second ago, `n` positions short (`complete` — the frame is
+    // whole), no retry due; drawn again until a frame lands nothing
+    let show = |h: &mut Harness<'static, KtApp>, n: u64, complete: bool| {
+        let deadline = kt_time::test_deadline();
+        loop {
+            {
+                let app = h.state_mut();
+                let k = app.preview_key.expect("a frame on screen");
+                app.preview_key = Some((k.0, k.1, complete));
+                app.incomplete_since = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+                app.preview_catching_up = n;
+                app.compose_retry_gap = crate::app::COMPOSE_RETRY_MAX * 2;
+                app.compose_retry_epoch = app.player.cache.epoch();
+            }
+            let before = h.state().composites;
+            h.step();
+            if h.state().composites == before && h.state().preview_asked.is_none() {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "the preview never stood still");
+        }
     };
     let catching = crate::tf!(k::perf::LOADING_CATCHING_UP, 37);
     let loading = tr(k::perf::LOADING).to_string();
     let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h);
-    short(&mut h, 37);
-    h.step();
+    let landed = h.state().composites;
+    show(&mut h, 37, false);
+    assert!(h.state().composites > landed, "scene guard: the pending answer landed meanwhile");
     let img = h.state().preview_img_rect;
     let at = texts(&h).into_iter().find(|t| t.src == catching).expect("the scrim names the catch-up");
     assert!(
@@ -20920,17 +20945,10 @@ fn t2415_loading_names_the_catch_up_where_it_is_written() {
         !texts(&h).iter().any(|t| img.contains(t.rect.left_top()) && (t.rect.left_top() - img.left_top()).length() < 40.0),
         "nothing is written in the preview's corner"
     );
-    short(&mut h, 0);
-    h.step();
+    show(&mut h, 0, false);
     assert!(texts(&h).iter().any(|t| t.src == loading), "another incomplete frame keeps plain Loading");
     assert!(!texts(&h).iter().any(|t| t.src == catching));
-    {
-        let app = h.state_mut();
-        let k = app.preview_key.unwrap();
-        app.preview_key = Some((k.0, k.1, true));
-        app.preview_catching_up = 0;
-    }
-    h.step();
+    show(&mut h, 0, true);
     assert!(!texts(&h).iter().any(|t| t.src == loading || t.src == catching), "a complete frame has no scrim");
 }
 

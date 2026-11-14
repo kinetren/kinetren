@@ -366,6 +366,11 @@ The rules above were written down — and did not work: the R.38 mechanism turne
 ## Layout testing rule (requirement of item 9 of R.8)
 
 - Any change to layout or interactive behaviour is accompanied by a harness test in `apps/kt-app/src/layout_tests.rs` (egui_kittest runs real frames without a window or GPU): panel width, dragging the separator, the cursor on the edge, sending `BeginResize`, button clickability, "the preview did not collapse".
+- **A harness test that SETS the preview's state draws until a frame lands no composite** (t2415): the
+  compose thread answers asks on its own clock, and an answer to an earlier ask (its 5 s grace outlived
+  under a full workspace load, or a version the deferred build moved) lands in the next frame and
+  overwrites `preview_key`/`preview_catching_up` — the program's news, not the test's state. Set, step,
+  and repeat while `composites` moved or `preview_asked` is set; read only then.
 - **In the harness, the button release is sent as an EXPLICIT event.** `Harness::drop_at` puts into the queue BOTH ButtonRelease AND PointerGone, and `step()` runs one frame FOR EACH event — `output()` after it shows the frame already without the command. When checking a `ViewportCommand` from a click (Close/Minimized), send `Event::PointerButton{pressed:false}` by hand and collect the commands after THAT frame (t101).
 - **The harness is NOT proof that the feature works for the user** (lesson of item 7 of R.11). The meters panel width limit was green in t97, and yet "the panel stretches over half the window" in the live window: the user was launching a DIFFERENT binary (`target/debug/kinetren` — since 2026-10-22 this is what the kt-app package's binary is called — it is not rebuilt by `cargo test`, which builds a separate test binary). Before saying "done", build what the user launches and check by hand or by script.
 - **Live scenarios — `scripts/live-check.sh`** (R.27, item 161): Xvfb + openbox +
