@@ -136,7 +136,25 @@ stages after it run over it at the moment asked; the composite is a picture no m
 
 ## Measured
 
-Filled in after the implementation (stage 5).
+Release, llvmpipe (no card here), footage in /dev/shm, `kt-cli preview … --size 640x360 --trace`; before =
+stage 10's release (a3c98bf7, the code this change starts from), after = this branch. The counts are read
+from each run's trace (`stream_run` aux, `frame_exec` flags).
+
+| What | Before | After |
+|---|---|---|
+| showcase `--mosh`, cold play 69.5–72.5 s | 4 composites showed a held mosh (VHS Tape over another position), 8 complete, 114 incomplete; V-fps 3.0 | 0 held, 11 complete, 132 incomplete (Loading); V-fps 2.2 |
+| his relinked copy, loop 4419.91–4422 s for 30 s | 29 held composites shown, 27 of them stored as kept composites (row 483); 936 complete; V-fps 32.0 (held counted as shown by the bench) | 0 held, 0 held stored; 862 complete, 238 incomplete; V-fps 28.5, all new pictures of their moments |
+| same, VHS Tape frames run / processor | 154 VHS runs, 311.5 s of CPU over 30.1 s (10.3 cores) | 127 VHS runs, 274.8 s over 30.2 s (9.1 cores) |
+| kept composites stored over the loop | 126 own + 27 held | 126 own |
+
+The first lap now shows Loading where it showed a held picture; the later laps are the kept composites
+of the moments' own pictures in both builds. Live `datamosh` (t2416): paused 1.9 s past the computed
+history, then playing past a jump — "Loading — catching up: 38" in the preview's centre over the last
+full picture, 0 vfps, no corner note; `idle` and `heavy_loop` green.
+
+t2410/t2411/t2413 hold the renderer's shape (a short frame has no stand-in, says how short); the old
+renderer passed them with its hold off, so the red-on-old guard is t2414 (the player set the hold while
+playing: the old answer was a complete held frame).
 
 ## Risks / Trade-offs
 
