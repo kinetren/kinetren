@@ -160,3 +160,20 @@ new admission without code change; `present`/`present_kept` call `note_display`.
   the next measurement overwriting the seed.
 - Two devices of one card are separate queues on the hardware: the FIFO model is an approximation there;
   the latency bench (t2254) and t2253 hold the bound.
+
+## Measured
+
+Release, llvmpipe (LLVM 20.1.2, 256 bits, 32 threads; no card on this machine), his relinked copy
+(`repro/26.11.09/haski-relinked.kt`, read only) and `kt-cli showcase --mosh`.
+
+Before (base 8fbe7313):
+
+| What | Before | How |
+|---|---|---|
+| shared device (his iGPU's case: display + offline + Datamosh history on ONE queue), 1280×720, 10 s | display waited p50 28.8, p95 42.7, max 56.8 ms over 246 presents; offline 32.4 frames/s; history 8.0 positions/s; 366 pieces; near admissions waited 10.96 s of 31 s | `kt-cli gpu-share mosh.kt --mosh 70 --size 1280x720 --seconds 10 --arbiter on --trace D`; `trace D gpu` |
+| a paused walk, problem region 4419.91–4422 s | 126 frames, 35.0 ms a frame, 33.3 positions/s, 1.2 positions a job | `kt-cli stream-cost h.kt 4419.91 4422 --laps 2 --loop` |
+| preview loop of `problem_region_26_11_09` (4419.90–4430.98 s), 1280×720, 90 s | history walked through lap 6 (313, 216, 103, 15, 13, 9, 1 positions); laps 0–7 made 292, 85, 62, 74, 64, 69, 79, 67 composites; process 16.9 cores (llvmpipe rasterizes on the processor); compute near start after submit p50 5.6 ms | `kt-cli preview h.kt 4419.90 4430.98 --size 1280x720 --loop 90 --trace D`; `trace D loop`, `trace D gpu` |
+
+On llvmpipe the display device and the compute host are separate rings (each software device has its own
+queue thread), so the preview loop does not reproduce row 480; `gpu-share` puts all three on one device as a
+card's ring does.
