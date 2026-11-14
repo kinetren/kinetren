@@ -979,6 +979,9 @@ mod key_tests {
 
     /// Test t2238 (one-scheduler): the thumbnail service has no thread of its own; while a player
     /// plays its lane starts nothing (the owner's "Да", H15), and the request is served on resume.
+    /// The proof is the scheduler's order, not a sleep (stream-memo-budget, found-defects 515): the
+    /// thumbnail's lane is queued, and a job of a LOWER class posted after it runs to its end, so a
+    /// worker picked past the thumbnail; no visible-class job started meanwhile.
     #[test]
     fn t2238_thumbnails_pause_while_playing_and_resume() {
         crate::plugins::install();
@@ -998,8 +1001,18 @@ mod key_tests {
         let key = ThumbKey { media: id, t: 0 };
         let playing = kt_time::sched::Vote::new(kt_time::sched::why::PLAYING);
         playing.set(true);
+        let visible = |st: kt_time::sched::Stats| st.classes[kt_time::sched::Class::Visible as usize].started;
+        let before = visible(kt_time::sched::stats());
         svc.request(key);
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        // an offline job is below the visible class: a worker that runs it passed the queued thumbnail
+        let lower = kt_time::sched::Lane::open("t2238-offline", kt_time::sched::Class::Offline);
+        let (tx, rx) = std::sync::mpsc::channel();
+        lower.post(move |_| {
+            let _ = tx.send(());
+        });
+        let left = kt_time::test_deadline().saturating_duration_since(std::time::Instant::now());
+        rx.recv_timeout(left).expect("the lower job never ran");
+        assert_eq!(visible(kt_time::sched::stats()), before, "a visible-class job started while playing");
         assert!(matches!(svc.state(&key), ThumbState::Missing), "a thumbnail was made while playing");
         drop(playing);
         assert!(svc.wait_idle(), "the lane never ran after the pause");

@@ -87,3 +87,118 @@ fn t2355_the_want_covers_the_walks_checkpoints() {
     assert_eq!(stream_memo_bytes_walk(base, per, Some(40), 25, Some(1u64 << 30)), base, "still within a quarter of the memory, not below the base");
     assert_eq!(stream_memo_bytes_walk(base, per, None, 25, plenty), base, "no loop: the base");
 }
+
+// ---- stream-memo-budget ------------------------------------------------------------------------
+
+use kt_model::*;
+use kt_time::Tick;
+
+const SEC: i64 = 90_000;
+const Q: kt_media::Quality = kt_media::Quality { width: 160, height: 90 };
+
+fn clip(id: u64, media: u64, start: i64, dur: i64, fx: Vec<FxInstance>) -> ClipEvent {
+    ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(start),
+        duration: Tick(dur),
+        source_in: Tick(0),
+        media: MediaId(media),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx,
+        opacity: 1.0,
+        fx_off: false,
+        masks: Default::default(),
+    }
+}
+
+/// The cut mosh of decode_storm: shot A for 2 s, then shot B for 6 s under Datamosh with every
+/// I-frame dropped, so a frame late in B walks back to the cut.
+fn mosh_clips() -> (Project, Vec<ClipEvent>) {
+    kt_plugins_builtin::install();
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), "synth:1"));
+    p.media.push(MediaRef::new(MediaId(2), "synth:2"));
+    let mut f = FxInstance::plugin("datamosh").expect("datamosh is built in");
+    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0), ("qp", 14.0)] {
+        assert!(f.set_param(name, v), "{name}");
+    }
+    let clips = vec![clip(1, 1, 0, 2 * SEC, vec![]), clip(2, 2, 2 * SEC, 6 * SEC, vec![f])];
+    (p, clips)
+}
+
+/// The mosh at the root, then a reel of it at 10 s, then a plain shot to 60 s.
+fn mosh_and_its_reel() -> Project {
+    let (mut p, clips) = mosh_clips();
+    let mut seq = Sequence::new(MediaId(100), "mosh reel");
+    // ids are unique across the project: the reel's copies get their own
+    seq.clips = clips.iter().cloned().map(|mut c| {
+        c.id = ClipId(c.id.0 + 100);
+        c
+    }).collect();
+    p.sequences.push(seq);
+    p.clips = clips;
+    p.clips.push(clip(10, 100, 10 * SEC, 8 * SEC, vec![]));
+    p.clips.push(clip(11, 1, 18 * SEC, 42 * SEC, vec![]));
+    p.validate().unwrap();
+    p
+}
+
+/// t2491 (stream-memo-budget, found-defects 512): the checkpoint tier of a walk is counted through a
+/// reel — a Datamosh inside a reel names the checkpoints its own walk keeps, as at the root.
+#[test]
+fn t2491_a_reels_stage_names_its_checkpoints() {
+    let p = mosh_and_its_reel();
+    let vr = kt_engine::VideoRenderer::new(&p);
+    let root = vr.stream_checkpoints(Tick(7 * SEC), Q);
+    assert!(root > 0, "the root's walk keeps checkpoints");
+    assert_eq!(vr.stream_checkpoints(Tick(17 * SEC), Q), root, "the reel's same walk, 10 s later, names none or others");
+}
+
+/// t2492 (stream-memo-budget, found-defects 518): the want over a loop counts each stream stage's own
+/// positions in it at its own size, a reel's included — not every moment of the region at the size of
+/// the frame on screen — and does not depend on where the playhead is.
+#[test]
+fn t2492_the_want_counts_the_stages_own_positions() {
+    let _one = ONE.lock().unwrap_or_else(|p| p.into_inner());
+    let p = mosh_and_its_reel();
+    let vr = kt_engine::VideoRenderer::new(&p);
+    let w = vr.stream_want(Tick(0), Tick(60 * SEC), Q);
+    // 6 s of the event at 30 fps at the root, the same in the reel
+    assert_eq!(w.positions, 2 * 180, "{w:?}");
+    let per = vr.stream_frame_bytes(Tick(5 * SEC), Q) / 2;
+    assert!(per > 0);
+    assert_eq!(w.per_position, per);
+    assert_eq!(w.lap_bytes, 2 * 180 * per);
+    let cp = vr.stream_checkpoints(Tick(8 * SEC - 3000), Q);
+    assert_eq!(w.checkpoint_bytes, 2 * (2 * cp * per), "both walks' tiers");
+    // a loop over the plain shot alone keeps nothing
+    assert_eq!(vr.stream_want(Tick(20 * SEC), Tick(60 * SEC), Q).positions, 0);
+    // the old want: the whole region's 1800 moments at the frame on screen's size
+    let plenty = Some(64u64 << 30);
+    let old = stream_memo_bytes(STREAM_MEMO_BASE, per, Some(1801), plenty);
+    let new = kt_engine::video::stream_memo_want(STREAM_MEMO_BASE, Some(&w), plenty);
+    assert_eq!(new, STREAM_MEMO_BASE + w.lap_bytes + w.lap_bytes / 8 + 2 * per + w.checkpoint_bytes);
+    assert!(new < old, "the region's moments were asked: {new} against {old}");
+    assert_eq!(kt_engine::video::stream_memo_want(STREAM_MEMO_BASE, None, plenty), STREAM_MEMO_BASE, "no loop");
+}

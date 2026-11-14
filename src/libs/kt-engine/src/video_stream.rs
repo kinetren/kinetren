@@ -104,13 +104,48 @@ pub fn size_stream_memo_walk(per_position: usize, loop_positions: Option<usize>,
     // the room, not the bare available: the memo's own growth is memory it may keep (class-walk-revision)
     let free = kt_time::mem::room();
     let want = stream_memo_bytes_walk(STREAM_MEMO_BASE, per_position, loop_positions, checkpoints, free);
+    size_to(want, loop_positions.unwrap_or(0), free)
+}
+
+/// What the stream stages over a loop keep (`VideoRenderer::stream_want`, stream-memo-budget): each
+/// stage's positions in the region at its own picture size, reels included.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamWant {
+    /// The positions the stages show in the region, summed over the stages.
+    pub positions: usize,
+    /// Their pictures: each stage's positions × its picture (half its RGBA frame).
+    pub lap_bytes: usize,
+    /// The largest picture of a stage.
+    pub per_position: usize,
+    /// The checkpoint tiers of the stages' walks to their last position in the region, two pictures each.
+    pub checkpoint_bytes: usize,
+}
+
+/// The preview memo's want for a loop the stages keep `want` of (stream-memo-budget, found-defects
+/// 518): the loop's pictures plus an eighth, the two the next frame reads and the checkpoint tiers, on
+/// top of `base`, within a quarter of the memory `available`, never below `base`. `None` — no loop.
+pub fn stream_memo_want(base: usize, want: Option<&StreamWant>, available: Option<u64>) -> usize {
+    let (Some(w), Some(free)) = (want, available) else { return base };
+    let bytes = w.lap_bytes + w.lap_bytes / 8 + 2 * w.per_position + w.checkpoint_bytes;
+    bytes.saturating_add(base).min(usize::try_from(free / 4).unwrap_or(usize::MAX)).max(base)
+}
+
+/// Size the preview's memo for the loop the stages keep `want` of (`None` — no loop), as
+/// `size_stream_memo` does.
+pub fn size_stream_memo_want(want: Option<&StreamWant>) -> usize {
+    let free = kt_time::mem::room();
+    size_to(stream_memo_want(STREAM_MEMO_BASE, want, free), want.map_or(0, |w| w.positions), free)
+}
+
+/// Ask the ledger for `want`, set the preview memo's bound to what it grants, and record it.
+fn size_to(want: usize, loop_positions: usize, free: Option<u64>) -> usize {
     let memo = stream_memo();
     let grant = memo.account().want((want - STREAM_MEMO_BASE) as u64);
     let cap = STREAM_MEMO_BASE.saturating_add(usize::try_from(grant).unwrap_or(usize::MAX));
     memo.set_cap(cap);
     kt_time::trace::ev(kt_time::trace::Ev::StreamMemoCap)
         .a(cap as u64)
-        .b(loop_positions.unwrap_or(0) as u64)
+        .b(loop_positions as u64)
         .c(free.map_or(0, |f| f >> 20))
         .emit();
     cap

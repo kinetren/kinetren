@@ -211,14 +211,28 @@ struct Entry {
     transient: bool,
     /// A checkpoint of a history walk and its rank (stream-history-on-device D5): outside the LRU.
     pinned: Option<u32>,
+    /// The lap of its last use (`StreamMemo::lap`).
+    lap: u64,
+    /// Admitted while the memo was full of the loop's own laps (stream-memo-budget): it lives in the
+    /// window past the part of the loop the memo keeps, and goes first.
+    probation: bool,
 }
 
 /// The newest transient entries the eviction spares like any other: what the next step still reads
 /// (the clean encoder's state of the last frame, on each side).
 const TRANSIENT_SPARED: usize = 4;
 
+/// The share of the bound the window past a kept part of the loop takes (stream-memo-budget): what the
+/// look-ahead walks and the composite then reads, a quarter as the look-ahead's reach.
+const WINDOW_DIV: usize = 4;
+
 /// The host-owned memo of a stream kernel (design D3): a bounded LRU of opaque entries keyed by a
 /// `u64` the kernel derives from what determines the entry. Speed only — never another byte.
+///
+/// Told of a loop (`keep_loop`) it cannot hold, it keeps a part (stream-memo-budget, found-defects
+/// 517, as the present memo does, memory-ledger D5): an entry used in this lap or the last is not
+/// evicted for a new one; the new one goes to a window of a quarter of the bound past the kept part,
+/// oldest first. An LRU over a cycle longer than itself evicts exactly what the next lap reads first.
 pub struct StreamMemo {
     /// The bound; the host may change it while the memo is used (stream-layout-per-build: the
     /// preview sizes it by its loop and the machine's memory).
@@ -237,7 +251,13 @@ struct MemoInner {
     bytes: usize,
     /// Of `bytes`, the pinned tier's.
     pinned: usize,
+    /// Of `bytes`, the window's (`Entry::probation`).
+    probation: usize,
     clock: u64,
+    /// A loop is kept (`keep_loop`).
+    looping: bool,
+    /// The laps the host marked (`lap`).
+    lap: u64,
 }
 
 impl StreamMemo {
@@ -272,8 +292,10 @@ impl StreamMemo {
         let mut g = self.lock();
         g.clock += 1;
         let now = g.clock;
+        let lap = g.lap;
         let e = g.map.get_mut(&key)?;
         e.used = now;
+        e.lap = lap;
         e.v.clone().downcast::<T>().ok()
     }
 
@@ -311,26 +333,52 @@ impl StreamMemo {
         let mut g = self.lock();
         g.clock += 1;
         let now = g.clock;
-        if let Some(old) = g.map.insert(key, Entry { v, bytes, used: now, transient, pinned }) {
-            g.bytes -= old.bytes;
-            if old.pinned.is_some() {
-                g.pinned -= old.bytes;
-            }
+        let lap = g.lap;
+        if let Some(old) = g.map.remove(&key) {
+            Self::uncount(&mut g, &old);
         }
-        g.bytes += bytes;
-        if pinned.is_some() {
-            g.pinned += bytes;
-        }
+        // the memo full of the loop's own laps: the new one goes to the window past the kept part
+        let probation = g.looping && !transient && pinned.is_none() && g.bytes + bytes > cap && Self::stale_victim(&g).is_none();
+        let e = Entry { v, bytes, used: now, transient, pinned, lap, probation };
+        Self::count(&mut g, &e);
+        g.map.insert(key, e);
         Self::evict_to(&mut g, cap, key);
         self.account.set(g.bytes as u64);
     }
 
+    fn count(g: &mut MemoInner, e: &Entry) {
+        g.bytes += e.bytes;
+        if e.pinned.is_some() {
+            g.pinned += e.bytes;
+        }
+        if e.probation {
+            g.probation += e.bytes;
+        }
+    }
+
+    fn uncount(g: &mut MemoInner, e: &Entry) {
+        g.bytes -= e.bytes;
+        if e.pinned.is_some() {
+            g.pinned -= e.bytes;
+        }
+        if e.probation {
+            g.probation -= e.bytes;
+        }
+    }
+
+    /// The least recently used kept entry no lap of the loop used lately (neither this lap nor the
+    /// last): what a loop it cannot hold may give up.
+    fn stale_victim(g: &MemoInner) -> Option<u64> {
+        g.map
+            .iter()
+            .filter(|(_, e)| e.pinned.is_none() && !e.transient && !e.probation && e.lap + 1 < g.lap)
+            .min_by_key(|(_, e)| e.used)
+            .map(|(k, _)| *k)
+    }
+
     fn remove(g: &mut MemoInner, k: u64, cause: u64) {
         if let Some(e) = g.map.remove(&k) {
-            g.bytes -= e.bytes;
-            if e.pinned.is_some() {
-                g.pinned -= e.bytes;
-            }
+            Self::uncount(g, &e);
             // what the history lost, and to what (structured-telemetry)
             kt_time::trace::ev(kt_time::trace::Ev::StreamMemoEvict).id(k).a(e.bytes as u64).cause(cause).emit();
         }
@@ -339,7 +387,9 @@ impl StreamMemo {
     /// Drop entries until `cap` holds the rest; `cause` names the key that made room necessary (0 —
     /// the bound shrank). The pinned tier first keeps under half the bound (lowest rank, then oldest);
     /// then the oldest transient past the newest few, else the least recently used unpinned entry;
-    /// pinned entries go last.
+    /// pinned entries go last. While a loop is kept, the unpinned victim is, in this order: the
+    /// window's oldest past its quarter of the bound, a kept entry no recent lap used, the kept part's
+    /// least recent (the window grows into it up to its quarter), the window's oldest.
     fn evict_to(g: &mut MemoInner, cap: usize, cause: u64) {
         let pinned_victim = |g: &MemoInner| g.map.iter().filter_map(|(k, e)| e.pinned.map(|r| ((r, e.used), *k))).min().map(|x| x.1);
         while g.pinned > cap / 2 {
@@ -351,12 +401,45 @@ impl StreamMemo {
             let victim = if tr.len() > TRANSIENT_SPARED {
                 tr.select_nth_unstable(0);
                 Some(tr[0].1)
+            } else if g.looping {
+                Self::loop_victim(g, cap, cause).or_else(|| pinned_victim(g))
             } else {
                 g.map.iter().filter(|(_, e)| e.pinned.is_none()).min_by_key(|(_, e)| e.used).map(|(k, _)| *k).or_else(|| pinned_victim(g))
             };
             let Some(k) = victim else { break };
             Self::remove(g, k, cause);
         }
+    }
+
+    /// The unpinned victim while a loop is kept (`evict_to`).
+    fn loop_victim(g: &MemoInner, cap: usize, cause: u64) -> Option<u64> {
+        let oldest = |f: &dyn Fn(&Entry) -> bool| g.map.iter().filter(|(k, e)| **k != cause && e.pinned.is_none() && f(e)).min_by_key(|(_, e)| e.used).map(|(k, _)| *k);
+        let window = || oldest(&|e: &Entry| e.probation);
+        (if g.probation > cap / WINDOW_DIV { window() } else { None })
+            .or_else(|| Self::stale_victim(g).filter(|k| *k != cause))
+            .or_else(|| oldest(&|e: &Entry| !e.probation))
+            .or_else(window)
+            .or_else(|| g.map.get(&cause).filter(|e| e.pinned.is_none()).map(|_| cause))
+    }
+
+    /// Keep the loop the host plays (`true`) or none (stream-memo-budget): a loop it cannot hold
+    /// keeps a part, lap after lap. A new loop starts a fresh count — what an earlier one kept is stale.
+    pub fn keep_loop(&self, on: bool) {
+        let mut g = self.lock();
+        if on {
+            g.lap += 2;
+        } else {
+            for e in g.map.values_mut() {
+                e.probation = false;
+            }
+            g.probation = 0;
+        }
+        g.looping = on;
+    }
+
+    /// The host's loop came round (the playhead went back to its start): a new lap.
+    pub fn lap(&self) {
+        self.lock().lap += 1;
     }
 
     /// Drop every entry but the pinned tier (tests: an LRU that lost the history).
@@ -403,6 +486,7 @@ impl StreamMemo {
         g.map.clear();
         g.bytes = 0;
         g.pinned = 0;
+        g.probation = 0;
         self.account.set(0);
     }
 }
@@ -445,5 +529,47 @@ mod tests {
         assert!(held.iter().all(|k| (k / N) % 2 == 0), "an odd multiple outlived an even one: {held:?}");
         assert!(held.contains(&(32 * N)) && held.contains(&0), "the newest and the anchor stay: {held:?}");
         assert!(held.len() >= 16, "it thinned more than half: {held:?}");
+    }
+
+    /// Laps of a loop of `n` positions of 10 KB over `memo`: per lap, the positions found held. Each
+    /// position computed is put and read back at once, as the look-ahead's walk and the composite do.
+    fn laps(memo: &StreamMemo, first: u64, n: u64, laps: usize, tell: bool) -> Vec<usize> {
+        memo.keep_loop(tell);
+        (0..laps)
+            .map(|_| {
+                let mut hits = 0;
+                for k in first..first + n {
+                    if memo.get::<u64>(k).is_some() {
+                        hits += 1;
+                    } else {
+                        memo.put(k, Arc::new(k), 10_000);
+                        assert!(memo.get::<u64>(k).is_some(), "a position just computed is not there for its composite");
+                    }
+                }
+                memo.lap();
+                hits
+            })
+            .collect()
+    }
+
+    /// Test t2490 (stream-memo-budget, found-defects 517): a loop three times the memo keeps a part of
+    /// it lap after lap — what it held stays and the rest passes through a window of a quarter of the
+    /// bound; without the loop told it is the LRU, which keeps nothing of a cycle longer than itself.
+    /// A loop it holds whole is held whole either way.
+    #[test]
+    fn t2490_a_loop_longer_than_the_memo_keeps_a_part() {
+        let lru = laps(&StreamMemo::new(100_000), 1, 30, 3, false);
+        assert_eq!(lru, vec![0, 0, 0], "the LRU kept a part of a loop longer than itself");
+        let kept = laps(&StreamMemo::new(100_000), 1, 30, 4, true);
+        assert_eq!(kept[0], 0);
+        assert!(kept[1..].iter().all(|&h| h >= 7), "a lap found less than the kept part: {kept:?}");
+        assert_eq!(kept[2], kept[3], "the kept part moved between laps: {kept:?}");
+        let whole = laps(&StreamMemo::new(400_000), 1, 30, 3, true);
+        assert_eq!(whole, vec![0, 30, 30], "a loop the memo holds");
+        // a new loop: what the old one kept goes for it, it is no longer protected
+        let memo = StreamMemo::new(100_000);
+        laps(&memo, 1, 30, 3, true);
+        let other = laps(&memo, 1000, 30, 3, true);
+        assert!(other[1..].iter().all(|&h| h >= 7), "the new loop kept nothing: {other:?}");
     }
 }

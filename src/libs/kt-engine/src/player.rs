@@ -2868,26 +2868,28 @@ pub fn stream_advance_ahead(
     false
 }
 
+/// The build, quality and loop region (ticks) the stream memo was last sized for.
+type MemoSizing = (u64, Quality, Option<(i64, i64)>);
+
 /// Size the preview's stream memo by the loop it must keep (stream-layout-per-build, found-defects
-/// 143): a position keeps the stage's picture — half the stage's RGBA frame at most (Datamosh's
-/// Y'CbCr 4:2:0 is 3/8 of it) — every position of the loop region, within a quarter of the memory
-/// available — measured only when the loop or the stage's size changes (`last`), so a pass that
-/// changes neither reads nothing.
-fn size_stream_memo(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, last: &mut Option<(usize, Option<usize>, usize)>) {
-    let frame = video.stream_frame_bytes(t, q);
-    if frame == 0 {
-        return;
-    }
-    let step = video.grid.frame_step().max(1);
-    let positions = region.map(|(s, e)| ((e - s).max(0) / step) as usize + 1);
-    // the walk from the chain's anchor to the region's end keeps its checkpoints too (found-defects 394)
-    let checkpoints = region.map_or(0, |(_, e)| video.stream_checkpoints(video.grid.align_floor(Tick(e - 1)), q));
-    let now = (frame / 2, positions, checkpoints);
+/// 143; stream-memo-budget, found-defects 512, 518): what every stream stage over the loop region
+/// keeps, at its own size, reels included — a short Datamosh in a long loop wants its own positions,
+/// not the whole region's at the frame on screen's size. Measured only when the build, the loop or
+/// the quality changes (`last`), so a pass that changes none reads nothing and a stage of another size
+/// crossed while playing re-sizes nothing. The memo is told whether it keeps a loop, so one it cannot
+/// hold keeps a part (found-defects 517).
+fn size_stream_memo(video: &VideoRenderer, seq: u64, q: Quality, region: Option<(i64, i64)>, last: &mut Option<MemoSizing>) {
+    let now = (seq, q, region);
     if *last == Some(now) {
         return;
     }
+    let looped = last.is_none_or(|(_, _, r)| r != region);
     *last = Some(now);
-    crate::video::size_stream_memo_walk(now.0, positions, checkpoints);
+    let want = region.map(|(s, e)| video.stream_want(Tick(s), Tick(e), q));
+    crate::video::size_stream_memo_want(want.as_ref().filter(|w| w.positions > 0));
+    if looped {
+        video.stream_keep_loop(want.is_some_and(|w| w.positions > 0));
+    }
 }
 
 /// Tell the display's executor the loop region's moments when they or the executor change
@@ -3002,7 +3004,9 @@ fn prefetch_loop(
     let mut far_stalls = 0u32;
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
-    let mut memo_sized: Option<(usize, Option<usize>, usize)> = None;
+    let mut memo_sized: Option<MemoSizing> = None;
+    // the moment shown at the last pass: going back inside the loop while playing is a new lap
+    let mut lap_at: Option<i64> = None;
     // the loop the display's executor was told to keep, and which executor (memory-ledger D4)
     let mut loop_told: Option<(Option<usize>, usize)> = None;
     // what the decoded-frame cache was sized for (frames-cache-growth)
@@ -3114,8 +3118,14 @@ fn prefetch_loop(
             kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect()
         };
         let kept = |t: Tick| kept_now.contains(&t.0);
-        if video.has_stream_stages() {
-            size_stream_memo(video, t0, q, region_ticks, &mut memo_sized);
+        size_stream_memo(video, built.seq, q, region_ticks, &mut memo_sized);
+        if transport.is_playing() && region_ticks.is_some() {
+            if lap_at.is_some_and(|at| t0.0 < at) {
+                video.stream_lap();
+            }
+            lap_at = Some(t0.0);
+        } else {
+            lap_at = None;
         }
         // the advance stops once the playhead or the project leaves it (gpu-arbiter, row 147):
         // what it computed stays in the memo, and the next pass starts from where the playhead is

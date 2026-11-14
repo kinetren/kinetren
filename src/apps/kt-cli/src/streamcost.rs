@@ -149,13 +149,13 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
     let t1 = Tick::from_secs_f64(to);
     let memo = kt_engine::video::stream_memo();
     if sized {
-        // the player's sizing for this range as its loop region
-        let positions = ((t1.0 - t0.0).max(0) / video.grid.frame_step().max(1)) as usize + 1;
-        let per = video.stream_frame_bytes(t0, q) / 2;
-        // the player's sizing with the walk's checkpoints (`player::size_stream_memo`): without them
-        // the tool reported a memo the program does not build (class-walk-revision)
-        let checkpoints = video.stream_checkpoints(video.grid.align_floor(Tick(t1.0 - 1)), q);
-        let cap = kt_engine::video::size_stream_memo_walk(per, Some(positions), checkpoints);
+        // the player's sizing for this range as its loop region (`player::size_stream_memo`): every
+        // stage's own positions at its own size, reels included, and their walks' checkpoints
+        // (stream-memo-budget: a tool that sizes otherwise reports a memo the program does not build)
+        let want = video.stream_want(t0, Tick(t1.0 + 1), q);
+        let cap = kt_engine::video::size_stream_memo_want(Some(&want).filter(|w| w.positions > 0));
+        memo.keep_loop(want.positions > 0);
+        let (positions, checkpoints) = (want.positions, want.checkpoint_bytes / (2 * want.per_position.max(1)));
         let room = kt_time::mem::room().unwrap_or(0);
         println!("  memo sized for a loop of {positions} positions, {checkpoints} checkpoints: {} MB (room {} MB)", cap >> 20, room >> 20);
     }
@@ -192,6 +192,10 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
     };
     let window = Tick(2 * kt_time::TICK_HZ);
     for lap in 0..laps.max(1) {
+        // a lap as the player marks it when its loop comes round (stream-memo-budget)
+        if lap > 0 {
+            memo.lap();
+        }
         // `--drop-lru`: the memo's LRU lost the history before this lap (an eviction, a jump away and
         // back): only the pinned checkpoints stay (stream-history-on-device)
         if drop_lru && lap > 0 {

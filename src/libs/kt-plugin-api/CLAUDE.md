@@ -31,7 +31,9 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   (stream-history-on-device): `StreamLayout::shown_from` is the host's view (the loop's start or the
   frame on screen; `None` — every position, an export), `StreamMemo::put_pinned` keeps a checkpoint
   outside the LRU (the pinned tier holds at most half the bound and thins by rank), and
-  `StreamKernel::checkpoints` tells the host how many a walk keeps, for the memo's sizing. Datamosh
+  `StreamKernel::checkpoints` tells the host how many a walk keeps, for the memo's sizing. Told of a
+  loop (`keep_loop`, `lap`), the memo keeps a part of one it cannot hold: entries a recent lap used are
+  not evicted for new ones, which pass through a window of a quarter of the bound (stream-memo-budget, t2490). Datamosh
   walks in batches on the device (`fx-video-codec` `walk.rs`); `mosh::render_reference` is the
   per-position walk the batches are held to (t2350).
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and

@@ -478,6 +478,61 @@ fn t2453_closing_while_playing_lets_the_close_jobs_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Frames until the autosave in flight has answered, the recovery file then read back: its media.
+fn until_autosaved(h: &mut Harness<'static, KtApp>) -> usize {
+    let deadline = kt_time::test_deadline();
+    while h.state().autosave_rx.is_some() {
+        assert!(std::time::Instant::now() < deadline, "the autosave never reached the recovery file");
+        std::thread::sleep(Duration::from_millis(1));
+        h.step();
+    }
+    let rec = h.state().recovery_written.clone().expect("a recovery target");
+    media_on_disk(&rec)
+}
+
+/// Test t2495 (stream-memo-budget, durability, found-defects 513): the insurance autosave — due after
+/// two intervals of playback — reaches the recovery file WHILE playing, and an autosave posted on a
+/// pause that a playback then holds is taken by the insurance lane after another interval. It was
+/// posted on the Background lane, which the player's vote holds, so nothing was written until a pause.
+///
+/// - **PATH** an edited project playing for over a minute → the recovery file holds the edit, the
+///   playback goes on
+#[test]
+fn t2495_the_insurance_autosave_writes_while_playing() {
+    let dir = std::env::temp_dir().join(format!("kt-t2495-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = dirty_named(&dir.join("a.kt"));
+    h.step();
+    let app = h.state_mut();
+    app.player.play();
+    app.last_autosave = std::time::Instant::now() - Duration::from_secs(10 * app.autosave_secs.max(1));
+    h.step();
+    assert!(h.state().autosave_rx.is_some(), "scene guard: the insurance autosave was posted while playing");
+    assert_eq!(until_autosaved(&mut h), 1, "the recovery file lacks the edit");
+    assert_ne!(kt_time::sched::paused() & kt_time::sched::why::PLAYING, 0, "scene guard: written while the vote was up");
+    h.state_mut().player.pause();
+    h.step();
+
+    // posted on a pause, then held by a playback's vote: another interval moves it to the insurance lane
+    let mut h = dirty_named(&dir.join("b.kt"));
+    h.step();
+    let vote = kt_time::sched::Vote::new(kt_time::sched::why::PLAYING);
+    vote.set(true);
+    let app = h.state_mut();
+    app.last_autosave = std::time::Instant::now() - Duration::from_secs(app.autosave_secs.max(1));
+    h.step();
+    assert!(h.state().autosave_rx.is_some(), "scene guard: the autosave was posted");
+    let (_, body) = h.state().autosave_job.clone().expect("the job in flight");
+    assert!(body.lock().unwrap().is_some(), "scene guard: the Background job started under the vote");
+    let app = h.state_mut();
+    app.autosave_job.as_mut().unwrap().0 = std::time::Instant::now() - Duration::from_secs(app.autosave_secs.max(1));
+    h.step();
+    assert_eq!(until_autosaved(&mut h), 1, "the held autosave never reached the recovery file");
+    drop(vote);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test t2308 (save-then-act, durability): a write that fails drops what waited for it — the
 /// project stays with its asterisk and the warning, whether the action came from "Save and
 /// continue" or met a Ctrl+S in flight.

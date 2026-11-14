@@ -409,6 +409,10 @@ pub struct KtApp {
     /// Background autosave (R.31 item 2): (snapshot rev, result). The UI thread
     /// no longer writes the file itself — it only serializes the snapshot and waits for the result.
     pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<SaveOutcome>>)>,
+    /// The autosave in flight as a job not yet started (stream-memo-budget, found-defects 513): when
+    /// it was posted and its body, which the first lane to start it takes. Held past another interval
+    /// on the Background lane (a playback's vote), it is posted on the insurance lane too.
+    pub autosave_job: Option<(std::time::Instant, AutosaveBody)>,
     /// Ctrl+S in flight (one-scheduler, row 98): the write and its two fsyncs run on the save
     /// lane; the UI takes the outcome within `ANSWER_GRACE` or in a later frame.
     pub saving: Option<Saving>,
@@ -1016,6 +1020,7 @@ impl KtApp {
             max_src_cache: None,
             max_src_job: None,
             autosave_rx: None,
+            autosave_job: None,
             saving: None,
             after_save: None,
             media_asks: Vec::new(),
@@ -1343,6 +1348,7 @@ impl KtApp {
             max_src_cache: None,
             max_src_job: None,
             autosave_rx: None,
+            autosave_job: None,
             saving: None,
             after_save: None,
             media_asks: Vec::new(),
@@ -2009,15 +2015,31 @@ impl KtApp {
             self.autosave_rx = Some((snap_rev, rx));
             let guard = self.recovery_rev.clone();
             self.recovery_written = Some(target.clone());
-            // on the autosave lane (one-scheduler): class `Background`, so it waits out playback
-            autosave_lane().post(move |_| {
+            let body: AutosaveBody = std::sync::Arc::new(std::sync::Mutex::new(Some(Box::new(move || {
                 let out = project_text_of(&project, &retained, target.parent());
                 // replacing the file — under the guard: if while we
                 // were serializing a MORE RECENT snapshot landed on disk
                 // (Ctrl+S), we do not write our stale one at all
                 let _ = tx.send(write_project_guarded(&guard, &target, snap_rev, &out));
                 crate::wake::now();
-            });
+            }))));
+            // on the autosave lane (one-scheduler): class `Background`, so it waits out playback; the
+            // insurance write — due while playing — goes on the insurance lane, which a vote does not
+            // hold (found-defects 513: it waited for the pause the insurance is there to do without)
+            let lane = if self.autosave_busy() { autosave_insurance_lane() } else { autosave_lane() };
+            post_autosave(lane, &body);
+            self.autosave_job = Some((std::time::Instant::now(), body));
+        }
+        // a Background autosave held for another interval (a playback began after it was posted):
+        // the insurance lane takes it; the first lane to start it writes, the other finds it taken
+        if let Some((at, body)) = &self.autosave_job
+            && self.autosave_rx.is_some()
+            && at.elapsed().as_secs() >= self.autosave_secs
+        {
+            if body.lock().unwrap_or_else(|e| e.into_inner()).is_some() {
+                post_autosave(autosave_insurance_lane(), body);
+            }
+            self.autosave_job = None;
         }
         self.poke_media_watch(ui.ctx());
         self.poll_returned_sources();
@@ -2065,6 +2087,7 @@ impl KtApp {
         {
             let snap_rev = *snap_rev;
             self.autosave_rx = None;
+            self.autosave_job = None;
             let _ = snap_rev;
             match res {
                 // The asterisk does NOT go out: the user’s work went into the recovery file,
@@ -2531,6 +2554,10 @@ impl KtApp {
         if (self.dirty_content || self.dirty_ui) && self.autosave_rx.is_none() {
             let every = Duration::from_secs(self.autosave_secs);
             wake.push(plus(left(self.last_autosave, every)));
+        }
+        // a held autosave's move to the insurance lane (found-defects 513)
+        if let Some((at, _)) = &self.autosave_job {
+            wake.push(plus(left(*at, Duration::from_secs(self.autosave_secs))));
         }
         // the Diagnostics window is a live instrument: its graphs sample twice a second
         if self.perf.diag_open {
@@ -5165,9 +5192,12 @@ impl KtApp {
         if idle < self.autosave_secs {
             return false;
         }
-        let busy =
-            self.drag.is_some() || self.bin_drag.is_some() || self.player.transport.is_playing();
-        !busy || idle >= self.autosave_secs * 2
+        !self.autosave_busy() || idle >= self.autosave_secs * 2
+    }
+
+    /// A gesture or playback: an autosave waits for it, at most two intervals (`autosave_due`).
+    fn autosave_busy(&self) -> bool {
+        self.drag.is_some() || self.bin_drag.is_some() || self.player.transport.is_playing()
     }
 
     pub fn clear_region(&mut self) {
@@ -10226,6 +10256,27 @@ fn save_lane() -> &'static kt_time::sched::LaneRef {
 fn autosave_lane() -> &'static kt_time::sched::LaneRef {
     static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
     L.get_or_init(|| kt_time::sched::Lane::open("autosave", kt_time::sched::Class::Background))
+}
+
+/// The insurance autosave's lane (found-defects 513): class `Answer`, no vote holds it — an autosave
+/// due after two intervals of playback reaches the recovery file while playing. One write a minute on
+/// a pool worker, never the audio or the UI thread.
+fn autosave_insurance_lane() -> &'static kt_time::sched::LaneRef {
+    static L: std::sync::OnceLock<kt_time::sched::LaneRef> = std::sync::OnceLock::new();
+    L.get_or_init(|| kt_time::sched::Lane::open("autosave-insurance", kt_time::sched::Class::Answer))
+}
+
+/// An autosave's write, taken by the first lane that starts it.
+pub type AutosaveBody = std::sync::Arc<std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>>;
+
+fn post_autosave(lane: &kt_time::sched::LaneRef, body: &AutosaveBody) {
+    let body = body.clone();
+    lane.post(move |_| {
+        let f = body.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(f) = f {
+            f();
+        }
+    });
 }
 
 pub fn write_project_guarded(

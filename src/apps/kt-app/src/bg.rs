@@ -69,6 +69,16 @@ impl BgCtl {
         self
     }
 
+    /// Held by a pause or a vote now (no wait: `should_stop` waits).
+    pub fn is_held(&self) -> bool {
+        self.held()
+    }
+
+    /// Cancelled, by the token or the flag (no wait).
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled() || self.flag.load(Ordering::Acquire)
+    }
+
     fn held(&self) -> bool {
         !self.cancel.is_cancelled()
             && (self.pause.load(Ordering::Acquire)
