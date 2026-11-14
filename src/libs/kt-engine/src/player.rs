@@ -2986,7 +2986,7 @@ fn prefetch_loop(
             && crate::video::stop_when(kt_time::trace::stop::PREFETCH, left(), || {
                 stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
             });
-        // the far part (gpu-throughput D3, found-defects 482, the owner's "наперед"): past the
+        // the far part (gpu-throughput D3, found-defects 482, the owner's "compute ahead", kkt-26.11.11 L4): past the
         // display's reach — the loop to its end and round, or well ahead — at the lowest class, once
         // the near part has nothing pending; a far part that computed nothing over `FAR_STALLS`
         // passes waits for the state to move

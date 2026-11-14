@@ -746,7 +746,7 @@ fn t2361_the_composite_says_it_held() {
     assert!(complete && !vr.stream_held(), "the moment's own frame is not held");
 }
 
-/// t2432 (gpu-throughput D3, found-defects 482, the owner's "наперед"): with a loop region over a mosh
+/// t2432 (gpu-throughput D3, found-defects 482, the owner's "compute ahead" (kkt-26.11.11 L4)): with a loop region over a mosh
 /// and every source frame cached, ONE pass of the prefetch's far look-ahead — paused and playing —
 /// walks the history to the region's last frame, at class background; a pass with the history complete
 /// runs nothing.

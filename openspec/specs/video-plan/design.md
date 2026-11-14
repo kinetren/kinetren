@@ -522,3 +522,33 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
   incomplete composites 1 → 51 in a minute's loop; the frame on screen now comes back first.
 - **A held frame says so:** `GpuStages.stream_held` → `Composed.held`; the app counts it apart and
   draws "Catching up…" (ui-timeline).
+
+## The ring's drain, cold passes, the history ahead, the machine-use rule (gpu-throughput, archived 2026-11-14)
+
+His stage-10 trace (kkt-26.11.10b K3, iGPU): a Datamosh walk spent 96–98 % of its wall in admission, 16 ms
+on the device a position in 106 ms; each piece waited for the earlier one's completion, which stood behind
+the display's own uncounted 32.5 ms composite. The class: work a person waits for runs serially while the
+device or the cores stand idle. Full record: `openspec/changes/archive/2026-11-14-gpu-throughput/design.md`.
+
+- **Admission by the predicted drain** (D1): flights carry predicted ns and submit instants; the ring drains
+  them as a FIFO (an overrun flight keeps half its time); a lower class is admitted while the drain plus its
+  claim ends within the bound past the later of the display's next present and the end of its frame in
+  flight; at most three lower flights uncompleted; a lower piece is half the bound so one runs while the
+  next is queued. The display's present is counted, never admitted. Rejected: a larger bound (the owner's
+  latency limit), counting the display without a time model (only more waits).
+- **What it cannot do:** a display that composes heavy chains every frame saturates the device; the walk
+  then gets about one bound a display frame (row 491, with 483).
+- **Cold passes** (D2): pass and dispatch times on disk (adapter + driver, label, work units), scaled by work;
+  a compute job learns from its own pieces' timestamps while it runs. A cache: it moves cuts, never bytes.
+- **The history ahead** (D3): a far part at class background — the loop to its end and round (playing or
+  paused inside it), else a quarter of the memo while playing; `FAR_STALLS` passes with nothing walked stop
+  the retries until the state moves, so a paused prefetch thread cannot pass forever.
+- **The processor** (D4): only where its bytes are the device's, or by a choice that does not follow the load
+  (invariant 11). Done: the preview's span conversion on a render's threads. Rejected: a CPU twin of the
+  codec's f32 DCT (WGSL division is 2.5 ULP, drivers contract multiply-adds), of Camera ISP and VHS (no CPU
+  kernel since compute-kernels-render), the Datamosh conversion on the CPU (3 % of a position's device
+  time), the paired audio halves off the render thread (invariant 2).
+- **Class walk:** the prefetch walk, the compose thread's stage, the slow route's ISP/VHS composites, Loading
+  on a pause, render/export (row 490: a stream stage keeps the serial export), thumbnails/strips/posters,
+  the decoder's conversion, pipeline warm, analysis lanes. Every caller of `Ring::admit`/`Piece` takes the
+  new admission unchanged; `present`/`present_kept` count the display.
