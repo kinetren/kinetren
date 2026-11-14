@@ -2129,7 +2129,7 @@ fn audio_render_loop(ctx: RenderCtx) {
     let mut build_holds_start = wanted > have;
     let mut traced_hold = 0u64;
     let mut fetcher = CacheFetcher::with_lengths(cache.clone(), &natives.read().unwrap().lengths);
-    let mut fetcher_facts = natives.read().unwrap().lengths.len();
+    let mut fetcher_facts = natives.read().unwrap().epoch;
     // the local render position (frames); may lead the playhead by the ring
     let mut render_head: i64 = transport.playhead_frames();
     let mut last_generation = transport.generation();
@@ -2190,13 +2190,14 @@ fn audio_render_loop(ctx: RenderCtx) {
             build_holds_start = false;
         }
         // The source could appear AFTER the stream started (opening the project,
-        // a missing file coming back): the fetcher's material edges must be
-        // updated, otherwise the tail of new media would again count as
-        // starvation. The check is cheap — the length of the map under the RwLock.
+        // a missing file coming back), be replaced (a changed path: the same id) or go: the
+        // fetcher's material edges must be updated, otherwise the tail of new media would again
+        // count as starvation. By the facts' epoch, not the count of lengths: a replacement keeps
+        // the count, and the old file's kept mix and edges stayed (t2540). Cheap: one read.
         {
             let facts = natives.read().unwrap();
-            if facts.lengths.len() != fetcher_facts {
-                fetcher_facts = facts.lengths.len();
+            if facts.epoch != fetcher_facts {
+                fetcher_facts = facts.epoch;
                 fetcher = CacheFetcher::with_lengths(cache.clone(), &facts.lengths);
                 // a source came or went: what was rendered without it is not its sound
                 mix.store.clear();

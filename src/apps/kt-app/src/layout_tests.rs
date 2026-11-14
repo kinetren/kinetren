@@ -4073,6 +4073,81 @@ fn t211_returned_source_replaces_its_placeholder() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test t2541 (t211's class): a file that comes back to disk gets its waveform. The index asks
+/// every media once, at opening: an absent file errs and gets no peaks, and the return swapped the
+/// player's decoder alone — the returned file's waveform stayed empty for the rest of the session.
+#[test]
+fn t2541_a_returned_file_gets_its_waveform() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let dir = std::env::temp_dir().join(format!("kt-t2541-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t2541.kt");
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    let file = dir.join("later.flac");
+    p.media.push(MediaRef::new(MediaId(1), file.to_string_lossy()));
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    std::fs::write(&path, crate::app::project_text_of(&p, &Default::default(), None)).unwrap();
+    let app = KtApp::open(&path).expect("the project must open");
+    assert_eq!(app.placeholder_media.len(), 1, "scene guard: the file is away at opening");
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(W, H))
+        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&h.ctx);
+    h.step();
+    assert!(h.state().index.wait_idle());
+    assert!(!h.state().peaks.lock().unwrap().contains_key(&MediaId(1)), "scene guard: the absent file has a waveform");
+    // the file comes back where it was
+    std::fs::copy(crate::util::tests::fixture("sine48k_stereo.flac"), &file).unwrap();
+    h.state_mut().offline.lock().unwrap().clear();
+    let deadline = kt_time::test_deadline();
+    while !h.state().placeholder_media.is_empty() {
+        assert!(std::time::Instant::now() < deadline, "the returned file never replaced the placeholder");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(h.state().index.wait_idle());
+    assert!(
+        h.state().peaks.lock().unwrap().contains_key(&MediaId(1)),
+        "the returned file's waveform was never built"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test 210 (R.33 item 10, about render): an unavailable source no longer
 /// cancels the export — it goes with a placeholder, which is said BEFORE the start (in the
 /// settings window) and AFTER (in the summary). Before, the render simply did not start, and

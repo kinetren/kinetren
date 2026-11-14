@@ -192,6 +192,12 @@ impl IndexService {
         self.lane.kick();
     }
 
+    /// Wait until the index has nothing queued or running (tests).
+    #[cfg(test)]
+    pub(crate) fn wait_idle(&self) -> bool {
+        self.lane.wait_idle(kt_time::test_deadline())
+    }
+
     /// Take the accumulated errors (the UI shows them once).
     pub fn take_errors(&self) -> Vec<String> {
         std::mem::take(&mut *self.errors.lock().unwrap())
