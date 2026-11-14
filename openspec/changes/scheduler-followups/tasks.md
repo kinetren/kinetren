@@ -37,7 +37,7 @@
 
 ## 6. Proof and records
 
-- [ ] 6.1 live scenario `open_heavy` (`src/scripts/live/open_heavy.py`) with screenshots per step; live `idle`, `heavy_loop`, `sched_pause` green
+- [x] 6.1 live scenario `open_heavy` (`src/scripts/live/open_heavy.py`) with screenshots per step; live `idle`, `heavy_loop`, `sched_pause` green
 - [x] 6.2 design.md: the class walk's results and the measurements; found-defects: rows 251, 270, 290 removed, 370+ for what is left; whats-new line; crate CLAUDE.md notes (kt-app open path, kt-engine first build, kt-gpu side engine)
-- [ ] 6.3 `src/scripts/specs-user-path.py --check`, `cargo test --workspace` of touched crates, clippy; commit "scheduler-followups 6"; target-prune
+- [x] 6.3 `src/scripts/specs-user-path.py --check`, `cargo test --workspace` of touched crates, clippy; commit "scheduler-followups 6"; target-prune
 - [ ] 6.4 archive (`/opsx:archive`), commit; `finish.sh` is the orchestrator's per stage
