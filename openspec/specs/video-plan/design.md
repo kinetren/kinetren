@@ -548,3 +548,24 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
 - **Measured** (release, llvmpipe): his relinked copy's 30 s loop over the problem region — 29 held
   composites shown and 27 stored before, 0 and 0 after; 10.3 → 9.1 cores (127 VHS runs instead of 154).
   The red-on-old guard is t2414 (the player set the hold while playing).
+
+## The loop fill and the slow route's own engine (scheduler-followups, 2026-11-14, found-defects 251, 290)
+
+- **The loop fill (251).** A display slower than the frames shows a different subset each lap and keeps
+  only what it shows. A `near` service composes the loop's unkept, fully decoded moments ahead of the
+  playhead on the side engine and keeps them on the display's executor, as the slow route does. It
+  asks no decode, and it starts nothing while the display composes a frame of its own: on a software
+  rasterizer the two share the processor, and the first version (no gate) only moved work off the
+  display's frames — all-kept at lap 17 against 16, V-fps 16.6 against 19.5. With the gate: all-kept
+  from lap 9 against 18, V-fps 20.6 against 18.4 (heavy showcase, 2 s loop, release, llvmpipe).
+  `stream_short` (the held flag before it) is per thread: two threads plan on one renderer.
+- **The slow route's own engine (290).** The offline engine's lock is held a whole frame, so the
+  slow-route frame waited behind an effect cell or a poster. Cells, strips, posters and the fill compose
+  on `side_engine()`, a `sibling` that shares the device, queue, ring and compiled pipelines but not the
+  lock; `serve_preview` makes the offline ring bound and cut lower classes. t2337: the route's frame
+  beside heavy side frames waited 119–153 ms on the shared engine, 3–26 ms after.
+- **Rejected:** composing fill moments on the compose thread (no time between asks on a slow display);
+  decoding for the fill (it would compete with the look-ahead for the frame on screen); a second
+  headless device for side work (a device and its pipelines against an arena and pools).
+- `kt-cli trace loop` counted the fill's composites as the display's frames; `lives` now takes only
+  frames the display asked for, and a lap names the fill apart.
