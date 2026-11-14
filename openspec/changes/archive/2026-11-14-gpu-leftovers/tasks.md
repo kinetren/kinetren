@@ -30,5 +30,5 @@
 
 ## 6. Close
 
-- [ ] 6.1 found-defects rows removed, new rows 560+; whats-new; specs' tests of touched crates, clippy
-- [ ] 6.2 Archive
+- [x] 6.1 found-defects rows removed, new rows 560+; whats-new; specs' tests of touched crates, clippy
+- [x] 6.2 Archive

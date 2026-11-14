@@ -155,3 +155,8 @@ t2519.
 None of these is a speed claim that a test asserts. On this machine (llvmpipe, load 17–21 from other
 sessions) a speed reading means nothing; the compute host's arena removes 2 × 267 device-object creations and
 266 queue writes from a 267-dispatch walk by construction (t2511 counts them).
+
+At rest nothing new runs: no thread, timer or poll is added; the arbiter's room is arithmetic at an
+admission, the compute arena and the calibration run only inside a job, the forms revision is a counter, and
+an export's retries run only on an incomplete frame. The idle-load measurement of a live run was not repeated
+here (no GUI in this session; the orchestrator's stage run covers it).
