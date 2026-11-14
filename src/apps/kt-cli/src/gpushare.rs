@@ -134,7 +134,10 @@ fn one_mode(
         std::thread::spawn(move || {
             let _class = with_class(Class::Offline);
             let mut src = sources(&p);
-            let video = VideoRenderer::new_with_facts(&p, &facts(&src));
+            let mut video = VideoRenderer::new_with_facts(&p, &facts(&src));
+            // an offline job keeps its history in a memo of its own, as a reel strip's and an export's
+            // do (stream-memo-budget, found-defects 519)
+            video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(kt_engine::export::EXPORT_STREAM_MEMO_BYTES)));
             let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 30 });
             decode_range(&video, &mut src, &cache, at.1, 1, q);
             let mut buf = Vec::new();

@@ -143,7 +143,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
-  stream history's want after the kept composites'. Both export bodies hold `kt_time::mem::claim()`
+  stream history's want after the kept composites' — by `VideoRenderer::stream_want`, every stream
+  stage over the loop at its own size, reels included, once per build/loop/quality, and tells the memo
+  the loop (`stream_keep_loop`) and each lap (`stream_lap`, the shown moment going back while playing):
+  a loop History cannot hold keeps a part (stream-memo-budget, t2490–t2492). An offline frame job (strip,
+  poster) builds its renderer with a memo of its own, never the preview's (t2493). Both export bodies hold `kt_time::mem::claim()`
   while they run, and the render window takes one before it counts devices and `tight` (on its job
   thread). t2294, t2296, t2297, t2299.
 - **The frames cache is sized by the look-ahead and the loop** (frames-cache-growth, t2393, t2394): the

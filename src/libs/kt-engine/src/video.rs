@@ -20,8 +20,8 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 #[path = "video_stream.rs"]
 mod stream;
 pub use stream::{
-    OpenFrontExec, STREAM_MEMO_BASE, StreamPacing, front_runs, front_slots as stream_front_slots, install_stream_front, prewarm_stream_front, memory_available, set_memory_probe, size_stream_memo,
-    size_stream_memo_walk, stop_when, stopping, stream_memo, stream_memo_bytes, stream_memo_bytes_walk,
+    OpenFrontExec, STREAM_MEMO_BASE, StreamPacing, StreamWant, front_runs, front_slots as stream_front_slots, install_stream_front, prewarm_stream_front, memory_available, set_memory_probe, size_stream_memo,
+    size_stream_memo_want, size_stream_memo_walk, stop_when, stopping, stream_memo, stream_memo_bytes, stream_memo_bytes_walk, stream_memo_want,
 };
 use stream::StreamStage;
 
@@ -263,6 +263,18 @@ impl TransAnim {
         }
         crate::TransMix::of(&k)
     }
+}
+
+/// One stream stage met over a loop (`VideoRenderer::stream_want`).
+struct WantStage<'a> {
+    clip: &'a VideoClip,
+    stage: &'a StreamStage,
+    grid: &'a FpsGrid,
+    quality: Quality,
+    /// Its RGBA frame at its own size.
+    frame: usize,
+    positions: std::collections::HashSet<i64>,
+    last: i64,
 }
 
 impl VideoClip {
@@ -1519,18 +1531,88 @@ impl VideoRenderer {
     }
 
     /// The checkpoints the stream stages active at `t` keep for a walk of `t`'s history (the memo's
-    /// sizing); the largest over the stages.
+    /// sizing); the largest over the stages, a reel's included (found-defects 512).
     pub fn stream_checkpoints(&self, t: Tick, quality: Quality) -> usize {
         self.clips
             .iter()
-            .filter(|c| c.active_at(t) && c.nest.is_none())
-            .filter_map(|c| {
-                let st = c.stream.as_ref()?;
-                let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
-                Some(st.kernel().checkpoints(&st.values, &cs, cs.pos(t)))
+            .filter(|c| c.active_at(t))
+            .filter_map(|c| match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
+                (Some(st), None) => {
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+                    Some(st.kernel().checkpoints(&st.values, &cs, cs.pos(t)))
+                }
+                (_, Some(sub)) => Some(sub.stream_checkpoints(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality))),
+                _ => None,
             })
             .max()
             .unwrap_or(0)
+    }
+
+    /// What the stream stages over the loop `from .. to` keep (stream-memo-budget, found-defects 512,
+    /// 518): every stage at its own size, reels included, counting the positions it shows in the
+    /// region and the checkpoints of its walk to its last one there. Reads no frame; walks the
+    /// region's moments once.
+    pub fn stream_want(&self, from: Tick, to: Tick, quality: Quality) -> StreamWant {
+        let mut stages = std::collections::HashMap::new();
+        let step = self.grid.frame_step().max(1);
+        let mut t = self.grid.align_floor(from);
+        while t.0 < to.0 {
+            self.stream_stages_at(t, quality, &mut stages);
+            t = Tick(t.0 + step);
+        }
+        let mut want = StreamWant::default();
+        for s in stages.into_values() {
+            let per = s.frame / 2;
+            want.positions += s.positions.len();
+            want.lap_bytes += per * s.positions.len();
+            want.per_position = want.per_position.max(per);
+            let cs = stream::ClipStream::new(s.clip, s.stage, s.grid, s.quality, None);
+            want.checkpoint_bytes += 2 * per * s.stage.kernel().checkpoints(&s.stage.values, &cs, s.last);
+        }
+        want
+    }
+
+    /// The stream stages active at `t`, through the reels (`stream_want`).
+    fn stream_stages_at<'a>(&'a self, t: Tick, quality: Quality, out: &mut std::collections::HashMap<(usize, kt_model::ClipId), WantStage<'a>>) {
+        for c in self.clips.iter().filter(|c| c.active_at(t)) {
+            match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
+                (Some(st), None) => {
+                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+                    let pos = cs.pos(t);
+                    let s = out.entry((self as *const VideoRenderer as usize, c.id)).or_insert_with(|| {
+                        let sq = stream::stream_quality(c, st, quality);
+                        WantStage {
+                            clip: c,
+                            stage: st,
+                            grid: &self.grid,
+                            quality,
+                            frame: sq.width as usize * sq.height as usize * 4,
+                            positions: std::collections::HashSet::new(),
+                            last: pos,
+                        }
+                    });
+                    s.positions.insert(pos);
+                    s.last = s.last.max(pos);
+                }
+                (_, Some(sub)) => sub.stream_stages_at(clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality), out),
+                _ => {}
+            }
+        }
+    }
+
+    /// Keep the loop the host plays in this renderer's stream memo (`StreamMemo::keep_loop`).
+    pub fn stream_keep_loop(&self, on: bool) {
+        self.stream_memo.keep_loop(on);
+    }
+
+    /// Whether this renderer keeps its stream history in `memo`.
+    pub fn shares_stream_memo(&self, memo: &Arc<kt_plugin_api::stream::StreamMemo>) -> bool {
+        Arc::ptr_eq(&self.stream_memo, memo)
+    }
+
+    /// The host's loop came round: a new lap for the stream memo (`StreamMemo::lap`).
+    pub fn stream_lap(&self) {
+        self.stream_memo.lap();
     }
 
     /// The largest frame (RGBA bytes) a stream stage active at `t` orders (decode-request-storm:

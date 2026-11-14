@@ -576,7 +576,7 @@ pub fn render_reel_preview(
         max_audio_bytes: 1,
         max_video_bytes: 64 << 20,
     });
-    let mut video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
+    let mut video = offline_renderer(p, &facts);
     let n = ((end.0 + step - 1) / step).max(1) as usize;
     let mut frames: Vec<Option<Arc<egui::ColorImage>>> = vec![None; n.min(MAX_FRAMES_PER_REEL)];
     let mut jpegs: Vec<Option<Vec<u8>>> = vec![None; frames.len()];
@@ -672,6 +672,29 @@ pub(crate) fn reel_envelope(
     Ok(acc.finish())
 }
 
+/// The renderer of an offline frame job (the reel strip, the poster): its stream stages keep their
+/// history in a memo of their own, as an export's do (stream-memo-budget, found-defects 519) — the
+/// preview's is sized for the player's loop and does not count them, so they evicted its history.
+pub(crate) fn offline_renderer(p: &Project, facts: &kt_engine::video::SourceFacts) -> kt_engine::VideoRenderer {
+    let mut video = kt_engine::VideoRenderer::new_with_facts(p, facts);
+    video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(kt_engine::export::EXPORT_STREAM_MEMO_BYTES)));
+    video
+}
+
+/// Run `run`, an offline job's stream pre-roll, under a stop check that answers its cancel AND its
+/// hold (found-defects 514): a held job's stages stop between history positions, keeping what they
+/// computed, the job waits out the vote here — between the pre-roll's batches, not inside a device
+/// job — and runs it again from the memo.
+pub(crate) fn preroll_under(ctl: &crate::bg::BgCtl, mut run: impl FnMut()) {
+    loop {
+        let held = ctl.clone();
+        kt_engine::stop_when(kt_time::trace::stop::JOB, move || held.is_cancelled() || held.is_held(), &mut run);
+        if !ctl.is_held() || ctl.should_stop() {
+            return;
+        }
+    }
+}
+
 /// One frame of the offline path at `t`: decode what the plan wants into the job's own cache,
 /// then compose. Shared by the reel strip and the project poster — one body (rule 17).
 pub(crate) fn compose_offline_frame(
@@ -687,11 +710,11 @@ pub(crate) fn compose_offline_frame(
     // over each, every other layer with it (decode-request-storm): read at once, the history lost
     // its front before the composite came, and the poster stayed black
     if video.has_stream_stages() {
-        // a cancelled job's history stops between positions (gpu-arbiter, row 147)
-        let cancelled = ctl.cancel_flag().clone();
-        let stop = move || cancelled.load(std::sync::atomic::Ordering::Acquire);
-        kt_engine::stop_when(kt_time::trace::stop::JOB, stop, || kt_engine::stream_preroll(video, cache, src, t, q));
-        if ctl.cancel_flag().load(std::sync::atomic::Ordering::Acquire) {
+        // a cancelled job's history stops between positions (gpu-arbiter, row 147), and so does a held
+        // one (found-defects 514): the stages keep what they computed, the job waits out the vote here,
+        // between the pre-roll's batches and not inside a device job, and goes on from the memo
+        preroll_under(ctl, || kt_engine::stream_preroll(video, cache, src, t, q));
+        if ctl.is_cancelled() {
             buf.clear();
             return;
         }
@@ -777,7 +800,7 @@ pub fn render_poster(
         max_audio_bytes: 1,
         max_video_bytes: 16 << 20,
     });
-    let mut video = kt_engine::VideoRenderer::new_with_facts(p, &facts);
+    let mut video = offline_renderer(p, &facts);
     let q = Quality { width: POSTER_W, height: POSTER_H };
     let t = video.grid.align_floor(at);
     let mut buf = Vec::new();
@@ -888,6 +911,60 @@ mod tests {
         let cell = strip.frames.first().and_then(|f| f.clone()).expect("the first cell is empty");
         let lit = cell.pixels.iter().filter(|c| c.r() > 200 && c.g() > 100 && c.b() < 60).count();
         assert!(lit * 2 > cell.pixels.len(), "the cell is not the generator's orange ({lit} of {})", cell.pixels.len());
+    }
+
+    /// Test t2493 (stream-memo-budget, found-defects 519): the reel strip's and the poster's renderer
+    /// keeps its stream history in a memo of its own, as an export does: the preview's is sized for
+    /// the player's loop, and a strip of a Datamosh filled it, evicting the player's history.
+    #[test]
+    fn t2493_an_offline_frame_job_has_its_own_stream_memo() {
+        crate::plugins::install();
+        let p = one_clip("synth:1");
+        let preview = kt_engine::VideoRenderer::new(&p);
+        assert!(preview.shares_stream_memo(kt_engine::video::stream_memo()), "scene guard: a plain renderer shares the preview's");
+        let job = super::offline_renderer(&p, &Default::default());
+        assert!(!job.shares_stream_memo(kt_engine::video::stream_memo()), "the job's renderer fills the preview's memo");
+        assert_eq!(job.stream_memo_cap(), kt_engine::export::EXPORT_STREAM_MEMO_BYTES);
+    }
+
+    /// Test t2494 (stream-memo-budget, found-defects 514): the stream pre-roll of a reel strip or a
+    /// poster stops when its job is held, not only when it is cancelled, waits out the hold between
+    /// batches, and goes on after it. Its stop check answered only the cancel, so the batches inside
+    /// one frame ran on through playback.
+    #[test]
+    fn t2494_the_offline_preroll_waits_while_its_job_is_held() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let pause = std::sync::Arc::new(AtomicBool::new(false));
+        let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), pause.clone());
+        let mut runs = Vec::new();
+        let mut releaser = None;
+        super::preroll_under(&ctl, || {
+            // what the run sees when it starts, then what its stages' stop check says once held
+            let started_held = pause.load(Ordering::SeqCst);
+            if runs.is_empty() {
+                pause.store(true, Ordering::SeqCst);
+                let pause = pause.clone();
+                releaser = Some(std::thread::spawn(move || {
+                    pause.store(false, Ordering::SeqCst);
+                    kt_time::sched::notify_gate();
+                }));
+            }
+            runs.push((started_held, kt_engine::video::stopping()));
+        });
+        releaser.unwrap().join().unwrap();
+        assert_eq!(runs.len(), 2, "the pre-roll did not run again after the hold: {runs:?}");
+        assert_eq!(runs[0], (false, true), "the stages' stop check did not answer the hold: {runs:?}");
+        assert!(!runs[1].0, "the pre-roll ran again while still held: {runs:?}");
+        // a cancel while held ends it without another run
+        let token = kt_time::sched::Token::new();
+        let ctl = crate::bg::BgCtl::from_flags(token.clone(), pause.clone());
+        let mut n = 0;
+        super::preroll_under(&ctl, || {
+            n += 1;
+            pause.store(true, Ordering::SeqCst);
+            token.cancel(0);
+        });
+        assert_eq!(n, 1, "a cancelled job's pre-roll ran again");
     }
 
     /// Test t2454 (class-walk-revision): the reel's envelope waits at each chunk while its job is
