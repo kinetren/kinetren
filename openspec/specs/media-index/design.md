@@ -516,3 +516,23 @@ render-speed-no-card D2 left the preview's sources converting a span on the deco
 because the count is read when a source opens. The split is by pictures, so the bytes do not move (t1765);
 the preview now takes the render's count by the memory measured when the project opens (t2440), part of the
 owner's "и процессор тоже" (kkt-26.11.11 L4).
+
+## A replaced source: what the old one left (2026-11-15, t211 red at load ~25)
+
+- **t211 was the test's, not the player's.** `replace_media` joins the old worker before it evicts the
+  source's bursts, so the old source cannot write after the eviction. But the check read "burst 0 is
+  absent" right after the call, while the new source's worker (woken by the same call) had already
+  decoded burst 0 with ITS value: 2 of 30 red beside a busy run, every time holding 0.25 (the new
+  source). The check is now "no burst holds the former value" over the whole range; 60 of 60 green
+  under load, red when the eviction is taken out.
+- **The class, walked**: every place a source is replaced or relinked goes through
+  `MediaParts::replace_media` (the media-path sync, a returned file, a generator recreated); a value
+  retune clears its cache on the worker itself (t663). Two holes were found:
+  - the audio render thread took "a source changed" from the COUNT of material lengths, which a
+    replacement keeps: the kept final mix of the former file went on replaying, and its material edges
+    stayed (`SourceFacts::epoch` now, t2540 — audio-render);
+  - the index asks every media once, at opening: a file away then never got its waveform after it
+    came back. The return now asks the index again and makes the thumbnails forget their probe (t2541).
+  The thumbnails themselves were not a hole: the filmstrip asks nothing of a file the watchdog has
+  offline. Proxies do not exist in the program; there is no separate relink dialog (the media-path
+  edit is the sync above).

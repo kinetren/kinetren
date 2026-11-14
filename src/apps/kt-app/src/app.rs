@@ -5073,7 +5073,7 @@ impl KtApp {
                 // did not open again — the placeholder stays, there is nothing to complain about
                 if let Ok(src) = open_source_indexed(&path, db.as_deref()) {
                     sources.replace_media(id, src);
-                    ok.push((id, label));
+                    ok.push((id, label, path));
                 }
             }
             reply.send(MediaDone::Returned(ok));
@@ -6820,10 +6820,17 @@ impl KtApp {
                 }
                 (MediaThen::Lock, MediaDone::Locked(state)) => self.take_lock(state),
                 (MediaThen::Returned, MediaDone::Returned(back)) => {
-                    for (id, label) in back {
+                    let mut index = Vec::new();
+                    for (id, label, path) in back {
                         self.placeholder_media.remove(&id);
+                        // what failed while the file was away is asked again: the index asks every
+                        // media once, at opening, so the waveform of a file away then was never
+                        // built (t2541); the thumbnails forget their probe of it too
+                        self.thumbs.invalidate_media(id);
+                        index.push((id, path));
                         self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
                     }
+                    self.index.enqueue(self.index_db_path(), index);
                 }
                 _ => {}
             }
@@ -10123,7 +10130,7 @@ enum MediaDone {
     Synced(Vec<(MediaId, Option<Tick>, Option<String>)>),
     Opened(Result<Box<dyn kt_media::MediaSource>, String>),
     Info(Result<kt_media::MediaInfo, String>),
-    Returned(Vec<(MediaId, String)>),
+    Returned(Vec<(MediaId, String, String)>),
     /// Per source: its id, label, the error of a placeholder, its length.
     Loaded(Vec<(MediaId, String, Option<String>, Tick)>),
     Locked(crate::project_lock::LockState),

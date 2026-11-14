@@ -967,6 +967,10 @@ pub struct SourceFacts {
     /// only whoever opened the source knows how much material there is.
     /// Its absence is not zero, but “no edge” (generator, placeholder).
     pub lengths: std::collections::HashMap<MediaId, kt_time::Tick>,
+    /// Moves on every source observed or forgotten: a source added, REPLACED (a file that came
+    /// back, a changed path — the same id, so no count moves) or removed. The audio render thread
+    /// takes the material edges again and drops the kept final mix when it moves.
+    pub epoch: u64,
 }
 
 impl SourceFacts {
@@ -974,6 +978,7 @@ impl SourceFacts {
     /// whether it is “procedural”: if the player, export and kt-cli diverged on this question,
     /// the order and the read would compute different keys (invariant 4).
     pub fn observe(&mut self, media: MediaId, info: &kt_media::MediaInfo) {
+        self.epoch += 1;
         if info.duration.0 > 0 {
             self.lengths.insert(media, info.duration);
         } else {
@@ -1008,6 +1013,9 @@ impl SourceFacts {
     }
 
     pub fn forget(&mut self, media: MediaId) {
+        self.epoch += 1;
+        // the material edge goes too: a removed source's length kept its silence counted as edge
+        self.lengths.remove(&media);
         self.natives.remove(&media);
         self.procedural.remove(&media);
         self.views.remove(&media);
