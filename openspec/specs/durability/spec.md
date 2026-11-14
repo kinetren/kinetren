@@ -689,6 +689,7 @@ up. The live `lessons` walk met "Unsaved work" over the program's own lesson cop
 - **THEN** the write's failure is warned, nothing opens, the work and its unsaved mark stay, and nothing is left waiting
 - **PATH** an edited project in an unwritable folder → File › New → "Save and continue" → a warning, the project stays with its asterisk
 - **TEST** t2308 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+
 ### Requirement: A live try starts clean and a red try keeps its evidence
 Before each try of a scenario the live bench SHALL empty the scenario's folder, so nothing an earlier
 run left reaches this one, and the stand SHALL drop its dump's companions (`.crash.json`, `.load.json`)
@@ -711,3 +712,27 @@ that ran.
   report names `first-try`
 - **TEST** t2210 (`src/apps/kt-app/src/reach_tests.rs`, calls `src/scripts/live-check.sh` on stand-in
   scenarios; without Xvfb the test is skipped with the named reason)
+
+### Requirement: A landed save clears only what the file holds
+When Ctrl+S's write lands, the view-state asterisk SHALL clear only if the view state now equals the
+one the file was written with.
+Why: class-walk-revision — one-scheduler made the write async; a bin or view edit made during it
+moves no `model_rev`, and the landed save cleared its asterisk though the file lacked it.
+
+#### Scenario: A view edit during the write keeps its asterisk
+- **WHEN** an edited project's Ctrl+S is writing and the person toggles the bin's free layout
+- **THEN** the write lands with the content asterisk gone and the view asterisk kept; a second Ctrl+S clears it
+- **PATH** an edited project → Ctrl+S → at once the bin's free-layout toggle → the write lands, the title keeps its asterisk; Ctrl+S again → the asterisk goes
+- **TEST** t2452 (`src/apps/kt-app/src/ui_wait_tests.rs`)
+
+### Requirement: Closing while playing lets the close's jobs run
+Closing the window SHALL stop playback before it waits for the autosave and the poster, so the
+player's pause vote does not hold the jobs it waits for.
+Why: class-walk-revision — both are Background jobs; closed while playing, the close waited out each
+bound (5 s, 3 s) with the jobs never started.
+
+#### Scenario: The close drops the playing vote first
+- **WHEN** an edited project plays long enough for the insurance autosave to be posted, and the window is closed
+- **THEN** the playing vote is down when the close has run
+- **PATH** an edited project playing for over a minute → the window's cross → the window goes at once; the recovery file holds the edit
+- **TEST** t2453 (`src/apps/kt-app/src/ui_wait_tests.rs`)
