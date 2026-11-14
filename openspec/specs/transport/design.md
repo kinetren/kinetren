@@ -283,3 +283,16 @@ unstamped) and its result is capped by the stream memo's room: noted, not change
   and pressed again within it does not reopen. Measured here: an open 7–20 ms, the first callback
   0.1–0.3 ms after; under a parallel live run at load ~30, 4.7 s and 23.4 s (found-defects 425).
 
+
+## A version asked on a pause holds the start, whenever the render thread notices it (2026-11-14)
+
+- **What hurt.** finish.sh of stage 11 at load ~200: t2331 "a start rendered before the project's
+  version landed" (32768 samples of the empty stand-in). The render thread decided the hold from
+  `is_playing()` at the moment IT noticed the new version (`dirty`), not at the moment the version was
+  asked: late to its loop under load, it noticed after the Play, held nothing, and played the former
+  version — for a deferred opening the empty stand-in, for an edit on a pause the version before it.
+  Reproduced: the former code red 1 of 12 beside a busy `nextest -p kt-gpu -p kt-app`, the fixed 0 of 36.
+- **The rule.** `Player::set_project` records "asked on a pause" (`asked_on_pause`, stored before the
+  dirty flag); the render thread holds the start that has not been handed out (`starting`) when it
+  sees it, playing or not by then. A version asked while playing never stops the sound. The deferred
+  opening needs no flag of its own. Guards: t2331, t2339.

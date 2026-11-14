@@ -422,7 +422,9 @@ opening. This is not a regression — the key is a function of the model, not of
   keys by `Player::built_seq` — the build lands after its edit. `Player::new` builds the opening on
   the caller's thread (offline callers: kt-cli, tests); `Player::new_deferred` (the editor) publishes an
   empty project of the same settings and hands the project to `engine-build` as version 1 — the render
-  thread reads that want at its start (`wanted` from `want_seq`, t2331).
+  thread reads that want at its start (`wanted` from `want_seq`, t2331). **A version asked on a pause
+  holds the next start however late the render thread notices it** (`asked_on_pause`, t2339): deciding
+  it by `is_playing()` at the notice played the stand-in or the former version under load.
 - **A loop region change is not an edit** (t2002): the head is pinned with the published renderer,
   and again by the builder when a version lands.
 - **`AudioRenderer` is shared across threads**: no render-time `Cell` in it. A value computed at the

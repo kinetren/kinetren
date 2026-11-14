@@ -98,3 +98,42 @@ fn t2331_the_first_version_is_built_off_the_caller() {
     assert!(first.iter().any(|v| v.abs() > 0.01), "the first pass after the build was silence");
     kt_engine::hold_builds_for_tests(0);
 }
+
+/// t2339 (the class of t2331): an edit asked on a pause holds the next start, however late the
+/// render thread notices it. A player of an empty project is built; with every build held, a version
+/// with the events is asked on the pause and Play pressed at once: nothing is rendered from the
+/// former (silent) version, and the first sound is the edit's. The hold was decided by whether the
+/// player played when the render thread NOTICED the edit, so under load (that thread late to its
+/// loop) the former version played.
+#[test]
+fn t2339_an_edit_asked_on_a_pause_holds_the_start() {
+    let p = project(400);
+    let mut empty = p.clone();
+    empty.clips.clear();
+    let (player, mut ring) = Player::new(
+        empty,
+        vec![(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Sine { hz: 330.0 })))],
+    );
+    let built = player.wait_built().seq;
+    kt_engine::hold_builds_for_tests(BUILD_HOLD_MS);
+    player.set_project(p.clone());
+    player.play();
+    let deadline = kt_time::test_deadline();
+    while player.built_seq() == built {
+        assert_eq!(ring.slots(), 0, "a start rendered the former version while the edit was being built");
+        assert!(std::time::Instant::now() < deadline, "the edit's version never landed");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let mut first = Vec::new();
+    while first.len() < 2048 {
+        assert!(std::time::Instant::now() < deadline, "the start never rendered");
+        while first.len() < 2048
+            && let Ok(v) = ring.pop()
+        {
+            first.push(v);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(first.iter().any(|v| v.abs() > 0.01), "the first pass after the edit was the former version's silence");
+    kt_engine::hold_builds_for_tests(0);
+}

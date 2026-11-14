@@ -181,6 +181,8 @@ pub struct Player {
     workers: Workers,
     natives: Natives,
     model_dirty: Arc<AtomicBool>,
+    /// The last version was asked on a pause (the render thread's start waits for it).
+    asked_on_pause: Arc<AtomicBool>,
     /// The one build per project version every consumer reads (edit-without-rebuild): the newest
     /// project handed over, and the renderers last published by the `engine-build` thread. A
     /// composite that holds an old renderer for seconds finishes on it and is abandoned (idle-cpu).
@@ -314,6 +316,7 @@ impl Player {
         let natives: Natives = Arc::new(std::sync::RwLock::new(nat));
         let video_gpu = Arc::new(Mutex::new(VideoGpuState::default()));
         let model_dirty = Arc::new(AtomicBool::new(true));
+        let asked_on_pause = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake { lock: Mutex::new(0), cv: std::sync::Condvar::new() });
         let project_version = Arc::new(AtomicU64::new(0));
         let content_version = Arc::new(AtomicU64::new(0));
@@ -363,6 +366,7 @@ impl Player {
             let workers = workers.clone();
             let builds = builds.clone();
             let dirty = model_dirty.clone();
+            let asked_on_pause_r = asked_on_pause.clone();
             let stop = stop.clone();
             let underruns = underruns.clone();
             let meters = meters.clone();
@@ -392,6 +396,7 @@ impl Player {
                         flight: flight_r,
                         natives: natives_r,
                         mix_coverage: mix_r,
+                        asked_on_pause: asked_on_pause_r,
                     })
                 })
                 .expect("spawn audio render")
@@ -475,6 +480,7 @@ impl Player {
             display_lap: Mutex::new(DisplayLap::default()),
             workers,
             model_dirty,
+            asked_on_pause,
             builds,
             build_thread: Some(build_thread),
             media,
@@ -529,6 +535,11 @@ impl Player {
         self.project_version.store(version, Ordering::Release);
         // the edit in the trace: the build of this version and what it invalidates follow
         kt_time::trace::ev(kt_time::trace::Ev::Edit).a(revision).b(version).emit();
+        // asked on a pause: the next start waits for this version, whenever the render thread
+        // notices it (stored before the dirty flag, which that thread reads first)
+        if !self.transport.is_playing() {
+            self.asked_on_pause.store(true, Ordering::Release);
+        }
         self.model_dirty.store(true, Ordering::Release);
         self.wake.notify();
     }
@@ -1754,6 +1765,9 @@ struct RenderCtx {
     /// MATERIAL (R.63 item 2) — without it honest silence past the file's end
     /// would be counted as starvation.
     natives: Natives,
+    /// A version was asked while the player was paused (`Player::set_project`): the next start
+    /// waits for it, however late this thread notices it.
+    asked_on_pause: Arc<AtomicBool>,
 }
 
 /// Worker map: RwLock, so that add_media/remove_media add decoders
@@ -2076,6 +2090,7 @@ fn audio_render_loop(ctx: RenderCtx) {
         flight,
         natives,
         mix_coverage,
+        asked_on_pause,
     } = ctx;
     let mut store = FxStateStore::new();
     // the opening's build IS the first model: the flag the player starts with asks for nothing
@@ -2131,7 +2146,12 @@ fn audio_render_loop(ctx: RenderCtx) {
 
     while !stop.load(Ordering::Acquire) {
         if dirty.swap(false, Ordering::AcqRel) {
-            build_holds_start |= !transport.is_playing();
+            // a version asked on a pause holds the start that has not been handed out yet, even when
+            // this thread notices it after the Play (under load it does: the deferred opening's
+            // stand-in and an edit's former version were played, found by t2331 at load 200); a
+            // version asked while playing never stops the sound
+            let on_pause = asked_on_pause.swap(false, Ordering::AcqRel);
+            build_holds_start |= !transport.is_playing() || (on_pause && starting);
             wanted = builds.want_seq();
         }
         if builds.built_seq() > have {

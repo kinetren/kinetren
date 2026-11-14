@@ -478,7 +478,8 @@ A model edit SHALL rebuild the audio renderer on a builder thread, never on the 
 thread; while the transport plays, the render thread SHALL keep filling the ring with the renderer it
 has until the new one arrives, then carry the FX state over (invariant 3) syncing only the events
 whose fingerprint changed (`sync_fx_since`). A build asked on a pause SHALL hold the next start until
-it arrives. The first model is built once. A start, the playback look-ahead and the background prefetch SHALL NOT order sources for the
+it arrives, however late the render thread notices the ask (a Play pressed before it does included);
+a deferred player's opening is such a build. The first model is built once. A start, the playback look-ahead and the background prefetch SHALL NOT order sources for the
 windows the final-mix store holds.
 Why: on the owner's project `AudioRenderer::new` takes 412 ms against a 341 ms ring; every edit
 during playback stopped the sound (his load report: 12–16 bursts a second instead of 47 at those
@@ -491,6 +492,11 @@ render thread and the sound stopped for a burst; a pause's inline build delayed 
 - **WHEN** one of 50 events with a reverb changes its gain and the renderer is rebuilt
 - **THEN** one event is synced, the rest keep their processors, and the sound after the swap equals a full sync's
 - **TEST** t1940 (`src/libs/kt-engine/tests/mix_store.rs`)
+
+#### Scenario: An edit asked on a pause holds the start that follows at once
+- **WHEN** with every build held, a version with events is asked on a pause of a player of an empty project and Play is pressed at once, beside a busy test run
+- **THEN** nothing is rendered until the edit's version lands, and the first sound is the edit's
+- **TEST** t2339 (`src/libs/kt-engine/tests/player_open.rs`)
 
 #### Scenario: Edits while a covered loop plays
 - **WHEN** a large project (a reel placed 400 times, each rebuild longer than the ring) loops a short range for 8 s and four edits arrive
