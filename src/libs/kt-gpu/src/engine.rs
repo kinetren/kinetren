@@ -1543,7 +1543,7 @@ impl GpuFxEngine {
     ) -> Result<(bool, kt_fx::video::FrameCost), GpuExecError> {
         let _frame = self.compiled.frame();
         let mut inner = self.inner.lock().unwrap();
-        let complete = inner.execute(plan, out, false)?;
+        let complete = inner.execute(plan, out, false, true)?;
         Ok((complete, inner.last_cost))
     }
 
@@ -1617,7 +1617,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
         let mut g = self.inner.lock().unwrap();
-        let r = g.execute(plan, out, true);
+        let r = g.execute(plan, out, true, false);
         g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         r
     }
@@ -1627,7 +1627,7 @@ impl VideoGpuExec for GpuFxEngine {
         let mut g = self.inner.lock().unwrap();
         // an export's frame: its runs in the settled form (gpu-leftovers D3)
         g.settled = true;
-        let r = g.execute(plan, out, false);
+        let r = g.execute(plan, out, false, true);
         g.settled = false;
         r
     }
@@ -1903,7 +1903,8 @@ impl Inner {
 
     /// `execute` that ends in the display target instead of a readback (preview-throughput D2):
     /// the same resolve and passes, then the display pass, and back without waiting. An
-    /// incomplete frame is not drawn at all unless asked: the picture holds the last full frame.
+    /// incomplete frame is not drawn at all, nor encoded (no-partial-picture): the target keeps what
+    /// it holds, and a starved plan stops before its first upload.
     fn present(&mut self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
         let (ow, oh) = (plan.out_w, plan.out_h);
         if ow > self.max_dim || oh > self.max_dim {
@@ -1920,15 +1921,19 @@ impl Inner {
             self.last_stages.encode_ns = mark.elapsed().as_nanos() as u64;
             return Ok(true);
         }
+        // a layer without its frame: nothing of this plan reaches the device (no-partial-picture)
+        if plan.starved() {
+            return Ok(false);
+        }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
         self.upload.begin_frame();
         self.binds.begin_frame();
         self.last_runs = Default::default();
         let (jobs, complete) = self.resolve_plan(plan)?;
-        for j in &jobs {
-            self.last_cost.add(j.cost());
-        }
-        if complete || o.show_incomplete {
+        if complete {
+            for j in &jobs {
+                self.last_cost.add(j.cost());
+            }
             // the arena: the jobs plus the display pass and the glow's
             let total: u32 = jobs.iter().map(|j| j.slot_units()).sum::<u32>() + 2;
             if total > self.arena_slots {
@@ -2127,8 +2132,11 @@ impl Inner {
     }
 
     /// `memo`: ask and fill the readback memo. An export composes every moment once, and the
-    /// memo's copy of each frame is pure cost.
-    fn execute(&mut self, plan: &FramePlan<'_>, out: &mut Vec<u8>, memo: bool) -> Result<bool, GpuExecError> {
+    /// memo's copy of each frame is pure cost. `partial`: an incomplete frame's bytes are wanted (an
+    /// export's last resort); otherwise an incomplete frame leaves `out` empty and stops where it is
+    /// known — a starved plan before its first upload, any other after the resolve
+    /// (no-partial-picture).
+    fn execute(&mut self, plan: &FramePlan<'_>, out: &mut Vec<u8>, memo: bool, partial: bool) -> Result<bool, GpuExecError> {
         let (ow, oh) = (plan.out_w, plan.out_h);
         if ow > self.max_dim || oh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: ow, h: oh });
@@ -2144,6 +2152,10 @@ impl Inner {
             self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
             return Ok(true);
         }
+        if !partial && plan.starved() {
+            out.clear();
+            return Ok(false);
+        }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
 
         // --- resolve: presence/size ---
@@ -2151,6 +2163,10 @@ impl Inner {
         self.binds.begin_frame();
         self.last_runs = Default::default();
         let (jobs, complete) = self.resolve_plan(plan)?;
+        if !complete && !partial {
+            out.clear();
+            return Ok(false);
+        }
         for j in &jobs {
             self.last_cost.add(j.cost());
         }

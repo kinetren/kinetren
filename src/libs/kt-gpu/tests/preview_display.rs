@@ -10,6 +10,10 @@ use kt_time::Tick;
 const Q: Quality = Quality { width: 320, height: 180 };
 
 fn warmed(p: &kt_model::Project, ts: &[Tick]) -> (VideoRenderer, BurstCache) {
+    warmed_at(p, ts, Q)
+}
+
+fn warmed_at(p: &kt_model::Project, ts: &[Tick], q: Quality) -> (VideoRenderer, BurstCache) {
     let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 256 << 20 });
     let video = VideoRenderer::new(p);
     let mut sources: std::collections::HashMap<_, Box<dyn MediaSource>> = p
@@ -20,7 +24,7 @@ fn warmed(p: &kt_model::Project, ts: &[Tick]) -> (VideoRenderer, BurstCache) {
     for (a, st) in kt_engine::gen_sources(p) {
         sources.insert(a, kt_media::factory::open_gen(&st));
     }
-    for (media, pts, dq) in ts.iter().flat_map(|t| video.layers_at(*t, Q)) {
+    for (media, pts, dq) in ts.iter().flat_map(|t| video.layers_at(*t, q)) {
         if let Some(s) = sources.get_mut(&media) {
             let f = s.read_video_frame(pts, Some(dq)).unwrap();
             cache.insert_video(
@@ -74,8 +78,10 @@ fn t1525_the_display_shows_the_readback_picture() {
     assert!(translucent > 0, "scene guard: opaque frames cannot see the premultiplication");
 }
 
-/// t1526: an incomplete frame leaves the picture as it is: the preview holds the last full frame
-/// (the flicker "black frame ↔ Loading", item 14/15), unless nothing has been shown yet.
+/// t1526 (rewritten by no-partial-picture, kkt-26.11.14 M1): an incomplete frame leaves the picture
+/// as it is, whatever was shown before: the preview holds the last full frame (the flicker "black
+/// frame ↔ Loading", item 14/15), and with none shown the place stays empty under Loading. The
+/// exception "unless nothing has been shown yet" is gone.
 #[test]
 fn t1526_an_incomplete_frame_does_not_touch_the_picture() {
     kt_plugins_builtin::install();
@@ -88,11 +94,40 @@ fn t1526_an_incomplete_frame_does_not_touch_the_picture() {
 
     let cold = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 20 });
     let hole = plan_at(&video, &cold, t);
-    assert!(!gpu.present(&hole, PresentOptions::default()).unwrap(), "scene guard: starved");
-    assert_eq!(gpu.read_display().unwrap(), held, "the last full frame stays");
-    let first = PresentOptions { show_incomplete: true, glow: false };
-    assert!(!gpu.present(&hole, first).unwrap());
-    assert_ne!(gpu.read_display().unwrap(), held, "with nothing shown yet the frame is drawn");
+    assert!(hole.starved(), "scene guard: starved");
+    for glow in [false, true] {
+        assert!(!gpu.present(&hole, PresentOptions { glow }).unwrap());
+        assert_eq!(gpu.read_display().unwrap(), held, "the last full frame stays (glow {glow})");
+    }
+}
+
+/// t2530 (no-partial-picture): an incomplete frame costs no drawing work. A starved plan is known
+/// before anything reaches the device: `present` and `execute_into` upload nothing, run no pass
+/// and read nothing back, and `execute_into` leaves no bytes; an export's `execute_once` still
+/// gets the frame's bytes (its last resort, named in its report).
+#[test]
+fn t2530_an_incomplete_frame_costs_no_drawing() {
+    kt_plugins_builtin::install();
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    let p = demo_project(DemoSources::Synth);
+    let t = Tick(90_000 * 3);
+    let (video, _) = warmed(&p, &[t]);
+    let cold = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 20 });
+    let hole = plan_at(&video, &cold, t);
+    assert!(hole.starved(), "scene guard: starved");
+    assert!(!gpu.present(&hole, PresentOptions { glow: true }).unwrap());
+    let s = gpu.last_stages();
+    assert_eq!((s.upload_bytes, s.submit_ns), (0, 0), "a starved present reached the device: {s:?}");
+    assert_eq!(gpu.last_cost(), Default::default(), "a starved present ran passes");
+    let mut out = vec![1u8; 16];
+    assert!(!gpu.execute_into(&hole, &mut out).unwrap());
+    assert!(out.is_empty(), "an incomplete frame's bytes were made: {} bytes", out.len());
+    let s = gpu.last_stages();
+    assert_eq!((s.upload_bytes, s.wait_ns, s.copy_ns), (0, 0, 0), "a starved readback ran: {s:?}");
+    assert_eq!(gpu.last_cost(), Default::default(), "a starved readback ran passes");
+    let mut last = Vec::new();
+    assert!(!gpu.execute_once(&hole, &mut last).unwrap());
+    assert_eq!(last.len(), (Q.width * Q.height * 4) as usize, "the export's last resort keeps its bytes");
 }
 
 /// t1527: the ambient glow picks the pixels the CPU loop picked, and a change of preview size is
@@ -107,7 +142,7 @@ fn t1527_glow_and_a_new_size() {
     let plan = plan_at(&video, &cache, t);
     let mut rgba = Vec::new();
     gpu.execute_into(&plan, &mut rgba).unwrap();
-    gpu.present(&plan, PresentOptions { show_incomplete: false, glow: true }).unwrap();
+    gpu.present(&plan, PresentOptions { glow: true }).unwrap();
     let (gw, gh, sw, sh) = (32usize, 18usize, Q.width as usize, Q.height as usize);
     let mut want = vec![0u8; gw * gh * 4];
     for gy in 0..gh {
@@ -122,9 +157,10 @@ fn t1527_glow_and_a_new_size() {
     assert_eq!(before.size, (Q.width, Q.height));
     gpu.present(&plan, PresentOptions::default()).unwrap();
     assert_eq!(gpu.display_target().unwrap().generation, before.generation, "the same size");
+    // the new size is a complete frame of that size: an incomplete one draws nothing at all
     let half = Quality { width: 160, height: 90 };
-    let first = PresentOptions { show_incomplete: true, glow: false };
-    gpu.present(&video.frame_plan(&cache, t, half), first).unwrap();
+    let (video_h, cache_h) = warmed_at(&p, &[t], half);
+    assert!(gpu.present(&video_h.frame_plan(&cache_h, t, half), PresentOptions::default()).unwrap());
     let after = gpu.display_target().unwrap();
     assert_eq!(after.size, (160, 90));
     assert_ne!(after.generation, before.generation, "a new size is a new texture");
@@ -195,7 +231,7 @@ fn t1845_the_display_target_never_waits_for_a_composite() {
     let t = Tick(90_000);
     let (video, cache) = warmed(&p, &[t]);
     let plan = plan_at(&video, &cache, t);
-    gpu.present(&plan, PresentOptions { show_incomplete: true, glow: true }).unwrap();
+    gpu.present(&plan, PresentOptions { glow: true }).unwrap();
     let presented = gpu.display_target().expect("a presented frame has a target").generation;
     let held = gpu.hold();
     let target = gpu.display_target().expect("the target is there while the engine is held");

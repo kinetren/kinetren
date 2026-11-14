@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 static ONE: Mutex<()> = Mutex::new(());
 const Q: Quality = Quality { width: 160, height: 90 };
-const SHOW: PresentOptions = PresentOptions { show_incomplete: false, glow: false };
+const SHOW: PresentOptions = PresentOptions { glow: false };
 
 fn sources(p: &Project) -> std::collections::HashMap<MediaId, Box<dyn MediaSource>> {
     let mut s: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =

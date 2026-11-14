@@ -393,7 +393,7 @@ pub struct KtApp {
     /// The video engine being built on its thread (pipeline-prewarm D3): taken by the frame it arrives.
     gpu_building: Option<(EngineBuild, eframe::egui_wgpu::RenderState)>,
     /// The last frame shown lives in `preview_display`, not in `texture`.
-    preview_on_display: bool,
+    pub(crate) preview_on_display: bool,
     /// Throttling of the glow mip: every N new frames (ambient does not flicker).
     glow_skip: u8,
     /// Name of the wgpu adapter/backend (perf panel diagnostics).
@@ -7190,10 +7190,9 @@ impl KtApp {
             // On the device when it can: the frame is not waited for, read back, converted
             // and uploaded again on this thread (preview-throughput D2). And never here: the
             // composite has a thread of its own, and a slow chain costs frames, not the Undo
-            // (idle-cpu, stage 2).
-            let shown_any = self.texture.is_some() || self.preview_on_display;
+            // (idle-cpu, stage 2). An incomplete frame is never drawn, not even the first one
+            // (no-partial-picture, kkt-26.11.14 M1): the place stays empty under Loading.
             let present = self.preview_display.as_ref().map(|_| kt_engine::PresentOptions {
-                show_incomplete: !shown_any,
                 glow: self.sw_render == Some(false) && self.glow_skip.wrapping_add(1) % 4 == 1,
             });
             let seq = self.player.ask_preview(Tick(key_tick), present);
@@ -7205,7 +7204,6 @@ impl KtApp {
             // screen (found-defects 393: V-fps counted every tick change)
             let new_frame = self.perf.take_composite(self.preview_key.map(|k| k.0) != Some(done.t.0), done.complete);
             self.preview_catching_up = done.catching_up;
-            let shown_any = self.texture.is_some() || self.preview_on_display;
             let (cq, c, on_display) = (done.quality, done.complete, done.on_display);
             complete = c;
             drop(composite_cost);
@@ -7216,8 +7214,10 @@ impl KtApp {
             self.composites += 1;
             let rgba = done.rgba;
             // we hold the last FULL frame: an incomplete composite does not overwrite the
-            // picture (the flicker “black frame ↔ Loading”, item 14/15)
-            if on_display && (c || !shown_any) {
+            // picture (the flicker “black frame ↔ Loading”, item 14/15), and with none shown yet
+            // the place stays empty under Loading (no-partial-picture): an incomplete composite
+            // has no bytes and drew nothing on the display target
+            if on_display && c {
                 self.glow_skip = self.glow_skip.wrapping_add(1);
                 if let Some(d) = &mut self.preview_display {
                     d.sync(self.smooth_scaling);
@@ -7226,7 +7226,7 @@ impl KtApp {
                 if new_frame {
                     self.perf.video_frames_shown += 1;
                 }
-            } else if !on_display && (c || !shown_any) && !rgba.is_empty() {
+            } else if !on_display && c && !rgba.is_empty() {
                 self.preview_on_display = false;
                 // glow mip: a coarse box downscale 32×18; during playback — every 4th new frame
                 // (ambient glow flicker will not notice)
@@ -7352,11 +7352,14 @@ impl KtApp {
         }
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(10, 10, 12));
-        if let Some(tex_id) = self.preview_texture_id() {
+        // the frame's place: the picture's, and Loading's when there is none yet (no-partial-picture)
+        let img_rect = {
             let scale =
                 (rect.width() / q.width as f32).min(rect.height() / q.height as f32).max(0.05);
             let size = egui::vec2(q.width as f32 * scale, q.height as f32 * scale);
-            let img_rect = egui::Rect::from_center_size(rect.center(), size);
+            egui::Rect::from_center_size(rect.center(), size)
+        };
+        if let Some(tex_id) = self.preview_texture_id() {
             // ambient glow as on YouTube (item 18): a BLURRED mini-copy
             // (32×18, LINEAR stretch = strong blur) + vignette to the background
             if self.sw_render == Some(false)
@@ -7470,7 +7473,11 @@ impl KtApp {
             // (caught by the live scenario `geomctl`)
             self.geom_toggle_button(ui, img_rect);
             self.title_drag_in_preview(ui, &painter, img_rect);
-            // scrim — only if the incompleteness lasts >180 ms (v1)
+        }
+        {
+            // scrim — only if the incompleteness lasts >180 ms (v1); over the picture held, or over
+            // the empty place when no complete frame has come yet: an incomplete one is never drawn
+            // (no-partial-picture, kkt-26.11.14 M1)
             let show_overlay = self
                 .incomplete_since
                 .map(|t0| t0.elapsed() > LOADING_SCRIM)
@@ -7781,7 +7788,7 @@ impl KtApp {
     }
 
     /// The texture of the frame on screen: the device's, or the uploaded bytes'.
-    fn preview_texture_id(&self) -> Option<egui::TextureId> {
+    pub(crate) fn preview_texture_id(&self) -> Option<egui::TextureId> {
         match (&self.preview_display, self.preview_on_display) {
             (Some(d), true) => d.id(),
             _ => self.texture.as_ref().map(|t| t.id()),

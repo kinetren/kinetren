@@ -156,7 +156,7 @@ fn display_latency(display: &Arc<GpuFxEngine>, offline: &Arc<GpuFxEngine>, host:
     let mut i = 10_000;
     while start.elapsed() < run {
         let t0 = Instant::now();
-        display.present(&plan(&f, &none, i), PresentOptions { show_incomplete: true, glow: false }).expect("present");
+        display.present(&plan(&f, &none, i), PresentOptions { glow: false }).expect("present");
         display.wait_presented();
         lat.push(t0.elapsed());
         i += 1;
@@ -293,7 +293,7 @@ fn t2260_a_present_is_waited_for_by_a_few_checks() {
     let Some((_ctx, display, _offline)) = shared() else { return };
     let fx = vec![instance("glow"), instance("radial_blur")];
     let f = frame(5);
-    let o = PresentOptions { show_incomplete: true, glow: false };
+    let o = PresentOptions { glow: false };
     for i in 0..3 {
         display.present(&plan(&f, &fx, 300 + i), o).unwrap();
         display.wait_presented();

@@ -20952,6 +20952,73 @@ fn t2415_loading_names_the_catch_up_where_it_is_written() {
     assert!(!texts(&h).iter().any(|t| t.src == loading || t.src == catching), "a complete frame has no scrim");
 }
 
+/// Test t2533 (no-partial-picture, kkt-26.11.14 M1): a preview that has no complete picture yet shows
+/// its place empty under Loading — the scrim and its text stand in the frame's place with no picture
+/// under them; before, the scrim was drawn only over a picture, so the first (partial) composite was
+/// put on screen to carry it.
+/// - **PATH** open a heavy project → the preview's place is dark with "Loading" in its centre, no
+///   picture under it → the first complete frame lands → the picture, no scrim
+#[test]
+fn t2533_no_picture_yet_is_an_empty_place_under_loading() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
+    let (mut h, _clip) = harness_geom_ctl();
+    assert!(h.state().texture.is_some() || h.state().preview_on_display, "scene guard: a picture came");
+    let loading = tr(k::perf::LOADING).to_string();
+    // nothing shown yet, the frame asked is incomplete, a second ago, no retry due
+    let deadline = kt_time::test_deadline();
+    loop {
+        {
+            let app = h.state_mut();
+            app.texture = None;
+            app.glow_texture = None;
+            app.preview_on_display = false;
+            let k = app.preview_key.expect("a frame was asked");
+            app.preview_key = Some((k.0, k.1, false));
+            app.incomplete_since = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+            app.preview_catching_up = 0;
+            app.compose_retry_gap = crate::app::COMPOSE_RETRY_MAX * 2;
+            app.compose_retry_epoch = app.player.cache.epoch();
+        }
+        let before = h.state().composites;
+        h.step();
+        if h.state().composites == before && h.state().preview_asked.is_none() {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the preview never stood still");
+    }
+    assert!(h.state().preview_texture_id().is_none(), "scene guard: no picture to draw");
+    let rect = h.state().preview_rect;
+    let at = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .find(|t| t.src == loading)
+        .expect("Loading is written over the empty place");
+    assert!(
+        (at.rect.center() - rect.center()).length() < 4.0,
+        "Loading stands in the frame's place, its centre ({:?} vs {:?})",
+        at.rect.center(),
+        rect.center()
+    );
+    // no image is painted in the preview's place: a mesh with a texture there would be a picture
+    fn images(shape: &egui::epaint::Shape, out: &mut Vec<egui::Rect>) {
+        use egui::epaint::Shape;
+        match shape {
+            Shape::Vec(v) => v.iter().for_each(|s| images(s, out)),
+            Shape::Mesh(m) if m.texture_id != egui::TextureId::default() => out.push(m.calc_bounds()),
+            _ => {}
+        }
+    }
+    let mut painted = Vec::new();
+    for cs in &h.output().shapes {
+        images(&cs.shape, &mut painted);
+    }
+    assert!(
+        !painted.iter().any(|r| r.intersects(rect.shrink(8.0)) && r.width() > rect.width() * 0.5),
+        "a picture was drawn in the empty preview: {painted:?}"
+    );
+}
+
 /// Test t2457 (class-walk-revision): two more gestures measured between reads count the busy frame
 /// and every press, as test-hygiene made the rest. The preview's single click waited a fixed 300 ms
 /// from when its frame happened to run: on 450 ms frames the play fired before egui's widened double

@@ -205,6 +205,25 @@ pub struct FramePlan<'a> {
     pub layers: Vec<PlanLayer<'a>>,
 }
 
+impl FramePlan<'_> {
+    /// Some layer of the plan, at any depth of its reels and track stages, has no input frame
+    /// (no-partial-picture): the composite cannot come out complete, and an executor knows it before
+    /// it uploads, encodes or reads back anything. Exactly the starvation `resolve` finds; a frame
+    /// that is there but of a foreign size is found only by resolving it.
+    pub fn starved(&self) -> bool {
+        fn src(s: &LayerSrc<'_>) -> bool {
+            match &s.input {
+                LayerInput::Frame(f) => f.is_none(),
+                LayerInput::Nest(n) => n.plan.starved(),
+            }
+        }
+        self.layers.iter().any(|l| match l {
+            PlanLayer::One { src: s, .. } => src(s),
+            PlanLayer::Dissolve { a, b, .. } => src(a) || src(b),
+        })
+    }
+}
+
 /// GPU executor error. `DeviceLost` — the caller “poisons” the GPU until the end
 /// of the session (no picture, a notice); `TooLarge` — no picture for
 /// this plan (the source is larger than the device's texture limit).
@@ -267,9 +286,13 @@ pub fn chain_plan<'a>(
 /// only the trait and receives the executor by injection from above).
 pub trait VideoGpuExec: Send + Sync {
     /// Plan → straight RGBA8 into `out` (readback). Ok(complete) — the same
-    /// “playback does not wait” rule (invariant No. 5): a layer without a pre-FX frame is skipped.
+    /// “playback does not wait” rule (invariant No. 5). An incomplete frame is not composed at all
+    /// (no-partial-picture): `out` is left empty, and nothing is uploaded, encoded or read back past
+    /// the point the executor knows it — a starved plan (`FramePlan::starved`) before anything.
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
     /// `execute_into` for a caller that asks each moment once (an export): no memo of the frame.
+    /// The one caller that gets an incomplete frame's bytes: an export writes, as its last resort,
+    /// a frame its input cannot give twice in a row, and names it (the export spec).
     fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         self.execute_into(plan, out)
     }
@@ -302,7 +325,7 @@ pub trait VideoGpuExec: Send + Sync {
     }
     /// Plan → the executor's display target, the frame stays on the device and nobody waits for
     /// it (preview-throughput D2). Ok(complete) as `execute_into`; an incomplete frame leaves the
-    /// target as it is unless `show_incomplete`. The passes are those of `execute_into`.
+    /// target as it is and runs no pass (no-partial-picture). The passes are those of `execute_into`.
     fn present(&self, _plan: &FramePlan<'_>, _o: PresentOptions) -> Result<bool, GpuExecError> {
         Err(GpuExecError::Unsupported("no display target"))
     }
@@ -353,8 +376,6 @@ pub trait VideoGpuExec: Send + Sync {
 /// How `VideoGpuExec::present` treats a frame.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct PresentOptions {
-    /// Write an incomplete frame too: nothing has been shown yet.
-    pub show_incomplete: bool,
     /// Refresh the 32×18 ambient glow target as well.
     pub glow: bool,
 }

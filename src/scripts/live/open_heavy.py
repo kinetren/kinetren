@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live scenario `open_heavy` (scheduler-followups, found-defects 270): opening a heavy project never
+"""Live scenario `open_heavy` (scheduler-followups, found-defects 270; t2534 no-partial-picture): opening a heavy project never
 stands the window.
 
 The new app's constructor opened every source (FFmpeg probe and sidecar) and built the player's
@@ -13,15 +13,19 @@ PATH (the durability spec, "The heavy showcase opens with the window answering")
    system dialog's answer is `KT_FILE_PICK` in Xvfb, the item itself is clicked);
 2. at once the timeline shows the showcase's events and the preview says Loading; the File menu
    answers a click while it loads;
-3. the preview shows the picture.
+3. the preview shows the picture; until then its place is empty under Loading, never a partial
+   picture (no-partial-picture, kkt-26.11.14 M1).
 
 The verdict: the menu opens during the load, the UI thread's blocking counter (`<dump>.load.json`,
-`block.ui`) stays at zero over the whole run, and the picture arrives.
+`block.ui`) stays at zero over the whole run, no picture is drawn while the fresh project's preview says
+Loading (it has no full frame to hold), and the picture arrives. The work of the open (composites,
+device submits, processor) and of the pause after it are printed: the load measure of the change.
 """
 import json
 import os
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 import kt_live  # noqa: E402
@@ -67,6 +71,7 @@ def main(out):
         app.click_probe("menu.file", "the “File” menu")
         app.expect(app.until(lambda: has_field(app, "file.open"), timeout=10.0), "the File menu opened")
         app.click_probe("file.open", "the “Open…” item")
+        opened_at, work0 = time.time(), meter.read()
         # the showcase's events are on the timeline as soon as the file is read
         app.expect(app.until(lambda: len(app.geom().get("clips", [])) == clips, timeout=30.0),
                    f"the showcase's {clips} events are on the timeline")
@@ -80,8 +85,29 @@ def main(out):
         app.step("menu", "the File menu answers while the showcase loads")
         app.key("Escape")
 
-        app.expect(app.until(lambda: not loading(app), timeout=300.0), "the showcase's picture never came")
-        app.step("picture", "the preview shows the showcase's picture")
+        # until the picture: Loading over an empty place, never a picture under it (a fresh project
+        # holds no full frame of its own, so any picture under Loading is a partial one)
+        partial = []
+
+        def came():
+            l, f = loading(app), has_field(app, "preview.frame")
+            if l and f:
+                partial.append(time.time() - opened_at)
+            return f and not l
+
+        app.expect(app.until(came, timeout=300.0), "the showcase's picture never came")
+        app.expect(not partial, f"a picture was drawn under Loading before the first full one: {len(partial)} looks")
+        app.step("picture", "the preview shows the showcase's picture; before it the place was empty under Loading")
+        kt_live._poll(0.3)
+        work1 = meter.read()
+        dt = time.time() - opened_at
+        open_work = {k: v - work0["work"].get(k, 0) for k, v in work1["work"].items() if v - work0["work"].get(k, 0)}
+        cpu = (sum(work1["ticks"].values()) - sum(work0["ticks"].values())) / dt
+        print(f"   the open to the picture: {dt:.1f} s, {cpu:.0f} % of a core, "
+              f"composites {open_work.get('composites', 0)}, device submits {open_work.get('device_submits', 0)}")
+        kt_live._poll(3.0)
+        pause, pct = meter.over(10.0)
+        print(f"   the pause after it, 10 s: {pause}, {pct:.1f} % of a core")
 
         block = meter.read().get("block", {})
         app.expect(block.get("ui", -1) == 0, f"the UI thread made no blocking call over the run: {block}")

@@ -79,8 +79,15 @@ pub fn compose(video: &VideoRenderer, cache: &BurstCache, t: Tick, q: Quality) -
     (out, complete)
 }
 
+/// An incomplete frame has no bytes on the preview's path (no-partial-picture); the tests that read
+/// what such a frame holds get the export's last-resort bytes, composed apart from the memo.
 pub fn compose_into(video: &VideoRenderer, cache: &BurstCache, t: Tick, q: Quality, out: &mut Vec<u8>) -> bool {
-    video.compose_on(&*engine(), cache, t, q, out).expect("GPU execute")
+    if video.compose_on(&*engine(), cache, t, q, out).expect("GPU execute") {
+        return true;
+    }
+    assert!(out.is_empty(), "the preview's path made an incomplete frame's bytes");
+    let (complete, _) = engine().execute_measured(&video.frame_plan(cache, t, q), out).expect("GPU execute");
+    complete
 }
 
 /// The export's video stream of the whole project.

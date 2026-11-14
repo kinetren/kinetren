@@ -290,9 +290,9 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
         };
         if need {
             let new_frame = key.map(|x| x.0) != Some(k);
-            // the program's choice: on the display target while the executor has one
-            let shown_yet = key.is_some();
-            let present = PresentOptions { show_incomplete: !shown_yet, glow: false };
+            // the program's choice: on the display target while the executor has one; an incomplete
+            // frame draws nothing (no-partial-picture)
+            let present = PresentOptions { glow: false };
             let c = match player.present_preview(Tick(k), present) {
                 Some((_, c)) => c,
                 None => player.compose_preview_into(Tick(k), &mut buf).1,

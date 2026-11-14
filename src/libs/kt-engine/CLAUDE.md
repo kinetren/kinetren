@@ -113,6 +113,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The preview composes on its own thread** (`compose_queue`, ui-never-waits): the UI asks (`ask_preview`) and takes (`take_composed`); the newest ask replaces a waiting one; a frame of a state the model has left is dropped; a chain whose executor time passes `SLOW_CHAIN` goes to the offline device. The renderer is an `Arc` behind a mutex: clone the pointer, never hold the lock through a plan. The kept moments' recheck runs there too (`recheck_shown`).
 - **A guard taken inside an expression lives to the end of the statement.** `X::new(&lock.lock().unwrap().clone())` holds the lock through the build, and `if let Some(w) = map.write().unwrap().remove(k) { w.shutdown() }` joins under the guard. Clone, or take out, in a statement of its own (ui-never-waits: the UI's edits waited 412 ms for the audio render thread's build).
 - **The preview presents** (preview-throughput D2). `Player::present_preview` ends in the executor's display target with no readback.
+- **An incomplete frame is never shown and costs no drawing** (no-partial-picture, kkt-26.11.14 M1): no
+  `PresentOptions` draws one; an executor asks `FramePlan::starved` before its first upload and stops after
+  the resolve for any other incompleteness; `execute_into` leaves no bytes for one, only `execute_once`
+  (the export's last resort) keeps them. A new reader of a picture or a level (the meter's
+  `sample_levels_at` → `None` on a cache miss) gives nothing rather than the part it has. t2530–t2532.
 - **A stream history stops when nobody wants it** (gpu-arbiter): `video_stream::stop_when(who, check,
   body)` sets this thread's stop check, which the host's `ClipStream::stop` answers to the kernel; the
   compose thread checks a newer ask for another moment, an edit and its end, the prefetch thread the

@@ -737,17 +737,24 @@ impl Player {
     }
 
     /// Peak levels on pause: one burst from position t through a one-off
-    /// FX state and the cache (a miss = silence — enough for the meter).
-    pub fn sample_levels_at(&self, t: Tick) -> (f32, f32) {
+    /// FX state and the cache. `None` — a burst of the mix is not in the cache yet: a level of the
+    /// part that is would be a partial mix shown as the moment's (no-partial-picture; it read the
+    /// missing part as silence).
+    pub fn sample_levels_at(&self, t: Tick) -> Option<(f32, f32)> {
         // Probe cache (item 1): previously EVERY call (8 times/s on pause) cloned
         // the whole Project and recreated all FX. Now the graph is the shared build's and the
         // states are synced by the builder; the state is reset before measuring (determinism).
         let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
+        let mut missed = false;
         self.with_probe(|renderer, store| {
             store.reset_all();
             let mut fetcher = CacheFetcher::new(self.cache.clone());
             renderer.render_frames_with(&mut fetcher, store, t.to_audio_frames(), &mut chunk);
+            missed = fetcher.misses.load(Ordering::Relaxed) > 0;
         });
+        if missed {
+            return None;
+        }
         let gain = self.master_gain();
         let mut pl = 0f32;
         let mut pr = 0f32;
@@ -755,7 +762,7 @@ impl Player {
             pl = pl.max((fr[0] * gain).abs());
             pr = pr.max((fr[1] * gain).abs());
         }
-        (pl, pr)
+        Some((pl, pr))
     }
 
     pub fn seek(&self, t: Tick) {
