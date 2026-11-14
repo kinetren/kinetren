@@ -242,6 +242,21 @@ pub fn chain_plan<'a>(
     t: Tick,
     cam3d: Option<Cam3d>,
 ) -> FramePlan<'a> {
+    chain_plan_with(frame, fx, fx_hash, u, t, cam3d, Vec::new())
+}
+
+/// `chain_plan` with the slots' mask ops (chain-everywhere, found-defects 541): a run of some of an
+/// event's slots outside its layer (a stream stage's inputs) keeps the masks those slots carry.
+#[allow(clippy::too_many_arguments)]
+pub fn chain_plan_with<'a>(
+    frame: Arc<VideoFrame>,
+    fx: &'a [FxInstance],
+    fx_hash: u64,
+    u: f64,
+    t: Tick,
+    cam3d: Option<Cam3d>,
+    masks: Vec<kt_fx::mask::MaskOp>,
+) -> FramePlan<'a> {
     let (out_w, out_h) = (frame.width, frame.height);
     let content = xxhash_rust::xxh3::xxh3_64(&frame.rgba);
     let src = LayerSrc {
@@ -257,7 +272,7 @@ pub fn chain_plan<'a>(
         blend: None,
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
-        masks: Vec::new(),
+        masks,
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
     FramePlan { t, out_w, out_h, layers }
