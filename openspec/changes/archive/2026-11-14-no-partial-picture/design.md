@@ -86,6 +86,20 @@ thrown away. Every place a picture or a level is made or drawn:
 
 ## Measured
 
-To be filled from the live runs (`open_heavy` fresh open + pause; `idle` pause), before = the stage-12
-build (`orch-26-11-01` 8fd5f2be), after = this branch, both debug, llvmpipe, the machine shared with other
-sessions' test runs.
+Before = the stage-12 build (`orch-26-11-01` 8fd5f2be), after = this branch; both debug, llvmpipe, the
+showcase `kt-cli showcase --heavy`, the machine shared with other sessions' test runs (timings swing by
+several times between runs; the counters are the measure).
+
+- **Fresh open of the heavy showcase** (live `open_heavy`, six runs each side over two rounds): the old
+  build drew a picture under Loading before the first full one on one run of three (29 looks — the
+  partial first picture), the new build on none. With the sidecars warm (rounds 3–4) the open to the
+  picture took 1.3/1.4 s before and 1.3/1.2 s after, 2 composites both, 103/114 against 95/118 device
+  submits — the same work; the incomplete composites the old build encoded are the ones that now stop
+  at `starved`, and on this machine the open's first frame is complete after two asks.
+- **The pause after the open**, 10 s: the same counts both sides (88–104 UI frames, all event passes,
+  equal before and after: the scenario's last Escape on the File menu, not the preview).
+- **Pause at rest** (live `idle`, the heavy showcase): before — quiet after 6 s, a pause 1 % of a core,
+  nothing ran, an open effects window 1 %; after — quiet after 3 s, a pause 1 %, nothing ran, an open
+  effects window 1 %. Nothing at rest changed: a rested preview asks no composite either way.
+- Live `datamosh`, `gpufx`, `heavy_loop` green on the new build (Loading over the held picture during a
+  catch-up, the device-drawn picture, a covered loop).

@@ -535,8 +535,9 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
   `stream_held`, `Composed.held` gone). A frame short of more than `compose_steps` is incomplete playing or
   paused; `VideoRenderer::stream_short` (max over the plan, reels and track stages included) →
   `GpuStages.stream_short` → `Composed.catching_up`; the Loading scrim writes "Loading — catching up: N" in
-  Loading's place. The first picture of a fresh preview is still presented incomplete under the scrim (the
-  owner's round-14 rule; row 461 asks him).
+  Loading's place. The first picture of a fresh preview was still presented incomplete under the scrim (the
+  owner's round-14 rule; row 461 asked him) — until no-partial-picture (kkt-26.11.14 M1: "пустое"): no
+  incomplete composite is presented at all, and an executor stops before the device for one.
 - **The class walk** (a stage given an input that is not its own position): the stream stage (fixed), a
   blended frame pair lacking a side (took the other at full weight and reported complete — now no picture,
   incomplete; t2418), the reel strip and the poster (kept incomplete offline composites — now only complete

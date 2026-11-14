@@ -14,6 +14,6 @@
 
 ## 3. Close
 
-- [ ] 3.1 Class walk in design.md; found-defects 461 out, 570–573 in; whats-new; registry M1
-- [ ] 3.2 Tests of the touched crates, clippy, live `open_heavy` + `idle`; load before/after in design.md
+- [x] 3.1 Class walk in design.md; found-defects 461 out, 570–573 in; whats-new; registry M1
+- [x] 3.2 Tests of the touched crates, clippy, live `open_heavy` + `idle`; load before/after in design.md
 - [ ] 3.3 Commit, target-prune, archive
