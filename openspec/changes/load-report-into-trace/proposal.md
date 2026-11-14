@@ -11,8 +11,8 @@ fact that is only in a text file is a fact he never sees.
 
 - The machine's facts go into the trace as `MACHINE` text records (the form `gpu.<role>.*` and the
   processor/memory/OS basics already use, repeated at every segment's head): `adapter.<i>` (name /
-  kind / backend / PCI ids), `monitors`, `power` — from `kt_gpu::trace_machine`, called by the load
-  watch's thread at its start (kt-app) and by `kt-cli --trace`; `clock` — the run's start in local
+  kind / backend / PCI ids), `monitors`, `power` — from `kt_gpu::trace_machine`, called by `app::run`
+  after the adapter listing it makes before eframe (kt-app) and by `kt-cli --trace`; `clock` — the run's start in local
   time with its offset, and `ffmpeg` — the FFmpeg major the run loaded, until now only in `kt-app.log`'s
   run header (kt-app). No new `Ev` number: these are facts of a run, not events.
 - `kt-cli trace machine` names the run and its start (UTC from the segment head) before the facts;

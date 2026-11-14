@@ -1,9 +1,8 @@
 //! The load watch (idle-cpu, kkt-26.11.07 item E3: the owner had no tool to bring proof with, and
 //! might not reach a menu in such lag). A thread of its own, on from the start, with no setup: once a second it reads
 //! which threads held the processor and which work counters moved, and hands each busy second to
-//! the telemetry journal and the structured trace. The machine's facts (every adapter, the cards the
-//! monitors hang off, the power choice) go into the trace once, from this thread, at its start: the
-//! first adapter listing loads every driver, and the UI thread must not wait for it.
+//! the telemetry journal and the structured trace. The machine's facts the load report's header
+//! carried go into the trace at the start (`app::run`, `kt_gpu::trace_machine`).
 //!
 //! The price at rest is one read of `/proc/self/task` a second and no write (t1839). It never
 //! touches the UI thread, and the UI only reads the last sample.
@@ -292,8 +291,6 @@ pub fn start() {
     let bench = std::env::var("KT_GEOM_DUMP").ok().map(|p| format!("{p}.load.json"));
     let period = if bench.is_some() { BENCH_PERIOD } else { PERIOD };
     let _ = std::thread::Builder::new().name("load-watch".into()).spawn(move || {
-        // the machine's devices into the trace, off the UI thread (load-report-into-trace)
-        kt_gpu::trace_machine();
         let mut before = thread_ticks();
         let mut was = work::totals();
         let mut cost_was = crate::frame_cost::totals();

@@ -5,9 +5,9 @@ Every run's trace SHALL carry, as machine facts at the head of every segment, wh
 header said: each adapter the machine offers (`adapter.<i>`: name / kind / backend / vendor:device),
 the cards the monitors hang off (`monitors`, "unknown" where the system does not say), the power
 choice the UI and offline work run on (`power`), the run's start in local time with milliseconds and
-its offset (`clock`), and the FFmpeg the run loaded (`ffmpeg`). The editor SHALL record the devices
-from the load watch's thread at its start, never from the UI thread; `kt-cli --trace` SHALL record
-them too. `kt-cli trace machine` SHALL print the run's label and its start (UTC) before the facts,
+its offset (`clock`), and the FFmpeg the run loaded (`ffmpeg`). The editor SHALL record the devices at
+its start from the one adapter listing it makes before the window's device opens; `kt-cli --trace`
+SHALL record them too. `kt-cli trace machine` SHALL print the run's label and its start (UTC) before the facts,
 `summary` SHALL end with the same lines, and `dump` SHALL start with one JSON line holding them. No
 `load-report.txt` SHALL be written. The Diagnostics load section's button SHALL open the trace
 folder `<data>/trace` (made if absent).

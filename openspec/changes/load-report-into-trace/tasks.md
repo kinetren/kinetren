@@ -10,7 +10,7 @@ Every stage ends with a commit (English, the first line = the stage and what was
 ## 1. The header into the trace
 
 - [x] 1.1 `kt_gpu::machine_facts` (pure) and `trace_machine`: `adapter.<i>`, `monitors`, `power` as trace machine facts; t2570
-- [x] 1.2 kt-app: the load watch's thread calls `trace_machine` at its start; `tele_journal::install` records `clock` (local start with milliseconds and offset) and `ffmpeg`; t2571
+- [x] 1.2 kt-app: `app::run` calls `trace_machine` after its adapter listing (the load watch's thread ran before the trace existed: live `idle` caught it); `tele_journal::install` records `clock` (local start with milliseconds and offset) and `ffmpeg`; t2571
 - [x] 1.3 kt-cli: `--trace` records the devices; `trace machine` names the run and its UTC start; `summary` ends with the machine; `dump` starts with it; t2572
 
 ## 2. The txt goes, the button opens the trace folder

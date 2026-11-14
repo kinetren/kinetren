@@ -19,8 +19,11 @@ renumber here).
 
 ### D2. Where they are recorded
 `kt_gpu::trace_machine` lists the adapters (`adapter_facts`, once per process: the first listing
-loads every driver) and reads sysfs. In kt-app the load watch's thread calls it first thing: off the
-UI thread, once, at start — the trace's segment head then carries them for the whole run. kt-cli calls
+loads every driver) and reads sysfs. In kt-app `app::run` calls it right after the listing it already
+makes on the main thread before eframe opens its instance (segv-crashes: no listing may race eframe's
+instance at start, so the load watch's thread — the first place tried — is the wrong one: it ran
+before the trace was installed and recorded nothing, which the live `idle` scenario caught). The
+segment heads then carry the facts for the whole run. kt-cli calls
 it right after `--trace` installs the trace. `machine_facts` is the pure part (t2570).
 
 ### D3. The wall clock
