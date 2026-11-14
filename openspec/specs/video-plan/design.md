@@ -624,3 +624,10 @@ is one) — and stays in the parallel run. t2436's "queued ahead" is a race of t
 the software device's threads on one processor (16 and 62 of 159 under full runs, 159 alone): it runs with
 the machine (`threads-required = 'num-cpus'`, as t2311), and its idle with nothing queued is held.
 
+The stage-11 rerun then failed t2255 ("the look-ahead's job went first") under the full run, green alone.
+The test, not the arbiter: its holder was a real long GPU job, which on a loaded machine could end before
+the frame's thread came to wait, and its order was the order the jobs' threads recorded their ends, which a
+descheduled thread reverses. It now holds the ring with an admitted piece never submitted (it never drains)
+until both wait, and reads the order from the arbiter's admission records. Under 64 busy loops on 32
+threads the old form failed 2 of 8, the new 0 of 18; with the class rule turned off the new form is red.
+

@@ -231,50 +231,55 @@ fn t2254_the_displays_latency_on_a_shared_device_is_bounded() {
 }
 
 /// Test t2255: on the compute host's ring the frame on screen's job is admitted before a waiting
-/// look-ahead job, whatever came first.
+/// look-ahead job, whatever came first. The ring is held by an admitted piece never submitted (it
+/// never drains) until both wait, and the order is the arbiter's own: its admission records. A long
+/// job as the holder and the order the jobs finished in were the machine's (stage 11: under the full
+/// run the holder ended before the frame's job came to wait, or the frame's thread recorded late).
 #[test]
 fn t2255_the_compute_host_admits_the_frame_on_screen_first() {
+    use kt_time::trace::{self, Ev};
     let _one = lock();
     let Some(ctx) = context() else { return };
     let host = ComputeDevice::on_context(&ctx);
     spin(&*host, "test:short", 1000, 1).unwrap();
-    let order = Arc::new(Mutex::new(Vec::new()));
-    let long = {
-        let host = host.clone();
-        std::thread::spawn(move || {
-            let _class = with_class(Class::Near);
-            spin(&*host, "test:long", 20_000_000, 1).unwrap();
-        })
-    };
     let ring = host.ring().clone();
     let deadline = kt_time::test_deadline();
-    while ring.in_flight_ns() == 0 {
-        assert!(Instant::now() < deadline, "the long job never went in flight");
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    let mut hs = Vec::new();
-    for c in [Class::Near, Class::Now] {
-        let (host, order) = (host.clone(), order.clone());
-        hs.push(std::thread::spawn(move || {
-            let _class = with_class(c);
-            // never measured: each claims the whole bound, so one runs at a time; the look-ahead's
-            // is long, so the order they finish in is the order they were admitted in
-            match c {
-                Class::Now => spin(&*host, "test:now", 1000, 1).unwrap(),
-                _ => spin(&*host, "test:near-long", 5_000_000, 1).unwrap(),
-            };
-            order.lock().unwrap().push(c);
-        }));
-        while !ring.higher_waits(Class::Offline) || (c == Class::Now && !ring.higher_waits(Class::Near)) {
-            assert!(Instant::now() < deadline, "{c:?} never waited");
-            std::thread::sleep(Duration::from_millis(1));
+    let held = Mutex::new(0u64);
+    let items = trace::testing::capture(|| {
+        let holder = ring.admit(Class::Near, arbiter::bound());
+        *held.lock().unwrap() = trace::now_ns();
+        let mut hs = Vec::new();
+        for c in [Class::Near, Class::Now] {
+            let host = host.clone();
+            hs.push(std::thread::spawn(move || {
+                let _class = with_class(c);
+                // never measured: each claims the whole bound
+                match c {
+                    Class::Now => spin(&*host, "test:now", 1000, 1).unwrap(),
+                    _ => spin(&*host, "test:near-long", 5_000_000, 1).unwrap(),
+                };
+            }));
+            while !ring.higher_waits(Class::Offline) || (c == Class::Now && !ring.higher_waits(Class::Near)) {
+                assert!(Instant::now() < deadline, "{c:?} never waited");
+                std::thread::sleep(Duration::from_millis(1));
+            }
         }
-    }
-    long.join().unwrap();
-    for h in hs {
-        h.join().unwrap();
-    }
-    assert_eq!(*order.lock().unwrap(), vec![Class::Now, Class::Near], "the look-ahead's job went first");
+        drop(holder);
+        for h in hs {
+            h.join().unwrap();
+        }
+    });
+    // when each waiter was admitted: its admission span's end (the holder's came before `since`)
+    let since = *held.lock().unwrap();
+    let mut admitted: Vec<(u64, u32)> = trace::testing::recs(&items)
+        .into_iter()
+        .filter(|r| r.kind() == Some(Ev::GpuAdmit) && r.id == ring.id() && r.t >= since)
+        .filter(|r| r.aux == Class::Now as u32 || r.aux == Class::Near as u32)
+        .map(|r| (r.t + r.dur, r.aux))
+        .collect();
+    admitted.sort_unstable();
+    let order: Vec<u32> = admitted.iter().map(|a| a.1).collect();
+    assert_eq!(order, vec![Class::Now as u32, Class::Near as u32], "the look-ahead's job was admitted first (waiting admissions by when they ended)");
 }
 
 /// Test t2260: a present is waited for by a few non-blocking checks, not one a millisecond.
