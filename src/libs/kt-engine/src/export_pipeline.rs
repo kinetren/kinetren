@@ -336,7 +336,7 @@ pub(crate) fn run<S: ExportSink>(
     // the chunks being composed and the ones decoded ahead (see the module doc)
     let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: pipe_cache_bytes(hooks.budget) });
     let mut video = VideoRenderer::new_with_facts(project, &facts);
-    video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(64 << 20)));
+    video.set_stream_memo(Arc::new(kt_plugin_api::stream::StreamMemo::new(crate::export::EXPORT_STREAM_MEMO_BYTES)));
     let video = video;
     let (t_first, end) = match range {
         Some((a, b)) => (video.grid.align_floor(a), b),

@@ -201,6 +201,20 @@ fn t2192_a_run_shape_compiles_beside_its_frame() {
     eprintln!("t2192: the trial decided after {n} frames: fused {} split {}", fused1 - fused0, split1 - split0);
 }
 
+/// Test t2450: a run longer than `MAX_RUN_STAGES` is prewarmed as the pieces a frame cuts it into, so
+/// its first frame has its passes warm; the whole run (no key a frame asks) was skipped before.
+#[test]
+fn t2450_a_long_run_is_prewarmed_as_the_frames_pieces() {
+    let _g = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(e) = warm_engine() else { return };
+    let run: Vec<String> =
+        (0..kt_gpu::runs::MAX_RUN_STAGES + 8).map(|i| if i % 2 == 0 { "posterize" } else { "duotone" }.to_string()).collect();
+    let before = e.run_shapes().0;
+    e.prewarm_point_runs(&[run]);
+    e.settle();
+    assert_eq!(e.run_shapes().0, before + 2, "the 32-stage piece and the 8-stage tail are warm");
+}
+
 fn project() -> Project {
     let mut p = Project::new(ProjectSettings {
         fps: 30,

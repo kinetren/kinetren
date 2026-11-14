@@ -431,7 +431,27 @@ fn t2044_a_short_loop_over_a_mosh_plays() {
     );
 }
 
-// ---- structured-telemetry -----------------------------------------------------------------------
+/// t2459 (class-walk-revision): the preview bench names a frame behind its stream history — a cold
+/// start over the mosh comes out incomplete while the history catches up, and the report says by how
+/// many positions. Since catch-up-shows-loading such a frame misses no decode, so the bench's only cause
+/// (`starved`, the missing layers) named nothing, and `kt-cli preview`/`pause-scan` printed no cause.
+#[test]
+fn t2459_the_bench_names_a_frame_behind_its_history() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let (player, ring) = mosh_player(CacheConfig { max_audio_bytes: 16 << 20, max_video_bytes: 256 << 20 });
+    let r = play_range(
+        &player,
+        ring,
+        BenchOptions { from: Tick(5 * SEC), to: Tick(5 * SEC + 8 * STEP), settle: Duration::ZERO, ..Default::default() },
+    );
+    assert!(r.incomplete > 0, "scene guard: the cold start's composites were incomplete");
+    assert!(!r.catching_up.is_empty(), "{} incomplete composites, none named as catching up", r.incomplete);
+    assert!(r.catching_up.iter().all(|&(_, n)| n > 0));
+}
+
 
 use kt_time::trace::{self, Ev, Rec};
 
@@ -721,6 +741,41 @@ fn t2360_frames_ahead_are_one_walk() {
     let mut m = t;
     while m.0 <= to.0 {
         assert!(vr.layers_at(m, Q).is_empty(), "the frame at {} still needs its history", m.0);
+        m = Tick(m.0 + STEP);
+    }
+}
+
+/// t2451 (class-walk-revision): the memo's view is the player's renderer's, a tick of ITS timeline: a
+/// renderer sharing the memo that never set it (a reel's renderer, a strip job, a poster) reads every
+/// position of its walk back. Before, the player's view at 8 s kept a walk of 5 s from reading any
+/// picture back, and every frame of it stayed short.
+#[test]
+fn t2451_a_renderer_that_set_no_view_reads_its_walk_back() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let t = Tick(5 * SEC);
+    let to = Tick(t.0 + 8 * STEP);
+    let memo = Arc::new(StreamMemo::new(256 << 20));
+    let mut player = VideoRenderer::new(&p);
+    player.set_stream_memo(memo.clone());
+    let mut strip = VideoRenderer::new(&p);
+    strip.set_stream_memo(memo);
+    strip.set_stream_pacing(Some(StreamPacing::preview(1 << 30)));
+    let cache = big_cache();
+    let plain = renderer(&p, None);
+    let mut m = t;
+    while m.0 <= to.0 {
+        warm(&plain.layers_at(m, Q), &cache);
+        m = Tick(m.0 + STEP);
+    }
+    player.set_stream_view(Some(Tick(8 * SEC)));
+    assert!(!strip.stream_advance_run(&cache, t, to, Q), "every frame was cached");
+    let mut m = t;
+    while m.0 <= to.0 {
+        assert!(strip.layers_at(m, Q).is_empty(), "the frame at {} lacks its history: the player's view applied", m.0);
         m = Tick(m.0 + STEP);
     }
 }

@@ -447,3 +447,32 @@ fn t1283_mask_texts_are_in_every_catalog() {
         assert_eq!(keys_of(lang), en, "{lang}: the masks section differs from English");
     }
 }
+
+/// Test t2456 (class-walk-revision): every Backspace a slow frame reads takes a pen point — the
+/// pen read one press a frame (test-hygiene D2's mechanism, missed here), so two Backspaces read
+/// together took one point.
+///
+/// - **PATH** the picture's menu → Mask → Pen → three clicks on the picture → Backspace twice
+///   quickly on a busy machine → one point is left
+#[test]
+fn t2456_backspaces_read_in_one_frame_each_take_a_pen_point() {
+    if crate::layout_tests::no_device() {
+        return;
+    }
+    let (mut h, clip) = crate::layout_tests::harness_geom_ctl();
+    let owner = MaskOwner::Picture(clip);
+    preview_menu(&mut h, crate::i18n::tr(crate::i18n::k::masks::PEN));
+    let n = egui::Modifiers::NONE;
+    for p in [(0.3, 0.3), (0.7, 0.3), (0.7, 0.7)] {
+        let s = at(&h, owner, p);
+        click_at(&mut h, s, n);
+    }
+    assert_eq!(h.state().mask_ctl.as_ref().map(|e| e.pen.len()), Some(3), "scene: three pen points");
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::Key { key: egui::Key::Backspace, physical_key: None, pressed, repeat: false, modifiers: n });
+        }
+    }
+    h.step();
+    assert_eq!(h.state().mask_ctl.as_ref().map(|e| e.pen.len()), Some(1), "two Backspaces in one frame took one point");
+}

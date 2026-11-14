@@ -540,6 +540,10 @@ pub struct VideoRenderer {
     stages: Vec<VideoTrackStage>,
     /// The memo of the stream stages (datamosh-codec-path, D3).
     stream_memo: Arc<kt_plugin_api::stream::StreamMemo>,
+    /// The memo's view applies to this renderer's own stages (`set_stream_view` was called on it):
+    /// the view is a tick of THIS timeline, so a reel's renderer, a strip job or a poster sharing the
+    /// memo reads every position back (class-walk-revision).
+    stream_view: std::sync::atomic::AtomicBool,
     /// How a live preview paces its stream stages (decode-request-storm); `None` — everything at
     /// once, as an export and the tools ask.
     stream_pacing: Option<StreamPacing>,
@@ -1361,6 +1365,7 @@ impl VideoRenderer {
             nests,
             stages,
             stream_memo: stream_memo().clone(),
+            stream_view: Default::default(),
             stream_pacing: None,
             stream_short: Default::default(),
             stream_cap: None,
@@ -1485,7 +1490,8 @@ impl VideoRenderer {
     /// One stage's advance to moment `t` (the body of `stream_advance`).
     fn stream_advance_clip(&self, cache: &BurstCache, c: &VideoClip, t: Tick, quality: Quality) -> bool {
         let Some(st) = &c.stream else { return false };
-        let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache)).with_view(&self.stream_memo);
+        let cs = stream::ClipStream::new(c, st, &self.grid, quality, Some(cache));
+        let cs = if self.stream_view.load(std::sync::atomic::Ordering::Relaxed) { cs.with_view(&self.stream_memo) } else { cs };
         let n = cs.pos(t);
         let needs = st.kernel().needs(&st.values, &cs, n, &self.stream_memo).len();
         if needs == 0 {
@@ -1509,6 +1515,7 @@ impl VideoRenderer {
     /// Tell the stream memo the moment the host shows from (stream-history-on-device D4); `None` —
     /// every position is shown (the default).
     pub fn set_stream_view(&self, from: Option<Tick>) {
+        self.stream_view.store(from.is_some(), std::sync::atomic::Ordering::Relaxed);
         self.stream_memo.set_view(from.map(|t| t.0));
     }
 
@@ -1900,6 +1907,7 @@ impl VideoRenderer {
             nests: &self.nests,
             stages: &self.stages,
             stream_memo: &self.stream_memo,
+            stream_view: self.stream_view.load(std::sync::atomic::Ordering::Relaxed),
             stream_pacing: self.pacing(),
             stream_short: &self.stream_short,
             blend_footage: false,
@@ -1930,6 +1938,9 @@ struct PlanCtx<'a> {
     /// The memo of the stream stages (datamosh-codec-path, D3): the root renderer's, inherited
     /// downward, so an export's private memo serves its reels too.
     stream_memo: &'a kt_plugin_api::stream::StreamMemo,
+    /// The memo's view (a tick of the root timeline) applies here: the root and its track stages;
+    /// a reel's sub-plan runs on its own time and reads every position back.
+    stream_view: bool,
     /// The live preview's pacing of the stream stages (decode-request-storm), inherited downward.
     stream_pacing: Option<StreamPacing>,
     /// The most positions a stream layer of the plan lacks (the root renderer's counter).
@@ -2028,7 +2039,7 @@ fn layer_src<'a>(
                 .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, t, src_pts))
                 .flatten()
                 .unwrap_or_else(|| {
-                    stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_pacing, ctx.stream_short, quality, dq, t, src_pts)
+                    stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_view, ctx.stream_pacing, ctx.stream_short, quality, dq, t, src_pts)
                 }),
         ),
         _ => None,
@@ -2110,6 +2121,7 @@ fn layer_src<'a>(
                 nests: &sub.nests,
                 stages: &sub.stages,
                 stream_memo: ctx.stream_memo,
+                stream_view: false,
                 stream_pacing: ctx.stream_pacing,
                 stream_short: ctx.stream_short,
                 probe: ctx.probe,
@@ -2189,6 +2201,7 @@ fn track_stage_layer<'a>(
         // the stage does NOT assemble itself
         stages: &[],
         stream_memo: ctx.stream_memo,
+        stream_view: ctx.stream_view,
         stream_pacing: ctx.stream_pacing,
         stream_short: ctx.stream_short,
         probe: ctx.probe,

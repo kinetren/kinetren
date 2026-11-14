@@ -60,10 +60,13 @@ fn t2230_lanes_are_fifo_one_at_a_time_and_classes_run_in_order() {
     // priority: fill the capped slots with held Background jobs, queue Visible, Background and
     // Answer jobs; the Answer runs at once (one worker is always kept for it), the rest wait for a slot
     let _v = VOTES.lock().unwrap_or_else(|e| e.into_inner());
-    let release = Arc::new(AtomicBool::new(false));
+    // each holder has its own release: freeing them together would start the Visible and the
+    // Background job in parallel, in either order (found-defects 463); one free slot shows the pick
+    let releases: Vec<Arc<AtomicBool>> = (0..workers() - 1).map(|_| Arc::new(AtomicBool::new(false))).collect();
     let entered = Arc::new(AtomicUsize::new(0));
-    let holders: Vec<LaneRef> = (0..workers() - 1)
-        .map(|_| {
+    let holders: Vec<LaneRef> = releases
+        .iter()
+        .map(|release| {
             let l = Lane::open("t2230:hold", Class::Background);
             let (r, e) = (release.clone(), entered.clone());
             l.post(move |_| {
@@ -88,9 +91,12 @@ fn t2230_lanes_are_fifo_one_at_a_time_and_classes_run_in_order() {
     ans.post(move |_| s.lock().unwrap().push("answer"));
     assert!(ans.wait_idle(crate::test_deadline()), "the person's answer waited behind background work");
     assert_eq!(*seen.lock().unwrap(), vec!["answer"], "a capped class took the kept worker");
-    release.store(true, Ordering::Release);
+    releases[0].store(true, Ordering::Release);
     assert!(bg.wait_idle(crate::test_deadline()) && vis.wait_idle(crate::test_deadline()));
     assert_eq!(*seen.lock().unwrap(), vec!["answer", "visible", "background"], "classes out of order");
+    for r in &releases {
+        r.store(true, Ordering::Release);
+    }
     for h in &holders {
         assert!(h.wait_idle(crate::test_deadline()));
     }

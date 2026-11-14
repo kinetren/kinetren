@@ -423,6 +423,61 @@ fn t2307_a_gesture_after_ctrl_s_waits_for_the_write() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Test t2452 (class-walk-revision, durability): a view-state edit made while Ctrl+S writes keeps its
+/// asterisk — the file holds the view state of the moment it was taken. One-scheduler made the write
+/// async; the landed save cleared `dirty_ui` for every edit, though a bin edit moves no `model_rev`.
+///
+/// - **PATH** an edited project → Ctrl+S → at once the bin's free-layout toggle → the write lands, the
+///   title keeps its asterisk; Ctrl+S again → the asterisk goes
+#[test]
+fn t2452_a_view_edit_during_the_write_keeps_its_asterisk() {
+    let _grace = LiveSaveGrace::set();
+    let dir = std::env::temp_dir().join(format!("kt-t2452-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = dirty_named(&dir.join("a.kt"));
+    h.step();
+    h.state_mut().save();
+    if h.state().saving.is_none() {
+        eprintln!("t2452: the write landed inside save(); nothing to race");
+        return;
+    }
+    let app = h.state_mut();
+    app.bin_free = !app.bin_free;
+    app.dirty_ui = true;
+    until_save_taken(&mut h);
+    assert!(!h.state().dirty_content, "the content edit is in the file");
+    assert!(h.state().dirty_ui, "the bin edit made during the write lost its asterisk");
+    h.state_mut().save();
+    until_save_taken(&mut h);
+    assert!(!h.state().dirty_ui, "the second save holds the bin edit");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test t2453 (class-walk-revision, durability): closing the window while playing lets the jobs the
+/// close waits for run — the autosave and the poster are Background jobs, and the playing player's
+/// vote held them, so the close waited out each bound (5 s, 3 s) with the jobs never started.
+///
+/// - **PATH** an edited project playing for over a minute → the window's cross → the window goes at
+///   once; the recovery file holds the edit
+#[test]
+fn t2453_closing_while_playing_lets_the_close_jobs_run() {
+    let dir = std::env::temp_dir().join(format!("kt-t2453-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = dirty_named(&dir.join("a.kt"));
+    h.step();
+    let app = h.state_mut();
+    app.player.play();
+    app.last_autosave = std::time::Instant::now() - Duration::from_secs(10 * app.autosave_secs.max(1));
+    h.step();
+    assert!(h.state().autosave_rx.is_some(), "scene guard: the insurance autosave was posted while playing");
+    assert_ne!(kt_time::sched::paused() & kt_time::sched::why::PLAYING, 0, "scene guard: the player's vote is up");
+    eframe::App::on_exit(h.state_mut());
+    assert_eq!(kt_time::sched::paused() & kt_time::sched::why::PLAYING, 0, "the close left the jobs it waits for held");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test t2308 (save-then-act, durability): a write that fails drops what waited for it — the
 /// project stays with its asterisk and the warning, whether the action came from "Save and
 /// continue" or met a Ctrl+S in flight.

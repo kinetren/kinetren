@@ -101,7 +101,8 @@ pub fn size_stream_memo(per_position: usize, loop_positions: Option<usize>) -> u
 
 /// `size_stream_memo` with the walk's checkpoints (`stream_memo_bytes_walk`).
 pub fn size_stream_memo_walk(per_position: usize, loop_positions: Option<usize>, checkpoints: usize) -> usize {
-    let free = memory_available();
+    // the room, not the bare available: the memo's own growth is memory it may keep (class-walk-revision)
+    let free = kt_time::mem::room();
     let want = stream_memo_bytes_walk(STREAM_MEMO_BASE, per_position, loop_positions, checkpoints, free);
     let memo = stream_memo();
     let grant = memo.account().want((want - STREAM_MEMO_BASE) as u64);
@@ -453,6 +454,7 @@ pub(super) fn run(
     grid: &FpsGrid,
     cache: &BurstCache,
     memo: &StreamMemo,
+    view: bool,
     pacing: Option<StreamPacing>,
     short: &std::sync::atomic::AtomicU64,
     quality: Quality,
@@ -461,7 +463,8 @@ pub(super) fn run(
     pts: Tick,
 ) -> (Option<Arc<VideoFrame>>, u64) {
     use kt_time::trace::{self, stream as so, Ev};
-    let cs = ClipStream::new(clip, st, grid, quality, Some(cache)).with_view(memo);
+    let cs = ClipStream::new(clip, st, grid, quality, Some(cache));
+    let cs = if view { cs.with_view(memo) } else { cs };
     let k = st.kernel();
     let n = cs.pos(t);
     // the stage's run in the trace: the position, what the memo still lacked, and what came out

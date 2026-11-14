@@ -164,3 +164,9 @@ playing: the old answer was a complete held frame).
   frame the cache can never hold fails (its own pre-roll heals what is missing; t1601's pressure test
   runs on).
 - A reel-strip cell of an incomplete frame is now empty, not partial.
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

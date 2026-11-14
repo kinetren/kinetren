@@ -1512,11 +1512,14 @@ impl GpuFxEngine {
 
     /// Compile and warm on the device's worker the point-wise run shapes `runs` (plugin ids in chain
     /// order). Returns at once; shapes asked before are skipped, a run of an unassembled id is ignored.
+    /// A run longer than `MAX_RUN_STAGES` is warmed as the pieces a frame cuts it into (`bind_runs`):
+    /// the whole run is no key any frame asks (class-walk-revision).
     pub fn prewarm_point_runs(&self, runs: &[Vec<String>]) {
         let taps = plugin_taps();
         let keys: Vec<Vec<u16>> = runs
             .iter()
-            .filter_map(|r| r.iter().map(|id| taps.iter().position(|(t, _)| t == id).map(|i| i as u16)).collect())
+            .filter_map(|r| r.iter().map(|id| taps.iter().position(|(t, _)| t == id).map(|i| i as u16)).collect::<Option<Vec<u16>>>())
+            .flat_map(|k| k.chunks(crate::runs::MAX_RUN_STAGES).map(<[u16]>::to_vec).collect::<Vec<_>>())
             .collect();
         self.compiled.prewarm_runs(keys);
     }

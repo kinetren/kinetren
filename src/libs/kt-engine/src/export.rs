@@ -106,6 +106,10 @@ pub struct ExportStats {
 /// Export video cache budget.
 pub const EXPORT_VIDEO_CACHE_BYTES: usize = 192 * 1024 * 1024;
 
+/// The export's own stream memo (datamosh-codec-path D3): both export bodies size it by this one
+/// number (class-walk-revision found two copies of the literal).
+pub const EXPORT_STREAM_MEMO_BYTES: usize = 64 << 20;
+
 /// How many frames to decode in one batch so that they GUARANTEED
 /// survive in the cache until composition (R.15 item 1). A batch takes no more than
 /// half the budget; `layers` — the maximum of SIMULTANEOUS video layers
@@ -263,7 +267,7 @@ fn render_raw_video_profiled(
     let mut video = VideoRenderer::new_with_facts(project, &facts);
     // an export owns its stream memo (datamosh-codec-path, D3): a preview on another thread cannot
     // evict what this export is about to read
-    video.set_stream_memo(std::sync::Arc::new(kt_plugin_api::stream::StreamMemo::new(64 << 20)));
+    video.set_stream_memo(std::sync::Arc::new(kt_plugin_api::stream::StreamMemo::new(EXPORT_STREAM_MEMO_BYTES)));
     let (mut t, end) = match range {
         Some((a, b)) => (video.grid.align_floor(a), b),
         None => (Tick(0), project_range(project)),

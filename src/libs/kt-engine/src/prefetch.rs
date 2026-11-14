@@ -232,7 +232,8 @@ pub fn size_frames_cache(
         sizing.key = Some(key);
         sizing.window = 0;
         // a loop past what the machine has now cannot be held: its count stops there
-        let stop = kt_time::mem::available().map_or(usize::MAX, |a| usize::try_from(a).unwrap_or(usize::MAX));
+        // (the room: the cache's own growth is memory the loop may keep, class-walk-revision)
+        let stop = kt_time::mem::room().map_or(usize::MAX, |a| usize::try_from(a).unwrap_or(usize::MAX));
         sizing.loop_bytes = region_ticks.map(|r| loop_frame_bytes(video, q, r, stop));
     }
     sizing.window = sizing.window.max(window);

@@ -223,3 +223,9 @@ a second on a loaded machine for as long as the check took, competing with it. R
   are kept. A person on a slow machine sees "Loading" moments compose for the first time lap after lap.
   Composing the unshown moments of a loop in the background is a scheduler feature
   (`one-scheduler`), not this change's. found-defects 251.
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

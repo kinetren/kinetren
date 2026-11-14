@@ -214,6 +214,21 @@ impl Ledger {
         self.probe.lock().unwrap_or_else(|p| p.into_inner()).as_ref().and_then(|p| p())
     }
 
+    /// The memory the growing kinds could hold in all: the memory available now plus the growth they
+    /// already hold above their bases — what the growth budget halves. A want measured against
+    /// `available` alone shrinks as its own cache fills, and the asker evicts what it just kept
+    /// (class-walk-revision); `None` — unknown.
+    pub fn room(&self) -> Option<u64> {
+        let held: u64 = GROWING
+            .iter()
+            .map(|t| {
+                let k = &self.kinds[*t as usize];
+                k.used.load(Ordering::Relaxed).saturating_sub(k.base.load(Ordering::Relaxed))
+            })
+            .sum();
+        self.available().map(|a| a.saturating_add(held))
+    }
+
     /// The grant of `t` above its bases now.
     pub fn grant(&self, t: Tenant) -> u64 {
         self.kinds[t as usize].grant.load(Ordering::Relaxed)
@@ -416,6 +431,11 @@ pub fn set_probe(probe: fn() -> Option<u64>) {
 /// The memory available now, by the process's probe.
 pub fn available() -> Option<u64> {
     ledger().available()
+}
+
+/// The room of the process's ledger ([`Ledger::room`]): what a cache sizes its want against.
+pub fn room() -> Option<u64> {
+    ledger().room()
 }
 
 static RESIDENT: OnceLock<fn() -> Option<u64>> = OnceLock::new();

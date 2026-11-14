@@ -157,3 +157,9 @@ laps 2 and 3 run no job (t2276 holds the rule on a small stream).
 - **Memory:** the plan grows with the event (≈ 200 B a position); the memo may grow to a quarter of
   the memory available when the person loops a long mosh — that is the trade the owner's loop asks.
 - **gpu-arbiter** works in `kt-gpu/src/compute.rs`; this change does not touch it.
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

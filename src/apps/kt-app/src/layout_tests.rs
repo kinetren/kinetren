@@ -20927,3 +20927,27 @@ fn t2415_loading_names_the_catch_up_where_it_is_written() {
     h.step();
     assert!(!texts(&h).iter().any(|t| t.src == loading || t.src == catching), "a complete frame has no scrim");
 }
+
+/// Test t2457 (class-walk-revision): two more gestures measured between reads count the busy frame
+/// and every press, as test-hygiene made the rest. The preview's single click waited a fixed 300 ms
+/// from when its frame happened to run: on 450 ms frames the play fired before egui's widened double
+/// click landed, so a double click played AND detached. The search window's arrows read one press a
+/// frame: ↓↓↓ in one slow frame moved one row.
+#[test]
+fn t2457_preview_click_and_search_arrows_count_the_busy_frame() {
+    use crate::app::{KeyClock, PendingOp, PreviewClick, preview_click_delay_ms, preview_click_step, search_step};
+    let busy = KeyClock { double_s: crate::app::DOUBLE_CLICK_S + 0.4, ..KeyClock::default() };
+    let delay = preview_click_delay_ms(&busy);
+    assert_eq!(delay, 700, "the single click waits egui's widened double-click window");
+    assert_eq!(
+        preview_click_step(Some(350), false, false, delay),
+        (PreviewClick::None, PendingOp::Keep),
+        "a frame 350 ms after the click on a busy machine played before the double could land"
+    );
+    assert_eq!(preview_click_step(Some(700), false, false, delay).0, PreviewClick::TogglePlay);
+    assert_eq!(preview_click_delay_ms(&KeyClock::default()), crate::app::PREVIEW_CLICK_DELAY_MS, "an idle machine keeps the base delay");
+    assert_eq!(search_step(0, 3, 0, 10), 3, "three ↓ in one frame move three rows");
+    assert_eq!(search_step(5, 0, 2, 10), 3);
+    assert_eq!(search_step(8, 4, 0, 10), 9, "clamped to the last hit");
+    assert_eq!(search_step(0, 1, 0, 0), 0, "no hits");
+}
