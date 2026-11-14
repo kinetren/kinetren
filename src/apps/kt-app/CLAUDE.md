@@ -442,7 +442,9 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   position. Waiting "until two reads match" is not enough: it will settle on the stale value.
   One must wait for a CHANGE (`differs_from`), and black must not be counted as a frame at that moment —
   this means "the composite is not yet complete".
-- **`x_at` handles only what is ON SCREEN** (R.37). The view follows the cursor, and a moment that was visible at the start of the scenario drifts past the edge by the middle: `x_at` returns a negative x, the click goes past the window, and the view check "cursor > X" passes by itself, which hides it. The target moment must first be brought into view (Home) and one must CONVINCE oneself via `view_start` from the geometry dump. This is exactly how the `loop` step "checked" a stale pixel for three rounds.
+- **`x_at` handles only what is ON SCREEN** (R.37). The view follows the cursor, and a moment that was visible at the start of the scenario drifts past the edge by the middle: `x_at` returns a negative x, the click goes past the window, and the view check "cursor > X" passes by itself, which hides it. The target moment must first be brought into view (Home) and one must CONVINCE oneself via `view_start` from the geometry dump. This is exactly how the `loop` step "checked" a stale pixel for three rounds. **A press outside the program's window is refused** (`Live._inside`, datamosh under load): the
+  window manager took the focus, and every key after it went elsewhere ("key ctrl+z was not read; the X
+  focus is …") — the red named the key, not the click.
 - **Manual live checking — `scripts/ui-probe.py`** (python3-xlib + XTest): finds the window, moves the real mouse, presses keys, takes a screenshot, prints panel boundaries by a row of pixels. This is how the meters limit (90 px), the left column limit (420 px) and the timecode mask were verified. The drag there is done in three steps — see the next item.
 - A screenshot is a supplement, not proof: all three earlier breakages "looked" perfectly fine in the picture.
 - Debugging "who ate the click" — `KT_DEBUG_HITS=1` (egui's built-in highlighting).

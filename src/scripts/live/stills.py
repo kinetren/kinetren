@@ -27,7 +27,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import KT_CLI, Live, require_tools  # noqa: E402
+from kt_live import KT_CLI, Live, geometry, require_tools  # noqa: E402
 from kt_live import demo_otio, import_project, new_otio, poll_step  # noqa: E402,F401
 
 SEC = 90000
@@ -130,8 +130,19 @@ def main(out):
         app.expect(sd > 0.15, f"in the preview a picture, not an empty frame (spread {sd:.2f})")
         app.step("still-start", "picture in the preview at the start of the event")
 
-        # 2) at the end of the event — the same picture (the material has no end for it)
-        app.click(app.x_at(int(19.5 * SEC)), y)
+        # 2) at the end of the event — the same picture (the material has no end for it). The
+        # twenty-second event is wider than the view: End (the next stop, the event's end) brings
+        # its end on screen first. The click at 19.5 s once went past the window and the check
+        # measured the 1 s frame again (found by `Live._inside`, datamosh under load)
+        target = int(19.5 * SEC)
+        app.key("End")
+        win = geometry()
+        app.expect(
+            app.until(lambda: app.geom()["view_start"] <= target and app.x_at(target) < win["x"] + win["w"] - 8),
+            f"19.5 s is on screen: view_start={app.geom()['view_start']}",
+        )
+        app.click(app.x_at(target), y)
+        app.wait_playhead(lambda t: abs(t - target) < SEC // 2, "the playhead at 19.5 s")
         app.settle()
         sd_end = looks_like_picture(app, box)
         app.expect(sd_end > 0.15, f"at 19.5 s the picture is in place (spread {sd_end:.2f})")
