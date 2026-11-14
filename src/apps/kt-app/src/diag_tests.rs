@@ -598,3 +598,23 @@ fn t2398_diagnostics_names_the_whole_process() {
     h.step();
     assert_eq!(h.state().status_line_shown.0, tr(k::perf::PROGRAM_HINT), "the hint names the rest");
 }
+
+/// Test t2573 (load-report-into-trace): the Diagnostics button that wrote and opened the load
+/// report now opens the trace folder — its label says so, a click makes `<data>/trace` if it is
+/// not there yet, and no `load-report.txt` appears in the data directory.
+#[test]
+fn t2573_the_load_button_opens_the_trace_folder() {
+    let (_j, _bound) = journal("t2573");
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+    let label = tr(k::perf::TRACE_FOLDER);
+    assert!(painted_texts(&h).iter().any(|t| t.src == label), "the button reads “{label}”");
+    let data = crate::journal::data_dir();
+    let trace = data.join("trace");
+    let _ = std::fs::remove_dir_all(&trace);
+    click_at(&mut h, probe("diag.trace_folder").center());
+    assert!(trace.is_dir(), "the click made {}", trace.display());
+    assert!(!data.join("load-report.txt").exists(), "no load report is written");
+}

@@ -468,3 +468,223 @@ fn t2472_an_export_runs_the_slot_in_front_of_the_stream() {
     assert!(parts == whole, "the pieces differ from the whole");
     assert!(whole != export(&project_order(None, Some(3.0)), (30, 42)), "the export runs the person's order");
 }
+
+/// A rectangle mask over the left half of the frame, hard-edged.
+fn left_half() -> Mask {
+    Mask::new(1, "left", MaskShape::Rect { cx: 0.25, cy: 0.5, w: 0.5, h: 1.0, rot: 0.0, round: 0.0 })
+}
+
+/// Compose the frame at `t` of `p` from the textures, on a renderer of its own (or on `memo`).
+fn frame_at(p: &Project, t: Tick) -> Vec<u8> {
+    let (vr, c) = (renderer(p), big_cache());
+    warm(&vr, &c, t);
+    let (f, complete) = kt_gpu::testkit::compose(&vr, &c, t, Q);
+    assert!(complete, "one warm-up of what the order names completes the frame");
+    f
+}
+
+/// t2550 (chain-everywhere, found-defects 541): a slot in front of a stream stage keeps its mask in
+/// the front run — the masked slot is neither the unmasked one nor no slot, and an edit of its mask
+/// makes the order ask the history again (the stream's addresses name the mask).
+#[test]
+fn t2550_a_masked_slot_in_front_keeps_its_mask() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let masked = |m: Option<Mask>| {
+        let mut p = project_order(Some(3.0), None);
+        let b = p.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap();
+        if let Some(m) = m {
+            b.masks.list_mut(Some(0)).push(m);
+        }
+        p.validate().unwrap();
+        p
+    };
+    let with_mask = frame_at(&masked(Some(left_half())), t);
+    assert_ne!(with_mask, frame_at(&masked(None), t), "the mask in front acted on the whole frame");
+    assert_ne!(with_mask, frame_at(&project(true), t), "the masked slot in front did nothing");
+
+    let memo = Arc::new(StreamMemo::new(256 << 20));
+    let build = |p: &Project| {
+        let mut vr = VideoRenderer::new(p);
+        vr.set_stream_memo(memo.clone());
+        vr
+    };
+    let shot_b = |vr: &VideoRenderer| vr.layers_at(t, Q).iter().filter(|(m, ..)| *m == MediaId(2)).count();
+    let first = build(&masked(Some(left_half())));
+    let cache = big_cache();
+    warm(&first, &cache, t);
+    assert!(kt_gpu::testkit::compose(&first, &cache, t, Q).1);
+    assert_eq!(shot_b(&first), 0, "the memo holds the history");
+    let mut moved = left_half();
+    moved.shape = MaskShape::Rect { cx: 0.75, cy: 0.5, w: 0.5, h: 1.0, rot: 0.0, round: 0.0 };
+    assert!(shot_b(&build(&masked(Some(moved)))) >= 7, "an edit of the mask in front feeds the whole history");
+}
+
+/// t2551 (chain-everywhere, found-defects 541): a Pan3d in front of a stream stage gets the camera the
+/// layer would resolve — it is no longer skipped there, and the camera's edit is seen.
+#[test]
+fn t2551_a_pan3d_in_front_has_its_camera() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let with_cam = |rot_y: f64| {
+        let mut p = project(true);
+        p.cameras.push(CameraEvent {
+            ease: true,
+            id: CameraId(1),
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(90 * STEP),
+            name: String::new(),
+            cam: CameraParams { rot_y, ..CameraParams::default() },
+            keyframes: vec![],
+            auto: vec![],
+        });
+        let b = p.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap();
+        b.fx.insert(0, FxInstance::builtin("pan3d"));
+        p.ensure_tracks(LaneKind::Camera, 1);
+        p.validate().unwrap();
+        p
+    };
+    let turned = frame_at(&with_cam(35.0), t);
+    assert_ne!(turned, frame_at(&project(true), t), "the Pan3d in front was skipped");
+    assert_ne!(turned, frame_at(&with_cam(-35.0), t), "the camera of the Pan3d in front is not read");
+}
+
+/// The cut mosh whose vectors come from the track below: shot B (lane 0) moshes with `vectors_from`
+/// = below; the event on lane 1 under it (media 3, hidden by the opaque shot B) carries `below`.
+fn project_second(below: Vec<FxInstance>) -> Project {
+    let mut p = project(true);
+    p.media.push(MediaRef::new(MediaId(3), "synth:3"));
+    let b = p.clips.iter_mut().find(|c| c.id == ClipId(2)).unwrap();
+    for f in b.fx.iter_mut() {
+        if f.is_stream() {
+            assert!(f.set_param("vectors_from", 2.0));
+        }
+    }
+    let mut under = clip(3, 3, 0, 60 * STEP, below);
+    under.lane = 1;
+    p.clips.push(under);
+    p.ensure_tracks(LaneKind::Video, 2);
+    p.validate().unwrap();
+    p
+}
+
+/// Warm the order with media 3 from `c`, the rest from the textures.
+fn frame_second(p: &Project, t: Tick, c: &mut dyn MediaSource) -> Vec<u8> {
+    let (vr, cache) = (renderer(p), big_cache());
+    let mut a = Tex::new(1, 0);
+    let mut b = Tex::new(2, 2);
+    for (m, pts, q) in vr.layers_at(t, Q) {
+        let s: &mut dyn MediaSource = match m.0 {
+            1 => &mut a,
+            2 => &mut b,
+            _ => &mut *c,
+        };
+        let f = s.read_video_frame(pts, Some(q)).unwrap();
+        cache.insert_video(kt_engine::source_id(m), Some(q), kt_engine::video_cache_idx(pts), Arc::new(f));
+    }
+    let (f, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
+    assert!(complete, "one warm-up of what the order names completes the frame");
+    f
+}
+
+/// A source with `fx` already run over each frame, by the test engine at the size asked.
+struct BakedWith {
+    tex: Tex,
+    fx: Vec<FxInstance>,
+}
+
+impl MediaSource for BakedWith {
+    fn info(&self) -> &MediaInfo {
+        self.tex.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
+        self.tex.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, pts: Tick, quality: Option<Quality>) -> Result<VideoFrame, MediaError> {
+        use kt_engine::VideoGpuExec as _;
+        let f = Arc::new(self.tex.read_video_frame(pts, quality)?);
+        let plan = kt_engine::chain_plan(f.clone(), &self.fx, 1, 0.0, pts, None);
+        let mut out = vec![];
+        assert!(kt_gpu::testkit::engine().execute_once(&plan, &mut out).unwrap());
+        Ok(VideoFrame { pts, width: f.width, height: f.height, rgba: out.into_boxed_slice(), has_alpha: false })
+    }
+    fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
+        self.tex.keyframe_before(pts)
+    }
+}
+
+/// t2552 (chain-everywhere, found-defects 540): the stream's second input is read through its event's
+/// chain — the slots of the mirrored event below run on the frames the kernel reads (the shot that
+/// moshes has no slot in front, so every run counted is the second input's), and the mosh equals the
+/// mosh of a source mirrored before decoding.
+#[test]
+fn t2552_the_second_input_runs_its_chain() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let mirror = || FxInstance::plugin_with("mirror", &[1.0, 0.0]).expect("mirror is built in");
+    let runs = kt_engine::video::front_runs();
+    let chained = frame_second(&project_second(vec![mirror()]), t, &mut Tex::new(3, 5));
+    assert!(kt_engine::video::front_runs() > runs, "the chain below ran on the second input's frames");
+    let baked = frame_second(&project_second(vec![]), t, &mut BakedWith { tex: Tex::new(3, 5), fx: vec![mirror()] });
+    assert_eq!(chained, baked, "the second input reads the event below through its chain");
+    // the mosh of this scene does not change with the second input's picture at all (found-defects
+    // 580, the vectors from another track): the runs above are what proves the chain below is read
+}
+
+/// t2553 (chain-everywhere, found-defects 540): the stream's addresses name the second input's chain —
+/// an edit of the slot on the event below makes the order ask the history again.
+#[test]
+fn t2553_an_edit_of_the_second_inputs_chain_invalidates_the_history() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let poster = |levels: f64| {
+        let mut f = FxInstance::plugin("posterize").unwrap();
+        assert!(f.set_param("levels", levels));
+        f
+    };
+    let memo = Arc::new(StreamMemo::new(256 << 20));
+    let build = |p: &Project| {
+        let mut vr = VideoRenderer::new(p);
+        vr.set_stream_memo(memo.clone());
+        vr
+    };
+    let below = |vr: &VideoRenderer| vr.layers_at(t, Q).iter().filter(|(m, ..)| *m == MediaId(3)).count();
+    let first = build(&project_second(vec![poster(3.0)]));
+    let cache = big_cache();
+    let mut a = Tex::new(1, 0);
+    let mut b = Tex::new(2, 2);
+    let mut c = Tex::new(3, 5);
+    for (m, pts, q) in first.layers_at(t, Q) {
+        let s: &mut dyn MediaSource = match m.0 {
+            1 => &mut a,
+            2 => &mut b,
+            _ => &mut c,
+        };
+        let f = s.read_video_frame(pts, Some(q)).unwrap();
+        cache.insert_video(kt_engine::source_id(m), Some(q), kt_engine::video_cache_idx(pts), Arc::new(f));
+    }
+    assert!(kt_gpu::testkit::compose(&first, &cache, t, Q).1);
+    let held = below(&first);
+    assert!(below(&build(&project_second(vec![poster(4.0)]))) > held, "an edit below fed no new history");
+}

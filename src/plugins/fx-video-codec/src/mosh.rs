@@ -321,7 +321,13 @@ impl Plan {
         // I-frame — a grid fixed by the chain, so consecutive frames continue each other
         let node = if idx > 0 && idx % MAX_CHAIN as u64 == 0 { Node::Refresh { p: pkt } } else { raw };
         // the clean encoder's keys: its configuration, the addresses and quantisers from the GOP start
-        let rows_of = |j: i64| if j >= k { r } else { at(j.max(first)).r };
+        // a position before the stream's first reads the first's rows; at the first itself those are
+        // `r` (a second input that starts before the stream reached here with nothing compiled and
+        // indexed past the schedule — chain-everywhere)
+        let rows_of = |j: i64| {
+            let j = j.max(first);
+            if j >= k { r } else { at(j).r }
+        };
         let main = {
             let base = match prev {
                 Some(p) if k > gs => p.clean[0].unwrap_or(0),

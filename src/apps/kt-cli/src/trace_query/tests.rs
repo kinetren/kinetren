@@ -535,3 +535,43 @@ fn t2438_gpu_tells_admission_from_device() {
         assert!(o.contains(want), "{want:?} missing:\n{o}");
     }
 }
+
+/// Test t2572 (load-report-into-trace): the load report's header is in the trace — `trace machine`
+/// names the run, its start on the clock and every fact (each adapter, the cards the monitors hang
+/// off, the power choice, the program's local clock); `summary` carries the same lines and `dump`
+/// starts with them as one JSON line.
+#[test]
+fn t2572_machine_summary_and_dump_carry_the_machine() {
+    let mut run = run_of(vec![rec(Ev::Load, MS, |r| r.a = 1000)]);
+    run.pid = 4242;
+    run.start_unix_ns = 1_762_498_800_250_000_000;
+    run.machine = [
+        ("clock", "2025-11-07 10:00:00.250+03:00"),
+        ("cores", "16"),
+        ("adapter.0", "AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO) / IntegratedGpu / Vulkan / 1002:164e"),
+        ("adapter.1", "llvmpipe (LLVM 19.1.1, 256 bits) / Cpu / Vulkan / 10005:0000"),
+        ("monitors", "1002:164e"),
+        ("power", "LowPower"),
+    ]
+    .iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+    let m = machine(&run);
+    for want in [
+        "run: test (pid 4242)",
+        "started: 2025-11-07 07:00:00.250 UTC",
+        "clock: 2025-11-07 10:00:00.250+03:00",
+        "adapter.0: AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO) / IntegratedGpu / Vulkan / 1002:164e",
+        "adapter.1: llvmpipe",
+        "monitors: 1002:164e",
+        "power: LowPower",
+    ] {
+        assert!(m.contains(want), "{want:?} missing:\n{m}");
+    }
+    let s = summary(&run);
+    assert!(s.contains("  monitors: 1002:164e") && s.contains("  power: LowPower"), "{s}");
+    let d = dump(&run, None, None);
+    let head: serde_json::Value = serde_json::from_str(d.lines().next().unwrap()).expect("JSON");
+    assert_eq!(head["machine"]["power"], "LowPower", "{d}");
+    assert_eq!(d.lines().count(), run.recs.len() + 1, "the machine line, then one line a record");
+}

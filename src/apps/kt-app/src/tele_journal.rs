@@ -19,7 +19,7 @@
 //!   (`.1` to `.2`).
 //!
 //! The journal is NOT per run (unlike `kt-app.log`): a RUN line starts each run, so a crash and the
-//! next start read in order. A short in-memory tail serves Diagnostics and the load report.
+//! next start read in order. A short in-memory tail serves Diagnostics.
 
 use std::collections::VecDeque;
 use std::io::Write;
@@ -35,7 +35,7 @@ pub const FILE: &str = "telemetry-journal.log";
 pub const ROTATE_BYTES: u64 = 2 * 1024 * 1024;
 /// Previous files kept next to the journal (`.1`, `.2`).
 pub const KEEP_OLD: usize = 2;
-/// The in-memory tail: what the load report exports and Diagnostics shows.
+/// The in-memory tail: what Diagnostics shows.
 pub const TAIL_SPAN_MS: i64 = 15 * 60 * 1000;
 const TAIL_MAX: usize = 4000;
 
@@ -220,12 +220,6 @@ impl Journal {
         st.tail.iter().skip(st.tail.len().saturating_sub(n)).cloned().collect()
     }
 
-    /// The records from `from_unix_ms` on, oldest first (the load report).
-    pub fn since(&self, from_unix_ms: i64) -> Vec<Rec> {
-        let st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        st.tail.iter().filter(|r| r.at.unix_ms >= from_unix_ms).cloned().collect()
-    }
-
     /// Wait until the writer has written everything recorded before this call, at most `limit`.
     pub fn flush(&self, limit: Duration) -> bool {
         let (tx, rx) = mpsc::channel();
@@ -382,6 +376,11 @@ pub fn install() {
         Some(crate::journal::data_dir().join("trace")),
         &format!("kinetren {}", kt_version::FULL),
     ));
+    // the run's start on the wall clock, with its offset: the trace's times count from it
+    // (load-report-into-trace: the load report's header carried the only clock time of a run)
+    kt_time::trace::machine("clock", &start_clock(kt_time::trace::start_unix_ns()));
+    // the FFmpeg the run loaded: it was only in `kt-app.log`'s run header (the class walk)
+    kt_time::trace::machine("ffmpeg", &crate::journal::ffmpeg_line());
     let j = GLOBAL.get_or_init(|| {
         Journal::open(path(), Arc::new(SystemClock(kt_time::trace::start_instant())), ROTATE_BYTES)
     });
@@ -395,6 +394,20 @@ pub fn install() {
             std::process::id()
         ),
     );
+}
+
+/// `YYYY-MM-DD HH:MM:SS.mmm±HH:MM`, local, of a Unix moment in nanoseconds (the trace's `clock`).
+pub(crate) fn start_clock(unix_ns: u64) -> String {
+    let secs = (unix_ns / 1_000_000_000) as i64;
+    start_clock_with(unix_ns, crate::journal::local_offset(secs))
+}
+
+pub(crate) fn start_clock_with(unix_ns: u64, offset_secs: i64) -> String {
+    let secs = (unix_ns / 1_000_000_000) as i64;
+    let s = crate::journal::stamp_with(secs, offset_secs);
+    // the stamp ends in `±HH:MM`; the milliseconds go before it
+    let (time, off) = s.split_at(s.len() - 6);
+    format!("{time}.{:03}{off}", unix_ns / 1_000_000 % 1000)
 }
 
 /// The journal this thread writes to: a test's bound one, or the program's.
@@ -720,5 +733,15 @@ mod tests {
         // and a record still wakes it at once
         j.record(Kind::Mark, "here");
         wait_written(&j, 2);
+    }
+
+    /// Test t2571 (load-report-into-trace): the trace's `clock` fact is the run's start in local
+    /// time with milliseconds and its offset — the one wall-clock time the load report's header gave.
+    #[test]
+    fn t2571_the_trace_clock_is_local_time_with_its_offset() {
+        let ns = T0 as u64 * 1_000_000 + 7;
+        assert_eq!(start_clock_with(ns, 3 * 3600), "2025-11-07 10:00:00.250+03:00");
+        assert_eq!(start_clock_with(ns, -(5 * 3600 + 1800)), "2025-11-07 01:30:00.250-05:30");
+        assert_eq!(start_clock_with(ns, 0), "2025-11-07 07:00:00.250+00:00");
     }
 }

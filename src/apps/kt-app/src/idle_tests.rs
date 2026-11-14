@@ -194,3 +194,103 @@ fn t1834_a_hover_frame_does_not_lay_out_the_events() {
     assert!(h.state().event_passes > before, "a frame with other input reused the events");
     assert!(h.state().event_paint.is_none());
 }
+
+/// The process's processor time so far (user + system), from `/proc/self/stat`; `None` elsewhere.
+fn cpu_time() -> Option<Duration> {
+    let s = std::fs::read_to_string("/proc/self/stat").ok()?;
+    let rest = &s[s.rfind(')')? + 2..];
+    let f: Vec<&str> = rest.split_whitespace().collect();
+    let ticks: u64 = f.get(11)?.parse::<u64>().ok()? + f.get(12)?.parse::<u64>().ok()?;
+    Some(Duration::from_millis(ticks * 10))
+}
+
+/// Test t2559 (chain-everywhere): the effects gallery of a heavy event (Datamosh then VHS Tape) costs
+/// nothing at rest once its cells are composed — the real-frame cells are computed once, a pointer
+/// moving over the open gallery renders no cell and leaves no cell asked, and the program asks for
+/// no frame on its account.
+/// - **PATH** select an event carrying Datamosh and VHS Tape, open its effects window, click
+///   "+ effect…": the cells read "Loading", then each shows the event's mosh with the candidate;
+///   moving the mouse over the gallery changes nothing and the processor stays idle
+#[test]
+fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    crate::plugins::install();
+    if kt_gpu::offline_engine().is_none() {
+        eprintln!("skipped: no offline device");
+        return;
+    }
+    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let mut h = crate::layout_tests::harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let mut mosh = FxInstance::plugin("datamosh").expect("datamosh");
+    for (name, v) in [("lines", 0.0), ("before", 0.0), ("mosh", 1.0), ("gop", 12.0)] {
+        assert!(mosh.set_param(name, v), "{name}");
+    }
+    let clip = |id: u64, start: i64, fx: Vec<FxInstance>| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(start),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx,
+        opacity: 1.0,
+        fx_off: false,
+    };
+    p.clips.push(clip(1, 0, vec![mosh, FxInstance::plugin("vhs_tape").expect("vhs_tape")]));
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.push_project_to_player();
+    app.open_fx_editor(ClipId(1));
+    for ed in app.fx_editors.iter_mut() {
+        ed.opened_at -= crate::fx_thumbs::DECODE_GUARD * 2;
+    }
+    h.step();
+    h.step();
+    let add = crate::i18n::tr(crate::i18n::k::fxreg::ADD).to_string();
+    h.get_by_label(&add).click();
+    h.step();
+
+    // the cells come: the real frames, once
+    let fill = cpu_time();
+    let deadline = kt_time::test_deadline();
+    let mut quiet = 0;
+    while quiet < 5 {
+        h.step();
+        quiet = if h.state().fx_thumbs.pending() { 0 } else { quiet + 1 };
+        assert!(std::time::Instant::now() < deadline, "the cells never settled");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let renders = kt_time::work::count(kt_time::work::Work::FxThumb);
+    assert!(renders > 0, "no cell was composed");
+
+    // at rest, the pointer over the gallery
+    let rest = cpu_time();
+    for i in 0..60 {
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(300.0 + (i % 30) as f32 * 8.0, 300.0)));
+        h.step();
+    }
+    let after = cpu_time();
+    assert_eq!(kt_time::work::count(kt_time::work::Work::FxThumb), renders, "a moving pointer rendered cells");
+    assert!(!h.state().fx_thumbs.pending(), "cells were asked again at rest");
+    if let (Some(a), Some(b), Some(c)) = (fill, rest, after) {
+        eprintln!("t2559: {renders} cells composed in {:?} of processor time; 60 frames of a moving pointer {:?}", b - a, c - b);
+    }
+}

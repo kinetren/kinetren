@@ -1725,7 +1725,7 @@ impl KtApp {
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
         // the UI thread posts jobs and reads answers: a blocking call on it is counted (one-scheduler)
         kt_time::block::mark(kt_time::block::role::UI);
-        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load report read it
+        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load watch read it
         let _frame_cost = crate::frame_cost::span(crate::frame_cost::Stage::Frame);
         // LIVE BENCH COUNTERS (R.68) sit here, not in `ui()`: a frame is
         // the drawing, and the harness draws it with the same body, bypassing
@@ -3159,8 +3159,15 @@ impl KtApp {
         }
     }
 
+    /// What names the player's project in the effect cells' keys (chain-everywhere): the model's
+    /// revision and the place being edited.
+    pub(crate) fn scene_rev(&self) -> u64 {
+        let place = self.model.editing().map_or(0, |m| m.0.wrapping_add(1));
+        self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place
+    }
+
     /// Path of the sidecar index DB of the current project (None for unnamed).
-    fn index_db_path(&self) -> Option<std::path::PathBuf> {
+    pub(crate) fn index_db_path(&self) -> Option<std::path::PathBuf> {
         self.project_path.as_ref().map(|p| p.with_extension("ktindex.db"))
     }
 
@@ -4791,9 +4798,6 @@ impl KtApp {
                 }
                 None => self.thumbs.add_media(addr, path),
             }
-            // picker cells remember the SAME ThumbKey, and it does not depend on the
-            // generator values (a twin defect of item 412)
-            self.fx_thumbs.invalidate_media(addr);
         }
         if respawn {
             let p = self.player_project();
@@ -4933,11 +4937,6 @@ impl KtApp {
             {
                 self.player.set_media_path(*id, path);
                 self.thumbs.retune_media(*id, resolved);
-                // picker cells remember the SAME ThumbKey, and it does not depend on the
-                // generator parameters: without this line the strip would show
-                // the effect on a frame of the OLD parameters — a twin defect of
-                // item 412, only in the picker
-                self.fx_thumbs.invalidate_media(*id);
                 continue;
             }
             // the file's open and the decoder's swap on the media lane (one-scheduler, row 148)
@@ -10582,12 +10581,14 @@ impl KtApp {
                 ui.add(egui::Label::new(egui::RichText::new(crate::tf!(k::perf::LOAD_GPU, g.line())).weak()).wrap());
             }
         }
-        let r = ui.button(tr(k::perf::LOAD_REPORT));
-        crate::widgets::field_probe::note("diag.load_report", r.rect);
-        let r = self.hint(r, tr(k::perf::LOAD_REPORT_HINT));
+        // the structured trace's folder (load-report-into-trace): what a complaint hands over
+        let r = ui.button(tr(k::perf::TRACE_FOLDER));
+        crate::widgets::field_probe::note("diag.trace_folder", r.rect);
+        let r = self.hint(r, tr(k::perf::TRACE_FOLDER_HINT));
         if r.clicked() {
-            crate::load_watch::write_now();
-            if let Err(e) = crate::util::open_in_file_manager(&crate::journal::data_dir()) {
+            let dir = crate::journal::data_dir().join("trace");
+            let _ = std::fs::create_dir_all(&dir);
+            if let Err(e) = crate::util::open_in_file_manager(&dir) {
                 self.warn(e);
             }
         }
@@ -11097,9 +11098,11 @@ pub fn run() -> eframe::Result {
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
     // system (item 1, v1.4). The card that drives the monitor is the one with no copy:
     // `display_power_preference` decides; WGPU_POWER_PREF overrides it.
-    // the adapter list, once, BEFORE eframe opens its own instance (segv-crashes): the load watch's
-    // report asks for it later from its thread, and no instance is created beside eframe's at start
+    // the adapter list, once, BEFORE eframe opens its own instance (segv-crashes): no instance is
+    // created beside eframe's at start. The trace takes it as the run's machine facts here, with
+    // the monitors' cards and the power choice (load-report-into-trace): the trace is installed above
     let _ = kt_gpu::adapter_facts();
+    kt_gpu::trace_machine();
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
         setup.power_preference = kt_gpu::display_power_preference();

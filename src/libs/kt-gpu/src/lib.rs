@@ -24,7 +24,7 @@ mod warm;
 
 pub use context::{trace_device, 
     AdapterFact, DrivingCard, GpuContext, GpuInitError, adapter_facts, display_power_preference, driving_cards,
-    instances_created, power_preference_for,
+    instances_created, machine_facts, power_preference_for, trace_machine,
 };
 pub use compiled::{cold_draws, forms_revision, pipelines_in_frame};
 pub use exit::background_gpu_work;

@@ -325,11 +325,15 @@ pub fn mark_shown(report: &Path) {
 /// Open this run's journal (D5): the previous run moves into the fan, the new file starts with
 /// the header. Called once, at the editor's start.
 pub fn start_run() {
-    let ffmpeg = match kt_ffmpeg::backend_info() {
+    start_run_at(&path(), &ffmpeg_line());
+}
+
+/// "FFmpeg 7" or "FFmpeg missing": the run header's and the trace's `ffmpeg` fact.
+pub(crate) fn ffmpeg_line() -> String {
+    match kt_ffmpeg::backend_info() {
         Some(i) => format!("FFmpeg {}", i.major),
         None => "FFmpeg missing".to_string(),
-    };
-    start_run_at(&path(), &ffmpeg);
+    }
 }
 
 pub(crate) fn start_run_at(path: &Path, ffmpeg: &str) {

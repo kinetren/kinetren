@@ -31,6 +31,8 @@ pub struct MorphEditor {
     pub backup: Option<kt_model::MorpherEvent>,
     /// The state of the automation widget for each slot (R.38 item 13).
     pub auto_views: std::collections::HashMap<usize, crate::automation::AutoView>,
+    /// When the window opened: its effect cells open no file before the misclick guard (item 430).
+    pub opened_at: std::time::Instant,
 }
 
 const MS: i64 = TICK_HZ / 1000; // ticks in ms
@@ -69,6 +71,7 @@ impl KtApp {
             src_rect: None,
             backup,
             auto_views: std::collections::HashMap::new(),
+            opened_at: std::time::Instant::now(),
         });
     }
 
@@ -209,6 +212,13 @@ impl KtApp {
         for ed in &mut editors {
             self.draw_one_morph_editor(ctx, ed);
         }
+        // a window closed: its queued cells are dropped, and with the last cell window its sources
+        if editors.iter().any(|e| !e.open) {
+            self.fx_thumbs.bump_generation();
+            if editors.iter().all(|e| !e.open) && self.fx_editors.is_empty() {
+                self.fx_thumbs.forget_scene();
+            }
+        }
         editors.retain(|e| e.open);
         self.morph_editors = editors;
     }
@@ -302,14 +312,20 @@ impl KtApp {
         // parts of the context of the picker’s thumbnails (R.54): the service and the texture cache
         // are borrowed BEFORE the window — inside the closure `self` is taken by the model
         let pv_svc = &self.fx_thumbs;
-        let pv_tick = playhead.0 - playhead.0.rem_euclid(frame_step);
-        let pv_cam = kt_engine::resolve_cam3d(
-            &[kt_model::FxInstance::builtin("pan3d")],
-            &self.model.project().cameras,
-            kt_time::Tick(pv_tick),
-            crate::fx_thumbs::REF_W,
-            self.model.project().settings.width,
-        );
+        // the cells are the REAL frame with the candidate at the tail of this morpher's patch
+        // (chain-everywhere): the moment is the cursor's, kept inside the morpher's span, and the
+        // whole frame (a morpher acts on many layers); before the misclick guard — Loading
+        let pv_tick = (playhead.0 - playhead.0.rem_euclid(frame_step))
+            .clamp(orig.start.0, (orig.start.0 + orig.duration.0 - 1).max(orig.start.0));
+        let pv_scene = crate::fx_thumbs::Scene {
+            project: self.player.project(),
+            rev: self.scene_rev(),
+            place: crate::fx_thumbs::Place::Morph(ed.id),
+            t: kt_time::Tick(pv_tick),
+            base: self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()),
+            index_db: self.index_db_path(),
+        };
+        let pv_decode = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
         let shown = crate::window_shell::Shell::new(
             egui::Id::new(("morph", ed.id.0)),
             title,
@@ -439,15 +455,7 @@ impl KtApp {
                 // splits them back by `FxInstance::class()`.
                 let (mut fx, mut bypass, mut auto, split) = merge_chains(&ev.patch);
                 let mut src_on = !ev.patch.src_off;
-                let mut pv = crate::fx_thumbs::PickerCtx::new(
-                    pv_svc,
-                    crate::fx_thumbs::FxThumbBase::Pattern,
-                    None,
-                    Vec::new(),
-                    0.5,
-                    pv_tick,
-                    pv_cam,
-                );
+                let mut pv = crate::fx_thumbs::PickerCtx::for_scene(pv_svc, pv_scene.clone(), pv_decode);
                 let ch = crate::widgets::chain_strip(
                     ui,
                     ("morphchain", ed.id.0),
