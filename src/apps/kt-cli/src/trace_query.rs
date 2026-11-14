@@ -377,6 +377,13 @@ pub fn gpu(run: &Run) -> String {
     // class → (start delays, runs, waits after the end, jobs with no timestamps, the worst error µs)
     type Starts = (Vec<u64>, Vec<u64>, Vec<u64>, u64, u32);
     let mut starts: BTreeMap<u64, Starts> = BTreeMap::new();
+    // a job's pieces are recorded together when its buffers came back (gpu-throughput D6): only its
+    // last piece's end says how long the buffers took after the device
+    let mut last_end: HashMap<(u64, u64), u64> = HashMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
+        let e = last_end.entry((r.t, r.id)).or_default();
+        *e = (*e).max(r.c);
+    }
     for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
         let e = starts.entry(r.id).or_default();
         if r.aux >= u32::MAX - 1 || r.b == 0 {
@@ -385,7 +392,9 @@ pub fn gpu(run: &Run) -> String {
         }
         e.0.push(r.b.saturating_sub(r.a));
         e.1.push(r.c.saturating_sub(r.b));
-        e.2.push(r.t.saturating_sub(r.c));
+        if last_end.get(&(r.t, r.id)) == Some(&r.c) {
+            e.2.push(r.t.saturating_sub(r.c));
+        }
         e.4 = e.4.max(r.aux);
     }
     for (c, (late, run_, signal, unknown, err)) in &mut starts {

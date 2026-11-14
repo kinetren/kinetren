@@ -41,6 +41,12 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   walks each stage to the frame on screen first, then to the run's last moment that is not kept;
   `set_stream_view` tells the memo the loop's start (playhead inside it) or the frame on screen, and the
   memo's want adds the walk's checkpoints (`size_stream_memo_walk`). t2355, t2360.
+  **The history is computed ahead** (gpu-throughput D3): once the near part (twice the display's reach)
+  has nothing pending, a FAR part walks at class background — inside a loop region to its end and round,
+  as many frames as the memo holds (`stream_far_frames`), playing or paused; outside one, playing, a
+  quarter of the memo. A far part pending with no position walked (`stream::positions_walked`) for
+  `FAR_STALLS` passes stops retrying until the state moves, so a source that never comes cannot keep a
+  paused prefetch thread passing. t2432.
 - **Frame blending (R.37 C5, "Frames: blending")** is done in the COMMON code of the plan (`layer_src` → `blend_frames`), not in the executor, which receives an already blended pre-FX frame (invariant No. 7). The kernel is `dissolve_into`, integer and scalar. A blended frame carries its base frame's serial, so kt-gpu's upload key takes the pair and the weight (t250).
   - A PAIR is decided by ONE function `clip_frame_keys`; `layers_at` MUST return BOTH pts, otherwise prefetch warms one frame while the plan asks for two — an eternal miss. With R.56 it also has a second entry — `blend_footage`, inherited from the attachment above (item 448): the reel itself has no pairs, its leaves blend.
   - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.

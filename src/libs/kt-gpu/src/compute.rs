@@ -470,7 +470,7 @@ impl ComputeHost for ComputeDevice {
             let (s, p) = (&job.steps[i], &pipes[i]);
             // what the pieces already run measured: every later dispatch of the same name (D2)
             if !learns.is_empty() {
-                self.learn(&mut learns, &job.steps, &mut predicted, i);
+                self.learn(&mut learns, job.steps, &mut predicted, i);
             }
             // a dispatch past the ring's bound, or a higher class waiting, ends the piece: the
             // buffers stay on the device, the next piece goes on with them (gpu-arbiter D4)

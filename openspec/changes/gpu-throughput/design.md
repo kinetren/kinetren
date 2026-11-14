@@ -102,7 +102,7 @@ executor may take work only where its bytes are the device's, or by a choice tha
 | Work | Decision | Why |
 |---|---|---|
 | Decoder RGBA conversion of a span (preview) | **CPU threads, as a render** (`rgba_threads` by memory) | the same swscale per picture, split by pictures: bytes equal (t1456 conformance holds threads). The preview converted on the decoder's one thread |
-| Datamosh source conversion RGBA→Y'CbCr | decided by measurement (stage 4) | `Planes::from_rgba` is the device's bytes (t2274), so the CPU may take it whatever the load; it pays only if the dispatch is a real share of a position's device time |
+| Datamosh source conversion RGBA→Y'CbCr | stays on the device (measured) | `Planes::from_rgba` is the device's bytes (t2274), so the CPU could take it whatever the load. Measured on the baseline's preview loop (llvmpipe, per dispatch): convert 0.667 ms ×698 against search 4.718 ×1366, residual 2.576 ×2094, decode 0.424 ×4143, vectors 0.265 ×683 — about 3 % of a position's device time (~20 ms). A second path for 3 % is not worth its upload and code; the processor's cores already rasterize on llvmpipe |
 | Datamosh clean encoder, residual, decoder | device only | the residual's DCT is f32 with a division (WGSL: 2.5 ULP) and drivers contract multiply-adds: a CPU result differs from the device's, and a load-dependent split would change the bytes. An always-CPU codec is a new look (t1239 pins the bytes) and slower than any card |
 | Datamosh GOPs of the clean encoder in parallel | not done | on one queue dispatches run in submission order; batching already removed the round trips |
 | Other events' histories concurrently | not done | his project has one stream layer at a time; a second walk on the one compute queue fills only gaps D1 already fills |
@@ -177,3 +177,27 @@ Before (base 8fbe7313):
 On llvmpipe the display device and the compute host are separate rings (each software device has its own
 queue thread), so the preview loop does not reproduce row 480; `gpu-share` puts all three on one device as a
 card's ring does.
+
+After (a528e2a3), measured on 2026-11-14 as interleaved pairs with a base binary built at the same time
+(the machine is shared with other sessions: load average 5–37 during the runs, so V-fps and display
+latencies move by tens of percent between two runs of one binary):
+
+| What | Base | After | How |
+|---|---|---|---|
+| shared device: near admission waits / compute jobs' wall | 54 %, 63 % | 2 %, 1 % | `gpu-share … --seconds 10 --arbiter on`, two pairs, `trace gpu` |
+| shared device: pieces submitted before the earlier one ended | 0 of 8, 0 of 7 | 108 of 182, 93 of 166 | same (`gpu_start` per piece) |
+| shared device: offline frames/s | 17.8, 17.1 | 19.2, 27.0 | same |
+| shared device: history positions/s | 6.8, 6.9 | 4.9, 7.6 | same: the display saturates the one queue (D1, what it cannot do) |
+| shared device: display waited p50 / p95 ms | 47.0/62.1, 51.0/79.0 | 50.5/74.8, 42.0/55.0 | same: within the noise |
+| a walk with no display (stream-cost) | 42.8, 42.0 positions/s | 42.4, 43.4 | interleaved, `stream-cost h.kt 4419.91 4422 --laps 1 --loop`: nothing to change there |
+| preview loop: history positions walked per lap (cumulative share of the 666) | 84, 235, 207, 111, 24, 2, 8, 1 (13 %, 48 %, 79 %, 96 %) | 386, 177, 73, 17, 13, 1 (58 %, 85 %, 96 %, 98 %) | `preview h.kt 4419.90 4430.98 --size 1280x720 --loop 90`, `trace loop` |
+| preview loop: last lap that walked the history | 7 | 5 | same |
+| preview loop: process cores | 16.0 | 14.4 | same (llvmpipe rasterizes the display on the processor) |
+
+On his card, what the trace should show: the walk's admission waits fall from 96–98 % of its wall to the
+display's own share; pieces queue behind the display's frame (`trace gpu`: "submitted before the earlier
+ended"); while the display composes Camera ISP + VHS every frame (32.5 ms at a 16.7 ms period) the walk
+still gets about one bound a display frame (row 491, with 483); on a pause, on Loading, on kept replays and
+once a held picture is no longer composed over (483), the device is fed continuously, and the loop's
+history is computed in its first laps (`trace loop`: positions walked per lap fall to zero by lap 2–3, the
+walk's rate rather than the display's reach bounding it).

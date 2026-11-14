@@ -329,9 +329,18 @@ is no picture, and an export refuses.
   first; the class is the caller thread's (`sched::current_class`: compose now, prefetch near, export
   offline, a lane's job its lane's class, untagged background). A new thread that submits GPU or
   compute work sets its class.
-- **A ring with a display bounds its flight** (half the preview's frame period); a lower-class frame or
+- **A ring with a display bounds what a lower class leaves in front of the display's NEXT present**
+  (gpu-throughput D1): every flight carries its predicted ns and submit instant, the ring drains them as a
+  FIFO, and a lower class is admitted while the drain plus its claim ends within the bound past the later
+  of the display's next present (a period after its last while it presents, else now) and the end of the
+  display's own frame in flight; at most `AHEAD_PIECES` (3) lower flights uncompleted. The display's
+  present is COUNTED (`Ring::note_display` in `present`/`present_kept`), never admitted. A waiter wakes
+  when the prediction makes room (it polls the flights' devices, never blocks on a surface device). A
+  lower class's piece is cut at HALF the bound (`piece_limit`) so one runs while the next is queued; a
+  `now` piece keeps the whole bound. A lower-class frame or
   compute job is cut at pass/dispatch boundaries by the pass timer's last MEASURED time of each label
-  (`Timer::predict`, `ComputeDevice::last`); an unmeasured pass ends its piece. A new pass site calls
+  (`Timer::predict`, `ComputeDevice::last`), else by the disk seeds (`seeds.rs`, below); an unmeasured
+  pass ends its piece. A new pass site calls
   `self.cut_point(enc, label)` before writing its uniform, or it is never cut. A compute ring is bounded
   too and cuts while a higher class waits. Same passes, same order, same bytes (t2253).
 - **A piece's completion frees the ring by a work-done callback**; a waiter completes the oldest piece by
@@ -347,5 +356,15 @@ is no picture, and an export refuses.
   batched Datamosh job carries hundreds of dispatches, and an untimed one is never predicted.
 - **`wait_presented` never polls on a fixed period**: the work-done callback, a check after the
   measured device time, then waits growing from a quarter of it (`present_checks`, t2260).
+- **Pass times outlive the process** (`seeds.rs`, gpu-throughput D2): `<shader-cache>/pass-times-v1.tsv`,
+  (adapter name + driver, label, work units) → ns; a label never measured in the process is predicted
+  from it (scaled by work from the nearest size). Notes only when a time is new or moved by a quarter;
+  written at most every 30 s and in the exit hook; no cache dir (tests) — memory only. A run shape's
+  label is never seeded (process-local number). A cache: it moves cuts, never bytes.
+- **A compute job learns from its own pieces** (D2): at a cut the piece's timestamps are resolved into
+  their own aligned part of the job's resolve buffer and mapped; the next `due` reads what came back
+  and predicts every later dispatch of that name. **A job holds a timestamp set of its own** (a pool of
+  `STAMP_SETS` made up front; none free — untimed, never a creation), and writes a `gpu_start` per
+  PIECE with that piece's submit; every piece writes `gpu_exec` (98) naming its executor (D6).
 - `KT_GPU_ARBITER=off` (or `arbiter::set_enabled(false)`) admits everything and cuts nothing: an A/B of
   a run; `kt-cli gpu-share` runs both on ONE device (t2254), `kt-cli trace gpu` reads the records.

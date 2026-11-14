@@ -101,10 +101,10 @@ The display's present (a composite, or a kept composite's display pass) SHALL en
 device completes it; the ring SHALL know when the display last submitted.
 Why: found-defects 480 — the display's 32.5 ms composite on his card was invisible to the ring.
 
-#### Scenario: A present is in flight until it completes
-- **WHEN** a displayed engine presents a measured chain and its ring is read before and after the device completes it
-- **THEN** the flight holds a now submission of the frame's predicted time with no admission wait, and nothing after completion
-- **TEST** t2433 (`src/libs/kt-gpu/tests/arbiter.rs`)
+#### Scenario: The display is counted, never admitted
+- **WHEN** a lower piece holds the bound and the display presents, then the display presents behind its frames
+- **THEN** the present enters the flight with no wait; a lower class may queue what drains before the display's next present plus the bound and not more; behind a late display frame a lower piece waits only for the bound past that frame's end
+- **TEST** t2433 (`src/libs/kt-gpu/src/arbiter.rs`)
 
 ### Requirement: A pass never measured is predicted
 A render pass or a compute dispatch SHALL be predicted from the device time measured for it on this device:
