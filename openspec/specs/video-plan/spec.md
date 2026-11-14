@@ -1093,12 +1093,19 @@ On a bounded ring, a lower-class frame or compute job cut into pieces SHALL subm
 encoding the next without waiting for the piece's completion; the next piece SHALL be admitted by the
 ring against its predicted drain (the device time still ahead of each submission in flight, the display's
 present included), waiting only until the drain has room, a higher class waits, or three lower pieces are
-uncompleted. The waiter SHALL wake when its claim fits by the prediction, not only at a completion. A ring
+uncompleted. Where a submitted piece of a device without a surface is in flight, the waiter SHALL wait for
+the oldest one's completion and look again the moment it comes; with none (a surface device's pieces,
+pieces still being encoded) it SHALL wake when its claim fits by the prediction. A piece whose time is a
+guess (a pass never measured) SHALL make room only by its completion, never by the clock. A ring
 with a display still never holds a piece of several passes predicted over the bound in front of the
 display, and the cut frame's bytes equal the uncut frame's.
 Why: found-defects 392 — `Piece::cut` waited for the device to finish each piece before admitting the
 next: ~45 % of a 720-line Datamosh walk in his trace was the arbiter's own waits. Found-defects 480 — counted
-by completions, a piece queued behind the display's frame held the ring for the whole frame.
+by completions, a piece queued behind the display's frame held the ring for the whole frame. Stage 11's
+finish.sh (t2435, t2436 red under the full parallel run, green alone): a guessed time drained by the clock,
+so on a loaded machine the next piece went before the guessed one's timestamps came back and nothing was
+learned; a waiter sleeping on a timer saw a completion only at its own next wake, and the device stood
+idle between pieces.
 
 #### Scenario: A cut goes on while the bound has room
 - **WHEN** a compute ring with no display and a ring with a display each take a lower-class job cut into pieces whose predicted times fit the bound together, and pieces that do not
@@ -1109,6 +1116,11 @@ by completions, a piece queued behind the display's frame held the ring for the 
 - **WHEN** a displayed ring holds a submitted lower piece predicted at the whole bound, never completing, and another lower piece of half the bound waits
 - **THEN** the waiter is admitted once half the earlier piece's predicted time has passed, with no completion
 - **TEST** t2431 (`src/libs/kt-gpu/src/arbiter.rs`)
+
+#### Scenario: A guess makes room only by its completion
+- **WHEN** a displayed ring holds a submitted lower piece whose time is a guess at the whole bound, never completing, and another lower piece of half the bound waits for twice that time
+- **THEN** the waiter is not admitted by the clock; it is admitted when the earlier piece completes
+- **TEST** t2441 (`src/libs/kt-gpu/src/arbiter.rs`); t2435 and t2436 (`src/libs/kt-gpu/tests/compute_start.rs`) hold under a full parallel run
 
 ### Requirement: The prefetch advances a run of stream frames as one walk
 The prefetch thread SHALL advance a stream stage's frames ahead of the frame on screen as one walk to the
@@ -1330,7 +1342,7 @@ piece (267 in 267).
 
 #### Scenario: A cold walk is cut by what its first pieces measured
 - **WHEN** a compute job of many dispatches of four names, never measured, runs on a bounded ring, then the same job again
-- **THEN** the first run is cut into fewer pieces than half its dispatches, and its bytes equal the second's
+- **THEN** the first run cuts before an unmeasured dispatch at most once a name (the cuts its measured times call for follow the machine's speed), and its bytes equal the second's
 - **TEST** t2435 (`src/libs/kt-gpu/tests/compute_start.rs`)
 
 ### Requirement: Work a person waits for uses the machine
@@ -1347,5 +1359,5 @@ Why: found-defects 485 — the owner, kkt-26.11.10b K3: "не грузит пр�
 
 #### Scenario: A walk keeps the device fed
 - **WHEN** a cold Datamosh walk of many positions runs at class near on a compute ring that carries a display with no display traffic
-- **THEN** from the trace's per-piece device starts and ends, the device stands idle between consecutive pieces for less than a fifth of the walk's device span, and the walk's admission waits are under half its wall
-- **TEST** t2436 (`src/libs/kt-gpu/tests/compute_start.rs`)
+- **THEN** from the trace's per-piece submits, device starts and ends, at least half the pieces are submitted before the earlier one ends, and the device stands idle with nothing queued (after a piece whose successor was not yet submitted) for less than a fifth of the walk's device span; idle behind a piece already queued is a software device's queue thread waiting for the processor and is reported, not held
+- **TEST** t2436 (`src/libs/kt-gpu/tests/compute_start.rs`, run with the machine: on a software device the queued-ahead count races the device's threads)

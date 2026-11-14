@@ -294,7 +294,7 @@ fn gpu_flow(run: &Run) -> String {
         .collect();
     pieces.sort_unstable();
     if pieces.len() > 1 {
-        let (mut idle, mut ahead, mut pairs) = (0u64, 0usize, 0usize);
+        let (mut idle, mut unfed, mut ahead, mut pairs) = (0u64, 0u64, 0usize, 0usize);
         for w in pieces.windows(2) {
             let ((_, end, _), (start, _, submit)) = (w[0], w[1]);
             let gap = start.saturating_sub(end);
@@ -305,16 +305,19 @@ fn gpu_flow(run: &Run) -> String {
             idle += gap;
             if submit < end {
                 ahead += 1;
+            } else {
+                unfed += gap;
             }
         }
         let busy: u64 = pieces.iter().map(|p| p.1 - p.0).sum();
         let _ = writeln!(
             o,
-            "  pieces on the device {}: busy {}, idle between consecutive pieces {} (gaps under {}), {ahead} of {pairs} submitted before the earlier ended",
+            "  pieces on the device {}: busy {}, idle between consecutive pieces {} (gaps under {}), {} of it with nothing queued, {ahead} of {pairs} submitted before the earlier ended",
             pieces.len(),
             ms(busy),
             ms(idle),
-            ms(PIECE_GAP_MAX)
+            ms(PIECE_GAP_MAX),
+            ms(unfed)
         );
     }
     let (mut device, mut cpu) = (0u64, 0u64);

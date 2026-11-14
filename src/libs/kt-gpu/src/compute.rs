@@ -475,6 +475,9 @@ impl ComputeHost for ComputeDevice {
             // a dispatch past the ring's bound, or a higher class waiting, ends the piece: the
             // buffers stay on the device, the next piece goes on with them (gpu-arbiter D4)
             if piece.due(predicted[i]) {
+                if predicted[i].is_none() {
+                    GUESS_CUTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 let mut full = std::mem::replace(&mut enc, d.create_command_encoder(&Default::default()));
                 let to = i.min(timed);
                 if let Some((set, resolve)) = stamps.as_ref().filter(|_| to > from) {
@@ -701,6 +704,14 @@ impl ComputeDevice {
 }
 
 static LEARNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GUESS_CUTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Cuts made before a dispatch never measured (tests): what a guess cost, apart from the cuts the
+/// measured times call for — those follow the machine's speed (a software device's time is processor
+/// time).
+pub fn guess_cuts() -> u64 {
+    GUESS_CUTS.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Pieces whose timestamps a running job learned from (tests).
 pub fn pieces_learned() -> u64 {
