@@ -613,24 +613,14 @@ impl crate::app::KtApp {
         if fresh {
             self.start.store.reset_tour();
         }
-        if fresh || !path.exists() {
-            let _ = std::fs::create_dir_all(&dir);
-            let text = crate::app::project_text_of(&lesson_project(), &Default::default(), Some(&dir));
-            if let Err(e) = crate::app::write_project_atomic(&path, &text) {
-                self.warn(crate::tf!(k::msg::SAVE_FAILED, e));
-                return;
-            }
-        }
-        match crate::app::KtApp::open(&path) {
-            Ok(mut app) => {
-                app.claim_project(&path);
-                self.replace_with(app);
-            }
-            Err(e) => {
-                self.note(crate::tf!(k::msg::OPEN_FAILED, e));
-                return;
-            }
-        }
+        // the copy is written (when fresh or missing) and read on the media lane, and the lesson's
+        // state is set when it lands (scheduler-followups D3)
+        let text = crate::app::project_text_of(&lesson_project(), &Default::default(), Some(&dir));
+        self.ask_open(path, crate::app::OpenThen::Lesson(lesson), Some((fresh, text)));
+    }
+
+    /// The lesson's copy is open: its state.
+    pub(crate) fn lesson_opened(&mut self, lesson: u32) {
         self.start.store.touch_tour();
         self.start.lessons.open = true;
         self.start.lessons.lesson = lesson;

@@ -6735,16 +6735,22 @@ fn t503_gesture_frame_touches_no_media_paths() {
     let gesture = 4242u64;
     // one gesture, 60 frames — a second of dragging a level of an event
     let before = h.state().media_sync_builds;
+    // the harness sets its model wholesale, so its first edit gives the model's media their sources
+    // (the snapshot is the opened project's, scheduler-followups D2): counted from after that frame
+    let mut spawns = 0;
     for i in 0..60 {
         let app = h.state_mut();
         let db = -6.0 + i as f32 * 0.1;
         assert!(app.apply_coalesced(Command::SetGain { id: ClipId(1), gain_db: db }, gesture));
         h.step();
+        if i == 0 {
+            spawns = h.state().player.worker_spawns();
+        }
     }
     let builds = h.state().media_sync_builds - before;
     assert!(builds <= 60, "the path map was rebuilt more often than the model changed: {builds}");
     // the media set did not change even once — there was no reason to touch the sources
-    assert_eq!(h.state().player.worker_spawns(), 0, "the level gesture raised the sources");
+    assert_eq!(h.state().player.worker_spawns(), spawns, "the level gesture raised the sources");
 }
 
 /// Test 504 (R.53, item 413): a pseudo-path does NOT open the sidecar DB. A generator

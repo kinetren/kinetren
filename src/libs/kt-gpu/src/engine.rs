@@ -863,6 +863,8 @@ struct Inner {
     surface: bool,
     /// This device shows the preview: its ring bounds what stands in front of it.
     shows: Option<crate::arbiter::Registered>,
+    /// This engine composes the preview's slow-chain frames (`serve_preview`): the ring bounds too.
+    serves: Option<crate::arbiter::Registered>,
     /// The frame being encoded is cut into pieces on its ring (`execute`, `submit`).
     piece: Option<crate::arbiter::Piece>,
 }
@@ -1301,7 +1303,50 @@ impl GpuFxEngine {
         if compile_only {
             return Ok(None);
         }
+        let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(ai, &device));
+        let memo_guard = ai.device_type != wgpu::DeviceType::Cpu;
+        Ok(Some(Self::assemble(device, queue, info, c, arb, memo_guard, keep, export)))
+    }
 
+    /// An engine on this one's device and queue with its compiled pipelines, and its own frame
+    /// state and lock (arena, pools, memos): work of another class composes beside this engine's
+    /// frames without waiting for its lock (scheduler-followups D6, row 290). Its submissions go to
+    /// the same ring. Nothing is compiled.
+    pub fn sibling(&self) -> Arc<GpuFxEngine> {
+        let (device, queue, arb, memo_guard) = {
+            let g = self.inner.lock().unwrap();
+            (g.device.clone(), g.queue.clone(), g.arb.clone(), g.memo_guard)
+        };
+        Self::assemble(device, queue, self.info.clone(), self.compiled.clone(), arb, memo_guard, false, false)
+    }
+
+    /// This engine's device shows the preview's frame from now on (the slow-chain route,
+    /// scheduler-followups D6): its ring bounds what stands in front of that frame and cuts a
+    /// lower-class frame while it waits, as a display's ring does. Idempotent.
+    pub fn serve_preview(&self) {
+        let mut g = self.inner.lock().unwrap();
+        if g.serves.is_none() {
+            g.serves = Some(g.arb.register_preview());
+        }
+    }
+
+    /// The same compiled set as `other` (tests: a sibling compiles nothing).
+    #[doc(hidden)]
+    pub fn shares_compiled(&self, other: &GpuFxEngine) -> bool {
+        Arc::ptr_eq(&self.compiled, &other.compiled)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assemble(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        info: GpuBackendInfo,
+        c: Arc<crate::compiled::Compiled>,
+        arb: Arc<crate::arbiter::Ring>,
+        memo_guard: bool,
+        keep: bool,
+        export: bool,
+    ) -> Arc<GpuFxEngine> {
         let arena_slots = 256u32;
         let arena = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kt-gpu uniforms"),
@@ -1313,7 +1358,6 @@ impl GpuFxEngine {
         let max_dim = device.limits().max_texture_dimension_2d;
         let (names, owners) = plugin_pipe_names();
         let timer = Timer::new(&device, &queue, &info.name, names, owners);
-        let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(ai, &device));
         // the editor's display device presents to its window (pipeline-prewarm D3: `keep` is it)
         let shows = keep.then(|| arb.register_display());
         let engine = Arc::new(GpuFxEngine {
@@ -1338,7 +1382,7 @@ impl GpuFxEngine {
                 upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(RING as u64)),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
-                memo_guard: ai.device_type != wgpu::DeviceType::Cpu,
+                memo_guard,
                 refuse_next_growth: false,
                 last_cost: Default::default(),
                 last_stages: Default::default(),
@@ -1356,6 +1400,7 @@ impl GpuFxEngine {
                 arb,
                 surface: keep,
                 shows,
+                serves: None,
                 piece: None,
             }),
         });
@@ -1369,7 +1414,7 @@ impl GpuFxEngine {
                 present_memo.evict_to_cap(pool);
             }
         }));
-        Ok(Some(engine))
+        engine
     }
 }
 

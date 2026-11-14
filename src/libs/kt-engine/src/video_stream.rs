@@ -456,7 +456,6 @@ pub(super) fn run(
     cache: &BurstCache,
     memo: &StreamMemo,
     pacing: Option<StreamPacing>,
-    held: &std::sync::atomic::AtomicBool,
     quality: Quality,
     dq: Quality,
     t: Tick,
@@ -479,7 +478,7 @@ pub(super) fn run(
         match k.held(&st.values, &cs, n, memo).filter(|&f| p.hold && k.needs(&st.values, &cs, f, memo).is_empty()) {
             Some(f) => {
                 n = f;
-                held.store(true, std::sync::atomic::Ordering::Relaxed);
+                crate::video::note_stream_held();
                 span.aux(so::HELD).c(f as u64);
             }
             None => {

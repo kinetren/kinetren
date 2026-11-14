@@ -1086,6 +1086,11 @@ fn preview_run(
         format!("GPU ({})", gpu.info().name)
     };
     player.set_video_gpu(Some(gpu));
+    // the app's arrangement: a playing loop's unshown moments compose on the offline device's side
+    // engine (scheduler-followups D5); `KT_LOOP_FILL=off` is the "before"
+    if looped.is_some() && kt_engine::loop_fill::enabled() {
+        player.set_fill_gpu(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+    }
     let opts = kt_engine::preview_bench::BenchOptions {
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
         to: Tick((to * kt_time::TICK_HZ as f64) as i64),
@@ -1130,6 +1135,13 @@ fn preview_run(
     let n = r.composites.max(1) as f64;
     let ms = |ns: u64| ns as f64 / 1e6 / n;
     println!("-- preview {}x{}, {backend}, {:.1}–{:.1} s --", q.width, q.height, from, to);
+    if looped.is_some() {
+        println!(
+            "  loop fill: {}, kept {} moments",
+            if kt_engine::loop_fill::enabled() { "on" } else { "off (KT_LOOP_FILL=off)" },
+            player.fill_kept()
+        );
+    }
     println!(
         "  shown {} of {} grid frames in {:.1} s: V-fps {:.1}, V-skipped {}, incomplete {}, underruns {}",
         r.shown,

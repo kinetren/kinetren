@@ -486,6 +486,10 @@ pub mod job {
     /// The player's shared build of a project version (`engine-build`): `id` its seq, `a` the
     /// version, `b` the events it derived, `c` the events its memo holds after it (the rest reused).
     pub const SHARED_BUILD: u32 = 12;
+    /// The loop fill's composite of a moment (scheduler-followups D5): `id` the job (the cause of
+    /// its records), `a` the moment's tick, `b` the outcome — 0 kept, 1 incomplete, 2 a held stream
+    /// frame, 3 the display's memo did not keep it.
+    pub const LOOP_FILL: u32 = 13;
 }
 
 /// `Invalidate.aux`.

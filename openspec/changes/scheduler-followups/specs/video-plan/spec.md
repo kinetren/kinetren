@@ -5,7 +5,8 @@ While a loop region plays and the display has an executor, the player SHALL comp
 the loop's moments the display's executor does not keep and whose frames are all decoded, on an
 executor other than the display's and at the scheduler's `near` class (below the frame on screen on
 every ring), and SHALL keep each complete composite on the display's executor as a slow-chain
-composite is kept. It SHALL ask no decode and withdraw no request, work ahead of the playhead, skip
+composite is kept. It SHALL ask no decode and withdraw no request, start no moment while the display composes a frame
+of its own (it takes only the time the display leaves), work ahead of the playhead, skip
 for the lap a moment that comes out incomplete or held or that the display's memo does not keep,
 and stop when the loop has no such moment left, the play or the loop stops, or the project changes.
 Nothing SHALL run while nothing plays. `KT_LOOP_FILL=off` disables it.
@@ -30,7 +31,7 @@ after lap.
 
 #### Scenario: Measured on a software rasterizer
 - **WHEN** `kt-cli preview <showcase> <from> <to> --loop S` runs on llvmpipe (release) with the fill and with `KT_LOOP_FILL=off`, and `kt-cli trace loop` reads each run
-- **THEN** with the fill the laps after the second compose no moment the display asks for (all kept), without it each lap composes again; both numbers are in the change's design record
+- **THEN** with the fill the loop becomes all-kept in fewer laps (measured 9 against 18) and the display shows no fewer frames; both runs are in the change's design record
 - **TEST** bench `kt-cli preview --loop` + `kt-cli trace loop`
 
 ### Requirement: The slow-chain frame never waits behind side work on its engine

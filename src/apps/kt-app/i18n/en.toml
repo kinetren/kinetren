@@ -862,6 +862,7 @@ loudness_to_target = "to −23 LUFS: {0} dB (reference only — nothing is appli
 [hint]
 preview_detached = "preview is in a separate window (close it to bring it back)"
 drop_here = "Release — the clip lands under the mouse (track highlighted)"
+opening = "Opening {0}…"
 idle = "drop a media file on the window — the clip lands under the mouse"
 preview_click = "Click — play/pause, double click — detach the preview into a window"
 speed = "Top strip — constant speed, bottom — shuttle (release to return); Shift — fine, double click — 1×, right click or Ctrl+click — type a value"

@@ -543,8 +543,6 @@ pub struct VideoRenderer {
     /// How a live preview paces its stream stages (decode-request-storm); `None` — everything at
     /// once, as an export and the tools ask.
     stream_pacing: Option<StreamPacing>,
-    /// The last plan showed a stream layer's held (late) frame (`StreamPacing::hold`).
-    stream_held: std::sync::atomic::AtomicBool,
     /// `StreamPacing::hold` as the player last set it: an atomic, because the preview's thread
     /// composes on a renderer shared with the UI thread (ui-never-waits).
     stream_hold: std::sync::atomic::AtomicBool,
@@ -1364,7 +1362,6 @@ impl VideoRenderer {
             stages,
             stream_memo: stream_memo().clone(),
             stream_pacing: None,
-            stream_held: Default::default(),
             stream_hold: Default::default(),
             stream_cap: None,
         }
@@ -1405,8 +1402,10 @@ impl VideoRenderer {
 
     /// Whether the last `frame_plan` showed a stream layer's late frame: such a composite is not
     /// the moment's own, and must not be kept as what plays there without work.
+    /// Per calling thread: the preview's compose thread and the loop fill plan on one renderer at
+    /// once (scheduler-followups D5), and each reads its own plan's answer.
     pub fn stream_held(&self) -> bool {
-        self.stream_held.load(std::sync::atomic::Ordering::Relaxed)
+        STREAM_HELD.with(|h| h.get())
     }
 
     /// Pace the stream stages as a live preview must (decode-request-storm): the order names the
@@ -1913,14 +1912,23 @@ impl VideoRenderer {
             stages: &self.stages,
             stream_memo: &self.stream_memo,
             stream_pacing: self.pacing(),
-            stream_held: &self.stream_held,
             blend_footage: false,
         };
         if !probe {
-            self.stream_held.store(false, std::sync::atomic::Ordering::Relaxed);
+            STREAM_HELD.with(|h| h.set(false));
         }
         build_plan(&self.clips, &ctx, cache, t, quality)
     }
+}
+
+/// A stream layer of this thread's plan shows its stage's late frame (`stream::run`).
+pub(crate) fn note_stream_held() {
+    STREAM_HELD.with(|h| h.set(true));
+}
+
+thread_local! {
+    /// Whether this thread's last full plan showed a stream layer's late frame (`stream_held`).
+    static STREAM_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Plan-building context: the grid, cameras and the project's world size.
@@ -1945,7 +1953,6 @@ struct PlanCtx<'a> {
     /// The live preview's pacing of the stream stages (decode-request-storm), inherited downward.
     stream_pacing: Option<StreamPacing>,
     /// Set when a stream layer of the plan shows a late frame (the root renderer's flag).
-    stream_held: &'a std::sync::atomic::AtomicBool,
     /// A key-only plan (`probe_plan`): stream stages are keyed, not run.
     probe: bool,
 }
@@ -2040,7 +2047,7 @@ fn layer_src<'a>(
                 .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, t, src_pts))
                 .flatten()
                 .unwrap_or_else(|| {
-                    stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_pacing, ctx.stream_held, quality, dq, t, src_pts)
+                    stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_pacing, quality, dq, t, src_pts)
                 }),
         ),
         _ => None,
@@ -2120,7 +2127,6 @@ fn layer_src<'a>(
                 stages: &sub.stages,
                 stream_memo: ctx.stream_memo,
                 stream_pacing: ctx.stream_pacing,
-                stream_held: ctx.stream_held,
                 probe: ctx.probe,
                 blend_footage: blend,
             };
@@ -2199,7 +2205,6 @@ fn track_stage_layer<'a>(
         stages: &[],
         stream_memo: ctx.stream_memo,
         stream_pacing: ctx.stream_pacing,
-        stream_held: ctx.stream_held,
         probe: ctx.probe,
     };
     let plan = build_plan(clips, &sub_ctx, cache, t, quality);

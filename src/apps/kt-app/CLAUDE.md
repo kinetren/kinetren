@@ -82,6 +82,16 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   test sees the gesture land in its frame).
 - **A pointer move starts no job**: the media watch is poked on the opening, a focus change and
   play/stop only (live `idle` counts `sched_jobs` among what a hover must not cause).
+- **Opening a project stands nothing** (scheduler-followups, row 270, t2330, t2332, live `open_heavy`).
+  Every UI open path posts `ask_open(path, OpenThen::…)`: the file is read (and a lesson's copy
+  written) on the `media` lane, `take_opening` parses it in a frame and swaps the app; the lock is
+  claimed after the swap (`claim_project_later`). `build_player` makes `Player::new_deferred` (its
+  first version is built on its own thread) with NO source: `begin_load` sets the sync snapshot to
+  the project's media and posts `load_sources` (the opens, the lengths and the missing-file notices
+  land as `MediaThen::Load`). The lane is FIFO, so an edit's sync during the load runs after it.
+  `replace_with` releases the closed app on an `app-drop` thread (its player joins threads and
+  decoders) after dropping its lock in place. `KtApp::open` stays synchronous for the start and tests.
+  `set_media_grace`/`hold_loads_for_tests` are the tests' seams for a load in flight.
 
 ## Writing the project to disk (R.31–R.32)
 

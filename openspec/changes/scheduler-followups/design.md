@@ -213,7 +213,46 @@ a device frame. Every place was read in the code at 6a7b0255. Verdict per place:
 | fx thumbs, reel strips, posters → side `inner` | each other | allowed: the same class band, all background |
 | loop fill → side `inner` | a poster | allowed (near behind background on the mutex, by design small) |
 
-Rows found and not fixed go to `docs/found-defects.md` rows 370–389.
+| `replace_with` → `note_recent` → `StartStore::write` | the recent list's tmp + rename | left: found-defects 370 (no fsync, page cache) |
+| `Ask::OverwriteRender` drawing | a `stat` of the target per frame | left: found-defects 370 |
+| `save_flight_log`, `offer_recovery` (read_dir), `forget_recovery`, `drop_own_recovery` | a write, a folder read, unlinks | left: found-defects 370 |
+| `run` (the start) → `KtApp::open` | the start project's read and parse | left: found-defects 371 (before the window exists) |
+| loop fill vs compose thread on one renderer | `stream_held` was one flag per renderer | fixed: per thread (D5) |
+
+Rows found and not fixed go to `docs/found-defects.md` rows 370–389 (370–372 used).
+
+## Measured
+
+- **Open (270)**: live `open_heavy` (debug, llvmpipe, Xvfb): File › Open of the heavy showcase (605
+  events) from a small project — the events on the timeline at once, the File menu opened during the
+  load, `block.ui` 0 and `block.render` 0 over the whole run. t2330 red on the former synchronous path
+  (`file_open ×1` counted), green on this one.
+- **Save (252)**: t2333 — three Ctrl+S while a thread writes and syncs 32 MB in a loop in the same
+  folder: no blocking call on the UI thread, every save lands in a later frame. Nothing left to fix.
+- **Slow route behind side work (290)**: t2337 on llvmpipe (one software device, 1080p): beside heavy
+  side frames of 178–184 ms (VHS Tape + Camera ISP), the route's light frame waited 119–153 ms when the
+  side work shared its engine (the former arrangement) and 3–26 ms on the side engine with the ring
+  bounded (30–32 cuts per run), two runs.
+- **A loop on a slow display (251)**: `kt-cli preview heavy.kt 30 32 --size 640x360 --loop 90`
+  (the heavy showcase, release, llvmpipe, 50 moments a lap), with the fill and `KT_LOOP_FILL=off`
+  one after the other, each run's `kt-cli trace … loop`:
+  - first version (the fill ran whenever there was work): all-kept from lap 17 against lap 16, V-fps
+    16.6 against 19.5 — on a software rasterizer the fill and the display share the processor, so it
+    only moved work off the display's own frames. Hence D5's gate below.
+  - with the gate (load 30–60 on the machine): **all-kept from lap 9 against lap 18**, V-fps 20.6
+    against 18.4, kept composites shown 1859 against 1624; the fill kept 30 moments, the display
+    composed 53 against 52.
+  - `trace loop` counted the fill's composites as the display's frames (no `FrameAsk`, tick 0) and
+    blamed "layer 0 reads another frame": `lives` now takes only the frames the display asked for,
+    and a lap names the fill apart ("fill: N kept of M composed").
+
+### D5 revised: the fill takes only the time the display leaves
+
+A display composite that runs a plan (not a replay of a kept moment) is counted while it runs
+(`PreviewParts::composing`); the fill starts no moment while one is. On a card that is the device's
+time between frames; on a software rasterizer it is the time the display spends replaying kept
+moments, which grows lap by lap, so the fill accelerates the convergence instead of slowing the frames
+the person sees.
 
 ## Risks / Trade-offs
 

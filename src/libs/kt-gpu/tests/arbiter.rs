@@ -300,3 +300,131 @@ fn t2260_a_present_is_waited_for_by_a_few_checks() {
     eprintln!("t2260: {checks} checks over {n} presents, {:.1} ms a frame", ms(spent) / n as f64);
     assert!(checks <= 4 * n, "{checks} checks for {n} presents of {:.1} ms each", ms(spent) / n as f64);
 }
+
+/// The offline device as the program has it: the slow route's engine serving the preview, and its
+/// sibling for effect cells, reel strips and posters.
+fn slow_and_side() -> Option<(Arc<GpuFxEngine>, Arc<GpuFxEngine>)> {
+    kt_plugins_builtin::install();
+    let ctx = context()?;
+    let slow = GpuFxEngine::new(ctx).expect("offline engine");
+    slow.serve_preview();
+    slow.settle();
+    let side = slow.sibling();
+    Some((slow, side))
+}
+
+/// Test t2338 (scheduler-followups D6): the side engine is made from the offline engine's compiled
+/// set (it compiles nothing) and composes the same bytes.
+#[test]
+fn t2338_the_side_engine_shares_the_compiled_pipelines() {
+    let _one = lock();
+    let Some((slow, side)) = slow_and_side() else { return };
+    assert!(side.shares_compiled(&slow), "the sibling compiled a set of its own");
+    let fx = heavy();
+    let f = frame(3);
+    let p = plan(&f, &fx, 31);
+    let (mut a, mut b) = (Vec::new(), Vec::new());
+    slow.execute_once(&p, &mut a).expect("slow");
+    side.execute_once(&p, &mut b).expect("side");
+    assert!(a == b, "the sibling's frame differs from its engine's");
+}
+
+/// Test t2337 (scheduler-followups D6, row 290): side work on the offline device holds the slow
+/// route's frame for one piece at most. With the side engine's lock held (a cell mid-composite) a
+/// slow-route frame composes; with heavy side frames running at class background, the route's
+/// frames wait less than one heavy frame takes, the heavy frames are cut, and both kinds of frame
+/// keep their solo bytes.
+#[test]
+fn t2337_side_work_holds_the_slow_route_for_one_piece() {
+    let _one = lock();
+    let Some((slow, side)) = slow_and_side() else { return };
+    arbiter::set_enabled(true);
+    let fx = heavy();
+    let (fh, fl) = (frame(5), frame(6));
+    let heavy_p = plan(&fh, &fx, 41);
+    let light_p = plan(&fl, &[], 42);
+    // solo: the bytes, and the heavy frame's own time once its passes are measured
+    let (mut heavy_solo, mut light_solo) = (Vec::new(), Vec::new());
+    {
+        let _c = with_class(Class::Background);
+        for _ in 0..2 {
+            side.execute_once(&heavy_p, &mut heavy_solo).expect("heavy");
+        }
+    }
+    let t0 = Instant::now();
+    {
+        let _c = with_class(Class::Background);
+        side.execute_once(&heavy_p, &mut heavy_solo).expect("heavy");
+    }
+    let heavy_time = t0.elapsed();
+    {
+        let _c = with_class(Class::Now);
+        slow.execute_once(&light_p, &mut light_solo).expect("light");
+    }
+
+    // a cell holds the side engine's lock: the route's frame does not wait for it
+    {
+        let held = side.hold();
+        let done = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _c = with_class(Class::Now);
+                let mut out = Vec::new();
+                slow.execute_once(&light_p, &mut out).expect("light beside a held cell");
+                assert!(out == light_solo, "the route's frame changed beside a held cell");
+                done.store(true, Ordering::Release);
+            });
+            let deadline = kt_time::test_deadline();
+            while !done.load(Ordering::Acquire) {
+                assert!(Instant::now() < deadline, "the route's frame waited for the side engine's lock");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+        drop(held);
+    }
+
+    // heavy side frames run; the route's frames wait one piece, not a heavy frame. `on`: the
+    // engine the heavy frames compose on (the former arrangement: the route's own)
+    let route_waits = |on: &Arc<GpuFxEngine>| {
+        let stop = AtomicBool::new(false);
+        let mut waits = Vec::new();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _c = with_class(Class::Background);
+                let mut out = Vec::new();
+                while !stop.load(Ordering::Acquire) {
+                    on.execute_once(&heavy_p, &mut out).expect("heavy beside the route");
+                    assert!(out == heavy_solo, "a cut heavy frame changed its bytes");
+                }
+            });
+            let _c = with_class(Class::Now);
+            let mut out = Vec::new();
+            // the heavy frame is on the device before the route asks
+            std::thread::sleep(heavy_time / 4);
+            for _ in 0..6 {
+                let t = Instant::now();
+                slow.execute_once(&light_p, &mut out).expect("light beside heavy");
+                waits.push(t.elapsed());
+                assert!(out == light_solo, "the route's frame changed beside heavy work");
+                std::thread::sleep(heavy_time / 3);
+            }
+            stop.store(true, Ordering::Release);
+        });
+        waits
+    };
+    // before (row 290): cells, strips and posters on the route's own engine
+    let before = route_waits(&slow);
+    let cuts0 = arbiter::pieces_cut();
+    let waits = route_waits(&side);
+    let cuts = arbiter::pieces_cut() - cuts0;
+    let worst = waits.iter().max().copied().unwrap_or_default();
+    let round = |w: &[Duration]| w.iter().map(|d| ms(*d).round()).collect::<Vec<_>>();
+    eprintln!(
+        "t2337: heavy frame {:.1} ms; route frames beside heavy work on its own engine {:?} ms, on the side engine {:?} ms, {cuts} cuts",
+        ms(heavy_time),
+        round(&before),
+        round(&waits)
+    );
+    assert!(cuts > 0, "no heavy side frame was cut on the route's ring");
+    assert!(worst < heavy_time, "a route frame waited {:.1} ms, a whole heavy frame is {:.1} ms", ms(worst), ms(heavy_time));
+}

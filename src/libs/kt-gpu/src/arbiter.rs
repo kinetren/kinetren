@@ -100,6 +100,8 @@ pub struct Ring {
     key: RingKey,
     displays: AtomicU32,
     computes: AtomicU32,
+    /// Engines that compose the preview's frame off the display's device (the slow-chain route).
+    previews: AtomicU32,
     st: Mutex<State>,
     cv: Condvar,
 }
@@ -127,6 +129,7 @@ pub fn ring_for(key: RingKey) -> Arc<Ring> {
         key,
         displays: AtomicU32::new(0),
         computes: AtomicU32::new(0),
+        previews: AtomicU32::new(0),
         st: Mutex::default(),
         cv: Condvar::new(),
     });
@@ -134,13 +137,34 @@ pub fn ring_for(key: RingKey) -> Arc<Ring> {
     r
 }
 
-/// A display or a compute host registered on a ring, while it lives.
-pub struct Registered(Arc<Ring>, bool);
+/// A display, a compute host or a preview's slow route registered on a ring, while it lives.
+pub struct Registered(Arc<Ring>, Holder);
+
+#[derive(Clone, Copy)]
+enum Holder {
+    Display,
+    Compute,
+    Preview,
+}
+
+impl Ring {
+    fn count(&self, h: Holder) -> &AtomicU32 {
+        match h {
+            Holder::Display => &self.displays,
+            Holder::Compute => &self.computes,
+            Holder::Preview => &self.previews,
+        }
+    }
+
+    fn register(self: &Arc<Self>, h: Holder) -> Registered {
+        self.count(h).fetch_add(1, Ordering::AcqRel);
+        Registered(self.clone(), h)
+    }
+}
 
 impl Drop for Registered {
     fn drop(&mut self) {
-        let c = if self.1 { &self.0.displays } else { &self.0.computes };
-        c.fetch_sub(1, Ordering::AcqRel);
+        self.0.count(self.1).fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -156,23 +180,33 @@ impl Ring {
     /// The editor's display device (or the bench's) runs on this ring: from now on the ring bounds
     /// what it holds in front of it.
     pub fn register_display(self: &Arc<Self>) -> Registered {
-        self.displays.fetch_add(1, Ordering::AcqRel);
-        Registered(self.clone(), true)
+        self.register(Holder::Display)
     }
 
     /// A compute host runs on this ring: the frame on screen and the look-ahead meet here.
     pub fn register_compute(self: &Arc<Self>) -> Registered {
-        self.computes.fetch_add(1, Ordering::AcqRel);
-        Registered(self.clone(), false)
+        self.register(Holder::Compute)
+    }
+
+    /// The preview's slow-chain frames compose on a device of this ring (scheduler-followups D6):
+    /// a software device's ring then bounds and cuts as a display's does, so the frame the person
+    /// waits for stands behind one piece of side work at most.
+    pub fn register_preview(self: &Arc<Self>) -> Registered {
+        self.register(Holder::Preview)
     }
 
     pub fn has_display(&self) -> bool {
         self.displays.load(Ordering::Acquire) > 0
     }
 
-    /// The ring bounds its flight: it carries a display or a compute host.
+    /// A frame the person waits for is shown from this ring: a display or the slow route.
+    pub fn fronts(&self) -> bool {
+        self.has_display() || self.previews.load(Ordering::Acquire) > 0
+    }
+
+    /// The ring bounds its flight: it carries a display, the slow route or a compute host.
     pub fn bounded(&self) -> bool {
-        enabled() && (self.has_display() || self.computes.load(Ordering::Acquire) > 0)
+        enabled() && (self.fronts() || self.computes.load(Ordering::Acquire) > 0)
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -269,7 +303,10 @@ impl Ring {
         if passes == 0 || !enabled() {
             return false;
         }
-        (self.has_display() && acc + next.unwrap_or(u64::MAX / 4) > bound()) || (self.bounded() && self.higher_waits(class))
+        // a slow-route ring cuts only what stands in front of the route's frame: that frame itself
+        // keeps the device's pipelining (scheduler-followups D6)
+        let front = self.has_display() || (class != Class::Now && self.previews.load(Ordering::Acquire) > 0);
+        (front && acc + next.unwrap_or(u64::MAX / 4) > bound()) || (self.bounded() && self.higher_waits(class))
     }
 }
 
@@ -418,7 +455,7 @@ impl Piece {
     }
 
     fn note_over(&self) {
-        if self.passes > 1 && self.acc > bound() && self.ring.has_display() {
+        if self.passes > 1 && self.acc > bound() && self.ring.fronts() {
             OVER.fetch_add(1, Ordering::Relaxed);
         }
     }

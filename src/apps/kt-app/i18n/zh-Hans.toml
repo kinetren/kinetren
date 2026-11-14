@@ -862,6 +862,7 @@ loudness_to_target = "到 −23 LUFS：{0} dB（仅供参考，不会应用）"
 [hint]
 preview_detached = "预览在独立窗口里（关掉它就会回来）"
 drop_here = "松开 — 片段落在鼠标下（轨道已高亮）"
+opening = "正在打开 {0}…"
 idle = "把媒体文件拖到窗口上 — 片段会落在鼠标下"
 preview_click = "点击 — 播放/暂停，双击 — 把预览分离成窗口"
 speed = "上面一条 — 恒定速度，下面 — shuttle（松开即回）；Shift — 精调，双击 — 1×，右键或 Ctrl+单击 — 输入数值"

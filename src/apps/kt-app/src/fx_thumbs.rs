@@ -440,7 +440,7 @@ pub(crate) fn render_job(job: &FxThumbJob) -> egui::ColorImage {
         rgba: rgba.clone().into_boxed_slice(),
         has_alpha: base.has_alpha,
     };
-    if let Some(engine) = kt_gpu::offline_engine() {
+    if let Some(engine) = kt_gpu::side_engine() {
         use kt_engine::VideoGpuExec as _;
         let hash = recipe_hash(&job.chain, job.u, job.burst_index, job.cam3d);
         let t = kt_time::Tick(job.burst_index);

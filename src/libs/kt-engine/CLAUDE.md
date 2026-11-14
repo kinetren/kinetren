@@ -116,6 +116,13 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   replay does not re-time the route; the prefetch thread skips kept moments (`video_prefetch_pass_except`,
   `stream_advance_ahead`). A new input of a stream layer's picture must reach its kernel's `key`, or a
   kept composite of another picture is shown; a kernel without `key` keeps the old path (the stage runs).
+- **A playing loop's unshown moments are composed below the display** (scheduler-followups D5,
+  `loop_fill.rs`, t2334–t2336): a `near` service lane, kicked by the prefetch thread while a loop
+  plays, composes on `set_fill_gpu`'s executor (the app's side engine) the moments the `shown` map does
+  not hold whose layers are ALL cached — `compose_at(fill)` asks no decode and withdraws no request —
+  ahead of the playhead by twice its frame time, and keeps them on the display's executor as the slow
+  route does. A moment incomplete, held or refused by the memo is skipped for the lap. `stream_held()`
+  is per thread (two threads plan on one renderer). `KT_LOOP_FILL=off` for an A/B.
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
@@ -402,8 +409,10 @@ opening. This is not a regression — the key is a function of the model, not of
   (t2000) counts every renderer built in the process.
 - **The UI thread builds nothing** (t2001): a meter reading, a region change, the grid and coverage
   questions read the last published build. A UI reader of the renderer that caches by revision also
-  keys by `Player::built_seq` — the build lands after its edit. The opening is the one build on the
-  caller's thread (the constructor).
+  keys by `Player::built_seq` — the build lands after its edit. `Player::new` builds the opening on
+  the caller's thread (offline callers: kt-cli, tests); `Player::new_deferred` (the editor) publishes an
+  empty project of the same settings and hands the project to `engine-build` as version 1 — the render
+  thread reads that want at its start (`wanted` from `want_seq`, t2331).
 - **A loop region change is not an edit** (t2002): the head is pinned with the published renderer,
   and again by the builder when a version lands.
 - **`AudioRenderer` is shared across threads**: no render-time `Cell` in it. A value computed at the

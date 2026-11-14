@@ -456,3 +456,195 @@ fn t2308_a_failed_write_drops_what_waited_for_it() {
         assert!(warns(&h) > w0, "the failed write said nothing");
     }
 }
+
+/// Step frames until `done` holds (the test's bound; a frame takes what landed).
+fn step_until(h: &mut Harness<'static, KtApp>, what: &str, done: impl Fn(&KtApp) -> bool) {
+    let deadline = kt_time::test_deadline();
+    while !done(h.state()) {
+        assert!(std::time::Instant::now() < deadline, "{what} never happened");
+        h.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The blocking calls this thread made since `before`, named.
+fn blocked_since(before: [u64; kt_time::block::kind::COUNT]) -> Vec<String> {
+    let after = kt_time::block::here();
+    (0..kt_time::block::kind::COUNT)
+        .filter(|&k| after[k] != before[k])
+        .map(|k| format!("{} ×{}", kt_time::block::kind::name(k as u32), after[k] - before[k]))
+        .collect()
+}
+
+/// Test t2330 (scheduler-followups, row 270): opening a project and replacing the one shown block
+/// nothing on the UI thread. The harness app holds a project with a real file (its decoder lives);
+/// it is saved and opened again through the menu's path: the file is read, the lock taken, the
+/// sources opened and the first version built off the UI thread, and the closed project's player
+/// (its threads and decoders) is released off it too. Everything lands.
+#[test]
+fn t2330_opening_a_project_blocks_nothing_on_the_ui_thread() {
+    use kt_time::Tick;
+    let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+    let dir = std::env::temp_dir().join(format!("kt-t2330-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let wav = dir.join("tone.wav");
+    write_wav(&wav);
+    h.step();
+    h.state_mut().add_media_clip_at(&wav.to_string_lossy(), Tick(300_000), None);
+    h.step();
+    let path = dir.join("t2330.kt");
+    h.state_mut().project_path = Some(path.clone());
+    h.state_mut().save();
+    step_until(&mut h, "the save", |a| a.saving.is_none() && path.exists());
+    let clips = h.state().model.project().clips.len();
+    let old_flight = h.state().player.flight.clone();
+    assert_eq!(kt_time::block::role_here(), kt_time::block::role::UI);
+    let before = kt_time::block::here();
+
+    h.state_mut().ask_open(path.clone(), crate::app::OpenThen::Open, None);
+    step_until(&mut h, "the open", |a| a.opening.is_none() && a.media_asks.is_empty());
+    h.step();
+
+    assert_eq!(h.state().project_path.as_deref(), Some(path.as_path()), "the opened project is not the one shown");
+    assert_eq!(h.state().model.project().clips.len(), clips, "the opened project lost events");
+    let media = h.state().model.doc().media.iter().find(|m| m.path.ends_with("tone.wav")).cloned().expect("the file's media");
+    assert!(media.duration.is_some_and(|d| d.0 > 0), "the source's length did not land");
+    assert!(!h.state().placeholder_media.contains(&media.id), "the real file became a placeholder");
+    assert!(h.state().project_lock.is_some(), "the opened project's lock was not taken");
+    // the closed project's player is gone: its render thread and the journal no longer hold it
+    let deadline = kt_time::test_deadline();
+    while Arc::strong_count(&old_flight) > 1 {
+        assert!(std::time::Instant::now() < deadline, "the closed project was never released");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let named = blocked_since(before);
+    assert!(named.is_empty(), "the UI thread waited across the open: {named:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test t2332 (scheduler-followups D2): edits during an open's load land on the loaded project. The
+/// source load is held; meanwhile an event is moved, the move undone and redone, a media's file
+/// changed and the project saved. When the load goes, the change of file is applied after it (the
+/// lane is in order), the player's version is the model's, and the file holds the move.
+#[test]
+fn t2332_edits_during_the_load_land_on_the_loaded_project() {
+    use kt_time::Tick;
+    let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+    let dir = std::env::temp_dir().join(format!("kt-t2332-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (wav, wav2) = (dir.join("a.wav"), dir.join("b.wav"));
+    write_wav(&wav);
+    write_wav(&wav2);
+    // the second file is longer: its length names which file the player opened last
+    {
+        let mut b = std::fs::read(&wav2).unwrap();
+        let tail = b[44..].to_vec();
+        b.extend_from_slice(&tail);
+        let data = (b.len() - 44) as u32;
+        b[4..8].copy_from_slice(&(36 + data).to_le_bytes());
+        b[40..44].copy_from_slice(&data.to_le_bytes());
+        std::fs::write(&wav2, b).unwrap();
+    }
+    h.step();
+    h.state_mut().add_media_clip_at(&wav.to_string_lossy(), Tick(300_000), None);
+    h.step();
+    let path = dir.join("t2332.kt");
+    h.state_mut().project_path = Some(path.clone());
+    h.state_mut().save();
+    step_until(&mut h, "the save", |a| a.saving.is_none() && path.exists());
+
+    crate::app::hold_loads_for_tests(true);
+    crate::app::set_media_grace(Some(Duration::ZERO));
+    h.state_mut().ask_open(path.clone(), crate::app::OpenThen::Open, None);
+    step_until(&mut h, "the read", |a| a.opening.is_none());
+    let media = h.state().model.doc().media.iter().find(|m| m.path.ends_with("a.wav")).map(|m| m.id).unwrap();
+    assert!(
+        h.state().media_asks.iter().any(|a| a.is_load()),
+        "scene guard: the load is not in flight"
+    );
+    let clip = h.state().model.project().clips.iter().find(|c| c.media == media).map(|c| (c.id, c.lane)).unwrap();
+    let moved = Tick(900_000);
+    assert!(h.state_mut().apply(Command::MoveClip { id: clip.0, new_start: moved, new_lane: clip.1 }));
+    h.step();
+    h.state_mut().undo();
+    h.step();
+    h.state_mut().redo();
+    h.step();
+    assert!(h.state_mut().apply(Command::SetMediaPath { id: media, path: wav2.to_string_lossy().into_owned() }));
+    h.step();
+    crate::app::set_media_grace(None);
+    h.state_mut().save();
+    step_until(&mut h, "the save during the load", |a| a.saving.is_none());
+    crate::app::hold_loads_for_tests(false);
+    step_until(&mut h, "the load", |a| a.media_asks.is_empty());
+    h.step();
+
+    let app = h.state();
+    assert!(!app.dirty_content, "the save during the load left the asterisk");
+    let doc = app.model.document();
+    let len = doc.media.iter().find(|m| m.id == media).and_then(|m| m.duration).expect("a length");
+    assert_eq!(len, Tick(180_000), "the changed media's length is not its new file's (the first open came last)");
+    let built = app.player.wait_built();
+    assert_eq!(built.project.clips, doc.clips, "the player's version is not the model's");
+    let (back, _, _) = crate::app::load_project_file(&path).expect("the saved file reads");
+    assert_eq!(back.clips.iter().find(|c| c.id == clip.0).map(|c| c.start), Some(moved), "the file lacks the move");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Test t2333 (scheduler-followups, row 252): Ctrl+S while another writer saturates the disk blocks
+/// nothing. A thread writes and syncs a large file in the project's folder in a loop; the save is
+/// asked with no grace, the UI thread counts no blocking call, and a later frame takes the write.
+#[test]
+fn t2333_a_save_on_a_busy_disk_blocks_nothing() {
+    use kt_time::Tick;
+    let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
+    let dir = std::env::temp_dir().join(format!("kt-t2333-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t2333.kt");
+    h.state_mut().project_path = Some(path.clone());
+    h.step();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writes = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let writer = {
+        let (stop, writes, f) = (stop.clone(), writes.clone(), dir.join("busy.bin"));
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let block = vec![0x5au8; 8 << 20];
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let mut file = std::fs::File::create(&f).unwrap();
+                for _ in 0..4 {
+                    file.write_all(&block).unwrap();
+                }
+                file.sync_all().unwrap();
+                writes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        })
+    };
+    // the disk is busy before the save is asked
+    let deadline = kt_time::test_deadline();
+    while writes.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        assert!(std::time::Instant::now() < deadline, "the writer never wrote");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    crate::app::set_save_grace(Some(Duration::ZERO));
+    let before = kt_time::block::here();
+    for k in 0..3 {
+        // an edit, then Ctrl+S, three times, as `formula` did
+        let c = h.state().model.project().clips[0].clone();
+        assert!(h.state_mut().apply(Command::MoveClip { id: c.id, new_start: Tick(c.start.0 + 3_000 * (k + 1)), new_lane: c.lane }));
+        h.step();
+        h.state_mut().save();
+        h.step();
+        let named = blocked_since(before);
+        assert!(named.is_empty(), "Ctrl+S waited on the UI thread under a busy disk: {named:?}");
+        step_until(&mut h, "the save's landing", |a| a.saving.is_none());
+        assert!(!h.state().dirty_content, "the landed save left the asterisk");
+    }
+    crate::app::set_save_grace(None);
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    writer.join().unwrap();
+    assert!(path.exists(), "the project was never written");
+    let named = blocked_since(before);
+    assert!(named.is_empty(), "the UI thread waited: {named:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

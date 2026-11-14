@@ -690,7 +690,7 @@ fn compose_offline_frame(
             cache.insert_video(sid, Some(dq), kt_engine::video_cache_idx(k), frame.into());
         });
     }
-    let composed = kt_gpu::offline_engine().map(|e| video.compose_on(&*e, cache, t, q, buf));
+    let composed = kt_gpu::side_engine().map(|e| video.compose_on(&*e, cache, t, q, buf));
     if !matches!(composed, Some(Ok(_))) {
         buf.clear();
     }

@@ -434,6 +434,11 @@ fn lives(run: &Run) -> BTreeMap<u64, Life> {
     let frame_ids: HashSet<u64> = run.recs.iter().filter(|r| is(r, Ev::FrameAsk)).map(|r| r.id).collect();
     for r in &run.recs {
         let Some(k) = kind(r) else { continue };
+        // a composite nobody asked to show (the loop fill's, scheduler-followups D5) is not a frame
+        // of the display: its plan, run and layers carry its job's id
+        if matches!(k, Ev::FramePlan | Ev::FrameExec | Ev::FrameLayer | Ev::FrameWait) && !frame_ids.contains(&r.id) {
+            continue;
+        }
         match k {
             Ev::FrameAsk => {
                 let l = m.entry(r.id).or_default();
@@ -961,7 +966,18 @@ pub fn laps(run: &Run) -> String {
         // the stream history walked in the lap: positions computed and how many of them distinct
         // (stream-history-on-device, found-defects 394: his run computed 1413 for 618)
         let (walked, distinct) = walked_in(run, a, b);
-        let walk = if walked > 0 { format!("  history: {walked} positions walked, {distinct} distinct;") } else { String::new() };
+        let mut walk = if walked > 0 { format!("  history: {walked} positions walked, {distinct} distinct;") } else { String::new() };
+        // the loop fill's composites below the display (scheduler-followups D5): not the display's
+        // frames, so not in the columns
+        let fills: Vec<&Rec> = run
+            .recs
+            .iter()
+            .filter(|r| is(r, Ev::Job) && r.aux == trace::job::LOOP_FILL && r.t >= a && r.t < b)
+            .collect();
+        if !fills.is_empty() {
+            let kept = fills.iter().filter(|r| r.b == 0).count();
+            let _ = write!(walk, "  fill: {kept} kept of {} composed;", fills.len());
+        }
         let _ = writeln!(
             o,
             "{:>4} {:>9} {:>7} {:>6} {:>6} {:>6} {:>6} {walk} {rep}/{} {why}",
@@ -1121,6 +1137,7 @@ fn job_name(aux: u32) -> &'static str {
         j::PEAKS => "peaks",
         j::EXPORT => "export",
         j::SHARED_BUILD => "shared_build",
+        j::LOOP_FILL => "loop_fill",
         _ => "?",
     }
 }
