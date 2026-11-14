@@ -105,9 +105,9 @@ fn walk(host: &dyn ComputeHost, names: &[&str], n: usize, work: u32, groups: u32
 }
 
 /// Test t2435 (gpu-throughput D2, found-defects 481): a compute job never measured, on a ring that
-/// carries a display, learns its dispatches' times from its own first pieces while it runs: it is cut
-/// into far fewer pieces than dispatches (the old claim of the whole bound per unmeasured dispatch cut
-/// at every one), and its bytes equal a measured run's.
+/// carries a display, learns its dispatches' times from its own first pieces while it runs: it cuts
+/// for an unmeasured dispatch at most once a name (the old claim of the whole bound per unmeasured
+/// dispatch cut at every one until a map happened to come back), and its bytes equal a measured run's.
 #[test]
 fn t2435_a_cold_walk_is_cut_by_what_its_first_pieces_measured() {
     let Some(host) = device() else { return };
@@ -118,17 +118,25 @@ fn t2435_a_cold_walk_is_cut_by_what_its_first_pieces_measured() {
     let _shown = host.ring().register_display();
     let names = ["t2435:a", "t2435:b", "t2435:c", "t2435:d"];
     let n = 64;
-    let before = arbiter::pieces_cut();
+    let (before, guesses) = (arbiter::pieces_cut(), kt_gpu::compute::guess_cuts());
     let cold = walk(&*host, &names, n, 2000, 4);
     let cold_pieces = arbiter::pieces_cut() - before;
+    let cold_guesses = kt_gpu::compute::guess_cuts() - guesses;
     let before = arbiter::pieces_cut();
     let warm = walk(&*host, &names, n, 2000, 4);
     let warm_pieces = arbiter::pieces_cut() - before;
     eprintln!(
-        "t2435: {n} dispatches, cold {cold_pieces} cuts ({} learned), measured {warm_pieces} cuts",
+        "t2435: {n} dispatches, cold {cold_pieces} cuts ({cold_guesses} before an unmeasured dispatch, {} learned), measured {warm_pieces} cuts",
         kt_gpu::compute::pieces_learned()
     );
-    assert!(cold_pieces < n as u64 / 2, "a cold walk was cut at nearly every dispatch: {cold_pieces} of {n}");
+    // a dispatch is a guess only until the first piece of its name came back: one cut a name at most.
+    // The cuts the measured times call for follow the machine's speed (a software device's time is
+    // processor time: under a full parallel run a dispatch here passes half the bound), not the arbiter
+    assert!(
+        cold_guesses <= names.len() as u64,
+        "a cold walk went on guessing after its first pieces came back: {cold_guesses} cuts before an unmeasured dispatch over {} names",
+        names.len()
+    );
     assert_eq!(cold, warm, "the cuts changed the bytes");
 }
 
@@ -140,7 +148,8 @@ fn host_has_timestamps(host: &ComputeDevice) -> bool {
 /// Test t2436 (gpu-throughput D1/D5, found-defects 480, 485): a walk keeps the device fed — on a ring
 /// that carries a display with no display traffic, the next piece of a measured walk is submitted while
 /// the one before still runs (counted from each piece's own `gpu_start`: its submit against the earlier
-/// piece's device end). Waiting for each piece's completion before admitting the next never does.
+/// piece's device end), and the device stands idle with nothing queued for under a fifth of the walk.
+/// Waiting for each piece's completion before admitting the next does neither.
 #[test]
 fn t2436_a_walk_keeps_the_device_fed() {
     let Some(host) = device() else { return };
@@ -165,10 +174,17 @@ fn t2436_a_walk_keeps_the_device_fed() {
     let pairs = ordered.len() - 1;
     let ahead = ordered.windows(2).filter(|w| w[1].0 < w[0].2).count();
     let gaps: u64 = ordered.windows(2).map(|w| w[1].1.saturating_sub(w[0].2)).sum();
+    // the idle the arbiter owns: after a piece whose successor was not yet submitted when it ended.
+    // A gap behind a piece already queued is a software device's queue thread waiting for the
+    // processor (a loaded machine), not a waiter that came late (stage 11, D1b)
+    let unfed: u64 = ordered.windows(2).filter(|w| w[1].0 >= w[0].2).map(|w| w[1].1.saturating_sub(w[0].2)).sum();
     let span = ordered.last().unwrap().2.saturating_sub(ordered[0].1);
-    eprintln!("t2436: {} pieces, {ahead} of {pairs} submitted before the earlier ended, idle gaps {gaps} ns of {span}", ordered.len());
+    eprintln!(
+        "t2436: {} pieces, {ahead} of {pairs} submitted before the earlier ended, idle gaps {gaps} ns of {span}, {unfed} ns of them with nothing queued",
+        ordered.len()
+    );
     assert!(ahead * 2 >= pairs, "pieces waited for the earlier one's end: {ahead} of {pairs} submitted ahead");
-    assert!(gaps * 5 < span, "the device stood idle between pieces: {gaps} ns of {span}");
+    assert!(unfed * 5 < span, "the device stood idle with nothing queued: {unfed} ns of {span}");
 }
 
 /// Test t2437 (gpu-throughput D6, found-defects 486): two jobs at once keep their own timestamps —

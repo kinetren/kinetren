@@ -599,3 +599,28 @@ device or the cores stand idle. Full record: `openspec/changes/archive/2026-11-1
   on a pause, render/export (row 490: a stream stage keeps the serial export), thumbnails/strips/posters,
   the decoder's conversion, pipeline warm, analysis lanes. Every caller of `Ring::admit`/`Piece` takes the
   new admission unchanged; `present`/`present_kept` count the display.
+
+### Admission under load (stage 11, D1b)
+
+finish.sh on the merged stage-11 tree failed t2435 ("a cold walk was cut at nearly every dispatch: 34 of
+64") and t2436 ("16 of 159 submitted before the earlier ended") under the full parallel run; each passed
+alone. Both were the arbiter, not the tests: (1) an unmeasured pass's claim — the whole bound, a guess —
+drained by the clock like a measured time, so a loaded machine (a software device's time is processor time)
+let the next piece in before the guessed piece's timestamps were back, and the walk learned nothing; (2) a
+waiter whose claim waited on the drain slept on a timer and noticed a completion only at its next wake.
+Now a guessed flight drains only by its completion, and a waiter completes the oldest piece of a device
+without a surface by a blocking wait on that piece, seeing the room the moment it comes (the timer stays
+only for surface devices and pieces still being encoded). The waiter's blocking wait is bounded by the instant the prediction makes room (a
+guess has none): whichever comes first. Unbounded, it threw away the clock's room whenever a measured piece
+was longer than half the bound (under load: 11 of 159 queued ahead). t2436 now holds the idle the arbiter
+owns — after a piece whose successor was not yet submitted — and reports the idle behind a piece already
+queued: under 48 busy loops on 32 threads all 159 pieces were queued ahead and still 27 % of the span was
+idle, the software device's queue thread waiting for the processor. `trace gpu` prints both. t2435's "34 of
+64" was not the guess at all: under the full run a dispatch's device time on a software device passed half
+the bound, so the measured times themselves called for those cuts (alongside 48 busy loops a guess-free
+variant cut for an unmeasured dispatch 4 times, this code 3). The test now holds what the arbiter owns — at
+most one cut a name before an unmeasured dispatch (`compute::guess_cuts`; with no learning every dispatch
+is one) — and stays in the parallel run. t2436's "queued ahead" is a race of the submitting thread against
+the software device's threads on one processor (16 and 62 of 159 under full runs, 159 alone): it runs with
+the machine (`threads-required = 'num-cpus'`, as t2311), and its idle with nothing queued is held.
+

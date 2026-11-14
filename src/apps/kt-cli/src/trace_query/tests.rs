@@ -528,7 +528,7 @@ fn t2438_gpu_tells_admission_from_device() {
     let o = gpu(&run_of(v));
     for want in [
         "admission waits 60.0 ms of the compute jobs' wall 100.0 ms (60 %)",
-        "pieces on the device 3: busy 30.0 ms, idle between consecutive pieces 2.0 ms",
+        "pieces on the device 3: busy 30.0 ms, idle between consecutive pieces 2.0 ms (gaps under 100.0 ms), 2.0 ms of it with nothing queued",
         "1 of 2 submitted before the earlier ended",
         "executors: device 3 pieces, processor 0",
     ] {

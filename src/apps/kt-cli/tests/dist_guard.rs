@@ -89,6 +89,7 @@ const FILES: &[&str] = &[
     "src/plugins/fx-video-tape/tests/physics.rs",
     "src/libs/kt-engine/tests/pitch_edges.rs",
     "src/libs/kt-gpu/tests/camera_isp.rs",
+    "src/libs/kt-gpu/tests/compute_start.rs",
 ];
 
 fn copy_tree(tag: &str) -> PathBuf {
