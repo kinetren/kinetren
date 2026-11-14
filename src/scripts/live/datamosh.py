@@ -63,9 +63,11 @@ def moshes(text):
 def main(out):
     require_tools()
     a = pattern_media(out, "mosh-a", 3)
-    b = moving_media(out, "mosh-b5", 5)
+    # shot B runs 10 s: a jump ahead while playing needs seconds of moshed runway, or under load the
+    # playhead leaves the event before the 180 ms scrim is in a dump (stage 11's first try)
+    b = moving_media(out, "mosh-b12", 12)
     proj = os.path.join(out, "datamosh.otio")
-    project_with_clips(proj, [(0, 2, a), (2, 4, b)], width=640, height=360)
+    project_with_clips(proj, [(0, 2, a), (2, 10, b)], width=640, height=360)
 
     with Live("datamosh", out, project=proj) as app:
         y = app.lane_y("video", 0, frac=0.5)
@@ -133,17 +135,24 @@ def main(out):
         app.expect(caught, "the paused frame behind its history says Loading — catching up")
         app.expect(app.wait_gone("preview.catching_up"), "the history caught up and the picture came")
         app.step("paused_caught_up", "the moment's own moshed picture")
-        # playing: a jump ahead of the history while the preview plays
+        # playing: a jump ahead of the history while the preview plays, 5 s before the event ends
+        jump = int(7.0 * SEC)
+        app.expect(app.geom()["view_start"] <= jump, f"the jump's moment is on screen: view_start={app.geom()['view_start']}")
         app.key("space")
-        app.click(app.x_at(int(5.6 * SEC)), app.ruler_y())
+        app.click(app.x_at(jump), app.ruler_y())
         caught = app.until(lambda: app.has_probe("preview.catching_up", tries=1), timeout=30)
         app.step("playing_catching_up", "playing past a jump ahead: Loading — catching up: N, the last full picture dimmed")
         app.expect(caught, "the playing frame behind its history says Loading — catching up")
         app.key("space")
         app.wait_gone("preview.catching_up")
         app.step("playing_caught_up", "paused again: the picture")
-        # back to the judged frame for the undo below
-        app.click(app.x_at(int(2.5 * SEC)), app.ruler_y())
+        # back to the judged frame for the undo below. The view follows the playhead: Home brings the
+        # project's start back into view before the ruler is clicked there (a click computed for a
+        # moment off screen left the window, and the Ctrl+Z after it went to another window)
+        app.key("Home")
+        judged = int(2.5 * SEC)
+        app.expect(app.until(lambda: app.geom()["view_start"] <= judged), f"the judged moment is back in view: view_start={app.geom()['view_start']}")
+        app.click(app.x_at(judged), app.ruler_y())
         app.pixel_settled(center, tries=60)
 
         # undo brings shot B back
