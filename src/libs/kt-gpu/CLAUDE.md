@@ -106,7 +106,8 @@ is no picture, and an export refuses.
   `GpuStages.stored`/`cold` say what a frame kept and how many pipelines it drew cold.
 - **Every device a role opens describes itself to the trace** (`trace_device`: adapter, driver, features,
   limits): a new way to open a device calls it.
-- **ReadbackCache is the readback path's memoization** (hash of the plan → frame): the post-FX cache
+- **ReadbackCache is the readback path's memoization** (hash of the plan → frame), complete composites
+  only, an LRU by generation (gpu-leftovers, rows 521/523): the post-FX cache
   of kt-cache (`PostFxVideo`) is not used by any executor (a per-layer readback would eat up the
   whole gain).
 - Errors: `TooLarge` → no picture for this plan in the preview, an error in an export;
@@ -182,14 +183,23 @@ is no picture, and an export refuses.
 - **A `PlanOp::PointRun` is ONE generated pass** (`runs.rs`): the stages' `tap_<id>` texts pasted
   into a text built per run SHAPE (the stages' indices in `plugin_taps()`), on the geometry pass's
   layout (1024-byte uniform, two vec4 a stage: 32 stages a piece, `MAX_RUN_STAGES`). Each stage is
-  rounded and clamped as its own pass stores it, so fused and unfused are the same bytes (t2190); keep
-  that rounding — it is what lets the trial switch forms at run time without moving a kept or exported
-  frame (invariant 11), and posterize would move a whole level without it.
+  rounded and clamped as its own pass stores it, so fused and unfused are the same bytes on llvmpipe
+  (t2190; on a card within 1 LSB a boundary); keep that rounding — posterize would move a whole level
+  without it.
+- **A frame's run form is the shape's state, and the keys name it** (gpu-leftovers D2, found-defects
+  510): own passes while pending or tried, the verdict after; the trial's fused pass runs as a SHADOW
+  beside the own passes (`RunPiece.shadow`), never as the frame's output. `compiled::forms_revision()`
+  moves whenever a shape's output form can change and is mixed into `plan_key`; a composite whose resolve
+  saw it move is not kept. A new way a run's form can change calls `forms_moved()`.
+- **An export's frame runs the SETTLED form** (`Inner::settled`, set by `execute_once` and `submit`):
+  every run fused, compiled in the frame when not warm (`Compiled::run_settled`), no trial. A new export
+  entry point sets it, or the file depends on what the editor tried (t2516).
 - **`FxOp::TapRun.pieces` is decided before the arena is sized** (`Inner::bind_runs`, in
-  `resolve_chain`): `passes`/`slot_units` read the pieces, so the slot count stays exact. A shape is a
-  `Compiled` run shape like a geometry shape: pending → its parts (the frame never compiles), warm →
-  the trial (`runs::Trial`: interleaved forms, the pass timer's `probe`, minima of five; slower fused
-  → split in halves, each tried; no timestamps → fused). `fuse_runs(FuseRuns::{Always, Never})` forces
+  `resolve_chain`): `passes`/`slot_units` read the pieces (a shadow adds its pass), so the slot count
+  stays exact. A shape is a `Compiled` run shape like a geometry shape: pending → its parts (the frame
+  never compiles), warm → the trial (`runs::Trial`: the shadow and the own passes timed in one frame,
+  the pass timer's `probe`, minima of five; slower fused → split in halves, each tried; no timestamps →
+  fused). `fuse_runs(FuseRuns::{Always, Never})` forces
   a form for tests and `kt-cli fuse-cost`; `KT_FUSE_RUNS=never|always` sets an engine's mode at its
   creation, for an A/B of a project through `kt-cli preview`/`pause-scan`. t2190, t2192, t2193, t2197.
 - A new point-wise plugin needs no code here: `fuses_in_runs` (kt-plugin-api) admits it, and its
@@ -346,6 +356,14 @@ is no picture, and an export refuses.
   pass ends its piece. A new pass site calls
   `self.cut_point(enc, label)` before writing its uniform, or it is never cut. A compute ring is bounded
   too and cuts while a higher class waits. Same passes, same order, same bytes (t2253).
+- **A saturating display leaves lower classes only its slack** (gpu-leftovers D4, row 491): `note_display`
+  averages the present's cost; while the display presents, `arbiter::room` is what a lower class may
+  leave in front of its next present — the period it leaves free, at most the bound; `near` at least a
+  quarter bound, `answer` the bound. t2517, t2433.
+- **The compute host admits EVERY submission** (gpu-leftovers D1, row 511): job pieces, the clock
+  calibration (`try_lock`: a job never waits behind another's calibration admission) and the warm-up
+  dispatch. A job writes one uniform arena and binds by dynamic offset, one bind group per (shader, slot
+  size, buffers) within the job (row 520, t2511). A new compute submission goes through the ring.
 - **A piece's completion frees the ring by a work-done callback**; a waiter completes the oldest piece by
   a blocking wait on THAT piece's device, never on a device with a surface (the window's present takes
   the device's lock for writing). So no piece waits for its own submitter to come back (the export's

@@ -3,7 +3,7 @@
 //! VRAM budgets are hard: the caches are the only holders of textures between
 //! frames; transients are returned to the pool within a single execute.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use kt_media::VideoFrame;
@@ -434,11 +434,16 @@ impl PresentMemo {
     }
 }
 
-/// LRU of ready composition frames: plan hash → (RGBA, complete). Keeps the
-/// warm loop fast (the GPU path has no post-FX memoization).
+/// LRU of ready composition frames: plan hash → RGBA. Keeps the warm loop fast (the GPU path has
+/// no post-FX memoization). Only COMPLETE composites are kept (gpu-leftovers, found-defects 523): an
+/// incomplete one is keyed by what it lacked and is never asked again once its layers arrive, so it
+/// only pushed complete frames out of the budget the strip, poster, picker and slow route share. The
+/// order is a generation per entry and a map from generation to key (found-defects 521): a hit and
+/// an eviction are a logarithmic step, not a scan of every key.
 pub(crate) struct ReadbackCache {
-    map: HashMap<u64, (Vec<u8>, bool)>,
-    order: VecDeque<u64>,
+    map: HashMap<u64, (Vec<u8>, u64)>,
+    order: std::collections::BTreeMap<u64, u64>,
+    next: u64,
     bytes: u64,
     budget: u64,
     /// Opened by the first insert (memory-ledger): an engine that never reads back has none.
@@ -447,38 +452,88 @@ pub(crate) struct ReadbackCache {
 
 impl ReadbackCache {
     pub fn new(budget: u64) -> ReadbackCache {
-        ReadbackCache { map: HashMap::new(), order: VecDeque::new(), bytes: 0, budget, account: None }
+        ReadbackCache { map: HashMap::new(), order: Default::default(), next: 0, bytes: 0, budget, account: None }
     }
 
-    pub fn get(&mut self, key: u64) -> Option<(&[u8], bool)> {
-        if !self.map.contains_key(&key) {
-            return None;
-        }
+    pub fn get(&mut self, key: u64) -> Option<&[u8]> {
+        let (_, stamp) = self.map.get_mut(&key)?;
         // recency bump
-        if let Some(p) = self.order.iter().position(|k| *k == key) {
-            self.order.remove(p);
-        }
-        self.order.push_back(key);
-        self.map.get(&key).map(|(v, c)| (v.as_slice(), *c))
+        self.order.remove(stamp);
+        self.next += 1;
+        *stamp = self.next;
+        self.order.insert(self.next, key);
+        self.map.get(&key).map(|(v, _)| v.as_slice())
     }
 
+    /// Keep a composite; an incomplete one is not kept.
     pub fn insert(&mut self, key: u64, data: Vec<u8>, complete: bool) {
-        if let Some((old, _)) = self.map.remove(&key) {
+        if !complete {
+            return;
+        }
+        if let Some((old, stamp)) = self.map.remove(&key) {
             self.bytes -= old.len() as u64;
-            if let Some(p) = self.order.iter().position(|k| *k == key) {
-                self.order.remove(p);
-            }
+            self.order.remove(&stamp);
         }
         self.bytes += data.len() as u64;
-        self.map.insert(key, (data, complete));
-        self.order.push_back(key);
+        self.next += 1;
+        self.map.insert(key, (data, self.next));
+        self.order.insert(self.next, key);
         while self.bytes > self.budget && self.order.len() > 1 {
-            let Some(k) = self.order.pop_front() else { break };
+            let Some((_, k)) = self.order.pop_first() else { break };
             if let Some((v, _)) = self.map.remove(&k) {
                 self.bytes -= v.len() as u64;
             }
         }
         let budget = self.budget;
         self.account.get_or_insert_with(|| kt_time::mem::open(kt_time::mem::Tenant::Readback, budget)).set(self.bytes);
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
+#[cfg(test)]
+mod readback_tests {
+    use super::ReadbackCache;
+
+    /// Test t2512 (gpu-leftovers, found-defects 521): the least recently ASKED goes first — a hit
+    /// moves a key to the young end — and the budget holds after every insert.
+    #[test]
+    fn t2512_the_readback_memo_evicts_the_least_recently_asked() {
+        let mut c = ReadbackCache::new(300);
+        for k in 0..3u64 {
+            c.insert(k, vec![k as u8; 100], true);
+        }
+        assert!(c.get(0).is_some(), "0 is kept");
+        c.insert(3, vec![3; 100], true);
+        assert!(c.get(1).is_none(), "1 was the least recently asked");
+        assert_eq!(c.get(0), Some(&[0u8; 100][..]));
+        assert!(c.get(2).is_some() && c.get(3).is_some());
+        assert_eq!(c.len(), 3);
+        // the same key again replaces it in place
+        c.insert(2, vec![9; 100], true);
+        assert_eq!(c.get(2), Some(&[9u8; 100][..]));
+        assert_eq!(c.len(), 3);
+        // a long run of hits keeps the order a map, not a growing list
+        for _ in 0..10_000 {
+            c.get(0);
+        }
+        assert_eq!(c.order.len(), 3);
+    }
+
+    /// Test t2513 (gpu-leftovers, found-defects 523): an incomplete composite is not kept, and does not
+    /// push a complete one out.
+    #[test]
+    fn t2513_the_readback_memo_keeps_only_complete_composites() {
+        let mut c = ReadbackCache::new(200);
+        c.insert(1, vec![1; 100], true);
+        c.insert(2, vec![2; 100], true);
+        for k in 10..20 {
+            c.insert(k, vec![0; 100], false);
+        }
+        assert!(c.get(1).is_some() && c.get(2).is_some(), "the complete ones stay");
+        assert!(c.get(10).is_none(), "an incomplete composite is not kept");
     }
 }
