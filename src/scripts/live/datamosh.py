@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Live scenario t1249 (datamosh-codec-path): a person moshes a cut in the real program.
+"""Live scenario t1249 (datamosh-codec-path): a person moshes a cut in the real program; t2416
+(catch-up-shows-loading): while the history catches up the preview shows Loading with the catch-up
+written in its place, paused and playing, never another position's picture.
 
 Two clips back to back on one track — shot A (colour bars, still) and shot B (a moving test
 pattern, scrolled). The person double-clicks B, picks "Datamosh → Cut mosh" in the gallery and
@@ -61,9 +63,9 @@ def moshes(text):
 def main(out):
     require_tools()
     a = pattern_media(out, "mosh-a", 3)
-    b = moving_media(out, "mosh-b", 3)
+    b = moving_media(out, "mosh-b5", 5)
     proj = os.path.join(out, "datamosh.otio")
-    project_with_clips(proj, [(0, 2, a), (2, 2, b)], width=640, height=360)
+    project_with_clips(proj, [(0, 2, a), (2, 4, b)], width=640, height=360)
 
     with Live("datamosh", out, project=proj) as app:
         y = app.lane_y("video", 0, frac=0.5)
@@ -122,6 +124,27 @@ def main(out):
                 s.get("before") == 12 and s.get("mosh") == 1.0,
                 f"the slot carries the cut-mosh rows (before={s.get('before')}, mosh={s.get('mosh')})",
             )
+
+        # t2416: a moment the history has not reached, on a pause — Loading names the catch-up in
+        # its place (the preview's centre), no picture of another position under VHS or anything
+        app.click(app.x_at(int(4.4 * SEC)), app.ruler_y())
+        caught = app.until(lambda: app.has_probe("preview.catching_up", tries=1), timeout=30)
+        app.step("paused_catching_up", "a pause 1.9 s past the computed history: Loading — catching up: N")
+        app.expect(caught, "the paused frame behind its history says Loading — catching up")
+        app.expect(app.wait_gone("preview.catching_up"), "the history caught up and the picture came")
+        app.step("paused_caught_up", "the moment's own moshed picture")
+        # playing: a jump ahead of the history while the preview plays
+        app.key("space")
+        app.click(app.x_at(int(5.6 * SEC)), app.ruler_y())
+        caught = app.until(lambda: app.has_probe("preview.catching_up", tries=1), timeout=30)
+        app.step("playing_catching_up", "playing past a jump ahead: Loading — catching up: N, the last full picture dimmed")
+        app.expect(caught, "the playing frame behind its history says Loading — catching up")
+        app.key("space")
+        app.wait_gone("preview.catching_up")
+        app.step("playing_caught_up", "paused again: the picture")
+        # back to the judged frame for the undo below
+        app.click(app.x_at(int(2.5 * SEC)), app.ruler_y())
+        app.pixel_settled(center, tries=60)
 
         # undo brings shot B back
         app.key("ctrl+z")

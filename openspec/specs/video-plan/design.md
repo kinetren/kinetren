@@ -522,3 +522,29 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
   incomplete composites 1 → 51 in a minute's loop; the frame on screen now comes back first.
 - **A held frame says so:** `GpuStages.stream_held` → `Composed.held`; the app counts it apart and
   draws "Catching up…" (ui-timeline).
+
+## No stage over a stand-in; Loading names the catch-up (catch-up-shows-loading, archived 2026-11-11)
+
+- **What hurt** (kkt-26.11.10b K1/K2/K5, kkt-26.11.11 L2, found-defects 403, 483): playing, a frame whose
+  stream history was behind showed the stage's latest HELD picture, and every later stage ran over it at
+  the moment asked — the event's VHS Tape, the track's and the reel's stages: "либо есть кадр либо нет".
+  The composite was complete, so the display's present memo stored it under a key no moment asks again
+  (his stage-10 trace: 248 of 920 stores). The owner: effects taking previous pictures are "пустая трата
+  времени и ресурсов".
+- **Decision:** no held frame anywhere (`StreamPacing::hold`, `StreamKernel::held` in the contract,
+  `stream_held`, `Composed.held` gone). A frame short of more than `compose_steps` is incomplete playing or
+  paused; `VideoRenderer::stream_short` (max over the plan, reels and track stages included) →
+  `GpuStages.stream_short` → `Composed.catching_up`; the Loading scrim writes "Loading — catching up: N" in
+  Loading's place. The first picture of a fresh preview is still presented incomplete under the scrim (the
+  owner's round-14 rule; row 461 asks him).
+- **The class walk** (a stage given an input that is not its own position): the stream stage (fixed), a
+  blended frame pair lacking a side (took the other at full weight and reported complete — now no picture,
+  incomplete; t2418), the reel strip and the poster (kept incomplete offline composites — now only complete
+  ones, a missing file is its placeholder; t2419). Checked and not the class: a transition pair's missing
+  half (already incomplete, never presented, t137), decode misses (exact keys), the slow route (a late
+  complete picture of its own moment), kept composites (keyed by the stage's own key), the freeze frame
+  (the person's own edit), the stream's sound (its own position). The FX picker's cell over a stream slot
+  is a look question (row 460). The full table is in the archived change's design.md.
+- **Measured** (release, llvmpipe): his relinked copy's 30 s loop over the problem region — 29 held
+  composites shown and 27 stored before, 0 and 0 after; 10.3 → 9.1 cores (127 VHS runs instead of 154).
+  The red-on-old guard is t2414 (the player set the hold while playing).

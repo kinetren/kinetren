@@ -685,9 +685,9 @@ pub struct KtApp {
     /// When the preview first became incomplete (the “Loading” scrim — after 180 ms,
     /// as in v1, so it does not flicker on quick misses; item 14).
     pub incomplete_since: Option<std::time::Instant>,
-    /// The picture on screen is a stream stage's held frame (stream-history-on-device): the preview
-    /// says it is catching up.
-    pub preview_held: bool,
+    /// The positions a stream stage of the frame on screen still lacks (0 — none): the Loading scrim
+    /// writes the catch-up where it writes Loading (catch-up-shows-loading, kkt-26.11.10b K2).
+    pub preview_catching_up: u64,
     /// Last attempt of a composite of an incomplete frame (retry throttling, item 1).
     pub last_compose_retry: std::time::Instant,
     /// The ask on its way to the preview's thread: its number and (tick, size, content, project).
@@ -1121,7 +1121,7 @@ impl KtApp {
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
-            preview_held: false,
+            preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
             compose_grace: COMPOSE_GRACE,
@@ -1448,7 +1448,7 @@ impl KtApp {
             preview_content: 0,
             preview_project: 0,
             incomplete_since: None,
-            preview_held: false,
+            preview_catching_up: 0,
             last_compose_retry: std::time::Instant::now(),
             preview_asked: None,
             compose_grace: COMPOSE_GRACE,
@@ -7171,11 +7171,10 @@ impl KtApp {
         }
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(true);
         if let Some(done) = self.take_composed() {
-            // a NEW picture of the moment asked: a held stream frame is the stage's latest picture
-            // behind the playhead, not this moment's (found-defects 393: V-fps counted every tick
-            // change, 19/s where 7.5 pictures a second were new)
-            let new_frame = self.perf.take_composite(self.preview_key.map(|k| k.0) != Some(done.t.0), done.held);
-            self.preview_held = done.held;
+            // a NEW picture of the moment asked: complete, and of another moment than the one on
+            // screen (found-defects 393: V-fps counted every tick change)
+            let new_frame = self.perf.take_composite(self.preview_key.map(|k| k.0) != Some(done.t.0), done.complete);
+            self.preview_catching_up = done.catching_up;
             let shown_any = self.texture.is_some() || self.preview_on_display;
             let (cq, c, on_display) = (done.quality, done.complete, done.on_display);
             complete = c;
@@ -7252,8 +7251,7 @@ impl KtApp {
                 use kt_time::trace::{self, show};
                 let flags = if c { show::COMPLETE } else { 0 }
                     | if new_frame { show::NEW } else { 0 }
-                    | if on_display { show::ON_DISPLAY } else { 0 }
-                    | if done.held { show::HELD } else { 0 };
+                    | if on_display { show::ON_DISPLAY } else { 0 };
                 trace::ev(trace::Ev::FrameShow).id(done.seq).a(done.t.0 as u64).aux(flags).emit();
             }
             // the last composite's bytes stay readable; the buffer before them goes back for reuse
@@ -7451,28 +7449,24 @@ impl KtApp {
             // the scrim's coming and going in the trace: `kt-cli trace loading` asks exactly this
             if LOADING_TRACED.swap(show_overlay, std::sync::atomic::Ordering::Relaxed) != show_overlay {
                 let at = self.preview_key.map_or(0, |k| k.0);
-                kt_time::trace::ev(kt_time::trace::Ev::Loading).aux(show_overlay as u32).a(at as u64).emit();
-            }
-            // a held stream frame: the picture moves, the stage behind it is catching up — a light
-            // note in the corner, never the scrim (stream-history-on-device; the scrim stays the
-            // owner's rule for a frame with no picture)
-            if self.preview_held && !show_overlay {
-                let text = tr(k::perf::CATCHING_UP);
-                let font = egui::FontId::proportional(11.0);
-                let galley = painter.layout_no_wrap(text.to_string(), font, egui::Color32::from_gray(225));
-                let at = img_rect.left_top() + egui::vec2(6.0, 6.0);
-                let back = egui::Rect::from_min_size(at, galley.size()).expand2(egui::vec2(4.0, 2.0));
-                painter.rect_filled(back, 3.0, egui::Color32::from_black_alpha(110));
-                painter.galley(at, galley, egui::Color32::from_gray(225));
+                kt_time::trace::ev(kt_time::trace::Ev::Loading).aux(show_overlay as u32).a(at as u64).b(self.preview_catching_up).emit();
             }
             if show_overlay {
                 // the README's hero waits for a frame without it (a picture mid-load is not one)
                 crate::widgets::field_probe::note("preview.loading", img_rect);
                 painter.rect_filled(img_rect, 2.0, egui::Color32::from_black_alpha(140));
+                // a stream stage behind the frame: the catch-up is written where Loading is, in its
+                // place and style (kkt-26.11.10b K2: "в том же месте где loading писать")
+                let text = if self.preview_catching_up > 0 {
+                    crate::widgets::field_probe::note("preview.catching_up", img_rect);
+                    crate::tf!(k::perf::LOADING_CATCHING_UP, self.preview_catching_up)
+                } else {
+                    tr(k::perf::LOADING).to_string()
+                };
                 painter.text(
                     img_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    tr(k::perf::LOADING),
+                    text,
                     egui::FontId::proportional(16.0),
                     egui::Color32::from_gray(230),
                 );
@@ -7952,12 +7946,7 @@ impl KtApp {
                 crate::tf!(k::perf::CALLBACK_FRAMES, self.player.shared.callback_frames.load(ord)),
             ),
             (
-                // held stream frames apart from the new pictures, while there are any (found-defects 393)
-                if self.perf.vheld > 0.0 {
-                    format!("{} · {}", crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown), crate::tf!(k::perf::V_HELD, self.perf.vheld.round() as u64))
-                } else {
-                    crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown)
-                },
+                crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown),
                 // short caption: in a narrow column the long line was cut with an ellipsis
                 // and the rollback counter could not be seen
                 crate::tf!(
@@ -9772,21 +9761,16 @@ pub fn preview_key_tick(grid: kt_time::FpsGrid, t: Tick) -> i64 {
 
 impl PerfState {
     /// A composite the preview took: whether it is a NEW picture of the moment asked (`moment` — its
-    /// tick differs from the one on screen). A held stream frame is not (found-defects 393); it is
-    /// counted apart.
-    pub fn take_composite(&mut self, moment: bool, held: bool) -> bool {
-        if held {
-            self.video_frames_held += 1;
-        }
-        moment && !held
+    /// tick differs from the one on screen) — a complete one: an incomplete composite (a frame still
+    /// loading, a stream catching up) is no picture of the moment (found-defects 393).
+    pub fn take_composite(&mut self, moment: bool, complete: bool) -> bool {
+        moment && complete
     }
 
-    /// The video counters' second: V-fps (new pictures shown) and held frames a second over `dt`.
+    /// The video counters' second: V-fps (new pictures shown) over `dt`.
     pub fn video_second(&mut self, dt: f32) -> f32 {
         self.vfps = self.video_frames_shown.saturating_sub(self.last_video_shown) as f32 / dt;
         self.last_video_shown = self.video_frames_shown;
-        self.vheld = self.video_frames_held.saturating_sub(self.last_video_held) as f32 / dt;
-        self.last_video_held = self.video_frames_held;
         self.vfps
     }
 }
@@ -9807,10 +9791,6 @@ pub struct PerfState {
     /// shown in the timecode of the toolbar).
     pub vfps: f32,
     last_video_shown: u64,
-    /// Composites that showed a held stream frame (not a new picture), and their rate a second.
-    pub video_frames_held: u64,
-    pub vheld: f32,
-    last_video_held: u64,
     /// Skipped cells of the frame grid during playback (jitter diagnostics).
     pub video_cells_skipped: u64,
     /// Backward rollbacks of the display key (item 14, round 14): the counter must not be
@@ -9911,9 +9891,6 @@ impl PerfState {
             frame_cost_was: crate::frame_cost::totals(),
             vfps: 0.0,
             last_video_shown: 0,
-            video_frames_held: 0,
-            vheld: 0.0,
-            last_video_held: 0,
             video_cells_skipped: 0,
             video_rollbacks: 0,
             diag_open: false,

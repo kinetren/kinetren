@@ -546,7 +546,9 @@ pub fn render_reel_preview(
             .filter_map(|m| {
                 let r = p.media.iter().find(|r| r.id == m)?;
                 let path = crate::util::resolve_media_path(base, &r.path);
-                crate::util::open_source_indexed(&path, index_db).ok().map(|s| (m, s))
+                // a missing file is its placeholder, as in the editor: the frame is the one the
+                // preview shows, and complete (catch-up-shows-loading D6)
+                Some((m, crate::util::open_source_or_placeholder(&path, index_db, &crate::util::media_label(&path)).0))
             })
             .collect()
     };
@@ -648,7 +650,7 @@ pub fn render_reel_preview(
 
 /// One frame of the offline path at `t`: decode what the plan wants into the job's own cache,
 /// then compose. Shared by the reel strip and the project poster — one body (rule 17).
-fn compose_offline_frame(
+pub(crate) fn compose_offline_frame(
     ctl: &crate::bg::BgCtl,
     video: &mut kt_engine::VideoRenderer,
     src: &mut HashMap<MediaId, Box<dyn kt_media::MediaSource>>,
@@ -690,8 +692,12 @@ fn compose_offline_frame(
             cache.insert_video(sid, Some(dq), kt_engine::video_cache_idx(k), frame.into());
         });
     }
+    // either the frame is there or not: an incomplete composite ran the track's and the reel's
+    // stages over the layers that were there, and the strip kept it on disk (catch-up-shows-loading
+    // D6, kkt-26.11.10b K5 "либо есть кадр либо нет"); on the offline device's side engine, beside
+    // the preview's slow route (scheduler-followups D6)
     let composed = kt_gpu::side_engine().map(|e| video.compose_on(&*e, cache, t, q, buf));
-    if !matches!(composed, Some(Ok(_))) {
+    if !matches!(composed, Some(Ok(true))) {
         buf.clear();
     }
 }
@@ -727,10 +733,10 @@ pub fn render_poster(
         }
         let Some(r) = p.media.iter().find(|r| r.id == m) else { continue };
         let path = crate::util::resolve_media_path(base, &r.path);
-        if let Ok(s) = crate::util::open_source_indexed(&path, None) {
-            facts.observe(m, s.info());
-            src.insert(m, s);
-        }
+        // a missing file is its placeholder, as in the editor (catch-up-shows-loading D6)
+        let (s, _) = crate::util::open_source_or_placeholder(&path, None, &crate::util::media_label(&path));
+        facts.observe(m, s.info());
+        src.insert(m, s);
     }
     // a generator's values live on its EVENT: the plan asks for per-event generator sources
     // (`GEN_TAG` addresses), which export raises itself from `gen_sources` — so does the poster.
@@ -753,4 +759,77 @@ pub fn render_poster(
     let mut buf = Vec::new();
     compose_offline_frame(ctl, &mut video, &mut src, &cache, t, q, &mut buf);
     (buf.len() == (q.width * q.height * 4) as usize).then_some(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use kt_model::*;
+    use kt_time::Tick;
+
+    fn one_clip(path: &str) -> Project {
+        let mut p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 320,
+            height: 180,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: true,
+        });
+        p.media.push(MediaRef::new(MediaId(1), path));
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            masks: Default::default(),
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(2 * 90_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            fx: vec![FxInstance::plugin("vhs_tape").unwrap()],
+            opacity: 1.0,
+            fx_off: false,
+        });
+        p.validate().unwrap();
+        p
+    }
+
+    /// Test t2419 (catch-up-shows-loading D6): the reel strip's and the poster's offline frame keeps
+    /// only a complete composite — a layer whose source is absent leaves no picture, not the track's
+    /// and the event's stages run over what was there — and a poster of a project whose file is
+    /// missing is the frame with the placeholder, as the preview shows it.
+    #[test]
+    fn t2419_an_offline_frame_keeps_only_a_complete_composite() {
+        crate::plugins::install();
+        if kt_gpu::offline_engine().is_none() {
+            eprintln!("skipped: no offline device");
+            return;
+        }
+        let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), Default::default());
+        let q = kt_media::Quality { width: 160, height: 90 };
+        let p = one_clip("synth:1");
+        let mut video = kt_engine::VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig { max_audio_bytes: 1, max_video_bytes: 16 << 20 });
+        let mut src = std::collections::HashMap::new();
+        let mut buf = Vec::new();
+        super::compose_offline_frame(&ctl, &mut video, &mut src, &cache, Tick(45_000), q, &mut buf);
+        assert!(buf.is_empty(), "a frame lacking its layer left a picture ({} bytes)", buf.len());
+
+        let missing = one_clip("/nonexistent/kt-t2419/missing.mp4");
+        let px = super::render_poster(&ctl, &missing, None, Tick(45_000)).expect("a poster of a project with a missing file");
+        let colours = px.chunks(4).map(|c| (c[0], c[1], c[2])).collect::<std::collections::HashSet<_>>().len();
+        assert!(colours > 2, "the poster is flat ({colours} colours): the placeholder was not composed");
+    }
 }

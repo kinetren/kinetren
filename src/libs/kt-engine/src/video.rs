@@ -543,9 +543,6 @@ pub struct VideoRenderer {
     /// How a live preview paces its stream stages (decode-request-storm); `None` — everything at
     /// once, as an export and the tools ask.
     stream_pacing: Option<StreamPacing>,
-    /// `StreamPacing::hold` as the player last set it: an atomic, because the preview's thread
-    /// composes on a renderer shared with the UI thread (ui-never-waits).
-    stream_hold: std::sync::atomic::AtomicBool,
     /// The player's decoded-frame cache bound (frames-cache-growth): the pacing's order is a
     /// quarter of it as it is NOW — the ledger moves the cap after this shared build was made.
     stream_cap: Option<Arc<dyn Fn() -> usize + Send + Sync>>,
@@ -1362,23 +1359,13 @@ impl VideoRenderer {
             stages,
             stream_memo: stream_memo().clone(),
             stream_pacing: None,
-            stream_hold: Default::default(),
             stream_cap: None,
         }
     }
 
-    /// Playing or paused, for the stream stages' late frames (`StreamPacing::hold`).
-    pub fn set_stream_hold(&self, hold: bool) {
-        self.stream_hold.store(hold, std::sync::atomic::Ordering::Relaxed);
-        for sub in self.nests.values() {
-            sub.set_stream_hold(hold);
-        }
-    }
-
-    /// The pacing with the hold the player last set.
+    /// The pacing with the order of the cache's bound as it is now.
     fn pacing(&self) -> Option<StreamPacing> {
         self.stream_pacing.map(|mut p| {
-            p.hold = self.stream_hold.load(std::sync::atomic::Ordering::Relaxed);
             if let Some(cap) = &self.stream_cap {
                 p.order_bytes = StreamPacing::preview(cap()).order_bytes;
             }
@@ -1400,12 +1387,14 @@ impl VideoRenderer {
         self.stream_cap = Some(cap);
     }
 
-    /// Whether the last `frame_plan` showed a stream layer's late frame: such a composite is not
-    /// the moment's own, and must not be kept as what plays there without work.
+    /// The most positions a stream stage of the last `frame_plan` (its reels and track stages
+    /// included) still lacked under the preview's pacing; 0 — none was short. Such a frame is
+    /// incomplete: the history is the prefetch thread's to walk.
+    ///
     /// Per calling thread: the preview's compose thread and the loop fill plan on one renderer at
     /// once (scheduler-followups D5), and each reads its own plan's answer.
-    pub fn stream_held(&self) -> bool {
-        STREAM_HELD.with(|h| h.get())
+    pub fn stream_short(&self) -> u64 {
+        STREAM_SHORT.with(|h| h.get())
     }
 
     /// Pace the stream stages as a live preview must (decode-request-storm): the order names the
@@ -1416,7 +1405,6 @@ impl VideoRenderer {
             sub.set_stream_pacing(pacing);
         }
         self.stream_pacing = pacing;
-        self.stream_hold.store(pacing.is_some_and(|p| p.hold), std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The memo the stream stages of this renderer (and of its reels) keep their codec results
@@ -1915,20 +1903,22 @@ impl VideoRenderer {
             blend_footage: false,
         };
         if !probe {
-            STREAM_HELD.with(|h| h.set(false));
+            STREAM_SHORT.with(|h| h.set(0));
         }
         build_plan(&self.clips, &ctx, cache, t, quality)
     }
 }
 
-/// A stream layer of this thread's plan shows its stage's late frame (`stream::run`).
-pub(crate) fn note_stream_held() {
-    STREAM_HELD.with(|h| h.set(true));
+/// A stream layer of this thread's plan lacks `n` positions of its history (`stream::run`).
+pub(crate) fn note_stream_short(n: u64) {
+    STREAM_SHORT.with(|h| h.set(h.get().max(n)));
 }
 
 thread_local! {
-    /// Whether this thread's last full plan showed a stream layer's late frame (`stream_held`).
-    static STREAM_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The most positions a paced stream stage of this thread's last full plan still lacked (0 —
+    /// none short): the frame is incomplete, and the preview writes the catch-up under Loading
+    /// (catch-up-shows-loading).
+    static STREAM_SHORT: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Plan-building context: the grid, cameras and the project's world size.
@@ -1952,7 +1942,7 @@ struct PlanCtx<'a> {
     stream_memo: &'a kt_plugin_api::stream::StreamMemo,
     /// The live preview's pacing of the stream stages (decode-request-storm), inherited downward.
     stream_pacing: Option<StreamPacing>,
-    /// Set when a stream layer of the plan shows a late frame (the root renderer's flag).
+    /// The most positions a stream layer of the plan lacks (the root renderer's counter).
     /// A key-only plan (`probe_plan`): stream stages are keyed, not run.
     probe: bool,
 }
@@ -2084,8 +2074,11 @@ fn layer_src<'a>(
                 Some((f, serial)) => (Some(f), serial),
                 None => (None, 0),
             };
+            // a pair lacking a side has no picture: the other side at full weight would be a stand-in
+            // the chain runs over, reported complete (catch-up-shows-loading D5); the frame waits
+            let both = frame.is_some() && nb.is_some();
             (
-                blend_frames(frame, nb, k),
+                blend_frames(frame, nb, k).filter(|_| both),
                 Some(crate::video_plan::LayerBlend { cache_idx: idx, k, content: nb_content }),
             )
         }

@@ -20858,49 +20858,78 @@ fn t1636_empty_rows_carry_no_captions() {
     assert!(items.iter().any(|l| l == tr(k::tl::lane::ADD_MORPHER_HERE)), "the action left the menu: {items:?}");
 }
 
-/// Test t2358 (stream-history-on-device, found-defects 393): V-fps counts new pictures of the moment
-/// asked; a composite that shows a held stream frame is counted apart. A second of held composites of
-/// advancing moments is V-fps 0; a second of complete new moments counts them and holds nothing.
+/// Test t2358 (stream-history-on-device, found-defects 393; catch-up-shows-loading): V-fps counts
+/// complete new pictures of the moment asked. A second of incomplete composites of advancing moments
+/// is V-fps 0; a second of complete new moments counts them; the same moment again is no new picture.
 #[test]
-fn t2358_every_frame_held_is_v_fps_0() {
+fn t2358_only_complete_new_pictures_count() {
     let mut h = harness();
     let perf = &mut h.state_mut().perf;
     perf.video_second(1.0);
-    for _ in 0..30 {
-        if perf.take_composite(true, true) {
-            perf.video_frames_shown += 1;
-        }
-    }
-    assert_eq!(perf.video_second(1.0), 0.0, "a held stream frame is no new picture");
-    assert_eq!(perf.vheld, 30.0, "the held frames are counted apart");
     for _ in 0..30 {
         if perf.take_composite(true, false) {
             perf.video_frames_shown += 1;
         }
     }
-    // the same moment again is no new picture either
-    assert!(!perf.take_composite(false, false));
+    assert_eq!(perf.video_second(1.0), 0.0, "an incomplete composite is no new picture");
+    for _ in 0..30 {
+        if perf.take_composite(true, true) {
+            perf.video_frames_shown += 1;
+        }
+    }
+    assert!(!perf.take_composite(false, true), "the same moment again is no new picture");
     assert_eq!(perf.video_second(1.0), 30.0);
-    assert_eq!(perf.vheld, 0.0);
 }
 
-/// Test t2359 (stream-history-on-device): a held stream frame on screen draws the "catching up" note
-/// over the picture, never the Loading scrim; a frame of the moment's own removes it.
+/// Test t2415 (catch-up-shows-loading, kkt-26.11.10b K2): while the frame on screen is short of its
+/// stream history, the Loading scrim writes the catch-up where it writes Loading — in its place, the
+/// preview's centre — and nothing is written in the preview's corner; another incomplete frame keeps
+/// plain Loading; a complete one has no scrim (the rest's cost is the live `idle` scenario's).
 #[test]
-fn t2359_a_held_frame_says_it_is_catching_up() {
+fn t2415_loading_names_the_catch_up_where_it_is_written() {
     if crate::layout_tests::no_device() {
         return;
     }
     let (mut h, _clip) = harness_geom_ctl();
     assert!(h.state().texture.is_some(), "scene guard: the preview has a picture");
-    let note = tr(k::perf::CATCHING_UP).to_string();
+    // the frame on screen came out incomplete a second ago, and no retry is due
+    let short = |h: &mut Harness<'static, KtApp>, n: u64| {
+        let app = h.state_mut();
+        let k = app.preview_key.expect("a frame on screen");
+        app.preview_key = Some((k.0, k.1, false));
+        app.incomplete_since = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        app.preview_catching_up = n;
+        app.compose_retry_gap = crate::app::COMPOSE_RETRY_MAX * 2;
+        app.compose_retry_epoch = app.player.cache.epoch();
+    };
+    let catching = crate::tf!(k::perf::LOADING_CATCHING_UP, 37);
     let loading = tr(k::perf::LOADING).to_string();
-    let drawn = |h: &Harness<'static, KtApp>, t: &str| crate::reach_tests::painted_texts(h).iter().any(|p| p.src == t);
-    h.state_mut().preview_held = true;
+    let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h);
+    short(&mut h, 37);
     h.step();
-    assert!(drawn(&h, &note), "the held frame says it is catching up");
-    assert!(!drawn(&h, &loading), "a held frame is not the Loading scrim");
-    h.state_mut().preview_held = false;
+    let img = h.state().preview_img_rect;
+    let at = texts(&h).into_iter().find(|t| t.src == catching).expect("the scrim names the catch-up");
+    assert!(
+        (at.rect.center() - img.center()).length() < 4.0,
+        "the catch-up is written where Loading is, the picture's centre ({:?} vs {:?})",
+        at.rect.center(),
+        img.center()
+    );
+    assert!(!texts(&h).iter().any(|t| t.src == loading), "one text in Loading's place");
+    assert!(
+        !texts(&h).iter().any(|t| img.contains(t.rect.left_top()) && (t.rect.left_top() - img.left_top()).length() < 40.0),
+        "nothing is written in the preview's corner"
+    );
+    short(&mut h, 0);
     h.step();
-    assert!(!drawn(&h, &note), "the moment's own frame removes the note");
+    assert!(texts(&h).iter().any(|t| t.src == loading), "another incomplete frame keeps plain Loading");
+    assert!(!texts(&h).iter().any(|t| t.src == catching));
+    {
+        let app = h.state_mut();
+        let k = app.preview_key.unwrap();
+        app.preview_key = Some((k.0, k.1, true));
+        app.preview_catching_up = 0;
+    }
+    h.step();
+    assert!(!texts(&h).iter().any(|t| t.src == loading || t.src == catching), "a complete frame has no scrim");
 }

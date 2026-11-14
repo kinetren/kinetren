@@ -7,7 +7,7 @@
 //! The rules: only a moment whose every layer is decoded (the fill asks no decode and withdraws
 //! no request of the frame on screen); ahead of the playhead by twice its own frame time (the
 //! moment at the head is the compose thread's); never while the display composes a frame of its own
-//! (it takes the time the display leaves); a moment that comes out incomplete, held or not
+//! (it takes the time the display leaves); a moment that comes out incomplete (a stream stage short of its frame included) or not
 //! kept by the display's memo is skipped for the lap; nothing runs while nothing plays. The class
 //! is `near`: on every ring it is admitted behind the frame on screen. `KT_LOOP_FILL=off` turns it
 //! off (an A/B on one binary).
@@ -162,13 +162,13 @@ fn pump(f: &LoopFill, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)>>, 
         span.aux(kt_time::trace::job::LOOP_FILL).id(id).a(t.0 as u64);
         let t0 = std::time::Instant::now();
         let mut buf = Vec::new();
-        let Some((complete, held, key)) = parts.compose_fill(&exec, t, &mut buf) else {
+        let Some((complete, key)) = parts.compose_fill(&exec, t, &mut buf) else {
             // not warm: the look-ahead brings it, the next pass looks again
             span.cancel();
             continue;
         };
-        let ok = complete && !held && key.is_some_and(|k| display.holds(k));
-        span.b(if ok { 0 } else if !complete { 1 } else if held { 2 } else { 3 });
+        let ok = complete && key.is_some_and(|k| display.holds(k));
+        span.b(if ok { 0 } else if !complete { 1 } else { 3 });
         drop(span);
         let mut st = f.st.lock().unwrap();
         st.last_ns = t0.elapsed().as_nanos() as u64;

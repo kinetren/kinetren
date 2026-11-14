@@ -434,3 +434,16 @@ it put the instruments past the window's fixed 720-point opening height, and the
 grew by itself a frame later (t918, t1147; the shell's sizing pass is row 442). The caches' line is one
 line whatever its numbers. Rejected: one long "video V / cap · audio A · program P" item — t128 holds
 the status items to 190 points in every language.
+
+## Loading names the catch-up; V-fps counts complete pictures (catch-up-shows-loading, archived 2026-11-11)
+
+- **What changed and why:** the owner decided against the held stream frame (kkt-26.11.10b K1, K5:
+  "либо есть кадр либо нет") and put the catch-up where Loading is written (K2: "в том же месте где
+  loading писать"). The corner note and the held/s count of stream-history-on-device go: a frame short of
+  its history is incomplete, the app keeps the last full picture under the scrim, and the scrim's text is
+  "Loading — catching up: N" (`perf.loading_catching_up`, five catalogs; the "noun: N" form, no plurals)
+  while `Composed.catching_up` is above zero, plain "Loading" otherwise. The probe `preview.catching_up`
+  lets the live `datamosh` scenario see it (t2416).
+- **V-fps:** `take_composite(moment, complete)` — only a complete composite of a new moment is a new
+  picture (t2358). The `loading` trace record carries the positions short in `b`; `kt-cli trace
+  loading` says so per stretch (t2417).

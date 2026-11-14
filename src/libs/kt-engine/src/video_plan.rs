@@ -380,7 +380,8 @@ pub struct GpuStages {
     pub stored: bool,
     /// Pipelines drawn in this frame before they were warm (a compile inside the frame).
     pub cold: u32,
-    /// A stream layer showed its stage's held frame, not this moment's (the player sets it;
-    /// stream-history-on-device): the preview says it is catching up, V-fps does not count it.
-    pub stream_held: bool,
+    /// The most positions a stream stage of the frame still lacked (the player sets it; 0 — none):
+    /// the frame is incomplete and the preview writes the catch-up under Loading
+    /// (catch-up-shows-loading).
+    pub stream_short: u64,
 }

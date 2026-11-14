@@ -7,7 +7,7 @@ executor other than the display's and at the scheduler's `near` class (below the
 every ring), and SHALL keep each complete composite on the display's executor as a slow-chain
 composite is kept. It SHALL ask no decode and withdraw no request, start no moment while the display composes a frame
 of its own (it takes only the time the display leaves), work ahead of the playhead, skip
-for the lap a moment that comes out incomplete or held or that the display's memo does not keep,
+for the lap a moment that comes out incomplete (a stream stage short of its frame included) or that the display's memo does not keep,
 and stop when the loop has no such moment left, the play or the loop stops, or the project changes.
 Nothing SHALL run while nothing plays. `KT_LOOP_FILL=off` disables it.
 Why: `found-defects.md` row 251 — on a display slower than the project's frames each lap showed a

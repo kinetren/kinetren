@@ -144,7 +144,8 @@ Rejected: a `KtApp` with `Option<Player>`. Hundreds of call sites read `self.pla
   3. Compose it with `compose_via(Some(fill), None, t, Bytes)`. That is the slow-route path: a
      complete, not held composite is `keep`-ed on the display executor and noted as kept (the
      bars show it).
-  4. If the frame came out incomplete or held, or the display executor does not hold it after the
+  4. If the frame came out incomplete (since catch-up-shows-loading a stream stage short of its frame
+     leaves it incomplete; there is no held frame), or the display executor does not hold it after the
      keep (the memo refused or is full), mark the moment skipped until the next lap. If nothing is
      left this lap, go idle until the next kick.
 - The skip set is cleared when the lap number moves, on an edit (project or content version) and
@@ -217,7 +218,7 @@ a device frame. Every place was read in the code at 6a7b0255. Verdict per place:
 | `Ask::OverwriteRender` drawing | a `stat` of the target per frame | left: found-defects 370 |
 | `save_flight_log`, `offer_recovery` (read_dir), `forget_recovery`, `drop_own_recovery` | a write, a folder read, unlinks | left: found-defects 370 |
 | `run` (the start) → `KtApp::open` | the start project's read and parse | left: found-defects 371 (before the window exists) |
-| loop fill vs compose thread on one renderer | `stream_held` was one flag per renderer | fixed: per thread (D5) |
+| loop fill vs compose thread on one renderer | `stream_held` (since catch-up-shows-loading `stream_short`) was one cell per renderer | fixed: per thread (D5) |
 
 Rows found and not fixed go to `docs/found-defects.md` rows 370–389 (370–372 used).
 

@@ -2861,3 +2861,12 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 - "Ответь, я почитаю и будем всё добивать по производительности, мне надоело."
 - Future: Datamosh keyframes placed by hand; the same rule for other effects.
 
+## 2026-11-11 — requests after the stage-10 diagnosis (`kkt-26.11.11`)
+
+- No effect takes a previous picture and is laid on further: "пустая трата времени и ресурсов которая
+  все замедляет". A stage either has its own input or the frame is Loading.
+- The fixes must be checked in the other places too: "может где забыли еще".
+- Computing ahead is welcome, and the processor should take part in the same computations: "почему и
+  нет".
+- These are requests, registered as such.
+
