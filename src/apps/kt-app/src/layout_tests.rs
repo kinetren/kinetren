@@ -20890,7 +20890,10 @@ fn t2358_only_complete_new_pictures_count() {
 /// answer to an earlier ask is the program's own news and overwrites that state. Under a full
 /// workspace load the harness's last ask outlived its 5 s grace (or the deferred build moved a
 /// version and asked again), its answer landed in the frame meant to show the catch-up, and the test
-/// read "Loading" (finish.sh of stage 11). The scene leaves such an ask pending on purpose.
+/// read "Loading" (finish.sh of stage 11). The scene asks again without waiting for the answer, so an
+/// answer may land at any frame after it, or within that very frame: the test does not depend on
+/// when, only on drawing until a frame lands nothing (a guard that the ask was still pending was a
+/// timing assumption of its own, red under load in stage 11's third finish.sh).
 #[test]
 fn t2415_loading_names_the_catch_up_where_it_is_written() {
     if crate::layout_tests::no_device() {
@@ -20898,12 +20901,11 @@ fn t2415_loading_names_the_catch_up_where_it_is_written() {
     }
     let (mut h, _clip) = harness_geom_ctl();
     assert!(h.state().texture.is_some(), "scene guard: the preview has a picture");
-    // an ask whose answer is still to land: a version moved, and the frame did not wait for it
+    // an ask the frame does not wait for: a version moved; its answer lands whenever it lands
     h.state_mut().compose_grace = std::time::Duration::ZERO;
     h.state_mut().preview_project = u64::MAX;
     h.step();
     h.state_mut().compose_grace = crate::app::COMPOSE_GRACE;
-    assert!(h.state().preview_asked.is_some(), "scene guard: an ask is pending");
     // the frame on screen: incomplete a second ago, `n` positions short (`complete` — the frame is
     // whole), no retry due; drawn again until a frame lands nothing
     let show = |h: &mut Harness<'static, KtApp>, n: u64, complete: bool| {
@@ -20929,9 +20931,7 @@ fn t2415_loading_names_the_catch_up_where_it_is_written() {
     let catching = crate::tf!(k::perf::LOADING_CATCHING_UP, 37);
     let loading = tr(k::perf::LOADING).to_string();
     let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h);
-    let landed = h.state().composites;
     show(&mut h, 37, false);
-    assert!(h.state().composites > landed, "scene guard: the pending answer landed meanwhile");
     let img = h.state().preview_img_rect;
     let at = texts(&h).into_iter().find(|t| t.src == catching).expect("the scrim names the catch-up");
     assert!(
