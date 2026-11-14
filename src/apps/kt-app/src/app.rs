@@ -3159,8 +3159,15 @@ impl KtApp {
         }
     }
 
+    /// What names the player's project in the effect cells' keys (chain-everywhere): the model's
+    /// revision and the place being edited.
+    pub(crate) fn scene_rev(&self) -> u64 {
+        let place = self.model.editing().map_or(0, |m| m.0.wrapping_add(1));
+        self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place
+    }
+
     /// Path of the sidecar index DB of the current project (None for unnamed).
-    fn index_db_path(&self) -> Option<std::path::PathBuf> {
+    pub(crate) fn index_db_path(&self) -> Option<std::path::PathBuf> {
         self.project_path.as_ref().map(|p| p.with_extension("ktindex.db"))
     }
 
@@ -4791,9 +4798,6 @@ impl KtApp {
                 }
                 None => self.thumbs.add_media(addr, path),
             }
-            // picker cells remember the SAME ThumbKey, and it does not depend on the
-            // generator values (a twin defect of item 412)
-            self.fx_thumbs.invalidate_media(addr);
         }
         if respawn {
             let p = self.player_project();
@@ -4933,11 +4937,6 @@ impl KtApp {
             {
                 self.player.set_media_path(*id, path);
                 self.thumbs.retune_media(*id, resolved);
-                // picker cells remember the SAME ThumbKey, and it does not depend on the
-                // generator parameters: without this line the strip would show
-                // the effect on a frame of the OLD parameters — a twin defect of
-                // item 412, only in the picker
-                self.fx_thumbs.invalidate_media(*id);
                 continue;
             }
             // the file's open and the decoder's swap on the media lane (one-scheduler, row 148)

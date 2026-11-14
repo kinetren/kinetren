@@ -644,7 +644,7 @@ fn t2552_the_second_input_runs_its_chain() {
     let baked = frame_second(&project_second(vec![]), t, &mut BakedWith { tex: Tex::new(3, 5), fx: vec![mirror()] });
     assert_eq!(chained, baked, "the second input reads the event below through its chain");
     // the mosh of this scene does not change with the second input's picture at all (found-defects
-    // 581, the vectors from another track): the runs above are what proves the chain below is read
+    // 580, the vectors from another track): the runs above are what proves the chain below is read
 }
 
 /// t2553 (chain-everywhere, found-defects 540): the stream's addresses name the second input's chain —

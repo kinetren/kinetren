@@ -227,6 +227,10 @@ impl KtApp {
         // still in the thumbnail queue is dropped by a generation change
         if editors.iter().any(|e| !e.open) {
             self.fx_thumbs.bump_generation();
+            // the last window that renders scene cells closed: its sources close (chain-everywhere)
+            if editors.iter().all(|e| !e.open) && self.morph_editors.is_empty() {
+                self.fx_thumbs.forget_scene();
+            }
         }
         editors.retain(|e| e.open);
         self.fx_editors = editors;
@@ -363,12 +367,8 @@ impl KtApp {
         let mut open = ed.open;
         let members = ed.members.clone();
         // ---- context of picker thumbnails (R.54, item 432) -------------------
-        // WYSIWYG: the cell shows the EVENT’S CHAIN plus the candidate in
-        // the tail, that is, exactly what will result after the click. The frame is
-        // the nearest ready thumbnail to the cursor position: the conversion formula
-        // “event tick → source frame” is ONE with the filmstrip
-        // (`thumbs::material_key_t`), so the keys are shared and the strip does not produce
-        // a new decode (invariant No. 8).
+        // WYSIWYG: the cell shows exactly what will result after the click, at the cursor's
+        // moment inside the event (frozen while playing).
         let pv_t = {
             let want = anchor
                 .start
@@ -383,102 +383,21 @@ impl KtApp {
                 t
             }
         };
-        let pv_span = anchor.duration.0.max(1);
-        let pv_u = (pv_t.0 - anchor.start.0) as f64 / pv_span as f64;
-        // the camera is resolved BY THE ANCHOR, but as if Pan3d were in the chain:
-        // the “Pan 3D” variant in the strip must show perspective also on
-        // a clip where 3D is not yet set. The resolution rule is one with the engine
-        // (kt_engine::resolve_cam3d, item 429).
-        let pv_cam = kt_engine::resolve_cam3d(
-            &[kt_model::FxInstance::builtin("pan3d")],
-            &self.model.project().cameras,
-            pv_t,
-            crate::fx_thumbs::REF_W,
-            self.model.project().settings.width,
-        );
-        // the ANCHOR’s chain with resolved curves: values at the moment of the
-        // cursor, the domain is the event’s material (R.37: speed does not squeeze the axis)
-        let pv_chain: Vec<FxInstance> = {
-            let mat = kt_model::clip_material_at(
-                anchor.source_in,
-                anchor.start,
-                anchor.duration,
-                anchor.reversed,
-                frame_step,
-                pv_t,
-            );
-            anchor
-                .fx
-                .iter()
-                .enumerate()
-                .filter(|(i, f)| {
-                    !anchor.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_audio()
-                })
-                .map(|(i, f)| {
-                    let mut fx = f.clone();
-                    if let Some(curves) = anchor.fx_auto.get(i) {
-                        kt_model::apply_fx_auto(&mut fx, curves, mat);
-                    }
-                    fx
-                })
-                .collect()
-        };
-        // base frame: exact thumbnail → media poster → built-in sample.
-        // Empty strips do not occur, and decode ORDERS are placed only after
-        // the misclick guard (item 430).
+        // The cell is the REAL frame (chain-everywhere, the owner 2026-11-14: "НИГДЕ НЕ ДОПУСТИМО
+        // чтобы эффекты накладывались мимо цепочки"): the project the player plays at this moment,
+        // the candidate at the tail of the anchor's chain, its track soloed — the event's placement,
+        // the slots in front, a stream history, the track's and a reel's stages run as after the
+        // click. Before the misclick guard nothing is opened and the cells are Loading (item 430).
         let decode_ok = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
-        let is_nest = self.model.project().sequence(anchor.media).is_some();
-        let pv_step = crate::thumbs::THUMB_STEP_LADDER[1];
-        let (pv_base, pv_img) = if is_nest {
-            // a reel has no file of its own, and it has no thumbnails (item 395) —
-            // we show the sample, not emptiness
-            (crate::fx_thumbs::FxThumbBase::Pattern, None)
-        } else {
-            let warps = self.warp_maps();
-            // the address of the event’s SOURCE, not its media (R.59, stage 2):
-            // for a generator the values live on the event, and the frame is different for each
-            // one. The rule is one for the whole program — `clip_source_addr`.
-            let pv_src = kt_engine::clip_source_addr(&anchor);
-            let key = crate::thumbs::ThumbKey {
-                media: pv_src,
-                t: crate::thumbs::material_key_t(
-                    anchor.source_in.0,
-                    warps.get(&anchor.id),
-                    anchor.duration,
-                    anchor.reversed,
-                    pv_t.0 - anchor.start.0,
-                    pv_step,
-                ),
-            };
-            match self.thumbs.get(&key) {
-                Some(img) => (crate::fx_thumbs::FxThumbBase::Thumb(key), Some(img)),
-                None => {
-                    if decode_ok {
-                        // the nearest ready thumbnail from the sidecar DB instead of
-                        // decoding (the bin scrub mechanism, item 14 of round 7)
-                        self.thumbs.request_near(key, pv_step * 2);
-                    }
-                    let poster =
-                        if decode_ok { self.thumbs.poster_t_or_request(pv_src) } else { None };
-                    let pk = poster
-                        .map(|t| crate::thumbs::ThumbKey { media: pv_src, t })
-                        .and_then(|pk| self.thumbs.get(&pk).map(|img| (pk, img)));
-                    match pk {
-                        Some((pk, img)) => (crate::fx_thumbs::FxThumbBase::Thumb(pk), Some(img)),
-                        None => (crate::fx_thumbs::FxThumbBase::Pattern, None),
-                    }
-                }
-            }
+        let scene = crate::fx_thumbs::Scene {
+            project: self.player.project(),
+            rev: self.scene_rev(),
+            place: crate::fx_thumbs::Place::Clip(anchor.id),
+            t: pv_t,
+            base: self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()),
+            index_db: self.index_db_path(),
         };
-        let mut pv = crate::fx_thumbs::PickerCtx::new(
-            &self.fx_thumbs,
-            pv_base,
-            pv_img,
-            pv_chain,
-            pv_u,
-            pv_t.0,
-            pv_cam,
-        );
+        let mut pv = crate::fx_thumbs::PickerCtx::for_scene(&self.fx_thumbs, scene, decode_ok);
         // There is one scroll — of the BODY (`window_body`): the outer `vscroll` of the window
         // would scroll the action buttons too, and “Done” went past the bottom
         // edge (R.67, found by the live scenario `curves`). The window height
