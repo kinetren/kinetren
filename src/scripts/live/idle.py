@@ -347,21 +347,35 @@ def main(out):
                 app.expect(not bad, f"over the deck panel: a static hover caused {bad}")
                 app.expect(not meter.engine_busy(), f"over the deck panel: the engine threads worked {meter.engine_busy()} % of a core")
                 app.step("fx-deck-hover", "the pointer went over the deck panel, the engine stayed asleep")
-        # the one click that hands the proof over: it writes the file, and it is on the machine
+        # the one click that hands the proof over: the trace folder (load-report-into-trace), whose
+        # run already names the machine; no load-report.txt is written any more
         app.key("Escape")
         app.settle()
         # a 1440-point window keeps the gauge under the toolbar's "more" button
         if not app.has_probe("tb.diag", tries=2):
             app.click_probe("tb.more", "the toolbar's more button")
         app.click_probe("tb.diag", "the Diagnostics button")
-        app.expect(app.has_probe("diag.load_report"), "Diagnostics opened with the load section")
-        app.click_probe("diag.load_report", "the load report button")
-        report = os.path.join(out, "xdg", "kinetren", "load-report.txt")
-        app.until(lambda: os.path.exists(report), timeout=10.0)
-        app.expect(os.path.exists(report), "one click wrote the load report")
-        text = open(report).read() if os.path.exists(report) else ""
-        app.expect("devices:" in text and "the choice:" in text, "the report names the devices and the choice")
-        app.step("report", "Diagnostics shows the load, and the report is on disk")
+        app.expect(app.has_probe("diag.trace_folder"), "Diagnostics opened with the load section")
+        app.click_probe("diag.trace_folder", "the trace folder button")
+        data = os.path.join(out, "xdg", "kinetren")
+        trace = os.path.join(data, "trace")
+
+        def machine():
+            if not os.path.isdir(trace):
+                return ""
+            r = subprocess.run([kt_live.KT_CLI, "trace", trace, "machine"], capture_output=True, text=True, timeout=60)
+            return r.stdout
+
+        app.until(lambda: "power:" in machine(), timeout=20.0)
+        facts = machine()
+        print("   trace machine:\n" + "\n".join("     " + l for l in facts.splitlines()))
+        app.expect("adapter.0:" in facts and "monitors:" in facts and "power:" in facts and "clock:" in facts,
+                   "the trace names every adapter, the monitors' cards, the power choice and the clock")
+        app.expect(not os.path.exists(os.path.join(data, "load-report.txt")), "no load-report.txt is written")
+        opened = os.path.join(out, "opened.txt")
+        asked = open(opened).read().split("\n") if os.path.exists(opened) else []
+        app.expect(os.path.join(data, "trace") in asked, f"the button asked to open the trace folder: {asked}")
+        app.step("trace-folder", "Diagnostics shows the load; its button opens the trace folder, whose run names the machine")
         return app.done()
 
 

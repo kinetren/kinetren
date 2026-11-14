@@ -9,7 +9,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-/// One kind of job. Append only: the load report names them by [`Work::name`].
+/// One kind of job. Append only: the journal's LOAD record and the trace name them by [`Work::name`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(usize)]
 pub enum Work {

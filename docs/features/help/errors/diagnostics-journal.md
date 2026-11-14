@@ -118,7 +118,7 @@ not tick.
 ## Verdict
 
 Take: change `telemetry-journal` (kkt-26.11.07b G6, G10). One local journal written at the moment
-with clock time, the load report as its export, the person's mark by a key and a Diagnostics button.
+with clock time (the load report as its export until load-report-into-trace moved its header into the trace), the person's mark by a key and a Diagnostics button.
 
 TEST: tele_journal::t1960_records_carry_the_event_time — fails today: the only file of this kind, `src/apps/kt-app/src/load_watch.rs`, stamps each second "N s ago" relative to the moment the report is written, and the Diagnostics log (`PerfState::note`) stamps a problem at the next UI frame, which on a pause may be minutes later.
 

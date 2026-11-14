@@ -250,9 +250,9 @@ pub fn power_preference_for(adapters: &[AdapterFact], driving: &[DrivingCard]) -
     }
 }
 
-/// Every device this machine offers: the load report names them, so that "which card did it run
-/// on" is a fact in the file, not a question to the person. Listed once per process: the load
-/// watch asks at every hot spell, and each listing once loaded every driver anew (segv-crashes).
+/// Every device this machine offers: the trace names them (`trace_machine`), so that "which card did
+/// it run on" is a fact in the run's record, not a question to the person. Listed once per process:
+/// each listing once loaded every driver anew (segv-crashes).
 pub fn adapter_facts() -> Vec<AdapterFact> {
     static FACTS: std::sync::OnceLock<Vec<AdapterFact>> = std::sync::OnceLock::new();
     FACTS
@@ -302,6 +302,38 @@ fn driving_cards_in(root: &std::path::Path) -> Vec<DrivingCard> {
     out
 }
 
+/// The machine's devices as trace facts (load-report-into-trace, found-defects 487): every adapter,
+/// the cards the monitors hang off and the power choice — what the load report's header said and
+/// nothing read. `adapter.<i>` is `name / kind / backend / vendor:device`. Off the UI thread: the
+/// first listing loads every driver.
+pub fn trace_machine() {
+    if !kt_time::trace::on() {
+        return;
+    }
+    for (k, v) in machine_facts(&adapter_facts(), &driving_cards(), display_power_preference()) {
+        kt_time::trace::machine(&k, &v);
+    }
+}
+
+/// The facts of [`trace_machine`] from what it read. A pure function; t2570.
+pub fn machine_facts(
+    adapters: &[AdapterFact],
+    driving: &[DrivingCard],
+    power: wgpu::PowerPreference,
+) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = adapters
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            (format!("adapter.{i}"), format!("{} / {:?} / {:?} / {:04x}:{:04x}", a.name, a.kind, a.backend, a.vendor, a.device))
+        })
+        .collect();
+    let cards: Vec<String> = driving.iter().map(|c| format!("{:04x}:{:04x}", c.vendor, c.device)).collect();
+    out.push(("monitors".into(), if cards.is_empty() { "unknown".into() } else { cards.join(", ") }));
+    out.push(("power".into(), format!("{power:?}")));
+    out
+}
+
 /// `power_preference_for` on this machine, once per process; WGPU_POWER_PREF overrides it.
 pub fn display_power_preference() -> wgpu::PowerPreference {
     static CHOICE: std::sync::OnceLock<wgpu::PowerPreference> = std::sync::OnceLock::new();
@@ -341,6 +373,26 @@ mod tests {
         assert_eq!(power_preference_for(std::slice::from_ref(&raphael), &[on(&raphael)]), LowPower);
         let unknown = DrivingCard { vendor: 1, device: 2 };
         assert_eq!(power_preference_for(&all, &[unknown]), LowPower, "a card no adapter names");
+    }
+
+    /// Test t2570 (load-report-into-trace): the load report's header, as trace facts — every
+    /// adapter with its kind, backend and PCI ids, the cards the monitors hang off ("unknown" with
+    /// none) and the power choice.
+    #[test]
+    fn t2570_the_machine_facts_name_every_adapter_the_monitors_and_the_choice() {
+        use wgpu::{DeviceType::*, PowerPreference::*};
+        let mut raphael = gpu(IntegratedGpu, 0x1002, 0x164e);
+        raphael.name = "AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO)".into();
+        let soft = gpu(Cpu, 0x10005, 0);
+        let on = DrivingCard { vendor: 0x1002, device: 0x164e };
+        let f = machine_facts(&[raphael, soft], &[on], LowPower);
+        let get = |k: &str| f.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone()).unwrap_or_else(|| panic!("{k}: {f:?}"));
+        assert_eq!(get("adapter.0"), "AMD Radeon Graphics (RADV RAPHAEL_MENDOCINO) / IntegratedGpu / Vulkan / 1002:164e");
+        assert_eq!(get("adapter.1"), " / Cpu / Vulkan / 10005:0000");
+        assert_eq!(get("monitors"), "1002:164e");
+        assert_eq!(get("power"), "LowPower");
+        let none = machine_facts(&[], &[], HighPerformance);
+        assert_eq!(none, vec![("monitors".into(), "unknown".into()), ("power".into(), "HighPerformance".into())]);
     }
 
     /// Test t1837b: `/sys/class/drm` as the kernel lays it out: a connector is named after its

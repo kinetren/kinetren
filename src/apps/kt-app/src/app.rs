@@ -1725,7 +1725,7 @@ impl KtApp {
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
         // the UI thread posts jobs and reads answers: a blocking call on it is counted (one-scheduler)
         kt_time::block::mark(kt_time::block::role::UI);
-        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load report read it
+        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load watch read it
         let _frame_cost = crate::frame_cost::span(crate::frame_cost::Stage::Frame);
         // LIVE BENCH COUNTERS (R.68) sit here, not in `ui()`: a frame is
         // the drawing, and the harness draws it with the same body, bypassing
@@ -10575,12 +10575,14 @@ impl KtApp {
                 ui.add(egui::Label::new(egui::RichText::new(crate::tf!(k::perf::LOAD_GPU, g.line())).weak()).wrap());
             }
         }
-        let r = ui.button(tr(k::perf::LOAD_REPORT));
-        crate::widgets::field_probe::note("diag.load_report", r.rect);
-        let r = self.hint(r, tr(k::perf::LOAD_REPORT_HINT));
+        // the structured trace's folder (load-report-into-trace): what a complaint hands over
+        let r = ui.button(tr(k::perf::TRACE_FOLDER));
+        crate::widgets::field_probe::note("diag.trace_folder", r.rect);
+        let r = self.hint(r, tr(k::perf::TRACE_FOLDER_HINT));
         if r.clicked() {
-            crate::load_watch::write_now();
-            if let Err(e) = crate::util::open_in_file_manager(&crate::journal::data_dir()) {
+            let dir = crate::journal::data_dir().join("trace");
+            let _ = std::fs::create_dir_all(&dir);
+            if let Err(e) = crate::util::open_in_file_manager(&dir) {
                 self.warn(e);
             }
         }
