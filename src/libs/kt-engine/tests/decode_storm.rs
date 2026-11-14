@@ -745,3 +745,47 @@ fn t2361_the_composite_says_it_held() {
     let (_, complete) = kt_gpu::testkit::compose(&vr, &cache, t, Q);
     assert!(complete && !vr.stream_held(), "the moment's own frame is not held");
 }
+
+/// t2432 (gpu-throughput D3, found-defects 482, the owner's "наперед"): with a loop region over a mosh
+/// and every source frame cached, ONE pass of the prefetch's far look-ahead — paused and playing —
+/// walks the history to the region's last frame, at class background; a pass with the history complete
+/// runs nothing.
+#[test]
+fn t2432_a_loop_is_computed_to_its_end() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let (s, e) = (3 * SEC, 4 * SEC);
+    for playing in [false, true] {
+        let (vr, cache) = (renderer(&p, Some(StreamPacing::preview(1 << 30))), big_cache());
+        let plain = renderer(&p, None);
+        let mut m = Tick(2 * SEC);
+        while m.0 < e {
+            warm(&plain.layers_at(m, Q), &cache);
+            m = Tick(m.0 + STEP);
+        }
+        let t = Tick(s);
+        vr.set_stream_view(Some(t));
+        let far = kt_engine::player::stream_far_frames(&vr, t, Q, Some((s, e)), playing);
+        assert!(far as i64 >= (e - s) / STEP, "the far part does not reach the loop's end: {far} frames");
+        assert_eq!(kt_engine::player::stream_far_frames(&vr, t, Q, None, false), 0, "paused outside a loop walks nothing ahead");
+        let items = trace::testing::capture(|| {
+            let _class = kt_time::sched::with_class(kt_time::sched::Class::Background);
+            assert!(!kt_engine::player::stream_advance_ahead(&vr, &cache, t, Q, Some((s, e)), far, &|_| false), "every frame was cached");
+        });
+        let jobs = of(&items, Ev::ComputeJob);
+        assert!(!jobs.is_empty(), "the walk ran no job");
+        assert!(jobs.iter().all(|r| r.id == kt_time::sched::Class::Background as u64), "a far walk ran above the lowest class");
+        let mut m = t;
+        while m.0 < e {
+            assert!(vr.layers_at(m, Q).is_empty(), "playing={playing}: the frame at {} still needs its history", m.0);
+            m = Tick(m.0 + STEP);
+        }
+        let again = trace::testing::capture(|| {
+            assert!(!kt_engine::player::stream_advance_ahead(&vr, &cache, t, Q, Some((s, e)), far, &|_| false));
+        });
+        assert!(of(&again, Ev::ComputeJob).is_empty(), "a complete history ran jobs again");
+    }
+}

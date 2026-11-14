@@ -266,6 +266,67 @@ fn class_name(c: u64) -> &'static str {
 
 /// The device rings (gpu-arbiter): who was admitted, who waited, what was cut, what the compute host
 /// ran, and how long the display's presents waited for the device.
+/// A gap between two pieces longer than this is a lull of the work, not a piece's wait (D6).
+const PIECE_GAP_MAX: u64 = 100_000_000;
+
+/// How the device was fed (gpu-throughput D6, found-defects 480, 486): per class, the compute jobs'
+/// admission waits against their wall; over all pieces with device timestamps, the device's idle time
+/// between consecutive pieces and how many were submitted before the earlier one ended; the executors.
+fn gpu_flow(run: &Run) -> String {
+    let mut o = String::new();
+    let mut wall: BTreeMap<u64, u64> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::ComputeJob)) {
+        *wall.entry(r.id).or_default() += r.dur;
+    }
+    let mut admit: BTreeMap<u64, u64> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuAdmit)) {
+        *admit.entry(r.aux as u64).or_default() += r.dur;
+    }
+    for (c, w) in wall.iter().filter(|(_, w)| **w > 0) {
+        let a = admit.get(c).copied().unwrap_or(0);
+        let _ = writeln!(o, "  {:<10} admission waits {} of the compute jobs' wall {} ({:.0} %)", class_name(*c), ms(a), ms(*w), a as f64 * 100.0 / *w as f64);
+    }
+    let mut pieces: Vec<(u64, u64, u64)> = run
+        .recs
+        .iter()
+        .filter(|r| is(r, Ev::GpuStart) && r.aux < u32::MAX - 1 && r.b > 0 && r.c >= r.b)
+        .map(|r| (r.b, r.c, r.a))
+        .collect();
+    pieces.sort_unstable();
+    if pieces.len() > 1 {
+        let (mut idle, mut ahead, mut pairs) = (0u64, 0usize, 0usize);
+        for w in pieces.windows(2) {
+            let ((_, end, _), (start, _, submit)) = (w[0], w[1]);
+            let gap = start.saturating_sub(end);
+            if gap > PIECE_GAP_MAX {
+                continue;
+            }
+            pairs += 1;
+            idle += gap;
+            if submit < end {
+                ahead += 1;
+            }
+        }
+        let busy: u64 = pieces.iter().map(|p| p.1 - p.0).sum();
+        let _ = writeln!(
+            o,
+            "  pieces on the device {}: busy {}, idle between consecutive pieces {} (gaps under {}), {ahead} of {pairs} submitted before the earlier ended",
+            pieces.len(),
+            ms(busy),
+            ms(idle),
+            ms(PIECE_GAP_MAX)
+        );
+    }
+    let (mut device, mut cpu) = (0u64, 0u64);
+    for r in run.recs.iter().filter(|r| is(r, Ev::GpuExec)) {
+        if r.aux == 0 { device += 1 } else { cpu += 1 }
+    }
+    if device + cpu > 0 {
+        let _ = writeln!(o, "  executors: device {device} pieces, processor {cpu}");
+    }
+    o
+}
+
 pub fn gpu(run: &Run) -> String {
     let mut o = String::new();
     let first = run.recs.first().map_or(0, |r| r.t);
@@ -350,6 +411,7 @@ pub fn gpu(run: &Run) -> String {
             let _ = writeln!(o, "  {:<10} {unknown:>6} with no device timestamps", class_name(*c));
         }
     }
+    o.push_str(&gpu_flow(run));
     let submits: u64 = run
         .recs
         .iter()

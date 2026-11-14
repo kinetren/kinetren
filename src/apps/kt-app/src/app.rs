@@ -853,11 +853,11 @@ impl KtApp {
         // the preview's decoders take a render's threads, by the memory measured now (memory-ledger
         // D11): libavcodec's auto is a thread per core, and a project of five VP9 files then held
         // 4.4 GB of frames in its decoders before anything was cached
-        kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(
-            kt_gpu::memory::available(),
-            project.settings.width,
-            project.settings.height,
-        ));
+        let available = kt_gpu::memory::available();
+        kt_ffmpeg::set_decode_threads(kt_gpu::memory::decode_threads(available, project.settings.width, project.settings.height));
+        // and convert a span's pictures on a render's threads (gpu-throughput D4): the same bytes, and
+        // a Loading or a history's decode no longer converts on the decoder's one thread
+        kt_ffmpeg::set_rgba_threads(kt_gpu::memory::rgba_threads(available, project.settings.width, project.settings.height));
         for m in &project.media {
             let label = crate::util::media_label(&m.path);
             let (src, err) = crate::util::open_source_or_placeholder(
@@ -4309,7 +4309,7 @@ impl KtApp {
             Some(_) => std::sync::Arc::new(self.model.reel_document()),
             None => self.model.doc_arc(),
         };
-        self.player.set_project(p);
+        self.player.set_project_at(p, self.model.revision());
     }
 
     pub fn apply(&mut self, cmd: Command) -> bool {

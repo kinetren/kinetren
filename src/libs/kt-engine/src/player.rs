@@ -476,6 +476,12 @@ impl Player {
     /// sources (a function of the PROJECT, their addresses derived from events) before it publishes.
     /// The app hands the model's shared snapshot (`Model::doc_arc`): no copy per edit.
     pub fn set_project(&self, p: impl Into<Arc<Project>>) {
+        self.set_project_at(p, 0)
+    }
+
+    /// [`Player::set_project`] of the model's `revision` (the trace's edit record names it,
+    /// gpu-throughput D6; found-defects 486).
+    pub fn set_project_at(&self, p: impl Into<Arc<Project>>, revision: u64) {
         let p = p.into();
         kt_time::work::bump(kt_time::work::Work::ProjectSwap);
         self.prewarm_reach(&p);
@@ -484,7 +490,7 @@ impl Player {
         self.builds.want_project(p, version);
         self.project_version.store(version, Ordering::Release);
         // the edit in the trace: the build of this version and what it invalidates follow
-        kt_time::trace::ev(kt_time::trace::Ev::Edit).b(version).emit();
+        kt_time::trace::ev(kt_time::trace::Ev::Edit).a(revision).b(version).emit();
         self.model_dirty.store(true, Ordering::Release);
         self.wake.notify();
     }
@@ -2673,7 +2679,7 @@ const PAUSE_TAIL_PASSES: u32 = 2;
 /// Advance the stream stages at the frame on screen and, while playing, at the frames after it
 /// (wrapping in the loop region), stopping at the first that still lacks source frames. `ahead` —
 /// how many frames after it. `true` — something is still pending.
-fn stream_advance_ahead(
+pub fn stream_advance_ahead(
     video: &VideoRenderer,
     cache: &BurstCache,
     shown: Tick,
@@ -2779,6 +2785,26 @@ fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std
     want.max(STREAM_AHEAD_MIN).min(room.max(1))
 }
 
+/// Passes in a row in which the far look-ahead stayed pending and computed nothing before it stops
+/// retrying until the state moves (gpu-throughput D3): a source that never comes must not keep a paused
+/// prefetch thread passing ten times a second.
+const FAR_STALLS: u32 = 8;
+
+/// How far the FAR part of the look-ahead walks a stream stage (gpu-throughput D3): with the frame on
+/// screen inside a loop region, every frame of the region (the walk wraps), as many as the stream memo
+/// holds at two frames a position; without one, while playing, a quarter of the memo; paused outside a
+/// loop, nothing.
+pub fn stream_far_frames(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, playing: bool) -> usize {
+    let step = video.grid.frame_step().max(1);
+    let per_position = 2 * video.stream_frame_bytes(t, q).max(1);
+    let memo = video.stream_memo_cap();
+    match region.filter(|&(s, e)| s <= t.0 && t.0 < e) {
+        Some((s, e)) => (((e - s) / step) as usize + 1).min((memo / per_position).max(1)),
+        None if playing => (memo / 4 / per_position).max(1),
+        None => 0,
+    }
+}
+
 /// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).
 fn preview_video(p: &Project, facts: &crate::SourceFacts, cache: &Arc<BurstCache>) -> VideoRenderer {
     let mut vr = VideoRenderer::new_with_facts(p, facts);
@@ -2831,6 +2857,8 @@ fn prefetch_loop(
     // runs again while it does, paused or not — the decoder fills the window, this thread advances
     // the stage over it, and the next window is ordered. Nothing pending — the pause costs nothing.
     let mut stream_pending = false;
+    // passes the far look-ahead computed nothing in a row (gpu-throughput D3); a moved state resets it
+    let mut far_stalls = 0u32;
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
     let mut memo_sized: Option<(usize, Option<usize>, usize)> = None;
@@ -2870,6 +2898,9 @@ fn prefetch_loop(
                 continue;
             }
             skipped = false;
+            if last_state != Some(state) {
+                far_stalls = 0;
+            }
             last_state = Some(state);
         }
         loop_stats.prefetch_passes.fetch_add(1, Ordering::Relaxed);
@@ -2941,23 +2972,40 @@ fn prefetch_loop(
         if video.has_stream_stages() {
             size_stream_memo(video, t0, q, region_ticks, &mut memo_sized);
         }
-        stream_pending = video.has_stream_stages() && {
-            let ahead = if transport.is_playing() { stream_ahead_frames(video, t0, q, interval) } else { 0 };
-            // the advance stops once the playhead or the project leaves it (gpu-arbiter, row 147):
-            // what it computed stays in the memo, and the next pass starts from where the playhead is
-            let left = {
-                let (transport, stop, version) = (transport.clone(), stop.clone(), project_version.clone());
-                let (generation, at) = (transport.generation(), project_version.load(Ordering::Acquire));
-                move || {
-                    stop.load(Ordering::Acquire)
-                        || transport.generation() != generation
-                        || version.load(Ordering::Acquire) != at
-                }
-            };
-            crate::video::stop_when(kt_time::trace::stop::PREFETCH, left, || {
-                stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
-            })
+        // the advance stops once the playhead or the project leaves it (gpu-arbiter, row 147):
+        // what it computed stays in the memo, and the next pass starts from where the playhead is
+        let left = || {
+            let (transport, stop, version) = (transport.clone(), stop.clone(), project_version.clone());
+            let (generation, at) = (transport.generation(), project_version.load(Ordering::Acquire));
+            move || {
+                stop.load(Ordering::Acquire) || transport.generation() != generation || version.load(Ordering::Acquire) != at
+            }
         };
+        let ahead = if transport.is_playing() { stream_ahead_frames(video, t0, q, interval) } else { 0 };
+        stream_pending = video.has_stream_stages()
+            && crate::video::stop_when(kt_time::trace::stop::PREFETCH, left(), || {
+                stream_advance_ahead(video, &cache, t0, q, region_ticks, ahead, &kept)
+            });
+        // the far part (gpu-throughput D3, found-defects 482, the owner's "наперед"): past the
+        // display's reach — the loop to its end and round, or well ahead — at the lowest class, once
+        // the near part has nothing pending; a far part that computed nothing over `FAR_STALLS`
+        // passes waits for the state to move
+        let far = if video.has_stream_stages() { stream_far_frames(video, t0, q, region_ticks, transport.is_playing()) } else { 0 };
+        if !stream_pending && far > ahead && far_stalls < FAR_STALLS {
+            let before = kt_plugin_api::stream::positions_walked();
+            let pending = {
+                let _class = kt_time::sched::with_class(kt_time::sched::Class::Background);
+                crate::video::stop_when(kt_time::trace::stop::PREFETCH, left(), || {
+                    stream_advance_ahead(video, &cache, t0, q, region_ticks, far, &kept)
+                })
+            };
+            far_stalls = match (pending, kt_plugin_api::stream::positions_walked() > before) {
+                (false, _) => FAR_STALLS,
+                (true, true) => 0,
+                (true, false) => far_stalls + 1,
+            };
+            stream_pending |= far_stalls < FAR_STALLS;
+        }
         let (missing, window) = video_prefetch_pass_sized(video, &cache, t0, q, region_ticks, &kept);
         // the cache asks the memory ledger for what this window and the loop need at this quality
         size_frames_cache(video, &cache, q, region_ticks, built.seq, window, &mut frames_sized);

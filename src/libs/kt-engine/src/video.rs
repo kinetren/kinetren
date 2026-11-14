@@ -1541,6 +1541,11 @@ impl VideoRenderer {
 
     /// The largest frame (RGBA bytes) a stream stage active at `t` orders (decode-request-storm:
     /// what the player's look-ahead of the stages may keep in the memo); 0 — none.
+    /// What this renderer's stream memo holds at most (the look-ahead's reach, gpu-throughput D3).
+    pub fn stream_memo_cap(&self) -> usize {
+        self.stream_memo.bytes_cap()
+    }
+
     pub fn stream_frame_bytes(&self, t: Tick, quality: Quality) -> usize {
         self.clips
             .iter()

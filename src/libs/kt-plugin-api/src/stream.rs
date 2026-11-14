@@ -104,7 +104,16 @@ pub fn compiling(from: i64, to: i64, f: impl FnOnce() -> usize) {
 /// `stream_walk` record — its first position, its positions, the pictures it brought back and the
 /// checkpoints it kept.
 pub fn walked(first: i64, positions: usize, reads: u64, checkpoints: u32) {
+    WALKED.fetch_add(positions as u64, std::sync::atomic::Ordering::Relaxed);
     kt_time::trace::ev(kt_time::trace::Ev::StreamWalk).a(first as u64).b(positions as u64).c(reads).aux(checkpoints).emit();
+}
+
+static WALKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// History positions every walk of the process computed so far: the host's sign of progress
+/// (gpu-throughput D3 — a look-ahead that computed nothing over several passes stops retrying).
+pub fn positions_walked() -> u64 {
+    WALKED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl std::fmt::Debug for PlanCell {

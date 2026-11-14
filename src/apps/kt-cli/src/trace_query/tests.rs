@@ -472,3 +472,46 @@ fn t2364_loop_counts_the_history_walked_and_distinct() {
     let out = laps(&run);
     assert!(out.contains("history: 50 positions walked, 40 distinct;"), "{out}");
 }
+
+/// Test t2438 (gpu-throughput D6, found-defects 480, 486): `gpu` reports a class's admission waits
+/// against its compute jobs' wall, the device's idle time between consecutive pieces and how many were
+/// submitted before the earlier one ended, and the executors.
+#[test]
+fn t2438_gpu_tells_admission_from_device() {
+    use kt_time::sched::Class;
+    let mut v = Vec::new();
+    // a near job of 100 ms wall that waited 60 ms for admission over three pieces
+    v.push(rec(Ev::ComputeJob, 0, |r| {
+        r.id = Class::Near as u64;
+        r.dur = 100 * MS;
+    }));
+    for (i, wait) in [0u64, 30, 30].iter().enumerate() {
+        v.push(rec(Ev::GpuAdmit, i as u64 * 30 * MS, |r| {
+            r.aux = Class::Near as u32;
+            r.dur = wait * MS;
+            r.id = 1;
+        }));
+    }
+    // pieces: [0,10) submitted at 0; [12,22) submitted at 11 (after the end: 2 ms idle); [22,32) submitted at 20
+    // (a device start of 0 reads as "unknown": the pieces start a second in)
+    for (a, b, c) in [(1000u64, 1000u64, 1010u64), (1011, 1012, 1022), (1020, 1022, 1032)] {
+        v.push(rec(Ev::GpuStart, (c + 1) * MS, |r| {
+            r.id = Class::Near as u64;
+            r.a = a * MS;
+            r.b = b * MS;
+            r.c = c * MS;
+            r.aux = 10;
+        }));
+        v.push(rec(Ev::GpuExec, a * MS, |r| r.id = 1));
+    }
+    v.sort_by_key(|r| r.t);
+    let o = gpu(&run_of(v));
+    for want in [
+        "admission waits 60.0 ms of the compute jobs' wall 100.0 ms (60 %)",
+        "pieces on the device 3: busy 30.0 ms, idle between consecutive pieces 2.0 ms",
+        "1 of 2 submitted before the earlier ended",
+        "executors: device 3 pieces, processor 0",
+    ] {
+        assert!(o.contains(want), "{want:?} missing:\n{o}");
+    }
+}

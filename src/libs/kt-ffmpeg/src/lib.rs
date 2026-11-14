@@ -37,6 +37,11 @@ pub fn set_rgba_threads(n: u32) {
 
 static RGBA_THREADS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
+/// The conversion threads a source opened now takes (tests).
+pub fn rgba_threads_set() -> u32 {
+    RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A render's own decoder settings (gpu-arbiter, row 94): the threads of a video decoder (0 — auto)
 /// and of the RGBA conversion of a span.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
