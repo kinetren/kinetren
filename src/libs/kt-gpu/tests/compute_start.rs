@@ -9,6 +9,14 @@ use kt_gpu::compute::ComputeDevice;
 use kt_plugin_api::compute::{Buf, ComputeHost, Init, Job, Step};
 use kt_time::trace::{self, Ev};
 
+/// One test at a time under `cargo test` (one process): t2357 turns the arbiter off process-wide, and a
+/// capture takes every thread's records (gpu-leftovers: t2436 red under `cargo test` at the base).
+static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one() -> std::sync::MutexGuard<'static, ()> {
+    ONE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn device() -> Option<std::sync::Arc<ComputeDevice>> {
     match kt_gpu::compute::open_device() {
         Ok(d) => Some(d),
@@ -40,6 +48,7 @@ fn spin(host: &dyn ComputeHost, name: &str, n: u32) {
 /// job submitted behind a long one starts late by about the long one's run.
 #[test]
 fn t2357_a_jobs_device_start_is_on_the_cpu_clock() {
+    let _one = one();
     let Some(host) = device() else { return };
     // both jobs go in flight at once: the late start is the queue's, not an admission's
     arbiter::set_enabled(false);
@@ -110,6 +119,8 @@ fn walk(host: &dyn ComputeHost, names: &[&str], n: usize, work: u32, groups: u32
 /// dispatch cut at every one until a map happened to come back), and its bytes equal a measured run's.
 #[test]
 fn t2435_a_cold_walk_is_cut_by_what_its_first_pieces_measured() {
+    let _one = one();
+    arbiter::set_enabled(true);
     let Some(host) = device() else { return };
     if !host_has_timestamps(&host) {
         eprintln!("t2435: no timestamps on this device: nothing to learn from");
@@ -152,6 +163,8 @@ fn host_has_timestamps(host: &ComputeDevice) -> bool {
 /// Waiting for each piece's completion before admitting the next does neither.
 #[test]
 fn t2436_a_walk_keeps_the_device_fed() {
+    let _one = one();
+    arbiter::set_enabled(true);
     let Some(host) = device() else { return };
     if !host_has_timestamps(&host) {
         eprintln!("t2436: no timestamps on this device");
@@ -192,6 +205,8 @@ fn t2436_a_walk_keeps_the_device_fed() {
 /// pieces share a start.
 #[test]
 fn t2437_concurrent_jobs_keep_their_own_starts() {
+    let _one = one();
+    arbiter::set_enabled(true);
     let Some(host) = device() else { return };
     if !host_has_timestamps(&host) {
         eprintln!("t2437: no timestamps on this device");

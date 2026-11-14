@@ -89,6 +89,12 @@ struct Calibration {
     set: Option<(wgpu::QuerySet, wgpu::Buffer, wgpu::Buffer)>,
 }
 
+/// What a calibration's empty submission claims on the ring: one timestamp write.
+const CALIBRATION_NS: u64 = 20_000;
+
+/// What the warm-up's one workgroup claims on the ring.
+const WARM_NS: u64 = 100_000;
+
 /// A calibration older than this is made again (the device's clock drifts against the CPU's).
 const CALIBRATION_AGE: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -244,10 +250,11 @@ impl ComputeDevice {
             return Ok((p.clone(), false));
         }
         let d = &self.device;
+        // the uniform at a dynamic offset into the job's one arena (gpu-leftovers, found-defects 520)
         let entry = |binding: usize, ty| wgpu::BindGroupLayoutEntry {
             binding: binding as u32,
             visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: false, min_binding_size: None },
+            ty: wgpu::BindingType::Buffer { ty, has_dynamic_offset: binding == 0, min_binding_size: None },
             count: None,
         };
         let mut entries = vec![entry(0, wgpu::BufferBindingType::Uniform)];
@@ -326,8 +333,12 @@ impl ComputeDevice {
             }));
             enc.resolve_query_set(set, 0..1, resolve, 0);
             enc.copy_buffer_to_buffer(resolve, 0, read, 0, 8);
+            // admitted on the ring as every other submission (gpu-leftovers, found-defects 511): the
+            // bracket is taken after the admission, so a wait for room never widens it
+            let ticket = self.arb.admit(kt_time::sched::current_class(), CALIBRATION_NS);
             let before = kt_time::trace::now_ns();
-            self.queue.submit([enc.finish()]);
+            let sub = self.queue.submit([enc.finish()]);
+            let flight = ticket.submitted(&self.device, &self.queue, sub, CALIBRATION_NS, false);
             let (tx, rx) = std::sync::mpsc::channel();
             read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
                 let _ = tx.send(r);
@@ -336,6 +347,7 @@ impl ComputeDevice {
                 return;
             }
             let after = kt_time::trace::now_ns();
+            flight.wait();
             if !matches!(rx.recv(), Ok(Ok(()))) {
                 return;
             }
@@ -375,7 +387,8 @@ impl ComputeHost for ComputeDevice {
         let zeros = |size: u64, usage| d.create_buffer(&wgpu::BufferDescriptor { label: Some("kt-gpu compute warm"), size, usage, mapped_at_creation: false });
         let uniform = zeros(d.limits().max_uniform_buffer_binding_size.min(1 << 16), wgpu::BufferUsages::UNIFORM);
         let bufs: Vec<wgpu::Buffer> = (0..shader.reads + shader.writes).map(|_| zeros(256, wgpu::BufferUsages::STORAGE)).collect();
-        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }];
+        let size = wgpu::BufferSize::new(uniform.size());
+        let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform, offset: 0, size }) }];
         entries.extend(bufs.iter().enumerate().map(|(i, b)| wgpu::BindGroupEntry { binding: i as u32 + 1, resource: b.as_entire_binding() }));
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let bind = d.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &p.layout, entries: &entries });
@@ -383,12 +396,16 @@ impl ComputeHost for ComputeDevice {
         {
             let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("kt-gpu compute warm"), timestamp_writes: None });
             cp.set_pipeline(&p.pipe);
-            cp.set_bind_group(0, &bind, &[]);
+            cp.set_bind_group(0, &bind, &[0]);
             cp.dispatch_workgroups(1, 1, 1);
         }
-        self.queue.submit([enc.finish()]);
+        // the warm thread's class (background) on the ring: it never stands in front of a frame
+        let ticket = self.arb.admit(kt_time::sched::current_class(), WARM_NS);
+        let sub = self.queue.submit([enc.finish()]);
+        let flight = ticket.submitted(&self.device, &self.queue, sub, WARM_NS, false);
         let refused = pollster::block_on(scope.pop());
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        flight.wait();
         if let Some(e) = refused {
             return Err(format!("compute warm-up refused: {e}"));
         }
@@ -456,7 +473,25 @@ impl ComputeHost for ComputeDevice {
                 }
             })
             .collect();
-        let mut uniforms = Vec::with_capacity(job.steps.len());
+        // every step's uniform in one arena, one write (gpu-leftovers, found-defects 520): a step binds
+        // its slot by a dynamic offset, and a bind group serves every step of the same shader, slot
+        // size and buffers
+        let align = (d.limits().min_uniform_buffer_offset_alignment as u64).max(16);
+        let mut slots = Vec::with_capacity(job.steps.len());
+        let mut total = 0u64;
+        for st in job.steps {
+            let size = (st.uniform.len() as u64).max(16).next_multiple_of(16);
+            slots.push((total, size));
+            total = (total + size).next_multiple_of(align);
+        }
+        let (arena, _) = self.take(total.max(16), wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
+        let mut bytes = vec![0u8; arena.size() as usize];
+        for (st, &(at, _)) in job.steps.iter().zip(&slots) {
+            bytes[at as usize..at as usize + st.uniform.len()].copy_from_slice(st.uniform);
+        }
+        self.queue.write_buffer(&arena, 0, &bytes);
+        drop(bytes);
+        let mut groups: Vec<BindKey<'_>> = Vec::new();
         // this job's own timestamp set (D6): none free — untimed
         let stamps: Option<Stamps> = if self.timed { self.stamps.lock().unwrap_or_else(|e| e.into_inner()).pop() } else { None };
         let timed = stamps.as_ref().map_or(0, |_| job.steps.len().min(STAMPS as usize / 2));
@@ -504,13 +539,24 @@ impl ComputeHost for ComputeDevice {
                 piece.cut(&self.device, &self.queue, sub, false, predicted[i]);
             }
             piece.add(predicted[i]);
-            let (uniform, _) = self.take(s.uniform.len() as u64, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST);
-            self.queue.write_buffer(&uniform, 0, s.uniform);
-            let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }];
-            for (i, b) in s.read.iter().chain(s.write).enumerate() {
-                entries.push(wgpu::BindGroupEntry { binding: i as u32 + 1, resource: bufs[b.0].as_entire_binding() });
-            }
-            let bind = d.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &p.layout, entries: &entries });
+            let (at, size) = slots[i];
+            let found = groups.iter().position(|g| Arc::ptr_eq(&g.pipe, p) && g.size == size && g.read == s.read && g.write == s.write);
+            let g = match found {
+                Some(g) => g,
+                None => {
+                    let mut entries = vec![wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &arena, offset: 0, size: wgpu::BufferSize::new(size) }),
+                    }];
+                    for (i, b) in s.read.iter().chain(s.write).enumerate() {
+                        entries.push(wgpu::BindGroupEntry { binding: i as u32 + 1, resource: bufs[b.0].as_entire_binding() });
+                    }
+                    BIND_GROUPS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let bind = d.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &p.layout, entries: &entries });
+                    groups.push(BindKey { pipe: p.clone(), size, read: s.read, write: s.write, bind });
+                    groups.len() - 1
+                }
+            };
             let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
                 timestamp_writes: stamps.as_ref().filter(|_| i < timed).map(|(set, _)| wgpu::ComputePassTimestampWrites {
@@ -520,11 +566,11 @@ impl ComputeHost for ComputeDevice {
                 }),
             });
             cp.set_pipeline(&p.pipe);
-            cp.set_bind_group(0, &bind, &[]);
+            cp.set_bind_group(0, &groups[g].bind, &[at as u32]);
             cp.dispatch_workgroups(s.groups[0], s.groups[1], s.groups[2]);
             drop(cp);
-            uniforms.push(uniform);
         }
+        drop(groups);
         let staging: Vec<wgpu::Buffer> = job
             .reads
             .iter()
@@ -638,7 +684,7 @@ impl ComputeHost for ComputeDevice {
             }
         }
         self.give_back(stamps, learns);
-        self.give(bufs.into_iter().chain(uniforms).chain(staging));
+        self.give(bufs.into_iter().chain([arena]).chain(staging));
         Ok(out)
     }
 }
@@ -701,6 +747,22 @@ impl ComputeDevice {
             }
         }
     }
+}
+
+/// A job's bind group, by what it binds: the step's shader, its uniform slot's size and its buffers.
+struct BindKey<'a> {
+    pipe: Arc<Pipe>,
+    size: u64,
+    read: &'a [kt_plugin_api::compute::Buf],
+    write: &'a [kt_plugin_api::compute::Buf],
+    bind: wgpu::BindGroup,
+}
+
+static BIND_GROUPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Bind groups the compute host's jobs created (tests).
+pub fn bind_groups_made() -> u64 {
+    BIND_GROUPS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 static LEARNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

@@ -149,6 +149,8 @@ pub struct Ring {
     computes: AtomicU32,
     /// Engines that compose the preview's frame off the display's device (the slow-chain route).
     previews: AtomicU32,
+    /// Submissions admitted (tests, the class walk of gpu-leftovers: every submit is one of these).
+    admitted: AtomicU64,
     st: Mutex<State>,
     cv: Condvar,
 }
@@ -177,6 +179,7 @@ pub fn ring_for(key: RingKey) -> Arc<Ring> {
         displays: AtomicU32::new(0),
         computes: AtomicU32::new(0),
         previews: AtomicU32::new(0),
+        admitted: AtomicU64::new(0),
         st: Mutex::default(),
         cv: Condvar::new(),
     });
@@ -394,7 +397,13 @@ impl Ring {
         }
         let ticket = self.push(&mut st, class, ns, false, done);
         drop(st);
+        self.admitted.fetch_add(1, Ordering::Relaxed);
         ticket
+    }
+
+    /// Submissions this ring admitted so far (tests).
+    pub fn admitted(&self) -> u64 {
+        self.admitted.load(Ordering::Relaxed)
     }
 
     fn push(self: &Arc<Self>, st: &mut State, class: Class, ns: u64, display: bool, done: Arc<AtomicBool>) -> Ticket {
