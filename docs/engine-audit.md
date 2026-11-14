@@ -625,6 +625,34 @@ journal from one machine.
   - the plugins would be rebuilt;
   - M2/M7/M8 would recur in the new code as in the old.
 
+## Class-walk revision 2026-11
+
+The owner, 11.11 (kkt-26.11.11 L3): "надо проверять по другим местам может где забыли еще". The
+eleven changes of 2026-11-09 … 2026-11-11 each kept a class walk, and later runs still found misses.
+The mechanism of the miss: **a walk listed the places that HAVE the mechanism (threads, tenants,
+kernels) and not the places that DEPEND on what it moved** — the caller that waits for a result now
+delivered later, the consumer of a value now sized elsewhere, a second copy of a constant, a path
+around the new scheduler/ledger/arbiter, a key without what now determines it, a flag one consumer
+ignores, a tool that measures the old behaviour. `class-walk-revision` walked those for every change
+(its `design.md` holds the full table: change → mechanism → places checked → misses).
+
+| Change | Misses fixed (test) | Rows |
+|---|---|---|
+| one-scheduler | view edit during the async save lost its asterisk (t2452); closing while playing left the close's jobs held (t2453); reel envelope ignored the vote (t2454) | 513, 514 |
+| fused-pointwise-runs | prewarm key ≠ the pieces a frame asks (t2450) | 510 |
+| stream-layout-per-build | two copies of the export memo size; `stream-cost` sized without checkpoints | 518, 519 |
+| gpu-arbiter | — | 511 (480–482, 486 stand) |
+| memory-ledger | stream memo want vs bare available shrank itself (t2458); `pause-scan` decoder threads | 517 |
+| test-hygiene | preview click window, search arrows (t2457); mask pen (t2456) | 515 |
+| local-cost-queue | — | 520, 521 |
+| stream-history-on-device | the view (an outer tick) applied in reels, strips, posters (t2451) | 512 |
+| kept-mix-settle | — | 516 |
+| frames-cache-growth | loop count vs bare available (t2458, shared `mem::room`) | — |
+| catch-up-shows-loading | strip without generator sources went empty (t2455); tools named no cause for a catch-up (t2459) | 522, 523, 524 |
+
+Also fixed: found-defects 463 (t2230's race). The rule that follows went into `docs/orchestrator.md`
+"Briefs for executors": a brief asks for the CALLERS walk by name, and a design records it.
+
 ## Appendix — performance rows of `docs/found-defects.md` by mechanism
 
 | Mechanism | Rows (open in bold) |

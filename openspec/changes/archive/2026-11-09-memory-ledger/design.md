@@ -239,3 +239,9 @@ Not memory-related, left: row 290 (the offline engine's `inner` held a whole fra
 - **Invariant 4**: an evicted kept moment leaves the bars at the next `recheck_shown`, as before.
 - **Invariant 11**: no cap changes a byte (t2292 compares pictures, t2298 export bytes, t2299 export
   with and without grants).
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

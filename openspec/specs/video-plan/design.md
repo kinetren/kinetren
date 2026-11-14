@@ -523,6 +523,53 @@ The walk and every number: `openspec/changes/archive/2026-11-09-gpu-arbiter/desi
 - **A held frame says so:** `GpuStages.stream_held` → `Composed.held`; the app counts it apart and
   draws "Catching up…" (ui-timeline).
 
+## No stage over a stand-in; Loading names the catch-up (catch-up-shows-loading, archived 2026-11-11)
+
+- **What hurt** (kkt-26.11.10b K1/K2/K5, kkt-26.11.11 L2, found-defects 403, 483): playing, a frame whose
+  stream history was behind showed the stage's latest HELD picture, and every later stage ran over it at
+  the moment asked — the event's VHS Tape, the track's and the reel's stages: "либо есть кадр либо нет".
+  The composite was complete, so the display's present memo stored it under a key no moment asks again
+  (his stage-10 trace: 248 of 920 stores). The owner: effects taking previous pictures are "пустая трата
+  времени и ресурсов".
+- **Decision:** no held frame anywhere (`StreamPacing::hold`, `StreamKernel::held` in the contract,
+  `stream_held`, `Composed.held` gone). A frame short of more than `compose_steps` is incomplete playing or
+  paused; `VideoRenderer::stream_short` (max over the plan, reels and track stages included) →
+  `GpuStages.stream_short` → `Composed.catching_up`; the Loading scrim writes "Loading — catching up: N" in
+  Loading's place. The first picture of a fresh preview is still presented incomplete under the scrim (the
+  owner's round-14 rule; row 461 asks him).
+- **The class walk** (a stage given an input that is not its own position): the stream stage (fixed), a
+  blended frame pair lacking a side (took the other at full weight and reported complete — now no picture,
+  incomplete; t2418), the reel strip and the poster (kept incomplete offline composites — now only complete
+  ones, a missing file is its placeholder; t2419). Checked and not the class: a transition pair's missing
+  half (already incomplete, never presented, t137), decode misses (exact keys), the slow route (a late
+  complete picture of its own moment), kept composites (keyed by the stage's own key), the freeze frame
+  (the person's own edit), the stream's sound (its own position). The FX picker's cell over a stream slot
+  is a look question (row 460). The full table is in the archived change's design.md.
+- **Measured** (release, llvmpipe): his relinked copy's 30 s loop over the problem region — 29 held
+  composites shown and 27 stored before, 0 and 0 after; 10.3 → 9.1 cores (127 VHS runs instead of 154).
+  The red-on-old guard is t2414 (the player set the hold while playing).
+
+## The loop fill and the slow route's own engine (scheduler-followups, 2026-11-14, found-defects 251, 290)
+
+- **The loop fill (251).** A display slower than the frames shows a different subset each lap and keeps
+  only what it shows. A `near` service composes the loop's unkept, fully decoded moments ahead of the
+  playhead on the side engine and keeps them on the display's executor, as the slow route does. It
+  asks no decode, and it starts nothing while the display composes a frame of its own: on a software
+  rasterizer the two share the processor, and the first version (no gate) only moved work off the
+  display's frames — all-kept at lap 17 against 16, V-fps 16.6 against 19.5. With the gate: all-kept
+  from lap 9 against 18, V-fps 20.6 against 18.4 (heavy showcase, 2 s loop, release, llvmpipe).
+  `stream_short` (the held flag before it) is per thread: two threads plan on one renderer.
+- **The slow route's own engine (290).** The offline engine's lock is held a whole frame, so the
+  slow-route frame waited behind an effect cell or a poster. Cells, strips, posters and the fill compose
+  on `side_engine()`, a `sibling` that shares the device, queue, ring and compiled pipelines but not the
+  lock; `serve_preview` makes the offline ring bound and cut lower classes. t2337: the route's frame
+  beside heavy side frames waited 119–153 ms on the shared engine, 3–26 ms after.
+- **Rejected:** composing fill moments on the compose thread (no time between asks on a slow display);
+  decoding for the fill (it would compete with the look-ahead for the frame on screen); a second
+  headless device for side work (a device and its pipelines against an arena and pools).
+- `kt-cli trace loop` counted the fill's composites as the display's frames; `lives` now takes only
+  frames the display asked for, and a lap names the fill apart.
+
 ## The ring's drain, cold passes, the history ahead, the machine-use rule (gpu-throughput, archived 2026-11-14)
 
 His stage-10 trace (kkt-26.11.10b K3, iGPU): a Datamosh walk spent 96–98 % of its wall in admission, 16 ms
@@ -537,7 +584,7 @@ device or the cores stand idle. Full record: `openspec/changes/archive/2026-11-1
   next is queued. The display's present is counted, never admitted. Rejected: a larger bound (the owner's
   latency limit), counting the display without a time model (only more waits).
 - **What it cannot do:** a display that composes heavy chains every frame saturates the device; the walk
-  then gets about one bound a display frame (row 491, with 483).
+  then gets about one bound a display frame (row 491).
 - **Cold passes** (D2): pass and dispatch times on disk (adapter + driver, label, work units), scaled by work;
   a compute job learns from its own pieces' timestamps while it runs. A cache: it moves cuts, never bytes.
 - **The history ahead** (D3): a far part at class background — the loop to its end and round (playing or

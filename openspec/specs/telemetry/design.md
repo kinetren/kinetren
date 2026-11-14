@@ -148,6 +148,13 @@ part and the rest.
   per lap. The timestamp set grew to 2048 stamps: a batched job has hundreds of dispatches, and the
   32 timed before undercounted its device time.
 
+## The Loading record names a stream catch-up (catch-up-shows-loading, archived 2026-11-11)
+
+- No new event: `loading` (8) carries `b` = the positions a stream stage of the frame on screen still
+  lacked when the scrim came; `kt-cli trace loading` prints "the stream history was catching up: N
+  positions short" for such a stretch (t2417). The held flags (`wait::STREAM_HELD`, `exec::STREAM_HELD`,
+  `show::HELD`, `stream::HELD`) stay so older traces read; nothing writes them since this change.
+
 ## Piece records, the executor, the edit's revision (gpu-throughput, archived 2026-11-14)
 
 Found-defects 486: `gpu_start` was one record per job with the job's last submit, from a query set every

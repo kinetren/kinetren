@@ -607,15 +607,17 @@ history lacks that fit a quarter of the video cache, at least one, in the order 
 prefetch thread SHALL advance the stream stages over what the decoder brought — at the frame on screen and,
 while playing, ahead of it (wrapping in the loop region) by the frames the display reaches before its next
 pass, twice over, bounded by a quarter of the stage's memo — and a pass that leaves a stage pending SHALL
-run again even on a pause. A composite SHALL run a stage only when its frame lacks at most two positions:
-on a pause it reports the frame incomplete; while playing it shows the latest frame the stage holds on that
-frame's stream, and such a composite is not kept as the moment's own. An offline path with its own sources
-and a small cache (the reel strip, the project poster) SHALL pre-roll a stream stage as the export does, in
-batches of half its cache.
+run again even on a pause. A composite SHALL run a stage only when its frame lacks at most two positions;
+otherwise, playing or paused alike, it reports the frame incomplete and says how many positions the
+history still lacks (the most over the frame's stream stages, reels and track stages included). An
+offline path with its own sources and a small cache (the reel strip, the project poster) SHALL pre-roll a
+stream stage as the export does, in batches of half its cache.
 Why: ordering the whole history (up to 600 frames of 8 MB at 1080 lines against a 512 MB cache) let the
 decoder run through it while the stage read only at composites; the cache dropped the history's front, the
 frame never came, and the owner saw a loop at V-fps 0. With the history cached, the composite computed it
-on the UI thread: 9 s for one composite on his relinked project (decode-request-storm).
+on the UI thread: 9 s for one composite on his relinked project (decode-request-storm). The playing
+preview once showed the stage's latest held picture instead; the owner decided against it (kkt-26.11.10b,
+found-defects 403: "ну пусть loading показывает").
 
 #### Scenario: The paced order is the earliest of the history
 - **WHEN** a frame 3 s into a cut mosh (a ~100-frame history) is ordered with budgets of 1, 7 and 30 frames, and of one byte
@@ -1133,16 +1135,173 @@ reach was ~100 positions a lap of his 715-position loop, six laps to finish it.
 - **THEN** the far part reaches the region's last frame in that pass (no frame of the region needs anything after it), ran at class background, and a pass with the history complete runs nothing
 - **TEST** t2432 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
-### Requirement: A held stream frame is shown as catching up
-A composite that shows a stream stage's held frame (playing, the stage behind the playhead) SHALL say
-so with its result, and the preview SHALL draw a light "catching up" marker over the picture while the
-frame on screen is held, never the Loading scrim; a complete frame of the moment asked removes it.
-Why: kkt-26.11.10 J2 — a held stream frame looked like playback, the preview said nothing.
+### Requirement: No stage runs over a stand-in input
+A composite SHALL NOT give any stage of the plan an input that is not that stage's own position — a
+stream stage's picture of another position, a sub-composite of a reel or of a track stage that lacks a
+layer, a neighbour of a frame pair, a decoded frame of another time — and run the stages after it (the
+event's later effects such as VHS Tape or Camera ISP, the track's stages, the reel's stages) over it at
+the moment asked. A layer whose own input is not there SHALL leave the frame incomplete; an incomplete
+composite SHALL NOT be presented over the picture on screen and SHALL NOT be kept as the moment's
+composite; the preview keeps its last full picture under its Loading look. The only incomplete
+composite ever presented is the first picture of a preview that has shown none (the owner's rule from
+round 14 items 14–15: a picture under the Loading scrim rather than an empty one). A kept composite of
+the exact moment SHALL still show at once, without the history. An export SHALL compose every frame from
+its own positions, never short.
+Why: kkt-26.11.10b K5 — "при кэтчинге - у меня vhs tape будто бы накладывается в этот момент
+актуальный … либо есть кадр либо нет, зачем накладывать эффект если предыдущий не готов?": the
+playing preview ran the event's VHS Tape at the moment asked over a Datamosh picture of a position
+the history had reached.
 
-#### Scenario: The composite says it held
-- **WHEN** a paced player plays over a mosh whose history is behind the playhead, then the history catches up
-- **THEN** the composites that show a held frame say held, the ones after the catch-up do not
-- **TEST** t2361 (`src/libs/kt-engine/tests/decode_storm.rs`)
+#### Scenario: A playing frame whose history is behind is Loading, not a held picture
+- **WHEN** a paced renderer composes a frame of a cut mosh whose history the prefetch has walked to ten positions behind it, then the history catches up
+- **THEN** the first composite is incomplete, the mosh layer has no picture, the renderer reports at least eight positions short, and the executor presents nothing when asked not to show an incomplete frame; after the catch-up the composite is complete, reports nothing short and is byte-identical to the unpaced renderer's
+- **TEST** t2410 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: VHS Tape is never laid over another position's mosh
+- **WHEN** the mosh event carries VHS Tape after Datamosh and its track carries VHS Tape as a track stage, and the frame is composed while the history is behind and again after it caught up
+- **THEN** the short composite runs no chain of the mosh layer and is incomplete with nothing presented; the caught-up composite equals the unpaced renderer's bytes
+- **TEST** t2411 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: An export composes every frame from its own positions
+- **WHEN** a range of the mosh event with VHS Tape after it is exported through the serial export and through the pipeline
+- **THEN** no frame is short, every frame's stream key is the stage's key of its own position, and the frames equal the unpaced renderer's at each moment
+- **TEST** t2412 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: A reel that holds a mosh reports its catch-up to the root
+- **WHEN** the mosh project is placed as a reel and the root frame is composed through a paced renderer with the inner history behind
+- **THEN** the root composite is incomplete and reports the inner positions short; after the inner history catches up the root composite is complete and reports nothing short
+- **TEST** t2413 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: The player answers a short frame with its catch-up and a kept moment at once
+- **WHEN** a playing player is asked a frame of the mosh whose history is behind, then the same moment after its composite was kept and the memo dropped
+- **THEN** the first answer is incomplete with a catch-up count above zero; the kept moment's answer is complete with a catch-up of zero, without the history
+- **TEST** t2414 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: A frame pair lacking a side is incomplete
+- **WHEN** a slowed event in the frame mode "blend" is composed at a moment between two source frames with both frames cached, then with the neighbour missing, then with the base frame missing
+- **THEN** the first is complete and blended; the other two are incomplete and their layer has no picture (neither side stands in at full weight)
+- **TEST** t2418 (`src/libs/kt-engine/tests/video_warp.rs`)
+
+#### Scenario: An offline frame keeps only a complete composite
+- **WHEN** the reel strip's and the poster's offline frame is composed with one layer's source absent, and a poster is made of a project whose file is missing
+- **THEN** the incomplete frame leaves no picture (no partial cell); the poster of the project with the missing file is the frame with the placeholder, as the preview shows it
+- **TEST** t2419 (`src/apps/kt-app/src/reel_preview.rs`)
+
+### Requirement: A playing loop's unshown moments are composed below the display
+While a loop region plays and the display has an executor, the player SHALL compose, one at a time,
+the loop's moments the display's executor does not keep and whose frames are all decoded, on an
+executor other than the display's and at the scheduler's `near` class (below the frame on screen on
+every ring), and SHALL keep each complete composite on the display's executor as a slow-chain
+composite is kept. It SHALL ask no decode and withdraw no request, start no moment while the display composes a frame
+of its own (it takes only the time the display leaves), work ahead of the playhead, skip
+for the lap a moment that comes out incomplete (a stream stage short of its frame included) or that the display's memo does not keep,
+and stop when the loop has no such moment left, the play or the loop stops, or the project changes.
+Nothing SHALL run while nothing plays. `KT_LOOP_FILL=off` disables it.
+Why: `found-defects.md` row 251 — on a display slower than the project's frames each lap showed a
+different subset and only shown moments were kept: a covered loop composed "for the first time" lap
+after lap.
+
+#### Scenario: A loop shown in part becomes all-kept
+- **WHEN** a loop of 24 moments plays with its frames decoded and a display that presents only every fourth moment it reaches, for three laps, with the fill and with `KT_LOOP_FILL=off`
+- **THEN** with the fill every moment of the loop is kept by the display's executor by the third lap and the display's own composites of the last lap are all replays; without it a part stays unkept
+- **TEST** t2334 (`src/libs/kt-engine/tests/loop_fill.rs`)
+
+#### Scenario: The fill asks no decode and rests with the player
+- **WHEN** a loop plays with half its frames not decoded, then the play stops
+- **THEN** the fill composes only moments whose frames are decoded, the workers received no request from it, and after the stop it runs no job
+- **TEST** t2335 (`src/libs/kt-engine/tests/loop_fill.rs`)
+
+#### Scenario: The fill stops where the memo stops keeping
+- **WHEN** a loop plays whose moments the display's memo refuses past the first eight
+- **THEN** the fill keeps eight, skips the rest for the lap, and composes nothing more until the next lap
+- **TEST** t2336 (`src/libs/kt-engine/tests/loop_fill.rs`)
+
+#### Scenario: Measured on a software rasterizer
+- **WHEN** `kt-cli preview <showcase> <from> <to> --loop S` runs on llvmpipe (release) with the fill and with `KT_LOOP_FILL=off`, and `kt-cli trace loop` reads each run
+- **THEN** with the fill the loop becomes all-kept in fewer laps (measured 9 against 18) and the display shows no fewer frames; both runs are in the change's design record
+- **TEST** bench `kt-cli preview --loop` + `kt-cli trace loop`
+
+### Requirement: The slow-chain frame never waits behind side work on its engine
+Effect cells, reel strips and project posters SHALL compose on an engine of their own on the
+offline device that shares its compiled pipelines but not the frame's state or lock; the slow-chain
+route of the preview SHALL have the offline engine to itself. The offline device's ring SHALL bound
+its flight once the slow route serves the preview from it: a lower-class frame submitted there is
+cut at pass boundaries when the slow route's frame waits, so that frame waits for at most one piece.
+Why: `found-defects.md` row 290 — the offline engine's lock was held for a whole frame, so the
+slow-route frame waited behind an effect cell or a poster on the mutex, not on the ring that bounds
+it; on a software device that ring did not bound either.
+
+#### Scenario: A side frame holds the slow route for one piece
+- **WHEN** a heavy chain composes on the side engine of the offline device (class background) and the slow-route engine asks a light frame at class now meanwhile, with the side engine's frame held mid-way
+- **THEN** the light frame composes without waiting for the side engine's lock, its wait on the ring stays within one measured piece of the heavy chain, and both frames' bytes equal their solo runs
+- **TEST** t2337 (`src/libs/kt-gpu/tests/arbiter.rs`)
+
+#### Scenario: The side engine compiles nothing
+- **WHEN** the side engine is made after the offline engine
+- **THEN** it shares the offline engine's compiled pipelines (no pipeline is created) and its own arena and pools
+- **TEST** t2338 (`src/libs/kt-gpu/tests/arbiter.rs`)
+### Requirement: A run prewarm warms the pieces a frame asks
+A point-wise run handed to the executor's prewarm SHALL be warmed as the pieces a frame cuts it into
+(at most `MAX_RUN_STAGES` stages each), so the first frame of a long run finds its passes warm.
+Why: class-walk-revision — the prewarm passed the whole run as one key, and a key longer than the
+cap is skipped; no frame ever asks it.
+
+#### Scenario: A 40-stage run is prewarmed as 32 + 8
+- **WHEN** a run of 40 point-wise stages is prewarmed and the device settles
+- **THEN** two run shapes are warm: the 32-stage piece and the 8-stage tail
+- **TEST** t2450 (`src/libs/kt-gpu/tests/fused_runs.rs`)
+
+### Requirement: The stream memo's view belongs to the renderer that set it
+The memo's view is a tick of the timeline of the renderer that set it (the player's preview
+renderer). A stream stage SHALL apply it only in that renderer's own plan and its track stages; a
+reel's sub-plan and any renderer sharing the memo that never set a view (a reel strip, a poster)
+SHALL read every position of its walk back.
+Why: class-walk-revision — the view was read by every renderer sharing the memo, so a walk on
+another timeline read no picture back and every frame of it stayed short.
+
+#### Scenario: A renderer that set no view reads its walk back
+- **WHEN** two renderers share one memo, the player's sets its view at 8 s, and the other walks 5 s … 5 s + 8 frames
+- **THEN** every frame of that walk needs nothing more
+- **TEST** t2451 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+### Requirement: A reel strip raises generators and pauses its envelope
+The reel strip SHALL open the generators' per-event sources as the poster does, so a cell a
+generator shows has its picture; its envelope (the offline audio render) SHALL wait at each chunk
+while its job is held, as its frames do.
+Why: class-walk-revision — since only complete offline composites are kept (catch-up-shows-loading
+D6) every generator cell was empty; the envelope checked only the cancel and ran during playback.
+
+#### Scenario: A generator cell has its picture
+- **WHEN** a reel's strip is rendered whose only event is a solid-colour generator
+- **THEN** its first cell is the generator's colour
+- **TEST** t2455 (`src/apps/kt-app/src/reel_preview.rs`)
+
+#### Scenario: The envelope waits while held
+- **WHEN** the strip job is held after the envelope's first chunk
+- **THEN** no further chunk runs until it is released
+- **TEST** t2454 (`src/apps/kt-app/src/reel_preview.rs`)
+
+### Requirement: Caches size against the ledger's room
+The preview's stream memo and the decoded-frame cache's loop count SHALL measure their want against
+the memory ledger's room — the memory available plus the growth the growing kinds already hold —
+never the bare available.
+Why: class-walk-revision — the cache's own growth took the free memory, so a re-sizing asked less
+than it held and the asker evicted what it had just kept.
+
+#### Scenario: A re-sizing after the memo filled keeps its cap
+- **WHEN** the memo is sized for a 400-position loop, fills to its cap, the machine has that much less available, and the same loop is sized again with one checkpoint more
+- **THEN** the cap does not shrink
+- **TEST** t2458 (`src/libs/kt-engine/tests/memory_ledger.rs`)
+
+### Requirement: The tools name a frame behind its stream history
+The preview bench SHALL report every incomplete composite whose stream history was behind with the
+positions short; `kt-cli preview` and `kt-cli pause-scan` SHALL print it.
+Why: class-walk-revision — such a frame misses no decode, so the tools' one cause named nothing.
+
+#### Scenario: A cold start over a mosh is named catching up
+- **WHEN** the bench plays a range of a Datamosh event from a cold start
+- **THEN** its incomplete composites are reported catching up, each with a positive count
+- **TEST** t2459 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 ### Requirement: The display's present is counted on its ring
 The display's present (a composite, or a kept composite's display pass) SHALL enter its ring's flight as a

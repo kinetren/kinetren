@@ -937,6 +937,17 @@ fn process_cpu_s() -> f64 {
 const BENCH_SETTLE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// `kt-cli preview` (preview-throughput): see the dispatch.
+/// The preview's decoders take a render's threads (memory-ledger D11), as the editor opens them;
+/// `KT_DECODE_THREADS=N` overrides it for an A/B (0 — libavcodec's auto). Every tool that plays or
+/// composes as the preview does opens its sources after this (`preview`, `pause-scan`;
+/// class-walk-revision).
+fn preview_decode_threads(project: &Project) {
+    let threads = std::env::var("KT_DECODE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+        kt_gpu::memory::decode_threads(kt_gpu::memory::available(), project.settings.width, project.settings.height)
+    });
+    kt_ffmpeg::set_decode_threads(threads);
+}
+
 /// A paused frame settles (idle-cpu): at every `step` seconds the program seeks and composes as a
 /// paused preview does, once per 100 ms, until the frame comes out complete. A moment that never
 /// does is a frame the UI would retry for as long as the person looks at it. Returns their number.
@@ -949,6 +960,7 @@ fn pause_scan(
     from: f64,
     to: Option<f64>,
 ) -> Result<usize, String> {
+    preview_decode_threads(project);
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
         let mut db = kt_media::index::MediaIndexDb::open(
@@ -993,13 +1005,15 @@ fn pause_scan(
             never += 1;
         }
         println!(
-            "{at:7.2} s  {}  composites {n}  settle {:.0} ms  last {:.1} ms  requests {} decoded {}  missing {:?}",
+            "{at:7.2} s  {}  composites {n}  settle {:.0} ms  last {:.1} ms  requests {} decoded {}  missing {:?}  catching up {}",
             if done { "ok   " } else { "NEVER" },
             t0.elapsed().as_secs_f64() * 1e3,
             cost.compose_ns as f64 / 1e6,
             count(Work::DecodeRequest) - r0,
             count(Work::Decoded) - d0,
             if done { Vec::new() } else { player.missing_layers(tick) },
+            // a stream history behind misses no decode: without it a NEVER named no cause
+            if done { 0 } else { cost.stages.stream_short },
         );
         at += step;
     }
@@ -1057,12 +1071,7 @@ fn preview_run(
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
-    // the preview's decoders take a render's threads (memory-ledger D11), as the editor opens them;
-    // `KT_DECODE_THREADS=N` overrides it for an A/B (0 — libavcodec's auto)
-    let threads = std::env::var("KT_DECODE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
-        kt_gpu::memory::decode_threads(kt_gpu::memory::available(), project.settings.width, project.settings.height)
-    });
-    kt_ffmpeg::set_decode_threads(threads);
+    preview_decode_threads(project);
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
         let mut db = kt_media::index::MediaIndexDb::open(
@@ -1086,6 +1095,11 @@ fn preview_run(
         format!("GPU ({})", gpu.info().name)
     };
     player.set_video_gpu(Some(gpu));
+    // the app's arrangement: a playing loop's unshown moments compose on the offline device's side
+    // engine (scheduler-followups D5); `KT_LOOP_FILL=off` is the "before"
+    if looped.is_some() && kt_engine::loop_fill::enabled() {
+        player.set_fill_gpu(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+    }
     let opts = kt_engine::preview_bench::BenchOptions {
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
         to: Tick((to * kt_time::TICK_HZ as f64) as i64),
@@ -1130,6 +1144,13 @@ fn preview_run(
     let n = r.composites.max(1) as f64;
     let ms = |ns: u64| ns as f64 / 1e6 / n;
     println!("-- preview {}x{}, {backend}, {:.1}–{:.1} s --", q.width, q.height, from, to);
+    if looped.is_some() {
+        println!(
+            "  loop fill: {}, kept {} moments",
+            if kt_engine::loop_fill::enabled() { "on" } else { "off (KT_LOOP_FILL=off)" },
+            player.fill_kept()
+        );
+    }
     println!(
         "  shown {} of {} grid frames in {:.1} s: V-fps {:.1}, V-skipped {}, incomplete {}, underruns {}",
         r.shown,
@@ -1209,6 +1230,12 @@ fn preview_run(
                 m.iter().map(|(m, (w, h))| format!("{}@{w}x{h}", m.0)).collect();
             println!("  starved {:.2}: {}", t.0 as f64 / kt_time::TICK_HZ as f64, ids.join(" "));
         }
+        for (t, n) in &r.catching_up {
+            println!("  catching up {:.2}: {n} positions short", t.0 as f64 / kt_time::TICK_HZ as f64);
+        }
+    }
+    if !r.catching_up.is_empty() {
+        println!("  catching up: {} incomplete composites waited for a stream history", r.catching_up.len());
     }
     let lookups = (r.video_hits + r.video_misses).max(1);
     println!(

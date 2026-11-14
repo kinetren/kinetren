@@ -211,8 +211,11 @@ is no picture, and an export refuses.
   adapter gets a device per frame worker, an eighth of the cores, 2 to 4, as many as the memory
   holds (`memory.rs`, gpu-render-hardening D1); a card gets one. `KT_VIDEO_ENGINES` overrides it.
   The file does not depend on their number (t1573). Each device adds 1.3 GB at 1080p.
-- `offline_engine()`: a headless device for effect thumbnails, reel strips and project posters, out
-  of the preview's queue. Serials of frames are process-wide because it serves a fresh cache per job
+- `offline_engine()`: a headless device out of the preview's queue; since scheduler-followups (row
+  290) the preview's slow-chain route has it to itself (`serve_preview` registers its ring as one that
+  fronts the person's frame: a software device's ring then bounds and cuts lower classes, t2337).
+  Effect thumbnails, reel strips, posters and the loop fill compose on `side_engine()`, its `sibling`:
+  the same device, queue, ring and `Compiled` (nothing compiles, t2338), its own `Inner` and lock. Serials of frames are process-wide because it serves a fresh cache per job
   (t1574). A blended frame's upload key takes the pair and the weight (t250): it carries its base
   frame's serial.
 

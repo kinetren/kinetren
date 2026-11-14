@@ -152,9 +152,12 @@ pub fn run(project: &kt_model::Project, path: &str, from: f64, to: f64, laps: us
         // the player's sizing for this range as its loop region
         let positions = ((t1.0 - t0.0).max(0) / video.grid.frame_step().max(1)) as usize + 1;
         let per = video.stream_frame_bytes(t0, q) / 2;
-        let cap = kt_engine::video::size_stream_memo(per, Some(positions));
-        let free = kt_engine::video::memory_available().unwrap_or(0);
-        println!("  memo sized for a loop of {positions} positions: {} MB (available {} MB)", cap >> 20, free >> 20);
+        // the player's sizing with the walk's checkpoints (`player::size_stream_memo`): without them
+        // the tool reported a memo the program does not build (class-walk-revision)
+        let checkpoints = video.stream_checkpoints(video.grid.align_floor(Tick(t1.0 - 1)), q);
+        let cap = kt_engine::video::size_stream_memo_walk(per, Some(positions), checkpoints);
+        let room = kt_time::mem::room().unwrap_or(0);
+        println!("  memo sized for a loop of {positions} positions, {checkpoints} checkpoints: {} MB (room {} MB)", cap >> 20, room >> 20);
     }
     println!(
         "-- stream cost {:.2}–{:.2} s at {}x{} (renderer built in {build_ms:.0} ms, memo {} MB) --",

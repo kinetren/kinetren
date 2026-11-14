@@ -329,14 +329,17 @@ fn bench_dump(path: &str, totals: &[u64], ticks: &std::collections::BTreeMap<Str
         .map(|(c, n)| format!("\"{}\":[{},{},{},{}]", c.name(), n.queued, n.started, n.done, n.cancelled))
         .collect();
     let json = format!(
-        "{{\"work\":{{{}}},\"ticks\":{{{}}},\"frame\":{{\"frames\":{frames},\"ns\":{{{}}}}},\"sched\":{{\"paused\":{},\"running\":{},\"waiting\":{},\"classes\":{{{}}}}}}}\n",
+        "{{\"work\":{{{}}},\"ticks\":{{{}}},\"frame\":{{\"frames\":{frames},\"ns\":{{{}}}}},\"sched\":{{\"paused\":{},\"running\":{},\"waiting\":{},\"classes\":{{{}}}}},\"block\":{{\"ui\":{},\"render\":{}}}}}\n",
         work.join(","),
         threads.join(","),
         stages.join(","),
         st.paused,
         st.running,
         st.waiting,
-        classes.join(",")
+        classes.join(","),
+        // the blocking calls the threads that must not wait made (one-scheduler, scheduler-followups)
+        kt_time::block::total(kt_time::block::role::UI),
+        kt_time::block::total(kt_time::block::role::RENDER)
     );
     let tmp = format!("{path}.tmp");
     if std::fs::write(&tmp, json).is_ok() {

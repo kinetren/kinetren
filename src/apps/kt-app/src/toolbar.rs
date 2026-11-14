@@ -384,7 +384,10 @@ impl KtApp {
                 self.new_project();
                 ui.close();
             }
-            if Self::menu_btn(ui, tr(k::menu::file::OPEN), self.start.controls.label(Cmd::OpenProject)) {
+            let (open, r) =
+                Self::menu_btn_probed(ui, tr(k::menu::file::OPEN), self.start.controls.label(Cmd::OpenProject));
+            crate::widgets::field_probe::note("file.open", r);
+            if open {
                 self.open_project_dialog();
                 ui.close();
             }

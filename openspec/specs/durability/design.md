@@ -280,3 +280,20 @@ Checked, every caller of `save()`/`save_as()` and every reader of the flags afte
   `write_project_atomic` before opening it (a new file, no flags involved).
 - Tests' helpers — the harness tests that `save()` and then read the file (t2236, t370, t815 …) stay
   right: under `cfg(test)` the answer is taken inside `save()`.
+
+## Opening a project stands nothing (scheduler-followups, 2026-11-14, found-defects 270, 252)
+
+- **What hurt.** The new app's constructor opened every source (FFmpeg probe and sidecar) and built
+  the player's first version on the UI thread; replacing the app joined the closed player's threads
+  and decoders there. On the heavy showcase the window stood for seconds.
+- **The shape.** Every UI open path posts `ask_open` (the file read, a lesson's copy written, on the
+  `media` lane) and lands in `take_opening`; the player is `new_deferred` (its first version on its own
+  thread) with no source, and `begin_load` posts the sources' opens (`MediaThen::Load`); the lock is
+  claimed after the swap; the closed app goes to an `app-drop` thread after dropping its lock in place.
+  The lane is FIFO, so an edit's sync during the load runs after the load (t2332).
+- **Rejected:** `Option<Player>` on the app (hundreds of reads, a new state each could get wrong); a lane
+  job for the drop (a decoder's last span would hold the next open's job).
+- **Not taken here** (found-defects 370, 371): the conveniences' small writes (recent list, flight log,
+  recovery list) and the program's start read stay on the UI thread.
+- **Ctrl+S (252)** was already off the UI thread since one-scheduler; t2333 proves it under a disk
+  writer. Measured: live `open_heavy` reads `block.ui` 0 across File › Open of the heavy showcase.

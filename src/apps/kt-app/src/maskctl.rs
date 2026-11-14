@@ -378,11 +378,12 @@ impl KtApp {
         if ctx.egui_wants_keyboard_input() {
             return (false, false);
         }
+        // every Backspace a slow frame read takes a point (test-hygiene D2; class-walk-revision)
         let (enter, back, del) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Enter),
-                i.key_pressed(egui::Key::Backspace),
-                i.key_pressed(egui::Key::Delete),
+                i.num_presses(egui::Key::Backspace),
+                i.num_presses(egui::Key::Delete),
             )
         });
         if e.tool == MaskTool::Pen {
@@ -390,15 +391,16 @@ impl KtApp {
                 self.finish_pen();
                 return (false, true);
             }
-            if back || del {
+            if back + del > 0 {
                 if let Some(m) = self.mask_ctl.as_mut() {
-                    m.pen.pop();
+                    let keep = m.pen.len().saturating_sub(back + del);
+                    m.pen.truncate(keep);
                 }
                 return (true, false);
             }
             return (false, false);
         }
-        if (del || back)
+        if del + back > 0
             && let (Some(mid), Some(vid)) = (e.mask, e.sel)
         {
             let Some(mut list) = self.mask_list_of(e.owner) else { return (true, false) };

@@ -130,3 +130,9 @@ closed a second after the pause. Under the parallel live run at load ~30 two ope
 found-defects 425. After a play and a pause the live `idle` counts no wake of `audio-output`,
 `cpal_alsa_out`, `pw-data-loop` or `alsa-pipewire` in 5 s — the threads are gone; before, the open
 device woke 119 + 235 + 8 times in the same 5 s.
+
+## Class-walk revision 2026-11
+
+The callers, consumers and sibling paths of this change were walked again in the code by
+`class-walk-revision` (2026-11-14); its `design.md` holds this change's row: what was checked, the
+misses fixed (tests t2450–t2459) and the ones recorded (found-defects 510–524).

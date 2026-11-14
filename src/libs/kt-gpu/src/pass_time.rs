@@ -150,6 +150,11 @@ impl Timer {
         self.seed_key = Some(key.into());
     }
 
+    /// The device's key in the seeds, if seeded (a sibling engine takes it).
+    pub fn seed_key(&self) -> Option<String> {
+        self.seed_key.as_deref().map(String::from)
+    }
+
     /// A new frame begins encoding.
     pub fn begin(&mut self) {
         self.labels.clear();

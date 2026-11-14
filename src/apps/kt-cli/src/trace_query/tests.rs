@@ -117,6 +117,26 @@ fn t2146_loading_ranks_the_waits() {
     assert_eq!(st[0].to, 2016 * MS);
 }
 
+/// Test t2417 (catch-up-shows-loading): a Loading stretch whose scrim came with a stream stage short
+/// says the history was catching up and by how much; one that came with nothing short does not.
+#[test]
+fn t2417_a_loading_stretch_over_a_catch_up_says_so() {
+    let mut run = paused_wait();
+    run.recs.push(rec(Ev::Loading, 180 * MS, |r| {
+        r.aux = 1;
+        r.b = 37;
+    }));
+    run.recs.push(rec(Ev::Loading, 900 * MS, |r| r.aux = 0));
+    run.recs.push(rec(Ev::Loading, 1180 * MS, |r| r.aux = 1));
+    run.recs.push(rec(Ev::Loading, 2016 * MS, |r| r.aux = 0));
+    run.recs.sort_by_key(|r| r.t);
+    let st = stretches(&run, 180 * MS);
+    assert_eq!(st.iter().map(|s| s.catching_up).collect::<Vec<_>>(), vec![37, 0], "{st:?}");
+    let out = loading(&run, None, None);
+    assert_eq!(out.matches("catching up").count(), 1, "{out}");
+    assert!(out.contains("catching up: 37 positions short"), "{out}");
+}
+
 /// A loop of three ticks over three laps: kept composites, one evicted, one whose key moved; the
 /// kept mix replays on the second lap but for a chunk never kept in the lap context.
 fn looped() -> Run {
