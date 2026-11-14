@@ -2103,11 +2103,11 @@ impl Inner {
         self.last_cost = Default::default();
         self.last_stages = Default::default();
         let mark = Instant::now();
-        if let Some((data, complete)) = key.and_then(|k| self.readback.get(k)) {
+        if let Some(data) = key.and_then(|k| self.readback.get(k)) {
             out.clear();
             out.extend_from_slice(data);
             self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
-            return Ok(complete);
+            return Ok(true);
         }
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
 
