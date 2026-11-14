@@ -257,6 +257,11 @@ in the source's state and arrive through the retune lane.
   change of chunks or of the look-ahead is checked under `MemoryMax=3G` more than once: one such run
   passed and the next was killed.
 - A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.
+- **An incomplete frame is composed again before it is written** (gpu-leftovers D5, found-defects 522):
+  `decode_requests` asks a key its span dropped alone up to `export::RETRIES` times in both exports, and
+  every compose site (serial loop, pipeline workers, the ring's `collect`, `depth == 0`) composes an
+  incomplete frame again up to `RETRIES` times (the serial one decoding what it lacks first). A new compose
+  site in an export does the same. Exports compose through `execute_once` (no memo, the settled run form).
 - The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer.
 
 ## Tests

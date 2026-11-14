@@ -921,3 +921,81 @@ fn t1456_the_encoder_gets_its_threads() {
         assert!(src.decode_debug_stats().1 >= 60, "serial={serial}: every frame is in the file");
     }
 }
+
+/// A source whose every video frame fails its first two reads (in a span or alone) and comes on the
+/// third: a decoder that hiccups, not a file that lacks the frame.
+struct FlakySource {
+    inner: Box<dyn MediaSource>,
+    tries: std::collections::HashMap<Tick, u32>,
+}
+
+impl MediaSource for FlakySource {
+    fn info(&self) -> &kt_media::MediaInfo {
+        self.inner.info()
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.inner.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, pts: Tick, quality: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        let n = self.tries.entry(pts).or_default();
+        *n += 1;
+        if *n <= 2 {
+            return Err(kt_media::MediaError::OutOfRange);
+        }
+        self.inner.read_video_frame(pts, quality)
+    }
+    fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
+        self.inner.keyframe_before(pts)
+    }
+}
+
+/// t2518 (gpu-leftovers D5, found-defects 522): an export does not write a frame incomplete because a
+/// read failed: what a frame lacks is asked again alone and the frame composed again before it is
+/// written, serially and pipelined alike. Nothing counts as lost, no frame is named, and the two
+/// files' video is the same. The serial export's pre-roll used to ask a missing frame once, the
+/// pipelined export's decode once alone.
+#[test]
+fn t2518_a_frame_whose_read_failed_is_asked_again_before_it_is_written() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    use kt_engine::export::{ExportEvent, ExportLog};
+    let p = two_seconds();
+    let dir = tempfile::tempdir().unwrap();
+    let mut files = Vec::new();
+    for serial in [true, false] {
+        let out = dir.path().join(format!("flaky-{serial}.mp4")).to_string_lossy().to_string();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let opts = ExportOptions { force_encoder: Some("libx264".into()), serial, ..Default::default() };
+        let video: Vec<(MediaId, Box<dyn MediaSource>)> = sources()
+            .into_iter()
+            .map(|(m, inner)| (m, Box::new(FlakySource { inner, tries: Default::default() }) as Box<dyn MediaSource>))
+            .collect();
+        let stats = {
+            let seen = seen.clone();
+            kt_engine::export_mp4_with_backends(
+                &p,
+                sources(),
+                video,
+                &out,
+                None,
+                &opts,
+                &kt_gpu::testkit::backends(),
+                &Arc::new(AtomicBool::new(false)),
+                &Arc::new(AtomicBool::new(false)),
+                move |e| seen.lock().unwrap().push(e),
+            )
+            .unwrap()
+        };
+        assert_eq!(stats.video_frames, 60);
+        assert_eq!(stats.missing_video_layers, 0, "serial {serial}: a frame was written without its layer");
+        let told = seen.lock().unwrap().iter().any(|e| matches!(e, ExportEvent::Log(ExportLog::IncompleteFrames { .. })));
+        assert!(!told, "serial {serial}: a frame was named incomplete");
+        files.push(out);
+    }
+    let frames = |f: &str| {
+        let mut s = kt_media::ffmpeg::FfmpegSource::open(f).expect("opening the result");
+        (0..60).map(|i| s.read_video_frame(Tick(i * 3000), None).map(|v| v.rgba.to_vec()).unwrap_or_default()).collect::<Vec<_>>()
+    };
+    assert!(frames(&files[0]) == frames(&files[1]), "the serial and the pipelined file differ");
+}

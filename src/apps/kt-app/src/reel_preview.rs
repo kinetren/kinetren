@@ -471,6 +471,20 @@ pub fn media_fingerprint(p: &Project, base: Option<&std::path::Path>) -> u64 {
     h.digest()
 }
 
+/// The version of what a strip row holds (gpu-leftovers D6, found-defects 524): builds between
+/// catch-up-shows-loading D6 and t2455's fix wrote rows whose generator cells were empty, and the key
+/// (reel, edit, media) never moves for them. A row written under another version is a miss, rendered
+/// again once. Move it whenever what a strip's cell holds changes for the same edit and media.
+pub const STRIP_ROW_VERSION: u64 = 2;
+
+/// The third part of a strip row's key: the media fingerprint and the row version.
+pub fn strip_key(p: &Project, base: Option<&std::path::Path>) -> u64 {
+    if STRIP_ROW_VERSION == 1 {
+        return media_fingerprint(p, base);
+    }
+    media_fingerprint(p, base) ^ STRIP_ROW_VERSION.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 /// A write error to the sidecar is a CACHE error: the preview still arrives, and the
 /// log gets one line, not one line per reel.
 fn warn_db_once(what: &str, e: &dyn std::fmt::Display) {
@@ -501,7 +515,7 @@ pub fn render_reel_preview(
     disk: ReelRow<'_>,
 ) -> ReelDone {
     let seq_row = disk.row;
-    let fp = media_fingerprint(p, base);
+    let fp = strip_key(p, base);
     // an opening that fails is a cache miss (the reel renders anew) — but not a SILENT one:
     // a lost disk tier must be visible in the log (t640/t795 under load showed a re-render
     // with no word on why)
@@ -929,5 +943,39 @@ mod tests {
         kt_time::sched::notify_gate();
         assert!(!worker.join().unwrap(), "a chunk ran while the job was held");
         assert!(calls.load(Ordering::SeqCst) > 2, "scene guard: the reel is several chunks long");
+    }
+}
+
+#[cfg(test)]
+mod strip_key_tests {
+    /// Test t2519 (gpu-leftovers D6, found-defects 524): a strip row written under the key before
+    /// `STRIP_ROW_VERSION` (its generator cells empty) is a miss, so the reel renders again once; a row
+    /// written under the current key is a hit.
+    #[test]
+    fn t2519_a_strip_row_of_an_older_version_is_a_miss() {
+        use kt_model::*;
+        let p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 320,
+            height: 180,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+            default_shape: Default::default(),
+            conform: Default::default(),
+            settings_explicit: false,
+        });
+        let dir = std::env::temp_dir().join(format!("kt-t2519-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut db = kt_media::index::MediaIndexDb::open(&dir.join("index.db")).unwrap();
+        let old = super::media_fingerprint(&p, None);
+        let now = super::strip_key(&p, None);
+        assert_ne!(old, now, "the row version is part of the key");
+        db.put_reel_frames(9, 77, old, 90_000, 90_000, &[None]).unwrap();
+        assert!(db.reel_preview(9, 77, now).unwrap().is_none(), "a row of the older version was read back");
+        db.put_reel_frames(9, 77, now, 90_000, 90_000, &[Some(&[1u8, 2, 3][..])]).unwrap();
+        assert!(db.reel_preview(9, 77, now).unwrap().is_some(), "a row of this version is a hit");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
