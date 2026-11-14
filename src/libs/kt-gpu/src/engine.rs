@@ -334,7 +334,10 @@ struct RunPiece {
     a: usize,
     b: usize,
     fused: Option<wgpu::RenderPipeline>,
-    probe: Option<(u32, bool)>,
+    /// A trying shape (gpu-leftovers D2): its fused pass runs beside the own passes into a scratch
+    /// target, both timed for shape `probe`; the frame shows the own passes.
+    shadow: Option<wgpu::RenderPipeline>,
+    probe: Option<u32>,
 }
 
 impl FxOp {
@@ -342,7 +345,7 @@ impl FxOp {
         match self {
             FxOp::TapRun { stages, pieces } if pieces.is_empty() => stages.len() as u32,
             FxOp::TapRun { pieces, .. } => {
-                pieces.iter().map(|p| if p.fused.is_some() { 1 } else { (p.b - p.a) as u32 }).sum()
+                pieces.iter().map(|p| if p.fused.is_some() { 1 } else { (p.b - p.a) as u32 + p.shadow.is_some() as u32 }).sum()
             }
             // every node is a pass but `Save` (the arena prediction stays exact)
             FxOp::PluginBarrier { nodes, .. } => {
@@ -367,7 +370,13 @@ impl FxOp {
             FxOp::GeomTile { .. } => GEOM_SLOT_UNITS + 1,
             FxOp::TapRun { pieces, .. } if !pieces.is_empty() => pieces
                 .iter()
-                .map(|p| if p.fused.is_some() { GEOM_SLOT_UNITS } else { (p.b - p.a) as u32 })
+                .map(|p| {
+                    if p.fused.is_some() {
+                        GEOM_SLOT_UNITS
+                    } else {
+                        (p.b - p.a) as u32 + if p.shadow.is_some() { GEOM_SLOT_UNITS } else { 0 }
+                    }
+                })
                 .sum(),
             _ => self.passes(),
         }
@@ -814,6 +823,8 @@ struct Inner {
     geom_interpret: bool,
     /// How point-wise runs run (fused-pointwise-runs): the device's trial, or forced either way.
     fuse: crate::runs::FuseRuns,
+    /// The frame being resolved is an export's (gpu-leftovers D3): its runs take the settled form.
+    settled: bool,
     /// Tells the pieces of point-wise runs apart in the timer's probes.
     run_serial: u32,
     arena: wgpu::Buffer,
@@ -837,6 +848,8 @@ struct Inner {
     last_cost: kt_fx::video::FrameCost,
     /// Where the last `execute` spent its time (preview-throughput).
     last_stages: GpuStages,
+    /// The last frame's run pieces by form: (own, fused, trial) — tests (gpu-leftovers).
+    last_runs: (u32, u32, u32),
     /// The preview's display targets (preview-throughput D2).
     display: Option<Tex>,
     /// Bumped when `display` is a new texture: the UI registers it again.
@@ -1374,6 +1387,7 @@ impl GpuFxEngine {
                 c,
                 geom_interpret: false,
                 fuse: crate::runs::FuseRuns::from_env(),
+                settled: false,
                 run_serial: 0,
                 arena,
                 arena_slots,
@@ -1390,6 +1404,7 @@ impl GpuFxEngine {
                 refuse_next_growth: false,
                 last_cost: Default::default(),
                 last_stages: Default::default(),
+                last_runs: Default::default(),
                 display: None,
                 display_generation: 0,
                 glow: None,
@@ -1554,6 +1569,12 @@ impl GpuFxEngine {
         self.inner.lock().unwrap().fuse = mode;
     }
 
+    /// The last frame's run pieces by the form it showed: (own passes, fused, own with the trial's
+    /// fused pass beside them).
+    pub fn last_run_forms(&self) -> (u32, u32, u32) {
+        self.inner.lock().unwrap().last_runs
+    }
+
     /// Point-wise run shapes with a warm pass of their own, and how many the trial kept fused and split.
     pub fn run_shapes(&self) -> (usize, usize, usize) {
         self.compiled.runs_ready()
@@ -1603,7 +1624,12 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         let _frame = self.compiled.frame();
-        self.inner.lock().unwrap().execute(plan, out, false)
+        let mut g = self.inner.lock().unwrap();
+        // an export's frame: its runs in the settled form (gpu-leftovers D3)
+        g.settled = true;
+        let r = g.execute(plan, out, false);
+        g.settled = false;
+        r
     }
 
     fn info(&self) -> &GpuBackendInfo {
@@ -1750,7 +1776,12 @@ impl Inner {
         self.last_cost = Default::default();
         self.upload.begin_frame();
         self.binds.begin_frame();
-        let (jobs, complete) = self.resolve_plan(plan)?;
+        self.last_runs = Default::default();
+        // the export's ring: its runs in the settled form (gpu-leftovers D3)
+        self.settled = true;
+        let resolved = self.resolve_plan(plan);
+        self.settled = false;
+        let (jobs, complete) = resolved?;
         for j in &jobs {
             self.last_cost.add(j.cost());
         }
@@ -1883,6 +1914,7 @@ impl Inner {
         let mark = Instant::now();
         // a composite this memo holds is shown by the display pass alone (cached-range-plays):
         // no upload, no chain, no composite
+        let forms = crate::compiled::forms_revision();
         let key = plan_key(plan);
         if self.present_kept(key, o) {
             self.last_stages.encode_ns = mark.elapsed().as_nanos() as u64;
@@ -1891,6 +1923,7 @@ impl Inner {
         let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
         self.upload.begin_frame();
         self.binds.begin_frame();
+        self.last_runs = Default::default();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -1946,7 +1979,8 @@ impl Inner {
                 }
                 // a later frame writing the accumulator is ordered after this one on the queue;
                 // a complete one is kept whole for the next lap (cached-range-plays)
-                if complete {
+                // and only when no run changed its form while it was resolved: the key names the form
+                if complete && crate::compiled::forms_revision() == forms {
                     self.last_stages.stored = self.memo_keep(key, result);
                 } else {
                     self.pool.release(result);
@@ -2099,6 +2133,7 @@ impl Inner {
         if ow > self.max_dim || oh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: ow, h: oh });
         }
+        let forms = crate::compiled::forms_revision();
         let key = memo.then(|| plan_key(plan));
         self.last_cost = Default::default();
         self.last_stages = Default::default();
@@ -2114,6 +2149,7 @@ impl Inner {
         // --- resolve: presence/size ---
         self.upload.begin_frame();
         self.binds.begin_frame();
+        self.last_runs = Default::default();
         let (jobs, complete) = self.resolve_plan(plan)?;
         for j in &jobs {
             self.last_cost.add(j.cost());
@@ -2233,7 +2269,7 @@ impl Inner {
         self.harvest();
 
         self.pool.release(result);
-        if let Some(key) = key {
+        if let Some(key) = key.filter(|_| crate::compiled::forms_revision() == forms) {
             self.readback.insert(key, out.clone(), complete);
         }
         self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
@@ -2547,6 +2583,13 @@ impl Inner {
                     self.run_pieces(stages, a, b, pieces);
                     a = b;
                 }
+                for p in pieces.iter() {
+                    match (&p.fused, &p.shadow) {
+                        (Some(_), _) => self.last_runs.1 += 1,
+                        (None, Some(_)) => self.last_runs.2 += 1,
+                        (None, None) => self.last_runs.0 += 1,
+                    }
+                }
             }
         }
     }
@@ -2554,16 +2597,23 @@ impl Inner {
     fn run_pieces(&self, stages: &[crate::runs::Stage], a: usize, b: usize, out: &mut Vec<RunPiece>) {
         use crate::compiled::RunUse;
         use crate::runs::FuseRuns;
+        let own = |out: &mut Vec<RunPiece>| out.push(RunPiece { a, b, fused: None, shadow: None, probe: None });
         if b - a < 2 || self.fuse == FuseRuns::Never {
-            out.push(RunPiece { a, b, fused: None, probe: None });
+            own(out);
             return;
         }
         let key: Vec<u16> = stages[a..b].iter().map(|s| s.idx as u16).collect();
-        match self.c.run_use(&key, self.fuse == FuseRuns::Measured) {
-            RunUse::Own(probe) => out.push(RunPiece { a, b, fused: None, probe: probe.map(|id| (id, false)) }),
-            RunUse::Fused { pipe, id, probe } => {
-                out.push(RunPiece { a, b, fused: Some(pipe), probe: probe.then_some((id, true)) })
+        if self.settled {
+            match self.c.run_settled(&key) {
+                Some(pipe) => out.push(RunPiece { a, b, fused: Some(pipe), shadow: None, probe: None }),
+                None => own(out),
             }
+            return;
+        }
+        match self.c.run_use(&key, self.fuse == FuseRuns::Measured) {
+            RunUse::Own => own(out),
+            RunUse::Fused(pipe) => out.push(RunPiece { a, b, fused: Some(pipe), shadow: None, probe: None }),
+            RunUse::Trial { pipe, id } => out.push(RunPiece { a, b, fused: None, shadow: Some(pipe), probe: Some(id) }),
             RunUse::Split => {
                 let m = a + (b - a) / 2;
                 self.run_pieces(stages, a, m, out);
@@ -2943,12 +2993,19 @@ impl Inner {
                     for p in pieces {
                         let serial = self.run_serial;
                         self.run_serial = self.run_serial.wrapping_add(1);
-                        let probe = |_: bool| p.probe.map(|(shape, fused)| crate::runs::Probe { shape, fused, piece: serial, px: w as u64 * h as u64 });
-                        if let Some(pipe) = &p.fused {
-                            let dst = self.pool.acquire(&self.device, w, h);
+                        let probe = |fused: bool| p.probe.map(|shape| crate::runs::Probe { shape, fused, piece: serial, px: w as u64 * h as u64 });
+                        // the trial's fused pass, beside the frame's own passes (gpu-leftovers D2)
+                        if let Some(pipe) = &p.shadow {
+                            let scratch = self.pool.acquire(&self.device, w, h);
                             if let Some(pr) = probe(true) {
                                 self.timer.probe(pr);
                             }
+                            let u = crate::runs::uniform(&stages[p.a..p.b], w, h);
+                            self.pass_run(enc, pipe, p.b - p.a, &scratch.view, &view, &u);
+                            self.pool.release(scratch);
+                        }
+                        if let Some(pipe) = &p.fused {
+                            let dst = self.pool.acquire(&self.device, w, h);
                             let u = crate::runs::uniform(&stages[p.a..p.b], w, h);
                             self.pass_run(enc, pipe, p.b - p.a, &dst.view, &view, &u);
                             if let Some(t) = owned.take() {
@@ -3199,7 +3256,13 @@ fn put_lead(h: &mut xxhash_rust::xxh3::Xxh3, lead: &Option<kt_fx::conform::LeadC
     }
 }
 
+/// The memo key of a plan: its hash and the run forms' revision (gpu-leftovers D2, found-defects 510):
+/// a composite kept while a run ran in one form is not served once it runs in the other.
 fn plan_key(plan: &FramePlan<'_>) -> u64 {
+    plan_hash(plan) ^ crate::compiled::forms_revision().wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
+fn plan_hash(plan: &FramePlan<'_>) -> u64 {
     fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
         h.update(&s.source.0.to_le_bytes());
         h.update(&s.cache_idx.to_le_bytes());

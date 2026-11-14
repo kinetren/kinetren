@@ -311,3 +311,90 @@ fn t2197_preview_equals_export_with_a_run() {
     }
     assert!(frames.iter().all(|f| *f == frames[0]), "export and preview, fused and unfused, give one frame");
 }
+
+/// Test t2514 (gpu-leftovers D2, found-defects 510): a trial never changes what a frame shows. A shape
+/// met for the first time runs its own passes; while it is tried every frame still shows the own
+/// passes (the fused pass runs beside them, timed); once the verdict is in, the frames show the
+/// verdict, and the run forms' revision has moved since the first frame.
+#[test]
+fn t2514_a_trial_never_changes_what_a_frame_shows() {
+    let _g = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(e) = warm_engine() else { return };
+    let f = frame(false);
+    let fx = vec![instance("posterize", false), instance("duotone", true), instance("color_grade", false)];
+    let rev0 = kt_gpu::forms_revision();
+    let (first, _) = compose(&e, &f, &fx);
+    assert_eq!(e.last_run_forms(), (1, 0, 0), "a shape met first runs its own passes");
+    e.settle();
+    let (_, fused0, split0) = e.run_shapes();
+    let mut tried = 0;
+    let mut n = 0;
+    while e.run_shapes().1 + e.run_shapes().2 == fused0 + split0 {
+        let (out, _) = compose(&e, &f, &fx);
+        let (own, fused, trial) = e.last_run_forms();
+        assert_eq!(fused, 0, "a frame of the trial shows the fused form");
+        assert_eq!(own + trial, 1);
+        tried += trial;
+        assert!(out == first || !e.info().software, "a trial frame differs from the own passes' bytes");
+        n += 1;
+        assert!(n <= 64 + 16, "the trial never ended");
+    }
+    let (_, fused1, _) = e.run_shapes();
+    compose(&e, &f, &fx);
+    if fused1 > fused0 {
+        assert_eq!(e.last_run_forms(), (0, 1, 0), "after a fused verdict the frame shows the fused pass");
+    }
+    assert!(kt_gpu::forms_revision() > rev0, "the forms' revision moved with the shape's form ({tried} trial frames)");
+}
+
+/// Test t2515 (gpu-leftovers D2, found-defects 510): the readback memo's key names the run forms. A
+/// plan composed twice is served from the memo the second time; once any shape's form moves (a new
+/// shape compiled), the same plan is composed again, not served in the form it was kept in.
+#[test]
+fn t2515_the_memo_key_names_the_run_forms() {
+    let _g = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(e) = warm_engine() else { return };
+    let f = frame(false);
+    let fx = vec![instance("vignette", true), instance("color_grade", true)];
+    let p = plan(&f, &fx);
+    let mut out = Vec::new();
+    e.execute_into(&p, &mut out).unwrap();
+    e.execute_into(&p, &mut out).unwrap();
+    assert_eq!(e.last_cost().passes, 0, "the second ask is served from the memo");
+    // a shape no test asked compiles: every run form's revision moves
+    let rev = kt_gpu::forms_revision();
+    e.prewarm_point_runs(&[vec!["duotone".into(), "posterize".into(), "duotone".into()]]);
+    e.settle();
+    assert!(kt_gpu::forms_revision() > rev, "a compiled shape moves the revision");
+    e.execute_into(&p, &mut out).unwrap();
+    assert!(e.last_cost().passes > 0, "a composite kept under the old forms is not served");
+    e.execute_into(&p, &mut out).unwrap();
+    assert_eq!(e.last_cost().passes, 0, "and the new one is kept");
+}
+
+/// Test t2516 (gpu-leftovers D3, found-defects 510): an export's frame takes the SETTLED form: a run
+/// shape no frame met runs fused in the export's first frame (compiled there, no trial), the same in
+/// every repeat, whatever the engine's measured trial would say; on a software adapter its bytes are
+/// the own passes'.
+#[test]
+fn t2516_an_export_frame_runs_the_settled_form() {
+    let _g = COUNTERS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(e) = warm_engine() else { return };
+    let f = frame(true);
+    let fx = vec![instance("vignette", false), instance("posterize", true), instance("vignette", true)];
+    let p = plan(&f, &fx);
+    let mut once = Vec::new();
+    assert!(e.execute_once(&p, &mut once).unwrap());
+    assert_eq!(e.last_run_forms(), (0, 1, 0), "the export's first frame of a new shape runs it fused");
+    for _ in 0..3 {
+        let mut again = Vec::new();
+        e.execute_once(&p, &mut again).unwrap();
+        assert_eq!(e.last_run_forms(), (0, 1, 0));
+        assert!(again == once, "an export frame is the same bytes every time");
+    }
+    e.fuse_runs(FuseRuns::Never);
+    let (own, _) = compose(&e, &f, &fx);
+    e.fuse_runs(FuseRuns::Measured);
+    assert_frames_close(&own, &once, W, H, FrameTol { max_lsb: 2, outlier_frac: 0.0, outlier_max: 2, mean_lsb: 2.0 }, "settled vs own");
+    assert!(own == once || !e.info().software, "on a software adapter the settled form is the own passes' bytes");
+}

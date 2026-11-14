@@ -177,9 +177,11 @@ pub(crate) type Sample = (Probe, u64);
 
 /// Sum the passes of each probed piece of a frame: `(probe, ns)` per timed pass.
 pub(crate) fn pieces(passes: &[(Probe, u64)]) -> Vec<Sample> {
-    let mut by: HashMap<(u32, u32), (Probe, u64)> = HashMap::new();
+    // a trying piece times both forms in one frame (the shadow pass, gpu-leftovers D2): the form is
+    // part of what a sum is
+    let mut by: HashMap<(u32, u32, bool), (Probe, u64)> = HashMap::new();
     for (p, ns) in passes {
-        by.entry((p.shape, p.piece)).and_modify(|e| e.1 += ns).or_insert((*p, *ns));
+        by.entry((p.shape, p.piece, p.fused)).and_modify(|e| e.1 += ns).or_insert((*p, *ns));
     }
     by.into_values().collect()
 }

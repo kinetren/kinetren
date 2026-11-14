@@ -300,7 +300,13 @@ impl ComputeDevice {
         if !self.timed || !kt_time::trace::on() {
             return;
         }
-        let mut c = self.calib.lock().unwrap_or_else(|e| e.into_inner());
+        // a job finding another calibrating goes on without: the calibration waits for its admission,
+        // and a frame's job must never wait for a lower class's admission behind this lock
+        let mut c = match self.calib.try_lock() {
+            Ok(c) => c,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return,
+        };
         if c.best.is_some_and(|b| b.3.elapsed() < CALIBRATION_AGE) {
             return;
         }

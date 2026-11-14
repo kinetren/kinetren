@@ -241,7 +241,11 @@ fn t2255_the_compute_host_admits_the_frame_on_screen_first() {
     let _one = lock();
     let Some(ctx) = context() else { return };
     let host = ComputeDevice::on_context(&ctx);
-    spin(&*host, "test:short", 1000, 1).unwrap();
+    // traced: the host's clock calibration (admitted on the ring since gpu-leftovers D1) is made here,
+    // not by the first job of the capture below
+    trace::testing::capture(|| {
+        spin(&*host, "test:short", 1000, 1).unwrap();
+    });
     let ring = host.ring().clone();
     let deadline = kt_time::test_deadline();
     let held = Mutex::new(0u64);
