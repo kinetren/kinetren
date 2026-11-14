@@ -33,8 +33,8 @@
 
 ## 5. Measure and close
 
-- [ ] 5.1 Release, llvmpipe: the baseline's numbers after; what a real iGPU should show
-- [ ] 5.2 Same bytes: t1239, t2270–t2278, t2350–t2364; workspace tests of touched crates; clippy
-- [ ] 5.3 Live `idle`, `heavy_loop`, `datamosh`
-- [ ] 5.4 found-defects rows 480–482, 485, 486 closed; new rows (490+); What's new line; crate CLAUDE.md notes
-- [ ] 5.5 Archive (specs merged, design into capability design.md); commit, target-prune
+- [x] 5.1 Release, llvmpipe: the baseline's numbers after; what a real iGPU should show
+- [x] 5.2 Same bytes: t1239, t2270–t2278, t2350–t2364; workspace tests of touched crates; clippy
+- [x] 5.3 Live `idle`, `heavy_loop`, `datamosh`
+- [x] 5.4 found-defects rows 480–482, 485, 486 closed; new rows (490+); What's new line; crate CLAUDE.md notes
+- [x] 5.5 Archive (specs merged, design into capability design.md); commit, target-prune
