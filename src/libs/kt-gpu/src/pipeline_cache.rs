@@ -15,6 +15,11 @@ pub fn set_cache_dir(dir: PathBuf) {
     let _ = DIR.set(dir);
 }
 
+/// The folder set by [`set_cache_dir`], if any (the pass-time seeds live there too, gpu-throughput D2).
+pub(crate) fn cache_dir() -> Option<&'static PathBuf> {
+    DIR.get()
+}
+
 /// The wgpu the blobs come from: the workspace pin (src/Cargo.toml). wgpu itself keeps its format
 /// compatible across versions; the key changes with it anyway, so an upgrade starts a fresh file.
 const WGPU: &str = "wgpu-30";

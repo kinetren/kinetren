@@ -19,6 +19,7 @@ mod engine;
 mod pipeline_cache;
 mod pool;
 pub mod runs;
+pub mod seeds;
 mod warm;
 
 pub use context::{trace_device, 

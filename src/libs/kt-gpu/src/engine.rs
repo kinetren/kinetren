@@ -1312,7 +1312,8 @@ impl GpuFxEngine {
         let dummy = create_tex(&device, 1, 1, "kt-gpu dummy");
         let max_dim = device.limits().max_texture_dimension_2d;
         let (names, owners) = plugin_pipe_names();
-        let timer = Timer::new(&device, &queue, &info.name, names, owners);
+        let mut timer = Timer::new(&device, &queue, &info.name, names, owners);
+        timer.seed_as(crate::seeds::device_key(ai));
         let arb = crate::arbiter::ring_for(crate::arbiter::RingKey::of(ai, &device));
         // the editor's display device presents to its window (pipeline-prewarm D3: `keep` is it)
         let shows = keep.then(|| arb.register_display());
@@ -1904,7 +1905,11 @@ impl Inner {
             let submit = Instant::now();
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.staged.flush(&self.queue, &self.arena);
-            self.queue.submit([enc.finish()]);
+            // counted on the ring, never admitted (gpu-throughput D1)
+            let ns = self.timer.last_frame(Role::Preview);
+            let ticket = self.arb.note_display(ns);
+            let sub = self.queue.submit([enc.finish()]);
+            drop(ticket.submitted(&self.device, &self.queue, sub, ns, self.surface));
             self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
             self.timer.submitted(&self.queue, Role::Preview, meta);
         }
@@ -1936,7 +1941,10 @@ impl Inner {
         self.timer.end(&mut enc, Role::Preview, meta);
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.staged.flush(&self.queue, &self.arena);
-        self.queue.submit([enc.finish()]);
+        let ns = self.timer.predict(PassLabel::Fixed("display")).unwrap_or(0) * if o.glow { 2 } else { 1 };
+        let ticket = self.arb.note_display(ns);
+        let sub = self.queue.submit([enc.finish()]);
+        drop(ticket.submitted(&self.device, &self.queue, sub, ns, self.surface));
         self.timer.submitted(&self.queue, Role::Preview, meta);
         self.last_stages.replayed = true;
         true

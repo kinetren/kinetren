@@ -194,10 +194,14 @@ pub enum Ev {
     /// One submission of a stream history walk (stream-history-on-device): `a` its first position,
     /// `b` the positions in it, `c` the pictures read back, `aux` the checkpoints it kept.
     StreamWalk = 97,
+    /// Who ran a piece of device work (gpu-throughput D6, found-defects 486): `aux` 0 the device, 1 the
+    /// processor; `id` the ring; `a` the piece's index in its frame or job; `b` its predicted device time
+    /// (ns); `c` its passes or dispatches; `cause` the caller's.
+    GpuExec = 98,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 51] = [
+    pub const ALL: [Ev; 52] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -249,6 +253,7 @@ impl Ev {
         Ev::MemUsed,
         Ev::GpuStart,
         Ev::StreamWalk,
+        Ev::GpuExec,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -308,6 +313,7 @@ impl Ev {
             Ev::MemUsed => "mem_used",
             Ev::GpuStart => "gpu_start",
             Ev::StreamWalk => "stream_walk",
+            Ev::GpuExec => "gpu_exec",
         }
     }
 }
