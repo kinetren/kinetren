@@ -83,6 +83,12 @@ nothing.
 - **TEST** t2557 (`src/apps/kt-app/src/fx_thumbs.rs`)
 - **PATH** open an effects window: for the first 800 ms every cell reads "Loading" and no file is opened
 
+#### Scenario: An open gallery of a heavy event costs nothing at rest
+- **WHEN** the gallery of an event carrying Datamosh then VHS Tape is open, its cells composed, and the pointer moves over it for 60 frames
+- **THEN** no cell is rendered or asked again
+- **TEST** t2559 (`src/apps/kt-app/src/idle_tests.rs`)
+- **PATH** open the effects window of an event with Datamosh and VHS Tape, click "+ effect…": the cells read "Loading", then show the candidates over the mosh; moving the mouse over them changes nothing
+
 #### Scenario: A stopped scene cell publishes nothing
 - **WHEN** a scene cell's job runs with its stop already asked (the picker moved on)
 - **THEN** it comes out as stopped, with nothing composed

@@ -9,5 +9,5 @@ three questions after stage 12: found-defects 461, 460, 487). Columns and states
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
 | M1 | 1 | the first picture of a fresh preview: empty, not partial; partial showing is NOWHERE allowed — it misleads and is extra drawing work (found-defects 461) | partial: goes to an executor with a walk of every place a partial picture can be shown or drawn | `no-partial-picture` | started |
-| M2 | 2 | effects are NEVER laid past the chain, anywhere, for every effect, not only Datamosh (found-defects 460) | partial: goes to an executor with a walk of every place an effect's picture is made outside its chain | `chain-everywhere` | started |
+| M2 | 2 | effects are NEVER laid past the chain, anywhere, for every effect, not only Datamosh (found-defects 460) | done: effect cells are the real frame after the click, a stream stage's inputs run their chains (540, 541); t2555, t2556, t2550, t2552; class walk in the change's design | `chain-everywhere` | done |
 | M3 | 3 | yes: move the load report's header facts into the trace, drop `load-report.txt`, the button opens the trace folder (found-defects 487) | partial: goes to an executor | `load-report-into-trace` | started |

@@ -104,4 +104,10 @@ and in the engine test's scene the mosh does not change with the second input's 
 
 The cells compute once per (project revision, place, moment, candidate); at rest nothing runs: no
 retry of a failed cell, the lane's queue is empty, the repaint gate is the queue (`pending`).
-Measured in tasks 3.2.
+Measured (t2559, debug build, the harness on llvmpipe): an event carrying Datamosh then VHS Tape,
+its gallery open — 32 cells composed once in 49.8 s of processor time spread over the cores (3.2 s
+of wall time; the Datamosh history is walked once and shared by the cells through the service's
+memo), then 60 frames of a moving pointer over the open gallery took 90 ms of processor time with
+no cell rendered or asked. The old cells cost about the same per cell (the same chain at the same
+size, without the history) and were equally quiet at rest; the old build was not measured side by
+side (a second target tree on a short disk).
