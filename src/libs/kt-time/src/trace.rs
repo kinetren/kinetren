@@ -441,7 +441,7 @@ pub mod play {
     /// `b` the rate ×1000 (signed, as i64).
     pub const RATE: u32 = 11;
     /// A start holds before its first frame: `b` 1 — the renderer is being built, 2 — its sound
-    /// is not cached yet.
+    /// is not cached yet, 3 — the consumer has not drained the seek's flush (play-start-and-prefetch).
     pub const START_HOLD: u32 = 12;
     /// The sound device opened on Play (kept-mix-settle D7): `b` µs the open took, `c` µs from the
     /// open's start to its first callback (0 — none came within a second after the open returned).
@@ -450,6 +450,14 @@ pub mod play {
     pub const DEVICE_CLOSE: u32 = 14;
     /// The sound device failed to open at Play, or reported an error while open.
     pub const DEVICE_ERROR: u32 = 15;
+    /// Play's first sound left (play-start-and-prefetch D5): `b` µs from Play to the first frames a
+    /// callback handed out. Written by the render thread, never the callback.
+    pub const FIRST_SOUND: u32 = 16;
+    /// The sound device was paused at rest, kept for the next Play: `b` ms it had played.
+    pub const DEVICE_PAUSE: u32 = 17;
+    /// A paused device resumed on Play: `b` µs the resume took, `c` µs from its start to the first
+    /// callback (0 — none came within a second).
+    pub const DEVICE_RESUME: u32 = 18;
 }
 
 /// `MixChunk.aux`.
@@ -1030,8 +1038,14 @@ pub enum Item {
     Text(Text),
 }
 
+/// The producer's half of the park handshake (play-start-and-prefetch D2): the writer stores
+/// `PARKED` and then looks at the ring, a producer publishes into the ring and then looks at
+/// `PARKED`. Each side's store must be seen before its own load, or both miss the other — a store
+/// followed by a load of another location may be reordered (x86's store buffer does it) — and the
+/// writer parks over a record nobody wakes it for. The fence pairs with the writer's `SeqCst`.
 #[inline]
 fn wake() {
+    std::sync::atomic::fence(Ordering::SeqCst);
     if PARKED.load(Ordering::Relaxed) && PARKED.swap(false, Ordering::AcqRel)
         && let Some(w) = WRITER.get()
     {

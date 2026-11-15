@@ -38,6 +38,10 @@ pub struct BenchOptions {
     pub loop_for: Option<Duration>,
     /// Keep what the output device played (f32 stereo interleaved), for a WAV and a test.
     pub capture: bool,
+    /// How long the device takes to open on Play before its first callback (play-start-and-prefetch
+    /// D4): the app opens it on Play (7–20 ms here, seconds under load, found-defects 425). Zero —
+    /// a device that is always open, as the bench modelled before.
+    pub device_open: Duration,
 }
 
 impl Default for BenchOptions {
@@ -53,6 +57,7 @@ impl Default for BenchOptions {
             hash_frames: false,
             loop_for: None,
             capture: false,
+            device_open: Duration::ZERO,
         }
     }
 }
@@ -114,6 +119,9 @@ pub struct BenchReport {
     pub audio_renders: u64,
     /// What the output device played, under `capture`.
     pub played: Vec<f32>,
+    /// Play → the first sound, in ms, as the render thread measured it (`AudioShared::first_sound_us`,
+    /// the trace's `play` aux `first_sound`); 0 — none came.
+    pub first_sound_ms: f64,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -143,9 +151,15 @@ fn output_clock(
     quantum: usize,
     stop: Arc<AtomicBool>,
     capture: bool,
+    open_delay: Duration,
 ) -> std::thread::JoinHandle<(Vec<f32>, DeviceStalls)> {
+    // it drains the flush itself, open or closed, as the app's output thread does
+    player_shared.drains_flush.store(true, Ordering::Release);
     std::thread::spawn(move || {
         let mut played = Vec::new();
+        // the device opened on Play: its first callback comes `open_delay` after the Play was seen;
+        // a pause closes it (the app keeps it a second, then pauses it: the bench plays once)
+        let mut open_at: Option<Instant> = None;
         let mut stalls = DeviceStalls::default();
         let period = Duration::from_secs_f64(quantum as f64 / AUDIO_SAMPLE_RATE as f64);
         // what a full ring covers: a wake later than this empties it whatever the render did
@@ -164,7 +178,14 @@ fn output_clock(
                 while ring.pop().is_ok() {}
                 primed = false;
             }
-            if !transport.is_playing() || (!primed && ring.slots() < 2) {
+            if !transport.is_playing() {
+                open_at = None;
+                continue;
+            }
+            if *open_at.get_or_insert_with(|| Instant::now() + open_delay) > Instant::now() {
+                continue;
+            }
+            if !primed && ring.slots() < 2 {
                 continue;
             }
             let mut next = || -> Option<(f32, f32)> {
@@ -220,6 +241,7 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
         o.quantum,
         stop.clone(),
         o.capture,
+        o.device_open,
     );
     let grid = player.video_grid();
     if o.loop_for.is_some() {
@@ -347,6 +369,7 @@ pub fn play_range(player: &Player, ring: rtrb::Consumer<f32>, o: BenchOptions) -
         }
     }
     r.wall_s = started.elapsed().as_secs_f64();
+    r.first_sound_ms = player.shared.first_sound_us.load(Ordering::Acquire) as f64 / 1e3;
     player.pause();
     stop.store(true, Ordering::Release);
     let (played, device) = clock.join().unwrap_or_default();
