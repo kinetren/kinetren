@@ -585,8 +585,12 @@ fn t2150_the_look_ahead_skips_kept_moments() {
 /// The slow-chain device of t2151: the test kit's executor, past `SLOW_CHAIN` per frame.
 struct Slow(Arc<dyn kt_engine::VideoGpuExec>);
 
+/// Frames the slow device composed.
+static SLOW_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl kt_engine::VideoGpuExec for Slow {
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        SLOW_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         std::thread::sleep(kt_engine::compose_queue::SLOW_CHAIN * 2);
         self.0.execute_into(plan, out)
     }
@@ -601,8 +605,11 @@ impl kt_engine::VideoGpuExec for Slow {
 /// t2151: a moment composed on the slow-chain device (bytes) is kept on the display's executor: the
 /// next ask of it is shown on the display target from the kept composite, with no chain composed,
 /// and the route stays on the slow device for what is not kept.
+///
+/// t2705 (stream-round-trips D7, found-defects 622): the slow device's picture, once kept on the
+/// display's executor, is shown from there at once — on the display, not uploaded again as bytes.
 #[test]
-fn t2151_the_slow_route_keeps_its_composites() {
+fn t2151_t2705_the_slow_route_keeps_its_composites() {
     let _g = serial();
     if no_device() {
         return;
@@ -626,18 +633,22 @@ fn t2151_the_slow_route_keeps_its_composites() {
             break c;
         }
     };
-    assert!(!first.on_display, "a slow chain composes on the slow device, as bytes");
-    let r0 = kt_time::work::count(kt_time::work::Work::CompositeReplay);
+    let runs = |_: ()| SLOW_RUNS.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(runs(()) > 0, "a slow chain composes on the slow device");
+    assert!(first.on_display, "the slow device's picture is shown from the display's memo, not uploaded again (t2705)");
+    let (r0, s0) = (kt_time::work::count(kt_time::work::Work::CompositeReplay), runs(()));
     let again = ask(t);
     assert!(again.complete && again.on_display, "shown on the display from the kept composite");
     assert_eq!(kt_time::work::count(kt_time::work::Work::CompositeReplay) - r0, 1);
+    assert_eq!(runs(()), s0, "the replay composed nothing on the slow device");
     let other = loop {
         let c = ask(Tick(SEC + STEP));
         if c.complete {
             break c;
         }
     };
-    assert!(!other.on_display, "a moment not kept still goes to the slow device: the replay timed no chain");
+    assert!(runs(()) > s0, "a moment not kept still goes to the slow device: the replay timed no chain");
+    assert!(other.on_display, "and is shown from the display's memo (t2705)");
 }
 
 // ---- gpu-arbiter ---------------------------------------------------------------------------------

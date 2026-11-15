@@ -437,4 +437,7 @@ pub struct GpuStages {
     /// the frame is incomplete and the preview writes the catch-up under Loading
     /// (catch-up-shows-loading).
     pub stream_short: u64,
+    /// The slow-chain route's composite, kept on the display's executor, was shown from there
+    /// (stream-round-trips D7, found-defects 622): the bytes are not uploaded again into the interface.
+    pub shown_kept: bool,
 }

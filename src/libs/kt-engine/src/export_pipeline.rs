@@ -253,8 +253,11 @@ impl Gate {
 }
 
 /// A frame for a worker: compose it or only convert the GPU's readback.
-enum Job {
+enum Job<'a> {
     Compose { t: Tick },
+    /// A frame whose plan the compose thread built: a project with a stream stage, whose history
+    /// advances in frame order (stream-round-trips D6, found-defects 490).
+    Planned { t: Tick, plan: crate::video_plan::FramePlan<'a> },
     Convert { t: Tick, rgba: Vec<u8>, complete: bool },
 }
 
@@ -370,6 +373,7 @@ pub(crate) fn run<S: ExportSink>(
         return Err(std::io::Error::other("no video device"));
     }
     let workers = if engines.is_empty() { frame_workers() } else { engines.len() };
+    let streams = video.has_stream_stages();
     if let Some(p) = prof {
         p.frame_workers.store(workers as u64, Ordering::Relaxed);
     }
@@ -382,7 +386,7 @@ pub(crate) fn run<S: ExportSink>(
         let mut back_txs = Vec::new();
         let mut worker_parts = Vec::new();
         for _ in 0..workers {
-            let (jt, jr) = bounded::<Job>(1);
+            let (jt, jr) = bounded::<Job<'_>>(1);
             let (dt, dr) = bounded::<Done<S::Frame>>(2);
             let (bt, br) = unbounded::<S::Frame>();
             for _ in 0..2 {
@@ -449,6 +453,12 @@ pub(crate) fn run<S: ExportSink>(
                     return Err(cancelled());
                 }
                 let mark = Instant::now();
+                // a range starting inside a stream's history decodes and walks it first, in bounded
+                // batches, as the serial export's pre-roll does (stream-round-trips D6); later chunks
+                // continue the walk the compose thread advances
+                if streams && ch.first == 0 {
+                    crate::export::stream_preroll(video_ref, cache_ref, &mut src, frame_tick(0), quality);
+                }
                 let held = decode_chunk(video_ref, cache_ref, &mut src, *ch, quality);
                 ledger.push_back((ch.end, held));
                 ExportProfile::add(prof.map(|p| &p.decode_ns), mark);
@@ -472,11 +482,14 @@ pub(crate) fn run<S: ExportSink>(
                     let Ok(job) = jr.recv() else { break };
                     ExportProfile::add(prof.map(|p| &p.wait_workers_ns), idle);
                     let (t, rgba, complete) = match job {
-                        Job::Compose { t } => {
+                        Job::Compose { t } | Job::Planned { t, .. } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
                             let e = engine.as_ref().expect("only a worker with an engine composes");
-                            let plan = video_ref.frame_plan(cache_ref, t, quality);
+                            let plan = match job {
+                                Job::Planned { plan, .. } => plan,
+                                _ => video_ref.frame_plan(cache_ref, t, quality),
+                            };
                             ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
                             let mut complete = e
                                 .execute_once(&plan, &mut buf)
@@ -526,7 +539,7 @@ pub(crate) fn run<S: ExportSink>(
             let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
             let mut pending: std::collections::VecDeque<(u64, u64)> = Default::default();
             let depth = gpu.as_ref().map_or(0, |g| g.readback_depth());
-            let send = |i: u64, job: Job| job_txs[(i % workers as u64) as usize].send(job).is_ok();
+            let send = |i: u64, job| job_txs[(i % workers as u64) as usize].send(job).is_ok();
             let collect = |gpu: &Arc<dyn crate::VideoGpuExec>, i: u64, ticket: u64| -> std::io::Result<bool> {
                 let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                 let mark = Instant::now();
@@ -573,7 +586,17 @@ pub(crate) fn run<S: ExportSink>(
                     }
                     let t = frame_tick(i);
                     let Some(gpu) = &gpu else {
-                        if !send(i, Job::Compose { t }) {
+                        // a stream stage's history is walked here, frame after frame, never by two
+                        // workers at once over each other's positions
+                        let job = if streams {
+                            let mark = Instant::now();
+                            let plan = video_ref.frame_plan(cache_ref, t, quality);
+                            ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
+                            Job::Planned { t, plan }
+                        } else {
+                            Job::Compose { t }
+                        };
+                        if !send(i, job) {
                             return Ok(());
                         }
                         continue;

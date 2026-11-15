@@ -1536,6 +1536,13 @@ impl PreviewParts {
                             if fill {
                                 FILL_KEY.with(|k| k.set(Some(key)));
                             }
+                            // the picture now lies on the display's device: shown from there, it is not
+                            // uploaded a second time into the interface (stream-round-trips D7, row 622)
+                            if let Some(o) = kept_on
+                                && d.present_kept(key, o)
+                            {
+                                stages.shown_kept = true;
+                            }
                         }
                         display
                     }
