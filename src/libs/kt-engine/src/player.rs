@@ -2998,10 +2998,23 @@ fn tell_loop(
 /// The frames ahead for a pass interval of `interval` (see `STREAM_AHEAD_MIN`).
 fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std::time::Duration) -> usize {
     let fps = kt_time::TICK_HZ as f64 / video.grid.frame_step().max(1) as f64;
-    let want = (interval.as_secs_f64() * fps * 2.0).ceil() as usize;
-    let per_position = 2 * video.stream_frame_bytes(t, q).max(1);
-    let room = crate::video::stream_memo().bytes_cap() / 4 / per_position;
+    let want = ((interval.as_secs_f64() * fps * 2.0).ceil() as usize).min(stream_walk_cap(video));
+    let bytes = video.stream_frame_bytes(t, q);
+    if bytes == 0 {
+        // no stage on screen: a stage starting just ahead is reached by the near walk's minimum
+        return STREAM_AHEAD_MIN;
+    }
+    let room = crate::video::stream_memo().bytes_cap() / 4 / (2 * bytes);
     want.max(STREAM_AHEAD_MIN).min(room.max(1))
+}
+
+/// Seconds of frames a look-ahead walk takes at most, whatever the memo holds (stream-round-trips
+/// D8, found-defects 660): the walk's own loop is a step a frame.
+const STREAM_WALK_SECS: i64 = 60;
+
+/// `STREAM_WALK_SECS` in frames of the project.
+fn stream_walk_cap(video: &VideoRenderer) -> usize {
+    (STREAM_WALK_SECS * kt_time::TICK_HZ as i64 / video.grid.frame_step().max(1)) as usize
 }
 
 /// Passes in a row in which the far look-ahead stayed pending and computed nothing before it stops
@@ -3015,13 +3028,21 @@ const FAR_STALLS: u32 = 8;
 /// loop, nothing.
 pub fn stream_far_frames(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, playing: bool) -> usize {
     let step = video.grid.frame_step().max(1);
-    let per_position = 2 * video.stream_frame_bytes(t, q).max(1);
+    // no stage on screen, nothing to walk far (found-defects 660): with a frame size of 0 the divisor
+    // was 2 bytes, and a quarter of a 256 MB memo made the walk 33.5 million frames — 26 s of the
+    // prefetch thread every pass while a piece without a stream played, its look-ahead starved
+    let bytes = video.stream_frame_bytes(t, q);
+    if bytes == 0 {
+        return 0;
+    }
+    let per_position = 2 * bytes;
     let memo = video.stream_memo_cap();
-    match region.filter(|&(s, e)| s <= t.0 && t.0 < e) {
+    let far = match region.filter(|&(s, e)| s <= t.0 && t.0 < e) {
         Some((s, e)) => (((e - s) / step) as usize + 1).min((memo / per_position).max(1)),
         None if playing => (memo / 4 / per_position).max(1),
         None => 0,
-    }
+    };
+    far.min(stream_walk_cap(video))
 }
 
 /// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).

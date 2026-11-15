@@ -693,18 +693,31 @@ impl ComputeDevice {
         let submitted_ns = kt_time::trace::now_ns();
         let sub = self.queue.submit([enc.finish()]);
         pieces.push((from, job.steps.len(), submitted_ns));
+        // this job's own submission: a wait for "the most recent" one waited for every piece another
+        // thread submitted to the device after it too (stream-round-trips D9, found-defects 661: its
+        // buffers came back 311 ms after its last dispatch ended at the median on the owner's iGPU)
+        let mine = wgpu::PollType::Wait { submission_index: Some(sub.clone()), timeout: None };
         let _flight = piece.end(&self.device, &self.queue, sub, false);
         if let Some(e) = pollster::block_on(scope.pop()) {
             self.give_back(stamps, learns);
             return Err(format!("compute job refused: {e}"));
         }
+        // every read mapped first, then one wait: a wait per buffer was a poll per buffer
+        let maps: Vec<std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>> = staging
+            .iter()
+            .map(|st| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                st.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                rx
+            })
+            .collect();
+        if !maps.is_empty() {
+            d.poll(mine.clone()).map_err(|e| e.to_string())?;
+        }
         let mut out = Vec::with_capacity(staging.len());
-        for (st, b) in staging.iter().zip(job.reads) {
-            let (tx, rx) = std::sync::mpsc::channel();
-            st.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
-            d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        for ((st, b), rx) in staging.iter().zip(job.reads).zip(maps) {
             rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
             let len = job.buffers[b.0].len();
             out.push(st.slice(..len).get_mapped_range().map_err(|e| e.to_string())?.to_vec());
@@ -720,7 +733,7 @@ impl ComputeDevice {
                     let _ = tx.send(r);
                 });
                 // the job's own wait has passed: this map is ready at the next poll
-                d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+                d.poll(mine).map_err(|e| e.to_string())?;
                 if let Ok(Ok(())) = rx.recv() {
                     let ticks: Vec<u64> = st
                         .slice(..bytes)

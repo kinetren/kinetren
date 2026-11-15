@@ -1055,3 +1055,21 @@ fn t2432_a_loop_is_computed_to_its_end() {
         assert!(of(&again, Ev::ComputeJob).is_empty(), "a complete history ran jobs again");
     }
 }
+
+/// t2710 (stream-round-trips D8, found-defects 660, kkt-26.11.15 N2): playing a piece with no stream
+/// stage on screen in a project that has one elsewhere, the far look-ahead walks nothing — it walked
+/// 33.5 million frames a pass (26 s of the prefetch thread on the owner's machine, the look-ahead
+/// starved) — and inside a stage it walks at most `STREAM_WALK_SECS` of frames whatever the memo holds.
+#[test]
+fn t2710_no_stage_on_screen_walks_nothing_far() {
+    let _g = serial();
+    let p = mosh_project();
+    let vr = renderer(&p, None);
+    let plain = Tick(SEC / 2);
+    assert_eq!(vr.stream_frame_bytes(plain, Q), 0, "the scene: no stage at the frame on screen");
+    assert_eq!(kt_engine::player::stream_far_frames(&vr, plain, Q, None, true), 0, "a far walk with no stage on screen");
+    let inside = Tick(3 * SEC);
+    let far = kt_engine::player::stream_far_frames(&vr, inside, Q, None, true);
+    assert!(far > 0, "a stage on screen walks ahead");
+    assert!(far <= 60 * 30, "{far} frames: more than a minute of the project");
+}
