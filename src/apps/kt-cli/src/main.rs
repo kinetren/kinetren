@@ -1070,6 +1070,7 @@ fn preview_run(
     cold: bool,
     looped: Option<f64>,
     wav: Option<String>,
+    device_open_ms: f64,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
@@ -1110,6 +1111,7 @@ fn preview_run(
         settle: if cold { std::time::Duration::ZERO } else { BENCH_SETTLE },
         loop_for: looped.map(std::time::Duration::from_secs_f64),
         capture: wav.is_some(),
+        device_open: std::time::Duration::from_secs_f64(device_open_ms.max(0.0) / 1e3),
         ..Default::default()
     };
     let replays0 = (
@@ -1163,6 +1165,9 @@ fn preview_run(
         r.incomplete,
         r.underruns
     );
+    // what Play waited for before the first sound (play-start-and-prefetch D4): the device's open,
+    // the start's pass, a build
+    println!("  play → first sound {:.1} ms (the device opens in {device_open_ms:.0} ms)", r.first_sound_ms);
     println!(
         "  UI thread in the preview, ms per UI frame: p50 {:.1}, p95 {:.1}, max {:.1}",
         r.ui_stall_ms.p50, r.ui_stall_ms.p95, r.ui_stall_ms.max
@@ -1698,7 +1703,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N]"
                 );
                 return 2;
             };
@@ -1719,7 +1724,8 @@ fn run(args: &[String]) -> i32 {
             let cold = args.iter().any(|a| a == "--cold");
             let looped = opt("--loop").and_then(|s| s.parse::<f64>().ok());
             let wav = opt("--wav").cloned();
-            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav) {
+            let device_open_ms = opt("--device-open-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
