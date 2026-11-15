@@ -144,6 +144,12 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   telemetry-journal lines), the next start absorbs one no supervisor took
   (`journal::absorb_native_report`). Nothing in the handler may call into the program. A test that
   crashes on purpose does it in a child (`t1072_child_body` modes).
+- **A GPU error is a journal line, never a crash** (gpu-errors-survive): `run` sets
+  `kt_gpu::errors::set_sink` to `journal::log("GPU", …)` and watches eframe's device in the creation
+  closure; `ui()` calls `kt_gpu::errors::display_frame()` first (it spends a refused reconfigure's
+  hold). The owner's kt26.11.10 died on a maximize while a loop played: egui's `Surface::configure`
+  found the queue busy with the preview's present. Live `resize_loop` meets that race through the
+  bench's `gpu_busy` and is red on the old code.
 - **Every wgpu device opens through kt-gpu's one instance** (`kt_gpu::GpuContext`, `compute::open`,
   `adapter_facts`): a new `wgpu::Instance::new` in kt-app is the race that killed t985, t986, t1312
   and t958 under load (segv-crashes D4).

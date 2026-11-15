@@ -181,6 +181,7 @@ pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
         ..Default::default()
     }))
     .map_err(|e| e.to_string())?;
+    crate::errors::watch(&device, crate::errors::role::COMPUTE);
     let stamps = make_stamps(&device);
     let info = adapter.get_info();
     crate::context::trace_device("compute", &info, &device);

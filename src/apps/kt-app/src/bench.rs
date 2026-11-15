@@ -138,6 +138,58 @@ pub(crate) enum Cmd {
     /// A native fault (SIGSEGV) on a thread named `live-fault` — the native-crash report's live
     /// scenario (segv-crashes). The bench alone asks for it.
     Fault,
+    /// Keep the window's device busy for N submissions from a thread of its own, as the preview's
+    /// thread does under a heavy loop: a resize meanwhile finds the queue busy (gpu-errors-survive,
+    /// live `resize_loop`). The bench alone asks for it.
+    GpuBusy(u64),
+}
+
+/// `Cmd::GpuBusy`: clear a large target on the window's device `count` times, two submissions in
+/// flight, each after the display's hold like every other submission there.
+pub(crate) fn gpu_busy(device: &eframe::wgpu::Device, queue: &eframe::wgpu::Queue, count: u64) {
+    use eframe::wgpu;
+    let tex = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("live gpu busy"),
+        size: wgpu::Extent3d { width: 2048, height: 2048, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = tex.create_view(&Default::default());
+    crate::journal::log("BENCH", &format!("the window's device is kept busy: {count} submissions"));
+    // two submissions in flight, never a blocking wait: a wait here would hold the device against the
+    // UI thread's reconfigure, the one thing this stands in for is a thread that keeps submitting
+    let flight = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    for _ in 0..count {
+        while flight.load(std::sync::atomic::Ordering::Acquire) >= 2 {
+            let _ = device.poll(wgpu::PollType::Poll);
+            std::thread::yield_now();
+        }
+        kt_gpu::errors::yield_to_display();
+        let mut enc = device.create_command_encoder(&Default::default());
+        for _ in 0..4 {
+            let _ = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("live gpu busy"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                })],
+                ..Default::default()
+            });
+        }
+        flight.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        queue.submit([enc.finish()]);
+        let f = flight.clone();
+        queue.on_submitted_work_done(move || {
+            f.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        });
+    }
+    crate::journal::log("BENCH", "the window's device is no longer kept busy");
 }
 
 /// The store assigned by the bench (see `Cmd::Store`). `user_store::store_dir`
@@ -192,6 +244,7 @@ pub(crate) fn poll() -> Option<(u64, Cmd)> {
         "noop" => Cmd::Noop,
         "crash" => Cmd::Crash,
         "fault" => Cmd::Fault,
+        "gpu_busy" => Cmd::GpuBusy(it.next()?.trim().parse().ok()?),
         _ => return None,
     };
     Some((seq, cmd))

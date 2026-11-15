@@ -142,6 +142,9 @@ impl GpuContext {
         adapter_info: wgpu::AdapterInfo,
     ) -> GpuContext {
         trace_device("display", &adapter_info, &device);
+        // the window's device is eframe's: its surface reconfigures on the UI thread while the
+        // preview's thread composes on it (gpu-errors-survive)
+        crate::errors::watch(&device, crate::errors::role::DISPLAY);
         GpuContext { device, queue, adapter_info }
     }
 
@@ -166,6 +169,7 @@ impl GpuContext {
             }),
         )
         .ok()?;
+        crate::errors::watch(&device, crate::errors::role::D3D12);
         Some(GpuContext { device: Arc::new(device), queue: Arc::new(queue), adapter_info: info })
     }
 
@@ -203,8 +207,14 @@ impl GpuContext {
             ..Default::default()
         }))
         .map_err(|e| GpuInitError::Device(e.to_string()))?;
-        let role = if default == wgpu::PowerPreference::HighPerformance { "export" } else { "headless" };
+        let role = if default == wgpu::PowerPreference::HighPerformance {
+            crate::errors::role::EXPORT
+        } else {
+            crate::errors::role::HEADLESS
+        };
         trace_device(role, &adapter.get_info(), &device);
+        // a GPU error never ends the program (gpu-errors-survive)
+        crate::errors::watch(&device, role);
         Ok(GpuContext {
             device: Arc::new(device),
             queue: Arc::new(queue),

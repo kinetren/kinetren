@@ -21,6 +21,14 @@ is no picture, and an export refuses.
   **Except a GL device**: GL adapters of one instance share its one EGL context, so a GL device opens
   from `own_instance` (dropped with it); on the shared one, the offline engine and the export's
   engines hit EGL_BAD_ACCESS in `GpuFxEngine::build` and every render from the editor died. t2088.
+- **A wgpu error never ends the program** (gpu-errors-survive, kkt-26.11.15 N1): every opener calls
+  `errors::watch(device, role)` (uncaptured-error handler + device-lost callback → the sink, counted
+  per role); a NEW way to open or receive a device calls it too, or its first error is wgpu's default
+  panic. A new composing entry point of `GpuFxEngine` runs through `Inner::guarded` (thread-local
+  scopes → `GpuExecError::Validation`) and calls `yield_to_display` first; anything else that submits
+  on the window's device off the UI thread calls `errors::yield_to_display()`: a refused
+  `Surface::configure` (another thread submitted while it waited for idle) holds those for two UI
+  frames. t2720–t2724.
 - **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
   sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
   with table reads lane by lane, ten times the cost. Write taps out, or specialize the text
