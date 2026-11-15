@@ -205,7 +205,8 @@ def main(out):
 
         # --- lesson 5 ------------------------------------------------------------------------
         app.click_probe("lessons.next", "Next lesson")
-        app.expect(app.has_probe("lesson.mark.tb.render") and app.has_probe("tb.render"), "the render button is outlined")
+        app.expect(app.until(lambda: app.has_probe("lesson.mark.tb.render", tries=2) and app.has_probe("tb.render", tries=2)),
+                   "the render button is outlined")
         app.click_probe("lessons.show", "Show")
         app.expect(app.has_probe("lesson.mark.menu"), "Show opened File with Render to MP4… outlined")
         app.step("l5-show", "the File menu, Render to MP4… outlined")
