@@ -58,11 +58,14 @@ asks it first and converts a held frame with the same `datamosh:convert` step on
 
 ### D4. The front memo keeps both forms
 
-The memo keys by (stream address, form): a held buffer and read-back bytes are separate entries, so
-a reader of bytes (the reference walk) never gets a buffer and the other way round; both count
-against the same 64 MB (row 542 stays: the memo is outside the ledger). The held buffers' spares
-(at most a codec batch's bytes, 192 MB) report to the ledger as compute buffers, so a walk's batches
-after the first create nothing.
+The memo keys by (stream address, form): a held buffer and read-back bytes are separate entries (a
+held entry's address is the stream address salted), so a reader of bytes (the reference walk) never
+gets a buffer and the other way round. Since loop-keeps-its-lap (row 542) the memo is a `StreamMemo`
+granted by the ledger as stream history and told of the preview's loop; a held entry's bytes count in
+that grant like read-back bytes — device memory of the compute host, but the same picture the memo
+would otherwise keep in processor memory, so the bound holds the walk's front either way. The held
+buffers' spares (at most a codec batch's bytes, 192 MB) report to the ledger as compute buffers, so a
+walk's batches after the first create nothing.
 
 ### D5. The A/B and the instruments
 

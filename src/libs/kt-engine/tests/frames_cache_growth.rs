@@ -67,13 +67,16 @@ fn ledger(available: u64) -> &'static kt_time::mem::Ledger {
 
 /// One lap of the loop region as the player's prefetch thread drives it: a pass at every frame (the
 /// window folded into the region), the sizing after it, the misses filled, the frame read by the plan.
-fn lap(vr: &VideoRenderer, cache: &Arc<BurstCache>, q: Quality, region: (i64, i64), sizing: &mut FramesSizing) {
+/// The frames decoded in the lap.
+fn lap(vr: &VideoRenderer, cache: &Arc<BurstCache>, q: Quality, region: (i64, i64), sizing: &mut FramesSizing) -> usize {
     let step = vr.grid.frame_step();
+    let mut decoded = 0;
     let mut t = Tick(region.0);
     while t.0 < region.1 {
         let (missing, window) = video_prefetch_pass_sized(vr, cache, t, q, Some(region), &|_| false);
         size_frames_cache(vr, cache, q, Some(region), 1, window, sizing);
         for (m, pts, dq) in missing {
+            decoded += 1;
             let frame = VideoFrame {
                 pts,
                 width: dq.width,
@@ -87,6 +90,7 @@ fn lap(vr: &VideoRenderer, cache: &Arc<BurstCache>, q: Quality, region: (i64, i6
         let _ = vr.frame_plan(cache, t, q);
         t = Tick(t.0 + step);
     }
+    decoded
 }
 
 /// t2393: three 640×360 layers over a 12 s loop are 830 MB of frames, past the 512 MiB base. With
@@ -138,6 +142,46 @@ fn t2393_a_loop_past_the_base_is_held_whole_when_the_memory_is_there() {
     lap(&vr, &cache, small, region, &mut sizing);
     assert!(cache.max_video_bytes() < cap, "a lower quality wants less: {} MB", cache.max_video_bytes() >> 20);
     assert!(cache.video_bytes() <= cache.max_video_bytes());
+}
+
+/// t2606 (loop-keeps-its-lap, found-defects 551): the same 830 MB loop over the 512 MiB base with
+/// no memory to grow, driven as the player drives it — the cache told of the loop, a lap marked at
+/// each wrap. The plain LRU decodes every frame of every lap; told of the loop, the cache keeps a
+/// stable part of it and later laps decode only the rest, with no frame of the look-ahead dropped
+/// unread.
+#[test]
+fn t2606_a_loop_past_the_bound_keeps_a_part_when_the_memory_is_not_there() {
+    let p = stack(3);
+    let vr = VideoRenderer::new(&p);
+    let q = Quality { width: 640, height: 360 };
+    let region = (2 * SEC, 14 * SEC);
+    let frames = 3 * 300;
+    let blind: &'static kt_time::mem::Ledger = Box::leak(Box::new(kt_time::mem::Ledger::new()));
+    let run = |tell: bool| {
+        let cache = Arc::new(BurstCache::with_ledger(CacheConfig::default(), blind));
+        let mut sizing = FramesSizing::default();
+        cache.keep_loop(tell);
+        let laps: Vec<usize> = (0..4)
+            .map(|i| {
+                if i > 0 {
+                    cache.lap();
+                }
+                lap(&vr, &cache, q, region, &mut sizing)
+            })
+            .collect();
+        (laps, cache.stats().unused_evictions)
+    };
+    let (plain, _) = run(false);
+    assert!(plain[1..].iter().all(|&d| d >= frames), "the plain LRU decodes every frame of every lap: {plain:?}");
+    let (kept, thrash) = run(true);
+    // the first lap decodes every frame, and the look-ahead folded past the wrap the next lap's head
+    assert!(kept[0] >= frames, "{kept:?}");
+    for (i, &d) in kept.iter().enumerate().skip(1) {
+        // half of the 512 MiB base is 291 frames of 640×360
+        assert!(d <= frames - 250, "lap {i} decoded {d} of {frames}: {kept:?}");
+    }
+    assert!(kept[2..].windows(2).all(|w| w[0] == w[1]), "the kept part is stable: {kept:?}");
+    assert_eq!(thrash, 0, "no frame of the look-ahead is dropped unread");
 }
 
 /// t2394: the stream pacing of a shared renderer build orders a quarter of the cache's cap as it is

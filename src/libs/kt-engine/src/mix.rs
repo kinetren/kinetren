@@ -18,21 +18,31 @@
 //!   chunk the store cannot hand out whole the effects are brought back — through the replayed
 //!   frames when they are short, else a reset and a discarded play of their settle length through
 //!   the same path (a loop's wrap included) — and a chunk the effects could not warm for is not kept.
-//! - Bounded ([`MIX_BUDGET_BYTES`]), least recently heard first; what is evicted leaves the bars.
+//! - Bounded: [`MIX_BUDGET_BYTES`] plus what the memory ledger grants the loop it plays
+//!   ([`MixBudget`], loop-keeps-its-lap), least recently heard first; what is evicted leaves the bars.
+//!   A loop longer than the bound keeps a stable PREFIX of its lap (`retain_laps` tells the store the
+//!   loop): the bursts of other contexts go first, then the lap's latest; a lap burst past what is kept
+//!   is not admitted. An LRU over a cycle longer than itself evicts exactly what the next lap hears
+//!   first, so a loop one burst too long kept nothing (found-defects 550).
 
 use crate::audio::{AudioRenderer, RenderStats};
 use crate::fxstore::FxStateStore;
 use crate::fetch::AudioFetcher;
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// 64 MB: 2.9 minutes of the final mix.
+/// 64 MB: 2.9 minutes of the final mix, the base the ledger never cuts.
 pub const MIX_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
 const UNIT: i64 = AUDIO_BURST_FRAMES as i64;
 const UNIT_SAMPLES: usize = AUDIO_BURST_FRAMES * AUDIO_CHANNELS;
+/// The bytes of one kept burst.
+const UNIT_BYTES: usize = UNIT_SAMPLES * 4;
+/// The rounding of the kept mix's want: a region dragged a little asks nothing new.
+const WANT_STEP: usize = 16 << 20;
 
 /// Which playing a recording belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -52,17 +62,79 @@ struct Unit {
     stamp: u64,
 }
 
+/// The kept mix's account in the memory ledger and its own want (loop-keeps-its-lap): the render
+/// thread's store reports to it and reads its bound at each new burst (atomics, invariant 2); the
+/// player's prefetch thread asks the ledger by the loop ([`MixBudget::ask`]), so the ledger's sizing —
+/// and the hooks of the tenants it takes back from — never runs on the render thread.
+pub struct MixBudget {
+    account: kt_time::mem::Account,
+    /// What this store asked above its base; 0 — it never asked, and its bound is its base.
+    want: AtomicU64,
+}
+
+impl MixBudget {
+    /// A budget of `base` bytes in the process's ledger.
+    pub fn new(base: usize) -> Arc<MixBudget> {
+        MixBudget::with_ledger(base, kt_time::mem::ledger())
+    }
+
+    /// A budget reporting to `ledger` (tests make their own).
+    pub fn with_ledger(base: usize, ledger: &'static kt_time::mem::Ledger) -> Arc<MixBudget> {
+        Arc::new(MixBudget { account: ledger.open(kt_time::mem::Tenant::Mix, base as u64), want: AtomicU64::new(0) })
+    }
+
+    /// The bound now: the base plus the ledger's grant, at most this store's own want (read at use: the
+    /// ledger tells a keeper only of a shrink).
+    pub fn cap(&self) -> usize {
+        let a = &self.account;
+        let own = (a.cap() - a.base()).min(self.want.load(Ordering::Relaxed));
+        usize::try_from(a.base().saturating_add(own)).unwrap_or(usize::MAX)
+    }
+
+    /// Ask the ledger for a bound of `total` bytes (below the base: none); the bound now.
+    pub fn ask(&self, total: usize) -> usize {
+        let extra = (total as u64).saturating_sub(self.account.base());
+        if extra != self.want.swap(extra, Ordering::Relaxed) {
+            self.account.want(extra);
+        }
+        self.cap()
+    }
+
+    /// Call `hook` when the ledger takes the kind's grant back (the player wakes the render thread,
+    /// which evicts down to the new bound: the store is that thread's alone).
+    pub fn on_shrink(&self, hook: impl Fn(u64) + Send + Sync + 'static) {
+        self.account.on_shrink(hook);
+    }
+
+    /// The bytes held, as the store reported them.
+    pub fn held(&self) -> u64 {
+        self.account.held()
+    }
+}
+
+/// What the kept mix wants for the loop region `[s, e)` in frames: every burst of it plus an eighth
+/// (the region's edge bursts, a lap of linear play inside it), rounded up to 16 MB; no loop — nothing.
+pub fn mix_want(region: Option<(i64, i64)>) -> usize {
+    let Some((s, e)) = region.filter(|(s, e)| e > s) else { return 0 };
+    let units = (e.div_euclid(UNIT) - s.div_euclid(UNIT) + 1) as usize;
+    let need = units.saturating_mul(UNIT_BYTES);
+    need.saturating_add(need / 8).div_ceil(WANT_STEP).saturating_mul(WANT_STEP)
+}
+
 /// The kept final mix, per context and timeline burst.
 pub struct MixStore {
     units: HashMap<(MixCtx, i64), Unit>,
-    /// stamp → key: the least recently heard first.
+    /// stamp → key of every burst but the kept loop's laps: the least recently heard first.
     order: BTreeMap<u64, (MixCtx, i64)>,
+    /// The bursts of the kept loop's laps, by burst index: the latest goes first.
+    lap_ks: BTreeSet<i64>,
+    /// The loop region whose laps the store keeps a prefix of (`retain_laps`).
+    looping: Option<(i64, i64)>,
     stamp: u64,
-    budget_units: usize,
     /// Something the bars show changed since the last `publish`.
     changed: bool,
-    /// Its account in the memory ledger (memory-ledger): the kept mix, its budget as the base.
-    account: kt_time::mem::Account,
+    /// Its account in the memory ledger (memory-ledger) and its bound (loop-keeps-its-lap).
+    budget: Arc<MixBudget>,
 }
 
 impl Default for MixStore {
@@ -72,20 +144,78 @@ impl Default for MixStore {
 }
 
 impl MixStore {
+    /// A store of its own budget of `budget_bytes` (tests; the player shares [`MixCoverage`]'s).
     pub fn new(budget_bytes: usize) -> MixStore {
+        MixStore::with_budget(MixBudget::new(budget_bytes))
+    }
+
+    pub fn with_budget(budget: Arc<MixBudget>) -> MixStore {
         MixStore {
             units: HashMap::new(),
             order: BTreeMap::new(),
+            lap_ks: BTreeSet::new(),
+            looping: None,
             stamp: 0,
-            budget_units: (budget_bytes / (UNIT_SAMPLES * 4)).max(2),
             changed: false,
-            account: kt_time::mem::open(kt_time::mem::Tenant::Mix, budget_bytes as u64),
+            budget,
         }
     }
 
     /// What it holds, to the memory ledger (atomics: the render thread may).
     fn report(&self) {
-        self.account.set((self.units.len() * UNIT_SAMPLES * 4) as u64);
+        self.budget.account.set((self.units.len() * UNIT_BYTES) as u64);
+    }
+
+    /// The bursts the bound holds now.
+    fn cap_units(&self) -> usize {
+        (self.budget.cap() / UNIT_BYTES).max(2)
+    }
+
+    /// Is `key` a burst of the kept loop's laps?
+    fn is_lap(&self, key: (MixCtx, i64)) -> bool {
+        matches!(key.0, MixCtx::Lap(s, e) if self.looping == Some((s, e)))
+    }
+
+    fn remove_unit(&mut self, key: (MixCtx, i64)) {
+        if let Some(u) = self.units.remove(&key) {
+            if self.is_lap(key) {
+                self.lap_ks.remove(&key.1);
+            } else {
+                self.order.remove(&u.stamp);
+            }
+            self.changed = true;
+        }
+    }
+
+    /// Drop one burst for room: the least recently heard outside the kept loop's laps, else the lap's
+    /// latest. `for_key` — the new burst the room is for: a lap burst later than every kept one takes
+    /// no room from them. False — nothing to drop.
+    fn drop_one(&mut self, for_key: Option<(MixCtx, i64)>) -> bool {
+        if let Some((_, k)) = self.order.pop_first() {
+            self.units.remove(&k);
+            self.changed = true;
+            return true;
+        }
+        let Some(&last) = self.lap_ks.last() else { return false };
+        if let Some(key) = for_key
+            && !(self.is_lap(key) && key.1 < last)
+        {
+            return false;
+        }
+        let Some((s, e)) = self.looping else { return false };
+        self.remove_unit((MixCtx::Lap(s, e), last));
+        true
+    }
+
+    /// Evict down to the bound (the ledger took the grant back: the player's render thread calls it
+    /// when woken, the store being that thread's alone).
+    pub fn fit(&mut self) {
+        let cap = self.cap_units();
+        if self.units.len() <= cap {
+            return;
+        }
+        while self.units.len() > cap && self.drop_one(None) {}
+        self.report();
     }
 
     pub fn len(&self) -> usize {
@@ -98,10 +228,13 @@ impl MixStore {
 
     fn touch(&mut self, key: (MixCtx, i64)) {
         self.stamp += 1;
+        let lap = self.is_lap(key);
         if let Some(u) = self.units.get_mut(&key) {
-            self.order.remove(&u.stamp);
+            if !lap {
+                self.order.remove(&u.stamp);
+                self.order.insert(self.stamp, key);
+            }
             u.stamp = self.stamp;
-            self.order.insert(self.stamp, key);
         }
     }
 
@@ -165,9 +298,11 @@ impl MixStore {
 
     /// Keep the frames `[start, start + data/2)` of `ctx`. A frame already held at the same
     /// scene stays as it was; a burst held at another scene is replaced; a piece that would not
-    /// join what a burst holds into one run is not kept.
-    pub fn write(&mut self, ctx: MixCtx, start: i64, data: &[f32], scene: &dyn Fn(i64) -> u64) {
+    /// join what a burst holds into one run is not kept. False — a new burst was not admitted: the
+    /// store is full of the kept loop's earlier bursts (a loop longer than its bound keeps a prefix).
+    pub fn write(&mut self, ctx: MixCtx, start: i64, data: &[f32], scene: &dyn Fn(i64) -> u64) -> bool {
         let n = (data.len() / AUDIO_CHANNELS) as i64;
+        let mut admitted = true;
         let mut f = start;
         while f < start + n {
             let k = f.div_euclid(UNIT);
@@ -197,59 +332,77 @@ impl MixStore {
                     }
                 }
                 _ => {
-                    if let Some(old) = self.units.remove(&key) {
-                        self.order.remove(&old.stamp);
+                    self.remove_unit(key);
+                    let cap = self.cap_units();
+                    let mut room = true;
+                    while self.units.len() >= cap {
+                        if !self.drop_one(Some(key)) {
+                            room = false;
+                            break;
+                        }
                     }
-                    let mut buf = vec![0f32; UNIT_SAMPLES].into_boxed_slice();
-                    buf[a as usize * AUDIO_CHANNELS..b as usize * AUDIO_CHANNELS].copy_from_slice(src);
-                    self.stamp += 1;
-                    self.units.insert(key, Unit { lo: a, hi: b, scene: sc, data: buf, stamp: self.stamp });
-                    self.order.insert(self.stamp, key);
+                    if room {
+                        let mut buf = vec![0f32; UNIT_SAMPLES].into_boxed_slice();
+                        buf[a as usize * AUDIO_CHANNELS..b as usize * AUDIO_CHANNELS].copy_from_slice(src);
+                        self.stamp += 1;
+                        self.units.insert(key, Unit { lo: a, hi: b, scene: sc, data: buf, stamp: self.stamp });
+                        if self.is_lap(key) {
+                            self.lap_ks.insert(k);
+                        } else {
+                            self.order.insert(self.stamp, key);
+                        }
+                    } else {
+                        admitted = false;
+                    }
                     self.changed = true;
-                    while self.units.len() > self.budget_units {
-                        let Some((_, oldest)) = self.order.pop_first() else { break };
-                        self.units.remove(&oldest);
-                    }
                     self.report();
                 }
             }
             f = to;
         }
+        admitted
     }
 
     /// Drop every burst whose scene the current renderer no longer gives it (after an edit).
     pub fn retain_valid(&mut self, scene: &dyn Fn(i64) -> u64) {
         let before = self.units.len();
-        let order = &mut self.order;
-        self.units.retain(|(_, k), u| {
-            let keep = u.scene == scene(*k);
-            if !keep {
-                order.remove(&u.stamp);
-            }
-            keep
-        });
+        self.units.retain(|(_, k), u| u.scene == scene(*k));
+        self.reindex();
         self.changed |= self.units.len() != before;
         self.report();
         let dropped = (before - self.units.len()) as u64;
         kt_time::trace::ev(kt_time::trace::Ev::Invalidate).aux(kt_time::trace::inval::MIX_STORE).b(dropped).emit();
     }
 
-    /// Drop the laps of every loop region but `keep`.
+    /// Drop the laps of every loop region but `keep`, and keep a prefix of `keep`'s laps when it is
+    /// longer than the bound (loop-keeps-its-lap).
     pub fn retain_laps(&mut self, keep: Option<(i64, i64)>) {
         let before = self.units.len();
-        let order = &mut self.order;
-        self.units.retain(|(ctx, _), u| {
-            let k = match ctx {
-                MixCtx::Linear => true,
-                MixCtx::Lap(s, e) => keep == Some((*s, *e)),
-            };
-            if !k {
-                order.remove(&u.stamp);
-            }
-            k
+        self.units.retain(|(ctx, _), _| match ctx {
+            MixCtx::Linear => true,
+            MixCtx::Lap(s, e) => keep == Some((*s, *e)),
         });
+        self.looping = keep;
+        self.reindex();
         self.changed |= self.units.len() != before;
         self.report();
+    }
+
+    /// Rebuild the eviction order from the units (after a retain or a new loop).
+    fn reindex(&mut self) {
+        self.order.clear();
+        self.lap_ks.clear();
+        let looping = self.looping;
+        for (key, u) in &self.units {
+            match key.0 {
+                MixCtx::Lap(s, e) if looping == Some((s, e)) => {
+                    self.lap_ks.insert(key.1);
+                }
+                _ => {
+                    self.order.insert(u.stamp, *key);
+                }
+            }
+        }
     }
 
     pub fn clear(&mut self) {
@@ -261,6 +414,7 @@ impl MixStore {
         self.changed |= !self.units.is_empty();
         self.units.clear();
         self.order.clear();
+        self.lap_ks.clear();
         self.report();
     }
 
@@ -291,7 +445,7 @@ impl MixStore {
     /// Publish the runs if they changed.
     pub fn publish(&mut self, to: &MixCoverage) {
         if std::mem::take(&mut self.changed) {
-            *to.0.lock().unwrap() = Arc::new(self.runs());
+            *to.runs.lock().unwrap() = Arc::new(self.runs());
         }
     }
 }
@@ -339,13 +493,29 @@ impl MixRuns {
     }
 }
 
-/// The store's runs as its thread last published them; the bars and the prefetch read it.
-#[derive(Debug, Default, Clone)]
-pub struct MixCoverage(pub Arc<Mutex<Arc<MixRuns>>>);
+/// The store's runs as its thread last published them; the bars and the prefetch read it. It carries
+/// the store's budget: the player's prefetch thread asks it by the loop.
+#[derive(Clone)]
+pub struct MixCoverage {
+    runs: Arc<Mutex<Arc<MixRuns>>>,
+    pub budget: Arc<MixBudget>,
+}
+
+impl Default for MixCoverage {
+    fn default() -> Self {
+        MixCoverage { runs: Default::default(), budget: MixBudget::new(MIX_BUDGET_BYTES) }
+    }
+}
+
+impl std::fmt::Debug for MixCoverage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MixCoverage").field("runs", &self.get()).finish()
+    }
+}
 
 impl MixCoverage {
     pub fn get(&self) -> Arc<MixRuns> {
-        self.0.lock().unwrap().clone()
+        self.runs.lock().unwrap().clone()
     }
 }
 
@@ -399,7 +569,7 @@ pub struct MixPlay {
 
 impl Default for MixPlay {
     fn default() -> Self {
-        MixPlay { store: MixStore::default(), stale_at: None, keep_from: i64::MIN }
+        MixPlay::with_store(MixStore::default())
     }
 }
 
@@ -436,6 +606,10 @@ fn render_chunk(
 }
 
 impl MixPlay {
+    pub fn with_store(store: MixStore) -> MixPlay {
+        MixPlay { store, stale_at: None, keep_from: i64::MIN }
+    }
+
     /// One chunk of the forward stream at the render head `head` into `out`: from the store when
     /// it holds all of it at the current scenes, else rendered live (`render_frames_with` or,
     /// under an armed loop, `render_looped_with`) and kept when nothing in it was missing and the
@@ -486,11 +660,12 @@ impl MixPlay {
             self.keep_from = self.keep_from.max(head + n + settle_at(renderer, region, head, n));
         }
         let keep = clean && head >= self.keep_from;
+        let mut admitted = true;
         if keep {
             let mut done = 0usize;
             for &(ctx, tl, m) in &parts {
                 let len = m as usize * AUDIO_CHANNELS;
-                self.store.write(ctx, tl, &out[done..done + len], &scene);
+                admitted &= self.store.write(ctx, tl, &out[done..done + len], &scene);
                 done += len;
             }
         }
@@ -500,7 +675,9 @@ impl MixPlay {
                 .a(head as u64)
                 .b(n as u64)
                 .c(why)
-                .aux(if keep {
+                .aux(if keep && !admitted {
+                    mix::PASSED
+                } else if keep {
                     mix::KEPT
                 } else if clean {
                     mix::UNSETTLED

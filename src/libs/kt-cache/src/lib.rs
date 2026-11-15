@@ -142,6 +142,11 @@ struct Entry {
     /// The width of an entry’s coverage in idx units (audio = 1 burst; video = the step of
     /// the frame grid in ticks — coverage is merged into honest bars, item 20).
     span: i64,
+    /// The lap of its last use — a read, a refresh, its insertion (`BurstCache::lap`).
+    lap: u64,
+    /// Admitted while its pool was full of the loop's own laps (loop-keeps-its-lap): it lives in the
+    /// window past the part of the loop the pool keeps, and goes first.
+    window: bool,
 }
 
 /// A set of non-overlapping half-open ranges [start, end) by idx.
@@ -245,7 +250,17 @@ struct Inner {
     /// item 409). Bounded, oldest first.
     past: HashMap<BurstKey, u64>,
     past_order: std::collections::VecDeque<BurstKey>,
+    /// A loop is kept (`keep_loop`).
+    looping: bool,
+    /// The laps the player marked (`lap`).
+    lap: u64,
+    /// Of each pool's bytes (audio, video), the window's (`Entry::window`).
+    window_bytes: [usize; 2],
 }
+
+/// The share of a pool's bound the window past a kept part of the loop takes (loop-keeps-its-lap):
+/// the look-ahead's — `video_prefetch_wants` cuts its window at half the video bound.
+const WINDOW_DIV: usize = 2;
 
 /// Evicted serials remembered (`Inner::past`): 24 bytes each.
 const PAST_SERIALS: usize = 1 << 16;
@@ -261,6 +276,76 @@ impl Inner {
             }
         }
     }
+}
+
+/// Add an entry's bytes to its pool (and to the pool's window).
+fn count(inner: &mut Inner, e: &Entry) {
+    let (b, a) = (e.payload.bytes(), e.payload.is_audio());
+    if a {
+        inner.audio_bytes += b;
+    } else {
+        inner.video_bytes += b;
+    }
+    if e.window {
+        inner.window_bytes[usize::from(!a)] += b;
+    }
+}
+
+/// Take an entry's bytes from its pool (and from the pool's window).
+fn uncount(inner: &mut Inner, e: &Entry) {
+    let (b, a) = (e.payload.bytes(), e.payload.is_audio());
+    if a {
+        inner.audio_bytes -= b;
+    } else {
+        inner.video_bytes -= b;
+    }
+    if e.window {
+        inner.window_bytes[usize::from(!a)] -= b;
+    }
+}
+
+fn pool_bytes(inner: &Inner, audio: bool) -> usize {
+    if audio { inner.audio_bytes } else { inner.video_bytes }
+}
+
+/// May the eviction of the pool (`audio`) take this entry?
+fn evictable(e: &Entry, audio: bool) -> bool {
+    !e.pinned && e.holds == 0 && e.payload.is_audio() == audio
+}
+
+/// The oldest evictable entry of a pool in the window (`window`) or the kept part, skipping `cause`;
+/// `read` — only one already read. A use stamps the lap with the recency, so the oldest kept entry
+/// carries the lowest lap.
+fn oldest_of_pool(inner: &Inner, audio: bool, window: bool, read: bool, cause: Option<BurstKey>) -> Option<(u64, BurstKey)> {
+    inner
+        .lru
+        .iter()
+        .find(|(_, k)| {
+            let e = &inner.map[k];
+            Some(**k) != cause && evictable(e, audio) && e.window == window && (e.had_hit || !read)
+        })
+        .map(|(r, k)| (*r, *k))
+}
+
+/// Does the pool hold a kept entry no recent lap used (neither this lap nor the last)?
+fn has_stale(inner: &Inner, audio: bool) -> bool {
+    oldest_of_pool(inner, audio, false, false, None).is_some_and(|(_, k)| inner.map[&k].lap + 1 < inner.lap)
+}
+
+/// The victim of a pool while a loop is kept (loop-keeps-its-lap), in this order: past its share of
+/// the bound, the window's oldest entry already read (what is not read yet is the look-ahead, which
+/// takes up to the same share: dropping it is thrash); a kept entry no recent lap used; the kept
+/// part's least recent (the window grows into it); the window's oldest; the new entry itself.
+fn loop_victim(inner: &Inner, audio: bool, cap: usize, cause: Option<BurstKey>) -> Option<(u64, BurstKey)> {
+    if inner.window_bytes[usize::from(!audio)] > cap / WINDOW_DIV
+        && let Some(v) = oldest_of_pool(inner, audio, true, true, cause)
+    {
+        return Some(v);
+    }
+    // the oldest kept entry is a stale one if any is; else it is the kept part's least recent
+    oldest_of_pool(inner, audio, false, false, cause)
+        .or_else(|| oldest_of_pool(inner, audio, true, false, cause))
+        .or_else(|| cause.and_then(|k| inner.map.get(&k).filter(|e| evictable(e, audio)).map(|e| (e.recency, k))))
 }
 
 /// Counters for the performance panel (cumulative; the UI computes the deltas).
@@ -338,6 +423,9 @@ impl BurstCache {
                 want_pass: 0,
                 past: HashMap::new(),
                 past_order: std::collections::VecDeque::new(),
+                looping: false,
+                lap: 0,
+                window_bytes: [0, 0],
             }),
             epoch: AtomicU64::new(0),
             stats: StatCounters::default(),
@@ -382,7 +470,7 @@ impl BurstCache {
             return;
         }
         let before = inner.map.len();
-        self.evict_over_budget(&mut inner, 0);
+        self.evict_over_budget(&mut inner, None);
         self.report(&inner);
         if inner.map.len() != before {
             self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -460,11 +548,13 @@ impl BurstCache {
         let mut inner = self.inner.lock().unwrap();
         inner.want_pass += 1;
         let pass = inner.want_pass;
+        let lap = inner.lap;
         for key in keys {
             inner.recency_counter += 1;
             let counter = inner.recency_counter;
             let Some(entry) = inner.map.get_mut(&key) else { continue };
             entry.wanted = pass;
+            entry.lap = lap;
             let old = entry.recency;
             entry.recency = counter;
             inner.lru.remove(&old);
@@ -525,6 +615,7 @@ impl BurstCache {
         inner.recency_counter += 1;
         let counter = inner.recency_counter;
         let is_audio = key.kind == BurstKind::Audio;
+        let lap = inner.lap;
         let Some(entry) = inner.map.get_mut(&key) else {
             match key.kind {
                 BurstKind::Audio => self.stats.audio_misses.fetch_add(1, Ordering::Relaxed),
@@ -537,6 +628,7 @@ impl BurstCache {
             false => self.stats.video_hits.fetch_add(1, Ordering::Relaxed),
         };
         entry.had_hit = true;
+        entry.lap = lap;
         let old = entry.recency;
         entry.recency = counter;
         let payload = entry.payload.clone();
@@ -612,12 +704,7 @@ impl BurstCache {
                 trace_evict(&key, false, old.wanted == inner.want_pass, key.trace_id());
             }
             inner.lru.remove(&old.recency);
-            let ob = old.payload.bytes();
-            if old.payload.is_audio() {
-                inner.audio_bytes -= ob;
-            } else {
-                inner.video_bytes -= ob;
-            }
+            uncount(&mut inner, &old);
             // the old coverage is removed with ITS span (it could have differed)
             if let Some(set) = inner.coverage.get_mut(&(key.source, key.kind)) {
                 set.remove_range(key.idx, key.idx + old.span);
@@ -632,27 +719,25 @@ impl BurstCache {
         // textures and frames by it alone and outlives any one cache, so a per-cache count gave a
         // new cache the old one's pictures (t1457, t1574, t1607).
         let serial = kept_serial.unwrap_or_else(|| NEXT_SERIAL.fetch_add(1, Ordering::Relaxed));
-        inner.map.insert(
-            key,
-            Entry { payload, serial, recency, pinned: false, holds, had_hit: false, wanted, span },
-        );
+        // the pool full of the loop's own laps: the new one goes to the window past the kept part
+        let cap = if is_audio { self.config.max_audio_bytes } else { self.max_video_bytes() };
+        let window = inner.looping && pool_bytes(&inner, is_audio) + bytes > cap && !has_stale(&inner, is_audio);
+        let lap = inner.lap;
+        let entry = Entry { payload, serial, recency, pinned: false, holds, had_hit: false, wanted, span, lap, window };
+        count(&mut inner, &entry);
+        inner.map.insert(key, entry);
         if holds > 0 {
             inner.held_bytes += bytes;
         }
         inner.lru.insert(recency, key);
         inner.by_source.entry(key.source).or_default().insert(key);
-        if is_audio {
-            inner.audio_bytes += bytes;
-        } else {
-            inner.video_bytes += bytes;
-        }
         inner
             .coverage
             .entry((key.source, key.kind))
             .or_default()
             .insert_range(key.idx, key.idx + span);
 
-        self.evict_over_budget(&mut inner, key.trace_id());
+        self.evict_over_budget(&mut inner, Some(key));
         self.report(&inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
         drop(inner);
@@ -676,24 +761,31 @@ impl BurstCache {
         }
     }
 
-    fn evict_over_budget(&self, inner: &mut Inner, by: u64) {
-        // Go from the oldest; pinned and held ones are skipped. If everything is — the budget
-        // may be exceeded, and this is deliberate (a pin is stronger than the budget).
+    /// Evict until both pools are within their bounds; `cause` — the key whose insertion made room
+    /// necessary. Pinned and held entries are skipped: if everything is, the bound may be exceeded, and
+    /// this is deliberate (a pin is stronger than the bound). While a loop is kept, the victim is
+    /// [`loop_victim`]'s; otherwise the least recently used.
+    fn evict_over_budget(&self, inner: &mut Inner, cause: Option<BurstKey>) {
+        let by = cause.map_or(0, |k| k.trace_id());
         let mut cursor = 0u64;
         let video_cap = self.max_video_bytes();
         while inner.audio_bytes > self.config.max_audio_bytes || inner.video_bytes > video_cap {
-            let Some((&recency, &key)) = inner.lru.range(cursor..).next() else {
+            let over_audio = inner.audio_bytes > self.config.max_audio_bytes;
+            let victim = if inner.looping {
+                let cap = if over_audio { self.config.max_audio_bytes } else { video_cap };
+                loop_victim(inner, over_audio, cap, cause)
+            } else {
+                // go from the oldest; the cursor never goes back, so a run of skipped entries is
+                // walked once
+                let found = inner.lru.range(cursor..).find(|(_, k)| evictable(&inner.map[k], over_audio)).map(|(r, k)| (*r, *k));
+                if let Some((r, _)) = found {
+                    cursor = r + 1;
+                }
+                found
+            };
+            let Some((recency, key)) = victim else {
                 break;
             };
-            cursor = recency + 1;
-            let entry = inner.map.get(&key).expect("lru/map sync");
-            if entry.pinned || entry.holds > 0 {
-                continue;
-            }
-            let over_audio = inner.audio_bytes > self.config.max_audio_bytes;
-            if entry.payload.is_audio() != over_audio {
-                continue; // evict from the pool that has been exceeded
-            }
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&recency);
             if let Some(keys) = inner.by_source.get_mut(&key.source) {
@@ -702,12 +794,7 @@ impl BurstCache {
                     inner.by_source.remove(&key.source);
                 }
             }
-            let b = entry.payload.bytes();
-            if entry.payload.is_audio() {
-                inner.audio_bytes -= b;
-            } else {
-                inner.video_bytes -= b;
-            }
+            uncount(inner, &entry);
             if let Some(set) = inner.coverage.get_mut(&(key.source, key.kind)) {
                 set.remove_range(key.idx, key.idx + entry.span);
             }
@@ -718,6 +805,34 @@ impl BurstCache {
                 self.count_unread_drop(&entry, inner.want_pass);
             }
         }
+    }
+
+    /// Keep the loop the player plays (`true`) or none (loop-keeps-its-lap, found-defects 551): a
+    /// loop a pool cannot hold keeps a part, lap after lap — an entry the current or the last lap
+    /// used is not evicted for a new one, which passes through a window of half the pool's bound
+    /// (the look-ahead's share). A new loop starts a fresh count: what an earlier one kept is stale.
+    pub fn keep_loop(&self, on: bool) {
+        let mut inner = self.inner.lock().unwrap();
+        if on {
+            inner.lap += 2;
+        } else {
+            for e in inner.map.values_mut() {
+                e.window = false;
+            }
+            inner.window_bytes = [0, 0];
+        }
+        inner.looping = on;
+    }
+
+    /// The player's loop came round (the moment shown went back inside it while playing): a new lap.
+    pub fn lap(&self) {
+        self.inner.lock().unwrap().lap += 1;
+    }
+
+    /// The bytes of the window past the kept part of a loop, (audio, video) (tests).
+    pub fn window_bytes(&self) -> (usize, usize) {
+        let w = self.inner.lock().unwrap().window_bytes;
+        (w[0], w[1])
     }
 
     /// The idx ranges actually lying in the cache, intersected with [range).
@@ -783,7 +898,7 @@ impl BurstCache {
                 inner.held_bytes -= bytes;
             }
         }
-        self.evict_over_budget(&mut inner, 0);
+        self.evict_over_budget(&mut inner, None);
         self.report(&inner);
     }
 
@@ -806,15 +921,10 @@ impl BurstCache {
         for key in keys {
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&entry.recency);
-            let b = entry.payload.bytes();
             if entry.holds > 0 {
-                inner.held_bytes -= b;
+                inner.held_bytes -= entry.payload.bytes();
             }
-            if entry.payload.is_audio() {
-                inner.audio_bytes -= b;
-            } else {
-                inner.video_bytes -= b;
-            }
+            uncount(&mut inner, &entry);
         }
         inner.coverage.retain(|(s, _), _| *s != source);
         self.report(&inner);
@@ -1398,5 +1508,82 @@ mod growth_tests {
         let blind: &'static kt_time::mem::Ledger = Box::leak(Box::new(kt_time::mem::Ledger::new()));
         let c = Arc::new(BurstCache::with_ledger(cfg, blind));
         assert_eq!(c.want_video(64 << 20), 1 << 20, "unknown memory: the base");
+    }
+
+    /// Laps of a loop of `n` frames read in order, missing frames decoded, inserted and read (the
+    /// composite reads what the prefetch brought), the lap marked at each start as the player marks
+    /// it; the hits of each lap.
+    fn laps(c: &BurstCache, n: i64, laps: usize, tell: bool) -> Vec<usize> {
+        let src = SourceId(1);
+        c.keep_loop(tell);
+        (0..laps)
+            .map(|lap| {
+                if lap > 0 {
+                    c.lap();
+                }
+                (0..n)
+                    .filter(|&i| {
+                        let hit = c.get_video(src, None, i).is_some();
+                        if !hit {
+                            c.insert_video(src, None, i, frame(1 << 10));
+                            let _ = c.get_video(src, None, i);
+                        }
+                        hit
+                    })
+                    .count()
+            })
+            .collect()
+    }
+
+    /// t2604 (loop-keeps-its-lap, found-defects 551): a loop twice the video bound, read lap after
+    /// lap. A plain LRU evicts exactly the frame the next lap reads first and hits nothing; told of the
+    /// loop, the cache keeps a stable part of it — half the bound — and every later lap reads that part
+    /// with no decode, the rest passing through the window.
+    #[test]
+    fn t2604_a_loop_longer_than_the_cache_keeps_a_part() {
+        let cfg = CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 10 << 10 };
+        let plain = laps(&BurstCache::new(cfg), 20, 6, false);
+        assert_eq!(plain, vec![0; 6], "a plain LRU over a cycle twice its size keeps nothing");
+        let c = BurstCache::new(cfg);
+        let kept = laps(&c, 20, 6, true);
+        assert_eq!(kept[0], 0);
+        for (lap, hits) in kept.iter().enumerate().skip(1) {
+            assert!(*hits >= 4, "lap {lap}: {hits} hits of 20 — the kept part is read with no decode ({kept:?})");
+        }
+        assert!(kept[2..].windows(2).all(|w| w[0] == w[1]), "the kept part is stable: {kept:?}");
+        assert!(c.video_bytes() <= 10 << 10, "the bound holds");
+        assert!(c.window_bytes().1 <= 6 << 10, "the window keeps to its half (one frame over at most)");
+    }
+
+    /// t2605 (loop-keeps-its-lap): told of a loop, entries no recent lap used (outside the loop) go
+    /// before any of the loop's, the new ones taking their place as kept entries; pins and holds stay;
+    /// a loop no longer kept turns the window back into plain entries.
+    #[test]
+    fn t2605_stale_entries_go_first_and_pins_stay() {
+        let c = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 10 << 10 });
+        let (out, src) = (SourceId(9), SourceId(1));
+        for i in 0..4 {
+            c.insert_video(out, None, i, frame(1 << 10));
+        }
+        c.keep_loop(true);
+        c.lap();
+        for i in 0..10 {
+            c.insert_video(src, None, i, frame(1 << 10));
+        }
+        assert!((0..4).all(|i| !c.contains_video(out, None, i)), "the stale entries went first");
+        assert!((0..10).all(|i| c.contains_video(src, None, i)), "the loop's entries took their place");
+        assert_eq!(c.window_bytes().1, 0, "replacing stale entries, they are kept, not windowed");
+        // full of the current lap: a new one is windowed; a held and a pinned entry outlast everything
+        assert!(c.hold_video(src, None, 0));
+        c.pin_range(src, BurstKind::video(None), 1..2);
+        for i in 10..40 {
+            c.insert_video(src, None, i, frame(1 << 10));
+        }
+        assert!(c.contains_video(src, None, 0) && c.contains_video(src, None, 1), "a hold and a pin stay");
+        assert!(c.window_bytes().1 > 0);
+        c.release_video([BurstKey { source: src, kind: BurstKind::video(None), idx: 0 }]);
+        c.keep_loop(false);
+        assert_eq!(c.window_bytes(), (0, 0), "no loop kept: no window");
+        assert!(c.video_bytes() <= 10 << 10);
     }
 }

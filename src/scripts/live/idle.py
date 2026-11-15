@@ -52,10 +52,21 @@ NO_WAKE_THREADS = (
     "fxthumbs", "kt-posters", "preview-compose", "trace-writer",
 )
 # the sound output (kept-mix-settle D5, found-defects 274): its thread opens the device on Play and
-# closes it a second after the play stopped, so on a pause after a play neither it nor what the device
-# brings into the process (cpal's ALSA worker, PipeWire's data loop) wakes; before, the open device
-# woke ~24 and ~48 times a second handing out silence
+# pauses it a second after the play stopped (play-start-and-prefetch D6: the next Play resumes it
+# instead of opening), so on a pause after a play neither it nor what the device brings into the
+# process (cpal's ALSA worker, PipeWire's data loop) wakes; before, the open device woke ~24 and ~48
+# times a second handing out silence
 AUDIO_THREADS = ("audio-output", "cpal_alsa_out", "pw-data-loop", "alsa-pipewire")
+
+
+def sound_stands(pid, window=0.5):
+    """No thread of the sound output woke over `window` seconds (a paused or closed device)."""
+    def sound(tw):
+        return {k: v for k, v in tw.items() if k.split("#")[0].startswith(AUDIO_THREADS)}
+    a = sound(thread_wakes(pid))
+    kt_live._poll(window)
+    b = sound(thread_wakes(pid))
+    return all(b[k] == a.get(k, b[k]) for k in b)
 
 
 def editor_pid(app):
@@ -231,9 +242,9 @@ def main(out):
         app.wait_playhead(lambda t: abs(t - h0) > 90_000, "the play sounds a second", timeout=30.0)
         app.key("space")
         app.until(lambda: not app.playing(), timeout=10.0)
-        app.step("played", "played a moment and paused: the sound device closes after a second")
-        # the device closes a second after the pause: what it brought into the process goes with it
-        app.until(lambda: not any(k.split("#")[0].startswith(AUDIO_THREADS[1:]) for k in thread_wakes(pid)), timeout=10.0)
+        app.step("played", "played a moment and paused: the sound device pauses after a second")
+        # the device pauses a second after the pause: what it brought into the process stays and stands
+        app.until(lambda: sound_stands(pid), timeout=10.0)
         wait_quiet(meter, "after the play")
         tw0 = thread_wakes(pid)
         kt_live._poll(5.0)

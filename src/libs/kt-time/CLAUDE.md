@@ -31,8 +31,8 @@ The time model of the whole engine. Zero dependencies (except serde).
 - **`mem` is the memory ledger** (memory-ledger, capability `media-index`, t2290, t2291): a keeper of
   pictures, mixes or device buffers opens an `Account` of its `Tenant` with its BASE (never cut) and
   reports `set(bytes)` (atomics: no lock, any thread). Growth above the bases is granted from ONE
-  budget, half of (available + growth held), in `Tenant`'s order — kept composites, stream history,
-  decoded frames; unknown memory or a live `Claim` (an export) grants nothing. A grant that shrinks
+  budget, half of (available + growth held), in `GROWING`'s order — the kept final mix
+  (loop-keeps-its-lap), kept composites, stream history, decoded frames; unknown memory or a live `Claim` (an export) grants nothing. A grant that shrinks
   calls the kind's `on_shrink` hooks after the lock and never for the kind that asked: a keeper asks
   under its own lock, and its hook takes it. A sizing runs only when a want or a claim changes, and
   records `mem_budget`/`mem_grant` only when something moved. A new cache that holds pictures, mixes

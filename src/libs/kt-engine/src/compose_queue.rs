@@ -129,9 +129,32 @@ impl Composer {
         }
     }
 
+    /// The flag is set and the waiter notified UNDER the ask lock (play-start-and-prefetch D2): set
+    /// between the waiter's look at it and its wait, an unlocked notify was lost and the thread
+    /// parked for good, holding the player's preview parts (it is not joined).
     pub(crate) fn stop(&self) {
+        let _g = self.ask.lock().unwrap();
         self.stop.store(true, Ordering::Release);
         self.ask_cv.notify_all();
+    }
+
+    /// The next ask, waited for: `Some(None)` — a nudge with no ask, `None` — stopped. `between` runs
+    /// after each look at the state, before the wait (a test's seam; the product passes nothing).
+    fn next_ask(&self, between: &dyn Fn()) -> Option<Option<Ask>> {
+        let mut g = self.ask.lock().unwrap();
+        loop {
+            if self.stop.load(Ordering::Acquire) {
+                return None;
+            }
+            if let Some(a) = g.take() {
+                return Some(Some(a));
+            }
+            if self.nudged.swap(false, Ordering::AcqRel) {
+                return Some(None);
+            }
+            between();
+            g = self.ask_cv.wait(g).unwrap();
+        }
     }
 }
 
@@ -175,21 +198,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
     let mut route = Route::default();
     let mut checked_gen = u64::MAX;
     loop {
-        let ask = {
-            let mut g = c.ask.lock().unwrap();
-            loop {
-                if c.stop.load(Ordering::Acquire) {
-                    return;
-                }
-                if let Some(a) = g.take() {
-                    break Some(a);
-                }
-                if c.nudged.swap(false, Ordering::AcqRel) {
-                    break None;
-                }
-                g = c.ask_cv.wait(g).unwrap();
-            }
-        };
+        let Some(ask) = c.next_ask(&|| {}) else { return };
         let Some(ask) = ask else {
             recheck(&c, &parts, &mut checked_gen);
             continue;
@@ -304,6 +313,35 @@ fn recheck(c: &Composer, parts: &PreviewParts, checked_gen: &mut u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test t2640 (play-start-and-prefetch D2): a stop that lands between the compose thread's look
+    /// at the flag and its wait still ends the wait. The seam holds the thread there; an unlocked
+    /// notify was lost and the thread parked for good.
+    #[test]
+    fn t2640_a_stop_between_the_look_and_the_wait_is_not_lost() {
+        let c = Composer::new();
+        let (looked_tx, looked) = std::sync::mpsc::channel();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        let waiter = {
+            let c = c.clone();
+            std::thread::spawn(move || {
+                let first = std::sync::atomic::AtomicBool::new(true);
+                let got = c.next_ask(&|| {
+                    if first.swap(false, Ordering::AcqRel) {
+                        looked_tx.send(()).unwrap();
+                        // the stop comes now, while the flag was already read as unset
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                });
+                done_tx.send(got.is_none()).unwrap();
+            })
+        };
+        looked.recv().unwrap();
+        c.stop();
+        let left = kt_time::test_deadline().saturating_duration_since(std::time::Instant::now());
+        assert_eq!(done.recv_timeout(left), Ok(true), "the compose thread missed the stop");
+        waiter.join().unwrap();
+    }
 
     /// Test t1841 (idle-cpu): a new project state is timed on the offline device first; a fast chain
     /// then goes to the display target, a slow one stays away from it, and an edit asks again.

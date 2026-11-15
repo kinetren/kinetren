@@ -37,10 +37,19 @@ pub struct AudioOutput {
 #[derive(Default)]
 pub struct OutputCtl {
     stop: AtomicBool,
-    /// A stream is open now.
+    /// A stream is open and calling back now.
     pub open: AtomicBool,
+    /// A stream is kept paused for the next Play, its callbacks seen to stand (play-start-and-prefetch
+    /// D5): set once the pause's check is over.
+    pub paused: AtomicBool,
     /// Streams opened so far.
     pub opens: AtomicU64,
+    /// Paused streams resumed on Play so far.
+    pub resumes: AtomicU64,
+    /// Streams dropped so far (at rest on a device that cannot pause, or after a failed resume).
+    pub closes: AtomicU64,
+    /// Callbacks so far (one relaxed add per callback): a pause that keeps them coming is a close.
+    pub callbacks: AtomicU64,
     /// The thread's passes: a pause parks it, so on a settled pause this stands.
     pub passes: AtomicU64,
     /// The last open: µs it took, µs from its start to the first callback (0 — none came within a
@@ -99,9 +108,12 @@ pub struct Sink {
     back: std::sync::mpsc::Sender<Feed>,
     shared: Arc<AudioShared>,
     transport: Arc<Transport>,
-    /// When the first callback came, ns after `opened` (0 — not yet).
+    /// When the first callback after the last open or resume came, ns after it (0 — not yet).
     first: Arc<AtomicU64>,
-    opened: std::time::Instant,
+    /// When the last open or resume started, ns after `epoch` (the output thread sets it).
+    started_ns: Arc<AtomicU64>,
+    epoch: std::time::Instant,
+    ctl: Arc<OutputCtl>,
 }
 
 impl Drop for Sink {
@@ -116,8 +128,10 @@ impl Sink {
     /// One device callback through `edge` (`device_channels` interleaved). Invariant 6: no
     /// allocations, no locks; the playhead advances by the engine frames handed out.
     pub fn fill(&mut self, edge: &mut OutputEdge, data: &mut [f32], device_channels: usize) {
+        self.ctl.callbacks.fetch_add(1, Ordering::Relaxed);
         if self.first.load(Ordering::Relaxed) == 0 {
-            self.first.store((self.opened.elapsed().as_nanos() as u64).max(1), Ordering::Relaxed);
+            let now = self.epoch.elapsed().as_nanos() as u64;
+            self.first.store(now.saturating_sub(self.started_ns.load(Ordering::Relaxed)).max(1), Ordering::Relaxed);
         }
         let shared = &self.shared;
         let Some(feed) = self.feed.as_mut() else {
@@ -171,17 +185,38 @@ impl Sink {
 
 /// A device the output thread opens: cpal's default output, or a test's double.
 pub trait Device: Send + 'static {
-    /// Open and start a stream whose callback calls [`Sink::fill`]; the guard returned keeps it
+    /// Open and start a stream whose callback calls [`Sink::fill`]; the stream returned keeps it
     /// open and closes it when dropped (it may not be `Send`: it lives on the output thread). On an
     /// error the sink must have been dropped, so its feed came back.
-    fn open(&mut self, sink: Sink, ctl: &Arc<OutputCtl>) -> Result<Box<dyn std::any::Any>, String>;
+    fn open(&mut self, sink: Sink, ctl: &Arc<OutputCtl>) -> Result<Box<dyn Stream>, String>;
+}
+
+/// An open stream (play-start-and-prefetch D6): at rest it is paused, not dropped, so the next Play
+/// starts its callbacks again instead of opening the device.
+pub trait Stream {
+    /// Stop the callbacks and keep the stream; an error, or callbacks that keep coming, close it.
+    fn pause(&self) -> Result<(), String>;
+    /// Start the callbacks again.
+    fn resume(&self) -> Result<(), String>;
+}
+
+struct CpalStream(cpal::Stream);
+
+impl Stream for CpalStream {
+    fn pause(&self) -> Result<(), String> {
+        self.0.pause().map_err(|e| e.to_string())
+    }
+
+    fn resume(&self) -> Result<(), String> {
+        self.0.play().map_err(|e| e.to_string())
+    }
 }
 
 /// The system's default output through cpal.
 pub struct CpalDevice;
 
 impl Device for CpalDevice {
-    fn open(&mut self, mut sink: Sink, ctl: &Arc<OutputCtl>) -> Result<Box<dyn std::any::Any>, String> {
+    fn open(&mut self, mut sink: Sink, ctl: &Arc<OutputCtl>) -> Result<Box<dyn Stream>, String> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or("no audio output device")?;
         // we prefer 48k stereo f32 — then the callback needs no conversions at all; then 48k with
@@ -234,7 +269,7 @@ impl Device for CpalDevice {
             )
             .map_err(|e| e.to_string())?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(Box::new(stream))
+        Ok(Box::new(CpalStream(stream)))
     }
 }
 
@@ -263,7 +298,20 @@ pub fn start_with<D: Device>(
     AudioOutput { ctl, wake, thread: Some(thread) }
 }
 
-/// The output thread: parks on the player's wake with no clock; opens on play, closes after rest.
+/// How long a paused stream is watched for callbacks that keep coming (a backend whose pause does
+/// not stop them is closed, as before play-start-and-prefetch).
+const PAUSE_CHECK: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// The stream the output thread holds.
+struct Held {
+    s: Box<dyn Stream>,
+    opened: std::time::Instant,
+    /// Paused at rest: the callbacks counted at the pause and when; `checked` once they stood.
+    paused: Option<(u64, std::time::Instant, bool)>,
+}
+
+/// The output thread: parks on the player's wake with no clock; opens on the first Play, pauses the
+/// stream after rest and resumes it on the next Play (play-start-and-prefetch D6).
 fn output_loop<D: Device>(
     mut device: D,
     feed: Feed,
@@ -274,13 +322,40 @@ fn output_loop<D: Device>(
     close_after: std::time::Duration,
 ) {
     use kt_time::trace::{self, play};
+    use std::time::{Duration, Instant};
     let (back, returned) = std::sync::mpsc::channel::<Feed>();
     let mut feed = Some(feed);
-    let mut stream: Option<(Box<dyn std::any::Any>, std::time::Instant)> = None;
-    let mut rest_since: Option<std::time::Instant> = None;
+    let mut stream: Option<Held> = None;
+    let mut rest_since: Option<Instant> = None;
     // an open failed for the Play of this count: the next Play tries again
     let mut failed: Option<u64> = None;
     let first = Arc::new(AtomicU64::new(0));
+    let epoch = Instant::now();
+    let started_ns = Arc::new(AtomicU64::new(0));
+    // the callbacks are counted from `now` again; `first` reports the first one after it
+    let mark = |first: &AtomicU64| {
+        first.store(0, Ordering::Relaxed);
+        started_ns.store(epoch.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    };
+    // the first callback after an open or a resume: when the first sound can leave (D7); bounded
+    let first_callback = |first: &AtomicU64| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        while first.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        first.load(Ordering::Relaxed) / 1000
+    };
+    // drop the stream: the callback hands the ring back
+    let close = |held: Held, feed: &mut Option<Feed>| {
+        drop(held.s);
+        *feed = returned.recv_timeout(Duration::from_secs(2)).ok();
+        ctl.open.store(false, Ordering::Release);
+        ctl.paused.store(false, Ordering::Release);
+        ctl.closes.fetch_add(1, Ordering::Release);
+        trace::ev(trace::Ev::Play).b(held.opened.elapsed().as_millis() as u64).aux(play::DEVICE_CLOSE).emit();
+    };
+    // the consumer drains every flush itself: a start holds its pass until it has (D3)
+    shared.drains_flush.store(true, Ordering::Release);
     loop {
         let seen = wake.seen();
         ctl.passes.fetch_add(1, Ordering::Relaxed);
@@ -288,69 +363,135 @@ fn output_loop<D: Device>(
             break;
         }
         // closed, the ring is ours: a seek's flush is done here, so the first callback of the next
-        // open does not drop the new start's pass (D6)
+        // open does not drop the new start's pass (D6); the render thread may now fill the start
         if let Some(f) = feed.as_mut()
             && shared.flush.swap(false, Ordering::AcqRel)
         {
             while f.ring.pop().is_ok() {}
+            wake.notify();
         }
         if transport.is_playing() {
             rest_since = None;
             let plays = shared.plays.load(Ordering::Acquire);
-            if stream.is_none() && failed != Some(plays) {
+            if let Some(h) = stream.as_mut().filter(|h| h.paused.is_some()) {
+                mark(&first);
+                let t = Instant::now();
+                match h.s.resume() {
+                    Ok(()) => {
+                        let resume_us = t.elapsed().as_micros() as u64;
+                        let first_us = first_callback(&first);
+                        h.paused = None;
+                        ctl.first_callback_us.store(first_us, Ordering::Relaxed);
+                        ctl.resumes.fetch_add(1, Ordering::Relaxed);
+                        ctl.paused.store(false, Ordering::Release);
+                        ctl.open.store(true, Ordering::Release);
+                        trace::ev(trace::Ev::Play).b(resume_us).c(first_us).aux(play::DEVICE_RESUME).emit();
+                    }
+                    Err(e) => {
+                        // the next pass opens it again
+                        eprintln!("audio output: the paused device did not resume: {e}");
+                        let h = stream.take().expect("held");
+                        close(h, &mut feed);
+                        continue;
+                    }
+                }
+            } else if stream.is_none() && failed != Some(plays) {
                 let Some(f) = feed.take() else {
                     failed = Some(plays);
                     ctl.report("the sound device kept the ring after it closed".into());
                     continue;
                 };
-                first.store(0, Ordering::Relaxed);
-                let opened = std::time::Instant::now();
+                mark(&first);
+                let opened = Instant::now();
                 let sink = Sink {
                     feed: Some(f),
                     back: back.clone(),
                     shared: shared.clone(),
                     transport: transport.clone(),
                     first: first.clone(),
-                    opened,
+                    started_ns: started_ns.clone(),
+                    epoch,
+                    ctl: ctl.clone(),
                 };
                 match device.open(sink, &ctl) {
                     Ok(s) => {
                         let open_us = opened.elapsed().as_micros() as u64;
-                        // the first callback: when the first sound can leave (D7); bounded, once a Play
-                        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
-                        while first.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
-                            std::thread::sleep(std::time::Duration::from_millis(1));
-                        }
-                        let first_us = first.load(Ordering::Relaxed) / 1000;
+                        let first_us = first_callback(&first);
                         ctl.open_us.store(open_us, Ordering::Relaxed);
                         ctl.first_callback_us.store(first_us, Ordering::Relaxed);
                         ctl.opens.fetch_add(1, Ordering::Relaxed);
                         ctl.open.store(true, Ordering::Release);
                         trace::ev(trace::Ev::Play).b(open_us).c(first_us).aux(play::DEVICE_OPEN).emit();
-                        stream = Some((s, opened));
+                        stream = Some(Held { s, opened, paused: None });
                     }
                     Err(e) => {
                         failed = Some(plays);
-                        feed = returned.recv_timeout(std::time::Duration::from_secs(1)).ok();
+                        feed = returned.recv_timeout(Duration::from_secs(1)).ok();
                         ctl.report(format!("the sound device did not open: {e}"));
                     }
                 }
             }
-        } else {
-            if stream.is_some() {
-                let since = *rest_since.get_or_insert_with(std::time::Instant::now);
-                let left = close_after.saturating_sub(since.elapsed());
-                if !left.is_zero() {
-                    wake.wait_timeout(left);
+        } else if let Some(h) = stream.as_mut() {
+            match h.paused {
+                None => {
+                    let since = *rest_since.get_or_insert_with(Instant::now);
+                    let left = close_after.saturating_sub(since.elapsed());
+                    if !left.is_zero() {
+                        wake.wait_timeout(left);
+                        continue;
+                    }
+                    rest_since = None;
+                    let calls = ctl.callbacks.load(Ordering::Relaxed);
+                    match h.s.pause() {
+                        Ok(()) => {
+                            h.paused = Some((calls, Instant::now(), false));
+                            ctl.open.store(false, Ordering::Release);
+                            trace::ev(trace::Ev::Play).b(h.opened.elapsed().as_millis() as u64).aux(play::DEVICE_PAUSE).emit();
+                        }
+                        Err(_) => {
+                            let h = stream.take().expect("held");
+                            close(h, &mut feed);
+                        }
+                    }
                     continue;
                 }
-                let (s, opened) = stream.take().expect("open");
-                drop(s);
-                feed = returned.recv_timeout(std::time::Duration::from_secs(2)).ok();
-                ctl.open.store(false, Ordering::Release);
-                trace::ev(trace::Ev::Play).b(opened.elapsed().as_millis() as u64).aux(play::DEVICE_CLOSE).emit();
-                rest_since = None;
-                continue;
+                Some((calls, at, false)) => {
+                    let left = PAUSE_CHECK.saturating_sub(at.elapsed());
+                    if !left.is_zero() {
+                        wake.wait_timeout(left);
+                        continue;
+                    }
+                    // one callback in flight at the pause may still land
+                    if ctl.callbacks.load(Ordering::Relaxed) > calls + 1 {
+                        let h = stream.take().expect("held");
+                        close(h, &mut feed);
+                        continue;
+                    }
+                    h.paused = Some((calls, at, true));
+                    ctl.paused.store(true, Ordering::Release);
+                    // a seek that came during the check is drained on the next pass, not parked over
+                    continue;
+                }
+                Some((_, _, true)) => {
+                    // a seek while paused: the callback drains the flush, so a short resume hands it
+                    // the ring for a callback of silence; then the render thread fills the start (D3)
+                    if shared.flush.load(Ordering::Acquire) {
+                        let drained = h.s.resume().is_ok() && {
+                            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+                            while shared.flush.load(Ordering::Acquire) && Instant::now() < deadline {
+                                std::thread::sleep(Duration::from_millis(1));
+                            }
+                            !shared.flush.load(Ordering::Acquire)
+                        };
+                        if !drained || h.s.pause().is_err() {
+                            let h = stream.take().expect("held");
+                            close(h, &mut feed);
+                            continue;
+                        }
+                        h.paused = Some((ctl.callbacks.load(Ordering::Relaxed), Instant::now(), true));
+                        wake.notify();
+                    }
+                }
             }
         }
         wake.wait_since(seen);
@@ -688,11 +829,38 @@ mod tests {
         fail: Arc<AtomicU64>,
         heard: Arc<Mutex<Vec<f32>>>,
         allocs: Arc<AtomicU64>,
+        /// How its stream pauses: `NO_PAUSE` (an error: closed at rest, as before
+        /// play-start-and-prefetch), `PAUSES`, `LYING` (says yes and keeps calling back).
+        pause: Arc<AtomicU64>,
     }
+
+    const NO_PAUSE: u64 = 0;
+    const PAUSES: u64 = 1;
+    const LYING: u64 = 2;
 
     struct Guard {
         stop: Arc<AtomicBool>,
+        paused: Arc<AtomicBool>,
+        mode: u64,
         thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl Stream for Guard {
+        fn pause(&self) -> Result<(), String> {
+            match self.mode {
+                NO_PAUSE => Err("this device cannot pause (test)".into()),
+                PAUSES => {
+                    self.paused.store(true, Ordering::Release);
+                    Ok(())
+                }
+                _ => Ok(()),
+            }
+        }
+
+        fn resume(&self) -> Result<(), String> {
+            self.paused.store(false, Ordering::Release);
+            Ok(())
+        }
     }
 
     impl Drop for Guard {
@@ -705,18 +873,23 @@ mod tests {
     }
 
     impl Device for Double {
-        fn open(&mut self, sink: Sink, _ctl: &Arc<OutputCtl>) -> Result<Box<dyn std::any::Any>, String> {
+        fn open(&mut self, sink: Sink, _ctl: &Arc<OutputCtl>) -> Result<Box<dyn Stream>, String> {
             if self.fail.load(Ordering::Acquire) > 0 {
                 self.fail.fetch_sub(1, Ordering::AcqRel);
                 return Err("no device here (test)".into());
             }
             let stop = Arc::new(AtomicBool::new(false));
-            let (heard, allocs, halt) = (self.heard.clone(), self.allocs.clone(), stop.clone());
+            let paused = Arc::new(AtomicBool::new(false));
+            let (heard, allocs, halt, quiet) = (self.heard.clone(), self.allocs.clone(), stop.clone(), paused.clone());
             let thread = std::thread::spawn(move || {
                 let mut sink = sink;
                 let mut edge = OutputEdge::new(AUDIO_SAMPLE_RATE, 2, MAX_CALLBACK_FRAMES).unwrap();
                 let mut buf = vec![0f32; 1024 * 2];
                 while !halt.load(Ordering::Acquire) {
+                    if quiet.load(Ordering::Acquire) {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
                     let before = ALLOCS.load(Ordering::Relaxed);
                     MEASURING.with(|m| m.set(true));
                     sink.fill(&mut edge, &mut buf, 2);
@@ -726,7 +899,7 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(5));
                 }
             });
-            Ok(Box::new(Guard { stop, thread: Some(thread) }))
+            Ok(Box::new(Guard { stop, paused, mode: self.pause.load(Ordering::Acquire), thread: Some(thread) }))
         }
     }
 
@@ -890,6 +1063,13 @@ mod tests {
         wait("the clock runs", || player.transport.playhead_frames() > head + SEC / 2);
         player.pause();
         drop(out);
+        first_sound_is_the_start(&dev, &player);
+        assert_eq!(dev.allocs.load(Ordering::Relaxed), 0, "the callback allocated");
+    }
+
+    /// What the device heard begins with the start's frames (after the kernel's priming), and the
+    /// callback allocated nothing.
+    fn first_sound_is_the_start(dev: &Double, player: &kt_engine::Player) {
         let heard = dev.heard.lock().unwrap().clone();
         let r = kt_engine::AudioRenderer::new(&project());
         let mut f = kt_engine::DirectFetcher::new(None);
@@ -910,5 +1090,99 @@ mod tests {
             &want[j..j + 6]
         );
         assert_eq!(dev.allocs.load(Ordering::Relaxed), 0, "the callback allocated");
+    }
+
+    fn pausing() -> Double {
+        let dev = Double::default();
+        dev.pause.store(PAUSES, Ordering::Release);
+        dev
+    }
+
+    /// Play, run the clock a tenth of a second, pause.
+    fn play_a_little(player: &kt_engine::Player) {
+        player.play();
+        let head = player.transport.playhead_frames();
+        wait("the clock runs", || player.transport.playhead_frames() > head + SEC / 10);
+        player.pause();
+    }
+
+    /// t2642 (play-start-and-prefetch D6): at rest a device that can pause is paused, not closed; the
+    /// output thread then stands, and the next Play resumes it without an open and the clock runs.
+    #[test]
+    fn t2642_the_device_pauses_at_rest_and_resumes_on_play() {
+        let rest = Duration::from_millis(100);
+        let (player, out) = player_with(pausing(), rest);
+        let ctl = out.ctl();
+        player.play();
+        wait("Play opened the device", || ctl.open.load(Ordering::Acquire));
+        player.pause();
+        wait("the device paused at rest", || ctl.paused.load(Ordering::Acquire));
+        assert!(!ctl.open.load(Ordering::Acquire), "a paused device counted as open");
+        // `paused` is set by the pass that checked the callbacks stood; after it the thread has no clock
+        assert!(parked(&out, Duration::from_millis(500)), "the output thread wakes with the device paused");
+        let calls = ctl.callbacks.load(Ordering::Relaxed);
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(ctl.callbacks.load(Ordering::Relaxed), calls, "a paused device calls back");
+        for round in 1..=2u64 {
+            play_a_little(&player);
+            assert_eq!(ctl.resumes.load(Ordering::Relaxed), round, "Play did not resume the paused device");
+            wait("the device paused again", || ctl.paused.load(Ordering::Acquire));
+        }
+        assert_eq!(ctl.opens.load(Ordering::Relaxed), 1, "Play opened the device again");
+        assert!(out.take_error().is_none());
+    }
+
+    /// t2643: a backend whose pause leaves the callbacks running is closed after the check, as a
+    /// device that cannot pause is at once; the ring comes back and the next Play opens again.
+    #[test]
+    fn t2643_a_pause_that_keeps_calling_back_is_a_close() {
+        for mode in [LYING, NO_PAUSE] {
+            let dev = Double::default();
+            dev.pause.store(mode, Ordering::Release);
+            let (player, out) = player_with(dev.clone(), Duration::from_millis(50));
+            let ctl = out.ctl();
+            play_a_little(&player);
+            wait("the device closed", || ctl.closes.load(Ordering::Acquire) == 1);
+            assert!(!ctl.paused.load(Ordering::Acquire) && !ctl.open.load(Ordering::Acquire));
+            assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes after the close (mode {mode})");
+            play_a_little(&player);
+            assert_eq!(ctl.opens.load(Ordering::Relaxed), 2, "the next Play did not open again (mode {mode})");
+            assert_eq!(ctl.resumes.load(Ordering::Relaxed), 0);
+        }
+    }
+
+    /// t2644 (D3): a seek while the device is paused is drained by a short resume, without Play; the
+    /// device pauses again, and the next Play's first sound is the start's first frame.
+    #[test]
+    fn t2644_a_seek_while_paused_is_drained_and_the_start_is_whole() {
+        let dev = pausing();
+        let (player, out) = player_with(dev.clone(), Duration::from_millis(30));
+        let ctl = out.ctl();
+        play_a_little(&player);
+        wait("the device paused at rest", || ctl.paused.load(Ordering::Acquire));
+        player.seek(Tick::from_audio_frames(7 * SEC + 111));
+        wait("the seek's flush was drained", || !player.shared.flush.load(Ordering::Acquire));
+        wait("the device paused again", || ctl.paused.load(Ordering::Acquire) && !ctl.open.load(Ordering::Acquire));
+        assert!(!player.transport.is_playing());
+        dev.heard.lock().unwrap().clear();
+        player.play();
+        let head = player.transport.playhead_frames();
+        wait("the clock runs", || player.transport.playhead_frames() > head + SEC / 2);
+        player.pause();
+        assert_eq!(ctl.opens.load(Ordering::Relaxed), 1);
+        first_sound_is_the_start(&dev, &player);
+        // a seek inside the pause's check window is drained too, once the check is over
+        play_a_little(&player);
+        wait("the pause began", || !ctl.open.load(Ordering::Acquire));
+        player.seek(Tick::from_audio_frames(3 * SEC + 7));
+        wait("the seek during the check was drained", || !player.shared.flush.load(Ordering::Acquire));
+        dev.heard.lock().unwrap().clear();
+        player.play();
+        let head = player.transport.playhead_frames();
+        wait("the clock runs", || player.transport.playhead_frames() > head + SEC / 2);
+        player.pause();
+        assert_eq!(ctl.opens.load(Ordering::Relaxed), 1);
+        drop(out);
+        first_sound_is_the_start(&dev, &player);
     }
 }

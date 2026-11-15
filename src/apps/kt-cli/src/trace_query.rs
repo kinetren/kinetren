@@ -259,10 +259,32 @@ pub fn summary(run: &Run) -> String {
         v.iter().map(|(k, n)| format!("{k}={n}")).collect::<Vec<_>>().join(", ")
     });
     let _ = writeln!(o, "  journal lines: {}", run.texts.len());
+    o.push_str(&starts(run));
     // the machine under the counts: what the load report's header said (load-report-into-trace)
     for line in machine(run).lines() {
         let _ = writeln!(o, "  {line}");
     }
+    o
+}
+
+/// What Play waited for (play-start-and-prefetch D5): Play → the first sound, the device's opens and
+/// resumes, in ms; empty when the run never played.
+fn starts(run: &Run) -> String {
+    use trace::play as p;
+    let of = |aux: u32, f: fn(&Rec) -> u64| -> Vec<u64> {
+        run.recs.iter().filter(|r| is(r, Ev::Play) && r.aux == aux).map(f).collect()
+    };
+    let line = |name: &str, mut v: Vec<u64>| -> String {
+        if v.is_empty() {
+            return String::new();
+        }
+        v.sort_unstable();
+        let at = |q: usize| v[(v.len() - 1) * q / 100] as f64 / 1000.0;
+        format!("  {name:<18} {:>8}  p50 {:.1} ms, max {:.1} ms\n", v.len(), at(50), at(100))
+    };
+    let mut o = line("play→first sound", of(p::FIRST_SOUND, |r| r.b));
+    o += &line("device open", of(p::DEVICE_OPEN, |r| r.c.max(r.b)));
+    o += &line("device resume", of(p::DEVICE_RESUME, |r| r.c.max(r.b)));
     o
 }
 
@@ -1071,6 +1093,7 @@ pub fn laps(run: &Run) -> String {
             let w = match (r.c & 0xff, r.aux) {
                 (_, trace::mix::NOT_CLEAN) => "not clean (starved/pre-roll)",
                 (_, trace::mix::UNSETTLED) => "not kept: effects still settling",
+                (_, trace::mix::PASSED) => "past the kept part of a loop longer than the store",
                 (1, _) if r.c >> 8 == 1 => "lap context never kept",
                 (1, _) => "never kept/evicted",
                 (2, _) => "scene changed",
@@ -1277,6 +1300,9 @@ fn play_name(aux: u32) -> &'static str {
         p::DEVICE_OPEN => "device_open",
         p::DEVICE_CLOSE => "device_close",
         p::DEVICE_ERROR => "device_error",
+        p::FIRST_SOUND => "first_sound",
+        p::DEVICE_PAUSE => "device_pause",
+        p::DEVICE_RESUME => "device_resume",
         _ => "?",
     }
 }

@@ -359,14 +359,18 @@ fn front_exec() -> Option<&'static Arc<dyn crate::video_plan::VideoGpuExec>> {
 
 /// The front's outputs by stream address (`ClipStream::ident`, which names the front): a re-walk
 /// after the codec memo dropped a position, or the prefetch and the composer reading the same
-/// position, runs the slots once. An output is bytes (read back) or a buffer left on the compute
-/// device (`execute_held`, stream-front-on-device); each form is its own entry. Bounded; the bytes do
-/// not depend on it (invariant 11).
-struct FrontMemo {
-    items: std::collections::VecDeque<((u64, bool), u32, u32, FrontOut)>,
-    bytes: usize,
+/// position, runs the slots once. A [`StreamMemo`] (loop-keeps-its-lap, found-defects 542): its bytes
+/// are in the memory ledger as stream history, and told of the preview's loop with the stream memo
+/// (`VideoRenderer::stream_keep_loop`) it keeps a part of a loop it cannot hold instead of an LRU's
+/// nothing. An output is bytes (read back) or a buffer left on the compute device (`execute_held`,
+/// stream-front-on-device), each form its own entry; a held buffer's bytes count in the grant too.
+/// Bounded; the bytes do not depend on it (invariant 11).
+pub fn front_memo() -> &'static StreamMemo {
+    static M: OnceLock<StreamMemo> = OnceLock::new();
+    M.get_or_init(|| StreamMemo::new(FRONT_MEMO_BYTES))
 }
 
+/// What the slots in front made at a position, as the front memo keeps it.
 #[derive(Clone)]
 enum FrontOut {
     Bytes(Arc<[u8]>),
@@ -382,10 +386,10 @@ impl FrontOut {
     }
 }
 
-const FRONT_MEMO_BYTES: usize = 64 << 20;
+/// An entry of the memo: the size and the output.
+struct FrontEntry(u32, u32, FrontOut);
 
-static FRONT_MEMO: std::sync::Mutex<FrontMemo> =
-    std::sync::Mutex::new(FrontMemo { items: std::collections::VecDeque::new(), bytes: 0 });
+const FRONT_MEMO_BYTES: usize = 64 << 20;
 
 /// How many times the slots in front ran (tests and `kt-cli stream-cost`).
 pub fn front_runs() -> u64 {
@@ -422,25 +426,20 @@ fn front_held_on() -> bool {
 static FRONT_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static FRONT_HELD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The memo's address of a form: the stream address for bytes, a salted one for a held buffer.
+fn front_key((id, held): (u64, bool)) -> u64 {
+    if held { mix(id, 0x4845_4c44) } else { id }
+}
+
 fn front_memo_get(key: (u64, bool)) -> Option<(u32, u32, FrontOut)> {
-    let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
-    let i = g.items.iter().position(|e| e.0 == key)?;
-    let e = g.items.remove(i)?;
-    let out = (e.1, e.2, e.3.clone());
-    g.items.push_back(e);
-    Some(out)
+    front_memo().get::<FrontEntry>(front_key(key)).map(|o| (o.0, o.1, o.2.clone()))
 }
 
 fn front_memo_put(key: (u64, bool), w: u32, h: u32, out: FrontOut) {
-    let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
-    if g.items.iter().any(|e| e.0 == key) {
-        return;
-    }
-    g.bytes += out.len();
-    g.items.push_back((key, w, h, out));
-    while g.bytes > FRONT_MEMO_BYTES {
-        let Some(e) = g.items.pop_front() else { break };
-        g.bytes -= e.3.len();
+    let id = front_key(key);
+    if !front_memo().contains(id) {
+        let bytes = out.len();
+        front_memo().put(id, Arc::new(FrontEntry(w, h, out)), bytes);
     }
 }
 

@@ -39,15 +39,25 @@ fn child_body() {
         header: "kt-crash test child".into(),
         symbolizer: None,
     }));
-    // a few named threads that live through the crash
+    // a few named threads that live through the crash. A thread names itself when it starts (Linux),
+    // so the probe faults only once each has run: under a loaded parallel run one had not, and the
+    // report listed it by the parent's name (play-start-and-prefetch, found while closing row 525)
+    let (started, up) = std::sync::mpsc::channel();
     let _keep: Vec<_> = (0..3)
         .map(|i| {
+            let started = started.clone();
             std::thread::Builder::new()
                 .name(format!("kt-bystander-{i}"))
-                .spawn(|| std::thread::sleep(std::time::Duration::from_secs(60)))
+                .spawn(move || {
+                    started.send(()).unwrap();
+                    std::thread::sleep(std::time::Duration::from_secs(60))
+                })
                 .unwrap()
         })
         .collect();
+    for _ in 0..3 {
+        up.recv().unwrap();
+    }
     let probe = std::thread::Builder::new().name("kt-crash-probe".into());
     let h = probe
         .spawn(move || match mode.as_str() {

@@ -1,7 +1,7 @@
 //! cached-range-plays: the final mix of a covered range is kept and played again with no decode
 //! and no effect run (the owner's choice "a", invariant 2 as reworded). t1930–t1933.
 
-use kt_engine::mix::{MixCtx, MixPlay, pieces};
+use kt_engine::mix::{MixBudget, MixCtx, MixPlay, MixStore, mix_want, pieces};
 use kt_engine::{AudioFetcher, AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::AudioBurst;
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
@@ -295,4 +295,136 @@ fn t1940_a_rebuild_syncs_what_the_edit_changed() {
     r2.render_frames_with(&mut f, &mut fx, 20 * BURST, &mut a);
     r2.render_frames_with(&mut Counting::new(), &mut full, 20 * BURST, &mut b);
     assert!(a == b, "a partial sync continues as a full one");
+}
+
+/// The bytes of one kept burst.
+const UNIT_BYTES: usize = AUDIO_BURST_FRAMES * CH * 4;
+
+/// Keep burst `k` of `ctx` (scene 0); whether it was admitted.
+fn keep(s: &mut MixStore, ctx: MixCtx, k: i64) -> bool {
+    s.write(ctx, k * BURST, &vec![k as f32; AUDIO_BURST_FRAMES * CH], &|_| 0)
+}
+
+/// t2601 (loop-keeps-its-lap, found-defects 550): a loop longer than the store keeps a stable
+/// PREFIX of its lap. The bursts of other contexts go first; a lap burst later than every kept one
+/// is not admitted, an earlier one takes the latest's place; a linear burst finds no room in a
+/// store full of the lap. Without a loop the store is the plain LRU it was.
+#[test]
+fn t2601_a_loop_longer_than_the_store_keeps_its_prefix() {
+    let region = (0, 10 * BURST);
+    let lap = MixCtx::Lap(region.0, region.1);
+    let held = |s: &MixStore| s.runs();
+    let mut s = MixStore::new(4 * UNIT_BYTES);
+    for k in 100..102 {
+        assert!(keep(&mut s, MixCtx::Linear, k));
+    }
+    s.retain_laps(Some(region));
+    let admitted: Vec<bool> = (0..10).map(|k| keep(&mut s, lap, k)).collect();
+    assert_eq!(admitted, [true, true, true, true, false, false, false, false, false, false]);
+    assert!(held(&s).linear.is_empty(), "the linear bursts went first");
+    assert_eq!(held(&s).laps, vec![(region, vec![0..4 * BURST])], "the lap's prefix");
+    // the next laps: the same prefix stays, whatever is written past it
+    for _ in 0..3 {
+        for k in 0..10 {
+            keep(&mut s, lap, k);
+        }
+    }
+    assert_eq!(held(&s).laps, vec![(region, vec![0..4 * BURST])]);
+    assert!(!keep(&mut s, MixCtx::Linear, 200), "no room for linear play over the lap's prefix");
+    // an edit dropped burst 1: it comes back; a burst dropped from the middle frees room for the latest
+    s.retain_valid(&|k| if k == 1 { 9 } else { 0 });
+    assert_eq!(s.len(), 3);
+    assert!(keep(&mut s, lap, 6), "room again");
+    assert!(s.write(lap, BURST, &vec![1.0; AUDIO_BURST_FRAMES * CH], &|k| if k == 1 { 9 } else { 0 }));
+    assert_eq!(held(&s).laps, vec![(region, vec![0..4 * BURST])], "an earlier burst takes the latest's place");
+    // no loop: least recently heard first
+    let mut s = MixStore::new(4 * UNIT_BYTES);
+    for k in 0..10 {
+        assert!(keep(&mut s, MixCtx::Linear, k));
+    }
+    assert_eq!(held(&s).linear, vec![6 * BURST..10 * BURST]);
+}
+
+/// t2602 (loop-keeps-its-lap, found-defects 550): the kept mix asks the memory ledger for its loop,
+/// as the frames cache and the memos do. Its bound grows to the loop's bursts and an eighth; a store
+/// that never asked keeps its base; a claim takes the growth back and the store evicts to its base
+/// when its thread fits it, keeping the lap's prefix; the claim's end gives the growth back.
+#[test]
+fn t2602_the_kept_mix_grows_by_the_ledger_for_its_loop() {
+    let l: &'static kt_time::mem::Ledger = Box::leak(Box::new(kt_time::mem::Ledger::new()));
+    l.set_probe(|| Some(1 << 30));
+    let base = 128 * UNIT_BYTES; // 1 MB
+    let budget = MixBudget::with_ledger(base, l);
+    let other = MixBudget::with_ledger(base, l);
+    let region = (0, 256 * BURST); // 2 MB of bursts
+    let want = mix_want(Some(region));
+    assert!(want >= 257 * UNIT_BYTES * 9 / 8 && want % (16 << 20) == 0, "every burst and an eighth, rounded: {want}");
+    assert_eq!(mix_want(None), 0);
+    assert_eq!(budget.ask(want), want);
+    assert_eq!(other.cap(), base, "only the asker grows");
+    let mut s = MixStore::with_budget(budget.clone());
+    s.retain_laps(Some(region));
+    let lap = MixCtx::Lap(region.0, region.1);
+    assert!((0..256).all(|k| keep(&mut s, lap, k)), "the whole loop is kept");
+    assert_eq!(budget.held(), (256 * UNIT_BYTES) as u64, "reported to the ledger");
+    let claim = l.claim();
+    assert_eq!(budget.cap(), base);
+    s.fit();
+    assert_eq!(s.len(), 128);
+    assert_eq!(s.runs().laps, vec![(region, vec![0..128 * BURST])], "the prefix stays");
+    drop(claim);
+    assert_eq!(budget.cap(), want, "the claim gone, the growth is back");
+}
+
+/// t2603 (loop-keeps-its-lap, found-defects 550): the forward render over a loop three times longer
+/// than the store. Before, an LRU over the cycle replayed nothing; now from the third lap on each
+/// lap replays the kept prefix — no source read for it — and it sounds as the kept second lap did
+/// (but the chunk that straddles the wrap, live as the lap's end before it is).
+#[test]
+fn t2603_a_long_loop_replays_its_prefix_every_lap() {
+    let p = project(vec![clip(1, 1, 0, 0, 4 * SEC, vec![reverb(0.5)])]);
+    let r = AudioRenderer::new(&p);
+    let region = (SEC + 696, SEC + 696 + 30 * BURST + 512);
+    let len = region.1 - region.0;
+    let laps = 6;
+    let n = ((laps * len) / BURST) as usize;
+    let run = |tell: bool| {
+        let mut fx = FxStateStore::new();
+        r.sync_fx(&mut fx);
+        let mut f = Counting::new();
+        let mut mix = MixPlay::with_store(MixStore::new(12 * UNIT_BYTES));
+        if tell {
+            mix.store.retain_laps(Some(region));
+        }
+        let mut out = Vec::new();
+        let mut per_lap = vec![0usize; laps as usize + 1];
+        let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * CH];
+        for i in 0..n {
+            let head = region.0 + i as i64 * BURST;
+            let o = mix.render(&r, &mut f, &mut fx, Some(region), head, &mut chunk);
+            per_lap[((head - region.0) / len) as usize] += usize::from(o.replayed);
+            out.extend_from_slice(&chunk);
+        }
+        (out, per_lap, mix.store.runs())
+    };
+    let (_, plain, _) = run(false);
+    assert!(plain.iter().all(|&r| r == 0), "an LRU over the cycle replays nothing: {plain:?}");
+    let (out, per_lap, runs) = run(true);
+    let kept = &runs.laps[0].1;
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].start, region.0, "a prefix of the lap");
+    let prefix = (kept[0].end - region.0) as usize;
+    assert!(prefix as i64 >= 9 * BURST, "most of the bound: {prefix}");
+    for (k, &rep) in per_lap.iter().enumerate().take(laps as usize).skip(2) {
+        assert!(rep >= 8, "lap {k} replayed {rep} chunks: {per_lap:?}");
+        // the chunk that straddles the wrap renders live (the lap before's end is past the prefix);
+        // from the first chunk inside the lap on, the prefix's chunks are handed out
+        let start = k as i64 * len;
+        let o = ((start + BURST - 1) / BURST * BURST - start) as usize;
+        let (a, b) = ((start as usize + o) * CH, (len as usize + o) * CH);
+        // to the last chunk wholly inside the prefix (the one past its end is live)
+        let m = (prefix - o) / BURST as usize * BURST as usize * CH;
+        let first = (0..m).find(|&i| out[a + i] != out[b + i]);
+        assert!(first.is_none(), "lap {k}'s prefix is the kept second lap's: first differs at frame {:?} of {} (o {o}, prefix {prefix}, {per_lap:?})", first.map(|i| i / CH), m / CH);
+    }
 }

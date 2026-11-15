@@ -7,8 +7,8 @@
 //! - What a kind wants ABOVE its bases ([`want`]) is granted from ONE growth budget: half of what the
 //!   process could still take beyond its bases — the memory available now (the host's probe, a
 //!   control group's limit included) plus the growth the kinds already hold — in the order of value
-//!   of [`Tenant`]: kept composites, then stream history, then decoded frames. Unknown memory grants
-//!   nothing; a live [`Claim`] (an export) grants nothing either.
+//!   of [`GROWING`]: the kept final mix, then kept composites, stream history, decoded frames. Unknown
+//!   memory grants nothing; a live [`Claim`] (an export) grants nothing either.
 //! - A kind whose grant shrinks is told at once through its accounts' hooks ([`Account::on_shrink`]),
 //!   after the ledger's lock is released and never for the kind that asked (its keeper asks under its
 //!   own lock, and its hook would take it again).
@@ -19,8 +19,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-/// The kinds of keeper. The declaration order of the growing kinds IS the order of value: the
-/// earlier is granted first and taken back last.
+/// The kinds of keeper. The numbers are in trace files: a new kind is appended. The order of value
+/// of the growing kinds is [`GROWING`]'s.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Tenant {
@@ -30,7 +30,8 @@ pub enum Tenant {
     History = 1,
     /// Decoded frames (the burst cache): a hit saves a decode.
     Frames = 2,
-    /// The kept final mix.
+    /// The kept final mix (loop-keeps-its-lap): a hit saves the whole audio render, at 22 MB a
+    /// minute — the cheapest second of a loop to keep, so it is granted first.
     Mix = 3,
     /// Uploaded source frames on a device.
     Upload = 4,
@@ -43,8 +44,9 @@ pub enum Tenant {
 }
 
 const KINDS: usize = 8;
-/// The kinds that may grow above their bases, in the order of value.
-pub const GROWING: [Tenant; 3] = [Tenant::Kept, Tenant::History, Tenant::Frames];
+/// The kinds that may grow above their bases, in the order of value: the earlier is granted first
+/// and taken back last.
+pub const GROWING: [Tenant; 4] = [Tenant::Mix, Tenant::Kept, Tenant::History, Tenant::Frames];
 
 impl Tenant {
     pub const ALL: [Tenant; KINDS] = [
@@ -141,7 +143,7 @@ pub fn growth_budget(available: Option<u64>, held: u64, claims: u32) -> u64 {
 }
 
 /// The grants of the growing kinds (in [`GROWING`]'s order) for their wants within `budget`.
-pub fn grants(wants: [u64; 3], budget: u64) -> [u64; 3] {
+pub fn grants<const N: usize>(wants: [u64; N], budget: u64) -> [u64; N] {
     let mut left = budget;
     wants.map(|w| {
         let g = w.min(left);
@@ -583,6 +585,32 @@ mod tests {
         // a dropped account leaves the base and its hook
         drop(hist);
         assert_eq!(l.snapshot().base(Tenant::History), 0);
+    }
+
+    /// t2600 (loop-keeps-its-lap, found-defects 550): the kept final mix grows like the memos and is
+    /// granted first — a loop's minute of it is 22 MB and saves the whole audio render — and a claim
+    /// takes it back to its base like any grant.
+    #[test]
+    fn t2600_the_kept_mix_grows_first() {
+        let _one = SERIAL.lock().unwrap_or_else(|p| p.into_inner());
+        assert_eq!(GROWING[0], Tenant::Mix);
+        assert_eq!(grants([1, 3, 4, 5], 6), [1, 3, 2, 0], "the mix first, then kept, history, frames");
+        let l = test_ledger(Some(600 * MB)); // 300 MB of growth
+        let mix = l.open(Tenant::Mix, 64 * MB);
+        let kept = l.open(Tenant::Kept, 512 * MB);
+        let told = Arc::new(AtomicU64::new(u64::MAX));
+        {
+            let t = told.clone();
+            kept.on_shrink(move |g| t.store(g, Ordering::Relaxed));
+        }
+        assert_eq!(kept.want(300 * MB), 300 * MB);
+        assert_eq!(mix.want(200 * MB), 200 * MB, "the mix is granted before the kept composites");
+        assert_eq!(mix.cap(), 264 * MB);
+        assert_eq!(told.load(Ordering::Relaxed), 100 * MB, "the kept composites gave way and were told");
+        let claim = l.claim();
+        assert_eq!(mix.cap(), 64 * MB, "a claim takes the mix's growth back");
+        drop(claim);
+        assert_eq!(mix.cap(), 264 * MB);
     }
 
     /// t2395 (frames-cache-growth): a busy second's sample writes the process's memory and each
