@@ -585,8 +585,12 @@ fn t2150_the_look_ahead_skips_kept_moments() {
 /// The slow-chain device of t2151: the test kit's executor, past `SLOW_CHAIN` per frame.
 struct Slow(Arc<dyn kt_engine::VideoGpuExec>);
 
+/// Frames the slow device composed.
+static SLOW_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl kt_engine::VideoGpuExec for Slow {
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        SLOW_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         std::thread::sleep(kt_engine::compose_queue::SLOW_CHAIN * 2);
         self.0.execute_into(plan, out)
     }
@@ -601,8 +605,11 @@ impl kt_engine::VideoGpuExec for Slow {
 /// t2151: a moment composed on the slow-chain device (bytes) is kept on the display's executor: the
 /// next ask of it is shown on the display target from the kept composite, with no chain composed,
 /// and the route stays on the slow device for what is not kept.
+///
+/// t2705 (stream-round-trips D7, found-defects 622): the slow device's picture, once kept on the
+/// display's executor, is shown from there at once — on the display, not uploaded again as bytes.
 #[test]
-fn t2151_the_slow_route_keeps_its_composites() {
+fn t2151_t2705_the_slow_route_keeps_its_composites() {
     let _g = serial();
     if no_device() {
         return;
@@ -626,18 +633,22 @@ fn t2151_the_slow_route_keeps_its_composites() {
             break c;
         }
     };
-    assert!(!first.on_display, "a slow chain composes on the slow device, as bytes");
-    let r0 = kt_time::work::count(kt_time::work::Work::CompositeReplay);
+    let runs = |_: ()| SLOW_RUNS.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(runs(()) > 0, "a slow chain composes on the slow device");
+    assert!(first.on_display, "the slow device's picture is shown from the display's memo, not uploaded again (t2705)");
+    let (r0, s0) = (kt_time::work::count(kt_time::work::Work::CompositeReplay), runs(()));
     let again = ask(t);
     assert!(again.complete && again.on_display, "shown on the display from the kept composite");
     assert_eq!(kt_time::work::count(kt_time::work::Work::CompositeReplay) - r0, 1);
+    assert_eq!(runs(()), s0, "the replay composed nothing on the slow device");
     let other = loop {
         let c = ask(Tick(SEC + STEP));
         if c.complete {
             break c;
         }
     };
-    assert!(!other.on_display, "a moment not kept still goes to the slow device: the replay timed no chain");
+    assert!(runs(()) > s0, "a moment not kept still goes to the slow device: the replay timed no chain");
+    assert!(other.on_display, "and is shown from the display's memo (t2705)");
 }
 
 // ---- gpu-arbiter ---------------------------------------------------------------------------------
@@ -1043,4 +1054,55 @@ fn t2432_a_loop_is_computed_to_its_end() {
         });
         assert!(of(&again, Ev::ComputeJob).is_empty(), "a complete history ran jobs again");
     }
+}
+
+/// t2710 (stream-round-trips D8, found-defects 660, kkt-26.11.15 N2): playing a piece with no stream
+/// stage on screen in a project that has one elsewhere, the far look-ahead walks nothing — it walked
+/// 33.5 million frames a pass (26 s of the prefetch thread on the owner's machine, the look-ahead
+/// starved) — and inside a stage it walks at most `STREAM_WALK_SECS` of frames whatever the memo holds.
+#[test]
+fn t2710_no_stage_on_screen_walks_nothing_far() {
+    let _g = serial();
+    let p = mosh_project();
+    let vr = renderer(&p, None);
+    let plain = Tick(SEC / 2);
+    assert_eq!(vr.stream_frame_bytes(plain, Q), 0, "the scene: no stage at the frame on screen");
+    assert_eq!(kt_engine::player::stream_far_frames(&vr, plain, Q, None, true), 0, "a far walk with no stage on screen");
+    let inside = Tick(3 * SEC);
+    let far = kt_engine::player::stream_far_frames(&vr, inside, Q, None, true);
+    assert!(far > 0, "a stage on screen walks ahead");
+    assert!(far <= 60 * 30, "{far} frames: more than a minute of the project");
+}
+
+/// t2711 (stream-round-trips D10, found-defects 662): the look-ahead's walk of the frame ON SCREEN runs
+/// at the display's class — the preview shows Loading until it is walked — and the frames after it at
+/// the look-ahead's own class.
+#[test]
+fn t2711_the_frame_on_screen_walks_at_the_displays_class() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let (vr, cache) = (renderer(&p, Some(StreamPacing::preview(1 << 30))), big_cache());
+    let plain = renderer(&p, None);
+    let t = Tick(3 * SEC);
+    let mut m = Tick(2 * SEC);
+    while m.0 <= t.0 + 8 * STEP {
+        warm(&plain.layers_at(m, Q), &cache);
+        m = Tick(m.0 + STEP);
+    }
+    let items = trace::testing::capture(|| {
+        let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
+        assert!(!kt_engine::player::stream_advance_ahead(&vr, &cache, t, Q, None, 8, &|_| false), "every frame was cached");
+    });
+    let jobs = of(&items, Ev::ComputeJob);
+    assert!(jobs.len() >= 2, "{} jobs: the frame on screen and the frames after it", jobs.len());
+    let (now, near) = (kt_time::sched::Class::Now as u64, kt_time::sched::Class::Near as u64);
+    let ids: Vec<u64> = jobs.iter().map(|r| r.id).collect();
+    // the history up to the frame on screen (its batches), then the frames after it
+    let split = ids.iter().position(|&c| c != now).unwrap_or(ids.len());
+    assert!(split > 0, "the frame on screen's walk ran below the display's class: {ids:?}");
+    assert!(split < ids.len() && ids[split..].iter().all(|&c| c == near), "the frames ahead ran at another class: {ids:?}");
+    assert!(vr.layers_at(Tick(t.0 + 8 * STEP), Q).is_empty(), "the run reached its end");
 }

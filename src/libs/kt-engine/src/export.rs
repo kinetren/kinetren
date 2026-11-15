@@ -745,9 +745,9 @@ pub fn export_mp4_with_backends(
             events(ExportEvent::Log(run.into_log(project)));
         }
     };
-    // a stream stage's pre-roll decodes on the compose thread (datamosh-codec-path D6): such a
-    // project keeps the serial export (export-throughput D2)
-    let serial = opts.serial || VideoRenderer::new(project).has_stream_stages();
+    // a stream stage no longer keeps the serial export (stream-round-trips D6, found-defects 490): the
+    // pipeline pre-rolls on its decode thread and walks the history in frame order on its compose thread
+    let serial = opts.serial;
     let (vstats, astats) = if serial {
         let vstats = {
             let v_done = v_done.clone();

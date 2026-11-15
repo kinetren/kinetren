@@ -876,9 +876,17 @@ pub(super) fn run(
         return (None, 0);
     };
     drop(span);
-    let src = kt_fx::video::Frame { w: out.w, h: out.h, rgba: buf, has_alpha: false };
-    let mut rgba = vec![0u8; (dq.width * dq.height * 4) as usize];
-    kt_fx::video::fit_into(&src, dq.width, dq.height, &mut rgba);
+    let n = (dq.width * dq.height * 4) as usize;
+    // at the decode size the stage's picture IS the layer (stream-round-trips D5): `fit_into` there is
+    // a copy, and the copy is skipped
+    let rgba = if out.w == dq.width && out.h == dq.height && buf.len() == n {
+        buf
+    } else {
+        let src = kt_fx::video::Frame { w: out.w, h: out.h, rgba: buf, has_alpha: false };
+        let mut rgba = vec![0u8; n];
+        kt_fx::video::fit_into(&src, dq.width, dq.height, &mut rgba);
+        rgba
+    };
     let frame = VideoFrame { pts, width: dq.width, height: dq.height, rgba: rgba.into_boxed_slice(), has_alpha: false };
     (Some(Arc::new(frame)), out.key)
 }

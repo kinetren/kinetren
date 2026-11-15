@@ -511,7 +511,7 @@ pub(crate) fn plan(r: Rows, lay: &dyn StreamLayout, n: i64) -> Arc<Plan> {
 pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<(Side, i64)> {
     let s = plan(r, lay, n);
     let chain = s.chain(n);
-    let start = match (0..chain.len()).rev().find(|&i| memo.contains(chain[i].2)) {
+    let start = match (0..chain.len()).rev().find(|&i| memo.holds(chain[i].2)) {
         Some(i) if i + 1 == chain.len() && lay.region_ident(n) == 0 => return vec![],
         Some(i) => i + 1,
         None => 0,
@@ -522,9 +522,9 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
         let mut j = p;
         while j >= gs {
             match s.clean(lay, side, j) {
-                Some(k) if memo.contains(k) => break,
+                Some(k) if memo.holds(k) => break,
                 // a reference kept alone serves the position after it (stream-history-on-device)
-                Some(k) if j < p && memo.contains(recon_key(k)) => break,
+                Some(k) if j < p && memo.holds(recon_key(k)) => break,
                 _ => {}
             }
             out.insert((side, j));
@@ -536,7 +536,7 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
             Node::Base | Node::Hold => {}
             Node::Intra { p } => need_clean(Side::Main, p, &mut out),
             Node::Refresh { p } => {
-                if !memo.contains(s.intra(lay, p)) {
+                if !memo.holds(s.intra(lay, p)) {
                     out.insert((Side::Main, p));
                 }
             }
@@ -569,7 +569,7 @@ pub fn key(r: Rows, lay: &dyn StreamLayout, n: i64) -> u64 {
 /// No host asks it since catch-up-shows-loading (a frame short of its history is incomplete, never
 /// shown from an earlier position); it stays one of the compiled schedule's answers t2270 pins.
 pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Option<i64> {
-    plan(r, lay, n).chain(n).into_iter().rev().find(|c| memo.contains(c.2)).map(|c| c.0)
+    plan(r, lay, n).chain(n).into_iter().rev().find(|c| memo.holds(c.2)).map(|c| c.0)
 }
 
 /// The clean encoder's output for the source frame at `k` against `prev` (`None` — intra): the job

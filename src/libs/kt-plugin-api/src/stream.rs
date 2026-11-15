@@ -257,11 +257,28 @@ pub struct StreamMemo {
     /// preview sizes it by its loop and the machine's memory).
     cap: std::sync::atomic::AtomicUsize,
     inner: Mutex<MemoInner>,
+    /// The live tier (stream-round-trips D1): what a walk continues from, kept on the compute device.
+    live: Mutex<LiveInner>,
     /// Its account in the process's memory ledger (memory-ledger): stream history, its first bound
     /// as the base.
     account: kt_time::mem::Account,
     /// The host's view (`set_view`), in the host's own time unit; `i64::MIN` — none.
     view: std::sync::atomic::AtomicI64,
+}
+
+/// The live tier's bound: device memory of the compute host, about a dozen 1080-line stages' states
+/// (a picture and the clean encoder's reconstruction per side, 9 MB).
+pub const LIVE_BYTES: usize = 128 << 20;
+
+/// The live tier (stream-round-trips D1): entries a kernel keeps on the compute device so the next
+/// walk continues from them without an upload, apart from the pictures' LRU — a memo full of pictures
+/// at 1080 lines evicted the clean encoder's state, and every frame encoded its GOP again.
+#[derive(Default)]
+struct LiveInner {
+    map: HashMap<u64, (Arc<dyn Any + Send + Sync>, usize, u64)>,
+    bytes: usize,
+    clock: u64,
+    account: Option<kt_time::mem::Account>,
 }
 
 #[derive(Default)]
@@ -285,6 +302,7 @@ impl StreamMemo {
         StreamMemo {
             cap: std::sync::atomic::AtomicUsize::new(cap_bytes),
             inner: Mutex::new(MemoInner::default()),
+            live: Mutex::default(),
             account: kt_time::mem::open(kt_time::mem::Tenant::History, cap_bytes as u64),
             view: std::sync::atomic::AtomicI64::new(i64::MIN),
         }
@@ -461,7 +479,64 @@ impl StreamMemo {
         self.lock().lap += 1;
     }
 
-    /// Drop every entry but the pinned tier (tests: an LRU that lost the history).
+    fn live(&self) -> std::sync::MutexGuard<'_, LiveInner> {
+        self.live.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Keep `v` in the live tier under `key` (stream-round-trips D1): `bytes` of the compute device,
+    /// the least recently used live entries evicted past [`LIVE_BYTES`]. Never counted in the bound of
+    /// the pictures, never evicted by them.
+    pub fn put_live<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        let mut g = self.live();
+        if bytes > LIVE_BYTES {
+            return;
+        }
+        g.clock += 1;
+        let now = g.clock;
+        if let Some((_, b, _)) = g.map.insert(key, (v, bytes, now)) {
+            g.bytes -= b;
+        }
+        g.bytes += bytes;
+        while g.bytes > LIVE_BYTES {
+            let Some(old) = g.map.iter().min_by_key(|(_, e)| e.2).map(|(k, _)| *k) else { break };
+            if let Some((_, b, _)) = g.map.remove(&old) {
+                g.bytes -= b;
+            }
+        }
+        let bytes = g.bytes as u64;
+        g.account.get_or_insert_with(|| kt_time::mem::open(kt_time::mem::Tenant::Compute, 0)).set(bytes);
+    }
+
+    /// The live entry under `key`, as the kernel's type; bumps its recency.
+    pub fn get_live<T: Any + Send + Sync>(&self, key: u64) -> Option<Arc<T>> {
+        let mut g = self.live();
+        g.clock += 1;
+        let now = g.clock;
+        let e = g.map.get_mut(&key)?;
+        e.2 = now;
+        e.0.clone().downcast::<T>().ok()
+    }
+
+    /// Whether either tier holds `key`.
+    pub fn holds(&self, key: u64) -> bool {
+        self.contains(key) || self.live().map.contains_key(&key)
+    }
+
+    /// Bytes of the live tier.
+    pub fn live_bytes(&self) -> usize {
+        self.live().bytes
+    }
+
+    fn clear_live(&self) {
+        let mut g = self.live();
+        g.map.clear();
+        g.bytes = 0;
+        if let Some(a) = &g.account {
+            a.set(0);
+        }
+    }
+
+    /// Drop every entry but the pinned tier and the live tier (tests: an LRU that lost the history).
     pub fn drop_unpinned(&self) {
         let mut g = self.lock();
         let ks: Vec<u64> = g.map.iter().filter(|(_, e)| e.pinned.is_none()).map(|(k, _)| *k).collect();
@@ -501,6 +576,7 @@ impl StreamMemo {
 
     /// Drop everything (tests: a cold memo).
     pub fn clear(&self) {
+        self.clear_live();
         let mut g = self.lock();
         g.map.clear();
         g.bytes = 0;

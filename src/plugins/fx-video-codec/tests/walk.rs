@@ -11,7 +11,7 @@ use fx_video_codec::codec::{self, Batch, Loss, Planes, Residual};
 use fx_video_codec::mosh::{self, Rows};
 use fx_video_codec::walk::{CHECKPOINT, MAX_BATCH};
 use fx_video_codec::{rows, Datamosh};
-use kt_plugin_api::compute::{ComputeHost, Job, Shader};
+use kt_plugin_api::compute::{Buf, ComputeHost, Held, Job, Shader};
 use kt_plugin_api::generator::lowbias32;
 use kt_plugin_api::stream::{mix, Rgba, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
 use kt_plugin_api::{ParamValues, Plugin};
@@ -21,6 +21,17 @@ const H: u32 = 48;
 
 static JOBS: AtomicU64 = AtomicU64::new(0);
 static DOWN: AtomicU64 = AtomicU64::new(0);
+/// Bytes uploaded, the clean encoder's residual dispatches and the source conversions.
+static UP: AtomicU64 = AtomicU64::new(0);
+static RESIDUALS: AtomicU64 = AtomicU64::new(0);
+static CONVERTS: AtomicU64 = AtomicU64::new(0);
+
+fn count(job: &Job<'_>) {
+    JOBS.fetch_add(1, Relaxed);
+    UP.fetch_add(job.buffers.iter().map(|b| if let kt_plugin_api::compute::Init::Bytes(v) = b { v.len() as u64 } else { 0 }).sum(), Relaxed);
+    RESIDUALS.fetch_add(job.steps.iter().filter(|s| s.name.ends_with(":residual")).count() as u64, Relaxed);
+    CONVERTS.fetch_add(job.steps.iter().filter(|s| s.name.ends_with(":convert")).count() as u64, Relaxed);
+}
 /// The counters are the process's: one test at a time.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -28,9 +39,18 @@ struct Counting(Arc<dyn ComputeHost>);
 
 impl ComputeHost for Counting {
     fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String> {
-        JOBS.fetch_add(1, Relaxed);
+        count(job);
         let got = self.0.run(job)?;
         DOWN.fetch_add(got.iter().map(|v| v.len() as u64).sum(), Relaxed);
+        Ok(got)
+    }
+    fn keeps(&self) -> bool {
+        self.0.keeps()
+    }
+    fn run_keeping(&self, job: &Job<'_>, keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {
+        count(job);
+        let got = self.0.run_keeping(job, keep)?;
+        DOWN.fetch_add(got.0.iter().map(|v| v.len() as u64).sum(), Relaxed);
         Ok(got)
     }
     fn prepare(&self, s: &Shader) -> Result<(), String> {
@@ -89,11 +109,13 @@ struct Mock {
     tag: u64,
     curve: Option<Curve>,
     view: Option<i64>,
+    /// A region of interest's coverage, `W`×`H`.
+    region: Option<Vec<u8>>,
 }
 
 impl Mock {
     fn new(first: i64, cut: i64, end: i64, f: impl Fn(i64) -> Vec<u8>) -> Mock {
-        Mock { first, cut, end, main: (first..end).map(|k| (k, f(k))).collect(), second: vec![], tag: TAGS.fetch_add(1, Relaxed), curve: None, view: None }
+        Mock { first, cut, end, main: (first..end).map(|k| (k, f(k))).collect(), second: vec![], tag: TAGS.fetch_add(1, Relaxed), curve: None, view: None, region: None }
     }
     fn second_at(&self, k: i64) -> Option<&Event> {
         self.second.iter().find(|(s, e, _)| *s <= k && k < *e)
@@ -129,9 +151,21 @@ impl StreamLayout for Mock {
     fn shown_from(&self) -> Option<i64> {
         self.view
     }
+    fn region_ident(&self, _k: i64) -> u64 {
+        self.region.as_ref().map_or(0, |_| 0x2704)
+    }
 }
 
 impl StreamInput for Mock {
+    fn with_region(&self, _k: i64, f: &mut dyn FnMut(&[u8])) -> bool {
+        match &self.region {
+            Some(c) => {
+                f(c);
+                true
+            }
+            None => false,
+        }
+    }
     fn with_frame(&self, side: Side, k: i64, f: &mut dyn FnMut(Rgba<'_>)) -> bool {
         let fr = match side {
             Side::Main => self.main.get(&k),
@@ -295,7 +329,7 @@ fn t2352_the_vector_edit_on_the_device_is_the_cpus() {
         }
         let (mv, lost) = b.edit(src_buf, bs, table, l);
         let (rmv, rlost) = (b.read(mv), lost.map(|x| b.read(x)));
-        let got = b.run().expect("the device runs the edit");
+        let got = b.run().expect("the device runs the edit").reads;
         let dev: Vec<(i32, i32)> = got[rmv].chunks_exact(8).map(|c| (i32::from_le_bytes(c[..4].try_into().unwrap()), i32::from_le_bytes(c[4..].try_into().unwrap()))).collect();
         for (i, v) in src.iter().enumerate() {
             let mut want = mosh::transform(&rows, *v);
@@ -333,7 +367,7 @@ fn t2352_the_vector_edit_on_the_device_is_the_cpus() {
         let lost = lost.unwrap();
         let out = b.drop_lost(rd, lost, bs);
         let (ro, rl) = (b.read3(out), b.read(lost));
-        let got = b.run().expect("the device runs the drop");
+        let got = b.run().expect("the device runs the drop").reads;
         let mut want = res.clone();
         for i in 0..blocks {
             if u32::from_le_bytes(got[rl][i * 4..i * 4 + 4].try_into().unwrap()) != 0 {
@@ -387,4 +421,117 @@ fn t2363_a_walk_is_its_batches_in_the_trace() {
     assert_eq!(recs.len(), 40usize.div_ceil(MAX_BATCH), "one record a submission");
     assert_eq!(recs.iter().map(|r| r.b).sum::<u64>(), 40);
     assert_eq!(recs[0].a, 0);
+}
+
+/// The padded planes' bytes of one picture of the mock (8 bits a sample, chroma 4:2:0).
+fn planes_bytes() -> u64 {
+    let (w, h) = (W.div_ceil(16) * 16, H.div_ceil(16) * 16);
+    (w * h * 3 / 2) as u64
+}
+
+/// Test t2700 (found-defects 401, 621) and t2706 (found-defects 135): played frame by frame from a
+/// memo that holds two pictures, a cut mosh uploads nothing but its source frames, encodes each
+/// position once, and reads back the frame shown and the checkpoints as 8-bit planes — the walk's
+/// state stays on the device between batches and walks; the pictures are the per-position walk's.
+#[test]
+fn t2700_t2706_a_walk_goes_on_from_the_device() {
+    let _one = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    if no_device() {
+        return;
+    }
+    let p = params(&[(rows::MOSH, 1.0), (rows::GOP, 8.0)]);
+    let s = Mock::new(0, 0, 80, |k| tex(21, 2 * k as i32, (k % 3) as i32));
+    let memo = StreamMemo::new(2 * planes_bytes() as usize);
+    let r = Rows::from(&p);
+    let kept0 = kt_gpu::compute::kept_buffers();
+    walk(&p, &s, 0, &memo);
+    let (mut up, mut down, mut residuals) = (0, 0, 0);
+    let reference_memo = StreamMemo::new(256 << 20);
+    for n in 1..80 {
+        let (u0, d0, r0) = (UP.load(Relaxed), DOWN.load(Relaxed), RESIDUALS.load(Relaxed));
+        let got = walk(&p, &s, n, &memo);
+        up += UP.load(Relaxed) - u0;
+        down += DOWN.load(Relaxed) - d0;
+        residuals += RESIDUALS.load(Relaxed) - r0;
+        assert!(*got == *mosh::render_reference(r, &s, n, &reference_memo).unwrap().0, "picture at {n}");
+    }
+    let frames = 79u64;
+    let rgba = (W * H * 4) as u64;
+    assert!(up <= frames * rgba, "uploaded {up} bytes over {frames} frames: more than their source frames ({rgba} each)");
+    assert_eq!(residuals, 3 * frames, "each position encoded once (three planes)");
+    // the frame shown each time, and at each checkpoint its picture and the clean reconstruction
+    let checkpoints = (1..80).filter(|k| k % CHECKPOINT == 0).count() as u64;
+    assert!(down <= (frames + 2 * checkpoints) * planes_bytes(), "read back {down} bytes over {frames} frames");
+    assert!(kt_gpu::compute::kept_buffers() > kept0, "nothing stayed on the device");
+    assert!(memo.live_bytes() > 0, "the live tier holds the walk's state");
+    eprintln!("t2700: up {up}, down {down}, residual dispatches {residuals}");
+}
+
+/// Test t2701: the shown frame's conversion row by row is the per-pixel conversion, at every crop.
+#[test]
+fn t2701_the_conversion_back_is_the_reference() {
+    for (w, h) in [(64usize, 48usize), (16, 16), (1920 / 4, 1088 / 4)] {
+        let mut x = 0x2701u32;
+        let mut next = || {
+            x = lowbias32(x);
+            (x >> 24) as u8
+        };
+        let p = Planes { w, h, y: (0..w * h).map(|_| next()).collect(), cb: (0..w * h / 4).map(|_| next()).collect(), cr: (0..w * h / 4).map(|_| next()).collect() };
+        for (ow, oh) in [(w as u32, h as u32), (w as u32 - 3, h as u32 - 5), (w as u32 + 7, h as u32), (1, 1)] {
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            p.to_rgba(ow, oh, &mut a);
+            p.to_rgba_reference(ow, oh, &mut b);
+            assert!(a == b, "{w}x{h} cropped to {ow}x{oh}");
+        }
+    }
+}
+
+/// Test t2703 (found-defects 402): a refresh's I-frame computed by a walk stays beside it: after the
+/// LRU lost the history, a re-walk to the refresh encodes nothing.
+#[test]
+fn t2703_a_refresh_is_kept_beside_the_walk() {
+    let _one = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    if no_device() {
+        return;
+    }
+    // GOP 0: one I-frame at the cut, then a chain whose 600th node is the intra refresh
+    let p = params(&[(rows::MOSH, 1.0), (rows::GOP, 0.0)]);
+    let n = mosh::MAX_CHAIN as i64;
+    let s = Mock::new(0, 0, n + 10, |k| tex(23, k as i32, (k / 5) as i32));
+    let memo = StreamMemo::new(256 << 20);
+    let want = walk(&p, &s, n + 9, &memo);
+    let at = walk(&p, &s, n, &StreamMemo::new(256 << 20));
+    memo.drop_unpinned();
+    let c0 = CONVERTS.load(Relaxed);
+    let again = walk(&p, &s, n, &memo);
+    let converts = CONVERTS.load(Relaxed) - c0;
+    // from the checkpoint before the refresh: the clean encoder's sources up to it, not the refresh's
+    // the refresh is self-contained: its chain is its own picture, kept on the device
+    assert_eq!(converts, 0, "the refresh was encoded again");
+    assert!(*again == *at);
+    assert!(*walk(&p, &s, n + 9, &memo) == *want);
+}
+
+/// Test t2704 (found-defects 405): a region of interest at a held position (a dropped I-frame) is one
+/// job: the clean encoder's picture it blends with is encoded in the walk's batch.
+#[test]
+fn t2704_a_region_at_a_held_position_is_one_job() {
+    let _one = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    if no_device() {
+        return;
+    }
+    let p = params(&[(rows::MOSH, 1.0), (rows::GOP, 8.0)]);
+    let mut s = Mock::new(0, 0, 40, |k| tex(24, 3 * k as i32, 0));
+    s.region = Some((0..W * H).map(|i| if (i % W) < W / 2 { 255 } else { 0 }).collect());
+    let memo = StreamMemo::new(256 << 20);
+    let reference_memo = StreamMemo::new(256 << 20);
+    let r = Rows::from(&p);
+    for n in 0..16 {
+        walk(&p, &s, n, &memo);
+    }
+    // 16 is a dropped I-frame: the decoder holds 15
+    let j0 = JOBS.load(Relaxed);
+    let got = walk(&p, &s, 16, &memo);
+    assert_eq!(JOBS.load(Relaxed) - j0, 1, "the region's clean picture took a job of its own");
+    assert!(*got == *mosh::render_reference(r, &s, 16, &reference_memo).unwrap().0);
 }

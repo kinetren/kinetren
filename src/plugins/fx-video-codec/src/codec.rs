@@ -107,8 +107,32 @@ impl Planes {
         Planes { w, h, y, cb, cr }
     }
 
-    /// Back to opaque RGBA, cropped to `ow`×`oh`; chroma by nearest neighbour.
+    /// Back to opaque RGBA, cropped to `ow`×`oh`; chroma by nearest neighbour. Row by row over slices
+    /// (stream-round-trips D5: the shown frame's conversion ran per pixel with every index computed and
+    /// checked, 6–15 ms a 1080-line stage on the composite's thread); the bytes of `to_rgba_reference`.
     pub fn to_rgba(&self, ow: u32, oh: u32, out: &mut Vec<u8>) {
+        let (ow, oh) = ((ow as usize).min(self.w), (oh as usize).min(self.h));
+        out.clear();
+        out.resize(ow * oh * 4, 255);
+        let cw = self.w / 2;
+        for (yy, row) in out.chunks_exact_mut(ow * 4).enumerate() {
+            let ys = &self.y[yy * self.w..yy * self.w + ow];
+            let cbs = &self.cb[(yy / 2) * cw..(yy / 2) * cw + ow.div_ceil(2)];
+            let crs = &self.cr[(yy / 2) * cw..(yy / 2) * cw + ow.div_ceil(2)];
+            for (xx, (o, &l)) in row.chunks_exact_mut(4).zip(ys).enumerate() {
+                let l = l as i32;
+                let cb = cbs[xx / 2] as i32 - 128;
+                let cr = crs[xx / 2] as i32 - 128;
+                o[0] = (l + ((359 * cr + 128) >> 8)).clamp(0, 255) as u8;
+                o[1] = (l - ((88 * cb + 183 * cr + 128) >> 8)).clamp(0, 255) as u8;
+                o[2] = (l + ((454 * cb + 128) >> 8)).clamp(0, 255) as u8;
+            }
+        }
+    }
+
+    /// `to_rgba` as it was written first, pixel by pixel: the reference t2701 holds it to.
+    #[doc(hidden)]
+    pub fn to_rgba_reference(&self, ow: u32, oh: u32, out: &mut Vec<u8>) {
         let (ow, oh) = ((ow as usize).min(self.w), (oh as usize).min(self.h));
         out.clear();
         out.resize(ow * oh * 4, 255);
@@ -467,8 +491,25 @@ pub struct Batch {
     steps: Vec<StepRec>,
     reads: Vec<usize>,
     read_at: HashMap<usize, usize>,
+    /// Buffers that stay on the device after the submission (stream-round-trips D1), and where.
+    keeps: Vec<usize>,
+    keep_at: HashMap<usize, usize>,
+    /// The host keeps buffers (`ComputeHost::keeps`); else a kept buffer is read back.
+    can_keep: bool,
     /// Bytes uploaded and allocated: the device memory the batch holds.
     pub bytes: usize,
+}
+
+/// What a submission gave: the buffers read, in `read`'s order, and the buffers kept, in `keep`'s.
+pub struct Got {
+    pub reads: Vec<Vec<u8>>,
+    pub held: Vec<compute::Held>,
+}
+
+/// A buffer of a finished batch the walk goes on from: on the device, or its bytes.
+pub enum Kept {
+    Held(compute::Held),
+    Bytes(Vec<u8>),
 }
 
 fn words(v: &[u8]) -> Vec<u8> {
@@ -489,12 +530,29 @@ impl Batch {
             steps: Vec::new(),
             reads: Vec::new(),
             read_at: HashMap::new(),
+            keeps: Vec::new(),
+            keep_at: HashMap::new(),
+            can_keep: compute::host().is_some_and(|h| h.keeps()),
             bytes: 0,
         }
     }
 
+    /// The padded luma size of its planes.
+    pub fn width(&self) -> usize {
+        self.w
+    }
+
+    pub fn height(&self) -> usize {
+        self.h
+    }
+
+    /// The batch keeps buffers on the device (else `keep` reads them back).
+    pub fn keeps_on_device(&self) -> bool {
+        self.can_keep
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty() && self.reads.is_empty()
+        self.steps.is_empty() && self.reads.is_empty() && self.keeps.is_empty()
     }
 
     pub fn steps(&self) -> usize {
@@ -608,6 +666,40 @@ impl Batch {
 
     pub fn read3(&mut self, d: Dev3) -> [usize; 3] {
         [self.read(d[0]), self.read(d[1]), self.read(d[2])]
+    }
+
+    /// Leave a buffer on the device after the submission (stream-round-trips D1): a later batch reads
+    /// it as a held buffer. A host that keeps nothing reads it back instead. Never handed out again.
+    pub fn keep(&mut self, id: usize) {
+        if !self.can_keep {
+            self.read(id);
+            return;
+        }
+        if self.keep_at.contains_key(&id) {
+            return;
+        }
+        self.fixed[id] = true;
+        self.keeps.push(id);
+        self.keep_at.insert(id, self.keeps.len() - 1);
+    }
+
+    pub fn keep3(&mut self, d: Dev3) {
+        for id in d {
+            self.keep(id);
+        }
+    }
+
+    /// Whether `id` stays on the device or comes back as kept.
+    pub fn is_kept(&self, id: usize) -> bool {
+        self.keep_at.contains_key(&id) || !self.can_keep && self.read_at.contains_key(&id)
+    }
+
+    /// A kept buffer after `run`.
+    pub fn kept(&self, got: &Got, id: usize) -> Kept {
+        match self.keep_at.get(&id) {
+            Some(&i) => Kept::Held(got.held[i].clone()),
+            None => Kept::Bytes(got.reads.get(self.read_index(id)).cloned().unwrap_or_default()),
+        }
     }
 
     /// Where a buffer read comes in `run`'s answer.
@@ -752,7 +844,7 @@ impl Batch {
 
     /// Submit the batch and wait once; the buffers read, in `read`'s order. `None` — no device, or
     /// it failed (`compute::fail` says why).
-    pub fn run(&self) -> Option<Vec<Vec<u8>>> {
+    pub fn run(&self) -> Option<Got> {
         let host = compute::host()?;
         let inits: Vec<Init<'_>> = self
             .bufs
@@ -769,7 +861,16 @@ impl Batch {
             .map(|s| Step { name: s.name, shader: s.shader, uniform: &s.uniform, read: &s.read, write: &s.write, groups: s.groups })
             .collect();
         let reads: Vec<Buf> = self.reads.iter().map(|&i| Buf(i)).collect();
-        match host.run(&Job { buffers: &inits, steps: &steps, reads: &reads }) {
+        let job = Job { buffers: &inits, steps: &steps, reads: &reads };
+        let got = if self.keeps.is_empty() {
+            host.run(&job).map(|reads| Got { reads, held: Vec::new() })
+        } else {
+            let keep: Vec<Buf> = self.keeps.iter().map(|&i| Buf(i)).collect();
+            host.run_keeping(&job, &keep).and_then(|(reads, held)| {
+                if held.len() == keep.len() { Ok(Got { reads, held }) } else { Err("the host kept fewer buffers than asked".into()) }
+            })
+        };
+        match got {
             Ok(g) => Some(g),
             Err(e) => {
                 compute::fail(e);

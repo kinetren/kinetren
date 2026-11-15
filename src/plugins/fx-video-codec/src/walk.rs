@@ -9,13 +9,19 @@
 //! the positions at or after the host's view, every `CHECKPOINT`-th position (pinned), and the state a
 //! later walk continues from. The bytes are the per-position walk's (t2350): every step is the same
 //! shader on the same inputs, and the vector edit is the CPU's, tabled (D3).
+//!
+//! The walk's own state never crosses the bus (stream-round-trips D1, found-defects 401, 621): the
+//! decoder's picture and the clean encoder's state at a batch's end stay on the device as held
+//! buffers the next batch reads, and at the walk's end they go into the memo's LIVE tier, where the
+//! next walk continues from them. What comes back is only what the host shows and the checkpoints.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use kt_plugin_api::compute::Held;
 use kt_plugin_api::stream::{OnDevice, SecondFrom, Side, StreamInput, StreamLayout, StreamMemo};
 
-use crate::codec::{self, Batch, Clean, Dev3, DevClean, Loss, Planes};
+use crate::codec::{self, Batch, Clean, Dev3, DevClean, Got, Kept, Loss, Planes};
 use crate::mosh::{self, Node, Plan, Rows};
 
 /// A walk keeps the decoder's reference and the clean encoder's state at every position that is a
@@ -43,6 +49,28 @@ pub fn rank(k: i64) -> u32 {
     if i == 0 { 31 } else { (i.unsigned_abs()).trailing_zeros().min(30) }
 }
 
+/// A picture kept on the compute device (stream-round-trips D1): its three planes.
+pub struct HeldPic(pub [Held; 3]);
+
+impl HeldPic {
+    pub fn bytes(&self) -> usize {
+        self.0.iter().map(|h| h.len as usize).sum()
+    }
+}
+
+/// A clean encoder's output kept on the device: its reconstruction and, when a later position
+/// repeats it, its packet (vectors — `None` for intra — and residual).
+pub struct HeldClean {
+    pub recon: Arc<HeldPic>,
+    pub pkt: Option<(Option<Held>, [Held; 3])>,
+}
+
+impl HeldClean {
+    pub fn bytes(&self) -> usize {
+        self.recon.bytes() + self.pkt.as_ref().map_or(0, |(mv, res)| mv.as_ref().map_or(0, |m| m.len as usize) + res.iter().map(|h| h.len as usize).sum::<usize>())
+    }
+}
+
 /// A picture inside a walk.
 #[derive(Clone)]
 enum Val {
@@ -50,6 +78,8 @@ enum Val {
     /// The reconstruction of a clean output the memo holds.
     Recon(Arc<Clean>),
     Dev(Dev3),
+    /// On the device from an earlier batch or walk.
+    Held(Arc<HeldPic>),
 }
 
 /// A clean encoder's output inside a walk.
@@ -60,6 +90,8 @@ enum CleanVal {
     /// The reconstruction alone (a batch brought back only what the next encoder reads): a reference,
     /// never a packet.
     Recon(Arc<Planes>),
+    /// On the device from an earlier batch or walk; whole when it keeps its packet.
+    Held(Arc<HeldClean>),
 }
 
 impl CleanVal {
@@ -68,6 +100,7 @@ impl CleanVal {
             CleanVal::Host(c) => Val::Recon(c.clone()),
             CleanVal::Dev(d) => Val::Dev(d.recon),
             CleanVal::Recon(p) => Val::Host(p.clone()),
+            CleanVal::Held(c) => Val::Held(c.recon.clone()),
         }
     }
 
@@ -76,12 +109,17 @@ impl CleanVal {
             CleanVal::Host(c) => c.pkt.intra,
             CleanVal::Dev(d) => d.mv.is_none(),
             CleanVal::Recon(_) => false,
+            CleanVal::Held(c) => c.pkt.as_ref().is_some_and(|p| p.0.is_none()),
         }
     }
 
     /// It carries its packet.
     fn whole(&self) -> bool {
-        !matches!(self, CleanVal::Recon(_))
+        match self {
+            CleanVal::Recon(_) => false,
+            CleanVal::Held(c) => c.pkt.is_some(),
+            _ => true,
+        }
     }
 }
 
@@ -98,6 +136,26 @@ enum Put {
 enum Back {
     Pic { key: u64, d: Dev3, put: Put },
     Clean { key: u64, c: DevClean, bs: usize },
+}
+
+/// A picture of the batch, after it ran: on the device or on the host.
+fn back_pic(b: &Batch, got: &Got, d: Dev3) -> Val {
+    let ks = d.map(|id| b.kept(got, id));
+    if ks.iter().all(|k| matches!(k, Kept::Held(_))) {
+        let [Kept::Held(y), Kept::Held(cb), Kept::Held(cr)] = ks else { unreachable!() };
+        return Val::Held(Arc::new(HeldPic([y, cb, cr])));
+    }
+    let bytes = |k: Kept| match k {
+        Kept::Bytes(v) => v,
+        Kept::Held(_) => Vec::new(),
+    };
+    let [y, cb, cr] = ks;
+    let (w, h) = (b.width(), b.height());
+    let take = |mut v: Vec<u8>, n: usize| {
+        v.truncate(n);
+        v
+    };
+    Val::Host(Arc::new(Planes { w, h, y: take(bytes(y), w * h), cb: take(bytes(cb), w * h / 4), cr: take(bytes(cr), w * h / 4) }))
 }
 
 struct Walk<'a> {
@@ -119,8 +177,14 @@ struct Walk<'a> {
     /// A packet later positions repeat (`bloom`), per side.
     bloom: [Option<(i64, CleanVal)>; 2],
     back: Vec<Back>,
-    /// Host pictures uploaded into the current batch, by their address.
+    /// Pictures the walk computed that go into the live tier at the flush (a refresh's I-frame, D3).
+    live: Vec<(u64, Dev3)>,
+    /// The last position computed.
+    at: Option<i64>,
+    /// Host and held pictures in the current batch, by their address.
     uploaded: HashMap<usize, Dev3>,
+    /// Held packets in the current batch, by their address.
+    packets: HashMap<usize, (Option<usize>, Dev3)>,
     tables: HashMap<(u64, u64, bool), usize>,
     grey: Arc<Planes>,
     /// The picture at `n`, once it is on the host.
@@ -147,11 +211,25 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
     let mut start = 0;
     let mut cur: Option<Val> = None;
     for i in (0..chain.len()).rev() {
+        let last = i + 1 == chain.len();
+        // the state a walk left on the device (D1): a picture the walk goes on from is read where it
+        // lies, never uploaded from the memo's copy
+        let held = |memo: &StreamMemo| memo.get_live::<HeldPic>(chain[i].2);
+        if !last && let Some(h) = held(memo) {
+            cur = Some(Val::Held(h));
+            start = i + 1;
+            break;
+        }
         if let Some(p) = memo.get::<Planes>(chain[i].2) {
-            if i + 1 == chain.len() {
+            if last {
                 return Some((p, chain[i].2));
             }
             cur = Some(Val::Host(p));
+            start = i + 1;
+            break;
+        }
+        if last && let Some(h) = held(memo) {
+            cur = Some(Val::Held(h));
             start = i + 1;
             break;
         }
@@ -166,12 +244,15 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         h,
         b: Batch::new(w, h),
         positions: 0,
-        first: chain[start].0,
+        first: chain[start.min(chain.len() - 1)].0,
         cur,
         last: [None, None],
         bloom: [None, None],
         back: Vec::new(),
+        live: Vec::new(),
+        at: None,
         uploaded: HashMap::new(),
+        packets: HashMap::new(),
         tables: HashMap::new(),
         grey: Arc::new(Planes::grey(w, h)),
         out: None,
@@ -179,11 +260,21 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         region: lay.region_ident(n) != 0,
         checkpoints: 0,
     };
+    let key = chain[chain.len() - 1].2;
+    if start == chain.len() {
+        // the frame asked is only on the device: it comes back alone, and to the memo as shown
+        let pic = walk.cur.clone().expect("found above");
+        walk.keep(key, &pic, Put::Lru);
+        let d = walk.dev(&pic);
+        walk.out_dev = Some(d);
+        walk.flush(false)?;
+        return walk.out.map(|p| (p, key));
+    }
     for &(k, node, dk) in &chain[start..] {
         // before each position: the host may have left the frame (gpu-arbiter, row 147); every
         // position computed so far comes back into the memo
         if input.stop() {
-            walk.flush();
+            walk.flush(true);
             return None;
         }
         if walk.positions == 0 {
@@ -192,18 +283,29 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         match walk.position(k, node, dk) {
             Ok(()) => {}
             Err(Short::Missing) => {
-                walk.flush();
+                walk.flush(true);
                 return None;
             }
         }
         walk.positions += 1;
+        walk.at = Some(k);
         // the frame on screen comes back with its own history, not after the frames ahead of it
         if walk.positions >= MAX_BATCH || walk.b.bytes >= BATCH_BYTES || (walk.view == Some(k) && k != n) {
-            walk.flush()?;
+            walk.flush(false)?;
         }
     }
-    walk.flush()?;
-    let key = chain[chain.len() - 1].2;
+    // a region of interest blends with the clean encoder's picture at `n` (D4, found-defects 405): at a
+    // held position the walk did not encode it, so it is encoded in this batch, not by a job of its own
+    if walk.region && !walk.last[Side::Main as usize].as_ref().is_some_and(|(q, _)| *q == n) && s.clean(lay, Side::Main, n).is_some_and(|k| memo.get::<Clean>(k).is_none()) {
+        match walk.clean(Side::Main, n) {
+            Ok(_) => {}
+            Err(Short::Missing) => {
+                walk.flush(true);
+                return None;
+            }
+        }
+    }
+    walk.flush(true)?;
     walk.out.map(|p| (p, key))
 }
 
@@ -212,10 +314,20 @@ impl Walk<'_> {
         self.input
     }
 
-    /// A picture's planes in the current batch (a host one uploaded once a batch).
+    /// A picture's planes in the current batch (a host one uploaded once a batch, a held one copied on
+    /// the device once a batch).
     fn dev(&mut self, v: &Val) -> Dev3 {
         match v {
             Val::Dev(d) => *d,
+            Val::Held(h) => {
+                let at = Arc::as_ptr(h) as usize;
+                if let Some(d) = self.uploaded.get(&at) {
+                    return *d;
+                }
+                let d = h.0.clone().map(|p| self.b.held(p));
+                self.uploaded.insert(at, d);
+                d
+            }
             Val::Host(p) => {
                 let at = Arc::as_ptr(p) as usize;
                 if let Some(d) = self.uploaded.get(&at) {
@@ -242,6 +354,16 @@ impl Walk<'_> {
         match c {
             CleanVal::Dev(d) => (d.mv, d.res),
             CleanVal::Host(h) => self.b.upload_packet(&h.pkt),
+            CleanVal::Held(h) => {
+                let at = Arc::as_ptr(h) as usize;
+                if let Some(p) = self.packets.get(&at) {
+                    return *p;
+                }
+                let (mv, res) = h.pkt.clone().expect("a reconstruction alone is never asked for its packet");
+                let p = (mv.map(|m| self.b.held(m)), res.map(|r| self.b.held(r)));
+                self.packets.insert(at, p);
+                p
+            }
             CleanVal::Recon(_) => unreachable!("a reconstruction alone is never asked for its packet"),
         }
     }
@@ -284,6 +406,9 @@ impl Walk<'_> {
         if let Some(c) = self.memo.get::<Clean>(k) {
             return Some(Val::Recon(c));
         }
+        if let Some(c) = self.memo.get_live::<HeldClean>(k) {
+            return Some(Val::Held(c.recon.clone()));
+        }
         self.memo.get::<Planes>(mosh::recon_key(k)).map(Val::Host)
     }
 
@@ -304,6 +429,11 @@ impl Walk<'_> {
         let Some(key) = s.clean(lay, side, p) else { return Err(Short::Missing) };
         if let Some(c) = self.memo.get::<Clean>(key) {
             return Ok(CleanVal::Host(c));
+        }
+        if let Some(c) = self.memo.get_live::<HeldClean>(key)
+            && c.pkt.is_some()
+        {
+            return Ok(CleanVal::Held(c));
         }
         let Some(gs) = s.gop_start(lay, side, p) else { return Err(Short::Missing) };
         let mut start = p;
@@ -371,11 +501,15 @@ impl Walk<'_> {
             Node::Intra { p } => self.clean(Side::Main, p)?.recon(),
             Node::Refresh { p } => {
                 let ik = s.intra(self.lay(), p);
-                match self.memo.get::<Planes>(ik) {
-                    Some(x) => Val::Host(x),
-                    None => {
+                match (self.memo.get::<Planes>(ik), self.memo.get_live::<HeldPic>(ik)) {
+                    (Some(x), _) => Val::Host(x),
+                    (None, Some(h)) => Val::Held(h),
+                    (None, None) => {
                         let cur = self.source(Side::Main, p)?;
-                        Val::Dev(self.b.encode(cur, None, &s.at(p).cfg).recon)
+                        let d = self.b.encode(cur, None, &s.at(p).cfg).recon;
+                        // kept beside the walk (found-defects 402): a re-walk across the refresh reads it
+                        self.live.push((ik, d));
+                        Val::Dev(d)
                     }
                 }
             }
@@ -438,6 +572,7 @@ impl Walk<'_> {
         if k == self.n {
             match &pic {
                 Val::Dev(d) => self.out_dev = Some(*d),
+                Val::Held(_) => self.out_dev = Some(self.dev(&pic)),
                 Val::Host(p) => self.out = Some(p.clone()),
                 Val::Recon(c) => self.out = Some(Arc::new(c.recon.clone())),
             }
@@ -453,9 +588,10 @@ impl Walk<'_> {
             self.checkpoints += 1;
         }
         match v {
-            Val::Dev(d) => {
-                self.b.read3(*d);
-                self.back.push(Back::Pic { key, d: *d, put });
+            Val::Dev(_) | Val::Held(_) => {
+                let d = self.dev(v);
+                self.b.read3(d);
+                self.back.push(Back::Pic { key, d, put });
             }
             Val::Host(p) => self.put(key, p.clone(), put),
             Val::Recon(c) => self.put(key, Arc::new(c.recon.clone()), put),
@@ -482,6 +618,9 @@ impl Walk<'_> {
         if let Some(c) = &self.cur {
             add(c);
         }
+        for (_, d) in &self.live {
+            live.extend_from_slice(d);
+        }
         for (_, c) in self.last.iter().chain(&self.bloom).flatten() {
             if let CleanVal::Dev(d) = c {
                 live.extend_from_slice(&d.recon);
@@ -499,46 +638,78 @@ impl Walk<'_> {
         self.s.pkt_pos(q + 1) == q
     }
 
-    /// Submit the batch, wait once, and put what came back into the memo; the walk's state goes on
-    /// from the host. `None` — the device failed.
-    fn flush(&mut self) -> Option<()> {
-        if self.b.is_empty() && self.back.is_empty() {
-            return Some(());
-        }
+    /// Submit the batch, wait once, and put what came back into the memo. The walk's state goes on
+    /// from the device (D1): the decoder's picture and the clean encoder's state stay there as held
+    /// buffers, and at the walk's `end` they go into the memo's live tier. A host that keeps nothing
+    /// reads them back and the memo keeps them as transient entries, as before. `None` — the device
+    /// failed.
+    fn flush(&mut self, end: bool) -> Option<()> {
         let s = self.s;
-        // the resume point: the decoder's picture and the clean encoder's state at the batch's end
-        if let Some(Val::Dev(d)) = self.cur.clone()
-            && !self.b.is_read(d[0])
-        {
-            let k = self.first + self.positions as i64 - 1;
-            let key = s.dk(k);
-            self.keep(key, &Val::Dev(d), Put::Transient);
+        let on_device = self.b.keeps_on_device();
+        if let Some(Val::Dev(d)) = self.cur {
+            self.b.keep3(d);
         }
         for side in [Side::Main, Side::Second] {
             let i = side as usize;
-            let whole_last = self.last[i].as_ref().is_some_and(|(q, _)| (self.region && *q == self.n && side == Side::Main) || self.repeated(*q));
-            for (slot, whole) in [(self.last[i].clone(), whole_last), (self.bloom[i].clone(), true)] {
+            for (slot, bloom) in [(self.last[i].clone(), false), (self.bloom[i].clone(), true)] {
                 let Some((q, CleanVal::Dev(c))) = slot else { continue };
-                let Some(key) = s.clean(self.lay(), side, q) else { continue };
-                if whole {
+                if !bloom && self.region && q == self.n && side == Side::Main {
+                    // the region's blend reads the clean picture on the host (`mosh::render`)
+                    let Some(key) = s.clean(self.lay(), side, q) else { continue };
                     self.b.read3(c.recon);
                     self.b.read3(c.res);
                     if let Some(m) = c.mv {
                         self.b.read(m);
                     }
                     self.back.push(Back::Clean { key, c, bs: s.at(q).cfg.bs });
-                } else if !self.b.is_read(c.recon[0]) {
-                    self.keep(mosh::recon_key(key), &Val::Dev(c.recon), Put::Transient);
+                    continue;
+                }
+                self.b.keep3(c.recon);
+                // the packet only where a later position repeats it (a `bloom` run)
+                if bloom || self.repeated(q) {
+                    self.b.keep3(c.res);
+                    if let Some(m) = c.mv {
+                        self.b.keep(m);
+                    }
                 }
             }
+        }
+        for (_, d) in &self.live {
+            self.b.keep3(*d);
         }
         if let Some(d) = self.out_dev {
             self.b.read3(d);
         }
+        if !self.b.is_empty() || !self.back.is_empty() {
+            self.run_batch()?;
+        }
+        if end && on_device {
+            // what the next walk continues from: the decoder's picture at the last position and the
+            // clean encoder's state per side
+            if let (Some(Val::Held(h)), Some(k)) = (&self.cur, self.at) {
+                self.memo.put_live(s.dk(k), h.clone(), h.bytes());
+            }
+            for side in [Side::Main, Side::Second] {
+                let i = side as usize;
+                for slot in [&self.last[i], &self.bloom[i]] {
+                    if let Some((q, CleanVal::Held(c))) = slot
+                        && let Some(key) = s.clean(self.lay(), side, *q)
+                    {
+                        self.memo.put_live(key, c.clone(), c.bytes());
+                    }
+                }
+            }
+        }
+        Some(())
+    }
+
+    /// Run the batch and turn its values into what the walk goes on from.
+    fn run_batch(&mut self) -> Option<()> {
+        let s = self.s;
         let got = self.b.run()?;
         let b = std::mem::replace(&mut self.b, Batch::new(self.w, self.h));
         let mut pics: HashMap<usize, Arc<Planes>> = HashMap::new();
-        let mut pic = |d: Dev3| -> Arc<Planes> { pics.entry(d[0]).or_insert_with(|| Arc::new(b.planes_of(&got, b.read_index3(d)))).clone() };
+        let mut pic = |d: Dev3| -> Arc<Planes> { pics.entry(d[0]).or_insert_with(|| Arc::new(b.planes_of(&got.reads, b.read_index3(d)))).clone() };
         let mut reads = 0;
         let mut cleans: HashMap<usize, Arc<Clean>> = HashMap::new();
         for back in std::mem::take(&mut self.back) {
@@ -548,28 +719,65 @@ impl Walk<'_> {
                     self.put(key, pic(d), put);
                 }
                 Back::Clean { key, c, bs } => {
-                    let clean = Arc::new(b.clean_of(&got, c.mv.map(|m| b.read_index(m)), b.read_index3(c.res), b.read_index3(c.recon), bs));
+                    let clean = Arc::new(b.clean_of(&got.reads, c.mv.map(|m| b.read_index(m)), b.read_index3(c.res), b.read_index3(c.recon), bs));
                     self.memo.put_transient(key, clean.clone(), mosh::clean_bytes(&clean));
                     cleans.insert(c.recon[0], clean);
                 }
             }
         }
-        // the walk goes on from the host: every live value came back
+        let mut kept: HashMap<usize, Val> = HashMap::new();
+        let mut back = |d: Dev3| -> Val { kept.entry(d[0]).or_insert_with(|| back_pic(&b, &got, d)).clone() };
         if let Some(Val::Dev(d)) = self.cur {
-            self.cur = Some(Val::Host(pic(d)));
+            let v = back(d);
+            // a host that keeps nothing: the resume point goes into the memo, as before D1
+            if let (Val::Host(p), Some(k)) = (&v, self.at) {
+                self.put(s.dk(k), p.clone(), Put::Transient);
+            }
+            self.cur = Some(v);
         }
         if let Some(d) = self.out_dev.take() {
             self.out = Some(pic(d));
         }
-        for i in 0..2 {
+        for side in [Side::Main, Side::Second] {
+            let i = side as usize;
             for slot in [&mut self.last[i], &mut self.bloom[i]] {
-                if let Some((q, CleanVal::Dev(c))) = slot.take() {
-                    *slot = match cleans.get(&c.recon[0]) {
-                        Some(full) => Some((q, CleanVal::Host(full.clone()))),
-                        None if b.is_read(c.recon[0]) => Some((q, CleanVal::Recon(pic(c.recon)))),
-                        None => None,
-                    };
-                }
+                let Some((q, CleanVal::Dev(c))) = slot.take() else { continue };
+                let key = s.clean(self.input as &dyn StreamLayout, side, q);
+                *slot = Some((q, match (cleans.get(&c.recon[0]), back(c.recon)) {
+                    (Some(full), _) => CleanVal::Host(full.clone()),
+                    (None, Val::Held(recon)) => {
+                        let pkt = b.is_kept(c.res[0]).then(|| {
+                            let held = |id: usize| match b.kept(&got, id) {
+                                Kept::Held(h) => h,
+                                Kept::Bytes(_) => unreachable!("a batch that keeps keeps every buffer"),
+                            };
+                            (c.mv.map(held), c.res.map(held))
+                        });
+                        CleanVal::Held(Arc::new(HeldClean { recon, pkt }))
+                    }
+                    (None, Val::Host(_)) if b.is_kept(c.res[0]) => {
+                        let full = Arc::new(b.clean_of(&got.reads, c.mv.map(|m| b.read_index(m)), b.read_index3(c.res), b.read_index3(c.recon), s.at(q).cfg.bs));
+                        if let Some(key) = key {
+                            self.memo.put_transient(key, full.clone(), mosh::clean_bytes(&full));
+                        }
+                        CleanVal::Host(full)
+                    }
+                    (None, Val::Host(recon)) => {
+                        if let Some(key) = key {
+                            self.memo.put_transient(mosh::recon_key(key), recon.clone(), recon.bytes());
+                        }
+                        CleanVal::Recon(recon)
+                    }
+                    (None, _) => unreachable!("a kept picture is held or on the host"),
+                }));
+            }
+        }
+        // a refresh's I-frame beside the walk (found-defects 402)
+        for (key, d) in std::mem::take(&mut self.live) {
+            match back(d) {
+                Val::Held(h) => self.memo.put_live(key, h.clone(), h.bytes()),
+                Val::Host(p) => self.memo.put(key, p.clone(), p.bytes()),
+                _ => {}
             }
         }
         kt_plugin_api::stream::walked(self.first, self.positions, reads, self.checkpoints);

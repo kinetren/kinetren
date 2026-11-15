@@ -295,7 +295,14 @@ in the source's state and arrive through the retune lane.
   Its bytes are real memory: moving them moves the render's peak, and a 3 GB render has no margin. A
   change of chunks or of the look-ahead is checked under `MemoryMax=3G` more than once: one such run
   passed and the next was killed.
-- A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.
+- **A stream stage takes the pipeline** (stream-round-trips D6, row 490): the decode thread pre-rolls the
+  range's history before its first chunk, and the compose thread builds the plan of a frame with a stream
+  stage in frame order and hands it to a worker (`Job::Planned`) — a worker never re-walks a history the
+  memo dropped. t2707.
+- **A look-ahead walk is bounded by what a stage on screen reaches** (stream-round-trips D8, row 660,
+  t2710): no stage on screen walks nothing far, every walk is at most `STREAM_WALK_SECS` of frames. A
+  divisor taken from a stage's frame size is 0 where no stage is: never divide by `max(1)` of it. The walk
+  of the frame ON SCREEN runs at the display's class (D10, t2711).
 - **An incomplete frame is composed again before it is written** (gpu-leftovers D5, found-defects 522):
   `decode_requests` asks a key its span dropped alone up to `export::RETRIES` times in both exports, and
   every compose site (serial loop, pipeline workers, the ring's `collect`, `depth == 0`) composes an

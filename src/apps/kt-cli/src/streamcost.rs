@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
 use std::time::Instant;
 
-use kt_plugin_api::compute::{ComputeHost, Init, Job, Shader};
+use kt_plugin_api::compute::{Buf, ComputeHost, Held, Init, Job, Shader};
 use kt_time::Tick;
 
 static UP: AtomicU64 = AtomicU64::new(0);
@@ -31,8 +31,9 @@ static DEC_STEPS: AtomicU64 = AtomicU64::new(0);
 /// The process's compute device, counting what each job moves (kt-cli's only host; a pass-through).
 struct Counting(Arc<dyn ComputeHost>);
 
-impl ComputeHost for Counting {
-    fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String> {
+impl Counting {
+    /// Count a job around `run`, which gives its reads and what it kept.
+    fn count<T>(&self, job: &Job<'_>, run: impl FnOnce() -> Result<(Vec<Vec<u8>>, T), String>) -> Result<(Vec<Vec<u8>>, T), String> {
         let up: usize = job.buffers.iter().map(|b| if let Init::Bytes(b) = b { b.len() } else { 0 }).sum();
         let first = job.steps.first().map_or("", |s| s.name);
         let kind = if job.steps.iter().any(|s| s.name.ends_with(":residual")) {
@@ -46,14 +47,26 @@ impl ComputeHost for Counting {
         ENC_STEPS.fetch_add(job.steps.iter().filter(|s| s.name.ends_with(":residual")).count() as u64, Relaxed);
         DEC_STEPS.fetch_add(job.steps.iter().filter(|s| s.name.ends_with(":decode")).count() as u64, Relaxed);
         let (t, c) = (Instant::now(), thread_cpu_ns());
-        let got = self.0.run(job);
+        let got = run();
         JOB_NS.fetch_add(t.elapsed().as_nanos() as u64, Relaxed);
         JOB_CPU_NS.fetch_add(thread_cpu_ns().saturating_sub(c), Relaxed);
         UP.fetch_add(up as u64, Relaxed);
-        if let Ok(g) = &got {
+        if let Ok((g, _)) = &got {
             DOWN.fetch_add(g.iter().map(|v| v.len() as u64).sum(), Relaxed);
         }
         got
+    }
+}
+
+impl ComputeHost for Counting {
+    fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String> {
+        self.count(job, || self.0.run(job).map(|r| (r, ()))).map(|r| r.0)
+    }
+    fn keeps(&self) -> bool {
+        self.0.keeps()
+    }
+    fn run_keeping(&self, job: &Job<'_>, keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {
+        self.count(job, || self.0.run_keeping(job, keep))
     }
     fn prepare(&self, shader: &Shader) -> Result<(), String> {
         self.0.prepare(shader)
