@@ -489,3 +489,14 @@ Why: 1.4 ms against 92 ms on the same 1080p frame, on llvmpipe; the owner, C2 of
 - **WHEN** a shader kind is asked for a frame with no compute device
 - **THEN** the frame is transparent, of its size
 - **TEST** t1645 (`src/libs/kt-plugin-api/tests/registry.rs`)
+
+### Requirement: A value edit costs its own address on the calling thread
+`Player::update_gen` SHALL retune the edited event's own address and hand its other addresses (an
+instance with overrides, a morpher's pieces) to the builder thread; it SHALL resolve no reel and
+build no renderer on the calling thread, and SHALL NOT copy the stored project when it already holds
+the values.
+
+#### Scenario: A title keystroke
+- **WHEN** a generator inside a reel placed eight times takes a new value through `update_gen`, and then the same value again
+- **THEN** the call counts no reel resolve and no renderer build, the stored project carries the value, and the second call keeps the stored project as it is
+- **TEST** t2669 (`src/libs/kt-engine/tests/gen_event.rs`)

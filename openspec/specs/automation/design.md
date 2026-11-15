@@ -189,3 +189,14 @@ The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-b
 - **Left**: the per-frame chain copy of an animated layer (row 168) and name-addressed curves on transitions, generators, cameras, masks (row 169).
 
 The class walked and the numbers: `openspec/changes/archive/2026-11-09-compiled-curves/design.md`.
+
+## One resolved chain per moment, carriers by row (frame-work-by-edit, 2026-11-15)
+
+A layer with live curves copied its whole chain for every plan of a frame — the probe, the composite, a
+retry, the loop fill each made their own. `LayerChain::Shared` hands one copy per (layer, material tick)
+from a four-entry memo on the layer (a pure function of the two: invariant 11 holds), `Owned` remains
+for a plan that changes the chain (a stream stage's front). An overlay of values on a borrowed chain was
+rejected: every executor path reads parameters from `FxInstance`s. Transitions, cameras and generators
+applied their curves by NAME per frame and masks rebuilt their whole passport per keyed row; `RowCurves`
+and `MasksPlan` compile the rows once and set them through the same setter (`set_param_idx` is the row's
+`set_param`), with the bits of the by-name path (t2667).
