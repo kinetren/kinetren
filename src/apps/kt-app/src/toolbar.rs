@@ -338,10 +338,15 @@ impl KtApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
         let mini = window_button(&mut row, 0, false);
+        let mini_left = mini.rect.left();
         self.no_resize_rects.push(mini.rect.expand(2.0));
         if self.hint(mini, tr(k::win::MINIMIZE)).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
+        // the strip's free part, where a double click maximizes (live `resize_loop`)
+        let mut free = strip;
+        free.max.x = mini_left;
+        crate::widgets::field_probe::note("title.drag", free);
         ui.advance_cursor_after_rect(strip);
     }
 

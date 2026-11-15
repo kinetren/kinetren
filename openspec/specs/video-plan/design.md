@@ -646,3 +646,10 @@ rejected: it filters per event per frame and merges across buckets, where the ru
 A dissolve's partner, a track stage's range, revision and masks, and the reel instances for the bars are
 laid out in the same build. The archived change's design lists every place walked and what was left
 (found-defects 640–643).
+## A frame's own GPU error is its error (gpu-errors-survive, 2026-11-15)
+
+No frame ran inside an error scope, so any wgpu error a frame raised went to the device's default
+handler and panicked instead of the poisoning contract (`GpuExecError::Validation`). Every composing
+entry point of `GpuFxEngine` now runs in thread-local Validation/Internal scopes (`Inner::guarded`);
+wgpu 30 keeps the scope stack per thread, so egui's errors on the UI thread never poison the
+preview's frame. Reasons and the class walk: `openspec/changes/archive/2026-11-15-gpu-errors-survive/design.md`.

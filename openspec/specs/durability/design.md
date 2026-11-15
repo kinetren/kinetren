@@ -297,3 +297,16 @@ Checked, every caller of `save()`/`save_as()` and every reader of the flags afte
   recovery list) and the program's start read stay on the UI thread.
 - **Ctrl+S (252)** was already off the UI thread since one-scheduler; t2333 proves it under a disk
   writer. Measured: live `open_heavy` reads `block.ui` 0 across File › Open of the heavy showcase.
+
+## A GPU error never ends the program (gpu-errors-survive, 2026-11-15)
+
+The owner's kt26.11.10 died on a maximize while a region looped (kkt-26.11.15 N1): egui's
+`Surface::configure` waits for the device to go idle and refuses when another thread submitted
+meanwhile — the preview's present on the same device — and with no uncaptured-error handler on any
+device wgpu's default handler panicked. Every device is now watched (`kt_gpu::errors::watch`, errors
+written to the journal), a frame's own errors are caught by thread-local scopes, and a refused
+reconfigure holds the display's submissions for two UI frames. The walk of every device and
+submission path, and why a lock around eframe's resize or a `catch_unwind` were rejected:
+`openspec/changes/archive/2026-11-15-gpu-errors-survive/design.md`. On GL the surface never reports
+`Outdated`, so up to a second of frames is lost until the window manager's next configure event
+(found-defects 672). Live `resize_loop` meets the race through the bench's `gpu_busy`.
