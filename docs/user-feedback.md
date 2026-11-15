@@ -2899,3 +2899,6 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 5. The final render's settings are very scant.
 - ORDER (his rule): item 4 is NOT started until item 2 is done, and done as FASTER than kt26.11.10,
   "не просто вернуть как было".
+- Correction to item 2 (same day): the slowdown is NOT mainly Datamosh — "я проверял в старой версии
+  кусок БЕЗ datamosh и он как раз меня еще сильнее беспокоит чем datamosh". The piece without
+  Datamosh is examined first-class, alongside Datamosh.
