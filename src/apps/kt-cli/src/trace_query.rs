@@ -1071,6 +1071,7 @@ pub fn laps(run: &Run) -> String {
             let w = match (r.c & 0xff, r.aux) {
                 (_, trace::mix::NOT_CLEAN) => "not clean (starved/pre-roll)",
                 (_, trace::mix::UNSETTLED) => "not kept: effects still settling",
+                (_, trace::mix::PASSED) => "past the kept part of a loop longer than the store",
                 (1, _) if r.c >> 8 == 1 => "lap context never kept",
                 (1, _) => "never kept/evicted",
                 (2, _) => "scene changed",

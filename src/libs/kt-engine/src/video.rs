@@ -20,7 +20,7 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 #[path = "video_stream.rs"]
 mod stream;
 pub use stream::{
-    OpenFrontExec, STREAM_MEMO_BASE, StreamPacing, StreamWant, front_runs, front_slots as stream_front_slots, install_stream_front, prewarm_stream_front, memory_available, set_memory_probe, size_stream_memo,
+    OpenFrontExec, STREAM_MEMO_BASE, StreamPacing, StreamWant, front_memo, front_runs, front_slots as stream_front_slots, install_stream_front, prewarm_stream_front, memory_available, set_memory_probe, size_stream_memo,
     size_stream_memo_want, size_stream_memo_walk, stop_when, stopping, stream_memo, stream_memo_bytes, stream_memo_bytes_walk, stream_memo_want,
 };
 use stream::StreamStage;
@@ -1628,9 +1628,13 @@ impl VideoRenderer {
         }
     }
 
-    /// Keep the loop the host plays in this renderer's stream memo (`StreamMemo::keep_loop`).
+    /// Keep the loop the host plays in this renderer's stream memo (`StreamMemo::keep_loop`), and,
+    /// for the preview's, in the front memo it feeds from (loop-keeps-its-lap).
     pub fn stream_keep_loop(&self, on: bool) {
         self.stream_memo.keep_loop(on);
+        if Arc::ptr_eq(&self.stream_memo, stream_memo()) {
+            front_memo().keep_loop(on);
+        }
     }
 
     /// Whether this renderer keeps its stream history in `memo`.
@@ -1641,6 +1645,9 @@ impl VideoRenderer {
     /// The host's loop came round: a new lap for the stream memo (`StreamMemo::lap`).
     pub fn stream_lap(&self) {
         self.stream_memo.lap();
+        if Arc::ptr_eq(&self.stream_memo, stream_memo()) {
+            front_memo().lap();
+        }
     }
 
     /// The largest frame (RGBA bytes) a stream stage active at `t` orders (decode-request-storm:

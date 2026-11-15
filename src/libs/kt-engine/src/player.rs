@@ -353,6 +353,11 @@ impl Player {
         let underruns = Arc::new(AtomicU64::new(0));
         let flight = Arc::new(crate::flight::FlightRecorder::new());
         let mix_coverage = crate::mix::MixCoverage::default();
+        {
+            // the ledger took the kept mix's grant back: the render thread, its keeper, evicts when woken
+            let wake = wake.clone();
+            mix_coverage.budget.on_shrink(move |_| wake.notify());
+        }
 
         let (producer, consumer) =
             rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * AUDIO_CHANNELS);
@@ -2119,7 +2124,7 @@ fn audio_render_loop(ctx: RenderCtx) {
     drop(first);
     renderer.sync_fx(&mut store);
     // the final mix of what was heard (cached-range-plays): a covered range plays from it
-    let mut mix = crate::mix::MixPlay::default();
+    let mut mix = crate::mix::MixPlay::with_store(crate::mix::MixStore::with_budget(mix_coverage.budget.clone()));
     let mut mix_published = std::time::Instant::now();
     // A build asked on a pause: the next start waits for it (time stands before the first frame,
     // invariant 6), so Play after an edit plays the edit. The render thread itself never builds:
@@ -2146,6 +2151,8 @@ fn audio_render_loop(ctx: RenderCtx) {
     let mut last_region: Option<(i64, i64)> = *loop_region.lock().unwrap();
     let mut loop_armed = loop_arm_after_jump(render_head, last_region, 1);
     let mut last_effective_some = loop_armed && last_region.is_some();
+    // the loop whose laps the kept mix keeps a prefix of when it is longer than the bound
+    mix.store.retain_laps(last_region);
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
     // The first pass after a start, held back from the callback until it is whole (test-hygiene,
     // found-defects 158). Allocated once, here: the loop allocates nothing.
@@ -2160,6 +2167,8 @@ fn audio_render_loop(ctx: RenderCtx) {
     let mut stall = crate::flight::StallWatch::new(render_head);
 
     while !stop.load(Ordering::Acquire) {
+        // a grant the ledger took back (an export's claim): two atomic reads when nothing moved
+        mix.store.fit();
         if dirty.swap(false, Ordering::AcqRel) {
             // a version asked on a pause holds the start that has not been handed out yet, even when
             // this thread notices it after the Play (under load it does: the deferred opening's
@@ -3021,6 +3030,8 @@ fn prefetch_loop(
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
     let mut memo_sized: Option<MemoSizing> = None;
+    // the loop the kept mix and the decoded-frame cache were told of (loop-keeps-its-lap)
+    let mut loop_kept: Option<Option<(i64, i64)>> = None;
     // the moment shown at the last pass: going back inside the loop while playing is a new lap
     let mut lap_at: Option<i64> = None;
     // the loop the display's executor was told to keep, and which executor (memory-ledger D4)
@@ -3089,6 +3100,13 @@ fn prefetch_loop(
         let generation = transport.generation();
         let head = transport.playhead_frames();
         let region = *loop_region.lock().unwrap();
+        if loop_kept != Some(region) {
+            // the kept mix asks the ledger for the loop's bursts (its keeper, the render thread, reads
+            // the bound at use), and the frames cache keeps a part of a loop past its bound
+            loop_kept = Some(region);
+            mix.budget.ask(crate::mix::mix_want(region));
+            cache.keep_loop(region.is_some());
+        }
         // what the final-mix store holds is not ordered (cached-range-plays)
         let held = mix.get().playing(region);
         for win in lookahead_windows(head, PREFETCH_AUDIO_LOOKAHEAD_FRAMES, region) {
@@ -3138,6 +3156,7 @@ fn prefetch_loop(
         if transport.is_playing() && region_ticks.is_some() {
             if lap_at.is_some_and(|at| t0.0 < at) {
                 video.stream_lap();
+                cache.lap();
             }
             lap_at = Some(t0.0);
         } else {

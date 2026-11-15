@@ -472,6 +472,9 @@ pub mod mix {
     /// (a starved pre-roll or chunk, a track stage after a seek), so it is not what a continuous
     /// play gives; `c` why it was live, as for the others.
     pub const UNSETTLED: u32 = 7;
+    /// Rendered live and clean, not kept: the store is full of the earlier bursts of the loop it
+    /// keeps a prefix of (loop-keeps-its-lap) — a loop longer than the store's bound.
+    pub const PASSED: u32 = 8;
     /// The effects went on from where they stopped through the replayed frames: the kept chunks
     /// are the continuous play's, byte for byte.
     pub const WARM_CONTINUED: u64 = 1;

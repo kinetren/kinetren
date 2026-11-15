@@ -202,3 +202,44 @@ fn t2492_the_want_counts_the_stages_own_positions() {
     assert!(new < old, "the region's moments were asked: {new} against {old}");
     assert_eq!(kt_engine::video::stream_memo_want(STREAM_MEMO_BASE, None, plenty), STREAM_MEMO_BASE, "no loop");
 }
+
+/// t2608 (loop-keeps-its-lap, found-defects 542): the front memo — the outputs of the slots in front
+/// of a stream stage — is a stream memo in the memory ledger as stream history, and the preview's
+/// renderer tells it its loop and laps with the stream memo's: over a loop twice its bound it keeps a
+/// part, lap after lap, where its former LRU kept nothing.
+#[test]
+fn t2608_the_front_memo_is_in_the_ledger_and_keeps_a_part_of_a_loop() {
+    let _one = ONE.lock().unwrap_or_else(|p| p.into_inner());
+    let front = kt_engine::video::front_memo();
+    let _ = stream_memo();
+    let cap = front.bytes_cap();
+    assert_eq!(cap, 64 * MB);
+    let snap = kt_time::mem::snapshot();
+    assert!(snap.base(kt_time::mem::Tenant::History) >= (STREAM_MEMO_BASE + cap) as u64, "both memos' bases are History's");
+    kt_plugins_builtin::install();
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let vr = kt_engine::VideoRenderer::new(&p);
+    assert!(vr.shares_stream_memo(stream_memo()));
+    vr.stream_keep_loop(true);
+    // a loop of 32 outputs of 4 MB (twice the bound), each read after it is made, as the walk does
+    let key = |i: u64| (0xF0 << 56) | i;
+    let mut hits = Vec::new();
+    for lap in 0..5 {
+        if lap > 0 {
+            vr.stream_lap();
+        }
+        let mut h = 0;
+        for i in 0..32 {
+            if front.get::<u64>(key(i)).is_some() {
+                h += 1;
+            } else {
+                front.put(key(i), std::sync::Arc::new(i), 4 * MB);
+            }
+        }
+        hits.push(h);
+    }
+    vr.stream_keep_loop(false);
+    front.drop_unpinned();
+    assert_eq!(hits[0], 0);
+    assert!(hits[1..].iter().all(|&h| h >= 8), "a part of the loop is kept every lap: {hits:?}");
+}

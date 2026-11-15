@@ -158,6 +158,39 @@ fn t2296_the_player_asks_for_the_loops_composites() {
     kt_time::mem::set_probe(|| None);
 }
 
+/// t2607 (loop-keeps-its-lap, found-defects 550): the player's prefetch thread asks the memory ledger
+/// for the kept mix of its loop region when it changes — every burst of a 400 s loop and an eighth,
+/// past the 64 MB base — and the render thread's store reads the grant; no region, no want.
+#[test]
+fn t2607_the_player_asks_for_the_loops_mix() {
+    let _g = ONE.lock().unwrap_or_else(|p| p.into_inner());
+    kt_plugins_builtin::install();
+    kt_time::mem::set_probe(|| Some(64 << 30));
+    let p = demo_project(DemoSources::Synth);
+    let srcs: Vec<(MediaId, Box<dyn MediaSource>)> =
+        p.media.iter().map(|m| (m.id, kt_media::factory::open_pseudo(&m.path).unwrap().unwrap())).collect();
+    let (player, _ring) = kt_engine::Player::new(p, srcs);
+    let secs = 400;
+    let region = kt_time::TickRange { start: Tick(0), end: Tick(secs * 90_000) };
+    player.set_loop_region(Some(region));
+    let total = kt_engine::mix::mix_want(Some((0, region.end.to_audio_frames())));
+    let base = kt_engine::mix::MIX_BUDGET_BYTES;
+    assert!(total > base, "scene guard: the loop's mix is past the base");
+    let wait = |want: u64| {
+        let deadline = kt_time::test_deadline();
+        while kt_time::mem::ledger().wanted(Tenant::Mix) != want {
+            assert!(std::time::Instant::now() < deadline, "the mix want never became {want}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+    wait((total - base) as u64);
+    assert_eq!(player.mix_coverage.budget.cap(), total, "the store's bound is the loop's want");
+    player.set_loop_region(None);
+    wait(0);
+    assert_eq!(player.mix_coverage.budget.cap(), base);
+    kt_time::mem::set_probe(|| None);
+}
+
 /// t2299: an export takes the preview's growth while it runs — the stream memo and the present memo
 /// drop to their bases — and gives it back after; its frames are the frames of an export with none.
 #[test]

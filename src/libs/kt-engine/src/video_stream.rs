@@ -359,16 +359,19 @@ fn front_exec() -> Option<&'static Arc<dyn crate::video_plan::VideoGpuExec>> {
 
 /// The front's outputs by stream address (`ClipStream::ident`, which names the front): a re-walk
 /// after the codec memo dropped a position, or the prefetch and the composer reading the same
-/// position, runs the slots once. Bounded; the bytes do not depend on it (invariant 11).
-struct FrontMemo {
-    items: std::collections::VecDeque<(u64, u32, u32, Arc<[u8]>)>,
-    bytes: usize,
+/// position, runs the slots once. A [`StreamMemo`] (loop-keeps-its-lap, found-defects 542): its bytes
+/// are in the memory ledger as stream history, and told of the preview's loop with the stream memo
+/// (`VideoRenderer::stream_keep_loop`) it keeps a part of a loop it cannot hold instead of an LRU's
+/// nothing. Bounded; the bytes do not depend on it (invariant 11).
+pub fn front_memo() -> &'static StreamMemo {
+    static M: OnceLock<StreamMemo> = OnceLock::new();
+    M.get_or_init(|| StreamMemo::new(FRONT_MEMO_BYTES))
 }
 
-const FRONT_MEMO_BYTES: usize = 64 << 20;
+/// What the slots in front made at a position, as the front memo keeps it.
+struct FrontOut(u32, u32, Arc<[u8]>);
 
-static FRONT_MEMO: std::sync::Mutex<FrontMemo> =
-    std::sync::Mutex::new(FrontMemo { items: std::collections::VecDeque::new(), bytes: 0 });
+const FRONT_MEMO_BYTES: usize = 64 << 20;
 
 /// How many times the slots in front ran (tests and `kt-cli stream-cost`).
 pub fn front_runs() -> u64 {
@@ -378,24 +381,13 @@ pub fn front_runs() -> u64 {
 static FRONT_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn front_memo_get(id: u64) -> Option<(u32, u32, Arc<[u8]>)> {
-    let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
-    let i = g.items.iter().position(|e| e.0 == id)?;
-    let e = g.items.remove(i)?;
-    let out = (e.1, e.2, e.3.clone());
-    g.items.push_back(e);
-    Some(out)
+    front_memo().get::<FrontOut>(id).map(|o| (o.0, o.1, o.2.clone()))
 }
 
 fn front_memo_put(id: u64, w: u32, h: u32, rgba: Arc<[u8]>) {
-    let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
-    if g.items.iter().any(|e| e.0 == id) {
-        return;
-    }
-    g.bytes += rgba.len();
-    g.items.push_back((id, w, h, rgba));
-    while g.bytes > FRONT_MEMO_BYTES {
-        let Some(e) = g.items.pop_front() else { break };
-        g.bytes -= e.3.len();
+    if !front_memo().contains(id) {
+        let bytes = rgba.len();
+        front_memo().put(id, Arc::new(FrontOut(w, h, rgba)), bytes);
     }
 }
 

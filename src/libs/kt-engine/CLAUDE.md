@@ -75,6 +75,12 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   - what cannot be warmed keeps nothing for the settle length (`keep_from`): a starved chunk or warm-up, a track stage after a seek (`cold_after_seek`, a stage has no pre-roll — t2371, t2373). `fx_reset(renderer, head)` takes the seek's head;
   - the store is cleared when a source comes, goes or is REPLACED — by `SourceFacts::epoch`, never a count
     (a replacement keeps every count, and the former file's mix replayed, t2540); offline paths never see it.
+  - the store is bounded by its base plus the ledger's `Mix` grant for the loop region (loop-keeps-its-lap):
+    `MixBudget` lives in `MixCoverage`, the prefetch thread asks it (`mix_want`) when the region changes —
+    the render thread never runs a ledger sizing — and the store reads the bound at each new burst; a
+    shrink wakes the render thread, which calls `MixStore::fit` at the top of its loop. A loop longer than
+    the bound keeps a PREFIX of its lap (`retain_laps` tells the store the loop; it is told again at the
+    thread's start): other contexts go first, a lap burst past the kept prefix is not admitted (`passed`).
   `kt-cli probe … --time` still measures the LIVE cost of a place (it never uses the store); `kt-cli preview --loop` shows what the player does on the second lap.
 - **The audio render thread never builds a renderer** (the player's `engine-build` thread does, edit-without-rebuild): `AudioRenderer::new` took 412 ms on the owner's 1974-event project against a 341 ms ring, and 5–7 s in a loaded test run. During playback the old renderer plays until the new one is published; a build asked on a pause holds the next start (`build_holds_start`, time stands before the first frame). The opening's build is the first model. **The swap costs what the edit changed** (t1940): `sync_fx_since` skips every event whose `AudioClip.fp` is unchanged, a reel's pre-roll is computed once per build (`preroll_bursts`), and the old renderer is dropped on another thread; `LoopStats::max_swap_us` reports the longest swap (0.6 ms at load 48, was 244–425 ms).
 - **The cost of a place depends on the LENGTH OF THE REGION** (R.43, item 303): the wrap-around is a seam, and a seam resets the ready resampler buffer (`Warp::seek_source`), and it is primed again, ≈0.3 ms per chain. A short region wraps more often and pays more often: 300 ms over the reverb tails costs 10.2 ms/s against 4.7 for a region of 1700 ms (7 chains, release). The worst is a region with NO BODIES of events — only tails. This must be measured in REPEAT mode (`kt-cli probe … --time` prints both the linear run and the loop): a linear measurement does not see the dependence on length at all.
@@ -151,7 +157,9 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
   stream history's want after the kept composites' — by `VideoRenderer::stream_want`, every stream
   stage over the loop at its own size, reels included, once per build/loop/quality, and tells the memo
-  the loop (`stream_keep_loop`) and each lap (`stream_lap`, the shown moment going back while playing):
+  the loop (`stream_keep_loop`) and each lap (`stream_lap`, the shown moment going back while playing; the
+  front memo, a `StreamMemo` of its own in the ledger, is told with the preview's, and the frames cache too —
+  `BurstCache::keep_loop`/`lap`, loop-keeps-its-lap):
   a loop History cannot hold keeps a part (stream-memo-budget, t2490–t2492). An offline frame job (strip,
   poster) builds its renderer with a memo of its own, never the preview's (t2493). Both export bodies hold `kt_time::mem::claim()`
   while they run, and the render window takes one before it counts devices and `tight` (on its job
