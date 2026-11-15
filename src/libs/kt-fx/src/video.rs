@@ -183,6 +183,19 @@ pub fn has_video_fx_in(
 /// Needed for layer strength: the chain input can be mixed with its output only at
 /// one size, and Pan/CamMotion change the size.
 pub fn fit_into(src: &Frame, ow: u32, oh: u32, out: &mut [u8]) {
+    // the same size is a copy, to the byte (stream-round-trips D5, t2702): each sample position is the
+    // pixel's own within an ulp, and its neighbour's weight times 255 stays far below half a level
+    if src.w == ow && src.h == oh && src.rgba.len() >= out.len() {
+        let n = out.len();
+        out.copy_from_slice(&src.rgba[..n]);
+        return;
+    }
+    bilinear_into(src, 0.0, 0.0, src.w as f64, src.h as f64, ow, oh, out);
+}
+
+/// `fit_into` through the general bilinear at any size: the reference t2702 holds the copy to.
+#[doc(hidden)]
+pub fn fit_into_general(src: &Frame, ow: u32, oh: u32, out: &mut [u8]) {
     bilinear_into(src, 0.0, 0.0, src.w as f64, src.h as f64, ow, oh, out);
 }
 

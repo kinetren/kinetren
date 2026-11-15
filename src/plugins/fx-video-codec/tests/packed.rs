@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::Arc;
 
 use fx_video_codec::codec::{self, Cfg, Planes};
-use kt_plugin_api::compute::{ComputeHost, Init, Job, Shader};
+use kt_plugin_api::compute::{Buf, ComputeHost, Held, Init, Job, Shader};
 use kt_plugin_api::generator::lowbias32;
 
 static UP: AtomicU64 = AtomicU64::new(0);
@@ -31,6 +31,20 @@ impl ComputeHost for Counting {
         }
         let got = self.0.run(job)?;
         DOWN.fetch_add(got.iter().map(|v| v.len() as u64).sum(), Relaxed);
+        Ok(got)
+    }
+    fn keeps(&self) -> bool {
+        self.0.keeps()
+    }
+    fn run_keeping(&self, job: &Job<'_>, keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {
+        let up: usize = job.buffers.iter().map(|b| if let Init::Bytes(b) = b { b.len() } else { 0 }).sum();
+        UP.fetch_add(up as u64, Relaxed);
+        JOBS.fetch_add(1, Relaxed);
+        if job.steps.iter().any(|s| s.name.ends_with(":convert")) {
+            CONVERSIONS.fetch_add(1, Relaxed);
+        }
+        let got = self.0.run_keeping(job, keep)?;
+        DOWN.fetch_add(got.0.iter().map(|v| v.len() as u64).sum(), Relaxed);
         Ok(got)
     }
     fn prepare(&self, s: &Shader) -> Result<(), String> {
@@ -163,7 +177,7 @@ fn laps(memo: &kt_plugin_api::stream::StreamMemo, s: &Loop) -> (u64, Vec<Arc<Pla
 }
 
 /// t2276: a memo sized by the loop rule keeps the loop: its second lap runs no encoder or decoder
-/// job and shows the same pictures; half of it recomputes.
+/// job and shows the same pictures; a quarter of it recomputes.
 #[test]
 fn t2276_a_loop_the_memo_holds_computes_nothing_twice() {
     let _one = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -179,8 +193,10 @@ fn t2276_a_loop_the_memo_holds_computes_nothing_twice() {
     let (jobs, a, b) = laps(&kt_plugin_api::stream::StreamMemo::new(sized), &s);
     assert_eq!(jobs, 0, "the second lap computed again");
     assert_eq!(a, b);
-    let (jobs_half, c, _) = laps(&kt_plugin_api::stream::StreamMemo::new(sized / 2), &s);
-    assert!(jobs_half > 10, "half the memo keeps the loop too ({jobs_half} jobs): the test is not about the bound");
+    // a quarter: since stream-round-trips the clean encoder's state lives in the memo's live tier, and
+    // the pictures alone of this loop fit in half
+    let (jobs_half, c, _) = laps(&kt_plugin_api::stream::StreamMemo::new(sized / 4), &s);
+    assert!(jobs_half > 10, "a quarter of the memo keeps the loop too ({jobs_half} jobs): the test is not about the bound");
     assert_eq!(a, c, "the bytes do not depend on the memo");
 }
 
