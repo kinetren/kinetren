@@ -47,7 +47,7 @@ Why: found-defects 274 — on a pause cpal's ALSA worker woke ~24 times a second
 
 #### Scenario: A seek while paused
 - **PATH** Play, Pause, a second later click on the ruler elsewhere → nothing is heard → Play: the first sound is the material at the click
-- **WHEN** the device is paused at rest and a seek comes
+- **WHEN** the device is paused at rest and a seek comes, then again with the seek inside the pause's check
 - **THEN** the flush is drained without Play and the device is paused again; the next Play's first sound is the start's first frame, byte for byte, and the device was opened once
 - **TEST** t2644 (`src/apps/kt-app/src/audio_out.rs`)
 
