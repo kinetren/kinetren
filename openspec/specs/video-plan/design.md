@@ -632,3 +632,11 @@ descheduled thread reverses. It now holds the ring with an admitted piece never 
 until both wait, and reads the order from the arbiter's admission records. Under 64 busy loops on 32
 threads the old form failed 2 of 8, the new 0 of 18; with the class rule turned off the new form is red.
 
+
+## A frame's own GPU error is its error (gpu-errors-survive, 2026-11-15)
+
+No frame ran inside an error scope, so any wgpu error a frame raised went to the device's default
+handler and panicked instead of the poisoning contract (`GpuExecError::Validation`). Every composing
+entry point of `GpuFxEngine` now runs in thread-local Validation/Internal scopes (`Inner::guarded`);
+wgpu 30 keeps the scope stack per thread, so egui's errors on the UI thread never poison the
+preview's frame. Reasons and the class walk: `openspec/changes/archive/2026-11-15-gpu-errors-survive/design.md`.
