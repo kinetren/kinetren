@@ -687,3 +687,14 @@ what the model holds costs nothing. A new mutation path that writes the canon mu
   link to the event's own other curve reads the event as it stood before its step.
 - The guard is `kt-engine/tests/build_cost.rs` (t2062–t2067): a new pass over a reel joins its
   `passes()`, a new axis a project can grow along joins its scenes.
+
+## Indexes for per-element questions (frame-work-by-edit)
+
+- **`with_sequence_index(p, f)`**: inside `f`, `p.sequence(id)` answers by an id index that lives
+  under the borrow of `p` (it cannot go stale). One-off callers keep the scan.
+- **A staircase transition's third event is `Reel::lane_busy`**: the default scans; `Indexed` and
+  `reconcile_reel` ask `LaneSpans` (sorted by start, the running maximum of the ends), which names the
+  scan's first event (t2665).
+- **`RowCurves` / `MasksPlan`** compile a carrier's curves to rows once; `apply`/`at` are the by-name
+  bits (`set_param_idx` IS the row's `set_param` — a new `HasParams` with plugin rows says so).
+  `apply_curves`, `kind_at`, `params_at` count `Cost::ParamByName`: they are for the UI, not a frame.

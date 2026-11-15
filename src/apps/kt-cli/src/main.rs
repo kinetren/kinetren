@@ -25,6 +25,7 @@
 
 mod editcost;
 mod firstframe;
+mod framecost;
 mod fxcost;
 mod fusecost;
 mod passcost;
@@ -1734,16 +1735,48 @@ fn run(args: &[String]) -> i32 {
                 }
             }
         }
-        // What one edit and one slider step cost the player (edit-without-rebuild)
-        Some("edit-cost") => {
-            let Some(input) = args.get(1) else {
-                eprintln!("usage: kt-cli edit-cost <in.kt> [--steps N]");
+        // What a frame's questions cost, and whether events no frame shows move it (frame-work-by-edit)
+        Some("frame-cost") => {
+            let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3)) else {
+                eprintln!("usage: kt-cli frame-cost <in.kt> <from_s> <to_s> [--far N] [--size WxH]");
+                return 2;
+            };
+            let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
+                eprintln!("from/to are seconds");
                 return 2;
             };
             let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
             };
+            let opt = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
+            let far = opt("--far").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let q = opt("--size")
+                .and_then(|s| s.split_once('x'))
+                .and_then(|(w, h)| Some(kt_media::Quality { width: w.parse().ok()?, height: h.parse().ok()? }))
+                .unwrap_or(kt_media::Quality { width: 640, height: 360 });
+            match framecost::run(&project, from, to, far, q) {
+                Ok(()) => 0,
+                Err(e) => {
+                    eprintln!("{e}");
+                    1
+                }
+            }
+        }
+        // What one edit and one slider step cost the player (edit-without-rebuild)
+        Some("edit-cost") => {
+            let Some(input) = args.get(1) else {
+                eprintln!("usage: kt-cli edit-cost <in.kt> [--steps N] [--far N]");
+                return 2;
+            };
+            let mut project = match load_project_resolved(input) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            // `--far N`: the same edit on a project grown by N events after its end (frame-work-by-edit)
+            if let Some(far) = args.iter().position(|a| a == "--far").and_then(|i| args.get(i + 1)).and_then(|s| s.parse::<u64>().ok()) {
+                framecost::grow(&mut project, far);
+            }
             let steps = args
                 .iter()
                 .position(|a| a == "--steps")

@@ -735,6 +735,8 @@ pub struct VideoRenderer {
     stream_cap: Option<Arc<dyn Fn() -> usize + Send + Sync>>,
     /// The time index of `clips` (frame-work-by-edit): every per-frame question asks it.
     index: LayerIndex,
+    /// The reel instances among `clips` (the coverage bars ask them, not every event).
+    placements: Vec<u32>,
 }
 
 /// Source frame(s) for moment `t`: the main one and, in “blend” mode,
@@ -1558,6 +1560,7 @@ impl VideoRenderer {
             st.revision = h.digest();
         }
         let index = LayerIndex::of(&clips);
+        let placements = clips.iter().enumerate().filter(|(_, c)| c.nest.is_some()).map(|(i, _)| i as u32).collect();
         // Subtrees: one renderer for EACH reel in use.
         // The depth limit is held by the model (`validate`); here it is a safeguard
         // against a hostile file.
@@ -1593,6 +1596,7 @@ impl VideoRenderer {
             stream_pacing: None,
             stream_cap: None,
             index,
+            placements,
         }
     }
 
@@ -2000,7 +2004,7 @@ impl VideoRenderer {
         #[allow(clippy::type_complexity)]
         let mut same: std::collections::HashMap<(Option<NestKey>, u32, u32, i64, i64, bool), Vec<std::ops::Range<i64>>> =
             Default::default();
-        for c in &self.clips {
+        for c in self.placements.iter().map(|&i| &self.clips[i as usize]) {
             let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) else { continue };
             // The window is by the SPAN of the material (R.55 C4, the axis refined in R.57):
             // for a stretched instance it is not equal to its length on the

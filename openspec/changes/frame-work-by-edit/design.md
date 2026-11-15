@@ -47,7 +47,7 @@ buckets; the run cover hands the answer itself.
 their cold parts and subtracts them from the window in ONE sorted pass (`subtract` merges the holes
 and walks both lists once; t2672 holds it to the former one-hole-at-a-time subtraction on random
 runs). `nest_coverage` answers the placements of one release over one window and decode quality once
-per call. What the bars draw is unchanged (the existing t... nest_render coverage tests).
+per call, walking the renderer's placements (kept per build), not its events. What the bars draw is unchanged (t452 and t585 in `nest_render.rs` stay green).
 
 ### D3. Reels by id inside a pass (row 157)
 
@@ -182,4 +182,34 @@ Every place a per-frame or per-edit question can walk the project (grep of `clip
 
 ## Numbers
 
-(release, footage in /dev/shm; filled by the measurement task)
+Release builds of the base (8cc06ecf with the measuring tool applied) and of this change, the heavy
+showcase (`kt-cli showcase --heavy`, 1357 events, footage in /dev/shm) grown by `--far N` one-second
+video events after its end (two lanes, crossfades), `kt-cli frame-cost … 20 30` (250 frames, minima of
+repeats, empty cache), machine load 30–40 from other sessions:
+
+| events | plan µs/frame before → after | order µs/frame | reel bars µs | fresh video build ms |
+|---|---|---|---|---|
+| 1 359 | 2.3 → 1.2 | 1.3 → 0.3 | 1.8 → 2.6 | 10.7 → 9.6 |
+| 13 359 | 29.5 → 1.1 | 25.8 → 0.3 | 28.4 → 2.6 | 61.0 → 54.4 |
+| 41 359 | 126.7 → 1.2 | 105.5 → 0.3 | 88.5 → 2.7 | 216.0 → 170.2 |
+
+`kt-cli preview heavy.kt 40 50 --size 640x360`: the plan of a composite 0.11 → 0.08 ms; the run is
+decode-bound and its V-fps moves with the load (0.5 and 3.0 in the two runs), so it is not compared.
+
+The cost of an edit (`kt-cli edit-cost --steps 10 [--far 6000]`), before → after: ×1 incremental build
+6.3 → 6.6 ms, UI thread p50 1.01 → 1.00 ms, CPU per edit 12 → 11 ms; ×10 (13 357 events) incremental
+50.8 → 49.0 ms (root resolve 5.7 → 5.5), UI thread p50 3.82 → 3.96 ms, CPU per edit 65 → 60 ms; a 60 Hz
+drag 138 → 128 % of a core. Unchanged by design (D9); the ×10 UI-thread time is the model's document
+snapshot per edit (found-defects 641).
+
+At rest (live `idle`, debug build, llvmpipe, the heavy showcase): a pause 1 % of a core (the bench's own
+threads) and nothing run, nothing recorded; the pointer over the preview, the status bar and a
+composition causes no counted work (`ui_frames` and `event_passes` only, 475–490 % of a core of
+software rasterizing of the UI frames, row 107); an open effects window 0 % and nothing run.
+
+## Rows 118 and 134
+
+Neither is work keyed by the project. Row 118 (the first loop lap composes every frame) is
+decode-bound; its plan and order are now 1.1 and 0.3 µs a frame whatever the edit's length. Row 134
+(Datamosh's GPU jobs) is two jobs per history position — per position, not per event; its batching is
+the codec walk's (row 621, the parallel `stream-round-trips`). Both stay open with this verdict.

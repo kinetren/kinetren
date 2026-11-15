@@ -487,3 +487,21 @@ opening. This is not a regression — the key is a function of the model, not of
 allocation per element). The player hands the set to `VideoGpuExec::prewarm` and `prewarm::compute` when
 it changes (`set_project`), when an executor arrives (`set_video_gpu`, the slow-chain setter); an edit that
 keeps the set asks nothing (t2127). The export prewarms its devices and waits (`settle_prewarm`).
+
+## A frame costs its events, an edit its index (frame-work-by-edit)
+
+- **A per-frame question asks the renderer's `LayerIndex`** (`VideoRenderer::active(t)`, `index.over`):
+  the events active at a tick, ascending — the list's (composite) order, so iterating it is the old
+  `clips.iter().filter(active_at)`. A new per-frame walk of `self.clips` is the defect this closed
+  (t2660, t2661, t2662). A track stage carries its own range, index, revision and masks; a reel's
+  sub-plan its renderer's index.
+- **A layer's chain in a plan is a `LayerChain`**: `Borrowed` without live curves, `Shared` from the
+  layer's `ChainMemo` (last four material ticks) with them, `Owned` once a plan changed it. Change it
+  with `to_mut` (it counts `ChainClone`). t2666.
+- **Carriers' curves are compiled** (`RowCurves` in `TransAnim`, the renderer's `cam_rows`; masks in
+  `ClipMaskPlan`'s `MasksPlan`): a frame sets no parameter by name (t2667).
+- **`update_gen` touches its own address only**: the other addresses go to the builder thread through
+  `Builds::want_gen_resync` (with the reel sources to stale); nothing resolves a reel on the calling
+  thread (t2669).
+- **Builders run under `kt_model::with_sequence_index`**: a new entry that builds (a renderer, the
+  generator list) wraps itself the same way, or every `project.sequence(id)` scans the reels.
