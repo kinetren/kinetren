@@ -52,7 +52,7 @@ fn layer<'a>(fx: &'a [FxInstance], frame: &Arc<VideoFrame>, id: u64) -> PlanLaye
             content: xxhash_rust::xxh3::xxh3_64(&frame.rgba),
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(frame.clone())),
-            fx: std::borrow::Cow::Borrowed(fx),
+            fx: kt_engine::LayerChain::Borrowed(fx),
             fx_hash: id,
             u: 0.5,
             cam3d: Some(Cam3d { cam: CameraParams::default(), world_scale: 1.0 }),

@@ -100,7 +100,7 @@ fn t644_a_clip_without_curves_borrows_its_chain() {
         .iter()
         .filter_map(|l| match l {
             kt_engine::video_plan::PlanLayer::One { src, .. } => {
-                Some(matches!(src.fx, std::borrow::Cow::Owned(_)))
+                Some(!matches!(src.fx, kt_engine::LayerChain::Borrowed(_)))
             }
             _ => None,
         })
@@ -144,7 +144,7 @@ fn t645_curves_on_one_clip_do_not_tax_the_others() {
         let kt_engine::video_plan::PlanLayer::One { src, .. } = &plan.layers[0] else {
             panic!("the first layer must be an ordinary one");
         };
-        (matches!(src.fx, std::borrow::Cow::Owned(_)), src.fx_hash, src.fx.to_vec())
+        (!matches!(src.fx, kt_engine::LayerChain::Borrowed(_)), src.fx_hash, src.fx.to_vec())
     };
     assert_eq!(
         neighbour(&bare),

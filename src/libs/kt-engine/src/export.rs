@@ -747,7 +747,9 @@ pub fn export_mp4_with_backends(
     };
     // a stream stage's pre-roll decodes on the compose thread (datamosh-codec-path D6): such a
     // project keeps the serial export (export-throughput D2)
-    let serial = opts.serial || VideoRenderer::new(project).has_stream_stages();
+    // asked of the slots, not of a renderer built only to answer (frame-work-by-edit, row 191): a
+    // stream slot anywhere — an event's, a reel's, a morpher layer's — keeps the serial path
+    let serial = opts.serial || crate::video::project_may_stream(project);
     let (vstats, astats) = if serial {
         let vstats = {
             let v_done = v_done.clone();

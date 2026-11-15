@@ -2869,6 +2869,7 @@ fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
             by_id.entry(c.id).or_insert(c);
         }
     }
+    let lanes: std::cell::OnceCell<crate::LaneSpans> = std::cell::OnceCell::new();
     transitions.retain_mut(|t| {
         let side = |id: Option<ClipId>| match id {
             // the empty side of a fade (R.25) is legal and stays empty
@@ -2901,14 +2902,11 @@ fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
                 if !stag || a_end - cb.start < MIN_TRANSITION_DURATION {
                     return false;
                 }
-                let busy = clips.iter().any(|c| {
-                    c.id != ca.id
-                        && c.id != cb.id
-                        && c.kind == ca.kind
-                        && c.lane == ca.lane
-                        && c.start < a_end
-                        && cb.start < c.start + c.duration
-                });
+                // the lanes laid out once per batch, on the first overlapped pair (row 156)
+                let busy = lanes
+                    .get_or_init(|| crate::LaneSpans::of(clips))
+                    .busy(ca.kind, ca.lane, TickRange::new(cb.start, a_end), ca.id, cb.id)
+                    .is_some();
                 // the offsets of an overlapped one are not clamped — they are dead weight and
                 // come back to life when the pair is joined again
                 return !busy;

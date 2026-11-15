@@ -682,7 +682,7 @@ thread_local! {
 impl AudioRenderer {
     pub fn new(project: &Project) -> AudioRenderer {
         crate::incremental::count_renderer_build();
-        crate::video::revisions_scope(|| AudioRenderer::build_reel(project, None, &[], 0))
+        kt_model::with_sequence_index(project, || crate::video::revisions_scope(|| AudioRenderer::build_reel(project, None, &[], 0)))
     }
 
     /// The renderer's derived state as text (a test's comparison of an incremental build with a

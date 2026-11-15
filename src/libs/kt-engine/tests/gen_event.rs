@@ -303,3 +303,44 @@ fn t670_export_opens_its_own_generators_and_equals_preview() {
     assert!(complete, "the preview composite is incomplete");
     assert_eq!(preview, frame_a, "preview and export must match byte for byte");
 }
+
+/// t2669 (frame-work-by-edit, found-defects 190): a value edit of a generator (a title keystroke)
+/// resolves no reel and builds nothing on the calling thread — the other addresses of the event are
+/// the builder thread's to find — and the stored project is not copied when it already holds the
+/// values (the app hands the model's snapshot first).
+#[test]
+fn t2669_a_value_edit_resolves_nothing_on_the_ui_thread() {
+    kt_plugins_builtin::install();
+    use kt_engine::Player;
+    let mut p = base();
+    let dark = GeneratorKind::solid(16, 16, 16);
+    let bright = GeneratorKind::solid(220, 220, 220);
+    p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&dark)));
+    let mut s = Sequence::new(MediaId(100), "reel");
+    let mut inner = clip(1, 0, 0, 90_000, 1);
+    inner.r#gen = Some(dark);
+    s.clips = vec![inner];
+    p.sequences.push(s);
+    p.clips = (0..8).map(|i| clip(10 + i, 0, i as i64 * 90_000, 90_000, 100)).collect();
+    p.validate().expect("a generator inside a reel is legal");
+    let (player, _consumer) = Player::new(p, vec![]);
+    // the generator's source is raised by the first build
+    let deadline = kt_time::test_deadline();
+    while !player.update_gen(ClipId(1), GeneratorKind::solid(16, 16, 16), Vec::new()) {
+        assert!(std::time::Instant::now() < deadline, "the generator's source was never raised");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let before = player.project();
+    let (ok, c) = kt_time::cost::meter(|| player.update_gen(ClipId(1), bright.clone(), Vec::new()));
+    assert!(ok);
+    assert_eq!(c[kt_time::cost::Cost::ReelResolve as usize], 0, "the keystroke resolved reels");
+    assert_eq!(c[kt_time::cost::Cost::RendererBuild as usize], 0, "the keystroke built a renderer");
+    // the stored project carries the values (export and diagnostics read it)
+    let p = player.project();
+    assert_eq!(p.sequences[0].clips[0].r#gen.as_ref(), Some(&bright));
+    // a project already holding the values is kept as it is, not copied
+    drop(before);
+    let held = player.project();
+    assert!(player.update_gen(ClipId(1), bright, Vec::new()));
+    assert!(std::sync::Arc::ptr_eq(&held, &player.project()), "the stored project was copied for values it held");
+}

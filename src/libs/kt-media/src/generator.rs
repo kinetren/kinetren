@@ -41,6 +41,9 @@ const DEFAULT_Q: Quality = Quality { width: 1920, height: 1080 };
 /// Generator source: the frame is computed from `GenState`.
 pub struct GeneratorSource {
     state: GenState,
+    /// The state's curves compiled to the kind's rows (frame-work-by-edit, row 169): a frame reads
+    /// them by index, not by name.
+    rows: kt_model::RowCurves,
     info: MediaInfo,
     /// A frame of the kinds that do not depend on time is built once for
     /// the requested quality (the pattern of `PlaceholderSource`).
@@ -55,13 +58,20 @@ impl GeneratorSource {
     /// A source from the state of an event (R.59, stage 2).
     pub fn from_state(state: GenState) -> GeneratorSource {
         let info = Self::info_for(&state.kind);
-        GeneratorSource { state, info, cache: None }
+        let rows = kt_model::RowCurves::compile(&state.kind, &state.auto);
+        GeneratorSource { state, rows, info, cache: None }
     }
 
     /// A kind WITH VALUES at the moment `pts` of the material. Without curves,
     /// it is a borrow: a non-animated generator pays no allocation.
     pub fn kind_at(&self, pts: Tick) -> Cow<'_, GeneratorKind> {
-        self.state.kind_at(pts)
+        if self.state.auto.is_empty() {
+            return Cow::Borrowed(&self.state.kind);
+        }
+        // `GenState::kind_at`'s bits, by compiled row
+        let mut k = self.state.kind.clone();
+        self.rows.apply(&mut k, pts);
+        Cow::Owned(k)
     }
 
     /// The passport of the source for a kind: the ONLY place where it is computed
@@ -105,7 +115,7 @@ impl GeneratorSource {
         // Curves make ANY kind time-dependent: a single-element cache by Quality would then
         // return the first frame all the way.
         if self.state.animated() || depends_on_time(&self.state.kind) {
-            let kind = self.state.kind_at(pts);
+            let kind = self.kind_at(pts);
             return render_at(&kind, pts, q.width, q.height);
         }
         if self.cache.as_ref().is_none_or(|(cq, _)| *cq != q) {
@@ -301,7 +311,7 @@ impl MediaSource for GeneratorSource {
         // curves give at the burst's first tick (the frame's rule: the source resolves them)
         if let Some(synth) = self.state.kind.kernel().and_then(|g| g.synth()) {
             let base = idx * kt_time::AUDIO_BURST_FRAMES as i64;
-            let kind = self.state.kind_at(Tick(idx * kt_time::AUDIO_BURST_TICKS));
+            let kind = self.kind_at(Tick(idx * kt_time::AUDIO_BURST_TICKS));
             let mut b = AudioBurst::silence(idx);
             if let GeneratorKind::Plugin(p) = kind.as_ref() {
                 synth(&p.values, base, &mut b.data[..]);
@@ -352,6 +362,7 @@ impl MediaSource for GeneratorSource {
             return false;
         }
         self.state = state.clone();
+        self.rows = kt_model::RowCurves::compile(&state.kind, &state.auto);
         self.cache = None;
         true
     }
