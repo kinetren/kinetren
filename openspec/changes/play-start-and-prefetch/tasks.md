@@ -16,6 +16,6 @@
 - [x] 3.4 Live `idle`: the sound threads stand on a pause (paused, no longer gone)
 
 ## 4. Measure and close
-- [ ] 4.1 Release, heavy showcase from /dev/shm, beside 96 busy loops: `kt-cli preview` first sound with device opens 0/20/2000 ms
-- [ ] 4.2 Tests of the specs, `cargo test` of what changed, clippy, live `idle`
+- [x] 4.1 Release, heavy showcase from /dev/shm, beside 96 busy loops: `kt-cli preview` first sound with device opens 0/20/2000 ms
+- [x] 4.2 Tests of the specs, `cargo test` of what changed, clippy, live `idle`
 - [ ] 4.3 found-defects 525, 516 leave; CLAUDE.md lines (kt-engine, kt-app); What's new; archive

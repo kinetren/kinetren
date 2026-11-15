@@ -39,12 +39,15 @@ pub struct OutputCtl {
     stop: AtomicBool,
     /// A stream is open and calling back now.
     pub open: AtomicBool,
-    /// A stream is kept paused for the next Play (play-start-and-prefetch D6).
+    /// A stream is kept paused for the next Play, its callbacks seen to stand (play-start-and-prefetch
+    /// D5): set once the pause's check is over.
     pub paused: AtomicBool,
     /// Streams opened so far.
     pub opens: AtomicU64,
     /// Paused streams resumed on Play so far.
     pub resumes: AtomicU64,
+    /// Streams dropped so far (at rest on a device that cannot pause, or after a failed resume).
+    pub closes: AtomicU64,
     /// Callbacks so far (one relaxed add per callback): a pause that keeps them coming is a close.
     pub callbacks: AtomicU64,
     /// The thread's passes: a pause parks it, so on a settled pause this stands.
@@ -336,7 +339,7 @@ fn output_loop<D: Device>(
     };
     // the first callback after an open or a resume: when the first sound can leave (D7); bounded
     let first_callback = |first: &AtomicU64| {
-        let deadline = Instant::now() + Duration::from_secs(1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while first.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -348,6 +351,7 @@ fn output_loop<D: Device>(
         *feed = returned.recv_timeout(Duration::from_secs(2)).ok();
         ctl.open.store(false, Ordering::Release);
         ctl.paused.store(false, Ordering::Release);
+        ctl.closes.fetch_add(1, Ordering::Release);
         trace::ev(trace::Ev::Play).b(held.opened.elapsed().as_millis() as u64).aux(play::DEVICE_CLOSE).emit();
     };
     // the consumer drains every flush itself: a start holds its pass until it has (D3)
@@ -442,7 +446,6 @@ fn output_loop<D: Device>(
                         Ok(()) => {
                             h.paused = Some((calls, Instant::now(), false));
                             ctl.open.store(false, Ordering::Release);
-                            ctl.paused.store(true, Ordering::Release);
                             trace::ev(trace::Ev::Play).b(h.opened.elapsed().as_millis() as u64).aux(play::DEVICE_PAUSE).emit();
                         }
                         Err(_) => {
@@ -465,13 +468,16 @@ fn output_loop<D: Device>(
                         continue;
                     }
                     h.paused = Some((calls, at, true));
+                    ctl.paused.store(true, Ordering::Release);
+                    // a seek that came during the check is drained on the next pass, not parked over
+                    continue;
                 }
                 Some((_, _, true)) => {
                     // a seek while paused: the callback drains the flush, so a short resume hands it
                     // the ring for a callback of silence; then the render thread fills the start (D3)
                     if shared.flush.load(Ordering::Acquire) {
                         let drained = h.s.resume().is_ok() && {
-                            let deadline = Instant::now() + Duration::from_secs(1);
+                            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
                             while shared.flush.load(Ordering::Acquire) && Instant::now() < deadline {
                                 std::thread::sleep(Duration::from_millis(1));
                             }
@@ -1112,8 +1118,8 @@ mod tests {
         player.pause();
         wait("the device paused at rest", || ctl.paused.load(Ordering::Acquire));
         assert!(!ctl.open.load(Ordering::Acquire), "a paused device counted as open");
-        std::thread::sleep(PAUSE_CHECK);
-        assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes with the device paused");
+        // `paused` is set by the pass that checked the callbacks stood; after it the thread has no clock
+        assert!(parked(&out, Duration::from_millis(500)), "the output thread wakes with the device paused");
         let calls = ctl.callbacks.load(Ordering::Relaxed);
         std::thread::sleep(Duration::from_millis(100));
         assert_eq!(ctl.callbacks.load(Ordering::Relaxed), calls, "a paused device calls back");
@@ -1136,9 +1142,8 @@ mod tests {
             let (player, out) = player_with(dev.clone(), Duration::from_millis(50));
             let ctl = out.ctl();
             play_a_little(&player);
-            wait("the device closed", || {
-                !ctl.open.load(Ordering::Acquire) && !ctl.paused.load(Ordering::Acquire) && ctl.opens.load(Ordering::Relaxed) == 1
-            });
+            wait("the device closed", || ctl.closes.load(Ordering::Acquire) == 1);
+            assert!(!ctl.paused.load(Ordering::Acquire) && !ctl.open.load(Ordering::Acquire));
             assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes after the close (mode {mode})");
             play_a_little(&player);
             assert_eq!(ctl.opens.load(Ordering::Relaxed), 2, "the next Play did not open again (mode {mode})");
@@ -1155,11 +1160,22 @@ mod tests {
         let ctl = out.ctl();
         play_a_little(&player);
         wait("the device paused at rest", || ctl.paused.load(Ordering::Acquire));
-        std::thread::sleep(PAUSE_CHECK + Duration::from_millis(50));
         player.seek(Tick::from_audio_frames(7 * SEC + 111));
         wait("the seek's flush was drained", || !player.shared.flush.load(Ordering::Acquire));
         wait("the device paused again", || ctl.paused.load(Ordering::Acquire) && !ctl.open.load(Ordering::Acquire));
         assert!(!player.transport.is_playing());
+        dev.heard.lock().unwrap().clear();
+        player.play();
+        let head = player.transport.playhead_frames();
+        wait("the clock runs", || player.transport.playhead_frames() > head + SEC / 2);
+        player.pause();
+        assert_eq!(ctl.opens.load(Ordering::Relaxed), 1);
+        first_sound_is_the_start(&dev, &player);
+        // a seek inside the pause's check window is drained too, once the check is over
+        play_a_little(&player);
+        wait("the pause began", || !ctl.open.load(Ordering::Acquire));
+        player.seek(Tick::from_audio_frames(3 * SEC + 7));
+        wait("the seek during the check was drained", || !player.shared.flush.load(Ordering::Acquire));
         dev.heard.lock().unwrap().clear();
         player.play();
         let head = player.transport.playhead_frames();

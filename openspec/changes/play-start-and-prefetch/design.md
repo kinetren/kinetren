@@ -51,6 +51,8 @@ a thread's look at the state and its wait. Every place a thread parks on another
 | kt-gpu's arbiter rings | `kt-gpu/src/arbiter.rs` | sound: timed waits (2 ms) |
 | **the seek's flush and the start's pass** | `Player::seek`, `audio_render_loop`, the callbacks | **lost pass**: the consumer drains `flush` when it next runs; a render thread that already took the new generation could write the start's whole pass before that drain, which then dropped it — the start lost its first ring and played ahead of the clock by it. Worse, `Player::seek` stored the flag AFTER the generation, so the render thread could see the new generation without the flag. Fixed (D3), t2641, t2644 |
 | the journal writer, export pipeline channels | `tele_journal.rs`, `export_pipeline.rs` | sound: blocking `recv` on channels, disconnect on drop |
+| **this change's own paused stream: a seek during the pause's check** | `audio_out.rs` `output_loop` | **lost drain** (found by t2644's second round, red on it): the pass that marked the pause checked parked on a `seen` taken after the seek, so the flush stayed pending and the start held for good — that pass now loops to look again |
+| a crash report's bystander threads (a test child) | `kt-crash/tests/handler.rs` | **naming race**: a thread names itself when it starts, and the probe faulted before a bystander ran (t2080 red in the full parallel run) — the child now waits for each to start |
 
 The callers of what moved: `AudioShared::flush` is set by `Player::seek` and the render thread (a
 change of direction, a loop flip) and drained by `audio_out::Sink::fill`, the output thread while
@@ -91,7 +93,9 @@ Play resumes it. The first Play still opens the device: the owner decided "open 
 (kkt-26.11.10 J6), and an open ahead of it is not his decision. Safeguards:
 
 - a backend whose `pause` fails is closed at once; one whose callbacks keep coming over `PAUSE_CHECK`
-  (300 ms) is closed after it — the program at rest costs nothing whatever the backend;
+  (300 ms) is closed after it — the program at rest costs nothing whatever the backend. `OutputCtl::paused`
+  says a pause was CHECKED (the tests wait for it, never for a sleep of `PAUSE_CHECK`), `closes` counts
+  drops;
 - a paused stream holds the ring, so a seek while paused is drained by a short resume (one callback of
   silence while the transport stands), then paused again; the render thread is woken to fill the start;
 - a resume that fails drops the stream; the next pass opens a new one.
@@ -103,5 +107,18 @@ and the first sound would be lost, not late).
 
 ## D6. Measurements
 
-See tasks 4.x: release build, the heavy showcase (`kt-cli showcase --heavy`) from /dev/shm, beside
-96 busy loops on 32 threads.
+Release `kt-cli preview`, the heavy showcase (`kt-cli showcase --heavy`: 401 events, 25 transitions)
+from /dev/shm, 5–8 s at 640×360; Play → first sound as the render thread measured it (the bench's
+device calls back every 2048 frames, 42.7 ms, so an open lands on the next period):
+
+| device opens in | alone | beside 96 busy loops (32 threads), two runs |
+|---|---|---|
+| 0 ms (always open, the former bench) | 28.5 ms | 130.0, 86.3 ms |
+| 20 ms (an open on this machine) | 84.9 ms | 166.3, 138.3 ms |
+| 2000 ms (row 425's loaded opens) | 2046.0 ms | 2037.5, 2042.7 ms |
+
+No callback or render underrun in any run. The open adds itself plus up to a device period; under
+load the start's pass and a period cost the rest. The live `idle` scenario (the real kt-app on
+PipeWire): the device's open with its first callback 25.8 ms, Play → first sound 69.5 ms; on the
+pause after the play no thread of the sound woke over 5 s with the stream paused. A paused stream's
+resume (the cpal probe, D5): 20 µs, next callback 27–45 ms, alone and beside ~100 busy loops.
