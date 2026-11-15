@@ -497,7 +497,11 @@ The preview SHALL compose through `VideoGpuExec::present`: the passes of
 `execute_into`, then a display pass into a texture the UI draws, with no wait for the device and
 no copy of the frame to the CPU. The display target SHALL hold the bytes the readback path shows,
 premultiplied as `Color32::from_rgba_unmultiplied` does. An incomplete frame SHALL leave the target
-as it is, unless nothing has been shown yet. An executor with no display target SHALL compose through
+as it is, whether or not anything has been shown, and SHALL cost no drawing work: a plan with a layer
+lacking its frame (`FramePlan::starved`) SHALL stop before its first upload, any other incomplete plan
+after its resolve, with no pass encoded and no display pass. `execute_into` SHALL likewise leave an
+incomplete frame's bytes empty with nothing uploaded, encoded or read back; only `execute_once` (an
+export's last resort, named in its report) SHALL produce an incomplete frame's bytes. An executor with no display target SHALL compose through
 the readback path; with no executor there is no picture. Export SHALL keep its readback.
 Why: at 1080p the UI thread spent about 33 ms of a 40 ms frame uploading, waiting for the device
 and copying the frame out, before converting it and uploading it a second time (`kt-cli preview`,
@@ -510,12 +514,22 @@ llvmpipe; preview-throughput, 2026-11-04). The p95 stall per UI frame went from 
 - **TEST** t1525 (`src/libs/kt-gpu/tests/preview_display.rs`)
 
 #### Scenario: An incomplete frame holds the last full one
-- **WHEN** a starved frame is presented after a full one
-- **THEN** the display target is unchanged, and with nothing shown yet the frame is drawn
+- **WHEN** a starved frame is presented after a full one, with and without the glow
+- **THEN** the display target is unchanged both times (no option draws an incomplete frame)
 - **TEST** t1526 (`src/libs/kt-gpu/tests/preview_display.rs`)
 
+#### Scenario: An incomplete frame costs no drawing
+- **WHEN** a starved plan is presented, executed through `execute_into` and executed through `execute_once`
+- **THEN** the present and `execute_into` upload no byte, submit nothing, run no pass, read nothing back and `execute_into` leaves no bytes; `execute_once` returns the frame's bytes, reported incomplete
+- **TEST** t2530 (`src/libs/kt-gpu/tests/preview_display.rs`)
+
+#### Scenario: A plan knows its starvation
+- **WHEN** a frame's plan is built over a cold cache, over a cache holding every layer but one, and over a warm one
+- **THEN** `FramePlan::starved` is true, true, false
+- **TEST** t2531 (`src/libs/kt-engine/tests/no_partial.rs`)
+
 #### Scenario: The glow and a new size
-- **WHEN** a frame is presented with the glow, and then at another preview size
+- **WHEN** a frame is presented with the glow, and then a complete frame at another preview size
 - **THEN** the glow holds the 32×18 picks of the readback's pixels, and the new size is a new
   texture with a new generation, while the same size keeps its generation
 - **TEST** t1527 (`src/libs/kt-gpu/tests/preview_display.rs`)
@@ -1185,9 +1199,9 @@ layer, a neighbour of a frame pair, a decoded frame of another time — and run 
 event's later effects such as VHS Tape or Camera ISP, the track's stages, the reel's stages) over it at
 the moment asked. A layer whose own input is not there SHALL leave the frame incomplete; an incomplete
 composite SHALL NOT be presented over the picture on screen and SHALL NOT be kept as the moment's
-composite; the preview keeps its last full picture under its Loading look. The only incomplete
-composite ever presented is the first picture of a preview that has shown none (the owner's rule from
-round 14 items 14–15: a picture under the Loading scrim rather than an empty one). A kept composite of
+composite; the preview keeps its last full picture under its Loading look, and a preview that has none
+keeps its place empty under Loading: no incomplete composite is ever presented, the first one included
+(kkt-26.11.14 M1, which replaced round 14's "a picture under the scrim rather than an empty one"). A kept composite of
 the exact moment SHALL still show at once, without the history. An export SHALL compose every frame from
 its own positions, never short.
 Why: kkt-26.11.10b K5 — "при кэтчинге - у меня vhs tape будто бы накладывается в этот момент
@@ -1197,7 +1211,7 @@ the history had reached.
 
 #### Scenario: A playing frame whose history is behind is Loading, not a held picture
 - **WHEN** a paced renderer composes a frame of a cut mosh whose history the prefetch has walked to ten positions behind it, then the history catches up
-- **THEN** the first composite is incomplete, the mosh layer has no picture, the renderer reports at least eight positions short, and the executor presents nothing when asked not to show an incomplete frame; after the catch-up the composite is complete, reports nothing short and is byte-identical to the unpaced renderer's
+- **THEN** the first composite is incomplete, the mosh layer has no picture, the renderer reports at least eight positions short, and the executor presents nothing; after the catch-up the composite is complete, reports nothing short and is byte-identical to the unpaced renderer's
 - **TEST** t2410 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 #### Scenario: VHS Tape is never laid over another position's mosh
@@ -1409,6 +1423,7 @@ present memo kept a part (memory-ledger D5), the stream memo did not.
 - **WHEN** a memo holding ten positions is run over a loop of thirty for several laps, each computed position read back at once, with the loop told and without; then over a loop it holds; then over a new loop after an old one
 - **THEN** without the loop no lap finds anything; with it every lap after the first finds at least seven and the same number lap after lap; a held loop is found whole; the new loop keeps its own part
 - **TEST** t2490 (`src/libs/kt-plugin-api/src/stream.rs`)
+
 ### Requirement: The compute host's every submission is admitted and a job binds by offset
 The compute host SHALL admit every submission on its ring by the caller's class: a job's pieces, its clock
 calibration (taken after the admission, so a wait never widens its bracket; a job finding another

@@ -468,7 +468,7 @@ fn mosh_player(cache: CacheConfig) -> (Player, rtrb::Consumer<f32>) {
     (player, ring)
 }
 
-const SHOW: kt_engine::PresentOptions = kt_engine::PresentOptions { show_incomplete: false, glow: false };
+const SHOW: kt_engine::PresentOptions = kt_engine::PresentOptions { glow: false };
 
 /// Present `t` until it comes out complete (the prefetch thread computes the history meanwhile).
 fn present_until_complete(player: &Player, t: Tick) {

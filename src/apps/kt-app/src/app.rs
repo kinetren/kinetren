@@ -393,7 +393,7 @@ pub struct KtApp {
     /// The video engine being built on its thread (pipeline-prewarm D3): taken by the frame it arrives.
     gpu_building: Option<(EngineBuild, eframe::egui_wgpu::RenderState)>,
     /// The last frame shown lives in `preview_display`, not in `texture`.
-    preview_on_display: bool,
+    pub(crate) preview_on_display: bool,
     /// Throttling of the glow mip: every N new frames (ambient does not flicker).
     glow_skip: u8,
     /// Name of the wgpu adapter/backend (perf panel diagnostics).
@@ -756,6 +756,9 @@ pub struct KtApp {
     pub(crate) event_passes: u64,
     /// How many composites this app asked for (`perf.compose_n` is reset per sample).
     pub(crate) composites: u64,
+    /// The complete composites taken since this project opened (no-partial-picture): a picture on
+    /// screen while it is zero would be a partial one; the geometry dump publishes both at one instant.
+    pub(crate) complete_composites: u64,
     pub reel_hash_cache: (Option<u64>, Arc<HashMap<ClipId, crate::reel_preview::ReelKey>>),
     /// The start, the Guide and the tour (welcome-window-and-tour): the state that lives
     /// BETWEEN projects. `replace_with` carries it across the in-place rebuild of File → New/Open.
@@ -1150,6 +1153,7 @@ impl KtApp {
             event_paint: None,
             event_passes: 0,
             composites: 0,
+            complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
         };
@@ -1478,6 +1482,7 @@ impl KtApp {
             event_paint: None,
             event_passes: 0,
             composites: 0,
+            complete_composites: 0,
             reel_hash_cache: (None, Arc::new(HashMap::new())),
             start: Default::default(),
         };
@@ -1725,7 +1730,7 @@ impl KtApp {
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
         // the UI thread posts jobs and reads answers: a blocking call on it is counted (one-scheduler)
         kt_time::block::mark(kt_time::block::role::UI);
-        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load report read it
+        // what this frame costs, by stage (ui-frame-cost): Diagnostics and the load watch read it
         let _frame_cost = crate::frame_cost::span(crate::frame_cost::Stage::Frame);
         // LIVE BENCH COUNTERS (R.68) sit here, not in `ui()`: a frame is
         // the drawing, and the harness draws it with the same body, bypassing
@@ -3159,8 +3164,15 @@ impl KtApp {
         }
     }
 
+    /// What names the player's project in the effect cells' keys (chain-everywhere): the model's
+    /// revision and the place being edited.
+    pub(crate) fn scene_rev(&self) -> u64 {
+        let place = self.model.editing().map_or(0, |m| m.0.wrapping_add(1));
+        self.model.revision().wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ place
+    }
+
     /// Path of the sidecar index DB of the current project (None for unnamed).
-    fn index_db_path(&self) -> Option<std::path::PathBuf> {
+    pub(crate) fn index_db_path(&self) -> Option<std::path::PathBuf> {
         self.project_path.as_ref().map(|p| p.with_extension("ktindex.db"))
     }
 
@@ -4791,9 +4803,6 @@ impl KtApp {
                 }
                 None => self.thumbs.add_media(addr, path),
             }
-            // picker cells remember the SAME ThumbKey, and it does not depend on the
-            // generator values (a twin defect of item 412)
-            self.fx_thumbs.invalidate_media(addr);
         }
         if respawn {
             let p = self.player_project();
@@ -4933,11 +4942,6 @@ impl KtApp {
             {
                 self.player.set_media_path(*id, path);
                 self.thumbs.retune_media(*id, resolved);
-                // picker cells remember the SAME ThumbKey, and it does not depend on the
-                // generator parameters: without this line the strip would show
-                // the effect on a frame of the OLD parameters — a twin defect of
-                // item 412, only in the picker
-                self.fx_thumbs.invalidate_media(*id);
                 continue;
             }
             // the file's open and the decoder's swap on the media lane (one-scheduler, row 148)
@@ -5074,7 +5078,7 @@ impl KtApp {
                 // did not open again — the placeholder stays, there is nothing to complain about
                 if let Ok(src) = open_source_indexed(&path, db.as_deref()) {
                     sources.replace_media(id, src);
-                    ok.push((id, label));
+                    ok.push((id, label, path));
                 }
             }
             reply.send(MediaDone::Returned(ok));
@@ -6821,10 +6825,17 @@ impl KtApp {
                 }
                 (MediaThen::Lock, MediaDone::Locked(state)) => self.take_lock(state),
                 (MediaThen::Returned, MediaDone::Returned(back)) => {
-                    for (id, label) in back {
+                    let mut index = Vec::new();
+                    for (id, label, path) in back {
                         self.placeholder_media.remove(&id);
+                        // what failed while the file was away is asked again: the index asks every
+                        // media once, at opening, so the waveform of a file away then was never
+                        // built (t2541); the thumbnails forget their probe of it too
+                        self.thumbs.invalidate_media(id);
+                        index.push((id, path));
                         self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
                     }
+                    self.index.enqueue(self.index_db_path(), index);
                 }
                 _ => {}
             }
@@ -7190,10 +7201,9 @@ impl KtApp {
             // On the device when it can: the frame is not waited for, read back, converted
             // and uploaded again on this thread (preview-throughput D2). And never here: the
             // composite has a thread of its own, and a slow chain costs frames, not the Undo
-            // (idle-cpu, stage 2).
-            let shown_any = self.texture.is_some() || self.preview_on_display;
+            // (idle-cpu, stage 2). An incomplete frame is never drawn, not even the first one
+            // (no-partial-picture, kkt-26.11.14 M1): the place stays empty under Loading.
             let present = self.preview_display.as_ref().map(|_| kt_engine::PresentOptions {
-                show_incomplete: !shown_any,
                 glow: self.sw_render == Some(false) && self.glow_skip.wrapping_add(1) % 4 == 1,
             });
             let seq = self.player.ask_preview(Tick(key_tick), present);
@@ -7205,7 +7215,6 @@ impl KtApp {
             // screen (found-defects 393: V-fps counted every tick change)
             let new_frame = self.perf.take_composite(self.preview_key.map(|k| k.0) != Some(done.t.0), done.complete);
             self.preview_catching_up = done.catching_up;
-            let shown_any = self.texture.is_some() || self.preview_on_display;
             let (cq, c, on_display) = (done.quality, done.complete, done.on_display);
             complete = c;
             drop(composite_cost);
@@ -7214,10 +7223,13 @@ impl KtApp {
             self.perf.compose_sum_ns += cost.compose_ns;
             self.perf.compose_n += 1;
             self.composites += 1;
+            self.complete_composites += u64::from(done.complete);
             let rgba = done.rgba;
             // we hold the last FULL frame: an incomplete composite does not overwrite the
-            // picture (the flicker “black frame ↔ Loading”, item 14/15)
-            if on_display && (c || !shown_any) {
+            // picture (the flicker “black frame ↔ Loading”, item 14/15), and with none shown yet
+            // the place stays empty under Loading (no-partial-picture): an incomplete composite
+            // has no bytes and drew nothing on the display target
+            if on_display && c {
                 self.glow_skip = self.glow_skip.wrapping_add(1);
                 if let Some(d) = &mut self.preview_display {
                     d.sync(self.smooth_scaling);
@@ -7226,7 +7238,7 @@ impl KtApp {
                 if new_frame {
                     self.perf.video_frames_shown += 1;
                 }
-            } else if !on_display && (c || !shown_any) && !rgba.is_empty() {
+            } else if !on_display && c && !rgba.is_empty() {
                 self.preview_on_display = false;
                 // glow mip: a coarse box downscale 32×18; during playback — every 4th new frame
                 // (ambient glow flicker will not notice)
@@ -7352,11 +7364,14 @@ impl KtApp {
         }
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(10, 10, 12));
-        if let Some(tex_id) = self.preview_texture_id() {
+        // the frame's place: the picture's, and Loading's when there is none yet (no-partial-picture)
+        let img_rect = {
             let scale =
                 (rect.width() / q.width as f32).min(rect.height() / q.height as f32).max(0.05);
             let size = egui::vec2(q.width as f32 * scale, q.height as f32 * scale);
-            let img_rect = egui::Rect::from_center_size(rect.center(), size);
+            egui::Rect::from_center_size(rect.center(), size)
+        };
+        if let Some(tex_id) = self.preview_texture_id() {
             // ambient glow as on YouTube (item 18): a BLURRED mini-copy
             // (32×18, LINEAR stretch = strong blur) + vignette to the background
             if self.sw_render == Some(false)
@@ -7470,7 +7485,11 @@ impl KtApp {
             // (caught by the live scenario `geomctl`)
             self.geom_toggle_button(ui, img_rect);
             self.title_drag_in_preview(ui, &painter, img_rect);
-            // scrim — only if the incompleteness lasts >180 ms (v1)
+        }
+        {
+            // scrim — only if the incompleteness lasts >180 ms (v1); over the picture held, or over
+            // the empty place when no complete frame has come yet: an incomplete one is never drawn
+            // (no-partial-picture, kkt-26.11.14 M1)
             let show_overlay = self
                 .incomplete_since
                 .map(|t0| t0.elapsed() > LOADING_SCRIM)
@@ -7781,7 +7800,7 @@ impl KtApp {
     }
 
     /// The texture of the frame on screen: the device's, or the uploaded bytes'.
-    fn preview_texture_id(&self) -> Option<egui::TextureId> {
+    pub(crate) fn preview_texture_id(&self) -> Option<egui::TextureId> {
         match (&self.preview_display, self.preview_on_display) {
             (Some(d), true) => d.id(),
             _ => self.texture.as_ref().map(|t| t.id()),
@@ -10117,7 +10136,7 @@ enum MediaDone {
     Synced(Vec<(MediaId, Option<Tick>, Option<String>)>),
     Opened(Result<Box<dyn kt_media::MediaSource>, String>),
     Info(Result<kt_media::MediaInfo, String>),
-    Returned(Vec<(MediaId, String)>),
+    Returned(Vec<(MediaId, String, String)>),
     /// Per source: its id, label, the error of a placeholder, its length.
     Loaded(Vec<(MediaId, String, Option<String>, Tick)>),
     Locked(crate::project_lock::LockState),
@@ -10575,12 +10594,14 @@ impl KtApp {
                 ui.add(egui::Label::new(egui::RichText::new(crate::tf!(k::perf::LOAD_GPU, g.line())).weak()).wrap());
             }
         }
-        let r = ui.button(tr(k::perf::LOAD_REPORT));
-        crate::widgets::field_probe::note("diag.load_report", r.rect);
-        let r = self.hint(r, tr(k::perf::LOAD_REPORT_HINT));
+        // the structured trace's folder (load-report-into-trace): what a complaint hands over
+        let r = ui.button(tr(k::perf::TRACE_FOLDER));
+        crate::widgets::field_probe::note("diag.trace_folder", r.rect);
+        let r = self.hint(r, tr(k::perf::TRACE_FOLDER_HINT));
         if r.clicked() {
-            crate::load_watch::write_now();
-            if let Err(e) = crate::util::open_in_file_manager(&crate::journal::data_dir()) {
+            let dir = crate::journal::data_dir().join("trace");
+            let _ = std::fs::create_dir_all(&dir);
+            if let Err(e) = crate::util::open_in_file_manager(&dir) {
                 self.warn(e);
             }
         }
@@ -11090,9 +11111,11 @@ pub fn run() -> eframe::Result {
     // hybrid graphics this is PRIME copying of every frame and a stutter of the WHOLE
     // system (item 1, v1.4). The card that drives the monitor is the one with no copy:
     // `display_power_preference` decides; WGPU_POWER_PREF overrides it.
-    // the adapter list, once, BEFORE eframe opens its own instance (segv-crashes): the load watch's
-    // report asks for it later from its thread, and no instance is created beside eframe's at start
+    // the adapter list, once, BEFORE eframe opens its own instance (segv-crashes): no instance is
+    // created beside eframe's at start. The trace takes it as the run's machine facts here, with
+    // the monitors' cards and the power choice (load-report-into-trace): the trace is installed above
     let _ = kt_gpu::adapter_facts();
+    kt_gpu::trace_machine();
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
         setup.power_preference = kt_gpu::display_power_preference();

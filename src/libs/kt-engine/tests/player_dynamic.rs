@@ -323,11 +323,22 @@ fn t211_replace_media_swaps_source_and_drops_its_cache() {
         .expect("the burst of the source must lie in the cache");
     assert!((old.data[0] - 1.0).abs() < 1e-6, "the wrong signal was warmed");
 
-    // source swap: the cache of THIS media is discarded
+    // source swap: the cache of THIS media is discarded. What may be there right after the call is
+    // the NEW source's: its worker starts with the swap and the prefetch is woken, and under load it
+    // refilled burst 0 before the test looked (0.25 found, 2 of 30 at load 25) — "absent" was the
+    // wrong check; no burst may hold the former value
     player.replace_media(MediaId(1), dc(0.25));
+    let stale: Vec<i64> = (0..64)
+        .filter(|&i| {
+            player
+                .cache
+                .get_audio(kt_engine::source_id(MediaId(1)), i)
+                .is_some_and(|b| (b.data[0] - 1.0).abs() < 1e-6)
+        })
+        .collect();
     assert!(
-        player.cache.get_audio(kt_engine::source_id(MediaId(1)), 0).is_none(),
-        "frames of the previous source remained in the cache — the preview would show a placeholder"
+        stale.is_empty(),
+        "frames of the previous source remained in the cache — the preview would show a placeholder: bursts {stale:?}"
     );
 
     // the new source fills the cache with its own values
@@ -617,4 +628,52 @@ fn t661_a_value_edit_does_not_rebuild_the_renderer() {
     let c = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
     assert!(c.r#gen.as_ref().and_then(|g| g.get_param("color_r")) == Some(9.0));
     assert!(!c.gen_auto.is_empty(), "the curves must reach the stored project");
+}
+
+/// t2540 (the class of t211): a source REPLACED while a covered loop plays from the kept final mix
+/// is heard at once — the mix kept from the former file goes with it. The render thread took a
+/// source change by the COUNT of material lengths, and a replacement (a file that came back, a
+/// changed path: the same id) keeps the count, so the loop went on replaying the former file.
+#[test]
+fn t2540_a_replaced_source_is_heard_through_a_covered_loop() {
+    use kt_engine::preview_bench::{BenchOptions, play_range};
+    let dc = |v: f32| -> Box<SyntheticSource> {
+        Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Dc { value: v }))
+    };
+    let (player, ring) = Player::new(base_project(), vec![(MediaId(1), dc(1.0))]);
+    let replays = || kt_time::work::count(kt_time::work::Work::MixReplay);
+    let r = std::thread::scope(|s| {
+        let swap = s.spawn(|| {
+            // the loop plays from the kept mix first
+            let r0 = replays();
+            let deadline = kt_time::test_deadline();
+            while replays() < r0 + 40 {
+                assert!(std::time::Instant::now() < deadline, "the covered loop never replayed its kept mix");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            player.replace_media(MediaId(1), dc(0.25));
+        });
+        let r = play_range(
+            &player,
+            ring,
+            BenchOptions {
+                from: Tick(45_000),
+                to: Tick(90_000),
+                loop_for: Some(std::time::Duration::from_secs(6)),
+                capture: true,
+                ..Default::default()
+            },
+        );
+        swap.join().unwrap();
+        r
+    });
+    let mean = |s: &[f32]| s.iter().map(|v| v.abs()).sum::<f32>() / s.len().max(1) as f32;
+    let tail = &r.played[r.played.len() - 48_000..];
+    let head_level = mean(&r.played[..48_000.min(r.played.len())]);
+    assert!(head_level > 0.1, "scene guard: the former source was heard ({head_level})");
+    let ratio = mean(tail) / head_level;
+    assert!(
+        (ratio - 0.25).abs() < 0.05,
+        "the last half second plays at {ratio:.3} of the former level: the former file's kept mix is still replayed"
+    );
 }

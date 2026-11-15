@@ -3,7 +3,7 @@
 by name, with the clock time of the moment, and he can mark the moment himself.
 
 The owner (kkt-26.11.07b, translated): the log was written late and he cannot say the exact time;
-how would anyone tell from load-report.txt what he did? The real program on our fixture: play and pause,
+how would anyone tell from the load report what he did? The real program on our fixture: play and pause,
 a marker, Diagnostics opened, a mark with a note from its button, Diagnostics closed, a mark by
 Ctrl+Alt+M. Then the journal file in the rig's own data directory is read back: every gesture is
 there in order, each stamped inside the scenario's own wall-clock window, and the Diagnostics pane

@@ -409,8 +409,13 @@ invalidation before stopping the worker allowed it to write a stub frame back af
 
 #### Scenario: A returned file replaces the stub
 - **WHEN** the file has appeared on the disk
-- **THEN** the source is substituted without reopening the project, the frames of the old source have left the cache, the new one fills the cache with its own values
+- **THEN** the source is substituted without reopening the project, no frame of the old source is left in the cache (what is there right after the swap may already be the new source's), the new one fills the cache with its own values
 - **TEST** t211 (`src/libs/kt-engine/tests/player_dynamic.rs`, `src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A returned file gets its waveform
+- **WHEN** a project opens with an audio file away (it gets a placeholder and the index errs on it), and the file comes back to its place
+- **THEN** once the placeholder is replaced the index is asked again and the returned file's waveform is built
+- **TEST** t2541 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: The return of a file changes the decode step
 - **WHEN** a file with a native margin under a zooming chain takes the place of the stub

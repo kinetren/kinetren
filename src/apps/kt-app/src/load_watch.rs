@@ -1,26 +1,26 @@
 //! The load watch (idle-cpu, kkt-26.11.07 item E3: the owner had no tool to bring proof with, and
 //! might not reach a menu in such lag). A thread of its own, on from the start, with no setup: once a second it reads
 //! which threads held the processor and which work counters moved, and hands each busy second to
-//! the telemetry journal. A spell of load writes the file by itself, so a person in such lag has
-//! nothing to reach: `load-report.txt` in the data directory is there to hand over. It stays on the
-//! machine: nothing in telemetry reads it.
+//! the telemetry journal and the structured trace. The machine's facts the load report's header
+//! carried go into the trace at the start (`app::run`, `kt_gpu::trace_machine`).
 //!
 //! The price at rest is one read of `/proc/self/task` a second and no write (t1839). It never
 //! touches the UI thread, and the UI only reads the last sample.
 //!
 //! telemetry-journal (kkt-26.11.07b G6): each busy second goes into the telemetry journal AT that
-//! second, and the report is the journal's last quarter of an hour with clock time — it said "487 s
-//! ago" from the moment it was written, and the owner could not say what moment was what. The
+//! second, with its clock time. The
 //! Diagnostics notes (evictions, no-read drops, low video hit, offline media) are raised here too,
 //! at the second they happen: inside a UI frame they waited for the next mouse move (t1966).
+//!
+//! load-report-into-trace (kkt-26.11.14 M3, found-defects 487): `load-report.txt` is gone. Its
+//! records were the journal's, its header lived only in the txt, and nothing read it; the header's
+//! facts are trace facts now (`kt-cli trace machine`), and the Diagnostics button opens the trace
+//! folder.
 
 use kt_time::work::{self, Work};
-use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-pub const REPORT_FILE: &str = "load-report.txt";
 const PERIOD: Duration = Duration::from_secs(1);
 /// Under a live scenario: the scenario's own limits read this often.
 const BENCH_PERIOD: Duration = Duration::from_millis(250);
@@ -28,11 +28,6 @@ const BENCH_PERIOD: Duration = Duration::from_millis(250);
 /// 122): it read `/proc/self/task` once a second at rest before. Any counted work — a UI frame
 /// included, so a mouse move — wakes it; the bench (`KT_GEOM_DUMP`) never parks it.
 const PARK_AFTER: u32 = 5;
-/// A spell of load: this share of one core, for this many samples in a row.
-const HOT_PERCENT: f32 = 100.0;
-const HOT_SAMPLES: usize = 3;
-/// A hot spell rewrites the file this seldom.
-const WRITE_EVERY: Duration = Duration::from_secs(5);
 const TOP_THREADS: usize = 6;
 /// A thread holding this share of a core while every counter stands still is work nobody counts
 /// (input-without-work): the owner's report read "at rest" at 196 % while prefetch and the audio
@@ -130,20 +125,10 @@ pub(crate) fn probe_notes(p: &PlayerProbe, st: &mut NoteState, dt: f32) -> Vec<S
     }
     out
 }
-static WRITE: AtomicBool = AtomicBool::new(false);
 
 /// The last second, for the performance panel.
 pub fn last() -> Option<Sample> {
     LAST.lock().unwrap().clone()
-}
-
-pub fn report_path() -> PathBuf {
-    crate::journal::data_dir().join(REPORT_FILE)
-}
-
-/// Write the report at the next sample, whatever the load.
-pub fn write_now() {
-    WRITE.store(true, Ordering::Release);
 }
 
 /// Thread times by name, in processor ticks (100 per second on Linux). Threads of one pool are
@@ -241,52 +226,6 @@ pub(crate) fn line(s: &Sample) -> String {
     )
 }
 
-/// Seconds of the report.
-pub const REPORT_SPAN_MS: i64 = crate::tele_journal::TAIL_SPAN_MS;
-
-/// The machine: build, processors, devices, which card drives the monitors.
-fn header() -> String {
-    let mut out = format!("Kinetren load report\nversion {}\n{} {}\n", kt_version::FULL, std::env::consts::OS, std::env::consts::ARCH);
-    out.push_str(&format!("logical processors: {}\n", std::thread::available_parallelism().map_or(0, |n| n.get())));
-    out.push_str("devices:\n");
-    for a in kt_gpu::adapter_facts() {
-        out.push_str(&format!(
-            "  {} / {:?} / {:?} / {:04x}:{:04x}\n",
-            a.name, a.kind, a.backend, a.vendor, a.device
-        ));
-    }
-    let driving: Vec<String> =
-        kt_gpu::driving_cards().iter().map(|c| format!("{:04x}:{:04x}", c.vendor, c.device)).collect();
-    out.push_str(&format!("monitors hang off: {}\n", if driving.is_empty() { "unknown".to_string() } else { driving.join(", ") }));
-    out.push_str(&format!("the choice: {:?}\n", kt_gpu::display_power_preference()));
-    out
-}
-
-/// The report: the machine, then the journal's last quarter of an hour, oldest first, each record
-/// with its clock time — load, playback, notes and what the person did.
-pub(crate) fn report(header: &str, recs: &[crate::tele_journal::Rec]) -> String {
-    let mut out = header.to_string();
-    out.push_str(&format!("journal: {} in the data directory\n", crate::tele_journal::FILE));
-    out.push_str("\nthe telemetry journal's last 15 minutes; LOAD: percent of one core (100 % = one core), threads | work per second\n");
-    out.push_str("GPU: the device that second: adapter | frame and decode size | frames, device ms a frame, span | each pass's mean ms ×count, the largest total first | the compute host's jobs\n");
-    for r in recs {
-        out.push_str(&r.line);
-        out.push('\n');
-    }
-    out
-}
-
-fn write_report() {
-    let path = report_path();
-    let tmp = path.with_extension("txt.tmp");
-    let recs = crate::tele_journal::global()
-        .map(|j| j.since(j.now().unix_ms - REPORT_SPAN_MS))
-        .unwrap_or_default();
-    if std::fs::write(&tmp, report(&header(), &recs)).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
-    }
-}
-
 /// One second into the journal, at that second: a busy one as a LOAD record, the first rest after
 /// a busy spell as one "at rest" record; a long rest writes nothing. Returns whether it was busy.
 pub(crate) fn journal_second(j: &crate::tele_journal::Journal, at: crate::tele_journal::Stamp, s: &Sample, was_busy: bool) -> bool {
@@ -356,7 +295,6 @@ pub fn start() {
         let mut was = work::totals();
         let mut cost_was = crate::frame_cost::totals();
         let mut t0 = Instant::now();
-        let (mut hot, mut written): (usize, Option<Instant>) = (0, None);
         let (mut busy, mut notes) = (false, NoteState::default());
         let mut quiet = 0u32;
         loop {
@@ -394,14 +332,8 @@ pub fn start() {
                     }
                 }
             }
-            hot = if s.cpu >= HOT_PERCENT { hot + 1 } else { 0 };
             quiet = if s.at_rest() { quiet + 1 } else { 0 };
             *LAST.lock().unwrap() = Some(s);
-            let due = hot >= HOT_SAMPLES && written.is_none_or(|t| t.elapsed() >= WRITE_EVERY);
-            if due || WRITE.swap(false, Ordering::AcqRel) {
-                write_report();
-                written = Some(Instant::now());
-            }
         }
     });
 }
@@ -508,39 +440,6 @@ mod tests {
         assert!(probe_notes(&p, &mut st, 1.0).is_empty(), "nothing moved since");
     }
 
-    /// Test t1967 (telemetry-journal): the load report is the journal's last quarter of an hour
-    /// with clock time — a load second, an edit and a mark, none "s ago".
-    #[test]
-    fn t1967_report_says_clock_time_and_holds_the_actions() {
-        use crate::tele_journal::{Kind, testing::*};
-        let clock = FakeClock::new(1_762_498_800_000, 3 * 3600);
-        let j = fresh("t1967", clock.clone(), crate::tele_journal::ROTATE_BYTES);
-        let map = |v: &[(&str, u64)]| v.iter().map(|(n, t)| (n.to_string(), *t)).collect();
-        let n = Work::ALL.len();
-        let busy = sample_of(&map(&[("prefetch", 90)]), &map(&[]), &vec![1; n], &vec![0; n], 1.0, 0);
-        let rest = sample_of(&map(&[]), &map(&[]), &vec![0; n], &vec![0; n], 1.0, 0);
-        assert!(journal_second(&j, j.now(), &busy, false));
-        clock.advance(1_000);
-        assert!(!journal_second(&j, j.now(), &rest, true), "the first rest closes the spell");
-        clock.advance(1_000);
-        assert!(!journal_second(&j, j.now(), &rest, false));
-        j.record(Kind::Act, "edit SetFx event 2132");
-        clock.advance(500);
-        j.record(Kind::Mark, "stall here");
-        clock.advance(10 * 60_000); // the report is written ten minutes later
-        let text = report("Kinetren load report\n", &j.since(j.now().unix_ms - REPORT_SPAN_MS));
-        assert!(!text.contains("ago"), "{text}");
-        let body: Vec<&str> = text.lines().filter(|l| l.starts_with("2025")).collect();
-        assert_eq!(body.len(), 4, "a busy second, the end of the spell, an edit, a mark: {text}");
-        assert!(body[0].starts_with("2025-11-07 10:00:00.000+03:00") && body[0].contains("LOAD") && body[0].contains("prefetch 90"));
-        assert!(body[1].starts_with("2025-11-07 10:00:01.000+03:00") && body[1].ends_with("at rest"));
-        assert!(body[2].starts_with("2025-11-07 10:00:02.000+03:00") && body[2].contains("ACT"));
-        assert!(body[3].starts_with("2025-11-07 10:00:02.500+03:00") && body[3].ends_with("MARK   stall here"));
-        // older than the quarter of an hour falls out of the report
-        clock.advance(6 * 60_000);
-        assert!(j.since(j.now().unix_ms - REPORT_SPAN_MS).len() < 4);
-    }
-
     /// Test t2021 (gpu-pass-cost): a busy second that composed carries a GPU record at the same
     /// moment, after its LOAD record, with the adapter, the sizes and each pass's mean and count;
     /// a second that composed nothing carries none.
@@ -569,8 +468,9 @@ mod tests {
         clock.advance(1_000);
         let quiet = sample_of(&map(&[("kinetren", 40)]), &map(&[]), &vec![1; n], &vec![0; n], 1.0, 0);
         assert!(journal_second(&j, j.now(), &quiet, true));
-        let text = report("Kinetren load report\n", &j.since(j.now().unix_ms - REPORT_SPAN_MS));
-        let body: Vec<&str> = text.lines().filter(|l| l.starts_with("2025")).collect();
+        let lines: Vec<String> = j.tail(10).into_iter().map(|r| r.line).collect();
+        let text = lines.join("\n");
+        let body: Vec<&str> = lines.iter().map(String::as_str).filter(|l| l.starts_with("2025")).collect();
         assert_eq!(body.len(), 3, "LOAD, GPU, LOAD: {text}");
         assert!(body[0].contains("LOAD") && body[1].contains("GPU    AMD Radeon"), "{text}");
         assert_eq!(body[0][..23], body[1][..23], "the GPU record carries its second's time: {text}");

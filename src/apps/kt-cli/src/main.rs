@@ -58,6 +58,8 @@ fn main() {
     {
         kt_time::trace::install(kt_time::trace::Config::new(Some(dir.into()), &format!("kt-cli {}", kt_version::FULL)));
         kt_time::trace::machine("args", &args.join(" "));
+        // every adapter, the monitors' cards, the power choice (load-report-into-trace)
+        kt_gpu::trace_machine();
         args.drain(i..i + 2);
     }
     let code = run(&args);

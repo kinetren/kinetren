@@ -104,7 +104,7 @@ fn t2120_after_prewarm_no_frame_compiles() {
         t += 3600;
         engine.execute_once(&plan(&frames, fx, t), &mut out).expect("execute");
         t += 3600;
-        engine.present(&plan(&frames, fx, t), PresentOptions { show_incomplete: true, glow: true }).expect("present");
+        engine.present(&plan(&frames, fx, t), PresentOptions { glow: true }).expect("present");
         assert_eq!(cold_draws() - cold, 0, "{name}: a pipeline drawn cold after the prewarm");
         assert_eq!(pipelines_in_frame() - made, 0, "{name}: a pipeline created inside a frame");
     }

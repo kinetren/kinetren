@@ -2870,3 +2870,13 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
   нет".
 - These are requests, registered as such.
 
+
+## 2026-11-14 — answers after stage 12 (`kkt-26.11.14`)
+
+- A partial picture is shown NOWHERE: "нигде не допустима частичный показ и введение в заблуждение,
+  частичный показ - это опять лишняя работа по отрисовке!!". Until a frame is complete the place is
+  empty with Loading, and nothing is drawn for a partial one.
+- Effects are never laid past their chain: "НИГДЕ НЕ ДОПУСТИМО чтобы эффекты накладывались мимо
+  цепочки, и это ко всему применимо а не только к datamosh". Every preview of an effect (picker cells,
+  galleries, presets, strips) shows it in its place in the chain, or Loading.
+- The load report moves into the trace; `load-report.txt` goes; the button opens the trace folder.

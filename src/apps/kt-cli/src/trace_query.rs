@@ -11,7 +11,9 @@
 //! - `frame <id>` — one frame's life;
 //! - `gpu` — the device rings (gpu-arbiter): admissions, waits, pieces and compute jobs by class,
 //!   device submits a second, stopped stream histories, the display's present latency;
-//! - `machine`, `dump [from to]` (JSON lines), `chrome <out.json>` (Perfetto / chrome://tracing).
+//! - `machine` — the run's start and its machine: processor, memory, OS, every adapter, the cards the
+//!   monitors hang off, the power choice, the devices opened;
+//! - `dump [from to]` (JSON lines, the machine first), `chrome <out.json>` (Perfetto / chrome://tracing).
 //!
 //! Times are seconds since the process started (`+193.201`), the clock of the text journal.
 
@@ -257,7 +259,33 @@ pub fn summary(run: &Run) -> String {
         v.iter().map(|(k, n)| format!("{k}={n}")).collect::<Vec<_>>().join(", ")
     });
     let _ = writeln!(o, "  journal lines: {}", run.texts.len());
+    // the machine under the counts: what the load report's header said (load-report-into-trace)
+    for line in machine(run).lines() {
+        let _ = writeln!(o, "  {line}");
+    }
     o
+}
+
+/// `YYYY-MM-DD HH:MM:SS.mmm UTC` of a Unix moment in nanoseconds (civil_from_days, Howard Hinnant).
+fn utc(unix_ns: u64) -> String {
+    let secs = (unix_ns / 1_000_000_000) as i64;
+    let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}.{:03} UTC",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60,
+        unix_ns / 1_000_000 % 1000
+    )
 }
 
 fn class_name(c: u64) -> &'static str {
@@ -463,8 +491,16 @@ pub fn gpu(run: &Run) -> String {
     o
 }
 
+/// The run and its machine (load-report-into-trace): the label, the start on the clock (UTC from the
+/// segment's head; the program's own `clock` fact gives local time), then every fact — the
+/// processor, memory, OS, each adapter, the cards the monitors hang off, the power choice, each
+/// device a role opened.
 pub fn machine(run: &Run) -> String {
     let mut o = String::new();
+    let _ = writeln!(o, "run: {} (pid {})", run.label, run.pid);
+    if run.start_unix_ns > 0 {
+        let _ = writeln!(o, "started: {}", utc(run.start_unix_ns));
+    }
     for (k, v) in &run.machine {
         let _ = writeln!(o, "{k}: {v}");
     }
@@ -1268,6 +1304,11 @@ fn line(run: &Run, r: &Rec) -> String {
 
 pub fn dump(run: &Run, from: Option<u64>, to: Option<u64>) -> String {
     let mut o = String::new();
+    // the machine's facts first, one line (load-report-into-trace)
+    if !run.machine.is_empty() {
+        let kv: Vec<String> = run.machine.iter().map(|(k, v)| format!("\"{}\":\"{}\"", esc(k), esc(v))).collect();
+        let _ = writeln!(o, "{{\"machine\":{{{}}}}}", kv.join(","));
+    }
     for r in run.recs.iter().filter(|r| from.is_none_or(|f| r.t >= f) && to.is_none_or(|t| r.t < t)) {
         let name = kind(r).map_or("?", |k| k.name());
         let _ = writeln!(

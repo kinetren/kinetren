@@ -182,7 +182,8 @@ fn one_mode(
     while start.elapsed() < run {
         let t0 = Instant::now();
         let plan = video.frame_plan(&cache, Tick(at.0.0 + (i % frames) * step), q);
-        if display.present(&plan, PresentOptions { show_incomplete: true, glow: false }).is_ok() {
+        // an incomplete frame draws nothing (no-partial-picture): only a drawn one is a latency
+        if let Ok(true) = display.present(&plan, PresentOptions { glow: false }) {
             display.wait_presented();
             let waited = t0.elapsed();
             kt_time::trace::ev(kt_time::trace::Ev::FrameWait)

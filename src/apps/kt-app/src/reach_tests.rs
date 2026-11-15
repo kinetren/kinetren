@@ -2055,7 +2055,6 @@ fn t669_generator_thumbs_follow_the_event_address() {
     for (rel, what) in [
         ("apps/kt-app/src/timeline.rs", "filmstrip"),
         ("apps/kt-app/src/app.rs", "coverage bar"),
-        ("apps/kt-app/src/fx_editor.rs", "gallery base frame"),
     ] {
         let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
         assert!(
@@ -2064,6 +2063,11 @@ fn t669_generator_thumbs_follow_the_event_address() {
              for a generator the values live on the event, and the media knows only the kind"
         );
     }
+
+    // the gallery's cells are the real frame (chain-everywhere): the engine's plan asks the event's
+    // address, and the cells' sources raise the generators per event (`gen_sources`), as the poster does
+    let thumbs = strip_comments(&std::fs::read_to_string(root.join("apps/kt-app/src/fx_thumbs.rs")).expect("fx_thumbs"));
+    assert!(thumbs.contains("gen_sources"), "the gallery's cells do not raise the generators' per-event sources");
 
     // 3) the event’s thumbnail source is raised by this address and knows the VALUES
     let (mut h, _g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));

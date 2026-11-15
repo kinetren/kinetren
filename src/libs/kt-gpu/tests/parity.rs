@@ -116,6 +116,12 @@ fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, 
     let c_cpu = kt_gpu::reference::next(&mut cpu);
     let mut gpu = Vec::new();
     let c_gpu = engine.execute_into(p, &mut gpu).expect("GPU execute");
+    // an incomplete frame has no bytes on the preview's path (no-partial-picture); its bytes are the
+    // export's last resort, and those are what the reference holds
+    if !c_gpu {
+        assert!(gpu.is_empty(), "execute_into made an incomplete frame's bytes");
+        assert!(!engine.execute_once(p, &mut gpu).expect("GPU execute"));
+    }
     (cpu, gpu, c_cpu, c_gpu)
 }
 

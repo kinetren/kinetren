@@ -37,14 +37,17 @@ pub struct MeterState {
     /// UNDER THE CURSOR (the user’s decision, item 4, round 16).
     last_playhead: i64,
     last_move: std::time::Instant,
+    /// The last probe under the cursor found a burst of the mix not cached: the level there is
+    /// not known, and the meter falls instead of holding another position's (no-partial-picture).
+    unknown: bool,
 }
 
 /// How long after the last cursor movement the meter still shows the level
 /// under it (on pause). After that — it fades.
 ///
 /// 1.2 s, not half a second: the measurement is taken FROM THE CACHE (`sample_levels_at`
-/// reads CacheFetcher), and at a fresh position the first probes return
-/// silence until prefetch delivers the burst. Too narrow a window faded the
+/// reads CacheFetcher), and at a fresh position the first probes find no burst until prefetch
+/// delivers it (they give no level: no-partial-picture). Too narrow a window faded the
 /// meter before data appeared under the cursor.
 pub const SCRUB_SHOW_MS: u128 = 1200;
 
@@ -151,6 +154,7 @@ impl Default for MeterState {
             last_sample: std::time::Instant::now(),
             last_playhead: i64::MIN,
             last_move: std::time::Instant::now(),
+            unknown: false,
         }
     }
 }
@@ -340,12 +344,18 @@ impl KtApp {
             Some(self.player.meters.take())
         } else if scrubbing && self.meter.last_sample.elapsed().as_millis() >= 120 {
             self.meter.last_sample = std::time::Instant::now();
-            Some(self.player.sample_levels_at(self.player.transport.playhead()))
+            // a partial mix gives no level: it read what is not cached yet as silence
+            let s = self.player.sample_levels_at(self.player.transport.playhead());
+            self.meter.unknown = s.is_none();
+            s
         } else {
             None // between measurements we do not touch the target (previously zeros went here)
         };
         if let Some((pl, pr)) = sample {
             self.meter.feed(pl, pr);
+        }
+        if playing {
+            self.meter.unknown = false;
         }
         // KT_METER_DEMO=1 — feed the meter fictitious levels: the look of the meter
         // (glow, zones, peak) otherwise cannot be checked without the sound hardware
@@ -360,7 +370,7 @@ impl KtApp {
             self.meter.last_tick = std::time::Instant::now();
             // the target is released on pause too — but only when the cursor stands still:
             // while scrubbing it holds the measurement under the cursor
-            self.meter.tick(ticks, playing || !scrubbing);
+            self.meter.tick(ticks, playing || !scrubbing || self.meter.unknown);
         } else {
             // clamps to the target — and between ticks (feeding above the decay)
             self.meter.tick(0.0, false);

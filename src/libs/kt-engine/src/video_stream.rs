@@ -215,6 +215,16 @@ pub(super) struct StreamStage {
     pub front_key: u64,
     /// A slot in front has curves: its output depends on the position too.
     pub front_curved: bool,
+    /// The picture slots each `second` event runs before the kernel reads it (chain-everywhere,
+    /// found-defects 540): that event's chain in front of its own stream slot, if any, without its
+    /// leading Geometry node — the other track's picture as its chain made it, never as decoded.
+    pub second_front: Vec<Vec<usize>>,
+    /// The cameras of the composite the stage stands in and the project's size: a Pan3d or a
+    /// camera-driven slot among the inputs' slots resolves its camera as the layer does (row 541).
+    pub cams: Arc<[kt_model::CameraEvent]>,
+    pub project_size: (u32, u32),
+    /// Per `second` event: the cameras' hash when its input slots read a camera, else 0.
+    pub second_cam: Vec<u64>,
     /// The kernel's compiled schedule per stream size (stream-layout-per-build): made fresh by
     /// `link_stages` on every build, so a neighbour's edit (the event before, the second input) can
     /// never leave a stale one; shared by the composer, the prefetch and the picker of the build.
@@ -246,6 +256,10 @@ impl StreamStage {
                 front: vec![],
                 front_key: 0,
                 front_curved: false,
+                second_front: vec![],
+                second_cam: vec![],
+                cams: Arc::from(Vec::new()),
+                project_size: (1, 1),
                 plans: Default::default(),
             }),
             _ => None,
@@ -385,8 +399,16 @@ fn front_memo_put(id: u64, w: u32, h: u32, rgba: Arc<[u8]>) {
     }
 }
 
-/// Fill each stage's event before and second input (after the composition sort).
-pub(super) fn link_stages(clips: &mut [VideoClip]) {
+/// The slots of an event's chain that make its picture as a stream's input reads it: the slots in
+/// front of its own stream slot (the whole chain without one), not the leading Geometry node.
+fn input_slots(fx: &[kt_model::FxInstance]) -> Vec<usize> {
+    let end = fx.iter().position(|f| f.is_stream()).unwrap_or(fx.len());
+    front_slots(&fx[..end])
+}
+
+/// Fill each stage's event before and second input (after the composition sort); `cams` and
+/// `project_size` are the composite's, as `layer_src` resolves a camera with them.
+pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent], project_size: (u32, u32)) {
     let snapshot: Vec<VideoClip> = clips.to_vec();
     let lite = |c: &VideoClip| {
         let mut c = c.clone();
@@ -397,6 +419,15 @@ pub(super) fn link_stages(clips: &mut [VideoClip]) {
         let Some(st) = c.stream.as_mut() else { continue };
         // this build's own schedules: the stage may be the last build's, copied (edit-without-rebuild)
         st.plans = Default::default();
+        // the masks of the slots in front cut them in the front run (found-defects 541): an edit of
+        // one changes what the stream reads, and an animated one changes it per position
+        if let Some(m) = &c.masks {
+            let front_masks: Vec<_> = m.slots.iter().filter(|(from, ..)| st.front.contains(from)).collect();
+            if !front_masks.is_empty() {
+                st.front_key = mix(st.front_key, xxhash_rust::xxh3::xxh3_64(format!("{front_masks:?}").as_bytes()));
+                st.front_curved = true;
+            }
+        }
         // curves in front are sampled by the event's placement: it joins the front's key
         if st.front_curved {
             let place = format!("{}|{}|{}|{}", c.start.0, c.end.0, c.source_in.0, c.reversed);
@@ -417,6 +448,21 @@ pub(super) fn link_stages(clips: &mut [VideoClip]) {
         if let Some(l) = lane {
             st.second = snapshot.iter().filter(|o| o.lane == l && o.nest.is_none()).map(lite).collect();
         }
+        st.second_front = st.second.iter().map(|o| input_slots(&o.fx)).collect();
+        st.cams = Arc::from(cams.to_vec());
+        st.project_size = project_size;
+        // a camera-driven slot among the inputs' reads the cameras at each position (row 541)
+        let cams_key = xxhash_rust::xxh3::xxh3_64(format!("{cams:?}").as_bytes());
+        if st.front.iter().any(|&i| c.fx[i].uses_camera()) {
+            st.front_key = mix(st.front_key, cams_key);
+            st.front_curved = true;
+        }
+        st.second_cam = st
+            .second
+            .iter()
+            .zip(&st.second_front)
+            .map(|(o, sl)| if sl.iter().any(|&i| o.fx[i].uses_camera()) { cams_key } else { 0 })
+            .collect();
     }
 }
 
@@ -562,27 +608,45 @@ impl StreamLayout for ClipStream<'_> {
                 h = mix(h, k as u64);
             }
         }
+        // the second input is read through its event's chain (found-defects 540): its chain, curves
+        // and placement (`fx_hash`) name what the kernel reads, and the position when curved
+        if side == Side::Second
+            && let Some(i) = self.second_index(k)
+            && !self.st.second_front[i].is_empty()
+        {
+            h = mix(h, c.fx_hash);
+            if self.st.second_cam[i] != 0 {
+                h = mix(h, self.st.second_cam[i]);
+            }
+            if c.auto_plan.is_some() || c.masks.is_some() || self.st.second_cam[i] != 0 {
+                h = mix(h, k as u64);
+            }
+        }
         h.max(1)
     }
 }
 
 impl ClipStream<'_> {
-    /// The main stream's frame at `k` through the slots in front of the stage (stream-input-order):
-    /// their rows at the position's material time, run by the injected executor at the stream's
-    /// size. `None` — no device, or the executor refused the plan: the frame is missing, never the
-    /// decoded picture standing in for it.
-    fn front(&self, k: i64, fr: Arc<VideoFrame>) -> Option<(u32, u32, Arc<[u8]>)> {
-        let id = self.ident(Side::Main, k);
+    /// The index in `second` of the event the second input reads at position `k`.
+    fn second_index(&self, k: i64) -> Option<usize> {
+        let t = Tick(k * self.step);
+        self.st.second.iter().position(|o| o.start <= t && t < o.end)
+    }
+
+    /// Run `slots` of event `clip`'s chain over `fr`, the frame read at position `k`, as its layer runs
+    /// them: their curves at the position's material time (clamped into the event), its `u`, the
+    /// masks those slots carry and the camera they resolve (chain-everywhere, found-defects 541), by
+    /// the injected executor at the stream's size. The output is kept by `id` (the stream address,
+    /// which names the slots). `None` — no device, or the executor refused the plan: the frame is
+    /// missing, never the decoded picture standing in for it.
+    fn run_slots(&self, clip: &VideoClip, slots: &[usize], id: u64, k: i64, fr: Arc<VideoFrame>) -> Option<(u32, u32, Arc<[u8]>)> {
         if let Some(hit) = front_memo_get(id) {
             return Some(hit);
         }
         let exec = front_exec()?;
-        let clip = self.clip;
-        let t = Tick((k * self.step).max(clip.start.0));
+        let t = Tick((k * self.step).clamp(clip.start.0, (clip.end.0 - 1).max(clip.start.0)));
         let mat = kt_model::clip_material_at(clip.source_in, clip.start, clip.end - clip.start, clip.reversed, self.step, t);
-        let slots: Vec<kt_model::FxInstance> = self
-            .st
-            .front
+        let fx: Vec<kt_model::FxInstance> = slots
             .iter()
             .filter_map(|&i| {
                 let mut s = clip.fx.get(i)?.clone();
@@ -594,7 +658,10 @@ impl ClipStream<'_> {
             .collect();
         let u = (t.0 - clip.start.0) as f64 / (clip.end.0 - clip.start.0).max(1) as f64;
         let (w, h) = (fr.width, fr.height);
-        let plan = crate::video_plan::chain_plan(fr, &slots, self.st.front_key, u.clamp(0.0, 1.0), t, None);
+        let (pw, ph) = self.st.project_size;
+        let cam3d = super::resolve_cam3d(&fx, &self.st.cams, t, w, pw);
+        let masks = clip.masks.as_ref().map(|m| m.ops_for(slots, mat, ph.max(1) as f64)).unwrap_or_default();
+        let plan = crate::video_plan::chain_plan_with(fr, &fx, id, u.clamp(0.0, 1.0), t, cam3d, masks);
         let mut out = Vec::new();
         FRONT_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         match exec.execute_once(&plan, &mut out) {
@@ -635,8 +702,15 @@ impl StreamInput for ClipStream<'_> {
         let Some(cache) = self.cache else { return false };
         let Some((c, pts)) = self.at(side, k) else { return false };
         let Some(fr) = cache.get_video(SourceId(c.media.0), Some(self.q), video_cache_idx(pts)) else { return false };
-        if side == Side::Main && !self.st.front.is_empty() {
-            let Some((w, h, rgba)) = self.front(k, fr) else { return false };
+        // the main stream through the slots in front of the stage (stream-input-order), the event
+        // before's frames included (its D2); the second input through its own event's chain (row 540)
+        let slots: &[usize] = match side {
+            Side::Main => &self.st.front,
+            Side::Second => self.second_index(k).map(|i| &self.st.second_front[i][..]).unwrap_or(&[]),
+        };
+        if !slots.is_empty() {
+            let owner = if side == Side::Main { self.clip } else { c };
+            let Some((w, h, rgba)) = self.run_slots(owner, slots, self.ident(side, k), k, fr) else { return false };
             f(Rgba { w, h, rgba: &rgba });
             return true;
         }

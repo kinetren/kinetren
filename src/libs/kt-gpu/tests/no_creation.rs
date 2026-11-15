@@ -87,7 +87,7 @@ fn t2023_no_resource_is_created_per_frame_after_warm_up() {
     for (name, fx) in &cases {
         let frames = [a.clone(), b.clone(), c.clone()];
         let mut execute = |t: i64| engine.execute_once(&plan(&frames, fx, t), &mut out).expect("execute");
-        let present = |t: i64| engine.present(&plan(&frames, fx, t), PresentOptions { show_incomplete: true, glow: true }).expect("present");
+        let present = |t: i64| engine.present(&plan(&frames, fx, t), PresentOptions { glow: true }).expect("present");
         // warm-up: the pipelines of new shapes, the pool's textures, the arena, the timer's buffers
         for _ in 0..3 {
             t += 3600;

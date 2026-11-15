@@ -222,6 +222,26 @@ impl ClipMaskPlan {
         out
     }
 
+    /// The mask ops of `slots` (materialized indices, ascending) run as a chain of their own, the
+    /// i-th slot at position i (chain-everywhere, found-defects 541): a stream stage's inputs run
+    /// those slots outside the layer, and a slot's mask must cut its effect there too.
+    fn ops_for(&self, slots: &[usize], mat: Tick, project_h: f64) -> Vec<kt_fx::mask::MaskOp> {
+        let mut out = Vec::new();
+        for (j, &i) in slots.iter().enumerate() {
+            for (from, list, follow) in self.slots.iter().filter(|(from, ..)| *from == i) {
+                debug_assert_eq!(*from, i);
+                out.push(kt_fx::mask::MaskOp {
+                    at: j + 1,
+                    kind: kt_fx::mask::MaskOpKind::Mix { from: j },
+                    masks: Arc::new(kt_model::masks_at(list, mat)),
+                    follow_lead: *follow,
+                    project_h,
+                });
+            }
+        }
+        out
+    }
+
     /// A mask point at position 0 forbids a decode step (a leading stop, like the morpher's).
     fn stops_at_zero(&self) -> bool {
         self.slots.iter().any(|(from, _, _)| *from == 0)
@@ -947,6 +967,10 @@ pub struct SourceFacts {
     /// only whoever opened the source knows how much material there is.
     /// Its absence is not zero, but “no edge” (generator, placeholder).
     pub lengths: std::collections::HashMap<MediaId, kt_time::Tick>,
+    /// Moves on every source observed or forgotten: a source added, REPLACED (a file that came
+    /// back, a changed path — the same id, so no count moves) or removed. The audio render thread
+    /// takes the material edges again and drops the kept final mix when it moves.
+    pub epoch: u64,
 }
 
 impl SourceFacts {
@@ -954,6 +978,7 @@ impl SourceFacts {
     /// whether it is “procedural”: if the player, export and kt-cli diverged on this question,
     /// the order and the read would compute different keys (invariant 4).
     pub fn observe(&mut self, media: MediaId, info: &kt_media::MediaInfo) {
+        self.epoch += 1;
         if info.duration.0 > 0 {
             self.lengths.insert(media, info.duration);
         } else {
@@ -988,6 +1013,9 @@ impl SourceFacts {
     }
 
     pub fn forget(&mut self, media: MediaId) {
+        self.epoch += 1;
+        // the material edge goes too: a removed source's length kept its silence counted as edge
+        self.lengths.remove(&media);
         self.natives.remove(&media);
         self.procedural.remove(&media);
         self.views.remove(&media);
@@ -1343,7 +1371,7 @@ impl VideoRenderer {
         // R.28; before that the v1 rule “on top is the one with the smaller start”
         // applied, and the timeline strip diverged with it). Test 162.
         clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
-        stream::link_stages(&mut clips);
+        stream::link_stages(&mut clips, cams, (project.settings.width, project.settings.height));
         // Subtrees: one renderer for EACH reel in use.
         // The depth limit is held by the model (`validate`); here it is a safeguard
         // against a hostile file.
