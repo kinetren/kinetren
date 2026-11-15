@@ -474,6 +474,29 @@ pub struct ClipProcessor {
     /// The twin has replaced nodes `0..=ctx` (D3): the gate does not cut past the out-point and the
     /// input stops at it, until the stream is back inside the event.
     ringing: bool,
+    /// Kept chunk buffers (per-sample-costs, found-defects 351): the dry side of a layer strength
+    /// (main stream and twin) and the twin's chunk, copied into these instead of a `to_vec` per
+    /// chunk. They hold no state between chunks.
+    scratch: ChunkScratch,
+    /// The last `source_offset` asked: (local, rate bits, clip length, offset). A loop wraps to the
+    /// same frame every lap, and the warp map laid out its segments per call — an allocation per
+    /// seam (per-sample-costs, t2684). Emptied when the curves or the chain change.
+    offset_memo: std::cell::Cell<Option<(i64, u64, i64, i64)>>,
+}
+
+/// The kept buffers of one chunk (see `ClipProcessor::scratch`).
+#[derive(Default)]
+struct ChunkScratch {
+    dry: Vec<f32>,
+    twin: Vec<f32>,
+    twin_dry: Vec<f32>,
+}
+
+/// `v` filled with a copy of `from`, without a new allocation once its capacity holds it.
+fn copy_into(mut v: Vec<f32>, from: &[f32]) -> Vec<f32> {
+    v.clear();
+    v.extend_from_slice(from);
+    v
 }
 
 /// The nodes `0..=ctx` split off at the out-point and the dry ring of a layer mix with them
@@ -504,7 +527,7 @@ impl DryRing {
         let len = self.buf.len();
         for v in buf.iter_mut() {
             std::mem::swap(&mut self.buf[self.pos], v);
-            self.pos = (self.pos + 1) % len;
+            self.pos = kt_plugin_api::dsp::wrap_next(self.pos, len);
         }
     }
 
@@ -567,6 +590,8 @@ impl ClipProcessor {
             ring_off: false,
             twin: None,
             ringing: false,
+            scratch: ChunkScratch::default(),
+            offset_memo: std::cell::Cell::new(None),
         };
         p.apply_params(fx, true);
         p
@@ -582,6 +607,7 @@ impl ClipProcessor {
     pub fn set_auto(&mut self, auto: &AutoProfiles) {
         if &self.auto != auto {
             self.auto = auto.clone();
+            self.offset_memo.set(None);
             for (slot, node) in &mut self.nodes {
                 node.bind_lfo(&self.auto, *slot, self.clip_len);
             }
@@ -708,6 +734,7 @@ impl ClipProcessor {
     /// ⇒ nodes are matched to slots 1:1 (invariant 3: the state
     /// lives on, parameters arrive smoothed).
     pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
+        self.offset_memo.set(None);
         if structural {
             self.nodes = fx
                 .iter()
@@ -986,9 +1013,16 @@ impl ClipProcessor {
     /// at speed |rate| and does not know the direction. On positive
     /// curves A ≡ S bit for bit, and the previous path is intact.
     fn source_offset(&self, local: i64) -> i64 {
+        let key = (local, self.rate.to_bits(), self.clip_len);
+        if let Some((l, r, n, v)) = self.offset_memo.get()
+            && (l, r, n) == key
+        {
+            return v;
+        }
         let t = local as f64 / self.clip_len as f64;
-        (self.clip_len as f64 * kt_model::consumed_abs(self.rate, self.rate_points(), t)).round()
-            as i64
+        let v = (self.clip_len as f64 * kt_model::consumed_abs(self.rate, self.rate_points(), t)).round() as i64;
+        self.offset_memo.set(Some((key.0, key.1, key.2, v)));
+        v
     }
 
     /// A POSITION jump with a continuous OUTPUT: the source is repositioned,
@@ -1237,6 +1271,7 @@ impl ClipProcessor {
             // a copy of nodes 0..=ctx from exactly this state, fed the chunk with its frames from
             // the out-point on zeroed and silence after — the echo of the event's own sound
             let mut twin_sub: Vec<f32> = Vec::new();
+            let mut twin_taken = false;
             if let Some(c) = self.ctx.filter(|_| self.ring && !self.ringing) {
                 if self.twin.is_none() && !before_material && chunk_in <= gate_end && gate_end < chunk_in + n as i64 {
                     let forked: Option<Vec<(usize, AudioNode)>> =
@@ -1246,7 +1281,8 @@ impl ClipProcessor {
                     }
                 }
                 if self.twin.is_some() {
-                    twin_sub = sub.to_vec();
+                    twin_sub = copy_into(std::mem::take(&mut self.scratch.twin), sub);
+                    twin_taken = true;
                     let cut = (gate_end - chunk_in).clamp(0, n as i64) as usize;
                     twin_sub[cut * CH..].fill(0.0);
                 }
@@ -1266,11 +1302,12 @@ impl ClipProcessor {
             let pos = |i: usize| fold(chunk_local + ahead[i]);
             let pass = Pass { mix: self.mix.as_ref(), mix_k, pos: &pos };
             let mut dry: Option<Vec<f32>> = None;
+            let sc = &mut self.scratch;
             let nodes_len = self.nodes.len();
             match self.ctx {
-                None => pass.run(&mut self.nodes, 0..nodes_len, sub, &mut dry, &mut self.dry_ring),
+                None => pass.run(&mut self.nodes, 0..nodes_len, sub, &mut dry, &mut self.dry_ring, &mut sc.dry),
                 Some(c) => {
-                    pass.run(&mut self.nodes, 0..c + 1, sub, &mut dry, &mut self.dry_ring);
+                    pass.run(&mut self.nodes, 0..c + 1, sub, &mut dry, &mut self.dry_ring, &mut sc.dry);
                     // THE CONTENT GATE (pitch-event-edges D1): right after the last node that reads
                     // across the edges, everything outside the event is cut — the content position
                     // there runs ahead of the output by what the later nodes still read
@@ -1286,20 +1323,30 @@ impl ClipProcessor {
                     // the twin gives the frames from the out-point on (pitch-tail-choice D3)
                     if let Some(t) = self.twin.as_mut() {
                         let mut tdry: Option<Vec<f32>> = None;
-                        pass.run(&mut t.nodes, 0..c + 1, &mut twin_sub[..], &mut tdry, &mut t.dry_ring);
+                        pass.run(&mut t.nodes, 0..c + 1, &mut twin_sub[..], &mut tdry, &mut t.dry_ring, &mut sc.twin_dry);
                         content_gate(&mut twin_sub[..], p0, gate_end, i64::MAX);
                         for (v, tv) in sub.iter_mut().zip(twin_sub.iter()) {
                             *v += tv;
                         }
-                        if let (Some(d), Some(mut td)) = (dry.as_mut(), tdry) {
-                            content_gate(&mut td, pd, gate_end, i64::MAX);
-                            for (v, tv) in d.iter_mut().zip(td.iter()) {
-                                *v += tv;
+                        if let Some(mut td) = tdry {
+                            if let Some(d) = dry.as_mut() {
+                                content_gate(&mut td, pd, gate_end, i64::MAX);
+                                for (v, tv) in d.iter_mut().zip(td.iter()) {
+                                    *v += tv;
+                                }
                             }
+                            sc.twin_dry = td;
                         }
                     }
-                    pass.run(&mut self.nodes, c + 1..nodes_len, sub, &mut dry, &mut self.dry_ring);
+                    pass.run(&mut self.nodes, c + 1..nodes_len, sub, &mut dry, &mut self.dry_ring, &mut sc.dry);
                 }
+            }
+            // the chunk's buffers go back to be filled again by the next one
+            if let Some(d) = dry {
+                sc.dry = d;
+            }
+            if twin_taken {
+                sc.twin = twin_sub;
             }
             done += n;
         }
@@ -1323,6 +1370,7 @@ impl Pass<'_> {
         sub: &mut [f32],
         dry: &mut Option<Vec<f32>>,
         dry_ring: &mut Option<DryRing>,
+        spare: &mut Vec<f32>,
     ) {
         for i in range {
             let (slot, node) = &mut nodes[i];
@@ -1330,7 +1378,7 @@ impl Pass<'_> {
                 && *slot >= m.from
                 && dry.is_none()
             {
-                let mut d = sub.to_vec();
+                let mut d = copy_into(std::mem::take(spare), sub);
                 // between the snapshot and the marker stands a lookahead node:
                 // the dry side must be delayed by the window it has eaten,
                 // otherwise the blend would mix different moments of the material

@@ -27,6 +27,13 @@ pub struct Warp {
     /// the anchor). Previously the refusal was swallowed by `let _ =`, and the curve 0.25→32 silently
     /// got stuck at the last accepted value (R.57, a latent defect).
     rejected: u64,
+    /// The chunk's buffers, kept (per-sample-costs, found-defects 350): the interleaved input the
+    /// source fills, its planar copy and rubato's planar output. `process` allocated the output and
+    /// the caller the two inputs per 1024 output frames; `process_into_buffer` into kept buffers is
+    /// the same arithmetic on the same values.
+    inter: Vec<f32>,
+    planar: Vec<Vec<f32>>,
+    out_planar: Vec<Vec<f32>>,
 }
 
 const WARP_CHUNK_OUT: usize = 1024;
@@ -85,6 +92,9 @@ impl Warp {
             ready: std::collections::VecDeque::new(),
             underruns: 0,
             rejected,
+            inter: Vec::new(),
+            planar: vec![Vec::new(); CH],
+            out_planar: vec![Vec::new(); CH],
         }
     }
 
@@ -124,19 +134,26 @@ impl Warp {
         let need_frames = out.len() / CH;
         while self.ready.len() < need_frames * CH {
             let in_frames = self.rs.input_frames_next();
-            let mut input = vec![0f32; in_frames * CH];
-            if !pull(kind, self.src_cursor, &mut input) {
+            self.inter.clear();
+            self.inter.resize(in_frames * CH, 0.0);
+            if !pull(kind, self.src_cursor, &mut self.inter) {
                 self.underruns += 1;
-                input.fill(0.0);
+                self.inter.fill(0.0);
             }
             self.src_cursor += in_frames as i64;
             // interleaved → planar
-            let planar: Vec<Vec<f32>> =
-                (0..CH).map(|ch| (0..in_frames).map(|f| input[f * CH + ch]).collect()).collect();
-            let out_planar = self.rs.process(&planar, None).expect("rubato process");
-            let produced = out_planar[0].len();
+            for (ch, p) in self.planar.iter_mut().enumerate() {
+                p.clear();
+                p.extend((0..in_frames).map(|f| self.inter[f * CH + ch]));
+            }
+            let out_frames = self.rs.output_frames_next();
+            for o in &mut self.out_planar {
+                o.resize(out_frames, 0.0);
+            }
+            let (_, produced) =
+                self.rs.process_into_buffer(&self.planar, &mut self.out_planar, None).expect("rubato process");
             for f in 0..produced {
-                for chd in out_planar.iter().take(CH) {
+                for chd in self.out_planar.iter().take(CH) {
                     self.ready.push_back(chd[f]);
                 }
             }

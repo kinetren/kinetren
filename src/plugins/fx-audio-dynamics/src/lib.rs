@@ -640,7 +640,7 @@ impl AudioState for CompNode {
                     let env_db = 20.0 * env.flog10();
                     let over = (env_db - thr).max(0.0);
                     let gr_db = over * (1.0 - 1.0 / ratio);
-                    10f32.fpowf(-gr_db / 20.0) * makeup
+                    kt_plugin_api::math::exp10f(-gr_db / 20.0) * makeup
                 };
                 for s in fr.iter_mut() {
                     *s *= g;

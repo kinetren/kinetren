@@ -100,6 +100,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   new term in the weight is a new boundary in `weight_run`, or the run hands out a stale weight (t2173
   holds the bytes on the specialized, general and baseline paths; a `debug_assert` compares the run's
   last frame).
+- **A warm render allocates nothing** (per-sample-costs, t2684): an event's chain output, the laps'
+  buffers, a stage's sum and key signals and the active-event lists come from `FxStateStore::pool()`
+  and go back to it in the same call; the reel maps are a `OnceLock` of the build; a sub-mix burst the
+  ring let go is refilled (`NestStream::burst`). A new buffer on the render path takes it from the pool;
+  t2684 counts every allocation of four warm seconds, linear and looped.
 - **In the tail of FX the warp is not computed** (R.43, item 304): beyond `gate_end` the dry signal is zeroed by the gate anyway, so a chunk lying entirely beyond it is skipped — byte-identical by construction, but without the resampler and without reading the source. Tests 294/295.
 - Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7). `reset_all` reaches EVERY stream through a chain: events, their laps, track stages, reels' sub-mix streams and the sidechain key branches (t2375: a key branch left out rang the old place into the detector). A reel's pre-roll counts its own track stages (t2376). A new state the render thread keeps joins `reset_all` and, when it rings, a pre-roll.
 - `Player::wake()` is public: kt-app's `audio-output` thread parks on it and opens the sound device on Play (kept-mix-settle D5). Every input that should open or close the device notifies it already (play, pause, seek).

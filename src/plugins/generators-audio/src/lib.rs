@@ -91,12 +91,27 @@ fn noise(p: &[f64], n0: i64, out: &mut [f32]) {
     let scale = db_amp(p[1]) / SQRT_2 / var.sqrt();
     let seed = p[2].round().max(0.0) as u64;
     let stereo = p[3] >= 0.5;
+    // row k holds its hash for 2^k samples: it is hashed again only when `n >> k` moves, and the
+    // rows are summed in their order as before, so the bytes stay (per-sample-costs, found-defects
+    // 360: pink hashed 12 rows a sample, ~2 suffice on average)
+    let nch = if stereo { 2 } else { 1 };
+    let mut held = [[0f64; 12]; 2];
+    let mut at_row: [Option<u64>; 12] = [None; 12];
     for f in 0..out.len() / 2 {
         let n = (n0 + f as i64) as u64;
-        let at = |ch: u64| {
+        for k in 0..rows {
+            let m = n >> k;
+            if at_row[k] != Some(m) {
+                at_row[k] = Some(m);
+                for (ch, h) in held.iter_mut().enumerate().take(nch) {
+                    h[k] = uni(seed, ch as u64, k as u64, m);
+                }
+            }
+        }
+        let at = |ch: usize| {
             let mut s = 0.0;
-            for (k, wk) in w.iter().enumerate().take(rows) {
-                s += wk * uni(seed, ch, k as u64, n >> k);
+            for (wk, u) in w.iter().zip(&held[ch]).take(rows) {
+                s += wk * u;
             }
             (s * scale).clamp(-1.0, 1.0) as f32
         };

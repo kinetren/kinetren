@@ -102,6 +102,14 @@ impl SmoothedParam {
 
 /// Classic freeverb tunings (44.1 kHz), scaled to 48 kHz
 /// and the delay parameter (base point delay_ms = 100).
+/// The next index of a ring of `len` (> 0): `(pos + 1) % len` without the division
+/// (per-sample-costs, found-defects 356 — Freeverb took 24 divisions a frame). A zero `len` stays 0.
+#[inline]
+pub fn wrap_next(pos: usize, len: usize) -> usize {
+    let n = pos + 1;
+    if n >= len { 0 } else { n }
+}
+
 pub const COMB_TUNINGS: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
 pub const ALLPASS_TUNINGS: [usize; 4] = [556, 441, 341, 225];
 pub const STEREO_SPREAD: usize = 23;
@@ -122,7 +130,7 @@ impl Comb {
         let out = self.buf[self.pos];
         self.filter_state = out * (1.0 - damp) + self.filter_state * damp;
         self.buf[self.pos] = input + self.filter_state * feedback;
-        self.pos = (self.pos + 1) % self.buf.len();
+        self.pos = wrap_next(self.pos, self.buf.len());
         out
     }
 }
@@ -142,7 +150,7 @@ impl Allpass {
         let bufout = self.buf[self.pos];
         let out = bufout - input;
         self.buf[self.pos] = input + bufout * 0.5;
-        self.pos = (self.pos + 1) % self.buf.len();
+        self.pos = wrap_next(self.pos, self.buf.len());
         out
     }
 }
@@ -261,6 +269,14 @@ impl Biquad {
         self.a2 = a2 / a0;
     }
 
+    /// Take `other`'s coefficients, keeping this filter's state: the other channel of a stereo
+    /// filter tuned by the same inputs is the same coefficients, so one `tune` serves both
+    /// (per-sample-costs, found-defects 355).
+    #[inline]
+    pub fn tune_like(&mut self, other: &Biquad) {
+        (self.b0, self.b1, self.b2, self.a1, self.a2) = (other.b0, other.b1, other.b2, other.a1, other.a2);
+    }
+
     /// The frequency response in dB at `freq_hz` — from the CURRENT coefficients, that is
     /// from the very filter that is sounding now (including the
     /// f32 quantization of `tune`). The RBJ formulas are NOT duplicated here: the graph
@@ -327,7 +343,7 @@ impl DelayLine {
         // Flush of denormals: feedback tails on x86 without FTZ cost
         // a clock tick on every subnormal value
         self.buf[self.pos] = if v.abs() < 1e-20 { 0.0 } else { v };
-        self.pos = (self.pos + 1) % self.buf.len();
+        self.pos = wrap_next(self.pos, self.buf.len());
     }
 
     /// Read the value written `frames` frames BACK (1.0 —
@@ -337,10 +353,13 @@ impl DelayLine {
     pub fn read_frac(&self, frames: f32) -> f32 {
         let len = self.buf.len();
         let d = frames.clamp(1.0, (len - 1) as f32);
-        let i = d.floor() as i64;
+        // `d ≥ 1`: truncation is the floor, and the SSE2 build's `floor` is a C-library call
+        // (per-sample-costs, found-defects 356); NaN clamps to NaN and truncates to 0 as before
+        let i = d as usize;
         let fr = d - i as f32;
-        let i0 = (self.pos as i64 - i).rem_euclid(len as i64) as usize;
-        let i1 = (self.pos as i64 - i - 1).rem_euclid(len as i64) as usize;
+        // `1 ≤ i ≤ len − 1` and `pos < len`: one compare-and-add is the `rem_euclid`
+        let i0 = if self.pos >= i { self.pos - i } else { self.pos + len - i };
+        let i1 = if i0 >= 1 { i0 - 1 } else { len - 1 };
         self.buf[i0] * (1.0 - fr) + self.buf[i1] * fr
     }
 
@@ -567,8 +586,8 @@ impl Freeverb {
                 let dry = frame[ch];
                 let mut input = dry * 0.015;
                 if !self.predelay[ch].is_empty() {
-                    let pos = self.pre_pos % self.predelay[ch].len();
-                    input = std::mem::replace(&mut self.predelay[ch][pos], input);
+                    // every channel's line has one length, and `pre_pos` wraps at it
+                    input = std::mem::replace(&mut self.predelay[ch][self.pre_pos], input);
                 }
                 let mut wet = 0.0;
                 for comb in &mut self.combs[ch] {
@@ -579,7 +598,7 @@ impl Freeverb {
                 }
                 wets[ch] = wet;
             }
-            self.pre_pos = self.pre_pos.wrapping_add(1);
+            self.pre_pos = wrap_next(self.pre_pos, self.predelay[0].len());
             // width: 1 — channels as they are, 0 — a common mono tail
             let (a, b) = (0.5 + 0.5 * self.width, 0.5 - 0.5 * self.width);
             for ch in 0..CH {

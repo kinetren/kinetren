@@ -306,6 +306,16 @@ pub struct AudioRenderer {
     scene_base: u64,
     /// The reel's pre-roll in bursts (`reel_preroll_bursts`), a function of the reel computed once.
     preroll_bursts: u32,
+    /// The reels' pre-rolls and the instances' reels, made at the first render that needs them
+    /// (per-sample-costs, found-defects 352: two maps were built per render call). Pure functions
+    /// of the build, so a `OnceLock` keeps the renderer shareable.
+    nest_maps: std::sync::OnceLock<NestMaps>,
+}
+
+/// `AudioRenderer::nest_prerolls` and `nest_keys`, once per build.
+struct NestMaps {
+    prerolls: std::collections::HashMap<crate::video::NestKey, (u32, u32)>,
+    keys: std::collections::HashMap<kt_model::ClipId, crate::video::NestKey>,
 }
 
 /// A fetcher behind which nested reels look like ordinary sources.
@@ -360,7 +370,9 @@ impl NestFetcher<'_> {
         idx: i64,
         raw: bool,
     ) -> std::sync::Arc<kt_media::AudioBurst> {
-        let mut data = Box::new([0.0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS]);
+        // a burst the ring let go is filled again (per-sample-costs): the same zeros to render into
+        let mut b = st.burst(idx);
+        let data = &mut std::sync::Arc::get_mut(&mut b).expect("a burst nobody else holds").data;
         let at = idx * AUDIO_BURST_FRAMES as i64;
         if raw {
             reel.render_frames_raw(inner, at, &mut data[..]);
@@ -368,7 +380,7 @@ impl NestFetcher<'_> {
             reel.render_frames_with(inner, &mut st.store, at, &mut data[..]);
         }
         st.next = Some(idx + 1);
-        std::sync::Arc::new(kt_media::AudioBurst { idx, data })
+        b
     }
 }
 
@@ -985,6 +997,7 @@ impl AudioRenderer {
             stage_reach,
             scene_base,
             preroll_bursts: 0,
+            nest_maps: std::sync::OnceLock::new(),
         };
         // the sub-renderers are built already: their own pre-rolls are in
         r.preroll_bursts = r.compute_preroll_bursts();
@@ -1067,25 +1080,34 @@ impl AudioRenderer {
     /// the same set and the same order that a scan of all clips would give
     /// (the guard — test 292).
     fn active_clips(&self, range: &std::ops::Range<i64>) -> Vec<usize> {
+        let mut out = Vec::new();
+        self.active_clips_into(range, &mut out);
+        out
+    }
+
+    /// `active_clips` into a kept list (per-sample-costs: the render path takes it from the
+    /// store's pool rather than allocating one per lane per call).
+    fn active_clips_into(&self, range: &std::ops::Range<i64>, out: &mut Vec<usize>) {
+        out.clear();
         let hit = |i: usize| {
             let c = &self.clips[i];
             c.start - c.head_ext < range.end && c.ext_end > range.start
         };
         if self.index.is_empty() {
-            return Vec::new();
+            return;
         }
         let a = (range.start - self.index_from).div_euclid(INDEX_BUCKET_FRAMES);
         let b = (range.end - 1 - self.index_from).div_euclid(INDEX_BUCKET_FRAMES);
         let (a, b) = (a.max(0) as usize, (b.max(0) as usize).min(self.index.len() - 1));
         if a >= self.index.len() {
-            return Vec::new();
+            return;
         }
         if a == b {
-            return self.index[a].iter().map(|&i| i as usize).filter(|&i| hit(i)).collect();
+            out.extend(self.index[a].iter().map(|&i| i as usize).filter(|&i| hit(i)));
+            return;
         }
         // several buckets: a merge of sorted lists with deduplication —
         // the order must remain ascending
-        let mut out: Vec<usize> = Vec::new();
         for bucket in &self.index[a..=b] {
             for &i in bucket {
                 let i = i as usize;
@@ -1096,7 +1118,6 @@ impl AudioRenderer {
         }
         out.sort_unstable();
         out.dedup();
-        out
     }
 
     /// The pre-roll and the block size of the sub-mix of THIS reel in bursts (R.55, C4).
@@ -1158,6 +1179,10 @@ impl AudioRenderer {
 
     fn nest_prerolls(&self) -> std::collections::HashMap<crate::video::NestKey, (u32, u32)> {
         self.nests.keys().map(|k| (*k, self.nest_preroll(*k))).collect()
+    }
+
+    fn nest_maps(&self) -> &NestMaps {
+        self.nest_maps.get_or_init(|| NestMaps { prerolls: self.nest_prerolls(), keys: self.nest_keys() })
     }
 
     /// Which sub-renderer reads THIS instance. The key is a pair (reel,
@@ -1288,15 +1313,14 @@ impl AudioRenderer {
         // and the fetcher lives next to the store — there is no way to take
         // both mutably at the same time.
         let mut states = store.take_nests();
-        let prerolls = self.nest_prerolls();
-        let keys = self.nest_keys();
+        let maps = self.nest_maps();
         let stats = {
             let mut f = NestFetcher {
                 inner: fetcher,
                 reels: &self.nests,
                 states: &mut states,
-                prerolls: &prerolls,
-                keys: &keys,
+                prerolls: &maps.prerolls,
+                keys: &maps.keys,
                 cur: None,
                 warmups: 0,
                 raw: false,
@@ -1310,13 +1334,11 @@ impl AudioRenderer {
         // bytes do not change, and memory holds the instances that sound, not every placement.
         let frames = (out.len() / AUDIO_CHANNELS) as i64;
         let near = start_frame - NEST_KEEP_FRAMES..start_frame + frames + NEST_KEEP_FRAMES;
-        let heard: std::collections::HashSet<kt_model::ClipId> = self
-            .active_clips(&near)
-            .into_iter()
-            .filter(|&i| self.clips[i].nest.is_some())
-            .map(|i| self.clips[i].id)
-            .collect();
-        states.retain(|id, _| heard.contains(id));
+        let mut heard = store.pool().indices();
+        self.active_clips_into(&near, &mut heard);
+        heard.retain(|&i| self.clips[i].nest.is_some());
+        states.retain(|id, _| heard.iter().any(|&i| self.clips[i].id == *id));
+        store.pool().give_indices(heard);
         store.put_nests(states);
         stats
     }
@@ -1334,7 +1356,8 @@ impl AudioRenderer {
         let range = start_frame..start_frame + frames;
         let mut stats = RenderStats::default();
 
-        let active = self.active_clips(&range);
+        let mut active = store.pool().indices();
+        self.active_clips_into(&range, &mut active);
 
         // TRACK STAGES (R.62): a track with a chain — the sum of its events
         // goes through the processor and only then lands in the output. We compute
@@ -1363,6 +1386,7 @@ impl AudioRenderer {
             }
             self.render_plain_clip(ci, fetcher, &range, out, &mut stats);
         }
+        store.pool().give_indices(active);
         stats
     }
 
@@ -1387,11 +1411,10 @@ impl AudioRenderer {
     ) -> RenderStats {
         let mut stats = RenderStats::default();
         let frames = (range.end - range.start) as usize;
-        let mut scratch = vec![0f32; frames * AUDIO_CHANNELS];
-        // the KEY buffers are reused between stages: the render path must have
-        // no extra allocations
-        let mut keybufs: Vec<(usize, Vec<f32>)> = Vec::new();
-        let mut pool: Vec<Vec<f32>> = Vec::new();
+        // the stage sum and the KEY buffers come from the store's pool and go back to it: the
+        // render path allocates nothing once warm (per-sample-costs, found-defects 352)
+        let mut scratch = store.pool().samples(frames * AUDIO_CHANNELS);
+        let mut keybufs = store.pool().keys();
         for st in &self.stages {
             let win = (range.start + st.la)..(range.end + st.la);
             scratch.fill(0.0);
@@ -1418,11 +1441,11 @@ impl AudioRenderer {
             // KEY SIGNALS (R.65) — ON THE TARGET WINDOW: the detector and what it
             // compresses must be time-aligned, otherwise ducking
             // triggers earlier or later than the speech.
-            keybufs.clear();
+            for (_, b) in keybufs.drain(..) {
+                store.pool().give_samples(b);
+            }
             for (slot, key_id, key_lane) in &st.keys {
-                let mut kb = pool.pop().unwrap_or_default();
-                kb.clear();
-                kb.resize(frames * AUDIO_CHANNELS, 0.0);
+                let mut kb = store.pool().samples(frames * AUDIO_CHANNELS);
                 // KEY WINDOW — the position of THOSE SAME samples this slot processes: nodes
                 // with lookahead BEFORE it return their output through
                 // their rings, and the signal at the slot is older than the chain input by their
@@ -1449,13 +1472,12 @@ impl AudioRenderer {
                     keybufs.iter().find(|(s, _)| *s == slot).map(|(_, b)| &b[..])
                 });
             }
-            for (_, b) in keybufs.drain(..) {
-                pool.push(b);
-            }
             for (o, v) in out.iter_mut().zip(scratch.iter()) {
                 *o += *v;
             }
         }
+        store.pool().give_keys(keybufs);
+        store.pool().give_samples(scratch);
         stats
     }
 
@@ -1471,7 +1493,9 @@ impl AudioRenderer {
         out: &mut [f32],
         stats: &mut RenderStats,
     ) {
-        for ci in self.active_clips(win) {
+        let mut active = store.pool().indices();
+        self.active_clips_into(win, &mut active);
+        for &ci in &active {
             let clip = &self.clips[ci];
             if clip.lane != lane {
                 continue;
@@ -1483,6 +1507,7 @@ impl AudioRenderer {
                 self.render_plain_clip(ci, fetcher, win, out, stats);
             }
         }
+        store.pool().give_indices(active);
     }
 
     /// A clip without FX: direct reading of source bursts with crossfade weights.
@@ -1716,14 +1741,13 @@ impl AudioRenderer {
             return self.render_raw_reel(fetcher, &range, out);
         }
         let mut states = std::collections::HashMap::new();
-        let prerolls = self.nest_prerolls();
-        let keys = self.nest_keys();
+        let maps = self.nest_maps();
         let mut f = NestFetcher {
             inner: fetcher,
             reels: &self.nests,
             states: &mut states,
-            prerolls: &prerolls,
-            keys: &keys,
+            prerolls: &maps.prerolls,
+            keys: &maps.keys,
             cur: None,
             warmups: 0,
             raw: true,
@@ -1869,9 +1893,19 @@ impl AudioRenderer {
         {
             configure(proc);
         }
-        let Some(proc) = store.get_mut(clip.id) else { return };
         let count = (to - from) as usize;
-        let mut buf = vec![0f32; count * AUDIO_CHANNELS];
+        // the chain's output and the laps' sum in kept buffers (per-sample-costs, found-defects 352)
+        let mut buf = store.pool().samples(count * AUDIO_CHANNELS);
+        let mut lap_bufs =
+            store.has_laps(clip.id).then(|| (store.pool().samples(count * AUDIO_CHANNELS), store.pool().samples(count * AUDIO_CHANNELS)));
+        let Some(proc) = store.get_mut(clip.id) else {
+            store.pool().give_samples(buf);
+            if let Some((a, b)) = lap_bufs {
+                store.pool().give_samples(a);
+                store.pool().give_samples(b);
+            }
+            return;
+        };
         let mut laps_out: Option<Vec<f32>> = None;
         {
             let reversed = clip.reversed;
@@ -1891,9 +1925,9 @@ impl AudioRenderer {
             };
             proc.read(local, &mut buf, &mut pull);
             // the earlier laps ring on, each continuing its own stream
-            if let Some(laps) = store.laps_mut(clip.id) {
-                let mut sum = vec![0f32; count * AUDIO_CHANNELS];
-                let mut ring = vec![0f32; count * AUDIO_CHANNELS];
+            if let Some(laps) = store.laps_mut(clip.id)
+                && let Some((mut sum, mut ring)) = lap_bufs.take()
+            {
                 for lap in laps.iter_mut() {
                     let Some(at) = lap.next_local() else { continue };
                     let n = (ext_len - at).clamp(0, count as i64) as usize * AUDIO_CHANNELS;
@@ -1906,8 +1940,13 @@ impl AudioRenderer {
                     }
                 }
                 store.retire_laps(clip.id, ext_len);
+                store.pool().give_samples(ring);
                 laps_out = Some(sum);
             }
+        }
+        if let Some((a, b)) = lap_bufs {
+            store.pool().give_samples(a);
+            store.pool().give_samples(b);
         }
         stats.underruns += pull_underruns;
         stats.warmup_misses += warmup_misses;
@@ -1951,7 +1990,9 @@ impl AudioRenderer {
                     out[oi + ch] += fr[ch] * clip.gain;
                 }
             }
+            store.pool().give_samples(sum);
         }
+        store.pool().give_samples(buf);
     }
 
     /// Render with a loop region: the output stream of `frames` frames, timeline

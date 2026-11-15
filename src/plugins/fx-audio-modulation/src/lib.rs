@@ -694,7 +694,7 @@ impl AudioState for PhaserNode {
                 let k = self.mix.tick().clamp(0.0, 1.0);
                 let ph = 0.5 + 0.5 * self.lfo.phase(pos + i as i64).fsin() as f32;
                 // center sweep: 200..2000 Hz exp, depth compresses the range
-                let f = 200.0 * (10.0f32).fpowf(ph * d);
+                let f = 200.0 * kt_plugin_api::math::exp10f(ph * d);
                 let t = (std::f32::consts::PI * f / sr).ftan();
                 let ap = (t - 1.0) / (t + 1.0);
                 for (ch, s) in fr.iter_mut().enumerate() {
@@ -847,6 +847,9 @@ struct PvState {
     prev_phase: [Vec<f32>; CH],
     synth_phase: [Vec<f32>; CH],
     window: Vec<f32>,
+    /// `window[i] · (1/N)`, the synthesis window with the inverse transform's scale — the same
+    /// product the grain took per sample (per-sample-costs, found-defects 359).
+    window_norm: Vec<f32>,
     time: Vec<f32>,
     spec: Vec<realfft::num_complex::Complex<f32>>,
     out_spec: Vec<realfft::num_complex::Complex<f32>>,
@@ -860,13 +863,16 @@ impl PvState {
         let fwd = planner.plan_fft_forward(PV_N);
         let inv = planner.plan_fft_inverse(PV_N);
         let bins = PV_N / 2 + 1;
+        let window: Vec<f32> = (0..PV_N)
+            .map(|i| {
+                let x = std::f32::consts::TAU * i as f32 / PV_N as f32;
+                0.5 - 0.5 * x.fcos()
+            })
+            .collect();
+        let norm = 1.0 / PV_N as f32;
         PvState {
-            window: (0..PV_N)
-                .map(|i| {
-                    let x = std::f32::consts::TAU * i as f32 / PV_N as f32;
-                    0.5 - 0.5 * x.fcos()
-                })
-                .collect(),
+            window_norm: window.iter().map(|w| w * norm).collect(),
+            window,
             prev_phase: std::array::from_fn(|_| vec![0.0; bins]),
             synth_phase: std::array::from_fn(|_| vec![0.0; bins]),
             time: vec![0.0; PV_N],
@@ -1054,13 +1060,8 @@ impl PitchNode {
         let hop = PITCH_HOP as f32;
         let expected = std::f32::consts::TAU * hop / PV_N as f32;
         for ch in 0..CH {
-            {
-                let pv = self.pv.as_deref_mut().expect("vocoder state");
-                for i in 0..PV_N {
-                    pv.time[i] = 0.0;
-                }
-            }
-            // analysis: the window from the ring
+            // analysis: the window from the ring (every sample of `time` is written here, so it is
+            // not zeroed first — per-sample-costs, found-defects 359)
             for i in 0..PV_N {
                 let v = self.ring_at(start + i as i64, ch);
                 let pv = self.pv.as_deref_mut().expect("vocoder state");
@@ -1105,9 +1106,8 @@ impl PitchNode {
             let last = bins - 1;
             pv.out_spec[last].im = 0.0;
             pv.inv.process(&mut pv.out_spec, &mut pv.time).expect("ifft");
-            let norm = 1.0 / PV_N as f32;
             for i in 0..PV_N {
-                pv.time[i] *= pv.window[i] * norm;
+                pv.time[i] *= pv.window_norm[i];
             }
             for i in 0..PV_N {
                 let v = self.pv.as_deref().expect("vocoder state").time[i];

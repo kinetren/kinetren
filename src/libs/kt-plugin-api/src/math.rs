@@ -78,6 +78,26 @@ pub fn powf_neg_half(x: f32) -> f32 {
     r as f32
 }
 
+/// `10^y` to the bit — `powf(10.0, y)` — through `exp` (per-sample-costs: Phaser's sweep and the
+/// compressor's gain take it per sample, and `pow` costs seven times `exp`). `exp(y·ln 10)` in `f64`
+/// lies within some 2⁶ `f64` ulps of the true value for `|y| ≤ 37` (the product's rounding grows
+/// with the argument), and `pow`'s result within one: both round to the same `f32` unless that
+/// value is near a boundary between two `f32` roundings (the low 29 bits of the `f64` mantissa
+/// within 2¹⁰ of the half); there, and outside `|y| ≤ 37` (the subnormal and infinite results,
+/// NaN), `powf` itself answers. t2682 holds it equal to `powf(10.0, y)` on every `f32`.
+#[inline]
+pub fn exp10f(y: f32) -> f32 {
+    if !(y.abs() <= 37.0) {
+        return powf(10.0, y);
+    }
+    let e = libm::exp(y as f64 * std::f64::consts::LN_10);
+    let low = e.to_bits() & ((1u64 << 29) - 1);
+    if low.abs_diff(1 << 28) <= 1 << 10 {
+        return powf(10.0, y);
+    }
+    e as f32
+}
+
 /// `log10` of an `f32`.
 #[inline]
 pub fn log10f(x: f32) -> f32 {

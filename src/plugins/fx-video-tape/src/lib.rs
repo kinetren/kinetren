@@ -102,8 +102,13 @@ pub const HEAD_ROWS: [&str; 12] = [
 
 /// The passport's defaults (a good deck).
 pub fn defaults() -> Vec<f64> {
+    defaults_ref().to_vec()
+}
+
+/// The passport's defaults, built once (`defaults` is a copy of them).
+pub fn defaults_ref() -> &'static [f64] {
     static D: OnceLock<Vec<f64>> = OnceLock::new();
-    D.get_or_init(|| passport().iter().map(|s| s.default).collect()).clone()
+    D.get_or_init(|| passport().iter().map(|s| s.default).collect())
 }
 
 fn rows() -> Vec<RowDecl> {
