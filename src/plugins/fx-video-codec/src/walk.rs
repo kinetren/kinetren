@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use kt_plugin_api::stream::{SecondFrom, Side, StreamInput, StreamLayout, StreamMemo};
+use kt_plugin_api::stream::{OnDevice, SecondFrom, Side, StreamInput, StreamLayout, StreamMemo};
 
 use crate::codec::{self, Batch, Clean, Dev3, DevClean, Loss, Planes};
 use crate::mosh::{self, Node, Plan, Rows};
@@ -249,6 +249,15 @@ impl Walk<'_> {
     /// The source frame at `q` on a side, converted on the device.
     fn source(&mut self, side: Side, q: i64) -> Result<Dev3, Short> {
         let (w, h) = (self.w, self.h);
+        // a frame the slots in front made on this device is read where it lies
+        // (stream-front-on-device): no readback, no upload
+        match self.input.on_device(side, q) {
+            OnDevice::Held { w: sw, h: sh, held } if sw > 0 && sh > 0 && held.len >= sw as u64 * sh as u64 * 4 => {
+                return Ok(self.b.convert_held(held, sw, sh));
+            }
+            OnDevice::Missing => return Err(Short::Missing),
+            _ => {}
+        }
         let mut got: Option<Result<Rgba, Planes>> = None;
         self.input.with_frame(side, q, &mut |f| {
             let n = f.w as usize * f.h as usize * 4;

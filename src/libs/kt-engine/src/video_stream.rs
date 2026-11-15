@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 use kt_cache::{BurstCache, SourceId};
 use kt_media::{Quality, VideoFrame};
 use kt_model::MediaId;
-use kt_plugin_api::stream::{mix, PlanCell, Rgba, SecondFrom, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
+use kt_plugin_api::stream::{mix, OnDevice, PlanCell, Rgba, SecondFrom, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
 use kt_time::{FpsGrid, Tick};
 
 use super::{clip_base_quality, clip_frame_keys, video_cache_idx, VideoClip};
@@ -359,10 +359,27 @@ fn front_exec() -> Option<&'static Arc<dyn crate::video_plan::VideoGpuExec>> {
 
 /// The front's outputs by stream address (`ClipStream::ident`, which names the front): a re-walk
 /// after the codec memo dropped a position, or the prefetch and the composer reading the same
-/// position, runs the slots once. Bounded; the bytes do not depend on it (invariant 11).
+/// position, runs the slots once. An output is bytes (read back) or a buffer left on the compute
+/// device (`execute_held`, stream-front-on-device); each form is its own entry. Bounded; the bytes do
+/// not depend on it (invariant 11).
 struct FrontMemo {
-    items: std::collections::VecDeque<(u64, u32, u32, Arc<[u8]>)>,
+    items: std::collections::VecDeque<((u64, bool), u32, u32, FrontOut)>,
     bytes: usize,
+}
+
+#[derive(Clone)]
+enum FrontOut {
+    Bytes(Arc<[u8]>),
+    Held(kt_plugin_api::compute::Held),
+}
+
+impl FrontOut {
+    fn len(&self) -> usize {
+        match self {
+            FrontOut::Bytes(b) => b.len(),
+            FrontOut::Held(h) => h.len as usize,
+        }
+    }
 }
 
 const FRONT_MEMO_BYTES: usize = 64 << 20;
@@ -375,24 +392,52 @@ pub fn front_runs() -> u64 {
     FRONT_RUNS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-static FRONT_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// How many of those runs left their output on the compute device (stream-front-on-device).
+pub fn front_held_runs() -> u64 {
+    FRONT_HELD.load(std::sync::atomic::Ordering::Relaxed)
+}
 
-fn front_memo_get(id: u64) -> Option<(u32, u32, Arc<[u8]>)> {
+/// The front's output is read back as bytes on this thread while `f` runs (the form before
+/// stream-front-on-device: tests compare the two). `KT_FRONT_HELD=off` does it for a whole run (an A/B).
+pub fn with_front_bytes<R>(f: impl FnOnce() -> R) -> R {
+    struct Back(bool);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            FRONT_BYTES.with(|b| b.set(self.0));
+        }
+    }
+    let _back = Back(FRONT_BYTES.with(|b| b.replace(true)));
+    f()
+}
+
+thread_local! {
+    static FRONT_BYTES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn front_held_on() -> bool {
+    static ENV: OnceLock<bool> = OnceLock::new();
+    !FRONT_BYTES.with(|b| b.get()) && *ENV.get_or_init(|| std::env::var("KT_FRONT_HELD").as_deref() != Ok("off"))
+}
+
+static FRONT_RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static FRONT_HELD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn front_memo_get(key: (u64, bool)) -> Option<(u32, u32, FrontOut)> {
     let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
-    let i = g.items.iter().position(|e| e.0 == id)?;
+    let i = g.items.iter().position(|e| e.0 == key)?;
     let e = g.items.remove(i)?;
     let out = (e.1, e.2, e.3.clone());
     g.items.push_back(e);
     Some(out)
 }
 
-fn front_memo_put(id: u64, w: u32, h: u32, rgba: Arc<[u8]>) {
+fn front_memo_put(key: (u64, bool), w: u32, h: u32, out: FrontOut) {
     let mut g = FRONT_MEMO.lock().unwrap_or_else(|e| e.into_inner());
-    if g.items.iter().any(|e| e.0 == id) {
+    if g.items.iter().any(|e| e.0 == key) {
         return;
     }
-    g.bytes += rgba.len();
-    g.items.push_back((id, w, h, rgba));
+    g.bytes += out.len();
+    g.items.push_back((key, w, h, out));
     while g.bytes > FRONT_MEMO_BYTES {
         let Some(e) = g.items.pop_front() else { break };
         g.bytes -= e.3.len();
@@ -626,24 +671,18 @@ impl StreamLayout for ClipStream<'_> {
     }
 }
 
-impl ClipStream<'_> {
+impl<'a> ClipStream<'a> {
     /// The index in `second` of the event the second input reads at position `k`.
     fn second_index(&self, k: i64) -> Option<usize> {
         let t = Tick(k * self.step);
         self.st.second.iter().position(|o| o.start <= t && t < o.end)
     }
 
-    /// Run `slots` of event `clip`'s chain over `fr`, the frame read at position `k`, as its layer runs
-    /// them: their curves at the position's material time (clamped into the event), its `u`, the
-    /// masks those slots carry and the camera they resolve (chain-everywhere, found-defects 541), by
-    /// the injected executor at the stream's size. The output is kept by `id` (the stream address,
-    /// which names the slots). `None` — no device, or the executor refused the plan: the frame is
-    /// missing, never the decoded picture standing in for it.
-    fn run_slots(&self, clip: &VideoClip, slots: &[usize], id: u64, k: i64, fr: Arc<VideoFrame>) -> Option<(u32, u32, Arc<[u8]>)> {
-        if let Some(hit) = front_memo_get(id) {
-            return Some(hit);
-        }
-        let exec = front_exec()?;
+    /// The plan of `slots` of event `clip`'s chain over `fr`, the frame read at position `k`, as its
+    /// layer runs them: their curves at the position's material time (clamped into the event), its
+    /// `u`, the masks those slots carry and the camera they resolve (chain-everywhere, found-defects
+    /// 541), at the stream's size; `run` takes it.
+    fn with_front_plan<R>(&self, clip: &VideoClip, slots: &[usize], id: u64, k: i64, fr: Arc<VideoFrame>, run: impl FnOnce(&crate::video_plan::FramePlan<'_>) -> R) -> R {
         let t = Tick((k * self.step).clamp(clip.start.0, (clip.end.0 - 1).max(clip.start.0)));
         let mat = kt_model::clip_material_at(clip.source_in, clip.start, clip.end - clip.start, clip.reversed, self.step, t);
         let fx: Vec<kt_model::FxInstance> = slots
@@ -657,20 +696,64 @@ impl ClipStream<'_> {
             })
             .collect();
         let u = (t.0 - clip.start.0) as f64 / (clip.end.0 - clip.start.0).max(1) as f64;
-        let (w, h) = (fr.width, fr.height);
+        let w = fr.width;
         let (pw, ph) = self.st.project_size;
         let cam3d = super::resolve_cam3d(&fx, &self.st.cams, t, w, pw);
         let masks = clip.masks.as_ref().map(|m| m.ops_for(slots, mat, ph.max(1) as f64)).unwrap_or_default();
         let plan = crate::video_plan::chain_plan_with(fr, &fx, id, u.clamp(0.0, 1.0), t, cam3d, masks);
+        run(&plan)
+    }
+
+    /// Run the front's plan by the injected executor and read the output back. It is kept by `id`
+    /// (the stream address, which names the slots). `None` — no device, or the executor refused the
+    /// plan: the frame is missing, never the decoded picture standing in for it.
+    fn run_slots(&self, clip: &VideoClip, slots: &[usize], id: u64, k: i64, fr: Arc<VideoFrame>) -> Option<(u32, u32, Arc<[u8]>)> {
+        if let Some((w, h, FrontOut::Bytes(b))) = front_memo_get((id, false)) {
+            return Some((w, h, b));
+        }
+        let exec = front_exec()?;
+        let (w, h) = (fr.width, fr.height);
         let mut out = Vec::new();
         FRONT_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        match exec.execute_once(&plan, &mut out) {
+        match self.with_front_plan(clip, slots, id, k, fr, |plan| exec.execute_once(plan, &mut out)) {
             Ok(true) if out.len() == (w * h * 4) as usize => {
                 let rgba: Arc<[u8]> = out.into();
-                front_memo_put(id, w, h, rgba.clone());
+                front_memo_put((id, false), w, h, FrontOut::Bytes(rgba.clone()));
                 Some((w, h, rgba))
             }
             _ => None,
+        }
+    }
+
+    /// `run_slots` whose output stays on the compute device (stream-front-on-device, found-defects
+    /// 543): the executor runs on the compute host's device and the codec's job copies the buffer
+    /// there. `Host` — the executor cannot (another device): the caller reads the bytes.
+    fn run_slots_held(&self, clip: &VideoClip, slots: &[usize], id: u64, k: i64, fr: Arc<VideoFrame>) -> OnDevice {
+        if let Some((w, h, FrontOut::Held(held))) = front_memo_get((id, true)) {
+            return OnDevice::Held { w, h, held };
+        }
+        let Some(exec) = front_exec() else { return OnDevice::Missing };
+        let (w, h) = (fr.width, fr.height);
+        match self.with_front_plan(clip, slots, id, k, fr, |plan| exec.execute_held(plan)) {
+            Ok(crate::video_plan::HeldOut::Held(held)) if held.len == w as u64 * h as u64 * 4 => {
+                FRONT_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                FRONT_HELD.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                front_memo_put((id, true), w, h, FrontOut::Held(held.clone()));
+                OnDevice::Held { w, h, held }
+            }
+            Ok(crate::video_plan::HeldOut::Unsupported) => OnDevice::Host,
+            _ => {
+                FRONT_RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                OnDevice::Missing
+            }
+        }
+    }
+
+    /// The slots that make the frame read at `k` on `side` and the event whose chain holds them.
+    fn input_slots_at(&self, side: Side, k: i64, c: &'a VideoClip) -> (&[usize], &'a VideoClip) {
+        match side {
+            Side::Main => (&self.st.front, self.clip),
+            Side::Second => (self.second_index(k).map(|i| &self.st.second_front[i][..]).unwrap_or(&[]), c),
         }
     }
 
@@ -698,18 +781,30 @@ impl StreamInput for ClipStream<'_> {
         }
     }
 
+    fn on_device(&self, side: Side, k: i64) -> OnDevice {
+        let Some(cache) = self.cache else { return OnDevice::Missing };
+        let Some((c, pts)) = self.at(side, k) else { return OnDevice::Missing };
+        let (slots, owner) = self.input_slots_at(side, k, c);
+        // a decoded frame with nothing in front is uploaded as it is: no round trip to save
+        if slots.is_empty() || !front_held_on() {
+            return OnDevice::Host;
+        }
+        let id = self.ident(side, k);
+        if let Some((w, h, FrontOut::Held(held))) = front_memo_get((id, true)) {
+            return OnDevice::Held { w, h, held };
+        }
+        let Some(fr) = cache.get_video(SourceId(c.media.0), Some(self.q), video_cache_idx(pts)) else { return OnDevice::Missing };
+        self.run_slots_held(owner, slots, id, k, fr)
+    }
+
     fn with_frame(&self, side: Side, k: i64, f: &mut dyn FnMut(Rgba<'_>)) -> bool {
         let Some(cache) = self.cache else { return false };
         let Some((c, pts)) = self.at(side, k) else { return false };
         let Some(fr) = cache.get_video(SourceId(c.media.0), Some(self.q), video_cache_idx(pts)) else { return false };
         // the main stream through the slots in front of the stage (stream-input-order), the event
         // before's frames included (its D2); the second input through its own event's chain (row 540)
-        let slots: &[usize] = match side {
-            Side::Main => &self.st.front,
-            Side::Second => self.second_index(k).map(|i| &self.st.second_front[i][..]).unwrap_or(&[]),
-        };
+        let (slots, owner) = self.input_slots_at(side, k, c);
         if !slots.is_empty() {
-            let owner = if side == Side::Main { self.clip } else { c };
             let Some((w, h, rgba)) = self.run_slots(owner, slots, self.ident(side, k), k, fr) else { return false };
             f(Rgba { w, h, rgba: &rgba });
             return true;

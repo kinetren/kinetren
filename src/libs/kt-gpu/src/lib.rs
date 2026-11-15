@@ -15,6 +15,7 @@ pub mod testkit;
 mod compiled;
 mod context;
 mod exit;
+mod held;
 mod engine;
 mod pipeline_cache;
 mod pool;
@@ -167,14 +168,27 @@ pub fn side_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
 
 static SIDE: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
 
-/// The engine of the slots in front of a stream stage (stream-input-order): the offline engine's
-/// sibling, so a history walk's front runs wait on no composite's lock. What
+/// The engine of the slots in front of a stream stage (stream-input-order): on the compute host's
+/// device, so their output stays there for the codec's job (`execute_held`, stream-front-on-device,
+/// found-defects 543); without a compute host of this crate, the offline engine's sibling (bytes).
+/// Either way its own engine: a history walk's front runs wait on no composite's lock. What
 /// `kt_engine::video::install_stream_front` takes. `None` — no device.
 pub fn stream_front_engine() -> Option<std::sync::Arc<dyn kt_engine::VideoGpuExec>> {
-    FRONT.get_or_init(|| offline_engine().map(|e| e.sibling())).clone().map(|e| e as _)
+    FRONT
+        .get_or_init(|| front_on_compute().or_else(|| offline_engine().map(|e| e.sibling())))
+        .clone()
+        .map(|e| e as _)
 }
 
 static FRONT: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
+
+/// An engine on the compute host's device that leaves its frames there (`execute_held`); `None` — no
+/// compute host of this crate, or no engine builds on it.
+pub fn front_on_compute() -> Option<std::sync::Arc<GpuFxEngine>> {
+    let e = GpuFxEngine::new(compute::host_device()?.context()).ok()?;
+    e.hold_for_compute();
+    Some(e)
+}
 
 /// The process is about to exit: wait for the offline engine's frame on the device and let no other
 /// start. A frame on the device at exit kills the process: libLLVM's destructors run under

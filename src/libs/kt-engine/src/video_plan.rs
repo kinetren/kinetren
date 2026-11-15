@@ -297,6 +297,17 @@ pub fn chain_plan_with<'a>(
     FramePlan { t, out_w, out_h, layers }
 }
 
+/// What `VideoGpuExec::execute_held` gave.
+#[derive(Debug, Clone)]
+pub enum HeldOut {
+    /// The complete frame in a buffer the compute host holds.
+    Held(kt_plugin_api::compute::Held),
+    /// The frame is incomplete: nothing is kept (no-partial-picture).
+    Incomplete,
+    /// This executor's device is not the compute host's: read the bytes (`execute_once`).
+    Unsupported,
+}
+
 /// The GPU executor of the plan (implementation — the kt-gpu crate; kt-engine knows
 /// only the trait and receives the executor by injection from above).
 pub trait VideoGpuExec: Send + Sync {
@@ -310,6 +321,12 @@ pub trait VideoGpuExec: Send + Sync {
     /// a frame its input cannot give twice in a row, and names it (the export spec).
     fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         self.execute_into(plan, out)
+    }
+    /// `execute_once` whose complete frame stays on the compute host's device
+    /// (stream-front-on-device, found-defects 543): the slots in front of a stream stage feed its
+    /// codec without a processor round trip. The bytes are `execute_once`'s, tightly packed RGBA.
+    fn execute_held(&self, _plan: &FramePlan<'_>) -> Result<HeldOut, GpuExecError> {
+        Ok(HeldOut::Unsupported)
     }
     fn info(&self) -> &GpuBackendInfo;
     /// How many frames this executor can hold in flight between `submit` and `collect`

@@ -240,3 +240,28 @@ fn t2437_concurrent_jobs_keep_their_own_starts() {
     b.dedup();
     assert_eq!(b.len(), starts.len(), "two pieces share a device start (one timestamp set for both jobs)");
 }
+
+/// Test t2623 (found-defects 562): a job that finds another calibrating goes on without waiting, and
+/// its records place nothing on a calibration older than its age — they say they have no position;
+/// the next job calibrates again and places its record.
+#[test]
+fn t2623_a_job_past_the_calibrations_age_places_no_record_on_it() {
+    let _one = one();
+    arbiter::set_enabled(true);
+    let Some(host) = device() else { return };
+    if !host_has_timestamps(&host) {
+        eprintln!("t2623: no timestamps on this device: nothing to calibrate");
+        return;
+    }
+    host.age_calibration_for_tests(Duration::from_secs(11));
+    let stale = kt_gpu::compute::stale_records();
+    let items = {
+        let _calibrating = host.hold_calibration_for_tests();
+        trace::testing::capture(|| spin(&*host, "t2623:skipped", 10))
+    };
+    let recs: Vec<_> = trace::testing::recs(&items).into_iter().filter(|r| r.kind() == Some(Ev::GpuStart)).collect();
+    assert!(!recs.is_empty(), "the job ran while another calibrated, and recorded");
+    assert!(recs.iter().all(|r| r.aux == u32::MAX - 1 && r.b == 0), "no record placed on the old calibration: {recs:?}");
+    assert!(kt_gpu::compute::stale_records() > stale, "the stale records are counted");
+    assert!(host_has_timestamps(&host), "the next job calibrates again and places its record");
+}

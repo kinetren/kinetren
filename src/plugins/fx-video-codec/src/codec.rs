@@ -440,6 +440,7 @@ pub const TABLE_RANGE: i32 = 64;
 enum Init0 {
     Bytes(Vec<u8>),
     Zero(u64),
+    Held(compute::Held),
 }
 
 struct StepRec {
@@ -504,6 +505,7 @@ impl Batch {
         match &self.bufs[id] {
             Init0::Bytes(b) => b.len() as u64,
             Init0::Zero(n) => *n,
+            Init0::Held(h) => h.len,
         }
     }
 
@@ -536,6 +538,15 @@ impl Batch {
     pub fn upload(&mut self, v: Vec<u8>) -> usize {
         self.bytes += v.len();
         self.bufs.push(Init0::Bytes(v));
+        self.fixed.push(true);
+        self.bufs.len() - 1
+    }
+
+    /// A buffer the compute host already holds (the slots in front of the stage made it on the device,
+    /// stream-front-on-device): copied on the device with the submission, no bytes travel.
+    pub fn held(&mut self, h: compute::Held) -> usize {
+        self.bytes += h.len as usize;
+        self.bufs.push(Init0::Held(h));
         self.fixed.push(true);
         self.bufs.len() - 1
     }
@@ -631,8 +642,19 @@ impl Batch {
 
     /// The source frame `sw`×`sh` as RGBA into the padded planes (`Planes::from_rgba` on the device).
     pub fn convert(&mut self, rgba: Vec<u8>, sw: u32, sh: u32) -> Dev3 {
-        let (w, h) = (self.w as u32, self.h as u32);
         let src = self.upload(rgba);
+        self.convert_buf(src, sw, sh)
+    }
+
+    /// `convert` of a frame the compute host holds (stream-front-on-device): the same step on the
+    /// same bytes, read where they lie.
+    pub fn convert_held(&mut self, held: compute::Held, sw: u32, sh: u32) -> Dev3 {
+        let src = self.held(held);
+        self.convert_buf(src, sw, sh)
+    }
+
+    fn convert_buf(&mut self, src: usize, sw: u32, sh: u32) -> Dev3 {
+        let (w, h) = (self.w as u32, self.h as u32);
         let out = self.planes();
         let u = uniform(&[sw.to_le_bytes(), sh.to_le_bytes(), w.to_le_bytes(), h.to_le_bytes()]);
         self.step("datamosh:convert", CONVERT, u, &[src], &out, [(w / 8).div_ceil(8), (h / 2).div_ceil(8), 1]);
@@ -738,6 +760,7 @@ impl Batch {
             .map(|b| match b {
                 Init0::Bytes(v) => Init::Bytes(v),
                 Init0::Zero(n) => Init::Zero(*n),
+                Init0::Held(h) => Init::Held(h),
             })
             .collect();
         let steps: Vec<Step<'_>> = self

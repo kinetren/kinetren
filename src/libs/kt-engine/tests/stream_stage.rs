@@ -688,3 +688,32 @@ fn t2553_an_edit_of_the_second_inputs_chain_invalidates_the_history() {
     let held = below(&first);
     assert!(below(&build(&project_second(vec![poster(4.0)]))) > held, "an edit below fed no new history");
 }
+
+/// t2620 (found-defects 543): the output of the slots in front of a stream stage reaches the codec on
+/// the compute device — the codec's jobs copy held frames there — and the frame is the one the bytes
+/// path (readback, upload) gives.
+#[test]
+fn t2620_the_front_reaches_the_codec_on_the_device() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let t = Tick(38 * STEP);
+    let p = project_order(Some(3.0), None);
+    let frame = || {
+        let mut vr = VideoRenderer::new(&p);
+        vr.set_stream_memo(Arc::new(StreamMemo::new(256 << 20)));
+        let c = big_cache();
+        warm(&vr, &c, t);
+        let (f, complete) = kt_gpu::testkit::compose(&vr, &c, t, Q);
+        assert!(complete, "one warm-up of what the order names completes the frame");
+        f
+    };
+    let reads = kt_gpu::compute::held_reads();
+    let held = frame();
+    assert!(kt_gpu::compute::held_reads() > reads, "the codec read the front's output where it lies");
+    let bytes = kt_engine::video::with_front_bytes(frame);
+    assert_eq!(held, bytes, "the held front gives the bytes of the read-back one");
+}

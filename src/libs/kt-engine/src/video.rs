@@ -20,7 +20,7 @@ use crate::video_plan::{Cam3d, FramePlan, GpuExecError, LayerSrc, PlanLayer, Vid
 #[path = "video_stream.rs"]
 mod stream;
 pub use stream::{
-    OpenFrontExec, STREAM_MEMO_BASE, StreamPacing, StreamWant, front_runs, front_slots as stream_front_slots, install_stream_front, prewarm_stream_front, memory_available, set_memory_probe, size_stream_memo,
+    OpenFrontExec, STREAM_MEMO_BASE, StreamPacing, StreamWant, front_held_runs, with_front_bytes, front_runs, front_slots as stream_front_slots, install_stream_front, prewarm_stream_front, memory_available, set_memory_probe, size_stream_memo,
     size_stream_memo_want, size_stream_memo_walk, stop_when, stopping, stream_memo, stream_memo_bytes, stream_memo_bytes_walk, stream_memo_want,
 };
 use stream::StreamStage;

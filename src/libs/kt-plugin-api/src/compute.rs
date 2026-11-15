@@ -15,6 +15,40 @@ pub enum Init<'a> {
     Bytes(&'a [u8]),
     /// That many zero bytes.
     Zero(u64),
+    /// A copy, on the device, of a buffer the host already holds there (stream-front-on-device): the
+    /// output of the slots in front of a stream stage reaches the codec without a processor round
+    /// trip. A host that does not own it refuses the job.
+    Held(&'a Held),
+}
+
+impl Init<'_> {
+    /// The buffer's length in bytes.
+    pub fn len(&self) -> u64 {
+        match self {
+            Init::Bytes(b) => b.len() as u64,
+            Init::Zero(n) => *n,
+            Init::Held(h) => h.len,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+/// A buffer the host keeps on its compute device: `len` bytes, its contents ordered before any job
+/// submitted after it was made (one queue). Opaque to a plugin; the host downcasts `inner` to its own
+/// type. Dropping the last clone gives the buffer back to the host.
+#[derive(Clone)]
+pub struct Held {
+    pub len: u64,
+    pub inner: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+impl std::fmt::Debug for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Held({} bytes)", self.len)
+    }
 }
 
 /// One dispatch.
