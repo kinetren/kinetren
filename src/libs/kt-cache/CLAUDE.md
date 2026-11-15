@@ -31,6 +31,13 @@ Cache of bursts + coverage. Without FFmpeg/audio hardware.
   hold needs its `release_video`. LRU's order is not the order of need: a read refreshes an entry that
   will never be needed again, and it outlives one decoded and not yet read. Never make a job's
   correctness rest on the budget being large enough.
+- **A loop longer than a pool keeps a part of it** (loop-keeps-its-lap, t2604–t2606): told of the player's
+  loop (`keep_loop`) and its laps (`lap`), an entry carries the lap of its last use (read, refresh,
+  insert); a new entry in a full pool with no entry unused for two laps goes to the WINDOW. The victim:
+  past half the pool's bound, the window's oldest READ entry (the unread rest is the look-ahead, up to the
+  same half: dropping it is thrash); then the oldest kept entry (stale first: a use stamps lap and recency
+  together); then the window's oldest. Both pools; holds and pins stay stronger. An LRU over a cycle
+  longer than itself evicts exactly what the next lap reads first.
 - `refresh(keys)` marks present keys recent in the given order WITHOUT a read (no `had_hit`, no hit, no epoch): the prefetch passes its window far → near so the nearest frame outlives the rest (video-prefetch-thrash). `contains` stays a pure probe — refreshing in ascending order is exactly what inverted the LRU in item 19.
 - **Thrash = dropped unread while STILL WANTED.** `refresh` numbers the passes; an entry carries the last pass that wanted it (or the one current at its insertion). Dropped unread at the current pass → `unused_evictions` (the panel's "prefetch thrash"); older → `abandoned_evictions` (a seek left it, the picture skipped it — waste, printed by `kt-cli probe`). Audio and a never-refreshed cache keep the old count (t37).
 - The cache holds PRE-FX data; coverage bars are built ONLY from it. Audio post-FX is not in this cache: the final mix is kept by the audio render thread (`kt_engine::mix`, cached-range-plays), and the bars learn it from there. VIDEO post-FX (R.7 item 2) — a separate kind `PostFxVideo{quality, fx_hash}` (idx = timeline tick): pure memoisation of expensive chains; it is invisible to the bars, prefetch and pin, because their requests are kind-exact; it lives in the common video budget, and invalidate_source also removes it. Test 65.

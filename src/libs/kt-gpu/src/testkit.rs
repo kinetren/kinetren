@@ -29,10 +29,16 @@ pub fn no_gpu<R>(install: impl FnOnce() -> R) -> bool {
     ENGINE.get_or_init(crate::test_engine).is_none()
 }
 
-/// The slots in front of a stream stage run on the test engine's sibling (stream-input-order).
+/// The slots in front of a stream stage run as in the product: on the compute host's device, their
+/// output left there for the codec (stream-front-on-device); else on the test engine's sibling.
 fn front() -> Option<Arc<dyn VideoGpuExec>> {
     static F: std::sync::OnceLock<Option<Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
-    F.get_or_init(|| ENGINE.get().cloned().flatten().map(|e| e.sibling())).clone().map(|e| e as _)
+    F.get_or_init(|| {
+        ENGINE.get().cloned().flatten()?;
+        crate::front_on_compute().or_else(|| ENGINE.get().cloned().flatten().map(|e| e.sibling()))
+    })
+    .clone()
+    .map(|e| e as _)
 }
 
 pub fn engine() -> Arc<GpuFxEngine> {

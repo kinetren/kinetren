@@ -130,10 +130,28 @@ pub struct Rgba<'a> {
     pub rgba: &'a [u8],
 }
 
+/// Where a frame of the stream lies (`StreamInput::on_device`).
+#[derive(Debug, Clone)]
+pub enum OnDevice {
+    /// Tightly packed RGBA `w`×`h` in a buffer the compute host holds.
+    Held { w: u32, h: u32, held: crate::compute::Held },
+    /// The frame is missing (starvation, no executor for what makes it).
+    Missing,
+    /// Ask `with_frame`.
+    Host,
+}
+
 /// The layout plus the frames themselves.
 pub trait StreamInput: StreamLayout {
     /// Calls `f` with the frame at `k` when the host has it; `false` — it is missing (starvation).
     fn with_frame(&self, side: Side, k: i64, f: &mut dyn FnMut(Rgba<'_>)) -> bool;
+    /// The frame at `k` where it already lies on the compute device (stream-front-on-device: the
+    /// output of the slots in front of the stage, made on that device): a kernel that runs on the
+    /// device asks this first and reads the bytes by `with_frame` only on `Host`. The bytes are the
+    /// ones `with_frame` would give.
+    fn on_device(&self, _side: Side, _k: i64) -> OnDevice {
+        OnDevice::Host
+    }
     /// The region of interest at `k` as a coverage plane at the stream's size (0 — outside, 255 —
     /// inside), when `region_ident(k) != 0`; `false` — no region (the whole frame). No host part
     /// gives one yet: masks and object detection will, through this one door.

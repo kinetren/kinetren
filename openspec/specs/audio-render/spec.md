@@ -521,10 +521,11 @@ audible on loud material and is not what "mute" means.
 - **TEST** t1631 (`src/libs/kt-engine/tests/clip_gain_floor.rs`)
 
 ### Requirement: A covered range keeps its final mix
-The audio render thread SHALL keep the final mix of what it rendered forward, per timeline burst, in the mix store (`kt_engine::mix`), and SHALL hand out a chunk the store holds whole with no source read and no effect run (`mix_replays`). A burst SHALL be held with the scene hash of its frames (`AudioRenderer::scene_hash`: the fingerprints of every event active there — body, handles, tail — widened by the track stages' tail and look-ahead, and what the reel shares); after an edit the store SHALL drop exactly the bursts whose scene changed. Linear play (and a loop's first lap) and the later laps of a loop region SHALL be kept apart; later laps replay the second lap. A frame held is not overwritten. The store is bounded (64 MB), least recently heard first, and cleared when a source comes, goes or is replaced (a file that came back, a changed path: the same media id). Offline paths (export, render, probe) MUST NOT read it.
+The audio render thread SHALL keep the final mix of what it rendered forward, per timeline burst, in the mix store (`kt_engine::mix`), and SHALL hand out a chunk the store holds whole with no source read and no effect run (`mix_replays`). A burst SHALL be held with the scene hash of its frames (`AudioRenderer::scene_hash`: the fingerprints of every event active there — body, handles, tail — widened by the track stages' tail and look-ahead, and what the reel shares); after an edit the store SHALL drop exactly the bursts whose scene changed. Linear play (and a loop's first lap) and the later laps of a loop region SHALL be kept apart; later laps replay the second lap. A frame held is not overwritten. The store is bounded by 64 MB plus what the memory ledger grants the loop region it plays (every burst of the region and an eighth, asked by the player's prefetch thread when the region changes, never by the render thread, which reads the bound at use and evicts when a grant is taken back); without a loop it is least recently heard first. A loop longer than the bound SHALL keep a stable prefix of its lap: bursts of other contexts go first, then the lap's latest; a lap burst later than every kept one SHALL NOT be admitted (a trace record `mix_chunk` aux `passed`), an earlier one takes the latest's place. The store is cleared when a source comes, goes or is replaced (a file that came back, a changed path: the same media id). Offline paths (export, render, probe) MUST NOT read it.
 A kept chunk SHALL be what a continuous play gives (kept-mix-settle). Before the first live chunk after a replayed run the effects SHALL be brought back: when the replayed frames are within the settle length of the chains heard in the chunk (`AudioRenderer::settle_frames`: an event chain's `max(tail, 100 ms) + look-ahead`, a track stage's tail and look-ahead, asked at the timeline frames the folded head plays), the effects go on from where they stopped through those frames, rendered and discarded — the continuous play itself; further, the effects are reset and a play of the settle length before the chunk is rendered and discarded through the same path, a loop's wrap included. A chunk with an underrun or a pre-roll miss SHALL NOT be kept, nor any chunk within the settle length after it, nor after a discarded warm-up that missed; after a seek, no chunk within a track stage's reach SHALL be kept while its lane's events still ring in it (`AudioRenderer::cold_after_seek`: the stage has no pre-roll). The warm-up and the chunk not kept for settling SHALL each leave a trace record (`mix_chunk` aux `warm` with the frames and how, aux `unsettled`).
 Why: his 400 ms covered range ran every effect on every lap (kkt-26.11.07b, line 3–4): "три проблемы - производительность, хрип звука, не рабочий кэш". Then (kkt-26.11.10 J1, found-defects 390) "опять появился косяк с пустотным звуком в начале": the live chunk after a replayed run reset the effects and was kept, so a loop's lap was recorded with the timeline before the region as its past instead of the lap before it, and replayed on every lap. A byte-exact hand-over of the FX state needs a copy of the resampler, which rubato cannot give; playing the replayed frames again (short) or the settle length (long) reconstructs it with the engine's own render.
 
+loop-keeps-its-lap (row 550): a fixed 64 MB LRU kept nothing of a loop longer than 2.9 minutes — every lap rendered every burst.
 #### Scenario: A replaced source is heard through a covered loop
 - **WHEN** a covered loop of a DC source plays from the kept mix and the source is replaced by another level while it plays
 - **THEN** the last half second plays the new level, not the former file's kept mix
@@ -579,6 +580,26 @@ Why: his 400 ms covered range ran every effect on every lap (kkt-26.11.07b, line
 - **WHEN** the player loops 230 ms over a reverb whose first part is kept from an earlier play, and an output device with no clock of its own takes whole quanta
 - **THEN** the second lap the device plays equals the continuous play's second lap byte for byte, every lap from the fourth equals the third, no lap starts quieter than half the second's head, and nothing underruns
 - **TEST** t2374 (`src/libs/kt-engine/tests/mix_settle_player.rs`)
+
+#### Scenario: A loop longer than the store keeps its prefix
+- **WHEN** a store of four bursts holding two linear ones is told a loop of ten and the laps are written lap after lap, an edit drops a kept burst, and separately a store with no loop is written ten bursts
+- **THEN** the linear bursts go first and the lap keeps bursts 0–3, the later ones not admitted, the same every lap; a linear burst finds no room; the dropped burst's room takes the next lap burst and the dropped one takes the latest's place again; with no loop the last four stay
+- **TEST** t2601 (`src/libs/kt-engine/tests/mix_store.rs`)
+
+#### Scenario: The kept mix grows by the ledger for its loop
+- **WHEN** a store asks the ledger for a loop of 256 bursts over a 128-burst base, keeps the whole loop, then a claim is taken and the store fits, then the claim ends
+- **THEN** its bound is the loop's bursts and an eighth rounded to 16 MB, another store that never asked keeps its base; the bytes are reported; under the claim the store keeps the first 128 bursts; the claim's end gives the growth back
+- **TEST** t2602 (`src/libs/kt-engine/tests/mix_store.rs`)
+
+#### Scenario: A long loop replays its prefix every lap
+- **WHEN** a loop of 30.5 bursts over a reverb plays six laps through a store of 12 bursts, plain and told of the loop
+- **THEN** the plain store replays nothing; told, it keeps a prefix of the lap of at least 9 bursts, every lap from the third replays at least 8 chunks, and those chunks equal the kept second lap's byte for byte
+- **TEST** t2603 (`src/libs/kt-engine/tests/mix_store.rs`)
+
+#### Scenario: The player asks for its loop's mix
+- **WHEN** the player's loop region is set to 400 s with memory to spare, then cleared
+- **THEN** the ledger's kept-mix want becomes the region's bursts and an eighth past the 64 MB base, the store's bound that want; with no region, no want and the base
+- **TEST** t2607 (`src/libs/kt-engine/tests/memory_ledger.rs`)
 
 ### Requirement: An audio build's work grows linearly with the project
 `AudioRenderer::new` SHALL do work linear in the project (up to sorting): a transition's ends, its

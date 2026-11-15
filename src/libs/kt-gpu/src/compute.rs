@@ -83,8 +83,6 @@ struct Pool {
 /// completion; the narrowest of the recent brackets is kept, its half-width is the error.
 #[derive(Default)]
 struct Calibration {
-    /// (device ticks, trace ns at the bracket's middle, half-width ns, when it was made).
-    best: Option<(u64, u64, u64, std::time::Instant)>,
     /// Its own query pair and buffers, made at the first calibration.
     set: Option<(wgpu::QuerySet, wgpu::Buffer, wgpu::Buffer)>,
 }
@@ -107,6 +105,7 @@ pub struct ComputeDevice {
     /// The device time each dispatch took when last measured, by its name (where a job is cut).
     last: Mutex<HashMap<String, u64>>,
     adapter: String,
+    info: wgpu::AdapterInfo,
     /// Timestamp sets free for a job (gpu-pass-cost; one per job in flight, gpu-throughput D6); none —
     /// the adapter has no timestamps.
     stamps: Mutex<Vec<Stamps>>,
@@ -116,6 +115,10 @@ pub struct ComputeDevice {
     /// The device's timestamps against the trace's clock (stream-history-on-device D7), made while the
     /// trace records.
     calib: Mutex<Calibration>,
+    /// The narrowest bracket: (device ticks, trace ns at its middle, half-width ns, when it was made).
+    /// Apart from `calib`, so a record reads it without waiting for a calibration in progress
+    /// (found-defects 562).
+    best: Mutex<Option<(u64, u64, u64, std::time::Instant)>>,
     pipes: Mutex<HashMap<(String, usize, usize), Arc<Pipe>>>,
     pool: Mutex<Pool>,
     /// The pool's free buffers, to the memory ledger (memory-ledger).
@@ -141,7 +144,20 @@ fn declared_hash() -> u64 {
 
 /// Open the device: what `kt_plugin_api::compute::install` takes.
 pub fn open() -> Result<Arc<dyn ComputeHost>, String> {
-    Ok(open_device()?)
+    let d = open_device()?;
+    let _ = OPENED.set(d.clone());
+    Ok(d)
+}
+
+static OPENED: std::sync::OnceLock<Arc<ComputeDevice>> = std::sync::OnceLock::new();
+
+/// The process's compute host when it is this crate's device (opened through
+/// `kt_plugin_api::compute::host`, which `open` serves): the device the slots in front of a stream
+/// stage run on, so their output reaches the codec where it lies (stream-front-on-device). `None` — no
+/// host, another host installed, or it failed.
+pub fn host_device() -> Option<Arc<ComputeDevice>> {
+    kt_plugin_api::compute::host()?;
+    OPENED.get().cloned()
 }
 
 pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
@@ -187,11 +203,13 @@ impl ComputeDevice {
             device,
             queue,
             adapter: info.name.clone(),
+            info: info.clone(),
             timed: !stamps.is_empty(),
             stamps: Mutex::new(stamps),
             seed_key: crate::seeds::device_key(info),
             pipes: Mutex::new(HashMap::new()),
             calib: Mutex::default(),
+            best: Mutex::default(),
             pool: Mutex::default(),
             account: kt_time::mem::open(kt_time::mem::Tenant::Compute, POOL_BYTES),
             cache,
@@ -203,6 +221,25 @@ impl ComputeDevice {
     pub fn on_context(ctx: &crate::GpuContext) -> Arc<ComputeDevice> {
         let stamps = make_stamps(&ctx.device);
         ComputeDevice::with(ctx.device.clone(), ctx.queue.clone(), &ctx.adapter_info, stamps)
+    }
+
+    /// Its device as an engine's context (the engine of the slots in front of a stream stage).
+    pub fn context(&self) -> crate::GpuContext {
+        crate::GpuContext { device: self.device.clone(), queue: self.queue.clone(), adapter_info: self.info.clone() }
+    }
+
+    /// Tests: hold the calibration as a job calibrating would, until the guard drops (found-defects 562).
+    #[doc(hidden)]
+    pub fn hold_calibration_for_tests(&self) -> impl Sized + '_ {
+        self.calib.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Tests: make the calibration `by` older.
+    #[doc(hidden)]
+    pub fn age_calibration_for_tests(&self, by: std::time::Duration) {
+        if let Some(b) = self.best.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            b.3 = b.3.checked_sub(by).unwrap_or(b.3);
+        }
     }
 
     /// The ring it runs on.
@@ -296,19 +333,21 @@ impl ComputeDevice {
     /// Bracket a device timestamp by the trace's clock (D7): while the trace records, at the first job
     /// and when the calibration is older than `CALIBRATION_AGE`; three brackets the first time, the
     /// narrowest kept. One empty submission and a wait each — never at rest (no job, no calibration).
-    fn calibrate(&self) {
+    /// `true` — another job was calibrating and this one went on without (found-defects 562).
+    fn calibrate(&self) -> bool {
         if !self.timed || !kt_time::trace::on() {
-            return;
+            return false;
         }
         // a job finding another calibrating goes on without: the calibration waits for its admission,
         // and a frame's job must never wait for a lower class's admission behind this lock
         let mut c = match self.calib.try_lock() {
             Ok(c) => c,
             Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return,
+            Err(std::sync::TryLockError::WouldBlock) => return true,
         };
-        if c.best.is_some_and(|b| b.3.elapsed() < CALIBRATION_AGE) {
-            return;
+        let prior = *self.best.lock().unwrap_or_else(|e| e.into_inner());
+        if prior.is_some_and(|b| b.3.elapsed() < CALIBRATION_AGE) {
+            return false;
         }
         let d = &self.device;
         if c.set.is_none() {
@@ -328,10 +367,10 @@ impl ComputeDevice {
             });
             c.set = Some((set, resolve, read));
         }
-        let tries = if c.best.is_none() { 3 } else { 1 };
+        let tries = if prior.is_none() { 3 } else { 1 };
         let mut best: Option<(u64, u64, u64, std::time::Instant)> = None;
         for _ in 0..tries {
-            let Some((set, resolve, read)) = c.set.as_ref() else { return };
+            let Some((set, resolve, read)) = c.set.as_ref() else { return false };
             let mut enc = d.create_command_encoder(&Default::default());
             drop(enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("kt-gpu compute calibration"),
@@ -350,12 +389,12 @@ impl ComputeDevice {
                 let _ = tx.send(r);
             });
             if d.poll(wgpu::PollType::wait_indefinitely()).is_err() {
-                return;
+                return false;
             }
             let after = kt_time::trace::now_ns();
             flight.wait();
             if !matches!(rx.recv(), Ok(Ok(()))) {
-                return;
+                return false;
             }
             let g = read.slice(..).get_mapped_range().map(|m| u64::from_le_bytes(m[..8].try_into().unwrap())).unwrap_or(0);
             read.unmap();
@@ -365,13 +404,21 @@ impl ComputeDevice {
             }
         }
         if best.is_some() {
-            c.best = best;
+            *self.best.lock().unwrap_or_else(|e| e.into_inner()) = best;
         }
+        false
     }
 
     /// A device timestamp on the trace's clock, and the error; `None` — no calibration.
-    fn to_trace_ns(&self, ticks: u64) -> Option<(u64, u64)> {
-        let (g0, mid, half, _) = self.calib.lock().unwrap_or_else(|e| e.into_inner()).best?;
+    fn to_trace_ns(&self, ticks: u64, skipped: bool) -> Option<(u64, u64)> {
+        let (g0, mid, half, made) = (*self.best.lock().unwrap_or_else(|e| e.into_inner()))?;
+        // a calibration older than its age is not used: the job that would renew it found another
+        // calibrating and went on without (gpu-leftovers D1); its record says it has no position
+        // rather than one on a drifted clock (found-defects 562)
+        if skipped && made.elapsed() > CALIBRATION_AGE {
+            STALE_RECORDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
         let period = self.queue.get_timestamp_period() as f64;
         let ns = mid as f64 + (ticks as f64 - g0 as f64) * period;
         Some((ns.max(0.0) as u64, half))
@@ -433,7 +480,7 @@ impl ComputeHost for ComputeDevice {
                 .a(job.steps.len() as u64)
                 .id(class as u64);
         }
-        self.calibrate();
+        let skipped = self.calibrate();
         // what each dispatch took when last measured — in this process, else on this device before
         // (gpu-throughput D2): the job's claim on the ring and its cuts
         let mut predicted: Vec<Option<u64>> = {
@@ -458,13 +505,15 @@ impl ComputeHost for ComputeDevice {
                 Ok(p)
             })
             .collect::<Result<Vec<_>, String>>()?;
+        if job.buffers.iter().any(|b| matches!(b, Init::Held(h) if crate::held::on(h, &self.device).is_none())) {
+            return Err("a held buffer of another device".into());
+        }
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
         let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
         let mut enc = d.create_command_encoder(&Default::default());
-        let bufs: Vec<wgpu::Buffer> = job
-            .buffers
-            .iter()
-            .map(|init| match init {
+        let mut bufs: Vec<wgpu::Buffer> = Vec::with_capacity(job.buffers.len());
+        for init in job.buffers {
+            bufs.push(match init {
                 Init::Bytes(b) => {
                     let (buf, _) = self.take(b.len() as u64, usage);
                     self.queue.write_buffer(&buf, 0, b);
@@ -477,8 +526,17 @@ impl ComputeHost for ComputeDevice {
                     }
                     buf
                 }
-            })
-            .collect();
+                // a frame an engine on this device left here (stream-front-on-device): copied on the
+                // device, ordered after the engine's submission on the one queue
+                Init::Held(h) => {
+                    let src = crate::held::on(h, &self.device).expect("checked before the scope");
+                    let (buf, _) = self.take(h.len, usage);
+                    enc.copy_buffer_to_buffer(src, 0, &buf, 0, h.len);
+                    HELD_READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    buf
+                }
+            });
+        }
         // every step's uniform in one arena, one write (gpu-leftovers, found-defects 520): a step binds
         // its slot by a dynamic offset, and a bind group serves every step of the same shader, slot
         // size and buffers
@@ -613,10 +671,7 @@ impl ComputeHost for ComputeDevice {
             });
             d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
             rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
-            let len = match job.buffers[b.0] {
-                Init::Bytes(v) => v.len() as u64,
-                Init::Zero(n) => n,
-            };
+            let len = job.buffers[b.0].len();
             out.push(st.slice(..len).get_mapped_range().map_err(|e| e.to_string())?.to_vec());
             st.unmap();
         }
@@ -650,8 +705,8 @@ impl ComputeHost for ComputeDevice {
                     // when each piece ran on the device, on the trace's clock (found-defects 398, 486)
                     if kt_time::trace::on() {
                         for &(a, b, at) in pieces.iter().filter(|p| p.0 < timed) {
-                            let start = self.to_trace_ns(ticks[2 * a]);
-                            let end = self.to_trace_ns(ticks[2 * b.min(timed) - 1]);
+                            let start = self.to_trace_ns(ticks[2 * a], skipped);
+                            let end = self.to_trace_ns(ticks[2 * b.min(timed) - 1], skipped);
                             kt_time::trace::ev(kt_time::trace::Ev::GpuStart)
                                 .id(class as u64)
                                 .a(at)
@@ -807,4 +862,20 @@ pub fn compile(ctx: &crate::GpuContext, text: &str) -> Result<(), String> {
         Some(e) => Err(e.to_string()),
         None => Ok(()),
     }
+}
+
+static HELD_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many job buffers started as a copy of a held frame on the device (stream-front-on-device:
+/// tests and `kt-cli stream-cost`).
+pub fn held_reads() -> u64 {
+    HELD_READS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static STALE_RECORDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many device timestamps were not placed on the trace's clock because the calibration was
+/// older than its age when the job found another calibrating (found-defects 562).
+pub fn stale_records() -> u64 {
+    STALE_RECORDS.load(std::sync::atomic::Ordering::Relaxed)
 }

@@ -13,7 +13,8 @@ pub fn install() -> &'static Arc<Registry> {
     #[cfg(test)]
     let reg = kt_plugins_builtin::install_with(test_tint::register);
     kt_plugin_api::compute::install(kt_gpu::compute::open);
-    // the slots in front of a stream stage run on the offline device (stream-input-order)
+    // the slots in front of a stream stage run on the compute device and feed the codec there
+    // (stream-front-on-device)
     kt_engine::video::install_stream_front(kt_gpu::stream_front_engine);
     // the memory the preview's stream memo may grow into (stream-layout-per-build)
     kt_engine::video::set_memory_probe(kt_gpu::memory::available);

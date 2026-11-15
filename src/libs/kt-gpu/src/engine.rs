@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use kt_engine::{
-    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, LayerSrc, PlanLayer, PresentOptions,
+    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, HeldOut, LayerSrc, PlanLayer, PresentOptions,
     TransMix, VideoGpuExec, video_plan::SoloFade,
 };
 use kt_model::FxInstance;
@@ -825,6 +825,9 @@ struct Inner {
     fuse: crate::runs::FuseRuns,
     /// The frame being resolved is an export's (gpu-leftovers D3): its runs take the settled form.
     settled: bool,
+    /// This engine's device is the compute host's: `execute_held` leaves frames on it
+    /// (stream-front-on-device), its spare buffers here.
+    held: Option<Arc<crate::held::Spares>>,
     /// Tells the pieces of point-wise runs apart in the timer's probes.
     run_serial: u32,
     arena: wgpu::Buffer,
@@ -1333,6 +1336,15 @@ impl GpuFxEngine {
         Self::assemble(device, queue, self.info.clone(), self.compiled.clone(), arb, memo_guard, false, false, seed)
     }
 
+    /// This engine's device is the compute host's (`compute::host_device`): `execute_held` leaves a
+    /// frame there for a compute job to read (stream-front-on-device). Idempotent.
+    pub fn hold_for_compute(&self) {
+        let mut g = self.inner.lock().unwrap();
+        if g.held.is_none() {
+            g.held = Some(Arc::default());
+        }
+    }
+
     /// This engine's device shows the preview's frame from now on (the slow-chain route,
     /// scheduler-followups D6): its ring bounds what stands in front of that frame and cuts a
     /// lower-class frame while it waits, as a display's ring does. Idempotent.
@@ -1388,6 +1400,7 @@ impl GpuFxEngine {
                 geom_interpret: false,
                 fuse: crate::runs::FuseRuns::from_env(),
                 settled: false,
+                held: None,
                 run_serial: 0,
                 arena,
                 arena_slots,
@@ -1628,6 +1641,19 @@ impl VideoGpuExec for GpuFxEngine {
         // an export's frame: its runs in the settled form (gpu-leftovers D3)
         g.settled = true;
         let r = g.execute(plan, out, false, true);
+        g.settled = false;
+        r
+    }
+
+    fn execute_held(&self, plan: &FramePlan<'_>) -> Result<HeldOut, GpuExecError> {
+        let _frame = self.compiled.frame();
+        let mut g = self.inner.lock().unwrap();
+        if g.held.is_none() {
+            return Ok(HeldOut::Unsupported);
+        }
+        // `execute_once`'s form: the settled runs (gpu-leftovers D3), so the bytes are its bytes
+        g.settled = true;
+        let r = g.execute_held(plan);
         g.settled = false;
         r
     }
@@ -2290,6 +2316,107 @@ impl Inner {
         }
         self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
         Ok(complete)
+    }
+
+    /// `execute` for a frame that stays on the device (stream-front-on-device): the same resolve and
+    /// passes, the result copied into a buffer of tightly packed RGBA, submitted, never waited for —
+    /// a compute job submitted later on the same queue reads it after the passes. Complete frames
+    /// only; no memo (the caller's front memo keeps the buffer).
+    fn execute_held(&mut self, plan: &FramePlan<'_>) -> Result<HeldOut, GpuExecError> {
+        let (ow, oh) = (plan.out_w, plan.out_h);
+        if ow > self.max_dim || oh > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: ow, h: oh });
+        }
+        let Some(spares) = self.held.clone() else { return Ok(HeldOut::Unsupported) };
+        self.last_cost = Default::default();
+        self.last_stages = Default::default();
+        let mark = Instant::now();
+        if plan.starved() {
+            return Ok(HeldOut::Incomplete);
+        }
+        let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
+        self.upload.begin_frame();
+        self.binds.begin_frame();
+        self.last_runs = Default::default();
+        let (jobs, complete) = self.resolve_plan(plan)?;
+        if !complete {
+            return Ok(HeldOut::Incomplete);
+        }
+        if jobs.is_empty() {
+            // a transparent frame: the bytes path gives it (nothing to keep on the device)
+            return Ok(HeldOut::Unsupported);
+        }
+        for j in &jobs {
+            self.last_cost.add(j.cost());
+        }
+        let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
+        if total > self.arena_slots {
+            let slots = total.next_power_of_two();
+            crate::created();
+            self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kt-gpu uniforms"),
+                size: SLOT * slots as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.arena_slots = slots;
+            self.binds.clear();
+        }
+        self.slot = 0;
+        let meta = frame_meta(&jobs, (ow, oh));
+        self.harvest();
+        self.timer.begin();
+        self.piece = Some(crate::arbiter::Piece::begin(&self.arb, self.timer.last_frame(Role::Offline)));
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu held") });
+        let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+        self.timer.end(&mut enc, Role::Offline, meta);
+        // the texture's rows are copied at the copy's alignment; a width that is not one is packed
+        // row by row on the device
+        let tight = ow * 4;
+        let padded = tight.next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let len = tight as u64 * oh as u64;
+        let out = spares.take(&self.device, len);
+        let copy = |enc: &mut wgpu::CommandEncoder, buffer: &wgpu::Buffer, bpr: u32| {
+            enc.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &result.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer,
+                    layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(oh) },
+                },
+                wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
+            );
+        };
+        let wide = (padded != tight).then(|| spares.take(&self.device, padded as u64 * oh as u64));
+        match &wide {
+            None => copy(&mut enc, &out, tight),
+            Some(w) => {
+                copy(&mut enc, w, padded);
+                for row in 0..oh as u64 {
+                    enc.copy_buffer_to_buffer(w, row * padded as u64, &out, row * tight as u64, tight as u64);
+                }
+            }
+        }
+        kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+        self.staged.flush(&self.queue, &self.arena);
+        let sub = self.queue.submit([enc.finish()]);
+        if let Some(p) = self.piece.take() {
+            p.end(&self.device, &self.queue, sub, self.surface);
+        }
+        self.timer.submitted(&self.queue, Role::Offline, meta);
+        self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
+        self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
+        self.last_stages.encode_ns = (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
+        self.pool.release(result);
+        if let Some(w) = wide {
+            // its copy is ordered before any later write to it on the one queue
+            drop(crate::held::held(w, 0, self.device.clone(), spares.clone()));
+        }
+        Ok(HeldOut::Held(crate::held::held(out, len, self.device.clone(), spares)))
     }
 
     /// Encodes a set of jobs into an accumulator texture. ONE code at the root and in
