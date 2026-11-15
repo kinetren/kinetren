@@ -870,6 +870,19 @@ impl Player {
                 // `Player::project()` is read by export and diagnostics
                 let p = {
                     let mut w = self.builds.want.lock().unwrap();
+                    // the app hands the model's snapshot first, which already holds the values: no
+                    // copy of the whole project per keystroke then (frame-work-by-edit, row 190)
+                    let holds = {
+                        let p = &w.project;
+                        p.clips
+                            .iter()
+                            .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
+                            .filter(|c| c.id == clip)
+                            .all(|c| c.r#gen.as_ref() == Some(&state.kind) && c.gen_auto == state.auto)
+                    };
+                    if holds {
+                        w.project.clone()
+                    } else {
                     let p = Arc::make_mut(&mut w.project);
                     let put = |cs: &mut Vec<kt_model::ClipEvent>| {
                         for c in cs.iter_mut().filter(|c| c.id == clip) {
@@ -884,6 +897,7 @@ impl Player {
                         p.sequences[i].clips = cs;
                     }
                     w.project.clone()
+                    }
                 };
                 let stale: Vec<kt_cache::SourceId> = crate::reel_chain_of_clip(&p, clip)
                     .into_iter()
@@ -896,27 +910,13 @@ impl Player {
                 // of the template would otherwise not reach the second copy before the
                 // first plan rebuild. The list is computed by the same
                 // `gen_sources` that raises the sources.
-                let wanted = crate::gen_sources(&p);
                 drop(p);
                 self.media.update_gen_at(addr, state, stale.clone());
-                for (a, st) in wanted {
-                    if a == addr {
-                        continue;
-                    }
-                    let live = self.media.gen_states.lock().unwrap().get(&a).cloned();
-                    match live {
-                        Some(o) if o == st => {}
-                        Some(o) if kt_media::factory::can_retune_gen(&o, &st) => {
-                            self.media.update_gen_at(a, st, stale.clone());
-                        }
-                        Some(_) => {
-                            self.media.gen_states.lock().unwrap().insert(a, st.clone());
-                            self.media.replace_media(a, kt_media::factory::open_gen(&st));
-                            self.builds.refresh();
-                        }
-                        None => {}
-                    }
-                }
+                // the OTHER addresses (an instance with overrides, a morpher's pieces) are the
+                // builder thread's to find: a whole `gen_sources` here resolved every reel on the UI
+                // thread per keystroke (frame-work-by-edit, found-defects 190)
+                drop(_g);
+                self.builds.want_gen_resync(stale);
                 true
             }
             None => false,
@@ -2008,6 +2008,29 @@ impl MediaParts {
         }
     }
 
+    /// Retune every live generator address whose state `wanted` changed (a value edit's other
+    /// instances); the caller holds `gen_lock`. `true` — a source had to be replaced (its passport
+    /// moved), and the version must be built again with the new facts.
+    fn resync_gen_others(&self, wanted: Vec<(MediaId, kt_model::GenState)>, stale: &[kt_cache::SourceId]) -> bool {
+        let mut replaced = false;
+        for (a, st) in wanted {
+            let live = self.gen_states.lock().unwrap().get(&a).cloned();
+            match live {
+                Some(o) if o == st => {}
+                Some(o) if kt_media::factory::can_retune_gen(&o, &st) => {
+                    self.update_gen_at(a, st, stale.to_vec());
+                }
+                Some(_) => {
+                    self.gen_states.lock().unwrap().insert(a, st.clone());
+                    self.replace_media(a, kt_media::factory::open_gen(&st));
+                    replaced = true;
+                }
+                None => {}
+            }
+        }
+        replaced
+    }
+
     fn update_gen_at(&self, addr: MediaId, state: kt_model::GenState, stale: Vec<kt_cache::SourceId>) {
         self.gen_states.lock().unwrap().insert(addr, state.clone());
         let workers = self.workers.read().unwrap();
@@ -2038,7 +2061,7 @@ fn build_version(
     // events its memo holds after it (the rest of them were reused from the last build)
     let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
     span.aux(kt_time::trace::job::SHARED_BUILD).id(seq).a(version);
-    let (mut built, cost) = kt_time::cost::meter(|| crate::incremental::with_memo(memo, || {
+    let (mut built, cost) = kt_time::cost::meter(|| crate::incremental::with_memo(memo, || kt_model::with_sequence_index(project, || {
         crate::video::revisions_scope(|| {
             let wanted = crate::gen_sources(project);
             {
@@ -2057,7 +2080,7 @@ fn build_version(
             let video = Arc::new(preview_video(project, &facts, cache));
             crate::builds::Built { seq, version, project: project.clone(), audio, video, cost: Default::default() }
         })
-    }));
+    })));
     built.cost = cost;
     let (held_a, held_v) = memo.len();
     span.b(cost[kt_time::cost::Cost::EventDerive as usize]).c((held_a + held_v) as u64);
@@ -2084,6 +2107,19 @@ fn build_loop(ctx: BuildCtx) {
         builds.wait_gate();
         if builds.stop.load(Ordering::Acquire) {
             return;
+        }
+        // a generator value edit's other addresses (found-defects 190): resynced here, not on the
+        // UI thread; a source that had to be replaced asks a build of its own (`refresh`)
+        if let Some((p, stale)) = builds.take_gen_resync() {
+            let wanted = crate::gen_sources(&p);
+            drop(p);
+            let _g = media.gen_lock.lock().unwrap();
+            if media.resync_gen_others(wanted, &stale) {
+                builds.refresh();
+            }
+        }
+        if builds.want_seq() <= done {
+            continue;
         }
         // the newest want after the gate: the ones in between are never built
         let (project, version, seq) = {

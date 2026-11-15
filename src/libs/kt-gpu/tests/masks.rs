@@ -88,7 +88,7 @@ fn t1274_masked_frames_agree_exactly_on_both_backends() {
             content: xxhash_rust::xxh3::xxh3_64(&f.rgba),
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(f)),
-            fx: std::borrow::Cow::Borrowed(&fx[..]),
+            fx: kt_engine::LayerChain::Borrowed(&fx[..]),
             fx_hash: xxhash_rust::xxh3::xxh3_64(format!("{fx:?}|{ops:?}|{i}").as_bytes()),
             u: 0.5,
             cam3d: None,

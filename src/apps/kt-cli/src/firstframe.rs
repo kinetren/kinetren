@@ -102,7 +102,7 @@ pub fn run(args: &[String]) -> i32 {
             content: 7,
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(frame.clone())),
-            fx: std::borrow::Cow::Borrowed(fx),
+            fx: kt_engine::LayerChain::Borrowed(fx),
             fx_hash: tick as u64,
             u: 0.5,
             cam3d: None,

@@ -33,7 +33,7 @@ use std::sync::Arc;
 use kt_plugin_api::barrier::{AlphaRel, BarrierKernel, GpuCtx, Node, Slot};
 use kt_plugin_api::math::FrozenMath;
 use kt_plugin_api::{
-    Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, ParamValues, Plugin,
+    Cooked, Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin,
     RowDecl, Store, UiDecl, UiVariant, VideoClass,
 };
 
@@ -821,9 +821,9 @@ impl Plan {
     }
 
     /// The passes that run, in order (the view pass last when a stage is viewed).
-    pub fn passes(&self) -> Vec<usize> {
-        let mut v =
-            vec![pass::UNPROCESS, pass::OPTICS, pass::PIXEL, pass::READOUT, pass::RAW_FRONT];
+    pub fn passes(&self) -> Passes {
+        let mut v = Passes::default();
+        v.extend([pass::UNPROCESS, pass::OPTICS, pass::PIXEL, pass::READOUT, pass::RAW_FRONT]);
         if self.raw_nr > 0.0 {
             v.push(pass::RAW_NR);
         }
@@ -903,15 +903,55 @@ impl CameraIsp {
         }
     }
 
-    fn defaults(&self) -> Vec<f64> {
-        ParamValues::defaults(&self.m.passport).0
-    }
 }
 
 /// The passport's defaults.
 pub fn defaults() -> Vec<f64> {
+    default_values().to_vec()
+}
+
+/// The passport's defaults, shared (a frame's graph reads them without a copy, row 365).
+fn default_values() -> &'static [f64] {
     static D: std::sync::OnceLock<Vec<f64>> = std::sync::OnceLock::new();
-    D.get_or_init(|| passport().iter().map(|(s, _)| s.default).collect()).clone()
+    D.get_or_init(|| passport().iter().map(|(s, _)| s.default).collect())
+}
+
+/// The passes a plan runs, in order, on the stack (frame-work-by-edit, found-defects 365): the
+/// graph asked them per frame as a vector.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Passes {
+    v: [usize; 16],
+    n: usize,
+}
+
+impl Passes {
+    fn push(&mut self, p: usize) {
+        self.v[self.n] = p;
+        self.n += 1;
+    }
+    fn extend(&mut self, ps: impl IntoIterator<Item = usize>) {
+        for p in ps {
+            self.push(p);
+        }
+    }
+    fn truncate(&mut self, n: usize) {
+        self.n = self.n.min(n);
+    }
+}
+
+impl std::ops::Deref for Passes {
+    type Target = [usize];
+    fn deref(&self) -> &[usize] {
+        &self.v[..self.n]
+    }
+}
+
+impl IntoIterator for Passes {
+    type Item = usize;
+    type IntoIter = std::iter::Take<std::array::IntoIter<usize, 16>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.v.into_iter().take(self.n)
+    }
 }
 
 /// The sensor's and the ISP's rows: the microphone never reads them (the seed it does).
@@ -1166,7 +1206,7 @@ impl Plan {
 impl BarrierKernel for CameraIsp {
 
     fn gpu(&self, _k: &Cooked, g: &GpuCtx, out: &mut Vec<Node>) {
-        self.gpu_values(&self.defaults(), g, out)
+        self.gpu_values(default_values(), g, out)
     }
 
     fn shaders(&self) -> &'static [&'static str] {

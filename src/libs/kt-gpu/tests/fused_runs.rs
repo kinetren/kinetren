@@ -52,7 +52,7 @@ fn plan<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance]) -> FramePlan<'a> {
         content: 5,
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(f.clone())),
-        fx: std::borrow::Cow::Borrowed(fx),
+        fx: kt_engine::LayerChain::Borrowed(fx),
         fx_hash: 5,
         u: 0.5,
         cam3d: None,

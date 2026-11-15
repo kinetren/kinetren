@@ -499,3 +499,13 @@ Why: found-defects row 360 (per-sample-costs).
 - **WHEN** white, pink and brown noise with two seeds and both stereo choices are read from four starts, aligned and not to a row's hold
 - **THEN** each digest equals the one printed before the change
 - **TEST** t2681 (`src/plugins/generators-audio/tests/sound.rs`)
+### Requirement: A value edit costs its own address on the calling thread
+`Player::update_gen` SHALL retune the edited event's own address and hand its other addresses (an
+instance with overrides, a morpher's pieces) to the builder thread; it SHALL resolve no reel and
+build no renderer on the calling thread, and SHALL NOT copy the stored project when it already holds
+the values.
+
+#### Scenario: A title keystroke
+- **WHEN** a generator inside a reel placed eight times takes a new value through `update_gen`, and then the same value again
+- **THEN** the call counts no reel resolve and no renderer build, the stored project carries the value, and the second call keeps the stored project as it is
+- **TEST** t2669 (`src/libs/kt-engine/tests/gen_event.rs`)

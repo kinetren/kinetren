@@ -42,7 +42,7 @@ fn t2128_a_prewarmed_gl_engine_keeps_composing() {
         content: 3,
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(frame)),
-        fx: std::borrow::Cow::Borrowed(&fx),
+        fx: kt_engine::LayerChain::Borrowed(&fx),
         fx_hash: 3,
         u: 0.5,
         cam3d: None,

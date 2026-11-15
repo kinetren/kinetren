@@ -2745,15 +2745,26 @@ impl Inner {
             own(out);
             return;
         }
-        let key: Vec<u16> = stages[a..b].iter().map(|s| s.idx as u16).collect();
+        // the shape's key on the stack (frame-work-by-edit, row 364): a run is at most a few dozen stages
+        let mut buf = [0u16; 64];
+        let long: Vec<u16>;
+        let key: &[u16] = if b - a <= buf.len() {
+            for (k, st) in buf.iter_mut().zip(&stages[a..b]) {
+                *k = st.idx as u16;
+            }
+            &buf[..b - a]
+        } else {
+            long = stages[a..b].iter().map(|s| s.idx as u16).collect();
+            &long
+        };
         if self.settled {
-            match self.c.run_settled(&key) {
+            match self.c.run_settled(key) {
                 Some(pipe) => out.push(RunPiece { a, b, fused: Some(pipe), shadow: None, probe: None }),
                 None => own(out),
             }
             return;
         }
-        match self.c.run_use(&key, self.fuse == FuseRuns::Measured) {
+        match self.c.run_use(key, self.fuse == FuseRuns::Measured) {
             RunUse::Own => own(out),
             RunUse::Fused(pipe) => out.push(RunPiece { a, b, fused: Some(pipe), shadow: None, probe: None }),
             RunUse::Trial { pipe, id } => out.push(RunPiece { a, b, fused: None, shadow: Some(pipe), probe: Some(id) }),
@@ -3426,7 +3437,16 @@ fn plan_hash(plan: &FramePlan<'_>) -> u64 {
         // the masks evaluated at THIS frame (shape-masks): an animated mask on a still frame
         // must not return another frame's composite; maskless layers add nothing
         if !s.masks.is_empty() {
-            h.update(format!("{:?}", s.masks).as_bytes());
+            // the Debug text streamed into the hash (frame-work-by-edit, row 364): the same digest
+            // as hashing the formatted string, with no string built per masked layer per frame
+            struct Into<'h>(&'h mut Xxh3);
+            impl std::fmt::Write for Into<'_> {
+                fn write_str(&mut self, s: &str) -> std::fmt::Result {
+                    self.0.update(s.as_bytes());
+                    Ok(())
+                }
+            }
+            let _ = std::fmt::Write::write_fmt(&mut Into(h), format_args!("{:?}", s.masks));
         }
         // decode scale step (R.46, item 318): a frame of the same key in another
         // size gives another picture; the plan MUST differ

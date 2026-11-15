@@ -326,13 +326,6 @@ fn shader_texts() -> &'static [&'static str] {
     })
 }
 
-/// The values a cooked form carries (the first eight rows; the kernel reads the values directly).
-fn values_of(k: &Cooked) -> Vec<f64> {
-    let mut v = defaults();
-    v[..8].copy_from_slice(k);
-    v
-}
-
 impl BarrierKernel for VhsTape {
 
     fn shaders(&self) -> &'static [&'static str] {
@@ -354,16 +347,23 @@ impl BarrierKernel for VhsTape {
     }
 
     fn gpu(&self, k: &Cooked, g: &GpuCtx, out: &mut Vec<Node>) {
-        self.gpu_values(&values_of(k), g, out)
+        // the deck straight from the cooked rows: one vector a frame, not two (row 365)
+        graph(&Deck::new(k), g, out)
     }
 
     /// The graph of design D2: the host's resample to the standard's grid, the parameter upload,
     /// the line table, the stages at the grid's size, the frame pass.
     fn gpu_values(&self, values: &[f64], g: &GpuCtx, out: &mut Vec<Node>) {
-        let d = Deck::new(values);
+        graph(&Deck::new(values), g, out)
+    }
+}
+
+/// The barrier's graph of one deck (`VhsTape::gpu_values`).
+fn graph(d: &Deck, g: &GpuCtx, out: &mut Vec<Node>) {
+    {
         let st = d.st;
         let c = d.words(g.burst_index);
-        let u = sim::Uni::new(&d, &c);
+        let u = sim::Uni::new(d, &c);
         let (w, h) = (st.w, st.h);
         let at = |shader: u8, inputs: [Slot; 3], uu: [u32; 8], ff: [f32; 8], w: u32, h: u32| Node::PassAt {
             shader,

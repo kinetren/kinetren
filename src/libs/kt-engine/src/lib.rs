@@ -54,7 +54,7 @@ pub use video::{
     nest_source_id, reel_chain_of_clip, resolve_cam3d, revisions_scope, video_cache_idx,
 };
 pub use video_plan::{
-    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, HeldOut, LayerSrc, PlanLayer, PresentOptions,
+    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, HeldOut, LayerChain, LayerSrc, PlanLayer, PresentOptions,
     VideoGpuExec, chain_plan,
 };
 pub use worker::{DecodeRequest, MediaWorker, RequestKind, Retune};
