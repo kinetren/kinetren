@@ -13,4 +13,4 @@ kt26.11.10-4275c0f8). Columns and states — as in [`v26.10-index.md`](v26.10-in
 | N2 | 4–5 | the performance problems we tried to solve are not solved and got worse: the real-time preview of a piece that played in real time in kt26.11.10 is very bad in the new one at the same system load | partial: diagnosed from his traces, then made FASTER than kt26.11.10 (not merely restored) | `kkt-26.11.15` stage 15 | 15 |
 | N3 | 6 | the final render is very slow in every version, slower than the preview | no → after N2 | — | later |
 | N4 | 7 | the processor mostly idles while the program works | no: FORBIDDEN to start until N2 is done and faster than before (line 9) | — | after N2 |
-| N5 | 8 | the final render's settings are very scant | no → feature note in `docs/features/` first | — | later |
+| N5 | 8 | the final render's settings are very scant | no: feature, no note yet (to write in `docs/features/` first) | — | later |
