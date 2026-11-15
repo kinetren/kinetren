@@ -1073,3 +1073,36 @@ fn t2710_no_stage_on_screen_walks_nothing_far() {
     assert!(far > 0, "a stage on screen walks ahead");
     assert!(far <= 60 * 30, "{far} frames: more than a minute of the project");
 }
+
+/// t2711 (stream-round-trips D10, found-defects 662): the look-ahead's walk of the frame ON SCREEN runs
+/// at the display's class — the preview shows Loading until it is walked — and the frames after it at
+/// the look-ahead's own class.
+#[test]
+fn t2711_the_frame_on_screen_walks_at_the_displays_class() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let p = mosh_project();
+    let (vr, cache) = (renderer(&p, Some(StreamPacing::preview(1 << 30))), big_cache());
+    let plain = renderer(&p, None);
+    let t = Tick(3 * SEC);
+    let mut m = Tick(2 * SEC);
+    while m.0 <= t.0 + 8 * STEP {
+        warm(&plain.layers_at(m, Q), &cache);
+        m = Tick(m.0 + STEP);
+    }
+    let items = trace::testing::capture(|| {
+        let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
+        assert!(!kt_engine::player::stream_advance_ahead(&vr, &cache, t, Q, None, 8, &|_| false), "every frame was cached");
+    });
+    let jobs = of(&items, Ev::ComputeJob);
+    assert!(jobs.len() >= 2, "{} jobs: the frame on screen and the frames after it", jobs.len());
+    let (now, near) = (kt_time::sched::Class::Now as u64, kt_time::sched::Class::Near as u64);
+    let ids: Vec<u64> = jobs.iter().map(|r| r.id).collect();
+    // the history up to the frame on screen (its batches), then the frames after it
+    let split = ids.iter().position(|&c| c != now).unwrap_or(ids.len());
+    assert!(split > 0, "the frame on screen's walk ran below the display's class: {ids:?}");
+    assert!(split < ids.len() && ids[split..].iter().all(|&c| c == near), "the frames ahead ran at another class: {ids:?}");
+    assert!(vr.layers_at(Tick(t.0 + 8 * STEP), Q).is_empty(), "the run reached its end");
+}

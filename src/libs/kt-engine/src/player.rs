@@ -2937,7 +2937,16 @@ pub fn stream_advance_ahead(
         }
     }
     runs.extend(run);
-    for (from, to) in runs {
+    for (i, (from, to)) in runs.into_iter().enumerate() {
+        // the frame on screen's own history is the display's work: the preview shows Loading until
+        // it is walked, so it runs at the display's class, not the look-ahead's (stream-round-trips
+        // D10, found-defects 662: at `near` its pieces waited for admission behind every present)
+        if i == 0 && from == t && kt_time::sched::current_class() == kt_time::sched::Class::Near {
+            let _shown = kt_time::sched::with_class(kt_time::sched::Class::Now);
+            if video.stream_advance_run(cache, t, t, q) {
+                return true;
+            }
+        }
         if video.stream_advance_run(cache, from, to, q) {
             return true;
         }
@@ -3014,7 +3023,7 @@ const STREAM_WALK_SECS: i64 = 60;
 
 /// `STREAM_WALK_SECS` in frames of the project.
 fn stream_walk_cap(video: &VideoRenderer) -> usize {
-    (STREAM_WALK_SECS * kt_time::TICK_HZ as i64 / video.grid.frame_step().max(1)) as usize
+    (STREAM_WALK_SECS * kt_time::TICK_HZ / video.grid.frame_step().max(1)) as usize
 }
 
 /// Passes in a row in which the far look-ahead stayed pending and computed nothing before it stops

@@ -40,6 +40,11 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   answers `Held` (a `compute::Held` buffer, the bytes `with_frame` would give), `Missing` or `Host` (ask
   `with_frame`); a kernel that runs on the device asks it first and passes the buffer as `Init::Held`.
   `Held` is opaque (`Arc<dyn Any>`): a plugin never sees wgpu.
+- **A job may keep its buffers on the device, and the memo has a live tier** (stream-round-trips D1):
+  `ComputeHost::run_keeping` returns the named buffers as `Held` (`keeps()` says whether the host can;
+  a counting wrapper forwards both, or the product path is not the one measured); `StreamMemo::put_live`
+  keeps what a walk continues from, bounded by `LIVE_BYTES` apart from the pictures' LRU. A kernel's
+  `needs` asks `holds` (both tiers). t2708, t2709.
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media).

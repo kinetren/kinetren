@@ -133,6 +133,11 @@ is no picture, and an export refuses.
   into `compute::fail` — so only a `hold_for_compute` engine on THE compute device returns `Held`).
   Dropped buffers go back to the device's spares (a codec batch's bytes, under the ledger as compute).
   t2621, t2622.
+- **A compute job's kept buffers are its own buffers** (stream-round-trips D1, t2708): `run_keeping` hands
+  them out as `Held`; dropped, they return to the device's `Spares`, which `take` asks before the pool.
+- **A job waits for ITS submission** (D9, row 661): reads are mapped first and one `PollType::Wait` names
+  the job's submission index. `wait_indefinitely` waits for whatever another thread submitted after it
+  (311 ms past the job's end at the median on the owner's iGPU).
 - **A shape's readiness does NOT move the memo keys** (row 561, stream-front-on-device D6): tried
   process-wide and per device, both recomposed the loop the fill kept (t2334 red). Move them only on a
   difference the device itself measured.
