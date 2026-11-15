@@ -194,8 +194,11 @@ def main(out):
     require_tools()
     sources = fixture_sources(os.path.join(out, "sources"))
     proj = os.path.join(out, "heavy.kt")
+    # KT_LIVE_SHOWCASE: more showcase flags (`--mosh-behind`: an effect in front of a Datamosh on every
+    # styled cut, stream-front-on-device), the same verdicts on that project
+    more = os.environ.get("KT_LIVE_SHOWCASE", "").split()
     subprocess.run(
-        [kt_live.KT_CLI, "showcase", proj, "--sources", sources, "--heavy", "--force"],
+        [kt_live.KT_CLI, "showcase", proj, "--sources", sources, "--heavy", "--force", *more],
         check=True, capture_output=True,
     )
     with Live("idle", out, project=proj, own_process=True) as app:

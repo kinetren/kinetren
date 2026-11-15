@@ -10,7 +10,7 @@
 
 ## 2. Rows 561, 562
 
-- [x] 2.1 A ready geometry shape moves the forms' revision; t2624
+- [x] 2.1 Row 561 tried (a ready geometry shape moving the forms, process-wide and then per device): t2334 red both ways — reverted, the row stays open with the verdict in design D6
 - [x] 2.2 The calibration's result apart from its lock; a skipped job's records on a stale one carry no position; t2623
 
 ## 3. Class walk and cost

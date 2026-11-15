@@ -70,14 +70,24 @@ after the first create nothing.
 `kt-cli stream-cost` prints how many front runs stayed on the device; `compute::held_reads` counts
 job buffers that started from a held frame.
 
-### D6. Row 561: a ready geometry shape moves the forms' revision
+### D6. Row 561 stays open: moving the keys on a shape's readiness recomposes every kept loop
 
-`Compiled::shape` answers `None` (the interpreter) while a shape compiles, then the specialized pass.
-t1766 holds the two equal on the adapter it runs on, but nothing proves it on a card, and the memo
-keys (`plan_key` mixes `forms_revision`) did not change when the form did — the mechanism of row
-510. `compile_shape` now calls `forms_moved()` when a specialized pass becomes ready. Cost: each
-shape's readiness drops the composites kept under the old revision once (a composite whose resolve
-saw the revision move is not kept); a shape becomes ready once per device.
+`Compiled::shape` answers `None` (the interpreter) while a shape compiles, then the specialized pass;
+t1766 holds the two equal on the adapter it runs on, and the memo keys do not name the form (the
+mechanism of row 510). Tried here, two ways:
+
+- `compile_shape` calling the process-wide `forms_moved()` when a specialized pass becomes ready: the
+  side device's shapes moved the display's keys too, and t2334 (cached-range-plays: a loop the fill
+  kept is replayed by the display) went red — 18 of 24 moments composed again;
+- a revision per device (`Compiled::shape_forms` mixed into that device's `plan_key`): still red, since
+  the display's own first presents enqueue its shapes, and their readiness drops every composite the
+  fill kept for it.
+
+Both turn an unproven difference (t1766 equal here; no card) into a sure cost on every machine: each
+new shape recomposes what the person's loop already kept. Reverted. The verdict of the row is now a
+check on the device itself: when a shape becomes ready, run it once beside the interpreter on the
+shape's first real frame (as a point-wise run's trial runs its shadow, gpu-leftovers D2) and move the
+device's forms only when the two differ. Rejected: weakening t2334.
 
 ### D7. Row 562: the calibration's result apart from its lock
 
@@ -127,13 +137,54 @@ What the change moves, grep'd across `src/`:
   default (`Unsupported`), so every stub keeps the bytes form.
 - `with_frame` readers: Datamosh's walk now asks `on_device` first; `mosh::render_reference`,
   `lib.rs` pass-through and `mosh.rs` CPU encode still read bytes (the reference and no-device paths).
-- `forms_revision` consumers: `plan_key`, the readback memo's keep check, the present memo — all move
-  with a shape's readiness now.
+- `forms_revision` consumers (`plan_key`, the readback memo's keep check, the present memo): unchanged
+  (D6).
 - `to_trace_ns` callers: the `gpu_start` records only.
 
 ## Cost
 
-(measured on release — filled below by task 3.2)
+Measured on release (`kt-cli stream-cost /dev/shm/…/behind.kt 11.2 13.2 --laps 1`) over the showcase
+`--heavy --mosh-behind` (an effect → Datamosh on every styled cut), footage in `/dev/shm`, llvmpipe
+(the only adapter here: compute and offline devices are both software Vulkan). The A/B is
+`KT_FRONT_HELD=on|off` on the same build — `off` reads the front back from the same engine and uploads
+it, the bytes form. Runs interleaved; the machine is shared with other sessions (load 4 … 78), so the
+walls below come from the runs at load ≤ 30, two pairs at load 4–6 agreeing with them.
+
+| per lap of 50 frames (62 front runs) | held | bytes |
+|---|---|---|
+| one front run, the advancing thread's wall, median | 0.53–0.60 ms | 2.42–2.57 ms |
+| one front run, its processor time, median | 0.53–0.60 ms | 0.73–0.79 ms |
+| all front runs but the first, wall | 74–80 ms | 147–154 ms |
+| the walk's `source` calls, processor time (212 positions) | 62–88 ms | 95–145 ms |
+| codec jobs' upload | 4.16 MB a frame | 5.31 MB a frame |
+| the first front run (opening the front's engine) | 0.68–0.75 s | 0.71–1.5 s |
+| processor time of the advancing thread outside jobs, a frame | 17.3–18.8 ms | 18.3–20.8 ms |
+
+What this says:
+
+- The round trip itself is gone: the bytes form waits ≈ 2 ms a position for the front's frame to come
+  back (submit, map, copy out) and copies it twice more; the held form submits and returns. Over a
+  lap that is ≈ 1.5 ms of the advancing thread's wall a frame and 1.15 MB a frame less uploaded.
+- The "≈ 16 ms a position" stream-input-order measured was NOT the round trip: it is the FIRST front
+  run, which opens the front's engine (0.7 s on llvmpipe with a warm disk cache, 73 s cold on a
+  loaded machine), spread over the lap's 50 frames — the same in both forms. Without it the front
+  costs ≈ 0.6 ms a position held. In the editor the player's prewarm (`prewarm_stream_front`, now on
+  the compute device) opens it before the first walk; `stream-cost` does not prewarm.
+- The stream here is coded at the kernel's own lines (the front's frames are 0.9 MB each), not at
+  1080: the earlier design's "at 1080 lines" named the preview's size.
+- Jobs' wall and the advance wall are the codec's on llvmpipe (44–48 ms a frame both forms at low
+  load); the front was never their bound here.
+- `kt-cli trace … summary` of a held run: `gpu_exec` 188 = 126 codec pieces + 62 front frames, all on
+  the compute device's ring; no offline device is opened by the front.
+
+Idle: nothing runs at rest that did not before — the front runs only inside a walk, no thread, timer
+or poll was added; the spares are freed buffers (no work). The live scenario `idle` takes
+`KT_LIVE_SHOWCASE=--mosh-behind` now. On the release build (`KT_LIVE_APP=target/release/kinetren`),
+that project, llvmpipe: a pause runs nothing, 1 % of a core (the live control and the load watch),
+trace +0 bytes, no thread of ours wakes on a clock; after a play the sound wakes nothing; an open
+effects window at rest runs nothing, 1 %, trace +0. The pointer over the preview, the status bar and
+the composition costs 416–445 % of a core in UI frames drawn by llvmpipe and asks no composite,
+decode or job — the same verdicts as the plain `--heavy` project; the front adds nothing at rest.
 
 ## Risks
 

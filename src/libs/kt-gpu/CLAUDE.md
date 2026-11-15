@@ -122,6 +122,24 @@ is no picture, and an export refuses.
   `pan3d_forward` (`fx-video-distort/src/pan3d.rs`), and the shader reads the result
   (t187 checks every run, t301 — an export carries it).
 
+## Held frames (stream-front-on-device)
+
+- **A frame can stay on the compute device** (`held.rs`, row 543): `front_on_compute` builds an engine on
+  `compute::host_device()`'s device and marks it `hold_for_compute`; its `execute_held` is
+  `execute_once`'s resolve and passes in the settled form, the result copied into a tightly packed
+  buffer (a padded width packed row by row on the device), submitted and never waited for. A compute
+  job takes it as `Init::Held`, copied on the device and ordered after the frame on the one queue; a
+  buffer of another device is refused before anything is encoded (an `Err`, which the codec would turn
+  into `compute::fail` — so only a `hold_for_compute` engine on THE compute device returns `Held`).
+  Dropped buffers go back to the device's spares (a codec batch's bytes, under the ledger as compute).
+  t2621, t2622.
+- **A shape's readiness does NOT move the memo keys** (row 561, stream-front-on-device D6): tried
+  process-wide and per device, both recomposed the loop the fill kept (t2334 red). Move them only on a
+  difference the device itself measured.
+- **A record never waits for a calibration and never uses a stale one** (row 562): the bracket lives in
+  `best`, apart from the `calib` lock; a job that found another calibrating places no `gpu_start` on a
+  calibration older than `CALIBRATION_AGE` (t2623).
+
 ## What a pass costs (gpu-pass-cost)
 
 - **Every render pass of the engine and every compute dispatch is timed** where the device has

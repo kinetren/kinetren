@@ -798,12 +798,6 @@ impl Compiled {
             self.wait_frames();
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }
-        let specialized = pipe.is_some();
         self.shapes.lock().unwrap_or_else(|e| e.into_inner()).insert(h, Shape::Ready(pipe));
-        // a frame asking the shape from now runs the specialized text, not the interpreter: the memo
-        // keys name the form (stream-front-on-device, found-defects 561 — the mechanism of row 510)
-        if specialized {
-            forms_moved();
-        }
     }
 }

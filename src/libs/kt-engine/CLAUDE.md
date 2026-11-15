@@ -36,6 +36,12 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   names the front (`front_key`, the position when curved): an edit in front re-walks the history, one after does
   not. No front executor → the frame is missing, never the decoded picture. A new path that builds a stream input
   goes through `ClipStream` or names the front itself. t2470–t2472.
+  **The front feeds the codec on the compute device** (stream-front-on-device, row 543): the front's
+  executor is an engine on the compute host's device, and `ClipStream::on_device` hands the kernel a
+  held buffer (`VideoGpuExec::execute_held`, `HeldOut`) — no readback, no upload; `with_frame` keeps the
+  bytes form for the reference walk and the no-device paths. The front memo keys by (address, form). A
+  new reader of a stream frame that runs on the device asks `on_device` first. `KT_FRONT_HELD=off` /
+  `with_front_bytes` run the bytes form (t2620).
   **The live preview PACES the stage** (decode-request-storm, `StreamPacing`, set by the player on its renderers
   only): the order is the earliest history positions that fit a quarter of the cache (a whole history ordered at
   once ran the decoder through it while the stage read only at composites, and LRU dropped its front — the frame

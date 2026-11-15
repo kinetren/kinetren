@@ -36,6 +36,10 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   not evicted for new ones, which pass through a window of a quarter of the bound (stream-memo-budget, t2490). Datamosh
   walks in batches on the device (`fx-video-codec` `walk.rs`); `mosh::render_reference` is the
   per-position walk the batches are held to (t2350).
+- **A stream frame may already lie on the compute device** (stream-front-on-device): `StreamInput::on_device`
+  answers `Held` (a `compute::Held` buffer, the bytes `with_frame` would give), `Missing` or `Host` (ask
+  `with_frame`); a kernel that runs on the device asks it first and passes the buffer as `Init::Held`.
+  `Held` is opaque (`Arc<dyn Any>`): a plugin never sees wgpu.
 - **Helpers shared by kernels and the host live here so each has ONE text**: `geo::invert3` and
   `TRANSPARENT`, `trans::Img`, the generator helpers (`smooth`, `rgb`, `coverage`, `lowbias32`…),
   `pixfont` (moved from kt-media).
