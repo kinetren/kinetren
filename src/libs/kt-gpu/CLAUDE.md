@@ -29,6 +29,15 @@ is no picture, and an export refuses.
   on the window's device off the UI thread calls `errors::yield_to_display()`: a refused
   `Surface::configure` (another thread submitted while it waited for idle) holds those for two UI
   frames. t2720–t2724.
+- **On GL the window's device is the UI thread's alone** (gl-context-holder, found-defects 651): every
+  wgpu-hal gles call holds the adapter's ONE context lock through the whole call (a link, a variant
+  compile at a draw, a fence wait up to 2.1 s, a Mesa disk-cache read), and egui's paint panics after
+  six seconds without it. `display_is_ui_only(info)` is true on GL; there the preview runs on
+  `preview_engine_off_display()` (its own GL device, a `sibling` per project) and the bytes path. A NEW
+  caller of the window's device off the UI thread is the defect this closed. Every wgpu call that can
+  hold a device registers in `holds` (`hold` for one call, `within` for an entry point's span): a
+  long one on the window's device is a journal line, and the panic report lists what is in flight.
+  t2740–t2744.
 - **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
   sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
   with table reads lane by lane, ten times the cost. Write taps out, or specialize the text

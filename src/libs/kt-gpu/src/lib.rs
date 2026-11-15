@@ -9,6 +9,7 @@ pub mod arbiter;
 mod binds;
 pub mod compute;
 pub mod errors;
+pub mod holds;
 pub mod memory;
 pub mod pass_time;
 pub mod reference;
@@ -198,7 +199,36 @@ pub fn park_offline_engine() {
     for e in [SIDE.get(), FRONT.get(), OFFLINE.get()].into_iter().flatten().flatten() {
         e.park();
     }
+    // the preview's engine off the window's device (GL): its thread may be composing at exit too
+    let current = PREVIEW_NOW.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(e) = current {
+        e.park();
+    }
 }
+
+/// Whether the window's device must be left to the UI thread alone (gl-context-holder): on GL every
+/// call into a device takes its adapter's ONE context lock, held through a pipeline link, a variant
+/// compile at a draw, a fence wait, a Mesa disk-cache read; and egui's paint gives up after six
+/// seconds ("Could not lock adapter context") and panics. Another thread of ours on that device —
+/// the preview's compose, the engine build, the warm worker — stalled by the system for six seconds
+/// ended the program. On GL the preview composes on a device of its own instead
+/// (`preview_engine_off_display`), and the window's device has no caller but the UI thread.
+pub fn display_is_ui_only(info: &wgpu::AdapterInfo) -> bool {
+    info.backend == wgpu::Backend::Gl
+}
+
+/// The preview's engine where the window's device is the UI thread's alone (`display_is_ui_only`):
+/// one headless device per process, its pipelines compiled once, and a `sibling` of it per project
+/// (its own frame state, nothing compiled). The preview then takes the bytes path. `None` — no device.
+pub fn preview_engine_off_display() -> Option<std::sync::Arc<GpuFxEngine>> {
+    let base = PREVIEW_BASE.get_or_init(|| GpuContext::new_headless().and_then(GpuFxEngine::new).ok()).clone()?;
+    let e = base.sibling();
+    *PREVIEW_NOW.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.clone());
+    Some(e)
+}
+
+static PREVIEW_BASE: std::sync::OnceLock<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::OnceLock::new();
+static PREVIEW_NOW: std::sync::Mutex<Option<std::sync::Arc<GpuFxEngine>>> = std::sync::Mutex::new(None);
 
 /// The engines an export of `w`×`h` composes on (compute-kernels-render, D4): a card gets one; a
 /// software adapter runs one frame per queue, so it gets a device per worker, as many as the cores

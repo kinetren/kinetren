@@ -260,7 +260,18 @@ pub fn set_session(id: &str) {
 /// replacing the global hook in a test (the replacement would affect neighboring tests).
 pub(crate) fn crash_report(panic_text: &str) -> String {
     let dump = flight_slot().lock().ok().and_then(|s| s.as_ref().map(|f| f.dump()));
-    crash_report_with(panic_text, dump.as_deref(), SESSION.get().map(String::as_str))
+    let mut out = crash_report_with(panic_text, dump.as_deref(), SESSION.get().map(String::as_str));
+    // who is inside a device call now (gl-context-holder): a paint that could not lock the GL
+    // context names the call that held it
+    let holds = kt_gpu::holds::in_flight();
+    if !holds.is_empty() {
+        out.push_str("\n--- GPU calls in flight ---\n");
+        for h in holds {
+            out.push_str(&h);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 pub(crate) fn crash_report_with(

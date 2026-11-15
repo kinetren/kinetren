@@ -29,6 +29,8 @@ pub(crate) struct Kit {
     shared: wgpu::BindGroup,
     geom: wgpu::BindGroup,
     targets: HashMap<wgpu::TextureFormat, wgpu::TextureView>,
+    /// The device's role, as `holds` names it.
+    role: &'static str,
 }
 
 fn texture(device: &wgpu::Device, format: wgpu::TextureFormat, usage: wgpu::TextureUsages) -> wgpu::TextureView {
@@ -47,7 +49,7 @@ fn texture(device: &wgpu::Device, format: wgpu::TextureFormat, usage: wgpu::Text
 }
 
 impl Kit {
-    pub(crate) fn new(device: &wgpu::Device, shared: &wgpu::BindGroupLayout, geom: &wgpu::BindGroupLayout) -> Kit {
+    pub(crate) fn new(device: &wgpu::Device, shared: &wgpu::BindGroupLayout, geom: &wgpu::BindGroupLayout, role: &'static str) -> Kit {
         // zeros: every loop bound a uniform gives is 0, every size is 0 — the cheapest run of the code
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("kt-gpu warm uniform"),
@@ -74,7 +76,7 @@ impl Kit {
             .into_iter()
             .map(|f| (f, texture(device, f, wgpu::TextureUsages::RENDER_ATTACHMENT)))
             .collect();
-        Kit { shared, geom, targets }
+        Kit { shared, geom, targets, role }
     }
 
     /// Draw each pipeline once and wait for the device: when this returns, their code is compiled.
@@ -109,7 +111,12 @@ impl Kit {
             }
             rp.draw(0..3, 0..1);
         }
-        queue.submit([enc.finish()]);
+        let role = self.role;
+        {
+            let _h = crate::holds::hold(role, "warm submit");
+            queue.submit([enc.finish()]);
+        }
+        let _h = crate::holds::hold(role, "warm wait");
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
     }
 }

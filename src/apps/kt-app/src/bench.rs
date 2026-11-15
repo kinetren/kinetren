@@ -142,6 +142,10 @@ pub(crate) enum Cmd {
     /// thread does under a heavy loop: a resize meanwhile finds the queue busy (gpu-errors-survive,
     /// live `resize_loop`). The bench alone asks for it.
     GpuBusy(u64),
+    /// Hold the GL context lock of the preview engine's device for N seconds from a thread of its
+    /// own, as a GL call of ours stalled by the system would (gl-context-holder, live `gl_stall`).
+    /// The bench alone asks for it.
+    GlStall(u64),
 }
 
 /// `Cmd::GpuBusy`: clear a large target on the window's device `count` times, two submissions in
@@ -245,6 +249,7 @@ pub(crate) fn poll() -> Option<(u64, Cmd)> {
         "crash" => Cmd::Crash,
         "fault" => Cmd::Fault,
         "gpu_busy" => Cmd::GpuBusy(it.next()?.trim().parse().ok()?),
+        "gl_stall" => Cmd::GlStall(it.next()?.trim().parse().ok()?),
         _ => return None,
     };
     Some((seq, cmd))

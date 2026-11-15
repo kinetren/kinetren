@@ -905,6 +905,8 @@ pub struct GpuFxEngine {
     /// The editor's display engine (`new_kept`): its frames wait out a refused reconfigure of the
     /// window's surface (gpu-errors-survive).
     display: bool,
+    /// Its device's role, as `holds` and the error log name it (gl-context-holder).
+    role: &'static str,
 }
 
 pub(crate) const SHADERS: [(&str, &str); PIPE_COUNT] = [
@@ -1318,7 +1320,14 @@ impl GpuFxEngine {
         // (the driver's disk cache carrying the code over) was measured there; on GL each device needs
         // an EGL instance of its own (segv-crashes), and the shadow's would buy nothing measured
         let shadow = info.software && !export && ai.backend == wgpu::Backend::Vulkan;
-        let c = crate::compiled::for_device(&device, &queue, ai, keep && !compile_only, shadow)?;
+        let role = if keep {
+            crate::errors::role::DISPLAY
+        } else if export {
+            crate::errors::role::EXPORT
+        } else {
+            crate::errors::role::HEADLESS
+        };
+        let c = crate::compiled::for_device(&device, &queue, ai, keep && !compile_only, shadow, role)?;
         if compile_only {
             return Ok(None);
         }
@@ -1397,6 +1406,13 @@ impl GpuFxEngine {
             compiled: c.clone(),
             shown: Mutex::new((None, None)),
             display: keep,
+            role: if keep {
+                crate::errors::role::DISPLAY
+            } else if export {
+                crate::errors::role::EXPORT
+            } else {
+                crate::errors::role::HEADLESS
+            },
             inner: Mutex::new(Inner {
                 device,
                 queue,
@@ -1497,6 +1513,7 @@ impl GpuFxEngine {
 
     /// The display target's bytes (premultiplied, as egui samples them): tests only.
     pub fn read_display(&self) -> Option<Vec<u8>> {
+        let _hold = crate::holds::within(self.role, "read_display");
         self.read_target(|i| i.display.as_ref())
     }
 
@@ -1549,6 +1566,14 @@ impl GpuFxEngine {
 }
 
 impl GpuFxEngine {
+    /// Tests and the live bench (gl-context-holder): hold this engine's device's GL context lock
+    /// until `release` returns, as a stalled GL call would; `false` on another backend.
+    #[doc(hidden)]
+    pub fn hold_gl_context(&self, release: impl FnOnce()) -> bool {
+        let device = self.inner.lock().unwrap_or_else(|e| e.into_inner()).device.clone();
+        crate::holds::hold_gl_context(&device, release)
+    }
+
     /// The display engine's frame waits out a refused reconfigure of the window's surface: wgpu
     /// refuses one that finds the queue busy with another thread's work (gpu-errors-survive).
     fn yield_to_display(&self) {
@@ -1567,6 +1592,7 @@ impl GpuFxEngine {
         out: &mut Vec<u8>,
     ) -> Result<(bool, kt_fx::video::FrameCost), GpuExecError> {
         self.yield_to_display();
+        let _hold = crate::holds::within(self.role, "execute_measured");
         let _frame = self.compiled.frame();
         let mut inner = self.inner.lock().unwrap();
         let complete = inner.guarded(|g| g.execute(plan, out, false, true))?;
@@ -1641,6 +1667,7 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         self.yield_to_display();
+        let _hold = crate::holds::within(self.role, "execute_into");
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
         let mut g = self.inner.lock().unwrap();
@@ -1651,6 +1678,7 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         self.yield_to_display();
+        let _hold = crate::holds::within(self.role, "execute_once");
         let _frame = self.compiled.frame();
         let mut g = self.inner.lock().unwrap();
         // an export's frame: its runs in the settled form (gpu-leftovers D3)
@@ -1661,6 +1689,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn execute_held(&self, plan: &FramePlan<'_>) -> Result<HeldOut, GpuExecError> {
+        let _hold = crate::holds::within(self.role, "execute_held");
         let _frame = self.compiled.frame();
         let mut g = self.inner.lock().unwrap();
         if g.held.is_none() {
@@ -1691,6 +1720,7 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn present(&self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
         self.yield_to_display();
+        let _hold = crate::holds::within(self.role, "present");
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
         let mut g = self.inner.lock().unwrap();
@@ -1707,6 +1737,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn wait_presented(&self) {
+        let _hold = crate::holds::within(self.role, "wait_presented");
         let (device, queue, expect) = {
             let g = self.inner.lock().unwrap();
             (g.device.clone(), g.queue.clone(), g.timer.last_frame(Role::Preview))
@@ -1747,6 +1778,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn finish_present(&self) {
+        let _hold = crate::holds::within(self.role, "finish_present");
         let device = self.inner.lock().unwrap().device.clone();
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
     }
@@ -1761,6 +1793,7 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn present_kept(&self, key: u64, o: PresentOptions) -> bool {
         self.yield_to_display();
+        let _hold = crate::holds::within(self.role, "present_kept");
         let _frame = self.compiled.frame();
         let mut g = self.inner.lock().unwrap();
         // an error in the replay shows nothing, as a miss does; the next composed frame reports it
@@ -1778,6 +1811,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn keep(&self, key: u64, w: u32, h: u32, rgba: &[u8]) {
+        let _hold = crate::holds::within(self.role, "keep");
         self.inner.lock().unwrap().keep(key, w, h, rgba);
     }
 
@@ -1795,10 +1829,12 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn submit(&self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
         self.yield_to_display();
+        let _hold = crate::holds::within(self.role, "submit");
         self.inner.lock().unwrap().guarded(|g| g.submit(plan))
     }
 
     fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        let _hold = crate::holds::within(self.role, "collect");
         self.inner.lock().unwrap().guarded(|g| g.collect(ticket, out))
     }
 }
@@ -1901,7 +1937,7 @@ impl Inner {
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.staged.flush(&self.queue, &self.arena);
-        let sub = self.queue.submit([enc.finish()]);
+        let sub = { let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "submit"); self.queue.submit([enc.finish()]) };
         if let Some(p) = self.piece.take() {
             p.end(&self.device, &self.queue, sub.clone(), self.surface);
         }
@@ -1932,9 +1968,11 @@ impl Inner {
             out.resize(n, 0);
             return Ok(f.complete);
         };
-        self.device
-            .poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None })
-            .map_err(|_| GpuExecError::DeviceLost)?;
+        let waited = {
+            let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "wait");
+            self.device.poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None })
+        };
+        waited.map_err(|_| GpuExecError::DeviceLost)?;
         let slot = self.ring[(ticket % RING as u64) as usize].as_ref().ok_or(GpuExecError::DeviceLost)?;
         if *slot.mapped.lock().unwrap() != Some(true) {
             return Err(GpuExecError::DeviceLost);
@@ -2051,7 +2089,7 @@ impl Inner {
             // counted on the ring, never admitted (gpu-throughput D1)
             let ns = self.timer.last_frame(Role::Preview);
             let ticket = self.arb.note_display(ns);
-            let sub = self.queue.submit([enc.finish()]);
+            let sub = { let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "submit"); self.queue.submit([enc.finish()]) };
             drop(ticket.submitted(&self.device, &self.queue, sub, ns, self.surface));
             self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
             self.timer.submitted(&self.queue, Role::Preview, meta);
@@ -2086,7 +2124,7 @@ impl Inner {
         self.staged.flush(&self.queue, &self.arena);
         let ns = self.timer.predict(PassLabel::Fixed("display")).unwrap_or(0) * if o.glow { 2 } else { 1 };
         let ticket = self.arb.note_display(ns);
-        let sub = self.queue.submit([enc.finish()]);
+        let sub = { let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "submit"); self.queue.submit([enc.finish()]) };
         drop(ticket.submitted(&self.device, &self.queue, sub, ns, self.surface));
         self.timer.submitted(&self.queue, Role::Preview, meta);
         self.last_stages.replayed = true;
@@ -2299,7 +2337,7 @@ impl Inner {
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.staged.flush(&self.queue, &self.arena);
-        let sub = self.queue.submit([enc.finish()]);
+        let sub = { let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "submit"); self.queue.submit([enc.finish()]) };
         if let Some(p) = self.piece.take() {
             p.end(&self.device, &self.queue, sub, self.surface);
         }
@@ -2315,9 +2353,11 @@ impl Inner {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|_| GpuExecError::DeviceLost)?;
+        let waited = {
+            let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "wait");
+            self.device.poll(wgpu::PollType::wait_indefinitely())
+        };
+        waited.map_err(|_| GpuExecError::DeviceLost)?;
         match rx.recv() {
             Ok(Ok(())) => {}
             _ => return Err(GpuExecError::DeviceLost),
@@ -2430,7 +2470,7 @@ impl Inner {
         }
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.staged.flush(&self.queue, &self.arena);
-        let sub = self.queue.submit([enc.finish()]);
+        let sub = { let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "submit"); self.queue.submit([enc.finish()]) };
         if let Some(p) = self.piece.take() {
             p.end(&self.device, &self.queue, sub, self.surface);
         }
@@ -2640,7 +2680,7 @@ impl Inner {
             );
             kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
             self.staged.flush(&self.queue, &self.arena);
-            let sub = self.queue.submit([full.finish()]);
+            let sub = { let _h = crate::holds::hold(if self.surface { crate::errors::role::DISPLAY } else { crate::errors::role::HEADLESS }, "submit"); self.queue.submit([full.finish()]) };
             p.cut(&self.device, &self.queue, sub, self.surface, next);
         }
         p.add(next);

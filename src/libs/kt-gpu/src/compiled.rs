@@ -140,6 +140,8 @@ pub(crate) struct Compiled {
     /// The adapter, and whether the worker warms a shadow device first (D2b).
     info: wgpu::AdapterInfo,
     shadow: bool,
+    /// The device's role, as `holds` names it (gl-context-holder).
+    role: &'static str,
 }
 
 /// A frame composing on the device (`Compiled::frame`): the warm worker waits for it to end.
@@ -220,6 +222,7 @@ impl Sources {
 }
 
 fn render_pipe(
+    role: &'static str,
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     cache: Option<&wgpu::PipelineCache>,
@@ -227,6 +230,8 @@ fn render_pipe(
     text: String,
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
+    // one wgpu call holding the device: on GL the context lock, through the GLSL link
+    let _hold = crate::holds::hold(role, "create pipeline");
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(name),
         source: wgpu::ShaderSource::Wgsl(text.into()),
@@ -263,21 +268,29 @@ pub(crate) fn for_device(
     info: &wgpu::AdapterInfo,
     keep: bool,
     shadow: bool,
+    role: &'static str,
 ) -> Result<Arc<Compiled>, GpuInitError> {
     if !keep {
-        return Ok(Arc::new(Compiled::compile(device, queue, info, shadow)?));
+        return Ok(Arc::new(Compiled::compile(device, queue, info, shadow, role)?));
     }
     let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(c) = kept.iter().find(|c| *c.device == **device) {
         return Ok(c.clone());
     }
-    let c = Arc::new(Compiled::compile(device, queue, info, shadow)?);
+    let c = Arc::new(Compiled::compile(device, queue, info, shadow, role)?);
     kept.push(c.clone());
     Ok(c)
 }
 
 impl Compiled {
-    fn compile(device: &Arc<wgpu::Device>, queue: &Arc<wgpu::Queue>, info: &wgpu::AdapterInfo, shadow: bool) -> Result<Compiled, GpuInitError> {
+    fn compile(
+        device: &Arc<wgpu::Device>,
+        queue: &Arc<wgpu::Queue>,
+        info: &wgpu::AdapterInfo,
+        shadow: bool,
+        role: &'static str,
+    ) -> Result<Compiled, GpuInitError> {
+        let _hold = crate::holds::within(role, "compile pipelines");
         // an engine built on a thread (the editor's, the offline one, a shadow) compiles on the device:
         // the exit waits for it (D10)
         let _busy = crate::exit::busy().ok_or_else(|| GpuInitError::Unsupported("the process is exiting".into()))?;
@@ -319,16 +332,16 @@ impl Compiled {
         let pipes: Vec<wgpu::RenderPipeline> = src
             .fixed
             .iter()
-            .map(|(name, body)| render_pipe(device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), FORMAT))
+            .map(|(name, body)| render_pipe(role, device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), FORMAT))
             .collect();
         let plugin_pipes: Vec<wgpu::RenderPipeline> = src
             .plugins
             .iter()
             .map(|(name, body, word, _)| {
-                render_pipe(device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), if *word { WORD_FORMAT } else { FORMAT })
+                render_pipe(role, device, &pipe_layout, pc, name, format!("{COMMON}\n{body}"), if *word { WORD_FORMAT } else { FORMAT })
             })
             .collect();
-        let display_pipe = render_pipe(device, &pipe_layout, pc, "display", format!("{COMMON}\n{DISPLAY}"), DISPLAY_FORMAT);
+        let display_pipe = render_pipe(role, device, &pipe_layout, pc, "display", format!("{COMMON}\n{DISPLAY}"), DISPLAY_FORMAT);
         // The merged geometry pass (R.44): the GEOM_UNIFORM_BYTES uniform does not fit into
         // the shared layout (128 B) — its own layout and pipe from the same arena buffer.
         let geom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -352,7 +365,7 @@ impl Compiled {
             bind_group_layouts: &[Some(&geom_layout)],
             immediate_size: 0,
         });
-        let geom_pipe = render_pipe(device, &geom_pipe_layout, pc, "geom_fused", src.fused.clone(), FORMAT);
+        let geom_pipe = render_pipe(role, device, &geom_pipe_layout, pc, "geom_fused", src.fused.clone(), FORMAT);
         let validation = pollster::block_on(err_scope.pop());
         let internal = pollster::block_on(internal_scope.pop());
         if let Some(e) = validation.or(internal) {
@@ -360,7 +373,7 @@ impl Compiled {
         }
         let pipes: [wgpu::RenderPipeline; PIPE_COUNT] =
             pipes.try_into().map_err(|_| GpuInitError::Pipeline("pipe count".into()))?;
-        let kit = Kit::new(device, &layout, &geom_layout);
+        let kit = Kit::new(device, &layout, &geom_layout, role);
         let slots = PIPE_COUNT + plugin_pipes.len() + 2;
         Ok(Compiled {
             device: device.clone(),
@@ -387,6 +400,7 @@ impl Compiled {
             frame_done: Condvar::new(),
             info: info.clone(),
             shadow,
+            role,
         })
     }
 
@@ -416,7 +430,7 @@ impl Compiled {
         if (i.name.as_str(), i.backend, i.driver_info.as_str()) != (self.info.name.as_str(), self.info.backend, self.info.driver_info.as_str()) {
             return None;
         }
-        Compiled::compile(&ctx.device, &ctx.queue, i, false).ok()
+        Compiled::compile(&ctx.device, &ctx.queue, i, false, crate::errors::role::HEADLESS).ok()
     }
 
     fn index(&self, s: Slot) -> usize {
@@ -736,6 +750,7 @@ impl Compiled {
                 Slot::Geom => (self.geom_pipe.clone(), Layout::Geom, FORMAT),
             })
             .collect();
+        let _hold = crate::holds::within(self.role, "warm draw");
         self.kit.draw(&self.device, &self.queue, &list);
         for &i in slots {
             self.warm[i].store(true, Ordering::Release);
@@ -753,13 +768,14 @@ impl Compiled {
             let text = crate::runs::run_text(&ids, &taps);
             let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
             let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let p = render_pipe(&self.device, &self.geom_pipe_layout, self.cache.as_ref().map(|c| c.get()), "point_run", text, FORMAT);
+            let p = render_pipe(self.role, &self.device, &self.geom_pipe_layout, self.cache.as_ref().map(|c| c.get()), "point_run", text, FORMAT);
             let failed = pollster::block_on(validation.pop()).is_some() | pollster::block_on(internal.pop()).is_some();
             (!failed).then_some(p)
         })
     }
 
     fn compile_run(&self, key: &[u16]) {
+        let hold = crate::holds::within(self.role, "compile run shape");
         let pipe = self.run_pipe(key);
         if let Some(p) = pipe.as_ref().filter(|_| !crate::exit::exiting()) {
             let mut span = kt_time::trace::span(kt_time::trace::Ev::Warm);
@@ -767,6 +783,7 @@ impl Compiled {
             self.wait_frames();
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }
+        drop(hold);
         let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         let (map, ids) = &mut *runs;
         match map.get_mut(key) {
@@ -785,10 +802,11 @@ impl Compiled {
     }
 
     fn compile_shape(&self, h: [u32; 4]) {
+        let hold = crate::holds::within(self.role, "compile geometry shape");
         let pipe = geom_specialized(h).and_then(|text| {
             let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
             let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-            let p = render_pipe(&self.device, &self.geom_pipe_layout, self.cache.as_ref().map(|c| c.get()), "geom_shape", text, FORMAT);
+            let p = render_pipe(self.role, &self.device, &self.geom_pipe_layout, self.cache.as_ref().map(|c| c.get()), "geom_shape", text, FORMAT);
             let failed = pollster::block_on(validation.pop()).is_some() | pollster::block_on(internal.pop()).is_some();
             (!failed).then_some(p)
         });
@@ -798,6 +816,7 @@ impl Compiled {
             self.wait_frames();
             self.kit.draw(&self.device, &self.queue, &[(p.clone(), Layout::Geom, FORMAT)]);
         }
+        drop(hold);
         self.shapes.lock().unwrap_or_else(|e| e.into_inner()).insert(h, Shape::Ready(pipe));
     }
 }

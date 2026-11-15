@@ -54,7 +54,7 @@ pub fn set_sink(f: impl Fn(&str) + Send + Sync + 'static) {
     let _ = SINK.set(Box::new(f));
 }
 
-fn emit(line: &str) {
+pub(crate) fn emit(line: &str) {
     match SINK.get() {
         Some(f) => f(line),
         None => eprintln!("kt-gpu: {line}"),

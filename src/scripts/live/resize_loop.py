@@ -82,7 +82,12 @@ def main(out):
         print(f"   journal GPU lines: {len(lines)}, refused reconfigures: {len(refused)}")
         for line in lines[:5]:
             print(f"     {line}")
-        app.expect(refused, "the busy queue refused a reconfigure, and the journal has its line (the race was met)")
+        if app.geom()["compose"].get("ui_only"):
+            # GL: the window's device is the UI thread's alone (gl-context-holder), nothing else submits
+            # there, so a reconfigure is never refused
+            app.expect(not refused, f"on GL no reconfigure is refused: {len(refused)}")
+        else:
+            app.expect(refused, "the busy queue refused a reconfigure, and the journal has its line (the race was met)")
         return app.done()
 
 

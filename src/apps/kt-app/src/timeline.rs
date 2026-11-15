@@ -1280,7 +1280,7 @@ impl KtApp {
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
              \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
-             \"on_display\":{},\"picture\":{},\"complete_taken\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
+             \"on_display\":{},\"ui_only\":{},\"picture\":{},\"complete_taken\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
@@ -1324,6 +1324,7 @@ impl KtApp {
             self.player.video_cost().gpu,
             self.player.video_cost().cost.subsamples,
             self.preview_on_display_now(),
+            self.display_ui_only,
             // what is on screen and how many complete composites came, read at ONE instant: the
             // fields above accumulate over the frames between two dumps (no-partial-picture)
             self.preview_texture_id().is_some(),
