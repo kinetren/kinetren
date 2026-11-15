@@ -234,3 +234,29 @@ fn src_alpha(p: vec2<i32>) -> u32 {
 fn isign(v: i32) -> i32 {
     return select(select(0, 1, v > 0), -1, v < 0);
 }
+
+// the source's transfer undone for a channel byte (s00, and s12's table of it: one text, so the
+// table holds the values s00 computed)
+fn decode(c: u32, curve: u32) -> f32 {
+    let v = f32(c) * 0.003921569;
+    switch curve {
+        case 0u: {
+            if (v <= 0.04045) {
+                return v * 0.07739938;
+            }
+            return pow((v + 0.055) * 0.9478673, 2.4);
+        }
+        case 1u: {
+            if (v < 0.081) {
+                return v * 0.22222222;
+            }
+            return pow((v + 0.099) * 0.9099181, 2.222222);
+        }
+        case 2u: {
+            return pow(v, 2.2);
+        }
+        default: {
+            return v;
+        }
+    }
+}

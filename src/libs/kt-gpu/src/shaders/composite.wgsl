@@ -77,9 +77,20 @@ fn dis(a: vec4<u32>, b: vec4<u32>, k: u32, a_has: u32, b_has: u32) -> vec4<u32> 
 
 // ---- transitions (a mirror of transitions.rs) -------------------------------------
 
+// the two sides' sizes, taken once per fragment by `take_dims` before any transition runs
+// (per-sample-costs, found-defects 361): `samp` asked textureDimensions five times a bilinear tap —
+// some 35 a pixel in whip and zoom blur
+var<private> DIM1: vec2<i32>;
+var<private> DIM2: vec2<i32>;
+
+fn take_dims() {
+    DIM1 = vec2<i32>(textureDimensions(T1, 0));
+    DIM2 = vec2<i32>(textureDimensions(T2, 0));
+}
+
 fn t_dims(which: u32) -> vec2<i32> {
-    if (which == 0u) { return vec2<i32>(textureDimensions(T1, 0)); }
-    return vec2<i32>(textureDimensions(T2, 0));
+    if (which == 0u) { return DIM1; }
+    return DIM2;
 }
 
 fn out_dims() -> vec2<f32> {
@@ -252,6 +263,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         // there is no fade with blend, and the slot is free by construction
         return blend_over(dst, a, P.u1.y, a_has, alpha_k);
     }
+    take_dims();
     let od = out_dims();
     let uv = (vec2<f32>(pos.xy)) / od;
     if (mode == 3u) {

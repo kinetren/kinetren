@@ -1,35 +1,21 @@
 // U: the unprocessing (cpu.rs unprocess_row), at FRAME pixels: the source's transfer undone, the
 // defocus disc, the source's saturation matrix and white balance undone → the scene, packed.
-// u0 = (flags, bits(m8), bits(1/wb_r), bits(1/wb_b)); u1 = (bits(blur px), 0, 0, 0); f0, f1 = m0..m7.
-// T0 = the source.
+// u0 = (flags, bits(m8), bits(1/wb_r), bits(1/wb_b)); u1 = (bits(blur px), the curve's table is in T2, 0, 0);
+// f0, f1 = m0..m7. T0 = the source, T2 = s12's table when u1.y is 1.
 
-fn decode(c: u32, curve: u32) -> f32 {
-    let v = f32(c) * 0.003921569;
-    switch curve {
-        case 0u: {
-            if (v <= 0.04045) {
-                return v * 0.07739938;
-            }
-            return pow((v + 0.055) * 0.9478673, 2.4);
-        }
-        case 1u: {
-            if (v < 0.081) {
-                return v * 0.22222222;
-            }
-            return pow((v + 0.099) * 0.9099181, 2.222222);
-        }
-        case 2u: {
-            return pow(v, 2.2);
-        }
-        default: {
-            return v;
-        }
+// the source's transfer of a channel byte: `decode` (camera_common.wgsl) or, with defocus, its
+// table (s12_curve.wgsl, per-sample-costs row 362: 51 `pow` a pixel), read as the f32's four bytes
+fn decode_at(c: u32, curve: u32) -> f32 {
+    if (P.u1.y == 1u) {
+        let t = textureLoad(T2, vec2<i32>(i32(c), 0), 0);
+        return bitcast<f32>(t.r | (t.g << 8u) | (t.b << 16u) | (t.a << 24u));
     }
+    return decode(c, curve);
 }
 
 fn lin(x: i32, y: i32, curve: u32) -> vec3<f32> {
     let t = at_frame(x, y);
-    return vec3<f32>(decode(t.r, curve), decode(t.g, curve), decode(t.b, curve));
+    return vec3<f32>(decode_at(t.r, curve), decode_at(t.g, curve), decode_at(t.b, curve));
 }
 
 const DISC = array<vec2<f32>, 8>(

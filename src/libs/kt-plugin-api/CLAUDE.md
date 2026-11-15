@@ -91,6 +91,10 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   cheaper form of a frozen function is that function to the bit and proved on every input
   (`math::powf_neg_half`, t1982). A new kind gets a row in t1980's bounds and t1981's digests
   (`kt-cli fx-cost --digest`, `KT_PRINT_COST=1`).
+- **Inner loops take once what is one value for a larger unit** (per-sample-costs): `math::exp10f` is
+  `powf(10, ·)` to the bit through `exp` (t2682, all 2³² floats) — a per-sample `10^x` calls it;
+  `dsp::wrap_next` wraps a ring without a division; `Biquad::tune_like` gives a second channel the
+  first one's coefficients. A per-sample loop over a ring or two channels uses them.
 - **A kernel standing still takes its constant path, to the bit** (kernel-specialization): a re-tune
   only when its inputs' bits move (`Biquad::tune_key`, the EQ's seven values), one set of values for a
   block whose smoothers stand still (`SmoothedParam::still` is a FIXED POINT of the tick, not

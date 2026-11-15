@@ -1002,7 +1002,11 @@ const SHADERS: &[&str] = &[
     shader!("s09_yuv.wgsl"),
     shader!("s10_chroma.wgsl"),
     shader!("s11_view.wgsl"),
+    shader!("s12_curve.wgsl"),
 ];
+
+/// The index of `s12_curve.wgsl` in `SHADERS`: the transfer table s00 reads with defocus.
+const CURVE_TABLE: u8 = 12;
 
 fn bits(x: f32) -> u32 {
     x.to_bits()
@@ -1173,7 +1177,7 @@ impl BarrierKernel for CameraIsp {
     fn pass_names(&self) -> &'static [&'static str] {
         &[
             "s00-unprocess", "s01-optics", "s02-pixel", "s03-readout", "s04-raw-front", "s05-raw-nr", "s06-raw-correct",
-            "s07-demosaic", "s08-lens-correct", "s09-yuv", "s10-chroma", "s11-view",
+            "s07-demosaic", "s08-lens-correct", "s09-yuv", "s10-chroma", "s11-view", "s12-curve",
         ]
     }
 
@@ -1191,13 +1195,27 @@ impl BarrierKernel for CameraIsp {
         let passes = c.passes();
         let sensor = c.k > 1 && kt_plugin_api::cpu::specialized();
         let (sw, sh) = (g.w.div_ceil(c.k), g.h.div_ceil(c.k));
+        // with defocus the unprocessing decodes 17 taps × 3 channels a pixel: its transfer is a table
+        // of the 256 byte values made on the device by the same function first (per-sample-costs, row
+        // 362; `cpu::with_general` keeps the per-tap form, the reference of t2683)
+        let table = c.blur > 0.0 && c.src_curve < 3 && kt_plugin_api::cpu::specialized();
+        if table {
+            let mut u = [0u32; 8];
+            u[0] = c.flags();
+            out.push(Node::PassAt { shader: CURVE_TABLE, inputs: [Slot::None; 3], u, f: [0.0; 8], w: 256, h: 1 });
+            out.push(Node::Save(0));
+        }
         let mut prev_sensor = false;
         for (i, &ps) in passes.iter().enumerate() {
             let on_sensor = sensor && i + 1 < passes.len() && ps != pass::UNPROCESS;
             let fl = c.flags() | if prev_sensor { SENSOR_IN } else { 0 } | if on_sensor { SENSOR_OUT } else { 0 };
-            let (u, f) = c.uniforms_fl(ps, fl);
+            let (mut u, f) = c.uniforms_fl(ps, fl);
             let first = if i == 0 { Slot::Src } else { Slot::Prev };
-            let inputs = [first, Slot::Src, Slot::None];
+            let mut inputs = [first, Slot::Src, Slot::None];
+            if table && ps == pass::UNPROCESS {
+                u[5] = 1;
+                inputs[2] = Slot::Saved(0);
+            }
             out.push(if on_sensor {
                 Node::PassAt { shader: ps as u8, inputs, u, f, w: sw, h: sh }
             } else {

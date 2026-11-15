@@ -190,7 +190,7 @@ impl Delay {
     fn run(&mut self, x: f64) -> f64 {
         let y = self.buf[self.i];
         self.buf[self.i] = x;
-        self.i = (self.i + 1) % self.buf.len();
+        self.i = kt_plugin_api::dsp::wrap_next(self.i, self.buf.len());
         y
     }
 }
@@ -345,13 +345,50 @@ pub struct MicSound {
     /// The timeline frame of the next input sample (a jump restarts the codec's frame grid).
     next_in: Option<i64>,
     frame_fill: usize,
+    /// The rows a chunk's curves give, kept (per-sample-costs, found-defects 354: `set_targets`
+    /// cloned the passport every 1 024 frames).
+    vt: Vec<f64>,
+    /// The gust's levels of the last cell asked: (cell, level at it, level at the next) —
+    /// a pure function of the cell, asked once per sample instead of hashed twice per sample and
+    /// channel (per-sample-costs, found-defects 358).
+    gust: (i64, f64, f64),
+}
+
+/// The curved rows' indices, looked up once (`set_targets` asked a map by name per row per chunk).
+fn curved_rows() -> &'static [usize; 11] {
+    static R: std::sync::OnceLock<[usize; 11]> = std::sync::OnceLock::new();
+    R.get_or_init(|| {
+        [
+            "mic_scene_spl",
+            "mic_wind",
+            "mic_port_d",
+            "mic_port_l",
+            "mic_front_v",
+            "mic_hpf",
+            "mic_self_noise",
+            "mic_aop",
+            "mic_agc_target",
+            "mic_agc_max",
+            "mic_ns_strength",
+        ]
+        .map(crate::ix)
+    })
 }
 
 impl MicSound {
     pub fn new() -> MicSound {
         let v = crate::defaults();
         let r = MicRows::from(&v);
-        MicSound { ch: [Self::chan(&r), Self::chan(&r)], v, r, at: Placement::default(), next_in: None, frame_fill: 0 }
+        MicSound {
+            ch: [Self::chan(&r), Self::chan(&r)],
+            vt: v.clone(),
+            v,
+            r,
+            at: Placement::default(),
+            next_in: None,
+            frame_fill: 0,
+            gust: (i64::MIN, 0.0, 0.0),
+        }
     }
 
     fn chan(r: &MicRows) -> Chan {
@@ -388,19 +425,28 @@ impl MicSound {
         self.frame_fill = 0;
     }
 
-    /// The wind's pressure (Pa) at timeline frame `n`: turbulence with a gust envelope.
-    fn wind(&self, n: i64, c: usize) -> f64 {
-        if self.r.wind <= 0.0 {
-            return 0.0;
-        }
-        let h = lowbias32(self.r.seed ^ (n as u32).wrapping_mul(0x9E37_79B9) ^ (c as u32 * 0x632B_E5AB) ^ 0x51D);
-        let white = ((h >> 8) as f64 / 16_777_216.0 - 0.5) * 3.464;
+    /// The wind's scale at timeline frame `n` — everything of `wind` but the turbulence: one per
+    /// sample for both channels.
+    fn wind_scale(&mut self, n: i64) -> f64 {
         // gusts: a smooth random level on a 0.4 s grid
         let cell = n.div_euclid(19_200);
         let fr = n.rem_euclid(19_200) as f64 / 19_200.0;
-        let lv = |k: i64| 0.4 + 1.2 * (lowbias32(self.r.seed ^ k as u32 ^ 0x6057) >> 8) as f64 / 16_777_216.0;
-        let gust = lv(cell) + (lv(cell + 1) - lv(cell)) * fr * fr * (3.0 - 2.0 * fr);
-        0.02 * self.r.wind * self.r.wind * self.r.wind * gust * white
+        if self.gust.0 != cell {
+            let lv = |k: i64| 0.4 + 1.2 * (lowbias32(self.r.seed ^ k as u32 ^ 0x6057) >> 8) as f64 / 16_777_216.0;
+            self.gust = (cell, lv(cell), lv(cell + 1));
+        }
+        let (_, l0, l1) = self.gust;
+        let gust = l0 + (l1 - l0) * fr * fr * (3.0 - 2.0 * fr);
+        0.02 * self.r.wind * self.r.wind * self.r.wind * gust
+    }
+
+    /// The wind's pressure (Pa) at timeline frame `n` and channel `c`: turbulence times the gust
+    /// envelope `scale` (`wind_scale`) — the product `0.02·w³·gust·white` in its former order.
+    #[inline]
+    fn wind(&self, n: i64, c: usize, scale: f64) -> f64 {
+        let h = lowbias32(self.r.seed ^ (n as u32).wrapping_mul(0x9E37_79B9) ^ (c as u32 * 0x632B_E5AB) ^ 0x51D);
+        let white = ((h >> 8) as f64 / 16_777_216.0 - 0.5) * 3.464;
+        scale * white
     }
 }
 
@@ -425,16 +471,13 @@ impl AudioState for MicSound {
     /// The microphone's numbers follow their curves chunk by chunk (a gust, an AGC ridden by hand);
     /// the filters take new coefficients and keep their state.
     fn set_targets(&mut self, c: &dyn kt_plugin_api::SlotCurves, s: f64) {
-        let mut v = self.v.clone();
-        for row in ["mic_scene_spl", "mic_wind", "mic_port_d", "mic_port_l", "mic_front_v", "mic_hpf"] {
-            let i = crate::ix(row);
-            v[i] = c.value(row, v[i], s);
+        let v = &mut self.vt;
+        v.clear();
+        v.extend_from_slice(&self.v);
+        for &i in curved_rows() {
+            v[i] = c.value(crate::names()[i], v[i], s);
         }
-        for row in ["mic_self_noise", "mic_aop", "mic_agc_target", "mic_agc_max", "mic_ns_strength"] {
-            let i = crate::ix(row);
-            v[i] = c.value(row, v[i], s);
-        }
-        let r = MicRows::from(&v);
+        let r = MicRows::from(v);
         let refilter = r.helmholtz() != self.r.helmholtz() || r.hpf != self.r.hpf;
         self.r = r;
         if refilter {
@@ -491,8 +534,9 @@ impl AudioState for MicSound {
                     [x, x]
                 };
                 let mut outs = [0f64; 2];
+                let wind_scale = if r.wind <= 0.0 { 0.0 } else { self.wind_scale(n) };
                 for c in 0..nch {
-                    let wind = self.wind(n, c);
+                    let wind = if r.wind <= 0.0 { 0.0 } else { self.wind(n, c, wind_scale) };
                     let ch = &mut self.ch[c];
                     // 1–3: the scene's pressure and the wind at the port, through the port
                     let wind = ch.wind_lp.run(wind);
@@ -532,7 +576,26 @@ impl AudioState for MicSound {
                         };
                         ch.ai_hist[p] = kept;
                         ch.ai_hist[p + HIST] = kept;
-                        ch.ai.iter().zip(&ch.ai_hist[from..from + HIST]).map(|(h, x)| h * x).sum()
+                        // the anti-image filter reads a history whose samples between the kept
+                        // ones are the literal zero: its polyphase form sums only the kept taps
+                        // (per-sample-costs, found-defects 353). History slot j holds frame
+                        // n − (HIST − 1 − j), kept where that frame is a multiple of m. A term
+                        // h·(+0) is ±0 and adding it leaves any non-zero sum exactly as it is, so
+                        // the two forms differ at most in the sign of an exact zero: then the full
+                        // sum answers.
+                        let hist = &ch.ai_hist[from..from + HIST];
+                        let j0 = (HIST as i64 - 1 - n).rem_euclid(m as i64) as usize;
+                        let mut acc = -0.0f64;
+                        let mut j = j0;
+                        while j < HIST {
+                            acc += ch.ai[j] * hist[j];
+                            j += m;
+                        }
+                        if acc == 0.0 {
+                            ch.ai.iter().zip(hist).map(|(h, x)| h * x).sum()
+                        } else {
+                            acc
+                        }
                     };
                     outs[c] = if r.codec == 0 {
                         // AAC: the codec's frames, on the grid of the stream's start

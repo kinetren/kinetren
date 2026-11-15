@@ -505,3 +505,13 @@ next editor:
   191-position walk 391 → 14 jobs, uploads 26 → 11 MB and readback 16 → 4.3 MB a frame, 49 → 53
   positions/s (device-bound on a software device, row 400); a re-walk after the LRU lost the history
   183 → 6 positions.
+
+## Per-fragment constants (per-sample-costs, 2026-11-15)
+
+- Camera ISP with defocus decodes its source's transfer from a 256×1 table pass (`s12_curve`) made by
+  the same `decode` text (moved to `camera_common.wgsl`); EXACT against the per-tap form on llvmpipe
+  (t2683); `cpu::with_general` keeps the per-tap graph. s00 at blur 4: 44 → 27 ms (BT.709, 1080p).
+- The composite takes its two sides' sizes once a fragment (`take_dims`), in the transition branches.
+- The transitions' `sin(π·k)`, spin's rotation and Camera ISP's per-frame scalars stay per pixel:
+  replaced by constants they changed a 1080p frame by nothing measurable, and moving them to the CPU
+  would move bytes.
