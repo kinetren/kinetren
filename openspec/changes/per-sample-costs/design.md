@@ -104,6 +104,14 @@ with every path: zero (the base tree: 1 509 linear, 32 looped).
 731/873 ms new for 104 s — 1 % of real time either way; the showcase's sound is light and the
 difference is inside the run-to-run spread.
 
+Processor load while playing the heavy showcase (`kt-cli preview heavy.kt 20 30 --size 960x540`, release,
+llvmpipe, two runs each, interleaved): base 1 122 % / 1 154 % of a core, V-fps 1.0 / 1.0; new 1 167 % /
+1 204 %, V-fps 2.3 / 2.1 — the software rasterizer takes the machine either way, and the frames shown
+doubled (the event under Camera ISP with lens blur 1.2 takes the table). Audio 484 bursts live, no
+underrun in any run. The live `idle` scenario on the same project: a pause 1 % of a core, the effects
+window paused 1 %, the mouse over the preview 317 %, over the effects window 193 % (llvmpipe drawing the
+interface); `heavy_loop`: from lap 6 every frame and burst from what is kept.
+
 ## Class walk (what was checked)
 
 Audio kinds (`process` and what it calls per sample/chunk):

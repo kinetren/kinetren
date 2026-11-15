@@ -19,4 +19,4 @@
 
 - [x] 3.1 Class walk into design.md; found-defects rows removed; crate CLAUDE.md notes; What's new
 - [x] 3.2 Workspace tests, clippy, live idle/heavy load check; commit; target-prune
-- [ ] 3.3 Archive (specs merged); commit; target-prune
+- [x] 3.3 Archive (specs merged); commit; target-prune
