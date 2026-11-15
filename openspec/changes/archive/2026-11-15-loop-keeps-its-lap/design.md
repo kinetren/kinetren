@@ -95,3 +95,16 @@ Every holder a loop or a repeated range reads, by subsystem.
 - The window's victim search scans the LRU from its oldest (to the first read window entry, or the
   first kept one). In steady state the first entries are what it wants; a pool with no read window entry
   and no kept one is walked whole once per eviction. Pools hold hundreds to a few thousand entries.
+
+## Measured (release build, `kt-cli showcase … --heavy`: 1357 events, 104 s, footage in /dev/shm; llvmpipe)
+
+- **Pause** (live `idle`, the release `kinetren` through `KT_LIVE_APP`): 1 % of a core, no counter
+  moved, the trace grew 0 bytes; with the effects window open 1 %; over the deck panel the engine threads
+  worked 0 % (the 354 % there is llvmpipe drawing the interface's frames, as before).
+- **A covered loop playing** (live `heavy_loop`, 0.7 s over Camera ISP → Datamosh → VHS Tape): 419 % of
+  a core; from lap 6 every frame shown is a kept composite, from lap 3 every burst comes from the kept
+  mix (32/0 kept/live).
+- **A 10 s loop of the heavy edit** (`kt-cli preview heavy.kt 20 30 --size 640x360 --loop 60`):
+  19.2 cores over 61.8 s — the device's passes on llvmpipe (VHS Tape and Camera ISP, 134 ms a frame);
+  audio 1972 bursts from the kept mix, 938 live, no underrun; video hit 77 %, dropped unread 0,
+  abandoned 0.
