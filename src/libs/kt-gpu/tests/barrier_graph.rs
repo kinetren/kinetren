@@ -114,7 +114,7 @@ fn run(engine: &dyn VideoGpuExec, id: u64, fx: Vec<FxInstance>, alpha: bool) -> 
         content: xxhash_rust::xxh3::xxh3_64(&fr.rgba),
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(fr)),
-        fx: std::borrow::Cow::Owned(fx),
+        fx: kt_engine::LayerChain::Owned(fx),
         fx_hash,
         u: 0.5,
         cam3d: None,

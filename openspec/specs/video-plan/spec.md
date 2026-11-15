@@ -1473,3 +1473,68 @@ and a lower class still got one bound in front of every display frame, which onl
 - **WHEN** the display presents frames costing a quarter period, seven eighths of it, twice it, and then stops
 - **THEN** a background piece has the bound, an eighth of the period, nothing and the bound again; the near class keeps a quarter bound in front of the saturating display
 - **TEST** t2517 (`src/libs/kt-gpu/src/arbiter.rs`)
+
+### Requirement: The look-ahead walks only what a stage on screen reaches
+The far look-ahead of a stream history SHALL walk nothing while no stream stage is on screen, and no
+look-ahead walk SHALL take more than `STREAM_WALK_SECS` of frames. The walk of the frame ON SCREEN SHALL
+run at the display's class; the frames after it at the look-ahead's.
+Why: found-defects 660, 662, kkt-26.11.15 N2 — with a stage frame size of 0 the far walk was 33.5 million
+frames, 26.5 s of the prefetch thread every pass, and a piece without Datamosh played at 8.7 V-fps
+against kt26.11.10's 21.6; the frame on screen's history waited behind every present at the look-ahead's
+class.
+
+#### Scenario: No stage on screen walks nothing far
+- **WHEN** a piece with no stream stage is on screen in a project with a Datamosh elsewhere, playing
+- **THEN** the far walk is 0 frames, and inside the stage it is at most a minute of frames
+- **TEST** t2710 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: The frame on screen walks at the display's class
+- **WHEN** the look-ahead at `near` walks a cold history to the frame on screen and eight frames after it
+- **THEN** the jobs up to the frame on screen run at `now` and the rest at `near`
+- **TEST** t2711 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+### Requirement: The slow route's picture is shown from the display's memo
+A complete composite of the slow-chain device, once kept on the display's executor, SHALL be shown from
+there at once, not handed to the interface as bytes to upload again.
+Why: found-defects 622 — the slow route's frame was written into the present memo and uploaded again into
+the interface's texture.
+
+#### Scenario: The slow route shows its kept picture
+- **WHEN** a moment of a chain slower than `SLOW_CHAIN` is composed on the slow device
+- **THEN** it comes back on the display, the next ask is a replay with no slow run, and a moment not kept runs on the slow device and is shown on the display
+- **TEST** t2705 (`src/libs/kt-engine/tests/decode_storm.rs`)
+### Requirement: A frame's work grows with the events active at it
+Every per-frame question of a video renderer — the plan, the order (`layers_at`, `wanted_frames`,
+`absent_layers`), a stream stage's advance, want, bytes and checkpoints — SHALL find the events active
+at the moment through the renderer's time index (`LayerIndex`), laid out once per build in the
+composite order; a dissolve's partner and a track stage's events, revision and masks SHALL be laid out
+once per build too. The index SHALL answer exactly the former scan, in its order. A stream stage's
+second input at a position SHALL be found by halving, not by a scan of the lane.
+
+#### Scenario: Far events do not tax a frame
+- **WHEN** a scene with a dissolve, an animated layer, an animated mask and a camera is planned over 50 frames with 20, 80 and 320 one-second events far after it
+- **THEN** the events looked at (`Cost::FrameClip`) are the same count in all three
+- **TEST** t2660 (`src/libs/kt-engine/tests/frame_cost.rs`)
+
+#### Scenario: The order costs its window
+- **WHEN** `wanted_frames` of the scene's first two seconds is asked with 20, 80 and 320 far events
+- **THEN** the count is the same in all three
+- **TEST** t2661 (`src/libs/kt-engine/tests/frame_cost.rs`)
+
+#### Scenario: The index is the scan
+- **WHEN** the events active at every 1/50 s of a scene with overlaps, transition handles and an event under everything are asked of the index and of the former scan
+- **THEN** both give the same events in the same order
+- **TEST** t2662 (`src/libs/kt-engine/tests/frame_cost.rs`)
+### Requirement: A frame's own GPU error is its frame's error
+Every engine entry point that composes (`execute_measured`, `execute_into`, `execute_once`,
+`execute_held`, `present`, `present_kept`, `submit`, `collect`) SHALL run inside thread-local
+Validation and Internal error scopes of its device; an error raised there SHALL return
+`GpuExecError::Validation` (poisoned until the end of the session in the preview, an error in an
+export; `present_kept` shows nothing) and SHALL NOT reach the device's uncaptured-error handler.
+Why: kkt-26.11.15 N1 — no frame ran inside a scope, so any wgpu error a frame raised ended the
+program through wgpu's default handler instead of the poisoning contract the player has.
+
+#### Scenario: A frame whose upload overruns returns its error
+- **WHEN** a frame's layer says 64×64 and carries the bytes of 4×4
+- **THEN** `execute_into` returns `GpuExecError::Validation` with the cause, the uncaptured count does not move, and the next frame of 16×8 composes (before: wgpu's default handler panicked inside the frame)
+- **TEST** t2721 (`src/libs/kt-gpu/tests/gpu_errors.rs`)

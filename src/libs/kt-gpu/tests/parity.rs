@@ -89,7 +89,7 @@ impl Src {
             content: self.frame.as_ref().map(|f| xxhash_rust::xxh3::xxh3_64(&f.rgba)).unwrap_or(0),
             src_scale: self.src_scale,
             input: kt_engine::video_plan::LayerInput::Frame(self.frame.clone()),
-            fx: std::borrow::Cow::Borrowed(&self.fx[..]),
+            fx: kt_engine::LayerChain::Borrowed(&self.fx[..]),
             fx_hash: self.fx_hash,
             u: self.u,
             cam3d: self.cam3d,

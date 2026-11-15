@@ -44,6 +44,14 @@ struct VideoTrackStage {
     /// memoization key of the sub-composite — without it an edit inside would return
     /// a stale result (the same problem as with the reel, item 409).
     content: u64,
+    /// The track's events in the renderer's list, its index over them and the revision of its
+    /// sub-composite (the stage's `content` plus its events'): laid out once per build
+    /// (frame-work-by-edit), a frame hashed every event of the lane before.
+    events: std::ops::Range<usize>,
+    index: LayerIndex,
+    revision: u64,
+    /// `masks` shared by every frame's plan (track masks are static).
+    mask_list: Arc<Vec<kt_model::Mask>>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,6 +162,49 @@ pub(crate) struct VideoClip {
     src_rev: u64,
     /// The event's masks mapped onto the materialized chain (shape-masks). `None` — none.
     masks: Option<Arc<ClipMaskPlan>>,
+    /// The chain resolved at the last few material ticks (`auto_plan` only).
+    chain_memo: ChainMemo,
+}
+
+/// The chains a layer with live curves resolved at its last few material ticks (frame-work-by-edit,
+/// found-defects 168). A pure function of the layer and the tick, so a hit hands the same values a
+/// copy would (invariant 11); bounded by `CHAIN_MEMO` entries per layer. A copy of the layer (the
+/// incremental build, a stream stage's neighbour) starts empty, and its Debug text is nothing, so
+/// `state_text` compares the layers alone.
+#[derive(Default)]
+pub(crate) struct ChainMemo(std::sync::Mutex<Vec<(i64, Arc<[kt_model::FxInstance]>)>>);
+
+/// How many moments a layer keeps: the composite's, the probe's look-ahead and the loop fill's.
+const CHAIN_MEMO: usize = 4;
+
+impl ChainMemo {
+    fn get(&self, mat: Tick, make: impl FnOnce() -> Arc<[kt_model::FxInstance]>) -> Arc<[kt_model::FxInstance]> {
+        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = m.iter().position(|(t, _)| *t == mat.0) {
+            let e = m.remove(i);
+            let c = e.1.clone();
+            m.push(e);
+            return c;
+        }
+        let c = make();
+        if m.len() >= CHAIN_MEMO {
+            m.remove(0);
+        }
+        m.push((mat.0, c.clone()));
+        c
+    }
+}
+
+impl Clone for ChainMemo {
+    fn clone(&self) -> ChainMemo {
+        ChainMemo::default()
+    }
+}
+
+impl std::fmt::Debug for ChainMemo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("_")
+    }
 }
 
 /// Where the masks of an event stand in its MATERIALIZED chain (shape-masks).
@@ -163,6 +214,9 @@ struct ClipMaskPlan {
     picture: Option<(usize, Vec<kt_model::Mask>)>,
     /// The masks of an active slot: (its index — the dry snapshot; masks; after the node?).
     slots: Vec<(usize, Vec<kt_model::Mask>, bool)>,
+    /// `picture`'s and each slot's list compiled for the frame (frame-work-by-edit, row 169).
+    picture_plan: Option<kt_model::MasksPlan>,
+    slot_plans: Vec<kt_model::MasksPlan>,
 }
 
 impl ClipMaskPlan {
@@ -195,26 +249,28 @@ impl ClipMaskPlan {
         if picture.is_none() && slots.is_empty() {
             return None;
         }
-        Some(Arc::new(ClipMaskPlan { picture, slots }))
+        let picture_plan = picture.as_ref().map(|(_, l)| kt_model::MasksPlan::of(l));
+        let slot_plans = slots.iter().map(|(_, l, _)| kt_model::MasksPlan::of(l)).collect();
+        Some(Arc::new(ClipMaskPlan { picture, slots, picture_plan, slot_plans }))
     }
 
     /// The application points at the material tick `mat`.
     fn ops(&self, mat: Tick, project_h: f64) -> Vec<kt_fx::mask::MaskOp> {
         let mut out = Vec::new();
-        for (from, list, follow) in &self.slots {
+        for ((from, _, follow), plan) in self.slots.iter().zip(&self.slot_plans) {
             out.push(kt_fx::mask::MaskOp {
                 at: from + 1,
                 kind: kt_fx::mask::MaskOpKind::Mix { from: *from },
-                masks: Arc::new(kt_model::masks_at(list, mat)),
+                masks: plan.at(mat),
                 follow_lead: *follow,
                 project_h,
             });
         }
-        if let Some((at, list)) = &self.picture {
+        if let (Some((at, _)), Some(plan)) = (&self.picture, &self.picture_plan) {
             out.push(kt_fx::mask::MaskOp {
                 at: *at,
                 kind: kt_fx::mask::MaskOpKind::Alpha,
-                masks: Arc::new(kt_model::masks_at(list, mat)),
+                masks: plan.at(mat),
                 follow_lead: true,
                 project_h,
             });
@@ -228,12 +284,12 @@ impl ClipMaskPlan {
     fn ops_for(&self, slots: &[usize], mat: Tick, project_h: f64) -> Vec<kt_fx::mask::MaskOp> {
         let mut out = Vec::new();
         for (j, &i) in slots.iter().enumerate() {
-            for (from, list, follow) in self.slots.iter().filter(|(from, ..)| *from == i) {
+            for ((from, _, follow), plan) in self.slots.iter().zip(&self.slot_plans).filter(|((from, ..), _)| *from == i) {
                 debug_assert_eq!(*from, i);
                 out.push(kt_fx::mask::MaskOp {
                     at: j + 1,
                     kind: kt_fx::mask::MaskOpKind::Mix { from: j },
-                    masks: Arc::new(kt_model::masks_at(list, mat)),
+                    masks: plan.at(mat),
                     follow_lead: *follow,
                     project_h,
                 });
@@ -259,7 +315,8 @@ use kt_model::ClipWarp as VideoWarp;
 #[derive(Debug, Clone)]
 struct TransAnim {
     kind: kt_model::TransitionKind,
-    auto: Vec<kt_model::ParamCurve>,
+    /// The transition's curves compiled to the kind's rows once per build.
+    rows: kt_model::RowCurves,
     w0: Tick,
     /// Transition inversion (R.51, item 398). Executed by the PLAN, not the kernel:
     /// `apply_invert` swaps the sides and reverses the progress.
@@ -268,19 +325,17 @@ struct TransAnim {
 
 impl TransAnim {
     fn of(t: &kt_model::TransitionEvent, w0: Tick) -> TransAnim {
-        TransAnim { kind: t.kind.clone(), auto: t.auto.clone(), w0, invert: t.invert }
+        let rows = kt_model::RowCurves::compile(&t.kind, &t.auto);
+        TransAnim { kind: t.kind.clone(), rows, w0, invert: t.invert }
     }
 
     fn mix_at(&self, t: Tick) -> crate::TransMix {
-        if self.auto.is_empty() {
+        if self.rows.is_empty() {
             return crate::TransMix::of(&self.kind);
         }
+        // the curves by compiled row (frame-work-by-edit, row 169): `kind_at`'s bits
         let mut k = self.kind.clone();
-        for c in &self.auto {
-            if !c.keys.is_empty() {
-                k.set_param(&c.param, kt_model::curve_value(&c.keys, Tick(t.0 - self.w0.0)));
-            }
-        }
+        self.rows.apply(&mut k, Tick(t.0 - self.w0.0));
         crate::TransMix::of(&k)
     }
 }
@@ -301,6 +356,100 @@ impl VideoClip {
     /// Whether the clip is active at moment t, taking the transition handles into account.
     fn active_at(&self, t: Tick) -> bool {
         self.start.0 - self.head_ext.0 <= t.0 && t.0 < self.end.0 + self.tail_ext.0
+    }
+}
+
+/// The layers of a list of `VideoClip`s laid out ONCE per build for the per-frame questions
+/// (frame-work-by-edit, found-defects 153): which events are active at a tick, and who an event's
+/// transition partner is. Before it the plan, the order, the stream stages and the coverage scanned
+/// every event per frame, and a frame of a long edit cost the edit.
+///
+/// `at(t)` hands the indices of the events active at `t` ASCENDING — the order of the list, which is
+/// the composite order: iterating it is the former `clips.iter().filter(active_at)` exactly.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LayerIndex {
+    /// Boundary ticks, ascending: run `i` is `[starts[i], starts[i+1])` (the last run is empty).
+    starts: Vec<i64>,
+    /// Run `i`'s events are `ids[at[i]..at[i + 1]]`.
+    at: Vec<u32>,
+    ids: Vec<u32>,
+    /// `find_pair(.., incoming = false)` of each event's `fade_in` window: the outgoing partner.
+    pair_in: Vec<Option<u32>>,
+    /// `find_pair(.., incoming = true)` of each event's `fade_out` window found someone.
+    paired_out: Vec<bool>,
+}
+
+impl LayerIndex {
+    pub(crate) fn of(clips: &[VideoClip]) -> LayerIndex {
+        // the sweep: at each boundary the events ending there leave, the ones beginning enter
+        let mut edges: Vec<(i64, bool, u32)> = Vec::with_capacity(clips.len() * 2);
+        for (i, c) in clips.iter().enumerate() {
+            let (b, e) = (c.start.0 - c.head_ext.0, c.end.0 + c.tail_ext.0);
+            if b < e {
+                edges.push((b, true, i as u32));
+                edges.push((e, false, i as u32));
+            }
+        }
+        edges.sort_unstable();
+        let mut active: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        let (mut starts, mut at, mut ids) = (Vec::new(), vec![0u32], Vec::new());
+        let mut k = 0;
+        while k < edges.len() {
+            let t = edges[k].0;
+            while k < edges.len() && edges[k].0 == t {
+                let (_, enter, i) = edges[k];
+                if enter {
+                    active.insert(i);
+                } else {
+                    active.remove(&i);
+                }
+                k += 1;
+            }
+            starts.push(t);
+            ids.extend(active.iter().copied());
+            at.push(ids.len() as u32);
+        }
+        // the partners, by the same rule as the scan: the FIRST event of the lane with that window
+        let mut first_out: std::collections::HashMap<(u32, (Tick, Tick)), u32> = Default::default();
+        let mut first_in: std::collections::HashMap<(u32, (Tick, Tick)), u32> = Default::default();
+        for (i, c) in clips.iter().enumerate() {
+            if let Some(w) = c.fade_out {
+                first_out.entry((c.lane, w)).or_insert(i as u32);
+            }
+            if let Some(w) = c.fade_in {
+                first_in.entry((c.lane, w)).or_insert(i as u32);
+            }
+        }
+        let pair_in = clips.iter().map(|c| c.fade_in.and_then(|w| first_out.get(&(c.lane, w)).copied())).collect();
+        let paired_out = clips.iter().map(|c| c.fade_out.is_some_and(|w| first_in.contains_key(&(c.lane, w)))).collect();
+        LayerIndex { starts, at, ids, pair_in, paired_out }
+    }
+
+    /// The events active at `t`, ascending.
+    pub(crate) fn at(&self, t: Tick) -> &[u32] {
+        let run = self.starts.partition_point(|&s| s <= t.0);
+        let ids = match run {
+            0 => &[][..],
+            r => &self.ids[self.at[r - 1] as usize..self.at[r] as usize],
+        };
+        kt_time::cost::add(kt_time::cost::Cost::FrameClip, ids.len() as u64);
+        ids
+    }
+
+    /// The events whose span (handles included) meets `[from, to)`, ascending, each once.
+    pub(crate) fn over(&self, from: i64, to: i64) -> Vec<u32> {
+        if from >= to {
+            return Vec::new();
+        }
+        let first = self.starts.partition_point(|&s| s <= from).saturating_sub(1);
+        let last = self.starts.partition_point(|&s| s < to);
+        let mut out: Vec<u32> = (first..last.min(self.starts.len()))
+            .flat_map(|r| self.ids[self.at[r] as usize..self.at[r + 1] as usize].iter().copied())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        kt_time::cost::add(kt_time::cost::Cost::FrameClip, out.len() as u64);
+        out
     }
 }
 
@@ -562,6 +711,8 @@ pub struct VideoRenderer {
     /// Snapshot of the project cameras (R.29): the active/pinned Pan3d camera
     /// is resolved when the plan is built, by the same rule as in the model.
     cameras: Vec<kt_model::CameraEvent>,
+    /// Each camera's curves compiled to its rows (frame-work-by-edit, row 169).
+    cam_rows: Vec<kt_model::RowCurves>,
     /// Project size in px — the world coordinate system of 3D effects.
     project_size: (u32, u32),
     /// Renderers of nested reels (R.50). The tree is built ONCE together with
@@ -582,6 +733,10 @@ pub struct VideoRenderer {
     /// The player's decoded-frame cache bound (frames-cache-growth): the pacing's order is a
     /// quarter of it as it is NOW — the ledger moves the cap after this shared build was made.
     stream_cap: Option<Arc<dyn Fn() -> usize + Send + Sync>>,
+    /// The time index of `clips` (frame-work-by-edit): every per-frame question asks it.
+    index: LayerIndex,
+    /// The reel instances among `clips` (the coverage bars ask them, not every event).
+    placements: Vec<u32>,
 }
 
 /// Source frame(s) for moment `t`: the main one and, in “blend” mode,
@@ -754,21 +909,30 @@ fn subtract(
     if b.is_empty() {
         return a;
     }
+    // one sorted pass (frame-work-by-edit): the holes merged into disjoint runs, then both lists
+    // walked once — `a` is sorted and disjoint by every caller
     b.sort_by_key(|r| r.start);
+    let mut holes: Vec<std::ops::Range<i64>> = Vec::with_capacity(b.len());
+    for h in b.into_iter().filter(|h| h.start < h.end) {
+        match holes.last_mut() {
+            Some(l) if h.start <= l.end => l.end = l.end.max(h.end),
+            _ => holes.push(h),
+        }
+    }
     let mut out = Vec::new();
+    let mut j = 0;
     for r in a {
         let mut cur = r.start;
-        for h in &b {
-            if h.end <= cur || h.start >= r.end {
-                continue;
+        while j < holes.len() && holes[j].end <= cur {
+            j += 1;
+        }
+        let mut k = j;
+        while k < holes.len() && holes[k].start < r.end {
+            if holes[k].start > cur {
+                out.push(cur..holes[k].start);
             }
-            if h.start > cur {
-                out.push(cur..h.start);
-            }
-            cur = cur.max(h.end);
-            if cur >= r.end {
-                break;
-            }
+            cur = cur.max(holes[k].end);
+            k += 1;
         }
         if cur < r.end {
             out.push(cur..r.end);
@@ -1081,7 +1245,7 @@ impl VideoRenderer {
 
     pub fn new_with_facts(project: &Project, facts: &SourceFacts) -> VideoRenderer {
         crate::incremental::count_renderer_build();
-        revisions_scope(|| VideoRenderer::build(project, facts))
+        kt_model::with_sequence_index(project, || revisions_scope(|| VideoRenderer::build(project, facts)))
     }
 
     fn build(project: &Project, facts: &SourceFacts) -> VideoRenderer {
@@ -1162,6 +1326,10 @@ impl VideoRenderer {
                         blend: t.blend,
                         masks: t.masks.clone(),
                         content: h.digest(),
+                        events: 0..0,
+                        index: LayerIndex::default(),
+                        revision: 0,
+                        mask_list: Arc::new(t.masks.clone()),
                     });
                 }
             }
@@ -1303,6 +1471,7 @@ impl VideoRenderer {
                     },
 
                     masks,
+                    chain_memo: ChainMemo::default(),
                 }
                 })
             })
@@ -1372,6 +1541,26 @@ impl VideoRenderer {
         // applied, and the timeline strip diverged with it). Test 162.
         clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
         stream::link_stages(&mut clips, cams, (project.settings.width, project.settings.height));
+        // the track stages' events lie consecutively (the list is sorted by lane)
+        let mut stages = stages;
+        for st in &mut stages {
+            let from = clips.iter().position(|c| c.lane == st.lane).unwrap_or(clips.len());
+            let to = clips[from..].iter().position(|c| c.lane != st.lane).map_or(clips.len(), |n| from + n);
+            st.events = from..to;
+            st.index = LayerIndex::of(&clips[from..to]);
+            // revision of the sub-composite: the track's properties plus the contents of its events
+            let mut h = xxhash_rust::xxh3::Xxh3::new();
+            h.update(&st.content.to_le_bytes());
+            for c in &clips[from..to] {
+                h.update(&c.fx_hash.to_le_bytes());
+                h.update(&c.content.to_le_bytes());
+                h.update(&c.start.0.to_le_bytes());
+                h.update(&c.end.0.to_le_bytes());
+            }
+            st.revision = h.digest();
+        }
+        let index = LayerIndex::of(&clips);
+        let placements = clips.iter().enumerate().filter(|(_, c)| c.nest.is_some()).map(|(i, _)| i as u32).collect();
         // Subtrees: one renderer for EACH reel in use.
         // The depth limit is held by the model (`validate`); here it is a safeguard
         // against a hostile file.
@@ -1398,6 +1587,7 @@ impl VideoRenderer {
             // cameras are OWN to each reel: cameras may be placed inside a nesting,
             // and the active-camera rule is computed from its own reel
             cameras: resolved.cameras.to_vec(),
+            cam_rows: resolved.cameras.iter().map(|c| kt_model::RowCurves::compile(&c.cam, &c.auto)).collect(),
             project_size: (project.settings.width, project.settings.height),
             nests,
             stages,
@@ -1405,7 +1595,23 @@ impl VideoRenderer {
             stream_view: Default::default(),
             stream_pacing: None,
             stream_cap: None,
+            index,
+            placements,
         }
+    }
+
+    /// The events active at `t`, in the composite order (the time index, frame-work-by-edit).
+    fn active(&self, t: Tick) -> impl Iterator<Item = &VideoClip> + '_ {
+        self.index.at(t).iter().map(|&i| &self.clips[i as usize])
+    }
+
+    /// The events active at `t` by the time index and by the former scan (t2662): the same list.
+    #[doc(hidden)]
+    pub fn active_ids_for_tests(&self, t: Tick) -> (Vec<kt_model::ClipId>, Vec<kt_model::ClipId>) {
+        (
+            self.active(t).map(|c| c.id).collect(),
+            self.clips.iter().filter(|c| c.active_at(t)).map(|c| c.id).collect(),
+        )
     }
 
     /// The pacing with the order of the cache's bound as it is now.
@@ -1466,7 +1672,7 @@ impl VideoRenderer {
     /// in the memo, so the next `layers_at` names less. `true` — a stage still lacks frames.
     pub fn stream_advance(&self, cache: &BurstCache, t: Tick, quality: Quality) -> bool {
         let mut pending = false;
-        for c in self.clips.iter().filter(|c| c.active_at(t)) {
+        for c in self.active(t) {
             match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(_), None) => {
                     pending |= self.stream_advance_clip(cache, c, t, quality);
@@ -1492,7 +1698,7 @@ impl VideoRenderer {
         let step = self.grid.frame_step().max(1);
         let mut pending = false;
         let mut done: Vec<kt_model::ClipId> = Vec::new();
-        for c in self.clips.iter().filter(|c| c.active_at(from) && c.stream.is_some() && c.nest.is_none()) {
+        for c in self.active(from).filter(|c| c.stream.is_some() && c.nest.is_none()) {
             // the run's last moment inside this event
             let last = Tick(to.0.min(self.grid.align_floor(Tick(c.end.0 - 1)).0).max(from.0));
             // the frame on screen first: its batch comes back before the frames ahead are walked
@@ -1507,15 +1713,15 @@ impl VideoRenderer {
             done.push(c.id);
         }
         if to.0 > from.0 {
-            for c in self.clips.iter().filter(|c| c.active_at(to) && c.stream.is_some() && c.nest.is_none() && !done.contains(&c.id)) {
+            for c in self.active(to).filter(|c| c.stream.is_some() && c.nest.is_none() && !done.contains(&c.id)) {
                 pending |= self.stream_advance_clip(cache, c, to, quality);
             }
         }
         // a reel's stages: per moment, as before
-        if self.clips.iter().any(|c| c.nest.is_some() && (c.active_at(from) || c.active_at(to))) {
+        if self.active(from).chain(self.active(to)).any(|c| c.nest.is_some()) {
             let mut t = from;
             while t.0 <= to.0 {
-                for c in self.clips.iter().filter(|c| c.active_at(t)) {
+                for c in self.active(t) {
                     if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
                         pending |= sub.stream_advance(cache, clip_inner_tick(c, t, &self.grid), clip_decode_quality(c, quality));
                     }
@@ -1561,9 +1767,7 @@ impl VideoRenderer {
     /// The checkpoints the stream stages active at `t` keep for a walk of `t`'s history (the memo's
     /// sizing); the largest over the stages, a reel's included (found-defects 512).
     pub fn stream_checkpoints(&self, t: Tick, quality: Quality) -> usize {
-        self.clips
-            .iter()
-            .filter(|c| c.active_at(t))
+        self.active(t)
             .filter_map(|c| match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(st), None) => {
                     let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
@@ -1602,7 +1806,7 @@ impl VideoRenderer {
 
     /// The stream stages active at `t`, through the reels (`stream_want`).
     fn stream_stages_at<'a>(&'a self, t: Tick, quality: Quality, out: &mut std::collections::HashMap<(usize, kt_model::ClipId), WantStage<'a>>) {
-        for c in self.clips.iter().filter(|c| c.active_at(t)) {
+        for c in self.active(t) {
             match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(st), None) => {
                     let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
@@ -1658,9 +1862,7 @@ impl VideoRenderer {
     }
 
     pub fn stream_frame_bytes(&self, t: Tick, quality: Quality) -> usize {
-        self.clips
-            .iter()
-            .filter(|c| c.active_at(t))
+        self.active(t)
             .map(|c| match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(st), None) => {
                     let sq = stream::stream_quality(c, st, quality);
@@ -1697,7 +1899,7 @@ impl VideoRenderer {
         blend_footage: bool,
         out: &mut Vec<(MediaId, Tick, Quality)>,
     ) {
-        for c in self.clips.iter().filter(|c| c.active_at(t)) {
+        for c in self.active(t) {
             // in “blend” mode the layer reads TWO frames — the prefetch
             // must warm both, otherwise the second would never be requested
             let (a, b) = clip_frame_keys(c, t, &self.grid, blend_footage);
@@ -1799,7 +2001,10 @@ impl VideoRenderer {
         quality: Quality,
     ) -> Vec<(kt_model::ClipId, Vec<std::ops::Range<i64>>)> {
         let mut out = Vec::new();
-        for c in &self.clips {
+        #[allow(clippy::type_complexity)]
+        let mut same: std::collections::HashMap<(Option<NestKey>, u32, u32, i64, i64, bool), Vec<std::ops::Range<i64>>> =
+            Default::default();
+        for c in self.placements.iter().map(|&i| &self.clips[i as usize]) {
             let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) else { continue };
             // The window is by the SPAN of the material (R.55 C4, the axis refined in R.57):
             // for a stretched instance it is not equal to its length on the
@@ -1815,7 +2020,18 @@ impl VideoRenderer {
                 None => c.source_in.0..(c.source_in.0 + c.end.0 - c.start.0),
             };
             let dq = clip_decode_quality(c, quality);
-            out.push((c.id, sub.reel_coverage(cache, dq, win, nest_blend(c, false))));
+            let blend = nest_blend(c, false);
+            // the placements of one release over one window ask once per call (found-defects 154)
+            let key = (c.nest, dq.width, dq.height, win.start, win.end, blend);
+            let runs = match same.get(&key) {
+                Some(r) => r.clone(),
+                None => {
+                    let r = sub.reel_coverage(cache, dq, win, blend);
+                    same.insert(key, r.clone());
+                    r
+                }
+            };
+            out.push((c.id, runs));
         }
         out
     }
@@ -1838,8 +2054,11 @@ impl VideoRenderer {
                 0
             }
         };
-        let mut warm = vec![win.clone()];
-        for c in &self.clips {
+        // only the events the window meets (the time index), their cold parts subtracted from the
+        // window in one pass (frame-work-by-edit, found-defects 154)
+        let mut colds: Vec<std::ops::Range<i64>> = Vec::new();
+        for i in self.index.over(win.start, win.end) {
+            let c = &self.clips[i as usize];
             let body = c.start.0.max(win.start)..(c.end.0 + c.tail_ext.0).min(win.end);
             if body.start >= body.end {
                 continue;
@@ -1915,9 +2134,9 @@ impl VideoRenderer {
                     .collect();
                 subtract(vec![body.clone()], mapped)
             };
-            warm = subtract(warm, cold);
+            colds.extend(cold);
         }
-        warm
+        subtract(vec![win], colds)
     }
 
     /// The frame at `t` from the cache through `exec`: complete, or a layer was missing and skipped
@@ -2024,6 +2243,7 @@ impl VideoRenderer {
             probe,
             grid: &self.grid,
             cameras: &self.cameras,
+            cam_rows: &self.cam_rows,
             project_size: self.project_size,
             nests: &self.nests,
             stages: &self.stages,
@@ -2035,7 +2255,7 @@ impl VideoRenderer {
         if !probe {
             STREAM_SHORT.with(|h| h.set(0));
         }
-        build_plan(&self.clips, &ctx, cache, t, quality)
+        build_plan(&self.clips, &self.index, &ctx, cache, t, quality)
     }
 }
 
@@ -2055,6 +2275,7 @@ thread_local! {
 struct PlanCtx<'a> {
     grid: &'a FpsGrid,
     cameras: &'a [kt_model::CameraEvent],
+    cam_rows: &'a [kt_model::RowCurves],
     project_size: (u32, u32),
     /// Renderers of nested reels — sub-plans are built from them (R.50).
     nests: &'a std::collections::HashMap<NestKey, VideoRenderer>,
@@ -2098,6 +2319,19 @@ pub fn resolve_cam3d(
     out_w: u32,
     project_w: u32,
 ) -> Option<Cam3d> {
+    resolve_cam3d_in(fx, cameras, None, t, out_w, project_w)
+}
+
+/// [`resolve_cam3d`] with the cameras' curves compiled (`rows` parallel to `cameras`): the frame's
+/// path reads them by row (frame-work-by-edit, row 169), the same bits.
+fn resolve_cam3d_in(
+    fx: &[kt_model::FxInstance],
+    cameras: &[kt_model::CameraEvent],
+    rows: Option<&[kt_model::RowCurves]>,
+    t: Tick,
+    out_w: u32,
+    project_w: u32,
+) -> Option<Cam3d> {
     // the first slot with a camera row decides (R.29), whatever its kind (D11.4)
     fx.iter()
         .find(|f| f.uses_camera())
@@ -2106,7 +2340,16 @@ pub fn resolve_cam3d(
             let ev = pinned
                 .and_then(|id| cameras.iter().find(|c| c.id == id))
                 .or_else(|| kt_model::active_camera_in(cameras, t));
-            let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
+            let row = |e: &kt_model::CameraEvent| {
+                let i = cameras.iter().position(|c| std::ptr::eq(c, e))?;
+                rows?.get(i)
+            };
+            let cam = ev
+                .map(|e| match row(e) {
+                    Some(r) => e.params_at_rows(r, t),
+                    None => e.params_at(t),
+                })
+                .unwrap_or_default();
             Cam3d { cam, world_scale: out_w as f64 / project_w.max(1) as f64 }
         })
 }
@@ -2221,14 +2464,17 @@ fn layer_src<'a>(
     // automation (R.30): curves are resolved HERE, once per frame —
     // the executor receives already computed parameters (the chain is cloned
     // only with live curves)
-    let mut fx: std::borrow::Cow<'_, [kt_model::FxInstance]> = match &clip.auto_plan {
-        Some(plan) => {
+    // one resolved chain per (layer, moment), shared by every plan of that moment (frame-work-by-edit,
+    // row 168): the probe, the composite, a retry and the loop fill do not each copy the chain
+    let mut fx: crate::video_plan::LayerChain<'_> = match &clip.auto_plan {
+        Some(plan) => crate::video_plan::LayerChain::Shared(clip.chain_memo.get(mat, || {
+            kt_time::cost::add(kt_time::cost::Cost::ChainClone, 1);
             let mut owned = clip.fx.clone();
             plan.apply(&mut owned, mat);
-            std::borrow::Cow::Owned(owned)
-        }
+            Arc::from(owned)
+        })),
         // zero cost: a clip without curves BORROWS its chain
-        None => std::borrow::Cow::Borrowed(&clip.fx[..]),
+        None => crate::video_plan::LayerChain::Borrowed(&clip.fx[..]),
     };
     // the slots in front of a stream stage ran on its input (stream-input-order): not again after it
     if streamed.is_some()
@@ -2237,7 +2483,7 @@ fn layer_src<'a>(
     {
         stream::after_chain(fx.to_mut(), &st.front);
     }
-    let cam3d = resolve_cam3d(&clip.fx, ctx.cameras, t, quality.width, ctx.project_size.0);
+    let cam3d = resolve_cam3d_in(&clip.fx, ctx.cameras, Some(ctx.cam_rows), t, quality.width, ctx.project_size.0);
     debug_assert!(
         src_scale == 1
             || kt_fx::video::has_video_fx_in(&fx, clip.lead, quality.width, quality.height),
@@ -2255,6 +2501,7 @@ fn layer_src<'a>(
             let sub_ctx = PlanCtx {
                 grid: &sub.grid,
                 cameras: &sub.cameras,
+                cam_rows: &sub.cam_rows,
                 project_size: sub.project_size,
                 nests: &sub.nests,
                 stages: &sub.stages,
@@ -2270,6 +2517,7 @@ fn layer_src<'a>(
             // Quality — the conjugation of the item 317 rule one level up.
             let plan = build_plan(
                 &sub.clips,
+                &sub.index,
                 &sub_ctx,
                 cache,
                 src_pts,
@@ -2332,6 +2580,7 @@ fn track_stage_layer<'a>(
     let sub_ctx = PlanCtx {
         grid: ctx.grid,
         cameras: ctx.cameras,
+        cam_rows: ctx.cam_rows,
         project_size: ctx.project_size,
         nests: ctx.nests,
         blend_footage: ctx.blend_footage,
@@ -2342,30 +2591,24 @@ fn track_stage_layer<'a>(
         stream_pacing: ctx.stream_pacing,
         probe: ctx.probe,
     };
-    let plan = build_plan(clips, &sub_ctx, cache, t, quality);
-    // revision of the sub-composite: the track's properties plus the contents of its events
-    let mut h = xxhash_rust::xxh3::Xxh3::new();
-    h.update(&st.content.to_le_bytes());
-    for c in clips {
-        h.update(&c.fx_hash.to_le_bytes());
-        h.update(&c.content.to_le_bytes());
-        h.update(&c.start.0.to_le_bytes());
-        h.update(&c.end.0.to_le_bytes());
-    }
+    let plan = build_plan(clips, &st.index, &sub_ctx, cache, t, quality);
+    // revision of the sub-composite: the track's properties plus the contents of its events,
+    // hashed once per build
+    let revision = st.revision;
     let src = LayerSrc {
         source: nest_source_id(kt_model::track_source_media(st.id)),
         cache_idx: t.0,
-        content: h.digest(),
+        content: revision,
         src_scale: 1,
         input: crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {
             seq: kt_model::track_source_media(st.id),
-            content_hash: h.digest(),
+            content_hash: revision,
             inner_t: t,
             blend: ctx.blend_footage,
             nest_scale: 1,
             plan,
         })),
-        fx: std::borrow::Cow::Borrowed(&st.fx),
+        fx: crate::video_plan::LayerChain::Borrowed(&st.fx),
         fx_hash: st.content,
         u: 0.0,
         cam3d: None,
@@ -2379,7 +2622,7 @@ fn track_stage_layer<'a>(
             vec![kt_fx::mask::MaskOp {
                 at: st.fx.len(),
                 kind: kt_fx::mask::MaskOpKind::Alpha,
-                masks: Arc::new(st.masks.clone()),
+                masks: st.mask_list.clone(),
                 follow_lead: false,
                 project_h: ctx.project_size.1.max(1) as f64,
             }]
@@ -2395,6 +2638,7 @@ fn track_stage_layer<'a>(
 /// (item 137); a fade at an edge/Gap (R.25) is a solo layer fading into transparency.
 fn build_plan<'a>(
     clips: &'a [VideoClip],
+    ix: &LayerIndex,
     ctx: &PlanCtx<'a>,
     cache: &BurstCache,
     t: Tick,
@@ -2404,10 +2648,14 @@ fn build_plan<'a>(
     // TRACK STAGES (R.62): a track with a stage yields ONE layer at the position of
     // its first row — its events do not go into flat layers.
     let mut staged_done: Vec<u32> = Vec::new();
-    for (i, clip) in clips.iter().enumerate() {
+    // the events active at `t`, in the list's order (frame-work-by-edit: a frame costs its events)
+    for &i in ix.at(t) {
+        let i = i as usize;
+        let clip = &clips[i];
+        debug_assert!(clip.active_at(t));
         // a muted track does not go into the composite; its ORDER nevertheless
         // remains (`layers_at_into`/`wanted_frames` do not check the flag)
-        if !clip.active_at(t) || clip.silent {
+        if clip.silent {
             continue;
         }
         if let Some(st) = ctx.stages.iter().find(|s| s.lane == clip.lane) {
@@ -2415,14 +2663,8 @@ fn build_plan<'a>(
                 continue;
             }
             staged_done.push(st.lane);
-            let lane_clips: &[VideoClip] = {
-                // track events lie consecutively: the list is sorted by
-                // (Reverse(lane), start)
-                let from = clips.iter().position(|c| c.lane == st.lane).unwrap_or(i);
-                let to = clips[from..].iter().position(|c| c.lane != st.lane).map(|n| from + n);
-                &clips[from..to.unwrap_or(clips.len())]
-            };
-            layers.push(track_stage_layer(st, lane_clips, ctx, cache, t, quality));
+            // track events lie consecutively: the list is sorted by (Reverse(lane), start)
+            layers.push(track_stage_layer(st, &clips[st.events.clone()], ctx, cache, t, quality));
             continue;
         }
         // fade at an edge/Gap: there is no pair in the model, the layer always goes through
@@ -2452,15 +2694,16 @@ fn build_plan<'a>(
         if let Some(win) = clip.fade_out
             && t.0 >= win.0.0
             && t.0 < win.1.0
-            && find_pair(clips, clip.lane, win, true).is_some()
+            && ix.paired_out[i]
         {
             continue;
         }
         if let Some(win) = clip.fade_in
             && t.0 >= win.0.0
             && t.0 < win.1.0
-            && let Some(pi) = find_pair(clips, clip.lane, win, false)
+            && let Some(pi) = ix.pair_in[i]
         {
+            let pi = pi as usize;
             let outgoing = &clips[pi];
             debug_assert_ne!(pi, i);
             let mut k = (((t.0 - win.0.0) * 4096) / (win.1.0 - win.0.0)).clamp(0, 4096) as u32;
@@ -2487,13 +2730,6 @@ fn build_plan<'a>(
     FramePlan { t, out_w: quality.width, out_h: quality.height, layers }
 }
 
-/// The transition partner: a clip of the same track with the SAME window on the opposite
-/// side (incoming looks for outgoing and vice versa). There are few clips, a linear scan.
-fn find_pair(clips: &[VideoClip], lane: u32, win: (Tick, Tick), incoming: bool) -> Option<usize> {
-    clips.iter().position(|c| {
-        c.lane == lane && (if incoming { c.fade_in } else { c.fade_out }) == Some(win)
-    })
-}
 
 /// The SOURCE address of an event (R.59, stage 2) — the ONLY rule.
 ///
@@ -2571,7 +2807,7 @@ pub fn clip_source_addr_in(c: &kt_model::ClipEvent, salt: u64) -> MediaId {
 /// this list: there must be no second enumeration, otherwise export would
 /// render something other than what the preview showed.
 pub fn gen_sources(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
-    revisions_scope(|| gen_sources_in(project))
+    kt_model::with_sequence_index(project, || revisions_scope(|| gen_sources_in(project)))
 }
 
 fn gen_sources_in(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
@@ -2660,6 +2896,17 @@ pub fn reel_chain_of_clip(project: &Project, id: kt_model::ClipId) -> Vec<MediaI
         }
     }
     chain
+}
+
+/// Whether a stream stage (datamosh-codec-path) can run anywhere in `project`: a video event's
+/// active chain or a morpher layer's patch in any reel holds a stream slot. The answer a renderer's
+/// `has_stream_stages` gives, or more (a reel placed nowhere, a slot whose plugin is missing), from
+/// one walk of the slots with nothing resolved (frame-work-by-edit, found-defects 191).
+pub fn project_may_stream(project: &Project) -> bool {
+    let events = project.clips.iter().chain(project.sequences.iter().flat_map(|s| s.clips.iter()));
+    let morphers = project.morphers.iter().chain(project.sequences.iter().flat_map(|s| s.morphers.iter()));
+    events.filter(|c| c.kind == ClipKind::Video).any(|c| c.fx.iter().any(|f| f.is_stream()))
+        || morphers.into_iter().any(|m| m.patch.video_fx.iter().any(|f| f.is_stream()))
 }
 
 /// The reel's address in the cache. The high bit of `MediaId` is given to nestings (R.50):
@@ -2798,3 +3045,62 @@ pub fn blend_ch(mode: kt_model::BlendMode, b: f64, a: f64) -> f64 {
     }
 }
 
+#[cfg(test)]
+mod frame_work_tests {
+    use super::subtract;
+
+    /// The former subtraction, one hole at a time (the oracle of t2672).
+    fn oracle(a: Vec<std::ops::Range<i64>>, mut b: Vec<std::ops::Range<i64>>) -> Vec<std::ops::Range<i64>> {
+        if b.is_empty() {
+            return a;
+        }
+        b.sort_by_key(|r| r.start);
+        let mut out = Vec::new();
+        for r in a {
+            let mut cur = r.start;
+            for h in &b {
+                if h.end <= cur || h.start >= r.end {
+                    continue;
+                }
+                if h.start > cur {
+                    out.push(cur..h.start);
+                }
+                cur = cur.max(h.end);
+                if cur >= r.end {
+                    break;
+                }
+            }
+            if cur < r.end {
+                out.push(cur..r.end);
+            }
+        }
+        out
+    }
+
+    /// t2672 (frame-work-by-edit): the one-pass subtraction answers what the former one answered,
+    /// on sorted disjoint runs minus any non-empty holes.
+    #[test]
+    fn t2672_one_pass_subtraction_is_the_former_one() {
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut rnd = |n: i64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x % n as u64) as i64
+        };
+        for _ in 0..2000 {
+            let mut a = Vec::new();
+            let mut t = rnd(20);
+            for _ in 0..rnd(5) {
+                let e = t + 1 + rnd(30);
+                a.push(t..e);
+                t = e + 1 + rnd(10);
+            }
+            let b: Vec<_> = (0..rnd(8)).map(|_| {
+                let s = rnd(200);
+                s..s + 1 + rnd(40)
+            }).collect();
+            assert_eq!(subtract(a.clone(), b.clone()), oracle(a, b));
+        }
+    }
+}

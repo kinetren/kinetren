@@ -902,6 +902,9 @@ pub struct GpuFxEngine {
     /// What `present` last drew into and the glow, published apart from `inner` (ui-never-waits):
     /// the UI's paint reads them, and the preview's thread holds `inner` for a whole composite.
     shown: Mutex<(Option<DisplayTarget>, Option<wgpu::TextureView>)>,
+    /// The editor's display engine (`new_kept`): its frames wait out a refused reconfigure of the
+    /// window's surface (gpu-errors-survive).
+    display: bool,
 }
 
 pub(crate) const SHADERS: [(&str, &str); PIPE_COUNT] = [
@@ -1393,6 +1396,7 @@ impl GpuFxEngine {
             info,
             compiled: c.clone(),
             shown: Mutex::new((None, None)),
+            display: keep,
             inner: Mutex::new(Inner {
                 device,
                 queue,
@@ -1545,6 +1549,14 @@ impl GpuFxEngine {
 }
 
 impl GpuFxEngine {
+    /// The display engine's frame waits out a refused reconfigure of the window's surface: wgpu
+    /// refuses one that finds the queue busy with another thread's work (gpu-errors-survive).
+    fn yield_to_display(&self) {
+        if self.display {
+            crate::errors::yield_to_display();
+        }
+    }
+
     /// Execute without the readback memo and return what the frame ran, under ONE hold of the
     /// engine: `execute_into` followed by `last_cost` is two holds, and a frame another thread
     /// composes between them is the cost read. Tests sharing one engine measure through this
@@ -1554,9 +1566,10 @@ impl GpuFxEngine {
         plan: &FramePlan<'_>,
         out: &mut Vec<u8>,
     ) -> Result<(bool, kt_fx::video::FrameCost), GpuExecError> {
+        self.yield_to_display();
         let _frame = self.compiled.frame();
         let mut inner = self.inner.lock().unwrap();
-        let complete = inner.execute(plan, out, false, true)?;
+        let complete = inner.guarded(|g| g.execute(plan, out, false, true))?;
         Ok((complete, inner.last_cost))
     }
 
@@ -1627,20 +1640,22 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        self.yield_to_display();
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
         let mut g = self.inner.lock().unwrap();
-        let r = g.execute(plan, out, true, false);
+        let r = g.guarded(|g| g.execute(plan, out, true, false));
         g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         r
     }
 
     fn execute_once(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
+        self.yield_to_display();
         let _frame = self.compiled.frame();
         let mut g = self.inner.lock().unwrap();
         // an export's frame: its runs in the settled form (gpu-leftovers D3)
         g.settled = true;
-        let r = g.execute(plan, out, false, true);
+        let r = g.guarded(|g| g.execute(plan, out, false, true));
         g.settled = false;
         r
     }
@@ -1653,7 +1668,7 @@ impl VideoGpuExec for GpuFxEngine {
         }
         // `execute_once`'s form: the settled runs (gpu-leftovers D3), so the bytes are its bytes
         g.settled = true;
-        let r = g.execute_held(plan);
+        let r = g.guarded(|g| g.execute_held(plan));
         g.settled = false;
         r
     }
@@ -1675,10 +1690,11 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn present(&self, plan: &FramePlan<'_>, o: PresentOptions) -> Result<bool, GpuExecError> {
+        self.yield_to_display();
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
         let mut g = self.inner.lock().unwrap();
-        let r = g.present(plan, o);
+        let r = g.guarded(|g| g.present(plan, o));
         g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         let target = g.display.as_ref().map(|d| DisplayTarget {
             view: d.view.clone(),
@@ -1744,9 +1760,11 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn present_kept(&self, key: u64, o: PresentOptions) -> bool {
+        self.yield_to_display();
         let _frame = self.compiled.frame();
         let mut g = self.inner.lock().unwrap();
-        if !g.present_kept(key, o) {
+        // an error in the replay shows nothing, as a miss does; the next composed frame reports it
+        if !g.guarded(|g| Ok(g.present_kept(key, o))).unwrap_or(false) {
             return false;
         }
         let target = g.display.as_ref().map(|d| DisplayTarget {
@@ -1776,15 +1794,24 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn submit(&self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
-        self.inner.lock().unwrap().submit(plan)
+        self.yield_to_display();
+        self.inner.lock().unwrap().guarded(|g| g.submit(plan))
     }
 
     fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
-        self.inner.lock().unwrap().collect(ticket, out)
+        self.inner.lock().unwrap().guarded(|g| g.collect(ticket, out))
     }
 }
 
 impl Inner {
+    /// Run a frame's work inside error scopes of this device: a wgpu error it raises is its
+    /// `GpuExecError::Validation` (the poisoning contract), never the process's panic
+    /// (gpu-errors-survive).
+    fn guarded<T>(&mut self, f: impl FnOnce(&mut Inner) -> Result<T, GpuExecError>) -> Result<T, GpuExecError> {
+        let device = self.device.clone();
+        crate::errors::scoped(&device, || f(self))
+    }
+
     /// `execute` without the wait (export-throughput D5): the same resolve, the same passes, the
     /// copy into the ring's staging buffer, the map requested — and back to the caller. The
     /// readback memo is neither asked nor filled: an export composes every moment once, and the
@@ -2745,15 +2772,26 @@ impl Inner {
             own(out);
             return;
         }
-        let key: Vec<u16> = stages[a..b].iter().map(|s| s.idx as u16).collect();
+        // the shape's key on the stack (frame-work-by-edit, row 364): a run is at most a few dozen stages
+        let mut buf = [0u16; 64];
+        let long: Vec<u16>;
+        let key: &[u16] = if b - a <= buf.len() {
+            for (k, st) in buf.iter_mut().zip(&stages[a..b]) {
+                *k = st.idx as u16;
+            }
+            &buf[..b - a]
+        } else {
+            long = stages[a..b].iter().map(|s| s.idx as u16).collect();
+            &long
+        };
         if self.settled {
-            match self.c.run_settled(&key) {
+            match self.c.run_settled(key) {
                 Some(pipe) => out.push(RunPiece { a, b, fused: Some(pipe), shadow: None, probe: None }),
                 None => own(out),
             }
             return;
         }
-        match self.c.run_use(&key, self.fuse == FuseRuns::Measured) {
+        match self.c.run_use(key, self.fuse == FuseRuns::Measured) {
             RunUse::Own => own(out),
             RunUse::Fused(pipe) => out.push(RunPiece { a, b, fused: Some(pipe), shadow: None, probe: None }),
             RunUse::Trial { pipe, id } => out.push(RunPiece { a, b, fused: None, shadow: Some(pipe), probe: Some(id) }),
@@ -3426,7 +3464,16 @@ fn plan_hash(plan: &FramePlan<'_>) -> u64 {
         // the masks evaluated at THIS frame (shape-masks): an animated mask on a still frame
         // must not return another frame's composite; maskless layers add nothing
         if !s.masks.is_empty() {
-            h.update(format!("{:?}", s.masks).as_bytes());
+            // the Debug text streamed into the hash (frame-work-by-edit, row 364): the same digest
+            // as hashing the formatted string, with no string built per masked layer per frame
+            struct Into<'h>(&'h mut Xxh3);
+            impl std::fmt::Write for Into<'_> {
+                fn write_str(&mut self, s: &str) -> std::fmt::Result {
+                    self.0.update(s.as_bytes());
+                    Ok(())
+                }
+            }
+            let _ = std::fmt::Write::write_fmt(&mut Into(h), format_args!("{:?}", s.masks));
         }
         // decode scale step (R.46, item 318): a frame of the same key in another
         // size gives another picture; the plan MUST differ

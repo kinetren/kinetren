@@ -8,6 +8,7 @@
 pub mod arbiter;
 mod binds;
 pub mod compute;
+pub mod errors;
 pub mod memory;
 pub mod pass_time;
 pub mod reference;

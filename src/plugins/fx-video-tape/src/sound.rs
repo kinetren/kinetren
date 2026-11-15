@@ -654,20 +654,20 @@ impl AudioState for TapeSound {
         // passport is built once, not per chunk (audio-fx-cost)
         static SPECS: std::sync::OnceLock<Vec<kt_plugin_api::ParamSpec>> = std::sync::OnceLock::new();
         let specs = SPECS.get_or_init(crate::passport);
+        // the rows change in place and the deck is renewed in place: no passport copy per chunk
+        // (per-sample-costs, found-defects 354)
         let mut changed = false;
-        let mut v = self.v.clone();
         for (i, spec) in specs.iter().enumerate() {
             if spec.kind == kt_plugin_api::ParamKind::Smooth {
-                let x = c.value(&spec.name, v[i], s);
-                if x != v[i] {
-                    v[i] = x;
+                let x = c.value(&spec.name, self.v[i], s);
+                if x != self.v[i] {
+                    self.v[i] = x;
                     changed = true;
                 }
             }
         }
         if changed {
-            self.deck = Deck::new(&v);
-            self.v = v;
+            self.deck.renew(&self.v);
             self.words = None;
             self.line = None;
             self.refresh_linear();
@@ -797,6 +797,15 @@ impl TapeSound {
                 let t_sw = (hf - sp) * st.t_line;
                 let tau = p.line as f64 * st.t_line + p.in_line;
                 let at_switch = (tau - t_sw).abs() < 0.5 / FS;
+                // which sub-samples fall in the dropout: the same for both channels, so asked once
+                // a frame, not per channel and sub-sample (per-sample-costs, found-defects 357)
+                let mut dropped = [false; OS];
+                for (s, d) in dropped.iter_mut().enumerate() {
+                    let sub_t = p.in_line + s as f64 / (FS * OS as f64);
+                    *d = rd.drop_len > 0.0
+                        && sub_t >= rd.drop_start as f64
+                        && sub_t < (rd.drop_start + rd.drop_len) as f64;
+                }
                 for (k, c) in self.ch.iter_mut().enumerate() {
                     let m = ring_read(&c.hifi_ring, w, d_hifi);
                     let a = rd.amp[k];
@@ -814,11 +823,7 @@ impl TapeSound {
                     }
                     let (mut zr, mut zi) = ([0f32; OS], [0f32; OS]);
                     for s in 0..OS {
-                        let sub_t = p.in_line + s as f64 / (FS * OS as f64);
-                        let dropped = rd.drop_len > 0.0
-                            && sub_t >= rd.drop_start as f64
-                            && sub_t < (rd.drop_start + rd.drop_len) as f64;
-                        let aa = if dropped { 0.0 } else { a };
+                        let aa = if dropped[s] { 0.0 } else { a };
                         let ph = (phs[s] + off).fract() as f32;
                         let ni = (n_out as u32).wrapping_mul(OS as u32).wrapping_add(s as u32);
                         let hn = hash3(ni, (n_out >> 29) as u32, 0xF0 + k as u32);

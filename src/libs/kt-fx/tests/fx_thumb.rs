@@ -140,3 +140,27 @@ fn t544d_drop_shadow_needs_the_alpha_pattern() {
     );
 }
 
+
+/// Test t2702 (stream-round-trips D5): `fit_into` at the frame's own size is a copy, to the byte the
+/// general bilinear gives, at odd and large sizes and over random bytes.
+#[test]
+fn t2702_fit_into_at_its_own_size_is_the_bilinear() {
+    use kt_fx::video::{fit_into, fit_into_general, Frame};
+    let mut x = 0x2702u32;
+    for (w, h) in [(1u32, 1u32), (3, 7), (64, 48), (1919, 1081), (1920, 1080)] {
+        let rgba: Vec<u8> = (0..w * h * 4)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                (x >> 24) as u8
+            })
+            .collect();
+        let f = Frame { w, h, rgba, has_alpha: true };
+        let (mut a, mut b) = (vec![0u8; (w * h * 4) as usize], vec![0u8; (w * h * 4) as usize]);
+        fit_into(&f, w, h, &mut a);
+        fit_into_general(&f, w, h, &mut b);
+        assert!(a == b, "{w}x{h}");
+        assert!(a == f.rgba, "{w}x{h}: not the frame itself");
+    }
+}

@@ -361,6 +361,13 @@ impl Mask {
         let Some(spec) = self.specs().into_iter().find(|s| s.name == name) else {
             return false;
         };
+        self.set_spec(&spec, v)
+    }
+
+    /// [`Mask::set`] of a row whose passport entry the caller holds (a compiled plan, row 169):
+    /// the same clamp and the same field, without building the passport.
+    pub fn set_spec(&mut self, spec: &ParamSpec, v: f64) -> bool {
+        let name: &str = &spec.name;
         let v = if v.is_finite() { v.clamp(spec.min, spec.max) } else { spec.default };
         match name {
             "opacity" => self.opacity = v,
@@ -749,6 +756,47 @@ pub fn next_mask_name(list: &[Mask], stem: &str) -> String {
 /// Evaluate a list at a tick (curves applied).
 pub fn masks_at(list: &[Mask], at: Tick) -> Vec<Mask> {
     list.iter().map(|m| m.at(at)).collect()
+}
+
+/// A mask list compiled for per-frame reading (frame-work-by-edit, found-defects 169): the list
+/// with its curves dropped, shared as it is when nothing is keyed, and each keyed row's passport
+/// entry found ONCE. `at` is `masks_at` bit for bit: `Mask::at` applies the same `curve_value` through
+/// the same setter, in the same order; a curve whose row the passport lacks is a no-op there.
+#[derive(Debug, Clone)]
+pub struct MasksPlan {
+    base: std::sync::Arc<Vec<Mask>>,
+    rows: Vec<(usize, ParamSpec, Vec<AutoKey>)>,
+}
+
+impl MasksPlan {
+    pub fn of(list: &[Mask]) -> MasksPlan {
+        let base: Vec<Mask> = list.iter().map(|m| Mask { auto: Vec::new(), ..m.clone() }).collect();
+        let mut rows = Vec::new();
+        for (i, m) in list.iter().enumerate() {
+            if !m.auto.iter().any(|c| !c.keys.is_empty()) {
+                continue;
+            }
+            let specs = m.specs();
+            for c in m.auto.iter().filter(|c| !c.keys.is_empty()) {
+                if let Some(spec) = specs.iter().find(|s| s.name == c.param.as_str()) {
+                    rows.push((i, spec.clone(), c.keys.clone()));
+                }
+            }
+        }
+        MasksPlan { base: std::sync::Arc::new(base), rows }
+    }
+
+    /// The list at the owner's tick `at`: the shared list when nothing is keyed.
+    pub fn at(&self, at: Tick) -> std::sync::Arc<Vec<Mask>> {
+        if self.rows.is_empty() {
+            return self.base.clone();
+        }
+        let mut list = (*self.base).clone();
+        for (i, spec, keys) in &self.rows {
+            list[*i].set_spec(spec, curve_value(keys, at));
+        }
+        std::sync::Arc::new(list)
+    }
 }
 
 /// The value of row `param` of a mask at `at` — reading a curve when there is one.

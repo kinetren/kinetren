@@ -244,10 +244,13 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
         // a kept composite was shown on the display: it timed no chain (structured-telemetry)
         let replayed = out.as_ref().is_some_and(|o| o.5.replayed);
         let catching_up = out.as_ref().map_or(0, |o| o.5.stream_short);
+        let shown_kept = out.as_ref().is_some_and(|o| o.5.shown_kept);
         if replayed {
             on_display = display.is_some();
         } else if timed {
             route.timed(exec);
+            // the slow route's picture was shown from the display's memo (row 622)
+            on_display = shown_kept && display.is_some();
         } else if on_display {
             route.slow = exec >= SLOW_CHAIN;
         }

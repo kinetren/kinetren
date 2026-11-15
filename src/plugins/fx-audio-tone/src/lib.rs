@@ -281,11 +281,16 @@ impl AudioState for EqNode {
 
 impl EqNode {
     fn tune_bands(&mut self, v: &[f32; 7]) {
-        for ch in 0..CH {
-            // the same numbers as the frequency response graph (R.48): the same constants
-            self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
-            self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
-            self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
+        // the same numbers as the frequency response graph (R.48): the same constants; tuned once,
+        // the other channels take the coefficients (per-sample-costs: the same inputs, the same bits)
+        let [first, rest @ ..] = &mut self.bands;
+        first[0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
+        first[1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
+        first[2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
+        for chb in rest {
+            for (b, t) in chb.iter_mut().zip(first.iter()) {
+                b.tune_like(t);
+            }
         }
     }
 }
@@ -377,7 +382,7 @@ impl AudioState for DistNode {
         // at the CPU's level, the same bytes (audio-fx-cost, `kt_plugin_api::cpu`)
         kt_plugin_api::fast!({
             let drive = |d: f32| {
-                let g = 10f32.fpowf(d / 20.0);
+                let g = kt_plugin_api::math::exp10f(d / 20.0);
                 (g, 1.0 / g.sqrt())
             };
             // tone: one-pole LP 500..12000 Hz (exp-map)
@@ -670,8 +675,10 @@ impl AudioState for FilterNode {
                 let key = Biquad::tune_key(&kind, f, q, 0.0);
                 if !(spec && self.tuned == Some(key)) {
                     self.tuned = Some(key);
-                    for b in &mut self.bq {
-                        b.tune(&kind, f, q, 0.0);
+                    let [first, rest @ ..] = &mut self.bq;
+                    first.tune(&kind, f, q, 0.0);
+                    for b in rest {
+                        b.tune_like(first);
                     }
                 }
                 for fr in block.chunks_exact_mut(CH) {

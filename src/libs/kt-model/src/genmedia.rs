@@ -524,6 +524,16 @@ impl HasParams for GeneratorKind {
             _ => gen_set_param(self, name, v),
         }
     }
+    fn set_param_idx(&mut self, idx: usize, v: f64) -> bool {
+        match self {
+            GeneratorKind::Plugin(p) => p.set_idx(idx, v),
+            GeneratorKind::Missing(_) => false,
+            _ => match self.param_specs().get(idx) {
+                Some(spec) => gen_set_param(self, &spec.name.clone(), v),
+                None => false,
+            },
+        }
+    }
     fn params_scope(&self) -> ParamScope {
         ParamScope::Generator
     }

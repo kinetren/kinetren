@@ -325,3 +325,16 @@ build of kt-app running beside them; the printed ratios at load 57–101 equal t
 - **Rejected — the limiter's `ceil/thr` memo** (found-defects 210): measured 1.17 → 1.20 reference kernels;
   the division is off the loop's critical path.
 - What the class walk left is found-defects 350–360.
+
+## Inner loops take once what is one value for a larger unit (per-sample-costs, 2026-11-15)
+
+- Phaser's sweep stays per sample (the owner's sound); its `10^x` is `math::exp10f` — `powf(10, ·)` to
+  the bit through `exp`, proved on all 2³² floats (t2682): `pow` was 22 ns, `exp` 3 ns. The compressor's
+  gain and the distortion's drive call it too. A `log10` twin was not made: 3 ns a sample above the
+  threshold only.
+- Rings wrap by compare-and-reset (`dsp::wrap_next`), `read_frac` truncates (`d ≥ 1`); one biquad
+  tune per channel pair (`tune_like`); the warp and a strength keep their chunk buffers.
+- The camera mic's anti-image filter sums its kept taps only: the history between kept samples is the
+  literal `+0.0`, so the sums agree but for the sign of an exact zero, where the full sum answers.
+- Not done, they would move bytes: divisions by per-block constants as reciprocals (VHS Tape's sound,
+  the vocoder's bins). Figures: archive `2026-11-15-per-sample-costs/design.md`. t2680 holds every path.

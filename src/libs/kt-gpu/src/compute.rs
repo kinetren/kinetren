@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use kt_plugin_api::compute::{ComputeHost, Init, Job, Shader};
+use kt_plugin_api::compute::{Buf, ComputeHost, Held, Init, Job, Shader};
 
 /// One shader's pipeline; the layout follows from how many buffers a step binds.
 struct Pipe {
@@ -123,6 +123,8 @@ pub struct ComputeDevice {
     pool: Mutex<Pool>,
     /// The pool's free buffers, to the memory ledger (memory-ledger).
     account: kt_time::mem::Account,
+    /// Where the buffers jobs kept go back when their last holder drops them (stream-round-trips D1).
+    spares: Arc<crate::held::Spares>,
     /// The disk tier of its pipelines (pipeline-prewarm D7), where the device has one.
     cache: Option<crate::pipeline_cache::DiskCache>,
 }
@@ -181,6 +183,7 @@ pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
         ..Default::default()
     }))
     .map_err(|e| e.to_string())?;
+    crate::errors::watch(&device, crate::errors::role::COMPUTE);
     let stamps = make_stamps(&device);
     let info = adapter.get_info();
     crate::context::trace_device("compute", &info, &device);
@@ -212,6 +215,7 @@ impl ComputeDevice {
             best: Mutex::default(),
             pool: Mutex::default(),
             account: kt_time::mem::open(kt_time::mem::Tenant::Compute, POOL_BYTES),
+            spares: Arc::default(),
             cache,
         })
     }
@@ -252,6 +256,11 @@ impl ComputeDevice {
     /// A buffer of at least `size` bytes; true when it comes from the pool and holds a past job.
     fn take(&self, size: u64, usage: wgpu::BufferUsages) -> (wgpu::Buffer, bool) {
         let size = size.max(16).next_multiple_of(16);
+        if usage == JOB_USAGE
+            && let Some(b) = self.spares.try_take(size)
+        {
+            return (b, true);
+        }
         let mut pool = self.pool.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(b) = pool.free.get_mut(&(size, usage.bits())).and_then(Vec::pop) {
             pool.bytes -= size;
@@ -470,6 +479,33 @@ impl ComputeHost for ComputeDevice {
     }
 
     fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String> {
+        self.run_job(job, &[]).map(|r| r.0)
+    }
+
+    fn keeps(&self) -> bool {
+        true
+    }
+
+    fn run_keeping(&self, job: &Job<'_>, keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {
+        self.run_job(job, keep)
+    }
+}
+
+/// A job's storage buffers: read and written by its steps, copied to and from.
+const JOB_USAGE: wgpu::BufferUsages =
+    wgpu::BufferUsages::STORAGE.union(wgpu::BufferUsages::COPY_DST).union(wgpu::BufferUsages::COPY_SRC);
+
+/// Buffers jobs kept on the device (stream-round-trips D1), for tests.
+static KEPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many job buffers stayed on the device after their job.
+pub fn kept_buffers() -> u64 {
+    KEPT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl ComputeDevice {
+    /// A job; the buffers `keep` names stay on the device as held buffers, the rest go back to the pool.
+    fn run_job(&self, job: &Job<'_>, keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {
         let d = &self.device;
         // the job in the trace: its kernel, dispatches, the device time and the wait for its buffers;
         // its cause is the caller's (a frame's stream stage, a prefetch advance)
@@ -509,7 +545,7 @@ impl ComputeHost for ComputeDevice {
             return Err("a held buffer of another device".into());
         }
         let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
-        let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+        let usage = JOB_USAGE;
         let mut enc = d.create_command_encoder(&Default::default());
         let mut bufs: Vec<wgpu::Buffer> = Vec::with_capacity(job.buffers.len());
         for init in job.buffers {
@@ -658,18 +694,31 @@ impl ComputeHost for ComputeDevice {
         let submitted_ns = kt_time::trace::now_ns();
         let sub = self.queue.submit([enc.finish()]);
         pieces.push((from, job.steps.len(), submitted_ns));
+        // this job's own submission: a wait for "the most recent" one waited for every piece another
+        // thread submitted to the device after it too (stream-round-trips D9, found-defects 661: its
+        // buffers came back 311 ms after its last dispatch ended at the median on the owner's iGPU)
+        let mine = wgpu::PollType::Wait { submission_index: Some(sub.clone()), timeout: None };
         let _flight = piece.end(&self.device, &self.queue, sub, false);
         if let Some(e) = pollster::block_on(scope.pop()) {
             self.give_back(stamps, learns);
             return Err(format!("compute job refused: {e}"));
         }
+        // every read mapped first, then one wait: a wait per buffer was a poll per buffer
+        let maps: Vec<std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>> = staging
+            .iter()
+            .map(|st| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                st.slice(..).map_async(wgpu::MapMode::Read, move |r| {
+                    let _ = tx.send(r);
+                });
+                rx
+            })
+            .collect();
+        if !maps.is_empty() {
+            d.poll(mine.clone()).map_err(|e| e.to_string())?;
+        }
         let mut out = Vec::with_capacity(staging.len());
-        for (st, b) in staging.iter().zip(job.reads) {
-            let (tx, rx) = std::sync::mpsc::channel();
-            st.slice(..).map_async(wgpu::MapMode::Read, move |r| {
-                let _ = tx.send(r);
-            });
-            d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        for ((st, b), rx) in staging.iter().zip(job.reads).zip(maps) {
             rx.recv().map_err(|e| e.to_string())?.map_err(|e| e.to_string())?;
             let len = job.buffers[b.0].len();
             out.push(st.slice(..len).get_mapped_range().map_err(|e| e.to_string())?.to_vec());
@@ -685,7 +734,7 @@ impl ComputeHost for ComputeDevice {
                     let _ = tx.send(r);
                 });
                 // the job's own wait has passed: this map is ready at the next poll
-                d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+                d.poll(mine).map_err(|e| e.to_string())?;
                 if let Ok(Ok(())) = rx.recv() {
                     let ticks: Vec<u64> = st
                         .slice(..bytes)
@@ -745,8 +794,18 @@ impl ComputeHost for ComputeDevice {
             }
         }
         self.give_back(stamps, learns);
-        self.give(bufs.into_iter().chain([arena]).chain(staging));
-        Ok(out)
+        let mut bufs: Vec<Option<wgpu::Buffer>> = bufs.into_iter().map(Some).collect();
+        let held = keep
+            .iter()
+            .map(|b| {
+                let len = job.buffers[b.0].len();
+                let buf = bufs[b.0].take().expect("a buffer kept once");
+                KEPT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                crate::held::held(buf, len, self.device.clone(), self.spares.clone())
+            })
+            .collect();
+        self.give(bufs.into_iter().flatten().chain([arena]).chain(staging));
+        Ok((out, held))
     }
 }
 

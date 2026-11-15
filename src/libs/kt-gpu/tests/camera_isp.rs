@@ -62,7 +62,7 @@ fn run_frame(
         content: xxhash_rust::xxh3::xxh3_64(&fr.rgba),
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(fr)),
-        fx: std::borrow::Cow::Owned(fx),
+        fx: kt_engine::LayerChain::Owned(fx),
         fx_hash,
         u: 0.5,
         cam3d: None,
@@ -253,7 +253,7 @@ fn camera_isp_gpu_cost_per_1080p_frame() {
             content: id,
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(fr)),
-            fx: std::borrow::Cow::Owned(vec![f.clone()]),
+            fx: kt_engine::LayerChain::Owned(vec![f.clone()]),
             fx_hash: id,
             u: 0.5,
             cam3d: None,
@@ -288,7 +288,7 @@ fn gpu_bytes(engine: &kt_gpu::GpuFxEngine, id: u64, fx: &[FxInstance], fr: &Arc<
         content: id,
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(fr.clone())),
-        fx: std::borrow::Cow::Borrowed(fx),
+        fx: kt_engine::LayerChain::Borrowed(fx),
         fx_hash: id,
         u: 0.5,
         cam3d: None,
@@ -438,4 +438,56 @@ fn t2311_the_sensor_grid_form_costs_less() {
     let ratio = best_new as f64 / best_old as f64;
     println!("t2311: camera passes {:.2} ms → {:.2} ms ({ratio:.2})", best_old as f64 / 1e6, best_new as f64 / 1e6);
     assert!(ratio <= 0.6, "the sensor-grid form costs {ratio:.2} of the frame-grid form's device time");
+}
+
+/// t2683 (per-sample-costs, found-defects 362): with defocus the unprocessing reads its source's
+/// transfer from a 256-texel table the device makes first by the same `decode`, and the frame is the
+/// per-tap form's bytes (`cpu::with_general` keeps that form) on the same device — every source
+/// curve, two defocus radii, opaque and alpha, K 1 and 2.
+#[test]
+fn t2683_the_curve_table_is_the_per_tap_forms_bytes() {
+    let _one = lock();
+    kt_plugins_builtin::install();
+    let Some(engine) = test_engine() else { return };
+    let reg = kt_plugin_api::installed().expect("installed");
+    let cam = reg.get(kt_plugin_api::Family::Fx, "camera_isp").expect("camera_isp is built in");
+    let m = cam.manifest();
+    let defaults = kt_plugin_api::ParamValues::defaults(&m.passport).0;
+    let row = |n: &str| m.passport.iter().position(|s| s.name == n).expect("a row");
+    // the table is in the graph only with defocus and a non-linear source
+    let g = kt_plugin_api::barrier::GpuCtx { w: 96, h: 54, res_scale: 1, alpha: None, src_has_alpha: false, burst_index: 0 };
+    let tables = |vals: &[f64]| {
+        let mut nodes = Vec::new();
+        cam.barrier().expect("a barrier").gpu_values(vals, &g, &mut nodes);
+        nodes.iter().filter(|n| matches!(n, kt_plugin_api::barrier::Node::PassAt { w: 256, h: 1, .. })).count()
+    };
+    let mut blurred = defaults.clone();
+    blurred[row("lens_blur")] = 3.0;
+    assert_eq!(tables(&defaults), 0, "no defocus, no table");
+    assert_eq!(tables(&blurred), 1, "defocus takes the table");
+    assert_eq!(kt_plugin_api::cpu::with_general(|| tables(&blurred)), 0, "the general form decodes per tap");
+    let mut id = 160_000;
+    let mut differ = Vec::new();
+    for curve in 0..4 {
+        for blur in [1.5, 6.0] {
+            let mut vals = defaults.clone();
+            vals[row("src_curve")] = curve as f64;
+            vals[row("lens_blur")] = blur;
+            let f = FxInstance::plugin_with("camera_isp", &vals).expect("the kind");
+            for k in [1u32, 2] {
+                let (fx, _) = if k == 1 { (vec![f.clone()], 1) } else { at_k(&f, k, W, H) };
+                for alpha in [false, true] {
+                    id += 1;
+                    let fr = frame(alpha);
+                    let new = gpu_bytes(&engine, id, &fx, &fr);
+                    let old = kt_plugin_api::cpu::with_general(|| gpu_bytes(&engine, id, &fx, &fr));
+                    if new != old {
+                        let n = new.iter().zip(&old).filter(|(a, b)| a != b).count();
+                        differ.push(format!("curve {curve} blur {blur} K {k} alpha={alpha}: {n} bytes differ"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(differ.is_empty(), "the curve table moved bytes: {differ:#?}");
 }

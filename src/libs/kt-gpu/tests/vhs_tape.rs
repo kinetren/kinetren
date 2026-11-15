@@ -52,7 +52,7 @@ impl Src {
             content: xxhash_rust::xxh3::xxh3_64(&self.frame.rgba),
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(self.frame.clone())),
-            fx: std::borrow::Cow::Borrowed(&self.fx[..]),
+            fx: kt_engine::LayerChain::Borrowed(&self.fx[..]),
             fx_hash: xxhash_rust::xxh3::xxh3_64(repr.as_bytes()),
             u: 0.5,
             cam3d: None,

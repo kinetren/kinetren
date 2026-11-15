@@ -100,6 +100,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   new term in the weight is a new boundary in `weight_run`, or the run hands out a stale weight (t2173
   holds the bytes on the specialized, general and baseline paths; a `debug_assert` compares the run's
   last frame).
+- **A warm render allocates nothing** (per-sample-costs, t2684): an event's chain output, the laps'
+  buffers, a stage's sum and key signals and the active-event lists come from `FxStateStore::pool()`
+  and go back to it in the same call; the reel maps are a `OnceLock` of the build; a sub-mix burst the
+  ring let go is refilled (`NestStream::burst`). A new buffer on the render path takes it from the pool;
+  t2684 counts every allocation of four warm seconds, linear and looped.
 - **In the tail of FX the warp is not computed** (R.43, item 304): beyond `gate_end` the dry signal is zeroed by the gate anyway, so a chunk lying entirely beyond it is skipped — byte-identical by construction, but without the resampler and without reading the source. Tests 294/295.
 - Seek: reset FX + pre-roll max(tail, 100 ms) into garbage (test 7). `reset_all` reaches EVERY stream through a chain: events, their laps, track stages, reels' sub-mix streams and the sidechain key branches (t2375: a key branch left out rang the old place into the detector). A reel's pre-roll counts its own track stages (t2376). A new state the render thread keeps joins `reset_all` and, when it rings, a pre-roll.
 - `Player::wake()` is public: kt-app's `audio-output` thread parks on it and opens the sound device on Play (kept-mix-settle D5). Every input that should open or close the device notifies it already (play, pause, seek).
@@ -290,7 +295,14 @@ in the source's state and arrive through the retune lane.
   Its bytes are real memory: moving them moves the render's peak, and a 3 GB render has no margin. A
   change of chunks or of the look-ahead is checked under `MemoryMax=3G` more than once: one such run
   passed and the next was killed.
-- A stream stage (datamosh) keeps the serial export: its pre-roll decodes on the compose thread.
+- **A stream stage takes the pipeline** (stream-round-trips D6, row 490): the decode thread pre-rolls the
+  range's history before its first chunk, and the compose thread builds the plan of a frame with a stream
+  stage in frame order and hands it to a worker (`Job::Planned`) — a worker never re-walks a history the
+  memo dropped. t2707.
+- **A look-ahead walk is bounded by what a stage on screen reaches** (stream-round-trips D8, row 660,
+  t2710): no stage on screen walks nothing far, every walk is at most `STREAM_WALK_SECS` of frames. A
+  divisor taken from a stage's frame size is 0 where no stage is: never divide by `max(1)` of it. The walk
+  of the frame ON SCREEN runs at the display's class (D10, t2711).
 - **An incomplete frame is composed again before it is written** (gpu-leftovers D5, found-defects 522):
   `decode_requests` asks a key its span dropped alone up to `export::RETRIES` times in both exports, and
   every compose site (serial loop, pipeline workers, the ring's `collect`, `depth == 0`) composes an
@@ -487,3 +499,21 @@ opening. This is not a regression — the key is a function of the model, not of
 allocation per element). The player hands the set to `VideoGpuExec::prewarm` and `prewarm::compute` when
 it changes (`set_project`), when an executor arrives (`set_video_gpu`, the slow-chain setter); an edit that
 keeps the set asks nothing (t2127). The export prewarms its devices and waits (`settle_prewarm`).
+
+## A frame costs its events, an edit its index (frame-work-by-edit)
+
+- **A per-frame question asks the renderer's `LayerIndex`** (`VideoRenderer::active(t)`, `index.over`):
+  the events active at a tick, ascending — the list's (composite) order, so iterating it is the old
+  `clips.iter().filter(active_at)`. A new per-frame walk of `self.clips` is the defect this closed
+  (t2660, t2661, t2662). A track stage carries its own range, index, revision and masks; a reel's
+  sub-plan its renderer's index.
+- **A layer's chain in a plan is a `LayerChain`**: `Borrowed` without live curves, `Shared` from the
+  layer's `ChainMemo` (last four material ticks) with them, `Owned` once a plan changed it. Change it
+  with `to_mut` (it counts `ChainClone`). t2666.
+- **Carriers' curves are compiled** (`RowCurves` in `TransAnim`, the renderer's `cam_rows`; masks in
+  `ClipMaskPlan`'s `MasksPlan`): a frame sets no parameter by name (t2667).
+- **`update_gen` touches its own address only**: the other addresses go to the builder thread through
+  `Builds::want_gen_resync` (with the reel sources to stale); nothing resolves a reel on the calling
+  thread (t2669).
+- **Builders run under `kt_model::with_sequence_index`**: a new entry that builds (a renderer, the
+  generator list) wraps itself the same way, or every `project.sequence(id)` scans the reels.

@@ -870,6 +870,19 @@ impl Player {
                 // `Player::project()` is read by export and diagnostics
                 let p = {
                     let mut w = self.builds.want.lock().unwrap();
+                    // the app hands the model's snapshot first, which already holds the values: no
+                    // copy of the whole project per keystroke then (frame-work-by-edit, row 190)
+                    let holds = {
+                        let p = &w.project;
+                        p.clips
+                            .iter()
+                            .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
+                            .filter(|c| c.id == clip)
+                            .all(|c| c.r#gen.as_ref() == Some(&state.kind) && c.gen_auto == state.auto)
+                    };
+                    if holds {
+                        w.project.clone()
+                    } else {
                     let p = Arc::make_mut(&mut w.project);
                     let put = |cs: &mut Vec<kt_model::ClipEvent>| {
                         for c in cs.iter_mut().filter(|c| c.id == clip) {
@@ -884,6 +897,7 @@ impl Player {
                         p.sequences[i].clips = cs;
                     }
                     w.project.clone()
+                    }
                 };
                 let stale: Vec<kt_cache::SourceId> = crate::reel_chain_of_clip(&p, clip)
                     .into_iter()
@@ -896,27 +910,13 @@ impl Player {
                 // of the template would otherwise not reach the second copy before the
                 // first plan rebuild. The list is computed by the same
                 // `gen_sources` that raises the sources.
-                let wanted = crate::gen_sources(&p);
                 drop(p);
                 self.media.update_gen_at(addr, state, stale.clone());
-                for (a, st) in wanted {
-                    if a == addr {
-                        continue;
-                    }
-                    let live = self.media.gen_states.lock().unwrap().get(&a).cloned();
-                    match live {
-                        Some(o) if o == st => {}
-                        Some(o) if kt_media::factory::can_retune_gen(&o, &st) => {
-                            self.media.update_gen_at(a, st, stale.clone());
-                        }
-                        Some(_) => {
-                            self.media.gen_states.lock().unwrap().insert(a, st.clone());
-                            self.media.replace_media(a, kt_media::factory::open_gen(&st));
-                            self.builds.refresh();
-                        }
-                        None => {}
-                    }
-                }
+                // the OTHER addresses (an instance with overrides, a morpher's pieces) are the
+                // builder thread's to find: a whole `gen_sources` here resolved every reel on the UI
+                // thread per keystroke (frame-work-by-edit, found-defects 190)
+                drop(_g);
+                self.builds.want_gen_resync(stale);
                 true
             }
             None => false,
@@ -1536,6 +1536,13 @@ impl PreviewParts {
                             if fill {
                                 FILL_KEY.with(|k| k.set(Some(key)));
                             }
+                            // the picture now lies on the display's device: shown from there, it is not
+                            // uploaded a second time into the interface (stream-round-trips D7, row 622)
+                            if let Some(o) = kept_on
+                                && d.present_kept(key, o)
+                            {
+                                stages.shown_kept = true;
+                            }
                         }
                         display
                     }
@@ -2001,6 +2008,29 @@ impl MediaParts {
         }
     }
 
+    /// Retune every live generator address whose state `wanted` changed (a value edit's other
+    /// instances); the caller holds `gen_lock`. `true` — a source had to be replaced (its passport
+    /// moved), and the version must be built again with the new facts.
+    fn resync_gen_others(&self, wanted: Vec<(MediaId, kt_model::GenState)>, stale: &[kt_cache::SourceId]) -> bool {
+        let mut replaced = false;
+        for (a, st) in wanted {
+            let live = self.gen_states.lock().unwrap().get(&a).cloned();
+            match live {
+                Some(o) if o == st => {}
+                Some(o) if kt_media::factory::can_retune_gen(&o, &st) => {
+                    self.update_gen_at(a, st, stale.to_vec());
+                }
+                Some(_) => {
+                    self.gen_states.lock().unwrap().insert(a, st.clone());
+                    self.replace_media(a, kt_media::factory::open_gen(&st));
+                    replaced = true;
+                }
+                None => {}
+            }
+        }
+        replaced
+    }
+
     fn update_gen_at(&self, addr: MediaId, state: kt_model::GenState, stale: Vec<kt_cache::SourceId>) {
         self.gen_states.lock().unwrap().insert(addr, state.clone());
         let workers = self.workers.read().unwrap();
@@ -2031,7 +2061,7 @@ fn build_version(
     // events its memo holds after it (the rest of them were reused from the last build)
     let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
     span.aux(kt_time::trace::job::SHARED_BUILD).id(seq).a(version);
-    let (mut built, cost) = kt_time::cost::meter(|| crate::incremental::with_memo(memo, || {
+    let (mut built, cost) = kt_time::cost::meter(|| crate::incremental::with_memo(memo, || kt_model::with_sequence_index(project, || {
         crate::video::revisions_scope(|| {
             let wanted = crate::gen_sources(project);
             {
@@ -2050,7 +2080,7 @@ fn build_version(
             let video = Arc::new(preview_video(project, &facts, cache));
             crate::builds::Built { seq, version, project: project.clone(), audio, video, cost: Default::default() }
         })
-    }));
+    })));
     built.cost = cost;
     let (held_a, held_v) = memo.len();
     span.b(cost[kt_time::cost::Cost::EventDerive as usize]).c((held_a + held_v) as u64);
@@ -2077,6 +2107,19 @@ fn build_loop(ctx: BuildCtx) {
         builds.wait_gate();
         if builds.stop.load(Ordering::Acquire) {
             return;
+        }
+        // a generator value edit's other addresses (found-defects 190): resynced here, not on the
+        // UI thread; a source that had to be replaced asks a build of its own (`refresh`)
+        if let Some((p, stale)) = builds.take_gen_resync() {
+            let wanted = crate::gen_sources(&p);
+            drop(p);
+            let _g = media.gen_lock.lock().unwrap();
+            if media.resync_gen_others(wanted, &stale) {
+                builds.refresh();
+            }
+        }
+        if builds.want_seq() <= done {
+            continue;
         }
         // the newest want after the gate: the ones in between are never built
         let (project, version, seq) = {
@@ -2930,7 +2973,16 @@ pub fn stream_advance_ahead(
         }
     }
     runs.extend(run);
-    for (from, to) in runs {
+    for (i, (from, to)) in runs.into_iter().enumerate() {
+        // the frame on screen's own history is the display's work: the preview shows Loading until
+        // it is walked, so it runs at the display's class, not the look-ahead's (stream-round-trips
+        // D10, found-defects 662: at `near` its pieces waited for admission behind every present)
+        if i == 0 && from == t && kt_time::sched::current_class() == kt_time::sched::Class::Near {
+            let _shown = kt_time::sched::with_class(kt_time::sched::Class::Now);
+            if video.stream_advance_run(cache, t, t, q) {
+                return true;
+            }
+        }
         if video.stream_advance_run(cache, from, to, q) {
             return true;
         }
@@ -2991,10 +3043,23 @@ fn tell_loop(
 /// The frames ahead for a pass interval of `interval` (see `STREAM_AHEAD_MIN`).
 fn stream_ahead_frames(video: &VideoRenderer, t: Tick, q: Quality, interval: std::time::Duration) -> usize {
     let fps = kt_time::TICK_HZ as f64 / video.grid.frame_step().max(1) as f64;
-    let want = (interval.as_secs_f64() * fps * 2.0).ceil() as usize;
-    let per_position = 2 * video.stream_frame_bytes(t, q).max(1);
-    let room = crate::video::stream_memo().bytes_cap() / 4 / per_position;
+    let want = ((interval.as_secs_f64() * fps * 2.0).ceil() as usize).min(stream_walk_cap(video));
+    let bytes = video.stream_frame_bytes(t, q);
+    if bytes == 0 {
+        // no stage on screen: a stage starting just ahead is reached by the near walk's minimum
+        return STREAM_AHEAD_MIN;
+    }
+    let room = crate::video::stream_memo().bytes_cap() / 4 / (2 * bytes);
     want.max(STREAM_AHEAD_MIN).min(room.max(1))
+}
+
+/// Seconds of frames a look-ahead walk takes at most, whatever the memo holds (stream-round-trips
+/// D8, found-defects 660): the walk's own loop is a step a frame.
+const STREAM_WALK_SECS: i64 = 60;
+
+/// `STREAM_WALK_SECS` in frames of the project.
+fn stream_walk_cap(video: &VideoRenderer) -> usize {
+    (STREAM_WALK_SECS * kt_time::TICK_HZ / video.grid.frame_step().max(1)) as usize
 }
 
 /// Passes in a row in which the far look-ahead stayed pending and computed nothing before it stops
@@ -3008,13 +3073,21 @@ const FAR_STALLS: u32 = 8;
 /// loop, nothing.
 pub fn stream_far_frames(video: &VideoRenderer, t: Tick, q: Quality, region: Option<(i64, i64)>, playing: bool) -> usize {
     let step = video.grid.frame_step().max(1);
-    let per_position = 2 * video.stream_frame_bytes(t, q).max(1);
+    // no stage on screen, nothing to walk far (found-defects 660): with a frame size of 0 the divisor
+    // was 2 bytes, and a quarter of a 256 MB memo made the walk 33.5 million frames — 26 s of the
+    // prefetch thread every pass while a piece without a stream played, its look-ahead starved
+    let bytes = video.stream_frame_bytes(t, q);
+    if bytes == 0 {
+        return 0;
+    }
+    let per_position = 2 * bytes;
     let memo = video.stream_memo_cap();
-    match region.filter(|&(s, e)| s <= t.0 && t.0 < e) {
+    let far = match region.filter(|&(s, e)| s <= t.0 && t.0 < e) {
         Some((s, e)) => (((e - s) / step) as usize + 1).min((memo / per_position).max(1)),
         None if playing => (memo / 4 / per_position).max(1),
         None => 0,
-    }
+    };
+    far.min(stream_walk_cap(video))
 }
 
 /// The live preview's renderer: its stream stages paced to the player's cache (decode-request-storm).

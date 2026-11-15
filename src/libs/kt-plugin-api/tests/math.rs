@@ -165,3 +165,32 @@ fn t1982_powf_neg_half_is_powf_on_every_float() {
         assert_eq!(powf_neg_half(x).to_bits(), powf(x, -0.5).to_bits(), "{x}");
     }
 }
+
+/// t2682 (per-sample-costs): `exp10f` is `powf(10.0, y)` to the bit on EVERY `f32` — the finite
+/// ones both signs, the infinities and the NaNs — the exhaustive check a cheaper form of a frozen
+/// function owes (kt-plugin-api CLAUDE.md, audio-fx-cost).
+#[test]
+fn t2682_exp10f_is_powf_ten_on_every_float() {
+    use kt_plugin_api::math::{exp10f, powf};
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(16) as u64;
+    let top = 1u64 << 32;
+    let per = top.div_ceil(threads);
+    let bad: u64 = std::thread::scope(|s| {
+        let jobs: Vec<_> = (0..threads)
+            .map(|t| {
+                s.spawn(move || {
+                    let mut bad = 0u64;
+                    for b in (t * per)..((t + 1) * per).min(top) {
+                        let y = f32::from_bits(b as u32);
+                        if exp10f(y).to_bits() != powf(10.0, y).to_bits() {
+                            bad += 1;
+                        }
+                    }
+                    bad
+                })
+            })
+            .collect();
+        jobs.into_iter().map(|j| j.join().unwrap()).sum()
+    });
+    assert_eq!(bad, 0, "exp10f differs from powf(10, y) on {bad} floats");
+}

@@ -204,6 +204,9 @@ pub(super) struct StreamStage {
     pub values: Vec<f64>,
     pub before: Option<Box<VideoClip>>,
     pub second: Vec<VideoClip>,
+    /// The running maximum of `second`'s ends (sorted by start): the first event covering a tick is
+    /// found by halving, not by a scan of the lane per position (frame-work-by-edit).
+    pub second_reach: Vec<i64>,
     /// The slots IN FRONT of the stage that act on the picture (stream-input-order, row 484): run on
     /// every frame of the main stream before the kernel reads it, in the order the person built.
     /// Indices into the clip's materialized chain; the leading Geometry node is not one (it places
@@ -253,6 +256,7 @@ impl StreamStage {
                 values: p.values.clone(),
                 before: None,
                 second: vec![],
+                second_reach: vec![],
                 front: vec![],
                 front_key: 0,
                 front_curved: false,
@@ -453,6 +457,10 @@ fn input_slots(fx: &[kt_model::FxInstance]) -> Vec<usize> {
 /// Fill each stage's event before and second input (after the composition sort); `cams` and
 /// `project_size` are the composite's, as `layer_src` resolves a camera with them.
 pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent], project_size: (u32, u32)) {
+    // no stage, no snapshot: a build without a stream stage copies no event (frame-work-by-edit)
+    if clips.iter().all(|c| c.stream.is_none()) {
+        return;
+    }
     let snapshot: Vec<VideoClip> = clips.to_vec();
     let lite = |c: &VideoClip| {
         let mut c = c.clone();
@@ -492,6 +500,14 @@ pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent
         if let Some(l) = lane {
             st.second = snapshot.iter().filter(|o| o.lane == l && o.nest.is_none()).map(lite).collect();
         }
+        st.second_reach = st
+            .second
+            .iter()
+            .scan(i64::MIN, |m, o| {
+                *m = (*m).max(o.end.0);
+                Some(*m)
+            })
+            .collect();
         st.second_front = st.second.iter().map(|o| input_slots(&o.fx)).collect();
         st.cams = Arc::from(cams.to_vec());
         st.project_size = project_size;
@@ -572,7 +588,7 @@ impl<'a> ClipStream<'a> {
         let c: &'a VideoClip = match side {
             Side::Main if k < self.cut => self.st.before.as_deref().unwrap_or(self.clip),
             Side::Main => self.clip,
-            Side::Second => self.st.second.iter().find(|o| o.start <= t && t < o.end)?,
+            Side::Second => &self.st.second[self.second_index(k)?],
         };
         Some((c, clip_frame_keys(c, t, self.grid, false).0))
     }
@@ -673,8 +689,11 @@ impl StreamLayout for ClipStream<'_> {
 impl<'a> ClipStream<'a> {
     /// The index in `second` of the event the second input reads at position `k`.
     fn second_index(&self, k: i64) -> Option<usize> {
-        let t = Tick(k * self.step);
-        self.st.second.iter().position(|o| o.start <= t && t < o.end)
+        // the first event (by start) with `start <= t < end`: the events before the first whose
+        // running end passes `t` all end at or before it
+        let t = k * self.step;
+        let i = self.st.second_reach.partition_point(|&e| e <= t);
+        self.st.second.get(i).filter(|o| o.start.0 <= t && t < o.end.0).map(|_| i)
     }
 
     /// The plan of `slots` of event `clip`'s chain over `fr`, the frame read at position `k`, as its
@@ -876,9 +895,17 @@ pub(super) fn run(
         return (None, 0);
     };
     drop(span);
-    let src = kt_fx::video::Frame { w: out.w, h: out.h, rgba: buf, has_alpha: false };
-    let mut rgba = vec![0u8; (dq.width * dq.height * 4) as usize];
-    kt_fx::video::fit_into(&src, dq.width, dq.height, &mut rgba);
+    let n = (dq.width * dq.height * 4) as usize;
+    // at the decode size the stage's picture IS the layer (stream-round-trips D5): `fit_into` there is
+    // a copy, and the copy is skipped
+    let rgba = if out.w == dq.width && out.h == dq.height && buf.len() == n {
+        buf
+    } else {
+        let src = kt_fx::video::Frame { w: out.w, h: out.h, rgba: buf, has_alpha: false };
+        let mut rgba = vec![0u8; n];
+        kt_fx::video::fit_into(&src, dq.width, dq.height, &mut rgba);
+        rgba
+    };
     let frame = VideoFrame { pts, width: dq.width, height: dq.height, rgba: rgba.into_boxed_slice(), has_alpha: false };
     (Some(Arc::new(frame)), out.key)
 }

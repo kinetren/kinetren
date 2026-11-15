@@ -10904,6 +10904,8 @@ static LOADING_TRACED: std::sync::atomic::AtomicBool = std::sync::atomic::Atomic
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         kt_time::work::bump(kt_time::work::Work::UiFrame);
+        // a frame of a refused surface reconfigure's hold is spent (gpu-errors-survive)
+        kt_gpu::errors::display_frame();
         // a UI frame of 50 ms or more is a stall: the trace holds it beside what the other threads
         // did (structured-telemetry); a hover frame records nothing, so the pointer over a still
         // place wakes no writer
@@ -10922,6 +10924,13 @@ impl eframe::App for KtApp {
                 crate::bench::Cmd::Fault => {
                     let t = std::thread::Builder::new().name("live-fault".into());
                     let _ = t.spawn(kt_crash::testing::kt_crash_probe_segv);
+                }
+                crate::bench::Cmd::GpuBusy(count) => {
+                    if let Some(rs) = _frame.wgpu_render_state() {
+                        let (device, queue) = (rs.device.clone(), rs.queue.clone());
+                        let t = std::thread::Builder::new().name("live-gpu-busy".into());
+                        let _ = t.spawn(move || crate::bench::gpu_busy(&device, &queue, count));
+                    }
                 }
             }
             crate::bench::finished(seq);
@@ -11116,6 +11125,9 @@ pub fn run() -> eframe::Result {
     // the monitors' cards and the power choice (load-report-into-trace): the trace is installed above
     let _ = kt_gpu::adapter_facts();
     kt_gpu::trace_machine();
+    // a GPU error on any device is a line in the log and the telemetry journal, never a panic
+    // (gpu-errors-survive, kkt-26.11.15 N1)
+    kt_gpu::errors::set_sink(|line| crate::journal::log("GPU", line));
     let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
         setup.power_preference = kt_gpu::display_power_preference();
@@ -11171,6 +11183,11 @@ pub fn run() -> eframe::Result {
             crate::i18n::set_lang_ctx(&cc.egui_ctx, crate::i18n::resolve(lang_choice));
             crate::icons::install_fonts(&cc.egui_ctx);
             crate::journal::install_panic_hook();
+            // the window's device before its first resize: egui reconfigures the surface on this
+            // thread while the preview's thread composes on the same device (gpu-errors-survive)
+            if let Some(rs) = &cc.wgpu_render_state {
+                kt_gpu::errors::watch(&rs.device, kt_gpu::errors::role::DISPLAY);
+            }
             // before the first KtApp: every app of this process takes the same telemetry
             crate::telemetry::install(crate::telemetry::Telemetry::for_process(
                 cc.storage.and_then(|s| s.get_string(crate::telemetry::STORAGE_KEY)).as_deref(),

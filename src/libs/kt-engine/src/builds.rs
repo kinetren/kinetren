@@ -45,6 +45,9 @@ pub(crate) struct Want {
     pub project: Arc<Project>,
     pub version: u64,
     pub seq: u64,
+    /// A generator's value edit asked its OTHER addresses resynced (frame-work-by-edit, found-defects
+    /// 190): the reel sources whose memoized composites it stales. `None` — nothing asked.
+    pub gen_resync: Option<Vec<kt_cache::SourceId>>,
 }
 
 pub(crate) struct Builds {
@@ -62,7 +65,7 @@ pub(crate) struct Builds {
 impl Builds {
     pub fn new(first: Built) -> Builds {
         Builds {
-            want: Mutex::new(Want { project: first.project.clone(), version: first.version, seq: first.seq }),
+            want: Mutex::new(Want { project: first.project.clone(), version: first.version, seq: first.seq, gen_resync: None }),
             want_cv: Condvar::new(),
             built_seq: AtomicU64::new(first.seq),
             built: Mutex::new(Arc::new(first)),
@@ -87,6 +90,27 @@ impl Builds {
     pub fn refresh(&self) {
         self.want.lock().unwrap().seq += 1;
         self.want_cv.notify_all();
+    }
+
+    /// Ask the builder thread to bring every address of the stored project's generators in line
+    /// (a value edit's other instances), `stale` — the reel sources to invalidate with them.
+    pub fn want_gen_resync(&self, stale: Vec<kt_cache::SourceId>) {
+        let mut w = self.want.lock().unwrap();
+        let all = w.gen_resync.get_or_insert_with(Vec::new);
+        for s in stale {
+            if !all.contains(&s) {
+                all.push(s);
+            }
+        }
+        drop(w);
+        self.want_cv.notify_all();
+    }
+
+    /// The asked resync with the project it is for (taken: asked once, done once).
+    pub(crate) fn take_gen_resync(&self) -> Option<(Arc<Project>, Vec<kt_cache::SourceId>)> {
+        let mut w = self.want.lock().unwrap();
+        let stale = w.gen_resync.take()?;
+        Some((w.project.clone(), stale))
     }
 
     pub fn want_seq(&self) -> u64 {
@@ -130,7 +154,7 @@ impl Builds {
             if self.stop.load(Ordering::Acquire) {
                 return None;
             }
-            if w.seq > done {
+            if w.seq > done || w.gen_resync.is_some() {
                 return Some((w.project.clone(), w.version, w.seq));
             }
             w = self.want_cv.wait(w).unwrap();

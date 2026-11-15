@@ -2886,3 +2886,19 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 - Decided: keep the new form ("1. оставь новое"). After the first Play the sound device stays the
   program's, paused at rest, and Play resumes it at once (play-start-and-prefetch, found-defects 516),
   instead of closing a second after a stop (the 2026-11-10 decision "да звук открывать при Играть").
+
+## 2026-11-15 — his run of the new version against kt26.11.10 (`kkt-26.11.15`)
+
+1. A crash of kt26.11.10 (double click on the window title while a region loops, a simple project
+   without video; earlier also a double click on the preview): check it in the new version.
+2. The real-time preview got much slower than kt26.11.10 at the same system load: "в старой там я
+   взял спокойно кусок и он в реалтайме рендерил а в новой … всё очень плохо". The performance
+   problems we worked on are "не решены, и стало даже хуже".
+3. The final render is slower than the preview, in every version.
+4. The processor mostly idles while the program works.
+5. The final render's settings are very scant.
+- ORDER (his rule): item 4 is NOT started until item 2 is done, and done as FASTER than kt26.11.10,
+  "не просто вернуть как было".
+- Correction to item 2 (same day): the slowdown is NOT mainly Datamosh — "я проверял в старой версии
+  кусок БЕЗ datamosh и он как раз меня еще сильнее беспокоит чем datamosh". The piece without
+  Datamosh is examined first-class, alongside Datamosh.

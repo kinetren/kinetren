@@ -41,6 +41,17 @@ impl Spares {
         })
     }
 
+    /// A spare of exactly `size` bytes, if one is free (the compute host's job buffers, D1 of
+    /// stream-round-trips: a kept buffer comes back to the job that next needs its size).
+    pub(crate) fn try_take(&self, size: u64) -> Option<wgpu::Buffer> {
+        let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
+        let i = free.0.iter().position(|b| b.size() == size)?;
+        let b = free.0.swap_remove(i);
+        free.1 -= size;
+        self.account.set(free.1);
+        Some(b)
+    }
+
     fn give(&self, b: wgpu::Buffer) {
         let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
         if free.1 + b.size() <= SPARE_BYTES {
@@ -66,7 +77,7 @@ impl Drop for HeldBuf {
     }
 }
 
-/// Wrap `buf` (`len` bytes of RGBA) as a held frame of `device`.
+/// Wrap `buf` (`len` bytes: a frame's RGBA, or a buffer a compute job kept) as held on `device`.
 pub(crate) fn held(buf: wgpu::Buffer, len: u64, device: Arc<wgpu::Device>, spares: Arc<Spares>) -> kt_plugin_api::compute::Held {
     kt_plugin_api::compute::Held { len, inner: Arc::new(HeldBuf { buf: Some(buf), device, spares }) }
 }

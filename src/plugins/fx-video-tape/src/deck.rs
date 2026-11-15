@@ -132,6 +132,16 @@ impl Deck {
         Deck { st: Standard::get(std), v }
     }
 
+    /// This deck made `Deck::new(values)` in place: the rows a curve moved, without a new
+    /// passport vector (per-sample-costs, found-defects 354).
+    pub fn renew(&mut self, values: &[f64]) {
+        let d = crate::defaults_ref();
+        self.v.clear();
+        self.v.extend((0..d.len()).map(|i| values.get(i).copied().unwrap_or(d[i])));
+        let std = if self.v[row::STANDARD].round() as i64 == 1 { Std::Ntsc } else { Std::Pal };
+        self.st = Standard::get(std);
+    }
+
     fn flag(&self, r: usize) -> bool {
         self.v[r] >= 0.5
     }

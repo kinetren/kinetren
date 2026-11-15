@@ -192,3 +192,57 @@ fn t1160_beep_is_the_gated_tone_and_silence_is_zeros() {
     let s = read("silence", &[], 12_345, 4096);
     assert!(s.iter().all(|v| *v == 0.0), "silence is zeros");
 }
+
+/// FNV-1a over the samples' bits.
+fn digest(x: &[f32]) -> u64 {
+    x.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| (h ^ v.to_bits() as u64).wrapping_mul(0x0100_0000_01b3))
+}
+
+/// t2681 (per-sample-costs): the noise generator hashes a row only when its held value changes, and
+/// every colour, seed, stereo choice and start (aligned or not to a row's hold) keeps the bytes it
+/// gave before (digests printed on the tree before the change, `KT_PRINT_DIGESTS=1`).
+#[test]
+fn t2681_noise_keeps_its_bytes() {
+    #[rustfmt::skip]
+    const WANT: &[u64] = &[
+        0xf3f7913666451b37,
+        0x2ea69ad7c024b6b1,
+        0x0c46a2c4773a721f,
+        0xcc9101981dd3fcef,
+        0x1cae55a6f04dd5ec,
+        0xf33001a2e90eef06,
+        0x1df6c7ad9414826d,
+        0xaaadc8b58b6e1253,
+        0x3c7ad1951fc66f59,
+        0x75d2e282eb8f16cf,
+        0xa628cd50bd179e6f,
+        0xa9d3a2158a42a7cf,
+        0x66ab25ae241665a7,
+        0x9d5f9fa06ed3c568,
+        0x7c1848c2367741b4,
+        0x65bfaeee539d4f7f,
+        0xff5e1bcaae074fc3,
+        0xa076e93aaa929279,
+        0xc6cf07482da44c61,
+        0x216451cf04736aaf,
+        0x66c11fa5653c3a8a,
+        0xdc74ac73d77f42e3,
+        0x0640ce18ad00798e,
+        0x817541c8ec36b4c6,
+    ];
+    let mut got = Vec::new();
+    for color in [0.0, 1.0, 2.0] {
+        for (seed, stereo) in [(0.0, 0.0), (7.0, 1.0)] {
+            for n0 in [0i64, 1_000_003, 4_095, (1 << 40) + 77] {
+                got.push(digest(&read("audio_noise", &[color, -12.0, seed, stereo], n0, 9_000)));
+            }
+        }
+    }
+    if std::env::var("KT_PRINT_DIGESTS").is_ok() {
+        for d in &got {
+            println!("        0x{d:016x},");
+        }
+        return;
+    }
+    assert_eq!(got, WANT, "the noise moved bytes");
+}

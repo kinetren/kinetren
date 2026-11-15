@@ -49,10 +49,20 @@ pub enum Cost {
     /// A reel instance resolved (its morpher layers, links, overrides) by a builder: once per
     /// instance per build (edit-without-rebuild, found-defects row 155).
     ReelResolve,
+    /// An event looked at by a per-frame question (frame-work-by-edit): the plan, the order, a stream
+    /// stage's advance or want, a reel's coverage. A renderer's time index hands the events active at
+    /// the moment, so the count is the frame's events, never the project's.
+    FrameClip,
+    /// A chain copied to carry its resolved curves into a frame's plan (frame-work-by-edit, row 168):
+    /// one per (layer, moment), shared by every plan of that moment.
+    ChainClone,
+    /// A parameter set by its NAME on a per-frame path (frame-work-by-edit, row 169): carriers apply
+    /// their curves by compiled index, so a frame counts none.
+    ParamByName,
 }
 
 impl Cost {
-    pub const ALL: [Cost; 11] = [
+    pub const ALL: [Cost; 14] = [
         Cost::WarpSegment,
         Cost::ClipSearch,
         Cost::ReelHash,
@@ -64,6 +74,9 @@ impl Cost {
         Cost::EventDerive,
         Cost::RendererBuild,
         Cost::ReelResolve,
+        Cost::FrameClip,
+        Cost::ChainClone,
+        Cost::ParamByName,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -79,6 +92,9 @@ impl Cost {
             Cost::EventDerive => "event_derives",
             Cost::RendererBuild => "renderer_builds",
             Cost::ReelResolve => "reel_resolves",
+            Cost::FrameClip => "frame_clips",
+            Cost::ChainClone => "chain_clones",
+            Cost::ParamByName => "params_by_name",
         }
     }
 }

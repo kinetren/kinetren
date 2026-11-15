@@ -717,3 +717,64 @@ fn t2620_the_front_reaches_the_codec_on_the_device() {
     let bytes = kt_engine::video::with_front_bytes(frame);
     assert_eq!(held, bytes, "the held front gives the bytes of the read-back one");
 }
+
+/// The frames the pipelined export hands its sink, concatenated.
+struct Frames(Vec<u8>);
+
+struct Copy;
+
+impl kt_engine::export::ExportConverter for Copy {
+    type Frame = Vec<u8>;
+    fn convert(&mut self, rgba: &[u8], out: &mut Vec<u8>) -> std::io::Result<()> {
+        out.clear();
+        out.extend_from_slice(rgba);
+        Ok(())
+    }
+}
+
+impl kt_engine::export::ExportSink for Frames {
+    type Frame = Vec<u8>;
+    type Converter = Copy;
+    fn converter(&self) -> std::io::Result<Copy> {
+        Ok(Copy)
+    }
+    fn alloc_frame(&self) -> std::io::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+    fn write_video(&mut self, f: &Vec<u8>) -> std::io::Result<()> {
+        self.0.extend_from_slice(f);
+        Ok(())
+    }
+    fn write_audio(&mut self, _s: &[f32]) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// t2707 (stream-round-trips D6, found-defects 490): the pipelined export of a project with a
+/// Datamosh — on one device and on a device per frame worker, over chunks of a few frames, from a range
+/// starting before the stream and from one starting inside its history — writes the serial export's
+/// frames.
+#[test]
+fn t2707_the_pipelined_export_walks_the_stream_in_order() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let p = project(true);
+    let never = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // a chunk of about four frames at `Q`, the stream's history at its own size besides
+    let budget = (Q.width * Q.height * 4 * 8) as usize;
+    for range in [(26, 46), (36, 52)] {
+        let serial = export(&p, range);
+        for (name, backends) in [("one device", kt_gpu::testkit::backends()), ("three workers", kt_gpu::testkit::backends_many(3))] {
+            let mut got = Frames(Vec::new());
+            let r = (Tick(range.0 * STEP), Tick(range.1 * STEP));
+            let st = kt_engine::export::render_pipelined_budget(&p, sources(), sources(), Q, Some(r), &backends, &never, None, budget, &mut got).unwrap();
+            assert_eq!(st.missing_video_layers, 0, "{name} {range:?}: a frame lost a layer");
+            assert_eq!(got.0.len(), serial.len(), "{name} {range:?}: the frame count");
+            assert!(got.0 == serial, "{name} {range:?}: the pipelined frames differ from the serial export");
+        }
+    }
+}

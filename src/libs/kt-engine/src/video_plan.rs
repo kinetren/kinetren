@@ -3,7 +3,6 @@
 //! are decided once in `VideoRenderer` (video.rs, build_plan); the one executor is the GPU (crate
 //! kt-gpu, injected from above, kt-engine does not depend on it; invariant No. 7).
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use kt_cache::SourceId;
@@ -15,6 +14,42 @@ use kt_time::Tick;
 /// — Pan3d is computed by BOTH backends, and the shared homography math
 /// sits alongside the rest of the shared parametrics (`pan_frame`/`cam_at`).
 pub use kt_fx::geom::Cam3d;
+
+/// A layer's chain in a plan (frame-work-by-edit, found-defects 168): borrowed from the renderer when
+/// it has no live curves; with curves, the chain resolved at the plan's moment, SHARED by every plan
+/// of that (layer, moment) — the probe, the composite, a retry, the loop fill — through the
+/// renderer's memo; `Owned` for a chain a plan's own code changed (a stream stage's front).
+#[derive(Debug, Clone)]
+pub enum LayerChain<'a> {
+    Borrowed(&'a [FxInstance]),
+    Shared(Arc<[FxInstance]>),
+    Owned(Vec<FxInstance>),
+}
+
+impl std::ops::Deref for LayerChain<'_> {
+    type Target = [FxInstance];
+    fn deref(&self) -> &[FxInstance] {
+        match self {
+            LayerChain::Borrowed(s) => s,
+            LayerChain::Shared(a) => a,
+            LayerChain::Owned(v) => v,
+        }
+    }
+}
+
+impl LayerChain<'_> {
+    /// The chain to change: copied once if borrowed or shared.
+    pub fn to_mut(&mut self) -> &mut Vec<FxInstance> {
+        if !matches!(self, LayerChain::Owned(_)) {
+            kt_time::cost::add(kt_time::cost::Cost::ChainClone, 1);
+            *self = LayerChain::Owned(self.to_vec());
+        }
+        match self {
+            LayerChain::Owned(v) => v,
+            _ => unreachable!("made owned above"),
+        }
+    }
+}
 
 /// The source of one layer: the pre-FX frame (already read from the cache when the
 /// plan is built — recency is ALWAYS bumped, the coverage bars do not “cool down”) +
@@ -41,7 +76,7 @@ pub struct LayerSrc<'a> {
     /// The chain WITH automation already applied (R.30): curves are resolved
     /// once when the plan is built — both executors see the ready
     /// parameters. Without curves — a borrow from VideoClip (zero clones).
-    pub fx: Cow<'a, [FxInstance]>,
+    pub fx: LayerChain<'a>,
     /// Names the chain in the executor's keys.
     pub fx_hash: u64,
     /// Clip progress 0..1 (CamMotion).
@@ -284,7 +319,7 @@ pub fn chain_plan_with<'a>(
         content,
         src_scale: 1,
         input: LayerInput::Frame(Some(frame)),
-        fx: Cow::Borrowed(fx),
+        fx: LayerChain::Borrowed(fx),
         fx_hash,
         u,
         cam3d,
@@ -437,4 +472,7 @@ pub struct GpuStages {
     /// the frame is incomplete and the preview writes the catch-up under Loading
     /// (catch-up-shows-loading).
     pub stream_short: u64,
+    /// The slow-chain route's composite, kept on the display's executor, was shown from there
+    /// (stream-round-trips D7, found-defects 622): the bytes are not uploaded again into the interface.
+    pub shown_kept: bool,
 }

@@ -47,6 +47,63 @@ pub struct FxStateStore {
     keys: HashMap<TrackId, Box<FxStateStore>>,
     /// How many times an event's processor was synced (t1940: a rebuild syncs what changed).
     clip_syncs: u64,
+    /// Buffers of the mixdown, kept between render calls (per-sample-costs, found-defects 352):
+    /// an event's chain output, a track stage's sum and key signals, the earlier laps' sum, and
+    /// the active-event lists. They hold no state: each is cleared and sized when taken.
+    pool: Pool,
+}
+
+/// The mixdown's kept buffers (`FxStateStore::pool`): taken and given back within one render call,
+/// so a steady play allocates nothing after its first bursts.
+#[derive(Default)]
+pub(crate) struct Pool {
+    samples: Vec<Vec<f32>>,
+    indices: Vec<Vec<usize>>,
+    keys: Vec<Vec<(usize, Vec<f32>)>>,
+}
+
+/// Kept buffers no larger than this many are held; more are dropped (a render call takes at most
+/// a few at a time, and a nest of stages a few more).
+const POOL_MAX: usize = 32;
+
+impl Pool {
+    /// A buffer of `len` zeros.
+    pub(crate) fn samples(&mut self, len: usize) -> Vec<f32> {
+        let mut v = self.samples.pop().unwrap_or_default();
+        v.clear();
+        v.resize(len, 0.0);
+        v
+    }
+    pub(crate) fn give_samples(&mut self, v: Vec<f32>) {
+        if self.samples.len() < POOL_MAX {
+            self.samples.push(v);
+        }
+    }
+    /// An empty index list.
+    pub(crate) fn indices(&mut self) -> Vec<usize> {
+        let mut v = self.indices.pop().unwrap_or_default();
+        v.clear();
+        v
+    }
+    pub(crate) fn give_indices(&mut self, v: Vec<usize>) {
+        if self.indices.len() < POOL_MAX {
+            self.indices.push(v);
+        }
+    }
+    /// An empty list of key signals.
+    pub(crate) fn keys(&mut self) -> Vec<(usize, Vec<f32>)> {
+        let mut v = self.keys.pop().unwrap_or_default();
+        v.clear();
+        v
+    }
+    pub(crate) fn give_keys(&mut self, mut v: Vec<(usize, Vec<f32>)>) {
+        for (_, b) in v.drain(..) {
+            self.give_samples(b);
+        }
+        if self.keys.len() < POOL_MAX {
+            self.keys.push(v);
+        }
+    }
 }
 
 /// Sub-mix stream of ONE instance of a nested reel.
@@ -99,7 +156,13 @@ pub struct NestStream {
     /// 400 times with 300 inner reverbs built 120 000 processors at every `sync_fx` and took the
     /// machine's memory before a single burst played.
     pub synced: bool,
+    /// Bursts the ring let go that nobody else holds, to be filled again (per-sample-costs,
+    /// found-defects 352: every produced burst was a new allocation). At most `SPARE_BURSTS`.
+    spare: Vec<std::sync::Arc<kt_media::AudioBurst>>,
 }
+
+/// How many let-go bursts a sub-mix stream keeps for reuse.
+const SPARE_BURSTS: usize = 4;
 
 impl NestStream {
     /// A fresh stream. `pub` because the producer in `audio.rs` also creates it:
@@ -117,6 +180,7 @@ impl NestStream {
             preroll,
             block,
             synced: false,
+            spare: Vec::new(),
         }
     }
 
@@ -137,8 +201,26 @@ impl NestStream {
         let cap = (self.block as usize + self.preroll as usize).max(2);
         self.ring.push_back((i, b));
         while self.ring.len() > cap {
-            self.ring.pop_front();
+            if let Some((_, old)) = self.ring.pop_front()
+                && std::sync::Arc::strong_count(&old) == 1
+                && self.spare.len() < SPARE_BURSTS
+            {
+                self.spare.push(old);
+            }
         }
+    }
+
+    /// A burst to fill as `idx`: a let-go one when there is one, else a new one; its samples are
+    /// zero either way (the render adds into them as into a fresh one).
+    pub fn burst(&mut self, idx: i64) -> std::sync::Arc<kt_media::AudioBurst> {
+        while let Some(mut b) = self.spare.pop() {
+            if let Some(m) = std::sync::Arc::get_mut(&mut b) {
+                m.idx = idx;
+                m.data.fill(0.0);
+                return b;
+            }
+        }
+        std::sync::Arc::new(kt_media::AudioBurst::silence(idx))
     }
 
     pub fn rewind(&mut self) {
@@ -151,6 +233,11 @@ impl NestStream {
 impl FxStateStore {
     pub fn new() -> FxStateStore {
         FxStateStore::default()
+    }
+
+    /// The mixdown's kept buffers (per-sample-costs).
+    pub(crate) fn pool(&mut self) -> &mut Pool {
+        &mut self.pool
     }
 
     /// Synchronize the clip processor with the model:
@@ -284,6 +371,11 @@ impl FxStateStore {
             p.reset();
         }
         true
+    }
+
+    /// `laps_mut` would give some (per-sample-costs: the render takes its lap buffers first).
+    pub fn has_laps(&self, id: ClipId) -> bool {
+        self.laps.get(&id).is_some_and(|l| !l.ringing.is_empty())
     }
 
     /// The ringing earlier laps of `id` (loop-pitch-tail-dip), oldest first.

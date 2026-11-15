@@ -30,7 +30,7 @@ fn layer<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance], id: u64) -> LayerSrc<'a>
         content: id,
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(f.clone())),
-        fx: std::borrow::Cow::Borrowed(fx),
+        fx: kt_engine::LayerChain::Borrowed(fx),
         fx_hash: id,
         u: 0.5,
         cam3d: None,

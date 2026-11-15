@@ -84,6 +84,17 @@ pub struct Shader {
 /// device refused and never panics.
 pub trait ComputeHost: Send + Sync {
     fn run(&self, job: &Job<'_>) -> Result<Vec<Vec<u8>>, String>;
+    /// Whether `run_keeping` keeps buffers on the device (stream-round-trips D1).
+    fn keeps(&self) -> bool {
+        false
+    }
+    /// `run`, and the buffers `keep` names stay on the device as [`Held`] buffers, in `keep`'s order:
+    /// a later job reads them as `Init::Held`, copied on the device, no readback and no upload
+    /// (stream-round-trips D1: a history walk's state between its batches and its walks). Only called
+    /// where `keeps()` says so.
+    fn run_keeping(&self, job: &Job<'_>, _keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {
+        self.run(job).map(|r| (r, Vec::new()))
+    }
     /// Compile `shader` and run it once off any frame, so a job using it compiles nothing
     /// (pipeline-prewarm D6). Blocks until done.
     fn prepare(&self, _shader: &Shader) -> Result<(), String> {

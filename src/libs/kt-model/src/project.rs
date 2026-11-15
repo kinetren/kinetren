@@ -111,6 +111,12 @@ impl HasParams for TransitionKind {
     fn set_param(&mut self, name: &str, v: f64) -> bool {
         TransitionKind::set_param(self, name, v)
     }
+    fn set_param_idx(&mut self, idx: usize, v: f64) -> bool {
+        match self {
+            TransitionKind::Plugin(p) => p.set_idx(idx, v),
+            TransitionKind::Crossfade | TransitionKind::Missing(_) => false,
+        }
+    }
 }
 
 impl TransitionKind {
@@ -318,6 +324,7 @@ impl TransitionEvent {
         let mut k = self.kind.clone();
         for c in &self.auto {
             if !c.keys.is_empty() {
+                kt_time::cost::add(kt_time::cost::Cost::ParamByName, 1);
                 k.set_param(&c.param, curve_value(&c.keys, local));
             }
         }
@@ -426,6 +433,61 @@ pub trait Reel {
         kt_time::cost::add(kt_time::cost::Cost::ClipSearch, at.map_or(clips.len(), |i| i + 1) as u64);
         at.map(|i| &clips[i])
     }
+    /// The first event (in the list's order) of `kind` on `lane` other than `a` and `b` whose body
+    /// meets `w`: a staircase transition's third event. The default scans the events and counts
+    /// them (`Cost::ClipSearch`); [`Indexed`] asks [`LaneSpans`] (frame-work-by-edit, row 156).
+    fn lane_busy(&self, kind: ClipKind, lane: u32, w: TickRange, a: ClipId, b: ClipId) -> Option<ClipId> {
+        let clips = self.clips();
+        kt_time::cost::add(kt_time::cost::Cost::ClipSearch, clips.len() as u64);
+        clips
+            .iter()
+            .find(|c| c.id != a && c.id != b && c.kind == kind && c.lane == lane && c.start < w.end && w.start < c.start + c.duration)
+            .map(|c| c.id)
+    }
+}
+
+/// The events of a reel by (kind, lane), sorted by start, for the question "which event of this
+/// lane meets this window" (a staircase transition's third event, found-defects 156): the events
+/// that start before the window's end, walked back from it while an earlier one can still reach
+/// the window. The answer is the scan's: the first such event in the list's order.
+pub struct LaneSpans {
+    by_lane: std::collections::HashMap<(ClipKind, u32), LaneSpan>,
+}
+
+/// One lane's (start, end, list index, id) by start, and the running maximum of the ends.
+type LaneSpan = (Vec<(i64, i64, usize, ClipId)>, Vec<i64>);
+
+impl LaneSpans {
+    pub fn of(clips: &[ClipEvent]) -> LaneSpans {
+        let mut by_lane: std::collections::HashMap<(ClipKind, u32), LaneSpan> = Default::default();
+        for (i, c) in clips.iter().enumerate() {
+            by_lane.entry((c.kind, c.lane)).or_default().0.push((c.start.0, (c.start + c.duration).0, i, c.id));
+        }
+        for (v, reach) in by_lane.values_mut() {
+            v.sort_unstable();
+            let mut m = i64::MIN;
+            *reach = v.iter().map(|e| {
+                m = m.max(e.1);
+                m
+            }).collect();
+        }
+        LaneSpans { by_lane }
+    }
+
+    pub fn busy(&self, kind: ClipKind, lane: u32, w: TickRange, a: ClipId, b: ClipId) -> Option<ClipId> {
+        let (v, reach) = self.by_lane.get(&(kind, lane))?;
+        let mut j = v.partition_point(|e| e.0 < w.end.0);
+        let mut best: Option<(usize, ClipId)> = None;
+        while j > 0 && reach[j - 1] > w.start.0 {
+            j -= 1;
+            let (_, end, i, id) = v[j];
+            kt_time::cost::add(kt_time::cost::Cost::ClipSearch, 1);
+            if end > w.start.0 && id != a && id != b && best.is_none_or(|(bi, _)| i < bi) {
+                best = Some((i, id));
+            }
+        }
+        best.map(|(_, id)| id)
+    }
 }
 
 /// A reel with its events indexed by id, for a pass that asks a transition's ends per
@@ -435,6 +497,8 @@ pub trait Reel {
 pub struct Indexed<'a> {
     reel: &'a dyn Reel,
     by_id: std::borrow::Cow<'a, std::collections::HashMap<ClipId, usize>>,
+    /// The lanes laid out on the first `lane_busy` (a draw path that asks none builds none).
+    lanes: std::cell::OnceCell<LaneSpans>,
 }
 
 impl<'a> Indexed<'a> {
@@ -443,14 +507,14 @@ impl<'a> Indexed<'a> {
         for (i, c) in reel.clips().iter().enumerate() {
             by_id.entry(c.id).or_insert(i);
         }
-        Indexed { reel, by_id: std::borrow::Cow::Owned(by_id) }
+        Indexed { reel, by_id: std::borrow::Cow::Owned(by_id), lanes: Default::default() }
     }
 
     /// Over an index the caller already keeps (the timeline's per-state `EventIndex`): a draw
     /// path builds nothing. An entry that does not name its event (an index of another state)
     /// falls back to the scan.
     pub fn over(reel: &'a dyn Reel, by_id: &'a std::collections::HashMap<ClipId, usize>) -> Indexed<'a> {
-        Indexed { reel, by_id: std::borrow::Cow::Borrowed(by_id) }
+        Indexed { reel, by_id: std::borrow::Cow::Borrowed(by_id), lanes: Default::default() }
     }
 }
 
@@ -488,6 +552,8 @@ impl Reel for Indexed<'_> {
             _ if matches!(self.by_id, std::borrow::Cow::Borrowed(_)) => self.reel.clip(id),
             _ => None,
         }
+    }    fn lane_busy(&self, kind: ClipKind, lane: u32, w: TickRange, a: ClipId, b: ClipId) -> Option<ClipId> {
+        self.lanes.get_or_init(|| LaneSpans::of(self.reel.clips())).busy(kind, lane, w, a, b)
     }
 }
 
@@ -4661,11 +4727,44 @@ pub fn apply_curves<T: HasParams + ?Sized>(t: &mut T, curves: &[ParamCurve], at:
         if c.keys.is_empty() {
             continue;
         }
+        kt_time::cost::add(kt_time::cost::Cost::ParamByName, 1);
         if t.set_param(&c.param, curve_value(&c.keys, at)) {
             applied += 1;
         }
     }
     applied
+}
+
+/// A carrier's curves compiled to its passport rows ONCE (frame-work-by-edit, found-defects 169): a
+/// transition's kind, a camera, a generator read per frame by row index, as the chain's `AutoPlan`
+/// does since R.59. `apply` is `apply_curves` bit for bit: the same `curve_value`, the same owner's
+/// setter (`set_param_idx` is `set_param` of the row), the same order; a curve whose name the
+/// passport lacks is a no-op there and is dropped here.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RowCurves {
+    rows: Vec<(usize, Vec<AutoKey>)>,
+}
+
+impl RowCurves {
+    pub fn compile<T: HasParams + ?Sized>(t: &T, curves: &[ParamCurve]) -> RowCurves {
+        let specs = t.param_specs();
+        let rows = curves
+            .iter()
+            .filter(|c| !c.keys.is_empty())
+            .filter_map(|c| specs.iter().position(|s| s.name == c.param.as_str()).map(|i| (i, c.keys.clone())))
+            .collect();
+        RowCurves { rows }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    pub fn apply<T: HasParams + ?Sized>(&self, t: &mut T, at: Tick) {
+        for (i, keys) in &self.rows {
+            t.set_param_idx(*i, curve_value(keys, at));
+        }
+    }
 }
 
 /// The material position of a timeline moment inside a clip — the SINGLE rule
@@ -5649,6 +5748,17 @@ impl CameraEvent {
     /// keyframes, smoothstep when eased, beyond the edges — the edge values. `target`
     /// is interpolated only when set at both points of the segment (otherwise
     /// the left value is kept); `ortho` — from the left point.
+    /// [`CameraEvent::params_at`] with the curves compiled once (`RowCurves::compile(&self.cam,
+    /// &self.auto)`, frame-work-by-edit row 169): the same bits, no lookup by name per frame.
+    pub fn params_at_rows(&self, rows: &RowCurves, t: Tick) -> CameraParams {
+        if !self.auto.is_empty() {
+            let mut cam = self.cam;
+            rows.apply(&mut cam, Tick(t.0 - self.start.0));
+            return cam;
+        }
+        self.params_at(t)
+    }
+
     pub fn params_at(&self, t: Tick) -> CameraParams {
         if !self.auto.is_empty() {
             // general mechanism (R.34 K3): a curve per parameter, position —
@@ -5659,6 +5769,7 @@ impl CameraEvent {
                 if c.keys.is_empty() {
                     continue;
                 }
+                kt_time::cost::add(kt_time::cost::Cost::ParamByName, 1);
                 cam.set_param(&c.param, curve_value(&c.keys, local));
             }
             return cam;
@@ -6121,6 +6232,36 @@ pub enum ProjectError {
     OverrideDuplicate(ClipId, PubId),
 }
 
+thread_local! {
+    /// The reels' id index of each project a pass on this thread holds open (frame-work-by-edit).
+    static SEQ_INDEX: std::cell::RefCell<Vec<(usize, std::collections::HashMap<MediaId, usize>)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Run `f` with `p`'s reels indexed by id (found-defects 157): every `p.sequence(id)` inside answers
+/// by the index instead of a scan of the reels. The borrow holds `p` unchanged for the whole of `f`,
+/// so the index cannot go stale; the answer is the scan's (the first reel of an id).
+pub fn with_sequence_index<R>(p: &Project, f: impl FnOnce() -> R) -> R {
+    let key = p as *const Project as usize;
+    if SEQ_INDEX.with(|v| v.borrow().iter().any(|(k, _)| *k == key)) {
+        return f();
+    }
+    let mut m = std::collections::HashMap::with_capacity(p.sequences.len());
+    for (i, s) in p.sequences.iter().enumerate() {
+        m.entry(s.id).or_insert(i);
+    }
+    kt_time::cost::add(kt_time::cost::Cost::ReelPass, p.sequences.len() as u64);
+    SEQ_INDEX.with(|v| v.borrow_mut().push((key, m)));
+    struct Pop;
+    impl Drop for Pop {
+        fn drop(&mut self) {
+            SEQ_INDEX.with(|v| v.borrow_mut().pop());
+        }
+    }
+    let _pop = Pop;
+    f()
+}
+
 /// Full check of a transition against the project: junction, fit, minimum,
 /// uniqueness of the junction and non-overlap of windows on the track. `ignore` — the id of the
 /// transition itself during SetTransition (do not compare with itself; Add passes None,
@@ -6175,16 +6316,8 @@ pub fn check_transition_full(
         if w.end - w.start < MIN_TRANSITION_DURATION {
             return Err(ProjectError::TransitionTooShort(t.id));
         }
-        for c in p.clips() {
-            if c.id != a.id
-                && c.id != b.id
-                && c.kind == kind
-                && c.lane == lane
-                && c.start < w.end
-                && w.start < c.start + c.duration
-            {
-                return Err(ProjectError::TransitionOverlapBusy(t.id, c.id));
-            }
+        if let Some(c) = p.lane_busy(kind, lane, w, a.id, b.id) {
+            return Err(ProjectError::TransitionOverlapBusy(t.id, c));
         }
     } else {
         if t.in_offset.0 < 0
@@ -7650,6 +7783,13 @@ impl Project {
     }
 
     pub fn sequence(&self, id: MediaId) -> Option<&Sequence> {
+        // a pass that asks per event holds the reels' index (`with_sequence_index`, row 157)
+        if let Some(at) = SEQ_INDEX.with(|v| {
+            v.borrow().iter().rev().find(|(p, _)| *p == self as *const Project as usize).map(|(_, m)| m.get(&id).copied())
+        }) {
+            kt_time::cost::add(kt_time::cost::Cost::ReelPass, 1);
+            return at.map(|i| &self.sequences[i]);
+        }
         let at = self.sequences.iter().position(|s| s.id == id);
         kt_time::cost::add(
             kt_time::cost::Cost::ReelPass,

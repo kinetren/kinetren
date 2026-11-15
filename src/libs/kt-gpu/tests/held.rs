@@ -73,3 +73,38 @@ fn t2622_a_held_frame_of_another_device_is_refused() {
     let err = read_held(&*host, Init::Held(&held)).expect_err("another device's buffer is refused");
     assert!(err.contains("another device"), "{err}");
 }
+
+/// Test t2708 (stream-round-trips D1, found-defects 401/621): a buffer a job keeps stays on the compute
+/// device, a later job reads it as held with nothing uploaded, and a dropped one comes back as a spare
+/// the next job of its size takes instead of creating a buffer.
+#[test]
+fn t2708_a_kept_buffer_feeds_the_next_job_on_the_device() {
+    kt_plugin_api::compute::install(kt_gpu::compute::open);
+    let Some(host) = kt_plugin_api::compute::host().cloned() else {
+        if std::env::var("KT_REQUIRE_GPU").as_deref() == Ok("1") {
+            panic!("KT_REQUIRE_GPU=1, but no compute device");
+        }
+        eprintln!("skipped: no compute device");
+        return;
+    };
+    assert!(host.keeps(), "kt-gpu's host keeps buffers");
+    let src: Vec<u8> = (0..4096u32).map(|i| (i * 13 % 251) as u8).collect();
+    let n = src.len() as u64;
+    let uniform: Vec<u8> = [(n / 4) as u32, 0, 0, 0].iter().flat_map(|v| v.to_le_bytes()).collect();
+    let steps = [Step { name: "t2708:copy", shader: COPY, uniform: &uniform, read: &[Buf(0)], write: &[Buf(1)], groups: [((n / 4) as u32).div_ceil(64), 1, 1] }];
+    let kept0 = kt_gpu::compute::kept_buffers();
+    let (reads, held) = host.run_keeping(&Job { buffers: &[Init::Bytes(&src), Init::Zero(n)], steps: &steps, reads: &[] }, &[Buf(1)]).unwrap();
+    assert!(reads.is_empty());
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].len, n);
+    assert_eq!(kt_gpu::compute::kept_buffers() - kept0, 1);
+    let held0 = kt_gpu::compute::held_reads();
+    assert_eq!(read_held(&*host, Init::Held(&held[0])).unwrap(), src, "the kept buffer holds what the job wrote");
+    assert_eq!(kt_gpu::compute::held_reads() - held0, 1, "read where it lies");
+    drop(held);
+    // its buffer is a spare now: the same job again creates nothing
+    let c0 = kt_gpu::resources_created();
+    let (_, again) = host.run_keeping(&Job { buffers: &[Init::Bytes(&src), Init::Zero(n)], steps: &steps, reads: &[] }, &[Buf(1)]).unwrap();
+    assert_eq!(kt_gpu::resources_created(), c0, "a kept buffer's size made a new buffer after the first was dropped");
+    assert_eq!(read_held(&*host, Init::Held(&again[0])).unwrap(), src);
+}

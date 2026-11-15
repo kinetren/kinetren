@@ -632,3 +632,24 @@ descheduled thread reverses. It now holds the ring with an admitted piece never 
 until both wait, and reads the order from the arbiter's admission records. Under 64 busy loops on 32
 threads the old form failed 2 of 8, the new 0 of 18; with the class rule turned off the new form is red.
 
+
+## A frame costs its events (frame-work-by-edit, 2026-11-15)
+
+Every per-frame question of a renderer (the plan, the order, a stream stage, the reel coverage bars)
+walked every event of the renderer, so a frame of a long edit cost the edit: on the heavy showcase grown
+to 41 359 events the plan took 126.7 µs a frame and the order 105.5 µs, for frames that show the same
+layers as on the short project (2.3 and 1.3 µs). `LayerIndex` lays the events out once per build by the
+boundaries of their spans (handles included), each run between two boundaries holding the ascending
+indices of the events active there; ascending is the list's composite order, so iterating it is the
+former filter exactly (t2662). Now 1.2 and 0.3 µs at any size. A bucket grid like the audio side's was
+rejected: it filters per event per frame and merges across buckets, where the run cover hands the answer.
+A dissolve's partner, a track stage's range, revision and masks, and the reel instances for the bars are
+laid out in the same build. The archived change's design lists every place walked and what was left
+(found-defects 640–643).
+## A frame's own GPU error is its error (gpu-errors-survive, 2026-11-15)
+
+No frame ran inside an error scope, so any wgpu error a frame raised went to the device's default
+handler and panicked instead of the poisoning contract (`GpuExecError::Validation`). Every composing
+entry point of `GpuFxEngine` now runs in thread-local Validation/Internal scopes (`Inner::guarded`);
+wgpu 30 keeps the scope stack per thread, so egui's errors on the UI thread never poison the
+preview's frame. Reasons and the class walk: `openspec/changes/archive/2026-11-15-gpu-errors-survive/design.md`.
