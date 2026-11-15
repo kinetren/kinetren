@@ -2880,3 +2880,9 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
   цепочки, и это ко всему применимо а не только к datamosh". Every preview of an effect (picker cells,
   galleries, presets, strips) shows it in its place in the chain, or Loading.
 - The load report moves into the trace; `load-report.txt` goes; the button opens the trace folder.
+
+## 2026-11-15 — the sound device after stage 14
+
+- Decided: keep the new form ("1. оставь новое"). After the first Play the sound device stays the
+  program's, paused at rest, and Play resumes it at once (play-start-and-prefetch, found-defects 516),
+  instead of closing a second after a stop (the 2026-11-10 decision "да звук открывать при Играть").
