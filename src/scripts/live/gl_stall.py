@@ -65,9 +65,13 @@ def main(out):
 
         app.expect(app.until(lambda: any("released" in line for line in bench_lines(out)), timeout=60.0),
                    "the bench released the preview's device")
-        app.click(app.x_at(int(2.5 * SEC)), app.ruler_y())
-        app.expect(app.until(lambda: app.geom()["compose"]["picture"], timeout=60.0),
-                   "after the release the preview shows a picture again")
+        # a NEW complete composite after the release: the preview's thread lives (a stalled call once
+        # killed it with "Could not lock adapter context", and the old picture stayed on screen)
+        taken = app.geom()["compose"]["complete_taken"]
+        # a moment none of the clicks above asked (they went to 1 s … 8 s)
+        app.click(app.x_at(int(11.5 * SEC)), app.ruler_y())
+        app.expect(app.until(lambda: app.geom()["compose"]["complete_taken"] > taken, timeout=60.0),
+                   "after the release the preview composes the clicked moment")
         app.expect(app.alive(), "the program lives after the stall")
         app.step("released", "the device is free again, the preview composes the clicked moment")
         for line in bench_lines(out):

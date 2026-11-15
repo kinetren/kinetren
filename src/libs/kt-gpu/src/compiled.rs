@@ -142,6 +142,8 @@ pub(crate) struct Compiled {
     shadow: bool,
     /// The device's role, as `holds` names it (gl-context-holder).
     role: &'static str,
+    /// On GL, the gate every call of ours into this device passes first (gl-context-holder D4).
+    gl_gate: Option<Mutex<()>>,
 }
 
 /// A frame composing on the device (`Compiled::frame`): the warm worker waits for it to end.
@@ -401,7 +403,17 @@ impl Compiled {
             info: info.clone(),
             shadow,
             role,
+            gl_gate: (info.backend == wgpu::Backend::Gl).then(|| Mutex::new(())),
         })
+    }
+
+    /// On GL, pass the device's gate (gl-context-holder D4): wgpu-hal takes the adapter's ONE context
+    /// lock in every call and panics after six seconds without it, on whichever thread waits. Our
+    /// threads on this device (a frame, the warm worker, the bench) queue here, with no timeout, so a
+    /// call of ours stalled under the lock — a 10 s variant compile on an empty Mesa cache, a disk
+    /// stall — makes the others wait instead of killing them. Elsewhere `None`: no lock to share.
+    pub(crate) fn gl_gate(&self) -> Option<std::sync::MutexGuard<'_, ()>> {
+        self.gl_gate.as_ref().map(|g| g.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// A frame starts composing on the device; it ends when the guard drops.
@@ -693,12 +705,14 @@ impl Compiled {
                     if let Some(sh) = shadow.get_or_insert_with(|| shadow_of(&self)) {
                         sh.compile_shape(h);
                     }
+                    let _gate = self.gl_gate();
                     self.compile_shape(h)
                 }
                 Some(Job::Run(key)) => {
                     if let Some(sh) = shadow.get_or_insert_with(|| shadow_of(&self)) {
                         sh.compile_run(&key);
                     }
+                    let _gate = self.gl_gate();
                     self.compile_run(&key)
                 }
                 None => {
@@ -751,6 +765,7 @@ impl Compiled {
             })
             .collect();
         let _hold = crate::holds::within(self.role, "warm draw");
+        let _gate = self.gl_gate();
         self.kit.draw(&self.device, &self.queue, &list);
         for &i in slots {
             self.warm[i].store(true, Ordering::Release);

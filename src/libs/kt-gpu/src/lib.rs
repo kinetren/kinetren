@@ -223,6 +223,7 @@ pub fn display_is_ui_only(info: &wgpu::AdapterInfo) -> bool {
 pub fn preview_engine_off_display() -> Option<std::sync::Arc<GpuFxEngine>> {
     let base = PREVIEW_BASE.get_or_init(|| GpuContext::new_headless().and_then(GpuFxEngine::new).ok()).clone()?;
     let e = base.sibling();
+    e.keep_composites_for_bytes();
     *PREVIEW_NOW.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.clone());
     Some(e)
 }

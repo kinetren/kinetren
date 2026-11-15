@@ -350,6 +350,15 @@ impl PresentMemo {
         Some((t.view.clone(), t.w, t.h))
     }
 
+    /// `get`'s composite as a texture to read back (gl-context-holder D5: the preview off the
+    /// window's device shows bytes), marked recent the same way.
+    pub fn get_texture(&mut self, key: u64) -> Option<(wgpu::Texture, u32, u32)> {
+        let (t, s) = self.map.get_mut(&key)?;
+        self.stamp += 1;
+        *s = self.stamp;
+        Some((t.texture.clone(), t.w, t.h))
+    }
+
     /// Would keeping `w`×`h` grow it past its base?
     pub fn grows_past_base(&self, w: u32, h: u32) -> bool {
         self.bytes + tex_bytes(w, h) > self.base
