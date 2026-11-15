@@ -76,7 +76,7 @@ fn plan(w: u32, h: u32, bytes: usize, id: u64) -> FramePlan<'static> {
         content: id,
         src_scale: 1,
         input: kt_engine::video_plan::LayerInput::Frame(Some(fr)),
-        fx: std::borrow::Cow::Owned(Vec::new()),
+        fx: kt_engine::LayerChain::Owned(Vec::new()),
         fx_hash: id,
         u: 0.5,
         cam3d: None,
