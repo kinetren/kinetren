@@ -3046,10 +3046,8 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
             "the field matching window appears only on an envelope paste that did not land \
              silently: its scene is the clipboard content, it is in the paste tests",
         ), Closes::Action),
-        ("kt_render_settings", OpenWin::Cant(
-            "the export parameters window is created together with its render session; the session requires \
-             a real codec, which the harness does not have",
-        ), Closes::Action),
+        // the settings window opens over any project; what FFmpeg can write is the scene's (render-settings)
+        ("kt_render_settings", OpenWin::By(crate::layout_tests::render_settings_scene), Closes::Action),
         // a scripted job (render-window-v1-parity): the window is fed messages, no codec needed
         ("kt_render_progress", OpenWin::By(crate::layout_tests::render_progress_scene), Closes::Action),
         ("kt_analysis", OpenWin::Cant(
@@ -7769,7 +7767,7 @@ fn t1090_a_result_is_announced_and_the_playhead_goes_there() {
 
 /// Test 1091 (tour-lessons-fixes, ui-reach): jokes while lesson 5 renders.
 ///
-/// - **PATH** lesson 5 → File › Render to MP4… → Start → while the progress runs the lessons panel
+/// - **PATH** lesson 5 → File › Render… → Start → while the progress runs the lessons panel
 ///   shows a line like "Teaching the pixels to stand in line…", a few seconds later another → the
 ///   render ends, the joke goes and the step is checked
 #[test]

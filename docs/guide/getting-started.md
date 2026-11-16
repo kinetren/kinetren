@@ -41,7 +41,7 @@ This page takes you from an empty window to an exported MP4. For installation se
    the background. If the program crashes, a window says so at once, with the error and
    the last lines of the log: **Restore the project** starts it again and offers the
    unsaved work; **File → Recover unsaved work…** does the same later.
-7. **Render.** **File → Render to MP4…** — see [Export and kt-cli](export.md).
+7. **Render.** **File → Render…** — see [Export and kt-cli](export.md).
 
 ## Projects
 

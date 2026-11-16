@@ -575,6 +575,10 @@ pub struct ExportOptions {
     pub tight: bool,
     /// Collects the busy time of every stage (`kt-cli export --time`).
     pub profile: Option<Arc<ExportProfile>>,
+    /// Container, codec, rate mode, GOP, depth, colour, audio codec, metadata (render-settings D1).
+    pub format: kt_media::muxer::OutputFormat,
+    /// The frame rate of the file, `None` — the project's (render-settings D1).
+    pub fps: Option<u32>,
 }
 
 impl Default for ExportOptions {
@@ -590,6 +594,8 @@ impl Default for ExportOptions {
             encoder_threads: None,
             tight: false,
             profile: None,
+            format: Default::default(),
+            fps: None,
         }
     }
 }
@@ -612,6 +618,20 @@ pub fn export_mp4_with_backends(
     if backends.video_gpu.is_none() {
         return Err(ExportError::NoDevice("no Vulkan, DX12 or Metal device".into()));
     }
+    // a frame-rate override renders on a clone whose settings carry it (render-settings D1): the
+    // frame plan, the totals and the muxer read one value
+    let overridden;
+    let project = match opts.fps {
+        Some(f) if f > 0 && f != project.settings.fps => {
+            overridden = {
+                let mut p = project.clone();
+                p.settings.fps = f;
+                p
+            };
+            &overridden
+        }
+        _ => project,
+    };
     // every ring admits the export's frames and compute jobs last (gpu-arbiter D5); the pipeline's
     // threads take the class again
     let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
@@ -673,6 +693,7 @@ pub fn export_mp4_with_backends(
         audio_bitrate: opts.audio_bitrate,
         force_encoder: opts.force_encoder.clone(),
         threads: opts.encoder_threads.unwrap_or(if opts.serial { 1 } else if opts.tight { 4 } else { 0 }),
+        format: opts.format.clone(),
     });
     let events = Arc::new(events);
     let mut muxer = match muxer {

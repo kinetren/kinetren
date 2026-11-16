@@ -1312,3 +1312,251 @@ mod records_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+// ---- render presets (render-settings D9, F-EXP-006) -----------------------
+//
+// The settings of the render window live between projects: named presets and the last settings
+// a render started with. A record stores the pairs of the ONE text form kt-cli also reads
+// (`kt_engine::export_settings`), as `[key, value]` in order. A key this build does not know is
+// shown as skipped and the record is kept verbatim when the file is saved: an old build does not
+// eat a newer one's work. Factory presets are named by codec, size and rate, never by a platform —
+// a platform's requirements change without a release (F-EXP-001 trick 2).
+
+/// The version of the render presets file this build writes.
+const RENDER_PRESETS_VERSION: u64 = 1;
+
+/// The factory presets: (name, pairs). The first is the former default file.
+pub const RENDER_FACTORY: &[(&str, &[(&str, &str)])] = &[
+    ("H.264 · MP4 · quality 23", &[]),
+    ("H.264 · MP4 · 1920×1080 · 12 Mbit/s", &[("rate", "vbr"), ("bitrate", "12M"), ("size", "1920x1080")]),
+    ("H.264 · MP4 · 1280×720 · 4 Mbit/s", &[("rate", "vbr"), ("bitrate", "4M"), ("size", "1280x720")]),
+    ("H.265 · MP4 · 10-bit · quality 24", &[("video", "h265"), ("depth", "10"), ("quality", "24"), ("matrix", "bt709")]),
+    ("ProRes 422 HQ · MOV · PCM 24", &[("container", "mov"), ("video", "prores"), ("audio", "pcm24")]),
+    ("VP9 · WebM · Opus", &[("container", "webm"), ("video", "vp9"), ("audio", "opus"), ("quality", "31")]),
+    ("AV1 · MKV · quality 30", &[("container", "mkv"), ("video", "av1"), ("quality", "30")]),
+];
+
+/// One render preset as the window lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderPreset {
+    pub name: String,
+    pub pairs: Vec<(String, String)>,
+    pub factory: bool,
+    /// Keys of the record this build does not know: not applied, kept in the file.
+    pub unknown: Vec<String>,
+}
+
+impl RenderPreset {
+    /// The export settings this preset sets, over the defaults; `Err` names a bad value.
+    pub fn options(&self) -> Result<kt_engine::export::ExportOptions, String> {
+        kt_engine::export_settings::from_pairs(
+            kt_engine::export::ExportOptions::default(),
+            self.pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        )
+    }
+}
+
+/// The render presets file: `render-presets.json` next to the FX presets.
+pub struct RenderPresetStore {
+    raw: Vec<serde_json::Value>,
+    last: Option<serde_json::Value>,
+    broken: bool,
+    readonly: bool,
+    loaded: bool,
+    dir: Option<PathBuf>,
+}
+
+impl Default for RenderPresetStore {
+    fn default() -> RenderPresetStore {
+        RenderPresetStore {
+            raw: Vec::new(),
+            last: None,
+            broken: false,
+            readonly: false,
+            loaded: false,
+            // under tests — memory only, unless a directory is set explicitly (as FxPresetStore)
+            dir: (!cfg!(test) || std::env::var_os("KT_USER_STORE_DIR").is_some()).then(store_dir),
+        }
+    }
+}
+
+/// The text form's ordered `key=value` pairs.
+type Pairs = Vec<(String, String)>;
+
+/// `[[k, v], …]` → pairs, with the keys this build does not know apart.
+fn decode_pairs(v: Option<&serde_json::Value>) -> Option<(Pairs, Vec<String>)> {
+    let arr = v?.as_array()?;
+    let mut pairs = Vec::new();
+    let mut unknown = Vec::new();
+    for e in arr {
+        let kv = e.as_array()?;
+        let (k, val) = (kv.first()?.as_str()?, kv.get(1)?.as_str()?);
+        if kt_engine::export_settings::known_key(k) {
+            pairs.push((k.to_string(), val.to_string()));
+        } else {
+            unknown.push(k.to_string());
+        }
+    }
+    Some((pairs, unknown))
+}
+
+fn encode_pairs(pairs: &[(String, String)]) -> serde_json::Value {
+    serde_json::Value::Array(pairs.iter().map(|(k, v)| serde_json::json!([k, v])).collect())
+}
+
+impl RenderPresetStore {
+    /// A store in the given directory (tests with real writing, live scenarios).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn at(dir: PathBuf) -> RenderPresetStore {
+        RenderPresetStore { dir: Some(dir), ..Default::default() }
+    }
+
+    fn path(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join("render-presets.json"))
+    }
+
+    fn load(&mut self) {
+        if self.loaded {
+            return;
+        }
+        self.loaded = true;
+        let Some(text) = self.path().and_then(|p| std::fs::read_to_string(p).ok()) else { return };
+        match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(v) => {
+                self.readonly = v.get("version").and_then(|x| x.as_u64()).unwrap_or(0) > RENDER_PRESETS_VERSION;
+                self.raw = v.get("presets").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+                self.last = v.get("last").cloned();
+            }
+            Err(_) => self.broken = true,
+        }
+    }
+
+    /// The presets: the person's first, then the factory ones.
+    pub fn rows(&mut self) -> Vec<RenderPreset> {
+        self.load();
+        let mut out: Vec<RenderPreset> = self
+            .raw
+            .iter()
+            .filter_map(|v| {
+                let name = v.get("name")?.as_str()?.to_string();
+                let (pairs, unknown) = decode_pairs(v.get("settings"))?;
+                (!name.is_empty()).then_some(RenderPreset { name, pairs, factory: false, unknown })
+            })
+            .collect();
+        out.extend(RENDER_FACTORY.iter().map(|(name, pairs)| RenderPreset {
+            name: name.to_string(),
+            pairs: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            factory: true,
+            unknown: Vec::new(),
+        }));
+        out
+    }
+
+    /// Save the settings under `name`, replacing the person's preset of that name.
+    pub fn add(&mut self, name: &str, pairs: &[(String, String)]) -> std::io::Result<()> {
+        self.load();
+        self.raw.retain(|v| v.get("name").and_then(|x| x.as_str()) != Some(name));
+        self.raw.insert(0, serde_json::json!({ "name": name, "settings": encode_pairs(pairs) }));
+        self.save()
+    }
+
+    pub fn remove(&mut self, name: &str) -> std::io::Result<()> {
+        self.load();
+        self.raw.retain(|v| v.get("name").and_then(|x| x.as_str()) != Some(name));
+        self.save()
+    }
+
+    /// The settings the last render started with.
+    pub fn last(&mut self) -> Option<Vec<(String, String)>> {
+        self.load();
+        decode_pairs(self.last.as_ref()).map(|(p, _)| p)
+    }
+
+    pub fn set_last(&mut self, pairs: &[(String, String)]) -> std::io::Result<()> {
+        self.load();
+        self.last = Some(encode_pairs(pairs));
+        self.save()
+    }
+
+    fn save(&mut self) -> std::io::Result<()> {
+        let Some(path) = self.path() else { return Ok(()) };
+        if self.readonly {
+            return Err(std::io::Error::other("render presets file is newer than this build"));
+        }
+        if self.broken && path.exists() {
+            let _ = kt_otio::replace_file(&path, &path.with_extension("json.broken"));
+            self.broken = false;
+        }
+        let mut doc = serde_json::json!({ "version": RENDER_PRESETS_VERSION, "presets": self.raw });
+        if let Some(l) = &self.last {
+            doc["last"] = l.clone();
+        }
+        if let Some(d) = path.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        crate::app::write_project_atomic(&path, &serde_json::to_string_pretty(&doc)?)
+    }
+}
+
+#[cfg(test)]
+mod render_preset_tests {
+    use super::*;
+
+    /// t2809 (render-settings): a preset is saved, read back by a new store and sets every option;
+    /// a record with a key this build does not know is listed with it skipped and survives the
+    /// save; a deleted preset is gone; the last settings are kept; every factory preset parses.
+    #[test]
+    fn t2809_render_presets_save_recall_and_survive_a_future_key() {
+        let d = std::env::temp_dir().join(format!("kt-render-presets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        // a future build's record
+        std::fs::write(
+            d.join("render-presets.json"),
+            r#"{"version":1,"presets":[{"name":"HDR","settings":[["video","h265"],["hdr","pq"]]}]}"#,
+        )
+        .unwrap();
+        let o = kt_engine::export_settings::from_pairs(
+            kt_engine::export::ExportOptions::default(),
+            [("container", "mkv"), ("video", "vp9"), ("rate", "cbr"), ("bitrate", "5M"), ("audio", "flac"), ("fps", "50")],
+        )
+        .unwrap();
+        let pairs = kt_engine::export_settings::pairs(&o);
+        let mut s = RenderPresetStore::at(d.clone());
+        s.add("Mine", &pairs).unwrap();
+        s.set_last(&pairs).unwrap();
+
+        let mut s = RenderPresetStore::at(d.clone());
+        let rows = s.rows();
+        let mine = rows.iter().find(|r| r.name == "Mine").unwrap();
+        let back = mine.options().unwrap();
+        assert_eq!(back.format, o.format);
+        assert_eq!((back.video_bitrate, back.fps), (Some(5_000_000), Some(50)));
+        let hdr = rows.iter().find(|r| r.name == "HDR").expect("the future record is listed");
+        assert_eq!(hdr.unknown, vec!["hdr".to_string()]);
+        assert_eq!(s.last(), Some(pairs.clone()));
+        s.remove("Mine").unwrap();
+        let text = std::fs::read_to_string(d.join("render-presets.json")).unwrap();
+        assert!(text.contains("\"hdr\""), "the unknown key is kept verbatim: {text}");
+        assert!(!text.contains("\"Mine\""));
+        assert!(RenderPresetStore::at(d.clone()).rows().iter().all(|r| r.name != "Mine"));
+
+        for r in RenderPresetStore::at(d.clone()).rows().iter().filter(|r| r.factory) {
+            let opts = r.options().unwrap_or_else(|e| panic!("{}: {e}", r.name));
+            assert_eq!(opts.format.refusal(), None, "{}", r.name);
+            assert!(!r.name.to_lowercase().contains("youtube"), "named by what it is");
+        }
+        assert_eq!(
+            RenderPresetStore::at(d.clone()).rows().iter().find(|r| r.factory).unwrap().options().unwrap().format,
+            kt_media::muxer::OutputFormat::default(),
+            "the first factory preset is the former file"
+        );
+        // a broken file is moved aside at the first write
+        std::fs::write(d.join("render-presets.json"), "{not json").unwrap();
+        let mut s = RenderPresetStore::at(d.clone());
+        assert_eq!(s.rows().iter().filter(|r| !r.factory).count(), 0);
+        s.set_last(&pairs).unwrap();
+        assert!(d.join("render-presets.json.broken").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

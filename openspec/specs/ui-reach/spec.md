@@ -1091,7 +1091,7 @@ runs, it is too boring".
   interval; then the render finishes
 - **THEN** one joke of the set is shown, a different one after the interval, every joke has five
   translations; after the render no joke is shown and step 2 is checked
-- **PATH** lesson 5 → File › Render to MP4… → Start → while the progress runs the lessons panel shows
+- **PATH** lesson 5 → File › Render… → Start → while the progress runs the lessons panel shows
   a line like "Teaching the pixels to stand in line…", a few seconds later another → the render ends,
   the joke goes and the step is checked
 - **TEST** t1091 (`src/apps/kt-app/src/reach_tests.rs`)
