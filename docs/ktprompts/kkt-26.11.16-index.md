@@ -9,5 +9,5 @@ old one). Columns and states — as in [`v26.10-index.md`](v26.10-index.md).
 
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
-| P1 | 2–3 | a loop on `problem_region_26_11_09` plays through without loading only from about the 25th lap in the new version, from about the 11th in kt26.11.10: worse than before, which was already bad | no → `loop-laps-regression` (stage 16); the N2 of `kkt-26.11.15` is not done while this holds | — | 16 |
-| P2 | 5 | the same comparison without Datamosh (`rendereg`, old vs new) is laid out | no → `loop-laps-regression` (stage 16), first-class with P1 | — | 16 |
+| P1 | 2–3 | a loop on `problem_region_26_11_09` plays through without loading only from about the 25th lap in the new version, from about the 11th in kt26.11.10: worse than before, which was already bad | partial: `loop-laps-regression` (stage 16); on `rendereg_2` the loop plays from kept from its 5th lap (`kkt-26.11.16b` Q1); `problem_region_26_11_09` not rerun by him | `loop-laps-regression` | 16 |
+| P2 | 5 | the same comparison without Datamosh (`rendereg`, old vs new) is laid out | done loop-laps-regression (t2517, t2433): his `rendereg_2` run (`kkt-26.11.16b` Q1) | `loop-laps-regression` | 16 |
