@@ -109,21 +109,24 @@ struct State {
     display_ns: Option<u64>,
 }
 
-/// What a lower class may leave in front of the display's next present (gpu-leftovers D4, found-defects
-/// 491): the part of the period the display's own present leaves free, at most the bound. A display
-/// that fills its period leaves the `near` class (what feeds the display: the prefetch, its stream
-/// walk) a quarter of the bound and the classes below it nothing until the display stops presenting —
-/// a piece in front of a saturated display only makes the display later.
+/// What a lower class may leave in front of the display's next present (loop-laps-regression D2,
+/// replacing gpu-leftovers D4 / found-defects 491): the `near` class (the look-ahead, its stream walk,
+/// the loop fill — what the display's next frames are made of) keeps the bound whatever the display
+/// costs; `visible` and `background` keep a quarter of it at least; an export (`offline`) keeps only
+/// the period the display's own present leaves free. No piece is longer than the bound (`piece_limit`).
+/// The slack rule for `near` starved it on a display that fills its period: on the owner's iGPU
+/// (kkt-26.11.16) the device stood idle 25 s with nothing queued while near work waited 486 % of its
+/// wall, and a loop filled in 25 laps against kt26.11.10's 11.
 pub fn room(class: Class, period: u64, display_ns: Option<u64>) -> u64 {
     let bound = period / 2;
     let Some(d) = display_ns else { return bound };
     let slack = period.saturating_sub(d).min(bound);
-    if (class as u8) < Class::Near as u8 {
+    if class as u8 <= Class::Near as u8 {
         bound
-    } else if class == Class::Near {
-        slack.max(bound / 4)
-    } else {
+    } else if class == Class::Offline {
         slack
+    } else {
+        slack.max(bound / 4)
     }
 }
 
@@ -342,7 +345,14 @@ impl Ring {
     /// drops unsubmitted.
     pub fn admit(self: &Arc<Self>, class: Class, ns: u64) -> Ticket {
         let mut span = trace::span(Ev::GpuAdmit);
-        span.id(self.id).aux(class as u32).a(ns).c(self.has_display() as u64);
+        let carries = if self.has_display() {
+            1
+        } else if self.previews.load(Ordering::Acquire) > 0 {
+            2
+        } else {
+            0
+        };
+        span.id(self.id).aux(class as u32).a(ns).c(carries);
         let done = Arc::new(AtomicBool::new(false));
         let mut st = self.lock();
         st.flight.retain(|f| !f.done.load(Ordering::Acquire));
@@ -903,7 +913,8 @@ mod tests {
     /// Test t2433 (gpu-throughput D1), the ring's part: the display's present goes into the flight
     /// with no wait; a lower class may queue what drains before the display's NEXT present plus the
     /// bound (a period away while it presents), not more; a display behind its frames leaves the near
-    /// class a quarter bound past its own frame's end and lower classes nothing (gpu-leftovers D4).
+    /// class the bound past its own frame's end, background a quarter and an export nothing
+    /// (loop-laps-regression D2).
     #[test]
     fn t2433_the_display_is_counted_never_admitted() {
         let r = ring();
@@ -933,12 +944,13 @@ mod tests {
         let now = Instant::now();
         let end = drain(&st, now, false).display_end.unwrap();
         assert!(end > r.display_next(&st, now));
-        // a display behind its frames fills its period: the near class keeps a quarter bound past its
-        // frame's end, a full bound waits, and a background piece waits (gpu-leftovers D4: before, a
-        // whole bound queued behind every late frame and made the next one later still)
-        assert!(r.admissible(&st, Class::Near, b / 4 - 1000, now).is_ok(), "a quarter bound behind the display's late frame was refused");
-        assert!(r.admissible(&st, Class::Near, b - 1000, now).is_err(), "a whole bound queued behind a saturating display");
-        assert!(r.admissible(&st, Class::Background, b / 8, now).is_err(), "background queued behind a saturating display");
+        // a display behind its frames fills its period: the near class keeps the bound past its frame's
+        // end, more waits; background keeps a quarter bound; an export nothing (loop-laps-regression D2)
+        assert!(r.admissible(&st, Class::Near, b - 1000, now).is_ok(), "the bound behind the display's late frame was refused");
+        assert!(r.admissible(&st, Class::Near, b + b / 2, now).is_err(), "more than the bound queued behind a saturating display");
+        assert!(r.admissible(&st, Class::Background, b / 8, now).is_ok(), "background lost its quarter bound");
+        assert!(r.admissible(&st, Class::Background, b / 2, now).is_err(), "background queued past its quarter bound");
+        assert!(r.admissible(&st, Class::Offline, b / 8, now).is_err(), "an export queued behind a saturating display");
         drop(st);
         drop(late);
     }
@@ -958,22 +970,23 @@ mod tests {
         assert!(!Arc::ptr_eq(&a, &vk));
     }
 
-    /// Test t2517 (gpu-leftovers D4, found-defects 491): what a lower class may leave in front of the
-    /// display's next present is the period the display's own present leaves free. A light display
-    /// leaves the bound; a display that fills its period leaves the near class a quarter bound and a
-    /// background piece nothing, so a background piece the old rule admitted waits; a display that
-    /// stopped presenting leaves the bound again. Pure arithmetic on a fixed instant: no device, no
-    /// timing.
+    /// Test t2517 (loop-laps-regression D2, replacing gpu-leftovers D4 / found-defects 491): what a lower
+    /// class may leave in front of the display's next present. A light display leaves the bound; a display
+    /// that fills its period leaves the near class the bound, visible and background a quarter of it and an
+    /// export its slack; a display that stopped presenting leaves the bound again. Pure arithmetic on a
+    /// fixed instant: no device, no timing.
     #[test]
-    fn t2517_a_saturating_display_leaves_lower_classes_only_its_slack() {
+    fn t2517_a_saturating_display_leaves_near_work_the_bound() {
         let p = 16_666_666u64;
         let b = p / 2;
         assert_eq!(room(Class::Background, p, None), b, "no display cost known: the bound");
         assert_eq!(room(Class::Background, p, Some(p / 4)), b, "a light display leaves the bound");
-        assert_eq!(room(Class::Background, p, Some(p - p / 8)), p / 8, "a heavy one leaves its slack");
-        assert_eq!(room(Class::Background, p, Some(2 * p)), 0, "a saturating display leaves background nothing");
-        assert_eq!(room(Class::Offline, p, Some(2 * p)), 0);
-        assert_eq!(room(Class::Near, p, Some(2 * p)), b / 4, "the near class feeds the display: a quarter bound");
+        assert_eq!(room(Class::Background, p, Some(p - p / 8)), b / 4, "a heavy one leaves a quarter bound at least");
+        assert_eq!(room(Class::Background, p, Some(2 * p)), b / 4, "a saturating display leaves background a quarter bound");
+        assert_eq!(room(Class::Visible, p, Some(2 * p)), b / 4);
+        assert_eq!(room(Class::Offline, p, Some(2 * p)), 0, "an export waits behind a saturating display");
+        assert_eq!(room(Class::Offline, p, Some(p - p / 8)), p / 8, "an export keeps the slack");
+        assert_eq!(room(Class::Near, p, Some(2 * p)), b, "the near class makes the display's next frames: the bound");
         assert_eq!(room(Class::Answer, p, Some(2 * p)), b, "a gesture's answer keeps the bound");
 
         // on a ring: the display presents a frame costing twice the period
@@ -990,11 +1003,13 @@ mod tests {
         let id = st.next;
         st.flight.push(Flight { id, ns: 2 * period, class: Class::Now, display: true, at: None, guess: false, sub: None, done: Arc::new(AtomicBool::new(false)) });
         let now = Instant::now();
-        assert!(r.admissible(&st, Class::Background, bound() / 2, now).is_err(), "background waits behind a saturating display");
-        assert!(r.admissible(&st, Class::Near, bound() / 8, now).is_ok(), "the near class keeps a quarter bound");
-        assert!(r.admissible(&st, Class::Near, bound() / 2, now).is_err());
+        assert!(r.admissible(&st, Class::Offline, bound() / 8, now).is_err(), "an export waits behind a saturating display");
+        assert!(r.admissible(&st, Class::Background, bound() / 2, now).is_err(), "background past its quarter bound waits");
+        assert!(r.admissible(&st, Class::Background, bound() / 8, now).is_ok(), "background keeps a quarter bound");
+        assert!(r.admissible(&st, Class::Near, bound() / 2, now).is_ok(), "the near class keeps the bound");
+        assert!(r.admissible(&st, Class::Near, bound() + bound() / 2, now).is_err(), "no more than the bound");
         // the display stopped: the room is the bound again
         st.last_display = Some(now - Duration::from_nanos(3 * period));
-        assert!(r.admissible(&st, Class::Background, bound() / 2, now).is_ok(), "a display that stopped leaves the bound");
+        assert!(r.admissible(&st, Class::Offline, bound() / 2, now).is_ok(), "a display that stopped leaves the bound");
     }
 }

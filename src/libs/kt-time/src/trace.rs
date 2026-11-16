@@ -105,7 +105,8 @@ pub enum Ev {
     ComputeJob = 30,
     /// A ring admitted a submission (gpu-arbiter; a span: the wait). `id` the ring, `aux` the
     /// [`crate::sched::Class`], `a` the device time it predicted (ns), `b` the device time in flight
-    /// before it (ns), `c` 1 when the ring carries a display.
+    /// before it (ns), `c` 1 when the ring carries a display, 2 when it fronts the person's frame without
+    /// one (the slow route, the preview's own device on GL; gl-record-preview).
     GpuAdmit = 31,
     /// A frame or a compute job was cut into a piece on a ring with a display (gpu-arbiter). `id` the
     /// ring, `a` the piece's index in its frame, `b` its predicted device time (ns), `c` passes in it,

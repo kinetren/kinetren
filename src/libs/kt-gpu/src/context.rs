@@ -151,7 +151,14 @@ impl GpuContext {
     /// Headless device (kt-cli probes, tests, previews). PowerPreference is
     /// the same as in the GUI: `display_power_preference`.
     pub fn new_headless() -> Result<GpuContext, GpuInitError> {
-        Self::headless_with(display_power_preference())
+        Self::headless_with(display_power_preference(), crate::errors::role::HEADLESS)
+    }
+
+    /// The preview's own headless device where the window's is the UI thread's alone (GL,
+    /// gl-context-holder): its errors and its trace description name the preview
+    /// (gl-record-preview).
+    pub(crate) fn new_headless_for_preview() -> Result<GpuContext, GpuInitError> {
+        Self::headless_with(display_power_preference(), crate::errors::role::PREVIEW)
     }
 
     /// The device of the D3D12 backend, whatever adapter it is; `None` where there is none.
@@ -178,10 +185,10 @@ impl GpuContext {
     /// every frame a person looks at. An export is a finite job the person WAITS for, on its own
     /// device; on a hybrid laptop the discrete card is the one built for it.
     pub fn new_headless_for_export() -> Result<GpuContext, GpuInitError> {
-        Self::headless_with(wgpu::PowerPreference::HighPerformance)
+        Self::headless_with(wgpu::PowerPreference::HighPerformance, crate::errors::role::EXPORT)
     }
 
-    fn headless_with(default: wgpu::PowerPreference) -> Result<GpuContext, GpuInitError> {
+    fn headless_with(default: wgpu::PowerPreference, role: &'static str) -> Result<GpuContext, GpuInitError> {
         let g = opening();
         let options = wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::from_env().unwrap_or(default),
@@ -207,11 +214,6 @@ impl GpuContext {
             ..Default::default()
         }))
         .map_err(|e| GpuInitError::Device(e.to_string()))?;
-        let role = if default == wgpu::PowerPreference::HighPerformance {
-            crate::errors::role::EXPORT
-        } else {
-            crate::errors::role::HEADLESS
-        };
         trace_device(role, &adapter.get_info(), &device);
         // a GPU error never ends the program (gpu-errors-survive)
         crate::errors::watch(&device, role);

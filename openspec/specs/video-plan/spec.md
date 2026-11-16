@@ -1461,19 +1461,6 @@ scan per frame.
 - **THEN** the complete ones stay and no incomplete one is kept
 - **TEST** t2513 (`src/libs/kt-gpu/src/pool.rs`)
 
-### Requirement: A saturating display leaves lower classes only its slack
-While the display presents, what a lower class may leave in front of the display's next present SHALL be
-the part of the frame period the display's own present leaves free (its present cost averaged over its
-recent presents), at most the bound; the `near` class SHALL keep at least a quarter of the bound and the
-`answer` class the bound. A display that stopped presenting leaves the bound.
-Why: found-defects 491 — on his iGPU the display's composite (32.5 ms at a 16.7 ms period) filled the device,
-and a lower class still got one bound in front of every display frame, which only made the display later.
-
-#### Scenario: Room by the display's cost
-- **WHEN** the display presents frames costing a quarter period, seven eighths of it, twice it, and then stops
-- **THEN** a background piece has the bound, an eighth of the period, nothing and the bound again; the near class keeps a quarter bound in front of the saturating display
-- **TEST** t2517 (`src/libs/kt-gpu/src/arbiter.rs`)
-
 ### Requirement: The look-ahead walks only what a stage on screen reaches
 The far look-ahead of a stream history SHALL walk nothing while no stream stage is on screen, and no
 look-ahead walk SHALL take more than `STREAM_WALK_SECS` of frames. The walk of the frame ON SCREEN SHALL
@@ -1503,6 +1490,7 @@ the interface's texture.
 - **WHEN** a moment of a chain slower than `SLOW_CHAIN` is composed on the slow device
 - **THEN** it comes back on the display, the next ask is a replay with no slow run, and a moment not kept runs on the slow device and is shown on the display
 - **TEST** t2705 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
 ### Requirement: A frame's work grows with the events active at it
 Every per-frame question of a video renderer — the plan, the order (`layers_at`, `wanted_frames`,
 `absent_layers`), a stream stage's advance, want, bytes and checkpoints — SHALL find the events active
@@ -1525,6 +1513,7 @@ second input at a position SHALL be found by halving, not by a scan of the lane.
 - **WHEN** the events active at every 1/50 s of a scene with overlaps, transition handles and an event under everything are asked of the index and of the former scan
 - **THEN** both give the same events in the same order
 - **TEST** t2662 (`src/libs/kt-engine/tests/frame_cost.rs`)
+
 ### Requirement: A frame's own GPU error is its frame's error
 Every engine entry point that composes (`execute_measured`, `execute_into`, `execute_once`,
 `execute_held`, `present`, `present_kept`, `submit`, `collect`) SHALL run inside thread-local
@@ -1538,3 +1527,37 @@ program through wgpu's default handler instead of the poisoning contract the pla
 - **WHEN** a frame's layer says 64×64 and carries the bytes of 4×4
 - **THEN** `execute_into` returns `GpuExecError::Validation` with the cause, the uncaptured count does not move, and the next frame of 16×8 composes (before: wgpu's default handler panicked inside the frame)
 - **TEST** t2721 (`src/libs/kt-gpu/tests/gpu_errors.rs`)
+
+### Requirement: The preview's executor on GL is off the window's device
+Where the window's device is the UI thread's alone (GL), the preview's executor SHALL be an engine on a
+headless GL device of the process (`preview_engine_off_display`: the device and its pipelines made
+once, a `sibling` engine per project) and the preview SHALL take the bytes path; the geometry dump SHALL
+say so (`compose.ui_only`). Elsewhere the display path stays.
+Why: on GL every wgpu call holds the adapter's one context lock, and the display engine's compose,
+build and warm work on the window's device made egui's paint wait for it (gl-context-holder).
+
+#### Scenario: A kept moment is read back, not composed
+- **WHEN** the preview's engine off the window's device composes a moment, then is asked the same moment again
+- **THEN** the first is kept (the coverage bars see it), the second is a replay with nothing composed, and both carry the same bytes
+- **TEST** t2746 (`src/libs/kt-gpu/tests/gl_context_holder.rs`)
+
+#### Scenario: Video FX on GL show their bytes
+- **PATH** open two flat light-gray clips, the second with Edges → click the first: the preview is light → click the second: the preview is black → the dump says the preview composed off the window's device on GL (on another backend: the picture stays on the device)
+- **TEST** t2744 live scenario `src/scripts/live/gpufx.py`
+
+### Requirement: A saturating display keeps near work at the bound
+While the display presents, what a lower class may leave in front of the display's next present SHALL be
+the bound for `near` (the look-ahead, its stream walk, the loop fill), at least a quarter of the bound for
+`visible` and `background` (more where the display's own present leaves more of the period free), and for
+an export (`offline`) only the part of the period the display's present leaves free. No piece SHALL be
+longer than the bound, and at most `AHEAD_PIECES` lower pieces stand uncompleted in front of the display.
+A display that stopped presenting leaves the bound.
+Why: kkt-26.11.16 — under the slack rule (gpu-leftovers D4, found-defects 491) the near class kept a quarter
+bound on a saturating display; on his iGPU the device stood idle 25 s with nothing queued while near work
+waited 486 % of its wall, and a loop filled in 25 laps against kt26.11.10's 11. kt26.11.10 put whole jobs of
+380 ms in front of the display; this rule keeps at most three half-bound pieces there.
+
+#### Scenario: Room by the display's cost
+- **WHEN** the display presents frames costing a quarter period, seven eighths of it, twice it, and then stops
+- **THEN** a background piece has the bound, a quarter bound, a quarter bound and the bound again; the near class keeps the bound in front of the saturating display; an export has the bound, an eighth of the period, nothing and the bound again
+- **TEST** t2517 (`src/libs/kt-gpu/src/arbiter.rs`)

@@ -29,6 +29,21 @@ is no picture, and an export refuses.
   on the window's device off the UI thread calls `errors::yield_to_display()`: a refused
   `Surface::configure` (another thread submitted while it waited for idle) holds those for two UI
   frames. t2720–t2724.
+- **On GL the window's device is the UI thread's alone** (gl-context-holder, found-defects 651): every
+  wgpu-hal gles call holds the adapter's ONE context lock through the whole call (a link, a variant
+  compile at a draw, a fence wait up to 2.1 s, a Mesa disk-cache read), and egui's paint panics after
+  six seconds without it. `display_is_ui_only(info)` is true on GL; there the preview runs on
+  `preview_engine_off_display()` (its own GL device, a `sibling` per project) and the bytes path. A NEW
+  caller of the window's device off the UI thread is the defect this closed. Every wgpu call that can
+  hold a device registers in `holds` (`hold` for one call, `within` for an entry point's span): a
+  long one on the window's device is a journal line, and the panic report lists what is in flight.
+  **On GL every call of ours into a device passes its `Compiled::gl_gate` first** (no timeout): the
+  six-second panic hits any waiting thread, and a stalled call of ours killed the preview's own compose
+  thread. A new entry point or background job on a device takes the gate before `inner`, never inside
+  a job's own calls. An engine is made (`sibling`) and released (`Drop`, its `inner` a `ManuallyDrop`)
+  inside its gate (t2748): never let a thread inside a device's gate drop the last reference of an engine
+  of that device, or it waits for itself. The preview engine off the display keeps its bytes-path composites in the present
+  memo (`keep_composites_for_bytes`): a covered loop replays there too. t2740–t2746.
 - **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
   sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
   with table reads lane by lane, ten times the cost. Write taps out, or specialize the text
@@ -160,6 +175,11 @@ is no picture, and an export refuses.
   `device_descriptor`). A new `begin_render_pass` passes `self.timer.pass(label)` as its
   `timestamp_writes`, or its time is lost from the journal's `GPU` record. A frame is `begin` … `end`
   (before `finish`) … `submitted` (after `submit`); `harvest` never waits.
+- **A frame is counted by the device that composed it for the person** (gl-record-preview, t2747):
+  `present` says `Preview`; a read-back frame says `Inner::readback_role` — `Preview` on an engine that
+  keeps the preview's bytes (`keep_composites_for_bytes`, the GL preview off the display) or owns the
+  window's surface, else `Offline`. A new caller of the window's engine's readback that is not the
+  preview, or a new preview device, decides its role here, or the record lies about who asked.
 - Labels: a fixed pipe by `Pipe::name`, a plugin's pass `id:name` (`BarrierKernel::pass_names`), a host
   node inside a barrier `id:node` by the barrier's index in `plugin_barriers()` (blur has no pipe of its
   own). `:` not `/` — the journal cuts a word with `/` to a file name.

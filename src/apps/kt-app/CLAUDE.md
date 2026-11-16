@@ -150,6 +150,13 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   hold). The owner's kt26.11.10 died on a maximize while a loop played: egui's `Surface::configure`
   found the queue busy with the preview's present. Live `resize_loop` meets that race through the
   bench's `gpu_busy` and is red on the old code.
+- **On GL nothing but the UI thread calls into eframe's device** (gl-context-holder): `init_video_gpu`
+  builds the preview's engine off it (`kt_gpu::preview_engine_off_display`) and `take_video_gpu` takes
+  the bytes path (`display_ui_only`, the dump's `compose.ui_only`). Three live scenarios died at one
+  second of the stage-15 finish.sh in egui's paint on "Could not lock adapter context": a thread of ours
+  held the window's GL context, stalled by the system. A new background call into
+  `frame.wgpu_render_state()`'s device must not exist on GL; the bench's `gpu_busy` skips GL, its
+  `gl_stall` holds the preview device (live `gl_stall`, red on the old route).
 - **Every wgpu device opens through kt-gpu's one instance** (`kt_gpu::GpuContext`, `compute::open`,
   `adapter_facts`): a new `wgpu::Instance::new` in kt-app is the race that killed t985, t986, t1312
   and t958 under load (segv-crashes D4).

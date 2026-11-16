@@ -22,6 +22,8 @@ use kt_engine::GpuExecError;
 pub mod role {
     /// The window's device: eframe's, shared with the preview's engine.
     pub const DISPLAY: &str = "display";
+    /// The preview's own device where the window's is the UI thread's alone (GL, gl-context-holder).
+    pub const PREVIEW: &str = "preview";
     /// A headless device: the offline engine, the shadow, kt-cli, tests.
     pub const HEADLESS: &str = "headless";
     /// An export's device.
@@ -54,7 +56,7 @@ pub fn set_sink(f: impl Fn(&str) + Send + Sync + 'static) {
     let _ = SINK.set(Box::new(f));
 }
 
-fn emit(line: &str) {
+pub(crate) fn emit(line: &str) {
     match SINK.get() {
         Some(f) => f(line),
         None => eprintln!("kt-gpu: {line}"),

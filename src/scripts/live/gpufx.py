@@ -50,8 +50,15 @@ def main(out):
         print(f"   preview brightness: without FX {plain:.1f}, with Edges {fx:.1f}")
         app.expect(plain > 120.0, f"frame without FX is light: {plain:.1f}")
         app.expect(fx < plain * 0.2, f"Edges darkened the flat frame: {fx:.1f} vs {plain:.1f}")
-        # the pixels above came from the device, not from a silent fallback to the bytes path
-        app.expect(app.geom()["compose"]["on_display"], "the picture stays on the device")
+        # the pixels above came from the device, not from a silent fallback to the bytes path; on GL
+        # the window's device is the UI thread's alone (gl-context-holder) and the preview composes
+        # off it on purpose, so there the bytes path is the right one
+        compose = app.geom()["compose"]
+        if compose.get("ui_only"):
+            app.expect(not compose["on_display"] and compose["picture"],
+                       "on GL the preview composes off the window's device and shows its bytes")
+        else:
+            app.expect(compose["on_display"], "the picture stays on the device")
         return app.done()
 
 

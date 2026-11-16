@@ -394,6 +394,11 @@ pub struct KtApp {
     gpu_building: Option<(EngineBuild, eframe::egui_wgpu::RenderState)>,
     /// The last frame shown lives in `preview_display`, not in `texture`.
     pub(crate) preview_on_display: bool,
+    /// The window's device is the UI thread's alone (GL): the preview composes off it and takes the
+    /// bytes path (gl-context-holder); the geometry dump says so.
+    pub(crate) display_ui_only: bool,
+    /// The preview's engine as installed (the live bench's `gl_stall` holds its device).
+    preview_engine: Option<std::sync::Arc<kt_gpu::GpuFxEngine>>,
     /// Throttling of the glow mip: every N new frames (ambient does not flicker).
     glow_skip: u8,
     /// Name of the wgpu adapter/backend (perf panel diagnostics).
@@ -794,16 +799,28 @@ impl KtApp {
         // built on a thread (pipeline-prewarm D3): compiling every pipeline took 0.95–1.9 s of a
         // frozen window on llvmpipe, at start and at every project open. The display device lives
         // as long as the process, so its pipelines are kept and the next project's engine takes them.
-        let ctx = kt_gpu::GpuContext::from_parts(
-            std::sync::Arc::new(rs.device.clone()),
-            std::sync::Arc::new(rs.queue.clone()),
-            rs.adapter.get_info(),
-        );
         let (tx, rx) = std::sync::mpsc::channel();
-        let spawned = std::thread::Builder::new().name("engine-build".into()).spawn(move || {
-            let _ = tx.send(kt_gpu::GpuFxEngine::new_kept(ctx).map_err(|e| e.to_string()));
-            crate::wake::now();
-        });
+        // on GL the window's device is the UI thread's alone (gl-context-holder): every call into it
+        // takes one context lock, egui's paint panics after six seconds without it, and a thread of
+        // ours stalled under it by the system ended the program. The preview composes on a device of
+        // its own there and takes the bytes path
+        let spawned = if kt_gpu::display_is_ui_only(&rs.adapter.get_info()) {
+            std::thread::Builder::new().name("engine-build".into()).spawn(move || {
+                let built = kt_gpu::preview_engine_off_display().ok_or_else(|| "no device for the preview".to_string());
+                let _ = tx.send(built);
+                crate::wake::now();
+            })
+        } else {
+            let ctx = kt_gpu::GpuContext::from_parts(
+                std::sync::Arc::new(rs.device.clone()),
+                std::sync::Arc::new(rs.queue.clone()),
+                rs.adapter.get_info(),
+            );
+            std::thread::Builder::new().name("engine-build".into()).spawn(move || {
+                let _ = tx.send(kt_gpu::GpuFxEngine::new_kept(ctx).map_err(|e| e.to_string()));
+                crate::wake::now();
+            })
+        };
         match spawned {
             Ok(_) => self.gpu_building = Some((rx, rs.clone())),
             Err(e) => self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, e)),
@@ -821,8 +838,11 @@ impl KtApp {
         let Some((_, rs)) = self.gpu_building.take() else { return };
         match built {
             Ok(engine) => {
-                // KT_PREVIEW_READBACK=1: the bytes path, to compare a picture or its cost
-                let readback = std::env::var_os("KT_PREVIEW_READBACK").is_some();
+                // KT_PREVIEW_READBACK=1: the bytes path, to compare a picture or its cost; on GL the
+                // engine is not on the window's device, so the bytes path is the only one
+                self.display_ui_only = kt_gpu::display_is_ui_only(&rs.adapter.get_info());
+                self.preview_engine = Some(engine.clone());
+                let readback = std::env::var_os("KT_PREVIEW_READBACK").is_some() || self.display_ui_only;
                 self.preview_display =
                     (!readback).then(|| crate::preview_display::PreviewDisplay::new(engine.clone(), rs));
                 self.player.set_video_gpu(Some(engine));
@@ -1017,6 +1037,8 @@ impl KtApp {
             preview_display: None,
             gpu_building: None,
             preview_on_display: false,
+            display_ui_only: false,
+            preview_engine: None,
             glow_skip: 0,
             gpu_info: None,
             gpu_fx_lost_notified: false,
@@ -1346,6 +1368,8 @@ impl KtApp {
             preview_display: None,
             gpu_building: None,
             preview_on_display: false,
+            display_ui_only: false,
+            preview_engine: None,
             glow_skip: 0,
             gpu_info: None,
             gpu_fx_lost_notified: false,
@@ -10925,8 +10949,20 @@ impl eframe::App for KtApp {
                     let t = std::thread::Builder::new().name("live-fault".into());
                     let _ = t.spawn(kt_crash::testing::kt_crash_probe_segv);
                 }
+                crate::bench::Cmd::GlStall(secs) => {
+                    if let Some(engine) = self.preview_engine.clone() {
+                        let t = std::thread::Builder::new().name("live-gl-stall".into());
+                        let _ = t.spawn(move || {
+                            crate::journal::log("BENCH", &format!("the preview's GL device is held for {secs} s"));
+                            let held = engine.hold_gl_context(|| std::thread::sleep(std::time::Duration::from_secs(secs)));
+                            crate::journal::log("BENCH", &format!("the preview's GL device is released (held: {held})"));
+                        });
+                    }
+                }
                 crate::bench::Cmd::GpuBusy(count) => {
-                    if let Some(rs) = _frame.wgpu_render_state() {
+                    // on GL the window's device is the UI thread's alone (gl-context-holder): nothing of
+                    // the program submits there off it, so there is nothing to stand in for
+                    if let Some(rs) = _frame.wgpu_render_state().filter(|rs| !kt_gpu::display_is_ui_only(&rs.adapter.get_info())) {
                         let (device, queue) = (rs.device.clone(), rs.queue.clone());
                         let t = std::thread::Builder::new().name("live-gpu-busy".into());
                         let _ = t.spawn(move || crate::bench::gpu_busy(&device, &queue, count));

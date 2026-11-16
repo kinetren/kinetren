@@ -653,3 +653,31 @@ handler and panicked instead of the poisoning contract (`GpuExecError::Validatio
 entry point of `GpuFxEngine` now runs in thread-local Validation/Internal scopes (`Inner::guarded`);
 wgpu 30 keeps the scope stack per thread, so egui's errors on the UI thread never poison the
 preview's frame. Reasons and the class walk: `openspec/changes/archive/2026-11-15-gpu-errors-survive/design.md`.
+
+## The preview's executor on GL is off the window's device (gl-context-holder, 2026-11-16)
+
+On GL the preview's engine is a sibling of one headless GL engine per process
+(`preview_engine_off_display`), and the preview takes the bytes path; its complete composites stay in
+the loop-sized present memo and a kept moment is read back with nothing composed (a replay), so a
+covered range plays without work on GL too. Reasons: `openspec/changes/archive/2026-11-16-gl-context-holder/design.md`.
+
+## A saturating display keeps near work at the bound (loop-laps-regression D2)
+
+gpu-leftovers D4 (found-defects 491) let a lower class leave in front of the display's next present only
+the period the display's own present left free — the `near` class a quarter of the bound, the classes
+below it nothing — on the reasoning that a piece in front of a saturated display only makes it later. The
+owner's kkt-26.11.16 trace pair (his problem region, iGPU RADV RAPHAEL) showed the cost: Datamosh's jobs
+cut into 1764 pieces claiming a quarter bound each, admission waits of 486 % of the near jobs' wall, and the
+device busy 10 s and idle 25.0 s with NOTHING queued over the run — kt26.11.10 ran the same jobs as 94
+whole pieces, the device busy 44 s and idle 0.3 s. The loop fill on his plain piece waited 56 s of its
+88 s the same way. A loop filled from the 25th lap against the 11th. The display was not served by it
+either: its present waited p50 54 ms against kt26.11.10's 60 ms, while the frames it presented were
+Loading for a history the ring held back.
+
+Now `near` keeps the bound, `visible`/`background` at least a quarter of it, an export only the slack. The
+owner's latency limit stays: no piece longer than the bound, at most three lower pieces of half the bound
+uncompleted in front of the display (kt26.11.10 put whole 380 ms jobs there). Rejected: dropping the
+cut of lower pieces (the display would wait behind a whole job again); admitting on an idle device only
+(the ring does not know the device is idle until a poll, and on a card the queue is rarely empty).
+Not reproduced here: llvmpipe gives each device a ring of its own, and `kt-cli gpu-share` on one llvmpipe
+device walked 25 positions a second under both rules — read his next trace's `trace gpu` admission share.
