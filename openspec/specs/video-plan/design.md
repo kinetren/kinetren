@@ -653,3 +653,10 @@ handler and panicked instead of the poisoning contract (`GpuExecError::Validatio
 entry point of `GpuFxEngine` now runs in thread-local Validation/Internal scopes (`Inner::guarded`);
 wgpu 30 keeps the scope stack per thread, so egui's errors on the UI thread never poison the
 preview's frame. Reasons and the class walk: `openspec/changes/archive/2026-11-15-gpu-errors-survive/design.md`.
+
+## The preview's executor on GL is off the window's device (gl-context-holder, 2026-11-16)
+
+On GL the preview's engine is a sibling of one headless GL engine per process
+(`preview_engine_off_display`), and the preview takes the bytes path; its complete composites stay in
+the loop-sized present memo and a kept moment is read back with nothing composed (a replay), so a
+covered range plays without work on GL too. Reasons: `openspec/changes/archive/2026-11-16-gl-context-holder/design.md`.

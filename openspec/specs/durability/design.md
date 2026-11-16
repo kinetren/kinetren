@@ -310,3 +310,15 @@ submission path, and why a lock around eframe's resize or a `catch_unwind` were 
 `openspec/changes/archive/2026-11-15-gpu-errors-survive/design.md`. On GL the surface never reports
 `Outdated`, so up to a second of frames is lost until the window manager's next configure event
 (found-defects 672). Live `resize_loop` meets the race through the bench's `gpu_busy`.
+
+## On GL only the UI thread calls into the window's device (gl-context-holder, 2026-11-16)
+
+Stage 15's finish.sh lost three live scenarios at one second in egui's paint: "Could not lock adapter
+context" — wgpu-hal gles holds the adapter's ONE context lock through every call (a link, a variant
+compile at a draw, a fence wait, a Mesa disk-cache read) and panics the waiter after six seconds. The
+window's device had callers besides egui (the preview's compose, the display engine's build, the warm
+worker), and one stalled by the system ended the program. On GL the preview now composes on a GL
+device of its own and shows its bytes; our calls into a GL device queue at its gate first (the
+six-second panic hits any waiter); who holds a device is recorded (`kt_gpu::holds`) and listed in a
+panic report. Reasons, the walk of every path into the window's device and what was rejected:
+`openspec/changes/archive/2026-11-16-gl-context-holder/design.md`.

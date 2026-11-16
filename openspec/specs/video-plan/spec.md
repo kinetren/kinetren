@@ -1503,6 +1503,7 @@ the interface's texture.
 - **WHEN** a moment of a chain slower than `SLOW_CHAIN` is composed on the slow device
 - **THEN** it comes back on the display, the next ask is a replay with no slow run, and a moment not kept runs on the slow device and is shown on the display
 - **TEST** t2705 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
 ### Requirement: A frame's work grows with the events active at it
 Every per-frame question of a video renderer — the plan, the order (`layers_at`, `wanted_frames`,
 `absent_layers`), a stream stage's advance, want, bytes and checkpoints — SHALL find the events active
@@ -1525,6 +1526,7 @@ second input at a position SHALL be found by halving, not by a scan of the lane.
 - **WHEN** the events active at every 1/50 s of a scene with overlaps, transition handles and an event under everything are asked of the index and of the former scan
 - **THEN** both give the same events in the same order
 - **TEST** t2662 (`src/libs/kt-engine/tests/frame_cost.rs`)
+
 ### Requirement: A frame's own GPU error is its frame's error
 Every engine entry point that composes (`execute_measured`, `execute_into`, `execute_once`,
 `execute_held`, `present`, `present_kept`, `submit`, `collect`) SHALL run inside thread-local
@@ -1538,3 +1540,20 @@ program through wgpu's default handler instead of the poisoning contract the pla
 - **WHEN** a frame's layer says 64×64 and carries the bytes of 4×4
 - **THEN** `execute_into` returns `GpuExecError::Validation` with the cause, the uncaptured count does not move, and the next frame of 16×8 composes (before: wgpu's default handler panicked inside the frame)
 - **TEST** t2721 (`src/libs/kt-gpu/tests/gpu_errors.rs`)
+
+### Requirement: The preview's executor on GL is off the window's device
+Where the window's device is the UI thread's alone (GL), the preview's executor SHALL be an engine on a
+headless GL device of the process (`preview_engine_off_display`: the device and its pipelines made
+once, a `sibling` engine per project) and the preview SHALL take the bytes path; the geometry dump SHALL
+say so (`compose.ui_only`). Elsewhere the display path stays.
+Why: on GL every wgpu call holds the adapter's one context lock, and the display engine's compose,
+build and warm work on the window's device made egui's paint wait for it (gl-context-holder).
+
+#### Scenario: A kept moment is read back, not composed
+- **WHEN** the preview's engine off the window's device composes a moment, then is asked the same moment again
+- **THEN** the first is kept (the coverage bars see it), the second is a replay with nothing composed, and both carry the same bytes
+- **TEST** t2746 (`src/libs/kt-gpu/tests/gl_context_holder.rs`)
+
+#### Scenario: Video FX on GL show their bytes
+- **PATH** open two flat light-gray clips, the second with Edges → click the first: the preview is light → click the second: the preview is black → the dump says the preview composed off the window's device on GL (on another backend: the picture stays on the device)
+- **TEST** t2744 live scenario `src/scripts/live/gpufx.py`
