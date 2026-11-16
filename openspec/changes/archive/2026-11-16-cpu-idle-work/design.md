@@ -102,6 +102,11 @@ gate — the rule scheduler-followups measured (all-kept from lap 9 against 18 w
 *At rest*: nothing new runs. The lanes are scheduler lanes (no thread, no timer); a lane runs only when
 kicked, and only the prefetch thread kicks while a loop PLAYS (t2335: a paused player starts no `near`
 job). The siblings are made once when the fill's executor arrives, not per frame.
+Live `idle` on the heavy showcase (this branch, debug kt-app, llvmpipe): on a pause nothing ran and the
+trace grew by 0 bytes (1 % of a core: the load watch and the test's own control thread); a pointer over
+the preview, the status bar and the composition caused no work; an open effects window ran nothing. Green.
+Workspace `nextest` (10 threads): 1966 of 1967 green; t573 aborted once at process exit after its body
+passed ("double free or corruption", native), 0 of 30 repeats under load — row 695.
 
 ## The class walk: work that waits on a round trip, one at a time
 

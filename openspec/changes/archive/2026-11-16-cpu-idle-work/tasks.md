@@ -18,4 +18,4 @@
 - [x] 3.3 Idle cost on a heavy project: live scenario `idle` (pause, the pointer over a static place, the effects window open) stays at rest
 - [x] 3.4 `cargo test --workspace` and `cargo clippy --all-targets` green; target-prune
 - [x] 3.5 What's new line (`docs/guide/whats-new.md`, `## kt26.11`), the registry row N4 of `kkt-26.11.15-index.md`
-- [ ] 3.6 Archive: specs merged, the "why" in `openspec/specs/video-plan/design.md` (finish.sh is the orchestrator's, per stage)
+- [x] 3.6 Archive: specs merged, the "why" in `openspec/specs/video-plan/design.md` (finish.sh is the orchestrator's, per stage)
