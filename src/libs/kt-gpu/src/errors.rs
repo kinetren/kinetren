@@ -22,6 +22,8 @@ use kt_engine::GpuExecError;
 pub mod role {
     /// The window's device: eframe's, shared with the preview's engine.
     pub const DISPLAY: &str = "display";
+    /// The preview's own device where the window's is the UI thread's alone (GL, gl-context-holder).
+    pub const PREVIEW: &str = "preview";
     /// A headless device: the offline engine, the shadow, kt-cli, tests.
     pub const HEADLESS: &str = "headless";
     /// An export's device.

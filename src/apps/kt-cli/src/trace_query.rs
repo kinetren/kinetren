@@ -389,22 +389,28 @@ pub fn gpu(run: &Run) -> String {
     // ring → class → (admissions, total wait, max wait, pieces)
     type Admits = BTreeMap<u64, (u64, u64, u64, u64)>;
     let mut rings: BTreeMap<u64, Admits> = BTreeMap::new();
-    let mut shown: HashSet<u64> = HashSet::new();
+    // ring → 1 carries the display, 2 fronts the person's frame without one (gl-record-preview)
+    let mut shown: HashMap<u64, u64> = HashMap::new();
     for r in &run.recs {
         if is(r, Ev::GpuAdmit) {
             let e = rings.entry(r.id).or_default().entry(r.aux as u64).or_default();
             e.0 += 1;
             e.1 += r.dur;
             e.2 = e.2.max(r.dur);
-            if r.c == 1 {
-                shown.insert(r.id);
+            if r.c > 0 {
+                shown.insert(r.id, r.c);
             }
         } else if is(r, Ev::GpuPiece) {
             rings.entry(r.id).or_default().entry(r.aux as u64).or_default().3 += 1;
         }
     }
     for (ring, classes) in &rings {
-        let _ = writeln!(o, "ring {ring}{}", if shown.contains(ring) { " (carries the display)" } else { "" });
+        let carries = match shown.get(ring) {
+            Some(1) => " (carries the display)",
+            Some(_) => " (fronts the person's frame)",
+            None => "",
+        };
+        let _ = writeln!(o, "ring {ring}{carries}");
         for (c, (n, wait, max, pieces)) in classes {
             let _ = writeln!(
                 o,

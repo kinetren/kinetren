@@ -221,9 +221,16 @@ pub fn display_is_ui_only(info: &wgpu::AdapterInfo) -> bool {
 /// one headless device per process, its pipelines compiled once, and a `sibling` of it per project
 /// (its own frame state, nothing compiled). The preview then takes the bytes path. `None` — no device.
 pub fn preview_engine_off_display() -> Option<std::sync::Arc<GpuFxEngine>> {
-    let base = PREVIEW_BASE.get_or_init(|| GpuContext::new_headless().and_then(GpuFxEngine::new).ok()).clone()?;
+    let base = PREVIEW_BASE
+        // the device is the preview's: its errors, its trace description and its frames say so
+        // (gl-record-preview)
+        .get_or_init(|| GpuContext::new_headless_for_preview().and_then(GpuFxEngine::new).ok())
+        .clone()?;
     let e = base.sibling();
     e.keep_composites_for_bytes();
+    // its ring fronts the person's frame, as the slow route's does (scheduler-followups D6)
+    e.serve_preview();
+    // the last project's sibling, when nothing else holds it, is released here, past its gate (`Drop`)
     *PREVIEW_NOW.lock().unwrap_or_else(|p| p.into_inner()) = Some(e.clone());
     Some(e)
 }

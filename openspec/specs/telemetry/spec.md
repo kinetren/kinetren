@@ -459,6 +459,10 @@ pass's mean and count named by effect and pass (`vhs_tape:s5-head-read`, `camera
 `composite`, `geometry`, `display`), the largest total first, then the compute host's jobs and
 dispatches (`datamosh:search`). Diagnostics SHALL show the same record. Where the adapter has no
 timestamps, a frame SHALL be timed from its submit to the device's "done" and the record SHALL say so.
+A frame SHALL be counted by the device that composed it for the person: the window's device and,
+where that device is the UI thread's alone (GL), the preview's own device count preview, whichever
+path (present or read back) the frame took; that device's errors, trace description and calls in
+flight SHALL name it `preview`.
 Nothing SHALL be queried or recorded while nothing composes. `kt-cli preview` prints the record of its run.
 Why: the owner, kkt-26.11.08 H9: "на моем компьютере всё что могло бы - работало пошустрее...
 гораздо.."; his journal showed the UI waiting seconds on the integrated Radeon with no word of what it
@@ -479,6 +483,11 @@ ran; found-defects 108: no pass was ever measured on a real card. docs/orchestra
 - **WHEN** an engine is open and composes nothing, and again after a taken second
 - **THEN** the sum is empty
 - **TEST** t2022 (`src/libs/kt-gpu/tests/pass_time.rs`)
+
+#### Scenario: The preview's own device counts its frames as the preview
+- **WHEN** on GL the preview's engine off the window's device reads back two moments never shown before
+- **THEN** the sum holds them as preview frames and none as offline or export, and its line says "preview"
+- **TEST** t2747 (`src/libs/kt-gpu/tests/gl_context_holder.rs`)
 
 ### Requirement: A long UI frame names the stage that waited
 The journal's note of a UI frame blocked for 100 ms or more SHALL list the frame's stages by their WALL
@@ -639,13 +648,14 @@ Every admission to a ring SHALL be recorded with its class, the device time it p
 waited and the ring; every cut piece and every stopped stream history SHALL be recorded too, with the
 frame or job they belong to as the cause. `kt-cli trace gpu` SHALL report, per ring and per class,
 submissions and compute jobs per second, admission waits and pieces, and the display's present
-latency.
+latency, and SHALL mark the ring that carries the display and a ring that fronts the person's frame
+without one (the slow route; the preview's own device on GL).
 Why: `docs/engine-audit.md` §2b — "every job is counted per class"; row 134 asked whether the
 look-ahead's Datamosh submissions fell, which only a count by class answers.
 
 #### Scenario: The query reports the ring by class
 - **WHEN** a window holds admissions of classes now and near on one ring, a cut frame of three pieces, a stopped history and three display presents
-- **THEN** `gpu` lists per class the admissions, the waits and the submissions per second, the pieces of the cut frame, the stop, and the presents' latency
+- **THEN** `gpu` lists per class the admissions, the waits and the submissions per second, the pieces of the cut frame, the stop, and the presents' latency; the display's ring is marked as carrying the display and a ring admitted as fronting the person's frame says so
 - **TEST** t2263 (`src/apps/kt-cli/src/trace_query/tests.rs`)
 
 ### Requirement: The trace names a stream schedule's compile and the memo's sizing

@@ -838,7 +838,8 @@ On the GL backend no thread of the program but the UI thread SHALL call into the
 device: the preview SHALL compose on a headless GL device of its own (one per process, a sibling engine
 per project) and show its pictures by the bytes path, and the bench's stand-ins SHALL leave the
 window's device alone. A GL call of ours stalled for longer than wgpu-hal's six-second context-lock
-timeout SHALL cost preview frames, never the program. Every wgpu call of ours that can hold a device
+timeout SHALL cost preview frames, never the program; making a project's preview engine and releasing
+the last one SHALL wait at the device's gate like any call of ours. Every wgpu call of ours that can hold a device
 (pipeline creation, submission, blocking wait) SHALL be recorded by thread, role and operation; a call
 on the window's device lasting past one second SHALL be written to the journal, and the editor's panic
 report SHALL list the calls in flight.
@@ -865,6 +866,11 @@ system, past six seconds.
 - **WHEN** a thread holds a GL engine's device through its gate for seven seconds and another thread asks that engine for a frame with a layer
 - **THEN** the frame waits and composes, with the bytes it composes when nothing is held (without the gate the waiting thread panicked "Could not lock adapter context" after six seconds)
 - **TEST** t2745 (`src/libs/kt-gpu/tests/gl_context_holder.rs`)
+
+#### Scenario: A new preview engine waits out a stalled call
+- **WHEN** a thread holds the preview's GL device through its gate for seven seconds while another makes the next project's preview engine, releasing the last one
+- **THEN** both wait and the new engine composes (its textures were created and the old one's destroyed past the gate, and the thread panicked "Could not lock adapter context")
+- **TEST** t2748 (`src/libs/kt-gpu/tests/gl_context_holder.rs`)
 
 #### Scenario: The preview's device stalled past six seconds
 - **PATH** open the demo project → the preview shows its first frame → (the bench holds the preview's GL device for nine seconds) → click the ruler again and again: the cursor moves, the window keeps drawing, nothing closes → after the release click the ruler: the preview shows the clicked moment

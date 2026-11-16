@@ -345,7 +345,14 @@ impl Ring {
     /// drops unsubmitted.
     pub fn admit(self: &Arc<Self>, class: Class, ns: u64) -> Ticket {
         let mut span = trace::span(Ev::GpuAdmit);
-        span.id(self.id).aux(class as u32).a(ns).c(self.has_display() as u64);
+        let carries = if self.has_display() {
+            1
+        } else if self.previews.load(Ordering::Acquire) > 0 {
+            2
+        } else {
+            0
+        };
+        span.id(self.id).aux(class as u32).a(ns).c(carries);
         let done = Arc::new(AtomicBool::new(false));
         let mut st = self.lock();
         st.flight.retain(|f| !f.done.load(Ordering::Acquire));

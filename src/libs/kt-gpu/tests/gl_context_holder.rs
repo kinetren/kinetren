@@ -163,3 +163,67 @@ fn t2746_a_kept_moment_is_read_back_not_composed() {
     assert!(engine.last_stages().replayed, "the second ask is a replay");
     assert_eq!(first, again, "the replay's bytes are the frame's");
 }
+
+/// t2747 (gl-record-preview): the frames the preview composes on its own device off the window's are
+/// counted as the preview's in the GPU record. They take the bytes path, which timed them as the
+/// offline device's, and on GL every record of a playback read "N frames (offline N)" (live
+/// gpu_record red on stage 16).
+#[test]
+fn t2747_the_preview_off_the_display_counts_its_frames_as_the_preview() {
+    // SAFETY: before any instance of this test's process
+    unsafe { std::env::set_var("WGPU_BACKEND", "gl") };
+    kt_plugins_builtin::install();
+    let Some(engine) = kt_gpu::preview_engine_off_display() else {
+        eprintln!("skipped: no GL adapter");
+        return;
+    };
+    use kt_engine::VideoGpuExec as _;
+    let mut out = Vec::new();
+    let _ = kt_gpu::pass_time::take();
+    // two moments never shown before: both composed, neither replayed
+    for (w, h) in [(40, 20), (48, 24)] {
+        assert!(engine.execute_into(&layer_plan(w, h), &mut out).unwrap());
+        assert!(!engine.last_stages().replayed);
+    }
+    let s = kt_gpu::pass_time::take().expect("two frames composed");
+    let line = s.line();
+    eprintln!("t2747 GPU   {line}");
+    // the other tests of this binary compose on the same preview engine only
+    assert!(s.preview >= 2, "the preview's frames are the preview's: {line}");
+    assert_eq!((s.offline, s.export), (0, 0), "{line}");
+    assert!(line.contains("preview"), "{line}");
+}
+
+/// t2748 (gl-record-preview): a new project's preview engine is made, and the last one released, while
+/// a call of ours holds the preview device's GL context past wgpu-hal's six seconds: both wait at the
+/// gate instead of panicking. A sibling's frame state created its textures past the gate, and the
+/// thread that opened a project died "Could not lock adapter context" (t2746 beside t2745's hold under
+/// load).
+#[test]
+fn t2748_a_new_preview_engine_waits_out_a_stalled_call() {
+    // SAFETY: before any instance of this test's process
+    unsafe { std::env::set_var("WGPU_BACKEND", "gl") };
+    kt_plugins_builtin::install();
+    let Some(first) = kt_gpu::preview_engine_off_display() else {
+        eprintln!("skipped: no GL adapter");
+        return;
+    };
+    let (held_tx, held_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        first.hold_gl_context(|| {
+            held_tx.send(()).unwrap();
+            // past wgpu-hal's CONTEXT_LOCK_TIMEOUT_SECS (6): the stall IS the check
+            std::thread::sleep(std::time::Duration::from_secs(7));
+        })
+    });
+    held_rx.recv().unwrap();
+    // the next project's engine: a sibling made, the last one released, both while the lock is held
+    let next = kt_gpu::preview_engine_off_display().expect("the preview device stands");
+    if !holder.join().unwrap() {
+        eprintln!("skipped: the preview's device is not GL");
+        return;
+    }
+    use kt_engine::VideoGpuExec as _;
+    let mut out = Vec::new();
+    assert!(next.execute_into(&layer_plan(20, 10), &mut out).unwrap(), "the new engine composes");
+}

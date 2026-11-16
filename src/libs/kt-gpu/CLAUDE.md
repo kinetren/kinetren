@@ -40,7 +40,9 @@ is no picture, and an export refuses.
   **On GL every call of ours into a device passes its `Compiled::gl_gate` first** (no timeout): the
   six-second panic hits any waiting thread, and a stalled call of ours killed the preview's own compose
   thread. A new entry point or background job on a device takes the gate before `inner`, never inside
-  a job's own calls. The preview engine off the display keeps its bytes-path composites in the present
+  a job's own calls. An engine is made (`sibling`) and released (`Drop`, its `inner` a `ManuallyDrop`)
+  inside its gate (t2748): never let a thread inside a device's gate drop the last reference of an engine
+  of that device, or it waits for itself. The preview engine off the display keeps its bytes-path composites in the present
   memo (`keep_composites_for_bytes`): a covered loop replays there too. t2740–t2746.
 - **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
   sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
@@ -173,6 +175,11 @@ is no picture, and an export refuses.
   `device_descriptor`). A new `begin_render_pass` passes `self.timer.pass(label)` as its
   `timestamp_writes`, or its time is lost from the journal's `GPU` record. A frame is `begin` … `end`
   (before `finish`) … `submitted` (after `submit`); `harvest` never waits.
+- **A frame is counted by the device that composed it for the person** (gl-record-preview, t2747):
+  `present` says `Preview`; a read-back frame says `Inner::readback_role` — `Preview` on an engine that
+  keeps the preview's bytes (`keep_composites_for_bytes`, the GL preview off the display) or owns the
+  window's surface, else `Offline`. A new caller of the window's engine's readback that is not the
+  preview, or a new preview device, decides its role here, or the record lies about who asked.
 - Labels: a fixed pipe by `Pipe::name`, a plugin's pass `id:name` (`BarrierKernel::pass_names`), a host
   node inside a barrier `id:node` by the barrier's index in `plugin_barriers()` (blur has no pipe of its
   own). `:` not `/` — the journal cuts a word with `/` to a file name.

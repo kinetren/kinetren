@@ -405,6 +405,13 @@ fn t2263_gpu_reports_the_ring_by_class() {
             r.c = 1;
             r.dur = 9 * MS;
         }),
+        // t2747: the preview's own device on GL fronts the person's frame without a display
+        rec(Ev::GpuAdmit, 20 * MS, |r| {
+            r.id = 5;
+            r.aux = Class::Now as u32;
+            r.c = 2;
+            r.dur = MS;
+        }),
         rec(Ev::StreamStop, 30 * MS, |r| {
             r.id = 2;
             r.aux = kt_time::trace::stop::PREFETCH;
@@ -430,6 +437,7 @@ fn t2263_gpu_reports_the_ring_by_class() {
     let o = gpu(&run_of(v));
     for want in [
         "ring 3 (carries the display)",
+        "ring 5 (fronts the person's frame)",
         "now",
         "near",
         "max 9.0 ms",
