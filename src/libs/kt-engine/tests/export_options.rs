@@ -999,3 +999,49 @@ fn t2518_a_frame_whose_read_failed_is_asked_again_before_it_is_written() {
     };
     assert!(frames(&files[0]) == frames(&files[1]), "the serial and the pipelined file differ");
 }
+
+/// t2792 (render-speed D2): every export, serial or pipelined and with no profile asked, writes where
+/// its time went into the trace when it ends: a record per stage and the wall, with the frames written
+/// and the timeline it covered. The person's own run then answers `kt-cli trace DIR export`.
+#[test]
+fn t2792_an_export_writes_its_stages_into_the_trace() {
+    use kt_time::trace::{Ev, export_stage as st};
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let p = two_seconds();
+    let dir = tempfile::tempdir().unwrap();
+    for serial in [true, false] {
+        let out = dir.path().join(format!("stages-{serial}.mp4")).to_string_lossy().to_string();
+        let opts = ExportOptions { force_encoder: Some("libx264".into()), serial, ..Default::default() };
+        let mut stats = None;
+        let items = kt_time::trace::testing::capture(|| {
+            stats = Some(kt_engine::export_mp4_with_backends(
+                &p,
+                sources(),
+                sources(),
+                &out,
+                None,
+                &opts,
+                &kt_gpu::testkit::backends(),
+                &Arc::new(AtomicBool::new(false)),
+                &Arc::new(AtomicBool::new(false)),
+                |_| {},
+            )
+            .expect("export"));
+        });
+        let line = stats.unwrap().stages;
+        assert!(line.starts_with("export: 60 frames at "), "serial {serial}: the journal's line: {line}");
+        assert!(line.contains("2.0 s of the timeline") && line.contains("× real time") && line.contains("busy: "), "{line}");
+        let recs: Vec<_> = kt_time::trace::testing::recs(&items).into_iter().filter(|r| r.ev == Ev::ExportStage as u16).collect();
+        let wall = recs.iter().find(|r| r.aux == st::WALL).unwrap_or_else(|| panic!("serial {serial}: no wall record"));
+        assert_eq!(wall.c, 60, "serial {serial}: the frames written");
+        assert_eq!(wall.b, 2_000_000_000, "serial {serial}: the timeline the export covered");
+        assert!(wall.a > 0, "serial {serial}: the wall");
+        assert_eq!(wall.id == 0, serial, "serial {serial}: the frame workers name the pipeline");
+        for stage in [st::DECODE, st::ENCODE] {
+            let r = recs.iter().find(|r| r.aux == stage).unwrap_or_else(|| panic!("serial {serial}: no {}", st::name(stage)));
+            assert!(r.a > 0 && r.b == wall.a && r.c == 60, "serial {serial}: {} {r:?}", st::name(stage));
+        }
+    }
+}

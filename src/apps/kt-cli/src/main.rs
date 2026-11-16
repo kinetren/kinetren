@@ -1889,7 +1889,7 @@ fn run(args: &[String]) -> i32 {
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
                 eprintln!(
-                    "usage: kt-cli export <in.kt> <out.mp4|.mov|.mkv|.webm> [encoder] [--time] [--serial] [--encoder-threads N]\n\
+                    "usage: kt-cli export <in.kt> <out.mp4|.mov|.mkv|.webm> [encoder] [--time] [--serial] [--encoder-threads N] [--range FROM_S TO_S]\n\
                      \x20      [--container C] [--video V] [--rate R] [--quality Q] [--bitrate B] [--audio A] [--size WxH] [--fps N]\n\
                      \x20      [--set key=value]…   keys: {}",
                     kt_engine::export_settings::KEYS.join(", ")
@@ -1921,6 +1921,13 @@ fn run(args: &[String]) -> i32 {
                     return 2;
                 }
             };
+            // --range: a piece of the timeline, as the render window's region (render-speed: the same
+            // piece the preview plays, compared)
+            let range = args.iter().position(|a| a == "--range").and_then(|i| {
+                let from = args.get(i + 1)?.parse::<f64>().ok()?;
+                let to = args.get(i + 2)?.parse::<f64>().ok()?;
+                Some((kt_time::Tick::from_secs_f64(from), kt_time::Tick::from_secs_f64(to)))
+            });
             let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
@@ -2003,7 +2010,7 @@ fn run(args: &[String]) -> i32 {
                 audio_sources,
                 video_sources,
                 output,
-                None,
+                range,
                 &opts,
                 &kt_engine::ExportBackends { video_gpu, video_gpu_more: engines },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2030,6 +2037,7 @@ fn run(args: &[String]) -> i32 {
                         stats.missing_video_layers,
                         stats.encoder
                     );
+                    eprintln!("{}", stats.stages);
                     if let Some(p) = &profile {
                         eprint!("stages:\n{}", p.report());
                         use std::sync::atomic::Ordering::Relaxed;

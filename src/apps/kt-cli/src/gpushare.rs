@@ -259,7 +259,8 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("--display {:.2}: a stream stage is active in its 50 frames; pick a moment without one", at.0.0 as f64 / kt_time::TICK_HZ as f64);
             return 2;
         }
-        if !has_stream(&video, at.2, 1) {
+        // `--mosh none`: no history walk, the display and the offline work alone (render-speed)
+        if opt("--mosh").map(String::as_str) != Some("none") && !has_stream(&video, at.2, 1) {
             eprintln!("--mosh: no stream stage at that moment");
             return 2;
         }

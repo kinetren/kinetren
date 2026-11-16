@@ -100,6 +100,9 @@ pub struct ExportStats {
     /// CONTROL, not of the material. Consequence: the number in the preview and the
     /// file's number coincide by construction.
     pub loudness: Option<kt_fx::audio::loudness::Loudness>,
+    /// Where the export's time went, one line (render-speed D2, `ExportProfile::summary`): the render
+    /// window writes it into the telemetry journal. Empty for render_raw_*.
+    pub stages: String,
 }
 
 /// Export range: [0, end of the last clip].
@@ -756,7 +759,10 @@ pub fn export_mp4_with_backends(
         let _ = std::fs::remove_file(out_path);
         e
     };
-    let profile = opts.profile.as_deref();
+    // every export keeps its profile and writes it into the trace when it ends (render-speed D2): the
+    // person's run says where its time went, not only `kt-cli export --time`
+    let own_profile = opts.profile.clone().unwrap_or_default();
+    let profile = Some(&*own_profile);
     let started = Instant::now();
     events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Video)));
     // a frame without a layer is told where it happens, in frame order (D4)
@@ -909,6 +915,8 @@ pub fn export_mp4_with_backends(
         events(ExportEvent::Log(ExportLog::Error(e.to_string())));
         return Err(ExportError::Io(std::io::Error::other(e)));
     }
+    let timeline_ns = (r1.0 - r0.0).max(0) as u64 * 1_000_000_000 / kt_time::TICK_HZ as u64;
+    own_profile.trace(vstats.video_frames, timeline_ns);
     events(ExportEvent::Log(ExportLog::Phase(ExportPhase::Done)));
     report(ExportPhase::Done);
     Ok(ExportStats {
@@ -920,6 +928,7 @@ pub fn export_mp4_with_backends(
         // the loudness is computed on the audio pass — with the same meter, the same
         // buffer and without the master gain (item 371)
         loudness: astats.loudness,
+        stages: own_profile.summary(vstats.video_frames, timeline_ns, (quality.width, quality.height)),
     })
 }
 
@@ -994,6 +1003,7 @@ pub fn render_pipelined_budget<S: ExportSink>(
         underruns: a.underruns,
         loudness: a.loudness,
         encoder: String::new(),
+        stages: String::new(),
     })
 }
 

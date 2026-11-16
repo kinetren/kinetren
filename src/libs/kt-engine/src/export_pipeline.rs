@@ -78,6 +78,71 @@ impl ExportProfile {
         }
     }
 
+    /// The stages in the order of `kt_time::trace::export_stage`.
+    fn stages(&self) -> [&AtomicU64; 16] {
+        [
+            &self.decode_ns,
+            &self.compose_ns,
+            &self.readback_ns,
+            &self.convert_ns,
+            &self.encode_ns,
+            &self.audio_ns,
+            &self.audio_encode_ns,
+            &self.plan_ns,
+            &self.upload_ns,
+            &self.encode_passes_ns,
+            &self.gpu_wait_ns,
+            &self.copy_ns,
+            &self.wait_lookahead_ns,
+            &self.wait_workers_ns,
+            &self.wait_frame_ns,
+            &self.wait_audio_ns,
+        ]
+    }
+
+    /// The record into the trace (render-speed D2): an `ExportStage` per stage, then the wall with the
+    /// timeline nanoseconds the export covered. `kt-cli trace DIR export` reads them back.
+    pub fn trace(&self, frames: u64, timeline_ns: u64) {
+        use kt_time::trace::{Ev, export_stage};
+        let wall = self.wall_ns.load(Ordering::Relaxed);
+        let workers = self.frame_workers.load(Ordering::Relaxed);
+        for (i, v) in self.stages().into_iter().enumerate() {
+            kt_time::trace::ev(Ev::ExportStage)
+                .id(workers)
+                .aux(i as u32 + 1)
+                .a(v.load(Ordering::Relaxed))
+                .b(wall)
+                .c(frames)
+                .emit();
+        }
+        kt_time::trace::ev(Ev::ExportStage).id(workers).aux(export_stage::WALL).a(wall).b(timeline_ns).c(frames).emit();
+    }
+
+    /// The record as one line for the telemetry journal (render-speed D2): the real-time factor, the
+    /// output size, and every busy stage's share of the wall, the largest first (summed over a stage's
+    /// threads, so a share past 100 % is several threads busy at once).
+    pub fn summary(&self, frames: u64, timeline_ns: u64, (w, h): (u32, u32)) -> String {
+        let wall = self.wall_ns.load(Ordering::Relaxed).max(1);
+        let workers = self.frame_workers.load(Ordering::Relaxed);
+        let mut busy: Vec<(&str, u64)> = self
+            .stages()
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| (kt_time::trace::export_stage::name(i as u32 + 1), v.load(Ordering::Relaxed)))
+            .filter(|(_, ns)| *ns * 100 >= wall)
+            .collect();
+        busy.sort_by_key(|(_, ns)| std::cmp::Reverse(*ns));
+        let shares: Vec<String> = busy.iter().map(|(n, ns)| format!("{n} {:.0} %", *ns as f64 * 100.0 / wall as f64)).collect();
+        format!(
+            "export: {frames} frames at {w}×{h}, {:.1} s of the timeline in {:.1} s ({:.2}× real time, {}); busy: {}",
+            timeline_ns as f64 / 1e9,
+            wall as f64 / 1e9,
+            timeline_ns as f64 / wall as f64,
+            if workers == 0 { "serial".to_string() } else { format!("{workers} frame workers") },
+            shares.join(", ")
+        )
+    }
+
     /// The record as text: one line per stage, busy seconds and the share of the wall time.
     pub fn report(&self) -> String {
         let wall = self.wall_ns.load(Ordering::Relaxed).max(1) as f64;
@@ -547,6 +612,11 @@ pub(crate) fn run<S: ExportSink>(
                 span.aux(kt_time::trace::job::EXPORT_FRAME).a(i);
                 let mut complete =
                     gpu.collect(ticket, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                if let Some(p) = prof {
+                    let s = gpu.last_stages();
+                    p.gpu_wait_ns.fetch_add(s.wait_ns, Ordering::Relaxed);
+                    p.copy_ns.fetch_add(s.copy_ns, Ordering::Relaxed);
+                }
                 // composed again before it is written (gpu-leftovers D5)
                 for _ in 0..crate::export::RETRIES {
                     if complete {
@@ -623,8 +693,14 @@ pub(crate) fn run<S: ExportSink>(
                         }
                         continue;
                     }
+                    ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
                     let ticket = gpu.submit(&plan).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                     ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
+                    if let Some(p) = prof {
+                        let s = gpu.last_stages();
+                        p.upload_ns.fetch_add(s.upload_ns, Ordering::Relaxed);
+                        p.encode_passes_ns.fetch_add(s.encode_ns, Ordering::Relaxed);
+                    }
                     pending.push_back((i, ticket));
                     if pending.len() >= depth {
                         let (j, tk) = pending.pop_front().unwrap();

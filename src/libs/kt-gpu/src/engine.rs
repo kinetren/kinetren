@@ -1941,6 +1941,11 @@ impl Inner {
         let ticket = self.next_ticket;
         self.next_ticket += 1;
         self.last_cost = Default::default();
+        // the submit's stages, as `execute_once` reports them (render-speed D2): the export's compose
+        // thread reads them after the call, and `collect` reports the wait and the copy
+        self.last_stages = Default::default();
+        let mark = Instant::now();
+        let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
         self.upload.begin_frame();
         self.binds.begin_frame();
         self.last_runs = Default::default();
@@ -2015,11 +2020,16 @@ impl Inner {
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.staged.flush(&self.queue, &self.arena);
+        let submit = Instant::now();
         let sub = { let _h = crate::holds::hold(self.role(), "submit"); self.queue.submit([enc.finish()]) };
+        self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
         if let Some(p) = self.piece.take() {
             p.end(&self.device, &self.queue, sub.clone(), self.surface);
         }
         self.timer.submitted(&self.queue, Role::Export, meta);
+        self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
+        self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
+        self.last_stages.encode_ns = (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
         *slot.mapped.lock().unwrap() = None;
         let mapped = slot.mapped.clone();
         slot.buf.slice(..).map_async(wgpu::MapMode::Read, move |r| {
@@ -2041,16 +2051,20 @@ impl Inner {
             return Err(GpuExecError::Validation(format!("collect {ticket}, the oldest is {}", f.ticket)));
         }
         let n = (f.out_w as usize) * (f.out_h as usize) * 4;
+        self.last_stages = Default::default();
         let Some(sub) = f.gpu else {
             out.clear();
             out.resize(n, 0);
             return Ok(f.complete);
         };
+        let mark = Instant::now();
         let waited = {
             let _h = crate::holds::hold(self.role(), "wait");
             self.device.poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None })
         };
         waited.map_err(|_| GpuExecError::DeviceLost)?;
+        self.last_stages.wait_ns = mark.elapsed().as_nanos() as u64;
+        let mark = Instant::now();
         let slot = self.ring[(ticket % RING as u64) as usize].as_ref().ok_or(GpuExecError::DeviceLost)?;
         if *slot.mapped.lock().unwrap() != Some(true) {
             return Err(GpuExecError::DeviceLost);
@@ -2067,6 +2081,7 @@ impl Inner {
         }
         slot.buf.unmap();
         self.harvest();
+        self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
         Ok(f.complete)
     }
 

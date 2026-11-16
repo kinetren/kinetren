@@ -19585,6 +19585,7 @@ fn t957_finished_render_is_frozen_and_opened_from_the_window() {
         encoder: "h264_nvenc".into(),
         missing_video_layers: 0,
         loudness: None,
+        ..Default::default()
     }));
     h.step();
     h.step();
