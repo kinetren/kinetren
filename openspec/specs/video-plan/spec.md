@@ -1461,19 +1461,6 @@ scan per frame.
 - **THEN** the complete ones stay and no incomplete one is kept
 - **TEST** t2513 (`src/libs/kt-gpu/src/pool.rs`)
 
-### Requirement: A saturating display leaves lower classes only its slack
-While the display presents, what a lower class may leave in front of the display's next present SHALL be
-the part of the frame period the display's own present leaves free (its present cost averaged over its
-recent presents), at most the bound; the `near` class SHALL keep at least a quarter of the bound and the
-`answer` class the bound. A display that stopped presenting leaves the bound.
-Why: found-defects 491 — on his iGPU the display's composite (32.5 ms at a 16.7 ms period) filled the device,
-and a lower class still got one bound in front of every display frame, which only made the display later.
-
-#### Scenario: Room by the display's cost
-- **WHEN** the display presents frames costing a quarter period, seven eighths of it, twice it, and then stops
-- **THEN** a background piece has the bound, an eighth of the period, nothing and the bound again; the near class keeps a quarter bound in front of the saturating display
-- **TEST** t2517 (`src/libs/kt-gpu/src/arbiter.rs`)
-
 ### Requirement: The look-ahead walks only what a stage on screen reaches
 The far look-ahead of a stream history SHALL walk nothing while no stream stage is on screen, and no
 look-ahead walk SHALL take more than `STREAM_WALK_SECS` of frames. The walk of the frame ON SCREEN SHALL
@@ -1557,3 +1544,20 @@ build and warm work on the window's device made egui's paint wait for it (gl-con
 #### Scenario: Video FX on GL show their bytes
 - **PATH** open two flat light-gray clips, the second with Edges → click the first: the preview is light → click the second: the preview is black → the dump says the preview composed off the window's device on GL (on another backend: the picture stays on the device)
 - **TEST** t2744 live scenario `src/scripts/live/gpufx.py`
+
+### Requirement: A saturating display keeps near work at the bound
+While the display presents, what a lower class may leave in front of the display's next present SHALL be
+the bound for `near` (the look-ahead, its stream walk, the loop fill), at least a quarter of the bound for
+`visible` and `background` (more where the display's own present leaves more of the period free), and for
+an export (`offline`) only the part of the period the display's present leaves free. No piece SHALL be
+longer than the bound, and at most `AHEAD_PIECES` lower pieces stand uncompleted in front of the display.
+A display that stopped presenting leaves the bound.
+Why: kkt-26.11.16 — under the slack rule (gpu-leftovers D4, found-defects 491) the near class kept a quarter
+bound on a saturating display; on his iGPU the device stood idle 25 s with nothing queued while near work
+waited 486 % of its wall, and a loop filled in 25 laps against kt26.11.10's 11. kt26.11.10 put whole jobs of
+380 ms in front of the display; this rule keeps at most three half-bound pieces there.
+
+#### Scenario: Room by the display's cost
+- **WHEN** the display presents frames costing a quarter period, seven eighths of it, twice it, and then stops
+- **THEN** a background piece has the bound, a quarter bound, a quarter bound and the bound again; the near class keeps the bound in front of the saturating display; an export has the bound, an eighth of the period, nothing and the bound again
+- **TEST** t2517 (`src/libs/kt-gpu/src/arbiter.rs`)
