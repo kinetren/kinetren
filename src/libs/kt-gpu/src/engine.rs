@@ -1697,6 +1697,10 @@ impl VideoGpuExec for GpuFxEngine {
         self.settle();
     }
 
+    fn sibling_exec(&self) -> Option<Arc<dyn VideoGpuExec>> {
+        Some(GpuFxEngine::sibling(self))
+    }
+
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         self.yield_to_display();
         let _hold = crate::holds::within(self.role(), "execute_into");

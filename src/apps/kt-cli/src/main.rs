@@ -1151,9 +1151,10 @@ fn preview_run(
     println!("-- preview {}x{}, {backend}, {:.1}–{:.1} s --", q.width, q.height, from, to);
     if looped.is_some() {
         println!(
-            "  loop fill: {}, kept {} moments",
+            "  loop fill: {}, kept {} moments, {} at once",
             if kt_engine::loop_fill::enabled() { "on" } else { "off (KT_LOOP_FILL=off)" },
-            player.fill_kept()
+            player.fill_kept(),
+            player.fill_width()
         );
     }
     println!(

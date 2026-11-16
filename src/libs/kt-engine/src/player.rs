@@ -1165,6 +1165,19 @@ impl Player {
         self.fill.kept()
     }
 
+    /// Moments the loop fill composes at once on its executor (cpu-idle-work; tests, the bench).
+    pub fn fill_width(&self) -> usize {
+        self.fill.width()
+    }
+
+    /// A display composite counted in flight while the guard lives (a test seam, t2860: the fill on a
+    /// card does not wait for the display's own composite). Zero in the product.
+    #[doc(hidden)]
+    pub fn composing_for_tests(&self) -> impl Drop + '_ {
+        self.composing.fetch_add(1, Ordering::AcqRel);
+        Composing(&self.composing)
+    }
+
     /// Compose the frame at `t` onto the executor's display target, without a readback
     /// (preview-throughput D2). `None` — no executor, a poisoned one, or a plan it refused
     /// (`TooLarge`).

@@ -438,6 +438,12 @@ pub trait VideoGpuExec: Send + Sync {
     fn prewarm_runs(&self, _runs: &[Vec<String>]) {}
     /// Wait until what `prewarm` started is done (an export before its first frame).
     fn settle_prewarm(&self) {}
+    /// An executor on this one's device, ring and compiled pipelines with its own lock and frame
+    /// state (cpu-idle-work): the loop fill composes several moments at once, one per executor, and a
+    /// composite holds its executor's lock through its admissions and its readback. `None` — none.
+    fn sibling_exec(&self) -> Option<Arc<dyn VideoGpuExec>> {
+        None
+    }
 }
 
 /// How `VideoGpuExec::present` treats a frame.
