@@ -1856,7 +1856,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder] [--time] [--serial] [--encoder-threads N]");
+                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder] [--time] [--serial] [--encoder-threads N] [--range FROM_S TO_S] [--size WxH]");
                 return 2;
             };
             // --time: where the export's time went, stage by stage (export-throughput D6);
@@ -1874,6 +1874,18 @@ fn run(args: &[String]) -> i32 {
             // the render MUST be reproducible — for example in the cross-render
             // conformance (test 158).
             let encoder = args.get(3).filter(|a| !a.starts_with("--")).cloned();
+            // --range: a piece of the timeline, as the render window's region (render-speed: the same
+            // piece the preview plays, compared)
+            let range = args.iter().position(|a| a == "--range").and_then(|i| {
+                let from = args.get(i + 1)?.parse::<f64>().ok()?;
+                let to = args.get(i + 2)?.parse::<f64>().ok()?;
+                Some((kt_time::Tick::from_secs_f64(from), kt_time::Tick::from_secs_f64(to)))
+            });
+            // --size: the render window's resolution (render-speed: an export at the preview's size)
+            let resolution = args.iter().position(|a| a == "--size").and_then(|i| args.get(i + 1)).and_then(|s| {
+                let (w, h) = s.split_once('x')?;
+                Some((w.parse().ok()?, h.parse().ok()?))
+            });
             let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
@@ -1925,6 +1937,7 @@ fn run(args: &[String]) -> i32 {
                 serial,
                 encoder_threads,
                 profile: profile.clone(),
+                resolution,
                 tight: kt_gpu::memory::tight(free, project.settings.width, project.settings.height),
                 ..Default::default()
             };
@@ -1946,7 +1959,7 @@ fn run(args: &[String]) -> i32 {
                 audio_sources,
                 video_sources,
                 output,
-                None,
+                range,
                 &opts,
                 &kt_engine::ExportBackends { video_gpu, video_gpu_more: engines },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1973,6 +1986,7 @@ fn run(args: &[String]) -> i32 {
                         stats.missing_video_layers,
                         stats.encoder
                     );
+                    eprintln!("{}", stats.stages);
                     if let Some(p) = &profile {
                         eprint!("stages:\n{}", p.report());
                         use std::sync::atomic::Ordering::Relaxed;

@@ -351,8 +351,12 @@ impl RenderJob {
     pub fn on_result(&mut self, r: Result<kt_engine::export::ExportStats, String>) {
         self.finished_at = Some((self.clock)());
         match &r {
-            Ok(_) => {
+            Ok(stats) => {
                 self.final_size = std::fs::metadata(&self.out_path).ok().map(|m| m.len());
+                // where the render's time went, into the journal the load report carries (render-speed D2)
+                if !stats.stages.is_empty() {
+                    crate::tele_journal::record(crate::tele_journal::Kind::Note, &stats.stages);
+                }
                 // the engine's own "done" line is the result: a second one only repeated it
             }
             Err(e) => self.push_log(LogLine::Failed(e.clone())),

@@ -628,3 +628,47 @@ fn t2760_an_incomplete_lap_is_not_a_key_change() {
     assert!(!out.contains("key changed"), "an incomplete lap read as a key change: {out}");
     assert!(out.contains("never kept on an earlier lap"), "{out}");
 }
+
+/// t2791 (render-speed D2): an export's stage records read back as where its time went — the real-time
+/// factor, each busy stage's share of the wall, and the admission waits its submissions had on a ring
+/// a display shares; a run without an export says so.
+#[test]
+fn t2791_trace_export_reads_where_an_export_spent_its_time() {
+    use kt_time::trace::export_stage as st;
+    let s = 1_000 * MS;
+    let end = 30 * s;
+    let mut v = vec![];
+    for (aux, busy) in [(st::DECODE, 6 * s), (st::COMPOSE, 18 * s), (st::READBACK, 0), (st::GPU_WAIT, 15 * s)] {
+        v.push(rec(Ev::ExportStage, end, |r| {
+            r.aux = aux;
+            r.a = busy;
+            r.b = 20 * s;
+            r.c = 250;
+            r.id = 4;
+        }));
+    }
+    v.push(rec(Ev::ExportStage, end, |r| {
+        r.aux = st::WALL;
+        r.a = 20 * s;
+        r.b = 10 * s;
+        r.c = 250;
+        r.id = 4;
+    }));
+    // inside the export: two offline admissions on a ring with a display, one cut piece; before it, a
+    // preview admission that is not the export's
+    for (t, class, dur) in [(15 * s, kt_time::sched::Class::Offline, 2 * s), (20 * s, kt_time::sched::Class::Offline, s), (2 * s, kt_time::sched::Class::Near, 5 * s)] {
+        v.push(rec(Ev::GpuAdmit, t, |r| {
+            r.aux = class as u32;
+            r.dur = dur;
+            r.c = 1;
+        }));
+    }
+    v.push(rec(Ev::GpuPiece, 21 * s, |r| r.aux = kt_time::sched::Class::Offline as u32));
+    let out = export(&run_of(v));
+    assert!(out.contains("export 0: 250 frames, 10.00 s of the timeline in 20.00 s — 0.50× real time (pipelined, 4 frame workers)"), "{out}");
+    assert!(out.contains("compose          18.00 s busy    90.0 % of wall"), "{out}");
+    assert!(out.contains("gpu wait         15.00 s busy    75.0 % of wall"), "{out}");
+    assert!(!out.contains("readback"), "an idle stage is not listed: {out}");
+    assert!(out.contains("2 export submissions waited 3000.0 ms for admission (15.0 % of wall), 1 pieces cut — a display shares the device"), "{out}");
+    assert!(export(&run_of(vec![])).contains("no export in this run"));
+}
