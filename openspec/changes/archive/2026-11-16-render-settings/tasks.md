@@ -31,5 +31,5 @@ message, the first line = the stage and what was done) and `scripts/target-prune
 
 ## 4. Close
 
-- [ ] 4.1 What's new line; found-defects row for the decode-side BT.601 default; clippy; idle measure
-- [ ] 4.2 Archive the change (specs merged), commit
+- [x] 4.1 What's new line; found-defects row for the decode-side BT.601 default; clippy; idle measure
+- [x] 4.2 Archive the change (specs merged), commit

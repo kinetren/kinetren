@@ -1,18 +1,18 @@
 ---
 id: F-EXP-006
 title: Render settings — what a person can set for the final file
-status: in-progress
+status: done
 priority: A
 cost: L
 category: export/presets
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-ffmpeg, kt-engine, kt-app, kt-cli]
 invariants: [1, 9, 10, 11]
 ui_rules: [4, 13, 16, 19, 23]
 round: kkt-26.11.15
 point: "N5 — change render-settings"
-tests: []
+tests: [2800, 2801, 2802, 2803, 2804, 2805, 2806, 2808, 2809, 2810, 2811, 2813]
 depends_on: [F-EXP-001, F-EXP-004]
 trackers: []
 services: []
@@ -117,50 +117,7 @@ send the job to software. The profile follows the bit depth (High vs High 10, Ma
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/export/
-
-### What already exists
-
-- `src/libs/kt-ffmpeg/src/muxer_impl.rs` — `Muxer::open`: the container is the literal
-  `"mp4"`, the audio encoder the literal `"aac"`, `gop_size = fps * 2`, `max_b_frames = 0`,
-  no `color_range`/`colorspace`/`color_primaries`/`color_trc` is set anywhere.
-- `src/libs/kt-ffmpeg/src/encoders.rs` — the per-OS H.264 cascade (nvenc → vaapi → qsv →
-  libx264 → mpeg4 on Linux; nvenc → amf → qsv → libx264 → mf → mpeg4 on Windows) with
-  `quality_options`/`bitrate_options` per encoder; libx264 is fixed to `preset veryfast`,
-  NVENC to `p4`. The open check is real (F-EXP-004).
-- `src/libs/kt-engine/src/export.rs` — `ExportOptions`: `quality`, `video_bitrate`,
-  `audio_bitrate`, `force_encoder`, `resolution`; the frame rate is `project.settings.fps`.
-- `src/apps/kt-app/src/render_dialog.rs` — `RenderSetup` and `draw_render_setup`: encoder,
-  CRF 14–32 or 0.5–80 Mbit/s, AAC 128–320 kbps, resolution (project / 4 presets / max of
-  sources). The range (region else whole project) is applied but not shown. Nothing survives a
-  restart (ui rule 23). The name template `kt-<project>-<region>-<len>s.mp4` is the owner's
-  decision and stays; only its extension follows the container.
-- `src/apps/kt-cli/src/main.rs` — `export <in.kt> <out.mp4> [encoder]`: only the encoder name.
-
-### What is missing
-
-Everything in the TAKE line of the verdict: other containers and codecs, VBR/CBR, GOP and
-B-frames, a speed scale, 10-bit, colour tags, custom size, frame-rate override, other audio
-codecs, a visible range, metadata, presets and remembered settings, a size estimate — and the
-same set reachable from kt-cli, or the GUI and the CLI render different files from one preset.
-
-### What hinders
-
-- Invariant 9: no temporary files — two-pass needs a stats file and is rejected below.
-- Invariant 10: one binary for FFmpeg 6–9 loaded at run time; which of libx265/libaom/libsvtav1/
-  libvpx/prores_ks a given build carries is known only by opening — each codec is a cascade
-  with the F-EXP-004 open check, and an absent one is shown as unavailable with the reason.
-- Invariant 1: the engine is 48 kHz stereo f32 to the output, so sample rate and layout are
-  not options; PCM/FLAC/Opus differ only in the encoder of that one stream.
-- Invariant 11: the export is byte-reproducible on one machine; every new option is part of
-  the determinism key (encoder threads are already pinned for it), and a frame-rate override
-  must come out of `frame_plan`, not a frame dropper after it (invariant 7).
-- The composite is RGBA 8-bit and progressive, built at the output size: 10-bit output carries
-  8-bit content in a 10-bit stream (fewer banding steps after the encoder, no new precision).
-
-### Which invariants it touches
-
-1 (audio format fixed), 7 (one composition path — size and fps come from the plan), 9
-(in-process, no temp files), 10 (dlopen, per-build encoder availability), 11 (determinism).
+Done in change render-settings (archived 2026-11-16): every TAKE of the verdict through the per-codec cascade, the text form shared by kt-cli and presets, and the window (t2800–t2811, t2813, live `render_settings`).
 
 ## Estimate
 
