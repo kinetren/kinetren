@@ -85,6 +85,11 @@ fn trial_encoder(args: &[String]) -> Result<String, String> {
         audio_bitrate: 128_000,
         force_encoder: Some(name.clone()),
         threads: 0,
+        // the codec family the name belongs to: the cascade it is forced within (render-settings D3)
+        format: crate::format::OutputFormat {
+            video: crate::encoders::codec_of(crate::search::Os::NATIVE, name).unwrap_or_default(),
+            ..Default::default()
+        },
     };
     let mut muxer = crate::Muxer::open(&cfg).map_err(|e| failing_part(&e.to_string(), name))?;
     let grey = vec![128u8; width as usize * height as usize * 4];

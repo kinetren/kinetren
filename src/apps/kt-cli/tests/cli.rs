@@ -1527,3 +1527,44 @@ fn t2086_export_without_a_display_does_not_crash() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// t2808 (render-settings D9): `kt-cli export` writes what its flags ask, read back by our own libav
+/// reader; a bad setting exits non-zero naming its key before anything is opened.
+#[test]
+fn t2808_kt_cli_export_writes_what_its_flags_ask() {
+    kt_plugins_builtin::install();
+    if kt_media::ffmpeg::backend_info().is_none() {
+        eprintln!("t2808 skipped: needs FFmpeg");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-cli-t2808-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut p = owner_grid_case();
+    p.morphers.clear();
+    p.clips[0].duration = kt_time::Tick(90_000);
+    p.validate().unwrap();
+    let project = dir.join("short.kt");
+    std::fs::write(&project, kt_model::project_file::to_text(&p, None)).unwrap();
+    let out = dir.join("out.mkv");
+    let run = |extra: &[&str]| {
+        let mut a = vec!["export", project.to_str().unwrap(), out.to_str().unwrap(), "libx264"];
+        a.extend_from_slice(extra);
+        let r = cli().args(&a).env("XDG_DATA_HOME", dir.join("xdg")).output().unwrap();
+        (r.status.success(), format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr)))
+    };
+    let (ok, all) = run(&["--container", "mkv", "--audio", "flac", "--set", "keyint=1", "--set", "title=Demo", "--fps", "25"]);
+    assert!(ok, "{all}");
+    let f = kt_media::muxer::probe_output(out.to_str().unwrap()).unwrap();
+    assert!(f.format.contains("matroska"), "{f:?}");
+    assert_eq!(f.video_codec, "h264");
+    assert_eq!(f.fps.0 as f64 / f.fps.1 as f64, 25.0);
+    assert_eq!(f.audio_codec.as_deref(), Some("flac"));
+    assert_eq!(f.title.as_deref(), Some("Demo"));
+    std::fs::remove_file(&out).unwrap();
+
+    let (ok, all) = run(&["--set", "speed=warp"]);
+    assert!(!ok, "a bad setting is an error");
+    assert!(all.contains("speed:"), "the key is named: {all}");
+    assert!(!out.exists(), "nothing was written");
+    let _ = std::fs::remove_dir_all(&dir);
+}

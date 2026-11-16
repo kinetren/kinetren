@@ -432,7 +432,7 @@ pub fn index() -> Vec<Entry> {
         e(k::guide::index::TRANSITION, k::guide::index::TRANSITION_HOW, "timeline.md", "transitions"),
         e(k::guide::index::MORPHER, k::guide::index::MORPHER_HOW, "morpher.md", "the-morpher"),
         e(k::guide::index::REEL, k::guide::index::REEL_HOW, "compositions-and-generators.md", "reels-nested-compositions"),
-        e(k::guide::index::RENDER, k::guide::index::RENDER_HOW, "export.md", "render-to-mp4"),
+        e(k::guide::index::RENDER, k::guide::index::RENDER_HOW, "export.md", "render"),
         e(k::guide::index::RECOVER, k::guide::index::RECOVER_HOW, "getting-started.md", "a-first-edit"),
         e(k::guide::index::KEYS, k::guide::index::KEYS_HOW, "shortcuts.md", "keyboard-and-mouse"),
         e(k::guide::index::ZOOM, k::guide::index::ZOOM_HOW, "timeline.md", "navigation-and-zoom"),

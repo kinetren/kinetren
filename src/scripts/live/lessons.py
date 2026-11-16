@@ -208,9 +208,9 @@ def main(out):
         app.expect(app.until(lambda: app.has_probe("lesson.mark.tb.render", tries=2) and app.has_probe("tb.render", tries=2)),
                    "the render button is outlined")
         app.click_probe("lessons.show", "Show")
-        app.expect(app.has_probe("lesson.mark.menu"), "Show opened File with Render to MP4… outlined")
-        app.step("l5-show", "the File menu, Render to MP4… outlined")
-        app.click_probe("file.render", "Render to MP4…")
+        app.expect(app.has_probe("lesson.mark.menu"), "Show opened File with Render… outlined")
+        app.step("l5-show", "the File menu, Render… outlined")
+        app.click_probe("file.render", "Render…")
         app.expect(closed(5, 1), "the render settings closed step 1")
         app.expect(app.has_probe("lesson.mark.render.start"), "Start is outlined")
         app.step("l5-settings", "the render settings, Start outlined")

@@ -28,6 +28,16 @@ with libav*"), `export` (the encoder cascade).
 - **Encoders** (`encoders.rs`): the cascade per OS with each candidate's pixel format and
   options; the muxer feeds the chosen encoder its own pixel format (QSV: NV12). Pure, tested on
   any OS (t858).
+- **The output format** (`format.rs`, render-settings): `MuxConfig.format` carries the container,
+  the codec family, the rate mode, GOP, B-frames, speed, depth, colour and the audio codec; its
+  `Default` IS the former file. Each codec has its cascade (`encoders::codec_candidates`); a
+  candidate lacking the asked depth or CBR is SKIPPED with the reason, never opened (t2801, t2803).
+  The colour tags are written from the SAME choice that drives `sws_setColorspaceDetails`; the
+  default BT.601 limited leaves swscale untouched, so the converted pictures stay the former ones
+  (the stream gains only its colour tags, t2806). Matroska/WebM
+  are written with `AVFMT_FLAG_BITEXACT` — without it a random SegmentUID made every file differ
+  (t2805); never set it on MP4 (it drops the muxer tag and moves every former export's bytes).
+  An audio sample is converted in Rust (`quantize`, no libm). `probe_output` is the tests' reader.
 - **Adding a major** (ffmpeg-9, design D1/D2) — five steps, each guarded:
   1. `scripts/vendor-ffmpeg-headers.sh <version> <sha256>` from the official signed tarball
      (`vendor/ffmpeg-N/SOURCE` records it); the Dockerfile's `ffmpeg-test` stage builds the

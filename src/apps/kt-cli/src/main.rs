@@ -870,6 +870,36 @@ fn decode_all(path: &str) -> Result<(usize, kt_time::Tick), String> {
     Ok((seen, *keys.last().unwrap()))
 }
 
+/// The render settings of `kt-cli export` (render-settings D9): `--set key=value` and the short
+/// flags, in order; a container not named follows the output's extension. Other flags are skipped.
+fn export_settings_args(args: &[String], output: &str) -> Result<Vec<(String, String)>, String> {
+    const SHORT: [&str; 8] = ["container", "video", "rate", "quality", "bitrate", "audio", "size", "fps"];
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let a = args[i].as_str();
+        if a == "--set" {
+            let kv = args.get(i + 1).ok_or("--set needs key=value")?;
+            let (k, v) = kv.split_once('=').ok_or_else(|| format!("--set {kv}: not key=value"))?;
+            out.push((k.to_string(), v.to_string()));
+            i += 2;
+        } else if let Some(k) = a.strip_prefix("--").filter(|k| SHORT.contains(k)) {
+            let v = args.get(i + 1).ok_or_else(|| format!("{a} needs a value"))?;
+            out.push((k.to_string(), v.clone()));
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    if !out.iter().any(|(k, _)| k == "container") {
+        let ext = std::path::Path::new(output).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        if ["mov", "mkv", "webm"].contains(&ext.as_str()) {
+            out.insert(0, ("container".into(), ext));
+        }
+    }
+    Ok(out)
+}
+
 /// `kt-cli ffmpeg --probe-encoders` (hw-encode-context D6): every hardware candidate of this OS
 /// opened by the export's own code at 1280×720 into a throwaway file — "opens" or the failing part.
 fn probe_encoders() -> String {
@@ -889,6 +919,7 @@ fn probe_encoders() -> String {
             audio_bitrate: 128_000,
             force_encoder: Some(spec.name.to_string()),
             threads: 0,
+            format: Default::default(),
         };
         let line = match kt_ffmpeg::Muxer::open(&cfg) {
             Ok(m) => match &m.open_report().device {
@@ -1151,9 +1182,10 @@ fn preview_run(
     println!("-- preview {}x{}, {backend}, {:.1}–{:.1} s --", q.width, q.height, from, to);
     if looped.is_some() {
         println!(
-            "  loop fill: {}, kept {} moments",
+            "  loop fill: {}, kept {} moments, {} at once",
             if kt_engine::loop_fill::enabled() { "on" } else { "off (KT_LOOP_FILL=off)" },
-            player.fill_kept()
+            player.fill_kept(),
+            player.fill_width()
         );
     }
     println!(
@@ -1856,7 +1888,12 @@ fn run(args: &[String]) -> i32 {
         }
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli export <in.kt> <out.mp4> [encoder] [--time] [--serial] [--encoder-threads N]");
+                eprintln!(
+                    "usage: kt-cli export <in.kt> <out.mp4|.mov|.mkv|.webm> [encoder] [--time] [--serial] [--encoder-threads N] [--range FROM_S TO_S]\n\
+                     \x20      [--container C] [--video V] [--rate R] [--quality Q] [--bitrate B] [--audio A] [--size WxH] [--fps N]\n\
+                     \x20      [--set key=value]…   keys: {}",
+                    kt_engine::export_settings::KEYS.join(", ")
+                );
                 return 2;
             };
             // --time: where the export's time went, stage by stage (export-throughput D6);
@@ -1874,6 +1911,23 @@ fn run(args: &[String]) -> i32 {
             // the render MUST be reproducible — for example in the cross-render
             // conformance (test 158).
             let encoder = args.get(3).filter(|a| !a.starts_with("--")).cloned();
+            // the render settings in the one text form the render window's presets use
+            // (render-settings D9): `--set key=value` and the short flags of the common keys; a
+            // container not named follows the output's extension
+            let settings = match export_settings_args(&args[3..], output) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("export: {e}");
+                    return 2;
+                }
+            };
+            // --range: a piece of the timeline, as the render window's region (render-speed: the same
+            // piece the preview plays, compared)
+            let range = args.iter().position(|a| a == "--range").and_then(|i| {
+                let from = args.get(i + 1)?.parse::<f64>().ok()?;
+                let to = args.get(i + 2)?.parse::<f64>().ok()?;
+                Some((kt_time::Tick::from_secs_f64(from), kt_time::Tick::from_secs_f64(to)))
+            });
             let project = match load_project_resolved(input) {
                 Ok(p) => p,
                 Err(code) => return code,
@@ -1928,6 +1982,16 @@ fn run(args: &[String]) -> i32 {
                 tight: kt_gpu::memory::tight(free, project.settings.width, project.settings.height),
                 ..Default::default()
             };
+            let opts = match kt_engine::export_settings::from_pairs(
+                opts,
+                settings.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+            ) {
+                Ok(o) => o,
+                Err(e) => {
+                    eprintln!("export: {e}");
+                    return 2;
+                }
+            };
             // R.29: headless devices, the same composition code as the preview
             let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines(project.settings.width, project.settings.height) {
                 Ok(e) => {
@@ -1946,7 +2010,7 @@ fn run(args: &[String]) -> i32 {
                 audio_sources,
                 video_sources,
                 output,
-                None,
+                range,
                 &opts,
                 &kt_engine::ExportBackends { video_gpu, video_gpu_more: engines },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -1973,6 +2037,7 @@ fn run(args: &[String]) -> i32 {
                         stats.missing_video_layers,
                         stats.encoder
                     );
+                    eprintln!("{}", stats.stages);
                     if let Some(p) = &profile {
                         eprint!("stages:\n{}", p.report());
                         use std::sync::atomic::Ordering::Relaxed;

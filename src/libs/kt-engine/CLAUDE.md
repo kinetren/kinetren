@@ -164,7 +164,13 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   not hold whose layers are ALL cached — `compose_at(fill)` asks no decode and withdraws no request —
   ahead of the playhead by twice its frame time, and keeps them on the display's executor as the slow
   route does. A moment incomplete (a stream stage short included) or refused by the memo is skipped for
-  the lap; it starts nothing while the display composes a frame of its own (`PreviewParts::composing`).
+  the lap. **Its width** (cpu-idle-work, t2860–t2862): on a card `loop_fill::width` moments at once
+  (the scheduler's pool less one, at most the ring's three lower pieces), each on a `sibling_exec` of
+  the fill's executor — a composite holds its engine's lock through its admissions and readback, so two
+  moments on one engine serialize; a moment is claimed before it is composed; an incomplete moment
+  narrows it to one for the lap. On a software device one at a time, and it starts nothing while the
+  display composes a frame of its own (`PreviewParts::composing`): forced wide there it filled slower
+  and cost the display frames. `KT_LOOP_FILL_WIDTH=N` for an A/B.
   `stream_short()` is per thread (two threads plan on one renderer). `KT_LOOP_FILL=off` for an A/B.
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from

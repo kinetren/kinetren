@@ -151,6 +151,22 @@ pub fn quality_text(r: &kt_media::muxer::OpenReport, opts: &kt_engine::export::E
     String::new()
 }
 
+/// The progress window's Audio row: what the file carries, not the former fixed AAC (render-settings).
+pub fn audio_row(opts: &kt_engine::export::ExportOptions) -> String {
+    use kt_media::muxer::format::AudioCodec;
+    let a = opts.format.audio;
+    match a {
+        AudioCodec::None => tr(k::render::AUDIO_NONE).to_string(),
+        _ if a.has_bitrate() => crate::tf!(k::render::AUDIO_LINE, a.label(), opts.audio_bitrate / 1000),
+        _ => format!("{}, {}", a.label(), tr(k::render::AUDIO_FIXED)),
+    }
+}
+
+/// The progress window's Container row: the container written, with `+faststart` where it is set.
+pub fn mux_row(f: &kt_media::muxer::OutputFormat) -> String {
+    if f.container.faststart() { format!("{} (+faststart)", f.container.label()) } else { f.container.label().to_string() }
+}
+
 /// The render log file (D9): `render.log`, the previous run's moved to `render.log.1`.
 pub struct LogFile {
     pub path: std::path::PathBuf,
@@ -351,8 +367,12 @@ impl RenderJob {
     pub fn on_result(&mut self, r: Result<kt_engine::export::ExportStats, String>) {
         self.finished_at = Some((self.clock)());
         match &r {
-            Ok(_) => {
+            Ok(stats) => {
                 self.final_size = std::fs::metadata(&self.out_path).ok().map(|m| m.len());
+                // where the render's time went, into the journal the load report carries (render-speed D2)
+                if !stats.stages.is_empty() {
+                    crate::tele_journal::record(crate::tele_journal::Kind::Note, &stats.stages);
+                }
                 // the engine's own "done" line is the result: a second one only repeated it
             }
             Err(e) => self.push_log(LogLine::Failed(e.clone())),
@@ -386,14 +406,25 @@ pub(crate) fn secs(s: f64) -> std::time::Duration {
     std::time::Duration::try_from_secs_f64(s.max(0.0)).unwrap_or_default()
 }
 
-/// Render SETTINGS dialog (item 5): codec, quality, bitrate, resolution.
+/// Render SETTINGS dialog (item 5; change render-settings): the output format, the rate, the size
+/// and frame rate, the audio, the range, the metadata and the presets.
 pub struct RenderSetup {
     pub encoder: Option<String>, // None = Auto
     pub quality: u32,
-    /// Some = target video bitrate mode (bit/s) instead of CRF (item 9).
-    pub video_bitrate: Option<u32>,
+    /// The average (VBR) or constant (CBR) video bitrate, bit/s; kept while the mode is Quality.
+    pub bitrate: u32,
     pub audio_bitrate: u32,
     pub resolution: Option<(u32, u32)>,
+    /// Container, codec, rate mode, GOP, depth, colour, audio codec, metadata (render-settings D1).
+    pub format: kt_media::muxer::OutputFormat,
+    /// The file's frame rate; `None` — the project's.
+    pub fps: Option<u32>,
+    /// The whole project even when a region is set (the range is shown, rule 16).
+    pub whole: bool,
+    /// The size of "Custom".
+    pub custom: (u32, u32),
+    /// Custom size chosen (the rows are shown).
+    pub custom_on: bool,
     pub open: bool,
     /// Sources unavailable at the moment the settings are opened: shown as a
     /// warning BEFORE the launch, not a surprise in the finished file.
@@ -406,8 +437,18 @@ pub struct RenderSetup {
     /// A test's answer of the save dialog: the harness runs many tests in one process, and
     /// `KT_FILE_PICK` — an environment variable — would answer for all of them at once.
     pub test_pick: Option<std::path::PathBuf>,
-    /// The encoders the settings offer, asked when the window opens (`start_render`).
-    pub encoders: Vec<kt_media::muxer::AvailableEncoder>,
+    /// What this FFmpeg can write, asked when the window opens (`start_render`), never per frame:
+    /// a device candidate opens its device to be listed (hw-encode-context D6).
+    pub avail: kt_media::muxer::format::Availability,
+    /// The presets file and its rows, read when the window opens and after a save or delete.
+    pub presets: crate::user_store::RenderPresetStore,
+    pub preset_rows: Vec<crate::user_store::RenderPreset>,
+    /// The preset the settings came from and its pairs ("(changed)" when they moved).
+    pub preset: Option<(String, Vec<(String, String)>)>,
+    /// The name typed for "Save as preset".
+    pub new_name: String,
+    /// The last settings were restored this session (rule 23: a tool remembers).
+    pub restored: bool,
 }
 
 impl Default for RenderSetup {
@@ -415,18 +456,130 @@ impl Default for RenderSetup {
         RenderSetup {
             encoder: None,
             quality: 23,
-            video_bitrate: None,
+            bitrate: kt_engine::export_settings::DEFAULT_BITRATE,
             audio_bitrate: 192_000,
             resolution: None,
+            format: Default::default(),
+            fps: None,
+            whole: false,
+            custom: (1920, 1080),
+            custom_on: false,
             open: false,
             missing: Vec::new(),
             // a test's data directory is its own (render-finish-crash D3)
             log_dir: crate::journal::data_dir(),
             test_open: None,
             test_pick: None,
-            encoders: Vec::new(),
+            avail: Default::default(),
+            presets: Default::default(),
+            preset_rows: Vec::new(),
+            preset: None,
+            new_name: String::new(),
+            restored: false,
         }
     }
+}
+
+/// What the size estimate can say (F-EXP-006: exact only where the rate is a promise).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Estimate {
+    About(u64),
+    UpTo(u64),
+    Unknown,
+}
+
+impl RenderSetup {
+    /// The export options these settings ask for.
+    pub fn options(&self) -> kt_engine::export::ExportOptions {
+        use kt_media::muxer::format::RateMode;
+        kt_engine::export::ExportOptions {
+            quality: self.quality,
+            video_bitrate: (self.format.rate != RateMode::Quality && !self.format.video.intra_only()).then_some(self.bitrate),
+            audio_bitrate: self.audio_bitrate,
+            force_encoder: self.encoder.clone(),
+            resolution: self.resolution,
+            fps: self.fps,
+            format: self.format.clone(),
+            placeholders: self.missing.clone(),
+            ..Default::default()
+        }
+    }
+
+    /// Take the settings of `o` (a preset, the last render).
+    pub fn apply(&mut self, o: &kt_engine::export::ExportOptions) {
+        self.quality = o.quality;
+        if let Some(b) = o.video_bitrate {
+            self.bitrate = b;
+        }
+        self.audio_bitrate = o.audio_bitrate;
+        self.encoder = o.force_encoder.clone();
+        self.resolution = o.resolution;
+        self.custom_on = o.resolution.is_some_and(|r| !SIZES.contains(&r));
+        if let Some(r) = o.resolution.filter(|_| self.custom_on) {
+            self.custom = r;
+        }
+        self.fps = o.fps;
+        self.format = o.format.clone();
+    }
+
+    /// Name the preset these settings are (the first whose settings they equal), or none.
+    pub fn match_preset(&mut self) {
+        let pairs = self.pairs();
+        self.preset = self
+            .preset_rows
+            .iter()
+            .find(|r| r.options().is_ok_and(|o| kt_engine::export_settings::pairs(&o) == pairs))
+            .map(|r| (r.name.clone(), pairs.clone()));
+    }
+
+    /// The pairs of the text form (kt-cli, presets).
+    pub fn pairs(&self) -> Vec<(String, String)> {
+        kt_engine::export_settings::pairs(&self.options())
+    }
+
+    /// The size estimate of `secs` of output.
+    pub fn estimate(&self, secs: f64) -> Estimate {
+        use kt_media::muxer::format::{AudioCodec, RateMode};
+        let audio = match self.format.audio {
+            AudioCodec::Aac | AudioCodec::Opus => Some(self.audio_bitrate as f64),
+            AudioCodec::Pcm16 => Some(48_000.0 * 2.0 * 16.0),
+            AudioCodec::Pcm24 => Some(48_000.0 * 2.0 * 24.0),
+            // lossless and variable: at most the 24-bit PCM it holds
+            AudioCodec::Flac => None,
+            AudioCodec::None => Some(0.0),
+        };
+        let bytes = |bps: f64| (bps * secs / 8.0) as u64;
+        if self.format.video.intra_only() {
+            return Estimate::Unknown;
+        }
+        match (self.format.rate, audio) {
+            (RateMode::Quality, _) => Estimate::Unknown,
+            (RateMode::Cbr, Some(a)) => Estimate::About(bytes(self.bitrate as f64 + a)),
+            (RateMode::Cbr, None) => Estimate::UpTo(bytes(self.bitrate as f64 + 48_000.0 * 2.0 * 24.0)),
+            (RateMode::Vbr, a) => Estimate::UpTo(bytes(self.format.max_for(self.bitrate) as f64 + a.unwrap_or(48_000.0 * 2.0 * 24.0))),
+        }
+    }
+}
+
+/// The frame sizes the window offers besides the project's, the largest source's and Custom.
+const SIZES: [(u32, u32); 4] = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
+/// The frame rates the window offers besides the project's: each divides 90000 (time-model).
+const RATES_FPS: [u32; 6] = [24, 25, 30, 48, 50, 60];
+
+/// A choice of a combo, enabled or disabled with its reason shown after it (rule 16: what cannot
+/// be chosen says why, it is not hidden).
+fn choice<T: PartialEq + Clone>(ui: &mut egui::Ui, cur: &mut T, v: T, label: &str, why: Option<String>, probe: &str) -> bool {
+    let text = match &why {
+        Some(w) => format!("{label} — {w}"),
+        None => label.to_string(),
+    };
+    let r = ui.add_enabled(why.is_none(), egui::Button::selectable(*cur == v, text));
+    crate::widgets::field_probe::note(probe, r.rect);
+    if r.clicked() && *cur != v {
+        *cur = v;
+        return true;
+    }
+    false
 }
 
 type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
@@ -520,7 +673,8 @@ impl KtApp {
     /// Name substituted into the render save dialog.
     pub(crate) fn default_render_name(&self) -> String {
         let project = self.model.project();
-        let (start, end) = project.region.map_or_else(
+        let region = project.region.filter(|_| !self.render_setup.whole);
+        let (start, end) = region.map_or_else(
             || (Tick::ZERO, kt_engine::export::project_range(project)),
             |r| (r.start, r.end),
         );
@@ -536,7 +690,10 @@ impl KtApp {
             .as_deref()
             .and_then(|p| p.file_stem())
             .map(|s| s.to_string_lossy().to_string());
-        render_file_name(stem.as_deref(), region_name.as_deref(), (end - start).0)
+        let name = render_file_name(stem.as_deref(), region_name.as_deref(), (end - start).0);
+        // the owner's template; only the extension follows the container (render-settings D8)
+        let ext = self.render_setup.format.container.extension();
+        format!("{}.{ext}", name.strip_suffix(".mp4").unwrap_or(&name))
     }
 
     /// “Render” button: opens the settings panel (item 5 — choice of codec etc.).
@@ -547,7 +704,23 @@ impl KtApp {
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent());
         self.render_setup.missing = missing_sources(&self.model.document(), base);
-        self.render_setup.encoders = kt_media::muxer::available_encoders();
+        // what this FFmpeg can write, asked once per opening (render-settings D2)
+        self.render_setup.avail = kt_media::muxer::availability();
+        self.render_setup.preset_rows = self.render_setup.presets.rows();
+        // a tool remembers what was entered (rule 23): the last render's settings, once a session
+        if !self.render_setup.restored {
+            self.render_setup.restored = true;
+            if let Some(o) = self.render_setup.presets.last().and_then(|pairs| {
+                kt_engine::export_settings::from_pairs(
+                    kt_engine::export::ExportOptions::default(),
+                    pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+                )
+                .ok()
+            }) {
+                self.render_setup.apply(&o);
+            }
+        }
+        self.render_setup.match_preset();
         // The mismatch must be NAMED (rule 16, R.55 C1): from this
         // round on, INSIDE a reel the reel PLAYS, but the export still covers
         // the whole DOCUMENT. A person who pressed “Render” from inside a composition
@@ -570,7 +743,10 @@ impl KtApp {
         // scenario (landing screenshots) did not start at all
         let picked = match self.render_setup.test_pick.clone() {
             Some(p) => Some(p),
-            None => crate::app::pick_save(tr(k::render::SETTINGS_TITLE), "MP4 Video", &["mp4"], None, &default_name),
+            None => {
+                let c = self.render_setup.format.container;
+                crate::app::pick_save(tr(k::render::SETTINGS_TITLE), &format!("{} video", c.label()), &[c.extension()], None, &default_name)
+            }
         };
         let Some(path) = picked else { return };
         // AN EXISTING FILE IS ASKED ABOUT FIRST (D8): the muxer would truncate it at once, and a
@@ -595,20 +771,20 @@ impl KtApp {
         let proj_res = (project.settings.width, project.settings.height);
         let proj_fps = project.settings.fps;
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let range = project.region.map(|r| (r.start, r.end));
+        let range = project.region.filter(|_| !self.render_setup.whole).map(|r| (r.start, r.end));
         let opts = kt_engine::export::ExportOptions {
-            quality: self.render_setup.quality,
-            video_bitrate: self.render_setup.video_bitrate,
-            audio_bitrate: self.render_setup.audio_bitrate,
-            force_encoder: self.render_setup.encoder.clone(),
-            resolution: self.render_setup.resolution,
-            placeholders: self.render_setup.missing.clone(),
             tight: {
                 let (w, h) = self.render_setup.resolution.unwrap_or(proj_res);
                 kt_gpu::memory::tight(kt_gpu::memory::available(), w, h)
             },
-            ..Default::default()
+            ..self.render_setup.options()
         };
+        // the next opening starts from these settings (rule 23); a store that cannot be written
+        // costs the memory, never the render
+        let pairs = self.render_setup.pairs();
+        if let Err(e) = self.render_setup.presets.set_last(&pairs) {
+            crate::journal::log("RENDER", &format!("render settings not remembered: {e}"));
+        }
         let mut opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
@@ -662,12 +838,13 @@ impl KtApp {
             .map_err(|e| e.to_string())
         });
         let out_res = opts.resolution.unwrap_or(proj_res);
+        let file_fps = opts.fps.unwrap_or(proj_fps);
         self.render_job = Some(RenderJob::new(
             job,
             out_path,
             opts,
             out_res,
-            proj_fps,
+            file_fps,
             self.render_setup.missing.clone(),
             &self.render_setup.log_dir,
             std::time::Instant::now,
@@ -675,7 +852,8 @@ impl KtApp {
         self.render_setup.open = false;
     }
 
-    /// Render settings panel (before the launch).
+    /// Render settings panel (before the launch), in groups (R.66): preset, video, size and rate,
+    /// audio, file; the buttons stay outside the scroll.
     pub fn draw_render_setup(&mut self, ctx: &egui::Context) {
         if !self.render_setup.open || self.render_job.is_some() {
             return;
@@ -684,6 +862,10 @@ impl KtApp {
         let mut launch = false;
         let proj = self.model.project().settings.clone();
         let max_src = self.max_source_resolution_cached();
+        let (region, full_len) = {
+            let p = self.model.project();
+            (p.region.map(|r| (r.start, r.end)), kt_engine::export::project_range(p))
+        };
         let shown = crate::window_shell::Shell::new(
             egui::Id::new("kt_render_settings"),
             tr(k::render::SETTINGS_TITLE),
@@ -693,148 +875,11 @@ impl KtApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
-                // GROUPS modeled on “Transform” (R.66): video, audio, file
-                crate::widgets::group(ui, "render.video", tr(k::grp::VIDEO), |ui| {
-                egui::Grid::new("render_setup").num_columns(2).spacing([12.0, 8.0]).show(
-                    ui,
-                    |ui| {
-                        ui.label(tr(k::render::VIDEO_CODEC));
-                        // asked once when the window opens (`start_render`): a device candidate
-                        // opens its device to be listed, which is not a per-frame cost
-                        let encoders = self.render_setup.encoders.clone();
-                        let sel = self
-                            .render_setup
-                            .encoder
-                            .clone()
-                            .unwrap_or_else(|| tr(k::render::ENCODER_AUTO).to_string());
-                        let combo = egui::ComboBox::from_id_salt("enc").selected_text(&sel).show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.render_setup.encoder,
-                                None,
-                                tr(k::render::ENCODER_AUTO),
-                            );
-                            for e in &encoders {
-                                // a device encoder names the device it will use (hw-encode-context D6)
-                                let label = match &e.device {
-                                    Some(d) => format!("{} ({d})", e.name),
-                                    None => e.name.clone(),
-                                };
-                                let r = ui.selectable_value(&mut self.render_setup.encoder, Some(e.name.clone()), label);
-                                crate::widgets::field_probe::note(&format!("render.encoder.{}", e.name), r.rect);
-                            }
-                        });
-                        crate::widgets::field_probe::note("render.encoder", combo.response.rect);
-                        ui.end_row();
-
-                        ui.label(tr(k::render::QUALITY));
-                        ui.horizontal(|ui| {
-                            let mut by_bitrate = self.render_setup.video_bitrate.is_some();
-                            if ui.selectable_label(!by_bitrate, "CRF").clicked() {
-                                by_bitrate = false;
-                                self.render_setup.video_bitrate = None;
-                            }
-                            if ui.selectable_label(by_bitrate, tr(k::render::BITRATE)).clicked()
-                                && self.render_setup.video_bitrate.is_none()
-                            {
-                                self.render_setup.video_bitrate = Some(8_000_000);
-                            }
-                            match &mut self.render_setup.video_bitrate {
-                                Some(bps) => {
-                                    let mut mbps = *bps as f32 / 1_000_000.0;
-                                    if ui
-                                        .add(
-                                            egui::Slider::new(&mut mbps, 0.5..=80.0)
-                                                .suffix(tr(k::render::MBPS_SUFFIX))
-                                                .logarithmic(true),
-                                        )
-                                        .changed()
-                                    {
-                                        *bps = (mbps * 1_000_000.0) as u32;
-                                    }
-                                }
-                                None => {
-                                    ui.add(egui::Slider::new(
-                                        &mut self.render_setup.quality,
-                                        14..=32,
-                                    ));
-                                }
-                            }
-                        });
-                        ui.end_row();
-
-                        ui.end_row();
-                    },
-                );
-                });
-                crate::widgets::group(ui, "render.audio", tr(k::grp::AUDIO), |ui| {
-                egui::Grid::new("render_audio").num_columns(2).spacing([12.0, 8.0]).show(
-                    ui,
-                    |ui| {
-                        ui.label(tr(k::render::AUDIO_BITRATE));
-                        egui::ComboBox::from_id_salt("abr")
-                            .selected_text(format!(
-                                "{} kbps",
-                                self.render_setup.audio_bitrate / 1000
-                            ))
-                            .show_ui(ui, |ui| {
-                                for b in [128_000u32, 192_000, 256_000, 320_000] {
-                                    ui.selectable_value(
-                                        &mut self.render_setup.audio_bitrate,
-                                        b,
-                                        format!("{} kbps", b / 1000),
-                                    );
-                                }
-                            });
-                        ui.end_row();
-
-                        ui.label(tr(k::render::RESOLUTION));
-                        let cur = self
-                            .render_setup
-                            .resolution
-                            .map(|(w, h)| format!("{w}×{h}"))
-                            .unwrap_or_else(|| {
-                                crate::tf!(k::render::RES_PROJECT, proj.width, proj.height)
-                            });
-                        egui::ComboBox::from_id_salt("rres").selected_text(cur).show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.render_setup.resolution,
-                                None,
-                                crate::tf!(k::render::RES_PROJECT, proj.width, proj.height),
-                            );
-                            for r in [(1280u32, 720u32), (1920, 1080), (2560, 1440), (3840, 2160)] {
-                                ui.selectable_value(
-                                    &mut self.render_setup.resolution,
-                                    Some(r),
-                                    format!("{}×{}", r.0, r.1),
-                                );
-                            }
-                            if let Some((mw, mh)) = max_src {
-                                ui.selectable_value(
-                                    &mut self.render_setup.resolution,
-                                    Some((mw, mh)),
-                                    format!("Max ({mw}×{mh})"),
-                                );
-                            }
-                        });
-                        ui.end_row();
-
-                        ui.label(tr(k::render::AUDIO));
-                        ui.weak("AAC, 48 kHz stereo");
-                        ui.end_row();
-                        ui.end_row();
-                    },
-                );
-                });
-                crate::widgets::group(ui, "render.file", tr(k::grp::FILE), |ui| {
-                egui::Grid::new("render_file").num_columns(2).spacing([12.0, 8.0]).show(
-                    ui,
-                    |ui| {
-                        ui.label(tr(k::render::CONTAINER));
-                        ui.weak("MP4 (+faststart)");
-                        ui.end_row();
-                    },
-                );
-                });
+                self.render_preset_group(ui);
+                self.render_video_group(ui);
+                self.render_size_group(ui, &proj, max_src);
+                self.render_audio_group(ui);
+                self.render_file_group(ui, region, full_len);
                 if !self.render_setup.missing.is_empty() {
                     ui.add_space(4.0);
                     ui.colored_label(
@@ -910,9 +955,460 @@ impl KtApp {
         }
     }
 
+    /// Preset: the list (the person's, then the factory ones), Save as, Delete.
+    fn render_preset_group(&mut self, ui: &mut egui::Ui) {
+        crate::widgets::group(ui, "render.preset", tr(k::render::GRP_PRESET), |ui| {
+            let s = &mut self.render_setup;
+            let pairs = s.pairs();
+            let mut chosen: Option<usize> = None;
+            egui::Grid::new("render_preset").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label(tr(k::render::PRESET));
+                ui.horizontal(|ui| {
+                    let cur = s.preset.as_ref().map(|p| p.0.clone()).unwrap_or_default();
+                    // settings that match no preset read "(changed)" rather than an empty list
+                    let changed = s.preset.as_ref().is_none_or(|p| p.1 != pairs);
+                    let shown = if changed { format!("{cur} {}", tr(k::render::PRESET_CHANGED)).trim().to_string() } else { cur };
+                    let combo = egui::ComboBox::from_id_salt("rpreset").selected_text(shown).width(300.0).show_ui(ui, |ui| {
+                        for (i, r) in s.preset_rows.iter().enumerate() {
+                            let label = if r.unknown.is_empty() {
+                                r.name.clone()
+                            } else {
+                                format!("{} — {}", r.name, crate::tf!(k::render::PRESET_SKIPPED, r.unknown.join(", ")))
+                            };
+                            let resp = ui.selectable_label(s.preset.as_ref().is_some_and(|p| p.0 == r.name), label);
+                            crate::widgets::field_probe::note(&format!("render.preset.{i}"), resp.rect);
+                            if resp.clicked() {
+                                chosen = Some(i);
+                            }
+                        }
+                    });
+                    crate::widgets::field_probe::note("render.preset", combo.response.rect);
+                });
+                ui.end_row();
+                ui.label(tr(k::render::PRESET_NAME));
+                ui.horizontal(|ui| {
+                    // a third of the row, so the window's width reaches the field (t1127)
+                    let w = ui.available_width() / 3.0;
+                    let r = ui.add(egui::TextEdit::singleline(&mut s.new_name).desired_width(w));
+                    crate::widgets::field_probe::note("render.preset_name", r.rect);
+                    let save = ui.add_enabled(!s.new_name.trim().is_empty(), egui::Button::new(tr(k::render::PRESET_SAVE)));
+                    crate::widgets::field_probe::note("render.preset_save", save.rect);
+                    if save.clicked() {
+                        let name = s.new_name.trim().to_string();
+                        if s.presets.add(&name, &pairs).is_ok() {
+                            s.preset_rows = s.presets.rows();
+                            s.preset = Some((name, pairs.clone()));
+                            s.new_name.clear();
+                        }
+                    }
+                    let mine = s.preset.as_ref().is_some_and(|p| s.preset_rows.iter().any(|r| r.name == p.0 && !r.factory));
+                    let del = ui.add_enabled(mine, egui::Button::new(tr(k::render::PRESET_DELETE)));
+                    crate::widgets::field_probe::note("render.preset_delete", del.rect);
+                    if del.clicked()
+                        && let Some((name, _)) = s.preset.take()
+                        && s.presets.remove(&name).is_ok()
+                    {
+                        s.preset_rows = s.presets.rows();
+                    }
+                });
+                ui.end_row();
+            });
+            ui.weak(tr(k::render::PRESET_WHERE));
+            if let Some(i) = chosen {
+                let r = s.preset_rows[i].clone();
+                if let Ok(o) = r.options() {
+                    s.apply(&o);
+                    s.preset = Some((r.name, s.pairs()));
+                }
+            }
+        });
+    }
+
+    fn render_video_group(&mut self, ui: &mut egui::Ui) {
+        use kt_media::muxer::format::{BitDepth, Matrix, Range, RateMode, Speed, VideoCodec};
+        crate::widgets::group(ui, "render.video", tr(k::grp::VIDEO), |ui| {
+            let s = &mut self.render_setup;
+            egui::Grid::new("render_setup").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label(tr(k::render::CODEC));
+                let combo = egui::ComboBox::from_id_salt("rcodec").selected_text(s.format.video.label()).show_ui(ui, |ui| {
+                    for v in VideoCodec::ALL {
+                        let why = if !s.avail.has_video(v) {
+                            Some(tr(k::render::NA_FFMPEG).to_string())
+                        } else if !s.format.container.allows_video(v) {
+                            Some(crate::tf!(k::render::NA_CONTAINER, s.format.container.label()))
+                        } else {
+                            None
+                        };
+                        if choice(ui, &mut s.format.video, v, v.label(), why, &format!("render.codec.{}", kt_engine::export_settings::video_word(v))) {
+                            // a forced encoder of another codec goes back to Auto
+                            if !s.avail.encoders(v).iter().any(|e| Some(&e.name) == s.encoder.as_ref()) {
+                                s.encoder = None;
+                            }
+                        }
+                    }
+                });
+                crate::widgets::field_probe::note("render.codec", combo.response.rect);
+                ui.end_row();
+
+                ui.label(tr(k::render::ENCODER));
+                let sel = s.encoder.clone().unwrap_or_else(|| tr(k::render::ENCODER_AUTO).to_string());
+                let encoders = s.avail.encoders(s.format.video).to_vec();
+                let combo = egui::ComboBox::from_id_salt("enc").selected_text(&sel).show_ui(ui, |ui| {
+                    ui.selectable_value(&mut s.encoder, None, tr(k::render::ENCODER_AUTO));
+                    for e in &encoders {
+                        // a device encoder names the device it will use (hw-encode-context D6)
+                        let label = match &e.device {
+                            Some(d) => format!("{} ({d})", e.name),
+                            None => e.name.clone(),
+                        };
+                        let r = ui.selectable_value(&mut s.encoder, Some(e.name.clone()), label);
+                        crate::widgets::field_probe::note(&format!("render.encoder.{}", e.name), r.rect);
+                    }
+                });
+                crate::widgets::field_probe::note("render.encoder", combo.response.rect);
+                ui.end_row();
+
+                let intra = s.format.video.intra_only();
+                ui.label(tr(k::render::RATE));
+                if intra {
+                    ui.weak(tr(k::render::INTRA_ONLY));
+                } else {
+                    let label = |r: RateMode| match r {
+                        RateMode::Quality => tr(k::render::RATE_QUALITY),
+                        RateMode::Vbr => tr(k::render::RATE_VBR),
+                        RateMode::Cbr => tr(k::render::RATE_CBR),
+                    };
+                    let combo = egui::ComboBox::from_id_salt("rrate").selected_text(label(s.format.rate)).show_ui(ui, |ui| {
+                        for r in kt_engine::export_settings::RATES {
+                            let why = (!s.avail.has_rate(s.format.video, r)).then(|| tr(k::render::NA_RATE).to_string());
+                            choice(ui, &mut s.format.rate, r, label(r), why, &format!("render.rate.{}", kt_engine::export_settings::rate_word(r)));
+                        }
+                    });
+                    crate::widgets::field_probe::note("render.rate", combo.response.rect);
+                }
+                ui.end_row();
+
+                if !intra {
+                    let mbps = |label, probe| crate::widgets::NumRow {
+                        label,
+                        probe,
+                        unit: kt_model::ParamUnit::None,
+                        min: 0.1,
+                        max: 400.0,
+                        step: 0.1,
+                        // a slider over 0.1–400 says nothing at 8: the number alone
+                        slider: None,
+                    };
+                    match s.format.rate {
+                        RateMode::Quality => {
+                            let row = crate::widgets::NumRow {
+                                label: tr(k::render::QUALITY_ROW),
+                                probe: "render.quality",
+                                unit: kt_model::ParamUnit::Count,
+                                min: 0.0,
+                                max: 51.0,
+                                step: 1.0,
+                                slider: Some(160.0),
+                            };
+                            let mut q = s.quality as f64;
+                            if crate::widgets::plain_row(ui, &row, &mut q).changed() {
+                                s.quality = q.round().clamp(0.0, 51.0) as u32;
+                            }
+                            ui.end_row();
+                        }
+                        RateMode::Vbr | RateMode::Cbr => {
+                            let label = if s.format.rate == RateMode::Vbr { tr(k::render::AVG_MBPS) } else { tr(k::render::CBR_MBPS) };
+                            let mut m = s.bitrate as f64 / 1e6;
+                            if crate::widgets::plain_row(ui, &mbps(label, "render.bitrate"), &mut m).changed() {
+                                s.bitrate = (m.clamp(0.1, 400.0) * 1e6) as u32;
+                            }
+                            ui.end_row();
+                            if s.format.rate == RateMode::Vbr {
+                                let mut m = s.format.max_for(s.bitrate) as f64 / 1e6;
+                                if crate::widgets::plain_row(ui, &mbps(tr(k::render::MAX_MBPS), "render.maxrate"), &mut m).changed() {
+                                    s.format.max_bitrate = Some((m.clamp(0.1, 400.0) * 1e6) as u32);
+                                }
+                                ui.end_row();
+                            }
+                        }
+                    }
+
+                    ui.label(tr(k::render::ENC_SPEED));
+                    let sl = |sp: Speed| match sp {
+                        Speed::Fastest => tr(k::render::SPEED_FASTEST),
+                        Speed::Fast => tr(k::render::SPEED_FAST),
+                        Speed::Balanced => tr(k::render::SPEED_BALANCED),
+                        Speed::Slow => tr(k::render::SPEED_SLOW),
+                        Speed::Slowest => tr(k::render::SPEED_SLOWEST),
+                    };
+                    let combo = egui::ComboBox::from_id_salt("rspeed").selected_text(sl(s.format.speed)).show_ui(ui, |ui| {
+                        for sp in kt_engine::export_settings::SPEEDS {
+                            choice(ui, &mut s.format.speed, sp, sl(sp), None, &format!("render.speed.{}", kt_engine::export_settings::speed_word(sp)));
+                        }
+                    });
+                    crate::widgets::field_probe::note("render.speed", combo.response.rect);
+                    ui.end_row();
+
+                    let row = crate::widgets::NumRow {
+                        label: tr(k::render::KEYINT),
+                        probe: "render.keyint",
+                        unit: kt_model::ParamUnit::Sec,
+                        min: 0.1,
+                        max: 60.0,
+                        step: 0.1,
+                        slider: None,
+                    };
+                    let mut v = s.format.keyint_tenths as f64 / 10.0;
+                    if crate::widgets::plain_row(ui, &row, &mut v).changed() {
+                        s.format.keyint_tenths = (v.clamp(0.1, 60.0) * 10.0).round() as u32;
+                    }
+                    ui.end_row();
+                    let row = crate::widgets::NumRow {
+                        label: tr(k::render::BFRAMES),
+                        probe: "render.bframes",
+                        unit: kt_model::ParamUnit::Count,
+                        min: 0.0,
+                        max: 4.0,
+                        step: 1.0,
+                        slider: None,
+                    };
+                    let mut v = s.format.b_frames as f64;
+                    if crate::widgets::plain_row(ui, &row, &mut v).changed() {
+                        s.format.b_frames = v.round().clamp(0.0, 4.0) as u32;
+                    }
+                    ui.end_row();
+                }
+
+                ui.label(tr(k::render::DEPTH));
+                let dl = |d: BitDepth| if d == BitDepth::Ten { tr(k::render::DEPTH_10) } else { tr(k::render::DEPTH_8) };
+                if intra {
+                    ui.weak(tr(k::render::DEPTH_10));
+                } else {
+                    let combo = egui::ComboBox::from_id_salt("rdepth").selected_text(dl(s.format.depth)).show_ui(ui, |ui| {
+                        choice(ui, &mut s.format.depth, BitDepth::Eight, dl(BitDepth::Eight), None, "render.depth.8");
+                        let why = (!s.avail.has_ten_bit(s.format.video)).then(|| tr(k::render::NA_TEN_BIT).to_string());
+                        choice(ui, &mut s.format.depth, BitDepth::Ten, dl(BitDepth::Ten), why, "render.depth.10");
+                    });
+                    crate::widgets::field_probe::note("render.depth", combo.response.rect);
+                }
+                ui.end_row();
+
+                ui.label(tr(k::render::COLOUR));
+                let cl = |m: Matrix, r: Range| {
+                    let range = if r == Range::Full { tr(k::render::RANGE_FULL) } else { tr(k::render::RANGE_LIMITED) };
+                    format!("{} {range}", if m == Matrix::Bt709 { "BT.709" } else { "BT.601" })
+                };
+                let mut cur = (s.format.matrix, s.format.range);
+                let combo = egui::ComboBox::from_id_salt("rcolour").selected_text(cl(cur.0, cur.1)).show_ui(ui, |ui| {
+                    for (i, c) in [(Matrix::Bt601, Range::Limited), (Matrix::Bt709, Range::Limited), (Matrix::Bt601, Range::Full), (Matrix::Bt709, Range::Full)]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        choice(ui, &mut cur, c, &cl(c.0, c.1), None, &format!("render.colour.{i}"));
+                    }
+                });
+                crate::widgets::field_probe::note("render.colour", combo.response.rect);
+                (s.format.matrix, s.format.range) = cur;
+                ui.end_row();
+            });
+        });
+    }
+
+    fn render_size_group(&mut self, ui: &mut egui::Ui, proj: &kt_model::ProjectSettings, max_src: Option<(u32, u32)>) {
+        crate::widgets::group(ui, "render.size", tr(k::render::GRP_SIZE), |ui| {
+            let s = &mut self.render_setup;
+            egui::Grid::new("render_size").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label(tr(k::render::RESOLUTION));
+                let cur = if s.custom_on {
+                    tr(k::render::CUSTOM).to_string()
+                } else {
+                    s.resolution
+                        .map(|(w, h)| format!("{w}×{h}"))
+                        .unwrap_or_else(|| crate::tf!(k::render::RES_PROJECT, proj.width, proj.height))
+                };
+                let combo = egui::ComboBox::from_id_salt("rres").selected_text(cur).show_ui(ui, |ui| {
+                    let mut pick = |ui: &mut egui::Ui, v: Option<(u32, u32)>, custom: bool, label: String| {
+                        let on = s.custom_on == custom && (custom || s.resolution == v);
+                        let r = ui.selectable_label(on, label);
+                        if custom {
+                            crate::widgets::field_probe::note("render.size.custom", r.rect);
+                        }
+                        if r.clicked() {
+                            s.custom_on = custom;
+                            s.resolution = if custom { Some(s.custom) } else { v };
+                        }
+                    };
+                    pick(ui, None, false, crate::tf!(k::render::RES_PROJECT, proj.width, proj.height));
+                    for r in SIZES {
+                        pick(ui, Some(r), false, format!("{}×{}", r.0, r.1));
+                    }
+                    if let Some((mw, mh)) = max_src {
+                        pick(ui, Some((mw, mh)), false, format!("Max ({mw}×{mh})"));
+                    }
+                    pick(ui, None, true, tr(k::render::CUSTOM).to_string());
+                });
+                crate::widgets::field_probe::note("render.size", combo.response.rect);
+                ui.end_row();
+                if s.custom_on {
+                    for (label, probe, i) in [(tr(k::render::WIDTH), "render.width", 0), (tr(k::render::HEIGHT), "render.height", 1)] {
+                        let row = crate::widgets::NumRow {
+                            label,
+                            probe,
+                            unit: kt_model::ParamUnit::Px,
+                            min: 16.0,
+                            max: 8192.0,
+                            step: 2.0,
+                            slider: None,
+                        };
+                        let mut v = if i == 0 { s.custom.0 } else { s.custom.1 } as f64;
+                        if crate::widgets::plain_row(ui, &row, &mut v).changed() {
+                            let n = (v.clamp(16.0, 8192.0) as u32) & !1;
+                            if i == 0 {
+                                s.custom.0 = n;
+                            } else {
+                                s.custom.1 = n;
+                            }
+                            s.resolution = Some(s.custom);
+                        }
+                        ui.end_row();
+                    }
+                }
+
+                ui.label(tr(k::render::FPS));
+                let fl = |f: Option<u32>| match f {
+                    None => crate::tf!(k::render::FPS_PROJECT, proj.fps),
+                    Some(f) => f.to_string(),
+                };
+                let combo = egui::ComboBox::from_id_salt("rfps").selected_text(fl(s.fps)).show_ui(ui, |ui| {
+                    choice(ui, &mut s.fps, None, &fl(None), None, "render.fps.project");
+                    for f in RATES_FPS {
+                        choice(ui, &mut s.fps, Some(f), &fl(Some(f)), None, &format!("render.fps.{f}"));
+                    }
+                });
+                crate::widgets::field_probe::note("render.fps", combo.response.rect);
+                ui.end_row();
+            });
+        });
+    }
+
+    fn render_audio_group(&mut self, ui: &mut egui::Ui) {
+        use kt_media::muxer::format::AudioCodec;
+        crate::widgets::group(ui, "render.audio", tr(k::grp::AUDIO), |ui| {
+            let s = &mut self.render_setup;
+            egui::Grid::new("render_audio").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label(tr(k::render::AUDIO_CODEC));
+                let al = |a: AudioCodec| if a == AudioCodec::None { tr(k::render::AUDIO_NONE).to_string() } else { a.label().to_string() };
+                let combo = egui::ComboBox::from_id_salt("racodec").selected_text(al(s.format.audio)).show_ui(ui, |ui| {
+                    for a in AudioCodec::ALL {
+                        let why = if !s.avail.has_audio(a) {
+                            Some(tr(k::render::NA_FFMPEG).to_string())
+                        } else if !s.format.container.allows_audio(a) {
+                            Some(crate::tf!(k::render::NA_CONTAINER, s.format.container.label()))
+                        } else {
+                            None
+                        };
+                        choice(ui, &mut s.format.audio, a, &al(a), why, &format!("render.audio.{}", kt_engine::export_settings::audio_word(a)));
+                    }
+                });
+                crate::widgets::field_probe::note("render.audio", combo.response.rect);
+                ui.end_row();
+                if s.format.audio.has_bitrate() {
+                    ui.label(tr(k::render::AUDIO_BITRATE));
+                    egui::ComboBox::from_id_salt("abr").selected_text(format!("{} kbps", s.audio_bitrate / 1000)).show_ui(ui, |ui| {
+                        for b in [96_000u32, 128_000, 160_000, 192_000, 256_000, 320_000] {
+                            ui.selectable_value(&mut s.audio_bitrate, b, format!("{} kbps", b / 1000));
+                        }
+                    });
+                    ui.end_row();
+                }
+                if s.format.audio != AudioCodec::None {
+                    ui.label("");
+                    ui.weak(tr(k::render::AUDIO_FIXED));
+                    ui.end_row();
+                }
+            });
+        });
+    }
+
+    fn render_file_group(&mut self, ui: &mut egui::Ui, region: Option<(Tick, Tick)>, full_len: Tick) {
+        use kt_media::muxer::format::Container;
+        crate::widgets::group(ui, "render.file", tr(k::grp::FILE), |ui| {
+            let s = &mut self.render_setup;
+            egui::Grid::new("render_file").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                ui.label(tr(k::render::CONTAINER));
+                let combo = egui::ComboBox::from_id_salt("rcont").selected_text(s.format.container.label()).show_ui(ui, |ui| {
+                    for c in Container::ALL {
+                        let why = (!s.avail.has_container(c)).then(|| tr(k::render::NA_FFMPEG).to_string());
+                        if choice(ui, &mut s.format.container, c, c.label(), why, &format!("render.container.{}", c.extension())) {
+                            // what the new container cannot hold moves to its first codec it can
+                            if !c.allows_video(s.format.video) {
+                                s.format.video = kt_media::muxer::format::VideoCodec::ALL
+                                    .into_iter()
+                                    .find(|&v| c.allows_video(v) && s.avail.has_video(v))
+                                    .unwrap_or(s.format.video);
+                                s.encoder = None;
+                            }
+                            if !c.allows_audio(s.format.audio) {
+                                s.format.audio = kt_media::muxer::format::AudioCodec::ALL
+                                    .into_iter()
+                                    .find(|&a| c.allows_audio(a) && s.avail.has_audio(a))
+                                    .unwrap_or(kt_media::muxer::format::AudioCodec::None);
+                            }
+                        }
+                    }
+                });
+                crate::widgets::field_probe::note("render.container", combo.response.rect);
+                ui.end_row();
+
+                ui.label(tr(k::render::RANGE));
+                let whole = crate::tf!(k::render::RANGE_WHOLE, tick_text(full_len));
+                match region {
+                    Some((a, b)) => {
+                        let reg = crate::tf!(k::render::RANGE_REGION, tick_text(a), tick_text(b));
+                        let combo = egui::ComboBox::from_id_salt("rrange")
+                            .selected_text(if s.whole { whole.clone() } else { reg.clone() })
+                            .show_ui(ui, |ui| {
+                                choice(ui, &mut s.whole, false, &reg, None, "render.range.region");
+                                choice(ui, &mut s.whole, true, &whole, None, "render.range.whole");
+                            });
+                        crate::widgets::field_probe::note("render.range", combo.response.rect);
+                    }
+                    None => {
+                        ui.label(whole);
+                    }
+                }
+                ui.end_row();
+
+                ui.label(tr(k::render::META_TITLE));
+                let r = ui.add(egui::TextEdit::singleline(&mut s.format.title).desired_width(f32::INFINITY));
+                crate::widgets::field_probe::note("render.title", r.rect);
+                ui.end_row();
+                ui.label(tr(k::render::META_COMMENT));
+                let r = ui.add(egui::TextEdit::singleline(&mut s.format.comment).desired_width(f32::INFINITY));
+                crate::widgets::field_probe::note("render.comment", r.rect);
+                ui.end_row();
+
+                let len = match region {
+                    Some((a, b)) if !s.whole => b - a,
+                    _ => full_len,
+                };
+                let est = match s.estimate(len.0.max(0) as f64 / 90_000.0) {
+                    Estimate::About(b) => crate::tf!(k::render::ESTIMATE, size_text(b)),
+                    Estimate::UpTo(b) => crate::tf!(k::render::ESTIMATE_MAX, size_text(b)),
+                    Estimate::Unknown => tr(k::render::ESTIMATE_UNKNOWN).to_string(),
+                };
+                ui.label("");
+                let r = ui.weak(est);
+                crate::widgets::field_probe::note("render.estimate", r.rect);
+                ui.end_row();
+            });
+        });
+    }
+
     pub fn draw_render_dialog(&mut self, ctx: &egui::Context) {
         self.draw_render_setup(ctx);
         let Some(job) = &mut self.render_job else { return };
+        let job_container = job.opts.format.container.label();
         if job.poll() {
             ctx.request_repaint();
         }
@@ -962,8 +1458,8 @@ impl KtApp {
             (tr(k::render::ROW_RESOLUTION), format!("{}×{}", job.out_res.0, job.out_res.1)),
             (tr(k::render::ROW_FPS), crate::tf!(k::render::FPS_VALUE, job.fps)),
             (tr(k::render::ROW_VIDEO), video),
-            (tr(k::render::ROW_AUDIO), crate::tf!(k::render::AUDIO_LINE, job.opts.audio_bitrate / 1000)),
-            (tr(k::render::ROW_MUX), "MP4 (+faststart)".to_string()),
+            (tr(k::render::ROW_AUDIO), audio_row(&job.opts)),
+            (tr(k::render::ROW_MUX), mux_row(&job.opts.format)),
             (tr(k::render::ROW_BACKEND), job.backend.as_ref().map(backend_text).unwrap_or_else(|| "—".into())),
             (tr(k::render::ROW_FILE), job.out_path.clone()),
         ];
@@ -1026,7 +1522,7 @@ impl KtApp {
         };
         let shown = crate::window_shell::Shell::new(
             egui::Id::new("kt_render_progress"),
-            tr(k::render::PROGRESS_TITLE),
+            crate::tf!(k::render::PROGRESS_TITLE, job_container),
             crate::window_shell::Kind::Progress {
                 why: "an export runs for minutes; an Esc meant for the timeline must not kill it, and the window has its own Cancel",
             },

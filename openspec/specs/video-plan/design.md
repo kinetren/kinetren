@@ -681,3 +681,31 @@ cut of lower pieces (the display would wait behind a whole job again); admitting
 (the ring does not know the device is idle until a poll, and on a card the queue is rarely empty).
 Not reproduced here: llvmpipe gives each device a ring of its own, and `kt-cli gpu-share` on one llvmpipe
 device walked 25 positions a second under both rules — read his next trace's `trace gpu` admission share.
+
+## The loop fill's width (cpu-idle-work, kkt-26.11.15 item 4)
+
+The owner: "по прежнему не понимаю почему не используется cpu при работе программы - он тупо простаивает по
+большей части". His traces of kt26.11.16 read the process at 12–30 % of ONE core of sixteen and his iGPU busy
+about a third of each second while a loop filled. The work is device work (the effects are WGSL passes),
+fed by chains of round trips run one at a time: one fill moment of `rendereg_2` took 163–181 ms of wall for
+~20 ms of device time (seven pieces admitted in turn, then a 70 ms readback), one moment in flight, none
+started while the display composed. Throughput is what is in flight over the round trip.
+
+Now on a card the fill runs `loop_fill::width` moments at once — the scheduler's pool less the answer's
+worker, at most the ring's three lower pieces (`arbiter::AHEAD_PIECES`, mirrored as `RING_LOWER_PIECES`;
+they change together) — each on a `sibling_exec` of its executor (a composite holds its engine's lock
+through its admissions and readback), with no display gate (the ring orders the frame on screen first:
+**revision** of scheduler-followups D5 for cards only). An incomplete moment narrows it to one for the lap:
+on his Datamosh region 86 of 92 fill moments of a lap came out incomplete, and three lanes would take the
+device from the history walk. On a software device it stays one at a time behind the display: forced to
+three on llvmpipe (release, heavy showcase, 4 s loop) it never became all-kept in 11–12 laps against lap 7,
+at V-fps 5–9 against 14 — the device is the processor. t2860 holds the card case with an executor of a
+150 ms round trip: 1.0 s against 2.8 s for 18 moments.
+
+Class walk (what else waits on a round trip one at a time): the display's compose thread and the slow route
+(one frame by contract, latest-wins); the decode (a worker per source by invariant 5, libavcodec threads
+fixed at 4 — row 694, not what his loop waits on); the Datamosh history walk (one walk on the prefetch
+thread; its compute buffers came back p50 607 ms after the device ended — row 693); the audio render (one
+thread by invariant 2, 4–5 % of a core); the scheduler's background lanes (paused while playing). Left for
+the owner: a CPU executor (his llvmpipe adapter) beside the card for the fill — frames of two devices within
+the stored-frame tolerances in one covered loop.

@@ -19401,7 +19401,7 @@ fn t956_render_window_rows_come_from_the_run() {
         format!("{}×{}", s.width, s.height),
         crate::tf!(k::render::FPS_VALUE, 30),
         "h264_nvenc (hardware) · yuv420p · CQ 23".to_string(),
-        crate::tf!(k::render::AUDIO_LINE, 192),
+        crate::tf!(k::render::AUDIO_LINE, "AAC", 192),
         "MP4 (+faststart)".to_string(),
         "GPU: llvmpipe".to_string(),
         "/tmp/kt-scripted/out.mp4".to_string(),
@@ -19585,6 +19585,7 @@ fn t957_finished_render_is_frozen_and_opened_from_the_window() {
         encoder: "h264_nvenc".into(),
         missing_video_layers: 0,
         loudness: None,
+        ..Default::default()
     }));
     h.step();
     h.step();
@@ -19801,7 +19802,7 @@ fn t965_encoder_combo_and_progress_row_follow_the_device() {
     let listed = |encoders: Vec<AvailableEncoder>| -> Vec<String> {
         let mut h = harness_lang(Lang::En);
         h.state_mut().start_render();
-        h.state_mut().render_setup.encoders = encoders;
+        h.state_mut().render_setup.avail.video = vec![(kt_media::muxer::format::VideoCodec::H264, encoders)];
         for _ in 0..3 {
             h.step();
         }
@@ -21116,4 +21117,137 @@ fn t2457_preview_click_and_search_arrows_count_the_busy_frame() {
     assert_eq!(search_step(5, 0, 2, 10), 3);
     assert_eq!(search_step(8, 4, 0, 10), 9, "clamped to the last hit");
     assert_eq!(search_step(0, 1, 0, 0), 0, "no hits");
+}
+
+/// The render settings window, open over the harness's project with everything available (the
+/// t779 form contract's and t918's opener; render-settings).
+pub(crate) fn render_settings_scene(h: &mut Harness<'static, KtApp>) {
+    h.state_mut().start_render();
+    h.state_mut().render_setup.avail = kt_media::muxer::format::Availability::everything();
+    h.step();
+}
+
+/// Open the combo showing `value` and choose `item` in it, as a person does.
+fn pick_combo(h: &mut Harness<'static, KtApp>, value: &str, item: &str) {
+    // the item may also be the text of a disabled sibling's reason: the exact label is clicked
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    h.get(by().role(Role::ComboBox).value(value)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    h.get_by_label(item).click();
+    for _ in 0..3 {
+        h.step();
+    }
+}
+
+/// t2810 (render-settings D10): the window drives the export options — container, codec, rate mode,
+/// speed, depth, colour, frame rate and audio codec chosen with the mouse reach the started job, the
+/// file name takes the container's extension, and the estimate reads a size.
+/// - **PATH** File → Render… → the Render settings window: Preset "H.264 · MP4 · quality 23" →
+///   File: Container "MKV" → Video: Codec "H.265" → Rate "VBR (average and maximum)", average 6,
+///   maximum 9 → Encoder speed "slow" → Bit depth "10-bit" → Colour "BT.709 limited" → Size and
+///   rate: Frame rate "25" → Audio: Audio codec "FLAC" → File: the estimate shows "Estimated size:
+///   up to …" → Render… → the save dialog offers "kt-untitled-<len>s.mkv"
+#[test]
+fn t2810_the_window_drives_the_export_options() {
+    use kt_media::muxer::format::{AudioCodec, BitDepth, Container, Matrix, RateMode, Speed, VideoCodec};
+    let dir = render_scratch("t2810");
+    let mut h = harness_lang(Lang::En);
+    h.state_mut().render_setup.log_dir = dir.join("logs");
+    render_settings_scene(&mut h);
+    for _ in 0..3 {
+        h.step();
+    }
+    let first = crate::user_store::RENDER_FACTORY[0].0;
+    assert!(shown_texts(&h).iter().any(|t| t == first), "the default settings name their preset “{first}”");
+    pick_combo(&mut h, "MP4", "MKV");
+    pick_combo(&mut h, "H.264", "H.265");
+    pick_combo(&mut h, tr(k::render::RATE_QUALITY), tr(k::render::RATE_VBR));
+    // the numbers: their fields are the shared rows (no accesskit node); the model is asserted
+    h.state_mut().render_setup.bitrate = 6_000_000;
+    h.state_mut().render_setup.format.max_bitrate = Some(9_000_000);
+    h.step();
+    pick_combo(&mut h, tr(k::render::SPEED_FAST), tr(k::render::SPEED_SLOW));
+    pick_combo(&mut h, tr(k::render::DEPTH_8), tr(k::render::DEPTH_10));
+    pick_combo(&mut h, "BT.601 limited", "BT.709 limited");
+    pick_combo(&mut h, &crate::tf!(k::render::FPS_PROJECT, 30), "25");
+    pick_combo(&mut h, "AAC", "FLAC");
+    let texts = shown_texts(&h);
+    let est = tr(k::render::ESTIMATE_MAX).replace("{0}", "");
+    assert!(texts.iter().any(|t| t.starts_with(&est)), "the estimate is a ceiling for VBR: {texts:?}");
+    let name = h.state().default_render_name();
+    assert!(name.starts_with("kt-untitled-") && name.ends_with(".mkv"), "{name}");
+
+    h.state_mut().render_setup.test_pick = Some(dir.join(&name));
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label(tr(k::render::START)).click();
+    }
+    h.step();
+    let job = h.state().render_job.as_ref().expect("Render… started the job");
+    let f = &job.opts.format;
+    assert_eq!((f.container, f.video, f.rate, f.speed, f.depth, f.matrix, f.audio), (
+        Container::Mkv,
+        VideoCodec::H265,
+        RateMode::Vbr,
+        Speed::Slow,
+        BitDepth::Ten,
+        Matrix::Bt709,
+        AudioCodec::Flac
+    ));
+    assert_eq!((job.opts.video_bitrate, f.max_bitrate, job.opts.fps), (Some(6_000_000), Some(9_000_000), Some(25)));
+    // the next opening starts from these settings (rule 23)
+    let last = h.state_mut().render_setup.presets.last().expect("the last settings are kept");
+    assert!(last.contains(&("container".into(), "mkv".into())), "{last:?}");
+    // the job ends before the test does: a running export pauses the background classes of the
+    // whole test process (its scheduler vote), and the tests beside it would wait on it
+    let job = h.state_mut().render_job.as_mut().unwrap();
+    job.job.cancel();
+    let deadline = kt_time::test_deadline();
+    while job.result.is_none() {
+        job.poll();
+        assert!(std::time::Instant::now() < deadline, "the cancelled render never ended");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// t2811 (render-settings D2): what the loaded FFmpeg cannot do, or the container cannot hold, is
+/// listed disabled with its reason — never hidden.
+#[test]
+fn t2811_what_this_ffmpeg_cannot_do_is_shown_not_hidden() {
+    use kt_media::muxer::format::{AudioCodec, Availability, VideoCodec};
+    let mut h = harness_lang(Lang::En);
+    render_settings_scene(&mut h);
+    let mut a = Availability::everything();
+    a.video.retain(|(v, _)| *v != VideoCodec::Av1);
+    a.audio.retain(|x| *x != AudioCodec::Opus);
+    h.state_mut().render_setup.avail = a;
+    for _ in 0..3 {
+        h.step();
+    }
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    h.get(by().role(Role::ComboBox).value("H.264")).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    let texts = shown_texts(&h);
+    let na = tr(k::render::NA_FFMPEG);
+    assert!(texts.iter().any(|t| *t == format!("AV1 — {na}")), "AV1 is not shown unavailable: {texts:?}");
+    let mp4 = crate::tf!(k::render::NA_CONTAINER, "MP4");
+    assert!(texts.iter().any(|t| *t == format!("ProRes 422 HQ — {mp4}")), "ProRes in MP4: {texts:?}");
+    h.get(by().role(Role::ComboBox).value("H.264")).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    h.get(by().role(Role::ComboBox).value("AAC")).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    let texts = shown_texts(&h);
+    assert!(texts.iter().any(|t| *t == format!("Opus — {na}")), "Opus is not shown unavailable: {texts:?}");
+    assert!(texts.iter().any(|t| *t == format!("FLAC — {mp4}")), "FLAC in MP4: {texts:?}");
 }

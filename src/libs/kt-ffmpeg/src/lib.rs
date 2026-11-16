@@ -10,6 +10,7 @@
 
 pub mod api;
 pub mod encoders;
+pub mod format;
 pub mod hw_trial;
 pub mod loader;
 pub mod search;
@@ -207,6 +208,8 @@ pub struct MuxConfig {
     /// The video encoder's threads (export-throughput D3): 0 = the encoder decides (`auto`),
     /// 1 = one thread (the former export, `ExportOptions.serial`).
     pub threads: u32,
+    /// Container, codec, rate mode, GOP, depth, colour, audio codec, metadata (render-settings D1).
+    pub format: format::OutputFormat,
 }
 
 /// Chosen encoder (for display in the UI).
@@ -534,6 +537,28 @@ pub fn available_encoders() -> Vec<AvailableEncoder> {
         Ok((Backend::V8(api), _)) => v8::available_encoders(api),
         Ok((Backend::V9(api), _)) => v9::available_encoders(api),
         Err(_) => Vec::new(),
+    }
+}
+
+/// What the loaded FFmpeg can write, for the render settings (render-settings D2): asked once per
+/// opening of the window. Empty when FFmpeg is not loaded.
+pub fn availability() -> format::Availability {
+    match init() {
+        Ok((Backend::V6(api), _)) => v6::availability(api),
+        Ok((Backend::V7(api), _)) => v7::availability(api),
+        Ok((Backend::V8(api), _)) => v8::availability(api),
+        Ok((Backend::V9(api), _)) => v9::availability(api),
+        Err(_) => format::Availability::default(),
+    }
+}
+
+/// Read back what a written file holds (t2802): our own libav reader, never an external binary.
+pub fn probe_output(path: &str) -> Result<format::OutputProbe, FfError> {
+    match init().map_err(FfError::NotFound)? {
+        (Backend::V6(api), _) => v6::probe_output(api, path),
+        (Backend::V7(api), _) => v7::probe_output(api, path),
+        (Backend::V8(api), _) => v8::probe_output(api, path),
+        (Backend::V9(api), _) => v9::probe_output(api, path),
     }
 }
 

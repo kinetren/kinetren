@@ -377,3 +377,36 @@ pairs: `openspec/changes/archive/2026-11-06-render-speed-no-card/design.md`.
   a preview source opened meanwhile on another thread took them. `kt_ffmpeg::with_decode_settings`
   scopes them to the thread that opens the render's sources (a source reads them at its open and keeps
   them for its reopens); kt-cli keeps the process-wide setters (one process, one render). t2262.
+
+## Render settings (render-settings, kkt-26.11.15 N5, F-EXP-006)
+
+The owner: "очень скудные настройки финального рендера прям очень". The note F-EXP-006 decides each
+option; the reasons kept here:
+- **One `OutputFormat`, its `Default` is the former file** (MP4, H.264, Quality 23, `veryfast`/`p4`,
+  2 s GOP, no B-frames, 8-bit, BT.601 limited, AAC). `ExportOptions` keeps its old fields beside it;
+  a frame-rate override renders a clone of the project with that rate, so the plan, the totals and
+  the muxer read one value.
+- **A cascade per codec; what a candidate cannot do is SKIPPED with the reason** ("no 10-bit input",
+  "no CBR") into the open report and the log; a forced one errs naming it. Whether libx264 of this
+  build takes 10-bit is the real open's answer, not a table's.
+- **The colour tags are written from the choice that drives the conversion.** Before, no tag at all:
+  players guessed BT.709 for HD against our BT.601 conversion (found-defects 696). The default stays
+  BT.601 limited because the DECODE converts every source with BT.601 (found-defects 697): a file
+  tagged BT.601 plays as the preview looked. The default leaves swscale untouched, so the pictures
+  are the former ones; only the tags are new.
+- **Matroska/WebM are written bit-exact**: their muxer drew a random segment id per file (t2805 found
+  it). Not on MP4: the flag drops the muxer's name tag and moves every former export's bytes.
+- **The keyframe interval is a maximum**: x264 cuts scenes earlier (the synthetic fixture changes
+  colour every frame), so tests assert the longest gap, not fixed positions.
+- **Rejected**: two-pass (a stats FILE — invariant 9 — and a second render of an export the owner
+  calls slow), a manual level (a too-low one makes the encoder refuse), tune, 4:4:4 (RGBA 8-bit
+  composite), a scaling filter (no scaler stage, invariant 7), interlacing, other sample rates and
+  layouts (invariant 1), a manual VBV buffer.
+- **One text form** (`kt_engine::export_settings`, ordered `key=value`) for kt-cli and presets; a
+  preset record keeps a key a build does not know. kt-cli keeps ignoring the region (owner).
+- **Factory presets are named by codec, size and rate**, never a platform: a platform's
+  requirements change without a release (F-EXP-001 trick 2).
+- The class walk (every place that states a property of the output): the progress window's Audio and
+  Container rows and title were literals, the File menu said "Render to MP4", the extension and the
+  save filter followed nothing, the hardware trial opened names inside the H.264 cascade only — all
+  now follow the format; `kt-cli ffmpeg --probe-encoders` stays H.264 (a driver report).

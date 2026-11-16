@@ -100,6 +100,7 @@ pub fn run(args: &[String]) -> i32 {
         "machine" => machine(run),
         "memory" => memory(run),
         "gpu" => gpu(run),
+        "export" => export(run),
         "dump" => dump(run, arg(1), arg(2)),
         "chrome" => match rest.get(1) {
             Some(out) => match std::fs::write(out, chrome(run)) {
@@ -110,13 +111,62 @@ pub fn run(args: &[String]) -> i32 {
         },
         _ => {
             eprintln!(
-                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|machine|memory|dump [from to]|chrome <out.json>"
+                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|export|machine|memory|dump [from to]|chrome <out.json>"
             );
             return 2;
         }
     };
     print!("{out}");
     0
+}
+
+/// Where each export of the run spent its time (render-speed D2): its stage records, the share of the
+/// wall each stage was busy (summed over its threads), how it compares with real time, and what the
+/// device rings made it wait — an export's frames are admitted last behind the display and the preview.
+pub fn export(run: &Run) -> String {
+    use kt_time::trace::export_stage as st;
+    let mut o = String::new();
+    let mut stages: Vec<&Rec> = Vec::new();
+    let mut n = 0;
+    for r in run.recs.iter().filter(|r| is(r, Ev::ExportStage)) {
+        if r.aux != st::WALL {
+            stages.push(r);
+            continue;
+        }
+        let (wall, timeline, frames, workers) = (r.a.max(1), r.b, r.c, r.id);
+        let (from, to) = (r.t.saturating_sub(wall), r.t);
+        let _ = writeln!(
+            o,
+            "export {n}: {frames} frames, {:.2} s of the timeline in {:.2} s — {:.2}× real time ({})",
+            timeline as f64 / NS,
+            wall as f64 / NS,
+            timeline as f64 / wall as f64,
+            if workers == 0 { "serial".to_string() } else { format!("pipelined, {workers} frame workers") }
+        );
+        for s in stages.drain(..) {
+            if s.a == 0 {
+                continue;
+            }
+            let _ = writeln!(o, "  {:<13}{:>9.2} s busy  {:>6.1} % of wall", st::name(s.aux), s.a as f64 / NS, s.a as f64 * 100.0 / wall as f64);
+        }
+        let offline = kt_time::sched::Class::Offline as u32;
+        let inside = |r: &&Rec| r.t >= from && r.t <= to && r.aux == offline;
+        let (admits, waited) = run.recs.iter().filter(|r| is(r, Ev::GpuAdmit)).filter(inside).fold((0u64, 0u64), |(n, w), r| (n + 1, w + r.dur));
+        let cut = run.recs.iter().filter(|r| is(r, Ev::GpuPiece)).filter(inside).count();
+        let shown = run.recs.iter().filter(|r| is(r, Ev::GpuAdmit) && r.t >= from && r.t <= to && r.c == 1).count();
+        let _ = writeln!(
+            o,
+            "  device rings: {admits} export submissions waited {} for admission{}, {cut} pieces cut{}",
+            ms(waited),
+            if admits > 0 { format!(" ({:.1} % of wall)", waited as f64 * 100.0 / wall as f64) } else { String::new() },
+            if shown > 0 { " — a display shares the device" } else { "" }
+        );
+        n += 1;
+    }
+    if n == 0 {
+        o.push_str("no export in this run\n");
+    }
+    o
 }
 
 /// The memory ledger over the run (memory-ledger): every sizing with the grants it changed, the

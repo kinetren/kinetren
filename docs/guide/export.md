@@ -1,22 +1,31 @@
 # Export and kt-cli
 
-## Render to MP4
+## Render
 
 ![The render settings](../images/render-dialog.webp)
 
-**File → Render to MP4…** (or the render button) exports the region, or the whole project
-when no region is set.
+**File → Render…** (or the render button) exports the region, or the whole project — the window
+shows which, and with a region set you can choose the whole project instead.
 
 | Setting | Values |
 |---|---|
-| Video codec | *Auto (hardware first)* or any encoder your FFmpeg can open |
-| Quality | CRF 14–32 (default 23) or a bitrate of 0.5–80 Mbit/s |
-| Audio bitrate | 128, 192, 256 or 320 kbps — AAC, 48 kHz stereo |
-| Resolution | the project's, 720p, 1080p, 1440p, 2160p, or the largest source |
-| Container | MP4 with faststart |
+| Preset | the factory presets (named by codec, size and rate) and your own; *Save as preset*, *Delete preset*. The last settings come back at the next render |
+| Codec | H.264, H.265, AV1, VP9, ProRes 422 HQ — each tries the hardware encoders first |
+| Encoder | *Auto (hardware first)* or any encoder of that codec your FFmpeg can open |
+| Rate | Quality (CRF/CQ 0–51, lower is better), VBR (average and maximum, Mbit/s) or CBR |
+| Encoder speed | fastest, fast, balanced, slow, slowest — mapped onto the encoder's own presets |
+| Keyframes, B-frames | a keyframe at least every N seconds (a scene cut may bring one earlier); 0–4 B-frames |
+| Bit depth, colour | 8- or 10-bit (the profile follows); BT.601 or BT.709, limited or full range — written into the file and used for the conversion |
+| Size and rate | the project's, 720p, 1080p, 1440p, 2160p, the largest source or a custom size; the project's frame rate or 24, 25, 30, 48, 50, 60 |
+| Audio | AAC or Opus (with a bitrate), PCM 16/24-bit, FLAC, or none — 48 kHz stereo |
+| File | MP4, MOV, MKV or WebM; the range; a title and a comment; the estimated size |
 
-The file is named after the project, region marker and length, e.g.
-`kt-song-chorus-4s.mp4`. Before starting, the dialog warns about missing sources and
+A choice your FFmpeg or the container cannot take is shown greyed with the reason. Two-pass encoding is
+not offered: it needs a temporary file and a second full render, and the quality mode reaches the same
+goal in one pass.
+
+The file is named after the project, region marker and length, with the container's extension,
+e.g. `kt-song-chorus-4s.mp4`. Before starting, the dialog warns about missing sources and
 about muted or solo tracks.
 
 Rendering runs inside the editor through the system's libavcodec and libavformat. There
@@ -48,7 +57,7 @@ cargo run -p kt-cli -- <command> …
 | `export-otio <in.kt> <out.otio>` | export OpenTimelineIO |
 | `roundtrip <in.otio> [out.otio]` | read and write OTIO back (a check of the exchange door) |
 | `render <in.kt> <out.wav> [--allow-missing]` | render the audio |
-| `export <in.kt> <out.mp4> [encoder]` | render video and audio to MP4 |
+| `export <in.kt> <out.mp4\|.mov\|.mkv\|.webm> [encoder] [--set key=value]…` | render video and audio with the render window's settings: `--container`, `--video`, `--rate`, `--quality`, `--bitrate`, `--audio`, `--size`, `--fps`, and `--set` for any key (`keyint`, `bframes`, `speed`, `depth`, `matrix`, `range`, `maxrate`, `abitrate`, `title`, `comment`, `encoder`); the extension picks the container |
 | `probe <in.kt> <from_s> <to_s> [--time]` | what plays in that range: effective events after morph layers, prefetch order, decode order; `--time` measures whether audio rendering keeps up with real time |
 
 `--force` lets any command overwrite an existing file. Without it, nothing is

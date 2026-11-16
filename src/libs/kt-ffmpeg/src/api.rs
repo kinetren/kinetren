@@ -55,6 +55,9 @@ macro_rules! ffmpeg_api {
             avutil::av_dict_set:
                 unsafe extern "C" fn(*mut *mut ffi::AVDictionary, *const c_char, *const c_char, c_int) -> c_int,
             avutil::av_dict_free: unsafe extern "C" fn(*mut *mut ffi::AVDictionary),
+            // the output probe reads the title back (render-settings t2802)
+            avutil::av_dict_get: unsafe extern "C" fn(
+                *const ffi::AVDictionary, *const c_char, *const ffi::AVDictionaryEntry, c_int) -> *mut ffi::AVDictionaryEntry,
             avutil::av_log_set_level: unsafe extern "C" fn(c_int),
             avutil::av_opt_set:
                 unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, c_int) -> c_int,
@@ -126,6 +129,10 @@ macro_rules! ffmpeg_api {
                 c_int, c_int, ffi::AVPixelFormat, c_int, c_int, ffi::AVPixelFormat,
                 c_int, *mut c_void, *mut c_void, *const f64) -> *mut ffi::SwsContext,
             swscale::sws_freeContext: unsafe extern "C" fn(*mut ffi::SwsContext),
+            // the export's matrix and range (render-settings D6): the conversion the tags state
+            swscale::sws_getCoefficients: unsafe extern "C" fn(c_int) -> *const c_int,
+            swscale::sws_setColorspaceDetails: unsafe extern "C" fn(
+                *mut ffi::SwsContext, *const c_int, c_int, *const c_int, c_int, c_int, c_int, c_int) -> c_int,
             swscale::sws_scale: unsafe extern "C" fn(
                 *mut ffi::SwsContext, *const *const u8, *const c_int, c_int, c_int,
                 *const *mut u8, *const c_int) -> c_int,

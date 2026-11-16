@@ -2911,3 +2911,10 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 2. The comparison without Datamosh is laid out too (`rendereg`, old and new traces).
 - Item 2 of `kkt-26.11.15` (faster than kt26.11.10) is NOT done: stage 15 did not make it faster on his
   machine. Both pieces are taken from his traces.
+
+## 2026-11-16 — his run of stage 16, `rendereg_2` (`kkt-26.11.16b`)
+
+1. "проверяй fails/26.11.16/rendereg_2/" — checked: the loop plays from kept frames from its 5th
+   lap; the first and the filled laps match kt26.11.10.
+2. "если устраивает - делай другие сам без меня" — his word to start items 3, 4 and 5 of
+   `kkt-26.11.15` (render speed, the idle processor, the render settings) without asking him.

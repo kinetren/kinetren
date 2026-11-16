@@ -200,10 +200,15 @@ pub enum Ev {
     /// processor; `id` the ring; `a` the piece's index in its frame or job; `b` its predicted device time
     /// (ns); `c` its passes or dispatches; `cause` the caller's.
     GpuExec = 98,
+
+    /// Where an export's time went, one record per stage when it ends (render-speed D2): `aux` the
+    /// [`export_stage`], `a` the stage's busy nanoseconds summed over its threads, `b` the export's
+    /// wall nanoseconds, `c` the video frames written, `id` its frame workers (0 — the serial export).
+    ExportStage = 110,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 52] = [
+    pub const ALL: [Ev; 53] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -256,6 +261,7 @@ impl Ev {
         Ev::GpuStart,
         Ev::StreamWalk,
         Ev::GpuExec,
+        Ev::ExportStage,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -316,6 +322,7 @@ impl Ev {
             Ev::GpuStart => "gpu_start",
             Ev::StreamWalk => "stream_walk",
             Ev::GpuExec => "gpu_exec",
+            Ev::ExportStage => "export_stage",
         }
     }
 }
@@ -513,6 +520,51 @@ pub mod job {
     /// its records), `a` the moment's tick, `b` the outcome — 0 kept, 1 incomplete (a stream stage short
     /// of its frame included), 3 the display's memo did not keep it.
     pub const LOOP_FILL: u32 = 13;
+}
+
+/// `ExportStage.aux`: the stages of `kt_engine::export::ExportProfile`, in its report's order.
+pub mod export_stage {
+    pub const DECODE: u32 = 1;
+    pub const COMPOSE: u32 = 2;
+    pub const READBACK: u32 = 3;
+    pub const CONVERT: u32 = 4;
+    pub const ENCODE: u32 = 5;
+    pub const AUDIO: u32 = 6;
+    pub const AUDIO_ENCODE: u32 = 7;
+    pub const PLAN: u32 = 8;
+    pub const UPLOAD: u32 = 9;
+    pub const PASSES: u32 = 10;
+    pub const GPU_WAIT: u32 = 11;
+    pub const COPY_OUT: u32 = 12;
+    pub const WAIT_LOOKAHEAD: u32 = 13;
+    pub const WAIT_NO_FRAME: u32 = 14;
+    pub const WAIT_WRITER_FRAME: u32 = 15;
+    pub const WAIT_WRITER_AUDIO: u32 = 16;
+    /// The export as a whole: `a` the wall nanoseconds, `b` the timeline nanoseconds it covered.
+    pub const WALL: u32 = 17;
+    pub const NAMES: [&str; 17] = [
+        "decode",
+        "compose",
+        "readback",
+        "convert",
+        "encode",
+        "audio",
+        "audio encode",
+        "plan",
+        "upload",
+        "passes",
+        "gpu wait",
+        "copy out",
+        "look-ahead",
+        "no frame",
+        "writer/frame",
+        "writer/audio",
+        "wall",
+    ];
+    /// The stage's name (`?` — a stage this build does not know).
+    pub fn name(aux: u32) -> &'static str {
+        aux.checked_sub(1).and_then(|i| NAMES.get(i as usize)).copied().unwrap_or("?")
+    }
 }
 
 /// `Invalidate.aux`.
