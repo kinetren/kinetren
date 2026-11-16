@@ -746,6 +746,19 @@ start of the next pass.
   preview of a name adds a row — the buttons slide down: they must be probed
   AFTER the redraw (a relative of the "drag in three steps" rule).
 
+## Render settings (render-settings, F-EXP-006)
+
+- `RenderSetup` is the window's state; `options()` makes the `ExportOptions`, `pairs()` the text form
+  kt-cli reads too (`kt_engine::export_settings`). A new setting goes into the text form first, then
+  the window — never a window-only field, or a preset and kt-cli cannot carry it.
+- What FFmpeg can write (`avail`) is asked once per opening in `start_render` (a device candidate
+  opens its device), never per frame; an option it lacks is listed DISABLED with the reason
+  (`choice`), never hidden. The window has a harness opener (`render_settings_scene`) and so stands
+  under t779/t918; t2813 keeps it free at rest.
+- Presets and the last settings live in `render-presets.json` (`RenderPresetStore`); a record with a
+  key this build does not know is listed with it and kept verbatim. Factory presets are named by
+  codec, size and rate, never by a platform.
+
 ## Coverage strips and the decode scale step (R.46)
 
 `coverage_runs` asks `BurstCache::coverage` by the DECODE QUALITY

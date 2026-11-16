@@ -294,3 +294,83 @@ fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
         eprintln!("t2559: {renders} cells composed in {:?} of processor time; 60 frames of a moving pointer {:?}", b - a, c - b);
     }
 }
+
+/// Test t2813 (render-settings): the render settings window open over a heavy event (Datamosh and
+/// VHS Tape) costs nothing at rest: still or with the pointer moving over the window, the program
+/// asks for no frame on its account, composes nothing new and starts no export.
+/// - **PATH** a project with an event carrying Datamosh and VHS Tape → File → Render… → the
+///   settings window stands open; the mouse rests, then moves over the window: nothing redraws by
+///   itself and the processor stays idle
+#[test]
+fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
+    use kt_model::*;
+    crate::plugins::install();
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let mut h = rest_harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let fx = vec![FxInstance::plugin("datamosh").expect("datamosh"), FxInstance::plugin("vhs_tape").expect("vhs_tape")];
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx,
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.push_project_to_player();
+    // the heavy event warms its history first: the project itself settles, then the window opens
+    let deadline = kt_time::test_deadline();
+    let mut quiet = 0;
+    while quiet < 10 {
+        h.step();
+        quiet = if next_repaint(&h) > Duration::from_secs(3600) { quiet + 1 } else { 0 };
+        assert!(std::time::Instant::now() < deadline, "the project never came to rest");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    crate::layout_tests::render_settings_scene(&mut h);
+    for _ in 0..20 {
+        h.step();
+    }
+    let composites = h.state().composites;
+    let cpu0 = cpu_time();
+    for _ in 0..120 {
+        h.step();
+    }
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "the open window asks for a frame in {:?}", next_repaint(&h));
+    let win = crate::widgets::field_probe::rect_of("win.render");
+    let c = win.map_or(egui::pos2(500.0, 400.0), |r| r.center());
+    for i in 0..120 {
+        h.input_mut().events.push(egui::Event::PointerMoved(c + egui::vec2((i % 40) as f32 * 3.0 - 60.0, (i % 7) as f32 * 4.0)));
+        h.step();
+    }
+    // a hovered button fades its highlight for a few frames, then the window is still again
+    for _ in 0..15 {
+        h.step();
+    }
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "after the pointer the window asks for a frame in {:?}", next_repaint(&h));
+    assert!(h.state().composites - composites <= 1, "the open window recomposed the preview");
+    assert!(h.state().render_job.is_none(), "an export started by itself");
+    if let (Some(a), Some(b)) = (cpu0, cpu_time()) {
+        eprintln!("t2813: 240 frames with the render settings open cost {:?} of processor", b.saturating_sub(a));
+    }
+}

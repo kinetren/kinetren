@@ -11,7 +11,9 @@ H.264/H.265/AV1/VP9 with AAC; MOV: H.264/H.265/ProRes with AAC/PCM; MKV: all; We
 Opus); another pair SHALL be refused before any file is created. The default format SHALL be the
 file the export wrote before this change: MP4, H.264, Quality 23, encoder speed `veryfast`, a
 two-second keyframe interval, no B-frames, 8-bit 4:2:0, AAC — now carrying the colour tags of D6.
-H.265 in MP4/MOV SHALL be tagged `hvc1`. No creation time is written (invariant 11).
+H.265 in MP4/MOV SHALL be tagged `hvc1`. No creation time is written, and Matroska/WebM are written
+bit-exact (their muxer otherwise draws a random segment id per file) — invariant 11. The keyframe
+interval is the encoder's MAXIMUM: a scene cut may bring a keyframe earlier.
 Why: kkt-26.11.15 N5 — "очень скудные настройки финального рендера"; F-EXP-006 decides each option.
 
 #### Scenario: The chosen settings are read back from the written file
@@ -19,10 +21,11 @@ Why: kkt-26.11.15 N5 — "очень скудные настройки фина�
   0.5 s and 2 B-frames into MKV with FLAC and a title; with libx265 10-bit Quality into MP4; with
   libvpx-vp9 into WebM with Opus; with prores_ks into MOV with PCM 24; with AAC disabled ("none")
 - **THEN** our own libav reader of the output reports the container, the codec, the profile (High,
-  Main 10, VP9 profile 0, ProRes HQ), the pixel format, a keyframe at every 15th frame of the 30 fps
-  stream, B-frames present only where asked, the audio codec and sample format, the title, and an
-  average video bitrate within 40 % of the asked VBR; an encoder this FFmpeg lacks is reported as
-  skipped by the test, never passed
+  Main 10 with `hvc1`, VP9 profile 0, ProRes HQ intra-only), the pixel format, no gap between
+  keyframes longer than 15 frames of the 30 fps stream, B-frames present only where asked, the audio
+  codec and its 24 bits, the title and comment, a video bitrate under 1.25× the VBR maximum, no
+  audio stream for "none", and the default file's BT.601 limited tags; an encoder this FFmpeg lacks
+  is reported as skipped by the test, never passed
 - **TEST** t2802 (`src/libs/kt-engine/tests/render_settings.rs`)
 
 #### Scenario: A frame-rate override renders that many frames
@@ -53,11 +56,11 @@ dropped is a file the person did not ask for.
 - **TEST** t2801 (`src/libs/kt-ffmpeg/src/encoders.rs`)
 
 #### Scenario: A candidate without 10-bit or CBR is skipped with the reason
-- **WHEN** H.264 10-bit is exported with Auto under the hardware seam reporting a VAAPI device
-  absent, and `h264_vaapi` is forced at 10-bit; then libx265 CBR is exported
-- **THEN** the Auto export's report lists the candidates without 10-bit input as skipped with
-  "no 10-bit input"; the forced one fails naming "no 10-bit input"; the CBR file's rate is within
-  25 % of the asked one
+- **WHEN** H.264 10-bit is exported with Auto, and `h264_vaapi` is forced at 10-bit; then libx264
+  CBR 500 kbit/s is exported
+- **THEN** the Auto export's report lists every hardware candidate present here as skipped with
+  "no 10-bit input" and libx264 writes `yuv420p10le`; the forced one fails naming
+  "h264_vaapi: no 10-bit input"; the CBR file's rate is within 25 % of the asked one
 - **TEST** t2803 (`src/libs/kt-engine/tests/render_settings.rs`)
 
 ### Requirement: The colour tags are the conversion's
@@ -69,8 +72,10 @@ than the preview (F-EXP-006 trick).
 
 #### Scenario: A saturated colour comes back by the tag
 - **WHEN** a flat saturated red frame is exported with BT.601 limited, BT.709 limited and BT.601 full
-- **THEN** the reader reports the three tag pairs; the stored Y of the BT.709 file differs from the
-  BT.601 file's by more than 5 codes, and the full-range file's Y spans beyond 16–235
+- **THEN** the reader reports the three tag pairs (smpte170m/bt709 matrix, limited/full range,
+  BT.709 primaries and transfer); the default file reads back as written within 6 codes, and the
+  BT.709 file, read back by the BT.601 decode, differs from it by more than 5 codes — the
+  conversion changed, not only the label
 - **TEST** t2806 (`src/libs/kt-engine/tests/render_settings.rs`)
 
 #### Scenario: The same settings write the same bytes
@@ -133,7 +138,7 @@ Why: N5; rule 16 (the range the render takes was not shown); the idle rule (owne
 - **THEN** the started job's options carry exactly these settings, the file name ends `.mkv`, the
   estimate reads a size in MB, and a codec the container cannot hold is listed disabled with its
   reason
-- **PATH** File → Render… → the Render settings window: Preset "Default (H.264 MP4)" → File:
+- **PATH** File → Render… → the Render settings window: Preset "H.264 · MP4 · quality 23" → File:
   Container "MKV" → Video: Codec "H.265" → Rate "VBR", average 6, maximum 9 → Speed "Slow" → Depth
   "10-bit" → Colour "BT.709 limited" → Size and rate: Frame rate "25" → Audio: Codec "FLAC" → File:
   Range "Whole project" — the estimate shows "≈ … MB" → Render… → the save dialog offers

@@ -9,6 +9,7 @@ pub mod audio;
 pub mod builds;
 pub mod export;
 pub mod export_pipeline;
+pub mod export_settings;
 pub mod fetch;
 pub mod flight;
 pub mod mix;

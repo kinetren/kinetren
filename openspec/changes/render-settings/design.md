@@ -117,3 +117,26 @@ are saved when a render starts and loaded when the window first opens in a sessi
   (D10 of hw-encode-context) and the same skip rules; the software candidates are tested.
 - `libsvtav1` determinism across runs at `threads auto` is not guaranteed by its vendor; the
   determinism test covers libx264, libx265, libvpx-vp9 and prores_ks, and names AV1 as not covered.
+
+## The class walk
+
+The mechanism behind "very scant settings": a property of the written file was FIXED in code and
+either not shown or shown as a constant that could lie once the file changed. Every place that
+states or decides a property of the output was walked:
+
+- the settings window — every row now a choice or an honest constant ("48 kHz stereo", invariant 1);
+- the progress window's Output rows — "Audio: AAC …" and "Container: MP4 (+faststart)" were
+  literals; now read from the job's format (`audio_row`, `mux_row`); its title "Render to MP4" now
+  names the container; the finalize phase no longer says "(faststart)";
+- the File menu, the toolbar hint and the Guide's lesson row said "Render to MP4" — now "Render…";
+- the file name's extension and the save dialog's filter followed nothing — now the container;
+- `kt-cli export` knew only an encoder — now the same settings; `kt-cli ffmpeg --probe-encoders`
+  still probes the H.264 hardware candidates only (left as is: it is a driver report, not a render);
+- the throwaway hardware trial (`hw_trial`) opened every name inside the H.264 cascade — now inside
+  the codec family the name belongs to (`encoders::codec_of`);
+- the colour: the export wrote no tags (found-defects 693, fixed); the DECODE converts every source
+  with swscale's BT.601 default whatever its tag (found-defects 694, open — a change of its own);
+- determinism: Matroska drew a random segment id per file (found here by t2805, fixed with the
+  bit-exact flag only for Matroska/WebM);
+- the render log and the telemetry journal already print the open report's options and skips, so the
+  new skip reasons ("no 10-bit input", "no CBR") reach them without a change.
