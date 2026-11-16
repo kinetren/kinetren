@@ -1171,8 +1171,10 @@ pub fn laps(run: &Run) -> String {
                 let _ = writeln!(o, "         {c:>4} × {r}");
             }
         }
+        // only a COMPLETE composite names the moment's key: an incomplete one (a stream stage short,
+        // a layer absent) read as "the key changed" on the next lap (loop-laps-regression D1)
         for l in &frames {
-            if let Some(e) = l.exec.filter(|e| e.a != 0) {
+            if let Some(e) = l.exec.filter(|e| e.a != 0 && e.aux & trace::exec::COMPLETE != 0) {
                 seen_key.insert(l.tick, e.a);
                 if !l.layers.is_empty() {
                     seen_layers.insert(l.tick, l.layers.clone());

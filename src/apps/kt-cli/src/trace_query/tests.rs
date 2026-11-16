@@ -575,3 +575,48 @@ fn t2572_machine_summary_and_dump_carry_the_machine() {
     assert_eq!(head["machine"]["power"], "LowPower", "{d}");
     assert_eq!(d.lines().count(), run.recs.len() + 1, "the machine line, then one line a record");
 }
+
+/// Test t2760 (loop-laps-regression D1): a moment incomplete on one lap and complete on the next is
+/// not "the frame's key changed": only a complete composite names the moment's key (the owner's
+/// kkt-26.11.16 trace read 6-25 such moments a lap as unstable keys; every complete composite of a
+/// moment had one key).
+#[test]
+fn t2760_an_incomplete_lap_is_not_a_key_change() {
+    let mut v = vec![
+        rec(Ev::Play, 0, |r| {
+            r.aux = play::REGION;
+            r.b = 9000;
+            r.c = 9000 + 3000;
+        }),
+        rec(Ev::Play, MS, |r| r.aux = play::PLAY),
+    ];
+    let mut id = 200;
+    let mut frame = |v: &mut Vec<Rec>, at: u64, key: u64, flags: u32| {
+        id += 1;
+        let i = id;
+        v.push(rec(Ev::FrameAsk, at, |r| {
+            r.id = i;
+            r.a = 9000;
+        }));
+        v.push(rec(Ev::FrameExec, at + MS, |r| {
+            r.id = i;
+            r.a = key;
+            r.dur = 30 * MS;
+            r.aux = flags;
+        }));
+        v.push(rec(Ev::FrameDone, at + 32 * MS, |r| {
+            r.id = i;
+            r.a = 9000;
+            r.aux = (flags & exec::COMPLETE) as u32;
+        }));
+    };
+    // lap 0: composed incomplete under another key (a stream stage short)
+    frame(&mut v, 10 * MS, 77, 0);
+    v.push(rec(Ev::Play, 60 * MS, |r| r.aux = play::WRAP));
+    // lap 1: complete
+    frame(&mut v, 70 * MS, 78, exec::COMPLETE | exec::MEMO_STORED);
+    v.push(rec(Ev::Play, 120 * MS, |r| r.aux = play::PAUSE));
+    let out = laps(&run_of(v));
+    assert!(!out.contains("key changed"), "an incomplete lap read as a key change: {out}");
+    assert!(out.contains("never kept on an earlier lap"), "{out}");
+}
