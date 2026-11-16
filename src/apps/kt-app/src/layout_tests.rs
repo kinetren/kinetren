@@ -21200,6 +21200,16 @@ fn t2810_the_window_drives_the_export_options() {
     // the next opening starts from these settings (rule 23)
     let last = h.state_mut().render_setup.presets.last().expect("the last settings are kept");
     assert!(last.contains(&("container".into(), "mkv".into())), "{last:?}");
+    // the job ends before the test does: a running export pauses the background classes of the
+    // whole test process (its scheduler vote), and the tests beside it would wait on it
+    let job = h.state_mut().render_job.as_mut().unwrap();
+    job.job.cancel();
+    let deadline = kt_time::test_deadline();
+    while job.result.is_none() {
+        job.poll();
+        assert!(std::time::Instant::now() < deadline, "the cancelled render never ended");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

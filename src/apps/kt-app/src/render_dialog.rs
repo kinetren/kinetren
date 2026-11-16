@@ -983,7 +983,9 @@ impl KtApp {
                 ui.end_row();
                 ui.label(tr(k::render::PRESET_NAME));
                 ui.horizontal(|ui| {
-                    let r = ui.add(egui::TextEdit::singleline(&mut s.new_name).desired_width(160.0));
+                    // a third of the row, so the window's width reaches the field (t1127)
+                    let w = ui.available_width() / 3.0;
+                    let r = ui.add(egui::TextEdit::singleline(&mut s.new_name).desired_width(w));
                     crate::widgets::field_probe::note("render.preset_name", r.rect);
                     let save = ui.add_enabled(!s.new_name.trim().is_empty(), egui::Button::new(tr(k::render::PRESET_SAVE)));
                     crate::widgets::field_probe::note("render.preset_save", save.rect);
@@ -1223,7 +1225,11 @@ impl KtApp {
                 let combo = egui::ComboBox::from_id_salt("rres").selected_text(cur).show_ui(ui, |ui| {
                     let mut pick = |ui: &mut egui::Ui, v: Option<(u32, u32)>, custom: bool, label: String| {
                         let on = s.custom_on == custom && (custom || s.resolution == v);
-                        if ui.selectable_label(on, label).clicked() {
+                        let r = ui.selectable_label(on, label);
+                        if custom {
+                            crate::widgets::field_probe::note("render.size.custom", r.rect);
+                        }
+                        if r.clicked() {
                             s.custom_on = custom;
                             s.resolution = if custom { Some(s.custom) } else { v };
                         }
