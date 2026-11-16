@@ -37,7 +37,11 @@ is no picture, and an export refuses.
   caller of the window's device off the UI thread is the defect this closed. Every wgpu call that can
   hold a device registers in `holds` (`hold` for one call, `within` for an entry point's span): a
   long one on the window's device is a journal line, and the panic report lists what is in flight.
-  t2740–t2744.
+  **On GL every call of ours into a device passes its `Compiled::gl_gate` first** (no timeout): the
+  six-second panic hits any waiting thread, and a stalled call of ours killed the preview's own compose
+  thread. A new entry point or background job on a device takes the gate before `inner`, never inside
+  a job's own calls. The preview engine off the display keeps its bytes-path composites in the present
+  memo (`keep_composites_for_bytes`): a covered loop replays there too. t2740–t2746.
 - **On llvmpipe a loop costs more than its body** (render-speed-no-card): one with a bound the compiler
   sees, up to 32 iterations, is unrolled and its table folds; any other runs through execution masks
   with table reads lane by lane, ten times the cost. Write taps out, or specialize the text

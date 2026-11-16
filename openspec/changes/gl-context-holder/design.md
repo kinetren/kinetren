@@ -67,6 +67,30 @@ caller. The bench's `gl_stall N` uses it on the preview engine's device. The ben
 (resize_loop's stand-in for the preview's submissions on Vulkan) does nothing on GL: nothing of the
 program submits on the window's device there, and `resize_loop` expects no refused reconfigure on GL.
 
+### D4. Our calls into a GL device queue at its gate
+
+wgpu-hal's six-second timeout panics whichever thread waits, not only the UI's. The first loaded runs
+of the new route showed it: under `gl_stall` the preview's compose thread itself waited past six
+seconds for the preview device's lock and died ("Could not lock adapter context" on `preview-compose`),
+leaving the preview dead for the session. A warm draw compiling a big variant on an empty Mesa cache
+(10 s for the composite) does the same to a frame. So on GL each `Compiled` carries a gate (a plain
+mutex, no timeout) that every call of ours into its device passes first: the engine's entry points
+(`execute*`, `present*`, `submit`, `collect`, `keep`, `keep_loop`, `wait_presented`, `finish_present`,
+`read_display`, `hold_gl_context`), the warm worker's draws and shape/run compiles. Siblings share the
+`Compiled`, so they share the gate. Our threads then wait for one another without a clock and the hal
+lock is never contended among them; on other backends the gate is `None`. Taken before `inner` and
+before `Compiled::frame`, never inside a worker job's own calls (a settled run compiled in a frame is
+under the frame's gate already). A resource dropped on another thread (an engine released on
+`app-drop`) still reaches the hal lock without the gate (found-defects 683).
+
+### D5. The bytes-path preview keeps its composites
+
+The preview off the window's device took the bytes path with only the fixed 64 MB readback memo, and
+a covered loop composed again (live `cached_range` red, the owner's G2–G4 requirement). Its engine
+(`keep_composites_for_bytes`) now keeps every complete composite in the loop-sized `PresentMemo`, as
+`present` does, and a kept moment asked again is read back from it with nothing composed and counted as
+a replay; the readback memo is not used there. The coverage bars ask the same memo (`holds`).
+
 ## The class, walked: every path that calls into the window's GL device
 
 | Path | Thread | Before | Now |
@@ -79,6 +103,7 @@ program submits on the window's device there, and `resize_loop` expects no refus
 | `preview_display` texture registration | UI | display path | not created on GL |
 | `read_display`, `finish_present` (bench/headless) | caller | window's device | not reached on GL |
 | bench `gpu_busy` | live-gpu-busy | window's device | does nothing on GL |
+| preview device (GL): compose vs warm worker vs bench | preview-compose, pipeline-warm, live-gl-stall | n/a (was the window's device) | one gate per device, no timeout (D4) |
 | offline/side engine, slow route, loop fill, thumbnails, reel strips, posters | sched/lanes | own GL device (own instance) | unchanged |
 | export engines | render | own GL devices | unchanged |
 | compute host, held frames | compute threads | Vulkan (PRIMARY), never GL | unchanged |

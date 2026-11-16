@@ -28,6 +28,11 @@ system, past six seconds.
 - **THEN** it is left to the UI thread alone exactly on GL
 - **TEST** t2742 (`src/libs/kt-gpu/tests/gl_context_holder.rs`)
 
+#### Scenario: A frame waits out a stalled call on its GL device
+- **WHEN** a thread holds a GL engine's device through its gate for seven seconds and another thread asks that engine for a frame with a layer
+- **THEN** the frame waits and composes, with the bytes it composes when nothing is held (without the gate the waiting thread panicked "Could not lock adapter context" after six seconds)
+- **TEST** t2745 (`src/libs/kt-gpu/tests/gl_context_holder.rs`)
+
 #### Scenario: The preview's device stalled past six seconds
 - **PATH** open the demo project → the preview shows its first frame → (the bench holds the preview's GL device for nine seconds) → click the ruler again and again: the cursor moves, the window keeps drawing, nothing closes → after the release click the ruler: the preview shows the clicked moment
 - **TEST** t2743 live scenario `src/scripts/live/gl_stall.py`
