@@ -2902,3 +2902,12 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 - Correction to item 2 (same day): the slowdown is NOT mainly Datamosh — "я проверял в старой версии
   кусок БЕЗ datamosh и он как раз меня еще сильнее беспокоит чем datamosh". The piece without
   Datamosh is examined first-class, alongside Datamosh.
+
+## 2026-11-16 — his run of stage 15 against kt26.11.10 (`kkt-26.11.16`)
+
+1. A loop put on `problem_region_26_11_09` "просто первое что попалось под руку" plays through
+   without loading only from about the 25th lap in the new version; kt26.11.10 managed from about
+   the 11th: "мало того что и так было плохо дак сейчас еще хуже".
+2. The comparison without Datamosh is laid out too (`rendereg`, old and new traces).
+- Item 2 of `kkt-26.11.15` (faster than kt26.11.10) is NOT done: stage 15 did not make it faster on his
+  machine. Both pieces are taken from his traces.
