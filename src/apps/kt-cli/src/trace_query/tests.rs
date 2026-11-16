@@ -607,7 +607,7 @@ fn t2760_an_incomplete_lap_is_not_a_key_change() {
         v.push(rec(Ev::FrameDone, at + 32 * MS, |r| {
             r.id = i;
             r.a = 9000;
-            r.aux = (flags & exec::COMPLETE) as u32;
+            r.aux = flags & exec::COMPLETE;
         }));
     };
     // lap 0: composed incomplete under another key (a stream stage short)
