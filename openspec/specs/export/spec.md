@@ -1251,7 +1251,8 @@ The preview SHALL keep the device time of each moment it composed, with its size
 show the preview's size against the render's and how many times the pixels of a frame the render draws
 when they differ, and a render time predicted from the preview's measured device time per pixel over the
 range at the render's size, saying how many of the range's frames were measured; with none measured it
-SHALL say to play the range once. A replayed kept composite SHALL NOT count as a measurement.
+SHALL say to play the range once. A replayed kept composite SHALL NOT count as a measurement; a moment the
+render-ahead producer composed SHALL.
 Why: row 711, review R8 — the owner's preview composes at 640×360 and his render at 1920×1080, nine times
 the pixels, and "the final render is slower than the preview" (kkt-26.11.15 item 3) had nothing on screen
 to explain it.
@@ -1272,6 +1273,13 @@ to explain it.
   "Preview 640×360 · render 1920×1080: 9.0× the pixels of a frame" and "Render time: not measured — play the
   range once"; after the range plays, "Render time ≈ … (measured … of … frames)"
 - **TEST** t2903 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: The producer's moments are measured
+- **WHEN** the render-ahead producer composes moments ahead on a sibling of the display's engine
+- **THEN** the sibling reports their device time (`last_device_ns` reads its preview frames), so the range
+  that played is measured (found-defects 728: read as an offline engine's frames it was 0, and the window
+  said "not measured" after the range had played)
+- **TEST** t2929 (`src/libs/kt-gpu/tests/render_ahead.rs`)
 
 ### Requirement: Every render journals its predicted time against its actual one
 A finished render SHALL write one line into the telemetry journal with the time predicted when it started

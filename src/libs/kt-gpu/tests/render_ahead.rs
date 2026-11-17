@@ -136,3 +136,39 @@ fn t2922_a_moment_kept_on_the_device_is_the_displays_own_composite() {
     assert!(ka == kc, "the on-device composite differs from the display's own");
     assert!(kb == kc, "the bytes route's composite differs from the display's own");
 }
+
+/// Test t2929 (render-ahead fix, found-defects 728): the producer's engine reports the device time of
+/// the moments it composes ahead — the render window predicts a render from it. Its frames are the
+/// preview's; read as an offline engine's, the time was 0 and the window said "not measured" after
+/// the range had played.
+#[test]
+fn t2929_the_producers_engine_reports_its_device_time() {
+    kt_plugins_builtin::install();
+    let Some(a) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let p = project();
+    let video = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> = sources().into_iter().collect();
+    let moments: Vec<Tick> = (10..16).map(|i| Tick(i * 3000)).collect();
+    for &t in &moments {
+        for (media, src_pts, dq) in video.layers_at(t, q) {
+            let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+            cache.insert_video(kt_engine::source_id(media), Some(dq), kt_engine::video::video_cache_idx(src_pts), frame.into());
+        }
+    }
+    let sib = a.sibling();
+    let keeper: Arc<dyn VideoGpuExec> = a.clone();
+    let mut buf = Vec::new();
+    let deadline = kt_time::test_deadline();
+    let mut i = 0;
+    // a frame's time is harvested at a later frame's start: compose until one came back
+    while sib.last_device_ns() == 0 {
+        assert!(std::time::Instant::now() < deadline, "the producer's engine never reported a device time");
+        let plan = video.frame_plan(&cache, moments[i % moments.len()], q);
+        let _ = sib.ahead(&plan, &keeper, &mut buf).unwrap();
+        sib.poll_done();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        i += 1;
+    }
+}

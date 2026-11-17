@@ -891,7 +891,8 @@ A decoder SHALL treat the keyframes the packet scan found as what the file holds
 promises. It SHALL NOT seek when no keyframe lies between its cursor and the target, SHALL NOT seek
 past the last keyframe the scan found, and SHALL NOT send the decoder a packet the file ended inside
 of. The audio SHALL answer past the end of an ended stream without a seek. Every key past the end SHALL
-be answered with the last picture the file holds.
+be answered with the last picture the file holds. A burst the source answers out of range SHALL be kept in
+the cache as silence.
 Why: a file cut short sought and reopened for every frame past its end, a GOP each, and the audio
 sought per burst: a 40 s event did not finish in 280 s.
 
@@ -909,6 +910,13 @@ sought per burst: a 40 s event did not finish in 280 s.
 - **WHEN** the bursts of a cut file are read through its end
 - **THEN** the bursts past the end answer with at most two seeks in all
 - **TEST** t1762 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+#### Scenario: A burst past the end is kept as silence
+- **WHEN** the worker of a two-second source is asked a burst inside it and one at 2.24 s, past its end
+- **THEN** both bursts land in the cache, the one past the end as silence, so an asker that waits for
+  coverage asks it once (found-defects 727: the start's wait and the look-ahead asked six such bursts 600
+  times in half a second, and the start waited its whole grace)
+- **TEST** t2928 (`src/libs/kt-engine/tests/video_stall.rs`)
 
 ### Requirement: A render converts a span's pictures on threads
 A render's source SHALL convert the pictures of a multi-size span to RGBA on several threads and emit
