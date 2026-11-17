@@ -231,6 +231,8 @@ struct Card {
     live: std::sync::Mutex<Vec<Arc<std::sync::atomic::AtomicBool>>>,
     peak: AtomicUsize,
     keys: std::sync::Mutex<Vec<u64>>,
+    /// The wall of each moment's own work (compose and hand over), the device latency aside.
+    work: std::sync::Mutex<Vec<std::time::Duration>>,
 }
 
 impl Card {
@@ -246,6 +248,7 @@ impl Card {
             live: Default::default(),
             peak: AtomicUsize::new(0),
             keys: Default::default(),
+            work: Default::default(),
         }))
     }
 }
@@ -258,7 +261,9 @@ impl VideoGpuExec for Card {
         &self.info
     }
     fn ahead(&self, plan: &FramePlan<'_>, keeper: &Arc<dyn VideoGpuExec>, buf: &mut Vec<u8>) -> Result<kt_engine::Ahead, GpuExecError> {
+        let t0 = std::time::Instant::now();
         let mut a = kt_engine::ahead_by_bytes(self, plan, keeper, buf)?;
+        self.work.lock().unwrap().push(t0.elapsed());
         if let Some(k) = a.kept {
             self.keys.lock().unwrap().push(k);
         }
@@ -317,26 +322,37 @@ fn fill_with(card: Arc<Card>, opacity: f32) -> Option<std::time::Duration> {
 
 /// Test t2920 (render-ahead D3, D4; replaces t2860–t2862): a producer executor on a card returns from
 /// each moment at once and the device ends it 40 ms later. Several moments are in flight on the one
-/// engine, none is composed twice in the lap, and at least half of the latency the same executor pays
-/// when every moment is waited for is hidden.
+/// engine, none is composed twice in the lap, and the wall beyond the moments' own work is under half
+/// of the latency the same executor pays when every moment is waited for.
 #[test]
 fn t2920_on_a_card_several_moments_are_in_flight() {
     let (Some(flagged), Some(waited)) = (Card::new(true), Card::new(false)) else { return };
     let Some(fast) = fill_with(flagged.clone(), 0.33) else { return };
     let slow = fill_with(waited.clone(), 0.31).unwrap();
     let waits = waited.keys.lock().unwrap().len() as u32;
+    let own = |c: &Card| {
+        let mut w = c.work.lock().unwrap().clone();
+        w.sort();
+        (w.first().copied().unwrap_or_default(), w.get(w.len() / 2).copied().unwrap_or_default(), w.iter().sum::<std::time::Duration>())
+    };
+    eprintln!("t2920: own work (min, median, sum) in flight {:?}, waited {:?}", own(&flagged), own(&waited));
     let peak = flagged.peak.load(Ordering::Acquire);
     let keys = flagged.keys.lock().unwrap().clone();
     let distinct: std::collections::HashSet<u64> = keys.iter().copied().collect();
     eprintln!("t2920: in flight up to {peak}, all-kept in {fast:?} against {slow:?} waited for ({waits} moments waited)");
     assert!(peak >= 2, "one moment in flight at a time");
     assert_eq!(distinct.len(), keys.len(), "a moment was composed twice in the lap");
-    // the waited run pays the device's latency once a moment; in flight it is hidden behind the next
-    // moments' own work. At least half of it must be gone, whatever the machine's load makes of the
-    // own work (a ratio of the two wall times moved with the load: the latency is a smaller share of a
-    // slower moment)
-    let hidden = slow.saturating_sub(fast);
-    assert!(hidden * 2 >= waited.delay * waits, "in flight {fast:?}, waited {slow:?}: {hidden:?} of {:?} of latency hidden", waited.delay * waits);
+    // The waited run pays the device's latency once a moment; in flight it is hidden behind the next
+    // moments' own work. Judged by the wall NOT explained by each run's own work (compose and hand
+    // over), measured per moment: the own work itself moves with the machine's load and between the two
+    // runs (found-defects 730: under a full parallel run the in-flight run's own work was 1.2 s against
+    // the waited run's 0.74 s, and a comparison of the two walls read it as latency not hidden)
+    let latency = waited.delay * waits;
+    let unexplained = |wall: std::time::Duration, c: &Card| wall.saturating_sub(own(c).2);
+    let (paid, left) = (unexplained(slow, &waited), unexplained(fast, &flagged));
+    eprintln!("t2920: latency {latency:?}: the waited run paid {paid:?}, in flight {left:?} was left");
+    assert!(paid * 10 >= latency * 9, "the scene: the waited run pays the latency ({paid:?} of {latency:?})");
+    assert!(left * 2 <= latency, "in flight {left:?} of the wall is not the moments' own work: the latency ({latency:?}) is not hidden");
 }
 
 /// The display's executor that counts the plans it presents.
