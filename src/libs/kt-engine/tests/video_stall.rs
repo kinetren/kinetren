@@ -214,3 +214,29 @@ fn t758_audio_is_served_before_video_after_a_seek() {
     );
     worker.shutdown();
 }
+
+/// Test t2928 (render-ahead fix, found-defects 727): a burst past the end of a short source is
+/// silence and lands in the cache as silence, so an asker that waits for coverage (the start's wait,
+/// the look-ahead) sees it covered and asks it once. The negative cache alone left it uncovered: the
+/// stage-19 `decode_storm` scenario asked six bursts of a two-second FLAC 600 times in half a second
+/// and the start waited its whole grace.
+#[test]
+fn t2928_a_burst_past_the_end_is_kept_as_silence() {
+    let cache = Arc::new(BurstCache::new(CacheConfig::default()));
+    let src = SyntheticSource::new(Tick(90_000 * 2), AudioPattern::Sine { hz: 440.0 }).with_eof();
+    let worker = MediaWorker::spawn(MediaId(1), Box::new(src), cache.clone());
+    let sid = source_id(MediaId(1));
+    let (inside, past) = (10i64, 105i64);
+    for idx in [inside, past] {
+        worker.submit(DecodeRequest { kind: RequestKind::Audio { idx }, prio: Priority::Playback, generation: 0 });
+    }
+    let deadline = kt_time::test_deadline();
+    while !(cache.contains_audio(sid, inside) && cache.contains_audio(sid, past)) {
+        assert!(std::time::Instant::now() < deadline, "a burst past the end was never covered");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let silent = cache.get_audio(sid, past).unwrap();
+    assert!(silent.data.iter().all(|s| *s == 0.0), "a burst past the end is silence");
+    let heard = cache.get_audio(sid, inside).unwrap();
+    assert!(heard.data.iter().any(|s| *s != 0.0), "the scene: a burst inside the source sounds");
+}

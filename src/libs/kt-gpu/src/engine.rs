@@ -886,6 +886,9 @@ struct Inner {
     serves: Option<crate::arbiter::Registered>,
     /// The frame being encoded is cut into pieces on its ring (`execute`, `submit`).
     piece: Option<crate::arbiter::Piece>,
+    /// This engine composes the preview's frames ahead (render-ahead D3, `ahead_tex`): its frames are
+    /// the preview's, and `last_device_ns` reads them (the render window's prediction, found-defects 728).
+    makes_preview: bool,
 }
 
 /// The non-blocking checks `wait_presented` made since the process started (gpu-arbiter D8, t2260).
@@ -1509,6 +1512,7 @@ impl GpuFxEngine {
                 shows,
                 serves: None,
                 piece: None,
+                makes_preview: false,
             })),
         });
         // a grant the ledger takes back (an export claimed the room) drops the kept composites past
@@ -2000,7 +2004,7 @@ impl Inner {
     /// one off the window's on GL, or the window's under `KT_PREVIEW_READBACK`), else offline
     /// (gl-record-preview).
     fn readback_role(&self) -> Role {
-        if self.keeps_bytes || self.surface { Role::Preview } else { Role::Offline }
+        if self.keeps_bytes || self.surface || self.makes_preview { Role::Preview } else { Role::Offline }
     }
 
     /// Run a frame's work inside error scopes of this device: a wgpu error it raises is its
@@ -2184,6 +2188,7 @@ impl Inner {
         self.last_cost = Default::default();
         self.last_stages = Default::default();
         let mark = Instant::now();
+        self.makes_preview = true;
         let forms = crate::compiled::forms_revision();
         let key = plan_key(plan);
         // a layer without its frame: nothing of this plan reaches the device (no-partial-picture)

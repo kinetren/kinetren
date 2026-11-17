@@ -11349,7 +11349,7 @@ impl KtApp {
         // request from the user: 420 px were insurance of round 7.1, in round 9 raised to
         // half the window by his direct request, and in round 11 I cut them
         // back “by analogy” with the meters and broke the work for the third time.
-        egui::Panel::left("left_col")
+        let column = egui::Panel::left("left_col")
             .frame(crate::theme::panel_frame())
             .resizable(true)
             .default_size(232.0)
@@ -11387,6 +11387,9 @@ impl KtApp {
                     // (diagnostics-three-graphs, kkt-26.11.01 item 14): the column is the bin's
                 });
             });
+        // the column's own rect: its right edge is the separator a person drags. The bin's rect
+        // is the scroll area's content, which a shown scrollbar narrows (found-defects 729)
+        crate::widgets::field_probe::note("bin.column", column.response.rect);
     }
 
     /// The meters column and its drag strip; the window buttons stand on it in the arrangement

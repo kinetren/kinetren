@@ -588,8 +588,14 @@ fn read_audio(
             trace_decoded(source_id, kt_cache::BurstKind::Audio, idx);
             cache.insert_audio(source_id, Arc::new(burst))
         }
+        // a burst past the material's end (or before its start) IS silence: kept as silence, so every
+        // asker sees it covered (render-ahead fix, found-defects 727). Left out of the cache, the
+        // start's wait and the look-ahead asked for it again every pass — 600 requests a second for a
+        // clip whose source window (the resampler's margin) reaches past a short file's end, and a
+        // start held for its whole grace
         Err(kt_media::MediaError::OutOfRange) => {
             failed.insert(idx);
+            cache.insert_audio(source_id, Arc::new(kt_media::AudioBurst::silence(idx)));
         }
         Err(_) => {}
     }
