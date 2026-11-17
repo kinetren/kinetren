@@ -112,11 +112,13 @@ impl Kit {
             rp.draw(0..3, 0..1);
         }
         let role = self.role;
-        {
+        let sub = {
             let _h = crate::holds::hold(role, "warm submit");
-            queue.submit([enc.finish()]);
-        }
+            queue.submit([enc.finish()])
+        };
+        // its own draw only (datamosh-history-wait D2): on a card the warm-up shares the device with
+        // the frames, and a wait for everything held the device's lock through them
         let _h = crate::holds::hold(role, "warm wait");
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = crate::wait_for(device, sub);
     }
 }

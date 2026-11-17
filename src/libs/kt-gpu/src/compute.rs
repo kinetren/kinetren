@@ -392,12 +392,15 @@ impl ComputeDevice {
             let ticket = self.arb.admit(kt_time::sched::current_class(), CALIBRATION_NS);
             let before = kt_time::trace::now_ns();
             let sub = self.queue.submit([enc.finish()]);
-            let flight = ticket.submitted(&self.device, &self.queue, sub, CALIBRATION_NS, false);
+            let flight = ticket.submitted(&self.device, &self.queue, sub.clone(), CALIBRATION_NS, false);
             let (tx, rx) = std::sync::mpsc::channel();
             read.slice(..).map_async(wgpu::MapMode::Read, move |r| {
                 let _ = tx.send(r);
             });
-            if d.poll(wgpu::PollType::wait_indefinitely()).is_err() {
+            // its own submission (datamosh-history-wait D2): the bracket's half-width is the clock
+            // error, and a wait for everything widened it by every job submitted meanwhile (his
+            // kt26.11.16 trace: error up to 39 ms, wider than the waits it was to measure)
+            if crate::wait_for(d, sub).is_err() {
                 return false;
             }
             let after = kt_time::trace::now_ns();
@@ -464,9 +467,9 @@ impl ComputeHost for ComputeDevice {
         // the warm thread's class (background) on the ring: it never stands in front of a frame
         let ticket = self.arb.admit(kt_time::sched::current_class(), WARM_NS);
         let sub = self.queue.submit([enc.finish()]);
-        let flight = ticket.submitted(&self.device, &self.queue, sub, WARM_NS, false);
+        let flight = ticket.submitted(&self.device, &self.queue, sub.clone(), WARM_NS, false);
         let refused = pollster::block_on(scope.pop());
-        d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
+        crate::wait_for(d, sub).map_err(|e| e.to_string())?;
         flight.wait();
         if let Some(e) = refused {
             return Err(format!("compute warm-up refused: {e}"));
@@ -697,7 +700,7 @@ impl ComputeDevice {
         // this job's own submission: a wait for "the most recent" one waited for every piece another
         // thread submitted to the device after it too (stream-round-trips D9, found-defects 661: its
         // buffers came back 311 ms after its last dispatch ended at the median on the owner's iGPU)
-        let mine = wgpu::PollType::Wait { submission_index: Some(sub.clone()), timeout: None };
+        let mine = sub.clone();
         let _flight = piece.end(&self.device, &self.queue, sub, false);
         if let Some(e) = pollster::block_on(scope.pop()) {
             self.give_back(stamps, learns);
@@ -715,7 +718,7 @@ impl ComputeDevice {
             })
             .collect();
         if !maps.is_empty() {
-            d.poll(mine.clone()).map_err(|e| e.to_string())?;
+            crate::wait_for(d, mine.clone()).map_err(|e| e.to_string())?;
         }
         let mut out = Vec::with_capacity(staging.len());
         for ((st, b), rx) in staging.iter().zip(job.reads).zip(maps) {
@@ -734,7 +737,7 @@ impl ComputeDevice {
                     let _ = tx.send(r);
                 });
                 // the job's own wait has passed: this map is ready at the next poll
-                d.poll(mine).map_err(|e| e.to_string())?;
+                crate::wait_for(d, mine).map_err(|e| e.to_string())?;
                 if let Ok(Ok(())) = rx.recv() {
                     let ticks: Vec<u64> = st
                         .slice(..bytes)
