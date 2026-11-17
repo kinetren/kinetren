@@ -7,9 +7,12 @@
 //!   frame) forward — inside a loop region round the whole region, outside one until the first moment
 //!   whose layers are not all decoded (the look-ahead's window, sized by the memory ledger, is the
 //!   horizon) or the first moment with no layer (a gap or the end: the display clears those itself).
-//!   Moments the display holds are noted for the bars; a moment that came out incomplete (a
-//!   stream stage short of its frame included) or that the memo refused is skipped for the lap. It asks
-//!   no decode and withdraws no request. Nothing runs while nothing plays.
+//!   Moments the display holds are noted for the bars; a moment the memo refused is skipped for the
+//!   lap. A moment that came out incomplete WAITS for what it lacked to move (ahead-kept D1): a stream
+//!   stage short of `k` positions until the walks computed `k` less what a composite computes itself,
+//!   anything else until a walk or a decode moved. Skipped for the lap, a moment the walk reached a
+//!   second later stayed unmade until the next lap: the owner's loop filled from lap 15 (kkt-26.11.18
+//!   T2). It asks no decode and withdraws no request. Nothing runs while nothing plays.
 //! - **Where** (D3): on the display's own device (a sibling engine: its own lock), the composite handed
 //!   to the display's memo on the device with no readback and no wait — on a card and on a software
 //!   rasterizer alike (measured: the side device's readback and upload cost more than they freed). The
@@ -25,7 +28,7 @@ use crate::video_plan::{Ahead, VideoGpuExec};
 use kt_media::Quality;
 use kt_time::sched::{Class, Ctx, Lane, LaneRef, Pump};
 use kt_time::Tick;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -64,6 +67,38 @@ fn ema(old: u64, ns: u64) -> u64 {
 /// The state a lap's skips belong to: versions, quality, region, build.
 type LapKey = ((u64, u64), Quality, Option<(i64, i64)>, u64);
 
+/// What an incomplete moment waits for before it is tried again (ahead-kept D1): the process's walked
+/// history positions (`kt_plugin_api::stream::positions_walked`) and the frames cache's decoded count
+/// (`BurstCache::video_inserted`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Waits {
+    /// The walked count at or past which the moment may be complete.
+    walked: u64,
+    /// `Some(n)` — any walk or decode past these counts moves it (it lacked no history, or lacked it
+    /// by what a composite computes): `(walked, inserted)` at the try.
+    moved: Option<(u64, u64)>,
+}
+
+impl Waits {
+    /// A try at counts `(walked, inserted)` came out incomplete, its stream stages short by `short`
+    /// positions of which a composite computes `steps` itself.
+    pub(crate) fn after(walked: u64, inserted: u64, short: u64, steps: u64) -> Waits {
+        if short > steps {
+            Waits { walked: walked + (short - steps), moved: None }
+        } else {
+            Waits { walked, moved: Some((walked, inserted)) }
+        }
+    }
+
+    /// Whether the moment is worth another try at counts `(walked, inserted)`.
+    pub(crate) fn ready(&self, walked: u64, inserted: u64) -> bool {
+        match self.moved {
+            None => walked >= self.walked,
+            Some((w, i)) => walked != w || inserted != i,
+        }
+    }
+}
+
 /// A moment handed to the device and not yet finished.
 struct Flight {
     done: Arc<AtomicBool>,
@@ -74,8 +109,10 @@ struct Flight {
 #[derive(Default)]
 struct St {
     key: Option<LapKey>,
-    /// Moments skipped this lap.
+    /// Moments skipped this lap (refused by the memo, no picture for the plan).
     skipped: BTreeSet<i64>,
+    /// Moments that came out incomplete and what they wait for (D1), until the lap ends.
+    waiting: BTreeMap<i64, Waits>,
     /// The playhead last seen: falling back is a new lap.
     head: i64,
     /// A moment's wall from its plan to its completion, and the producer's own time a moment (EMAs).
@@ -181,9 +218,11 @@ impl RenderAhead {
         }
     }
 
-    /// The producer skipped the moment `t` this lap (incomplete, or refused by the display's memo).
+    /// The producer skipped the moment `t` this lap (refused by the display's memo) or it waits for
+    /// what it lacked (D1): the display composes it on demand, as it did a moment skipped incomplete.
     pub(crate) fn skipped(&self, t: i64) -> bool {
-        self.st.lock().unwrap().skipped.contains(&t)
+        let st = self.st.lock().unwrap();
+        st.skipped.contains(&t) || st.waiting.contains_key(&t)
     }
 
     /// Composites kept so far.
@@ -237,6 +276,9 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
         if st.key != Some(key) || head.0 < st.head {
             st.key = Some(key);
             st.skipped.clear();
+            // a new lap tries every waiting moment again: never later than the skip it replaced, if a
+            // walk ever moves a history without counting its positions
+            st.waiting.clear();
         }
         st.head = head.0;
         st.retire();
@@ -271,6 +313,8 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
     };
     let linear = inside.is_none();
     let mut buf = Vec::new();
+    let progress = || (kt_plugin_api::stream::positions_walked(), parts.cache.video_inserted());
+    let steps = video.stream_compose_steps().unwrap_or(0) as u64;
     for t in moments {
         if ctx.cancelled() || !parts.transport.is_playing() {
             return Pump::Idle;
@@ -280,8 +324,18 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
         if linear && video.layers_at(Tick(t), q).is_empty() {
             return Pump::Idle;
         }
-        if kept.contains(&t) || ra.st.lock().unwrap().skipped.contains(&t) {
-            continue;
+        {
+            let st = ra.st.lock().unwrap();
+            if kept.contains(&t) || st.skipped.contains(&t) {
+                continue;
+            }
+            // incomplete before: nothing it lacked has moved since
+            if let Some(w) = st.waiting.get(&t) {
+                let (walked, inserted) = progress();
+                if !w.ready(walked, inserted) {
+                    continue;
+                }
+            }
         }
         if !warm(Tick(t)) {
             // linear play: past the decoded window nothing is composable yet
@@ -322,7 +376,9 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
         let in_flight = ra.st.lock().unwrap().flights.len() + 1;
         span.aux(kt_time::trace::job::RENDER_AHEAD).id(id).a(t as u64).c(in_flight as u64);
         let at = Instant::now();
+        let (walked, inserted) = progress();
         let out = parts.compose_ahead(&exec, &display, &video, Tick(t), q, &mut buf);
+        let short = video.stream_short();
         let own = at.elapsed().as_nanos() as u64;
         let Some(out) = out else {
             span.cancel();
@@ -334,6 +390,7 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
             Ok(Ahead { complete, kept: Some(k), done }) if complete => {
                 span.b(0);
                 st.kept += 1;
+                st.waiting.remove(&t);
                 drop(st);
                 parts.note_kept(Tick(t), k);
                 let mut st = ra.st.lock().unwrap();
@@ -345,8 +402,15 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
                 st.deepest = st.deepest.max(st.flights.len()).max(1);
             }
             Ok(a) => {
-                span.b(if a.complete { 3 } else { 1 });
-                st.skipped.insert(t);
+                if a.complete {
+                    // refused by the display's memo: skipped for the lap
+                    span.b(3);
+                    st.skipped.insert(t);
+                } else {
+                    // incomplete: it waits for what it lacked (D1); `b` 4 — its history was short
+                    span.b(if short > steps { 4 } else { 1 });
+                    st.waiting.insert(t, Waits::after(walked, inserted, short, steps));
+                }
                 if a.done.is_none() {
                     st.lat_ns = ema(st.lat_ns, own);
                 }
@@ -377,6 +441,23 @@ mod tests {
         assert_eq!(depth(40_000_000, 4_000_000, Some(3)), 3, "the room caps it");
         assert_eq!(depth(40_000_000, 4_000_000, Some(0)), 1, "never zero");
         assert_eq!(depth(1_000, 4_000_000, None), 1, "a moment faster than its own time: one");
+    }
+
+    /// Test t2931 (ahead-kept D1, kkt-26.11.18 T2): an incomplete moment waits for what it lacked, not
+    /// for the lap's end — a stream history short by `k` until the walks computed `k` less what a
+    /// composite computes itself, anything else until a walk or a decode moved.
+    #[test]
+    fn t2931_an_incomplete_moment_waits_for_what_it_lacked() {
+        let w = Waits::after(100, 7, 64, 2);
+        assert!(!w.ready(100, 7), "nothing moved");
+        assert!(!w.ready(161, 9), "61 positions walked of the 62 it lacks beyond a composite's own");
+        assert!(w.ready(162, 7), "the walk reached a composite's reach");
+        let w = Waits::after(100, 7, 2, 2);
+        assert!(!w.ready(100, 7), "nothing moved");
+        assert!(w.ready(101, 7), "a walk moved");
+        assert!(w.ready(100, 8), "a decode moved");
+        let w = Waits::after(100, 7, 0, 0);
+        assert!(w.ready(100, 8) && !w.ready(100, 7), "no stream stage: a decode moves it");
     }
 
     /// The order round a region starts at the moment the start falls in and visits every moment once.

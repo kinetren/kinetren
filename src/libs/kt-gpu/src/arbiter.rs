@@ -16,7 +16,9 @@
 //!   display presents kept frames only, so a period of the render-ahead producer's work stands queued
 //!   in front of each present and the device never runs dry.
 //! - **Pieces** ([`Piece`]): a lower-class frame on a displayed ring is cut at pass boundaries where
-//!   the passes' device time, as the pass timer MEASURED them on this machine, would pass the bound;
+//!   the passes' device time, as the pass timer MEASURED them on this machine, would pass HALF the
+//!   bound (ahead-kept D2: a whole-bound piece fitted only an empty ring, so nothing was ever queued
+//!   behind the piece that ran);
 //!   on any bounded ring it is cut at the next boundary while a higher class waits. A piece is submitted
 //!   and the next is admitted against the time in flight, never after a wait for the piece itself
 //!   (stream-history-on-device, found-defects 392). The passes, their order and their targets do not change: the same bytes
@@ -452,10 +454,14 @@ impl Ring {
         (front && acc + next.unwrap_or(u64::MAX / 4) > self.piece_limit(class)) || (self.bounded() && self.higher_waits(class))
     }
 
-    /// What one piece holds at most: the bound, whatever its class (render-ahead D5; a lower piece was
-    /// half the bound while the bound was half a period).
+    /// What one piece holds at most, and what its admission claims at most: half the bound, whatever
+    /// its class (ahead-kept D2). A piece the size of the bound fitted only an EMPTY ring (the bound
+    /// less a whole piece is nothing), so every piece waited for the one before to end and the device
+    /// stood idle while the next was noticed, encoded and submitted — the owner's card was busy a third
+    /// of the time while frames were missing (kkt-26.11.18 T2). Half the bound keeps one piece queued
+    /// behind the one that runs; what stands in front of a present stays the bound (render-ahead D5).
     pub fn piece_limit(&self, _class: Class) -> u64 {
-        bound()
+        bound() / 2
     }
 }
 
@@ -775,9 +781,9 @@ mod tests {
         let next = h.join().unwrap();
         assert_eq!(r.in_flight_ns(), b * 3 / 10 * 2 + b / 5, "the three are in flight together");
         drop(next);
-        // an unmeasured pass claims a whole piece: the bound (render-ahead D5; half of it before)
+        // an unmeasured pass claims a whole piece: half the bound (ahead-kept D2)
         let unmeasured = claim_after_cut(&r, Class::Offline, None);
-        assert_eq!(unmeasured, b);
+        assert_eq!(unmeasured, b / 2);
         let waited = Arc::new(AtomicBool::new(false));
         let h = {
             let (r2, waited) = (r.clone(), waited.clone());
@@ -788,7 +794,7 @@ mod tests {
             })
         };
         std::thread::sleep(Duration::from_millis(50));
-        assert!(!waited.load(Ordering::Acquire), "a whole-bound piece was admitted past the bound");
+        assert!(!waited.load(Ordering::Acquire), "an unmeasured piece was admitted past the bound");
         drop((display, earlier));
         h.join().unwrap();
         assert!(waited.load(Ordering::Acquire));
@@ -916,6 +922,29 @@ mod tests {
         }
         drop(st);
         drop(late);
+    }
+
+    /// Test t2930 (ahead-kept D2, kkt-26.11.18 T2): a walk of whole pieces keeps the next one queued
+    /// while the one before runs — on a displayed ring with no present (the frames are missing) and for
+    /// the frame on screen's own class alike. A piece the size of the bound waited for an empty ring.
+    #[test]
+    fn t2930_a_whole_piece_is_queued_behind_the_one_that_runs() {
+        let b = bound();
+        for class in [Class::Now, Class::Near, Class::Background] {
+            let r = ring();
+            let _d = r.register_display();
+            let piece = r.piece_limit(class);
+            assert!(piece * 2 <= b, "two pieces fit the bound");
+            let running = r.admit(class, piece);
+            let now = Instant::now();
+            submitted_at(&r, &running, now);
+            let st = r.lock();
+            assert!(r.admissible(&st, class, piece, now).is_ok(), "{class:?}: the next piece waited for an empty ring");
+            // what stands in front of the next present is still the bound
+            assert!(r.admissible(&st, class, b, now).is_err(), "{class:?}: more than the bound queued");
+            drop(st);
+            drop(running);
+        }
     }
 
     /// Test t2252: devices of one card share a ring whatever their backend; a card that names no

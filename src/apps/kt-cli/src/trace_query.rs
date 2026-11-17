@@ -1217,12 +1217,31 @@ pub fn laps(run: &Run) -> String {
         if !ahead.is_empty() {
             let kept = ahead.iter().filter(|r| r.b == 0).count();
             let deepest = ahead.iter().map(|r| r.c).max().unwrap_or(0);
-            let _ = write!(walk, "  ahead: {kept} kept of {} composed, up to {deepest} in flight;", ahead.len());
+            let _ = write!(walk, "  ahead: {kept} kept of {} composed, up to {deepest} in flight", ahead.len());
+            // why the rest were not kept (ahead-kept D3): short of the stream history (they wait for
+            // the walk), incomplete otherwise, refused by the display's memo
+            let why = [(4, "short of the history"), (1, "incomplete"), (3, "refused by the memo")]
+                .iter()
+                .filter_map(|&(b, w)| {
+                    let n = ahead.iter().filter(|r| r.b == b).count();
+                    (n > 0).then(|| format!("{n} {w}"))
+                })
+                .collect::<Vec<_>>();
+            if !why.is_empty() {
+                let _ = write!(walk, " ({})", why.join(", "));
+            }
+            walk.push(';');
         }
         // how busy the device was (render-ahead D7): the device time of the frames harvested in the lap
         let device = device_ns(run, a, b);
         if device > 0 {
             let _ = write!(walk, "  device {:.0} %;", device as f64 * 100.0 / (b - a).max(1) as f64);
+        }
+        // the time submissions waited for the ring while the device was not full (ahead-kept D3): a
+        // wait of whole seconds beside an idle device is the arbiter holding work back
+        let (waits, waited) = admit_waits(run, a, b);
+        if waited > 0 {
+            let _ = write!(walk, "  ring waits {:.1} s over {waits};", waited as f64 / NS);
         }
         if kept < frames.len() || frames.is_empty() {
             missing.0 += device;
@@ -1309,6 +1328,12 @@ pub fn laps(run: &Run) -> String {
 }
 
 /// The device time of the timed frames harvested in `[a, b)` (`GpuFrame`, render-ahead D7).
+/// Admissions that waited for their ring in `[a, b)` and the sum of their waits (`GpuAdmit` spans).
+pub fn admit_waits(run: &Run, a: u64, b: u64) -> (usize, u64) {
+    let w: Vec<u64> = run.recs.iter().filter(|r| is(r, Ev::GpuAdmit) && r.t >= a && r.t < b && r.dur > 0).map(|r| r.dur).collect();
+    (w.len(), w.iter().sum())
+}
+
 pub fn device_ns(run: &Run, a: u64, b: u64) -> u64 {
     run.recs.iter().filter(|r| is(r, Ev::GpuFrame) && r.t >= a && r.t < b).map(|r| r.a).sum()
 }
