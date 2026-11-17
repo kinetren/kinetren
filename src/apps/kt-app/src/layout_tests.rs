@@ -21182,7 +21182,7 @@ fn t2903_the_window_states_the_size_and_the_prediction() {
     let texts = shown_texts(&h);
     let line = cost.time_line();
     assert!(line.contains(&format!("measured {} of {} frames", cost.frames, cost.frames)), "{line}");
-    assert!(texts.iter().any(|t| *t == line), "the prediction is shown: {texts:?}");
+    assert!(texts.contains(&line), "the prediction is shown: {texts:?}");
 }
 
 /// t2904 (render-honest D4): a finished render writes its predicted time against its actual one into

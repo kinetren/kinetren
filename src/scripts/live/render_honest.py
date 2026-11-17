@@ -6,12 +6,13 @@ The render settings window states the preview's size against the render's and a 
 predicted from what the preview's frames cost over the range; before the range has played it says
 that nothing was measured. The project is OUR synthetic fixture at 1920×1080, not the owner's.
 
-PATH (export spec, t2903):
+PATH (export spec, t2903; the region 2–3 s, the cursor at 0):
 1. File → Render… → the File group under the size estimate: "Preview W×H · render 1920×1080: N× the
    pixels of a frame" and "Render time: not measured — play the range once"; Esc closes the window;
-2. Space → the range plays to its end → Space;
+2. a click on the ruler at 0:02 (the region's start) → Space → the region plays to its end → Space;
 3. File → Render… → "Render time ≈ m:ss (measured … of … frames)".
 """
+import json
 import os
 import sys
 
@@ -23,6 +24,12 @@ def main(out):
     require_tools()
     os.makedirs(out, exist_ok=True)
     proj = project_with_clips(os.path.join(out, "honest.otio"), [(0.0, 3.0, "synth:Ramp")], width=1920, height=1080)
+    # the region 2–3 s is rendered; the cursor at 0 shows (and measures) a frame outside it
+    with open(proj) as f:
+        doc = json.load(f)
+    doc["metadata"]["kt"]["transport"] = {"region": [180000, 270000]}
+    with open(proj, "w") as f:
+        json.dump(doc, f, indent=4)
     with Live("render_honest", out, project=proj) as app:
         # 1) nothing measured yet
         app.click_probe("menu.file", "the File menu")
@@ -38,11 +45,10 @@ def main(out):
         app.expect(app.wait_gone("render.start"), "Esc closed the window")
 
         # 2) the range plays once
-        app.key("Home")
+        app.click(app.x_at(2 * 90_000), app.ruler_y())
         app.key("space")
-        app.wait_playhead(lambda p: p >= 2.8 or not app.playing(), "the range played to its end", timeout=60.0)
-        if app.playing():
-            app.key("space")
+        app.wait_playhead(lambda p: p >= int(2.9 * 90_000), "the region played to its end", timeout=60.0)
+        app.key("space")
         app.step("played", "the range played once: the preview measured its frames")
 
         # 3) the prediction
