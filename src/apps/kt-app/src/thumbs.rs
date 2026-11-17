@@ -648,11 +648,12 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
             if let Ok(frame) = src.read_video_frame(Tick(key.t), Some(tq))
                 && let Some(buf) = encode_thumb_jpeg(frame.width, frame.height, frame.rgba.into())
             {
-                if let (Some(db), Some(&db_id)) = (&db, db_ids.get(&key.media))
+                if let (Some(db), Some(&db_id)) = (&mut db, db_ids.get(&key.media))
                     && db_id >= 0
                 {
-                    let _ = db.put_thumbnail(db_id, key.t, &buf);
+                    // the size first: it drops thumbs of an older pixel version (t2894)
                     let _ = db.put_thumb_size(db_id, frame.width, frame.height);
+                    let _ = db.put_thumbnail(db_id, key.t, &buf);
                 }
                 jpeg = Some(buf);
                 ok = true;

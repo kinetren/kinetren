@@ -21,6 +21,7 @@ pub mod player;
 pub mod prefetch;
 pub mod prewarm;
 pub mod preview_bench;
+pub mod preview_cost;
 pub mod transitions;
 pub mod transport;
 pub mod video;

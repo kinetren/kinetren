@@ -755,6 +755,11 @@ start of the next pass.
   opens its device), never per frame; an option it lacks is listed DISABLED with the reason
   (`choice`), never hidden. The window has a harness opener (`render_settings_scene`) and so stands
   under t779/t918; t2813 keeps it free at rest.
+- **The window says what the render costs against the preview** (render-honest D3, row 711):
+  `KtApp::render_cost` (the range and size the window would render, the preview's size now, the
+  player's `preview_cost` over the range) gives the size line, the predicted time and, held on the
+  `RenderJob`, the journal line at the result (predicted against actual). A new way to change the
+  range or size of a render goes through `render_setup`, or the prediction names another render.
 - Presets and the last settings live in `render-presets.json` (`RenderPresetStore`); a record with a
   key this build does not know is listed with it and kept verbatim. Factory presets are named by
   codec, size and rate, never by a platform.

@@ -206,6 +206,7 @@ pub struct Player {
     video_gpu: Arc<Mutex<VideoGpuState>>,
     /// The cost of the last preview compose (morpher-event-grid-cost, D1).
     video_cost: Arc<Mutex<VideoCost>>,
+    preview_costs: Arc<Mutex<crate::preview_cost::PreviewCosts>>,
     /// The preview's own thread (`compose_queue`): the UI asks and never waits.
     composer: Arc<crate::compose_queue::Composer>,
     compose_thread: Option<std::thread::JoinHandle<()>>,
@@ -421,6 +422,7 @@ impl Player {
         let preview_quality = Arc::new(Mutex::new(Quality { width: 640, height: 360 }));
         let shown: Shown = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let video_cost = Arc::new(Mutex::new(VideoCost::default()));
+        let preview_costs = Arc::new(Mutex::new(crate::preview_cost::PreviewCosts::default()));
         let shown_gen = Arc::new(AtomicU64::new(0));
         let ahead = Arc::new(crate::render_ahead::RenderAhead::default());
         let parts = PreviewParts {
@@ -430,6 +432,7 @@ impl Player {
             builds: builds.clone(),
             video_gpu: video_gpu.clone(),
             video_cost: video_cost.clone(),
+            preview_costs: preview_costs.clone(),
             preview_quality: preview_quality.clone(),
             project_version: project_version.clone(),
             content_version: content_version.clone(),
@@ -502,6 +505,7 @@ impl Player {
             media,
             video_gpu,
             video_cost,
+            preview_costs,
             composer,
             compose_thread: Some(compose_thread),
             preview_quality,
@@ -1217,6 +1221,18 @@ impl Player {
         *self.video_cost.lock().unwrap()
     }
 
+    /// What the preview's composites of `[a, b)` cost on the device, per pixel, and at what size
+    /// (render-honest D2): the render window predicts a render of the range from it. `None` — no
+    /// moment of the range was composed and measured.
+    pub fn preview_cost(&self, a: Tick, b: Tick) -> Option<crate::preview_cost::PreviewCost> {
+        self.preview_costs.lock().unwrap().over(a, b)
+    }
+
+    /// Record a moment's cost as the preview would (a test of the render window).
+    pub fn note_preview_cost(&self, t: Tick, ns: u64, size: (u32, u32)) {
+        self.preview_costs.lock().unwrap().note(t, ns, size);
+    }
+
     fn compose_preview_measured(
         &self,
         t: Tick,
@@ -1233,6 +1249,7 @@ impl Player {
             builds: self.builds.clone(),
             video_gpu: self.video_gpu.clone(),
             video_cost: self.video_cost.clone(),
+            preview_costs: self.preview_costs.clone(),
             preview_quality: self.preview_quality.clone(),
             project_version: self.project_version.clone(),
             content_version: self.content_version.clone(),
@@ -1307,6 +1324,7 @@ pub(crate) struct PreviewParts {
     pub(crate) builds: Arc<crate::builds::Builds>,
     video_gpu: Arc<Mutex<VideoGpuState>>,
     video_cost: Arc<Mutex<VideoCost>>,
+    preview_costs: Arc<Mutex<crate::preview_cost::PreviewCosts>>,
     preview_quality: Arc<Mutex<Quality>>,
     project_version: Arc<AtomicU64>,
     content_version: Arc<AtomicU64>,
@@ -1394,7 +1412,17 @@ impl PreviewParts {
             return None;
         }
         let plan = video.frame_plan(&self.cache, aligned, q);
-        Some(via.ahead(&plan, display, buf))
+        let out = via.ahead(&plan, display, buf);
+        // what the moment cost on the device, for the render window's prediction (render-honest D2):
+        // the producer makes the preview's composites now. The engine's latest harvested frame: on the
+        // device route one or two moments before this one
+        if out.as_ref().is_ok_and(|a| a.complete) {
+            let ns = via.last_device_ns();
+            if ns > 0 {
+                self.preview_costs.lock().unwrap().note(aligned, ns, (plan.out_w, plan.out_h));
+            }
+        }
+        Some(out)
     }
 
     /// Playing with the producer running (render-ahead D1): the display shows the moment's kept
@@ -1602,6 +1630,12 @@ impl PreviewParts {
                     && let Some(key) = e.present_key(&plan)
                 {
                     self.note_kept(aligned, key);
+                }
+                // what the moment cost on the device, for the render window's prediction
+                // (render-honest D2): a replay of a kept composite composed nothing
+                if complete && !stages.replayed && !stages.shown_kept {
+                    let ns = exec.last_device_ns();
+                    self.preview_costs.lock().unwrap().note(aligned, ns, (plan.out_w, plan.out_h));
                 }
                 Some((q, complete, true, exec.last_cost(), plan_ns, stages))
             }

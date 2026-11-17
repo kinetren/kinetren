@@ -6,6 +6,7 @@
 // sample-accurate audio seek, threads=1 for VP9/AV1, recreation of the
 // video decoder on backward seek, swscale into RGBA.
 
+use crate::colour::{ColourTags, SourceColour};
 use crate::{FfError, Probe, RgbaFrame};
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, TICK_HZ, Tick};
 use std::collections::VecDeque;
@@ -24,6 +25,56 @@ const AVSEEK_FLAG_BACKWARD: c_int = 1;
 
 fn tb(num: i32, den: i32) -> ffi::AVRational {
     ffi::AVRational { num, den }
+}
+
+/// The colour tags of a stream's codec parameters (source-colour-matrix).
+fn stream_colour_tags(par: &ffi::AVCodecParameters) -> ColourTags {
+    ColourTags {
+        matrix: par.color_space as u32,
+        range: par.color_range as u32,
+        primaries: par.color_primaries as u32,
+    }
+}
+
+/// A `yuvj*` pixel format: swscale reads it as full range of its own accord.
+fn is_jpeg_format(format: c_int) -> bool {
+    [
+        ffi::AV_PIX_FMT_YUVJ420P,
+        ffi::AV_PIX_FMT_YUVJ422P,
+        ffi::AV_PIX_FMT_YUVJ444P,
+        ffi::AV_PIX_FMT_YUVJ440P,
+        ffi::AV_PIX_FMT_YUVJ411P,
+    ]
+    .iter()
+    .any(|f| *f as c_int == format)
+}
+
+/// A pixel format whose pictures a YUV matrix applies to: three or more components, neither RGB
+/// nor a palette (grey, RGB and PAL8 pictures keep swscale's own conversion).
+fn is_yuv_format(api: &Api, format: c_int) -> bool {
+    let d = unsafe { (api.av_pix_fmt_desc_get)(format as ffi::AVPixelFormat) };
+    if d.is_null() {
+        return false;
+    }
+    let d = unsafe { &*d };
+    let other = (ffi::AV_PIX_FMT_FLAG_RGB | ffi::AV_PIX_FMT_FLAG_PAL) as u64;
+    d.nb_components >= 3 && d.flags & other == 0
+}
+
+/// The matrix and range a picture converts with, or `None` when it is swscale's own default
+/// (then the context is left untouched and the former bytes stay — invariant 11).
+fn conversion_colour(api: &Api, f: &ffi::AVFrame, stream: ColourTags) -> Option<SourceColour> {
+    if !is_yuv_format(api, f.format) {
+        return None;
+    }
+    let jpeg = is_jpeg_format(f.format);
+    let own = ColourTags {
+        matrix: f.colorspace as u32,
+        range: f.color_range as u32,
+        primaries: f.color_primaries as u32,
+    };
+    let c = own.or(stream).resolve(f.width.max(0) as u32, f.height.max(0) as u32, jpeg);
+    ((c.matrix, c.full_range) != SourceColour::swscale_default(jpeg)).then_some(c)
 }
 
 /// Checks that `wanted` (the index from the scan context) exists and has the
@@ -126,11 +177,17 @@ struct VideoPath {
 /// One thread's conversion to RGBA: a context per size.
 struct Rgba {
     sws: *mut ffi::SwsContext,
-    sws_key: (c_int, c_int, c_int, c_int, c_int),
+    sws_key: SwsKey,
+    /// The stream's colour tags: a picture without its own takes these (source-colour-matrix).
+    stream_colour: ColourTags,
     /// Contexts of the other sizes a multi-size span converts to (export-throughput D7): the
     /// same picture to two sizes must not rebuild a context per picture.
-    sws_spare: Vec<((c_int, c_int, c_int, c_int, c_int), *mut ffi::SwsContext)>,
+    sws_spare: Vec<(SwsKey, *mut ffi::SwsContext)>,
 }
+
+/// A conversion context's key: destination and source size, source format, and the matrix and
+/// range set on it (`-1` = swscale's default).
+type SwsKey = (c_int, c_int, c_int, c_int, c_int, c_int, c_int);
 
 // SAFETY: a context is used by one thread at a time, as a decoder is
 unsafe impl Send for Rgba {}
@@ -305,6 +362,15 @@ impl Source {
         } else {
             (None, 0, 0, (1, 1))
         };
+        let (colour_tags, colour) = if video_idx >= 0 {
+            let st = unsafe { &**sc.streams.add(video_idx as usize) };
+            let par = unsafe { &*st.codecpar };
+            let tags = stream_colour_tags(par);
+            (tags, tags.resolve(src_w, src_h, is_jpeg_format(par.format)))
+        } else {
+            let tags = ColourTags::default();
+            (tags, tags.resolve(0, 0, false))
+        };
         let probe = Probe {
             duration,
             has_video: video_idx >= 0,
@@ -315,6 +381,8 @@ impl Source {
             sar,
             still,
             has_alpha,
+            colour_tags,
+            colour,
         };
         unsafe { (api.avformat_close_input)(&mut scan) };
 
@@ -804,6 +872,7 @@ impl VideoPath {
         let time_base = st.time_base;
         let start_time = if st.start_time == AV_NOPTS_VALUE { 0 } else { st.start_time };
         let codec_id = unsafe { (*st.codecpar).codec_id };
+        let stream_colour = stream_colour_tags(unsafe { &*st.codecpar });
         let threads = crate::decode_threads();
         let dec = Self::open_decoder(api, fmt, stream_index, codec_id, &threads)?;
         Ok(VideoPath {
@@ -820,7 +889,7 @@ impl VideoPath {
             pending: core::ptr::null_mut(),
             pending_pts: i64::MIN,
             still,
-            rgba: Rgba::new(),
+            rgba: Rgba::new(stream_colour),
             span_rgba: Vec::new(),
             rgba_threads: crate::rgba_threads(),
             eof: false,
@@ -1129,7 +1198,7 @@ impl VideoPath {
             size: (u32, u32),
         }
         while self.span_rgba.len() < threads {
-            self.span_rgba.push(Rgba::new());
+            self.span_rgba.push(Rgba::new(self.rgba.stream_colour));
         }
         let mut converters = std::mem::take(&mut self.span_rgba);
         let (start_time, time_base) = (self.start_time, self.time_base);
@@ -1210,8 +1279,8 @@ impl VideoPath {
 }
 
 impl Rgba {
-    fn new() -> Rgba {
-        Rgba { sws: core::ptr::null_mut(), sws_key: (0, 0, 0, 0, 0), sws_spare: Vec::new() }
+    fn new(stream_colour: ColourTags) -> Rgba {
+        Rgba { sws: core::ptr::null_mut(), sws_key: (0, 0, 0, 0, 0, 0, 0), stream_colour, sws_spare: Vec::new() }
     }
 
     fn free(&mut self, api: &Api) {
@@ -1239,7 +1308,11 @@ impl Rgba {
             (width.max(2) as c_int) & !1,
             (height.max(2) as c_int) & !1,
         );
-        let key = (dst_w, dst_h, f.width, f.height, f.format);
+        // the source's matrix and range (source-colour-matrix): part of the context's key, so a
+        // file whose pictures change their tags never converts with another picture's
+        let colour = conversion_colour(api, f, self.stream_colour);
+        let (cs, full) = colour.map_or((-1, -1), |c| (c.matrix.sws_cs(), c.full_range as c_int));
+        let key = (dst_w, dst_h, f.width, f.height, f.format, cs, full);
         if !self.sws.is_null() && self.sws_key != key {
             // keep the current context for its size; take this size's if it is kept
             let found = self.sws_spare.iter().position(|(k, _)| *k == key);
@@ -1273,6 +1346,15 @@ impl Rgba {
             };
             if self.sws.is_null() {
                 return Err(FfError::Av("sws_getContext failed".into()));
+            }
+            if colour.is_some() {
+                unsafe {
+                    let src = (api.sws_getCoefficients)(cs);
+                    // the RGB side keeps swscale's own table and range; brightness 0, contrast
+                    // and saturation 1.0 (16.16)
+                    let dst = (api.sws_getCoefficients)(crate::colour::SourceMatrix::Bt601.sws_cs());
+                    (api.sws_setColorspaceDetails)(self.sws, src, full, dst, 0, 0, 1 << 16, 1 << 16);
+                }
             }
             self.sws_key = key;
         }

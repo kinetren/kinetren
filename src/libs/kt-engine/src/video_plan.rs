@@ -386,6 +386,12 @@ pub trait VideoGpuExec: Send + Sync {
     fn last_cost(&self) -> kt_fx::video::FrameCost {
         kt_fx::video::FrameCost::default()
     }
+    /// The device time of this executor's latest measured frame, in nanoseconds (render-honest D2):
+    /// the sum of its passes, or its submit to done where the device has no timestamps; the frame
+    /// harvested by now may be one or two before the last. 0 — nothing measured.
+    fn last_device_ns(&self) -> u64 {
+        0
+    }
     /// Can this executor show a frame without reading it back (`present`)?
     fn can_present(&self) -> bool {
         false
