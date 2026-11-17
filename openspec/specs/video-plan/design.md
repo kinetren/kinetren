@@ -709,3 +709,20 @@ thread; its compute buffers came back p50 607 ms after the device ended — row 
 thread by invariant 2, 4–5 % of a core); the scheduler's background lanes (paused while playing). Left for
 the owner: a CPU executor (his llvmpipe adapter) beside the card for the fill — frames of two devices within
 the stored-frame tolerances in one covered loop.
+
+## datamosh-history-wait (found-defects 662, 693; kkt-26.11.16 P1)
+
+The "607 ms" of row 693 was the trace query's (telemetry design): per job the owner's Datamosh buffers came
+back p50 37 ms after the device end, within the calibration's 12–39 ms clock error. The class behind both
+rows is a completion seen late. Every wait for a device now names its own submission (`wait_for`): the
+read-back frame (the loop fill's lanes, effect cells, reel strips, the slow route), the warm-up draw, the
+compute calibration and warm-up waited for EVERYTHING submitted, so also for every other thread's work, with
+the device's lock held (against the window's present on the display's device); `wait_all` is left to `park`
+and `finish_present` and counted (t2864). The ring's waiter blocked on the oldest piece of one device while
+the devices of a card finish out of each other's order: with flights on several devices it now polls them
+all and sleeps on the ring's condvar at most 2 ms (t2865). Never a `Wait` with a timeout: in wgpu 30 one
+that times out while another thread's poll retires the submission panics in `maintain` (a loop-fill lane
+died so under a full run). `wait_presented`'s checks stop growing at the frame's time, at least 4 ms
+(t2866). Rejected: a lower-class piece of the whole bound — his near waits outlasted their prediction
+(p50 22 ms), they were not pieces too small for it. On llvmpipe (a ring per device, one fill lane) the
+preview bench does not move; his next trace is the measure: near admission share against 486 %.

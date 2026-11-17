@@ -161,6 +161,10 @@ is no picture, and an export refuses.
 - **A job waits for ITS submission** (D9, row 661): reads are mapped first and one `PollType::Wait` names
   the job's submission index. `wait_indefinitely` waits for whatever another thread submitted after it
   (311 ms past the job's end at the median on the owner's iGPU).
+- **Every wait names its own submission** (datamosh-history-wait D2, row 693): `crate::wait_for(device,
+  sub)` — a read-back frame, a warm-up draw, a compute job, the calibration, the compute warm-up.
+  `crate::wait_all` only where waiting for everything IS the job (`park`, `finish_present`); it is
+  counted, and t2864 holds the frame paths at zero. A new wait for a device goes through `wait_for`.
 - **A shape's readiness does NOT move the memo keys** (row 561, stream-front-on-device D6): tried
   process-wide and per device, both recomposed the loop the fill kept (t2334 red). Move them only on a
   difference the device itself measured.
@@ -418,16 +422,23 @@ is no picture, and an export refuses.
 - **A piece's completion frees the ring by a work-done callback**; a waiter completes the oldest piece by
   a blocking wait on THAT piece's device, never on a device with a surface (the window's present takes
   the device's lock for writing). So no piece waits for its own submitter to come back (the export's
-  ring of three would deadlock).
+  ring of three would deadlock). It blocks only when every flight is on ONE device and only a completion
+  makes room; with flights on several devices (they finish out of each other's order) or a predicted
+  fit it polls them all and sleeps on the ring's condvar at most `WAIT_TICK` (2 ms) (datamosh-history-wait
+  D3, row 662, t2865). **Never a `PollType::Wait` with a timeout**: in wgpu 30 one that times out while
+  another thread's poll retires the submission panics in `maintain` ("If the queue is empty…").
 - **A cut piece does not wait for itself** (stream-history-on-device, t2356): `Piece::cut` submits and
   admits the next piece by its first pass's prediction against the time in flight; only a full bound or
   a higher class waits. A cut display-device piece is completed by non-blocking polls in `admit`.
+- **`trace gpu` reads a job's pieces by the job's span on its thread** (t2863): every `gpu_start` carries
+  its own instant, so a query keyed by the instant reads every piece as a job's last.
 - **A compute job records when it ran on the device on the trace's clock** (`GpuStart`, D7 of
   stream-history-on-device, t2357): a calibration (an empty submission's timestamp bracketed by the CPU
   clock, the narrowest of three, again after 10 s) made only while the trace records. `STAMPS` is 2048: a
   batched Datamosh job carries hundreds of dispatches, and an untimed one is never predicted.
 - **`wait_presented` never polls on a fixed period**: the work-done callback, a check after the
-  measured device time, then waits growing from a quarter of it (`present_checks`, t2260).
+  measured device time, then waits growing from a quarter of it (`present_checks`, t2260), never past
+  the frame's own time or 4 ms (`present_waits`, t2866: an uncapped doubling saw a late frame late).
 - **Pass times outlive the process** (`seeds.rs`, gpu-throughput D2): `<shader-cache>/pass-times-v1.tsv`,
   (adapter name + driver, label, work units) → ns; a label never measured in the process is predicted
   from it (scaled by work from the nearest size). Notes only when a time is new or moved by a quarter;

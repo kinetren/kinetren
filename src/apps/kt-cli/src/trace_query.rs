@@ -372,6 +372,28 @@ const PIECE_GAP_MAX: u64 = 100_000_000;
 /// How the device was fed (gpu-throughput D6, found-defects 480, 486): per class, the compute jobs'
 /// admission waits against their wall; over all pieces with device timestamps, the device's idle time
 /// between consecutive pieces and how many were submitted before the earlier one ended; the executors.
+/// The job a `GpuStart` record belongs to: the `ComputeJob` span on its thread that holds its
+/// instant (the records are written inside the job), else the record alone (`(u64::MAX, index)`).
+fn job_spans(run: &Run) -> impl Fn(usize, &Rec) -> (u64, u64) + '_ {
+    let mut spans: HashMap<u16, Vec<(u64, u64, usize)>> = HashMap::new();
+    for (i, r) in run.recs.iter().enumerate().filter(|(_, r)| is(r, Ev::ComputeJob)) {
+        spans.entry(r.th).or_default().push((r.t, r.t + r.dur, i));
+    }
+    for v in spans.values_mut() {
+        v.sort_unstable();
+    }
+    move |i, r| {
+        let found = spans.get(&r.th).and_then(|v| {
+            let k = v.partition_point(|s| s.0 <= r.t);
+            k.checked_sub(1).map(|k| v[k]).filter(|s| r.t <= s.1)
+        });
+        match found {
+            Some((_, _, j)) => (r.th as u64, j as u64),
+            None => (u64::MAX, i as u64),
+        }
+    }
+}
+
 fn gpu_flow(run: &Run) -> String {
     let mut o = String::new();
     let mut wall: BTreeMap<u64, u64> = BTreeMap::new();
@@ -487,13 +509,17 @@ pub fn gpu(run: &Run) -> String {
     type Starts = (Vec<u64>, Vec<u64>, Vec<u64>, u64, u32);
     let mut starts: BTreeMap<u64, Starts> = BTreeMap::new();
     // a job's pieces are recorded together when its buffers came back (gpu-throughput D6): only its
-    // last piece's end says how long the buffers took after the device
-    let mut last_end: HashMap<(u64, u64), u64> = HashMap::new();
-    for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
-        let e = last_end.entry((r.t, r.id)).or_default();
-        *e = (*e).max(r.c);
+    // last piece's end says how long the buffers took after the device. Each record carries its own
+    // emission instant, so the pieces are one job by the job's span that holds them on their thread
+    // (datamosh-history-wait D1, found-defects 693: keyed by the instant, every piece counted as a
+    // last one, and the admission waits between pieces read as 607 ms of waiting for buffers)
+    let job_of = job_spans(run);
+    let mut last: HashMap<(u64, u64), (u64, u64)> = HashMap::new();
+    for (i, r) in run.recs.iter().enumerate().filter(|(_, r)| is(r, Ev::GpuStart)) {
+        let e = last.entry(job_of(i, r)).or_default();
+        *e = ((*e).0.max(r.c), (*e).1.max(r.t));
     }
-    for r in run.recs.iter().filter(|r| is(r, Ev::GpuStart)) {
+    for (i, r) in run.recs.iter().enumerate().filter(|(_, r)| is(r, Ev::GpuStart)) {
         let e = starts.entry(r.id).or_default();
         if r.aux >= u32::MAX - 1 || r.b == 0 {
             e.3 += 1;
@@ -501,8 +527,8 @@ pub fn gpu(run: &Run) -> String {
         }
         e.0.push(r.b.saturating_sub(r.a));
         e.1.push(r.c.saturating_sub(r.b));
-        if last_end.get(&(r.t, r.id)) == Some(&r.c) {
-            e.2.push(r.t.saturating_sub(r.c));
+        if let Some(&(end, back)) = last.get(&job_of(i, r)).filter(|l| l.0 == r.c) {
+            e.2.push(back.saturating_sub(end));
         }
         e.4 = e.4.max(r.aux);
     }

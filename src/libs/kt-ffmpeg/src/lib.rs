@@ -907,6 +907,16 @@ impl Source {
         }
     }
 
+    /// `video_reach` once the decoder stands at `at` (decode-waste D2).
+    pub fn video_reach_from(&self, at: Tick, start: Tick) -> Option<i64> {
+        match self {
+            Source::V6(s) => s.video_reach_from(at, start),
+            Source::V7(s) => s.video_reach_from(at, start),
+            Source::V8(s) => s.video_reach_from(at, start),
+            Source::V9(s) => s.video_reach_from(at, start),
+        }
+    }
+
     /// A span at several sizes in one forward pass (export-throughput D7).
     pub fn read_video_span_sizes(
         &mut self,

@@ -27,9 +27,18 @@ pub struct FfmpegSource {
 }
 
 /// Decoders per file at most (D9): each 4K decoder holds its threads' frame pools.
-const MAX_CURSORS: usize = 2;
-/// Keys of one span further apart than this are separate runs, each given the nearest decoder.
-const RUN_GAP: i64 = 2 * kt_time::TICK_HZ;
+const MAX_CURSORS: usize = 4;
+
+/// The pictures a file's decoders may stand on together (decode-waste D3): two decoders of a 4K
+/// file, as many decoders of a smaller one as fit the same pixels, at least two, at most
+/// `MAX_CURSORS`. A decoder's frame pool grows with its picture, so a 1080p file's four
+/// decoders hold what a 4K file's two do.
+const CURSOR_PIXELS: u64 = 2 * 3840 * 2160;
+
+pub fn cursors_for_size((w, h): (u32, u32)) -> usize {
+    let px = (w as u64 * h as u64).max(1);
+    ((CURSOR_PIXELS / px) as usize).clamp(2, MAX_CURSORS)
+}
 
 impl From<kt_ffmpeg::FfError> for MediaError {
     fn from(e: kt_ffmpeg::FfError) -> MediaError {
@@ -100,21 +109,28 @@ impl FfmpegSource {
     }
 
     /// The decoder for a run of keys starting at `start` (D9): the one that reaches it by
-    /// decoding on (the nearest behind it, within the forward bound); else a fresh one while the
-    /// file has fewer than `MAX_CURSORS`; else the one standing longest unused. Ties go to the
-    /// lower index — the choice is a function of the requests, never of timing.
-    fn cursor_for(&mut self, start: Tick) -> usize {
+    /// decoding on (the nearest behind it, within the forward bound). Else a fresh one while the
+    /// file has fewer than `cursors_for_size` (decode-waste D3), when no decoder is free to go:
+    /// every one stands ahead of `start` (a place behind the others), has read a key of this
+    /// request (`since`: the request's first run) or is the one a later key of it would be given.
+    /// Else the free one standing longest unused — a key ahead of it is a seek forward, so a sweep
+    /// (the filmstrip, a jump) keeps one decoder. Ties go to the lower index — the choice is a
+    /// function of the requests, never of timing.
+    fn cursor_for(&mut self, start: Tick, later: &[(Tick, u32, u32)], since: u64) -> usize {
         let all = 1 + self.cursors.len();
         let src = |i: usize| if i == 0 { &self.inner } else { &self.cursors[i - 1] };
         let at = |i: usize| src(i).video_cursor();
-        let near = (0..all).filter_map(|i| src(i).video_reach(start).map(|d| (d, i))).min();
-        if let Some((_, i)) = near {
+        let nearest = |t: Tick| (0..all).filter_map(|i| src(i).video_reach(t).map(|d| (d, i))).min().map(|(_, i)| i);
+        if let Some(i) = nearest(start) {
             return i;
         }
         if let Some(i) = (0..all).find(|&i| at(i).is_none()) {
             return i;
         }
-        if all < MAX_CURSORS {
+        let wanted = |i: usize| later.iter().any(|k| nearest(k.0) == Some(i));
+        let held = |i: usize| self.cursor_used[i] >= since || wanted(i);
+        let behind_all = (0..all).all(|i| at(i).is_some_and(|t| t.0 > start.0));
+        if (behind_all || (0..all).all(held)) && all < cursors_for_size(self.src_size) {
             let (a, v) = self.inner.packet_index();
             let prebuilt = kt_ffmpeg::PrebuiltIndex { audio_pts: a.to_vec(), video_keyframes: v.to_vec() };
             if let Ok(s) = kt_ffmpeg::Source::open_with_index(&self.path, Some(prebuilt)) {
@@ -122,7 +138,17 @@ impl FfmpegSource {
                 return all;
             }
         }
-        (0..all).min_by_key(|&i| (self.cursor_used[i], i)).unwrap_or(0)
+        // the decoder this request still holds keeps its place: the least recently used one may
+        // stand right behind the next run
+        (0..all).min_by_key(|&i| (wanted(i), self.cursor_used[i] >= since, self.cursor_used[i], i)).unwrap_or(0)
+    }
+
+    /// Does decoder `c`, having read `at`, read `next` on in the same run: it reaches it by
+    /// decoding on and no other decoder already stands nearer (decode-waste D2).
+    fn goes_on(&self, c: usize, at: Tick, next: Tick) -> bool {
+        let src = |i: usize| if i == 0 { &self.inner } else { &self.cursors[i - 1] };
+        let Some(d) = src(c).video_reach_from(at, next) else { return false };
+        !(0..1 + self.cursors.len()).any(|i| i != c && src(i).video_reach(next).is_some_and(|e| e < d))
     }
 }
 
@@ -130,6 +156,11 @@ impl FfmpegSource {
     /// How many times the audio sought (t1762).
     pub fn audio_debug_seeks(&self) -> u64 {
         self.inner.audio_debug_seeks()
+    }
+
+    /// How many decoders the file holds open (decode-waste D3, t2884).
+    pub fn decoders(&self) -> usize {
+        1 + self.cursors.len()
     }
 
     /// (backward_reopens, frames_decoded): diagnostics of test 21.
@@ -184,20 +215,10 @@ impl MediaSource for FfmpegSource {
         // position that is not in the file is a sure way to get
         // “no frame” and an eternal “Loading…” over the event.
         let pts = if self.info.still { Tick::ZERO } else { pts };
-        let (w, h) = match quality {
-            Some(q) => (q.width, q.height),
-            None => self.src_size, // the source’s native resolution
-        };
-        let f = self.inner.read_video_frame(pts, w, h)?;
-        Ok(VideoFrame {
-            pts: f.pts,
-            width: f.width,
-            height: f.height,
-            rgba: f.rgba.into_boxed_slice(),
-            // The TRUTH about alpha (R.67): the stream format knows it, and the composite
-            // can mix it: a hard-coded `false` discarded the transparency
-            has_alpha: self.has_alpha,
-        })
+        let (w, h) = self.size_of(quality);
+        let mut out = None;
+        self.read_runs(&[(pts, w, h)], &mut |_, _, f| out = Some(f))?;
+        out.ok_or(MediaError::OutOfRange)
     }
 
     fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
@@ -210,25 +231,9 @@ impl MediaSource for FfmpegSource {
         quality: Option<Quality>,
         emit: &mut dyn FnMut(Tick, VideoFrame),
     ) -> Result<(), MediaError> {
-        let (w, h) = match quality {
-            Some(q) => (q.width, q.height),
-            None => self.src_size,
-        };
-        let has_alpha = self.has_alpha;
-        self.inner
-            .read_video_span(keys, w, h, &mut |k, f| {
-                emit(
-                    k,
-                    VideoFrame {
-                        pts: f.pts,
-                        width: f.width,
-                        height: f.height,
-                        rgba: f.rgba.into_boxed_slice(),
-                        has_alpha,
-                    },
-                )
-            })
-            .map_err(MediaError::from)
+        let (w, h) = self.size_of(quality);
+        let sized: Vec<(Tick, u32, u32)> = keys.iter().map(|k| (*k, w, h)).collect();
+        self.read_runs(&sized, &mut |k, _, f| emit(k, f))
     }
 
     fn read_video_span_qualities(
@@ -237,24 +242,41 @@ impl MediaSource for FfmpegSource {
         emit: &mut dyn FnMut(Tick, Quality, VideoFrame),
     ) -> Result<(), MediaError> {
         let sized: Vec<(Tick, u32, u32)> = keys.iter().map(|(k, q)| (*k, q.width, q.height)).collect();
+        self.read_runs(&sized, &mut |k, (width, height), f| emit(k, Quality { width, height }, f))
+    }
+}
+
+impl FfmpegSource {
+    /// The decode size asked: `None` is the source's native one.
+    fn size_of(&self, quality: Option<Quality>) -> (u32, u32) {
+        quality.map_or(self.src_size, |q| (q.width, q.height))
+    }
+
+    /// Every video read of the file, a frame, a span or a span at several sizes (decode-waste D4):
+    /// runs, each to its own decoder (D9). A run goes on while its decoder, standing at the run's
+    /// last key, is the nearest that reaches the next one (D2) — two places of one file read in one
+    /// chunk keep a decoder each instead of one walking between them — and every key decides
+    /// between decoding on and seeking (`read_video_span_sizes`).
+    fn read_runs(
+        &mut self,
+        sized: &[(Tick, u32, u32)],
+        emit: &mut dyn FnMut(Tick, (u32, u32), VideoFrame),
+    ) -> Result<(), MediaError> {
         let has_alpha = self.has_alpha;
-        // runs of nearby keys, each to its own decoder (D9)
+        let since = self.runs + 1;
         let mut i = 0;
         while i < sized.len() {
+            self.runs += 1;
+            let c = self.cursor_for(sized[i].0, &sized[i + 1..], since);
+            self.cursor_used[c] = self.runs;
             let mut j = i + 1;
-            while j < sized.len() && sized[j].0.0 - sized[j - 1].0.0 <= RUN_GAP {
+            while j < sized.len() && (sized[j].0 == sized[j - 1].0 || self.goes_on(c, sized[j - 1].0, sized[j].0)) {
                 j += 1;
             }
-            self.runs += 1;
-            let c = self.cursor_for(sized[i].0);
-            self.cursor_used[c] = self.runs;
             let src = if c == 0 { &mut self.inner } else { &mut self.cursors[c - 1] };
-            src.read_video_span_sizes(&sized[i..j], &mut |k, (w, h), f| {
-                emit(
-                    k,
-                    Quality { width: w, height: h },
-                    VideoFrame { pts: f.pts, width: f.width, height: f.height, rgba: f.rgba.into_boxed_slice(), has_alpha },
-                )
+            src.read_video_span_sizes(&sized[i..j], &mut |k, size, f| {
+                // the TRUTH about alpha (R.67): the stream format knows it, and the composite can mix it
+                emit(k, size, VideoFrame { pts: f.pts, width: f.width, height: f.height, rgba: f.rgba.into_boxed_slice(), has_alpha })
             })?;
             i = j;
         }
