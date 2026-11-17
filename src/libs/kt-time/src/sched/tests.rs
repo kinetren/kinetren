@@ -341,3 +341,22 @@ fn t2256_a_threads_class_follows_its_work() {
     .join()
     .unwrap();
 }
+
+/// t2953 (close-while-busy): a running job's `cancel_check` turns true when its lane closes, so the
+/// layer under it (the render-ahead producer's stream history walk) stops with the lane.
+#[test]
+fn t2953_a_job_sees_its_lane_close_through_its_check() {
+    let lane = Lane::open("t2953:close", Class::Near);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (go_tx, go) = std::sync::mpsc::channel::<()>();
+    lane.post(move |ctx| {
+        let check = ctx.cancel_check();
+        tx.send(check()).unwrap();
+        let _ = go.recv();
+        tx.send(check()).unwrap();
+    });
+    assert!(!rx.recv().unwrap(), "a running job's check is false while its lane is open");
+    lane.close();
+    go_tx.send(()).unwrap();
+    assert!(rx.recv().unwrap(), "the closed lane's job did not see it");
+}

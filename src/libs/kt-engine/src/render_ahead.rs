@@ -322,7 +322,11 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
         let in_flight = ra.st.lock().unwrap().flights.len() + 1;
         span.aux(kt_time::trace::job::RENDER_AHEAD).id(id).a(t as u64).c(in_flight as u64);
         let at = Instant::now();
-        let out = parts.compose_ahead(&exec, &display, &video, Tick(t), q, &mut buf);
+        // a stream history this moment walks stops when the lane closes (close-while-busy): the
+        // player's drop closes it, and a walk of seconds held the producer's thread past the close
+        let out = crate::video::stop_when(kt_time::trace::stop::CLOSED, ctx.cancel_check(), || {
+            parts.compose_ahead(&exec, &display, &video, Tick(t), q, &mut buf)
+        });
         let own = at.elapsed().as_nanos() as u64;
         let Some(out) = out else {
             span.cancel();

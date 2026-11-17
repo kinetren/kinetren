@@ -1128,3 +1128,38 @@ fn t2711_the_frame_on_screen_walks_at_the_displays_class() {
     assert!(split < ids.len() && ids[split..].iter().all(|&c| c == near), "the frames ahead ran at another class: {ids:?}");
     assert!(vr.layers_at(Tick(t.0 + 8 * STEP), Q).is_empty(), "the run reached its end");
 }
+
+// ---- close-while-busy ----------------------------------------------------------------------------
+
+/// t2952 (close-while-busy, kkt-26.11.18 T1): a decoder in a long span stops at the next chunk once
+/// its worker closes, and the close's wait for it is bounded and recorded. Before, the span of 32
+/// pictures ran to its end (6.4 s here) and the join waited for all of it — the player's drop, the
+/// window's close.
+#[test]
+fn t2952_a_closing_decoder_stops_between_chunks() {
+    let _g = serial();
+    let cache = Arc::new(BurstCache::new(CacheConfig::default()));
+    let counts = Arc::new(Mutex::new(Counts::default()));
+    let worker = MediaWorker::spawn(MediaId(1), Box::new(GopSource::new(Duration::from_millis(200), counts.clone())), cache);
+    let items = kt_time::trace::testing::capture(|| {
+        for k in 0..32 {
+            worker.submit(video(k * STEP));
+        }
+        let deadline = kt_time::test_deadline();
+        while counts.lock().unwrap().served.is_empty() {
+            assert!(std::time::Instant::now() < deadline, "the decoder never started");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let t0 = std::time::Instant::now();
+        worker.shutdown();
+        // the bound IS the check: a close that waits for a whole span is the defect
+        assert!(t0.elapsed() < kt_time::shutdown::WAIT + Duration::from_secs(1), "the close waited {:?}", t0.elapsed());
+    });
+    let recs = kt_time::trace::testing::recs(&items);
+    let wait = recs
+        .iter()
+        .find(|r| r.ev == kt_time::trace::Ev::Shutdown as u16 && r.aux == kt_time::trace::name("media-worker"))
+        .expect("the close's wait for the decoder is in the trace");
+    assert_eq!(wait.b, 0, "the decoder stopped between chunks (it was left running: no stop check in its span)");
+    assert!(counts.lock().unwrap().pictures < 32, "the span ran to its end");
+}

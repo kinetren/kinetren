@@ -101,6 +101,7 @@ pub fn run(args: &[String]) -> i32 {
         "memory" => memory(run),
         "gpu" => gpu(run),
         "export" => export(run),
+        "shutdown" => shutdown(run),
         "dump" => dump(run, arg(1), arg(2)),
         "chrome" => match rest.get(1) {
             Some(out) => match std::fs::write(out, chrome(run)) {
@@ -111,13 +112,63 @@ pub fn run(args: &[String]) -> i32 {
         },
         _ => {
             eprintln!(
-                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|export|machine|memory|dump [from to]|chrome <out.json>"
+                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|export|shutdown|machine|memory|dump [from to]|chrome <out.json>"
             );
             return 2;
         }
     };
     print!("{out}");
     0
+}
+
+/// The run's close (close-while-busy, kkt-26.11.18 T1): when it was asked, every wait of the close
+/// (who, how long, ended or left running), the durability point, a forced exit, and what each thread
+/// still did after the close was asked. A run with no close says so with its last record: killed, or
+/// a build before close-while-busy (it recorded no close).
+pub fn shutdown(run: &Run) -> String {
+    use kt_time::trace::shutdown as k;
+    let mut o = String::new();
+    let marks: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::Shutdown)).collect();
+    let last = run.recs.iter().map(|r| r.end()).max().unwrap_or(0);
+    let Some(asked) = marks.iter().find(|r| r.id == k::ASKED).map(|r| r.t) else {
+        let _ = writeln!(o, "no close in this run: its last record is at {} (killed, or a build that recorded no close)", s(last));
+        return o;
+    };
+    for r in &marks {
+        let who = run.name_of(r.aux);
+        let line = match r.id {
+            k::ASKED => format!("the program closes ({who})"),
+            k::DURABLE => "the work is safe (recovery written): the exit is bounded from here".to_string(),
+            k::FORCED => format!("the exit passed its bound and was FORCED; still waited for: {who}"),
+            k::RETURNED => "eframe returned: the app was dropped, the C exit hooks are next".to_string(),
+            _ => format!(
+                "waited {} for {who}{}",
+                ms(r.dur),
+                if r.b == 1 { " — still running at its bound, left behind" } else { "" }
+            ),
+        };
+        let _ = writeln!(o, "  {} {line}", s(r.t));
+    }
+    let _ = writeln!(o, "  the run's last record: {} ({} after the close was asked)", s(last), ms(last.saturating_sub(asked)));
+    // what each thread did after the close: its last record past the ask
+    let mut after: BTreeMap<String, (u64, &'static str, u64)> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| r.end() > asked && !is(r, Ev::Shutdown)) {
+        let name = Ev::from_u16(r.ev).map_or("?", |e| e.name());
+        let th = run.thread_of(r.th);
+        let e = after.entry(th).or_insert((0, name, 0));
+        e.2 += 1;
+        if r.end() >= e.0 {
+            e.0 = r.end();
+            e.1 = name;
+        }
+    }
+    if !after.is_empty() {
+        o.push_str("  after the close was asked:\n");
+        for (th, (end, name, n)) in after {
+            let _ = writeln!(o, "    {th:<24} {n:>5} records, the last {name} ending {}", s(end));
+        }
+    }
+    o
 }
 
 /// Where each export of the run spent its time (render-speed D2): its stage records, the share of the
