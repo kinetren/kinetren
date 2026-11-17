@@ -28,6 +28,7 @@ already made the export tag what it writes; the decode side still guessed.
 
 ### Modified Capabilities
 - `media-index`: the decode converts YUV with the source's own matrix and range.
+- `export`: t2806's scenario — every exported file reads back as written through the decode that reads its tags.
 
 ## Impact
 
