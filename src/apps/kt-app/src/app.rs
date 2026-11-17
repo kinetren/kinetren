@@ -850,7 +850,7 @@ impl KtApp {
                 // the device a slow chain moves to: building it takes seconds, and until it
                 // stands everything composes on the display's device
                 let slow = self.player.slow_gpu_setter();
-                let fill = self.player.fill_gpu_setter();
+                let ahead = self.player.ahead_gpu_setter();
                 let _ = std::thread::Builder::new().name("offline-engine".into()).spawn(move || {
                     // the slow route has the offline engine to itself (effect cells, reel strips
                     // and posters compose on its sibling), and its ring bounds what stands in front
@@ -859,9 +859,9 @@ impl KtApp {
                         e.serve_preview();
                         e as std::sync::Arc<dyn kt_engine::VideoGpuExec>
                     }));
-                    // a playing loop's unshown moments compose on the side engine, below the
-                    // display (scheduler-followups D5, row 251)
-                    fill(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+                    // the render-ahead producer composes on the display's own device; the side engine
+                    // serves it only under KT_RENDER_AHEAD_DEVICE=side (render-ahead D3)
+                    ahead(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
                 });
             }
             Err(e) => self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, e)),

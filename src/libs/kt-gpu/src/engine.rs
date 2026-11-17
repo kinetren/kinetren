@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use kt_engine::{
     Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, HeldOut, LayerSrc, PlanLayer, PresentOptions,
-    TransMix, VideoGpuExec, video_plan::SoloFade,
+    TransMix, VideoGpuExec, video_plan::{Ahead, SoloFade},
 };
 use kt_model::FxInstance;
 use kt_time::Tick;
@@ -927,6 +927,12 @@ pub struct GpuFxEngine {
     /// The preview's engine off the window's device (`keep_composites_for_bytes`): its device's
     /// role is the preview's (gl-record-preview).
     bytes_preview: std::sync::atomic::AtomicBool,
+    /// A sibling of the window's engine (the render-ahead producer's): its submissions on the window's
+    /// device yield to a refused reconfigure as the display's own do.
+    on_window: std::sync::atomic::AtomicBool,
+    /// Its device, by address: an engine on the same device keeps a composite on the device
+    /// (render-ahead D3).
+    device_id: usize,
 }
 
 pub(crate) const SHADERS: [(&str, &str); PIPE_COUNT] = [
@@ -1364,11 +1370,33 @@ impl GpuFxEngine {
         // its frame state creates textures and buffers on the device: on GL past the gate, a call of
         // ours stalled under the context lock made this thread panic (t2746 beside t2745's hold)
         let _gate = self.compiled.gl_gate();
-        let (device, queue, arb, memo_guard, seed) = {
+        let (device, queue, arb, memo_guard, seed, surface) = {
             let g = self.inner.lock().unwrap();
-            (g.device.clone(), g.queue.clone(), g.arb.clone(), g.memo_guard, g.timer.seed_key())
+            (g.device.clone(), g.queue.clone(), g.arb.clone(), g.memo_guard, g.timer.seed_key(), g.surface)
         };
-        Self::assemble(device, queue, self.info.clone(), self.compiled.clone(), arb, memo_guard, false, false, seed)
+        let e = Self::assemble(device, queue, self.info.clone(), self.compiled.clone(), arb, memo_guard, false, false, seed);
+        // a sibling of the window's engine: nobody block-waits on its device either, and its frames
+        // yield to the window's refused reconfigure
+        if surface {
+            e.inner.lock().unwrap().surface = true;
+        }
+        if self.display || self.on_window.load(std::sync::atomic::Ordering::Relaxed) {
+            e.on_window.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        e
+    }
+
+    /// Keep a composite made on this engine's device by a sibling (render-ahead D3): no copy; the
+    /// queue orders this memo's later display pass after the sibling's passes. `false` — not kept.
+    fn keep_tex(&self, key: u64, tex: Tex) -> bool {
+        let _hold = crate::holds::within(self.role(), "keep");
+        let _gate = self.compiled.gl_gate();
+        let mut g = self.inner.lock().unwrap();
+        if g.present_memo.holds(key) {
+            g.pool.release(tex);
+            return true;
+        }
+        g.memo_keep(key, tex)
     }
 
     /// This engine's device is the compute host's (`compute::host_device`): `execute_held` leaves a
@@ -1430,6 +1458,8 @@ impl GpuFxEngine {
             shown: Mutex::new((None, None)),
             display: keep,
             bytes_preview: std::sync::atomic::AtomicBool::new(false),
+            on_window: std::sync::atomic::AtomicBool::new(false),
+            device_id: Arc::as_ptr(&device) as usize,
             role: if keep {
                 crate::errors::role::DISPLAY
             } else if export {
@@ -1621,7 +1651,7 @@ impl GpuFxEngine {
     /// The display engine's frame waits out a refused reconfigure of the window's surface: wgpu
     /// refuses one that finds the queue busy with another thread's work (gpu-errors-survive).
     fn yield_to_display(&self) {
-        if self.display {
+        if self.display || self.on_window.load(std::sync::atomic::Ordering::Relaxed) {
             crate::errors::yield_to_display();
         }
     }
@@ -1712,6 +1742,46 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn sibling_exec(&self) -> Option<Arc<dyn VideoGpuExec>> {
         Some(GpuFxEngine::sibling(self))
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn poll_done(&self) {
+        let device = self.inner.lock().unwrap().device.clone();
+        let _ = device.poll(wgpu::PollType::Poll);
+    }
+
+    /// On the keeper's own device the composite goes into its memo on the device and nobody waits
+    /// (render-ahead D3); otherwise by bytes.
+    fn ahead(&self, plan: &FramePlan<'_>, keeper: &Arc<dyn VideoGpuExec>, buf: &mut Vec<u8>) -> Result<Ahead, GpuExecError> {
+        let same = keeper
+            .as_any()
+            .and_then(|a| a.downcast_ref::<GpuFxEngine>())
+            .filter(|k| k.device_id == self.device_id && !std::ptr::eq(*k, self));
+        let Some(k) = same else {
+            return kt_engine::ahead_by_bytes(self, plan, keeper, buf);
+        };
+        self.yield_to_display();
+        let (complete, kept, sub, queue) = {
+            let _hold = crate::holds::within(self.role(), "ahead");
+            let _gate = self.compiled.gl_gate();
+            let _frame = self.compiled.frame();
+            let cold = crate::compiled::cold_draws();
+            let mut g = self.inner.lock().unwrap();
+            let (complete, kept, sub) = g.guarded(|g| g.ahead_tex(plan))?;
+            g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
+            (complete, kept, sub, g.queue.clone())
+        };
+        let done = Arc::new(std::sync::atomic::AtomicBool::new(sub.is_none()));
+        if sub.is_some() {
+            let flag = done.clone();
+            queue.on_submitted_work_done(move || flag.store(true, std::sync::atomic::Ordering::Release));
+        }
+        // the keeper's lock is taken with this engine's released: its present never waits for ours
+        let kept = kept.and_then(|(key, tex)| k.keep_tex(key, tex).then_some(key));
+        Ok(Ahead { complete, kept, done: Some(done) })
     }
 
     fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
@@ -2098,6 +2168,78 @@ impl Inner {
         self.harvest();
         self.last_stages.copy_ns = mark.elapsed().as_nanos() as u64;
         Ok(f.complete)
+    }
+
+    /// `present`'s resolve and passes without the display pass (render-ahead D3): the composite texture
+    /// comes back to be kept by an engine of the same device, the submission admitted on the ring by
+    /// the caller's class and cut as a lower-class frame is, nothing waited for. `(complete, the key and
+    /// texture to keep, the submission)`; nothing to keep for an incomplete or empty plan, or when a
+    /// run's form moved while it resolved (the key names the form).
+    #[allow(clippy::type_complexity)]
+    fn ahead_tex(&mut self, plan: &FramePlan<'_>) -> Result<(bool, Option<(u64, Tex)>, Option<wgpu::SubmissionIndex>), GpuExecError> {
+        let (ow, oh) = (plan.out_w, plan.out_h);
+        if ow > self.max_dim || oh > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: ow, h: oh });
+        }
+        self.last_cost = Default::default();
+        self.last_stages = Default::default();
+        let mark = Instant::now();
+        let forms = crate::compiled::forms_revision();
+        let key = plan_key(plan);
+        // a layer without its frame: nothing of this plan reaches the device (no-partial-picture)
+        if plan.starved() {
+            return Ok((false, None, None));
+        }
+        let upload_before = (self.upload.spent_ns, self.upload.spent_bytes);
+        self.upload.begin_frame();
+        self.binds.begin_frame();
+        self.last_runs = Default::default();
+        let (jobs, complete) = self.resolve_plan(plan)?;
+        if !complete || jobs.is_empty() {
+            return Ok((complete, None, None));
+        }
+        for j in &jobs {
+            self.last_cost.add(j.cost());
+        }
+        let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
+        if total > self.arena_slots {
+            let slots = total.next_power_of_two();
+            crate::created();
+            self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("kt-gpu uniforms"),
+                size: SLOT * slots as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.arena_slots = slots;
+            self.binds.clear();
+        }
+        self.slot = 0;
+        let meta = frame_meta(&jobs, (ow, oh));
+        self.harvest();
+        self.timer.begin();
+        self.piece = Some(crate::arbiter::Piece::begin(&self.arb, self.timer.last_frame(Role::Preview)));
+        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu ahead") });
+        let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+        self.timer.end(&mut enc, Role::Preview, meta);
+        kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
+        self.staged.flush(&self.queue, &self.arena);
+        let submit = Instant::now();
+        let sub = { let _h = crate::holds::hold(self.role(), "submit"); self.queue.submit([enc.finish()]) };
+        self.last_stages.submit_ns = submit.elapsed().as_nanos() as u64;
+        if let Some(p) = self.piece.take() {
+            p.end(&self.device, &self.queue, sub.clone(), self.surface);
+        }
+        self.timer.submitted(&self.queue, Role::Preview, meta);
+        self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
+        self.last_stages.upload_bytes = self.upload.spent_bytes - upload_before.1;
+        self.last_stages.encode_ns = (mark.elapsed().as_nanos() as u64).saturating_sub(self.last_stages.upload_ns);
+        if crate::compiled::forms_revision() != forms {
+            // a later frame writing the texture is ordered after this one on the queue
+            self.pool.release(result);
+            return Ok((true, None, Some(sub)));
+        }
+        Ok((true, Some((key, result)), Some(sub)))
     }
 
     /// `execute` that ends in the display target instead of a readback (preview-throughput D2):

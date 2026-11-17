@@ -170,3 +170,9 @@ carries the model's revision into `Edit.a`.
 read as its job's last, and the admission waits between a Datamosh job's 33 pieces read as "buffers after
 end p50 607 ms". The query takes the `compute_job` span holding the record on its thread; a record outside
 every span is its own job (traces before the span was written).
+
+**Acceptance by utilisation** (render-ahead D7, t2926): a performance change was accepted when the mechanism
+found in the owner's trace was gone; none asked how busy the device was while frames were missing, the
+property he notices. Every timed frame is a `GpuFrame` record (its device ns at the harvest), and `trace loop`
+prints the device's share per lap and over the laps that missed a frame. On a software rasterizer the share
+is the processor's; on a card it is the card's.

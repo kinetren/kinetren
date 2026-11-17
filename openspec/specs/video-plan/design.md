@@ -582,8 +582,8 @@ device or the cores stand idle. Full record: `openspec/changes/archive/2026-11-1
   them as a FIFO (an overrun flight keeps half its time); a lower class is admitted while the drain plus its
   claim ends within the bound past the later of the display's next present and the end of its frame in
   flight; at most three lower flights uncompleted; a lower piece is half the bound so one runs while the
-  next is queued. The display's present is counted, never admitted. Rejected: a larger bound (the owner's
-  latency limit), counting the display without a time model (only more waits).
+  next is queued. The display's present is counted, never admitted. Rejected then: a larger bound (called "the owner's
+  latency limit" — a mislabel, see render-ahead D5: he never set it and raised it on 2026-11-17), counting the display without a time model (only more waits).
 - **What it cannot do:** a display that composes heavy chains every frame saturates the device; the walk
   then gets about one bound a display frame (row 491).
 - **Cold passes** (D2): pass and dispatch times on disk (adapter + driver, label, work units), scaled by work;
@@ -675,7 +675,8 @@ either: its present waited p50 54 ms against kt26.11.10's 60 ms, while the frame
 Loading for a history the ring held back.
 
 Now `near` keeps the bound, `visible`/`background` at least a quarter of it, an export only the slack. The
-owner's latency limit stays: no piece longer than the bound, at most three lower pieces of half the bound
+half-frame bound stays (then mislabelled "the owner's latency limit"; render-ahead D5 corrected it and,
+by his decision, raised the bound to a frame period and removed the piece count): no piece longer than the bound, at most three lower pieces of half the bound
 uncompleted in front of the display (kt26.11.10 put whole 380 ms jobs there). Rejected: dropping the
 cut of lower pieces (the display would wait behind a whole job again); admitting on an idle device only
 (the ring does not know the device is idle until a poll, and on a card the queue is rarely empty).
@@ -699,7 +700,7 @@ through its admissions and readback), with no display gate (the ring orders the 
 on his Datamosh region 86 of 92 fill moments of a lap came out incomplete, and three lanes would take the
 device from the history walk. On a software device it stays one at a time behind the display: forced to
 three on llvmpipe (release, heavy showcase, 4 s loop) it never became all-kept in 11–12 laps against lap 7,
-at V-fps 5–9 against 14 — the device is the processor. t2860 holds the card case with an executor of a
+at V-fps 5–9 against 14 — the device is the processor. t2860 held the card case (replaced by t2920 in render-ahead) with an executor of a
 150 ms round trip: 1.0 s against 2.8 s for 18 moments.
 
 Class walk (what else waits on a round trip one at a time): the display's compose thread and the slow route
@@ -726,3 +727,35 @@ died so under a full run). `wait_presented`'s checks stop growing at the frame's
 (t2866). Rejected: a lower-class piece of the whole bound — his near waits outlasted their prediction
 (p50 22 ms), they were not pieces too small for it. On llvmpipe (a ring per device, one fill lane) the
 preview bench does not move; his next trace is the measure: near admission share against 486 %.
+
+## Playback is a render-ahead pipeline (render-ahead, 2026-11-17; review R2+R5, kkt-26.11.17 S4)
+
+The two sections above ("A saturating display keeps near work at the bound", "The loop fill's width") are
+history: render-ahead deleted the rooms by class, `AHEAD_PIECES`, the loop fill and its width. The
+architecture review (`docs/architecture-review-26.11.17.md`) found the scheduling layer, not the
+computation, to be the weak point: one frame in flight, a round trip per frame (admit → pieces → readback →
+upload), several devices on one card; on the owner's iGPU the card was 4–26 % busy while frames were missing.
+
+- **D1 — playing, the display presents.** With a producer executor the compose thread shows a moment's kept
+  composite or nothing (Loading), runs no plan, and kicks the producer; on demand only for a moment with no
+  layer, one not decoded, one the producer skipped this lap, and paused/scrubbing/seeking. Two producers
+  of the same moments was the duplicate work the bench measured (a quarter of a loop composed twice).
+- **D2 — one producer, one order:** frame on screen plus the measured lead, round the loop or forward to the
+  decoded window's end; skips for the lap what came out incomplete or the memo refused.
+- **D3 — on the display's device.** `VideoGpuExec::ahead`: a sibling of the display engine hands the
+  composite to the display's memo on the device (a done flag, no readback, no wait). Chosen for a software
+  rasterizer too by measurement: the side device's readback and upload cost more than its own queue thread
+  gave. `KT_RENDER_AHEAD_DEVICE=side` keeps the side route as the A/B.
+- **D4 — the depth is measured:** moments in flight ≤ ceil(wall of a moment / the producer's own time a
+  moment), capped by the ledger's room. Rejected: a width from the scheduler's pool (cpu-idle-work) — a
+  constant of one machine's shape.
+- **D5 — the bound is one frame period** for every lower class; piece count and rooms deleted. The half
+  period was never the owner's ("the owner's latency limit" in two designs was a mislabel); asked with
+  context he raised it.
+- **D6 — the far walk retries while it walks or the decoder brings frames** (`far_walk_again`), replacing the
+  eight-pass `FAR_STALLS`.
+- **What llvmpipe shows and what it cannot:** the device is the processor and was saturated before and
+  after (88–89 % busy while frames were missing now); the same heavy VHS loop costs 35 % less device time and
+  shows 41 frames in its second lap against 25. The card case (rows 663, 692) is held by t2920 and t2922 and
+  waits for the owner's trace or the reference mini-PC. Not done: the compute host on the display's device
+  (eframe creates the window's device; on GL it has no compute) — rows 663, 693 stay open.

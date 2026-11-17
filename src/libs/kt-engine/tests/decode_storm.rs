@@ -1056,6 +1056,28 @@ fn t2432_a_loop_is_computed_to_its_end() {
     }
 }
 
+/// t2924 (render-ahead D6, replacing gpu-throughput D3's eight-pass `FAR_STALLS`): a far walk left
+/// pending runs again while it walks or while the decoded-frame cache gains frames; one that walked
+/// nothing over a pass that decoded nothing stops, and the cache's count moves with every video frame
+/// inserted (never with audio).
+#[test]
+fn t2924_a_stalled_far_walk_waits_for_a_decoded_frame() {
+    use kt_engine::player::far_walk_again;
+    assert!(far_walk_again(true, true, 5, 5), "a walk that walked goes on");
+    assert!(far_walk_again(true, false, 5, 6), "a frame came: try again");
+    assert!(!far_walk_again(true, false, 5, 5), "nothing walked, nothing decoded: stop");
+    assert!(!far_walk_again(false, true, 5, 6), "a walk with nothing pending is done");
+    let p = mosh_project();
+    let (vr, cache) = (renderer(&p, None), big_cache());
+    let before = cache.video_inserted();
+    let layers = vr.layers_at(Tick(2 * SEC), Q);
+    assert!(!layers.is_empty(), "the scene: a frame with layers");
+    warm(&layers, &cache);
+    assert_eq!(cache.video_inserted() - before, layers.len() as u64, "every decoded frame counts once");
+    cache.insert_audio(kt_engine::source_id(MediaId(1)), Arc::new(AudioBurst::silence(0)));
+    assert_eq!(cache.video_inserted() - before, layers.len() as u64, "audio moved the video count");
+}
+
 /// t2710 (stream-round-trips D8, found-defects 660, kkt-26.11.15 N2): playing a piece with no stream
 /// stage on screen in a project that has one elsewhere, the far look-ahead walks nothing — it walked
 /// 33.5 million frames a pass (26 s of the prefetch thread on the owner's machine, the look-ahead

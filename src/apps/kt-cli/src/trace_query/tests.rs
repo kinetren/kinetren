@@ -706,3 +706,31 @@ fn t2791_trace_export_reads_where_an_export_spent_its_time() {
     assert!(out.contains("2 export submissions waited 3000.0 ms for admission (15.0 % of wall), 1 pieces cut — a display shares the device"), "{out}");
     assert!(export(&run_of(vec![])).contains("no export in this run"));
 }
+
+/// Test t2926 (render-ahead D7): `trace loop` reads the device's busy share per lap from the `GpuFrame`
+/// records harvested in it, and over the laps that had a moment not kept, the share while frames were
+/// missing.
+#[test]
+fn t2926_a_lap_reads_its_device_share() {
+    let mut run = looped();
+    // lap 0 [first play .. 120 ms) and lap 1 [120 .. 240 ms) miss frames; lap 2 is all kept
+    let first = lap_bounds(&run)[0].0;
+    for (t, ns) in [(first + 20 * MS, 30 * MS), (first + 60 * MS, 30 * MS), (130 * MS, 60 * MS), (250 * MS, MS)] {
+        run.recs.push(rec(Ev::GpuFrame, t, |r| r.a = ns));
+    }
+    run.recs.sort_by_key(|r| r.t);
+    let b = lap_bounds(&run);
+    let out = laps(&run);
+    println!("{out}");
+    let lap = |n: usize| out.lines().filter(|l| l.split_whitespace().nth(1).is_some_and(|w| w.starts_with('+'))).nth(n).unwrap().to_string();
+    let pct = |ns: u64, (a, z): (u64, u64)| format!("device {:.0} %;", ns as f64 * 100.0 / (z - a) as f64);
+    assert!(lap(0).contains(&pct(60 * MS, (b[0].0, b[0].1))), "{}", lap(0));
+    assert!(lap(1).contains(&pct(60 * MS, (b[1].0, b[1].1))), "{}", lap(1));
+    assert!(lap(2).contains(&pct(MS, (b[2].0, b[2].1))), "{}", lap(2));
+    let wall = (b[0].1 - b[0].0) + (b[1].1 - b[1].0);
+    let line = out.lines().find(|l| l.starts_with("device busy while frames were missing")).expect("the summary");
+    assert!(line.contains(&format!("{:.0} %", 120.0 * MS as f64 * 100.0 / wall as f64)), "{line}");
+    assert!(line.contains("over 2 laps"), "{line}");
+    let g = gpu(&run);
+    assert!(g.contains("frames timed 4 (preview 4"), "{g}");
+}

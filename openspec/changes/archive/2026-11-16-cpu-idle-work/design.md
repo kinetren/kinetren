@@ -34,8 +34,8 @@ over 165 ms is ~6 moments a second, whatever the card and the processor could do
 the machine and the device at run time; nothing changes at rest; the software rasterizer keeps its
 measured rule.
 
-**Non-Goals:** the arbiter's bound and its three lower pieces (the owner's latency limit, loop-laps-regression
-D2); the export pipeline (`render-speed`); the display's own compose thread (one frame at a time is its
+**Non-Goals:** the arbiter's bound and its three lower pieces (called the owner's latency limit, loop-laps-regression
+D2 — a mislabel [Correction, render-ahead 2026-11-17: this bound was never the owner's rule — gpu-arbiter D3 set it as a general rule he might revisit; asked with context, he raised it to one frame period (kkt-26.11.17 S4).]); the export pipeline (`render-speed`); the display's own compose thread (one frame at a time is its
 contract: a newer ask replaces a waiting one); a CPU executor of device work beside a card (see Open Questions).
 
 ## Decisions

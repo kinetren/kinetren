@@ -458,6 +458,22 @@ pub fn gpu(run: &Run) -> String {
     let last = run.recs.iter().map(|r| r.end()).max().unwrap_or(0);
     let span = (last.saturating_sub(first) as f64 / NS).max(1e-9);
     let _ = writeln!(o, "-- device rings over {span:.1} s --");
+    // the timed frames and their device time (render-ahead D7)
+    let frames: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::GpuFrame)).collect();
+    if !frames.is_empty() {
+        let dev: u64 = frames.iter().map(|r| r.a).sum();
+        let roles = |role: u32| frames.iter().filter(|r| r.aux == role).count();
+        let _ = writeln!(
+            o,
+            "frames timed {} (preview {}, offline {}, export {}): device {} — {:.0} % of the run",
+            frames.len(),
+            roles(0),
+            roles(1),
+            roles(2),
+            ms(dev),
+            dev as f64 / NS * 100.0 / span
+        );
+    }
     // ring → class → (admissions, total wait, max wait, pieces)
     type Admits = BTreeMap<u64, (u64, u64, u64, u64)>;
     let mut rings: BTreeMap<u64, Admits> = BTreeMap::new();
@@ -1153,6 +1169,8 @@ pub fn laps(run: &Run) -> String {
     }
     let mut seen_key: HashMap<u64, u64> = HashMap::new();
     let mut seen_layers: HashMap<u64, Vec<Rec>> = HashMap::new();
+    // the laps with a moment the display did not show kept: device time, wall, laps
+    let mut missing = (0u64, 0u64, 0usize);
     let _ = writeln!(
         o,
         "{:>4} {:>9} {:>7} {:>6} {:>6} {:>6} {:>6}  audio: kept/live — why the rest were not served",
@@ -1189,16 +1207,27 @@ pub fn laps(run: &Run) -> String {
         // (stream-history-on-device, found-defects 394: his run computed 1413 for 618)
         let (walked, distinct) = walked_in(run, a, b);
         let mut walk = if walked > 0 { format!("  history: {walked} positions walked, {distinct} distinct;") } else { String::new() };
-        // the loop fill's composites below the display (scheduler-followups D5): not the display's
-        // frames, so not in the columns
-        let fills: Vec<&Rec> = run
+        // the render-ahead producer's composites (render-ahead D2; the loop fill's before it): not the
+        // display's frames, so not in the columns
+        let ahead: Vec<&Rec> = run
             .recs
             .iter()
-            .filter(|r| is(r, Ev::Job) && r.aux == trace::job::LOOP_FILL && r.t >= a && r.t < b)
+            .filter(|r| is(r, Ev::Job) && r.aux == trace::job::RENDER_AHEAD && r.t >= a && r.t < b)
             .collect();
-        if !fills.is_empty() {
-            let kept = fills.iter().filter(|r| r.b == 0).count();
-            let _ = write!(walk, "  fill: {kept} kept of {} composed;", fills.len());
+        if !ahead.is_empty() {
+            let kept = ahead.iter().filter(|r| r.b == 0).count();
+            let deepest = ahead.iter().map(|r| r.c).max().unwrap_or(0);
+            let _ = write!(walk, "  ahead: {kept} kept of {} composed, up to {deepest} in flight;", ahead.len());
+        }
+        // how busy the device was (render-ahead D7): the device time of the frames harvested in the lap
+        let device = device_ns(run, a, b);
+        if device > 0 {
+            let _ = write!(walk, "  device {:.0} %;", device as f64 * 100.0 / (b - a).max(1) as f64);
+        }
+        if kept < frames.len() || frames.is_empty() {
+            missing.0 += device;
+            missing.1 += b - a;
+            missing.2 += 1;
         }
         let _ = writeln!(
             o,
@@ -1265,7 +1294,23 @@ pub fn laps(run: &Run) -> String {
         }
         let _ = rs + re;
     }
+    if missing.2 > 0 {
+        let _ = writeln!(
+            o,
+            "device busy while frames were missing: {:.0} % ({} of device in {:.2} s over {} lap{})",
+            missing.0 as f64 * 100.0 / missing.1.max(1) as f64,
+            ms(missing.0),
+            missing.1 as f64 / NS,
+            missing.2,
+            if missing.2 == 1 { "" } else { "s" }
+        );
+    }
     o
+}
+
+/// The device time of the timed frames harvested in `[a, b)` (`GpuFrame`, render-ahead D7).
+pub fn device_ns(run: &Run, a: u64, b: u64) -> u64 {
+    run.recs.iter().filter(|r| is(r, Ev::GpuFrame) && r.t >= a && r.t < b).map(|r| r.a).sum()
 }
 
 // ---- windows -------------------------------------------------------------------------------------
@@ -1361,7 +1406,7 @@ fn job_name(aux: u32) -> &'static str {
         j::PEAKS => "peaks",
         j::EXPORT => "export",
         j::SHARED_BUILD => "shared_build",
-        j::LOOP_FILL => "loop_fill",
+        j::RENDER_AHEAD => "render_ahead",
         _ => "?",
     }
 }
