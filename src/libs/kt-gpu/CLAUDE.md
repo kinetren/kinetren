@@ -260,6 +260,18 @@ is no picture, and an export refuses.
 - A new point-wise plugin needs no code here: `fuses_in_runs` (kt-plugin-api) admits it, and its
   `tap_<id>` must read only its arguments (the registry refuses a texture or `P` read, t2194).
 
+## The render-ahead producer's moments stay on the device (render-ahead D3)
+
+- **`ahead(plan, keeper)` on a sibling of the keeper's engine** (the same `device_id`): `Inner::ahead_tex`
+  is `present`'s resolve and passes without the display pass, admitted and cut on the ring by the caller's
+  class (`Piece`, `Role::Preview`), submitted, never waited for; the composite texture moves into the
+  keeper's present memo (`keep_tex`, the keeper's lock taken with ours released) and a done flag is set by
+  the queue's work-done callback (`poll_done` drives it). Any other keeper — the bytes form
+  (`kt_engine::ahead_by_bytes`: `execute_into`, then the keeper's `keep`). Nothing is kept when a run's
+  form moved during the resolve. t2922 holds the three routes to one key and one composite.
+- **A sibling of the window's engine inherits `surface` and `on_window`**: nobody block-waits on its
+  device and its frames yield to a refused reconfigure, as the display's own do.
+
 ## The export's readback ring (export-throughput D5)
 
 - `submit`/`collect` (`readback_depth` = `RING` = 3): the same resolve and passes as `execute`, the
@@ -279,7 +291,7 @@ is no picture, and an export refuses.
 - `offline_engine()`: a headless device out of the preview's queue; since scheduler-followups (row
   290) the preview's slow-chain route has it to itself (`serve_preview` registers its ring as one that
   fronts the person's frame: a software device's ring then bounds and cuts lower classes, t2337).
-  Effect thumbnails, reel strips, posters and the loop fill compose on `side_engine()`, its `sibling`:
+  Effect thumbnails, reel strips and posters (and the render-ahead producer under `KT_RENDER_AHEAD_DEVICE=side`) compose on `side_engine()`, its `sibling`:
   the same device, queue, ring and `Compiled` (nothing compiles, t2338), its own `Inner` and lock. Serials of frames are process-wide because it serves a fresh cache per job
   (t1574). A blended frame's upload key takes the pair and the weight (t250): it carries its base
   frame's serial.
@@ -398,23 +410,22 @@ is no picture, and an export refuses.
   offline, a lane's job its lane's class, untagged background). A new thread that submits GPU or
   compute work sets its class.
 - **A ring with a display bounds what a lower class leaves in front of the display's NEXT present**
-  (gpu-throughput D1): every flight carries its predicted ns and submit instant, the ring drains them as a
-  FIFO, and a lower class is admitted while the drain plus its claim ends within the bound past the later
-  of the display's next present (a period after its last while it presents, else now) and the end of the
-  display's own frame in flight; at most `AHEAD_PIECES` (3) lower flights uncompleted. The display's
-  present is COUNTED (`Ring::note_display` in `present`/`present_kept`), never admitted. A waiter wakes
-  when the prediction makes room (it polls the flights' devices, never blocks on a surface device). A
-  lower class's piece is cut at HALF the bound (`piece_limit`) so one runs while the next is queued; a
-  `now` piece keeps the whole bound. A lower-class frame or
-  compute job is cut at pass/dispatch boundaries by the pass timer's last MEASURED time of each label
-  (`Timer::predict`, `ComputeDevice::last`), else by the disk seeds (`seeds.rs`, below); an unmeasured
-  pass ends its piece. A new pass site calls
-  `self.cut_point(enc, label)` before writing its uniform, or it is never cut. A compute ring is bounded
-  too and cuts while a higher class waits. Same passes, same order, same bytes (t2253).
-- **A saturating display leaves lower classes only its slack** (gpu-leftovers D4, row 491): `note_display`
-  averages the present's cost; while the display presents, `arbiter::room` is what a lower class may
-  leave in front of its next present — the period it leaves free, at most the bound; `near` at least a
-  quarter bound, `answer` the bound. t2517, t2433.
+  (gpu-throughput D1, render-ahead D5): every flight carries its predicted ns and submit instant, the ring
+  drains them as a FIFO, and a lower class is admitted while the drain plus its claim ends within the bound
+  past the later of the display's next present (a period after its last while it presents, else now) and
+  the end of the display's own frame in flight. The bound is ONE frame period (`arbiter::bound`; half a
+  period until render-ahead — the owner raised it, kkt-26.11.17 S4, it was never his "latency limit").
+  Every lower class has the same room; there is no count of lower pieces (`AHEAD_PIECES` and the rooms by
+  class, `room`, are gone). The display's present is COUNTED (`Ring::note_display` in
+  `present`/`present_kept`), never admitted. A waiter wakes when the prediction makes room (it polls the
+  flights' devices, never blocks on a surface device). A piece is cut at the bound (`piece_limit`). A
+  lower-class frame or compute job is cut at pass/dispatch boundaries by the pass timer's last MEASURED
+  time of each label (`Timer::predict`, `ComputeDevice::last`), else by the disk seeds (`seeds.rs`,
+  below); an unmeasured pass ends its piece. A new pass site calls `self.cut_point(enc, label)` before
+  writing its uniform, or it is never cut. A compute ring is bounded too and cuts while a higher class
+  waits. Same passes, same order, same bytes (t2253). t2430, t2433, t2923.
+- **Every timed frame is a `GpuFrame` trace record** when its timestamps are harvested (render-ahead D7):
+  `trace loop` reads the device's busy share per lap and while frames were missing from them (t2926).
 - **The compute host admits EVERY submission** (gpu-leftovers D1, row 511): job pieces, the clock
   calibration (`try_lock`: a job never waits behind another's calibration admission) and the warm-up
   dispatch. A job writes one uniform arena and binds by dynamic offset, one bind group per (shader, slot

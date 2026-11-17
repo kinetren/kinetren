@@ -15,12 +15,13 @@ pub mod flight;
 pub mod mix;
 pub mod fxstore;
 pub mod incremental;
-pub mod loop_fill;
+pub mod render_ahead;
 pub mod compose_queue;
 pub mod player;
 pub mod prefetch;
 pub mod prewarm;
 pub mod preview_bench;
+pub mod preview_cost;
 pub mod transitions;
 pub mod transport;
 pub mod video;
@@ -56,7 +57,7 @@ pub use video::{
 };
 pub use video_plan::{
     Cam3d, FramePlan, GpuBackendInfo, GpuExecError, GpuStages, HeldOut, LayerChain, LayerSrc, PlanLayer, PresentOptions,
-    VideoGpuExec, chain_plan,
+    VideoGpuExec, chain_plan, Ahead, ahead_by_bytes,
 };
 pub use worker::{DecodeRequest, MediaWorker, RequestKind, Retune};
 

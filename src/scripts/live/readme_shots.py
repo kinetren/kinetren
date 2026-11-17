@@ -364,9 +364,17 @@ class Shooter:
         if bin_["right"] - bin_["left"] >= width - 20:
             return
         win = self.kt.geometry()
-        y = win["y"] + int((bin_["top"] + bin_["bottom"]) / 2)
-        for off in (5, 8, 3, 11):
-            x = win["x"] + int(bin_["right"]) + off
+        # the column's own rect (found-defects 729): the bin's rect is the scroll area's CONTENT, which
+        # runs past the column when there are more cards than it shows (12 sources since the colour
+        # fixtures): its middle lay below the column, over the timeline, and the drag missed the edge
+        col = app._probe_rect("bin.column")
+        if col:
+            edge, mid = col["x"] + col["w"], col["y"] + col["h"] / 2
+        else:
+            edge, mid = bin_["right"], (bin_["top"] + bin_["bottom"]) / 2
+        y = win["y"] + int(mid)
+        for off in (0, 3, -3, 5):
+            x = win["x"] + int(edge) + off
             app.drag(x, y, x + int(width - (bin_["right"] - bin_["left"])), y)
             # the width read as a consequence, from fresh dumps (test-hygiene): the dump right
             # after the release can be one written before it landed
@@ -658,10 +666,16 @@ class Shooter:
             before = self.frame_image(app, step, "before")
             self.add_effect(app, step, c, "vhs tape", "fxreg.tpl.vhs_tape")
             self.require(step, app.has_probe("deck.head.0.0", tries=40), "the deck face drawn")
+            # the deck face sits under the chain strip and the slot's header; with a taller strip it
+            # lies past the window's fold, and its published rect is below the window (found-defects 729)
+            app.scroll_probe_into_view("deck.head.0.0", "win.fx", below="fx.cancel", tries=40,
+                                       what="head A of the drum scrolled into the effects window")
             self.require(step, app.click_probe("deck.head.0.0"), "click on head A of the drum")
             # Chipped: the picture stays, with the dropouts and noise of a damaged head. A dirty or
             # clogged head loses the FM carrier altogether — honest snow, but nothing to look at
             self.require(step, app.has_probe("deck.cond.Chipped", tries=20), "the condition row of head A")
+            app.scroll_probe_into_view("deck.cond.Chipped", "win.fx", below="fx.cancel", tries=40,
+                                       what="the condition row scrolled into the effects window")
             self.require(step, app.click_probe("deck.cond.Chipped"), "click on “Chipped”")
             # the panel first (the window covers part of the preview), then the frame without it
             win = self.probe(app, step, "win.fx", app.has_probe("win.fx"))

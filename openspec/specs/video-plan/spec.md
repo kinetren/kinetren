@@ -975,18 +975,19 @@ submit instant, and the queue drains in submission order (a submission past its 
 done ends now); the display's next submission is expected one frame period after its last while it
 presents, else now. A lower-class submission SHALL be admitted while the predicted drain with it ends no
 later than the bound past the later of the display's next submission and the end of the display's own frame
-in flight; at most three lower-class submissions of a ring SHALL be uncompleted at once. A `now`
+in flight; every lower class has the same bound, and no count of lower submissions limits it. A `now`
 submission keeps one bound of predicted time in flight, and one piece is always admitted on an idle ring.
-The bound is half a frame period of the preview's project (20 ms at 25 fps), a general rule; a lower-class
+The bound is ONE frame period of the preview's project (40 ms at 25 fps), a general rule; a lower-class
 frame or compute job SHALL be cut at pass (dispatch) boundaries into pieces whose predicted device time
-stays under half the bound, so one piece runs while the next is queued (a pass longer than that is a piece
-of its own). A ring with no display neither bounds nor cuts: an export's ring of frames and a software
-device keep their pipelining. The cut frame's bytes SHALL equal the uncut frame's.
+stays under the bound (a pass longer than that is a piece of its own). A ring with no display neither bounds
+nor cuts: an export's ring of frames and a software device keep their pipelining. The cut frame's bytes
+SHALL equal the uncut frame's.
 Why: row 149 — on a real card the display and the offline device share the graphics ring, and one
-long submission held the display. Reproduced on llvmpipe by running the preview and the offline work
-on ONE device. Found-defects 480 — waiting for the earlier piece's completion, which stood behind the
-display's own uncounted 32.5 ms composite, cost a Datamosh walk 96–98 % of its wall on his iGPU: 16 ms of
-device time a position in 106 ms.
+long submission held the display. Found-defects 480 — waiting for the earlier piece's completion cost a
+Datamosh walk 96–98 % of its wall on his iGPU. The bound was half a frame period until 2026-11-17; two
+designs called it "the owner's latency limit", which he never set (gpu-arbiter D3: "a general rule … the
+owner may want to revisit"). Asked with context, he raised it ("Поднять", kkt-26.11.17 S4): a lower piece
+may delay a displayed frame by up to one period, and while playing the display presents kept frames only.
 
 #### Scenario: The in-flight bound applies only with a display
 - **WHEN** a ring with a display holds pieces whose predicted drain reaches the bound, and the same pieces wait on a ring without one
@@ -1000,7 +1001,7 @@ device time a position in 106 ms.
 
 #### Scenario: The display's latency on a shared device is bounded
 - **WHEN** the preview presents a light frame every frame period on one device while an offline heavy chain and a Datamosh history run on the same device, with the arbiter and without it
-- **THEN** with it the display's frame waits for at most one bound of lower work (its latency stays below the offline frame's own device time, and its p95 is not worse than with the completion-per-piece rule); without it the display waits for whole offline frames
+- **THEN** with it the display's frame waits for at most one bound of lower work (its latency stays below the offline frame's own device time); without it the display waits for whole offline frames
 - **TEST** t2254 (`src/libs/kt-gpu/tests/arbiter.rs`), bench `kt-cli gpu-share`
 
 #### Scenario: The compute host admits the frame on screen first
@@ -1010,8 +1011,13 @@ device time a position in 106 ms.
 
 #### Scenario: A lower class keeps a piece queued while one runs
 - **WHEN** a displayed ring idle of display work takes lower-class pieces of a quarter of the bound each, none completing
-- **THEN** pieces are admitted while their predicted drain fits the bound from now (more than one in flight at once), and the next waits only until the drain has room; never more than three are uncompleted
+- **THEN** four are admitted at once (their drain fits the bound from now), and the fifth waits until the drain has room
 - **TEST** t2430 (`src/libs/kt-gpu/src/arbiter.rs`)
+
+#### Scenario: Every lower class keeps the bound in front of the display
+- **WHEN** the display presents frames costing a quarter period, twice the period, and then stops, and a near, a background and an offline piece of three quarters of the bound ask in turn
+- **THEN** each class is admitted with the same room, the bound past the display's next present; none has a quarter bound or a slack of its own
+- **TEST** t2923 (`src/libs/kt-gpu/src/arbiter.rs`)
 
 ### Requirement: The preview's present waits without polling the device
 `wait_presented` SHALL NOT poll the display device on a fixed short period: it sleeps on the frame's
@@ -1144,20 +1150,20 @@ thread.
 On a bounded ring, a lower-class frame or compute job cut into pieces SHALL submit a piece and go on
 encoding the next without waiting for the piece's completion; the next piece SHALL be admitted by the
 ring against its predicted drain (the device time still ahead of each submission in flight, the display's
-present included), waiting only until the drain has room, a higher class waits, or three lower pieces are
-uncompleted. Where a submitted piece of a device without a surface is in flight, the waiter SHALL wait for
-the oldest one's completion and look again the moment it comes; with none (a surface device's pieces,
-pieces still being encoded) it SHALL wake when its claim fits by the prediction. A piece whose time is a
-guess (a pass never measured) SHALL make room only by its completion, never by the clock. A ring
-with a display still never holds a piece of several passes predicted over the bound in front of the
-display, and the cut frame's bytes equal the uncut frame's.
+present included), waiting only until the drain has room or a higher class waits. Where a submitted piece
+of a device without a surface is in flight, the waiter SHALL wait for the oldest one's completion and look
+again the moment it comes; with none (a surface device's pieces, pieces still being encoded) it SHALL wake
+when its claim fits by the prediction. A piece whose time is a guess (a pass never measured) SHALL make room
+only by its completion, never by the clock. A ring with a display still never holds a piece of several
+passes predicted over the bound in front of the display, and the cut frame's bytes equal the uncut frame's.
 Why: found-defects 392 — `Piece::cut` waited for the device to finish each piece before admitting the
 next: ~45 % of a 720-line Datamosh walk in his trace was the arbiter's own waits. Found-defects 480 — counted
 by completions, a piece queued behind the display's frame held the ring for the whole frame. Stage 11's
 finish.sh (t2435, t2436 red under the full parallel run, green alone): a guessed time drained by the clock,
 so on a loaded machine the next piece went before the guessed one's timestamps came back and nothing was
 learned; a waiter sleeping on a timer saw a completion only at its own next wake, and the device stood
-idle between pieces.
+idle between pieces. render-ahead (2026-11-17): the count of three lower pieces is gone with the half-frame
+bound; the predicted drain alone bounds what stands in front of the display.
 
 #### Scenario: A cut goes on while the bound has room
 - **WHEN** a compute ring with no display and a ring with a display each take a lower-class job cut into pieces whose predicted times fit the bound together, and pieces that do not
@@ -1182,12 +1188,14 @@ over, at class near; and a FAR part at class background: with the playhead insid
 region's end and round from its start, as far as the stream memo holds the positions; without one, while
 playing, up to a quarter of the memo ahead. On a pause inside a loop region the far part runs too; on a pause
 outside one, only the frame on screen. Both parts skip kept moments, stop at the first position whose source
-is not decoded, and stop when the transport or the project leaves them. The player SHALL tell the stream memo
-its view (the loop region's start while the playhead is inside it, else the frame on screen), from which on
-a walk keeps every picture.
+is not decoded, and stop when the transport or the project leaves them. A far part left pending SHALL run
+again on the next pass only while it walks or while the decoded-frame cache gained a video frame since the
+pass before; one that walked nothing over a pass that decoded nothing waits for the pass state to move. The player SHALL tell the stream memo its view (the loop region's start while the playhead is inside
+it, else the frame on screen), from which on a walk keeps every picture.
 Why: found-defects 391 — one advance per frame made every position its own submission while playing.
 Found-defects 482 and the owner's 11.11 L4 ("я не против чтобы оно наперед считало") — twice the display's
-reach was ~100 positions a lap of his 715-position loop, six laps to finish it.
+reach was ~100 positions a lap of his 715-position loop, six laps to finish it. render-ahead D6: the eight
+retries of `FAR_STALLS` were a count of one machine; a decoded frame is what lets a stalled walk move.
 
 #### Scenario: Frames ahead are one walk
 - **WHEN** a mosh is advanced from the frame on screen through eight frames ahead
@@ -1198,6 +1206,11 @@ reach was ~100 positions a lap of his 715-position loop, six laps to finish it.
 - **WHEN** a loop region over a mosh is set with every source frame cached, and the prefetch's advance runs once with the playhead at its start, paused and playing
 - **THEN** the far part reaches the region's last frame in that pass (no frame of the region needs anything after it), ran at class background, and a pass with the history complete runs nothing
 - **TEST** t2432 (`src/libs/kt-engine/tests/decode_storm.rs`)
+
+#### Scenario: A stalled far walk waits for a decoded frame
+- **WHEN** a far walk is left pending after a pass that walked positions, one that walked none while the cache gained a frame, and one that walked none while the cache gained nothing; and video frames and an audio burst go into a cache
+- **THEN** the first two run again on the next pass, the third stops until the state moves; the cache's count moves by every video frame and not by audio
+- **TEST** t2924 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 ### Requirement: No stage runs over a stand-in input
 A composite SHALL NOT give any stage of the plan an input that is not that stage's own position — a
@@ -1250,65 +1263,6 @@ the history had reached.
 - **WHEN** the reel strip's and the poster's offline frame is composed with one layer's source absent, and a poster is made of a project whose file is missing
 - **THEN** the incomplete frame leaves no picture (no partial cell); the poster of the project with the missing file is the frame with the placeholder, as the preview shows it
 - **TEST** t2419 (`src/apps/kt-app/src/reel_preview.rs`)
-
-### Requirement: A playing loop's unshown moments are composed below the display
-While a loop region plays and the display has an executor, the player SHALL compose the loop's moments
-the display's executor does not keep and whose frames are all decoded, on an executor other than the
-display's and at the scheduler's `near` class (below the frame on screen on every ring), and SHALL keep
-each complete composite on the display's executor as a slow-chain composite is kept. It SHALL ask no
-decode and withdraw no request, work ahead of the playhead, skip for the lap a moment that comes out
-incomplete (a stream stage short of its frame included) or that the display's memo does not keep, and
-stop when the loop has no such moment left, the play or the loop stops, or the project changes. Nothing
-SHALL run while nothing plays. `KT_LOOP_FILL=off` disables it.
-
-How many moments it composes at once SHALL come from the machine at run time, never from a constant of
-one machine: on a hardware device as many as the scheduler's pool leaves beside one worker for a person's
-answer, at most the lower-class pieces a ring admits in front of the display; each on an engine of its
-own on the same device (its own lock), no moment taken twice. On a hardware device a moment SHALL NOT wait
-for the display to end a composite of its own (the ring puts the frame on screen first); on a software
-rasterizer, where the fill and the display share the processor, the fill SHALL compose one moment at a
-time and start none while the display composes. A moment that comes out incomplete SHALL narrow the fill
-to one moment for the rest of the lap. `KT_LOOP_FILL_WIDTH=N` overrides the width.
-Why: `found-defects.md` row 251 — on a display slower than the project's frames each lap showed a
-different subset and only shown moments were kept: a covered loop composed "for the first time" lap
-after lap. The width: the owner's `kkt-26.11.15` item 4 ("он тупо простаивает") — on his iGPU one fill
-moment took ~170 ms of wall for ~20 ms of device work, one at a time, the processor at 13 % of one core
-and the card a third busy.
-
-#### Scenario: A loop shown in part becomes all-kept
-- **WHEN** a loop of 24 moments plays with its frames decoded and a display that presents only every fourth moment it reaches, for three laps, with the fill and with `KT_LOOP_FILL=off`
-- **THEN** with the fill every moment of the loop is kept by the display's executor by the third lap and the display's own composites of the last lap are all replays; without it a part stays unkept
-- **TEST** t2334 (`src/libs/kt-engine/tests/loop_fill.rs`)
-
-#### Scenario: The fill asks no decode and rests with the player
-- **WHEN** a loop plays with half its frames not decoded, then the play stops
-- **THEN** the fill composes only moments whose frames are decoded, the workers received no request from it, and after the stop it runs no job
-- **TEST** t2335 (`src/libs/kt-engine/tests/loop_fill.rs`)
-
-#### Scenario: The fill stops where the memo stops keeping
-- **WHEN** a loop plays whose moments the display's memo refuses past the first eight
-- **THEN** the fill keeps eight, skips the rest for the lap, and composes nothing more until the next lap
-- **TEST** t2336 (`src/libs/kt-engine/tests/loop_fill.rs`)
-
-#### Scenario: On a card the fill keeps several moments in flight
-- **WHEN** a loop of 24 moments plays with a fill executor that reports a hardware device and whose every composite takes 40 ms of wall (a round trip), the display composing a frame of its own all the while, with the width the machine gives and with `KT_LOOP_FILL_WIDTH=1`
-- **THEN** with the machine's width (at least two here) at least two fill composites run at the same time, each on its own engine, no moment is composed twice in a lap, the loop is all-kept in at most two thirds of the wall time of width 1, and the display's composite in progress did not stop the fill
-- **TEST** t2860 (`src/libs/kt-engine/tests/loop_fill.rs`)
-
-#### Scenario: The width comes from the machine and the device
-- **WHEN** the width is asked for a software and a hardware device, for pools of 3 to 6 workers, and with `KT_LOOP_FILL_WIDTH` set
-- **THEN** a software device gets 1, a hardware device the pool less one worker and at most the ring's lower-class pieces in flight, and the variable wins over both
-- **TEST** t2861 (`src/libs/kt-engine/src/loop_fill.rs`)
-
-#### Scenario: An incomplete moment narrows the fill for the lap
-- **WHEN** a loop plays on a hardware fill executor at width three and one moment comes out incomplete
-- **THEN** from then to the end of the lap no two fill composites run at once; a new lap widens it again
-- **TEST** t2862 (`src/libs/kt-engine/tests/loop_fill.rs`)
-
-#### Scenario: Measured on a software rasterizer
-- **WHEN** `kt-cli preview <showcase> <from> <to> --loop S` runs on llvmpipe (release) with the fill and with `KT_LOOP_FILL=off`, and `kt-cli trace loop` reads each run
-- **THEN** with the fill the loop becomes all-kept in fewer laps (measured 9 against 18) and the display shows no fewer frames; both runs are in the change's design record
-- **TEST** bench `kt-cli preview --loop` + `kt-cli trace loop`
 
 ### Requirement: The slow-chain frame never waits behind side work on its engine
 Effect cells, reel strips and project posters SHALL compose on an engine of their own on the
@@ -1401,7 +1355,7 @@ Why: found-defects 480 — the display's 32.5 ms composite on his card was invis
 
 #### Scenario: The display is counted, never admitted
 - **WHEN** a lower piece holds the bound and the display presents, then the display presents behind its frames
-- **THEN** the present enters the flight with no wait; a lower class may queue what drains before the display's next present plus the bound and not more; behind a late display frame a lower piece waits only for the bound past that frame's end
+- **THEN** the present enters the flight with no wait; a lower class may queue what drains before the display's next present plus one frame period and not more; behind a late display frame a lower piece waits only for the bound past that frame's end
 - **TEST** t2433 (`src/libs/kt-gpu/src/arbiter.rs`)
 
 ### Requirement: A pass never measured is predicted
@@ -1577,23 +1531,6 @@ build and warm work on the window's device made egui's paint wait for it (gl-con
 - **PATH** open two flat light-gray clips, the second with Edges → click the first: the preview is light → click the second: the preview is black → the dump says the preview composed off the window's device on GL (on another backend: the picture stays on the device)
 - **TEST** t2744 live scenario `src/scripts/live/gpufx.py`
 
-### Requirement: A saturating display keeps near work at the bound
-While the display presents, what a lower class may leave in front of the display's next present SHALL be
-the bound for `near` (the look-ahead, its stream walk, the loop fill), at least a quarter of the bound for
-`visible` and `background` (more where the display's own present leaves more of the period free), and for
-an export (`offline`) only the part of the period the display's present leaves free. No piece SHALL be
-longer than the bound, and at most `AHEAD_PIECES` lower pieces stand uncompleted in front of the display.
-A display that stopped presenting leaves the bound.
-Why: kkt-26.11.16 — under the slack rule (gpu-leftovers D4, found-defects 491) the near class kept a quarter
-bound on a saturating display; on his iGPU the device stood idle 25 s with nothing queued while near work
-waited 486 % of its wall, and a loop filled in 25 laps against kt26.11.10's 11. kt26.11.10 put whole jobs of
-380 ms in front of the display; this rule keeps at most three half-bound pieces there.
-
-#### Scenario: Room by the display's cost
-- **WHEN** the display presents frames costing a quarter period, seven eighths of it, twice it, and then stops
-- **THEN** a background piece has the bound, a quarter bound, a quarter bound and the bound again; the near class keeps the bound in front of the saturating display; an export has the bound, an eighth of the period, nothing and the bound again
-- **TEST** t2517 (`src/libs/kt-gpu/src/arbiter.rs`)
-
 ### Requirement: Every wait for a device names its own submission
 A thread that waits for what it submitted SHALL wait for that submission's index: a read-back frame, a
 pipeline warm-up draw, a compute job, the compute host's clock calibration and its shader warm-up. Waiting
@@ -1619,3 +1556,82 @@ oldest piece of one device missed the room a piece on another made, and near wor
 - **WHEN** a ring with a display holds a long piece on one device, a short piece on another, and the rest of the lower pieces it keeps uncompleted, and a near piece comes to be admitted
 - **THEN** it is admitted once the short piece ends, while the long one still runs
 - **TEST** t2865 (`src/libs/kt-gpu/tests/own_waits.rs`)
+
+### Requirement: Playing, the display presents finished frames and one producer renders ahead
+While the transport plays and the player's render-ahead producer has an executor, the preview's display
+SHALL only present composites the display's executor already keeps: a moment asked that is not kept SHALL
+give no picture (the preview keeps its last full picture under Loading), run no plan, ask no decode and
+wake the producer. The on-demand composite SHALL remain for a paused transport, scrubbing and seeking, for
+an ask without a display target (the bytes path), and for a player whose producer has no executor.
+`KT_RENDER_AHEAD=off` turns the producer off and restores the on-demand composite while playing (an A/B of
+one binary).
+
+The producer SHALL be one `near` service of the scheduler. Each pass SHALL look from the frame on screen
+plus its measured lead (the wall a moment takes, at least one frame) forward: inside a loop region round
+the region (every moment of the lap); outside one forward until the first moment whose layers are not all
+decoded. It SHALL skip moments the display's executor holds (noting them for the coverage bars) and moments
+skipped this lap — one that came out incomplete (a stream stage short of its frame included) or that the
+display's memo did not keep — and compose the rest in that order, keeping each complete composite on the
+display's executor under its plan key. It SHALL ask no decode and withdraw no request. Nothing SHALL run
+while nothing plays.
+
+The producer SHALL compose on an engine of the display's own device (its own lock), on a card and on a
+software rasterizer alike, and the composite SHALL reach the display's present memo on the device, with no
+readback, no upload and no wait for the device; the producer learns that the device finished a moment from a
+done flag the device sets. Only where the display's executor has no engine of its own device (or
+`KT_RENDER_AHEAD_DEVICE=side`) it SHALL compose on the offline device's side engine and hand the bytes to the
+display's executor. The moments in flight at once (the depth) SHALL be measured, never a constant of
+one machine: the wall a moment takes from its plan to its completion over the producer's own time per
+moment, at least one, at most the moments whose bytes the memory ledger has room for. A kept composite's
+bytes SHALL equal the bytes the display's own `present` would have kept for the same plan.
+Why: `docs/architecture-review-26.11.17.md` §1–§2, R2 — on the owner's iGPU the loop fill's moment took ~174
+ms of wall for ~12 ms of device, the card was 4–26 % busy while frames were missing, and a VHS Tape loop the
+card could compose in real time took seven laps; the owner raised the bound and asked for computing ahead
+(kkt-26.11.17 S4, kkt-26.11.11 L4). Found-defects 251 — a display slower than the project's frames kept only
+the moments it showed.
+
+#### Scenario: A loop shown in part becomes all-kept
+- **WHEN** a loop of 24 moments plays with its frames decoded and a display that presents only every fourth moment it reaches, for three laps, with a producer executor and with `KT_RENDER_AHEAD=off`
+- **THEN** with the producer every moment of the loop is kept by the display's executor by the third lap and the display's answers of the last lap are all kept composites; without it a part stays unkept
+- **TEST** t2334 (`src/libs/kt-engine/tests/render_ahead.rs`)
+
+#### Scenario: The producer asks no decode and rests with the player
+- **WHEN** a loop plays with half its frames not decoded, then the play stops
+- **THEN** the producer composes only moments whose frames are decoded, the workers received no request from it, and after the stop it runs no job
+- **TEST** t2335 (`src/libs/kt-engine/tests/render_ahead.rs`)
+
+#### Scenario: The producer skips what the memo does not keep
+- **WHEN** a loop plays whose moments the display's memo refuses past the first eight
+- **THEN** the producer keeps eight, skips the rest for the lap, and composes nothing more until the next lap
+- **TEST** t2336 (`src/libs/kt-engine/tests/render_ahead.rs`)
+
+#### Scenario: On a card several moments are in flight on one engine
+- **WHEN** a loop of 24 moments plays with a producer executor that reports a hardware device, returns from each moment at once and finishes it 40 ms later (a device's done flag)
+- **THEN** at least two moments are in flight at once, no moment is composed twice in a lap, and at least half of the device latency the same executor pays when every moment is waited for is hidden
+- **TEST** t2920 (`src/libs/kt-engine/tests/render_ahead.rs`)
+
+#### Scenario: The depth comes from measurement and memory
+- **WHEN** the depth is asked for a moment's wall and the producer's own time per moment, with and without a memory room
+- **THEN** it is the wall over the own time rounded up, at least one, one for a synchronous moment, and never more moments than the room holds
+- **TEST** t2921 (`src/libs/kt-engine/src/render_ahead.rs`)
+
+#### Scenario: A moment kept on the device is the display's own composite
+- **WHEN** a heavy chain's plan is kept on a display engine by a sibling of it (on the device), by another engine (bytes), and presented by the display engine itself
+- **THEN** the sibling's path made no readback, all three keep the same key, and the kept composites read back equal bytes
+- **TEST** t2922 (`src/libs/kt-gpu/tests/render_ahead.rs`)
+
+#### Scenario: Playing, the display shows only kept moments
+- **WHEN** a player with a producer executor plays, and the display asks for a moment not kept and then for one kept; then the player pauses and asks the first moment again
+- **THEN** playing, the first answer has no picture and ran no plan on the display's executor, the second is the kept composite; paused, the moment is composed on demand
+- **TEST** t2925 (`src/libs/kt-engine/tests/render_ahead.rs`)
+
+#### Scenario: Measured on a software rasterizer
+- **WHEN** `kt-cli preview <showcase> 70 74 --size 640x360 --loop 40` runs on llvmpipe (release) on the stage-18 base and on this change, each recorded with `--trace`, and `kt-cli trace loop` reads each run
+- **THEN** both runs and the device's busy share while frames were missing are in the change's design record
+- **TEST** bench `kt-cli preview --loop` + `kt-cli trace loop`
+
+#### Scenario: Loop playback in the program
+- **WHEN** the live scenario opens a project with a heavy effect, sets a loop region and plays it for several laps
+- **THEN** the preview shows the loop's frames (no lasting Loading after the first laps), the coverage bar over the region reads kept, and the process rests after the stop
+- **TEST** t2927 (`src/scripts/live/render_ahead.py`)
+- **PATH** open the project → drag over the ruler above the first event to set a loop region → press Space → the preview plays the region round and round; after the first laps the region's bar turns bright → press Space → the preview stands on its last frame

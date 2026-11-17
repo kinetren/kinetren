@@ -850,7 +850,7 @@ impl KtApp {
                 // the device a slow chain moves to: building it takes seconds, and until it
                 // stands everything composes on the display's device
                 let slow = self.player.slow_gpu_setter();
-                let fill = self.player.fill_gpu_setter();
+                let ahead = self.player.ahead_gpu_setter();
                 let _ = std::thread::Builder::new().name("offline-engine".into()).spawn(move || {
                     // the slow route has the offline engine to itself (effect cells, reel strips
                     // and posters compose on its sibling), and its ring bounds what stands in front
@@ -859,9 +859,9 @@ impl KtApp {
                         e.serve_preview();
                         e as std::sync::Arc<dyn kt_engine::VideoGpuExec>
                     }));
-                    // a playing loop's unshown moments compose on the side engine, below the
-                    // display (scheduler-followups D5, row 251)
-                    fill(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+                    // the render-ahead producer composes on the display's own device; the side engine
+                    // serves it only under KT_RENDER_AHEAD_DEVICE=side (render-ahead D3)
+                    ahead(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
                 });
             }
             Err(e) => self.warn(crate::tf!(k::msg::VIDEO_DEVICE_MISSING, e)),
@@ -11349,7 +11349,7 @@ impl KtApp {
         // request from the user: 420 px were insurance of round 7.1, in round 9 raised to
         // half the window by his direct request, and in round 11 I cut them
         // back “by analogy” with the meters and broke the work for the third time.
-        egui::Panel::left("left_col")
+        let column = egui::Panel::left("left_col")
             .frame(crate::theme::panel_frame())
             .resizable(true)
             .default_size(232.0)
@@ -11387,6 +11387,9 @@ impl KtApp {
                     // (diagnostics-three-graphs, kkt-26.11.01 item 14): the column is the bin's
                 });
             });
+        // the column's own rect: its right edge is the separator a person drags. The bin's rect
+        // is the scroll area's content, which a shown scrollbar narrows (found-defects 729)
+        crate::widgets::field_probe::note("bin.column", column.response.rect);
     }
 
     /// The meters column and its drag strip; the window buttons stand on it in the arrangement

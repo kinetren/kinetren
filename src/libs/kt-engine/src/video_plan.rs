@@ -386,6 +386,12 @@ pub trait VideoGpuExec: Send + Sync {
     fn last_cost(&self) -> kt_fx::video::FrameCost {
         kt_fx::video::FrameCost::default()
     }
+    /// The device time of this executor's latest measured frame, in nanoseconds (render-honest D2):
+    /// the sum of its passes, or its submit to done where the device has no timestamps; the frame
+    /// harvested by now may be one or two before the last. 0 — nothing measured.
+    fn last_device_ns(&self) -> u64 {
+        0
+    }
     /// Can this executor show a frame without reading it back (`present`)?
     fn can_present(&self) -> bool {
         false
@@ -439,11 +445,57 @@ pub trait VideoGpuExec: Send + Sync {
     /// Wait until what `prewarm` started is done (an export before its first frame).
     fn settle_prewarm(&self) {}
     /// An executor on this one's device, ring and compiled pipelines with its own lock and frame
-    /// state (cpu-idle-work): the loop fill composes several moments at once, one per executor, and a
-    /// composite holds its executor's lock through its admissions and its readback. `None` — none.
+    /// state (cpu-idle-work): the render-ahead producer composes on the display's sibling, so its
+    /// moments never wait for the display's lock. `None` — none.
     fn sibling_exec(&self) -> Option<Arc<dyn VideoGpuExec>> {
         None
     }
+    /// Render-ahead (render-ahead D3): compose `plan` and keep the complete composite on `keeper` (the
+    /// display's executor) under `keeper.present_key(plan)`. An executor on the keeper's own device
+    /// hands the composite over on the device and returns before the device ends it (`Ahead::done`); any
+    /// other reads it back into `buf` and the keeper uploads it ([`ahead_by_bytes`], this default). The
+    /// kept bytes are those `keeper.present` would keep for the plan.
+    fn ahead(&self, plan: &FramePlan<'_>, keeper: &Arc<dyn VideoGpuExec>, buf: &mut Vec<u8>) -> Result<Ahead, GpuExecError> {
+        ahead_by_bytes(self, plan, keeper, buf)
+    }
+    /// Lets an executor recognise another of its own kind (an engine on the same device, D3).
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
+    /// Run the device's completion callbacks without waiting (`Ahead::done` flags are set by them).
+    fn poll_done(&self) {}
+}
+
+/// What [`VideoGpuExec::ahead`] did with a moment.
+#[derive(Debug, Clone, Default)]
+pub struct Ahead {
+    /// Every layer and stage of the plan had its input (an incomplete plan keeps nothing).
+    pub complete: bool,
+    /// The key the keeper holds the composite under; `None` — nothing kept (incomplete, or the
+    /// keeper's memo refused it).
+    pub kept: Option<u64>,
+    /// Set by the device when it has finished the moment; `None` — it was finished before `ahead`
+    /// returned.
+    pub done: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+/// [`VideoGpuExec::ahead`] by bytes: compose and read back on `exec`, the keeper uploads (the slow
+/// route's form, synchronous).
+pub fn ahead_by_bytes<E: VideoGpuExec + ?Sized>(
+    exec: &E,
+    plan: &FramePlan<'_>,
+    keeper: &Arc<dyn VideoGpuExec>,
+    buf: &mut Vec<u8>,
+) -> Result<Ahead, GpuExecError> {
+    let complete = exec.execute_into(plan, buf)?;
+    let kept = match keeper.present_key(plan) {
+        Some(k) if complete => {
+            keeper.keep(k, plan.out_w, plan.out_h, buf);
+            keeper.holds(k).then_some(k)
+        }
+        _ => None,
+    };
+    Ok(Ahead { complete, kept, done: None })
 }
 
 /// How `VideoGpuExec::present` treats a frame.

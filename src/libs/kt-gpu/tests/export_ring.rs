@@ -131,11 +131,43 @@ fn t1573_several_engines_write_the_frames_of_one() {
     let more: Vec<Arc<dyn VideoGpuExec>> =
         (0..2).map(|_| kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>).collect();
     let several =
-        ExportBackends { video_gpu: Some(kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>), video_gpu_more: more };
+        ExportBackends { video_gpu: Some(kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>), video_gpu_more: more, ..Default::default() };
     let mut got = Hashes::default();
     render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &several, &never, None, &mut got).unwrap();
     assert!(want.0.len() > 40);
     assert_eq!(got.0, want.0, "the file does not depend on how many devices composed it");
+}
+
+/// t2901 (render-honest D1): the count of devices that compose may change as the render goes —
+/// scripted here 1, 3, 2, 3, 1 every four frames — and the frames are the frames of one device; the
+/// export's line names the counts used.
+#[test]
+fn t2901_a_changing_count_writes_the_frames_of_one_device() {
+    kt_plugins_builtin::install();
+    let Some(one) = kt_gpu::test_engine() else { return };
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let q = Quality { width: 320, height: 180 };
+    let range = (Tick(90_000 * 3), Tick(90_000 * 5));
+    let never = Arc::new(AtomicBool::new(false));
+    let single = ExportBackends { video_gpu: Some(one as Arc<dyn VideoGpuExec>), ..Default::default() };
+    let mut want = Hashes::default();
+    render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &single, &never, None, &mut want).unwrap();
+    let more: Vec<Arc<dyn VideoGpuExec>> =
+        (0..2).map(|_| kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>).collect();
+    let changing = ExportBackends {
+        video_gpu: Some(kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>),
+        video_gpu_more: more,
+        devices: kt_engine::export::DeviceCount::Script(vec![1, 3, 2, 3, 1]),
+    };
+    let prof = kt_engine::export::ExportProfile::default();
+    let mut got = Hashes::default();
+    render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &changing, &never, Some(&prof), &mut got).unwrap();
+    assert!(want.0.len() > 40);
+    assert_eq!(got.0, want.0, "the file does not depend on a count that changes");
+    let line = prof.devices_text();
+    for k in ["1 ×", "2 ×", "3 ×"] {
+        assert!(line.contains(k), "the line names the counts used: {line}");
+    }
 }
 
 /// t2298 (memory-ledger D7): an export's device keeps only the uploads its frames in flight read: a

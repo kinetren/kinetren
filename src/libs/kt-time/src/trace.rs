@@ -205,10 +205,14 @@ pub enum Ev {
     /// [`export_stage`], `a` the stage's busy nanoseconds summed over its threads, `b` the export's
     /// wall nanoseconds, `c` the video frames written, `id` its frame workers (0 — the serial export).
     ExportStage = 110,
+    /// A timed frame's passes came back from the device (render-ahead D7): `a` its device nanoseconds
+    /// (the sum of its passes), `b` its span from the first pass's start to the last pass's end, `aux`
+    /// its role (0 preview, 1 offline, 2 export). The record's own time is the harvest's.
+    GpuFrame = 111,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 53] = [
+    pub const ALL: [Ev; 54] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -262,6 +266,7 @@ impl Ev {
         Ev::StreamWalk,
         Ev::GpuExec,
         Ev::ExportStage,
+        Ev::GpuFrame,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -323,6 +328,7 @@ impl Ev {
             Ev::StreamWalk => "stream_walk",
             Ev::GpuExec => "gpu_exec",
             Ev::ExportStage => "export_stage",
+            Ev::GpuFrame => "gpu_frame",
         }
     }
 }
@@ -516,10 +522,12 @@ pub mod job {
     /// The player's shared build of a project version (`engine-build`): `id` its seq, `a` the
     /// version, `b` the events it derived, `c` the events its memo holds after it (the rest reused).
     pub const SHARED_BUILD: u32 = 12;
-    /// The loop fill's composite of a moment (scheduler-followups D5): `id` the job (the cause of
-    /// its records), `a` the moment's tick, `b` the outcome — 0 kept, 1 incomplete (a stream stage short
-    /// of its frame included), 3 the display's memo did not keep it.
-    pub const LOOP_FILL: u32 = 13;
+    /// The render-ahead producer's composite of a moment (render-ahead D2; the loop fill's number before
+    /// it): `id` the job (the cause of its records), `a` the moment's tick, `b` the outcome — 0 kept, 1
+    /// incomplete (a stream stage short of its frame included), 3 the display's memo did not keep it;
+    /// `c` the moments in flight with it (itself included). The span ends at the submission; on a card the
+    /// device finishes the moment after it.
+    pub const RENDER_AHEAD: u32 = 13;
 }
 
 /// `ExportStage.aux`: the stages of `kt_engine::export::ExportProfile`, in its report's order.

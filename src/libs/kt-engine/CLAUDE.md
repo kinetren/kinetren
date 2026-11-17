@@ -59,9 +59,10 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   **The history is computed ahead** (gpu-throughput D3): once the near part (twice the display's reach)
   has nothing pending, a FAR part walks at class background — inside a loop region to its end and round,
   as many frames as the memo holds (`stream_far_frames`), playing or paused; outside one, playing, a
-  quarter of the memo. A far part pending with no position walked (`stream::positions_walked`) for
-  `FAR_STALLS` passes stops retrying until the state moves, so a source that never comes cannot keep a
-  paused prefetch thread passing. t2432.
+  quarter of the memo. A far part left pending runs again only while it walks
+  (`stream::positions_walked`) or the cache gained a decoded video frame since the pass before
+  (`BurstCache::video_inserted`, `player::far_walk_again`, render-ahead D6; the eight-pass `FAR_STALLS`
+  is gone), so a source that never comes cannot keep a paused prefetch thread passing. t2432, t2924.
 - **Frame blending (R.37 C5, "Frames: blending")** is done in the COMMON code of the plan (`layer_src` → `blend_frames`), not in the executor, which receives an already blended pre-FX frame (invariant No. 7). The kernel is `dissolve_into`, integer and scalar. A blended frame carries its base frame's serial, so kt-gpu's upload key takes the pair and the weight (t250).
   - A PAIR is decided by ONE function `clip_frame_keys`; `layers_at` MUST return BOTH pts, otherwise prefetch warms one frame while the plan asks for two — an eternal miss. With R.56 it also has a second entry — `blend_footage`, inherited from the attachment above (item 448): the reel itself has no pairs, its leaves blend.
   - Weight `k == 0` (a position on the grid, integer speeds, rate = 1) gives no pair: the path is the former byte-for-byte, and GOLDEN_VIDEO stands on this.
@@ -131,7 +132,7 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
 - **The video look-ahead fits the cache until it is read** (video-prefetch-thrash). `video_prefetch_wants` walks the window frame by frame, nearest first, and cuts it at a WHOLE frame within half the video budget, counting every layer at its own decode size; dividing the budget by one frame of the largest quality ignored the stack of layers, and the showcase's pass wanted 604 MB of 512. `video_prefetch_pass` then `refresh`es the window far → near (LRU ranks a prefetched frame by its INSERTION, so the nearest went first), and the prefetch loop withdraws the NearPrefetch video requests its window no longer asks for — the loop is their only producer; the window starts at the frame ON SCREEN (`video_display_frame`), or that withdrawal would drop the frames the latency still has to show. A Playback video request is THE FRAME ON SCREEN: `compose_preview_measured` withdraws the Playback requests that are not a layer of its frame (Playback outranks the look-ahead, and a lagging decoder spent itself on frames already left, t1418b). `kt-cli probe` and t1416 drive the same pass through `simulate_video_playback`.
 
 - **A span is every decode size of its moments** (preview-throughput D1). `worker_loop` builds one span across sizes and reads it through `read_video_span_qualities`: a picture is decoded once and converted to each size. Two spans, one per size, sent the second behind the cursor, which rebuilds the decoder (9 pictures per frame asked on the showcase). A chunk (`span_chunks`) is whole moments; the budget counts each key at its own size (`key_bytes`); a key past it STAYS queued. A native-size key (`quality: None`) keeps a span of its own. Tests t1520–t1522, t1524.
-- **The preview composes on its own thread** (`compose_queue`, ui-never-waits): the UI asks (`ask_preview`) and takes (`take_composed`); the newest ask replaces a waiting one; a frame of a state the model has left is dropped; a chain whose executor time passes `SLOW_CHAIN` goes to the offline device. The renderer is an `Arc` behind a mutex: clone the pointer, never hold the lock through a plan. The kept moments' recheck runs there too (`recheck_shown`).
+- **The preview composes on its own thread** (`compose_queue`, ui-never-waits): the UI asks (`ask_preview`) and takes (`take_composed`); the newest ask replaces a waiting one; a frame of a state the model has left is dropped; a chain whose executor time passes `SLOW_CHAIN` goes to the offline device. Playing with the render-ahead producer it only presents kept composites (above). The renderer is an `Arc` behind a mutex: clone the pointer, never hold the lock through a plan. The kept moments' recheck runs there too (`recheck_shown`).
 - **A guard taken inside an expression lives to the end of the statement.** `X::new(&lock.lock().unwrap().clone())` holds the lock through the build, and `if let Some(w) = map.write().unwrap().remove(k) { w.shutdown() }` joins under the guard. Clone, or take out, in a statement of its own (ui-never-waits: the UI's edits waited 412 ms for the audio render thread's build).
 - **The preview presents** (preview-throughput D2). `Player::present_preview` ends in the executor's display target with no readback.
 - **An incomplete frame is never shown and costs no drawing** (no-partial-picture, kkt-26.11.14 M1): no
@@ -146,10 +147,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   `StreamStop` in the trace and reads as incomplete, never kept; `stream_preroll` gives up between
   batches. An export sets none. t2258, t2259.
 - **Every thread that submits GPU or compute work runs as a class** (`kt_time::sched::with_class`,
-  gpu-arbiter): the compose thread now (its kept-moment recheck near), the prefetch thread near, a media
+  gpu-arbiter): the compose thread now (its kept-moment recheck near), the prefetch thread and the
+  render-ahead producer near, a media
   worker by the span's priority (a generator's compute frame), the export and every pipeline thread
   offline. kt-gpu's rings admit by it. The player sets `sched::set_frame_period_ns` from its project:
-  the rings' bound is half of it.
+  the rings' bound is one period of it (render-ahead D5; half until then).
 - **A kept moment is reached without the work that made it** (structured-telemetry, kkt-26.11.09 I8;
   t2145, t2150, t2151). `compose_via` asks `show_kept` FIRST: a probe plan (`VideoRenderer::probe_plan`)
   keys every stream stage by `StreamKernel::key` without running it, and a key the display's executor
@@ -158,20 +160,22 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   replay does not re-time the route; the prefetch thread skips kept moments (`video_prefetch_pass_except`,
   `stream_advance_ahead`). A new input of a stream layer's picture must reach its kernel's `key`, or a
   kept composite of another picture is shown; a kernel without `key` keeps the old path (the stage runs).
-- **A playing loop's unshown moments are composed below the display** (scheduler-followups D5,
-  `loop_fill.rs`, t2334–t2336): a `near` service lane, kicked by the prefetch thread while a loop
-  plays, composes on `set_fill_gpu`'s executor (the app's side engine) the moments the `shown` map does
-  not hold whose layers are ALL cached — `compose_at(fill)` asks no decode and withdraws no request —
-  ahead of the playhead by twice its frame time, and keeps them on the display's executor as the slow
-  route does. A moment incomplete (a stream stage short included) or refused by the memo is skipped for
-  the lap. **Its width** (cpu-idle-work, t2860–t2862): on a card `loop_fill::width` moments at once
-  (the scheduler's pool less one, at most the ring's three lower pieces), each on a `sibling_exec` of
-  the fill's executor — a composite holds its engine's lock through its admissions and readback, so two
-  moments on one engine serialize; a moment is claimed before it is composed; an incomplete moment
-  narrows it to one for the lap. On a software device one at a time, and it starts nothing while the
-  display composes a frame of its own (`PreviewParts::composing`): forced wide there it filled slower
-  and cost the display frames. `KT_LOOP_FILL_WIDTH=N` for an A/B.
-  `stream_short()` is per thread (two threads plan on one renderer). `KT_LOOP_FILL=off` for an A/B.
+- **Playing, the display presents and one producer renders ahead** (render-ahead, `render_ahead.rs`,
+  review R2; the loop fill's lanes, width, claims, narrow mode and display gate are DELETED). While the
+  transport plays and the producer has an executor, the compose thread answers an ask with the moment's
+  kept composite (`PreviewParts::present_ahead` → `show_kept`) or no picture (Loading), running no plan;
+  it composes on demand only a moment with no layer, one not decoded yet, or one the producer skipped
+  this lap (paused, scrubbing and seeking stay on demand too). The producer is one `near` lane, kicked
+  by `play`, a display miss and every playing prefetch pass: from the frame on screen plus its measured
+  lead, round the loop region or forward to the first moment not decoded / with no layer, it composes
+  what the display does not hold through `VideoGpuExec::ahead` (asks no decode, withdraws no request)
+  and keeps it on the display's executor. Where: the display's `sibling_exec` on a card and on a
+  software rasterizer alike (the same device: kt-gpu hands the composite to the display's memo on the
+  device, a done flag, no wait); the side engine `ahead_gpu_setter` gives (bytes) only for a display with
+  no sibling or `KT_RENDER_AHEAD_DEVICE=side`. Depth: `render_ahead::depth` —
+  a moment's wall over the producer's own time a moment, capped by `kt_time::mem::room()`; never a
+  constant. A moment incomplete or refused by the memo is skipped for the lap. `KT_RENDER_AHEAD=off`
+  for an A/B. t2334–t2336, t2920, t2921, t2925.
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
@@ -314,7 +318,12 @@ in the source's state and arrive through the retune lane.
   every compose site (serial loop, pipeline workers, the ring's `collect`, `depth == 0`) composes an
   incomplete frame again up to `RETRIES` times (the serial one decoding what it lacks first). A new compose
   site in an export does the same. Exports compose through `execute_once` (no memo, the settled run form).
-- The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer.
+- The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer — with ONE
+  exception (render-honest D1, row 710): `DeviceRule` chooses how many of several devices compose
+  from the frames dispatched per second of wall. It steers only WHICH device composes a frame; the
+  compose thread names each frame's worker to the writer on the order channel (frames go out in
+  order, every worker is FIFO), so a count that changes writes the frames of one device (t1573,
+  t2901). A new reader of the clock in an export steers nothing a frame IS.
 
 ## Tests
 1–3 (concatenation/crossfade/gain), 7 (seek determinism), 9 (scheduler), 11 (golden export), 13 (viewport black), 14 (loop).

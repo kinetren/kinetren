@@ -2927,3 +2927,10 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 3. "я уже немного устал это делать каждый раз для тебя" — recording traces for every diagnosis
    tires him. A separate agent thinks whether a fundamental, breaking change or a different
    architecture is needed, instead of one more round on his traces.
+4. His answers to the architecture review (`docs/architecture-review-26.11.17.md`):
+   - the half-frame bound of GPU work in flight is raised ("Поднять");
+   - the disk prerender of slow regions runs by itself in the background ("Сам в фоне") — his
+     exception to "the program at rest costs nothing";
+   - the processor as a second executor: "да и я не против второго вычеслителя и для превью" —
+     export and preview, frames within tolerance instead of byte for byte (invariants 7, 11 amended);
+   - the reference machine: a mini-PC with an AMD iGPU is bought ("Купить мини-ПК").

@@ -377,6 +377,10 @@ fn t2806_the_colour_tags_are_the_conversion() {
         back.push([fr.rgba[c] as i32, fr.rgba[c + 1] as i32, fr.rgba[c + 2] as i32]);
     }
     let d = |a: [i32; 3], b: [i32; 3]| (0..3).map(|k| (a[k] - b[k]).abs()).max().unwrap();
-    assert!(d(back[0], [230, 20, 20]) <= 6, "the default file comes back as written: {:?}", back[0]);
-    assert!(d(back[1], back[0]) > 5, "BT.709 is another conversion: {:?} vs {:?}", back[1], back[0]);
+    // source-colour-matrix: the decode reads the tags, so every file comes back as written — a file
+    // converted with one matrix and tagged with another would come back 12+ levels off (BT.709 read
+    // as BT.601 is what this test used to see, found-defects 697)
+    for (i, b) in back.iter().enumerate() {
+        assert!(d(*b, [230, 20, 20]) <= 6, "file {i} comes back as written: {b:?}");
+    }
 }

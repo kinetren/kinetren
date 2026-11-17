@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
-use kt_gpu::arbiter::{self, RingKey, AHEAD_PIECES};
+use kt_gpu::arbiter::{self, RingKey};
 use kt_gpu::{GpuContext, GpuFxEngine};
 use kt_media::VideoFrame;
 use kt_plugin_api::compute::{Buf, ComputeHost, Init, Job, Step};
@@ -106,13 +106,15 @@ fn t2865_a_waiter_sees_a_completion_on_another_device() {
     let sub = busy(&long, 256 << 20, 48);
     let flag = long_done.clone();
     long.queue.on_submitted_work_done(move || flag.store(true, Ordering::Release));
-    let _long_flight = first.submitted(&long.device, &long.queue, sub, ms, false);
+    // its time a guess: it makes room only by its completion, never by the clock
+    let _long_flight = first.submitted_as(&long.device, &long.queue, sub, ms, false, true);
     // a short piece on the second device, still running when the waiter comes
     let second = ring.admit(Class::Near, ms);
     let sub = busy(&short, 64 << 20, 6);
-    let _short_flight = second.submitted(&short.device, &short.queue, sub, ms, false);
-    // the rest of the lower pieces a ring keeps uncompleted, still being encoded
-    let held: Vec<_> = (2..AHEAD_PIECES).map(|_| ring.admit(Class::Near, ms)).collect();
+    let _short_flight = second.submitted_as(&short.device, &short.queue, sub, ms, false, true);
+    // the rest of the bound, still being encoded: only a completion makes room for the waiter
+    // (render-ahead D5: the bound alone limits what stands in front of the display, no count)
+    let held = ring.admit(Class::Near, arbiter::bound() - 2 * ms);
     let t0 = Instant::now();
     let ticket = ring.admit(Class::Near, ms);
     let waited = t0.elapsed();
