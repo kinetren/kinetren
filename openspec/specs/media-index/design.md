@@ -561,3 +561,16 @@ owner's "и процессор тоже" (kkt-26.11.11 L4).
   The thumbnails themselves were not a hole: the filmstrip asks nothing of a file the watchdog has
   offline. Proxies do not exist in the program; there is no separate relink dialog (the media-path
   edit is the sync above).
+
+## The decode reads the source's colour (source-colour-matrix, archived 2026-11-17)
+
+Found-defects 697: every source was converted with swscale's default BT.601 limited, so a BT.709 HD
+file (most cameras and phones) came back 12–14 levels off in reds and greens. The picture's tags,
+else the stream's, else the players' rule (≥ 1280 wide or > 576 lines → BT.709, else BT.601; range
+full only for `yuvj*`) now pick the matrix and range (`kt_ffmpeg::colour`). Swscale's own default
+leaves the context untouched, so untagged SD and JPEG keep their former bytes (invariant 11); the
+colour is part of the context key. The class walk (decode, stills, thumbnails, reel strips, posters,
+GPU upload, export, generators, effects' own round trips) is in the change's design D4: the disk
+tiers of decoded pixels move a version (`THUMB_PIXELS_VERSION` in the sidecar, `STRIP_ROW_VERSION`
+3). Rejected: tags read once at open — a picture's own tag wins. Left open: primaries and transfer
+are read, not converted (found-defects 724: BT.2020/HDR without gamut or tone mapping).

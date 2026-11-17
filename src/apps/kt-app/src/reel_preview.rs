@@ -475,7 +475,8 @@ pub fn media_fingerprint(p: &Project, base: Option<&std::path::Path>) -> u64 {
 /// catch-up-shows-loading D6 and t2455's fix wrote rows whose generator cells were empty, and the key
 /// (reel, edit, media) never moves for them. A row written under another version is a miss, rendered
 /// again once. Move it whenever what a strip's cell holds changes for the same edit and media.
-pub const STRIP_ROW_VERSION: u64 = 2;
+/// 3: the decode converts with the source's own colour matrix (source-colour-matrix).
+pub const STRIP_ROW_VERSION: u64 = 3;
 
 /// The third part of a strip row's key: the media fingerprint and the row version.
 pub fn strip_key(p: &Project, base: Option<&std::path::Path>) -> u64 {

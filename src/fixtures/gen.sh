@@ -81,6 +81,19 @@ gen testsrc_sar11.mp4 -f lavfi -i "testsrc=size=640x480:rate=25:duration=1" \
 gen testsrc_sar21.mp4 -f lavfi -i "testsrc=size=640x480:rate=25:duration=1" \
     -vf "setsar=2/1" -c:v libx264 -preset veryfast -g 25 -pix_fmt yuv420p -f mp4
 
+# source-colour-matrix (t2892): one colour patch #C03020 converted to YUV with BT.709 limited.
+# Tagged at HD and at SD (the tag beats the size), and untagged at HD (the rule: HD → BT.709).
+# Read as BT.601, the patch comes back 12–14 levels off in red and green.
+for f in "colour709_tagged_hd.mp4 1280x720 1" "colour709_tagged_sd.mp4 320x180 1" \
+         "colour709_untagged_hd.mp4 1280x720 0"; do
+    set -- $f
+    tags=()
+    [ "$3" = 1 ] && tags=(-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv)
+    gen "$1" -f lavfi -i "color=c=0xC03020:size=$2:rate=10:duration=0.3,format=rgb24" \
+        -vf "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p" \
+        -c:v libx264 -preset veryfast -crf 4 "${tags[@]}" -f mp4
+done
+
 # 2 s muxed A/V (h264 + aac 48k stereo)
 gen muxed_av.mp4 \
     -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \

@@ -9,6 +9,7 @@
 //! all of its hardware acceleration.
 
 pub mod api;
+pub mod colour;
 pub mod encoders;
 pub mod format;
 pub mod hw_trial;
@@ -188,6 +189,10 @@ pub struct Probe {
     /// ProRes 4444, WebM VP9 with alpha. The composite can blend it —
     /// before, it simply did not know about it (`has_alpha: false` was hard-coded).
     pub has_alpha: bool,
+    /// The video stream's colour tags and how its YUV becomes RGB (source-colour-matrix): the
+    /// stream-level answer; a picture's own tags, when it carries them, win at the conversion.
+    pub colour_tags: colour::ColourTags,
+    pub colour: colour::SourceColour,
 }
 
 /// Export configuration.
