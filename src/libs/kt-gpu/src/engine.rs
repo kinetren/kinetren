@@ -891,6 +891,19 @@ struct Inner {
 /// The non-blocking checks `wait_presented` made since the process started (gpu-arbiter D8, t2260).
 static PRESENT_CHECKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The waits `wait_presented` makes between its checks for a frame whose last device time was
+/// `expect_ns` (0 — never measured): the frame's time, then from a quarter of it doubling, at least a
+/// millisecond each. They stop growing at the frame's own time, at least 4 ms (datamosh-history-wait
+/// D4, found-defects 693): unbounded doubling noticed a frame the device ended late at up to twice its
+/// lateness, and the display presented at 18 frames a second on frames of a few milliseconds.
+pub fn present_waits(expect_ns: u64) -> impl Iterator<Item = std::time::Duration> {
+    let ms = std::time::Duration::from_millis(1);
+    let expect = if expect_ns == 0 { 2 * ms } else { std::time::Duration::from_nanos(expect_ns) };
+    let cap = expect.max(4 * ms);
+    let first = expect.max(ms);
+    std::iter::once(first).chain(std::iter::successors(Some((expect / 4).max(ms)), move |w| Some((*w * 2).min(cap))))
+}
+
 /// See [`PRESENT_CHECKS`].
 pub fn present_checks() -> u64 {
     PRESENT_CHECKS.load(std::sync::atomic::Ordering::Relaxed)
@@ -1271,7 +1284,7 @@ impl GpuFxEngine {
     /// on waits until the process is gone.
     pub fn park(&self) {
         let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = inner.device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = crate::wait_all(&inner.device);
         std::mem::forget(inner);
     }
 
@@ -1564,10 +1577,10 @@ impl GpuFxEngine {
             wgpu::Extent3d { width: t.w, height: t.h, depth_or_array_layers: 1 },
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
-        g.queue.submit([enc.finish()]);
+        let sub = g.queue.submit([enc.finish()]);
         let slice = buf.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        g.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
+        crate::wait_for(&g.device, sub).ok()?;
         let data = slice.get_mapped_range().ok()?;
         let mut out = Vec::with_capacity(t.w as usize * t.h as usize * 4);
         for row in 0..t.h as usize {
@@ -1794,10 +1807,8 @@ impl VideoGpuExec for GpuFxEngine {
             *flag.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
             flag.1.notify_all();
         });
-        let ms = std::time::Duration::from_millis(1);
-        let expect = if expect == 0 { 2 * ms } else { std::time::Duration::from_nanos(expect) };
-        let mut wait = expect.max(ms);
-        let mut next = (expect / 4).max(ms);
+        let mut waits = present_waits(expect);
+        let mut wait = waits.next().unwrap_or_default();
         loop {
             {
                 let g = done.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -1813,8 +1824,7 @@ impl VideoGpuExec for GpuFxEngine {
             if *done.0.lock().unwrap_or_else(|e| e.into_inner()) {
                 return;
             }
-            wait = next;
-            next *= 2;
+            wait = waits.next().unwrap_or_default();
         }
     }
 
@@ -1822,7 +1832,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "finish_present");
         let _gate = self.compiled.gl_gate();
         let device = self.inner.lock().unwrap().device.clone();
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        let _ = crate::wait_all(&device);
     }
 
     fn present_key(&self, plan: &FramePlan<'_>) -> Option<u64> {
@@ -2505,7 +2515,7 @@ impl Inner {
         self.staged.flush(&self.queue, &self.arena);
         let sub = { let _h = crate::holds::hold(self.role(), "submit"); self.queue.submit([enc.finish()]) };
         if let Some(p) = self.piece.take() {
-            p.end(&self.device, &self.queue, sub, self.surface);
+            p.end(&self.device, &self.queue, sub.clone(), self.surface);
         }
         self.timer.submitted(&self.queue, self.readback_role(), meta);
         self.last_stages.upload_ns = self.upload.spent_ns - upload_before.0;
@@ -2519,9 +2529,11 @@ impl Inner {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
+        // this frame's own submission (datamosh-history-wait D2): the loop fill's lanes and the
+        // effect cells share the device, and "everything submitted" waited for their frames too
         let waited = {
             let _h = crate::holds::hold(self.role(), "wait");
-            self.device.poll(wgpu::PollType::wait_indefinitely())
+            crate::wait_for(&self.device, sub)
         };
         waited.map_err(|_| GpuExecError::DeviceLost)?;
         match rx.recv() {

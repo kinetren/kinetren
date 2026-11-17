@@ -481,6 +481,40 @@ fn t2362_gpu_tells_a_late_start_from_a_late_signal() {
     }
 }
 
+/// Test t2863 (datamosh-history-wait D1, found-defects 693): a job's pieces are one job however far
+/// apart their records were written: the wait for its buffers is read from its LAST piece's end, and
+/// a piece that ended before the job's admission waits is not a buffer wait.
+#[test]
+fn t2863_a_jobs_pieces_read_as_one_job() {
+    use kt_time::sched::Class;
+    let mut v = Vec::new();
+    // two near jobs on the prefetch thread, each of five pieces 100 ms apart (the admission waits
+    // between them), the last piece ending 3 ms before its buffers came back; the records are written
+    // at the end, each with its own instant a microsecond apart
+    for j in 0..2u64 {
+        let base = j * 1000 * MS;
+        let back = base + 405 * MS;
+        v.push(rec(Ev::ComputeJob, base, |r| {
+            r.th = 2;
+            r.dur = 406 * MS;
+            r.id = Class::Near as u64;
+        }));
+        for p in 0..5u64 {
+            v.push(rec(Ev::GpuStart, back + p * 1000, |r| {
+                r.th = 2;
+                r.id = Class::Near as u64;
+                r.a = base + p * 100 * MS;
+                r.b = r.a + MS;
+                r.c = r.a + 2 * MS;
+                r.aux = 50;
+            }));
+        }
+    }
+    let o = gpu(&run_of(v));
+    assert!(o.contains("10 on the device"), "{o}");
+    assert!(o.contains("buffers after end p50 3.0 ms p95 3.0 ms"), "the buffers were read from every piece:\n{o}");
+}
+
 /// Test t2364 (stream-history-on-device, found-defects 394): `loop` counts, per lap, the stream history
 /// positions the walks computed and how many were distinct.
 #[test]

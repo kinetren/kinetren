@@ -32,7 +32,7 @@ pub use context::{trace_device,
 pub use compiled::{cold_draws, forms_revision, pipelines_in_frame};
 pub use exit::background_gpu_work;
 pub use pipeline_cache::set_cache_dir;
-pub use engine::{present_checks, DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
+pub use engine::{present_checks, present_waits, DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
 /// Textures, buffers and pipelines the engine and the compute host created since the process
 /// started (gpu-pass-cost): after warm-up a frame creates none (t2023). Bind groups and command
@@ -45,6 +45,29 @@ pub(crate) static CREATED: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 
 pub(crate) fn created() {
     CREATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Wait for ONE submission (datamosh-history-wait D2, found-defects 661, 693): whoever waits for
+/// what it submitted names its index. A wait for "everything submitted" also waits for whatever any
+/// other thread submits to the device meanwhile (the loop fill's eight lanes, a look-ahead's pieces)
+/// and holds the device's lock through it, against the window's present on the display's device.
+pub(crate) fn wait_for(device: &wgpu::Device, sub: wgpu::SubmissionIndex) -> Result<wgpu::PollStatus, wgpu::PollError> {
+    device.poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: None })
+}
+
+/// Wait until `device` has finished everything submitted to it: only where that IS the job (a parked
+/// engine, `finish_present` for tests and benches). Counted, so a test holds the frame paths off it.
+pub(crate) fn wait_all(device: &wgpu::Device) -> Result<wgpu::PollStatus, wgpu::PollError> {
+    WAITS_ALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    device.poll(wgpu::PollType::wait_indefinitely())
+}
+
+static WAITS_ALL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Waits for everything submitted to a device since the process started (t2864: no frame, readback,
+/// compute job, calibration or warm-up makes one).
+pub fn waits_for_all() -> u64 {
+    WAITS_ALL.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A single method of comparing GPU frames with the stored ones (R.29): ad-hoc epsilons in

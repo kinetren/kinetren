@@ -135,6 +135,10 @@ pub fn room(class: Class, period: u64, display_ns: Option<u64>) -> u64 {
 /// front of the display.
 pub const AHEAD_PIECES: usize = 3;
 
+/// The longest a waiter goes without looking at every device in flight while nothing it waits on can
+/// be named (a surface device's piece, one still being encoded, flights on several devices).
+const WAIT_TICK: Duration = Duration::from_millis(2);
+
 /// The ring's queue as predicted at `now` (gpu-throughput D1): it drains in submission order, each
 /// flight's predicted time after the one before (a flight still being encoded is taken as submitted
 /// now; one past its predicted end and not done has half its time left).
@@ -396,33 +400,30 @@ impl Ring {
                     .iter()
                     .find(|f| !f.done.load(Ordering::Acquire) && f.sub.as_ref().is_some_and(|s| !s.2))
                     .and_then(|f| f.sub.as_ref().map(|s| (s.0.clone(), s.1.clone(), f.done.clone())));
+                let higher = st.waiting[..class as usize].iter().any(|&n| n > 0);
                 match (oldest, wait) {
-                    // bounded by the instant the prediction makes room, if it does (a guess never
-                    // does): whichever comes first, the completion or the predicted fit
-                    (Some((device, sub, done)), w) if !st.waiting[..class as usize].iter().any(|&n| n > 0) => {
+                    // only a completion makes room and every flight is on one device, whose queue
+                    // finishes in order: the oldest piece's completion is the room. Never a wait with
+                    // a timeout: in wgpu 30 one that times out while another thread's poll retires the
+                    // submission trips `maintain`'s queue-empty assert (datamosh-history-wait D3: a loop
+                    // fill lane died so under a full test run)
+                    (Some((device, sub, done)), None) if !higher && devices.len() <= 1 => {
                         drop(st);
-                        let w = w.map(|w| w.clamp(Duration::from_micros(250), Duration::from_millis(20)));
-                        let t0 = Instant::now();
-                        match device.poll(wgpu::PollType::Wait { submission_index: Some(sub), timeout: w }) {
-                            Ok(_) => done.store(true, Ordering::Release),
-                            // a backend that cannot wait with a timeout answers at once: sleep instead
-                            Err(_) => {
-                                if let Some(w) = w.filter(|w| t0.elapsed() < *w / 2) {
-                                    std::thread::sleep(w);
-                                }
-                            }
+                        if crate::wait_for(&device, sub).is_ok() {
+                            done.store(true, Ordering::Release);
                         }
                         st = self.lock();
                     }
-                    // the prediction makes room by itself (no piece to wait on: a surface device's,
-                    // or one still being encoded): sleep until then, or a completion
-                    (_, Some(w)) => {
-                        let w = w.clamp(Duration::from_micros(250), Duration::from_millis(20));
+                    // the prediction makes room by itself, or the room may come from any of several
+                    // devices, which finish out of each other's order (datamosh-history-wait D3,
+                    // found-defects 662: a wait on the oldest piece of one device alone saw the room
+                    // another device's piece made only when the oldest ended, and near work waited
+                    // while the card stood idle): every device in flight is polled at the loop's top at
+                    // least every tick, and a completion seen by anyone wakes this wait
+                    (_, w) => {
+                        let w = w.map_or(WAIT_TICK, |w| w.clamp(Duration::from_micros(250), WAIT_TICK));
                         st = self.cv.wait_timeout(st, w).unwrap_or_else(|e| e.into_inner()).0;
                     }
-                    // a piece on a device with a surface (driven by polls above), one still being
-                    // encoded, or a higher class waiting
-                    (_, None) => st = self.cv.wait_timeout(st, Duration::from_millis(2)).unwrap_or_else(|e| e.into_inner()).0,
                 }
                 st.flight.retain(|f| !f.done.load(Ordering::Acquire));
             }
