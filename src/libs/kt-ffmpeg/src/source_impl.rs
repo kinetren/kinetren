@@ -531,12 +531,24 @@ impl Source {
     pub fn video_reach(&self, start: Tick) -> Option<i64> {
         let v = self.video.as_ref()?;
         let at = self.video_cursor()?;
+        self.reach(at, v.held_pts, start)
+    }
+
+    /// `video_reach` of this decoder once it stands at `at` (decode-waste D2): a caller planning
+    /// which decoder reads the next key asks where the one reading the current key will stand.
+    pub fn video_reach_from(&self, at: Tick, start: Tick) -> Option<i64> {
+        let v = self.video.as_ref()?;
+        self.reach(at, v.target_ts(self.api, at), start)
+    }
+
+    fn reach(&self, at: Tick, at_ts: i64, start: Tick) -> Option<i64> {
+        let v = self.video.as_ref()?;
         if at.0 > start.0 {
             return None;
         }
         let ahead = start.0 - at.0;
         (ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
-            || VideoPath::no_keyframe_ahead(v.held_pts, v.target_ts(self.api, start), &self.index.video_keyframes))
+            || VideoPath::no_keyframe_ahead(at_ts, v.target_ts(self.api, start), &self.index.video_keyframes))
         .then_some(ahead)
     }
 

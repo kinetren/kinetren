@@ -415,6 +415,113 @@ fn t1455_two_places_of_one_file_get_two_decoders() {
     }
 }
 
+/// Reads `places` (seconds) of `path` in `chunks` one-frame chunks, place `p` at `p + n` frames,
+/// plus `extra(n)` keys; returns (reopens, decoded) and checks every frame against a fresh source.
+fn read_places(path: &str, places: &[f64], chunks: i64, extra: impl Fn(i64) -> Vec<f64>) -> (u64, u64) {
+    use kt_time::{TICK_HZ, Tick};
+    let step = TICK_HZ / 30;
+    let q = Quality { width: 160, height: 90 };
+    let mut src = FfmpegSource::open(path).unwrap();
+    let mut got = Vec::new();
+    for n in 0..chunks {
+        let mut keys: Vec<(Tick, Quality)> = places
+            .iter()
+            .map(|p| Tick((p * TICK_HZ as f64) as i64 + n * step))
+            .chain(extra(n).into_iter().map(|p| Tick((p * TICK_HZ as f64) as i64)))
+            .map(|k| (k, q))
+            .collect();
+        keys.sort();
+        let want = keys.len();
+        let before = got.len();
+        src.read_video_span_qualities(&keys, &mut |k, _, f| got.push((k, f))).unwrap();
+        assert_eq!(got.len() - before, want, "every key of chunk {n} arrives");
+    }
+    let stats = src.decode_debug_stats();
+    let mut fresh = FfmpegSource::open(path).unwrap();
+    for (k, f) in &got {
+        assert_eq!(f.rgba, fresh.read_video_frame(*k, Some(q)).unwrap().rgba, "the frame at {k:?}");
+    }
+    stats
+}
+
+/// t2880 (decode-waste D2): two places of one file 1.5 s apart in every chunk keep a decoder each.
+/// Keys closer than 2 s were one run on one decoder: it walked from the first place to the second
+/// and the next chunk sought back to the first and decoded its GOP again — every chunk.
+#[test]
+fn t2880_two_near_places_keep_a_decoder_each() {
+    let (reopens, decoded) = read_places(&fixture("testsrc_12s.mp4"), &[1.0, 2.5], 30, |_| vec![]);
+    // the first chunk walks 1.0 → 2.5 s (45 pictures), the second opens a decoder for 1.0 s again
+    assert!(reopens <= 3, "each place keeps its decoder: reopens={reopens}");
+    assert!(decoded <= 45 + 2 * 30 + 60 + 4, "no GOP per chunk: decoded={decoded}");
+}
+
+/// t2881 (decode-waste D3): a file of a quarter of 4K's pixels keeps four decoders, so three
+/// places read together (a montage, its picture-in-picture and a backdrop of one file) stop
+/// sending one decoder back to a keyframe every chunk; a 4K file keeps two.
+#[test]
+fn t2881_decoders_per_file_by_its_picture() {
+    let (reopens, decoded) = read_places(&fixture("testsrc_12s.mp4"), &[1.0, 5.0, 9.0], 30, |_| vec![]);
+    assert!(reopens <= 3, "three places, three decoders: reopens={reopens}");
+    assert!(decoded <= 3 * 30 + 90 + 6, "no GOP per chunk: decoded={decoded}");
+    assert_eq!(kt_media::ffmpeg::cursors_for_size((3840, 2160)), 2);
+    assert_eq!(kt_media::ffmpeg::cursors_for_size((7680, 4320)), 2);
+    assert_eq!(kt_media::ffmpeg::cursors_for_size((3840, 1608)), 2);
+    assert_eq!(kt_media::ffmpeg::cursors_for_size((2048, 858)), 4);
+    assert_eq!(kt_media::ffmpeg::cursors_for_size((1920, 1080)), 4);
+    assert_eq!(kt_media::ffmpeg::cursors_for_size((320, 180)), 4);
+}
+
+/// t2882 (decode-waste D3): when every decoder is taken, the one a LATER key of the same request
+/// reaches is not the one sent away. Four places read in every chunk and, every fifth chunk, a key
+/// no decoder reaches between the second and the third place: the least recently used decoder was
+/// the third place's (read last in the chunk before), whose reopen then sent the fourth's away.
+#[test]
+fn t2882_a_decoder_wanted_later_in_the_request_stays() {
+    let stray = |n: i64| if n % 5 == 2 { vec![6.0] } else { vec![] };
+    let (reopens, decoded) = read_places(&fixture("testsrc_12s.mp4"), &[0.3, 0.6, 8.0, 10.0], 30, stray);
+    // four first opens; each of the six stray keys sends one decoder away and its place takes one back
+    assert!(reopens <= 4 + 2 * 6, "no cascade: reopens={reopens}");
+    assert!(decoded <= 4 * 30 + 120 + 2 * 6 * 30 + 8, "decoded={decoded}");
+}
+
+/// t2883 (decode-waste D4): a span at one size (the reel strip, an effect thumbnail, a stream
+/// stage's history, the export's retry) chooses its decoder and seeks per key like a span at
+/// several sizes. It sought only before its first key and decoded every picture up to a far one.
+#[test]
+fn t2883_a_one_size_span_seeks_per_key() {
+    use kt_time::{TICK_HZ, Tick};
+    let path = fixture("testsrc_12s.mp4");
+    let q = Quality { width: 160, height: 90 };
+    let mut src = FfmpegSource::open(&path).unwrap();
+    let keys = [Tick(TICK_HZ), Tick(10 * TICK_HZ)];
+    let mut got = Vec::new();
+    src.read_video_span(&keys, Some(q), &mut |k, f| got.push((k, f))).unwrap();
+    let (_, decoded) = src.decode_debug_stats();
+    assert_eq!(got.len(), 2);
+    // two GOPs of lead-in at most, not the 270 pictures between the keys
+    assert!(decoded <= 2 * 31 + 2, "decoded={decoded}");
+    let mut fresh = FfmpegSource::open(&path).unwrap();
+    for (k, f) in &got {
+        assert_eq!(f.rgba, fresh.read_video_frame(*k, Some(q)).unwrap().rgba, "the frame at {k:?}");
+    }
+}
+
+/// t2884 (decode-waste D3): a sweep forward (the filmstrip's thumbnails, one frame per request)
+/// keeps one decoder: a key ahead of the only decoder is a seek forward, never a second decoder;
+/// a key behind it, while the file still has room, is.
+#[test]
+fn t2884_a_forward_sweep_keeps_one_decoder() {
+    use kt_time::{TICK_HZ, Tick};
+    let q = Quality { width: 160, height: 90 };
+    let mut src = FfmpegSource::open(&fixture("testsrc_12s.mp4")).unwrap();
+    for s in [0.2, 4.5, 9.0, 11.5] {
+        src.read_video_frame(Tick((s * TICK_HZ as f64) as i64), Some(q)).unwrap();
+    }
+    assert_eq!(src.decoders(), 1, "a forward sweep seeks one decoder");
+    src.read_video_frame(Tick(TICK_HZ), Some(q)).unwrap();
+    assert_eq!(src.decoders(), 2, "a key behind the only decoder opens a second");
+}
+
 // ---- Packet index in the sidecar DB -------------------------------------------
 
 /// Test 34: persistence of the packet index.
