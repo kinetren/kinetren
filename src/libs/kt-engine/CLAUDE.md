@@ -314,7 +314,12 @@ in the source's state and arrive through the retune lane.
   every compose site (serial loop, pipeline workers, the ring's `collect`, `depth == 0`) composes an
   incomplete frame again up to `RETRIES` times (the serial one decoding what it lacks first). A new compose
   site in an export does the same. Exports compose through `execute_once` (no memo, the settled run form).
-- The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer.
+- The clock is read only into `ExportProfile` (`kt-cli export --time`), never to steer — with ONE
+  exception (render-honest D1, row 710): `DeviceRule` chooses how many of several devices compose
+  from the frames dispatched per second of wall. It steers only WHICH device composes a frame; the
+  compose thread names each frame's worker to the writer on the order channel (frames go out in
+  order, every worker is FIFO), so a count that changes writes the frames of one device (t1573,
+  t2901). A new reader of the clock in an export steers nothing a frame IS.
 
 ## Tests
 1–3 (concatenation/crossfade/gain), 7 (seek determinism), 9 (scheduler), 11 (golden export), 13 (viewport black), 14 (loop).

@@ -198,6 +198,19 @@ pub struct ExportBackends {
     /// More executors on devices of their own: a software adapter runs one frame per queue, so
     /// each frame worker composes on its own (compute-kernels-render, D4). Empty on a real card.
     pub video_gpu_more: Vec<Arc<dyn VideoGpuExec>>,
+    /// How many of several devices compose (render-honest D1): by the measured time, or a script
+    /// a test drives.
+    pub devices: DeviceCount,
+}
+
+/// How many of an export's devices compose its frames (render-honest D1).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub enum DeviceCount {
+    /// As many as the frames written per second of wall say (`export_pipeline::DeviceRule`).
+    #[default]
+    Measured,
+    /// The counts in turn, four frames each, round and round: a test changes the count on purpose.
+    Script(Vec<usize>),
 }
 
 /// How many frames an export of `[r0, r1)` renders at `fps`: the grid frames from the one that

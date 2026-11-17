@@ -822,7 +822,7 @@ impl KtApp {
                 }
             };
             let video_gpu = (!engines.is_empty()).then(|| engines.remove(0));
-            let backends = kt_engine::ExportBackends { video_gpu, video_gpu_more: engines };
+            let backends = kt_engine::ExportBackends { video_gpu, video_gpu_more: engines, ..Default::default() };
             kt_engine::export::export_mp4_with_backends(
                 &project,
                 a,

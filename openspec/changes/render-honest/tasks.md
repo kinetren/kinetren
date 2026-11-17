@@ -1,6 +1,6 @@
 # Tasks: render-honest
 
-- [ ] 1 Device count by measured time: `DeviceRule` (D1), the dispatcher's active count and the writer's
+- [x] 1 Device count by measured time: `DeviceRule` (D1), the dispatcher's active count and the writer's
       order channel, `ExportBackends::devices` (scripted for tests), the counts in the export line (t2900, t2901)
 - [ ] 2 The preview cost ledger: `VideoGpuExec::last_device_ns` (kt-gpu), `PreviewCosts` in the player,
       `Player::preview_cost` (D2, t2902)
