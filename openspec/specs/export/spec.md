@@ -1129,9 +1129,9 @@ than the preview (F-EXP-006 trick).
 #### Scenario: A saturated colour comes back by the tag
 - **WHEN** a flat saturated red frame is exported with BT.601 limited, BT.709 limited and BT.601 full
 - **THEN** the reader reports the three tag pairs (smpte170m/bt709 matrix, limited/full range,
-  BT.709 primaries and transfer); the default file reads back as written within 6 codes, and the
-  BT.709 file, read back by the BT.601 decode, differs from it by more than 5 codes — the
-  conversion changed, not only the label
+  BT.709 primaries and transfer); every file reads back as written within 6 codes through the
+  decode that reads the tags (source-colour-matrix) — a file converted with one matrix and tagged
+  with another would come back 12 or more codes off, so the conversion follows the label
 - **TEST** t2806 (`src/libs/kt-engine/tests/render_settings.rs`)
 
 #### Scenario: The same settings write the same bytes
@@ -1212,6 +1212,7 @@ Why: N5; rule 16 (the range the render takes was not shown); the idle rule (owne
   still, then 120 with the pointer moving over a static place in the window
 - **THEN** no repaint is requested after the first settle, and no export work is started
 - **TEST** t2813 (`src/apps/kt-app/src/idle_tests.rs`)
+
 ### Requirement: An export writes where its time went
 Every export, serial or pipelined, SHALL keep its stage profile whether or not a caller asked for one, and
 when it ends SHALL write it into the trace — an `ExportStage` record per stage (busy nanoseconds summed over
