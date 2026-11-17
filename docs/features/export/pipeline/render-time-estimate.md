@@ -1,12 +1,12 @@
 ---
 id: F-EXP-007
 title: The render time said before the render, and why it differs from the preview
-status: in-progress
+status: done
 priority: B
 cost: S
 category: export/pipeline
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-engine, kt-gpu, kt-app]
 invariants: [7, 11, 12]
 ui_rules: [9, 13, 16]
