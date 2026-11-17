@@ -13,6 +13,10 @@ use std::path::{Path, PathBuf};
 // replaced by packet_index with i64 LE blobs — persisted packet index of
 // FfmpegSource (fast opening of large files). A bump = DB recreation.
 pub const SCHEMA_VERSION: i64 = 2;
+/// The version of the PIXELS a media's thumbs hold (source-colour-matrix): thumbs written under
+/// another version are not read, and the first write under this one drops them. 1: the decode
+/// converts with the source's own matrix and range (before, BT.601 for every source).
+pub const THUMB_PIXELS_VERSION: i64 = 1;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {
@@ -215,6 +219,10 @@ impl MediaIndexDb {
                media_id INTEGER PRIMARY KEY,
                w        INTEGER NOT NULL,
                h        INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS thumb_pixels (
+               media_id INTEGER PRIMARY KEY,
+               version  INTEGER NOT NULL
              );
              CREATE TABLE IF NOT EXISTS loudness (
                media_id  INTEGER PRIMARY KEY,
@@ -703,7 +711,12 @@ impl MediaIndexDb {
     /// 320×180 are squashed, and they must not be read — they are rebuilt on the
     /// first request. The table is additive: no schema bump (and loss of the index and
     /// peaks of all media) is needed for this.
+    /// Thumbs whose pixels are of another `THUMB_PIXELS_VERSION` (written before the decode
+    /// took the source's colour matrix) count as absent the same way.
     pub fn thumb_size(&self, media_id: i64) -> Result<Option<(u32, u32)>, IndexError> {
+        if !self.thumb_pixels_current(media_id)? {
+            return Ok(None);
+        }
         Ok(self
             .conn
             .query_row("SELECT w, h FROM thumb_meta WHERE media_id=?1", params![media_id], |r| {
@@ -712,11 +725,31 @@ impl MediaIndexDb {
             .optional()?)
     }
 
-    pub fn put_thumb_size(&self, media_id: i64, w: u32, h: u32) -> Result<(), IndexError> {
-        self.conn.execute(
+    fn thumb_pixels_current(&self, media_id: i64) -> Result<bool, IndexError> {
+        let v: Option<i64> = self
+            .conn
+            .query_row("SELECT version FROM thumb_pixels WHERE media_id=?1", params![media_id], |r| r.get(0))
+            .optional()?;
+        Ok(v == Some(THUMB_PIXELS_VERSION))
+    }
+
+    /// Written BEFORE the thumb it describes: a media whose thumbs are of an older
+    /// `THUMB_PIXELS_VERSION` loses them here, so none of them is read once the size is set.
+    pub fn put_thumb_size(&mut self, media_id: i64, w: u32, h: u32) -> Result<(), IndexError> {
+        let stale = !self.thumb_pixels_current(media_id)?;
+        let tx = self.conn.transaction()?;
+        if stale {
+            tx.execute("DELETE FROM thumbnails WHERE media_id=?1", params![media_id])?;
+            tx.execute(
+                "INSERT OR REPLACE INTO thumb_pixels(media_id, version) VALUES(?1,?2)",
+                params![media_id, THUMB_PIXELS_VERSION],
+            )?;
+        }
+        tx.execute(
             "INSERT OR REPLACE INTO thumb_meta(media_id, w, h) VALUES(?1,?2,?3)",
             params![media_id, w as i64, h as i64],
         )?;
+        tx.commit()?;
         Ok(())
     }
 

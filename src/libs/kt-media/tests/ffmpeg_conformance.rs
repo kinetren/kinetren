@@ -738,3 +738,75 @@ fn t796_a_single_image_is_a_source_with_one_frame_at_any_tick() {
         &alphas[..8.min(alphas.len())]
     );
 }
+
+// ---- Source colour (source-colour-matrix) -------------------------------------
+
+/// The centre pixel of an RGBA frame.
+fn centre(rgba: &[u8], w: u32, h: u32) -> [u8; 3] {
+    let i = ((h / 2 * w + w / 2) * 4) as usize;
+    [rgba[i], rgba[i + 1], rgba[i + 2]]
+}
+
+/// t2892: a patch #C03020 written as BT.709 limited decodes to that colour — tagged at HD, tagged
+/// at SD (the tag beats the size) and untagged at HD (the rule) — through the frame read, a
+/// smaller size and a span at two sizes; read as BT.601 it would come back (180, 33, 33).
+#[test]
+fn t2892_bt709_source_decodes_to_its_colour() {
+    const PATCH: [i32; 3] = [0xC0, 0x30, 0x20];
+    const TOL: i32 = 3;
+    let near = |c: [u8; 3], what: &str| {
+        for k in 0..3 {
+            assert!(
+                (c[k] as i32 - PATCH[k]).abs() <= TOL,
+                "{what}: decoded {c:?}, the patch is {PATCH:?} (± {TOL}); (180, 33, 33) is BT.601"
+            );
+        }
+    };
+    for (name, w, h, tagged) in [
+        ("colour709_tagged_hd.mp4", 1280u32, 720u32, true),
+        ("colour709_tagged_sd.mp4", 320, 180, true),
+        ("colour709_untagged_hd.mp4", 1280, 720, false),
+    ] {
+        let path = fixture(name);
+        let raw = kt_ffmpeg::Source::open(&path).unwrap();
+        let p = raw.probe();
+        assert_eq!(p.colour.matrix, kt_ffmpeg::colour::SourceMatrix::Bt709, "{name}");
+        assert!(!p.colour.full_range, "{name}");
+        assert_eq!(p.colour.matrix_tagged, tagged, "{name}");
+        if tagged {
+            assert_eq!((p.colour_tags.matrix, p.colour_tags.range, p.colour_tags.primaries), (1, 1, 1), "{name}");
+        }
+        let mut src = FfmpegSource::open(&path).unwrap();
+        let f = src.read_video_frame(Tick(3000), Some(Quality { width: w, height: h })).unwrap();
+        near(centre(&f.rgba, f.width, f.height), name);
+        let small = src.read_video_frame(Tick(3000), Some(Quality { width: w / 2, height: h / 2 })).unwrap();
+        near(centre(&small.rgba, small.width, small.height), &format!("{name} at half size"));
+        let mut raw = kt_ffmpeg::Source::open(&path).unwrap();
+        let mut seen = 0;
+        raw.read_video_span_sizes(&[(Tick(0), w, h), (Tick(0), w / 4, h / 4), (Tick(9000), w, h)], &mut |_, _, fr| {
+            near(centre(&fr.rgba, fr.width, fr.height), &format!("{name} span {}×{}", fr.width, fr.height));
+            seen += 1;
+        })
+        .unwrap();
+        assert_eq!(seen, 3, "{name}");
+    }
+}
+
+/// t2893: an untagged SD source and a JPEG still keep swscale's own conversion (BT.601, the
+/// still full range): the context is not touched, and a decode is the same bytes twice
+/// (invariant 11).
+#[test]
+fn t2893_untagged_sd_keeps_the_former_conversion() {
+    for name in ["testsrc_h264.mp4", "still.jpg"] {
+        let path = fixture(name);
+        let raw = kt_ffmpeg::Source::open(&path).unwrap();
+        let p = raw.probe();
+        assert_eq!(p.colour.matrix, kt_ffmpeg::colour::SourceMatrix::Bt601, "{name}");
+        let q = Some(Quality { width: 320, height: 180 });
+        let a = FfmpegSource::open(&path).unwrap().read_video_frame(Tick(3000), q).unwrap();
+        let b = FfmpegSource::open(&path).unwrap().read_video_frame(Tick(3000), q).unwrap();
+        assert_eq!(a.rgba, b.rgba, "{name}: the same bytes on every decode");
+    }
+    let p = kt_ffmpeg::Source::open(&fixture("still.jpg")).unwrap().probe().clone();
+    assert!(p.colour.full_range, "a JPEG is full range: {p:?}");
+}

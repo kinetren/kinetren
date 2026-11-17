@@ -83,6 +83,12 @@ with libav*"), `export` (the encoder cascade).
 - **`prepare_for`'s "already held" exit holds only while the target is before the deferred frame**
   (D8): past it, the jump decides between decoding on and seeking — without the bound a two-minute
   jump decoded every 4K picture in between (t1453). Every key of a span goes through `prepare_for`.
+- **The decode converts with the source's matrix and range** (source-colour-matrix): `colour.rs` is
+  the pure rule (the picture's tag, else the stream's, else HD → BT.709 / SD → BT.601; range from the
+  tag or a `yuvj*` format); `conversion_colour` gives `None` for swscale's own default, and then
+  `sws_setColorspaceDetails` is NOT called — untagged SD and JPEG keep their former bytes (t2893).
+  `(matrix, range)` is part of `SwsKey`. A new conversion to RGBA goes through `Rgba::convert` or
+  resolves the colour the same way. Primaries/transfer are read, not converted (found-defects 724).
 - `read_video_span_sizes` decodes each picture once for every size asked at it (D7, t1454);
   `video_cursor` says where the decoder stands, for a caller choosing among decoders of one file;
   `video_reach_from(at, start)` answers the reach rule for a decoder once it stands at `at` (decode-waste D2).
@@ -91,7 +97,7 @@ with libav*"), `export` (the encoder cascade).
 - `iostats::{VDEC_FRAMES, VDEC_NS, VIDEO_REOPENS, RGBA_*}` — the decode counters `kt-cli export
   --time` prints; the first thing to read when an export is slow.
 
-Tests: t10/t21/t37/t112 (conformance), t1450 (RGBA tail), t1453–t1455 (span seek/qualities/decoders, in kt-media), t844–t847 (search, one-folder load under wine/Windows,
+Tests: t10/t21/t37/t112 (conformance), t1450 (RGBA tail), t2890/t2891 (colour rule), t2892/t2893 (in kt-media), t1453–t1455 (span seek/qualities/decoders, in kt-media), t844–t847 (search, one-folder load under wine/Windows,
 retry), t858 (encoders), t862 (table == headers), t863 (Linux plan), t864 (earlier download),
 t865 (a run proves its major), t960 (device contexts), t961 (optional table == headers), t962
 (no device: skip or error, never a crash), t963 (VAAPI on hardware, opt-in), t964 (kt-cli report).

@@ -569,3 +569,34 @@ fn t1742_a_source_with_no_end_is_not_read() {
     assert!(pyr.levels.iter().flatten().all(|c| c.is_empty()), "an envelope of a source with no end");
     assert_eq!(reads.load(Relaxed), 0, "the source was read");
 }
+
+/// t2894 (source-colour-matrix): thumbs written before the decode took the source's colour
+/// matrix are of an older pixel version: not read, and the first thumb written now drops them,
+/// so a filmstrip never mixes old and new colours. Thumbs of the current version stay.
+#[test]
+fn t2894_thumbs_of_an_older_pixel_version_are_not_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("p.ktindex.db");
+    let file = dir.path().join("a.bin");
+    std::fs::write(&file, b"media").unwrap();
+    let mut db = MediaIndexDb::open(&db_path).unwrap();
+    let id = db.ensure_media(&file).unwrap().0;
+    // a sidecar of a former build: thumbs and their size, no pixel version
+    db.put_thumbnail(id, 0, b"old0").unwrap();
+    db.put_thumbnail(id, 9000, b"old1").unwrap();
+    drop(db);
+    let raw = rusqlite::Connection::open(&db_path).unwrap();
+    raw.execute("INSERT INTO thumb_meta(media_id, w, h) VALUES(?1, 320, 180)", [id]).unwrap();
+    drop(raw);
+
+    let mut db = MediaIndexDb::open(&db_path).unwrap();
+    assert_eq!(db.thumb_size(id).unwrap(), None, "thumbs of an older pixel version are not read");
+    db.put_thumb_size(id, 320, 180).unwrap();
+    db.put_thumbnail(id, 0, b"new0").unwrap();
+    assert_eq!(db.thumb_size(id).unwrap(), Some((320, 180)));
+    assert_eq!(db.thumbnail(id, 0).unwrap().as_deref(), Some(&b"new0"[..]));
+    assert_eq!(db.thumbnail(id, 9000).unwrap(), None, "the older thumb at another moment is gone");
+    // a second write at the current version keeps what is there
+    db.put_thumb_size(id, 320, 180).unwrap();
+    assert_eq!(db.thumbnail(id, 0).unwrap().as_deref(), Some(&b"new0"[..]));
+}
