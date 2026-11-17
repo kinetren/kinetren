@@ -418,7 +418,8 @@ is no picture, and an export refuses.
   Every lower class has the same room; there is no count of lower pieces (`AHEAD_PIECES` and the rooms by
   class, `room`, are gone). The display's present is COUNTED (`Ring::note_display` in
   `present`/`present_kept`), never admitted. A waiter wakes when the prediction makes room (it polls the
-  flights' devices, never blocks on a surface device). A piece is cut at the bound (`piece_limit`). A
+  flights' devices, never blocks on a surface device). A piece is cut at HALF the bound and no admission claims more (`piece_limit`, ahead-kept D2): a piece
+  of the whole bound fitted only an empty ring, so the device idled between pieces (found-defects 732, t2930). A
   lower-class frame or compute job is cut at pass/dispatch boundaries by the pass timer's last MEASURED
   time of each label (`Timer::predict`, `ComputeDevice::last`), else by the disk seeds (`seeds.rs`,
   below); an unmeasured pass ends its piece. A new pass site calls `self.cut_point(enc, label)` before

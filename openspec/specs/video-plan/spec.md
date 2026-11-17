@@ -979,7 +979,9 @@ in flight; every lower class has the same bound, and no count of lower submissio
 submission keeps one bound of predicted time in flight, and one piece is always admitted on an idle ring.
 The bound is ONE frame period of the preview's project (40 ms at 25 fps), a general rule; a lower-class
 frame or compute job SHALL be cut at pass (dispatch) boundaries into pieces whose predicted device time
-stays under the bound (a pass longer than that is a piece of its own). A ring with no display neither bounds
+stays under HALF the bound (a pass longer than that is a piece of its own), and no admission SHALL claim
+more than half the bound, so one piece is admitted behind the one that runs while what stands in front of a
+present stays within the bound. A ring with no display neither bounds
 nor cuts: an export's ring of frames and a software device keep their pipelining. The cut frame's bytes
 SHALL equal the uncut frame's.
 Why: row 149 — on a real card the display and the offline device share the graphics ring, and one
@@ -987,7 +989,10 @@ long submission held the display. Found-defects 480 — waiting for the earlier 
 Datamosh walk 96–98 % of its wall on his iGPU. The bound was half a frame period until 2026-11-17; two
 designs called it "the owner's latency limit", which he never set (gpu-arbiter D3: "a general rule … the
 owner may want to revisit"). Asked with context, he raised it ("Поднять", kkt-26.11.17 S4): a lower piece
-may delay a displayed frame by up to one period, and while playing the display presents kept frames only.
+may delay a displayed frame by up to one period, and while playing the display presents kept frames only. Pieces were cut at the whole bound from then until ahead-kept: a piece that size fitted only an EMPTY
+ring, so every piece of the history walk waited for the one before to end, and the owner's card was busy
+32–46 % while a VHS Tape + Camera ISP + Datamosh loop missed frames (kkt-26.11.18 T2: a history position's
+59 ms of device took a 117 ms span).
 
 #### Scenario: The in-flight bound applies only with a display
 - **WHEN** a ring with a display holds pieces whose predicted drain reaches the bound, and the same pieces wait on a ring without one
@@ -1018,6 +1023,11 @@ may delay a displayed frame by up to one period, and while playing the display p
 - **WHEN** the display presents frames costing a quarter period, twice the period, and then stops, and a near, a background and an offline piece of three quarters of the bound ask in turn
 - **THEN** each class is admitted with the same room, the bound past the display's next present; none has a quarter bound or a slack of its own
 - **TEST** t2923 (`src/libs/kt-gpu/src/arbiter.rs`)
+
+#### Scenario: A whole piece is queued behind the one that runs
+- **WHEN** on a ring with a display that presents nothing a piece of the largest size runs, for the frame on screen's class, a near and a background class
+- **THEN** a next piece of that size is admissible at once, and a claim of the whole bound is not
+- **TEST** t2930 (`src/libs/kt-gpu/src/arbiter.rs`)
 
 ### Requirement: The preview's present waits without polling the device
 `wait_presented` SHALL NOT poll the display device on a fixed short period: it sleeps on the frame's
@@ -1570,8 +1580,11 @@ The producer SHALL be one `near` service of the scheduler. Each pass SHALL look 
 plus its measured lead (the wall a moment takes, at least one frame) forward: inside a loop region round
 the region (every moment of the lap); outside one forward until the first moment whose layers are not all
 decoded. It SHALL skip moments the display's executor holds (noting them for the coverage bars) and moments
-skipped this lap — one that came out incomplete (a stream stage short of its frame included) or that the
-display's memo did not keep — and compose the rest in that order, keeping each complete composite on the
+skipped this lap — one the display's memo did not keep. A moment that came out incomplete SHALL wait for
+what it lacked, not for the lap's end: one whose stream stage was short of `k` positions until the history
+walks computed `k` less the positions a composite computes itself, any other until a walk or a decode
+moved; a new lap tries it again. A moment skipped or waiting is composed on demand by the display. The
+producer SHALL compose the rest in that order, keeping each complete composite on the
 display's executor under its plan key. It SHALL ask no decode and withdraw no request. Nothing SHALL run
 while nothing plays.
 
@@ -1588,7 +1601,9 @@ Why: `docs/architecture-review-26.11.17.md` §1–§2, R2 — on the owner's iGP
 ms of wall for ~12 ms of device, the card was 4–26 % busy while frames were missing, and a VHS Tape loop the
 card could compose in real time took seven laps; the owner raised the bound and asked for computing ahead
 (kkt-26.11.17 S4, kkt-26.11.11 L4). Found-defects 251 — a display slower than the project's frames kept only
-the moments it showed.
+the moments it showed. kkt-26.11.18 T2 — a moment short of its history was skipped for the lap, so a moment the walk reached
+a second later waited for the next lap: of 300 moments composed ahead a lap, 6–58 were kept, and his loop
+filled from lap 15.
 
 #### Scenario: A loop shown in part becomes all-kept
 - **WHEN** a loop of 24 moments plays with its frames decoded and a display that presents only every fourth moment it reaches, for three laps, with a producer executor and with `KT_RENDER_AHEAD=off`
@@ -1635,3 +1650,8 @@ the moments it showed.
 - **THEN** the preview shows the loop's frames (no lasting Loading after the first laps), the coverage bar over the region reads kept, and the process rests after the stop
 - **TEST** t2927 (`src/scripts/live/render_ahead.py`)
 - **PATH** open the project → drag over the ruler above the first event to set a loop region → press Space → the preview plays the region round and round; after the first laps the region's bar turns bright → press Space → the preview stands on its last frame
+
+#### Scenario: An incomplete moment waits for what it lacked
+- **WHEN** a moment comes out short of its stream history by 64 positions with a composite computing 2 itself, and another short by 2, and one with no stream stage
+- **THEN** the first is not tried again until 62 positions were walked, the second as soon as a walk or a decode moved, the third as soon as a decode moved
+- **TEST** t2931 (`src/libs/kt-engine/src/render_ahead.rs`)

@@ -174,7 +174,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   device, a done flag, no wait); the side engine `ahead_gpu_setter` gives (bytes) only for a display with
   no sibling or `KT_RENDER_AHEAD_DEVICE=side`. Depth: `render_ahead::depth` —
   a moment's wall over the producer's own time a moment, capped by `kt_time::mem::room()`; never a
-  constant. A moment incomplete or refused by the memo is skipped for the lap. `KT_RENDER_AHEAD=off`
+  constant. A moment refused by the memo is skipped for the lap; an incomplete one WAITS for what it
+  lacked (`render_ahead::Waits`: a history short by `k` until `k − compose_steps` positions were walked,
+  else a walk or a decode), cleared each lap; the display composes a skipped or waiting moment on demand
+  (ahead-kept D1, t2931). A new walk of a stream history calls `kt_plugin_api::stream::walked`, or a
+  moment waiting on it is tried again only next lap. `KT_RENDER_AHEAD=off`
   for an A/B. t2334–t2336, t2920, t2921, t2925.
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
