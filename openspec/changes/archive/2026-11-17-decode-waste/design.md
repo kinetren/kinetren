@@ -22,7 +22,7 @@ reopens for the logged run's 12,289 and 157, so policies were compared on it bef
 | 20–30 s, 640×360, preview (two runs each) | before | 10,309 / 10,280 | 1,878 / 1,899 | 136 / 135 | 5.5 |
 | | after | 9,444 / 9,419 | 1,939 / 1,916 | 117 / 115 | 4.9 |
 | whole project, 640×360, export | before | 117,679 | 21,187 | 1,536 | 5.6 |
-| | after | AFTER_ALL | 21,187 | AFTER_ALL_R | AFTER_ALL_P |
+| | after | 105,115 | 21,188 | 1,281 | 5.0 |
 
 The export's file is byte for byte the same before and after (md5 of the 20–30 s piece and of the whole
 project). The export's wall did not move here (51.5 / 49.6 s at load ~15; 117.0 / 116.7 s side by side at
@@ -141,7 +141,7 @@ Found by grep of `read_video_frame`, `read_video_span`, `read_video_span_qualiti
 ## Not done (found-defects)
 
 - **A GOP walked again by cuts far apart on the timeline** (whole project: 31,469 pictures would do,
-  ~AFTER_ALL are decoded). Removing it needs the walked pictures kept until their cut comes — a
+  105,115 are decoded). Removing it needs the walked pictures kept until their cut comes — a
   decoded-picture tier, or intra-frame proxies of the footage ("optimized media" in Resolve, proxies in
   Premiere and Vegas). New row.
 - **The MediaWorker's queue order knows one cursor per media** (above). Not a measured cost.

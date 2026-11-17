@@ -412,6 +412,31 @@ showcase project reads seven VP8/VP9 files up to 3840×2160.
   the least recently used — a function of the requests. Decoded pictures for the showcase: 101,009
   → 9,190 (for 5,644 used). t1455. Not done: the preview's `MediaWorker` keeps one decoder per media
   and has the same ping-pong on such a project (a follow-up; its queue is its own design).
+  **Superseded by decode-waste (2026-11-17)**: the 2 s gap and the fixed two decoders are gone (below).
+
+## Every read of a file chooses its decoder per key (decode-waste, 2026-11-17)
+
+Found-defects 712: the heavy showcase's 20–30 s decoded 12,289 pictures for 1,924 used (157 reopens),
+the preview as many. Two causes. Most of it is each cut's lead-in from its keyframe (2.6–4.9 s GOPs
+against 0.3–0.5 s cuts; every seek landed on the keyframe right before its target), which no decoder
+order removes inside a stretch (the union of the walks: 8,609). The rest was decoders fighting over
+places of one file: keys closer than 2 s were one run, so one decoder walked between two places and
+sought back every chunk; three places thrashed two decoders; the least recently used decoder sent away
+was often the next run's; a one-size span (strip, effect thumbnails, stream history, the export's
+retry) sought only before its first key, and a frame always used the first decoder.
+
+- `read_runs` is the one body of `read_video_frame`, `read_video_span` and `read_video_span_qualities`;
+  a run goes on while its decoder, standing at the run's last key, is the nearest that reaches the next
+  (`video_reach_from`). Rejected: a smaller gap (wrong for some speed); "seek whenever a keyframe lies
+  between" (−2.5 % pictures, +20 % decoder rebuilds on the model).
+- A fresh decoder only when none is free to go (each ahead of the key, read by this request, or wanted
+  by a later key of it); else the least recently used free one, so a forward sweep keeps one decoder.
+- Decoders per file by picture: two 4K pictures' pixels, 2..=4 (a third decoder for every file saved a
+  little more and cost +0.8 GB on the showcase export, the size rule +0.3 GB).
+- Measured: export 12,289 → 10,214 pictures, 157 → 120 reopens; preview ~10,300 → ~9,430; whole
+  project 117,679 → 105,115; the export's bytes unchanged. t2880–t2884.
+- Left (found-defects 720): the same GOPs are walked again by cuts far apart on the timeline (whole
+  project: 31,469 would do); only kept lead-in pictures or proxies remove it.
 
 ## The live decoder (preview-throughput, 2026-11-04)
 
