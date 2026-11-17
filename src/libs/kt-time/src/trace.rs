@@ -550,7 +550,13 @@ pub mod export_stage {
     pub const WAIT_WRITER_AUDIO: u32 = 16;
     /// The export as a whole: `a` the wall nanoseconds, `b` the timeline nanoseconds it covered.
     pub const WALL: u32 = 17;
-    pub const NAMES: [&str; 17] = [
+    /// The readback ring of one device (export-readback D2): `a` its bound, `b` the frames in flight
+    /// summed over the submissions, `c` the submissions, `id` the most in flight at once. Not a stage.
+    pub const RING: u32 = 18;
+    /// A frame from its submission to its collection: `a` nanoseconds summed, `b` the longest, `c` the
+    /// frames. Not a stage.
+    pub const LATENCY: u32 = 19;
+    pub const NAMES: [&str; 19] = [
         "decode",
         "compose",
         "readback",
@@ -568,6 +574,8 @@ pub mod export_stage {
         "writer/frame",
         "writer/audio",
         "wall",
+        "ring",
+        "latency",
     ];
     /// The stage's name (`?` — a stage this build does not know).
     pub fn name(aux: u32) -> &'static str {

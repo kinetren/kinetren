@@ -15,7 +15,9 @@ pub(crate) const QUERIES: u32 = 1024;
 /// Frames whose timestamps may wait for their map; past it a frame runs untimed (no poll came).
 /// Their read buffers are made with the timer, all of them: a device that lags (a loaded machine)
 /// keeps more frames waiting, and a buffer made then would be a resource made per frame (t2023).
-const PENDING_MAX: usize = 8;
+/// Twice the export's readback ring (export-readback D1): a ring of 16 in flight left frames past 8
+/// untimed exactly when the device time a frame was the question.
+const PENDING_MAX: usize = 2 * crate::engine::RING_MAX;
 
 /// Who asked for the frame.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

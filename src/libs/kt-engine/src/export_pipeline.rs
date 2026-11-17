@@ -72,6 +72,16 @@ pub struct ExportProfile {
     /// Frames dispatched while `n + 1` devices composed (render-honest D1): which counts the
     /// measured time chose. Empty on one device.
     pub frames_on_devices: [AtomicU64; MAX_DEVICES],
+    /// The readback ring (export-readback D2): its bound, the frames in flight summed at every
+    /// submission and the most at once, the submissions.
+    pub ring_depth: AtomicU64,
+    pub in_flight_sum: AtomicU64,
+    pub in_flight_max: AtomicU64,
+    pub submissions: AtomicU64,
+    /// A frame's time from its submission until it was collected: summed, the longest, the frames.
+    pub latency_ns: AtomicU64,
+    pub latency_max_ns: AtomicU64,
+    pub latency_frames: AtomicU64,
 }
 
 /// The most devices the profile counts frames for; more are counted with the last.
@@ -121,7 +131,41 @@ impl ExportProfile {
                 .c(frames)
                 .emit();
         }
+        let submissions = self.submissions.load(Ordering::Relaxed);
+        if submissions > 0 {
+            kt_time::trace::ev(Ev::ExportStage)
+                .id(self.in_flight_max.load(Ordering::Relaxed))
+                .aux(export_stage::RING)
+                .a(self.ring_depth.load(Ordering::Relaxed))
+                .b(self.in_flight_sum.load(Ordering::Relaxed))
+                .c(submissions)
+                .emit();
+            kt_time::trace::ev(Ev::ExportStage)
+                .id(workers)
+                .aux(export_stage::LATENCY)
+                .a(self.latency_ns.load(Ordering::Relaxed))
+                .b(self.latency_max_ns.load(Ordering::Relaxed))
+                .c(self.latency_frames.load(Ordering::Relaxed))
+                .emit();
+        }
         kt_time::trace::ev(Ev::ExportStage).id(workers).aux(export_stage::WALL).a(wall).b(timeline_ns).c(frames).emit();
+    }
+
+    /// `; readback: up to 12 in flight of 16 (mean 9.8), a frame back 52.7 ms after its submission`
+    /// — the ring of one device (export-readback D2); empty when no frame went through it.
+    pub fn ring_text(&self) -> String {
+        let n = self.submissions.load(Ordering::Relaxed);
+        let back = self.latency_frames.load(Ordering::Relaxed);
+        if n == 0 || back == 0 {
+            return String::new();
+        }
+        format!(
+            "; readback: up to {} in flight of {} (mean {:.1}), a frame back {:.1} ms after its submission",
+            self.in_flight_max.load(Ordering::Relaxed),
+            self.ring_depth.load(Ordering::Relaxed),
+            self.in_flight_sum.load(Ordering::Relaxed) as f64 / n as f64,
+            self.latency_ns.load(Ordering::Relaxed) as f64 / back as f64 / 1e6
+        )
     }
 
     /// The record as one line for the telemetry journal (render-speed D2): the real-time factor, the
@@ -146,7 +190,7 @@ impl ExportProfile {
             timeline_ns as f64 / wall as f64,
             if workers == 0 { "serial".to_string() } else { format!("{workers} frame workers") },
             shares.join(", "),
-            self.devices_text()
+            self.devices_text() + &self.ring_text()
         )
     }
 
@@ -782,8 +826,8 @@ pub(crate) fn run<S: ExportSink>(
         //     dispatcher handing frames to the workers' devices round robin ---
         let compose = scope.spawn(move || -> std::io::Result<()> {
             let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
-            let mut pending: std::collections::VecDeque<(u64, u64)> = Default::default();
-            let depth = gpu.as_ref().map_or(0, |g| g.readback_depth());
+            // (frame, ticket, submitted at — read into the profile only)
+            let mut pending: std::collections::VecDeque<(u64, u64, Instant)> = Default::default();
             // several devices: as many compose as the measured time says (render-honest D1)
             let rule = (engines.len() > 1).then(|| {
                 let script = match &backends.devices {
@@ -797,7 +841,7 @@ pub(crate) fn run<S: ExportSink>(
                 let w = dispatch.borrow_mut().pick(prof);
                 order_tx.send(w).is_ok() && job_txs[w].send(job).is_ok()
             };
-            let collect = |gpu: &Arc<dyn crate::VideoGpuExec>, i: u64, ticket: u64| -> std::io::Result<bool> {
+            let collect = |gpu: &Arc<dyn crate::VideoGpuExec>, i: u64, ticket: u64, at: Instant| -> std::io::Result<bool> {
                 let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                 let mark = Instant::now();
                 let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
@@ -808,6 +852,10 @@ pub(crate) fn run<S: ExportSink>(
                     let s = gpu.last_stages();
                     p.gpu_wait_ns.fetch_add(s.wait_ns, Ordering::Relaxed);
                     p.copy_ns.fetch_add(s.copy_ns, Ordering::Relaxed);
+                    let back = at.elapsed().as_nanos() as u64;
+                    p.latency_ns.fetch_add(back, Ordering::Relaxed);
+                    p.latency_max_ns.fetch_max(back, Ordering::Relaxed);
+                    p.latency_frames.fetch_add(1, Ordering::Relaxed);
                 }
                 // composed again before it is written (gpu-leftovers D5)
                 for _ in 0..crate::export::RETRIES {
@@ -829,8 +877,8 @@ pub(crate) fn run<S: ExportSink>(
                     Ok(c) => c,
                     Err(_) => {
                         if let Some(gpu) = &gpu {
-                            while let Some((j, tk)) = pending.pop_front() {
-                                if !collect(gpu, j, tk)? {
+                            while let Some((j, tk, at)) = pending.pop_front() {
+                                if !collect(gpu, j, tk, at)? {
                                     return Ok(());
                                 }
                             }
@@ -867,6 +915,8 @@ pub(crate) fn run<S: ExportSink>(
                     };
                     let mark = Instant::now();
                     let plan = video_ref.frame_plan(cache_ref, t, quality);
+                    // the ring's bound for this size (export-readback D1); 0 — no ring
+                    let depth = gpu.readback_depth(plan.out_w, plan.out_h);
                     if depth == 0 {
                         let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                         let mut complete = gpu
@@ -895,10 +945,21 @@ pub(crate) fn run<S: ExportSink>(
                         p.upload_ns.fetch_add(s.upload_ns, Ordering::Relaxed);
                         p.encode_passes_ns.fetch_add(s.encode_ns, Ordering::Relaxed);
                     }
-                    pending.push_back((i, ticket));
-                    if pending.len() >= depth {
-                        let (j, tk) = pending.pop_front().unwrap();
-                        if !collect(gpu, j, tk)? {
+                    pending.push_back((i, ticket, Instant::now()));
+                    if let Some(p) = prof {
+                        p.ring_depth.fetch_max(depth as u64, Ordering::Relaxed);
+                        p.in_flight_sum.fetch_add(pending.len() as u64, Ordering::Relaxed);
+                        p.in_flight_max.fetch_max(pending.len() as u64, Ordering::Relaxed);
+                        p.submissions.fetch_add(1, Ordering::Relaxed);
+                    }
+                    // every frame the device finished goes on now; a full ring waits for its oldest
+                    // (export-readback D1): the frames in flight follow the device's latency
+                    while let Some(&(j, tk, at)) = pending.front() {
+                        if pending.len() < depth && !gpu.done(tk) {
+                            break;
+                        }
+                        pending.pop_front();
+                        if !collect(gpu, j, tk, at)? {
                             return Ok(());
                         }
                     }
