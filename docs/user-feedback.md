@@ -2918,3 +2918,12 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    lap; the first and the filled laps match kt26.11.10.
 2. "если устраивает - делай другие сам без меня" — his word to start items 3, 4 and 5 of
    `kkt-26.11.15` (render speed, the idle processor, the render settings) without asking him.
+
+## 2026-11-17 — after stage 17 (`kkt-26.11.17`)
+
+1. "запускай пока другие вещи потихоньку когда эти два завершатся" — the queue after
+   `datamosh-history-wait` and `decode-waste` starts without asking him.
+2. Remind him of the trace request in about 7 and 17 hours.
+3. "я уже немного устал это делать каждый раз для тебя" — recording traces for every diagnosis
+   tires him. A separate agent thinks whether a fundamental, breaking change or a different
+   architecture is needed, instead of one more round on his traces.
