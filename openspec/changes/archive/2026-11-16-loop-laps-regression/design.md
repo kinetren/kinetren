@@ -39,9 +39,9 @@ at half the bound, at most three ahead) with gpu-leftovers D4 (`8de88b13`, stage
 display that fills its period leaves `near` a quarter bound and the classes below it nothing). His display
 fills its period in both versions (present wait 54–60 ms at 33 ms), so the look-ahead, its stream walk and
 the loop fill got a quarter bound a period while the device idled. Now `near` keeps the bound,
-`visible`/`background` a quarter at least, an export only the slack (`arbiter::room`). The owner's latency
+`visible`/`background` a quarter at least, an export only the slack (`arbiter::room`). The (mislabelled) owner's latency
 limit stays: no piece longer than the bound, at most `AHEAD_PIECES` (3) lower pieces of half the bound
-uncompleted in front of the display — kt26.11.10 put whole 380 ms jobs there. t2517, t2433 rewritten.
+uncompleted in front of the display — kt26.11.10 put whole 380 ms jobs there. t2517, t2433 rewritten. [Correction, render-ahead 2026-11-17: this bound was never the owner's rule — gpu-arbiter D3 set it as a general rule he might revisit; asked with context, he raised it to one frame period (kkt-26.11.17 S4).]
 
 ### Checked and not a mechanism
 

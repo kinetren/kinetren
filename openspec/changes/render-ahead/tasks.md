@@ -7,22 +7,22 @@
 
 ## 2. The bound (R5) and utilisation in the trace
 
-- [ ] 2.1 `arbiter`: `bound()` = one frame period; `room` and `AHEAD_PIECES` deleted; a lower piece is cut at the bound; t2251, t2430, t2431, t2433, t2441 at the new bound; t2517 → t2923; kt-gpu CLAUDE.md
-- [ ] 2.2 `Ev::GpuFrame` written by the pass timer's harvest; `trace loop` per-lap device share and "while frames were missing"; `trace gpu` frames; t2926
-- [ ] 2.3 `cargo test -p kt-gpu -p kt-time -p kt-cli`, clippy; commit; target-prune
+- [x] 2.1 `arbiter`: `bound()` = one frame period; `room` and `AHEAD_PIECES` deleted; a lower piece is cut at the bound; t2251, t2430, t2431, t2433, t2441 at the new bound; t2517 → t2923; kt-gpu CLAUDE.md
+- [x] 2.2 `Ev::GpuFrame` written by the pass timer's harvest; `trace loop` per-lap device share and "while frames were missing"; `trace gpu` frames; t2926
+- [x] 2.3 `cargo test -p kt-gpu -p kt-time -p kt-cli`, clippy; commit; target-prune
 
 ## 3. The producer (R2)
 
-- [ ] 3.1 `VideoGpuExec::{ahead, as_any, poll_done}` and `Ahead`; kt-gpu's on-device keep into a same-device keeper's present memo with a done flag, the bytes form otherwise; t2922
-- [ ] 3.2 `render_ahead.rs`: one near lane, the order (frame on screen + lead, the lap or the decoded window), skips for the lap, the measured depth (t2921), the executor choice (display sibling on a card, the side engine on software); `loop_fill.rs` deleted
-- [ ] 3.3 Player: the producer in place of the fill (kick on play, seek and every playing prefetch pass, `ahead_gpu_setter`), `compose_ahead`; compose thread presents only kept moments while playing (`KT_RENDER_AHEAD=off` for an A/B)
-- [ ] 3.4 `FAR_STALLS` → the cache's decoded count (`BurstCache::video_inserted`); t2924
-- [ ] 3.5 `tests/render_ahead.rs`: t2334–t2336 moved, t2920, t2925; t2432 green; `cargo test -p kt-engine` (nextest), clippy
+- [x] 3.1 `VideoGpuExec::{ahead, as_any, poll_done}` and `Ahead`; kt-gpu's on-device keep into a same-device keeper's present memo with a done flag, the bytes form otherwise; t2922
+- [x] 3.2 `render_ahead.rs`: one near lane, the order (frame on screen + lead, the lap or the decoded window), skips for the lap, the measured depth (t2921), the executor choice (display sibling on a card, the side engine on software); `loop_fill.rs` deleted
+- [x] 3.3 Player: the producer in place of the fill (kick on play, seek and every playing prefetch pass, `ahead_gpu_setter`), `compose_ahead`; compose thread presents only kept moments while playing (`KT_RENDER_AHEAD=off` for an A/B)
+- [x] 3.4 `FAR_STALLS` → the cache's decoded count (`BurstCache::video_inserted`); t2924
+- [x] 3.5 `tests/render_ahead.rs`: t2334–t2336 moved, t2920, t2925; t2432 green; `cargo test -p kt-engine` (nextest), clippy
 - [ ] 3.6 kt-cli `preview` lines, kt-app setter; build kt-app; commit; target-prune
 
 ## 4. Docs
 
-- [ ] 4.1 kt-engine and kt-gpu CLAUDE.md; the "owner's latency limit" wording corrected in `openspec/specs/video-plan/design.md` and the loop-laps-regression design
+- [x] 4.1 kt-engine and kt-gpu CLAUDE.md; the "owner's latency limit" wording corrected in `openspec/specs/video-plan/design.md` and the loop-laps-regression design
 - [ ] 4.2 found-defects rows touched (663, 692, 693 state); What's new line; `kkt-26.11.17-index.md` row S4
 
 ## 5. Measured and checked

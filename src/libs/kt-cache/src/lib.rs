@@ -398,6 +398,9 @@ pub struct BurstCache {
     /// What this cache asked above its base; 0 — it never asked (an export's, a reel strip's cache),
     /// and its cap is its base whatever the kind's grant.
     video_want: AtomicU64,
+    /// Video frames inserted so far (render-ahead D6): a stalled far stream walk is tried again only
+    /// when this moved.
+    video_inserted: AtomicU64,
     /// The shrink hook is set at the first want (it needs the cache's `Arc`).
     hooked: AtomicBool,
 }
@@ -436,6 +439,7 @@ impl BurstCache {
                 ledger.open(kt_time::mem::Tenant::Frames, config.max_audio_bytes as u64),
             ],
             video_want: AtomicU64::new(0),
+            video_inserted: AtomicU64::new(0),
             hooked: AtomicBool::new(false),
         }
     }
@@ -686,6 +690,9 @@ impl BurstCache {
         let mut inner = self.inner.lock().unwrap();
         let bytes = payload.bytes();
         let is_audio = payload.is_audio();
+        if !is_audio {
+            self.video_inserted.fetch_add(1, Ordering::Relaxed);
+        }
         debug_assert_eq!(is_audio, key.kind == BurstKind::Audio);
 
         // an overwrite keeps the holds of the entry it replaces; its bytes are new (a new serial).
@@ -879,6 +886,11 @@ impl BurstCache {
             inner.held_bytes += bytes;
         }
         true
+    }
+
+    /// Video frames inserted into this cache so far (render-ahead D6).
+    pub fn video_inserted(&self) -> u64 {
+        self.video_inserted.load(Ordering::Relaxed)
     }
 
     /// `insert_video` that takes a hold in the same step.

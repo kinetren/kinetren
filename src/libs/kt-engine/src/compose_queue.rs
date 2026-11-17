@@ -13,6 +13,10 @@
 //! display target with no readback. Only the executor's time counts: a stream stage runs inside
 //! the plan, its compute jobs on a device of their own, and it holds no display queue.
 //!
+//! Playing with the render-ahead producer (render-ahead D1) the thread only presents: the moment's
+//! kept composite, or no picture (Loading) while the producer reaches it. The rest of this — the
+//! latest-wins composite, the slow route — is the paused, scrubbing and seeking preview's.
+//!
 //! Between frames the thread also checks the kept moments against an edit (`recheck_shown`): that
 //! builds plans, and the bars ask for it on the UI thread.
 
@@ -222,7 +226,10 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
                     || c.ask.lock().unwrap().as_ref().is_some_and(|a| a.t != t)
             }
         };
-        let out = crate::video::stop_when(kt_time::trace::stop::COMPOSE, left, || match display.filter(|_| on_display) {
+        // playing with the render-ahead producer: the moment's kept composite or nothing (render-ahead D1)
+        let ahead = display.and_then(|o| parts.present_ahead(ask.t, o));
+        let presented_ahead = ahead.is_some();
+        let out = if presented_ahead { ahead } else { crate::video::stop_when(kt_time::trace::stop::COMPOSE, left, || match display.filter(|_| on_display) {
             Some(o) => {
                 let r = parts.compose(ask.t, Target::Display(o));
                 let w = Instant::now();
@@ -236,7 +243,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
                 r
             }
             None => parts.compose_via(via.as_ref(), display, ask.t, Target::Bytes(&mut rgba)),
-        });
+        }) };
         let spent = t0.elapsed();
         // the executor's own time: the plan (a stream stage's kernel included) holds no queue
         let plan = out.as_ref().map_or(0, |o| o.4);
@@ -245,7 +252,7 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
         let replayed = out.as_ref().is_some_and(|o| o.5.replayed);
         let catching_up = out.as_ref().map_or(0, |o| o.5.stream_short);
         let shown_kept = out.as_ref().is_some_and(|o| o.5.shown_kept);
-        if replayed {
+        if replayed || presented_ahead {
             on_display = display.is_some();
         } else if timed {
             route.timed(exec);

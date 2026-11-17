@@ -101,9 +101,11 @@ on screen longer when the person seeks.
 
 ### D6. `FAR_STALLS` → the cache's decoded count
 
-A far walk that walked no position waits until the frames cache has gained a decoded video frame
-(`BurstCache::video_inserted`) or the pass state moves; the eight-pass counter is gone. A source that never
-comes costs no pass; one that comes wakes it at its first frame.
+A far walk left pending runs again on the next pass while it walks, or while the frames cache gained a
+decoded video frame since the pass before (`BurstCache::video_inserted`); one that walked nothing over a
+pass that decoded nothing waits for the pass state to move. The eight-pass counter is gone: the retries
+follow the decoder's progress, not a count. A source that never comes costs one pass; one that comes keeps
+the walk going while it comes.
 
 ### D7. Utilisation is the acceptance
 

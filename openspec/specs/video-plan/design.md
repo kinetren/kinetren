@@ -582,8 +582,8 @@ device or the cores stand idle. Full record: `openspec/changes/archive/2026-11-1
   them as a FIFO (an overrun flight keeps half its time); a lower class is admitted while the drain plus its
   claim ends within the bound past the later of the display's next present and the end of its frame in
   flight; at most three lower flights uncompleted; a lower piece is half the bound so one runs while the
-  next is queued. The display's present is counted, never admitted. Rejected: a larger bound (the owner's
-  latency limit), counting the display without a time model (only more waits).
+  next is queued. The display's present is counted, never admitted. Rejected then: a larger bound (called "the owner's
+  latency limit" — a mislabel, see render-ahead D5: he never set it and raised it on 2026-11-17), counting the display without a time model (only more waits).
 - **What it cannot do:** a display that composes heavy chains every frame saturates the device; the walk
   then gets about one bound a display frame (row 491).
 - **Cold passes** (D2): pass and dispatch times on disk (adapter + driver, label, work units), scaled by work;
@@ -675,7 +675,8 @@ either: its present waited p50 54 ms against kt26.11.10's 60 ms, while the frame
 Loading for a history the ring held back.
 
 Now `near` keeps the bound, `visible`/`background` at least a quarter of it, an export only the slack. The
-owner's latency limit stays: no piece longer than the bound, at most three lower pieces of half the bound
+half-frame bound stays (then mislabelled "the owner's latency limit"; render-ahead D5 corrected it and,
+by his decision, raised the bound to a frame period and removed the piece count): no piece longer than the bound, at most three lower pieces of half the bound
 uncompleted in front of the display (kt26.11.10 put whole 380 ms jobs there). Rejected: dropping the
 cut of lower pieces (the display would wait behind a whole job again); admitting on an idle device only
 (the ring does not know the device is idle until a poll, and on a card the queue is rarely empty).

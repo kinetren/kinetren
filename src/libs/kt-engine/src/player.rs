@@ -237,10 +237,9 @@ pub struct Player {
     shown: Shown,
     /// Bumped when `shown` gains a moment or a moment's key changes.
     shown_gen: Arc<AtomicU64>,
-    /// The display's composites in flight (`PreviewParts::composing`).
-    composing: Arc<AtomicU64>,
-    /// The loop's unshown moments composed below the display (scheduler-followups D5).
-    fill: Arc<crate::loop_fill::LoopFill>,
+    /// The render-ahead producer (render-ahead): playing, it composes the moments ahead of the frame on
+    /// screen and the display presents what it kept.
+    ahead: Arc<crate::render_ahead::RenderAhead>,
 }
 
 /// State of the preview GPU executor (R.29).
@@ -423,7 +422,7 @@ impl Player {
         let shown: Shown = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
         let video_cost = Arc::new(Mutex::new(VideoCost::default()));
         let shown_gen = Arc::new(AtomicU64::new(0));
-        let composing = Arc::new(AtomicU64::new(0));
+        let ahead = Arc::new(crate::render_ahead::RenderAhead::default());
         let parts = PreviewParts {
             cache: cache.clone(),
             transport: transport.clone(),
@@ -436,10 +435,10 @@ impl Player {
             content_version: content_version.clone(),
             shown: shown.clone(),
             shown_gen: shown_gen.clone(),
-            composing: composing.clone(),
+            ahead: ahead.clone(),
         };
-        // the loop's unshown moments, composed below the display (scheduler-followups D5)
-        let fill = crate::loop_fill::LoopFill::start(parts.clone(), loop_region.clone());
+        // playing, the moments ahead of the frame on screen are composed and kept (render-ahead)
+        ahead.start(parts.clone(), loop_region.clone());
         let prefetch_thread = {
             let wake_p = wake.clone();
             let stats_p = loop_stats.clone();
@@ -456,13 +455,13 @@ impl Player {
             let mix_p = mix_coverage.clone();
             let shown_p = shown.clone();
             let gpu_p = video_gpu.clone();
-            let fill_p = fill.clone();
+            let ahead_p = ahead.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, builds, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p, gpu_p, fill_p,
+                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p, gpu_p, ahead_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -521,8 +520,7 @@ impl Player {
             mix_coverage,
             shown,
             shown_gen,
-            composing,
-            fill,
+            ahead,
         };
         if deferred {
             player.set_project(project);
@@ -690,6 +688,8 @@ impl Player {
         self.transport.set_playing(true);
         self.bg_pause.set(true);
         self.wake.notify();
+        // the frame on screen is the producer's first moment (render-ahead D2)
+        self.ahead.kick();
     }
 
     pub fn pause(&self) {
@@ -1139,11 +1139,11 @@ impl Player {
         }
     }
 
-    /// The executor the loop fill composes on (scheduler-followups D5): not the display's, and not
-    /// the slow route's (kt-app gives the side engine of the offline device). A setter for a thread,
-    /// like `slow_gpu_setter`: the device may take seconds to open.
-    pub fn fill_gpu_setter(&self) -> impl FnOnce(Option<Arc<dyn VideoGpuExec>>) + Send + 'static {
-        let fill = self.fill.clone();
+    /// The offline device's side engine (kt-app gives it): on a software rasterizer the render-ahead
+    /// producer composes there (render-ahead D3); on a card it composes on the display's own device. A
+    /// setter for a thread, like `slow_gpu_setter`: the device may take seconds to open.
+    pub fn ahead_gpu_setter(&self) -> impl FnOnce(Option<Arc<dyn VideoGpuExec>>) + Send + 'static {
+        let ahead = self.ahead.clone();
         let reach = self.reach.clone();
         move |exec| {
             if let Some(e) = &exec {
@@ -1151,31 +1151,24 @@ impl Player {
                 e.prewarm(&ids);
                 e.prewarm_runs(&runs);
             }
-            fill.set_exec(exec)
+            // the next playing prefetch pass kicks it: a kick on a pause would start a job at rest
+            ahead.set_side(exec);
         }
     }
 
-    /// The loop fill's executor, at once (tests, the bench).
-    pub fn set_fill_gpu(&self, exec: Option<Arc<dyn VideoGpuExec>>) {
-        self.fill_gpu_setter()(exec);
+    /// The producer's side engine, at once (tests, the bench).
+    pub fn set_ahead_gpu(&self, exec: Option<Arc<dyn VideoGpuExec>>) {
+        self.ahead_gpu_setter()(exec);
     }
 
-    /// Composites the loop fill kept (tests, the bench).
-    pub fn fill_kept(&self) -> u64 {
-        self.fill.kept()
+    /// Composites the producer kept (tests, the bench).
+    pub fn ahead_kept(&self) -> u64 {
+        self.ahead.kept()
     }
 
-    /// Moments the loop fill composes at once on its executor (cpu-idle-work; tests, the bench).
-    pub fn fill_width(&self) -> usize {
-        self.fill.width()
-    }
-
-    /// A display composite counted in flight while the guard lives (a test seam, t2860: the fill on a
-    /// card does not wait for the display's own composite). Zero in the product.
-    #[doc(hidden)]
-    pub fn composing_for_tests(&self) -> impl Drop + '_ {
-        self.composing.fetch_add(1, Ordering::AcqRel);
-        Composing(&self.composing)
+    /// The most moments the producer had in flight at once (tests, the bench).
+    pub fn ahead_deepest(&self) -> usize {
+        self.ahead.deepest()
     }
 
     /// Compose the frame at `t` onto the executor's display target, without a readback
@@ -1233,7 +1226,7 @@ impl Player {
             content_version: self.content_version.clone(),
             shown: self.shown.clone(),
             shown_gen: self.shown_gen.clone(),
-            composing: self.composing.clone(),
+            ahead: self.ahead.clone(),
         }
     }
 
@@ -1278,11 +1271,6 @@ fn trace_layers(frame: u64, plan: &crate::video_plan::FramePlan<'_>) {
     }
 }
 
-thread_local! {
-    /// The key the loop fill's last composite was kept under (`compose_fill`).
-    static FILL_KEY: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
-}
-
 /// A lock the frame took, its wait in the trace when it stood a millisecond or more.
 fn locked<'a, T>(m: &'a Mutex<T>, frame: u64, what: &'static str) -> std::sync::MutexGuard<'a, T> {
     if let Ok(g) = m.try_lock() {
@@ -1312,18 +1300,8 @@ pub(crate) struct PreviewParts {
     content_version: Arc<AtomicU64>,
     pub(crate) shown: Shown,
     shown_gen: Arc<AtomicU64>,
-    /// The display's composites running a plan now (not a replay): the loop fill uses only the time
-    /// the display does not (scheduler-followups D5).
-    pub(crate) composing: Arc<AtomicU64>,
-}
-
-/// A display composite in flight, counted while it lives.
-struct Composing<'a>(&'a AtomicU64);
-
-impl Drop for Composing<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
+    /// The render-ahead producer: while it runs, the display only presents while playing.
+    pub(crate) ahead: Arc<crate::render_ahead::RenderAhead>,
 }
 
 impl PreviewParts {
@@ -1379,18 +1357,64 @@ impl PreviewParts {
         t: Tick,
         target: Target<'_>,
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
-        self.compose_at(via, kept_on, t, target, false)
+        self.compose_at(via, kept_on, t, target)
     }
 
-    /// The loop fill's composite of the moment `t` on `via` (scheduler-followups D5), its bytes
-    /// kept on the display's executor as a slow-chain composite is: only when every layer is
-    /// decoded — it asks no decode and withdraws no request of the frame on screen. `(complete,
-    /// key)`: a stream stage short of its frame leaves it incomplete; `None` — not warm, or no
-    /// picture.
-    pub(crate) fn compose_fill(&self, via: &Arc<dyn VideoGpuExec>, t: Tick, buf: &mut Vec<u8>) -> Option<(bool, Option<u64>)> {
-        let out = self.compose_at(Some(via), None, t, Target::Bytes(buf), true)?;
-        let key = FILL_KEY.with(|k| k.take());
-        Some((out.1, key))
+    /// Every layer of the moment `t` is decoded (the producer asks no decode).
+    pub(crate) fn layers_cached(&self, video: &VideoRenderer, t: Tick, q: Quality) -> bool {
+        video.layers_at(t, q).iter().all(|(m, p, dq)| self.cache.contains_video(source_id(*m), Some(*dq), video_cache_idx(*p)))
+    }
+
+    /// The producer's composite of the moment `t` on `via`, kept on `display` (render-ahead D3); `None`
+    /// — a layer is not decoded (it asks no decode and withdraws no request).
+    pub(crate) fn compose_ahead(
+        &self,
+        via: &Arc<dyn VideoGpuExec>,
+        display: &Arc<dyn VideoGpuExec>,
+        video: &VideoRenderer,
+        t: Tick,
+        q: Quality,
+        buf: &mut Vec<u8>,
+    ) -> Option<Result<crate::video_plan::Ahead, GpuExecError>> {
+        kt_time::work::bump(kt_time::work::Work::Composite);
+        let aligned = video.grid.align_floor(t);
+        if !self.layers_cached(video, aligned, q) {
+            return None;
+        }
+        let plan = video.frame_plan(&self.cache, aligned, q);
+        Some(via.ahead(&plan, display, buf))
+    }
+
+    /// Playing with the producer running (render-ahead D1): the display shows the moment's kept
+    /// composite or nothing — no plan, no decode — and the producer is told. `None` — not this path
+    /// (paused, no display target, no producer), or a moment the producer does not make (see below).
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn present_ahead(
+        &self,
+        t: Tick,
+        o: PresentOptions,
+    ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
+        if !self.transport.is_playing() {
+            return None;
+        }
+        let display = self.display_exec()?;
+        if !self.ahead.active(&display) {
+            return None;
+        }
+        let q = self.quality();
+        let video = self.builds.latest().video.clone();
+        let aligned = video.grid.align_floor(t);
+        if let Some(r) = self.show_kept(&video, kt_time::trace::cause(), aligned, q, Some(o)) {
+            return Some(r);
+        }
+        // the display composes itself what the producer will not: a moment with no layer (a clear), one
+        // whose frames are not decoded yet (its Playback decode is asked there), one the producer skipped
+        // this lap (the memo refused it — a loop longer than the memo keeps a part)
+        if video.layers_at(aligned, q).is_empty() || !self.layers_cached(&video, aligned, q) || self.ahead.skipped(aligned.0) {
+            return None;
+        }
+        self.ahead.kick();
+        Some((q, false, true, Default::default(), 0, Default::default()))
     }
 
     #[allow(clippy::type_complexity)]
@@ -1400,7 +1424,6 @@ impl PreviewParts {
         kept_on: Option<PresentOptions>,
         t: Tick,
         target: Target<'_>,
-        fill: bool,
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
         use kt_time::trace::{self, Ev};
         kt_time::work::bump(kt_time::work::Work::Composite);
@@ -1427,31 +1450,17 @@ impl PreviewParts {
         }
         let aligned = video.grid.align_floor(t);
         let mut target = target;
-        // the fill asked for a moment that is not kept, and asks no decode: a cold layer ends it
-        if fill
-            && !video
-                .layers_at(aligned, q)
-                .iter()
-                .all(|(m, p, dq)| self.cache.contains_video(source_id(*m), Some(*dq), video_cache_idx(*p)))
-        {
-            return None;
-        }
         // A KEPT MOMENT IS SHOWN BEFORE ANYTHING IS ASKED (structured-telemetry, kkt-26.11.09 I8: "если
         // хоть сто раз пройтись по небольшому куску - он все равно что-то loading делает"): the key of
         // the moment's composite comes from a plan that runs no stream stage, so a covered frame is
         // found without its history, its decodes or the look-ahead's leftovers — the plan of a
         // kept frame used to wait for a history the memo had dropped, and showed "Loading".
-        if let Some(r) = (!fill).then(|| self.show_kept(&video, frame, aligned, q, kept_on.or(match &target {
+        if let Some(r) = self.show_kept(&video, frame, aligned, q, kept_on.or(match &target {
             Target::Display(o) => Some(*o),
             Target::Bytes(_) => None,
-        }))).flatten() {
+        })) {
             return Some(r);
         }
-        // the display's own composite runs a plan: the fill waits for it to end
-        let _composing = (!fill).then(|| {
-            self.composing.fetch_add(1, Ordering::AcqRel);
-            Composing(&self.composing)
-        });
         let generation = self.transport.generation();
         let step = video.grid.frame_step();
         // the decode quality comes FROM THE REQUEST (R.46, item 318): a clip with a zooming
@@ -1461,7 +1470,7 @@ impl PreviewParts {
         // withdrawn (video-prefetch-thrash). It outranks the look-ahead, so when decoding
         // lagged, every frame shown queued one more, and the decoder spent itself on frames
         // nobody would read while the window ahead starved.
-        for (media, w) in self.workers.read().unwrap().iter().filter(|_| !fill) {
+        for (media, w) in self.workers.read().unwrap().iter() {
             w.withdraw_video(Priority::Playback, |pts, wq| {
                 layers
                     .iter()
@@ -1485,7 +1494,7 @@ impl PreviewParts {
                         .c(idx as u64)
                         .emit();
                 }
-                if let Some(w) = self.workers.read().unwrap().get(&media).filter(|_| !fill) {
+                if let Some(w) = self.workers.read().unwrap().get(&media) {
                     w.submit(DecodeRequest {
                         kind: RequestKind::video_on_grid(src_pts, Some(dq), step),
                         prio: Priority::Playback,
@@ -1546,9 +1555,6 @@ impl PreviewParts {
                         let display = self.display_exec();
                         if let (Some(d), Some(key)) = (&display, exec.present_key(&plan)) {
                             d.keep(key, plan.out_w, plan.out_h, out);
-                            if fill {
-                                FILL_KEY.with(|k| k.set(Some(key)));
-                            }
                             // the picture now lies on the display's device: shown from there, it is not
                             // uploaded a second time into the interface (stream-round-trips D7, row 622)
                             if let Some(o) = kept_on
@@ -1775,7 +1781,7 @@ pub struct VideoCost {
 impl Drop for Player {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        self.fill.close();
+        self.ahead.close();
         self.builds.shutdown();
         self.wake.notify();
         // a build is tens of ms on a large project, and it ends at the stop
@@ -3075,10 +3081,14 @@ fn stream_walk_cap(video: &VideoRenderer) -> usize {
     (STREAM_WALK_SECS * kt_time::TICK_HZ / video.grid.frame_step().max(1)) as usize
 }
 
-/// Passes in a row in which the far look-ahead stayed pending and computed nothing before it stops
-/// retrying until the state moves (gpu-throughput D3): a source that never comes must not keep a paused
-/// prefetch thread passing ten times a second.
-const FAR_STALLS: u32 = 8;
+/// Whether a far stream walk left pending runs again on the next pass (render-ahead D6, replacing
+/// gpu-throughput D3's count `FAR_STALLS` of eight passes): while it walks, or while the decoded-frame
+/// cache gained a video frame since the pass before (the decoder still brings its sources); a walk that
+/// walked nothing over a pass that decoded nothing waits for the pass state to move. A source that never
+/// comes costs no pass; one that comes keeps the walk going for as long as it comes.
+pub fn far_walk_again(pending: bool, walked: bool, inserted_before: u64, inserted_now: u64) -> bool {
+    pending && (walked || inserted_now != inserted_before)
+}
 
 /// How far the FAR part of the look-ahead walks a stream stage (gpu-throughput D3): with the frame on
 /// screen inside a loop region, every frame of the region (the walk wraps), as many as the stream memo
@@ -3131,7 +3141,7 @@ fn prefetch_loop(
     mix: crate::mix::MixCoverage,
     kept_moments: Shown,
     video_gpu: Arc<Mutex<VideoGpuState>>,
-    fill: Arc<crate::loop_fill::LoopFill>,
+    ahead: Arc<crate::render_ahead::RenderAhead>,
 ) {
     // its stream advances and decodes are the look-ahead (gpu-arbiter D5)
     let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
@@ -3156,8 +3166,10 @@ fn prefetch_loop(
     // runs again while it does, paused or not — the decoder fills the window, this thread advances
     // the stage over it, and the next window is ordered. Nothing pending — the pause costs nothing.
     let mut stream_pending = false;
-    // passes the far look-ahead computed nothing in a row (gpu-throughput D3); a moved state resets it
-    let mut far_stalls = 0u32;
+    // the far look-ahead stalled: it walked nothing and the cache gained no frame (render-ahead D6); a
+    // moved state clears it. The cache's count at the last far walk
+    let mut far_stalled = false;
+    let mut far_seen = cache.video_inserted();
     // the wall clock is legal here: the live preview's prefetch, not an offline path (invariant 11)
     let mut last_pass = std::time::Instant::now();
     let mut memo_sized: Option<MemoSizing> = None;
@@ -3186,9 +3198,9 @@ fn prefetch_loop(
             return;
         }
         tell_loop(&video_gpu, &builds, &loop_region, &mut loop_told);
-        // a loop that plays: its unshown moments are composed below the display (D5)
-        if transport.is_playing() && loop_region.lock().unwrap().is_some() {
-            fill.kick();
+        // playing: the producer looks for moments to compose ahead (render-ahead D2)
+        if transport.is_playing() {
+            ahead.kick();
         }
         {
             let state = (
@@ -3206,7 +3218,7 @@ fn prefetch_loop(
             }
             skipped = false;
             if last_state != Some(state) {
-                far_stalls = 0;
+                far_stalled = false;
             }
             last_state = Some(state);
         }
@@ -3312,20 +3324,19 @@ fn prefetch_loop(
         // the near part has nothing pending; a far part that computed nothing over `FAR_STALLS`
         // passes waits for the state to move
         let far = if video.has_stream_stages() { stream_far_frames(video, t0, q, region_ticks, transport.is_playing()) } else { 0 };
-        if !stream_pending && far > ahead && far_stalls < FAR_STALLS {
+        if !stream_pending && far > ahead && !far_stalled {
             let before = kt_plugin_api::stream::positions_walked();
+            let inserted = cache.video_inserted();
             let pending = {
                 let _class = kt_time::sched::with_class(kt_time::sched::Class::Background);
                 crate::video::stop_when(kt_time::trace::stop::PREFETCH, left(), || {
                     stream_advance_ahead(video, &cache, t0, q, region_ticks, far, &kept)
                 })
             };
-            far_stalls = match (pending, kt_plugin_api::stream::positions_walked() > before) {
-                (false, _) => FAR_STALLS,
-                (true, true) => 0,
-                (true, false) => far_stalls + 1,
-            };
-            stream_pending |= far_stalls < FAR_STALLS;
+            let again = far_walk_again(pending, kt_plugin_api::stream::positions_walked() > before, far_seen, inserted);
+            far_seen = inserted;
+            far_stalled = !again;
+            stream_pending |= again;
         }
         let (missing, window) = video_prefetch_pass_sized(video, &cache, t0, q, region_ticks, &kept);
         // the cache asks the memory ledger for what this window and the loop need at this quality

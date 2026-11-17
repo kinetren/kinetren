@@ -260,6 +260,18 @@ is no picture, and an export refuses.
 - A new point-wise plugin needs no code here: `fuses_in_runs` (kt-plugin-api) admits it, and its
   `tap_<id>` must read only its arguments (the registry refuses a texture or `P` read, t2194).
 
+## The render-ahead producer's moments stay on the device (render-ahead D3)
+
+- **`ahead(plan, keeper)` on a sibling of the keeper's engine** (the same `device_id`): `Inner::ahead_tex`
+  is `present`'s resolve and passes without the display pass, admitted and cut on the ring by the caller's
+  class (`Piece`, `Role::Preview`), submitted, never waited for; the composite texture moves into the
+  keeper's present memo (`keep_tex`, the keeper's lock taken with ours released) and a done flag is set by
+  the queue's work-done callback (`poll_done` drives it). Any other keeper — the bytes form
+  (`kt_engine::ahead_by_bytes`: `execute_into`, then the keeper's `keep`). Nothing is kept when a run's
+  form moved during the resolve. t2922 holds the three routes to one key and one composite.
+- **A sibling of the window's engine inherits `surface` and `on_window`**: nobody block-waits on its
+  device and its frames yield to a refused reconfigure, as the display's own do.
+
 ## The export's readback ring (export-throughput D5)
 
 - `submit`/`collect` (`readback_depth` = `RING` = 3): the same resolve and passes as `execute`, the
@@ -279,7 +291,7 @@ is no picture, and an export refuses.
 - `offline_engine()`: a headless device out of the preview's queue; since scheduler-followups (row
   290) the preview's slow-chain route has it to itself (`serve_preview` registers its ring as one that
   fronts the person's frame: a software device's ring then bounds and cuts lower classes, t2337).
-  Effect thumbnails, reel strips, posters and the loop fill compose on `side_engine()`, its `sibling`:
+  Effect thumbnails, reel strips, posters and (on a software display) the render-ahead producer compose on `side_engine()`, its `sibling`:
   the same device, queue, ring and `Compiled` (nothing compiles, t2338), its own `Inner` and lock. Serials of frames are process-wide because it serves a fresh cache per job
   (t1574). A blended frame's upload key takes the pair and the weight (t250): it carries its base
   frame's serial.

@@ -185,9 +185,9 @@ over, at class near; and a FAR part at class background: with the playhead insid
 region's end and round from its start, as far as the stream memo holds the positions; without one, while
 playing, up to a quarter of the memo ahead. On a pause inside a loop region the far part runs too; on a pause
 outside one, only the frame on screen. Both parts skip kept moments, stop at the first position whose source
-is not decoded, and stop when the transport or the project leaves them. A far part left pending that walked
-no position SHALL NOT run again until the decoded-frame cache has gained a video frame or the pass state
-moves. The player SHALL tell the stream memo its view (the loop region's start while the playhead is inside
+is not decoded, and stop when the transport or the project leaves them. A far part left pending SHALL run
+again on the next pass only while it walks or while the decoded-frame cache gained a video frame since the
+pass before; one that walked nothing over a pass that decoded nothing waits for the pass state to move. The player SHALL tell the stream memo its view (the loop region's start while the playhead is inside
 it, else the frame on screen), from which on a walk keeps every picture.
 Why: found-defects 391 — one advance per frame made every position its own submission while playing.
 Found-defects 482 and the owner's 11.11 L4 ("я не против чтобы оно наперед считало") — twice the display's
@@ -205,8 +205,8 @@ retries of `FAR_STALLS` were a count of one machine; a decoded frame is what let
 - **TEST** t2432 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 #### Scenario: A stalled far walk waits for a decoded frame
-- **WHEN** a paused player inside a loop region over a mosh has a far walk pending whose next source frame is not decoded, and nothing else moves
-- **THEN** the prefetch thread parks after the pass that walked nothing; a decoded video frame arriving in the cache wakes exactly the next far walk
+- **WHEN** a far walk is left pending after a pass that walked positions, one that walked none while the cache gained a frame, and one that walked none while the cache gained nothing; and video frames and an audio burst go into a cache
+- **THEN** the first two run again on the next pass, the third stops until the state moves; the cache's count moves by every video frame and not by audio
 - **TEST** t2924 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 ## REMOVED Requirements
