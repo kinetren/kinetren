@@ -12,6 +12,7 @@ pub mod block;
 pub mod cost;
 pub mod mem;
 pub mod sched;
+pub mod shutdown;
 pub mod trace;
 pub mod work;
 

@@ -146,6 +146,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   transport's generation and the project version, a reel/poster job its cancel flag. A stopped run is
   `StreamStop` in the trace and reads as incomplete, never kept; `stream_preroll` gives up between
   batches. An export sets none. t2258, t2259.
+- **A player's drop is bounded** (close-while-busy, kkt-26.11.18 T1, t2952): its build, render and
+  prefetch threads and every media worker are joined through `kt_time::shutdown` (2 s, left behind past
+  it); a worker stops its span between chunks once closed; the render-ahead producer composes under its
+  lane's `cancel_check` (`stop::CLOSED`). A new thread of the player joins the same way, and a new long
+  loop in one checks the stop between its steps.
 - **Every thread that submits GPU or compute work runs as a class** (`kt_time::sched::with_class`,
   gpu-arbiter): the compose thread now (its kept-moment recheck near), the prefetch thread and the
   render-ahead producer near, a media

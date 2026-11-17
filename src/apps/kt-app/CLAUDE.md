@@ -93,6 +93,20 @@ UI invariants earned through the rounds 4–5 (details and test numbers — item
   decoders) after dropping its lock in place. `KtApp::open` stays synchronous for the start and tests.
   `set_media_grace`/`hold_loads_for_tests` are the tests' seams for a load in flight.
 
+## Closing the program (close-while-busy, kkt-26.11.18 T1)
+
+- **The close is bounded after its durability.** `on_exit`: pause, the autosave in flight (5 s), a
+  Ctrl+S being written (30 s), the recovery file — then `Shutdown DURABLE` and `exit_watch::arm`: the rest
+  (poster, offline park, telemetry, the drops, eframe's teardown, the C exit hooks) gets `EXIT_BOUND`
+  (8 s), past it the watcher names what was waited for, flushes the trace and `_exit(0)`s. Never move a
+  durability step after the arm, and never wait on the close path without `kt_time::shutdown`
+  (t2950, t2951, live `close_busy`).
+- **The close is named**: `note_close_asked` (journal + trace) when a close goes on; the trace is flushed
+  at the end of `on_exit` and after eframe returns. `kt-cli trace <dir> shutdown` reads it.
+- **A background thread wakes the UI AFTER its locks** (found-defects 750): `wake::` takes egui's context
+  lock, and a UI frame holds it while it reads the shared state; a wake under a lock the UI reads is an
+  ABBA deadlock (epaint's 10 s panic at the start).
+
 ## Writing the project to disk (R.31–R.32)
 
 - **Ctrl+S writes on the `save` lane** (one-scheduler, row 98): the text, the write and both fsyncs; `take_saved` applies the outcome, and the asterisk clears only if no edit came while the file was written. A new save path posts there too, never writes on the UI thread.

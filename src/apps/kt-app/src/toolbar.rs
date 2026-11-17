@@ -456,7 +456,9 @@ impl KtApp {
                 ui.close();
             }
             ui.separator();
-            if ui.button(tr(k::menu::file::QUIT)).clicked() {
+            let r = ui.button(tr(k::menu::file::QUIT));
+            crate::widgets::field_probe::note("file.quit", r.rect);
+            if r.clicked() {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });

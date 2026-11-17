@@ -212,6 +212,12 @@ impl Ctx {
         self.lane.is_cancelled() || self.job.is_cancelled()
     }
 
+    /// [`Ctx::cancelled`] as a check another layer asks (a stream history's stop, close-while-busy).
+    pub fn cancel_check(&self) -> impl Fn() -> bool + Send + 'static {
+        let (lane, job) = (self.lane.clone(), self.job.clone());
+        move || lane.is_cancelled() || job.is_cancelled()
+    }
+
     /// Its class is paused now: a pump returns [`Pump::More`] at its next item.
     pub fn paused(&self) -> bool {
         self.class.pausable() && sched().paused.load(Ordering::Acquire) != 0

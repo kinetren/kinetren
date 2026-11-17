@@ -254,7 +254,13 @@ impl MediaWorker {
         self.shared.idle.load(Ordering::Acquire) && self.shared.queue.lock().unwrap().is_empty()
     }
 
-    pub fn shutdown(mut self) {
+    pub fn shutdown(self) {
+        self.shutdown_until(kt_time::shutdown::deadline());
+    }
+
+    /// Close the queue and wait for the decoder at most until `until` (close-while-busy): it stops
+    /// between two chunks of its span; a chunk past the bound is left to end by itself.
+    pub fn shutdown_until(mut self, until: std::time::Instant) {
         {
             let mut q = self.shared.queue.lock().unwrap();
             q.closed = true;
@@ -263,7 +269,7 @@ impl MediaWorker {
         if let Some(j) = self.join.take() {
             // the decoder's last span: never on the UI or the render thread (one-scheduler)
             let _w = kt_time::block::wait(kt_time::block::kind::JOIN);
-            let _ = j.join();
+            kt_time::shutdown::join("media-worker", j, until);
         }
     }
 }
@@ -507,6 +513,10 @@ fn worker_loop(
                     }, source_id, cache);
                     done_keys += chunk.len();
                     if res.is_err() {
+                        break;
+                    }
+                    // the worker closes (close-while-busy): the rest of the span is nobody's
+                    if shared.queue.lock().unwrap().closed {
                         break;
                     }
                     // audio is MORE URGENT than this span and cannot wait — we give up the stream

@@ -18,13 +18,25 @@ unsafe extern "C" {
     fn atexit(cb: extern "C" fn()) -> std::ffi::c_int;
 }
 
+/// How long the exit waits for background GPU work (close-while-busy): each guard holder checks
+/// `exiting()` between its steps, so this is one compile or one warm draw. Past it the process exits
+/// anyway — a hung driver must not keep a closed program alive.
+pub const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 extern "C" fn at_exit() {
     EXITING.store(true, Ordering::Release);
+    let since = std::time::Instant::now();
     let mut n = BUSY.lock().unwrap_or_else(|e| e.into_inner());
     while *n > 0 {
-        n = DONE.wait(n).unwrap_or_else(|e| e.into_inner());
+        let left = EXIT_WAIT.saturating_sub(since.elapsed());
+        if left.is_zero() {
+            break;
+        }
+        n = DONE.wait_timeout(n, left).unwrap_or_else(|e| e.into_inner()).0;
     }
+    let ended = *n == 0;
     drop(n);
+    kt_time::shutdown::record("gpu-background-work", since, ended);
     // the pass times measured since the last write (gpu-throughput D2)
     crate::seeds::flush();
 }

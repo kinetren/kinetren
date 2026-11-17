@@ -89,8 +89,10 @@ impl Drop for AudioOutput {
     fn drop(&mut self) {
         self.ctl.stop.store(true, Ordering::Release);
         self.wake.notify();
+        // bounded (close-while-busy): an open or a close of the device may stand in the sound
+        // server; the thread ends by itself after it
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            kt_time::shutdown::join("audio-output", t, kt_time::shutdown::deadline());
         }
     }
 }

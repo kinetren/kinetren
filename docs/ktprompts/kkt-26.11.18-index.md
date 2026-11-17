@@ -8,7 +8,7 @@ Columns and states — as in [`v26.10-index.md`](v26.10-index.md).
 
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
-| T1 | 1 | closing the program while a loop is catching up does not work; he has to kill the process | no → `close-while-busy` | `durability`, `transport` | 20 |
+| T1 | 1 | closing the program while a loop is catching up does not work; he has to kill the process | done close-while-busy: every wait of the close bounded and named in the trace (`kt-cli trace shutdown`), the exit bounded after the recovery write (t2950–t2953; live scenario `close_busy`: paused, playing and File → Quit) | `durability`, `transport`, `telemetry` | 20 |
 | T2 | 2 | problem_region: the processor and the card barely work, the loop is complete only from about lap 15 | done ahead-kept: a moment short of its history waits for the walk instead of the lap's end (t2931), ring pieces are half the bound so the device is never left without a queued piece (t2930), `trace loop` says why moments ahead were not kept and the ring's waits (t2932); the laps on his card wait for his next trace (llvmpipe here: whole at lap 7 against 8) | `video-plan`, `telemetry` | 20 |
 | T3 | 3 | even the simplest region renders at about 1× real time | no → `export-readback` (his trace: 0.94×, readback 94.5 % of the wall, encode 3.7 %) | `export` | 20 |
 | T4 | 4 | the render log goes into the telemetry, not a separate file | no → `export-readback` (render.log into the structured trace) | `export`, `telemetry` | 20 |

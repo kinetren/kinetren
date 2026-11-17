@@ -455,6 +455,8 @@ pub struct KtApp {
     /// Exit is already allowed by the user: the next `close_requested` is not
     /// intercepted, otherwise the window would never close.
     pub quit_confirmed: bool,
+    /// The close was recorded (close-while-busy): once per app.
+    pub close_noted: bool,
     /// Last line of defence is enabled (item 354). Disabled in the harness: a thousand
     /// apps created and destroyed must not scatter recovery files
     /// into the shared data directory.
@@ -1058,6 +1060,7 @@ impl KtApp {
             lock_override: false,
             ask: None,
             quit_confirmed: false,
+            close_noted: false,
             recovery_on_drop: true,
             ctx_panel: None,
             recovery_offer: Vec::new(),
@@ -1389,6 +1392,7 @@ impl KtApp {
             lock_override: false,
             ask: None,
             quit_confirmed: false,
+            close_noted: false,
             recovery_on_drop: true,
             ctx_panel: None,
             recovery_offer: Vec::new(),
@@ -4354,6 +4358,19 @@ impl KtApp {
     /// (verdict F-RES-005): the background autosave wrote straight into the user’s file,
     /// so there was nothing to lose. The owner removed this (item 351) — together with
     /// the right not to ask.
+    /// The close goes on: once, a journal line and a trace record (close-while-busy).
+    pub(crate) fn note_close_asked(&mut self) {
+        if std::mem::replace(&mut self.close_noted, true) {
+            return;
+        }
+        let playing = self.player.transport.is_playing();
+        crate::tele_journal::record(
+            crate::tele_journal::Kind::Act,
+            if playing { "close asked (playing)" } else { "close asked" },
+        );
+        kt_time::shutdown::mark(kt_time::trace::shutdown::ASKED, if playing { "playing" } else { "paused" });
+    }
+
     pub fn guard_unsaved(&mut self, p: Pending) -> bool {
         if !self.dirty_content && !self.dirty_ui {
             return true;
@@ -10975,11 +10992,14 @@ impl eframe::App for KtApp {
         // Intercepting window close (item 354). `CancelClose` in eframe 0.36
         // works for the ROOT window too — so the question “save before
         // exit?” is asked by the standard path, without our own handling of system events.
-        if ui.ctx().input(|i| i.viewport().close_requested())
-            && !self.quit_confirmed
-            && !self.guard_unsaved(Pending::Quit)
-        {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if ui.ctx().input(|i| i.viewport().close_requested()) {
+            if !self.quit_confirmed && !self.guard_unsaved(Pending::Quit) {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            } else {
+                // the close goes on (close-while-busy): the moment is in the journal and the trace,
+                // which had no word of it — a close that hung could not be told from a kill
+                self.note_close_asked();
+            }
         }
         if self.quit_confirmed {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -11065,6 +11085,9 @@ impl eframe::App for KtApp {
     }
 
     fn on_exit(&mut self) {
+        use kt_time::shutdown::record;
+        // a close eframe made without our frame (a session's end) is named too
+        self.note_close_asked();
         // Closed while playing: the player's vote would hold the autosave and the poster jobs
         // this close waits for (Background lanes), each for its whole bound (class-walk-revision)
         self.player.pause();
@@ -11072,12 +11095,18 @@ impl eframe::App for KtApp {
         // First we wait for the background autosave: its rename must not
         // overwrite our fresher snapshot with the stale one.
         if let Some((_, rx)) = self.autosave_rx.take() {
-            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+            let since = std::time::Instant::now();
+            let ended = rx.recv_timeout(std::time::Duration::from_secs(5)).is_ok();
+            record("autosave", since, ended);
         }
         // a Ctrl+S still writing finishes first: its outcome decides the asterisk below. What
         // waited for it (an open, a lesson) has no window to happen in any more
         self.after_save = None;
-        self.take_saved(std::time::Duration::from_secs(30));
+        if self.saving.is_some() {
+            let since = std::time::Instant::now();
+            self.take_saved(std::time::Duration::from_secs(30));
+            record("save", since, self.saving.is_none());
+        }
         // R.49 item 351: exit is NOT the moment to silently rewrite the user's project.
         // Unsaved work goes to the recovery file; saved work carries its own recovery file
         // away with it, so that the next start does not offer
@@ -11089,16 +11118,30 @@ impl eframe::App for KtApp {
         } else {
             self.drop_own_recovery();
         }
+        // the work is safe (the recovery written; the lock goes with the app): from here the exit is
+        // bounded, whatever is still busy (close-while-busy, kkt-26.11.18 T1)
+        kt_time::shutdown::mark(kt_time::trace::shutdown::DURABLE, "recovery");
+        #[cfg(not(test))]
+        crate::exit_watch::arm(crate::exit_watch::EXIT_BOUND, crate::exit_watch::end_now);
         // closing a named project renders its poster (D5): one frame, within a budget
         self.queue_poster();
-        crate::welcome::wait_posters(std::time::Duration::from_secs(3));
+        let since = std::time::Instant::now();
+        let ended = crate::welcome::wait_posters(std::time::Duration::from_secs(3));
+        record("poster", since, ended);
         // a reel strip may be on the device: the process must not exit under it. A test's process
         // goes on after this close, and every later render would wait on the parked engine for good
         #[cfg(not(test))]
-        kt_gpu::park_offline_engine();
+        {
+            let since = std::time::Instant::now();
+            kt_gpu::park_offline_engine();
+            record("offline-engine", since, true);
+        }
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
         crate::telemetry::signal(crate::telemetry::Signal::Exit);
+        // what the close did is in the file before the drops join threads (a clean exit flushed
+        // nothing, and the owner's trace ended a second before his close)
+        kt_time::trace::flush();
     }
 }
 
@@ -11197,7 +11240,7 @@ pub fn run() -> eframe::Result {
         persistence_path: Some(crate::journal::data_dir().join(kt_dirs::EFRAME_SETTINGS_FILE)),
         ..Default::default()
     };
-    eframe::run_native(
+    let ran = eframe::run_native(
         "kinetren",
         options,
         Box::new(move |cc| {
@@ -11291,7 +11334,12 @@ pub fn run() -> eframe::Result {
             }
             Ok(Box::new(app))
         }),
-    )
+    );
+    // the app and its threads are dropped (each join bounded): the drops' records reach the file
+    // before the C exit hooks run (close-while-busy)
+    kt_time::shutdown::mark(kt_time::trace::shutdown::RETURNED, "eframe");
+    kt_time::trace::flush();
+    ran
 }
 
 impl KtApp {
