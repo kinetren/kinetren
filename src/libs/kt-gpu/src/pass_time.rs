@@ -321,6 +321,8 @@ impl Timer {
                 let first = ticks.iter().step_by(2).copied().min().unwrap_or(0);
                 let last = ticks.iter().skip(1).step_by(2).copied().max().unwrap_or(0);
                 let span = ns(last.saturating_sub(first));
+                // the device's busy share reads these (render-ahead D7: acceptance by utilisation)
+                kt_time::trace::ev(kt_time::trace::Ev::GpuFrame).a(sum).b(span).aux(p.role as u32).emit();
                 let adapter = self.adapter.clone();
                 with_agg(|a| {
                     a.note_frame(&adapter, true, p.role, p.meta);

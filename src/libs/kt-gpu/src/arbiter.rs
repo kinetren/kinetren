@@ -10,8 +10,11 @@
 //!   higher class waits.
 //! - **The bound**: a ring that carries a display (or a compute host's ring, where the frame on
 //!   screen and the look-ahead meet) holds at most [`bound`] of predicted device time in flight; one
-//!   piece always fits an idle ring. Half a frame period of the preview — a general rule, never a
-//!   number of one machine.
+//!   piece always fits an idle ring. One frame period of the preview — a general rule, never a
+//!   number of one machine. It was half a period until render-ahead D5 (owner, kkt-26.11.17 S4:
+//!   "Поднять"): a lower piece may delay a displayed frame by up to one period, and while playing the
+//!   display presents kept frames only, so a period of the render-ahead producer's work stands queued
+//!   in front of each present and the device never runs dry.
 //! - **Pieces** ([`Piece`]): a lower-class frame on a displayed ring is cut at pass boundaries where
 //!   the passes' device time, as the pass timer MEASURED them on this machine, would pass the bound;
 //!   on any bounded ring it is cut at the next boundary while a higher class waits. A piece is submitted
@@ -36,11 +39,11 @@ static ENABLED: AtomicU32 = AtomicU32::new(UNSET);
 const UNSET: u32 = 2;
 static NEXT_RING: AtomicU64 = AtomicU64::new(1);
 
-/// What a bounded ring holds in flight at most: half a frame period of the preview
-/// (`kt_time::sched::frame_period_ns`, the player sets it from its project's frame rate), so the
-/// display's own frame and one piece fit one period.
+/// What a bounded ring holds in flight at most in front of the display's next present: one frame
+/// period of the preview (`kt_time::sched::frame_period_ns`, the player sets it from its project's
+/// frame rate). Half a period until render-ahead D5; never "the owner's latency limit" — he raised it.
 pub fn bound() -> u64 {
-    kt_time::sched::frame_period_ns() / 2
+    kt_time::sched::frame_period_ns()
 }
 
 /// The bench's A/B switch (`kt-cli gpu-share --arbiter off`): off, every ring admits at once and
@@ -84,7 +87,6 @@ impl RingKey {
 struct Flight {
     id: u64,
     ns: u64,
-    class: Class,
     /// The display's present (counted, never admitted: gpu-throughput D1).
     display: bool,
     /// When it was submitted; `None` — admitted, still being encoded.
@@ -104,36 +106,7 @@ struct State {
     next: u64,
     /// When the display last submitted a present.
     last_display: Option<Instant>,
-    /// What the display's present costs on the device, averaged over its recent presents (gpu-leftovers
-    /// D4, found-defects 491).
-    display_ns: Option<u64>,
 }
-
-/// What a lower class may leave in front of the display's next present (loop-laps-regression D2,
-/// replacing gpu-leftovers D4 / found-defects 491): the `near` class (the look-ahead, its stream walk,
-/// the loop fill — what the display's next frames are made of) keeps the bound whatever the display
-/// costs; `visible` and `background` keep a quarter of it at least; an export (`offline`) keeps only
-/// the period the display's own present leaves free. No piece is longer than the bound (`piece_limit`).
-/// The slack rule for `near` starved it on a display that fills its period: on the owner's iGPU
-/// (kkt-26.11.16) the device stood idle 25 s with nothing queued while near work waited 486 % of its
-/// wall, and a loop filled in 25 laps against kt26.11.10's 11.
-pub fn room(class: Class, period: u64, display_ns: Option<u64>) -> u64 {
-    let bound = period / 2;
-    let Some(d) = display_ns else { return bound };
-    let slack = period.saturating_sub(d).min(bound);
-    if class as u8 <= Class::Near as u8 {
-        bound
-    } else if class == Class::Offline {
-        slack
-    } else {
-        slack.max(bound / 4)
-    }
-}
-
-/// Lower-class pieces of one ring uncompleted at once at most (gpu-throughput D1): one running, one
-/// queued behind it and one being encoded. A prediction far below the real time cannot pile more in
-/// front of the display.
-pub const AHEAD_PIECES: usize = 3;
 
 /// The longest a waiter goes without looking at every device in flight while nothing it waits on can
 /// be named (a surface device's piece, one still being encoded, flights on several devices).
@@ -328,18 +301,12 @@ impl Ring {
             let left = d.end.saturating_duration_since(now);
             return if left + ns <= bound { Ok(()) } else { Err(Some(left + ns - bound)) };
         }
-        // a lower class: never more than AHEAD_PIECES uncompleted, and what it leaves in front of
-        // the display's next present within the bound (gpu-throughput D1)
-        if st.flight.iter().filter(|f| live(f) && f.class != Class::Now).count() >= AHEAD_PIECES {
-            return Err(None);
-        }
+        // a lower class: what it leaves in front of the display's next present within the bound
+        // (gpu-throughput D1); every lower class alike, no count of pieces (render-ahead D5 deleted
+        // the rooms by class and `AHEAD_PIECES`)
         let d = drain(st, now, false);
         let reference = if self.has_display() { self.display_next(st, now).max(d.display_end.unwrap_or(now)) } else { now };
-        // the room by what the display's own present costs, while it presents
-        let period = kt_time::sched::frame_period_ns();
-        let presenting = st.last_display.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_nanos(2 * period));
-        let free = if self.has_display() && presenting { Duration::from_nanos(room(class, period, st.display_ns)) } else { bound };
-        let fits_by = reference + free;
+        let fits_by = reference + bound;
         let ends = d.end + ns;
         if ends <= fits_by { Ok(()) } else { Err(Some(ends - fits_by)) }
     }
@@ -445,7 +412,7 @@ impl Ring {
     fn push(self: &Arc<Self>, st: &mut State, class: Class, ns: u64, display: bool, done: Arc<AtomicBool>) -> Ticket {
         st.next += 1;
         let id = st.next;
-        st.flight.push(Flight { id, ns, class, display, at: None, guess: false, sub: None, done: done.clone() });
+        st.flight.push(Flight { id, ns, display, at: None, guess: false, sub: None, done: done.clone() });
         Ticket { ring: self.clone(), id, done, class, submitted: false }
     }
 
@@ -455,7 +422,6 @@ impl Ring {
         let mut st = self.lock();
         st.flight.retain(|f| !f.done.load(Ordering::Acquire));
         st.last_display = Some(Instant::now());
-        st.display_ns = Some(st.display_ns.map_or(ns, |d| (3 * d + ns) / 4));
         self.push(&mut st, Class::Now, ns, true, Arc::new(AtomicBool::new(false)))
     }
 
@@ -486,11 +452,10 @@ impl Ring {
         (front && acc + next.unwrap_or(u64::MAX / 4) > self.piece_limit(class)) || (self.bounded() && self.higher_waits(class))
     }
 
-    /// What one piece of `class` holds at most: on a ring that fronts the person's frame a lower
-    /// class's piece is half the bound, so one runs while the next is queued in front of that frame
-    /// (gpu-throughput D1).
-    pub fn piece_limit(&self, class: Class) -> u64 {
-        if self.fronts() && class != Class::Now { bound() / 2 } else { bound() }
+    /// What one piece holds at most: the bound, whatever its class (render-ahead D5; a lower piece was
+    /// half the bound while the bound was half a period).
+    pub fn piece_limit(&self, _class: Class) -> u64 {
+        bound()
     }
 }
 
@@ -810,9 +775,9 @@ mod tests {
         let next = h.join().unwrap();
         assert_eq!(r.in_flight_ns(), b * 3 / 10 * 2 + b / 5, "the three are in flight together");
         drop(next);
-        // an unmeasured pass claims a whole lower-class piece: half the bound (gpu-throughput D1)
+        // an unmeasured pass claims a whole piece: the bound (render-ahead D5; half of it before)
         let unmeasured = claim_after_cut(&r, Class::Offline, None);
-        assert_eq!(unmeasured, b / 2);
+        assert_eq!(unmeasured, b);
         let waited = Arc::new(AtomicBool::new(false));
         let h = {
             let (r2, waited) = (r.clone(), waited.clone());
@@ -823,7 +788,7 @@ mod tests {
             })
         };
         std::thread::sleep(Duration::from_millis(50));
-        assert!(!waited.load(Ordering::Acquire), "a half-bound piece was admitted past the bound");
+        assert!(!waited.load(Ordering::Acquire), "a whole-bound piece was admitted past the bound");
         drop((display, earlier));
         h.join().unwrap();
         assert!(waited.load(Ordering::Acquire));
@@ -836,16 +801,16 @@ mod tests {
         }
     }
 
-    /// Test t2430 (gpu-throughput, found-defects 480): on a displayed ring with no display traffic a
-    /// lower class keeps pieces queued while their predicted drain fits the bound — more than one
-    /// uncompleted at once — and never more than `AHEAD_PIECES`.
+    /// Test t2430 (gpu-throughput, found-defects 480; render-ahead D5): on a displayed ring with no
+    /// display traffic a lower class keeps pieces queued while their predicted drain fits the bound —
+    /// four quarter-bound pieces at once, no count of pieces — and the fifth waits for room.
     #[test]
     fn t2430_a_lower_class_keeps_a_piece_queued_while_one_runs() {
         let r = ring();
         let _d = r.register_display();
         let b = bound();
-        let held: Vec<Ticket> = (0..AHEAD_PIECES).map(|_| r.admit(Class::Near, b / 4)).collect();
-        assert_eq!(r.in_flight_ns(), AHEAD_PIECES as u64 * b / 4, "pieces that fit together were not admitted together");
+        let held: Vec<Ticket> = (0..4).map(|_| r.admit(Class::Near, b / 4)).collect();
+        assert_eq!(r.in_flight_ns(), b, "pieces that fit together were not admitted together");
         let admitted = Arc::new(AtomicBool::new(false));
         let h = {
             let (r2, admitted) = (r.clone(), admitted.clone());
@@ -856,7 +821,7 @@ mod tests {
             })
         };
         std::thread::sleep(Duration::from_millis(50));
-        assert!(!admitted.load(Ordering::Acquire), "more than {AHEAD_PIECES} lower pieces uncompleted");
+        assert!(!admitted.load(Ordering::Acquire), "a piece past the bound was admitted");
         let mut held = held;
         drop(held.remove(0));
         h.join().unwrap();
@@ -911,17 +876,17 @@ mod tests {
         assert!(admitted.load(Ordering::Acquire));
     }
 
-    /// Test t2433 (gpu-throughput D1), the ring's part: the display's present goes into the flight
-    /// with no wait; a lower class may queue what drains before the display's NEXT present plus the
-    /// bound (a period away while it presents), not more; a display behind its frames leaves the near
-    /// class the bound past its own frame's end, background a quarter and an export nothing
-    /// (loop-laps-regression D2).
+    /// Test t2433 (gpu-throughput D1; render-ahead D5), the ring's part: the display's present goes
+    /// into the flight with no wait; a lower class may queue what drains before the display's NEXT
+    /// present plus the bound — one frame period — not more; a display behind its frames leaves every
+    /// lower class the bound past its own frame's end.
     #[test]
     fn t2433_the_display_is_counted_never_admitted() {
         let r = ring();
         let _d = r.register_display();
         let b = bound();
         let period = Duration::from_nanos(kt_time::sched::frame_period_ns());
+        assert_eq!(b, period.as_nanos() as u64, "the bound is one frame period");
         // a lower piece holds the bound, the display's present still goes at once
         let low = r.admit(Class::Near, b);
         let shown = r.note_display(b / 4);
@@ -931,8 +896,8 @@ mod tests {
         submitted_at(&r, &shown, now);
         {
             let st = r.lock();
-            // the next present is a period away: two bounds of lower work drain before it plus the bound
             assert!(r.display_next(&st, now) >= now + period / 2);
+            // the next present is a period away: a period plus the bound, less the present in flight
             let room = (period + Duration::from_nanos(b)).as_nanos() as u64 - b / 4;
             assert!(r.admissible(&st, Class::Near, room - 1_000_000, now).is_ok(), "room in front of the next present refused");
             assert!(r.admissible(&st, Class::Near, room + 1_000_000, now).is_err(), "more than the room admitted");
@@ -945,13 +910,10 @@ mod tests {
         let now = Instant::now();
         let end = drain(&st, now, false).display_end.unwrap();
         assert!(end > r.display_next(&st, now));
-        // a display behind its frames fills its period: the near class keeps the bound past its frame's
-        // end, more waits; background keeps a quarter bound; an export nothing (loop-laps-regression D2)
-        assert!(r.admissible(&st, Class::Near, b - 1000, now).is_ok(), "the bound behind the display's late frame was refused");
-        assert!(r.admissible(&st, Class::Near, b + b / 2, now).is_err(), "more than the bound queued behind a saturating display");
-        assert!(r.admissible(&st, Class::Background, b / 8, now).is_ok(), "background lost its quarter bound");
-        assert!(r.admissible(&st, Class::Background, b / 2, now).is_err(), "background queued past its quarter bound");
-        assert!(r.admissible(&st, Class::Offline, b / 8, now).is_err(), "an export queued behind a saturating display");
+        for c in [Class::Near, Class::Background, Class::Offline] {
+            assert!(r.admissible(&st, c, b - 1000, now).is_ok(), "{c:?}: the bound behind the display's late frame was refused");
+            assert!(r.admissible(&st, c, b + b / 2, now).is_err(), "{c:?}: more than the bound queued behind the display");
+        }
         drop(st);
         drop(late);
     }
@@ -971,46 +933,34 @@ mod tests {
         assert!(!Arc::ptr_eq(&a, &vk));
     }
 
-    /// Test t2517 (loop-laps-regression D2, replacing gpu-leftovers D4 / found-defects 491): what a lower
-    /// class may leave in front of the display's next present. A light display leaves the bound; a display
-    /// that fills its period leaves the near class the bound, visible and background a quarter of it and an
-    /// export its slack; a display that stopped presenting leaves the bound again. Pure arithmetic on a
-    /// fixed instant: no device, no timing.
+    /// Test t2923 (render-ahead D5, replacing t2517 and the rooms by class of loop-laps-regression D2 /
+    /// gpu-leftovers D4): a display presenting frames of a quarter period, of twice the period, and one
+    /// that stopped — every lower class has the same room, the bound past the display's next present (or
+    /// its late frame's end); no class has a quarter bound or a slack of its own.
     #[test]
-    fn t2517_a_saturating_display_leaves_near_work_the_bound() {
-        let p = 16_666_666u64;
-        let b = p / 2;
-        assert_eq!(room(Class::Background, p, None), b, "no display cost known: the bound");
-        assert_eq!(room(Class::Background, p, Some(p / 4)), b, "a light display leaves the bound");
-        assert_eq!(room(Class::Background, p, Some(p - p / 8)), b / 4, "a heavy one leaves a quarter bound at least");
-        assert_eq!(room(Class::Background, p, Some(2 * p)), b / 4, "a saturating display leaves background a quarter bound");
-        assert_eq!(room(Class::Visible, p, Some(2 * p)), b / 4);
-        assert_eq!(room(Class::Offline, p, Some(2 * p)), 0, "an export waits behind a saturating display");
-        assert_eq!(room(Class::Offline, p, Some(p - p / 8)), p / 8, "an export keeps the slack");
-        assert_eq!(room(Class::Near, p, Some(2 * p)), b, "the near class makes the display's next frames: the bound");
-        assert_eq!(room(Class::Answer, p, Some(2 * p)), b, "a gesture's answer keeps the bound");
-
-        // on a ring: the display presents a frame costing twice the period
+    fn t2923_every_lower_class_keeps_the_bound() {
         let period = kt_time::sched::frame_period_ns();
-        let r = ring();
-        let _d = r.register_display();
-        for _ in 0..8 {
-            drop(r.note_display(2 * period));
+        for cost in [period / 4, 2 * period] {
+            let r = ring();
+            let _d = r.register_display();
+            for _ in 0..8 {
+                drop(r.note_display(cost));
+            }
+            let mut st = r.lock();
+            st.flight.retain(|f| !f.done.load(Ordering::Acquire));
+            // one present in flight, being encoded
+            st.next += 1;
+            let id = st.next;
+            st.flight.push(Flight { id, ns: cost, display: true, at: None, guess: false, sub: None, done: Arc::new(AtomicBool::new(false)) });
+            let now = Instant::now();
+            for c in [Class::Answer, Class::Near, Class::Visible, Class::Background, Class::Offline] {
+                assert!(r.admissible(&st, c, bound() * 3 / 4, now).is_ok(), "{c:?} behind a display of {cost} ns lost the bound");
+                assert!(r.admissible(&st, c, bound() + bound() / 2 + cost, now).is_err(), "{c:?}: more than the bound");
+            }
+            // the display stopped: the bound from now
+            st.last_display = Some(now - Duration::from_nanos(3 * period));
+            st.flight.clear();
+            assert!(r.admissible(&st, Class::Offline, bound(), now).is_ok(), "a display that stopped leaves the bound");
         }
-        let mut st = r.lock();
-        st.flight.retain(|f| !f.done.load(Ordering::Acquire));
-        // one present in flight, being encoded
-        st.next += 1;
-        let id = st.next;
-        st.flight.push(Flight { id, ns: 2 * period, class: Class::Now, display: true, at: None, guess: false, sub: None, done: Arc::new(AtomicBool::new(false)) });
-        let now = Instant::now();
-        assert!(r.admissible(&st, Class::Offline, bound() / 8, now).is_err(), "an export waits behind a saturating display");
-        assert!(r.admissible(&st, Class::Background, bound() / 2, now).is_err(), "background past its quarter bound waits");
-        assert!(r.admissible(&st, Class::Background, bound() / 8, now).is_ok(), "background keeps a quarter bound");
-        assert!(r.admissible(&st, Class::Near, bound() / 2, now).is_ok(), "the near class keeps the bound");
-        assert!(r.admissible(&st, Class::Near, bound() + bound() / 2, now).is_err(), "no more than the bound");
-        // the display stopped: the room is the bound again
-        st.last_display = Some(now - Duration::from_nanos(3 * period));
-        assert!(r.admissible(&st, Class::Offline, bound() / 2, now).is_ok(), "a display that stopped leaves the bound");
     }
 }

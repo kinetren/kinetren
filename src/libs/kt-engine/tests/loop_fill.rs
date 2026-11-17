@@ -112,7 +112,7 @@ fn t2334_a_loop_shown_in_part_becomes_all_kept() {
     let recs = kt_time::trace::testing::recs(&items);
     let jobs: std::collections::HashSet<u64> = recs
         .iter()
-        .filter(|r| r.ev == kt_time::trace::Ev::Job as u16 && r.aux == kt_time::trace::job::LOOP_FILL)
+        .filter(|r| r.ev == kt_time::trace::Ev::Job as u16 && r.aux == kt_time::trace::job::RENDER_AHEAD)
         .map(|r| r.id)
         .collect();
     assert!(!jobs.is_empty(), "no fill job was traced");
@@ -338,7 +338,7 @@ fn t2860_on_a_card_the_fill_keeps_several_moments_in_flight() {
     let recs = kt_time::trace::testing::recs(&items);
     let mut jobs: Vec<(u64, u64, u64)> = recs
         .iter()
-        .filter(|r| r.ev == kt_time::trace::Ev::Job as u16 && r.aux == kt_time::trace::job::LOOP_FILL)
+        .filter(|r| r.ev == kt_time::trace::Ev::Job as u16 && r.aux == kt_time::trace::job::RENDER_AHEAD)
         .map(|r| (r.a, r.t, r.t + r.dur))
         .collect();
     jobs.sort();

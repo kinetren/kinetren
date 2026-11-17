@@ -263,7 +263,7 @@ fn pump(f: &LoopFill, lane: usize, parts: &PreviewParts, region: &Mutex<Option<(
         let id = kt_time::trace::next_id();
         let _cause = kt_time::trace::with_cause(id);
         let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
-        span.aux(kt_time::trace::job::LOOP_FILL).id(id).a(t.0 as u64).c(lane as u64);
+        span.aux(kt_time::trace::job::RENDER_AHEAD).id(id).a(t.0 as u64).c(lane as u64);
         let t0 = std::time::Instant::now();
         let mut buf = Vec::new();
         let Some((complete, key)) = parts.compose_fill(&exec, t, &mut buf) else {
