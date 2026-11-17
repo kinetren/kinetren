@@ -108,6 +108,77 @@ fn backend_text(b: &BackendLine) -> String {
 pub const LOG_LINES: usize = 800;
 
 /// "0:42" / "1:02:03".
+/// What a render costs against the preview (render-honest D3): the preview's size, the render's, the
+/// frames of the range and what the preview measured over it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderCost {
+    pub preview: (u32, u32),
+    pub render: (u32, u32),
+    pub frames: u64,
+    pub measured: Option<kt_engine::preview_cost::PreviewCost>,
+}
+
+impl RenderCost {
+    /// How many times the pixels of a preview frame a render frame has.
+    pub fn ratio(&self) -> f64 {
+        let px = |(w, h): (u32, u32)| w.max(1) as f64 * h.max(1) as f64;
+        px(self.render) / px(self.preview)
+    }
+
+    /// The predicted render time in seconds, when the preview measured the range.
+    pub fn predicted_secs(&self) -> Option<f64> {
+        self.measured.map(|m| m.predict_secs(self.frames, self.render))
+    }
+
+    /// "Preview 640×360 · render 1920×1080: 9.0× the pixels of a frame", when the sizes differ.
+    pub fn size_line(&self) -> Option<String> {
+        (self.preview != self.render).then(|| {
+            crate::tf!(
+                k::render::PREVIEW_VS,
+                format!("{}×{}", self.preview.0, self.preview.1),
+                format!("{}×{}", self.render.0, self.render.1),
+                format!("{:.1}", self.ratio())
+            )
+        })
+    }
+
+    /// The predicted time with how many frames it was measured from, or that nothing was.
+    pub fn time_line(&self) -> String {
+        match (self.measured, self.predicted_secs()) {
+            (Some(m), Some(secs)) => {
+                crate::tf!(k::render::TIME_PREDICTED, secs_text(secs), m.moments.min(self.frames), self.frames)
+            }
+            _ => tr(k::render::TIME_UNMEASURED).to_string(),
+        }
+    }
+
+    /// The journal's line at the result (render-honest D4), in English (the journal's rule).
+    pub fn journal_line(&self, actual: std::time::Duration) -> String {
+        let actual = actual.as_secs_f64();
+        match (self.measured, self.predicted_secs()) {
+            (Some(m), Some(p)) => format!(
+                "render time: predicted {p:.1} s (from {} of {} frames of the preview at {}×{}, {}×{} render), actual {actual:.1} s (×{:.2} the prediction)",
+                m.moments.min(self.frames),
+                self.frames,
+                m.size.0,
+                m.size.1,
+                self.render.0,
+                self.render.1,
+                actual / p.max(1e-9)
+            ),
+            _ => format!(
+                "render time: no prediction (the preview at {}×{} measured none of the {} frames, {}×{} render), actual {actual:.1} s",
+                self.preview.0, self.preview.1, self.frames, self.render.0, self.render.1
+            ),
+        }
+    }
+}
+
+/// A duration of seconds as `m:ss`, or `0:01` at the least.
+fn secs_text(secs: f64) -> String {
+    clock_text(std::time::Duration::from_secs_f64(secs.max(1.0).round()))
+}
+
 pub fn clock_text(d: std::time::Duration) -> String {
     let s = d.as_secs();
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
@@ -246,6 +317,8 @@ pub struct RenderJob {
     pub final_size: Option<u64>,
     /// Where Cancel stood during the run: the closing buttons must not land there (trick 3).
     pub cancel_rect: Option<egui::Rect>,
+    /// What the render was predicted to cost when it started (render-honest D4).
+    pub cost: Option<RenderCost>,
 }
 
 impl RenderJob {
@@ -291,6 +364,7 @@ impl RenderJob {
             log_file: LogFile::open(log_dir),
             final_size: None,
             cancel_rect: None,
+            cost: None,
         }
     }
 
@@ -368,6 +442,10 @@ impl RenderJob {
         self.finished_at = Some((self.clock)());
         match &r {
             Ok(stats) => {
+                // the prediction against the time it took (render-honest D4)
+                if let Some(c) = &self.cost {
+                    crate::tele_journal::record(crate::tele_journal::Kind::Note, &c.journal_line(self.elapsed()));
+                }
                 self.final_size = std::fs::metadata(&self.out_path).ok().map(|m| m.len());
                 // where the render's time went, into the journal the load report carries (render-speed D2)
                 if !stats.stages.is_empty() {
@@ -697,6 +775,28 @@ impl KtApp {
     }
 
     /// “Render” button: opens the settings panel (item 5 — choice of codec etc.).
+    /// What the render the window would start costs against the preview (render-honest D3): the
+    /// range and size the window would render, the preview's size now, and the preview's measured
+    /// device time over the range.
+    pub fn render_cost(&self) -> RenderCost {
+        let doc = self.model.doc_arc();
+        let set = &doc.settings;
+        let (a, b) = doc
+            .region
+            .filter(|_| !self.render_setup.whole)
+            .map(|r| (r.start, r.end))
+            .unwrap_or((Tick(0), kt_engine::export::project_range(&doc)));
+        let render = self.render_setup.resolution.unwrap_or((set.width, set.height));
+        let fps = self.render_setup.fps.unwrap_or(set.fps);
+        let q = self.player.preview_quality();
+        RenderCost {
+            preview: (q.width, q.height),
+            render,
+            frames: kt_engine::export::video_frames_in(fps, a, b),
+            measured: self.player.preview_cost(a, b),
+        }
+    }
+
     pub fn start_render(&mut self) {
         if self.render_job.is_some() {
             self.note(tr(k::render::ALREADY_RUNNING));
@@ -837,6 +937,7 @@ impl KtApp {
             )
             .map_err(|e| e.to_string())
         });
+        let cost = self.render_cost();
         let out_res = opts.resolution.unwrap_or(proj_res);
         let file_fps = opts.fps.unwrap_or(proj_fps);
         self.render_job = Some(RenderJob::new(
@@ -849,6 +950,9 @@ impl KtApp {
             &self.render_setup.log_dir,
             std::time::Instant::now,
         ));
+        if let Some(j) = &mut self.render_job {
+            j.cost = Some(cost);
+        }
         self.render_setup.open = false;
     }
 
@@ -879,7 +983,8 @@ impl KtApp {
                 self.render_video_group(ui);
                 self.render_size_group(ui, &proj, max_src);
                 self.render_audio_group(ui);
-                self.render_file_group(ui, region, full_len);
+                let cost = self.render_cost();
+                self.render_file_group(ui, region, full_len, &cost);
                 if !self.render_setup.missing.is_empty() {
                     ui.add_space(4.0);
                     ui.colored_label(
@@ -1330,7 +1435,7 @@ impl KtApp {
         });
     }
 
-    fn render_file_group(&mut self, ui: &mut egui::Ui, region: Option<(Tick, Tick)>, full_len: Tick) {
+    fn render_file_group(&mut self, ui: &mut egui::Ui, region: Option<(Tick, Tick)>, full_len: Tick, cost: &RenderCost) {
         use kt_media::muxer::format::Container;
         crate::widgets::group(ui, "render.file", tr(k::grp::FILE), |ui| {
             let s = &mut self.render_setup;
@@ -1400,6 +1505,21 @@ impl KtApp {
                 ui.label("");
                 let r = ui.weak(est);
                 crate::widgets::field_probe::note("render.estimate", r.rect);
+                ui.end_row();
+
+                // what the render costs against the preview (render-honest D3, row 711)
+                if let Some(line) = cost.size_line() {
+                    ui.label("");
+                    let r = ui.weak(line);
+                    crate::widgets::field_probe::note("render.preview_vs", r.rect);
+                    ui.end_row();
+                }
+                ui.label("");
+                let r = ui.weak(cost.time_line());
+                crate::widgets::field_probe::note("render.time", r.rect);
+                // the state for a live scenario: the dump carries rectangles, not text
+                let state = if cost.measured.is_some() { "render.time.measured" } else { "render.time.none" };
+                crate::widgets::field_probe::note(state, r.rect);
                 ui.end_row();
             });
         });

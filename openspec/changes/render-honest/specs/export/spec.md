@@ -61,7 +61,7 @@ to explain it.
   newer record replaces an older one of the same moment
 - **THEN** the range's cost is the newest records' sum over their pixels, the count of moments measured,
   the preview's size; a range with no record has no cost
-- **TEST** t2902 (`src/libs/kt-engine/src/player.rs`)
+- **TEST** t2902 (`src/libs/kt-engine/src/preview_cost.rs`)
 
 #### Scenario: The window states the size and the prediction
 - **WHEN** the render settings window opens on a 1920×1080 project whose preview runs at 640×360, first

@@ -21142,6 +21142,84 @@ fn pick_combo(h: &mut Harness<'static, KtApp>, value: &str, item: &str) {
     }
 }
 
+/// t2903 (render-honest D3, row 711): the render window states the render's size against the
+/// preview's and the pixel ratio, and a render time predicted from the preview's measured device
+/// time over the range — first that nothing was measured, then the prediction and its share.
+/// - **PATH** File → Render… → the Render settings window: the File group under the size estimate
+///   reads "Preview 640×360 · render 1920×1080: 9.0× the pixels of a frame" and "Render time: not
+///   measured — play the range once"; after the range plays, "Render time ≈ … (measured … of …
+///   frames)"
+#[test]
+fn t2903_the_window_states_the_size_and_the_prediction() {
+    let mut h = harness_lang(Lang::En);
+    // four seconds to render: an edit length with no event (as a foreign file's trailing gap)
+    let mut p = h.state().model.project().clone();
+    p.timeline_end = Some(kt_time::Tick(4 * 90_000));
+    h.state_mut().model = kt_model::TimelineModel::new(p);
+    h.state().player.set_preview_quality(kt_media::Quality { width: 640, height: 360 });
+    render_settings_scene(&mut h);
+    h.state_mut().render_setup.resolution = Some((1920, 1080));
+    h.state_mut().render_setup.fps = Some(25);
+    for _ in 0..3 {
+        h.step();
+    }
+    let cost = h.state().render_cost();
+    assert!(cost.frames > 0, "the scene has a range to render: {cost:?}");
+    assert!((cost.ratio() - 9.0).abs() < 1e-9, "{cost:?}");
+    let texts = shown_texts(&h);
+    let vs = "Preview 640×360 · render 1920×1080: 9.0× the pixels of a frame";
+    assert!(texts.iter().any(|t| t == vs), "the size difference is stated: {texts:?}");
+    assert!(texts.iter().any(|t| t == tr(k::render::TIME_UNMEASURED)), "nothing measured yet: {texts:?}");
+    // the range plays: every frame of it measured at 4 ms of device time at 640×360
+    let step = 90_000 / 25;
+    for i in 0..cost.frames as i64 {
+        h.state().player.note_preview_cost(kt_time::Tick(i * step), 4_000_000, (640, 360));
+    }
+    h.step();
+    let cost = h.state().render_cost();
+    let secs = cost.predicted_secs().expect("measured");
+    assert!((secs - cost.frames as f64 * 0.004 * 9.0).abs() < 1e-6, "{secs} for {} frames", cost.frames);
+    let texts = shown_texts(&h);
+    let line = cost.time_line();
+    assert!(line.contains(&format!("measured {} of {} frames", cost.frames, cost.frames)), "{line}");
+    assert!(texts.iter().any(|t| *t == line), "the prediction is shown: {texts:?}");
+}
+
+/// t2904 (render-honest D4): a finished render writes its predicted time against its actual one into
+/// the telemetry journal, and says when it had no prediction.
+#[test]
+fn t2904_a_render_journals_its_prediction() {
+    use crate::tele_journal::testing;
+    let clock = testing::FakeClock::new(1_762_498_800_250, 0);
+    let j = testing::fresh("t2904", clock, crate::tele_journal::ROTATE_BYTES);
+    let _bound = testing::bind(j.clone());
+    let dir = render_scratch("t2904");
+    let mut app = KtApp::new_empty(None);
+    app.recovery_on_drop = false;
+    let measured = kt_engine::preview_cost::PreviewCost { moments: 100, ns_per_px: 12.0 / (100.0 * 1920.0 * 1080.0) * 1e9, size: (640, 360) };
+    for (cost, actual) in [(Some(measured), 18.0), (None, 7.0)] {
+        scripted_render(&mut app, &dir);
+        let job = app.render_job.as_mut().expect("job");
+        job.cost = Some(crate::render_dialog::RenderCost { preview: (640, 360), render: (1920, 1080), frames: 100, measured: cost });
+        set_render_now(actual);
+        job.on_result(Ok(kt_engine::export::ExportStats::default()));
+        job.job.cancel();
+        app.render_job = None;
+    }
+    let deadline = kt_time::test_deadline();
+    let mut text = testing::read(&j);
+    while text.matches("render time:").count() < 2 {
+        assert!(std::time::Instant::now() < deadline, "two render lines never came: {text}");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        text = testing::read(&j);
+    }
+    assert!(
+        text.contains("render time: predicted 12.0 s (from 100 of 100 frames of the preview at 640×360, 1920×1080 render), actual 18.0 s (×1.50 the prediction)"),
+        "{text}"
+    );
+    assert!(text.contains("render time: no prediction") && text.contains("actual 7.0 s"), "{text}");
+}
+
 /// t2810 (render-settings D10): the window drives the export options — container, codec, rate mode,
 /// speed, depth, colour, frame rate and audio codec chosen with the mouse reach the started job, the
 /// file name takes the container's extension, and the estimate reads a size.
