@@ -50,7 +50,7 @@ the moments it showed.
 
 #### Scenario: On a card several moments are in flight on one engine
 - **WHEN** a loop of 24 moments plays with a producer executor that reports a hardware device, returns from each moment at once and finishes it 40 ms later (a device's done flag)
-- **THEN** at least two moments are in flight at once, no moment is composed twice in a lap, and the loop is all-kept in at most two thirds of the time the same executor takes when every moment is waited for
+- **THEN** at least two moments are in flight at once, no moment is composed twice in a lap, and at least half of the device latency the same executor pays when every moment is waited for is hidden
 - **TEST** t2920 (`src/libs/kt-engine/tests/render_ahead.rs`)
 
 #### Scenario: The depth comes from measurement and memory

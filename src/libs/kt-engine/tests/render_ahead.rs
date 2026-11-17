@@ -317,20 +317,26 @@ fn fill_with(card: Arc<Card>, opacity: f32) -> Option<std::time::Duration> {
 
 /// Test t2920 (render-ahead D3, D4; replaces t2860–t2862): a producer executor on a card returns from
 /// each moment at once and the device ends it 40 ms later. Several moments are in flight on the one
-/// engine, none is composed twice in the lap, and the loop is all-kept in at most two thirds of the time
-/// the same executor takes when every moment is waited for.
+/// engine, none is composed twice in the lap, and at least half of the latency the same executor pays
+/// when every moment is waited for is hidden.
 #[test]
 fn t2920_on_a_card_several_moments_are_in_flight() {
     let (Some(flagged), Some(waited)) = (Card::new(true), Card::new(false)) else { return };
     let Some(fast) = fill_with(flagged.clone(), 0.33) else { return };
-    let slow = fill_with(waited, 0.31).unwrap();
+    let slow = fill_with(waited.clone(), 0.31).unwrap();
+    let waits = waited.keys.lock().unwrap().len() as u32;
     let peak = flagged.peak.load(Ordering::Acquire);
     let keys = flagged.keys.lock().unwrap().clone();
     let distinct: std::collections::HashSet<u64> = keys.iter().copied().collect();
-    eprintln!("t2920: in flight up to {peak}, all-kept in {fast:?} against {slow:?} waited for");
+    eprintln!("t2920: in flight up to {peak}, all-kept in {fast:?} against {slow:?} waited for ({waits} moments waited)");
     assert!(peak >= 2, "one moment in flight at a time");
     assert_eq!(distinct.len(), keys.len(), "a moment was composed twice in the lap");
-    assert!(fast * 3 <= slow * 2, "in flight {fast:?}, waited {slow:?}: no gain from the depth");
+    // the waited run pays the device's latency once a moment; in flight it is hidden behind the next
+    // moments' own work. At least half of it must be gone, whatever the machine's load makes of the
+    // own work (a ratio of the two wall times moved with the load: the latency is a smaller share of a
+    // slower moment)
+    let hidden = slow.saturating_sub(fast);
+    assert!(hidden * 2 >= waited.delay * waits, "in flight {fast:?}, waited {slow:?}: {hidden:?} of {:?} of latency hidden", waited.delay * waits);
 }
 
 /// The display's executor that counts the plans it presents.
