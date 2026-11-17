@@ -69,8 +69,13 @@ and passes (not the export's settled form), and nothing is kept when a run's for
 
 Why the display's device: the review's "one device per card". On a card every device we open runs through
 one graphics ring anyway (gpu-arbiter); the offline device only added the readback and the upload. On a
-software rasterizer each device is a queue thread of its own, and the display's thread is the one that
-must present; there the producer keeps the offline device's side engine (scheduler-followups D5).
+software rasterizer each device is a queue thread of its own, so the first form kept the side engine there;
+measured, the display's device won there too (Measurements: the same heavy VHS loop was kept a lap sooner
+with about a third of the device work alone, 35 % less beside another process — the readback, the upload into the
+display's memo and the side device's own frames cost more than its second queue thread gave). So the
+display's device is the route everywhere; `KT_RENDER_AHEAD_DEVICE=side` keeps the side route as an A/B and
+for a display with no sibling. The bench (`kt-cli preview`) registers its display engine on the ring as the
+editor's window device is (`register_display`), so the bound in front of its presents is the program's.
 
 ### D4. Depth from measurement
 
@@ -160,7 +165,49 @@ submit → wait → read back → hand over) with one item in flight. Where it a
   t2922 holds them equal.
 - [llvmpipe cannot show the card's gain] → the bench shows the software case; the card case waits for the
   reference mini-PC (owner, 2026-11-17). Stated in the measurements.
+- [On a software rasterizer the producer shares the display's one queue thread] → the ring's bound (one
+  frame period) holds what stands in front of a present; measured V-fps equal to the base.
 
 ## Measurements
 
-(filled by stage 5)
+Release builds, llvmpipe (LLVM 20.1.2, Vulkan), the machine shared with other sessions (load 4–8 while
+measuring). Base = stage 18 (`7ad1ad71`), new = this branch. Footage in `/dev/shm`. The `rendereg_2`-like
+shape: `kt-cli showcase` (plain) — 70–74 s lies in the "BREAK" section, where the morpher plays the montage
+through VHS Tape (worn tape); `kt-cli preview plain.kt 70 74 --size 640x360 --loop 40 --trace DIR`, then
+`kt-cli trace DIR loop` (laps: frames shown, kept, composed by the display, Loading) and the bench's own
+lines. "Shown" counts complete frames the display put on screen in the lap.
+
+**Together** (base and new started at the same moment, each on its own copy, two pairs, the second order
+swapped; each process had about half the machine):
+
+| | base 1 | new 1 | base 2 | new 2 |
+|---|---|---|---|---|
+| lap 0: frames shown | 17 | 19 | 15 | 19 |
+| lap 1: frames shown | 25 | 41 | 26 | 41 |
+| lap 2: frames shown | 48 | 52 | 58 | 57 |
+| composites by the display while playing | 30+ | 0 | 26+ | 0 |
+| V-fps over 40 s | 19.6 | 19.7 | 19.9 | 19.6 |
+| device time of the run | 23.1 s | 14.9 s | 23.2 s | 15.1 s |
+| device busy while frames were missing | — | 88 % | — | 89 % |
+
+**Alone** (each run with nothing else of ours running, at different moments): new — lap 0 46 frames shown
+(53 moments composed ahead), lap 1 66, every frame kept from lap 2, V-fps 22.6, device time 8.3 s; base —
+lap 0 26, lap 1 73, every frame kept from lap 2, V-fps 19.3, device time 24.4 s.
+
+**`showcase --heavy`, 20–22 s** (the plain piece of loop-laps-regression; together): V-fps 16.1 → 18.9;
+the device was busy 36 % while frames were missing — the loop waits for decoding there (row 720), not for
+the device.
+
+What these numbers are and are not:
+- the base records no `GpuFrame`, so its device share comes from the bench's device total: ~23 s of
+  device over the ~16 s of laps that missed frames, on TWO llvmpipe devices (display and side engine),
+  each a queue of its own on the same processor. On llvmpipe the device IS the processor: it was saturated
+  in the base and is saturated now (88–89 %); the share cannot "rise clearly" here. What changed is the work:
+  the base composed a quarter of the loop's moments twice (the display on demand and the fill), and the new
+  path reads nothing back and uploads nothing — 35 % less device time for the same loop, and the display
+  shows kept frames from the producer's lead from lap 0;
+- the card case — a 2-CU iGPU busy 4–26 % with ~170 ms of wall per ~12 ms moment — is not reproducible
+  here. Its mechanism is held by t2920 (40 ms of device latency per moment: up to 17 in flight, the loop
+  kept 4.1× sooner than one at a time) and t2922 (no readback on the display's device). The headline for
+  the owner's machine waits for his next trace (`trace loop` now prints the device share per lap) or the
+  reference mini-PC (kkt-26.11.17 S7).

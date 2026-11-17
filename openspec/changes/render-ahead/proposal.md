@@ -22,13 +22,14 @@ review's R2 (playback as a render-ahead pipeline) and R5 (lift the half-frame bo
   ahead, in a loop the rest of the lap — with several moments in flight, and keeps each in the display's
   present memo. A moment not ready is Loading (no partial picture, kkt-26.11.14 M1); the on-demand
   latest-wins composite stays for paused, scrubbing and seeking, and where no producer runs.
-- On a hardware card the producer composes on the DISPLAY's device (a sibling engine: its own lock, the
+- The producer composes on the DISPLAY's device (a sibling engine: its own lock, the
   same device, queue and pipelines), and the composite goes into the display's memo on the device: no
   readback, no upload, no wait. Its depth (moments in flight) is measured: the wall a moment takes from
   submit to done over the producer's own time per moment, bounded by the memory the ledger has left. No
   constant of one machine (owner rule H13).
-- On a software rasterizer (the device is the processor) the producer keeps the side engine of the offline
-  device and its one-moment form; the depth rule gives one there by measurement.
+- On a software rasterizer too (measured: the side device's readback and upload cost more than its own
+  queue thread gave); the side engine of the offline device stays for a display with no sibling and as the
+  A/B `KT_RENDER_AHEAD_DEVICE=side`.
 - **BREAKING (internal):** the loop fill (`loop_fill.rs`: lanes, width, claims, narrow mode, the display
   gate, `RING_LOWER_PIECES`, `KT_LOOP_FILL*`) is DELETED; the producer replaces it in loops and linear play.
 - **BREAKING (internal):** the arbiter's bound is ONE frame period (was half); every lower class keeps the

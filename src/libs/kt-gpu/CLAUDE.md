@@ -291,7 +291,7 @@ is no picture, and an export refuses.
 - `offline_engine()`: a headless device out of the preview's queue; since scheduler-followups (row
   290) the preview's slow-chain route has it to itself (`serve_preview` registers its ring as one that
   fronts the person's frame: a software device's ring then bounds and cuts lower classes, t2337).
-  Effect thumbnails, reel strips, posters and (on a software display) the render-ahead producer compose on `side_engine()`, its `sibling`:
+  Effect thumbnails, reel strips and posters (and the render-ahead producer under `KT_RENDER_AHEAD_DEVICE=side`) compose on `side_engine()`, its `sibling`:
   the same device, queue, ring and `Compiled` (nothing compiles, t2338), its own `Inner` and lock. Serials of frames are process-wide because it serves a fresh cache per job
   (t1574). A blended frame's upload key takes the pair and the weight (t250): it carries its base
   frame's serial.

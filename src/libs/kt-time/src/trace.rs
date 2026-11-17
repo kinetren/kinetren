@@ -525,7 +525,7 @@ pub mod job {
     /// The render-ahead producer's composite of a moment (render-ahead D2; the loop fill's number before
     /// it): `id` the job (the cause of its records), `a` the moment's tick, `b` the outcome — 0 kept, 1
     /// incomplete (a stream stage short of its frame included), 3 the display's memo did not keep it;
-    /// `c` the moments in flight when it was submitted. The span ends at the submission; on a card the
+    /// `c` the moments in flight with it (itself included). The span ends at the submission; on a card the
     /// device finishes the moment after it.
     pub const RENDER_AHEAD: u32 = 13;
 }

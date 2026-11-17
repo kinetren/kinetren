@@ -169,9 +169,10 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   by `play`, a display miss and every playing prefetch pass: from the frame on screen plus its measured
   lead, round the loop region or forward to the first moment not decoded / with no layer, it composes
   what the display does not hold through `VideoGpuExec::ahead` (asks no decode, withdraws no request)
-  and keeps it on the display's executor. Where: on a card the display's `sibling_exec` (the same
-  device: kt-gpu hands the composite to the display's memo on the device, a done flag, no wait); on a
-  software display the side engine `ahead_gpu_setter` gives (bytes). Depth: `render_ahead::depth` —
+  and keeps it on the display's executor. Where: the display's `sibling_exec` on a card and on a
+  software rasterizer alike (the same device: kt-gpu hands the composite to the display's memo on the
+  device, a done flag, no wait); the side engine `ahead_gpu_setter` gives (bytes) only for a display with
+  no sibling or `KT_RENDER_AHEAD_DEVICE=side`. Depth: `render_ahead::depth` —
   a moment's wall over the producer's own time a moment, capped by `kt_time::mem::room()`; never a
   constant. A moment incomplete or refused by the memo is skipped for the lap. `KT_RENDER_AHEAD=off`
   for an A/B. t2334–t2336, t2920, t2921, t2925.

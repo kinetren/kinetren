@@ -1161,6 +1161,13 @@ impl Player {
         self.ahead_gpu_setter()(exec);
     }
 
+    /// Tests: the producer's executor whatever the rule says — `Some(None)` no producer, `Some(Some(e))`
+    /// this one — or `None`, the rule again (the display's sibling, else the side engine).
+    #[doc(hidden)]
+    pub fn force_ahead_gpu(&self, forced: Option<Option<Arc<dyn VideoGpuExec>>>) {
+        self.ahead.force(forced);
+    }
+
     /// Composites the producer kept (tests, the bench).
     pub fn ahead_kept(&self) -> u64 {
         self.ahead.kept()
@@ -1183,8 +1190,13 @@ impl Player {
                 return None;
             }
         }
-        let (q, complete, gpu, cost, plan_ns, stages) =
-            self.compose_preview_measured(t, Target::Display(o))?;
+        // playing with the render-ahead producer, the program's display only presents (render-ahead D1):
+        // `preview_bench` measures that, not a composite the program no longer makes
+        let parts = self.preview_parts();
+        let (q, complete, gpu, cost, plan_ns, stages) = match parts.present_ahead(t, o) {
+            Some(r) => r,
+            None => parts.compose(t, Target::Display(o))?,
+        };
         *self.video_cost.lock().unwrap() =
             VideoCost { gpu, cost, compose_ns: t0.elapsed().as_nanos() as u64, plan_ns, stages };
         Some((q, complete))
@@ -1401,10 +1413,24 @@ impl PreviewParts {
         if !self.ahead.active(&display) {
             return None;
         }
+        use kt_time::trace::{self, Ev};
         let q = self.quality();
         let video = self.builds.latest().video.clone();
         let aligned = video.grid.align_floor(t);
-        if let Some(r) = self.show_kept(&video, kt_time::trace::cause(), aligned, q, Some(o)) {
+        // the frame's id: the compose thread's ask set it; a direct call (the bench) is a frame of its own
+        let mut frame = trace::cause();
+        let own = frame == 0 && trace::on();
+        let _cause = own.then(|| {
+            frame = trace::next_id();
+            trace::ev(Ev::FrameAsk).id(frame).a(aligned.0 as u64).aux(trace::ask::PLAYING | trace::ask::PRESENT).emit();
+            trace::with_cause(frame)
+        });
+        if let Some(r) = self.show_kept(&video, frame, aligned, q, Some(o)) {
+            // a composite asked and served from what is kept, counted as `compose_at` counts it
+            kt_time::work::bump(kt_time::work::Work::Composite);
+            if own {
+                trace::ev(Ev::FrameDone).id(frame).a(aligned.0 as u64).aux(1).emit();
+            }
             return Some(r);
         }
         // the display composes itself what the producer will not: a moment with no layer (a clear), one
@@ -1414,6 +1440,9 @@ impl PreviewParts {
             return None;
         }
         self.ahead.kick();
+        if own {
+            trace::ev(Ev::FrameDone).id(frame).a(aligned.0 as u64).aux(0).emit();
+        }
         Some((q, false, true, Default::default(), 0, Default::default()))
     }
 

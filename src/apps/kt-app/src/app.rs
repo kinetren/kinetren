@@ -859,8 +859,8 @@ impl KtApp {
                         e.serve_preview();
                         e as std::sync::Arc<dyn kt_engine::VideoGpuExec>
                     }));
-                    // on a software rasterizer the render-ahead producer composes on the side engine;
-                    // on a card it composes on the display's own device (render-ahead D3)
+                    // the render-ahead producer composes on the display's own device; the side engine
+                    // serves it only under KT_RENDER_AHEAD_DEVICE=side (render-ahead D3)
                     ahead(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
                 });
             }

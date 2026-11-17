@@ -87,13 +87,16 @@ fn t2334_a_loop_shown_in_part_becomes_all_kept() {
     for t in moments.iter().step_by(4) {
         present_complete(&player, *t);
     }
+    // the "before": no producer, the laps keep only what the display presented
+    player.force_ahead_gpu(Some(None));
     player.play();
-    // the "before": no fill executor, the laps keep only what the display presented
     passes(&player, 5);
     let before = kept(&player, &moments);
     assert_eq!(before, moments.len() / 4, "scene guard: only the presented moments are kept");
     let items = kt_time::trace::testing::capture(|| {
-        player.set_ahead_gpu(Some(side as Arc<dyn VideoGpuExec>));
+        // the rule's own executor: the display's sibling, on its device
+        let _ = side;
+        player.force_ahead_gpu(None);
         let deadline = kt_time::test_deadline();
         while kept(&player, &moments) < moments.len() {
             assert!(std::time::Instant::now() < deadline, "the loop never became all-kept: {} of {}", kept(&player, &moments), moments.len());
@@ -284,6 +287,8 @@ impl VideoGpuExec for Card {
 /// from its arrival to all-kept.
 fn fill_with(card: Arc<Card>, opacity: f32) -> Option<std::time::Duration> {
     let (player, moments) = player(opacity)?;
+    // no producer until the card arrives
+    player.force_ahead_gpu(Some(None));
     for t in moments.iter().step_by(4) {
         present_complete(&player, *t);
     }
@@ -299,7 +304,7 @@ fn fill_with(card: Arc<Card>, opacity: f32) -> Option<std::time::Duration> {
     player.seek(moments[0]);
     player.play();
     let t0 = std::time::Instant::now();
-    player.set_ahead_gpu(Some(card as Arc<dyn VideoGpuExec>));
+    player.force_ahead_gpu(Some(Some(card as Arc<dyn VideoGpuExec>)));
     let deadline = kt_time::test_deadline();
     while kept(&player, &moments) < moments.len() {
         assert!(std::time::Instant::now() < deadline, "the loop never became all-kept");

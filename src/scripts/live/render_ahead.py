@@ -6,8 +6,8 @@ Playing, the preview only presents what the producer composed ahead and kept; th
 nothing itself. The project is ours (`kt-cli showcase --heavy`): a one-second loop over the composition
 under Slowed, VHS Tape and Camera ISP, at the preview's own size. The verdict:
 - after the first laps every frame shown is a kept composite, and no Loading lasts;
-- the run's trace says the display made no composite of its own on the laps after the second (the
-  `made` column of `trace loop`), and how busy the device was while frames were missing;
+- the run's trace says the display made no composite of its own after the first lap shown wholly from
+  kept frames (the `made` column of `trace loop`), and how busy the device was while frames were missing;
 - paused, the program rests.
 """
 import json
@@ -39,13 +39,13 @@ def one_second_loop(path):
     return at
 
 
-def display_made(answer):
-    """The display's own composites per lap (`trace loop` rows: lap, at, len, frames, kept, made, …)."""
+def laps(answer):
+    """`trace loop` rows: lap → (frames, kept, made by the display)."""
     out = {}
     for line in answer.splitlines():
         cols = line.split()
         if len(cols) > 6 and cols[0].isdigit() and cols[1].startswith("+"):
-            out[int(cols[0])] = int(cols[5])
+            out[int(cols[0])] = (int(cols[3]), int(cols[4]), int(cols[5]))
     return out
 
 
@@ -85,10 +85,16 @@ def main(out):
 
     answer = trace_answer(out, "loop")
     print(answer)
-    made = display_made(answer)
-    late = {lap: n for lap, n in made.items() if lap >= 2 and n > 0}
+    rows = laps(answer)
+    # the first lap the display showed only kept frames; after it the display composes nothing itself.
+    # Before it the display composes what is not decoded yet, and on GL (the live check's backend) the
+    # preview is the bytes path, which composes on demand what the producer has not kept yet
+    full = [lap for lap, (frames, kept, _) in sorted(rows.items()) if frames > 0 and kept == frames]
+    if not full:
+        raise SystemExit(f"no lap was shown wholly from kept frames: {rows}")
+    late = {lap: made for lap, (_, _, made) in rows.items() if lap > full[0] and made > 0}
     if late:
-        raise SystemExit(f"the display composed itself on laps after the second: {late}")
+        raise SystemExit(f"the display composed itself after lap {full[0]} was all kept: {late}")
     share = [line for line in answer.splitlines() if line.startswith("device busy while frames were missing")]
     print(share[0] if share else "no lap missed a frame")
 

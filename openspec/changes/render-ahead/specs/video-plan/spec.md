@@ -18,11 +18,12 @@ display's memo did not keep — and compose the rest in that order, keeping each
 display's executor under its plan key. It SHALL ask no decode and withdraw no request. Nothing SHALL run
 while nothing plays.
 
-On a hardware device the producer SHALL compose on an engine of the display's own device (its own lock),
-and the composite SHALL reach the display's present memo on the device, with no readback, no upload and no
-wait for the device; the producer learns that the device finished a moment from a done flag the device
-sets. On a software rasterizer it SHALL compose on the offline device's side engine and hand the bytes to
-the display's executor. The moments in flight at once (the depth) SHALL be measured, never a constant of
+The producer SHALL compose on an engine of the display's own device (its own lock), on a card and on a
+software rasterizer alike, and the composite SHALL reach the display's present memo on the device, with no
+readback, no upload and no wait for the device; the producer learns that the device finished a moment from a
+done flag the device sets. Only where the display's executor has no engine of its own device (or
+`KT_RENDER_AHEAD_DEVICE=side`) it SHALL compose on the offline device's side engine and hand the bytes to the
+display's executor. The moments in flight at once (the depth) SHALL be measured, never a constant of
 one machine: the wall a moment takes from its plan to its completion over the producer's own time per
 moment, at least one, at most the moments whose bytes the memory ledger has room for. A kept composite's
 bytes SHALL equal the bytes the display's own `present` would have kept for the same plan.

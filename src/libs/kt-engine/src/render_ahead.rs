@@ -10,9 +10,10 @@
 //!   Moments the display holds are noted for the bars; a moment that came out incomplete (a
 //!   stream stage short of its frame included) or that the memo refused is skipped for the lap. It asks
 //!   no decode and withdraws no request. Nothing runs while nothing plays.
-//! - **Where** (D3): on a card, on the display's own device (a sibling engine: its own lock), the
-//!   composite handed to the display's memo on the device with no readback and no wait; on a software
-//!   rasterizer, on the offline device's side engine, by bytes.
+//! - **Where** (D3): on the display's own device (a sibling engine: its own lock), the composite handed
+//!   to the display's memo on the device with no readback and no wait — on a card and on a software
+//!   rasterizer alike (measured: the side device's readback and upload cost more than they freed). The
+//!   offline device's side engine, by bytes, only when the display has no sibling or for an A/B.
 //! - **Depth** (D4): moments in flight at most `ceil(lat / own)` — a moment's wall from its plan to its
 //!   completion over the producer's own time a moment — at least one, at most what the memory ledger has
 //!   room for. Measured on the machine that runs it, never a constant of one machine (owner rule H13).
@@ -33,6 +34,15 @@ use std::time::{Duration, Instant};
 pub fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("KT_RENDER_AHEAD").as_deref() != Ok("off"))
+}
+
+/// `KT_RENDER_AHEAD_DEVICE=side`: compose on the offline device's side engine, by bytes (the A/B of the
+/// display's own device; measured on llvmpipe the display's device showed more of a heavy loop's frames
+/// in its first laps with a third less device work — the readback and the upload cost more than the side
+/// device's own queue thread gave, render-ahead design "Measurements").
+fn on_side_device() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KT_RENDER_AHEAD_DEVICE").as_deref() == Ok("side"))
 }
 
 /// Moments in flight at most (D4): a moment's wall `lat_ns` over the producer's own time a moment
@@ -98,8 +108,10 @@ struct Execs {
     display: Option<usize>,
     /// The display's sibling (a card) — or the side engine.
     exec: Option<Arc<dyn VideoGpuExec>>,
-    /// The offline device's side engine (kt-app, the bench, tests): a software display's producer.
+    /// The offline device's side engine (kt-app, the bench, tests): a display with no sibling's producer.
     side: Option<Arc<dyn VideoGpuExec>>,
+    /// A test's choice over the rule: `Some(None)` — no producer, `Some(Some(e))` — this executor.
+    forced: Option<Option<Arc<dyn VideoGpuExec>>>,
 }
 
 /// The player's producer: its executors, its state and its lane.
@@ -129,13 +141,16 @@ impl RenderAhead {
         drop(old);
     }
 
-    /// The executor to compose on for `display`: on a card the display's sibling (made once per
-    /// display, on the caller's thread), on a software rasterizer the side engine; `None` — none.
+    /// The executor to compose on for `display`: the display's sibling (made once per display, on the
+    /// caller's thread), else the side engine; `None` — none.
     pub(crate) fn exec_for(&self, display: &Arc<dyn VideoGpuExec>) -> Option<Arc<dyn VideoGpuExec>> {
         let id = Arc::as_ptr(display) as *const () as usize;
         let mut e = self.execs.lock().unwrap();
+        if let Some(f) = &e.forced {
+            return f.clone();
+        }
         if e.display != Some(id) {
-            let made = if display.info().software { e.side.clone() } else { display.sibling_exec().or_else(|| e.side.clone()) };
+            let made = if on_side_device() { e.side.clone() } else { display.sibling_exec().or_else(|| e.side.clone()) };
             let old = std::mem::replace(&mut e.exec, made);
             e.display = Some(id);
             drop(e);
@@ -144,6 +159,12 @@ impl RenderAhead {
             e = self.execs.lock().unwrap();
         }
         e.exec.clone()
+    }
+
+    /// Tests: the producer's executor whatever the rule says (`Some(None)` — none), or the rule again.
+    pub(crate) fn force(&self, forced: Option<Option<Arc<dyn VideoGpuExec>>>) {
+        let old = std::mem::replace(&mut self.execs.lock().unwrap().forced, forced);
+        drop(old);
     }
 
     /// The producer runs for `display` now: the display only presents while playing (D1).
@@ -297,7 +318,8 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
         let id = kt_time::trace::next_id();
         let _cause = kt_time::trace::with_cause(id);
         let mut span = kt_time::trace::span(kt_time::trace::Ev::Job);
-        let in_flight = ra.st.lock().unwrap().flights.len();
+        // the moments in flight with this one
+        let in_flight = ra.st.lock().unwrap().flights.len() + 1;
         span.aux(kt_time::trace::job::RENDER_AHEAD).id(id).a(t as u64).c(in_flight as u64);
         let at = Instant::now();
         let out = parts.compose_ahead(&exec, &display, &video, Tick(t), q, &mut buf);
@@ -319,7 +341,8 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
                     Some(done) => st.flights.push_back(Flight { done, at }),
                     None => st.lat_ns = ema(st.lat_ns, own),
                 }
-                st.deepest = st.deepest.max(st.flights.len());
+                // a moment composed while the call lasted was one in flight
+                st.deepest = st.deepest.max(st.flights.len()).max(1);
             }
             Ok(a) => {
                 span.b(if a.complete { 3 } else { 1 });

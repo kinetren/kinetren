@@ -1129,10 +1129,12 @@ fn preview_run(
         use kt_engine::VideoGpuExec as _;
         format!("GPU ({})", gpu.info().name)
     };
+    // the program's display device is on its ring as a display: the ring bounds what stands in front of
+    // its present (render-ahead D5), as the editor's window device does
+    gpu.register_display();
     player.set_video_gpu(Some(gpu));
-    // the app's arrangement (render-ahead D3): on a software rasterizer the producer composes on the
-    // offline device's side engine; on a card on the display's own device. `KT_RENDER_AHEAD=off` is the
-    // "before"
+    // the app's arrangement (render-ahead D3): the producer composes on the display's own device, the
+    // side engine only under `KT_RENDER_AHEAD_DEVICE=side`; `KT_RENDER_AHEAD=off` is the "before"
     player.set_ahead_gpu(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
     let opts = kt_engine::preview_bench::BenchOptions {
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
