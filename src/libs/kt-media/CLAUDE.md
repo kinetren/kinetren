@@ -99,13 +99,22 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
 
 ## Decoders of one file (export-throughput D9, preview-throughput D1)
 
-- `FfmpegSource::read_video_span_qualities` gives a run of keys (keys more than 2 s apart start a
-  new run) the decoder that reaches it by decoding on, else a fresh one while the file has fewer
-  than `MAX_CURSORS` (2), else the least recently used — a function of the requests, never of
-  timing. One decoder for a file read at two places (a picture-in-picture of the same footage)
-  seeked back and decoded a 4K GOP for every frame (t1455: 60 reopens → 2). The second decoder is
-  opened with the packet index the first already has. The export's sources and every `MediaWorker`
-  use it; the second decoder lives inside the source, on the worker's thread (invariant 5).
+- **Every video read of a file goes through `read_runs`** (decode-waste): a frame, a span at one size,
+  a span at several sizes. A run starts at the decoder that reaches its first key by decoding on (the
+  nearest) and goes on while that decoder, standing at the run's last key, is still the nearest that
+  reaches the next (`goes_on`, `kt_ffmpeg::Source::video_reach_from`) — never a fixed gap: keys of two
+  places 1.5 s apart were one run, one decoder walked between them and sought back every chunk (t2880).
+  Every key goes through `prepare_for` (a one-size span sought only before its first key, t2883).
+- **A fresh decoder opens only when none is free to go** (`cursor_for`): each stands ahead of the key, has
+  read a key of this request, or is the one a later key of the request would be given. Otherwise the free
+  one standing longest unused goes (a key ahead of it is a seek forward: a filmstrip keeps one decoder,
+  t2884), and the one a later key would be given goes last (t2882). Decoders per file follow the picture
+  (`cursors_for_size`: two 4K pictures' pixels, 2..=`MAX_CURSORS` 4, t2881) — a decoder's frame pool
+  grows with its picture. The choice is a function of the requests, never of timing; a frame does not
+  depend on the decoder that read it. Every extra decoder is opened with the packet index the first
+  already has and lives inside the source, on its owner's thread (invariant 5).
+- What remains of a dense edit's decode is each cut's lead-in from its keyframe, walked again by cuts far
+  apart on the timeline (found-defects): only kept pictures or proxies remove it.
 
 - **`frame_alloc::return_large_frames_to_os()` is the binaries' FIRST statement** (kt-cli, kt-app;
   export-throughput D11, t1458): glibc's dynamic mmap threshold let freed 8–33 MB frames pile up in
