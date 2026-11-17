@@ -25,7 +25,8 @@ pub enum BackendLine {
     None(String),
 }
 
-/// One line of the render log (D9): a fact, written in English to the file and shown translated.
+/// One line of the render log (D9): a fact, recorded in English in the telemetry journal (and so the
+/// trace; export-readback D3) and shown translated.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogLine {
     Engine(kt_engine::export::ExportLog),
@@ -38,7 +39,7 @@ pub enum LogLine {
 }
 
 impl LogLine {
-    /// For the file (the journal's rule: the file is for a report — English).
+    /// For the telemetry journal (the journal's rule: a record is for a report — English).
     pub fn english(&self) -> String {
         use kt_engine::export::{ExportLog, ExportPhase};
         match self {
@@ -238,45 +239,6 @@ pub fn mux_row(f: &kt_media::muxer::OutputFormat) -> String {
     if f.container.faststart() { format!("{} (+faststart)", f.container.label()) } else { f.container.label().to_string() }
 }
 
-/// The render log file (D9): `render.log`, the previous run's moved to `render.log.1`.
-pub struct LogFile {
-    pub path: std::path::PathBuf,
-    out: Option<std::io::BufWriter<std::fs::File>>,
-    /// The file could not be written: the log is only in the window.
-    pub failed: bool,
-}
-
-impl LogFile {
-    pub fn open(dir: &std::path::Path) -> LogFile {
-        let path = dir.join("render.log");
-        let out = (|| {
-            std::fs::create_dir_all(dir)?;
-            if path.exists() {
-                std::fs::rename(&path, dir.join("render.log.1"))?;
-            }
-            std::fs::File::create(&path).map(std::io::BufWriter::new)
-        })();
-        match out {
-            Ok(f) => LogFile { path, out: Some(f), failed: false },
-            Err(e) => {
-                crate::journal::log("RENDER", &format!("render log not written ({}): {e}", path.display()));
-                LogFile { path, out: None, failed: true }
-            }
-        }
-    }
-
-    fn write(&mut self, stamp: std::time::Duration, line: &str, flush: bool) {
-        use std::io::Write;
-        let Some(out) = self.out.as_mut() else { return };
-        let ok = writeln!(out, "[{}] {line}", clock_text(stamp)).is_ok() && (!flush || out.flush().is_ok());
-        if !ok {
-            self.out = None;
-            self.failed = true;
-            crate::journal::log("RENDER", &format!("render log write failed: {}", self.path.display()));
-        }
-    }
-}
-
 pub struct RenderJob {
     /// Common frame of a background TASK (R.49, item 367): channel, cancel, pause and
     /// stopping the thread on `Drop`. Render is the reference from which the frame was
@@ -312,7 +274,6 @@ pub struct RenderJob {
     pub graph: crate::graphs::RollingGraph,
     /// The last `LOG_LINES` lines with their elapsed stamps (D9).
     pub log: std::collections::VecDeque<(std::time::Duration, LogLine)>,
-    pub log_file: LogFile,
     /// The file's size, read once at the finish.
     pub final_size: Option<u64>,
     /// Where Cancel stood during the run: the closing buttons must not land there (trick 3).
@@ -330,7 +291,6 @@ impl RenderJob {
         out_res: (u32, u32),
         fps: u32,
         missing: Vec<String>,
-        log_dir: &std::path::Path,
         clock: fn() -> std::time::Instant,
     ) -> RenderJob {
         let now = clock();
@@ -361,7 +321,6 @@ impl RenderJob {
                 vec![("×", egui::Color32::from_rgb(120, 200, 255), 4.0)],
             ),
             log: std::collections::VecDeque::with_capacity(LOG_LINES),
-            log_file: LogFile::open(log_dir),
             final_size: None,
             cancel_rect: None,
             cost: None,
@@ -379,17 +338,9 @@ impl RenderJob {
 
     pub fn push_log(&mut self, line: LogLine) {
         let stamp = self.elapsed();
-        // flushed at phase changes and at the end: a crash in libav keeps the lines before it
-        let flush = matches!(
-            line,
-            LogLine::Engine(kt_engine::export::ExportLog::Phase(_) | kt_engine::export::ExportLog::Finalizing)
-                | LogLine::Failed(_)
-                | LogLine::Engine(kt_engine::export::ExportLog::Error(_))
-        );
-        let text = line.english();
-        self.log_file.write(stamp, &text, flush);
-        // the same line in the telemetry journal, at its clock time (telemetry-journal)
-        crate::tele_journal::record(crate::tele_journal::Kind::Export, &text);
+        // the line lives in the telemetry journal, at its clock time (telemetry-journal), which writes
+        // it at once and mirrors it into the trace: no file of its own (export-readback D3)
+        crate::tele_journal::record(crate::tele_journal::Kind::Export, &line.english());
         if self.log.len() == LOG_LINES {
             self.log.pop_front();
         }
@@ -507,8 +458,6 @@ pub struct RenderSetup {
     /// Sources unavailable at the moment the settings are opened: shown as a
     /// warning BEFORE the launch, not a surprise in the finished file.
     pub missing: Vec<String>,
-    /// Where `render.log` is written (D9): the data directory; a test points it at a temp folder.
-    pub log_dir: std::path::PathBuf,
     /// A test's recorder of Open file / Open folder / Open log (D7): `Some` — the path is pushed
     /// here instead of starting the system's program.
     pub test_open: Option<Vec<std::path::PathBuf>>,
@@ -545,7 +494,6 @@ impl Default for RenderSetup {
             open: false,
             missing: Vec::new(),
             // a test's data directory is its own (render-finish-crash D3)
-            log_dir: crate::journal::data_dir(),
             test_open: None,
             test_pick: None,
             avail: Default::default(),
@@ -947,7 +895,6 @@ impl KtApp {
             out_res,
             file_fps,
             self.render_setup.missing.clone(),
-            &self.render_setup.log_dir,
             std::time::Instant::now,
         ));
         if let Some(j) = &mut self.render_job {
@@ -1742,14 +1689,6 @@ impl KtApp {
                         .id_salt("render_log")
                         .open(failed.then_some(true))
                         .show(ui, |ui| {
-                            if job.log_file.failed {
-                                ui.colored_label(
-                                    egui::Color32::from_rgb(255, 190, 120),
-                                    crate::tf!(k::render::LOG_ONLY_WINDOW, job.log_file.path.display()),
-                                );
-                            } else {
-                                ui.weak(crate::tf!(k::render::LOG_PATH, job.log_file.path.display()));
-                            }
                             egui::ScrollArea::vertical().max_height((ui.clip_rect().height() * 0.4).max(160.0)).stick_to_bottom(true).show(ui, |ui| {
                                 for (stamp, line) in &job.log {
                                     ui.monospace(format!("[{}] {}", clock_text(*stamp), line.shown()));
@@ -1844,8 +1783,8 @@ impl KtApp {
                 self.open_render_path(dir);
             }
             Some(Act::OpenLog) => {
-                let p = job.log_file.path.clone();
-                self.open_render_path(p);
+                // the render's lines are the telemetry journal's (export-readback D3)
+                self.open_render_path(crate::tele_journal::path());
             }
             Some(Act::Close) => {
                 // the dialog lets the job go: the export's facts (telemetry-identify-activity)

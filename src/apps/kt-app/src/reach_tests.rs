@@ -6205,7 +6205,6 @@ fn t958_render_over_an_existing_file_is_asked_first() {
     let bare = middle_layers(&h);
     {
         let app = h.state_mut();
-        app.render_setup.log_dir = dir.join("logs");
         app.render_setup.test_pick = Some(old.clone());
         app.start_render();
     }
@@ -7785,7 +7784,7 @@ fn t1091_jokes_while_the_render_runs() {
     let (mut h, dir) = lesson_at("t1091", 5, 2);
     let none = |h: &AppHarness| JOKES.iter().all(|j| h.query_all_by_label(tr(*j)).count() == 0);
     assert!(none(&h), "a joke without a render");
-    crate::layout_tests::scripted_render(h.state_mut(), &dir);
+    crate::layout_tests::scripted_render(h.state_mut());
     let mut seen: Vec<&str> = Vec::new();
     for _ in 0..60 {
         h.step();

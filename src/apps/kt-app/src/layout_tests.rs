@@ -19304,7 +19304,7 @@ fn set_render_now(secs: f64) {
 
 /// A render job whose thread only waits for Cancel: every number the window shows comes from the
 /// messages the test hands to `on_msg` — the same path the background thread's messages take.
-pub(crate) fn scripted_render(app: &mut KtApp, log_dir: &std::path::Path) {
+pub(crate) fn scripted_render(app: &mut KtApp) {
     set_render_now(0.0);
     let job = crate::bg::BgJob::spawn("scripted-render", |ctl, _send| {
         while !ctl.should_stop() {
@@ -19320,7 +19320,6 @@ pub(crate) fn scripted_render(app: &mut KtApp, log_dir: &std::path::Path) {
         (s.width, s.height),
         30,
         Vec::new(),
-        log_dir,
         render_clock,
     ));
 }
@@ -19375,7 +19374,7 @@ fn t956_render_window_rows_come_from_the_run() {
     let dir = render_scratch("t956");
     let mut h = harness_lang(Lang::En);
     let bare_windows = crate::reach_tests::middle_layers(&h);
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     render_step(h.state_mut(), 0.2, 0, 120, ExportPhase::Video);
     h.step();
     h.step();
@@ -19430,7 +19429,7 @@ fn t956_render_window_rows_come_from_the_run() {
     // Pause and Cancel stay outside the scrolling body: in a LOW window they are on screen
     let mut low = harness_sized(1100.0, 420.0);
     crate::i18n::set_lang(Lang::En);
-    scripted_render(low.state_mut(), &dir);
+    scripted_render(low.state_mut());
     low.state_mut().render_job.as_mut().unwrap().on_msg(RenderMsg::Engine(ExportEvent::Opened(nvenc_report())));
     render_step(low.state_mut(), 1.0, 30, 120, ExportPhase::Video);
     low.step();
@@ -19451,7 +19450,7 @@ fn t1071_render_window_survives_frames_past_the_total() {
     use kt_engine::export::ExportPhase;
     let dir = render_scratch("t1071");
     let mut h = harness_lang(Lang::En);
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     render_step(h.state_mut(), 1.0, 30, 120, ExportPhase::Video);
     render_step(h.state_mut(), 4.0, 121, 120, ExportPhase::Video);
     h.step();
@@ -19471,7 +19470,7 @@ fn t1071_render_window_survives_frames_past_the_total() {
 
     // nothing done yet: no remaining row at all, still no panic
     let mut h = harness_lang(Lang::En);
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     render_step(h.state_mut(), 1.0, 0, 120, ExportPhase::Video);
     h.step();
     h.step();
@@ -19509,7 +19508,6 @@ fn t1312_real_offgrid_region_render_finishes_and_closes() {
         p.settings.height = 36;
         p.region = Some(kt_model::Region { start: r0, end: r1 });
         app.model = kt_model::TimelineModel::new(p);
-        app.render_setup.log_dir = dir.join("logs");
         app.render_setup.test_pick = Some(dir.join("out.mp4"));
         app.start_render();
     }
@@ -19563,7 +19561,7 @@ fn t957_finished_render_is_frozen_and_opened_from_the_window() {
     use kt_engine::export::{ExportEvent, ExportPhase, ExportStats};
     let dir = render_scratch("t957");
     let mut h = harness_lang(Lang::En);
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     h.state_mut().render_setup.test_open = Some(Vec::new());
     {
         let job = h.state_mut().render_job.as_mut().unwrap();
@@ -19627,7 +19625,7 @@ fn t957_finished_render_is_frozen_and_opened_from_the_window() {
 
     // the Finalize phase: Cancel is disabled and its hint names the finishing step
     let mut f = harness_lang(Lang::En);
-    scripted_render(f.state_mut(), &dir);
+    scripted_render(f.state_mut());
     render_step(f.state_mut(), 1.0, 120, 120, ExportPhase::Finalize);
     f.step();
     f.step();
@@ -19641,7 +19639,7 @@ fn t957_finished_render_is_frozen_and_opened_from_the_window() {
 
     // an error: the log is offered, no Open file
     let mut e = harness_lang(Lang::En);
-    scripted_render(e.state_mut(), &dir);
+    scripted_render(e.state_mut());
     render_step(e.state_mut(), 1.0, 10, 120, ExportPhase::Video);
     set_render_now(2.0);
     e.state_mut().render_job.as_mut().unwrap().on_result(Err("encoder died".into()));
@@ -19652,18 +19650,22 @@ fn t957_finished_render_is_frozen_and_opened_from_the_window() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Test 959 (render-window-v1-parity, D9): the log is bounded, rotated and named.
+/// Test 959 (render-window-v1-parity, D9; export-readback D3): the log is bounded, and it lives in the
+/// telemetry journal, not in a file of its own.
 ///
-/// v1 kept 800 lines and wrote a file on error; we had one error line in the window and nothing on
-/// disk, and the GPU failure went to `eprintln!`, which a desktop start never shows.
+/// v1 kept 800 lines and wrote a file on error; `render.log` then repeated every line the telemetry
+/// journal (and so the trace) already held — kkt-26.11.18 T4: "объедини лог рендера в телеметрию".
 #[test]
-fn t959_render_log_is_bounded_rotated_and_named() {
+fn t959_render_log_is_bounded_and_in_the_telemetry() {
     use crate::render_dialog::{LOG_LINES, RenderMsg};
+    use crate::tele_journal::testing;
+    use egui_kittest::kittest::Queryable;
     use kt_engine::export::{ExportEvent, ExportLog};
-    let dir = render_scratch("t959");
-    std::fs::write(dir.join("render.log"), b"previous run\n").unwrap();
+    let j = testing::fresh("t959", testing::FakeClock::new(1_762_498_800_250, 0), crate::tele_journal::ROTATE_BYTES);
+    let _bound = testing::bind(j.clone());
     let mut h = harness_lang(Lang::En);
-    scripted_render(h.state_mut(), &dir);
+    h.state_mut().render_setup.test_open = Some(Vec::new());
+    scripted_render(h.state_mut());
     {
         let job = h.state_mut().render_job.as_mut().unwrap();
         for i in 0..1000 {
@@ -19687,45 +19689,31 @@ fn t959_render_log_is_bounded_rotated_and_named() {
     assert!(!shown.is_empty(), "the log is not open after the error, or the line is missing: {texts:?}");
     assert!(shown[0].starts_with("[0:09] "), "the line has no elapsed stamp: {}", shown[0]);
     assert!(!texts.iter().any(|t| t.ends_with(&crate::tf!(k::render::LOG_PLACEHOLDER, "m199"))), "line 200 survived the bound");
-    let path = dir.join("render.log");
-    assert!(
-        texts.iter().any(|t| t == &crate::tf!(k::render::LOG_PATH, path.display())),
-        "the window does not name the log file: {texts:?}"
-    );
-    h.state_mut().render_job = None;
-    let file = std::fs::read_to_string(&path).unwrap();
-    assert_eq!(file.lines().count(), 1001, "render.log does not hold every line of the run");
-    assert!(file.lines().all(|l| l.starts_with('[')), "a file line has no stamp");
-    assert!(file.contains("placeholder rendered for m0") && file.contains("render failed: encoder died"), "{file}");
-    assert_eq!(std::fs::read(dir.join("render.log.1")).unwrap(), b"previous run\n", "the previous run was not kept");
-
-    // a read-only data directory: the render goes on, the window says the log is only here
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let ro = dir.join("ro");
-        std::fs::create_dir_all(&ro).unwrap();
-        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555)).unwrap();
-        // root writes anyway — the case cannot be made there
-        if std::fs::File::create(ro.join("probe")).is_err() {
-            let mut r = harness_lang(Lang::En);
-            scripted_render(r.state_mut(), &ro);
-            render_step(r.state_mut(), 1.0, 10, 120, kt_engine::export::ExportPhase::Video);
-            set_render_now(2.0);
-            r.state_mut().render_job.as_mut().unwrap().on_result(Err("encoder died".into()));
-            r.step();
-            r.step();
-            let job = r.state().render_job.as_ref().unwrap();
-            assert!(job.log_file.failed, "an unwritable log is not noticed");
-            assert!(matches!(job.result, Some(Err(_))), "the result changed");
-            let texts = shown_texts(&r);
-            let want = crate::tf!(k::render::LOG_ONLY_WINDOW, ro.join("render.log").display());
-            assert!(texts.contains(&want), "the window does not say the log is only here: {texts:?}");
-        }
-        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!texts.iter().any(|t| t.contains("render.log")), "the window still names a log file: {texts:?}");
+    // every line is the telemetry journal's (and through it the trace's)
+    let deadline = kt_time::test_deadline();
+    let mut text = testing::read(&j);
+    while !text.contains("render failed: encoder died") {
+        assert!(std::time::Instant::now() < deadline, "the result never reached the journal");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        text = testing::read(&j);
     }
-    // the new texts are translated (identical-to-English only where the word is international)
-    for key in [k::render::LOG_TITLE, k::render::OPEN_FOLDER, k::render::OVERWRITE_BODY, k::render::CANCEL_FINALIZING] {
+    assert_eq!(text.lines().filter(|l| l.contains(" EXPORT ")).count(), 1001, "the journal does not hold every line of the run");
+    assert!(text.contains("placeholder rendered for m0"), "{text}");
+    // no file of its own anywhere in the data directory
+    let data = crate::journal::data_dir();
+    for name in ["render.log", "render.log.1"] {
+        assert!(!data.join(name).exists(), "{name} was written into {data:?}");
+    }
+    // Open log opens the telemetry journal
+    h.get_by_label(tr(k::render::OPEN_LOG)).click();
+    h.step();
+    h.step();
+    let opened = h.state().render_setup.test_open.clone().unwrap();
+    assert_eq!(opened.last(), Some(&crate::tele_journal::path()), "Open log opened something else");
+    h.state_mut().render_job = None;
+    // the texts of the log section are translated (identical-to-English only where the word is international)
+    for key in [k::render::LOG_TITLE, k::render::OPEN_LOG, k::render::OPEN_FOLDER, k::render::OVERWRITE_BODY, k::render::CANCEL_FINALIZING] {
         for lang in [Lang::Ru, Lang::Es, Lang::Zh, Lang::Ar] {
             crate::i18n::set_lang(lang);
             let v = tr(key).to_string();
@@ -19733,14 +19721,12 @@ fn t959_render_log_is_bounded_rotated_and_named() {
             assert_ne!(v, tr(key), "{}: “{}” is not translated", lang.code(), tr(key));
         }
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The progress window of a scripted run, mid-run (the t779 form contract's opener).
 pub(crate) fn render_progress_scene(h: &mut Harness<'static, KtApp>) {
     use crate::render_dialog::RenderMsg;
-    let dir = std::env::temp_dir().join(format!("kt-render-scene-{}", std::process::id()));
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     let job = h.state_mut().render_job.as_mut().unwrap();
     job.on_msg(RenderMsg::Engine(kt_engine::export::ExportEvent::Opened(nvenc_report())));
     render_step(h.state_mut(), 1.0, 30, 120, kt_engine::export::ExportPhase::Video);
@@ -19754,7 +19740,7 @@ pub(crate) fn render_progress_scene(h: &mut Harness<'static, KtApp>) {
 fn t1604_a_failed_render_says_what_failed() {
     let dir = render_scratch("t1604");
     let mut h = harness_lang(Lang::En);
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     let error = kt_engine::export::ExportError::Io(std::io::Error::other(
         "no video encoder could be opened (last error: h264_vaapi: no VAAPI device)",
     ));
@@ -19770,7 +19756,7 @@ fn t1604_a_failed_render_says_what_failed() {
     assert!(!texts.iter().any(|t| t.contains("io:")), "a Rust type in the window: {texts:?}");
 
     let mut h = harness_lang(Lang::En);
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     let job = h.state_mut().render_job.as_mut().unwrap();
     job.on_msg(crate::render_dialog::RenderMsg::Engine(kt_engine::export::ExportEvent::Log(
         kt_engine::export::ExportLog::IncompleteFrames {
@@ -19823,7 +19809,7 @@ fn t965_encoder_combo_and_progress_row_follow_the_device() {
     // the progress row of an opened VAAPI encoder names its device
     let dir = render_scratch("t965");
     let mut h = harness_lang(Lang::En);
-    scripted_render(h.state_mut(), &dir);
+    scripted_render(h.state_mut());
     let report = kt_media::muxer::OpenReport {
         encoder: "h264_vaapi".into(),
         hardware: true,
@@ -21193,12 +21179,11 @@ fn t2904_a_render_journals_its_prediction() {
     let clock = testing::FakeClock::new(1_762_498_800_250, 0);
     let j = testing::fresh("t2904", clock, crate::tele_journal::ROTATE_BYTES);
     let _bound = testing::bind(j.clone());
-    let dir = render_scratch("t2904");
     let mut app = KtApp::new_empty(None);
     app.recovery_on_drop = false;
     let measured = kt_engine::preview_cost::PreviewCost { moments: 100, ns_per_px: 12.0 / (100.0 * 1920.0 * 1080.0) * 1e9, size: (640, 360) };
     for (cost, actual) in [(Some(measured), 18.0), (None, 7.0)] {
-        scripted_render(&mut app, &dir);
+        scripted_render(&mut app);
         let job = app.render_job.as_mut().expect("job");
         job.cost = Some(crate::render_dialog::RenderCost { preview: (640, 360), render: (1920, 1080), frames: 100, measured: cost });
         set_render_now(actual);
@@ -21233,7 +21218,6 @@ fn t2810_the_window_drives_the_export_options() {
     use kt_media::muxer::format::{AudioCodec, BitDepth, Container, Matrix, RateMode, Speed, VideoCodec};
     let dir = render_scratch("t2810");
     let mut h = harness_lang(Lang::En);
-    h.state_mut().render_setup.log_dir = dir.join("logs");
     render_settings_scene(&mut h);
     for _ in 0..3 {
         h.step();

@@ -18,7 +18,8 @@ PATH (export spec):
 6. Pause → "paused" → Resume;
 7. the bar fills → the numbers stop, the summary line, Open file and Open folder (hovered here: a
    click would launch the system's player and file manager), Close at the right;
-8. Close → the window is gone; the file on disk is a new MP4.
+8. Close → the window is gone; the file on disk is a new MP4; the render's lines are in the telemetry
+   journal, and no `render.log` was written (export-readback D3, kkt-26.11.18 T4).
 """
 import os
 import sys
@@ -98,7 +99,22 @@ def main(out):
             with open(target, "rb") as f:
                 head = f.read(12)
             app.expect(head[4:8] == b"ftyp", "the file on disk is a new MP4")
-            app.step("closed", "the timeline again, the file rendered")
+            # the render's log is the telemetry's: its lines in the journal, no file of its own
+            data = os.path.join(out, "xdg", "kinetren")
+            journal = os.path.join(data, "telemetry-journal.log")
+
+            def logged():
+                try:
+                    with open(journal, encoding="utf-8") as f:
+                        text = f.read()
+                except OSError:
+                    return False
+                return " EXPORT " in text and "opened" in text and "done" in text
+
+            app.expect(app.until(logged, timeout=30.0), f"the render's lines are in the telemetry journal ({journal})")
+            for name in ("render.log", "render.log.1"):
+                app.expect(not os.path.exists(os.path.join(data, name)), f"no {name} in the data directory")
+            app.step("closed", "the timeline again, the file rendered, its log in the telemetry journal")
             return app.done()
     finally:
         if was is None:
