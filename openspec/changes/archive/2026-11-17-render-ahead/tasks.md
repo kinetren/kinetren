@@ -18,17 +18,17 @@
 - [x] 3.3 Player: the producer in place of the fill (kick on play, seek and every playing prefetch pass, `ahead_gpu_setter`), `compose_ahead`; compose thread presents only kept moments while playing (`KT_RENDER_AHEAD=off` for an A/B)
 - [x] 3.4 `FAR_STALLS` → the cache's decoded count (`BurstCache::video_inserted`); t2924
 - [x] 3.5 `tests/render_ahead.rs`: t2334–t2336 moved, t2920, t2925; t2432 green; `cargo test -p kt-engine` (nextest), clippy
-- [ ] 3.6 kt-cli `preview` lines, kt-app setter; build kt-app; commit; target-prune
+- [x] 3.6 kt-cli `preview` lines, kt-app setter; build kt-app; commit; target-prune
 
 ## 4. Docs
 
 - [x] 4.1 kt-engine and kt-gpu CLAUDE.md; the "owner's latency limit" wording corrected in `openspec/specs/video-plan/design.md` and the loop-laps-regression design
-- [ ] 4.2 found-defects rows touched (663, 692, 693 state); What's new line; `kkt-26.11.17-index.md` row S4
+- [x] 4.2 found-defects rows touched (663, 692, 693 state); What's new line; `kkt-26.11.17-index.md` row S4
 
 ## 5. Measured and checked
 
-- [ ] 5.1 Release bench on llvmpipe, base against this branch, interleaved: `kt-cli preview … --loop`, `trace loop`, `trace gpu`; lap-1 V-fps and device share while frames were missing into design "Measurements"; what needs a card stated
-- [ ] 5.2 Idle cost on the heavy showcase (pause, pointer over a static place, the effects window open): live `idle` scenario
-- [ ] 5.3 Live scenario `render_ahead` (loop playback), t2927
-- [ ] 5.4 `cargo test` of the touched crates under nextest, clippy; commit; target-prune
+- [x] 5.1 Release bench on llvmpipe, base against this branch, interleaved: `kt-cli preview … --loop`, `trace loop`, `trace gpu`; lap-1 V-fps and device share while frames were missing into design "Measurements"; what needs a card stated
+- [x] 5.2 Idle cost on the heavy showcase (pause, pointer over a static place, the effects window open): live `idle` scenario
+- [x] 5.3 Live scenario `render_ahead` (loop playback), t2927
+- [x] 5.4 `cargo test` of the touched crates under nextest, clippy; commit; target-prune
 - [ ] 5.5 Archive: specs merged, the "why" into `openspec/specs/{video-plan,telemetry}/design.md`

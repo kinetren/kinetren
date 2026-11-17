@@ -12,7 +12,7 @@
 //!   screen and the look-ahead meet) holds at most [`bound`] of predicted device time in flight; one
 //!   piece always fits an idle ring. One frame period of the preview — a general rule, never a
 //!   number of one machine. It was half a period until render-ahead D5 (owner, kkt-26.11.17 S4:
-//!   "Поднять"): a lower piece may delay a displayed frame by up to one period, and while playing the
+//!   he raised it): a lower piece may delay a displayed frame by up to one period, and while playing the
 //!   display presents kept frames only, so a period of the render-ahead producer's work stands queued
 //!   in front of each present and the device never runs dry.
 //! - **Pieces** ([`Piece`]): a lower-class frame on a displayed ring is cut at pass boundaries where

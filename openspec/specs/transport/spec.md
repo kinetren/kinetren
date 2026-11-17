@@ -762,4 +762,4 @@ Why: found-defects 525 — t2335's hang was the test's own race (fixed by ec6be3
 #### Scenario: A paused seek owes one prefetch pass, under load
 - **WHEN** t2335 counts passes from before each seek, beside 48 and 96 busy loops on 32 threads
 - **THEN** every seek gets its pass (42 of 42 runs); counted after the seek, 8 of 12 runs waited for a pass nothing would ask
-- **TEST** t2335 (`src/libs/kt-engine/tests/loop_fill.rs`)
+- **TEST** t2335 (`src/libs/kt-engine/tests/render_ahead.rs`)
