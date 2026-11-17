@@ -69,7 +69,13 @@ pub struct ExportProfile {
     pub wait_workers_ns: AtomicU64,
     pub wait_frame_ns: AtomicU64,
     pub wait_audio_ns: AtomicU64,
+    /// Frames dispatched while `n + 1` devices composed (render-honest D1): which counts the
+    /// measured time chose. Empty on one device.
+    pub frames_on_devices: [AtomicU64; MAX_DEVICES],
 }
+
+/// The most devices the profile counts frames for; more are counted with the last.
+pub const MAX_DEVICES: usize = 8;
 
 impl ExportProfile {
     pub(crate) fn add(slot: Option<&AtomicU64>, since: Instant) {
@@ -134,13 +140,28 @@ impl ExportProfile {
         busy.sort_by_key(|(_, ns)| std::cmp::Reverse(*ns));
         let shares: Vec<String> = busy.iter().map(|(n, ns)| format!("{n} {:.0} %", *ns as f64 * 100.0 / wall as f64)).collect();
         format!(
-            "export: {frames} frames at {w}×{h}, {:.1} s of the timeline in {:.1} s ({:.2}× real time, {}); busy: {}",
+            "export: {frames} frames at {w}×{h}, {:.1} s of the timeline in {:.1} s ({:.2}× real time, {}); busy: {}{}",
             timeline_ns as f64 / 1e9,
             wall as f64 / 1e9,
             timeline_ns as f64 / wall as f64,
             if workers == 0 { "serial".to_string() } else { format!("{workers} frame workers") },
-            shares.join(", ")
+            shares.join(", "),
+            self.devices_text()
         )
+    }
+
+    /// `; devices: 1 ×40, 2 ×20` — the frames each device count composed, when several devices could.
+    pub fn devices_text(&self) -> String {
+        let used: Vec<String> = self
+            .frames_on_devices
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| {
+                let n = n.load(Ordering::Relaxed);
+                (n > 0).then(|| format!("{} ×{n}", i + 1))
+            })
+            .collect();
+        if used.is_empty() { String::new() } else { format!("; devices: {}", used.join(", ")) }
     }
 
     /// The record as text: one line per stage, busy seconds and the share of the wall time.
@@ -317,6 +338,163 @@ impl Gate {
     }
 }
 
+/// How many of an export's devices compose (render-honest D1, found-defects 710). A software
+/// adapter's export opens as many devices as the cores and the memory allow; this decides how many
+/// of them are GIVEN frames, from the frames dispatched per second of wall, measured over windows:
+/// one device first, one more while it wins by more than `GAIN`, back on a loss, the fewer on a tie,
+/// and every `HOLD` windows one more and then one fewer are tried again, so a light stretch and a
+/// heavy one each get their count. The numbers are the queues' depths and a margin over a window's
+/// noise, not measurements of any machine. The frames do not depend on the count (t1573, t2901): the
+/// clock steers only which device composes a frame (invariant 11).
+pub(crate) struct DeviceRule {
+    max: usize,
+    k: usize,
+    phase: Phase,
+    script: Option<(Vec<usize>, usize)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Phase {
+    /// The first window, at one device.
+    Start,
+    /// `k` is held; the window is its fresh rate. After `HOLD` windows a probe starts.
+    Hold(u32),
+    /// `k` is a trial from `from`, which ran at `base`; `up` — one more; `then_down` — a probe that
+    /// tries one fewer after a failed one more.
+    Try { from: usize, base: f64, up: bool, then_down: bool },
+}
+
+/// A step is a win only past this share of the rate before it (a window's own noise).
+const GAIN: f64 = 0.10;
+/// Windows a count is held before one more and one fewer are tried again.
+const HOLD: u32 = 4;
+/// The fewest frames a window measures.
+const MIN_WINDOW: u64 = 8;
+
+impl DeviceRule {
+    pub(crate) fn new(max: usize, script: Option<Vec<usize>>) -> DeviceRule {
+        let max = max.max(1);
+        let script = script.filter(|s| !s.is_empty()).map(|s| (s, 0));
+        let mut r = DeviceRule { max, k: 1, phase: Phase::Start, script };
+        if let Some((s, _)) = &r.script {
+            r.k = s[0].clamp(1, max);
+        }
+        r
+    }
+
+    /// The devices that compose now.
+    pub(crate) fn count(&self) -> usize {
+        self.k
+    }
+
+    /// (frames to let pass before the window, frames the window measures) at the current count: a
+    /// fresh worker fills its job slot and its two done slots first, which is not throughput.
+    pub(crate) fn window(&self) -> (u64, u64) {
+        if self.script.is_some() {
+            return (0, 4);
+        }
+        let k = self.k as u64;
+        (2 * k, MIN_WINDOW.max(4 * k))
+    }
+
+    /// A window at `count()` ran at `rate` frames a second; returns the count of the next window.
+    pub(crate) fn measured(&mut self, rate: f64) -> usize {
+        if let Some((s, at)) = &mut self.script {
+            *at = (*at + 1) % s.len();
+            self.k = s[*at].clamp(1, self.max);
+            return self.k;
+        }
+        let (k, max) = (self.k, self.max);
+        let (next, phase) = match self.phase {
+            Phase::Start => {
+                if k < max {
+                    (k + 1, Phase::Try { from: k, base: rate, up: true, then_down: false })
+                } else {
+                    (k, Phase::Hold(0))
+                }
+            }
+            Phase::Hold(n) if n + 1 < HOLD => (k, Phase::Hold(n + 1)),
+            Phase::Hold(_) if k < max => (k + 1, Phase::Try { from: k, base: rate, up: true, then_down: true }),
+            Phase::Hold(_) if k > 1 => (k - 1, Phase::Try { from: k, base: rate, up: false, then_down: false }),
+            Phase::Hold(_) => (k, Phase::Hold(0)),
+            Phase::Try { up: true, base, .. } if rate > base * (1.0 + GAIN) => {
+                // a win: keep climbing from here
+                if k < max {
+                    (k + 1, Phase::Try { from: k, base: rate, up: true, then_down: false })
+                } else {
+                    (k, Phase::Hold(0))
+                }
+            }
+            Phase::Try { up: true, from, base, then_down: true } if from > 1 => {
+                (from - 1, Phase::Try { from, base, up: false, then_down: false })
+            }
+            Phase::Try { up: true, from, .. } => (from, Phase::Hold(0)),
+            // fewer devices are kept unless they lose more than the margin
+            Phase::Try { up: false, base, .. } if rate * (1.0 + GAIN) >= base => (k, Phase::Hold(0)),
+            Phase::Try { up: false, from, .. } => (from, Phase::Hold(0)),
+        };
+        self.k = next;
+        self.phase = phase;
+        next
+    }
+}
+
+/// The compose thread's choice of worker for each frame: round robin over the devices the rule lets
+/// compose, measuring the dispatch rate in windows (render-honest D1). Without a rule, round robin
+/// over every worker.
+struct Dispatch {
+    workers: usize,
+    rule: Option<DeviceRule>,
+    next: usize,
+    /// Frames dispatched at the current count, and when its window began.
+    n: u64,
+    began: Option<Instant>,
+    /// The person's pause inside the window: not throughput.
+    paused: std::time::Duration,
+}
+
+impl Dispatch {
+    fn new(workers: usize, rule: Option<DeviceRule>) -> Dispatch {
+        Dispatch { workers, rule, next: 0, n: 0, began: None, paused: Default::default() }
+    }
+
+    fn active(&self) -> usize {
+        self.rule.as_ref().map_or(self.workers, |r| r.count().min(self.workers))
+    }
+
+    /// The worker of the next frame.
+    fn pick(&mut self, prof: Option<&ExportProfile>) -> usize {
+        let active = self.active();
+        let w = self.next % active;
+        self.next = (w + 1) % active;
+        let Some(rule) = &mut self.rule else { return w };
+        if let Some(p) = prof {
+            p.frames_on_devices[(active - 1).min(MAX_DEVICES - 1)].fetch_add(1, Ordering::Relaxed);
+        }
+        let (settle, frames) = rule.window();
+        if self.n == settle {
+            self.began = Some(Instant::now());
+            self.paused = Default::default();
+        }
+        self.n += 1;
+        if self.n == settle + frames + 1
+            && let Some(began) = self.began.take()
+        {
+            let secs = began.elapsed().saturating_sub(self.paused).as_secs_f64().max(1e-9);
+            let before = rule.count();
+            if rule.measured(frames as f64 / secs) != before {
+                self.next = 0;
+            }
+            self.n = 0;
+        }
+        w
+    }
+
+    fn paused(&mut self, d: std::time::Duration) {
+        self.paused += d;
+    }
+}
+
 /// A frame for a worker: compose it or only convert the GPU's readback.
 enum Job<'a> {
     Compose { t: Tick },
@@ -464,6 +642,8 @@ pub(crate) fn run<S: ExportSink>(
         }
         let (rgba_pool_tx, rgba_pool_rx) = unbounded::<Vec<u8>>();
         let (audio_tx, audio_rx) = bounded::<Vec<f32>>(96);
+        // the worker of each frame, in frame order, for the writer (render-honest D1)
+        let (order_tx, order_rx) = unbounded::<usize>();
 
         // --- audio: its own thread, the same renderer and stream as the serial pass ---
         let audio_halt = halt.clone();
@@ -604,7 +784,19 @@ pub(crate) fn run<S: ExportSink>(
             let _class = kt_time::sched::with_class(kt_time::sched::Class::Offline);
             let mut pending: std::collections::VecDeque<(u64, u64)> = Default::default();
             let depth = gpu.as_ref().map_or(0, |g| g.readback_depth());
-            let send = |i: u64, job| job_txs[(i % workers as u64) as usize].send(job).is_ok();
+            // several devices: as many compose as the measured time says (render-honest D1)
+            let rule = (engines.len() > 1).then(|| {
+                let script = match &backends.devices {
+                    crate::export::DeviceCount::Script(s) => Some(s.clone()),
+                    crate::export::DeviceCount::Measured => None,
+                };
+                DeviceRule::new(engines.len(), script)
+            });
+            let dispatch = std::cell::RefCell::new(Dispatch::new(workers, rule));
+            let send = |_i: u64, job| {
+                let w = dispatch.borrow_mut().pick(prof);
+                order_tx.send(w).is_ok() && job_txs[w].send(job).is_ok()
+            };
             let collect = |gpu: &Arc<dyn crate::VideoGpuExec>, i: u64, ticket: u64| -> std::io::Result<bool> {
                 let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                 let mark = Instant::now();
@@ -650,7 +842,9 @@ pub(crate) fn run<S: ExportSink>(
                     }
                 };
                 for i in ch.first..ch.end {
+                    let paused = Instant::now();
                     (hooks.wait_paused)();
+                    dispatch.borrow_mut().paused(paused.elapsed());
                     if halted() {
                         return Err(cancelled());
                     }
@@ -719,6 +913,7 @@ pub(crate) fn run<S: ExportSink>(
             total,
             done_rxs,
             back_txs,
+            order_rx,
             audio_rx,
             |i| (frame_tick(i + 1).to_audio_frames() - audio_start).max(0) as u64,
             &gate,
@@ -766,7 +961,8 @@ pub(crate) fn run<S: ExportSink>(
     Ok((vstats, astats))
 }
 
-/// The writer: video frame `i` from worker `i % W`, then the audio up to the end of that frame.
+/// The writer: video frame `i` from the worker the compose thread named for it (in frame order), then
+/// the audio up to the end of that frame.
 /// Returns how many layers frames were composed without.
 #[allow(clippy::too_many_arguments)]
 fn write_all<S: ExportSink>(
@@ -774,6 +970,7 @@ fn write_all<S: ExportSink>(
     total: u64,
     done_rxs: Vec<Receiver<Done<S::Frame>>>,
     back_txs: Vec<Sender<S::Frame>>,
+    order_rx: Receiver<usize>,
     audio_rx: Receiver<Vec<f32>>,
     audio_until: impl Fn(u64) -> u64,
     gate: &Gate,
@@ -781,7 +978,6 @@ fn write_all<S: ExportSink>(
     hooks: &Hooks<'_>,
 ) -> std::io::Result<u64> {
     let prof = hooks.profile;
-    let workers = done_rxs.len() as u64;
     let mut incomplete = 0u64;
     let mut audio_written = 0u64;
     let mut audio_open = true;
@@ -795,9 +991,8 @@ fn write_all<S: ExportSink>(
         if halted() {
             return Err(cancelled());
         }
-        let w = (i % workers) as usize;
         let waited = Instant::now();
-        let Ok(done) = done_rxs[w].recv() else {
+        let Some((w, Ok(done))) = order_rx.recv().ok().map(|w| (w, done_rxs[w].recv())) else {
             return Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "a frame worker stopped"));
         };
         ExportProfile::add(prof.map(|p| &p.wait_frame_ns), waited);
@@ -891,6 +1086,50 @@ fn decode_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Feeds `windows` windows to the rule, each at the rate `rate(count)`; returns the counts asked.
+    fn drive(rule: &mut DeviceRule, windows: usize, rate: impl Fn(usize) -> f64) -> Vec<usize> {
+        (0..windows)
+            .map(|_| {
+                let k = rule.count();
+                assert!((1..=4).contains(&k), "a count outside 1..=4: {k}");
+                rule.measured(rate(k))
+            })
+            .collect()
+    }
+
+    /// t2900 (render-honest D1, found-defects 710): the device count follows the measured time — it
+    /// climbs while one more device wins by more than a tenth, keeps the fewer on a tie, comes down
+    /// when a stretch turns even and goes back up when more devices win again; never none, never
+    /// more than it has.
+    #[test]
+    fn t2900_the_count_follows_the_measured_time() {
+        let mut r = DeviceRule::new(4, None);
+        assert_eq!(r.count(), 1, "the first window runs on one device");
+        // a heavy stretch: three devices win, the fourth adds little
+        let heavy = |k: usize| [10.0, 15.0, 20.0, 21.0][k - 1];
+        let seen = drive(&mut r, 30, heavy);
+        assert_eq!(&seen[..3], &[2, 3, 4], "it climbs while a step wins: {seen:?}");
+        assert_eq!(r.count(), 3, "and stays at three: {seen:?}");
+        assert!(seen[4..].iter().filter(|&&k| k == 3).count() >= 18, "the probes are short: {seen:?}");
+        // an even stretch: every count runs at the same rate — it comes down to one
+        let seen = drive(&mut r, 30, |_| 10.0);
+        assert_eq!(r.count(), 1, "an even stretch keeps the fewest: {seen:?}");
+        // two win again
+        let seen = drive(&mut r, 30, |k| [10.0, 15.0, 15.0, 15.0][k - 1]);
+        assert_eq!(r.count(), 2, "more devices come back when they win: {seen:?}");
+        // a rise under a tenth adds no device
+        let mut r = DeviceRule::new(4, None);
+        let seen = drive(&mut r, 20, |k| 10.0 + 0.5 * (k - 1) as f64);
+        assert_eq!(r.count(), 1, "a gain under a tenth is a tie: {seen:?}");
+        // one device has nothing to choose
+        let mut r = DeviceRule::new(1, None);
+        assert!(drive(&mut r, 10, |_| 10.0).iter().all(|&k| k == 1));
+        // a script ignores the rate and stays within what there is
+        let mut r = DeviceRule::new(3, Some(vec![1, 5, 2]));
+        assert_eq!((r.count(), r.window()), (1, (0, 4)));
+        assert_eq!(drive(&mut r, 4, |_| 1.0), vec![3, 2, 1, 3]);
+    }
 
     /// t1767 (render-speed-no-card D5): a chunk is counted by what its frames ask. The demo has a
     /// stretch of many layers and stretches of few, so the measure of the worst moment gives a

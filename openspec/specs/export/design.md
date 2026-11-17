@@ -410,3 +410,23 @@ option; the reasons kept here:
   Container rows and title were literals, the File menu said "Render to MP4", the extension and the
   save filter followed nothing, the hardware trial opened names inside the H.264 cascade only — all
   now follow the format; `kt-cli ffmpeg --probe-encoders` stays H.264 (a driver report).
+
+## render-honest (2026-11-17, found-defects 710, 711; review R8)
+
+- **The device count is opened by memory and used by time** (D1). `export_engines` still opens the
+  memory/core ceiling; `export_pipeline::DeviceRule` decides how many are given frames from the frames
+  dispatched per second of wall: one first, one more while it wins by more than 10 %, back on a loss,
+  the fewer on a tie, and every four windows one more then one fewer again. A window is `max(8, 4k)`
+  frames after `2k` of settling (a fresh worker's job and done slots). Rejected: a fixed rule by size or
+  stage shares (render-speed D1 found none right both ways), per-device frame times (on llvmpipe a
+  device's time grows with the others' load). The writer learns each frame's worker on an order
+  channel, so the count may change at any frame (t2901). Invariant 11: the clock chooses only WHICH
+  device composes.
+- **The render window states the cost against the preview** (D2–D4). The player keeps each complete,
+  non-replayed preview composite's device time (`VideoGpuExec::last_device_ns`, the pass timer's latest
+  frame — the same or a neighbour) per aligned moment with its size (`preview_cost.rs`). The window
+  shows the pixel ratio and `frames × ns/px × render pixels`, with how many frames were measured; a
+  render journals predicted against actual, since the prediction leaves out decode and encode.
+- **Class walk:** the reel strip, posters and loop fill compose at their own sizes and are compared with
+  nothing; `kt-cli export` prints its own factor. Fixed counts elsewhere: one-device convert workers,
+  the loop fill's width (already narrowed by what composes), decode threads (bounded by memory) — left.

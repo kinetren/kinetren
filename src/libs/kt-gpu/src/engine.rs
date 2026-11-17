@@ -1766,6 +1766,11 @@ impl VideoGpuExec for GpuFxEngine {
         self.inner.lock().unwrap().last_stages
     }
 
+    fn last_device_ns(&self) -> u64 {
+        let g = self.inner.lock().unwrap();
+        g.timer.last_frame(g.readback_role())
+    }
+
     fn can_present(&self) -> bool {
         true
     }

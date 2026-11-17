@@ -2012,7 +2012,7 @@ fn run(args: &[String]) -> i32 {
                 output,
                 range,
                 &opts,
-                &kt_engine::ExportBackends { video_gpu, video_gpu_more: engines },
+                &kt_engine::ExportBackends { video_gpu, video_gpu_more: engines, ..Default::default() },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 // the log facts, in English, on stderr (render-window-v1-parity, D1)
