@@ -10,5 +10,5 @@ Columns and states — as in [`v26.10-index.md`](v26.10-index.md).
 |---|---|---|---|---|---|
 | T1 | 1 | closing the program while a loop is catching up does not work; he has to kill the process | no → `close-while-busy` | `durability`, `transport` | 20 |
 | T2 | 2 | problem_region: the processor and the card barely work, the loop is complete only from about lap 15 | no → `ahead-kept` (his trace `new`: device 32–46 %, up to 2–3 moments in flight, most moments composed ahead are never kept) | `video-plan`, `telemetry` | 20 |
-| T3 | 3 | even the simplest region renders at about 1× real time | no → `export-readback` (his trace: 0.94×, readback 94.5 % of the wall, encode 3.7 %) | `export` | 20 |
-| T4 | 4 | the render log goes into the telemetry, not a separate file | no → `export-readback` (render.log into the structured trace) | `export`, `telemetry` | 20 |
+| T3 | 3 | even the simplest region renders at about 1× real time | done export-readback, t2960, t2961, t2962: his trace's mechanism — 1.06 ms of device work a frame, 52.7 ms until it came back, a ring of three frames → 57 frames/s; the ring now keeps the latency in flight; on his card unmeasured until his next trace (found-defects 740, 741) | `export`, `telemetry` | 20 |
+| T4 | 4 | the render log goes into the telemetry, not a separate file | done export-readback, t959, t2962, live `render`: no `render.log`; the lines are the telemetry journal's and the trace's, `trace … export` lists them | `export`, `telemetry` | 20 |

@@ -8,5 +8,5 @@
       `EXPORT` lines (D2, t2962)
 - [x] 4 No `render.log`: `LogFile`, `log_dir`, the path line and its keys go, Open log opens the telemetry
       journal; t959 rewritten; live `render` (D3)
-- [ ] 5 found-defects rows 740–741, registry T3/T4, What's new, crate CLAUDE.md; tests, clippy, live,
+- [x] 5 found-defects rows 740–741, registry T3/T4, What's new, crate CLAUDE.md; tests, clippy, live,
       target-prune, commit; archive
