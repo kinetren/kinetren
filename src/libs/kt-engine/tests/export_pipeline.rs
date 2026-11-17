@@ -4,6 +4,8 @@
 //!   the chunks are a few frames — the pipelined stream equals the serial passes frame for frame
 //!   and sample for sample, and the call order into the sink is the same on every run;
 //! - t1452: a cancel in the middle and a sink error in the middle stop every stage promptly.
+//! - t2961 (export-readback): the compose thread keeps the device's latency in flight and hands on
+//!   a finished frame at once.
 
 use kt_engine::export::{
     ExportConverter, ExportSink, render_pipelined, render_pipelined_budget, render_raw_audio_range,
@@ -210,4 +212,85 @@ fn t1452_a_cancel_or_an_error_mid_pipeline_stops_every_stage() {
     let err = pipelined(&p, &mut rec, &never).expect_err("the sink's error ends the export");
     assert_eq!(err.to_string(), "the disk is full", "the cause, not a stage's \"the writer stopped\"");
     assert_eq!(rec.frames.len(), 5);
+}
+
+/// A device whose frame is done `lag` submissions after its own (export-readback, t2961): the
+/// owner's card handed a 1 ms frame back 52 ms after its submission. The latency is counted in
+/// submissions, not time, so the frames in flight it asks for do not depend on the machine's load.
+struct Latent {
+    inner: Arc<dyn kt_engine::VideoGpuExec>,
+    lag: u64,
+    depth: usize,
+    next: std::sync::atomic::AtomicU64,
+    held: std::sync::Mutex<std::collections::HashMap<u64, (Vec<u8>, bool)>>,
+}
+
+impl kt_engine::VideoGpuExec for Latent {
+    fn execute_into(&self, p: &kt_engine::FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        self.inner.execute_into(p, out)
+    }
+    fn execute_once(&self, p: &kt_engine::FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        self.inner.execute_once(p, out)
+    }
+    fn info(&self) -> &kt_engine::GpuBackendInfo {
+        self.inner.info()
+    }
+    fn readback_depth(&self, _w: u32, _h: u32) -> usize {
+        self.depth
+    }
+    fn submit(&self, p: &kt_engine::FramePlan<'_>) -> Result<u64, kt_engine::GpuExecError> {
+        let mut out = Vec::new();
+        let complete = self.inner.execute_once(p, &mut out)?;
+        let t = self.next.fetch_add(1, Ordering::AcqRel);
+        self.held.lock().unwrap().insert(t, (out, complete));
+        Ok(t)
+    }
+    fn done(&self, ticket: u64) -> bool {
+        self.next.load(Ordering::Acquire) > ticket + self.lag
+    }
+    fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        let (bytes, complete) = self.held.lock().unwrap().remove(&ticket).expect("collected once, in order");
+        *out = bytes;
+        Ok(complete)
+    }
+}
+
+/// t2961 (export-readback D1): with a device that hands a frame back eight submissions later and a
+/// ring of twelve, the compose thread keeps nine in flight — the latency, not the ring — and writes
+/// the serial frames; with a device that is done at once it never holds more than one. The old loop
+/// collected only when three (then the ring's depth) were in flight, whatever the device said.
+#[test]
+fn t2961_the_ring_keeps_the_latency_in_flight_and_hands_on_finished_frames() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let p = project();
+    let q = Quality { width: 320, height: 180 };
+    let never = Arc::new(AtomicBool::new(false));
+    let mut serial = Vec::new();
+    kt_gpu::testkit::render_range(&p, sources(&p), q, Some(range()), &never, |_| {}, |f| {
+        serial.push(fnv(f));
+        Ok(())
+    })
+    .unwrap();
+    let inner = kt_gpu::testkit::backends().video_gpu.unwrap();
+    for (lag, most) in [(8u64, 9u64), (0, 1)] {
+        let dev = Arc::new(Latent { inner: inner.clone(), lag, depth: 12, next: Default::default(), held: Default::default() });
+        let backends = kt_engine::ExportBackends { video_gpu: Some(dev as Arc<dyn kt_engine::VideoGpuExec>), ..Default::default() };
+        let prof = kt_engine::export::ExportProfile::default();
+        let mut rec = Recorder::default();
+        // one chunk for the whole range: a chunk boundary with the next not decoded yet drains the ring
+        render_pipelined_budget(&p, sources(&p), sources(&p), q, Some(range()), &backends, &never, Some(&prof), 1 << 30, &mut rec)
+            .unwrap();
+        assert_eq!(rec.frames, serial, "lag {lag}: the frames written are the serial export's");
+        let n = serial.len() as u64;
+        assert_eq!(prof.submissions.load(Ordering::Relaxed), n, "lag {lag}: every frame went through the ring");
+        assert_eq!(prof.latency_frames.load(Ordering::Relaxed), n, "lag {lag}: every frame's time back is recorded");
+        assert_eq!(prof.ring_depth.load(Ordering::Relaxed), 12, "lag {lag}: the ring's bound");
+        assert_eq!(
+            prof.in_flight_max.load(Ordering::Relaxed),
+            most,
+            "lag {lag}: the frames in flight follow the device's latency, not the ring's bound"
+        );
+    }
 }

@@ -33,9 +33,23 @@ const READBACK_BUDGET: u64 = 64 * 1024 * 1024;
 /// The presented composites the preview keeps (cached-range-plays): 512 MB is 560 frames at
 /// 640×360 and 60 at 1920×1080. What it holds the bars show as playing without work.
 const PRESENT_MEMO_BUDGET: u64 = 512 * 1024 * 1024;
-/// Frames in flight between `submit` and `collect` (export-throughput D5): one being read back,
-/// one being rendered, one being built — more only adds staging memory.
-const RING: usize = 3;
+/// The readback ring's bound (export-readback D1): as many frames of a size as `RING_BYTES` of
+/// staging holds, at least `RING_MIN` (export-throughput D5's three: one read back, one rendered, one
+/// built), at most `RING_MAX`. The depth USED follows the device: the export hands on every frame
+/// the device finished and waits only on a full ring. A card that handed a 1 ms frame back 52 ms
+/// after its submission made a ring of three a 57-frames-a-second export (kkt-26.11.18 T3).
+const RING_MIN: usize = 3;
+pub(crate) const RING_MAX: usize = 16;
+const RING_BYTES: u64 = 256 * 1024 * 1024;
+/// The frames whose uploads an export's device keeps (memory-ledger D7): a frame deeper in the ring
+/// holds its textures by reference, and no later frame reads them again.
+const KEEP_UPLOAD_FRAMES: u64 = 3;
+
+/// The ring's bound for frames of `w`×`h` (export-readback D1).
+pub(crate) fn ring_depth(w: u32, h: u32) -> usize {
+    let bytes = ((w * 4).next_multiple_of(256) as u64 * h as u64).max(1);
+    ((RING_BYTES / bytes) as usize).clamp(RING_MIN, RING_MAX)
+}
 
 /// A staging buffer of the readback ring and the map callback's verdict.
 struct RingSlot {
@@ -49,6 +63,8 @@ struct RingSlot {
 /// A submitted frame: on the device (with its submission) or ready without one (an empty plan).
 struct InFlight {
     ticket: u64,
+    /// Its staging slot in the ring (none for an empty plan).
+    slot: usize,
     complete: bool,
     gpu: Option<wgpu::SubmissionIndex>,
     out_w: u32,
@@ -863,8 +879,11 @@ struct Inner {
     glow: Option<Tex>,
     staging: Option<(wgpu::Buffer, u32, u32, u32)>, // (buf, padded_bpr, w, h)
     /// The export's readback ring (export-throughput D5): a frame submitted, its copy in flight,
-    /// while the caller builds and submits the next; slot = ticket % `RING`.
+    /// while the caller builds and submits the next; `RING_MAX` places, made as first used, a frame
+    /// takes the first free one below `ring_depth` of its size (export-readback D1).
     ring: Vec<Option<RingSlot>>,
+    /// The ring's staging bytes, to the memory ledger as readback memory (made at the first slot).
+    ring_account: Option<kt_time::mem::Account>,
     /// Submitted, not yet collected, in submission order.
     in_flight: std::collections::VecDeque<InFlight>,
     next_ticket: u64,
@@ -1487,7 +1506,7 @@ impl GpuFxEngine {
                 per_pass: false,
                 pool: TexturePool::new(TRANSIENT_BUDGET),
                 // an export's device keeps what its frames in flight read (memory-ledger D7)
-                upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(RING as u64)),
+                upload: UploadCache::new(UPLOAD_BUDGET, export.then_some(KEEP_UPLOAD_FRAMES)),
                 readback: ReadbackCache::new(READBACK_BUDGET),
                 present_memo: PresentMemo::new(PRESENT_MEMO_BUDGET),
                 keeps_bytes: false,
@@ -1500,7 +1519,8 @@ impl GpuFxEngine {
                 display_generation: 0,
                 glow: None,
                 staging: None,
-                ring: (0..RING).map(|_| None).collect(),
+                ring: (0..RING_MAX).map(|_| None).collect(),
+                ring_account: None,
                 in_flight: Default::default(),
                 next_ticket: 0,
                 dummy,
@@ -1957,8 +1977,14 @@ impl VideoGpuExec for GpuFxEngine {
         present_memo.evict_to_cap(pool);
     }
 
-    fn readback_depth(&self) -> usize {
-        RING
+    fn readback_depth(&self, w: u32, h: u32) -> usize {
+        ring_depth(w, h)
+    }
+
+    fn done(&self, ticket: u64) -> bool {
+        let _hold = crate::holds::within(self.role(), "done");
+        let _gate = self.compiled.gl_gate();
+        self.inner.lock().unwrap().done(ticket)
     }
 
     fn submit(&self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
@@ -2024,7 +2050,8 @@ impl Inner {
         if ow > self.max_dim || oh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: ow, h: oh });
         }
-        if self.in_flight.len() >= RING {
+        let depth = ring_depth(ow, oh);
+        if self.in_flight.len() >= depth {
             return Err(GpuExecError::Validation("readback ring full: collect before submitting".into()));
         }
         let ticket = self.next_ticket;
@@ -2047,7 +2074,7 @@ impl Inner {
             self.last_cost.add(j.cost());
         }
         if jobs.is_empty() {
-            self.in_flight.push_back(InFlight { ticket, complete, gpu: None, out_w: ow, out_h: oh });
+            self.in_flight.push_back(InFlight { ticket, slot: usize::MAX, complete, gpu: None, out_w: ow, out_h: oh });
             return Ok(ticket);
         }
         let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
@@ -2072,7 +2099,9 @@ impl Inner {
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
         self.timer.end(&mut enc, Role::Export, meta);
         let padded_bpr = (ow * 4).next_multiple_of(256);
-        let i = (ticket % RING as u64) as usize;
+        let i = (0..depth)
+            .find(|i| !self.in_flight.iter().any(|f| f.slot == *i))
+            .expect("fewer frames in flight than the depth leave a slot free");
         let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == ow && r.h == oh);
         if !fits {
             crate::created();
@@ -2088,6 +2117,10 @@ impl Inner {
                 h: oh,
                 mapped: Default::default(),
             });
+            let bytes: u64 = self.ring.iter().flatten().map(|r| r.buf.size()).sum();
+            self.ring_account
+                .get_or_insert_with(|| kt_time::mem::open(kt_time::mem::Tenant::Readback, 0))
+                .set(bytes);
         }
         let slot = self.ring[i].as_ref().unwrap();
         enc.copy_texture_to_buffer(
@@ -2127,8 +2160,24 @@ impl Inner {
         // the accumulator goes back to the pool: a later frame writing it is ordered after this
         // copy on the one queue
         self.pool.release(result);
-        self.in_flight.push_back(InFlight { ticket, complete, gpu: Some(sub), out_w: ow, out_h: oh });
+        self.in_flight.push_back(InFlight { ticket, slot: i, complete, gpu: Some(sub), out_w: ow, out_h: oh });
         Ok(ticket)
+    }
+
+    /// Has the device finished `ticket` (export-readback D1)? A non-blocking poll, then its map's
+    /// verdict; a frame not in flight (or an empty plan) is done.
+    fn done(&mut self, ticket: u64) -> bool {
+        let Some(f) = self.in_flight.iter().find(|f| f.ticket == ticket) else { return true };
+        if f.gpu.is_none() {
+            return true;
+        }
+        let slot = f.slot;
+        let Some(r) = self.ring[slot].as_ref() else { return true };
+        if r.mapped.lock().unwrap().is_some() {
+            return true;
+        }
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        self.ring[slot].as_ref().is_none_or(|r| r.mapped.lock().unwrap().is_some())
     }
 
     /// Wait for the OLDEST submitted frame and copy it out — the bytes `execute` returns.
@@ -2154,7 +2203,7 @@ impl Inner {
         waited.map_err(|_| GpuExecError::DeviceLost)?;
         self.last_stages.wait_ns = mark.elapsed().as_nanos() as u64;
         let mark = Instant::now();
-        let slot = self.ring[(ticket % RING as u64) as usize].as_ref().ok_or(GpuExecError::DeviceLost)?;
+        let slot = self.ring[f.slot].as_ref().ok_or(GpuExecError::DeviceLost)?;
         if *slot.mapped.lock().unwrap() != Some(true) {
             return Err(GpuExecError::DeviceLost);
         }

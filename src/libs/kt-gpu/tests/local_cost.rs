@@ -87,7 +87,7 @@ fn t2313_batched_uniforms_and_kept_bind_groups_keep_the_bytes() {
         let mut tickets = std::collections::VecDeque::new();
         for (i, (top, bottom)) in all.iter().enumerate() {
             tickets.push_back(engine.submit(&plan(i as u64, top, bottom, &a, &b)).expect("submit"));
-            if tickets.len() == engine.readback_depth() {
+            if tickets.len() == 3 {
                 let mut out = Vec::new();
                 engine.collect(tickets.pop_front().unwrap(), &mut out).expect("collect");
                 frames.push(out);
