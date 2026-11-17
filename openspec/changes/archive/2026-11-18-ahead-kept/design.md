@@ -99,11 +99,18 @@ Release, llvmpipe (no card in this machine: a VM), the machine shared with other
 --heavy --mosh-behind` in `/dev/shm`, the 8 s Datamosh event at 62.4 s, `preview mosh.kt 63 67 --size
 640x360 --loop 40`, then `trace … loop`. Base = orch `2d1cc934`.
 
-| | base | new |
-|---|---|---|
-| first lap with every frame kept | 8 | 7 |
-| device busy while frames were missing | 67 % | 88 % |
-| ring waits, laps 2–6 | 0.3–0.5 s a lap | 0.0 s a lap |
+Two sequential pairs (each run alone, other sessions' load beside it):
+
+| | base 1 | new 1 | base 2 | new 2 |
+|---|---|---|---|---|
+| load average during the run | 8–12 | 8–12 | 15–25 | 8–15 |
+| first lap with every frame kept | 8 | 7 | 8 | 8 |
+| device busy while frames were missing | 67 % | 88 % | 85 % | 88 % |
+| ring waits a lap, laps 2–6 | 0.3–0.5 s | 0.0 s | 0.3–0.4 s | 0.0–0.1 s |
+| V-fps over 40 s | — | — | 13.5 | 17.2 |
+
+A pair started together at load 27–40 starved both processes (audio underruns of 44 000 and 234 000
+frames, V-fps 0.9 and 0.1) and is discarded.
 
 On llvmpipe the device IS the processor (15.9 cores busy in both runs): the share cannot show the card's
 idle gaps, and lap counts move by one. The card's mechanism is held by t2930 (a whole piece is queued behind
