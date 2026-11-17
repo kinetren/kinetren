@@ -120,6 +120,9 @@ pub fn run(args: &[String]) -> i32 {
     0
 }
 
+/// How long after an export's last record its render log lines may land (the result reaches the window).
+const LOG_GRACE_NS: u64 = 2_000_000_000;
+
 /// Where each export of the run spent its time (render-speed D2): its stage records, the share of the
 /// wall each stage was busy (summed over its threads), how it compares with real time, and what the
 /// device rings made it wait — an export's frames are admitted last behind the display and the preview.
@@ -128,6 +131,7 @@ pub fn export(run: &Run) -> String {
     let mut o = String::new();
     let mut stages: Vec<&Rec> = Vec::new();
     let mut n = 0;
+    let mut last_end = 0;
     for r in run.recs.iter().filter(|r| is(r, Ev::ExportStage)) {
         if r.aux != st::WALL {
             stages.push(r);
@@ -135,6 +139,10 @@ pub fn export(run: &Run) -> String {
         }
         let (wall, timeline, frames, workers) = (r.a.max(1), r.b, r.c, r.id);
         let (from, to) = (r.t.saturating_sub(wall), r.t);
+        // the ring and a frame's time back are not stages (export-readback D2)
+        let ring = stages.iter().find(|s| s.aux == st::RING).copied();
+        let back = stages.iter().find(|s| s.aux == st::LATENCY).copied();
+        stages.retain(|s| s.aux != st::RING && s.aux != st::LATENCY);
         let _ = writeln!(
             o,
             "export {n}: {frames} frames, {:.2} s of the timeline in {:.2} s — {:.2}× real time ({})",
@@ -161,6 +169,57 @@ pub fn export(run: &Run) -> String {
             if admits > 0 { format!(" ({:.1} % of wall)", waited as f64 * 100.0 / wall as f64) } else { String::new() },
             if shown > 0 { " — a display shares the device" } else { "" }
         );
+        let p50 = |mut v: Vec<u64>| {
+            v.sort_unstable();
+            (v[v.len() / 2], v.len())
+        };
+        // the device's own time a frame beside the time a frame took to come back (export-readback D2)
+        let device: Vec<u64> = run
+            .recs
+            .iter()
+            .filter(|r| is(r, Ev::GpuFrame) && r.aux == 2 && r.t >= from && r.t <= to)
+            .map(|r| r.a)
+            .collect();
+        if !device.is_empty() {
+            let (ns, k) = p50(device);
+            let _ = writeln!(o, "  device: {:.2} ms a frame of work (p50 of {k} timed frames)", ns as f64 / 1e6);
+        }
+        match (ring, back) {
+            (Some(ring), Some(back)) if ring.c > 0 && back.c > 0 => {
+                let _ = writeln!(
+                    o,
+                    "  readback: up to {} in flight of {} (mean {:.1}), a frame back {:.1} ms after its submission (longest {:.1} ms)",
+                    ring.id,
+                    ring.a,
+                    ring.b as f64 / ring.c as f64,
+                    back.a as f64 / back.c as f64 / 1e6,
+                    back.b as f64 / 1e6
+                );
+            }
+            _ => {
+                // a run recorded before the ring's records: the collects' spans
+                let waits: Vec<u64> = run
+                    .recs
+                    .iter()
+                    .filter(|r| is(r, Ev::Job) && r.aux == kt_time::trace::job::EXPORT_FRAME && r.t >= from && r.t <= to)
+                    .map(|r| r.dur)
+                    .collect();
+                if !waits.is_empty() {
+                    let (ns, k) = p50(waits);
+                    let _ = writeln!(o, "  readback: a collect waited {:.1} ms (p50 of {k}); the ring's depth was not recorded", ns as f64 / 1e6);
+                }
+            }
+        }
+        // the render's own lines (export-readback D3): the journal's EXPORT records since the export
+        // before, up to a moment past this one's end (its last lines land as the result arrives)
+        let lines: Vec<_> = run.texts.iter().filter(|t| t.t > last_end && t.t <= to + LOG_GRACE_NS && t.s.starts_with("EXPORT ")).collect();
+        if !lines.is_empty() {
+            let _ = writeln!(o, "  render log:");
+            for t in lines {
+                let _ = writeln!(o, "    {} {}", s(t.t), t.s.trim_start_matches("EXPORT "));
+            }
+        }
+        last_end = to + LOG_GRACE_NS;
         n += 1;
     }
     if n == 0 {
