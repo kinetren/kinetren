@@ -841,6 +841,10 @@ mod tests {
     struct Guard {
         stop: Arc<AtomicBool>,
         paused: Arc<AtomicBool>,
+        /// Held by the callback thread across its "paused?" check, the fill and the append: a pause
+        /// returns only once no callback is in flight, as a backend's pause does. Without it a fill
+        /// begun before the pause landed in `heard` after the test cleared it (t2644 under load).
+        in_callback: Arc<Mutex<()>>,
         mode: u64,
         thread: Option<std::thread::JoinHandle<()>>,
     }
@@ -850,6 +854,7 @@ mod tests {
             match self.mode {
                 NO_PAUSE => Err("this device cannot pause (test)".into()),
                 PAUSES => {
+                    let _out = self.in_callback.lock().unwrap();
                     self.paused.store(true, Ordering::Release);
                     Ok(())
                 }
@@ -880,13 +885,17 @@ mod tests {
             }
             let stop = Arc::new(AtomicBool::new(false));
             let paused = Arc::new(AtomicBool::new(false));
+            let in_callback = Arc::new(Mutex::new(()));
             let (heard, allocs, halt, quiet) = (self.heard.clone(), self.allocs.clone(), stop.clone(), paused.clone());
+            let busy = in_callback.clone();
             let thread = std::thread::spawn(move || {
                 let mut sink = sink;
                 let mut edge = OutputEdge::new(AUDIO_SAMPLE_RATE, 2, MAX_CALLBACK_FRAMES).unwrap();
                 let mut buf = vec![0f32; 1024 * 2];
                 while !halt.load(Ordering::Acquire) {
+                    let held = busy.lock().unwrap();
                     if quiet.load(Ordering::Acquire) {
+                        drop(held);
                         std::thread::sleep(Duration::from_millis(5));
                         continue;
                     }
@@ -896,10 +905,11 @@ mod tests {
                     MEASURING.with(|m| m.set(false));
                     allocs.fetch_add(ALLOCS.load(Ordering::Relaxed) - before, Ordering::Relaxed);
                     heard.lock().unwrap().extend_from_slice(&buf);
+                    drop(held);
                     std::thread::sleep(Duration::from_millis(5));
                 }
             });
-            Ok(Box::new(Guard { stop, paused, mode: self.pause.load(Ordering::Acquire), thread: Some(thread) }))
+            Ok(Box::new(Guard { stop, paused, in_callback, mode: self.pause.load(Ordering::Acquire), thread: Some(thread) }))
         }
     }
 
