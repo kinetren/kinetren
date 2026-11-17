@@ -2934,3 +2934,14 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    - the processor as a second executor: "да и я не против второго вычеслителя и для превью" —
      export and preview, frames within tolerance instead of byte for byte (invariants 7, 11 amended);
    - the reference machine: a mini-PC with an AMD iGPU is bought ("Купить мини-ПК").
+
+## 2026-11-18 — after stage 19 (`kkt-26.11.18`)
+
+1. "закрытие программы при catching up не срабатывает приходится убивать процесс" — closing
+   while a loop catches up must close the program.
+2. "problem_region - мне кажется процессор/gpu вообще не напригался, отрисовалось оно раза с
+   15го" — the loop on his card fills only from about lap 15 while the device stands idle.
+3. "отрендерил даже самый простой регион - и скорость 1x cur" — a simple region renders at
+   about real time; he finds that unacceptable.
+4. "объедини лог рендера в телеметрию, нахуя ты его выделил отдельно то?!?" — no separate render
+   log file: the render's lines live in the telemetry like everything else.
