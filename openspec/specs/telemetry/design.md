@@ -164,3 +164,9 @@ untimed, never a creation), writes `gpu_start` per piece with that piece's submi
 `gpu_exec` (98) naming its executor. `trace gpu` reads a job's buffer wait from its last piece only, and
 reports the admission share and the device's idle gaps between pieces. The player's `set_project_at`
 carries the model's revision into `Edit.a`.
+
+**A job's pieces are one job by its span** (datamosh-history-wait D1, found-defects 693, t2863): every
+`gpu_start` is written with its own instant, so keyed by the instant no two pieces grouped, every piece
+read as its job's last, and the admission waits between a Datamosh job's 33 pieces read as "buffers after
+end p50 607 ms". The query takes the `compute_job` span holding the record on its thread; a record outside
+every span is its own job (traces before the span was written).
