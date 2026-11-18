@@ -95,6 +95,8 @@ rubato = "0.16"
 libm = "0.2.16"
 rusqlite = { version = "0.37", features = ["bundled"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# lossless deflate of the disk tier of preview composites (render-cache-disk D2); already in the lock
+miniz_oxide = "0.8"
 realfft = "3"
 
 [profile.release]

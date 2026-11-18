@@ -1541,6 +1541,7 @@ fn job_name(aux: u32) -> &'static str {
         j::EXPORT => "export",
         j::SHARED_BUILD => "shared_build",
         j::RENDER_AHEAD => "render_ahead",
+        j::PRERENDER => "prerender",
         _ => "?",
     }
 }

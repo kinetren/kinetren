@@ -118,6 +118,7 @@ impl Meters {
 /// Wake-up of background threads: in pause they park on a condvar instead of a
 /// busy loop (item 1: 500 wake-ups/s from audio-render + a clone of the Project every
 /// 100 ms of prefetch warmed the system even with an empty project).
+#[derive(Default)]
 pub struct Wake {
     /// How many notifies so far: a parked thread waits for it to move, so a notify that lands
     /// between its last look at the state and its wait is never lost.
@@ -241,6 +242,9 @@ pub struct Player {
     /// The render-ahead producer (render-ahead): playing, it composes the moments ahead of the frame on
     /// screen and the display presents what it kept.
     ahead: Arc<crate::render_ahead::RenderAhead>,
+    /// The disk tier of preview composites and its prerender at rest (render-cache-disk).
+    render_cache: Arc<crate::render_cache::RenderCache>,
+    render_cache_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 /// State of the preview GPU executor (R.29).
@@ -425,6 +429,7 @@ impl Player {
         let preview_costs = Arc::new(Mutex::new(crate::preview_cost::PreviewCosts::default()));
         let shown_gen = Arc::new(AtomicU64::new(0));
         let ahead = Arc::new(crate::render_ahead::RenderAhead::default());
+        let render_cache = Arc::new(crate::render_cache::RenderCache::default());
         let parts = PreviewParts {
             cache: cache.clone(),
             transport: transport.clone(),
@@ -439,9 +444,20 @@ impl Player {
             shown: shown.clone(),
             shown_gen: shown_gen.clone(),
             ahead: ahead.clone(),
+            rc: render_cache.clone(),
+            loop_region: loop_region.clone(),
         };
         // playing, the moments ahead of the frame on screen are composed and kept (render-ahead)
         ahead.start(parts.clone(), loop_region.clone());
+        // at rest, the moments measured slow are prerendered to disk (render-cache-disk D4)
+        let render_cache_thread = {
+            let parts = parts.clone();
+            let stop = stop.clone();
+            std::thread::Builder::new()
+                .name("render-cache".into())
+                .spawn(move || crate::render_cache::run_prerender(parts, stop))
+                .expect("spawn render-cache")
+        };
         let prefetch_thread = {
             let wake_p = wake.clone();
             let stats_p = loop_stats.clone();
@@ -525,6 +541,8 @@ impl Player {
             shown,
             shown_gen,
             ahead,
+            render_cache,
+            render_cache_thread: Some(render_cache_thread),
         };
         if deferred {
             player.set_project(project);
@@ -684,6 +702,37 @@ impl Player {
         self.wake.clone()
     }
 
+    /// The disk tier of preview composites (render-cache-disk): `Some` — its root, the build salt, the
+    /// project's folder and the cap; `None` — off (the default: tests, a CLI without the flag).
+    pub fn set_render_cache(&self, cfg: Option<crate::render_cache::Config>) {
+        self.render_cache.set_config(cfg);
+    }
+
+    /// The person acted (render-cache-disk D4): the prerender keeps its quiet from now. An atomic stamp,
+    /// no wake: a pointer move costs a store.
+    pub fn note_input(&self) {
+        self.render_cache.note_input();
+    }
+
+    /// The disk tier (its counts, tests, the bench).
+    pub fn render_cache(&self) -> Arc<crate::render_cache::RenderCache> {
+        self.render_cache.clone()
+    }
+
+    /// What the disk tier holds for the moment `t` of the current build at the preview's quality, on
+    /// the display's device (diagnostics, tests); `None` — nothing, or the tier is off.
+    pub fn disk_picture(&self, t: Tick) -> Option<crate::render_cache::Picture> {
+        let parts = self.preview_parts();
+        let display = parts.display_exec()?;
+        let store = self.render_cache.store(display.info())?;
+        let built = self.builds.latest();
+        let versions = parts.versions();
+        let files = self.render_cache.files(&built.project, (built.seq, versions.1), false);
+        let t = built.video.grid.align_floor(t);
+        let (plan, leaves) = built.video.probe_durable(&self.cache, t, parts.quality());
+        store.get(crate::render_cache::disk_key(&plan, &leaves, &files))
+    }
+
     pub fn play(&self) {
         self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
         self.shared.first_sound_us.store(0, Ordering::Release);
@@ -692,6 +741,7 @@ impl Player {
         self.transport.set_playing(true);
         self.bg_pause.set(true);
         self.wake.notify();
+        self.render_cache.wake.notify();
         // the frame on screen is the producer's first moment (render-ahead D2)
         self.ahead.kick();
     }
@@ -701,6 +751,7 @@ impl Player {
         self.transport.set_playing(false);
         self.bg_pause.set(false);
         self.wake.notify();
+        self.render_cache.wake.notify();
     }
 
     /// Preview master volume (linear; mute = 0).
@@ -1256,6 +1307,8 @@ impl Player {
             shown: self.shown.clone(),
             shown_gen: self.shown_gen.clone(),
             ahead: self.ahead.clone(),
+            rc: self.render_cache.clone(),
+            loop_region: self.loop_region.clone(),
         }
     }
 
@@ -1324,7 +1377,7 @@ pub(crate) struct PreviewParts {
     pub(crate) builds: Arc<crate::builds::Builds>,
     video_gpu: Arc<Mutex<VideoGpuState>>,
     video_cost: Arc<Mutex<VideoCost>>,
-    preview_costs: Arc<Mutex<crate::preview_cost::PreviewCosts>>,
+    pub(crate) preview_costs: Arc<Mutex<crate::preview_cost::PreviewCosts>>,
     preview_quality: Arc<Mutex<Quality>>,
     project_version: Arc<AtomicU64>,
     content_version: Arc<AtomicU64>,
@@ -1332,6 +1385,10 @@ pub(crate) struct PreviewParts {
     shown_gen: Arc<AtomicU64>,
     /// The render-ahead producer: while it runs, the display only presents while playing.
     pub(crate) ahead: Arc<crate::render_ahead::RenderAhead>,
+    /// The disk tier (render-cache-disk).
+    pub(crate) rc: Arc<crate::render_cache::RenderCache>,
+    /// The loop region in 48k frames (the prerender's order).
+    pub(crate) loop_region: Arc<Mutex<Option<(i64, i64)>>>,
 }
 
 impl PreviewParts {
@@ -1420,6 +1477,7 @@ impl PreviewParts {
             let ns = via.last_device_ns();
             if ns > 0 {
                 self.preview_costs.lock().unwrap().note(aligned, ns, (plan.out_w, plan.out_h));
+                self.cost_noted(video, ns);
             }
         }
         Some(out)
@@ -1636,6 +1694,7 @@ impl PreviewParts {
                 if complete && !stages.replayed && !stages.shown_kept {
                     let ns = exec.last_device_ns();
                     self.preview_costs.lock().unwrap().note(aligned, ns, (plan.out_w, plan.out_h));
+                    self.cost_noted(&video, ns);
                 }
                 Some((q, complete, true, exec.last_cost(), plan_ns, stages))
             }
@@ -1653,6 +1712,78 @@ impl PreviewParts {
     pub(crate) fn display_exec(&self) -> Option<Arc<dyn VideoGpuExec>> {
         let g = self.video_gpu.lock().unwrap();
         if g.poisoned.is_some() { None } else { g.exec.clone().filter(|e| e.can_present()) }
+    }
+
+    /// A composite of `video` cost `ns` of device: a heavy one wakes the prerender once (render-cache-disk
+    /// D4), which looks when the player rests.
+    pub(crate) fn cost_noted(&self, video: &VideoRenderer, ns: u64) {
+        if self.rc.is_on()
+            && ns >= self.rc.heavy(video.grid.frame_step())
+            && !self.rc.news.swap(true, Ordering::AcqRel)
+        {
+            self.rc.wake.notify();
+        }
+    }
+
+    /// The moment `t` from disk into the display's memo (render-cache-disk D3): `Some(key)` — the key the
+    /// display now holds it under (already held, or restored now); `None` — the tier is off, the
+    /// moment has no key or the store does not hold it. Asks no decode and runs no stage.
+    pub(crate) fn restore_from_disk(&self, display: &Arc<dyn VideoGpuExec>, video: &VideoRenderer, t: Tick, q: Quality) -> Option<u64> {
+        use kt_time::trace::{self, render_cache as k, Ev};
+        if !self.rc.is_on() {
+            return None;
+        }
+        let store = self.rc.store(display.info())?;
+        let built = self.builds.latest();
+        let versions = self.versions();
+        let files = self.rc.files(&built.project, (built.seq, versions.1), false);
+        let (plan, leaves) = video.probe_durable(&self.cache, t, q);
+        let present = display.present_key(&plan)?;
+        let dk = crate::render_cache::disk_key(&plan, &leaves, &files);
+        let key = crate::render_cache::restored_key(present, dk);
+        let (w, h) = (plan.out_w, plan.out_h);
+        drop(plan);
+        if display.holds(key) {
+            self.note_kept(t, key);
+            return Some(key);
+        }
+        if !store.contains(dk) {
+            return None;
+        }
+        let mut span = trace::span(Ev::RenderCache);
+        let pic = store.get(dk);
+        let Some(pic) = pic.filter(|p| (p.w, p.h) == (w, h)) else {
+            span.cancel();
+            return None;
+        };
+        display.keep(key, pic.w, pic.h, &pic.rgba);
+        if !display.holds(key) {
+            span.cancel();
+            return None;
+        }
+        span.aux(k::RESTORE).a(t.0 as u64).b(pic.rgba.len() as u64).c(dk);
+        drop(span);
+        self.rc.restores.fetch_add(1, Ordering::Relaxed);
+        self.rc.note_on_disk(t.0, dk, versions);
+        self.note_kept(t, key);
+        Some(key)
+    }
+
+    /// Ask the layers of the moment `t` the cache lacks of the player's workers at `prio`; how many.
+    pub(crate) fn request_layers(&self, video: &VideoRenderer, t: Tick, q: Quality, prio: Priority) -> usize {
+        let step = video.grid.frame_step();
+        let generation = self.transport.generation();
+        let mut missing = 0;
+        for (media, pts, dq) in video.layers_at(t, q) {
+            if self.cache.contains_video(source_id(media), Some(dq), video_cache_idx(pts)) {
+                continue;
+            }
+            missing += 1;
+            if let Some(w) = self.workers.read().unwrap().get(&media) {
+                w.submit(DecodeRequest { kind: RequestKind::video_on_grid(pts, Some(dq), step), prio, generation });
+            }
+        }
+        missing
     }
 
     /// The moment `t` is kept under `key` (cached-range-plays): the bars show it.
@@ -1687,9 +1818,8 @@ impl PreviewParts {
         let plan_ns = t0.elapsed().as_nanos() as u64;
         plan_span.id(frame).a(key).c(trace::route::DISPLAY);
         drop(plan_span);
-        if !exec.holds(key) {
-            return None;
-        }
+        // not held: the disk tier may have it (render-cache-disk D3)
+        let key = if exec.holds(key) { key } else { self.restore_from_disk(&exec, video, t, q)? };
         let mut exec_span = trace::span(Ev::FrameExec);
         if !exec.present_kept(key, o) {
             exec_span.cancel();
@@ -1783,19 +1913,25 @@ impl Player {
         let now = self.preview_parts().versions();
         let step = self.video_grid().frame_step();
         let shown = self.shown.lock().unwrap();
-        let mut runs: Vec<std::ops::Range<i64>> = Vec::new();
+        let mut moments: std::collections::BTreeSet<i64> = std::collections::BTreeSet::new();
         let mut pending = false;
         for (t, (_, p, c)) in shown.iter() {
             if (*p, *c) != now {
                 pending = true;
                 continue;
             }
-            match runs.last_mut() {
-                Some(r) if r.end >= *t => r.end = r.end.max(t + step),
-                _ => runs.push(*t..t + step),
-            }
+            moments.insert(*t);
         }
         drop(shown);
+        // and what the disk tier holds for this state (render-cache-disk D3): it plays without a composite
+        moments.extend(self.render_cache.disk_moments(now));
+        let mut runs: Vec<std::ops::Range<i64>> = Vec::new();
+        for t in moments {
+            match runs.last_mut() {
+                Some(r) if r.end >= t => r.end = r.end.max(t + step),
+                _ => runs.push(t..t + step),
+            }
+        }
         if pending {
             self.composer.nudge();
         }
@@ -1806,7 +1942,8 @@ impl Player {
     /// final mix): a part of the bars' stamp.
     pub fn final_stamp(&self) -> u64 {
         let mix = Arc::as_ptr(&self.mix_coverage.get()) as u64;
-        self.shown_gen.load(Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ mix
+        let disk = self.render_cache.disk_gen.load(Ordering::Relaxed).rotate_left(29);
+        self.shown_gen.load(Ordering::Relaxed).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ mix ^ disk
     }
 
     /// The timeline ticks whose final mix the audio render thread holds and would hand out now
@@ -1847,6 +1984,7 @@ impl Drop for Player {
         self.ahead.close();
         self.builds.shutdown();
         self.wake.notify();
+        self.render_cache.wake.notify();
         // Every join is BOUNDED (close-while-busy, kkt-26.11.18 T1): a prefetch pass walking a
         // Datamosh history ran 37 s on the owner's iGPU, and the close waited for it until he
         // killed the process. Each thread sees the stop at its next check (the history walk at its
@@ -1865,6 +2003,10 @@ impl Drop for Player {
         }
         if let Some(t) = self.prefetch_thread.take() {
             kt_time::shutdown::join("prefetch", t, until);
+        }
+        // a prerender moment stops at its next step (its stop check reads `stop`)
+        if let Some(t) = self.render_cache_thread.take() {
+            kt_time::shutdown::join("render-cache", t, until);
         }
         // The render/prefetch threads are finished (or left behind); the preview's thread may still
         // hold the map
