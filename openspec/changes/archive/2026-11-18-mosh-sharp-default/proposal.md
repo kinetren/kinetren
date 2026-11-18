@@ -9,7 +9,11 @@ red under a parallel run of the merged stage (a red under load is a cause, test-
 - `kt_plugin_api::Decl::fresh`: what a NEW instance takes over its passport's defaults; `PluginSlot::new`
   applies it, the file reader does not (a missing row reads the passport default). Datamosh and its sound
   half declare `sharp` = 1.
-- t2044: the cause of its red under load (design).
+- t2044's red under load: since mosh-sharp a soft Datamosh with `lines` above the layer read the layer's
+  size and resampled every position up to the codec's, a quarter more of a software device's walk with
+  nothing in front to save. The input is the layer's only when slots run in front (row 762).
+- A sharp carrier re-asked the previous source frame at every step: the walk keeps it (`mosh::src_key`),
+  and `needs` does not name it again (row 761).
 
 ## Capabilities
 

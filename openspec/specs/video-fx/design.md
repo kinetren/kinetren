@@ -545,3 +545,20 @@ vectors, dropped keyframes, which blocks it codes); the softness was only its pi
   sound break at the same positions (t2975).
 - Preview and export decide from inputs resampled from different sizes: the same grid and breakages,
   vectors that may differ where the motion is ambiguous.
+
+## Sharp for new instances; the input resized only for a front (mosh-sharp-default, 2026-11-18)
+
+- `Decl::fresh` (kt-plugin-api): values a NEW instance takes over its passport's defaults; `PluginSlot::new`
+  applies them, `from_value` does not, so a saved slot without the row reads the passport default and
+  writes back the same text (t2977). Datamosh and its sound half declare `sharp` = 1 (owner, kkt-26.11.18b
+  U7: "Вкл. для новых"). A plugin that wants another default for new instances uses `fresh`, never the
+  passport default, or every saved project changes its look.
+- The carrier reads the source at `p` and `p−1`; the walk keeps the last source planes under
+  `mosh::src_key` (live tier on the device, transient on the host) and `needs` names `p−1` only when the
+  memo lacks it — else the steady state ordered the previous frame again (found-defects 761, t1248,
+  t2259 red once `sharp` became the default).
+- `stream_quality` takes the layer's size for a soft stream only when slots run in front of the stage
+  (found-defects 762): measured on llvmpipe, a 112-position walk at 144 lines cost 0.68 s from 256×144 and
+  0.87 s from 160×90 resampled (the resample's own dispatch and the convert after it, not its arithmetic
+  — a loop-free shader changed nothing); t2044's short loop under a parallel run showed 57 frames
+  instead of ~200. A sharp walk costs ~0.96 s there (row 763): the owner's default carries that cost.

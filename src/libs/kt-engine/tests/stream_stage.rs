@@ -275,8 +275,8 @@ fn t1248_the_order_asks_what_the_stage_reads() {
     let t = Tick(36 * STEP);
     let order = vr.layers_at(t, Q);
     let cq = order.iter().find(|(m, ..)| *m == MediaId(2)).expect("the mosh orders its source").2;
-    // the input follows the layer (mosh-sharp D2): 144 lines in a 90-line layer are coded from the
-    // layer's own size, never decoded above it
+    // the input follows the layer (mosh-sharp D2): a new Datamosh is sharp (kkt-26.11.18b U7), its
+    // carrier runs at the layer's size, and the codec's 144 lines are resampled from it
     assert_eq!((cq.width, cq.height), (Q.width, Q.height), "the stream is ordered at its input size, the layer's here");
     assert!(order.iter().all(|(_, _, q)| *q == cq), "no frame at the layer's ordinary quality: {order:?}");
     assert!(order.iter().any(|(m, ..)| *m == MediaId(1)), "the history reaches into the event before");

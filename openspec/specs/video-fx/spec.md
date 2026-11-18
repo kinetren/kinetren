@@ -1225,7 +1225,9 @@ same-size bilinear.
 - **TEST** t2702 (`src/libs/kt-fx/tests/fx_thumb.rs`)
 
 ### Requirement: A sharp datamosh carries the codec's decisions at the layer's size
-The kind `datamosh` SHALL have a structural flag row `sharp`, off by default. With it on, the codec SHALL
+The kind `datamosh` SHALL have a structural flag row `sharp`: ON for a Datamosh added from now on
+(`Decl::fresh`, every way a new instance is made), OFF where a saved slot lacks the row — its passport
+default — so a project saved before keeps its look. With it on, the codec SHALL
 still encode at `lines` and decide there the stream's schedule and breakages, its block grid, its motion
 vectors and which blocks are coded; a carrier decoder SHALL execute the same dependency chain at the
 stream's input size instead of the broken decoder at `lines`: an intra or refresh node is the source frame;
@@ -1237,7 +1239,8 @@ on the device with the bytes of the per-position reference. The paired sound SHA
 
 Why: kkt-26.11.18b U1 — "на 144p получаются красивые изломы но они мыльные … не пиксилизацию включить а
 чтобы именно расчет был такой хитрый чтобы оно в разрешение проекта превращалось если я хочу". The look is
-the codec's decisions; the softness is only its picture's size (F-FX-015, design D1).
+the codec's decisions; the softness is only its picture's size (F-FX-015, design D1). On for new instances: kkt-26.11.18b U7
+("«Резко» по умолчанию для новых Datamosh? — Вкл. для новых").
 
 #### Scenario: An intact sharp stream is the source
 - **WHEN** a moving picture goes through the codec at 144 lines with `sharp` on and no breakage, the input at 4× the codec's size
@@ -1265,21 +1268,28 @@ the codec's decisions; the softness is only its picture's size (F-FX-015, design
 - **THEN** the sharp frame differs from the soft one and has more fine detail; the screenshots of each step are saved
 - **TEST** live `datamosh_sharp.py` (`src/scripts/live/datamosh_sharp.py`, via `src/scripts/live-check.sh`) — t2976
 
+#### Scenario: A new Datamosh is sharp, a saved one keeps its look
+- **WHEN** a slot `{"kind":"datamosh","lines":"144","before":12,"mosh":1.0}` saved before is read, and a new Datamosh (and its sound half) is made
+- **THEN** the saved slot reads `sharp` off and writes back the same text; the new one is sharp and its file names `"sharp":true`
+- **TEST** t2977 (`src/libs/kt-model/tests/plugin_format.rs`)
+
 ### Requirement: A stream's input follows the layer's size
 The host SHALL order a stream stage's frames, and run the slots in front of it, at the stream's INPUT size:
 the layer's base size when the kernel carries its picture (`StreamKernel::carried`); otherwise the codec's
 size (`lines` high, the layer's aspect, `stream::coded_size`), but the layer's base size when `lines` is
-above the layer's height. The kernel SHALL resample an input of another size to its codec's size, by the
+above the layer's height AND slots run in front of the stage (with nothing in front the decoder gives the
+codec's size and nothing is resampled). The kernel SHALL resample an input of another size to its codec's size, by the
 same integer rule on the device and on the processor, and with the input at the codec's size SHALL read it
 as before. In the preview the layer's size is the preview quality's, in an export the project's.
 
 Why: kkt-26.11.18b U2 — "тут бы конечно как-то учитывать настройки превью проекта чтобы поменьше работы
 было"; row 734: Camera ISP in front of a 720-line Datamosh cost 59 ms a history position on his iGPU
-against ~14 ms at the 360p preview (design D2).
+against ~14 ms at the 360p preview (design D2). Only a front gains: with nothing in front the resample
+cost a software device's walk a quarter more and t2044 missed its frames under load (found-defects 762).
 
 #### Scenario: The input size follows the layer
 - **WHEN** a Datamosh event's stream size is asked at a 640×360 preview and at 1920×1080 with `lines` 144, 720 and 1080, soft and sharp
-- **THEN** soft: 256×144 at both; 640×360 and 1280×720 for 720 lines; 640×360 and 1920×1080 for 1080 lines; sharp: 640×360 and 1920×1080 at every `lines`
+- **THEN** soft with slots in front: 256×144 at both; 640×360 and 1280×720 for 720 lines; 640×360 and 1920×1080 for 1080 lines; soft with nothing in front: the codec's size (1280×720 for 720 lines in the preview); sharp: 640×360 and 1920×1080 at every `lines`
 - **TEST** t2974 (`src/libs/kt-engine/src/video_stream.rs`)
 
 #### Scenario: The resample is an identity at the codec's size

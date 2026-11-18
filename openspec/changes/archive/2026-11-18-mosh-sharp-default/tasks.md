@@ -4,4 +4,4 @@
 
 ## 2. t2044 under load
 
-- [ ] 2.1 Find and fix the cause; found-defects row
+- [x] 2.1 Find and fix the cause; found-defects rows 761–763

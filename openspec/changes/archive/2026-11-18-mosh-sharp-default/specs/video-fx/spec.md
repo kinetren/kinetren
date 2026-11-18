@@ -48,3 +48,27 @@ the codec's decisions; the softness is only its picture's size (F-FX-015, design
 - **WHEN** a slot `{"kind":"datamosh","lines":"144","before":12,"mosh":1.0}` saved before is read, and a new Datamosh (and its sound half) is made
 - **THEN** the saved slot reads `sharp` off and writes back the same text; the new one is sharp and its file names `"sharp":true`
 - **TEST** t2977 (`src/libs/kt-model/tests/plugin_format.rs`)
+
+### Requirement: A stream's input follows the layer's size
+The host SHALL order a stream stage's frames, and run the slots in front of it, at the stream's INPUT size:
+the layer's base size when the kernel carries its picture (`StreamKernel::carried`); otherwise the codec's
+size (`lines` high, the layer's aspect, `stream::coded_size`), but the layer's base size when `lines` is
+above the layer's height AND slots run in front of the stage (with nothing in front the decoder gives the
+codec's size and nothing is resampled). The kernel SHALL resample an input of another size to its codec's size, by the
+same integer rule on the device and on the processor, and with the input at the codec's size SHALL read it
+as before. In the preview the layer's size is the preview quality's, in an export the project's.
+
+Why: kkt-26.11.18b U2 — "тут бы конечно как-то учитывать настройки превью проекта чтобы поменьше работы
+было"; row 734: Camera ISP in front of a 720-line Datamosh cost 59 ms a history position on his iGPU
+against ~14 ms at the 360p preview (design D2). Only a front gains: with nothing in front the resample
+cost a software device's walk a quarter more and t2044 missed its frames under load (found-defects 762).
+
+#### Scenario: The input size follows the layer
+- **WHEN** a Datamosh event's stream size is asked at a 640×360 preview and at 1920×1080 with `lines` 144, 720 and 1080, soft and sharp
+- **THEN** soft with slots in front: 256×144 at both; 640×360 and 1280×720 for 720 lines; 640×360 and 1920×1080 for 1080 lines; soft with nothing in front: the codec's size (1280×720 for 720 lines in the preview); sharp: 640×360 and 1920×1080 at every `lines`
+- **TEST** t2974 (`src/libs/kt-engine/src/video_stream.rs`)
+
+#### Scenario: The resample is an identity at the codec's size
+- **WHEN** a frame is resampled to its own size, shrunk 4× and grown 2×
+- **THEN** the identity returns the bytes, a flat colour stays the colour, and a shrink of a one-pixel checker gives its mean grey
+- **TEST** t2973 (`src/plugins/fx-video-codec/tests/sharp.rs`)

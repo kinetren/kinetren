@@ -520,6 +520,14 @@ pub(crate) fn pic_padded(r: &Rows, lay: &dyn StreamLayout) -> (usize, usize) {
     (codec::pad16(w.max(16)), codec::pad16(h.max(16)))
 }
 
+/// The key of the carrier's SOURCE planes at `p` (mosh-sharp-default, found-defects 761): the next
+/// position's carrier reads them as its previous frame, so a walk keeps the last one and `needs` does not
+/// ask that frame again. A function of the frame's address and the picture size.
+pub fn src_key(r: &Rows, lay: &dyn StreamLayout, p: i64) -> u64 {
+    let (w, h) = pic_padded(r, lay);
+    mix(mix(lay.ident(Side::Main, p), 0x5a5c_ca22), ((w as u64) << 32) | h as u64)
+}
+
 /// The visible size of the stream's pictures (what `render` hands out).
 pub fn out_size(r: &Rows, lay: &dyn StreamLayout) -> (u32, u32) {
     if r.sharp { lay.size() } else { lay.coded() }
@@ -571,7 +579,10 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
                 }
                 Node::Inter { p, .. } => {
                     out.insert((Side::Main, p));
-                    out.insert((Side::Main, p - 1));
+                    // the previous frame the walk before kept is not read again
+                    if !memo.holds(src_key(&r, lay, p - 1)) {
+                        out.insert((Side::Main, p - 1));
+                    }
                 }
                 _ => {}
             }
@@ -745,7 +756,8 @@ fn inter_packet<'a>(r: &Rows, k: i64, w: usize, own: &'a Clean, second: Option<&
 }
 
 /// One P-frame of the carrier (mosh-sharp D1): the decoder's packet executed at the picture size.
-fn carry_inter(s: &Plan, input: &dyn StreamInput, k: i64, p: i64, rf: &Planes, own: &Clean, second: Option<&Clean>) -> Option<Planes> {
+#[allow(clippy::too_many_arguments)]
+fn carry_inter(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, k: i64, p: i64, rf: &Planes, own: &Clean, second: Option<&Clean>) -> Option<Planes> {
     let lay: &dyn StreamLayout = input;
     let r = s.at(k);
     let (w, h) = padded(lay);
@@ -753,7 +765,13 @@ fn carry_inter(s: &Plan, input: &dyn StreamInput, k: i64, p: i64, rf: &Planes, o
     let flags = codec::coded_flags(&res, w, h, r.cfg.bs);
     let own_mv = if own.pkt.intra { vec![(0, 0); flags.len()] } else { own.pkt.mv.clone() };
     let cur = source_planes(&s.r, input, p)?;
-    let prev = source_planes(&s.r, input, p - 1)?;
+    let prev = match memo.get::<Planes>(src_key(&s.r, lay, p - 1)) {
+        Some(x) => (*x).clone(),
+        None => source_planes(&s.r, input, p - 1)?,
+    };
+    // the next position's previous frame (found-defects 761)
+    let bytes = cur.bytes();
+    memo.put_transient(src_key(&s.r, lay, p), Arc::new(cur.clone()), bytes);
     Some(codec::carry_planes(rf, &cur, &prev, &mv, &own_mv, &flags, &carry_cfg(&r, lay)))
 }
 
@@ -878,7 +896,7 @@ fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Optio
                 };
                 let rf = cur.clone().unwrap_or_else(|| Arc::new(Planes::grey(w, h)));
                 if r.sharp {
-                    Arc::new(carry_inter(s, input, k, p, &rf, &own, second.as_deref())?)
+                    Arc::new(carry_inter(s, input, memo, k, p, &rf, &own, second.as_deref())?)
                 } else {
                     Arc::new(decode_inter(&s.at(k), k, &rf, &own, second.as_deref())?)
                 }
