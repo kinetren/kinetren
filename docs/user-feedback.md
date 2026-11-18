@@ -2965,3 +2965,6 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 6. "блядь да сделай ты сжатие видео нормальное что ты мозг мне ебешь" — DECISION: the prerender is
    compressed with a normal video codec on the machine's hardware encoder/decoder; no more questions
    about it.
+7. Future ("это на будущее"): the cached final render (FastCachedRender, `v26.10` item X1) uses the same
+   cache logic as the prerender — the same keys, an index in or beside rendered files telling which
+   segments can be reused.
