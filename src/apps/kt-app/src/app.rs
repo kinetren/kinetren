@@ -5301,7 +5301,8 @@ impl KtApp {
         // WHAT COPY TAKES (selection-copy-target, ktprompts 26.10.18 item 4: "if I selected one
         // event, copy-paste must take it, not the region I selected"). Three rules, in order:
         // exactly ONE event selected (link partners count as one — a click on a video event
-        // selects an A/V pair) → that event whole, the region is left as it is; otherwise a region
+        // selects an A/V pair) → that event whole, or its part under a region that crops it (B10),
+        // the region is left as it is; otherwise a region
         // → the region block, as before; otherwise → the selected events. Several selected events
         // keep the region first: the range marker's double-click selects the events it crosses
         // AND sets the region, and its copy must stay cropped to the marker.
@@ -5320,7 +5321,18 @@ impl KtApp {
             units.dedup();
             units.len() == 1
         };
+        // kkt-26.11.01b B10 (the owner's rule as taken 2026-11-01): a region that CROPS the one
+        // selected event copies that event's part under the region and nothing of the other tracks;
+        // a region that does not touch it leaves the whole event.
+        let crops = |p: &kt_model::Project, r: Region| {
+            ids.iter().filter_map(|id| p.clips.iter().find(|c| c.id == *id)).any(|c| {
+                r.intersects_clip(c) && (r.start > c.start || r.end < c.start + c.duration)
+            })
+        };
         let (mut block, what) = match self.model.project().region {
+            Some(r) if one_event && crops(self.model.project(), r) => {
+                (kt_model::ops::copy_clips_in(self.model.project(), &ids, r), k::msg::COPIED_EVENT_PART)
+            }
             _ if one_event => (kt_model::ops::copy_clips(self.model.project(), &ids), k::msg::COPIED_EVENT),
             Some(r) => (kt_model::ops::copy_region_block(self.model.project(), r), k::msg::COPIED_REGION),
             // without a region — everything selected (each with its own link group)

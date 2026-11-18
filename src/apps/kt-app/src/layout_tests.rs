@@ -19141,7 +19141,7 @@ fn t925_several_or_none_selected_keep_the_region_first() {
 }
 
 /// Test 926: Copy after a double-click on a range marker — three crossing events copy the region
-/// (cropped, as before); one crossing event is the one selected event and is copied whole.
+/// (cropped, as before); one crossing event is the one selected event, cropped by the marker (B10).
 #[test]
 fn t926_copy_after_a_range_marker_double_click() {
     use kt_model::*;
@@ -19165,8 +19165,10 @@ fn t926_copy_after_a_range_marker_double_click() {
         let (clips, note) = copy(&mut h);
         assert_eq!(clips.len(), want_n, "marker over {len}: copied {} events", clips.len());
         if whole {
-            assert!(clips.iter().all(|c| c.duration == kt_time::Tick(50_000)), "one event: copied whole");
-            assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT, 2));
+            // kkt-26.11.01b B10 (change region-crops-copy, the owner's rule of 2026-11-01): the marker's
+            // range crops the one selected event, so its part under the marker is copied
+            assert!(clips.iter().all(|c| c.duration == kt_time::Tick(len)), "one event: its part under the marker");
+            assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT_PART, 2));
         } else {
             assert_eq!(note, crate::tf!(k::msg::COPIED_REGION, want_n));
         }
@@ -21312,4 +21314,42 @@ fn t2811_what_this_ffmpeg_cannot_do_is_shown_not_hidden() {
     let texts = shown_texts(&h);
     assert!(texts.iter().any(|t| *t == format!("Opus — {na}")), "Opus is not shown unavailable: {texts:?}");
     assert!(texts.iter().any(|t| *t == format!("FLAC — {mp4}")), "FLAC in MP4: {texts:?}");
+}
+
+/// t3105 (kkt-26.11.01b B10, change region-crops-copy): a region that CROPS the one selected event
+/// copies that event's part under the region (with its partner's) and nothing of the other event it
+/// crosses; a region away from the event leaves the whole event, as t924 holds for a covering one.
+#[test]
+fn t3105_a_region_cropping_the_selected_event_copies_its_part() {
+    use kt_model::*;
+    let (mut h, g) = copy_scene();
+    // event 2 (100 000–150 000, partner 4) is clicked; the region 40 000–130 000 also crosses event 1
+    clicks(&mut h, egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6)), 1);
+    set_region(&mut h, 40_000, 130_000);
+    let (clips, note) = copy(&mut h);
+    let mut ids: Vec<u64> = clips.iter().map(|c| c.id.0).collect();
+    ids.sort();
+    assert_eq!(ids, vec![2, 4], "the event and its partner only, not event 1 under the region");
+    assert!(
+        clips.iter().all(|c| c.duration == kt_time::Tick(30_000) && c.start == kt_time::Tick(0)),
+        "the part under the region, rebased: {:?}",
+        clips.iter().map(|c| (c.start, c.duration)).collect::<Vec<_>>()
+    );
+    assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT_PART, 2));
+    let n0 = h.state().model.project().clips.len();
+    h.state_mut().player.seek(kt_time::Tick(600_000));
+    h.event(egui::Event::Paste(String::new()));
+    h.step();
+    let p = h.state().model.project();
+    assert_eq!(p.clips.len(), n0 + 2, "the paste puts the two parts");
+    assert!(
+        p.clips.iter().filter(|c| c.start == kt_time::Tick(600_000)).all(|c| c.duration == kt_time::Tick(30_000)),
+        "the pasted parts are the region's length"
+    );
+    // a region away from the event: the whole event (the paste selected what it put: select 2 again)
+    h.state_mut().selected = [ClipId(2)].into_iter().collect();
+    set_region(&mut h, 0, 40_000);
+    let (clips, note) = copy(&mut h);
+    assert!(clips.iter().all(|c| c.duration == kt_time::Tick(50_000)), "a region away from it: the event whole");
+    assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT, 2));
 }

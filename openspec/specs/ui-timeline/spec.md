@@ -369,9 +369,15 @@ Ctrl+C copy every event of every track inside the loop.
 
 #### Scenario: Copy after a double-click on a range marker
 - **WHEN** a range marker crosses three events and is double-clicked; Ctrl+C; separately a range marker that crosses exactly one event is double-clicked; Ctrl+C
-- **THEN** with three events the region block is copied (cropped to the marker's range, the marker travels with it), as before the change; with one event that event is copied whole, because it is the one selected event, and the status line says "the selected event"
-- **PATH** double-click the ribbon of a range marker over three events → region over it, three events highlighted → Ctrl+C → "Copied the region: 3" → double-click a range marker over one event → one event highlighted → Ctrl+C → "Copied the selected event: 1"
+- **THEN** with three events the region block is copied (cropped to the marker's range, the marker travels with it), as before the change; with one event the marker's range crops that one selected event, so its part under the marker and its partner's are copied (kkt-26.11.01b B10, change region-crops-copy) and the status line says "the selected event's part under the region"
+- **PATH** double-click the ribbon of a range marker over three events → region over it, three events highlighted → Ctrl+C → "Copied the region: 3" → double-click a range marker inside one event → one event highlighted → Ctrl+C → "Copied the selected event's part under the region: 2"
 - **TEST** t926 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A region that crops the one selected event copies its part
+- **WHEN** one event with an audio partner is selected and a region covers its first part and part of another event on the same track; Ctrl+C; Ctrl+V at a free place; then a region that does not touch the selected event; Ctrl+C
+- **THEN** the first clipboard holds the selected event and its partner cropped to the region and nothing of the other event, the paste puts these two parts; with the region away from the event the whole event is copied as before
+- **PATH** click an event → drag a region over its first part that also crosses the event before it → Ctrl+C → the status line "Copied the selected event's part under the region: 2" → move the playhead to empty time → Ctrl+V → only that part of the event and of its audio appear
+- **TEST** t3105 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Triple click on an event sets the region over it
 - **WHEN** an event with an audio partner and no FX window open is triple-clicked on its body (harness step 0.02 s between clicks); separately with the FX window of another event already open

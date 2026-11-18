@@ -975,6 +975,7 @@ paste_lanes_clamped = "the paste was clamped to the top tracks: there is no room
 last_lane = "the last track cannot be deleted"
 nothing_to_copy = "nothing to copy (no region and no selection)"
 copied_event = "Copied the selected event: {0}"
+copied_event_part = "Copied the selected event's part under the region: {0}"
 copied_region = "Copied the region: {0}"
 copied_events = "Copied the selected events: {0}"
 clipboard_empty = "the clipboard is empty"
