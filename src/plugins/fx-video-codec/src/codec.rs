@@ -533,11 +533,11 @@ fn carry_scale(v: i32, num: u32, den: u32) -> i32 {
 /// One P-frame of the carrier (D1): the codec's applied vectors `mv` and own vectors `own` per block of
 /// its grid, its coded `flags`, executed on carrier planes — the reference `rf`, the source frame `cur` and
 /// the previous source frame `prev`, all of one padded size. The CPU reference of `wgsl/carry.wgsl`.
-pub fn carry_planes(rf: &Planes, cur: &Planes, prev: &Planes, mv: &[(i16, i16)], own: &[(i16, i16)], flags: &[u32], c: &Carry) -> Planes {
+pub fn carry_planes<'a>(rf: &'a Planes, cur: &'a Planes, prev: &'a Planes, mv: &[(i16, i16)], own: &[(i16, i16)], flags: &[u32], c: &Carry) -> Planes {
     let mut out = Planes::grey(rf.w, rf.h);
-    let planes: [(&[u8], &[u8], &[u8], &mut Vec<u8>); 3] =
-        [(&rf.y, &cur.y, &prev.y, &mut out.y), (&rf.cb, &cur.cb, &prev.cb, &mut out.cb), (&rf.cr, &cur.cr, &prev.cr, &mut out.cr)];
-    for (plane, (r, s, q, o)) in planes.into_iter().enumerate() {
+    for (plane, o) in [&mut out.y, &mut out.cb, &mut out.cr].into_iter().enumerate() {
+        let pick = |p: &'a Planes| -> &'a [u8] { [&p.y, &p.cb, &p.cr][plane] };
+        let (r, s, q) = (pick(rf), pick(cur), pick(prev));
         let shift = (plane > 0) as u32;
         let (w, h) = ((rf.w >> shift) as i32, (rf.h >> shift) as i32);
         let at = |p: &[u8], x: i32, y: i32| p[(y.clamp(0, h - 1) * w + x.clamp(0, w - 1)) as usize] as i32;

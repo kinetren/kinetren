@@ -506,7 +506,7 @@ pub(crate) fn clean_bytes(c: &Clean) -> usize {
 }
 
 /// The padded plane size of the codec (the host's `coded`, mosh-sharp D2).
-pub(crate) fn padded(_r: &Rows, lay: &dyn StreamLayout) -> (usize, usize) {
+pub(crate) fn padded(lay: &dyn StreamLayout) -> (usize, usize) {
     let (w, h) = lay.coded();
     (codec::pad16(w.max(16)), codec::pad16(h.max(16)))
 }
@@ -514,7 +514,7 @@ pub(crate) fn padded(_r: &Rows, lay: &dyn StreamLayout) -> (usize, usize) {
 /// The padded size of the stream's pictures: the carrier's (the input's) when sharp, else the codec's.
 pub(crate) fn pic_padded(r: &Rows, lay: &dyn StreamLayout) -> (usize, usize) {
     if !r.sharp {
-        return padded(r, lay);
+        return padded(lay);
     }
     let (w, h) = lay.size();
     (codec::pad16(w.max(16)), codec::pad16(h.max(16)))
@@ -527,7 +527,7 @@ pub fn out_size(r: &Rows, lay: &dyn StreamLayout) -> (u32, u32) {
 
 /// The carrier's geometry at a position's rows.
 pub(crate) fn carry_cfg(r: &Rows, lay: &dyn StreamLayout) -> codec::Carry {
-    let (w, h) = padded(r, lay);
+    let (w, h) = padded(lay);
     codec::Carry { codec: lay.coded(), vis: lay.size(), bs: r.cfg.bs, grid: (w / r.cfg.bs, h / r.cfg.bs), gain_q8: r.gain_q8 }
 }
 
@@ -623,8 +623,8 @@ pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Optio
 /// The clean encoder's output for the source frame at `k` against `prev` (`None` — intra): the job
 /// converts the frame's RGBA to the padded planes itself. `None` — the host does not have the frame,
 /// or the device failed.
-fn encode_at(r: &Rows, input: &dyn StreamInput, side: Side, k: i64, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
-    let (w, h) = padded(r, input);
+fn encode_at(input: &dyn StreamInput, side: Side, k: i64, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
+    let (w, h) = padded(input);
     let (cw, ch) = input.coded();
     let mut out = None;
     input.with_frame(side, k, &mut |f| {
@@ -684,7 +684,7 @@ fn clean_at(s: &Plan, input: &dyn StreamInput, memo: &StreamMemo, side: Side, p:
             return None;
         }
         let cfg = s.at(q).cfg;
-        let c = Arc::new(encode_at(&s.r, input, side, q, if q == gs { None } else { prev.as_ref() }, &cfg)?);
+        let c = Arc::new(encode_at(input, side, q, if q == gs { None } else { prev.as_ref() }, &cfg)?);
         let k = s.clean(lay, side, q)?;
         // the encoder's state is read by the next frame's encoder; the loop keeps the pictures
         memo.put_transient(k, c.clone(), clean_bytes(&c));
@@ -748,7 +748,7 @@ fn inter_packet<'a>(r: &Rows, k: i64, w: usize, own: &'a Clean, second: Option<&
 fn carry_inter(s: &Plan, input: &dyn StreamInput, k: i64, p: i64, rf: &Planes, own: &Clean, second: Option<&Clean>) -> Option<Planes> {
     let lay: &dyn StreamLayout = input;
     let r = s.at(k);
-    let (w, h) = padded(&r, lay);
+    let (w, h) = padded(lay);
     let (mv, res) = inter_packet(&r, k, w, own, second);
     let flags = codec::coded_flags(&res, w, h, r.cfg.bs);
     let own_mv = if own.pkt.intra { vec![(0, 0); flags.len()] } else { own.pkt.mv.clone() };
@@ -863,7 +863,7 @@ fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Optio
                 match memo.get::<Planes>(ik) {
                     Some(x) => x,
                     None => {
-                        let x = Arc::new(encode_at(&r, input, Side::Main, p, None, &s.at(p).cfg)?.recon);
+                        let x = Arc::new(encode_at(input, Side::Main, p, None, &s.at(p).cfg)?.recon);
                         memo.put(ik, x.clone(), x.bytes());
                         x
                     }

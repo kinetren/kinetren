@@ -14,6 +14,6 @@
 
 ## 4. Checks
 
-- [ ] 4.1 Tests t2970–t2976; codec/engine tests; clippy
-- [ ] 4.2 Live scenario (sharp against soft), load at rest with the effect window open
-- [ ] 4.3 found-defects 734 and rows 760+, registry U1/U2, What's new; target-prune
+- [x] 4.1 Tests t2970–t2976; codec/engine tests; clippy
+- [x] 4.2 Live scenario (sharp against soft), load at rest with the effect window open
+- [x] 4.3 found-defects 734 and rows 760+, registry U1/U2, What's new; target-prune

@@ -214,7 +214,7 @@ enum Short {
 pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
     let lay: &dyn StreamLayout = input;
     let chain = s.chain(n);
-    let (w, h) = mosh::padded(&s.r, lay);
+    let (w, h) = mosh::padded(lay);
     let pic = mosh::pic_padded(&s.r, lay);
     let mut start = 0;
     let mut cur: Option<Val> = None;

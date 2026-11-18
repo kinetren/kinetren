@@ -11,7 +11,7 @@ use fx_video_codec::codec::{self, Planes};
 use fx_video_codec::mosh::{self, Rows};
 use fx_video_codec::{rows, Datamosh};
 use kt_plugin_api::generator::lowbias32;
-use kt_plugin_api::stream::{mix, Rgba, Side, StreamInput, StreamKernel, StreamLayout, StreamMemo};
+use kt_plugin_api::stream::{mix, Rgba, Side, StreamInput, StreamLayout, StreamMemo};
 use kt_plugin_api::Plugin;
 
 /// One test at a time: they share the compute device, and a software one is slow at these sizes.
