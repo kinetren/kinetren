@@ -1242,6 +1242,14 @@ impl KtApp {
                 )
             })
             .collect();
+        let markers = self
+            .model
+            .project()
+            .markers
+            .iter()
+            .map(|m| format!("[{},{}]", m.t.0, m.duration.0))
+            .collect::<Vec<_>>()
+            .join(",");
         // WHERE WE STAND (R.50, B4): without this all future scenarios would silently
         // check the wrong list of events — `clips` above gives the content of the CURRENT reel,
         // and from outside that is the root, and inside it the reel.
@@ -1276,7 +1284,7 @@ impl KtApp {
             .unwrap_or_default();
         let json = format!(
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
-             \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
+             \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\"markers\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
              \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
@@ -1303,6 +1311,9 @@ impl KtApp {
             self.base_rate,
             fields.join(","),
             clips.join(","),
+            // markers as [tick, length] (marker-region-split): the region-edge items are read off
+            // the live model, not off the ruler's pixels
+            markers,
             nest,
             self.clipboard.clips.len(),
             status_shown,
@@ -6911,21 +6922,33 @@ impl KtApp {
             Some(CtxTarget::RegionEdge(t)) => {
                 // PARITY with gesture M (the user’s item 11): with a selected region
                 // both ways give a marker-RANGE, not a point.
-                // The item name says what exactly will result (item 4).
-                let on_region = self
-                    .model
-                    .project()
-                    .region
-                    .map(|r| r.start.0 <= t && t <= r.end.0)
-                    .unwrap_or(false);
-                let label = if on_region {
-                    tr(k::tl::menu::MARKER_REGION)
-                } else {
-                    tr(k::tl::menu::MARKER_HERE)
-                };
-                if ui.button(label).clicked() {
-                    self.marker_here(Tick(t));
-                    ui.close();
+                // The item name says what exactly will result (item 4). Since marker-region-split
+                // (the owner, 2026-11-07 answer 4) the item ALWAYS makes a new range, and changing
+                // the marker that stands at the region's start is an item of its own.
+                let region = self.model.project().region.filter(|r| r.start.0 <= t && t <= r.end.0);
+                match region {
+                    Some(r) => {
+                        let b = ui.button(tr(k::tl::menu::MARKER_REGION));
+                        crate::widgets::field_probe::note("tl.marker_region", b.rect);
+                        if b.clicked() {
+                            self.marker_over_region_new(r);
+                            ui.close();
+                        }
+                        if self.marker_to_stretch(r).is_some() {
+                            let b = ui.button(tr(k::tl::menu::MARKER_STRETCH));
+                            crate::widgets::field_probe::note("tl.marker_stretch", b.rect);
+                            if b.clicked() {
+                                self.stretch_marker_over_region(r);
+                                ui.close();
+                            }
+                        }
+                    }
+                    None => {
+                        if ui.button(tr(k::tl::menu::MARKER_HERE)).clicked() {
+                            self.marker_here(Tick(t));
+                            ui.close();
+                        }
+                    }
                 }
                 if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
                     self.clear_region();

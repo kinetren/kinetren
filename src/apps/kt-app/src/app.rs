@@ -5226,6 +5226,41 @@ impl KtApp {
         };
     }
 
+    /// "Marker over the region" (the region-edge menu, marker-region-split): ALWAYS a new range
+    /// marker over the region, never a change of the one there. An equal range is removed — the
+    /// toggle M has; a different marker at the region's start stays as it is, and the refusal names
+    /// the item that changes it (rule 16). One marker per tick is the model's rule.
+    pub fn marker_over_region_new(&mut self, r: Region) {
+        let dur = r.end - r.start;
+        match self.model.project().markers.iter().find(|m| m.t == r.start) {
+            Some(m) if m.duration == dur => {
+                self.apply(Command::RemoveMarker { at: r.start });
+            }
+            Some(_) => self.note(tr(k::msg::MARKER_REGION_TAKEN)),
+            None => {
+                if self.apply(Command::AddMarker { at: r.start, duration: dur }) {
+                    self.marker_edit = Some(MarkerEdit { at: r.start.0, buf: String::new(), is_new: true });
+                    self.marker_edit_focus = true;
+                }
+            }
+        }
+    }
+
+    /// The marker "Stretch the marker over the region" would change: the one at the region's start
+    /// whose length is not the region's (`None` — the item is not offered).
+    pub fn marker_to_stretch(&self, r: Region) -> Option<Tick> {
+        let dur = r.end - r.start;
+        self.model.project().markers.iter().find(|m| m.t == r.start && m.duration != dur).map(|m| m.t)
+    }
+
+    /// "Stretch the marker over the region": the marker at the region's start takes the region's
+    /// length, its name kept (what "Marker over the region" did before the split).
+    pub fn stretch_marker_over_region(&mut self, r: Region) {
+        if let Some(at) = self.marker_to_stretch(r) {
+            self.apply(Command::SetMarkerDuration { at, duration: r.end - r.start });
+        }
+    }
+
     /// Region in/out from the cursor; without a region — a seed [cursor, cursor+1 s].
     pub fn set_region_edge_from_cursor(&mut self, set_start: bool) {
         let at = self.player.transport.playhead();

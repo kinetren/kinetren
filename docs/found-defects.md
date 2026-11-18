@@ -238,8 +238,6 @@ list may be short of items from them.
 
 ## Changes left unfinished
 
-- `r72-timeline-transport-defects`: archived 2026-11-06, only the split of "Marker over the region"
-  waits for the owner.
 - `loop-play-latency-hold`: row 16.
 - `fx-lens-and-camera` (2 of 14 done), `flatpak-flathub` (11 tasks open): after С.3.
 - Every task done, or only the archive steps left: ARCHIVED 2026-11-04 (specs and design records merged,

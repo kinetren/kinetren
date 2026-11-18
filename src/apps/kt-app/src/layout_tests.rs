@@ -21313,3 +21313,64 @@ fn t2811_what_this_ffmpeg_cannot_do_is_shown_not_hidden() {
     assert!(texts.iter().any(|t| *t == format!("Opus — {na}")), "Opus is not shown unavailable: {texts:?}");
     assert!(texts.iter().any(|t| *t == format!("FLAC — {mp4}")), "FLAC in MP4: {texts:?}");
 }
+
+/// t3104 (marker-region-split, the owner 2026-11-07 answer 4, `v26.10` U7): the region-edge menu's
+/// "Marker over the region" ALWAYS makes a new range and never changes the marker at the region's
+/// start; changing it is "Stretch the marker over the region", offered only when there is one to
+/// stretch. Probed from where the person acts: a right click on the region's edge.
+#[test]
+fn t3104_marker_over_the_region_is_new_and_stretching_is_its_own_item() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    let r = Region { start: Tick(30_000), end: Tick(90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let at = egui::pos2(g.tick_to_x(r.start.0), g.rect.center().y);
+    let markers = |h: &Harness<'_, KtApp>| -> Vec<(i64, i64)> {
+        h.state().model.project().markers.iter().map(|m| (m.t.0, m.duration.0)).collect()
+    };
+
+    // no marker there: the new item makes the range; nothing to stretch, so no stretch item
+    right_click_at(&mut h, at);
+    assert!(h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_none(), "a stretch item with nothing to stretch");
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    h.state_mut().marker_edit = None;
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 60_000)], "the item makes a range over the region");
+
+    // a point marker at the region's start: the new item leaves it and says which item changes it
+    h.state_mut().apply(Command::RemoveMarker { at: Tick(30_000) });
+    h.state_mut().apply(Command::AddMarker { at: Tick(30_000), duration: Tick::ZERO });
+    h.step();
+    right_click_at(&mut h, at);
+    let labels = menu_labels(&mut h);
+    assert!(
+        h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_some(),
+        "no stretch item over a point marker; visible: {labels:?}"
+    );
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 0)], "“Marker over the region” changed the existing marker");
+    assert_eq!(
+        h.state().notices.back().map(|n| n.text.clone()),
+        Some(tr(k::msg::MARKER_REGION_TAKEN).to_string()),
+        "the refusal is silent"
+    );
+
+    // the stretch item stretches it, and is then gone (nothing left to stretch)
+    right_click_at(&mut h, at);
+    h.get_by_label(tr(k::tl::menu::MARKER_STRETCH)).click();
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 60_000)], "the stretch item did not stretch the marker");
+    right_click_at(&mut h, at);
+    assert!(h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_none(), "a stretch item over an equal range");
+    // an equal range: the new item removes it — the toggle M has
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    assert!(markers(&h).is_empty(), "a repeat removes the equal range: {:?}", markers(&h));
+}
