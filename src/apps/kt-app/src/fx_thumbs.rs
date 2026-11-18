@@ -137,6 +137,19 @@ pub struct FxThumbJob {
     pub generation: u64,
     /// A scene cell (chain-everywhere): `chain` is then the candidate alone, appended at `place`.
     pub scene: Option<Scene>,
+    /// A scene cell of a KIND picker (kind-picker-previews): the candidate is a kind put in place of
+    /// the event's generator or the transition's kind, and `chain` is empty.
+    pub swap: Option<Swap>,
+}
+
+/// A kind candidate (kind-picker-previews): what the click on a cell of the generator or the
+/// transition kind picker puts in place. The cell is the frame after that click, as an effect cell is.
+#[derive(Debug, Clone)]
+pub enum Swap {
+    /// The generator event `ClipId` with this kind at its defaults (what `switch_kind` gives).
+    Gen(kt_model::ClipId, kt_model::GeneratorKind),
+    /// The transition with this kind at its defaults, its curves gone (what the picker's click gives).
+    Transition(kt_model::TransitionId, kt_model::TransitionKind),
 }
 
 /// The request queue: LIFO + dedup by key + cancellation by
@@ -319,6 +332,12 @@ impl FxThumbService {
         self.shared.queue.lock().unwrap().len() > 0
     }
 
+    /// How many cells were asked at all: queued, ready or failed (the harness's view of a gallery).
+    #[cfg(test)]
+    pub fn asked(&self) -> usize {
+        self.shared.queue.lock().unwrap().len() + self.shared.ready.lock().unwrap().len() + self.shared.failed.lock().unwrap().len()
+    }
+
     /// Already queued? So that drawing does not assemble the
     /// request anew on every frame while the cell is being computed
     /// (dedup inside the queue saves from work, but not from assembling the job).
@@ -426,6 +445,7 @@ impl<'a> PickerCtx<'a> {
                     cam3d: None,
                     generation: self.generation,
                     scene: Some(scene.clone()),
+                    swap: None,
                 });
             }
             return None;
@@ -453,10 +473,106 @@ impl<'a> PickerCtx<'a> {
                 cam3d: self.cam3d,
                 generation: self.generation,
                 scene: None,
+                swap: None,
             });
         }
         None
     }
+}
+
+impl PickerCtx<'_> {
+    /// The cell texture of a KIND candidate (kind-picker-previews): the scene with `swap` in place,
+    /// or `None` — Loading (before the misclick guard nothing is asked; a context without a scene
+    /// has no frame to show a kind on).
+    pub fn swap_texture(&mut self, ctx: &egui::Context, swap: &Swap) -> Option<egui::TextureId> {
+        let scene = self.scene.as_ref()?;
+        let recipe = xxhash_rust::xxh3::xxh3_64(format!("{swap:?}|{}|{REF_W}x{REF_H}>{CELL_W}x{CELL_H}", scene.t.0).as_bytes());
+        let key = FxThumbKey { base: self.base, recipe };
+        if let Some(id) = self.svc.texture_for(ctx, key) {
+            return Some(id);
+        }
+        if self.decode_ok && !self.svc.queued(&key) && !self.svc.failed(&key) {
+            self.svc.request(FxThumbJob {
+                key,
+                chain: Vec::new(),
+                u: 0.0,
+                burst_index: scene.t.0,
+                cam3d: None,
+                generation: self.generation,
+                scene: Some(scene.clone()),
+                swap: Some(swap.clone()),
+            });
+        }
+        None
+    }
+}
+
+/// The width of a kind gallery's popup: the host window's body (as the effects gallery), never under
+/// four cells a row. `host_w` is read before the popup opens: inside it the clip rect is the popup's.
+pub fn gallery_width(ui: &mut egui::Ui, host_w: f32) {
+    let margins = ui.spacing().menu_margin.sum().x + 4.0;
+    let four = 4.0 * (crate::fx_registry::CELL_DRAW_W + ui.spacing().item_spacing.x);
+    let w = (host_w - margins).max(four).floor();
+    ui.set_min_width(w);
+    ui.set_max_width(w);
+}
+
+/// One cell of a KIND picker (kind-picker-previews): the frame after the click (or Loading while it
+/// is computed), the kind's name under it, ONE click interaction (t254). `swap` is `None` for a kind
+/// with no picture (a sound generator): the cell is its name alone. `probe` publishes the cell's
+/// rectangle for the live scenarios. A cell below the scroll fold is neither drawn, asked nor
+/// published (rule 12: an invisible rectangle would be clicked past the popup).
+pub fn kind_cell(
+    ui: &mut egui::Ui,
+    pv: Option<&mut PickerCtx<'_>>,
+    swap: Option<&Swap>,
+    name: &str,
+    selected: bool,
+    probe: &str,
+) -> egui::Response {
+    use crate::fx_registry::{CELL_DRAW_H, CELL_DRAW_W};
+    let cap_h = ui.text_style_height(&egui::TextStyle::Small) + 2.0;
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(CELL_DRAW_W, CELL_DRAW_H + cap_h), egui::Sense::click());
+    // the name is the cell's in the accessibility tree even unseen (a popup's sizing pass draws nothing)
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, ui.is_enabled(), selected, name));
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    crate::widgets::field_probe::note(probe, rect);
+    let img = egui::Rect::from_min_size(rect.min, egui::vec2(CELL_DRAW_W, CELL_DRAW_H));
+    let p = ui.painter();
+    p.rect_filled(img, 2.0, crate::theme::EXTREME);
+    let small = egui::TextStyle::Small.resolve(ui.style());
+    let weak = ui.visuals().weak_text_color();
+    match (pv, swap) {
+        (Some(pv), Some(swap)) => match pv.swap_texture(ui.ctx(), swap) {
+            Some(tex) => {
+                p.image(tex, img, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+            }
+            None => {
+                p.text(img.center(), egui::Align2::CENTER_CENTER, crate::i18n::tr(crate::i18n::k::perf::LOADING), small.clone(), weak);
+            }
+        },
+        // a sound kind: no picture exists, the speaker says why the cell is empty
+        (_, None) => {
+            p.text(img.center(), egui::Align2::CENTER_CENTER, crate::icons::CAT_VOLUME, egui::FontId::proportional(20.0), weak);
+        }
+        (None, Some(_)) => {}
+    }
+    let stroke = if resp.hovered() || selected { crate::theme::ACCENT } else { ui.visuals().widgets.noninteractive.bg_stroke.color };
+    p.rect_stroke(img, 2.0, egui::Stroke::new(if selected { 2.0 } else { 1.0 }, stroke), egui::StrokeKind::Inside);
+    // the caption is truncated, never widening the cell (rule 7)
+    let galley = ui.fonts_mut(|f| {
+        let mut job = egui::text::LayoutJob::single_section(
+            name.to_string(),
+            egui::TextFormat { font_id: small, color: if selected { ui.visuals().strong_text_color() } else { weak }, ..Default::default() },
+        );
+        job.wrap = egui::text::TextWrapping { max_width: CELL_DRAW_W, max_rows: 1, overflow_character: Some('…'), ..Default::default() };
+        f.layout_job(job)
+    });
+    let x = img.center().x - galley.size().x / 2.0;
+    ui.painter().galley(egui::pos2(x, img.bottom() + 2.0), galley, egui::Color32::WHITE);
+    resp
 }
 
 impl Drop for FxThumbService {
@@ -513,9 +629,16 @@ pub(crate) fn render_job(job: &FxThumbJob) -> egui::ColorImage {
 
 /// The project with the candidate at `place`: appended to the event's chain (its track soloed when
 /// the event is at the root), or to the morpher's video patch. `None` — the place is not in it.
-pub(crate) fn with_candidate(project: &kt_model::Project, place: Place, extra: &[FxInstance]) -> Option<kt_model::Project> {
-    use kt_model::LaneKind;
+pub(crate) fn with_candidate(
+    project: &kt_model::Project,
+    place: Place,
+    extra: &[FxInstance],
+    swap: Option<&Swap>,
+) -> Option<kt_model::Project> {
     let mut p = project.clone();
+    if let Some(swap) = swap {
+        return with_swap(p, swap);
+    }
     let append = |c: &mut kt_model::ClipEvent| {
         c.fx_bypass.resize(c.fx.len(), false);
         for f in extra {
@@ -528,13 +651,7 @@ pub(crate) fn with_candidate(project: &kt_model::Project, place: Place, extra: &
             if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
                 append(c);
                 let lane = c.lane;
-                if let Some(i) = kt_model::track_index(&p.tracks, LaneKind::Video, lane) {
-                    for (j, t) in p.tracks.iter_mut().enumerate() {
-                        if t.kind == LaneKind::Video {
-                            t.solo = j == i;
-                        }
-                    }
-                }
+                solo_video(&mut p, lane);
             } else {
                 // an event of a reel (an expanded band): the frame as it is, its chain extended
                 append(p.sequences.iter_mut().flat_map(|s| s.clips.iter_mut()).find(|c| c.id == id)?);
@@ -550,6 +667,56 @@ pub(crate) fn with_candidate(project: &kt_model::Project, place: Place, extra: &
             for f in extra {
                 m.patch.video_fx.push(f.clone());
                 m.patch.video_bypass.push(false);
+            }
+        }
+    }
+    Some(p)
+}
+
+/// Solo the video track `lane` (a layer above would hide every cell alike, as for an effect cell).
+fn solo_video(p: &mut kt_model::Project, lane: u32) {
+    use kt_model::LaneKind;
+    if let Some(i) = kt_model::track_index(&p.tracks, LaneKind::Video, lane) {
+        for (j, t) in p.tracks.iter_mut().enumerate() {
+            if t.kind == LaneKind::Video {
+                t.solo = j == i;
+            }
+        }
+    }
+}
+
+/// The project with a kind candidate in place (kind-picker-previews): the generator event's kind at
+/// its defaults with no curves (`fit_gen_to_media` after a kind change), or the transition's kind at
+/// its defaults with no curves (the picker's click). At the root the track is soloed; an event or a
+/// transition of a reel (an expanded band) is changed where it lies. `None` — it is not in the project.
+fn with_swap(mut p: kt_model::Project, swap: &Swap) -> Option<kt_model::Project> {
+    match swap {
+        Swap::Gen(id, kind) => {
+            let set = |c: &mut kt_model::ClipEvent| {
+                c.r#gen = Some(kind.clone());
+                c.gen_auto.clear();
+            };
+            if let Some(c) = p.clips.iter_mut().find(|c| c.id == *id) {
+                set(c);
+                let lane = c.lane;
+                solo_video(&mut p, lane);
+            } else {
+                set(p.sequences.iter_mut().flat_map(|s| s.clips.iter_mut()).find(|c| c.id == *id)?);
+            }
+        }
+        Swap::Transition(id, kind) => {
+            let set = |t: &mut kt_model::TransitionEvent| {
+                t.kind = kind.clone();
+                t.auto.clear();
+            };
+            if let Some(t) = p.transitions.iter_mut().find(|t| t.id == *id) {
+                set(t);
+                let side = t.a.or(t.b);
+                if let Some(lane) = side.and_then(|c| p.clips.iter().find(|e| e.id == c)).map(|c| c.lane) {
+                    solo_video(&mut p, lane);
+                }
+            } else {
+                set(p.sequences.iter_mut().flat_map(|s| s.transitions.iter_mut()).find(|t| t.id == *id)?);
             }
         }
     }
@@ -633,6 +800,7 @@ pub(crate) fn render_scene(
     slot: &mut Option<SceneCtx>,
     scene: &Scene,
     extra: &[FxInstance],
+    swap: Option<&Swap>,
     stop: impl Fn() -> bool + Clone + 'static,
 ) -> SceneOut {
     use kt_time::trace::stop::JOB;
@@ -643,11 +811,19 @@ pub(crate) fn render_scene(
     if stop() {
         return SceneOut::Stopped;
     }
+    // a generator kind is a SOURCE's state: the scene's sources and frame cache are keyed by the
+    // event's address and hold its present kind, so the candidate gets a context of its own project
+    // (its generator opened with the candidate's values; the track is soloed, so little else opens)
+    if let Some(Swap::Gen(..)) = swap {
+        let Some(p) = with_candidate(&scene.project, scene.place, extra, swap) else { return SceneOut::Incomplete };
+        let own = Scene { project: Arc::new(p), ..scene.clone() };
+        return render_scene(&mut None, &own, &[], None, stop);
+    }
     if !matches!(slot, Some(sc) if Arc::ptr_eq(&sc.project, &scene.project)) {
         *slot = Some(SceneCtx::new(scene));
     }
     let Some(sc) = slot.as_mut() else { return SceneOut::Incomplete };
-    let Some(p) = with_candidate(&scene.project, scene.place, extra) else { return SceneOut::Incomplete };
+    let Some(p) = with_candidate(&scene.project, scene.place, extra, swap) else { return SceneOut::Incomplete };
     let Some(engine) = kt_gpu::side_engine() else { return SceneOut::Incomplete };
     let q = kt_media::Quality { width: REF_W, height: REF_H };
     let mut video = sc.build(&p);
@@ -735,7 +911,7 @@ fn pump(shared: &Arc<Shared>, ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump
                         || sh.generation.load(Ordering::Relaxed) > generation
                         || (class.pausable() && kt_time::sched::paused() != 0)
                 };
-                let out = render_scene(&mut shared.scene.lock().unwrap(), scene, &job.chain, stop);
+                let out = render_scene(&mut shared.scene.lock().unwrap(), scene, &job.chain, job.swap.as_ref(), stop);
                 match out {
                     SceneOut::Done(img) => img,
                     SceneOut::Incomplete => {
@@ -779,6 +955,7 @@ mod tests {
             cam3d: None,
             generation,
             scene: None,
+            swap: None,
         }
     }
 
@@ -1077,11 +1254,112 @@ mod tests {
 
     fn cell(sc: &Scene, extra: &[FxInstance]) -> Vec<u8> {
         let mut slot = None;
-        match render_scene(&mut slot, sc, extra, || false) {
+        match render_scene(&mut slot, sc, extra, None, || false) {
             SceneOut::Done(img) => img.as_raw().to_vec(),
             SceneOut::Incomplete => panic!("the cell is incomplete"),
             SceneOut::Stopped => panic!("the cell stopped"),
         }
+    }
+
+    fn cut_project(kind: kt_model::TransitionKind) -> kt_model::Project {
+        let mut p = scene_project();
+        p.ensure_tracks(kt_model::LaneKind::Video, 2);
+        p.clips.push(clip_at(1, 1, 0, 0, 2 * 90_000, vec![]));
+        let mut b = clip_at(2, 2, 0, 2 * 90_000, 2 * 90_000, vec![]);
+        b.source_in = kt_time::Tick(90_000);
+        p.clips.push(b);
+        // a layer above the cut: the cell solos the cut's track, as an effect cell does
+        p.clips.push(clip_at(3, 1, 1, 0, 4 * 90_000, vec![]));
+        p.transitions.push(kt_model::TransitionEvent {
+            id: kt_model::TransitionId(1),
+            a: Some(kt_model::ClipId(1)),
+            b: Some(kt_model::ClipId(2)),
+            in_offset: kt_time::Tick(30_000),
+            out_offset: kt_time::Tick(30_000),
+            kind,
+            audio: Default::default(),
+            auto: Vec::new(),
+            invert: false,
+        });
+        p
+    }
+
+    /// t3108 (kind-picker-previews, `v26.10` G6): a kind candidate goes where the picker's click puts
+    /// it — the generator event's kind at its defaults with no curves, the transition's kind with no
+    /// curves — on the track soloed; a place the project does not hold gives no scene.
+    #[test]
+    fn t3108_a_kind_candidate_is_what_the_click_puts() {
+        crate::plugins::install();
+        let mut p = cut_project(kt_model::TransitionKind::Crossfade);
+        p.transitions[0].auto.push(kt_model::ParamCurve::constant("x", kt_time::Tick(0), kt_time::Tick(90_000), 0.5, Default::default()));
+        let iris = kt_model::TransitionKind::builtin("iris");
+        let got = with_candidate(&p, Place::Clip(kt_model::ClipId(1)), &[], Some(&Swap::Transition(kt_model::TransitionId(1), iris.clone())))
+            .expect("a scene");
+        assert_eq!(got.transitions[0].kind, iris, "the transition's kind is not the candidate");
+        assert!(got.transitions[0].auto.is_empty(), "the former kind's curves stayed");
+        let solo: Vec<bool> = got.tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Video).map(|t| t.solo).collect();
+        assert_eq!(solo, vec![true, false], "the cut's track alone is soloed");
+        assert_eq!(got.clips, p.clips, "a kind candidate touched the events");
+
+        let mut g = scene_project();
+        let mut c = clip_at(1, 1, 0, 0, 90_000, vec![]);
+        c.r#gen = Some(kt_model::GeneratorKind::solid(10, 20, 30));
+        c.gen_auto.push(kt_model::ParamCurve::constant("x", kt_time::Tick(0), kt_time::Tick(90_000), 0.5, Default::default()));
+        g.clips.push(c);
+        let checker = kt_model::GeneratorKind::default_for_tag("checker").expect("checker is built in");
+        let got = with_candidate(&g, Place::Clip(kt_model::ClipId(1)), &[], Some(&Swap::Gen(kt_model::ClipId(1), checker.clone())))
+            .expect("a scene");
+        assert_eq!(got.clips[0].r#gen, Some(checker), "the generator's kind is not the candidate at its defaults");
+        assert!(got.clips[0].gen_auto.is_empty(), "the former kind's curves stayed");
+        assert!(with_candidate(&g, Place::Clip(kt_model::ClipId(1)), &[], Some(&Swap::Gen(kt_model::ClipId(9), kt_model::GeneratorKind::solid(0, 0, 0)))).is_none());
+        assert!(with_candidate(&p, Place::Clip(kt_model::ClipId(1)), &[], Some(&Swap::Transition(kt_model::TransitionId(9), iris))).is_none());
+    }
+
+    /// t3109 (kind-picker-previews): a transition kind's cell is the frame after the click — the cut
+    /// composed with that kind at the middle of its window — byte for byte, and two kinds differ there.
+    #[test]
+    fn t3109_a_transition_cell_is_the_cut_after_the_click() {
+        crate::plugins::install();
+        if kt_gpu::offline_engine().is_none() {
+            eprintln!("skipped: no offline device");
+            return;
+        }
+        let p = cut_project(kt_model::TransitionKind::Crossfade);
+        p.validate().unwrap();
+        let mid = 2 * 90_000;
+        let sc = scene(p.clone(), Place::Clip(kt_model::ClipId(1)), mid);
+        let shot = |kind: &kt_model::TransitionKind| {
+            let swap = Swap::Transition(kt_model::TransitionId(1), kind.clone());
+            let got = match render_scene(&mut None, &sc, &[], Some(&swap), || false) {
+                SceneOut::Done(img) => img.as_raw().to_vec(),
+                _ => panic!("the kind cell is incomplete"),
+            };
+            let want = after_click(&with_candidate(&p, sc.place, &[], Some(&swap)).unwrap(), mid);
+            assert_eq!(got, want, "the {} cell is not the cut after the click", kind.tag());
+            got
+        };
+        let iris = shot(&kt_model::TransitionKind::builtin("iris"));
+        let fade = shot(&kt_model::TransitionKind::Crossfade);
+        assert_ne!(iris, fade, "two kinds give one cell: the candidate did not reach the frame");
+
+        // a generator kind: the event's SOURCE takes the candidate's values (live kind-picker-previews
+        // found every cell the present kind's frame — the scene's source opened by the present state)
+        let mut g = scene_project();
+        let black = kt_model::GeneratorKind::solid(0, 0, 0);
+        g.media.push(kt_model::MediaRef::new(MediaId(3), kt_model::format_gen_path(&black)));
+        let mut c = clip_at(1, 3, 0, 0, 90_000, vec![]);
+        c.r#gen = Some(black);
+        g.clips.push(c);
+        g.validate().unwrap();
+        let sc = scene(g, Place::Clip(kt_model::ClipId(1)), 45_000);
+        let gen_cell = |kind: kt_model::GeneratorKind| match render_scene(&mut None, &sc, &[], Some(&Swap::Gen(kt_model::ClipId(1), kind)), || false) {
+            SceneOut::Done(img) => img.as_raw().to_vec(),
+            _ => panic!("the generator kind cell is incomplete"),
+        };
+        let white = gen_cell(kt_model::GeneratorKind::solid(255, 255, 255));
+        let checker = gen_cell(kt_model::GeneratorKind::default_for_tag("checker").unwrap());
+        assert!(white.chunks(4).all(|px| px[0] > 200), "the white candidate's cell is not white: the present kind's source drew it");
+        assert_ne!(white, checker, "two generator kinds give one cell");
     }
 
     /// t2554 (chain-everywhere): the candidate goes where the click puts it — the tail of the event's
@@ -1095,14 +1373,14 @@ mod tests {
         p.clips.push(clip_at(1, 1, 0, 0, 90_000, vec![]));
         p.clips.push(clip_at(2, 2, 1, 0, 90_000, vec![poster(4.0)]));
         p.clips[1].fx_bypass = vec![true];
-        let got = with_candidate(&p, Place::Clip(kt_model::ClipId(2)), &[mirror()]).expect("a scene");
+        let got = with_candidate(&p, Place::Clip(kt_model::ClipId(2)), &[mirror()], None).expect("a scene");
         let c = got.clips.iter().find(|c| c.id == kt_model::ClipId(2)).unwrap();
         assert_eq!(c.fx, vec![poster(4.0), mirror()], "the candidate is not at the tail");
         assert_eq!(c.fx_bypass, vec![true, false], "the candidate is bypassed or the bypass moved");
         let videos: Vec<bool> = got.tracks.iter().filter(|t| t.kind == kt_model::LaneKind::Video).map(|t| t.solo).collect();
         assert_eq!(videos, vec![false, true], "the event's track alone is soloed");
-        assert!(with_candidate(&p, Place::Clip(kt_model::ClipId(9)), &[mirror()]).is_none());
-        assert!(with_candidate(&p, Place::Morph(kt_model::MorphId(9)), &[mirror()]).is_none());
+        assert!(with_candidate(&p, Place::Clip(kt_model::ClipId(9)), &[mirror()], None).is_none());
+        assert!(with_candidate(&p, Place::Morph(kt_model::MorphId(9)), &[mirror()], None).is_none());
     }
 
     /// t2555 (chain-everywhere, found-defects 460): an effect cell is the frame the preview shows after
@@ -1124,7 +1402,7 @@ mod tests {
         let t = 45_000;
         let sc = scene(p.clone(), Place::Clip(kt_model::ClipId(1)), t);
         let got = cell(&sc, &[mirror()]);
-        let want = after_click(&with_candidate(&p, Place::Clip(kt_model::ClipId(1)), &[mirror()]).unwrap(), t);
+        let want = after_click(&with_candidate(&p, Place::Clip(kt_model::ClipId(1)), &[mirror()], None).unwrap(), t);
         assert_eq!(got, want, "the cell is not the frame after the click");
         let mut on_sample = job(1, 0);
         on_sample.chain = vec![poster(5.0), mirror()];
@@ -1163,10 +1441,10 @@ mod tests {
         let t = 34 * 3000;
         let moshed = shots(vec![mosh()]);
         let got = cell(&scene(moshed.clone(), Place::Clip(kt_model::ClipId(2)), t), &[mirror()]);
-        let want = after_click(&with_candidate(&moshed, Place::Clip(kt_model::ClipId(2)), &[mirror()]).unwrap(), t);
+        let want = after_click(&with_candidate(&moshed, Place::Clip(kt_model::ClipId(2)), &[mirror()], None).unwrap(), t);
         assert_eq!(got, want, "the cell is not the frame after the click");
         let plain = shots(vec![]);
-        let unmoshed = after_click(&with_candidate(&plain, Place::Clip(kt_model::ClipId(2)), &[mirror()]).unwrap(), t);
+        let unmoshed = after_click(&with_candidate(&plain, Place::Clip(kt_model::ClipId(2)), &[mirror()], None).unwrap(), t);
         assert_ne!(got, unmoshed, "the candidate was laid over the un-moshed frame");
     }
 
@@ -1205,7 +1483,7 @@ mod tests {
         p.clips.push(clip_at(1, 1, 0, 0, 90_000, vec![]));
         let sc = scene(p, Place::Clip(kt_model::ClipId(1)), 45_000);
         let mut slot = None;
-        let out = render_scene(&mut slot, &sc, &[mirror()], || true);
+        let out = render_scene(&mut slot, &sc, &[mirror()], None, || true);
         assert!(matches!(out, SceneOut::Stopped), "a stopped cell came out");
     }
 }

@@ -215,7 +215,7 @@ impl KtApp {
         // a window closed: its queued cells are dropped, and with the last cell window its sources
         if editors.iter().any(|e| !e.open) {
             self.fx_thumbs.bump_generation();
-            if editors.iter().all(|e| !e.open) && self.fx_editors.is_empty() {
+            if editors.iter().all(|e| !e.open) && self.fx_editors.is_empty() && self.transition_editors.is_empty() {
                 self.fx_thumbs.forget_scene();
             }
         }

@@ -654,3 +654,21 @@ Class walk (a hover scrub that shows a moment's picture without its number): the
 fixed; audio cards draw a waveform with no hover scrub; reel cards a mini-map; the timeline filmstrip
 is not hover-scrubbed (the playhead and ruler carry time); the FX picker follows the playhead. The
 second half of his line — a drag that places the file from the scrubbed moment — is his to decide.
+
+## The kind pickers' cells (kind-picker-previews, 2026-11-18, F-AUT-012)
+
+The owner (`v26.10` line 17): the generator and transition kind pickers were lists of names next to the
+effects picker's gallery. Both are now galleries of `fx_thumbs::kind_cell`, rendered by the effect
+cells' service with one more candidate form, `Swap` (a kind put in place of the event's generator or
+the transition's kind, curves dropped as the click drops them); the guard, lane, cache and pause are
+the service's. A transition cell is the cut at the MIDDLE of its window: at an edge every kind is the
+same frame A or B. A generator kind is a SOURCE's state, and the scene's sources and frame cache are
+keyed by the event's address: a candidate shared them and every cell showed the present kind (found
+by the live scenario `kind_picker_previews`, t3109's generator half is red on it); a generator
+candidate gets a context of its own project. The pickers stay ComboBoxes (t227, t511, the lessons'
+scenario find them so); a cell keeps its accessible name below the fold and in a popup's sizing pass,
+but is neither drawn, asked nor published there. Class walk: the right-click "Transition with
+next/previous" stays a menu of names (a picture popup inside a menu; the window shows the gallery);
+"Create a generator…" has no event yet, so no frame after the click; a track's blend modes are a
+candidate for a later change (a mode shows only over another layer); the morpher's source kind and the
+geometry fit name behaviours, not looks.
