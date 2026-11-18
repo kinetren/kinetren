@@ -2953,3 +2953,9 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    codec size while the picture stays sharp at the project's resolution; pixelation is NOT the answer.
 2. "да - тут бы конечно как-то учитывать настройки превью проекта чтобы поменьше работы было" — yes
    to found-defects 734: the Datamosh history and what is in front of it follow the preview settings.
+3. "когда морфером добавляю датамош / vhstape / isp - нет возможности отключить морфинг эффекта для
+   аудио … в морфере и впринципе в fx-chain управление дебильное получается, нужно что-то типо
+   компактного удобного графа делать" — the audio half of a paired effect must be switchable in a
+   morpher; the morpher's and the FX chain's control becomes a compact graph (design shown to him
+   before code).
+4. His question: is the disk prerender encoded or raw?
