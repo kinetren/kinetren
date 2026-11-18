@@ -59,6 +59,8 @@ pub enum Cmd {
     SelectTool = 35,
     /// telemetry-journal: the person's mark in the telemetry journal.
     MarkMoment = 36,
+    /// features-slow (F-TL-015, `v26.10` U9): cut out the region's interior, no ripple.
+    PunchOut = 37,
 }
 
 /// The groups of the key list, in the order a person reads them.
@@ -114,6 +116,7 @@ pub const COMMANDS: &[(Cmd, Group, Text)] = &[
     (Cmd::RegionPrev, Group::Region, k::controls::cmd::REGION_PREV),
     (Cmd::RegionNext, Group::Region, k::controls::cmd::REGION_NEXT),
     (Cmd::RegionClear, Group::Region, k::controls::cmd::REGION_CLEAR),
+    (Cmd::PunchOut, Group::Region, k::controls::cmd::PUNCH_OUT),
     (Cmd::Loop, Group::Region, k::controls::cmd::LOOP),
     (Cmd::Marker, Group::Region, k::controls::cmd::MARKER),
     (Cmd::ZoomIn, Group::View, k::controls::cmd::ZOOM_IN),
@@ -128,7 +131,7 @@ pub const COMMANDS: &[(Cmd, Group, Text)] = &[
 ];
 
 /// The number of commands: one past the highest frozen number.
-pub(crate) const CMD_COUNT: usize = 37;
+pub(crate) const CMD_COUNT: usize = 38;
 
 fn cmd_from(code: u8) -> Option<Cmd> {
     COMMANDS.iter().map(|c| c.0).find(|c| *c as u8 == code)
@@ -434,6 +437,9 @@ const OWN: &[(Cmd, &[Chord])] = &[
     (Cmd::TrackSolo, &[a(Key::S)]),
     (Cmd::RegionIn, &[p(Key::I)]),
     (Cmd::RegionOut, &[p(Key::O)]),
+    // the owner's key (`v26.10` line 35: "cut(ножницы) региона … кнопка "C" свободна?"); the other
+    // styles bind C to a razor/blade tool we do not have, so it stays unbound there
+    (Cmd::PunchOut, &[p(Key::C)]),
     (Cmd::RegionPrev, &[s(Key::A)]),
     (Cmd::RegionNext, &[s(Key::D)]),
     (Cmd::Loop, &[p(Key::L)]),

@@ -21392,3 +21392,78 @@ fn t3101_bin_scrub_timecode_fits_a_narrow_card_and_is_laid_out_once() {
     let again = h.state().bin_scrub_tc.as_ref().map(|c| c.4.clone()).expect("kept");
     assert!(std::sync::Arc::ptr_eq(&first, &again), "the same moment laid the label out again");
 }
+
+/// t3102 (F-TL-015, `v26.10` U9): `C` cuts out the region's interior, and the Edit menu item with
+/// `C` in its chord column does exactly the same; the part outside the region stays in place.
+#[test]
+fn t3102_c_and_the_edit_item_cut_out_the_region() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::Region;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.model.set_region(Region::normalized(Tick(20_000), Tick(40_000)));
+        app.player.seek(Tick(30_000));
+    }
+    h.step();
+    let ranges = |h: &Harness<'_, KtApp>| {
+        let mut v: Vec<(i64, i64)> =
+            h.state().model.project().clips.iter().map(|c| (c.start.0, c.duration.0)).collect();
+        v.sort_unstable();
+        v
+    };
+    let before = ranges(&h);
+    let inside = |v: &[(i64, i64)]| v.iter().any(|r| r.0 < 40_000 && r.0 + r.1 > 20_000);
+    assert!(inside(&before), "the scene has an event under the region");
+
+    h.key_press(egui::Key::C);
+    h.step();
+    let by_key = ranges(&h);
+    assert!(!inside(&by_key), "C left material inside the region: {by_key:?}");
+    assert!(
+        by_key.iter().any(|r| r.0 + r.1 == 20_000) && by_key.iter().any(|r| r.0 == 40_000),
+        "the remainders do not stay at the region's edges: {by_key:?}"
+    );
+
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(ranges(&h), before, "one undo restores the cut");
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    let item = format!("{}\t{}", tr(k::tl::menu::PUNCH_OUT), "C");
+    let labels = menu_labels(&mut h);
+    assert!(h.query_by_label(&item).is_some(), "the Edit menu has no “{item}”; visible: {labels:?}");
+    h.get_by_label(&item).click();
+    h.step();
+    h.step();
+    assert_eq!(ranges(&h), by_key, "the Edit item and C cut differently");
+}
+
+/// t3103 (F-TL-015): with no region `C` changes nothing and says why (rule 16); the other layouts
+/// leave `C` to their own tools — the command has no key there.
+#[test]
+fn t3103_c_without_a_region_says_so_and_other_styles_leave_c_alone() {
+    use crate::controls::{Choice, Cmd, Controls, Style};
+    use crate::i18n::{k, tr};
+    let (mut h, _) = harness_three_clips_dt(None);
+    h.state_mut().model.set_region(None);
+    h.step();
+    let before = h.state().model.project().clips.clone();
+    h.key_press(egui::Key::C);
+    h.step();
+    assert_eq!(h.state().model.project().clips, before, "C without a region edited the project");
+    assert_eq!(
+        h.state().notices.back().map(|n| n.text.clone()),
+        Some(tr(k::msg::PUNCH_OUT_NO_REGION).to_string()),
+        "C without a region stayed silent"
+    );
+    assert_eq!(Controls::default().label(Cmd::PunchOut), "C", "our layout: C");
+    for s in Style::ALL.into_iter().filter(|s| *s != Style::Own) {
+        let c = Controls::new(Choice::of(s));
+        assert_eq!(c.label(Cmd::PunchOut), "", "{s:?} binds the cut-out to a key of its own tools");
+    }
+}

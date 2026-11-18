@@ -5839,8 +5839,13 @@ impl KtApp {
         self.apply_batch(cmds);
     }
 
-    /// Cutting the interior of a region (context menu).
+    /// Cutting the interior of a region: the empty-space menu, Edit and its key (one body, rule 17).
+    /// Without a region it says so instead of doing nothing (rule 16).
     pub fn punch_out_action(&mut self) {
+        if self.model.project().region.is_none() {
+            self.note(tr(k::msg::PUNCH_OUT_NO_REGION));
+            return;
+        }
         if let Some(r) = self.model.project().region {
             let mut next = self.next_clip_id();
             let cmds = kt_model::ops::punch_out_region(self.model.project(), r, &mut next);
@@ -8411,6 +8416,7 @@ impl KtApp {
                 Cmd::Copy => self.copy_selection(),
                 Cmd::Paste => self.paste_at_cursor(),
                 Cmd::RegionClear => self.clear_region(),
+                Cmd::PunchOut => self.punch_out_action(),
                 Cmd::ZoomIn => self.zoom_at_playhead(0.8),
                 Cmd::ZoomOut => self.zoom_at_playhead(1.25),
                 Cmd::ZoomFit => self.zoom_fit(),
