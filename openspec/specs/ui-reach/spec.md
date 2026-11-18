@@ -915,6 +915,7 @@ index entry pointing at a heading is that address.
 ### Requirement: Selecting segments is reachable by mouse and keyboard and is said
 The segment selection of the automation graph SHALL be said where the person acts: the graph's
 hover hint over a segment names the gestures (Ctrl+click, Shift+click, a drag over empty space), the
+hover hint over a key names Shift+click on a key and the joint drag of the selection, the
 selection row names what it edits (the bounds of one segment or the count), and the segment menu
 header names how many segments it touches. The selection row's controls SHALL be reachable by Tab in
 the window's order, a typed value SHALL apply on Enter, and the row SHALL carry a button that clears
@@ -933,6 +934,12 @@ nobody can discover is the same "nowhere to write them" (rule 16: a control says
 - **THEN** the hover hint names Ctrl+click, Shift+click and the sweep; the row caption names the count; the menu header names the count; every new key exists in en, ru, es, zh-Hans and ar
 - **PATH** hover a segment → the status line explains how to select several → Ctrl+click a second segment → the row says "Selected segments: 2" → right click on one → the menu header says 2 segments
 - **TEST** t1122 (`src/apps/kt-app/src/segfield_tests.rs`), live scenario `src/scripts/live/segfields.py` (`./scripts/live-check.sh`)
+
+#### Scenario: Hovering a key says how keys are selected and moved together
+- **WHEN** the pointer hovers a key of the curve graph; the catalogs are read
+- **THEN** the status line names the key's place and then Shift+click and the drag of a selected key; the text exists in all five catalogs
+- **PATH** hover a key → the status line reads "key: … · Shift+click: take this key in or out of the selection · drag a selected key: move the whole selection"
+- **TEST** t3116 (`src/apps/kt-app/src/segfield_tests.rs`)
 
 ### Requirement: A lesson step is re-checked when what it reads changes
 The re-check of the current step SHALL follow every input of its predicate, not only the model

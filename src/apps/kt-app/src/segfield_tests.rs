@@ -475,3 +475,102 @@ fn t1122_segment_selection_is_said() {
     }
     crate::i18n::set_lang(crate::i18n::Lang::En);
 }
+
+// ---- curve-key-selection (v26.10 A1, the owner's answer kkt-26.11.18b U9): tests t3114–t3116 ----
+
+fn key_pt(h: &Harness<'_, KtApp>, ki: usize) -> egui::Pos2 {
+    view(h).key_marks.iter().find(|(c, k, _)| *c == 0 && *k == ki).map(|(_, _, p)| *p).expect("key drawn")
+}
+
+fn selected_keys(h: &Harness<'_, KtApp>) -> Vec<usize> {
+    let c = ParamCurve { param: "radius".into(), keys: keys_of(h), source: Default::default() };
+    view(h).seg_sel.key_indices(0, &c)
+}
+
+/// Test 3114: the keys of the selected segments move together — one time shift on the frame grid,
+/// one value shift, the distances kept, the rest untouched, one history step; the block stops
+/// before an unselected neighbour.
+#[test]
+fn t3114_the_keys_of_selected_segments_move_together() {
+    let mut h = harness_keys(even_keys(4, |_| SegShape::Linear));
+    let before = keys_of(&h);
+    let p = seg_pt(&h, 1, 0.3);
+    click(&mut h, p, egui::Modifiers::COMMAND);
+    assert_eq!(selected(&h), vec![1], "Ctrl+click did not select the segment");
+    assert_eq!(selected_keys(&h), vec![1, 2], "the selected segment's ends are not the selected keys");
+    let depth = h.state().model.undo_depth();
+    let from = key_pt(&h, 1);
+    // up past the plot's top: the gesture stays the key drag, the ruler does not take it
+    drag(&mut h, from, from + egui::vec2(12.0, -40.0), egui::Modifiers::NONE);
+    let after = keys_of(&h);
+    let dt = after[1].t.0 - before[1].t.0;
+    assert!(dt > 0, "the grabbed key did not move in time: {after:?}");
+    assert_eq!(after[2].t.0 - before[2].t.0, dt, "the second selected key did not move by the same time");
+    assert_eq!(after[1].t.0 % 3000, 0, "the grabbed key is off the frame grid");
+    assert!(after[1].v > before[1].v && after[2].v > before[2].v, "the values did not rise together: {after:?}");
+    for i in [0, 3, 4] {
+        assert_eq!(after[i], before[i], "unselected key {i} moved");
+    }
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the joint drag is not one history step");
+    assert_eq!(selected(&h), vec![1], "the selection did not follow its keys");
+    // far to the right: the block stops before key 3 and never passes it
+    let from = key_pt(&h, 1);
+    drag(&mut h, from, from + egui::vec2(400.0, 0.0), egui::Modifiers::NONE);
+    let k = keys_of(&h);
+    assert!(k[2].t < k[3].t, "the block passed an unselected key: {k:?}");
+    assert_eq!(k[2].t.0 - k[1].t.0, before[2].t.0 - before[1].t.0, "the distance inside the block changed");
+    assert_eq!(k[3], before[3], "the unselected neighbour moved");
+}
+
+/// Test 3115: Shift+click takes a key in and out; Shift on a sweep adds segments; a plain press on
+/// a key outside the selection drops it.
+#[test]
+fn t3115_shift_takes_keys_and_segments_in_and_out() {
+    let mut h = harness_keys(even_keys(4, |_| SegShape::Linear));
+    let p = seg_pt(&h, 1, 0.3);
+    click(&mut h, p, egui::Modifiers::COMMAND);
+    let p = key_pt(&h, 3);
+    click(&mut h, p, egui::Modifiers::SHIFT);
+    assert_eq!(selected_keys(&h), vec![1, 2, 3], "Shift+click did not take the key in");
+    let p = key_pt(&h, 2);
+    click(&mut h, p, egui::Modifiers::SHIFT);
+    assert_eq!(selected_keys(&h), vec![1, 3], "Shift+click did not take a segment's end out");
+    assert_eq!(keys_of(&h).len(), 5, "Shift+click on a key placed or removed a key");
+    // the drag moves keys 1 and 3; key 2, now outside, holds them both
+    let before = keys_of(&h);
+    let from = key_pt(&h, 1);
+    drag(&mut h, from, from + egui::vec2(-8.0, 0.0), egui::Modifiers::NONE);
+    let k = keys_of(&h);
+    assert_eq!(k[2], before[2], "the key taken out moved with the selection");
+    assert_eq!(k[1].t.0 - before[1].t.0, k[3].t.0 - before[3].t.0, "keys 1 and 3 did not move together");
+    assert_ne!(k[1].t, before[1].t, "nothing moved");
+    // a plain sweep selects anew, a Shift sweep adds
+    let (a, b) = (seg_pt(&h, 0, 0.2), seg_pt(&h, 0, 0.7));
+    drag(&mut h, a, b, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), vec![0], "the plain sweep did not start anew");
+    let (a, b) = (seg_pt(&h, 3, 0.2), seg_pt(&h, 3, 0.7));
+    drag(&mut h, a, b, egui::Modifiers::SHIFT);
+    assert_eq!(selected(&h), vec![0, 3], "the Shift sweep did not add the segment");
+    // a plain press on a key outside the selection drops it
+    let p = key_pt(&h, 2);
+    click(&mut h, p, egui::Modifiers::NONE);
+    assert!(selected(&h).is_empty() && selected_keys(&h).is_empty(), "a press outside kept the selection");
+}
+
+/// Test 3116: hovering a key says how to select keys and move them together, in every language.
+#[test]
+fn t3116_key_selection_is_said() {
+    let mut h = harness_keys(even_keys(4, |_| SegShape::Linear));
+    let p = key_pt(&h, 2);
+    h.hover_at(p);
+    h.step();
+    h.step();
+    let hint = h.state().hover_hint.clone().unwrap_or_default();
+    assert!(hint.contains(tr(k::fx::KEY_SELECT_HINT)), "the key hover does not say the selection: {hint}");
+    for lang in [crate::i18n::Lang::En, crate::i18n::Lang::Ru, crate::i18n::Lang::Es, crate::i18n::Lang::Zh, crate::i18n::Lang::Ar] {
+        crate::i18n::set_lang(lang);
+        let t = tr(k::fx::KEY_SELECT_HINT);
+        assert!(t.contains("Shift") || t.contains("Mayús"), "{lang:?}: the hint does not name Shift+click");
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+}

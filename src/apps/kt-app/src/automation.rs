@@ -116,6 +116,8 @@ pub struct AutoView {
     /// Screen midpoints of the segments of the active curve from the LAST draw:
     /// (key, point) — the probe of the handle by what is drawn, as for keys.
     pub seg_marks: Vec<(usize, egui::Pos2)>,
+    /// A joint drag of several selected keys in progress (curve-key-selection).
+    pub key_drag: Option<KeyDrag>,
 }
 
 /// Selected segments of ONE curve (segment-shape-fields), each by the TIME of its left key:
@@ -128,6 +130,11 @@ pub struct SegSel {
     pub left: Vec<Tick>,
     /// The last clicked segment — the start of a Shift+click run.
     pub anchor: Option<Tick>,
+    /// Keys taken in by Shift+click beyond the ends of the selected segments (curve-key-selection
+    /// D1), sorted.
+    pub keys: Vec<Tick>,
+    /// Segment ends taken OUT by Shift+click, sorted.
+    pub off: Vec<Tick>,
 }
 
 impl SegSel {
@@ -150,6 +157,8 @@ impl SegSel {
     pub fn clear(&mut self) {
         self.left.clear();
         self.anchor = None;
+        self.keys.clear();
+        self.off.clear();
     }
 
     /// Exactly this segment.
@@ -158,6 +167,75 @@ impl SegSel {
         self.left.clear();
         self.left.push(t);
         self.anchor = Some(t);
+        self.keys.clear();
+        self.off.clear();
+    }
+
+    /// Key `ki` of curve `ci` is selected: it ends a selected segment or was taken in by
+    /// Shift+click, and was not taken out (curve-key-selection D1). No allocation: read per key
+    /// in the draw loop.
+    pub fn key_on(&self, ci: usize, c: &ParamCurve, ki: usize) -> bool {
+        if ci != self.ci {
+            return false;
+        }
+        let Some(k) = c.keys.get(ki) else { return false };
+        if self.off.binary_search(&k.t).is_ok() {
+            return false;
+        }
+        if self.keys.binary_search(&k.t).is_ok() {
+            return true;
+        }
+        let starts = ki + 1 < c.keys.len() && self.left.binary_search(&k.t).is_ok();
+        let ends = ki > 0 && self.left.binary_search(&c.keys[ki - 1].t).is_ok();
+        starts || ends
+    }
+
+    /// Indices of the selected keys of curve `ci`, in order.
+    pub fn key_indices(&self, ci: usize, c: &ParamCurve) -> Vec<usize> {
+        (0..c.keys.len()).filter(|ki| self.key_on(ci, c, *ki)).collect()
+    }
+
+    /// Shift+click on a key: in or out. Another curve starts the selection anew.
+    pub fn toggle_key(&mut self, ci: usize, c: &ParamCurve, ki: usize) {
+        if self.ci != ci {
+            self.clear();
+            self.ci = ci;
+        }
+        let Some(t) = c.keys.get(ki).map(|k| k.t) else { return };
+        let on = self.key_on(ci, c, ki);
+        let flip = |v: &mut Vec<Tick>| match v.binary_search(&t) {
+            Ok(i) => {
+                v.remove(i);
+            }
+            Err(i) => v.insert(i, t),
+        };
+        if on {
+            // a taken-in key leaves the list; a segment end is masked out
+            match self.keys.binary_search(&t) {
+                Ok(i) => {
+                    self.keys.remove(i);
+                }
+                Err(_) => flip(&mut self.off),
+            }
+        } else if self.off.binary_search(&t).is_ok() {
+            flip(&mut self.off);
+        } else {
+            flip(&mut self.keys);
+        }
+    }
+
+    /// Every tick of the selection moved by `dt` (a joint key drag, D2): the order of the keys
+    /// is kept, so the lists stay sorted.
+    fn shifted(&mut self, from: &SegSel, dt: i64) {
+        let mv = |dst: &mut Vec<Tick>, src: &[Tick]| {
+            dst.clear();
+            dst.extend(src.iter().map(|t| Tick(t.0 + dt)));
+        };
+        self.ci = from.ci;
+        mv(&mut self.left, &from.left);
+        mv(&mut self.keys, &from.keys);
+        mv(&mut self.off, &from.off);
+        self.anchor = from.anchor.map(|t| Tick(t.0 + dt));
     }
 
     /// Ctrl+click: in or out; another curve starts the selection anew.
@@ -182,6 +260,18 @@ impl SegSel {
         self.ci = ci;
         self.left = ticks;
     }
+}
+
+/// A joint drag of the selected keys (curve-key-selection D2): the curve and the selection as
+/// they were at the press; every frame writes them shifted, so nothing accumulates.
+#[derive(Debug, Clone)]
+pub struct KeyDrag {
+    pub ci: usize,
+    pub grab: usize,
+    pub orig: Vec<kt_model::AutoKey>,
+    pub moved: Vec<usize>,
+    pub sel0: SegSel,
+    pub from_y: f32,
 }
 
 /// Drag of the shape-parameter handle (R.67).
@@ -1009,8 +1099,10 @@ fn graph(
         }
         for (ki, k) in c.keys.iter().enumerate() {
             let (x, y) = (x_of(k.t.0), y_of(k.v));
-            let selected = view.sel == Some((ci, ki));
-            let r = if selected { 6.0 } else { 4.5 };
+            // a key of the selection is filled white too (curve-key-selection), a size smaller
+            // than the key the person last grabbed
+            let selected = view.sel == Some((ci, ki)) || view.seg_sel.key_on(ci, c, ki);
+            let r = if view.sel == Some((ci, ki)) { 6.0 } else if selected { 5.0 } else { 4.5 };
             p.add(egui::Shape::convex_polygon(
                 vec![
                     egui::pos2(x, y - r),
@@ -1022,6 +1114,13 @@ fn graph(
                 egui::Stroke::new(1.0, col),
             ));
             view.key_marks.push((ci, ki, egui::pos2(x, y)));
+            // the keys of the active curve — the live scenario's targets (curve-key-selection)
+            if ci == view.active && crate::widgets::field_probe::on() {
+                crate::widgets::field_probe::note(
+                    &format!("auto.key.{ki}"),
+                    egui::Rect::from_center_size(egui::pos2(x, y), egui::vec2(2.0 * r, 2.0 * r)),
+                );
+            }
         }
         // SEGMENTS of the active curve — the target of the live scenario (R.63 item 5):
         // the right click must land BETWEEN keys, and only the drawing knows where they are.
@@ -1050,13 +1149,18 @@ fn graph(
         && let Some((ci, ki)) = view.key_at(hp)
         && let Some(key) = curves.get(ci).and_then(|c| c.keys.get(ki))
     {
+        // the key's place, then how to select keys and move them together (curve-key-selection)
         crate::app::hint_into(
             hover,
             resp.clone(),
-            &crate::tf!(
-                k::fx::KEY_AT,
-                format!("{:.3}", secs(key.t)),
-                format!("{:.0}", ctx.frac(key.t) * 100.0)
+            &format!(
+                "{} · {}",
+                crate::tf!(
+                    k::fx::KEY_AT,
+                    format!("{:.3}", secs(key.t)),
+                    format!("{:.0}", ctx.frac(key.t) * 100.0)
+                ),
+                tr(k::fx::KEY_SELECT_HINT)
             ),
         );
     } else if let Some(hp) = resp.hover_pos()
@@ -1271,7 +1375,13 @@ fn graph(
     }
 
     let Some(pos) = resp.interact_pointer_pos() else { return };
-    let on_ruler = pos.y < rect.top() + RULER_H;
+    // the gesture's zone is where it was PRESSED (curve-key-selection): a key pulled up past the
+    // plot's top used to drop the key and scrub the playhead instead
+    let press = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
+    let on_ruler = press.y < rect.top() + RULER_H;
+    // a drag starts where it was PRESSED: egui declares it past its threshold, and by then the
+    // pointer may have left the key's grab (a quick pull treated the key as empty space)
+    let hit = if resp.drag_started() { view.key_at(press) } else { hit };
     // mini-timeline: a gesture on the ruler moves the MAIN cursor — “it is immediately
     // visible what it belongs to” (reverse and speed are accounted for by the inverse
     // mapping material → timeline)
@@ -1296,9 +1406,8 @@ fn graph(
             view.seg_at(hp).map(|ki| (view.active, ki))
         }
     });
-    // grab — by the PRESS POINT: egui declares a drag when the pointer has already
-    // moved past the threshold, and the current position may be farther than the handle's grab
-    let press = ui.input(|i| i.pointer.press_origin()).unwrap_or(pos);
+    // grab — by the PRESS POINT (`press` above): egui declares a drag when the pointer has
+    // already moved past the threshold, and the current position may be farther than the grab
     if resp.drag_started()
         && hit.is_none()
         && let Some(ki) = view.seg_at(press)
@@ -1352,6 +1461,19 @@ fn graph(
     }
     // ---- SEGMENT SELECTION (segment-shape-fields) ----
     let (ctrl, shift) = ui.input(|i| (i.modifiers.ctrl || i.modifiers.command, i.modifiers.shift));
+    // Shift+click on a KEY takes it into the selection or out of it (curve-key-selection, the
+    // owner's U9: "шифтом прокликать ключи нужные")
+    if resp.clicked()
+        && shift
+        && let Some((ci, ki)) = hit
+        && let Some(c) = curves.get(ci)
+    {
+        view.active = ci;
+        view.seg_sel.toggle_key(ci, c, ki);
+        view.sel = Some((ci, ki));
+        view.seg_formula = None;
+        return;
+    }
     // Ctrl+click toggles a segment, Shift+click selects the run from the last clicked one;
     // neither places a key
     if resp.clicked()
@@ -1379,7 +1501,14 @@ fn graph(
     // a drag over EMPTY space sweeps the segments it covers (Ctrl — adds to the selection);
     // before this round such a drag did nothing
     if resp.drag_started() && hit.is_none() && view.shape_drag.is_none() && view.seg_at(press).is_none() {
-        let base = if ctrl && view.seg_sel.ci == view.active { view.seg_sel.left.clone() } else { Vec::new() };
+        // Ctrl or Shift add (the owner's U9: "шифтом выделить еще несколько участков"); a plain
+        // sweep starts anew, the keys taken in by Shift+click with it
+        let adds = (ctrl || shift) && view.seg_sel.ci == view.active;
+        if !adds {
+            view.seg_sel.keys.clear();
+            view.seg_sel.off.clear();
+        }
+        let base = if adds { view.seg_sel.left.clone() } else { Vec::new() };
         view.sweep = Some((press.x, base));
     }
     if resp.dragged()
@@ -1413,6 +1542,23 @@ fn graph(
                 let (lo, hi) = value_window(&curves[ci], spec);
                 view.drag_win = Some((ci, lo, hi));
             }
+            // a press on a key of the selection moves all of it; on any other key it drops
+            // the selection, as a click on empty space does (curve-key-selection D3)
+            if view.seg_sel.key_on(ci, &curves[ci], ki) {
+                let moved = view.seg_sel.key_indices(ci, &curves[ci]);
+                if resp.drag_started() && moved.len() > 1 {
+                    view.key_drag = Some(KeyDrag {
+                        ci,
+                        grab: ki,
+                        orig: curves[ci].keys.clone(),
+                        moved,
+                        sel0: view.seg_sel.clone(),
+                        from_y: press.y,
+                    });
+                }
+            } else {
+                view.seg_sel.clear();
+            }
         } else if resp.clicked() && view.seg_at(pos).is_none() {
             // a click on an empty spot — a new key on the active curve; it also drops the
             // segment selection (a plain click elsewhere deselects)
@@ -1428,6 +1574,53 @@ fn graph(
                 out.changed = true;
             }
         }
+    }
+    if resp.dragged()
+        && let Some(d) = &view.key_drag
+        && d.ci < curves.len()
+        && curves[d.ci].keys.len() == d.orig.len()
+    {
+        let ci = d.ci;
+        let Some(spec) = ctx.spec(&curves[ci].param).cloned() else { return };
+        let ax = axis_of(&spec);
+        let (lo, hi) = win_of(&curves[ci], &spec, view, ci);
+        let Some(d) = &view.key_drag else { return };
+        // the grabbed key follows the pointer on the frame grid; the others keep their distances
+        let raw = t_of(pos.x).clamp(m0, m1);
+        let step = ctx.frame_step.max(1);
+        let mut dt = raw - raw.rem_euclid(step) - d.orig[d.grab].t.0;
+        // never past an unselected neighbour (the order stays, no two keys on one tick), never
+        // out of the visible axis (a block already partly outside may still come in)
+        let (mut lo_dt, mut hi_dt) = (i64::MIN, i64::MAX);
+        for &i in &d.moved {
+            let t = d.orig[i].t.0;
+            if i > 0 && !d.moved.contains(&(i - 1)) {
+                lo_dt = lo_dt.max(d.orig[i - 1].t.0 - t + 1);
+            }
+            if i + 1 < d.orig.len() && !d.moved.contains(&(i + 1)) {
+                hi_dt = hi_dt.min(d.orig[i + 1].t.0 - t - 1);
+            }
+            lo_dt = lo_dt.max((m0 - t).min(0));
+            hi_dt = hi_dt.min((m1 - t).max(0));
+        }
+        dt = dt.clamp(lo_dt.min(0), hi_dt.max(0));
+        // the value shift on the graph's scale, each value inside its passport
+        let dg = (d.from_y - pos.y) as f64 / (plot.height() - 12.0).max(1.0) as f64 * (hi - lo);
+        let keys = &mut curves[ci].keys;
+        for &i in &d.moved {
+            let o = d.orig[i];
+            let v = ax.unmap(ax.map(o.v) + dg).clamp(spec.min, spec.max);
+            let k = kt_model::AutoKey::shaped(Tick(o.t.0 + dt), v, o.shape);
+            if keys[i] != k {
+                keys[i] = k;
+                out.changed = true;
+            }
+        }
+        let (grab, sel0) = (d.grab, d.sel0.clone());
+        view.seg_sel.shifted(&sel0, dt);
+        view.sel = Some((ci, grab));
+        view.drag = view.sel;
+        return;
     }
     if resp.dragged()
         && let Some((ci, ki)) = view.drag
@@ -1455,6 +1648,7 @@ fn graph(
     if resp.drag_stopped() {
         view.drag = None;
         view.drag_win = None;
+        view.key_drag = None;
     }
 }
 
