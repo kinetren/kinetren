@@ -228,7 +228,7 @@ impl KtApp {
         if editors.iter().any(|e| !e.open) {
             self.fx_thumbs.bump_generation();
             // the last window that renders scene cells closed: its sources close (chain-everywhere)
-            if editors.iter().all(|e| !e.open) && self.morph_editors.is_empty() {
+            if editors.iter().all(|e| !e.open) && self.morph_editors.is_empty() && self.transition_editors.is_empty() {
                 self.fx_thumbs.forget_scene();
             }
         }
@@ -697,6 +697,8 @@ impl KtApp {
                                     view,
                                     warn,
                                     &mut hover_out,
+                                    // a sound event has no picture: its kinds are names (as its effects)
+                                    if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
                                 );
                                 if let Some(t) = gen_edit.seek {
                                     seek = Some(t);

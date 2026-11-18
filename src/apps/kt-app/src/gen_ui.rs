@@ -618,7 +618,7 @@ pub struct GenCtx<'a> {
 /// It is drawn in the event’s effects window when the pinned head of the strip is selected. The generator and the title
 /// no longer have a window of their own: the owner asked to see
 /// the source as a crumb BEFORE the effects, in the same window.
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
 pub fn draw_gen_section(
     ui: &mut egui::Ui,
     ctx: &GenCtx<'_>,
@@ -627,27 +627,49 @@ pub fn draw_gen_section(
     view: &mut crate::automation::AutoView,
     warn: &mut GenWarn,
     hover: &mut Option<String>,
+    mut pv: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> GenEdit {
     let mut out = GenEdit::default();
     let clip = ctx.clip;
 
     // ---- kind: the same picker that was in both former windows -------------
+    // A gallery of cells, as the effects picker (kind-picker-previews, `v26.10` G6): each kind is the
+    // frame after the click, the event with that kind at the cursor; a sound kind is its name. The
+    // groups are the creation menu's (one list of kinds, rule 17).
+    let host_w = ui.clip_rect().width();
     ui.horizontal(|ui| {
         widgets::hint(&ui.label(tr(k::trn::KIND)), tr(k::genw::HINT_KIND));
-        egui::ComboBox::from_id_salt(("genkind", clip.id.0))
+        let combo = egui::ComboBox::from_id_salt(("genkind", clip.id.0))
             .selected_text(kind_name(kind))
+            .height(widgets::popup_list_height(ui))
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show_ui(ui, |ui| {
-                for kd in GeneratorKind::all() {
-                    let same = kd.tag() == kind.tag();
-                    let r = ui.selectable_label(same, kind_name(&kd));
-                    crate::widgets::field_probe::note(&format!("genw.kind.{}", kd.tag()), r.rect);
-                    if r.clicked() && !same {
-                        // changing the kind = its defaults: the parameters of
-                        // the kinds differ, so there is nothing to carry over
-                        out.switch_kind = Some(kd);
+                crate::fx_thumbs::gallery_width(ui, host_w);
+                for grp in GenGroup::ALL {
+                    let kinds: Vec<GeneratorKind> = GeneratorKind::all().into_iter().filter(|kd| GenGroup::of(kd) == grp).collect();
+                    if kinds.is_empty() {
+                        continue;
                     }
+                    ui.label(egui::RichText::new(grp.name()).small().weak());
+                    ui.horizontal_wrapped(|ui| {
+                        for kd in kinds {
+                            let same = kd.tag() == kind.tag();
+                            let swap = (!is_sound(&kd)).then(|| crate::fx_thumbs::Swap::Gen(clip.id, kd.clone()));
+                            let probe = format!("genw.kind.{}", kd.tag());
+                            let r = crate::fx_thumbs::kind_cell(ui, pv.as_deref_mut(), swap.as_ref(), kind_name(&kd), same, &probe);
+                            if r.clicked() {
+                                if !same {
+                                    // changing the kind = its defaults: the parameters of
+                                    // the kinds differ, so there is nothing to carry over
+                                    out.switch_kind = Some(kd);
+                                }
+                                ui.close();
+                            }
+                        }
+                    });
                 }
             });
+        crate::widgets::field_probe::note("genw.kind.pick", combo.response.rect);
     });
     if out.switch_kind.is_some() {
         // the kind goes away entirely — there is no point drawing the old form any further

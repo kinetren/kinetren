@@ -431,7 +431,7 @@ const EFFECT_CARD_W: f32 = 3.0 * CELL_DRAW_W + 16.0;
 const EFFECT_NAME_W: f32 = 200.0;
 /// Drawn cell size (stored twice as large — hidpi).
 pub(crate) const CELL_DRAW_W: f32 = 80.0;
-const CELL_DRAW_H: f32 = 45.0;
+pub(crate) const CELL_DRAW_H: f32 = 45.0;
 
 /// Where the open picker's frame is kept for the harness.
 pub(crate) fn popup_id() -> egui::Id {

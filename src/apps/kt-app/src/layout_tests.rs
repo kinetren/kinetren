@@ -21528,3 +21528,41 @@ fn t3104_marker_over_the_region_is_new_and_stretching_is_its_own_item() {
     h.step();
     assert!(markers(&h).is_empty(), "a repeat removes the equal range: {:?}", markers(&h));
 }
+
+/// Test 3110 (kind-picker-previews, `v26.10` G6): the transition kind picker is a gallery of cells as
+/// the effects picker — a cell per kind under its family, the current kind marked, each cell asking
+/// the effect cells' service for the cut after its click once the misclick guard passed — and a click
+/// on a cell changes the kind and closes the gallery.
+/// - **PATH** double-click a transition → its window; click the Kind field → a gallery of pictures
+///   by family, each the cut at the middle of the window with that kind ("Loading" for the first
+///   second); click the Iris picture → the window shows Iris, the gallery is gone.
+#[test]
+fn t3110_transition_kind_picker_is_a_gallery_of_cells() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_model::{TransitionId, TransitionKind};
+    let mut h = harness_sized(1600.0, 900.0);
+    transition_scene(&mut h);
+    h.step();
+    h.step();
+    // the misclick guard is a second from the window's opening: the test does not sleep
+    h.state_mut().transition_editors[0].opened_at = std::time::Instant::now() - std::time::Duration::from_secs(2);
+    let fade = crate::transition_editor::kind_name(&TransitionKind::Crossfade);
+    h.get(by().role(Role::ComboBox).value(fade)).click();
+    h.step();
+    h.step();
+    let iris = TransitionKind::builtin("iris");
+    let cell = crate::widgets::field_probe::rect_of("trkind.iris").expect("the Iris cell is not published");
+    assert!(
+        cell.width() >= crate::fx_registry::CELL_DRAW_W - 0.5,
+        "a kind is not a picture cell but a row: {cell:?}"
+    );
+    assert!(crate::widgets::field_probe::rect_of("trkind.crossfade").is_some(), "the current kind has no cell");
+    assert!(h.state().fx_thumbs.asked() > 0, "the cells asked the service for nothing");
+    h.get_by_label(crate::transition_editor::kind_name(&iris)).click();
+    h.step();
+    h.step();
+    let kind = h.state().model.project().transitions.iter().find(|t| t.id == TransitionId(1)).unwrap().kind.clone();
+    assert_eq!(kind.tag(), "iris", "the click on the cell did not change the kind");
+    assert!(h.query_by_label(fade).is_none(), "the gallery stayed open after the pick");
+}
