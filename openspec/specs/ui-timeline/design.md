@@ -467,3 +467,13 @@ behaviour, stretch included (t142 is frozen; his words were about the menu item)
 `markers` as [tick, length] for scenarios. Class walk (one name, results by hidden state): "Marker here",
 "Clear the region", the marker menu's items and the empty-space region items each have one result; only
 this item changed.
+
+## A marker's note at its flag (marker-notes, 2026-11-18)
+
+The inline-field pattern of the marker's name, multi-line: Enter is a new line, so the note is kept
+by Ctrl+Enter or a click elsewhere (a stray click does not throw a typed note away) and Esc cancels;
+one `SetMarkerNote` when it closes. The note glyph (Phosphor `note`) stands after the name on the
+time-label row (rule 13), the text is read in the status line on hover (rule 10), its lines joined by
+" · ". Class walk (a remark with only a name to hold it): areas, events, tracks, the bin's media and
+groups have names only and no request; reels have their public parameters' author text. "с пометками"
+is read as free text with lines; a checklist or styled text would be a question to him.

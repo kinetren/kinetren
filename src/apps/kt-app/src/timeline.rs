@@ -3238,9 +3238,14 @@ impl KtApp {
                 // it comes first as at the press: over a region edge the ruler gives the end
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 zone_hint = Some(tr(k::tl::hint::MARKER_END));
-            } else if marker_at(self, pos).is_some() {
+            } else if let Some(mt) = marker_at(self, pos) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                zone_hint = Some(tr(k::tl::hint::MARKER));
+                // a marker with a note: the status line reads the note (the one place of hints,
+                // rule 10); its lines are joined, the line is one
+                match self.model.project().markers.iter().find(|k| k.t.0 == mt).filter(|k| !k.note.is_empty()) {
+                    Some(k) => hint_owned = Some(k.note.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(" · ")),
+                    None => zone_hint = Some(tr(k::tl::hint::MARKER)),
+                }
             } else if region_edge_at(self, pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 zone_hint = Some(tr(k::tl::hint::REGION_EDGE));
@@ -5761,9 +5766,11 @@ impl KtApp {
             // the flag (item 3 round 12: a separate strip for markers stood empty).
             // It is drawn after the ruler, so the amber name covers
             // the grey time digit, and not the other way round.
+            let mut name_w = 0.0;
             if !m.name.is_empty() {
                 let font = egui::FontId::proportional(10.5);
                 let g = full_painter.layout_no_wrap(m.name.clone(), font, amber);
+                name_w = g.size().x + 4.0;
                 let at = egui::pos2(x + 7.0, top + 1.0);
                 // backing: the name lies over the time digit, and without it they
                 // merge into a mess (checked live, item 3 round 12)
@@ -5773,6 +5780,68 @@ impl KtApp {
                     egui::Color32::from_rgba_unmultiplied(12, 13, 16, 235),
                 );
                 full_painter.galley(at, g, amber);
+            }
+            // a marker with a NOTE (marker-notes): the note glyph after the name (or after the
+            // flag), on the same row — the text itself is the hover's status line
+            if !m.note.is_empty() {
+                let font = egui::FontId::proportional(10.5);
+                let g = full_painter.layout_no_wrap(crate::icons::MARKER_NOTE.to_string(), font, amber);
+                let at = egui::pos2(x + 7.0 + name_w, top + 1.0);
+                let r = egui::Rect::from_min_size(at, g.size());
+                full_painter.rect_filled(r.expand2(egui::vec2(2.0, 0.0)), 2.0, egui::Color32::from_rgba_unmultiplied(12, 13, 16, 235));
+                full_painter.galley(at, g, amber);
+                // the probe's name is built only where a dump or a harness reads it (no allocation per frame)
+                if cfg!(test) || crate::widgets::field_probe::on() {
+                    crate::widgets::field_probe::note(&format!("tl.marker_note_mark.{}", m.t.0), r);
+                }
+            }
+        }
+
+        // ---- inline marker NOTE entry (marker-notes, `v26.10` U8) ----------------
+        // Multi-line: Enter is a new line; Ctrl+Enter or a click elsewhere keeps the text (a note
+        // typed is not thrown away by a stray click), Esc cancels. One undo step when it closes.
+        if let Some(ed) = self.marker_note.clone() {
+            let x = tick_to_x(ed.at);
+            let mut buf = ed.buf.clone();
+            let mut focus = ed.focus;
+            let mut done: Option<bool> = None;
+            egui::Area::new(egui::Id::new("marker-note-edit"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(x + 6.0, rect.top() + TIME_TOP))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        let r = ui.add(
+                            egui::TextEdit::multiline(&mut buf)
+                                .id(egui::Id::new("marker-note-field"))
+                                .hint_text(tr(k::tl::field::MARKER_NOTE))
+                                .desired_rows(4)
+                                .desired_width(260.0),
+                        );
+                        crate::widgets::field_probe::note("tl.marker_note.field", r.rect);
+                        if focus {
+                            r.request_focus();
+                            focus = false;
+                        }
+                        let ctrl_enter = ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
+                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            done = Some(false);
+                        } else if ctrl_enter || (r.lost_focus() && !r.has_focus()) {
+                            done = Some(true);
+                        }
+                    });
+                });
+            match done {
+                Some(true) => {
+                    self.marker_note = None;
+                    // a trailing newline from Ctrl+Enter or the end of typing is not part of the note
+                    let note = buf.trim_end().to_string();
+                    let same = self.model.project().markers.iter().any(|m| m.t.0 == ed.at && m.note == note);
+                    if !same {
+                        self.apply(Command::SetMarkerNote { at: Tick(ed.at), note });
+                    }
+                }
+                Some(false) => self.marker_note = None,
+                None => self.marker_note = Some(crate::app::MarkerNoteEdit { buf, focus, ..ed }),
             }
         }
 
@@ -6969,6 +7038,15 @@ impl KtApp {
                     self.marker_edit =
                         Some(crate::app::MarkerEdit { at: m, buf: name, is_new: false });
                     self.marker_edit_focus = true;
+                    ui.close();
+                }
+                // the marker's note (marker-notes): any text, several lines
+                let note = self.model.project().markers.iter().find(|k| k.t.0 == m).map(|k| k.note.clone()).unwrap_or_default();
+                let b = ui.button(tr(k::tl::menu::MARKER_NOTE));
+                crate::widgets::field_probe::note("tl.marker_note", b.rect);
+                if b.clicked() {
+                    self.marker_edit = None;
+                    self.marker_note = Some(crate::app::MarkerNoteEdit { at: m, buf: note, focus: true });
                     ui.close();
                 }
                 let is_range =

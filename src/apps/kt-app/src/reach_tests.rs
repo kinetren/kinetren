@@ -6752,6 +6752,8 @@ fn no_teaching_layer_over_the_ui() {
         "speed-drag-overlay",
         "bin-group-name",
         "marker-name-edit",
+        // the marker's note typed at its flag (marker-notes), the same inline field as its name
+        "marker-note-edit",
         "lane-name-edit",
         "area-name-edit",
     ];

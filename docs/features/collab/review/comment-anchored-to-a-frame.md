@@ -10,13 +10,13 @@ we_have: partial
 crates: [kt-model, kt-otio, kt-app]
 invariants: []
 ui_rules: [13]
-round: null
-point: null
-tests: []
+round: features-slow
+point: change marker-notes
+tests: [t3111, t3112, t3113]
 depends_on: []
 trackers: []
 services: [frame-io, bm-cloud]
-checked: 2026-09-08
+checked: 2026-11-18
 ---
 
 # F-COL-020 — A comment anchored to a frame
@@ -105,7 +105,7 @@ NETWORK COST: both sides are obliged to look at ONE and the same immutable video
 
 ### What is missing
 
-- Text for a marker: a second string field which does NOT take part in the namespace and therefore can hold any phrase (analysis — F-COL-022).
+- ~~Text for a marker~~ — done by `marker-notes` (2026-11-18, `v26.10` U8): `Marker.note`, multi-line, outside the namespace; OTIO `comment` is that note both ways. The author and time of a remark stay with F-COL-022.
 - A "done" mark — a state of the remark; today a marker either exists or does not.
 - A way to say to which state of the edit a remark refers: not a network, but a revision of the document that can be written into the file.
 
@@ -131,6 +131,8 @@ None of the twelve: a marker takes part neither in the composition, nor in the a
 | Breaks compatibility | no |
 
 ## Verdict
+
+Done (2026-11-18, change `marker-notes`, the owner's `v26.10` U8 "нужен механизм заметок (чтобы прям можно было текст писать многострочный…)"): a marker carries a multi-line note, typed at its flag from its right-click menu, read in the status line on hover, shown as a glyph after its name; the file is format 5 when a note exists; `comment` of `Marker.2` is the note on import and export. The rest of this verdict (a "done" mark, the revision a remark is about) is not taken.
 
 We take the local half and do not introduce the server half: there is no second participant, while a field for the text of a remark is useful even for one person — today the editor writes "re-shoot" into the name of a marker, which is at the same time the address of a named range.
 

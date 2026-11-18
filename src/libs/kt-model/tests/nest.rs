@@ -1182,6 +1182,7 @@ fn foreign() -> Project {
         duration: Tick::ZERO,
         name: "foreign marker".into(),
         color: Default::default(),
+        note: String::new(),
     });
     p.validate().expect("a foreign project is legal");
     p

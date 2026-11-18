@@ -43,6 +43,7 @@ pub const LIST: &str = "\u{E2F0}"; // list; it is also the “hamburger” of th
 pub const CHECK: &str = "\u{E182}"; // check mark in menu items (≡/✓ from Unicode — tofu, test t100)
 #[allow(dead_code)] // used by the bin groups (item 13 of round 11)
 pub const LOCK: &str = "\u{E2FA}"; // lock (bin groups)
+pub const MARKER_NOTE: &str = "\u{E348}"; // note (a marker carries a note, marker-notes)
 pub const ARROWS_OUT: &str = "\u{E0A2}"; // free layout
 // the guide's "→" and "←" (no font of ours has U+2190/U+2192 — t100)
 pub const ARROW_RIGHT: &str = "\u{E06C}"; // arrow-right

@@ -2733,6 +2733,11 @@ pub struct Marker {
     /// Color of OTIO Marker.2 — round-trip of foreign files; the UI draws in its own style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// The marker's NOTE (marker-notes, `v26.10` U8, F-COL-020): multi-line text of a remark,
+    /// separate from the name — the name is an address of named ranges and areas, the note any
+    /// phrase. OTIO Marker.2 `comment` carries it. A file with a note is format 5.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }
 
 fn tick_is_zero(t: &Tick) -> bool {
@@ -2790,10 +2795,10 @@ pub fn unique_name(taken: &[String], wanted: &str, stem: &str) -> String {
 
 impl Marker {
     pub fn at(t: Tick) -> Marker {
-        Marker { t, duration: Tick::ZERO, name: String::new(), color: None }
+        Marker { t, duration: Tick::ZERO, name: String::new(), color: None, note: String::new() }
     }
     pub fn named(t: Tick, name: impl Into<String>) -> Marker {
-        Marker { t, duration: Tick::ZERO, name: name.into(), color: None }
+        Marker { t, duration: Tick::ZERO, name: name.into(), color: None, note: String::new() }
     }
     /// End of the range (== the start for a point marker).
     pub fn end(&self) -> Tick {
@@ -2820,12 +2825,14 @@ impl<'de> Deserialize<'de> for Marker {
                 name: String,
                 #[serde(default)]
                 color: Option<String>,
+                #[serde(default)]
+                note: String,
             },
         }
         Ok(match Repr::deserialize(d)? {
             Repr::Bare(t) => Marker::at(Tick(t)),
-            Repr::Full { t, duration, name, color } => {
-                Marker { t: Tick(t), duration: Tick(duration.max(0)), name, color }
+            Repr::Full { t, duration, name, color, note } => {
+                Marker { t: Tick(t), duration: Tick(duration.max(0)), name, color, note }
             }
         })
     }
@@ -6397,6 +6404,11 @@ impl Project {
                 || reel.tracks().iter().any(|t| t.fx.iter().any(sound))
                 || reel.morphers().iter().any(|m| m.patch.audio_fx.iter().chain(&m.patch.video_fx).any(sound))
         })
+    }
+
+    /// Whether a marker carries a note (marker-notes): the file is then format 5.
+    pub fn has_marker_notes(&self) -> bool {
+        self.markers.iter().any(|m| !m.note.is_empty())
     }
 
     pub fn has_masks(&self) -> bool {

@@ -246,7 +246,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 name: m.name.clone(),
                 color: m.color.clone().unwrap_or_else(Marker::default_color),
                 marked_range: range(m.t, m.duration),
-                comment: ex.comment,
+                // the note is the model's (marker-notes); a passthrough of an older project
+                // file still holding a comment in its extras gives it when the note is empty
+                comment: if m.note.is_empty() { ex.comment } else { m.note.clone() },
                 metadata: ex.metadata,
                 extra: ex.extra,
             })
@@ -1538,11 +1540,13 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
     for m in &tl.tracks.markers {
         match m {
             MarkerNode::Marker(mk) => {
-                if !mk.comment.is_empty() || !mk.metadata.is_empty() || !mk.extra.is_empty() {
+                // the comment is the marker's NOTE (marker-notes): the model holds it, the extras
+                // keep only what the model does not know
+                if !mk.metadata.is_empty() || !mk.extra.is_empty() {
                     retained.stack_marker_extras.push((
                         p.markers.len(),
                         MarkerExtra {
-                            comment: mk.comment.clone(),
+                            comment: String::new(),
                             metadata: mk.metadata.clone(),
                             extra: mk.extra.clone(),
                         },
@@ -1553,6 +1557,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                     duration: Tick(mk.marked_range.duration.to_ticks().0.max(0)),
                     name: mk.name.clone(),
                     color: Some(mk.color.clone()),
+                    note: mk.comment.clone(),
                 })
             }
             MarkerNode::Unknown(_) => retained.stack_markers_foreign.push(m.clone()),
