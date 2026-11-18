@@ -26,11 +26,14 @@ OWN_PROCESS = True
 
 
 def cache_files(out):
-    """The render cache's files under the scenario's data directory."""
+    """The moments the render cache holds: the keys of its segments' manifests."""
     root = os.path.join(out, "xdg", "kinetren", "render-cache")
     n = 0
-    for _, _, files in os.walk(root):
-        n += sum(1 for f in files if f.endswith(".ktf"))
+    for top, _, files in os.walk(root):
+        for f in files:
+            if f.endswith(".idx"):
+                with open(os.path.join(top, f)) as m:
+                    n += sum(1 for line in m if line.startswith("key "))
     return n
 
 
@@ -44,6 +47,9 @@ def counted(answer, prefix):
 
 def main(out):
     require_tools()
+    # the virtual screen has no hardware encoder, and the cache takes no processor codec on its own
+    # (kkt-26.11.18b U4): the scenario forces the export's software H.264 to run the same path
+    os.environ.setdefault("KT_RENDER_CACHE_ENCODER", "libx264")
     sources = fixture_sources(os.path.join(out, "sources"))
     proj = os.path.join(out, "heavy.kt")
     subprocess.run([kt_live.KT_CLI, "showcase", proj, "--sources", sources, "--heavy", "--force"],

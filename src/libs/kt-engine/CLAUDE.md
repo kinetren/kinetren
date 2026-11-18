@@ -192,7 +192,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   (`note_leaf`: a file's path/size/mtime, a generator's `src_rev`, every file for a stream stage),
   salted by the program build and the device (the folder). **A new field `plan_hash` hashes is
   hashed by `durable_hash` too**, and a new input of a leaf's picture that a content serial stood for
-  reaches `note_leaf`, or a stale picture comes back from disk after a restart. Reads before composing:
+  reaches `note_leaf`, or a stale picture comes back from disk after a restart. The pictures are
+  SEGMENTS of hardware-encoded video (render-cache-codec, the owner's kkt-26.11.18b U4): the host's
+  `Config::codec` (`kt_media::segment`), hardware encoders only, every frame a keyframe, a manifest of
+  codec, encoder and keys; no hardware encoder → the store writes nothing and `status()` says why; one
+  `render-cache-read` thread owns the readers (invariant 5). Tests use `RawSegments`. Reads before composing:
   the producer (before its decoded check), `show_kept`, the bytes path (`disk_bytes`); a restored moment
   is kept under `restored_key(present, durable)`. Writes only by the player's `render-cache` thread at
   rest: moments the cost map measured at least half a frame period and their unmeasured neighbours,

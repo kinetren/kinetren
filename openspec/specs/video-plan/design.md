@@ -787,3 +787,13 @@ exception to "the program at rest costs nothing". Full record: `openspec/changes
   whole in 20 s (V-fps 5.6, 9.5 cores); the restart over the store showed every lap whole from lap 0
   (V-fps 25.0, 0 incomplete, 0.2 cores). The `idle` live scenario on the heavy project rests at 1 % of a
   core once the run is on disk.
+
+## The prerender's storage is hardware-encoded video (render-cache-codec, 2026-11-18; kkt-26.11.18b U4, U5)
+
+The owner refused raw frames and processor codecs ("слабо я верю что ffv1 аппаратно ускорен") and decided
+"сделай ты сжатие видео нормальное": segments of consecutive moments, every frame a keyframe, H.264 by the
+export's hardware cascade in-process; no hardware encoder → no writes, said in Diagnostics and the trace;
+lossy accepted (the export never reads it). The key stays the plan's durable hash, apart from codec and
+container, written per frame in each segment's manifest so the cached final render (F-EXP-003) can match
+it later. Measured at 360p: ~95 KB a frame (~140 MB a minute at 25 fps), a few ms of a core to read a moment
+against ~215 ms of device to compose it. Full record: `openspec/changes/archive/2026-11-18-render-cache-codec/`.

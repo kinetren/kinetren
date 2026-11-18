@@ -14,7 +14,7 @@ fn frame(i: u32) -> Vec<u8> {
     for y in 0..H {
         for x in 0..W {
             let r = ((x + i * 7) % 256) as u8;
-            let g = if (x / 40 + y / 30 + i) % 2 == 0 { 40 } else { 210 };
+            let g = if (x / 40 + y / 30 + i).is_multiple_of(2) { 40 } else { 210 };
             let b = ((y * 255) / H) as u8;
             v.extend_from_slice(&[r, g, b, 255]);
         }
@@ -58,13 +58,16 @@ fn t2986_a_segment_is_written_by_the_hardware_encoder_or_refused() {
         }
     };
     assert_eq!(w.encoder(), "libx264");
+    let t0 = std::time::Instant::now();
     for i in 0..6 {
         w.push(&frame(i)).unwrap();
     }
     let bytes = w.finish().unwrap();
+    eprintln!("t2986: libx264 {W}×{H}: {:.1} ms a frame written, {} bytes a frame", t0.elapsed().as_secs_f64() * 1e3 / 6.0, bytes / 6);
     assert!(bytes > 0 && bytes < 6 * (W * H * 4) as u64 / 4, "{bytes} bytes for six frames");
     let mut r = codec.reader(&path).unwrap();
     let mut out = Vec::new();
+    let t0 = std::time::Instant::now();
     for i in [3u32, 0, 5, 1, 4, 2] {
         r.frame(i, W, H, &mut out).unwrap();
         let want = frame(i);
@@ -73,4 +76,5 @@ fn t2986_a_segment_is_written_by_the_hardware_encoder_or_refused() {
         let mean = diff as f64 / out.len() as f64;
         assert!(mean < 3.0, "frame {i}: mean difference {mean:.2}");
     }
+    eprintln!("t2986: {:.1} ms a frame read back out of order", t0.elapsed().as_secs_f64() * 1e3 / 6.0);
 }
