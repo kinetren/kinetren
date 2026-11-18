@@ -1594,8 +1594,10 @@ impl KtApp {
                 why: "an export runs for minutes; an Esc meant for the timeline must not kill it, and the window has its own Cancel",
             },
         )
-            .default_size([2.0 * FORM_W + 40.0, 520.0])
-            .default_pos(ctx.content_rect().center() - egui::vec2(FORM_W + 20.0, 260.0))
+            // 600: the loudness table (four rows with their norms, F-EXP-009) sits under the
+            // summary; at 520 its last row — the channels — opened under the fold
+            .default_size([2.0 * FORM_W + 40.0, 600.0])
+            .default_pos(ctx.content_rect().center() - egui::vec2(FORM_W + 20.0, 300.0))
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
                     // the forms side by side when there is room, else one under the other (rule 3)
@@ -1655,17 +1657,12 @@ impl KtApp {
                                 );
                             }
                             // Loudness is computed on the same pass (R.49, item 371), FOR
-                            // REFERENCE: the normalization target is a person's choice
-                            if let Some(l) = stats.loudness
-                                && let Some(lufs) = l.lufs
-                            {
-                                ui.label(crate::tf!(
-                                    k::render::LOUDNESS,
-                                    format!("{lufs:.1}"),
-                                    format!("{:.1}", l.dbtp),
-                                    format!("{:.1}", l.lra)
-                                ));
-                                ui.weak(crate::tf!(k::render::LOUDNESS_TO_TARGET, format!("{:+.1}", -23.0 - lufs)));
+                            // REFERENCE: the normalization target is a person's choice. Each value
+                            // stands against its norm and a bad one is coloured (F-EXP-009, v26.10
+                            // T14: "на цифры вообще внимание не обратишь … не понятно что является
+                            // нормой у каждого параметра")
+                            if let Some(l) = stats.loudness {
+                                loudness_table(ui, &l);
                             }
                             if stats.missing_video_layers > 0 {
                                 ui.colored_label(
@@ -1807,4 +1804,108 @@ impl KtApp {
             self.warn(crate::tf!(k::render::OPEN_FAILED, p.display()));
         }
     }
+}
+
+/// How a loudness value stands against its norm (F-EXP-009).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Verdict {
+    Ok,
+    /// Outside the norm, not a fault in every delivery (amber).
+    Off,
+    /// Wrong anywhere: a peak over the ceiling, a silent or far-off channel (the error colour).
+    Bad,
+}
+
+/// One row of the render's loudness table: what, its value, its norm, how it stands.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct LoudRow {
+    pub what: crate::i18n::Key,
+    pub value: String,
+    pub norm: crate::i18n::Key,
+    pub verdict: Verdict,
+}
+
+/// The norms (EBU R 128 / Tech 3342 and the streaming platforms' −14), one place:
+/// integrated within 1 LU of −23 or −14, louder than −9 bad anywhere; true peak at most −1 dBTP;
+/// range at most 20 LU; the channels within 3 LU of each other, 6 LU or a silent one bad.
+pub(crate) fn loudness_rows(l: &kt_fx::audio::loudness::Loudness) -> Vec<LoudRow> {
+    let mut rows = Vec::with_capacity(4);
+    if let Some(lufs) = l.lufs {
+        let near = |t: f64| (lufs - t).abs() <= 1.0;
+        let verdict = if lufs > -9.0 {
+            Verdict::Bad
+        } else if near(-23.0) || near(-14.0) {
+            Verdict::Ok
+        } else {
+            Verdict::Off
+        };
+        rows.push(LoudRow {
+            what: k::render::LOUD_INTEGRATED,
+            value: crate::tf!(k::render::LOUD_LUFS, format!("{lufs:.1}")),
+            norm: k::render::LOUD_NORM_INTEGRATED,
+            verdict,
+        });
+    } else {
+        rows.push(LoudRow {
+            what: k::render::LOUD_INTEGRATED,
+            value: tr(k::render::LOUD_SILENT).to_string(),
+            norm: k::render::LOUD_NORM_INTEGRATED,
+            verdict: Verdict::Bad,
+        });
+    }
+    let peak = l.dbtp;
+    rows.push(LoudRow {
+        what: k::render::LOUD_PEAK,
+        value: if peak.is_finite() {
+            crate::tf!(k::render::LOUD_DBTP, format!("{peak:.1}"))
+        } else {
+            tr(k::render::LOUD_SILENT).to_string()
+        },
+        norm: k::render::LOUD_NORM_PEAK,
+        verdict: if peak > -1.0 { Verdict::Bad } else { Verdict::Ok },
+    });
+    rows.push(LoudRow {
+        what: k::render::LOUD_RANGE,
+        value: crate::tf!(k::render::LOUD_LU, format!("{:.1}", l.lra)),
+        norm: k::render::LOUD_NORM_RANGE,
+        verdict: if l.lra > 20.0 { Verdict::Off } else { Verdict::Ok },
+    });
+    let [a, b] = [l.channels[0].lufs, l.channels[1].lufs];
+    let side = |v: Option<f64>| v.map_or_else(|| tr(k::render::LOUD_SILENT).to_string(), |x| format!("{x:.1}"));
+    let verdict = match (a, b) {
+        (Some(a), Some(b)) if (a - b).abs() > 6.0 => Verdict::Bad,
+        (Some(a), Some(b)) if (a - b).abs() > 3.0 => Verdict::Off,
+        (Some(_), Some(_)) | (None, None) => Verdict::Ok,
+        _ => Verdict::Bad,
+    };
+    rows.push(LoudRow {
+        what: k::render::LOUD_CHANNELS,
+        value: crate::tf!(k::render::LOUD_LR, side(a), side(b)),
+        norm: k::render::LOUD_NORM_CHANNELS,
+        verdict,
+    });
+    rows
+}
+
+/// The table in the result block: the value in the error colour when it is out (rule 16), the norm
+/// beside it, a weak line saying nothing was applied.
+pub(crate) fn loudness_table(ui: &mut egui::Ui, l: &kt_fx::audio::loudness::Loudness) {
+    ui.label(egui::RichText::new(tr(k::render::LOUD_TITLE)).strong());
+    egui::Grid::new("render-loudness").num_columns(3).spacing([12.0, 2.0]).show(ui, |ui| {
+        for r in loudness_rows(l) {
+            ui.label(tr(r.what));
+            let text = egui::RichText::new(&r.value);
+            let shown = match r.verdict {
+                Verdict::Ok => ui.label(text),
+                Verdict::Off => ui.label(text.color(egui::Color32::from_rgb(255, 190, 120))),
+                Verdict::Bad => ui.label(text.color(egui::Color32::from_rgb(255, 120, 120)).strong()),
+            };
+            if r.verdict == Verdict::Bad {
+                crate::widgets::field_probe::note("render.loud.bad", shown.rect);
+            }
+            ui.weak(tr(r.norm));
+            ui.end_row();
+        }
+    });
+    ui.weak(tr(k::render::LOUD_NOTE));
 }

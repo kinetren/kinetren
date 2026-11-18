@@ -173,3 +173,31 @@ fn t405_chunking_does_not_change_the_result() {
     );
     assert!(l < -19.5, "loudness is overstated: {l:.2} LUFS with phrases at −20");
 }
+
+/// t3106 (render-loudness-norms, F-EXP-009): each channel on its own. A balanced pair reads equal
+/// channels 3 LU under the summed value; one channel 10 dB down reads 10 LU down; a silent channel
+/// has no level and no peak while the summed value still passes as "a bit quiet" — the case the
+/// summed number hides. A quiet channel's true peak is its own, not cut by the loud one's gate.
+#[test]
+fn t3106_each_channel_is_measured_on_its_own() {
+    let amp = 10f32.powf(-20.0 / 20.0);
+    let pair = |l: f32, r: f32| -> Vec<f32> {
+        sine(1000.0, 1.0, 20.0).chunks_exact(AUDIO_CHANNELS).flat_map(|f| [f[0] * l, f[1] * r]).collect()
+    };
+    let both = measure(&pair(amp, amp));
+    let sum = both.lufs.unwrap();
+    for c in both.channels {
+        let l = c.lufs.expect("a tone has a level");
+        assert!(((sum - l) - 3.01).abs() <= 0.1, "a balanced channel is 3 LU under the sum: {l:.2} vs {sum:.2}");
+        assert!((c.dbtp + 20.0).abs() <= 0.2, "the channel's peak: {:.2}", c.dbtp);
+    }
+    let lean = measure(&pair(amp, amp * 10f32.powf(-10.0 / 20.0)));
+    let (l, r) = (lean.channels[0].lufs.unwrap(), lean.channels[1].lufs.unwrap());
+    assert!(((l - r) - 10.0).abs() <= 0.1, "10 dB down reads 10 LU down: {l:.2} {r:.2}");
+    assert!((lean.channels[1].dbtp + 30.0).abs() <= 0.2, "the quiet channel's own true peak: {:.2}", lean.channels[1].dbtp);
+    let one = measure(&pair(amp, 0.0));
+    assert!(one.lufs.is_some(), "the summed value passes");
+    assert_eq!(one.channels[1].lufs, None, "a silent channel has no level");
+    assert_eq!(one.channels[1].dbtp, f64::NEG_INFINITY, "a silent channel has no peak");
+    assert!((one.lufs.unwrap() - one.channels[0].lufs.unwrap()).abs() <= 0.1, "the sum is the one channel");
+}

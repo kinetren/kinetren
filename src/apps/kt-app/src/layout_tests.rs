@@ -21528,3 +21528,43 @@ fn t3104_marker_over_the_region_is_new_and_stretching_is_its_own_item() {
     h.step();
     assert!(markers(&h).is_empty(), "a repeat removes the equal range: {:?}", markers(&h));
 }
+
+/// t3107 (render-loudness-norms, F-EXP-009, `v26.10` T14): the render's loudness stands against its
+/// norms. A mix at −23 LUFS / −3 dBTP / balanced is all plain; a peak over −1 dBTP, a silent channel
+/// and channels 10 LU apart are drawn in the error colour, 4 LU apart in amber; each row prints its
+/// norm next to the value.
+#[test]
+fn t3107_render_loudness_values_stand_against_their_norms() {
+    use crate::render_dialog::{Verdict, loudness_rows};
+    use kt_fx::audio::loudness::{ChannelLoudness, Loudness};
+    let ch = |lufs: Option<f64>, dbtp: f64| ChannelLoudness { lufs, dbtp };
+    let mix = |lufs: f64, dbtp: f64, l: Option<f64>, r: Option<f64>| Loudness {
+        lufs: Some(lufs),
+        lra: 6.0,
+        dbtp,
+        channels: [ch(l, dbtp), ch(r, dbtp)],
+    };
+    let verdicts = |l: &Loudness| loudness_rows(l).iter().map(|r| r.verdict).collect::<Vec<_>>();
+    use Verdict::*;
+    assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-26.0), Some(-26.0))), vec![Ok, Ok, Ok, Ok], "a good mix");
+    assert_eq!(verdicts(&mix(-14.2, -1.5, Some(-17.0), Some(-17.4))), vec![Ok, Ok, Ok, Ok], "a streaming mix");
+    assert_eq!(verdicts(&mix(-23.0, -0.4, Some(-26.0), Some(-26.0)))[1], Bad, "a peak over −1 dBTP");
+    assert_eq!(verdicts(&mix(-26.0, -3.0, Some(-26.0), None))[3], Bad, "a silent channel");
+    assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-24.0), Some(-34.0)))[3], Bad, "10 LU apart");
+    assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-24.0), Some(-28.0)))[3], Off, "4 LU apart");
+    assert_eq!(verdicts(&mix(-19.0, -3.0, Some(-22.0), Some(-22.0)))[0], Off, "between the norms");
+    assert_eq!(verdicts(&mix(-6.0, -3.0, Some(-9.0), Some(-9.0)))[0], Bad, "too loud for any delivery");
+
+    // the drawn table: the bad values carry the error probe, every row prints its norm
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    let bad = mix(-23.0, -0.4, Some(-24.0), None);
+    let mut h = egui_kittest::Harness::new_ui(move |ui| crate::render_dialog::loudness_table(ui, &bad));
+    crate::icons::install_fonts(&h.ctx);
+    h.run();
+    use egui_kittest::kittest::Queryable;
+    for norm in [k::render::LOUD_NORM_INTEGRATED, k::render::LOUD_NORM_PEAK, k::render::LOUD_NORM_CHANNELS] {
+        assert!(h.query_by_label(tr(norm)).is_some(), "the norm “{}” is printed", tr(norm));
+    }
+    assert!(h.query_by_label("L -24.0 · R silent LUFS").is_some(), "the channels row");
+    assert!(crate::widgets::field_probe::rect_of("render.loud.bad").is_some(), "a bad value is marked as one");
+}
