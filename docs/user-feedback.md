@@ -2945,3 +2945,11 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    about real time; he finds that unacceptable.
 4. "объедини лог рендера в телеметрию, нахуя ты его выделил отдельно то?!?" — no separate render
    log file: the render's lines live in the telemetry like everything else.
+
+## 2026-11-18 — his answer on Datamosh's size (`kkt-26.11.18b`)
+
+1. "на 144p получаются красивые изломы но они мыльные … чтобы именно расчет был такой хитрый чтобы
+   оно в разрешение проекта превращалось если я хочу" — an opt-in way to keep the break of a small
+   codec size while the picture stays sharp at the project's resolution; pixelation is NOT the answer.
+2. "да - тут бы конечно как-то учитывать настройки превью проекта чтобы поменьше работы было" — yes
+   to found-defects 734: the Datamosh history and what is in front of it follow the preview settings.
