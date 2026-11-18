@@ -5,6 +5,12 @@
 > скролить … графовое представление эффектов? типо как в blender? все таки у нас композинг должен
 > быть и вообще говоря более сложные графы". Revision 1's two-rail row is superseded by a node
 > editor; its defect fix (D1, D2) stands unchanged.
+>
+> Revision 3 (2026-11-18), his answers to Q1–Q5 (kkt-26.11.18b lines 26–29, registry U8): nodes laid
+> out automatically by order; "я бы хотел 2-3 ползунка, но и нужно учесть как уместить огромные
+> эффекты типо isp чтобы не нагромождали" — 2–3 main sliders in a node, a huge device kept compact
+> (D4a); layers and the track's effects shown as read-only boxes; Slowed keeps one switch in a layer
+> for now; sound for a device on a video track — a separate later change (D9). No question is open.
 
 ## Context
 
@@ -47,11 +53,11 @@ that kind" — and the count of what this side holds filters out bypassed slots
 | Place | What the render gets beyond the edited slots | Found |
 |---|---|---|
 | Morpher patch, paired device | the counterpart half (`derived_pairs`) | **the defect** — fixed here (D2) |
-| Morpher patch, time warp | `chain_for(Video)` adds the warp from `audio_fx` | the same ghost: the picture's slowing by a layer cannot be switched off alone, while on an event it can (R.37 slot checkbox). Question Q4 |
+| Morpher patch, time warp | `chain_for(Video)` adds the warp from `audio_fx` | the same ghost: the picture's slowing by a layer cannot be switched off alone, while on an event it can (R.37 slot checkbox). kept as one switch for now (his answer Q4) |
 | Morpher patch, layer strength | `chain_for(Audio)` adds `LayerMix` from `video_fx` | by his decision R.38 item 12 ("at once"); shown as one node with a tie and ONE dot — not a defect |
 | Event, paired device | — real slots on both events (`sync_pairs_to_link_group`) | clean |
 | Event, warp | — real slots on both events (`sync_warp_to_link_group`) | clean |
-| Track chain, paired device | nothing: a track has no partner track, VHS Tape on a video track has no sound | a gap of the same family (no pair at all); not fixed here, question Q5 |
+| Track chain, paired device | nothing: a track has no partner track, VHS Tape on a video track has no sound | a gap of the same family (no pair at all); a later change `track-device-sound` (his answer Q5, D9) |
 | Composition instance chain | an instance is an event: the event rule | clean |
 | Preset / pasted chain into a patch | goes through `SetMorpher` → the new rule (D2) | covered |
 | Bake of a morpher | `apply_to` reads `chain_for` → real slots on the pieces, then the event rule | clean after D2 |
@@ -123,7 +129,8 @@ same keys, same nodes everywhere.
   header (Blender's collapsed node); H collapses/expands the selected nodes by hand. No scrollbars:
   the graph never scrolls, it zooms. The view (zoom, pan) is per window session.
 - **Layout.** v1 computes it from the order (columns by processing order, the picture lane above the
-  sound lane, groups and frames as boxes); nothing is stored (question Q1).
+  sound lane, groups and frames as boxes); nothing is stored (his answer Q1: automatic by order).
+  Dragging a node changes only its ORDER (drop it on a wire); free placement waits for v2's slot ids.
 - **Sockets.** Picture — yellow circle; sound — green circle; key (sidechain) — grey diamond. A wire
   carries one kind; picture never connects to sound.
 - **Nodes.**
@@ -131,7 +138,7 @@ same keys, same nodes everywhere.
     generator its kind) and Output (→ the next stage). Pinned: they cannot be deleted or moved out of
     order.
   - Effect: header (switch, name, kind glyph, a curve mark ∿ if automated, a mask mark ◐) and its
-    sockets. Parameters are in the side form (question Q2).
+    sockets, then at most THREE main sliders (D4a). The full form is beside the graph.
   - Device (VHS Tape, Datamosh, Camera ISP): ONE node, two lanes — "picture" and "sound", each with
     its own switch; the header's switch (M) turns both. If its two halves stand at crossing positions
     in their chains (VHS before Datamosh on the picture, after it on the sound), it draws as two
@@ -155,6 +162,42 @@ same keys, same nodes everywhere.
 - **What v1 refuses.** Connecting one output to two inputs, a second input to a node, a wire across
   kinds, a cycle: the wire snaps back and the status line says why ("branches arrive in v2"). No
   half-working branch is drawn.
+
+### D4a. Main sliders, and a huge device that stays compact (his answer Q2)
+
+- **The passport names the main rows.** `kt-plugin-api` `UiDecl` gets `main: &'static [&'static
+  str]`: at most THREE row names, each a numeric row (slider) or a choice row (a drop-down chip); a
+  device names them PER LANE (`main` for the picture, `main_sound` for the sound half's passport). A
+  plugin that names none gets its first ≤3 numeric `Smooth` rows; a simulated device MUST name its
+  set (the registry refuses one that does not: a "first three" of ISP would be `qe_r`, `qe_g`,
+  `qe_b`). Checked for every built-in plugin by t2998.
+- **A node's height is bounded**: header + at most 3 slider rows per lane + one lane row per lane.
+  ISP has ~80 rows, VHS Tape ~40; the node never grows with the passport. Everything else — the
+  deck face, the ISP panel with its blocks, the curves — is the side form of the selected node.
+- **The node's sliders ARE the common row widget** (R.66: numbers only through the common row) at
+  node width; a drag is one undo step; a curve on the row shows ∿ on the slider and the slider sets
+  the key at the cursor, as the form does (one rule of editing a curved row).
+- **When zoomed out** past readability the sliders fold first, then the node folds to its header —
+  the fit (Home) never scrolls.
+- Main sets proposed (chosen in v1b from the passports, shown in the live screenshots):
+  Camera ISP — picture: `look` (chip), `exposure_ev`, `analog_gain`, `sharpen_amount`… trimmed to 3
+  with the look as the chip; sound: `mic_ns_strength`. VHS Tape — picture: the tape wear, tracking,
+  the head clog; sound: the audio track (Hi-Fi / Normal chip). Datamosh — picture: the codec size,
+  the broken-keyframe rate; sound: the audio bitrate.
+
+ISP as a node (selected; its full panel beside it):
+
+```
+┌─ Camera ISP ──────────── ⏻ ∿ ┐  ┌ Camera ISP ─────────────────────────────┐
+│ look  [ Phone night  ▾ ]      │  │ Sensor │ Optics │ ISP │ Microphone      │
+●picture                 ⏻     ●  │ full well … QE … read noise … PRNU …    │
+│ exposure   ▮▮▮▮▯▯▯  +0.7 EV   │  │ demosaic … NR … sharpen … tone … YUV …  │
+│ gain       ▮▮▮▮▮▮▯  ×8        │  │ (the existing panel, unchanged; scrolls │
+●sound                   ⏻     ●  │  inside the form only, R.66)            │
+│ noise sup. ▮▮▮▯▯▯▯  60 %      │  │                                         │
+└───────────────────────────────┘  └─────────────────────────────────────────┘
+  ≤ 3 rows per lane, whatever the passport holds
+```
 
 ### Mockups
 
@@ -279,84 +322,22 @@ The fit on a long chain (24 effects): zoomed out, every node is a header chip; H
   sockets fed by any node, the DAG in `video_plan` and the audio node chain, format by content.
 - **v3** horizon only: the timeline composite as a graph.
 
-## Questions for the owner
+## His answers (kkt-26.11.18b U8) and what they fix
 
-Each quotes what he said, what is there today, and what each answer means.
+- **Q1 — layout:** automatic by processing order; nothing stored in v1 (D4).
+- **Q2 — parameters:** 2–3 main sliders in a node, a huge device bounded, the full panel beside (D4a).
+- **Q3 — context:** after the event's own nodes, read-only boxes for the morpher layers over it and
+  its track's effects; Tab peeks, double click opens that layer's or track's window (D4).
+- **Q4 — Slowed in a layer:** one switch for picture and sound stays (D1's walk records it).
+- **Q5 — a device on a video track:** gets its sound in a separate later change (D9).
 
-**Q1 — Can nodes be moved freely, like in Blender?** You wrote: "типо как в blender". Today nothing
-is placed by hand: the strip is a row. In Blender you drag nodes anywhere and the positions are
-saved.
+## D9. Follow-up, not in this change: a device's sound on a video track
 
-- (a) **Arranged automatically** (recommended for v1): the editor places nodes by processing order;
-  you never tidy them; nothing is saved in the project. Dragging a node only changes its ORDER (drop
-  it on a wire). Free placement comes with v2, when effects get permanent ids.
-- (b) **Free like Blender from v1**: you place nodes where you want, and the positions are saved in
-  the `.kt`. Needs permanent ids for every effect slot now — the project format changes in v1.
-
-```
- (a)  Src ─● A ─● B ─● C ─● Out      always tidy, by order
- (b)  Src ─● A               B ─● Out   wherever you put them
-            ╲─────● C ──────╱
-```
-
-**Q2 — Parameters inside the node, or beside it?** You wrote: "в одном месте чтобы не скролить".
-Today the form (the deck face, the sliders) is under the strip and the window scrolls.
-
-- (a) **Beside** (recommended): the graph on the left, the selected effect's full form on the right,
-  both always visible; nodes stay small, so the graph fits.
-- (b) **Beside, plus the 2–3 main sliders inside each node** (as Blender's nodes show values): quicker
-  tweaks without selecting, but nodes are taller and a long chain fits only zoomed out.
-
-```
- (a) ┌Glow┐          (b) ┌Glow──────────┐
-     └────┘              │ amount ▮▮▮▯▯ │
-                         │ radius ▮▮▯▯▯ │
-                         └──────────────┘
-```
-
-**Q3 — In the effects window of ONE event, show what is applied to it AFTER its own effects?**
-(Revision 1's question, said plainly.) An event is also changed by the morpher layers above it and
-by its track's effects. Today you see that only by opening each morpher and the track window.
-
-- (a) **Show them, closed and read-only** (recommended): after the event's own nodes come boxes
-  "Layer mosh (3)" and "Track Video 1"; Tab peeks inside; double click opens that layer's or track's
-  own window to edit.
-- (b) **Only the event's own effects**: smaller, but you do not see what else touches the event.
-
-```
- (a)  Src ─● Glow ─● [◆ Layer "mosh" (3)] ─● [▤ Track Video 1] ─● Out
- (b)  Src ─● Glow ─● Out
-```
-
-**Q4 — Slowed in a morpher layer: separate switches for picture and sound?** You asked in R.37 that a
-slowed event's picture can be un-slowed by its own switch — that is so on events. In a morpher layer
-today ONE Slowed slows both picture and sound, and there is no way to slow only the sound.
-
-- (a) **Make it like a device**: the Slowed node gets a picture lane and a sound lane, each with a
-  switch; the speed and its curve stay shared.
-- (b) **Leave it one switch for both** in layers (recommended for now; it can follow later).
-
-```
- (a) ┌Slowed─────────┐       (b) ┌Slowed────┐
-     │● picture  [⏻] │           │ [⏻] both │
-     │● sound    [⏻] │           └──────────┘
-     └───────────────┘
-```
-
-**Q5 — VHS Tape / Datamosh / ISP put on a whole TRACK: should it also sound?** Today on an event
-it does (the linked audio gets the sound half); on a video TRACK it is picture only — a track has no
-"linked" audio track.
-
-- (a) **A separate change**: the track's device node gets a sound lane wired to the audio track(s)
-  you pick in its form.
-- (b) **Leave it picture-only on tracks**; the node then shows no sound lane, and its form says so.
-
-```
- (a) ┌▤ Track Video 1──────────┐       (b) ┌▤ Track Video 1─┐
-     │ VHS ● picture           │           │ VHS ● picture  │
-     │     ● sound → Audio 1   │           └────────────────┘
-     └─────────────────────────┘
-```
+His answer Q5 (a): VHS Tape / Datamosh / Camera ISP on a whole VIDEO track should also sound. A track
+has no linked audio track today; the follow-up change (`track-device-sound`) gives the track's device
+node a sound lane wired to the audio track(s) the person picks in its form, the device state shared as
+on events. Until then the node on a track shows no sound lane and its form says the device is
+picture-only there.
 
 ## Risks
 

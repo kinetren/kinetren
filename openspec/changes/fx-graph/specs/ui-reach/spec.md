@@ -7,15 +7,17 @@ SHALL open framed (every node in view) and SHALL never scroll: Home frames all, 
 the pointer, a middle drag pans, and below a readable zoom a node shows only its header. Picture and
 sound SHALL be two socket kinds and no wire SHALL join them. A simulated device SHALL be one node
 with a picture lane and a sound lane, each with its own switch. A morpher layer, a composition and a
-track stage SHALL be group nodes that Tab enters and leaves. Selecting a node SHALL open that slot's
-existing form beside the graph. An effect SHALL be added by dragging a wire into empty canvas or
+track stage SHALL be group nodes that Tab enters and leaves. A node SHALL show at most three main
+sliders per lane, named by the plugin's passport, and its height SHALL NOT grow with the passport;
+selecting a node SHALL open that slot's existing form beside the graph. Nodes SHALL be laid out by
+processing order; dragging a node SHALL change only its order. An effect SHALL be added by dragging a wire into empty canvas or
 Shift+A (the existing picker opens at the pointer) and inserted by dropping a node on a wire; M
 SHALL mute, X SHALL remove (a device: both halves). Every gesture SHALL be one undo step. A gesture
 the engine cannot execute yet (a branch, a second input, a cycle) SHALL be refused with a reason in
 the status line, changing nothing. No layout SHALL be stored and no window SHALL be added.
 Why: kkt-26.11.18b item 3 — "компактного удобного графа"; U7 — "Вместо полоски", "везде в окнах
 разных единым стилем в одном месте чтобы не скролить … типо как в blender"; R.63 — no new window;
-rule 17 — one widget.
+rule 17 — one widget. U8 — "2-3 ползунка, но … как уместить огромные эффекты типо isp".
 
 #### Scenario: An event and its linked audio in one node editor
 - **PATH** double click a video event linked to its audio → the FX window shows the node editor framed: Source, Geometry, Color Curves, Glow, Output on the picture wire, EQ on the sound wire → drag a wire from Glow's picture output into empty canvas → the picker gallery opens at the pointer → click VHS Tape → a VHS Tape node with a picture lane and a sound lane is inserted after Glow and EQ → its deck face opens beside the graph
@@ -40,6 +42,12 @@ rule 17 — one widget.
 - **WHEN** a chain is longer than the graph area and the event has several partners
 - **THEN** the opened view frames every node; zooming out past readability collapses nodes to headers; Home restores the fit; each audio partner is its own sound wire; no node label wraps
 - **TEST** t3001 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: A huge device stays a small node with its main sliders
+- **PATH** add Camera ISP to an event with linked audio → the ISP node shows its look chip, two picture sliders and one sound slider, no more → drag the exposure slider in the node → the preview brightens → click the node's title → the full ISP panel opens beside the graph with all its blocks
+- **WHEN** a device with tens of rows is added and its main slider is dragged in the node
+- **THEN** the node has at most three rows per lane and the same height whatever the passport holds; the drag sets that row in the MODEL in one undo step, exactly as the same row in the side form; the side form shows the whole device
+- **TEST** t2999 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: The Viewer shows the picture after a node
 - **PATH** Ctrl+Shift+click the Geometry node of an event carrying Geometry, VHS Tape and Glow → the preview shows the picture after Geometry with the badge "Viewer: Geometry" → Esc → the full picture returns

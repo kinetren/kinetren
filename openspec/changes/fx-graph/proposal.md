@@ -48,6 +48,10 @@ Two things are inside it:
   The selected node's EXISTING form opens beside the graph. Effects are added by dragging a wire into
   empty canvas (the picker opens there) or Shift+A; M mutes, X removes, Ctrl+Shift+click shows the
   picture after a node in the preview (the Viewer).
+- **Revision 3 (his answers U8):** automatic layout by order; 2–3 main sliders in a node of bounded
+  height (a passport-declared set; Camera ISP's 80 rows stay in the side panel); layers and the
+  track as read-only boxes; Slowed keeps one switch in a layer; a device's sound on a video track is
+  a later change (`track-device-sound`).
 - **Staged.** v1 = the editor over today's model: it shows and edits the straight chains the engine
   runs, and REFUSES a branch with a reason. v2 (a separate change) = branches, merges, mask and key
   inputs that `video_plan` and the audio node chain execute through the one plan (invariant 7), with
@@ -67,6 +71,8 @@ Two things are inside it:
   node editor with the purple source-swap node first.
 - `audio-fx`: "a simulated device is one across an A/V link group" — the morpher clause changes from
   derivation to real slots.
+- `plugins`: a passport names at most three main rows per lane (the node's sliders); a paired
+  device must name them.
 - `ui-reach`: the node editor — one widget for every chain, framed without scrolling, its sockets,
   devices, groups, gestures, refusals and its cost at rest.
 
