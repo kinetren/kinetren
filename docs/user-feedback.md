@@ -2962,3 +2962,6 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 5. "слабо я верю что ffv1 аппаратно ускорен.. у нас datamosh лагает как нехуй делать а ты тут для
    превью это на постоянку предлагаешь" — the prerender must not put a CPU codec into the preview's
    path; the processor is already the bottleneck.
+6. "блядь да сделай ты сжатие видео нормальное что ты мозг мне ебешь" — DECISION: the prerender is
+   compressed with a normal video codec on the machine's hardware encoder/decoder; no more questions
+   about it.
