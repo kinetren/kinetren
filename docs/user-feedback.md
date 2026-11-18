@@ -2971,3 +2971,9 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 8. "я бы еще хотел чтобы ты добавил еще один чат который будет потихоньку фишки уже пилить, а то мы
    над оптимизацией долго сидим уже" — a standing session builds small features one at a time, beside
    the optimisation work (a fourth executor at his request).
+9. His answers on `fx-graph` and Datamosh: the graph replaces the effects strip; "я бы хотел везде в окнах
+   разных единым стилем в одном месте чтобы не скролить, вообще может быть перейти на графовое
+   представление эффектов? типо как в blender? все таки у нас композинг должен быть и вообще говоря
+   более сложные графы впринципе.." — a node graph like Blender's is to be designed; the question on the
+   event window "вопроса не понял. контекст не ясен" — ask again with context; "Резко" ON for new
+   Datamosh instances (old projects keep their look).
