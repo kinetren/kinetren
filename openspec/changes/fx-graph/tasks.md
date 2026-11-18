@@ -17,17 +17,18 @@
 
 ## 1. v1a — the patch holds both halves (the defect)
 
-- [ ] 1.1 kt-model: one n-th-occurrence matcher shared by `sync_pairs_to_link_group` and a new
+- [x] 1.1 kt-model: one n-th-occurrence matcher shared by `sync_pairs_to_link_group` and a new
       `sync_pairs_in_patch`, called from `SetMorpher` (edited side from the command; leader rule for
       model-only callers)
-- [ ] 1.2 remove `MorphPatch::derived_pairs`; `chain_for`/`auto_for` return own enabled slots (warp
+- [x] 1.2 remove `MorphPatch::derived_pairs`; `chain_for`/`auto_for` return own enabled slots (warp
       and strength unchanged)
-- [ ] 1.3 `Project::normalize`: materialize the halves of older patches (the only migration place)
-- [ ] 1.4 tests t2990, t2991 (old file byte-identical render), t2992 (picture untouched by the sound
+- [x] 1.3 `Project::normalize`: materialize the halves of older patches (the only migration place); a
+      half held switched off counts as held (else a save turns it back on)
+- [x] 1.4 tests t2990, t2991 (old file: the derived chains, idempotent), t2992 (picture untouched by the sound
       half's switch; both on equals an event-carried device); rewrite t1461b per its new text
-- [ ] 1.5 kt-app on today's strip: the sound half is a visible slot with its checkbox (t2993) — the
-      owner's complaint is closed before the editor exists
-- [ ] 1.6 OTIO-loss row of sim-audio-pairs extended; kt-model CLAUDE.md paragraph; What's new line;
+- [x] 1.5 kt-app on today's strip: the sound half is a visible slot with its checkbox, marked with the
+      speaker in a strip of both kinds (the halves share one name); t2993; live `morph_pair`
+- [x] 1.6 OTIO-loss row of sim-audio-pairs extended; kt-model CLAUDE.md paragraph; What's new line;
       commit; `target-prune.py`
 
 ## 2. v1b — the node editor widget

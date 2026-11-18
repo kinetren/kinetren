@@ -1985,6 +1985,7 @@ pub fn chain_strip(
     preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> ChainChanged {
     let kinds = kinds.into();
+    let both = matches!(kinds, crate::fx_registry::PickKinds::Both);
     let mut ch = ChainChanged::default();
     edit.bypass.resize(edit.fx.len(), false);
     edit.auto.resize(edit.fx.len(), Vec::new());
@@ -2058,15 +2059,18 @@ pub fn chain_strip(
             let off = edit.bypass[i];
             // the enable checkbox of the slot (morphers had none at all)
             let mut on = !off;
-            if crate::app::hint_into(
+            let cb = crate::app::hint_into(
                 hover,
                 ui.checkbox(&mut on, ""),
                 if off { tr(k::fx::ENABLE) } else { tr(k::fx::DISABLE) },
-            )
-            .changed()
-            {
+            );
+            if cb.changed() {
                 edit.bypass[i] = !on;
                 ch.bypass = true;
+            }
+            // the slot's own switch, by name for a live scenario (the morpher's sound half, t2993)
+            if crate::widgets::field_probe::on() {
+                crate::widgets::field_probe::note(&format!("fx.slot.{i}.on"), cb.rect);
             }
             // The slot name: both the selection by click and the drag source.
             //
@@ -2081,6 +2085,19 @@ pub fn chain_strip(
             // `drag_started()`/`clicked()` on one interaction.
             let slot_id = egui::Id::new((&id, "slot", i));
             let name = crate::fx_editor::fx_display_name(&edit.fx[i]);
+            // a strip of both kinds (the morpher) marks a device's SOUND half with the speaker: the two
+            // halves carry ONE name, and the sound half is the one a person switches off alone
+            // (fx-graph D2, kkt-26.11.18b U3); other effects have names of their own
+            let marked;
+            let sound_half = matches!(&edit.fx[i], FxInstance::Plugin(p)
+                if p.manifest().media == kt_plugin_api::Media::AudioFx
+                    && kt_model::plugin_slot::registry().counterpart(&p.id).is_some());
+            let name = if both && sound_half {
+                marked = format!("{} {name}", crate::icons::CAT_VOLUME);
+                marked.as_str()
+            } else {
+                name
+            };
             let text = slot_text(ui, name, ui.visuals().text_color(), off);
             let drawn = ui.selectable_label(*edit.selected == ChainSel::Fx(i), text);
             // the grab area is wider than the drawing (rule 1 of the checklist): one should not

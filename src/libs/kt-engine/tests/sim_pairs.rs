@@ -100,3 +100,53 @@ fn t1467_the_engine_seats_the_device_on_the_timeline() {
     // determinism
     assert!(render(&project(vec![tape], vec![])) == wet, "two renders differ");
 }
+
+/// t2992 (fx-graph D2; capabilities `morpher`, `audio-fx`): a layer's device keeps one device state
+/// and each half switches alone. Camera ISP put by a layer over a linked pair: the sound under the
+/// layer is byte for byte the event carrying the same microphone half itself; the microphone half
+/// switched off gives the dry bytes; the picture's effective chain is the same with the sound half
+/// on or off.
+#[test]
+fn t2992_a_layer_s_sound_half_switches_without_touching_the_picture() {
+    kt_plugins_builtin::install();
+    let dry = render(&project(vec![], vec![]));
+    let mut p = project(vec![], vec![]);
+    let mut v = p.clips[0].clone();
+    v.id = ClipId(2);
+    v.kind = ClipKind::Video;
+    p.clips.push(v);
+    p.ensure_tracks(LaneKind::Morph, 1);
+    let mut isp = FxInstance::plugin("camera_isp").expect("camera_isp");
+    isp.set_param("mic_ns_strength", 0.8);
+    let mut m = TimelineModel::new(p);
+    let start = m.project().clips[0].start;
+    let duration = m.project().clips[0].duration;
+    m.apply(Command::AddMorpher(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start,
+        duration,
+        targets: MorphTargets::Clips { ids: vec![ClipId(1), ClipId(2)] },
+        patch: MorphPatch { video_fx: vec![isp], ..Default::default() },
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
+        enabled: true,
+    }))
+    .unwrap();
+    let on = m.project().clone();
+    let mic = on.morphers[0].patch.audio_fx.first().cloned().expect("the layer holds no microphone half");
+    assert_eq!(mic.tag(), "camera_isp_sound");
+    let layered = render(&on);
+    let carried = render(&project(vec![mic], vec![]));
+    assert!(layered == carried, "the layer's microphone is not the device the event would carry");
+    assert!(layered != dry, "the microphone half changed nothing");
+    let mut ev = on.morphers[0].clone();
+    ev.patch.audio_bypass = vec![true];
+    m.apply(Command::SetMorpher(ev)).unwrap();
+    let off = m.project().clone();
+    assert!(render(&off) == dry, "the switched-off microphone half still sounds");
+    let picture = |p: &Project| p.effective_clips().into_iter().find(|c| c.kind == ClipKind::Video).map(|c| c.active_fx());
+    assert_eq!(picture(&on), picture(&off), "switching the sound half moved the picture");
+}
