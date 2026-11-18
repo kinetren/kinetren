@@ -430,3 +430,18 @@ option; the reasons kept here:
 - **Class walk:** the reel strip, posters and loop fill compose at their own sizes and are compared with
   nothing; `kt-cli export` prints its own factor. Fixed counts elsewhere: one-device convert workers,
   the loop fill's width (already narrowed by what composes), decode threads (bounded by memory) — left.
+
+## The render's loudness against its norms (render-loudness-norms, 2026-11-18, F-EXP-009)
+
+The owner (`v26.10` line 56): the loudness line had no emphasis and no norms, and a channel problem was
+invisible. BS.1770 SUMS the channels, so a mix with the right channel silent read −23.0 LUFS — the
+target. `LoudnessMeter` now gives each channel's level over the blocks the summed gates keep (the
+channels compared over the same moments; silent = `None`) and its own true peak; the true-peak gate is
+per channel, or a quiet channel's peak was never interpolated. The summed values are unchanged
+(t403–t407). `render_dialog::loudness_rows` holds the norms in one place: integrated −23 (EBU R 128) or
+−14 (streaming) ±1 plain, louder than −9 red; true peak above −1 dBTP red; range above 20 LU amber;
+channels 3 LU apart amber, 6 LU or one silent red. No target is chosen for the person; normalizing to a
+chosen target stays with F-AUD-005. The progress window opens at 600 (was 520, an agent's value) so
+the table's last row is above the fold. Class walk: the bin card's loudness hint is about a source (no
+delivery norm applies), the render prediction and the meters already carry their reference, the
+Diagnostics numbers their thresholds; only the render result lacked norms.
