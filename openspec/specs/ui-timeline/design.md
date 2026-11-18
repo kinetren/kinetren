@@ -455,3 +455,15 @@ the status items to 190 points in every language.
   "Loading"). The first fix also asserted that the ask was still pending after its frame and that its
   answer landed later — a timing assumption of its own, red in the third finish.sh; the test now
   asserts nothing about when an answer lands.
+
+## "Marker over the region" split (marker-region-split, 2026-11-18, F-TL-016)
+
+The owner (`v26.10` line 33; his answer of 2026-11-07, в.4): the region-edge item did three things under
+one name. Now "Marker over the region" (`marker_over_region_new`) ALWAYS adds a range; an equal range is
+removed (M's toggle); a different marker at the region's start is not changed — the model keeps one
+marker per tick, so the item refuses with a notice naming "Stretch the marker over the region"
+(`stretch_marker_over_region`), offered only when `marker_to_stretch` finds one. M keeps its R.24
+behaviour, stretch included (t142 is frozen; his words were about the menu item). The live dump carries
+`markers` as [tick, length] for scenarios. Class walk (one name, results by hidden state): "Marker here",
+"Clear the region", the marker menu's items and the empty-space region items each have one result; only
+this item changed.

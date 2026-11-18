@@ -21313,3 +21313,218 @@ fn t2811_what_this_ffmpeg_cannot_do_is_shown_not_hidden() {
     assert!(texts.iter().any(|t| *t == format!("Opus — {na}")), "Opus is not shown unavailable: {texts:?}");
     assert!(texts.iter().any(|t| *t == format!("FLAC — {mp4}")), "FLAC in MP4: {texts:?}");
 }
+
+/// t3100 (F-MED-008, `v26.10` MW1): scrubbing a bin card writes the file's moment under the cursor
+/// over the thumbnail, in the program's timecode; it follows the cursor and leaves with it.
+#[test]
+fn t3100_bin_scrub_writes_the_moment_under_the_cursor() {
+    use kt_model::*;
+    let mut h = harness();
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let dur = h.state().thumbs.duration(MediaId(1)).expect("the fixture's length is known");
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let fps = h.state().model.project().settings.fps;
+    let shown = |h: &Harness<'static, KtApp>| -> Vec<String> {
+        crate::reach_tests::painted_texts(h)
+            .into_iter()
+            .filter(|t| card.contains(t.rect.center()) && t.drawn.contains(" F"))
+            .map(|t| t.drawn)
+            .collect()
+    };
+    assert!(shown(&h).is_empty(), "a timecode is written without a hover: {:?}", shown(&h));
+    let mut seen = Vec::new();
+    for frac in [0.5f32, 0.25] {
+        let x = card.left() + card.width() * frac;
+        h.hover_at(egui::pos2(x, card.center().y));
+        h.step();
+        let at = ((x - card.left()) / card.width()).clamp(0.0, 0.999) as f64;
+        let want = crate::util::format_timecode(kt_time::Tick((at * dur.0 as f64) as i64), fps);
+        let texts = shown(&h);
+        assert_eq!(texts, vec![want.clone()], "the moment under the cursor at {frac}");
+        let r = crate::widgets::field_probe::rect_of("bin.scrub.tc").expect("the label is probed");
+        assert!(card.contains_rect(r), "the label stays inside the thumbnail: {r:?} in {card:?}");
+        seen.push(want);
+    }
+    assert_ne!(seen[0], seen[1], "the moment follows the cursor");
+    h.hover_at(egui::pos2(card.right() + 200.0, card.center().y));
+    h.step();
+    assert!(shown(&h).is_empty(), "the timecode stays after the cursor left: {:?}", shown(&h));
+}
+
+/// t3101 (F-MED-008): the scrub's timecode shortens to the card instead of covering it — the
+/// narrowest card (56 points, `card_w`'s floor) still gets a label inside its thumbnail — and a
+/// hover frame on the same moment replays the laid-out label instead of formatting it again.
+#[test]
+fn t3101_bin_scrub_timecode_fits_a_narrow_card_and_is_laid_out_once() {
+    use kt_model::*;
+    let mut h = harness();
+    h.step();
+    let p = egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), egui::Rect::EVERYTHING);
+    let full = crate::util::format_timecode(kt_time::Tick(100 * 90_000 + 45_000), 25);
+    let wide = crate::bin_panel::scrub_timecode_galley(&p, full.clone(), 120.0);
+    assert_eq!(wide.text(), full, "a full card keeps the program's form");
+    let narrow = crate::bin_panel::scrub_timecode_galley(&p, full.clone(), 56.0 - 8.0);
+    assert!(narrow.size().x <= 48.0, "the narrow label fits: {:?} {}", narrow.size(), narrow.text());
+    assert!(full.contains(narrow.text()), "a shortened form is a part of the moment: {}", narrow.text());
+
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let at = egui::pos2(card.left() + card.width() * 0.4, card.center().y);
+    h.hover_at(at);
+    h.step();
+    let first = h.state().bin_scrub_tc.as_ref().map(|c| c.4.clone()).expect("laid out");
+    h.hover_at(at + egui::vec2(0.0, 3.0));
+    h.step();
+    let again = h.state().bin_scrub_tc.as_ref().map(|c| c.4.clone()).expect("kept");
+    assert!(std::sync::Arc::ptr_eq(&first, &again), "the same moment laid the label out again");
+}
+
+/// t3102 (F-TL-015, `v26.10` U9): `C` cuts out the region's interior, and the Edit menu item with
+/// `C` in its chord column does exactly the same; the part outside the region stays in place.
+#[test]
+fn t3102_c_and_the_edit_item_cut_out_the_region() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::Region;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.model.set_region(Region::normalized(Tick(20_000), Tick(40_000)));
+        app.player.seek(Tick(30_000));
+    }
+    h.step();
+    let ranges = |h: &Harness<'_, KtApp>| {
+        let mut v: Vec<(i64, i64)> =
+            h.state().model.project().clips.iter().map(|c| (c.start.0, c.duration.0)).collect();
+        v.sort_unstable();
+        v
+    };
+    let before = ranges(&h);
+    let inside = |v: &[(i64, i64)]| v.iter().any(|r| r.0 < 40_000 && r.0 + r.1 > 20_000);
+    assert!(inside(&before), "the scene has an event under the region");
+
+    h.key_press(egui::Key::C);
+    h.step();
+    let by_key = ranges(&h);
+    assert!(!inside(&by_key), "C left material inside the region: {by_key:?}");
+    assert!(
+        by_key.iter().any(|r| r.0 + r.1 == 20_000) && by_key.iter().any(|r| r.0 == 40_000),
+        "the remainders do not stay at the region's edges: {by_key:?}"
+    );
+
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(ranges(&h), before, "one undo restores the cut");
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    let item = format!("{}\t{}", tr(k::tl::menu::PUNCH_OUT), "C");
+    let labels = menu_labels(&mut h);
+    assert!(h.query_by_label(&item).is_some(), "the Edit menu has no “{item}”; visible: {labels:?}");
+    h.get_by_label(&item).click();
+    h.step();
+    h.step();
+    assert_eq!(ranges(&h), by_key, "the Edit item and C cut differently");
+}
+
+/// t3103 (F-TL-015): with no region `C` changes nothing and says why (rule 16); the other layouts
+/// leave `C` to their own tools — the command has no key there.
+#[test]
+fn t3103_c_without_a_region_says_so_and_other_styles_leave_c_alone() {
+    use crate::controls::{Choice, Cmd, Controls, Style};
+    use crate::i18n::{k, tr};
+    let (mut h, _) = harness_three_clips_dt(None);
+    h.state_mut().model.set_region(None);
+    h.step();
+    let before = h.state().model.project().clips.clone();
+    h.key_press(egui::Key::C);
+    h.step();
+    assert_eq!(h.state().model.project().clips, before, "C without a region edited the project");
+    assert_eq!(
+        h.state().notices.back().map(|n| n.text.clone()),
+        Some(tr(k::msg::PUNCH_OUT_NO_REGION).to_string()),
+        "C without a region stayed silent"
+    );
+    assert_eq!(Controls::default().label(Cmd::PunchOut), "C", "our layout: C");
+    for s in Style::ALL.into_iter().filter(|s| *s != Style::Own) {
+        let c = Controls::new(Choice::of(s));
+        assert_eq!(c.label(Cmd::PunchOut), "", "{s:?} binds the cut-out to a key of its own tools");
+    }
+}
+
+/// t3104 (marker-region-split, the owner 2026-11-07 answer 4, `v26.10` U7): the region-edge menu's
+/// "Marker over the region" ALWAYS makes a new range and never changes the marker at the region's
+/// start; changing it is "Stretch the marker over the region", offered only when there is one to
+/// stretch. Probed from where the person acts: a right click on the region's edge.
+#[test]
+fn t3104_marker_over_the_region_is_new_and_stretching_is_its_own_item() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    let r = Region { start: Tick(30_000), end: Tick(90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let at = egui::pos2(g.tick_to_x(r.start.0), g.rect.center().y);
+    let markers = |h: &Harness<'_, KtApp>| -> Vec<(i64, i64)> {
+        h.state().model.project().markers.iter().map(|m| (m.t.0, m.duration.0)).collect()
+    };
+
+    // no marker there: the new item makes the range; nothing to stretch, so no stretch item
+    right_click_at(&mut h, at);
+    assert!(h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_none(), "a stretch item with nothing to stretch");
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    h.state_mut().marker_edit = None;
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 60_000)], "the item makes a range over the region");
+
+    // a point marker at the region's start: the new item leaves it and says which item changes it
+    h.state_mut().apply(Command::RemoveMarker { at: Tick(30_000) });
+    h.state_mut().apply(Command::AddMarker { at: Tick(30_000), duration: Tick::ZERO });
+    h.step();
+    right_click_at(&mut h, at);
+    let labels = menu_labels(&mut h);
+    assert!(
+        h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_some(),
+        "no stretch item over a point marker; visible: {labels:?}"
+    );
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 0)], "“Marker over the region” changed the existing marker");
+    assert_eq!(
+        h.state().notices.back().map(|n| n.text.clone()),
+        Some(tr(k::msg::MARKER_REGION_TAKEN).to_string()),
+        "the refusal is silent"
+    );
+
+    // the stretch item stretches it, and is then gone (nothing left to stretch)
+    right_click_at(&mut h, at);
+    h.get_by_label(tr(k::tl::menu::MARKER_STRETCH)).click();
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 60_000)], "the stretch item did not stretch the marker");
+    right_click_at(&mut h, at);
+    assert!(h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_none(), "a stretch item over an equal range");
+    // an equal range: the new item removes it — the toggle M has
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    assert!(markers(&h).is_empty(), "a repeat removes the equal range: {:?}", markers(&h));
+}

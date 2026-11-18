@@ -340,6 +340,9 @@ pub struct KtApp {
     pub tl_v_zoom: Option<f32>,
     /// Last successful preview bucket in the bin (scrubbing without flicker, item 11 round 6).
     pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
+    /// The bin scrub's timecode (F-MED-008): `(media, file tick, fps, card width, laid-out text)`,
+    /// rebuilt only when the moment under the cursor changes — a hover frame allocates nothing.
+    pub bin_scrub_tc: Option<(MediaId, i64, u32, u32, std::sync::Arc<egui::Galley>)>,
     /// Previous offline snapshot of the bin: detection of offline→online (item 1 round 7).
     pub bin_last_offline: std::collections::HashSet<kt_model::MediaId>,
     /// Media bin: free layout (item 7 round 8) instead of the grid.
@@ -1031,6 +1034,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_scrub_tc: None,
             bin_last_offline: std::collections::HashSet::new(),
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
@@ -1363,6 +1367,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_scrub_tc: None,
             bin_last_offline: std::collections::HashSet::new(),
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
@@ -5226,6 +5231,41 @@ impl KtApp {
         };
     }
 
+    /// "Marker over the region" (the region-edge menu, marker-region-split): ALWAYS a new range
+    /// marker over the region, never a change of the one there. An equal range is removed — the
+    /// toggle M has; a different marker at the region's start stays as it is, and the refusal names
+    /// the item that changes it (rule 16). One marker per tick is the model's rule.
+    pub fn marker_over_region_new(&mut self, r: Region) {
+        let dur = r.end - r.start;
+        match self.model.project().markers.iter().find(|m| m.t == r.start) {
+            Some(m) if m.duration == dur => {
+                self.apply(Command::RemoveMarker { at: r.start });
+            }
+            Some(_) => self.note(tr(k::msg::MARKER_REGION_TAKEN)),
+            None => {
+                if self.apply(Command::AddMarker { at: r.start, duration: dur }) {
+                    self.marker_edit = Some(MarkerEdit { at: r.start.0, buf: String::new(), is_new: true });
+                    self.marker_edit_focus = true;
+                }
+            }
+        }
+    }
+
+    /// The marker "Stretch the marker over the region" would change: the one at the region's start
+    /// whose length is not the region's (`None` — the item is not offered).
+    pub fn marker_to_stretch(&self, r: Region) -> Option<Tick> {
+        let dur = r.end - r.start;
+        self.model.project().markers.iter().find(|m| m.t == r.start && m.duration != dur).map(|m| m.t)
+    }
+
+    /// "Stretch the marker over the region": the marker at the region's start takes the region's
+    /// length, its name kept (what "Marker over the region" did before the split).
+    pub fn stretch_marker_over_region(&mut self, r: Region) {
+        if let Some(at) = self.marker_to_stretch(r) {
+            self.apply(Command::SetMarkerDuration { at, duration: r.end - r.start });
+        }
+    }
+
     /// Region in/out from the cursor; without a region — a seed [cursor, cursor+1 s].
     pub fn set_region_edge_from_cursor(&mut self, set_start: bool) {
         let at = self.player.transport.playhead();
@@ -5834,8 +5874,13 @@ impl KtApp {
         self.apply_batch(cmds);
     }
 
-    /// Cutting the interior of a region (context menu).
+    /// Cutting the interior of a region: the empty-space menu, Edit and its key (one body, rule 17).
+    /// Without a region it says so instead of doing nothing (rule 16).
     pub fn punch_out_action(&mut self) {
+        if self.model.project().region.is_none() {
+            self.note(tr(k::msg::PUNCH_OUT_NO_REGION));
+            return;
+        }
         if let Some(r) = self.model.project().region {
             let mut next = self.next_clip_id();
             let cmds = kt_model::ops::punch_out_region(self.model.project(), r, &mut next);
@@ -8406,6 +8451,7 @@ impl KtApp {
                 Cmd::Copy => self.copy_selection(),
                 Cmd::Paste => self.paste_at_cursor(),
                 Cmd::RegionClear => self.clear_region(),
+                Cmd::PunchOut => self.punch_out_action(),
                 Cmd::ZoomIn => self.zoom_at_playhead(0.8),
                 Cmd::ZoomOut => self.zoom_at_playhead(1.25),
                 Cmd::ZoomFit => self.zoom_fit(),
