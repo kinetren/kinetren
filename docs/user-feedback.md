@@ -2959,3 +2959,6 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    morpher; the morpher's and the FX chain's control becomes a compact graph (design shown to him
    before code).
 4. His question: is the disk prerender encoded or raw?
+5. "слабо я верю что ffv1 аппаратно ускорен.. у нас datamosh лагает как нехуй делать а ты тут для
+   превью это на постоянку предлагаешь" — the prerender must not put a CPU codec into the preview's
+   path; the processor is already the bottleneck.
