@@ -2983,3 +2983,8 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    a big effect does not crowd the graph; the event window shows the morpher layers and the track's
    effects over it as read-only boxes; VHS Tape, Datamosh and Camera ISP on a whole video track get
    their sound as a separate change.
+11. His answers on A1 and MW1 (U9, 2026-11-19): the keys of the selected curve segments are selected
+   and move together, Shift+click adds single keys or more segments; a bin card dragged to the
+   timeline lands whole with the scrubbed moment under the mouse; Alt puts the event's start under
+   the cursor, another combination its end; the modifier may change mid-drag and the event's ghost
+   shows where it lands before the drop.
