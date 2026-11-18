@@ -18,4 +18,5 @@ without a number says only "roughly here" (F-MED-008).
 #### Scenario: A narrow card shortens the label; a still moment is not laid out again
 - **WHEN** the label is laid out for a 120-point card and for the 56-point narrowest card; the pointer rests on one moment for two hover frames
 - **THEN** the wide card keeps the full form, the narrow one a shortened part of it that fits; the second frame replays the same laid-out label
+- **PATH** narrow the bin column to its least → hover a file card → the chip reads a shorter form ("01:40.500" instead of "00:01:40.500 F12") inside the thumbnail → keep the pointer still → nothing changes
 - **TEST** t3101 (`src/apps/kt-app/src/layout_tests.rs`)

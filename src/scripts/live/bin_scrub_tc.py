@@ -57,6 +57,10 @@ def main(out):
             r, g, b = app.pixel(win["x"] + int(card["x"] + 4), win["y"] + int(card["y"] + 4))
             app.expect(min(r, g, b) > 150, f"the thumbnail above the chip stays bright: RGB {r},{g},{b}")
 
+        # the chip itself is over the card: hovering it keeps the scrub (and the chip) alive
+        app.hover_probe("bin.scrub.tc", "the chip's rectangle")
+        app.expect(field(app, "bin.scrub.tc") is not None, "hovering the chip keeps it")
+
         # --- 2. move to a quarter --------------------------------------------------
         app.hover(at(0.25), cy)
         app.step("move", "the pointer moved left: the chip names an earlier moment")

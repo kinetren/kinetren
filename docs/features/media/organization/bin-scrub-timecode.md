@@ -1,18 +1,18 @@
 ---
 id: F-MED-008
 title: The timecode of the moment under the cursor while scrubbing a bin card
-status: in-progress
+status: done
 priority: B
 cost: S
 category: media/organization
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-app]
 invariants: [8, 12]
 ui_rules: [9, 13]
-round: null
-point: null
-tests: []
+round: features-slow
+point: change bin-scrub-timecode
+tests: [t3100, t3101]
 depends_on: []
 trackers: []
 services: []
@@ -68,30 +68,8 @@ Source Monitor) and Larry Jordan's FCP articles on Skimmer Info; found descripti
 no verbatim user statement about a timecode during a bin scrub within the search budget.
 
 ## How it fits Kinotrain
-
-CAPABILITY: openspec/specs/ui-reach/
-
-### What already exists
-
-`src/apps/kt-app/src/bin_panel.rs` maps hover-x to a fraction of the file and asks the shared
-thumbnail cache by `thumb_key_t` (invariant 8: the scrub reads the filmstrip's stored thumbnails, no
-new decode); a thin white line marks the cursor over the thumbnail. `util::format_timecode` is the
-program's one timecode form. The owner asked for it in `v26.10` line 156 (registry MW1).
-
-### What is missing
-
-The moment as text. The second half of his line — a drag from the scrubbed moment that places the
-file starting there — is a separate question to him ("мб его порезать захотят или нет").
-
-### What hinders
-
-Nothing structural. A per-frame `format!` on a hover frame is an allocation in a draw path (UI
-checklist, invariant 12): the text is kept by `(media, moment)` and rebuilt only when they change.
-
-### Which invariants it touches
-
-8 (no decode from display — the label adds none), 12 (no allocation per frame); UI rules 9 (no
-obvious label: the number alone, no "time:") and 13 (no new strip: drawn over the thumbnail).
+CAPABILITY: openspec/specs/ui-reach/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
+The scrub's own hover-x gives the moment; `bin_panel.rs` writes it with `format_timecode` on a dark chip over the thumbnail, shortened on a narrow card, laid out once per moment. The drag-from-moment half is a question to the owner.
 
 ## Estimate
 
