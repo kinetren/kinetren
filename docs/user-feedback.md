@@ -2977,3 +2977,9 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    более сложные графы впринципе.." — a node graph like Blender's is to be designed; the question on the
    event window "вопроса не понял. контекст не ясен" — ask again with context; "Резко" ON for new
    Datamosh instances (old projects keep their look).
+10. His answers on the graph's revision (U8): the nodes are laid out automatically in chain order
+   (no free placement in v1); "я бы хотел 2-3 ползунка, но и нужно учесть как уместить огромные
+   эффекты типо isp чтобы не нагромождали" — two or three main sliders inside a node, with a bound so
+   a big effect does not crowd the graph; the event window shows the morpher layers and the track's
+   effects over it as read-only boxes; VHS Tape, Datamosh and Camera ISP on a whole video track get
+   their sound as a separate change.
