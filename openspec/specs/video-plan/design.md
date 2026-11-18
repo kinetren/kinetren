@@ -759,3 +759,31 @@ upload), several devices on one card; on the owner's iGPU the card was 4–26 % 
   shows 41 frames in its second lap against 25. The card case (rows 663, 692) is held by t2920 and t2922 and
   waits for the owner's trace or the reference mini-PC. Not done: the compute host on the display's device
   (eframe creates the window's device; on GL it has no compute) — rows 663, 693 stay open.
+
+## Slow moments are prerendered to disk at rest (render-cache-disk, 2026-11-18; review R3, kkt-26.11.17 S5)
+
+The owner chose the mode: "Сам в фоне" — the program prerenders slow regions by itself, his one
+exception to "the program at rest costs nothing". Full record: `openspec/changes/archive/2026-11-18-render-cache-disk/`.
+
+- **D1 — a durable key.** The present key carries the frames' per-process content serials (0 for an
+  undecoded frame), so it dies with the process. `render_cache::durable_hash` hashes what kt-gpu's
+  `plan_hash` hashes minus the serials and the input frame's presence; `layer_src` notes what each serial
+  stood for while `probe_durable` builds (a file's path/size/mtime, a generator's `src_rev`, every file
+  for a stream stage). The program build (with the FFmpeg version) and the device are the folder. Rejected:
+  a scene hash of the active events (it would repeat every plan input and miss the next one).
+- **D2 — lossless files, 2 GiB, least recently used out**; the prerender never evicts what this process
+  used; other builds' folders go at open.
+- **D3 — read before composing**: the producer before its decoded check, `show_kept`, the bytes path. A
+  restored moment is kept under `restored_key(present, durable)`: a key with serial 0 alone could outlive a
+  replaced file under the same media id. The bars add the moments the store holds for this state (a scan
+  at rest, no device).
+- **D4 — by measured cost, at rest**: moments whose device time was at least half a frame period, and their
+  unmeasured neighbours (a heavy run grows to its measured end), after 1.5 s with no input, never while
+  playing or under an export's vote; decodes at `Thumbnail`, device work at class `background`. A thread
+  of the player, not a lane: the quiet is a deadline, and a lane has no clock. The frame shown at an
+  opening is measured too, so opening a heavy project prerenders its slow run around the playhead.
+- **D5 — the export never reads it** (invariant 11; row 773 holds the open question).
+- **Measured** (release, llvmpipe, a one-second VHS Tape + Camera ISP loop): without the tier no lap was
+  whole in 20 s (V-fps 5.6, 9.5 cores); the restart over the store showed every lap whole from lap 0
+  (V-fps 25.0, 0 incomplete, 0.2 cores). The `idle` live scenario on the heavy project rests at 1 % of a
+  core once the run is on disk.
