@@ -178,7 +178,9 @@ The mask keys work only while nothing else has the keyboard focus.
 | drag a segment's handle; <kbd>Shift</kbd>+drag sideways | the curve's tension or amplitude; the number of periods |
 | right-click a segment of the curve graph | select it and open its shape menu (on a selected segment the menu acts on the whole selection) |
 | <kbd>Ctrl</kbd>+click / <kbd>Shift</kbd>+click a segment | add it to the segment selection or take it out / select the run up to it |
-| drag across empty space in the curve graph | select the segments it covers; <kbd>Ctrl</kbd> adds to the selection |
+| drag across empty space in the curve graph | select the segments it covers; <kbd>Ctrl</kbd> or <kbd>Shift</kbd> adds to the selection |
+| <kbd>Shift</kbd>+click a key | take it into the selection or out of it (the ends of selected segments are selected keys) |
+| drag a selected key | move every selected key together: the same time and value shift, stopping before an unselected key |
 | <kbd>Ctrl</kbd>+click the key-before / key-after button | lock every curve of the slot, not just one |
 | <kbd>Tab</kbd> / <kbd>Enter</kbd> in a formula field | complete a name / apply |
 | drag a point of the equalizer graph | its frequency and gain |
