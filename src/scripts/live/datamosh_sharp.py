@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Live scenario t2976 (mosh-sharp, kkt-26.11.18b U1): a person sharpens a 144-line mosh.
+"""Live scenario t2976 (mosh-sharp, kkt-26.11.18b U1, U7): a person sharpens a 144-line mosh.
 
 Two clips back to back — shot A (colour bars, still) and shot B (a moving test pattern) — in a
-1280×720 project. The person double-clicks B, picks "Datamosh → Cut mosh", sets the encoded height
-to 144 and looks half a second after the cut: the soft break, the codec's 144-line picture enlarged.
-Then ticks "Sharp": the same break (the bars dragged by the pattern's motion) carried at the preview's
-size — the frame changes and carries more fine detail. The saved file holds the row.
+1280×720 project. The person double-clicks B, picks "Datamosh → Cut mosh" and sets the encoded height
+to 144: a new Datamosh is sharp (U7), so the break (the bars dragged by the pattern's motion) is carried
+at the preview's size, and the file names the row. Unticking "Sharp" gives the reference: the same
+break, the codec's 144-line picture enlarged — less fine detail, and the file leaves the row out.
 
 Our own fixtures (ffmpeg lavfi), never the owner's projects (R.67).
 """
@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
 from datamosh import moshes, moving_media  # noqa: E402
-from idle import NOT_ON_HOVER, Meter, sweep, wait_quiet  # noqa: E402
+from idle import NOT_ON_HOVER, Meter, sweep, wait_quiet, wakes, woke  # noqa: E402
 from kt_live import Live, pattern_media, poll_step, project_with_clips, require_tools, screen_image  # noqa: E402
 
 # the rest measure reads the program's own threads (as `idle`)
@@ -41,6 +41,8 @@ def open_fx(app, y):
 
 def main(out):
     require_tools()
+    # an edit's autosave thirty seconds later must not land in the rest measure (found-defects 765)
+    os.environ.setdefault("KT_AUTOSAVE_SECS", "600")
     a = pattern_media(out, "msharp-a", 3, size="1280x720")
     b = moving_media(out, "msharp-b", 6, size="1280x720")
     proj = os.path.join(out, "datamosh_sharp.otio")
@@ -74,17 +76,21 @@ def main(out):
             return app.done()
         if not app.click_probe("mosh.lines.0", "the 144 item"):
             return app.done()
-        app.step("lines144", "the encoded height set to 144")
+        app.step("lines144", "the encoded height set to 144; a new Datamosh is sharp (kkt-26.11.18b U7)")
         app.key("Escape")
         app.click(app.x_at(int(2.5 * SEC)), app.ruler_y())
         # the history catches up first (Loading — catching up): the judged picture is the moment's own
         app.wait_gone("preview.catching_up", timeout=120.0)
-        soft = app.pixel_settled(center, differs_from=plain, tries=60)
+        moshed = app.pixel_settled(center, differs_from=plain, tries=60)
         app.wait_still(timeout=60.0)
-        soft_shot = app.step("soft", "the 144-line break: the bars dragged by the pattern, soft")
-        d_soft = detail(app)
-        app.expect(soft is not None and soft != plain, f"the frame after the cut is moshed ({plain} → {soft})")
+        sharp_shot = app.step("sharp", "the 144-line break carried at the preview's size: the pattern's detail")
+        d_sharp = detail(app)
+        app.expect(moshed is not None and moshed != plain, f"the frame after the cut is moshed ({plain} → {moshed})")
+        app.saved_project()
+        slots = moshes(app.project_text())
+        app.expect(len(slots) == 1 and slots[0].get("sharp") is True, f"a new Datamosh is sharp in the file ({json.dumps(slots)[:200]})")
 
+        # the reference: the same break, soft — the tick taken off explicitly
         app.expect(open_fx(app, y), "the FX window opened again")
         if not app.has_probe("mosh.sharp"):
             # the window opens on its last slot; the datamosh panel is the selected slot's
@@ -92,26 +98,38 @@ def main(out):
             return app.done()
         if not app.click_probe("mosh.sharp", "the Sharp tick"):
             return app.done()
-        app.step("ticked", "Sharp ticked")
+        app.step("unticked", "Sharp unticked")
         app.key("Escape")
         app.click(app.x_at(int(2.5 * SEC)), app.ruler_y())
         app.wait_gone("preview.catching_up", timeout=120.0)
         app.pixel_settled(center, tries=60)
         app.wait_still(timeout=60.0)
-        app.step("sharp", "the same break, carried at the preview's size: the pattern's detail")
-        d_sharp = detail(app)
-        diff = app.screen_diff(soft_shot)
-        app.expect(diff > 0.005, f"the sharp frame differs from the soft one (the screen changed by {diff:.1%})")
+        app.step("soft", "the same break, soft: the codec's 144-line picture enlarged")
+        d_soft = detail(app)
+        diff = app.screen_diff(sharp_shot)
+        app.expect(diff > 0.005, f"the soft frame differs from the sharp one (the screen changed by {diff:.1%})")
         app.expect(d_sharp > 1.15 * d_soft, f"the sharp frame has more fine detail ({d_sharp:.2f} against {d_soft:.2f})")
+        app.saved_project()
+        slots = moshes(app.project_text())
+        app.expect(len(slots) == 1 and not slots[0].get("sharp"), f"the soft slot leaves the row out ({json.dumps(slots)[:200]})")
 
         # the program at rest costs nothing (owner, 2026-11-07): the sharp mosh's window open, a pause,
         # then the pointer over the window
         meter = Meter(app)
         app.expect(open_fx(app, y), "the FX window opened for the rest measure")
+        if not app.click_probe("mosh.sharp", "the Sharp tick, back on"):
+            return app.done()
+        # the Ctrl+S above queued the project's poster, a Background render that walks the mosh's
+        # history and shows no counter until it ends (found-defects 767): rest begins after it
+        app.expect(app.until(lambda: app.geom().get("posters_busy") is False, timeout=300.0), "the poster of the save is done")
+        # the save's status line goes out six seconds after it (a frame for a visible change, not
+        # rest work): rest begins when no short clock is left (found-defects 768)
+        app.expect(app.until(lambda: not 0 <= app.geom().get("rest_clock_ms", -1) < 60_000, timeout=60.0), "no status or guard clock is left")
         wait_quiet(meter, "sharp, its window open")
+        w0 = wakes(app)
         work, cpu = meter.over(5.0)
         print(f"   sharp window, pause: {work}, {cpu:.0f} % of a core, threads {meter.threads}")
-        app.expect(not work, f"an open sharp Datamosh window at rest runs nothing, ran {work}")
+        app.expect(not work, f"an open sharp Datamosh window at rest runs nothing, ran {work}; frames with no input were asked by: {woke(app, w0)}")
         r = app._probe_rect("win.fx")
         if r is not None:
             from kt_live import geometry

@@ -203,6 +203,10 @@ def sweep(app, a, b):
 
 def main(out):
     require_tools()
+    # the autosave clock is not this scenario's subject (found-defects 765): an edit's autosave thirty
+    # seconds later fell into the deck panel's hover and was counted as the hover's job — the shared
+    # stand runs with the same 600 s
+    os.environ.setdefault("KT_AUTOSAVE_SECS", "600")
     sources = fixture_sources(os.path.join(out, "sources"))
     proj = os.path.join(out, "heavy.kt")
     # KT_LIVE_SHOWCASE: more showcase flags (`--mosh-behind`: an effect in front of a Datamosh on every
@@ -243,7 +247,10 @@ def main(out):
         app.key("space")
         app.until(lambda: not app.playing(), timeout=10.0)
         app.step("played", "played a moment and paused: the sound device pauses after a second")
-        # the device pauses a second after the pause: what it brought into the process stays and stands
+        # the device pauses a second after the pause: the program says when it did (its callbacks seen
+        # to stand), and only then is the sound judged — a quiet half second under load came before the
+        # pause, and the pause's own wakes landed in the measure (found-defects 764)
+        app.expect(app.until(lambda: app.geom().get("sound_paused") is True, timeout=30.0), "the sound device paused at rest")
         app.until(lambda: sound_stands(pid), timeout=10.0)
         wait_quiet(meter, "after the play")
         tw0 = thread_wakes(pid)

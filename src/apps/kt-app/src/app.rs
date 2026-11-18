@@ -2582,7 +2582,7 @@ impl KtApp {
     /// When something on a clock needs a frame while nothing moves: the earliest of them. A new
     /// timed state belongs here, or it waits for the mouse. Background threads do not: they call
     /// `wake`.
-    fn rest_wake(&self) -> Option<std::time::Duration> {
+    pub(crate) fn rest_wake(&self) -> Option<std::time::Duration> {
         use std::time::Duration;
         let left = |at: std::time::Instant, ttl: Duration| ttl.saturating_sub(at.elapsed());
         let ttl = Duration::from_millis(STATUS_TTL_MS);
