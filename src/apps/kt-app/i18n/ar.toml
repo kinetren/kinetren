@@ -976,6 +976,7 @@ paste_lanes_clamped = "أُلصق عند المسارات العليا: لا م�
 last_lane = "لا يمكن حذف المسار الأخير"
 nothing_to_copy = "لا شيء لنسخه (لا منطقة ولا تحديد)"
 copied_event = "نُسخ الحدث المحدد: {0}"
+copied_event_part = "نُسخ جزء الحدث المحدد الواقع تحت المنطقة: {0}"
 copied_region = "نُسخت المنطقة: {0}"
 copied_events = "نُسخت الأحداث المحددة: {0}"
 clipboard_empty = "الحافظة فارغة"

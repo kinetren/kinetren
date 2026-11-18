@@ -976,6 +976,7 @@ paste_lanes_clamped = "el pegado se ajustó a las pistas superiores: no hay espa
 last_lane = "no se puede eliminar la última pista"
 nothing_to_copy = "nada que copiar (no hay región ni selección)"
 copied_event = "Copiado el clip seleccionado: {0}"
+copied_event_part = "Copiada la parte del evento seleccionado bajo la región: {0}"
 copied_region = "Copiada la región: {0}"
 copied_events = "Copiados los clips seleccionados: {0}"
 clipboard_empty = "el portapapeles está vacío"

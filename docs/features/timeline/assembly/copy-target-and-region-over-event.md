@@ -96,6 +96,7 @@ Take: the owner asked for both (ktprompts 26.10.18 items 4–5); one selected ev
 region, a triple click sets the region over the event through the existing one body. The rule for
 several selected events is decided in change `selection-copy-target` (archived 2026-11-04): they keep the
 region rule, because "any selection wins" would change the range-marker double click; the target is named in the status line.
+B10 (kkt-26.11.01b, 2026-11-01, change `region-crops-copy`): a region that CROPS the one selected event copies its part under the region and nothing of the other events; a covering or distant region keeps the whole event.
 
 ## Sources
 
