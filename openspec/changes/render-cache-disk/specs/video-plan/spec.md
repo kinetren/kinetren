@@ -56,3 +56,9 @@ whenever the display's memo lost it.
 - **WHEN** the store holds a prerendered loop and a new player opens the project with the loop region set; then an effect of the event is edited
 - **THEN** after the scan at rest the bars draw the loop as playing without work, with no device work and no decode; after the edit they do not
 - **TEST** t2985 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+#### Scenario: The editor prerenders a slow loop by itself and plays it from disk after a restart
+- **PATH** open the heavy project with a one-second loop → Play: the loop plays slowly → Pause and leave the mouse: the program writes the loop's moments to its render cache, then rests → close and open the project again, Play → the loop plays from the disk from its first lap
+- **WHEN** the editor plays a loop under Slowed, VHS Tape and Camera ISP on a software rasterizer, pauses with no input, and is started again on the same project
+- **THEN** files appear in the render cache at rest and the program then rests; the first run's trace records heavy prerendered moments; the restart's trace counts moments restored from disk in its first lap
+- **TEST** t2988 (`src/scripts/live/render_cache.py`)

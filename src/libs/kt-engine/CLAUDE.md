@@ -185,6 +185,20 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   (ahead-kept D1, t2931). A new walk of a stream history calls `kt_plugin_api::stream::walked`, or a
   moment waiting on it is tried again only next lap. `KT_RENDER_AHEAD=off`
   for an A/B. t2334–t2336, t2920, t2921, t2925.
+- **Slow moments are prerendered to disk at rest and played from it** (render-cache-disk,
+  `render_cache.rs`; the owner's "Сам в фоне", kkt-26.11.17 S5). The key is DURABLE: `durable_hash` of
+  the probe plan (every field kt-gpu's `plan_hash` hashes but the content serials and the input
+  frame's presence) mixed with the leaves `layer_src` notes while `probe_durable` builds it
+  (`note_leaf`: a file's path/size/mtime, a generator's `src_rev`, every file for a stream stage),
+  salted by the program build and the device (the folder). **A new field `plan_hash` hashes is
+  hashed by `durable_hash` too**, and a new input of a leaf's picture that a content serial stood for
+  reaches `note_leaf`, or a stale picture comes back from disk after a restart. Reads before composing:
+  the producer (before its decoded check), `show_kept`, the bytes path (`disk_bytes`); a restored moment
+  is kept under `restored_key(present, durable)`. Writes only by the player's `render-cache` thread at
+  rest: moments the cost map measured at least half a frame period and their unmeasured neighbours,
+  after `QUIET` with no `note_input`, never while playing or under an export's vote; its decodes at
+  `Thumbnail`, its device work at class `background`. No export reads it. With no `Config` (tests,
+  the CLI without `--render-cache`) nothing changes. t2980–t2985, t2988.
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
   the UI thread, the executor's lock may stand behind a composite), and `size_stream_memo` asks the
