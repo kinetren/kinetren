@@ -528,10 +528,13 @@ pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent
 
 /// The size the stream is ordered and read at — its INPUT, where the slots in front of it run (mosh-sharp
 /// D2): the layer's base size when the kernel carries its picture there; else the codec's (`lines` high,
-/// the layer's aspect), but never above the layer's height. The layer's size is the preview's in the
-/// preview and the project's in an export, so the preview does the work it shows.
+/// the layer's aspect), but the layer's when slots in front of the stage would run above it. The layer's
+/// size is the preview's in the preview and the project's in an export, so the preview does the work it
+/// shows. With nothing in front the codec's size stays: the decoder scales for free, and a resample to
+/// the codec's size cost a software device's walk a quarter more (found-defects 762).
 pub(super) fn stream_quality(c: &VideoClip, st: &StreamStage, quality: Quality) -> Quality {
-    input_quality(clip_base_quality(c, quality), st.kernel().lines(&st.values), st.kernel().carried(&st.values))
+    let front = !st.front.is_empty() || st.second_front.iter().any(|f| !f.is_empty());
+    input_quality(clip_base_quality(c, quality), st.kernel().lines(&st.values), st.kernel().carried(&st.values), front)
 }
 
 /// The codec's own size: `lines` at the layer's aspect (with the input at the codec's size it IS the input).
@@ -540,10 +543,11 @@ fn stream_coded(c: &VideoClip, st: &StreamStage, quality: Quality) -> (u32, u32)
     kt_plugin_api::stream::coded_size(st.kernel().lines(&st.values), (base.width, base.height))
 }
 
-/// `stream_quality` from the layer's base size, the codec's `lines` and whether the kernel carries.
-fn input_quality(base: Quality, lines: u32, carried: bool) -> Quality {
+/// `stream_quality` from the layer's base size, the codec's `lines`, whether the kernel carries and
+/// whether slots run in front of the stage.
+fn input_quality(base: Quality, lines: u32, carried: bool, front: bool) -> Quality {
     let layer = Quality { width: base.width.max(16), height: base.height.max(16) };
-    if carried || lines.max(16) > layer.height {
+    if carried || (front && lines.max(16) > layer.height) {
         return layer;
     }
     let (width, height) = kt_plugin_api::stream::coded_size(lines, (base.width, base.height));
@@ -936,17 +940,20 @@ pub(super) fn run(
 mod tests {
     use super::*;
 
-    /// t2974 (mosh-sharp D2): the stream's input follows the layer's size — the codec's size while it is
-    /// not above the layer, the layer's when it is or when the kernel carries its picture.
+    /// t2974 (mosh-sharp D2, found-defects 762): the stream's input follows the layer's size — the codec's
+    /// size while it is not above the layer or nothing runs in front, the layer's when slots in front would
+    /// run above it or when the kernel carries its picture.
     #[test]
     fn t2974_input_follows_the_layer() {
         let q = |width, height| Quality { width, height };
         let (preview, project) = (q(640, 360), q(1920, 1080));
         for (lines, soft_p, soft_e) in [(144, q(256, 144), q(256, 144)), (720, q(640, 360), q(1280, 720)), (1080, q(640, 360), q(1920, 1080))] {
-            assert_eq!(input_quality(preview, lines, false), soft_p, "soft {lines} in the preview");
-            assert_eq!(input_quality(project, lines, false), soft_e, "soft {lines} in the export");
-            assert_eq!(input_quality(preview, lines, true), preview, "sharp {lines} in the preview");
-            assert_eq!(input_quality(project, lines, true), project, "sharp {lines} in the export");
+            assert_eq!(input_quality(preview, lines, false, true), soft_p, "soft {lines} in the preview, a front");
+            assert_eq!(input_quality(project, lines, false, true), soft_e, "soft {lines} in the export, a front");
+            assert_eq!(input_quality(preview, lines, true, false), preview, "sharp {lines} in the preview");
+            assert_eq!(input_quality(project, lines, true, true), project, "sharp {lines} in the export");
         }
+        // nothing in front: the decoder gives the codec's size, nothing is resampled (found-defects 762)
+        assert_eq!(input_quality(preview, 720, false, false), q(1280, 720));
     }
 }

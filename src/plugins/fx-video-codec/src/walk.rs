@@ -199,6 +199,8 @@ struct Walk<'a> {
     frames: HashMap<(Side, i64), (usize, u32, u32)>,
     /// The carrier's source planes of the current batch, by position (mosh-sharp).
     carried: HashMap<i64, Dev3>,
+    /// The carrier's source at the last position, kept for the next walk (found-defects 761).
+    src_back: Option<(u64, Dev3)>,
 }
 
 /// A source frame's RGBA and size, copied out of the host's cache.
@@ -272,6 +274,7 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         checkpoints: 0,
         frames: HashMap::new(),
         carried: HashMap::new(),
+        src_back: None,
     };
     let key = chain[chain.len() - 1].2;
     if start == chain.len() {
@@ -421,9 +424,22 @@ impl Walk<'_> {
         }
     }
 
-    /// The source frame at `q` as planes of the carrier's size (mosh-sharp D1), once a batch.
+    /// The source frame at `q` as planes of the carrier's size (mosh-sharp D1), once a batch; the one
+    /// a walk before kept is read where it lies (found-defects 761).
     fn carrier_source(&mut self, q: i64) -> Result<Dev3, Short> {
         if let Some(&d) = self.carried.get(&q) {
+            return Ok(d);
+        }
+        let key = mosh::src_key(&self.s.r, self.lay(), q);
+        let kept = match (self.memo.get_live::<HeldPic>(key), self.memo.get::<Planes>(key)) {
+            (Some(h), _) => Some(Val::Held(h)),
+            (None, Some(p)) => Some(Val::Host(p)),
+            _ => None,
+        };
+        if let Some(v) = kept {
+            let d = self.dev(&v);
+            self.carried.retain(|&k, _| k >= q - 1);
+            self.carried.insert(q, d);
             return Ok(d);
         }
         let d = match self.frame(Side::Main, q, self.pic)? {
@@ -705,6 +721,13 @@ impl Walk<'_> {
         if let Some(Val::Dev(d)) = self.cur {
             self.b.keep3(d);
         }
+        // the carrier's source at the last position: the next position reads it as its previous frame
+        if let Some(k) = self.at
+            && let Some(&d) = self.carried.get(&k)
+        {
+            self.b.keep3(d);
+            self.src_back = Some((mosh::src_key(&s.r, self.lay(), k), d));
+        }
         for side in [Side::Main, Side::Second] {
             let i = side as usize;
             for (slot, bloom) in [(self.last[i].clone(), false), (self.bloom[i].clone(), true)] {
@@ -796,6 +819,13 @@ impl Walk<'_> {
         }
         if let Some(d) = self.out_dev.take() {
             self.out = Some(pic(d, self.pic));
+        }
+        if let Some((key, d)) = self.src_back.take() {
+            match back(d, self.pic) {
+                Val::Held(h) => self.memo.put_live(key, h.clone(), h.bytes()),
+                Val::Host(p) => self.memo.put_transient(key, p.clone(), p.bytes()),
+                _ => {}
+            }
         }
         for side in [Side::Main, Side::Second] {
             let i = side as usize;

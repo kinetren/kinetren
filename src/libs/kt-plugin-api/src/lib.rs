@@ -965,6 +965,11 @@ pub struct Decl {
     /// that ask every automatable row to act (t322) skip them; the registry refuses a name the
     /// passport lacks.
     pub foreign_rows: &'static [&'static str],
+    /// What a NEW instance takes over its passport's defaults (mosh-sharp-default, kkt-26.11.18b U7):
+    /// the owner's choice for what is added from now on. A row missing from a file still reads the
+    /// passport's default, so a project saved before keeps its look (`project-format`); the registry
+    /// refuses a name the passport lacks.
+    pub fresh: &'static [(&'static str, f64)],
 }
 
 /// A time-warp declaration (D11.5): which rows the host's warp machinery reads.
@@ -995,6 +1000,7 @@ impl Default for Decl {
             alpha: barrier::AlphaRel::Preserves,
             pair: None,
             foreign_rows: &[],
+            fresh: &[],
         }
     }
 }
@@ -1702,6 +1708,9 @@ impl Registry {
         }
         if let Some(r) = m.decl.foreign_rows.iter().find(|r| !m.passport.iter().any(|s| s.name == **r)) {
             return Err(Refusal { id: m.id.to_string(), reason: format!("a foreign row `{r}` the passport lacks") });
+        }
+        if let Some((r, _)) = m.decl.fresh.iter().find(|(r, _)| !m.passport.iter().any(|s| s.name == *r)) {
+            return Err(Refusal { id: m.id.to_string(), reason: format!("a fresh value for `{r}` the passport lacks") });
         }
         // a simulated device's pair (sim-audio-pairs): one passport, declared by the video half
         if let Some(a) = m.decl.pair {

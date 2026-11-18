@@ -146,6 +146,9 @@ impl Datamosh {
                     pair: Some("datamosh_sound"),
                     // the stream's sound rows: the picture never reads them
                     foreign_rows: &["audio_kbps", "audio_predict"],
+                    // a Datamosh added from now on is sharp; a saved one keeps its value (the owner,
+                    // kkt-26.11.18b U7: "Вкл. для новых")
+                    fresh: FRESH,
                     ..Decl::default()
                 },
                 ui: UiDecl {
@@ -189,7 +192,11 @@ pub const VARIANTS: &[UiVariant] = &[
     },
 ];
 
-/// The passport's defaults.
+/// What a new Datamosh takes over the passport's defaults (mosh-sharp-default): `sharp` on. The
+/// passport's default stays off, so a file without the row reads as it was saved.
+pub const FRESH: &[(&str, f64)] = &[("sharp", 1.0)];
+
+/// The passport's defaults (what a file's missing row reads as; a new instance adds `FRESH`).
 pub fn defaults() -> Vec<f64> {
     Datamosh::passport().iter().map(|s| s.default).collect()
 }
@@ -218,6 +225,8 @@ impl DatamoshSound {
                     lookahead: Some(|_, _| sound::LA),
                     // motion vectors and the picture's carrier have no audio meaning (mosh-sharp D5)
                     foreign_rows: &["mv_scale", "mv_rotate", "sharp"],
+                    // the pair's halves are created together with one set of values
+                    fresh: FRESH,
                     ..Decl::default()
                 },
                 ui: UiDecl {

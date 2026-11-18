@@ -47,10 +47,13 @@ impl std::fmt::Debug for PluginSlot {
 }
 
 impl PluginSlot {
-    /// A slot of `id` of `family` at its passport's defaults; `None` — no such plugin is registered.
+    /// A NEW slot of `id` of `family`: its passport's defaults, then what the plugin gives a new
+    /// instance (`Decl::fresh`, mosh-sharp-default); a file's missing row reads the passport's default
+    /// (`from_value`), never the fresh value. `None` — no such plugin is registered.
     pub fn new(family: Family, id: &str) -> Option<PluginSlot> {
         let m = registry().get(family, id)?.manifest();
-        let values = m.passport.iter().enumerate().map(|(i, s)| m.row(i).store.cast(s.default)).collect();
+        let fresh = |name: &str, d: f64| m.decl.fresh.iter().find(|(r, _)| *r == name).map_or(d, |(_, v)| *v);
+        let values = m.passport.iter().enumerate().map(|(i, s)| m.row(i).store.cast(fresh(&s.name, s.default))).collect();
         Some(PluginSlot { family, id: id.to_string(), values, extra: Default::default() })
     }
 

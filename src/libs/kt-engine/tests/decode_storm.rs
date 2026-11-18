@@ -301,7 +301,9 @@ fn mosh_project() -> Project {
     p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.media.push(MediaRef::new(MediaId(2), "synth:2"));
     let mut f = FxInstance::plugin("datamosh").expect("datamosh is built in");
-    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0), ("qp", 14.0)] {
+    // the classic soft mosh these tests were written for: its stream is ordered at the codec's size (a
+    // new Datamosh is sharp since kkt-26.11.18b U7; the order and the walk are the same code either way)
+    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0), ("qp", 14.0), ("sharp", 0.0)] {
         assert!(f.set_param(name, v), "{name}");
     }
     p.clips.push(clip(1, 1, 0, 2 * SEC, vec![]));
