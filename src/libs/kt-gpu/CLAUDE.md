@@ -274,8 +274,16 @@ is no picture, and an export refuses.
 
 ## The export's readback ring (export-throughput D5)
 
-- `submit`/`collect` (`readback_depth` = `RING` = 3): the same resolve and passes as `execute`, the
-  copy into the ring's staging buffer, the map requested; `collect` waits for THAT submission. The
+- `submit`/`collect`: the same resolve and passes as `execute`, the copy into the ring's staging
+  buffer, the map requested; `collect` waits for THAT submission, `done(ticket)` asks without waiting
+  (a `Poll` and the map's verdict). `readback_depth(w, h)` = `ring_depth`: `RING_BYTES` (256 MiB) of
+  staging over the frame, 3 to `RING_MAX` (16) — a BOUND, not the depth used: the export hands on
+  every finished frame and waits only on a full ring (export-readback D1). The owner's iGPU handed a
+  1 ms frame back 52 ms after its submission; a ring of three made that a 57-frames-a-second export.
+  A frame takes the first free slot below the depth; slots are made as first used and reported to
+  the ledger as readback memory. The pass timer's `PENDING_MAX` is twice `RING_MAX`, or the frames
+  past it run untimed. Uploads stay `KEEP_UPLOAD_FRAMES` (3): a deeper frame keeps its textures by
+  reference. t2960. The
   arena and the pool's accumulators are reused by frames in flight — legal because
   `queue.write_buffer` and later passes are ordered after earlier submissions on the one queue;
   never write a buffer of a frame in flight by mapping it. The ring neither asks nor fills the
@@ -418,7 +426,8 @@ is no picture, and an export refuses.
   Every lower class has the same room; there is no count of lower pieces (`AHEAD_PIECES` and the rooms by
   class, `room`, are gone). The display's present is COUNTED (`Ring::note_display` in
   `present`/`present_kept`), never admitted. A waiter wakes when the prediction makes room (it polls the
-  flights' devices, never blocks on a surface device). A piece is cut at the bound (`piece_limit`). A
+  flights' devices, never blocks on a surface device). A piece is cut at HALF the bound and no admission claims more (`piece_limit`, ahead-kept D2): a piece
+  of the whole bound fitted only an empty ring, so the device idled between pieces (found-defects 732, t2930). A
   lower-class frame or compute job is cut at pass/dispatch boundaries by the pass timer's last MEASURED
   time of each label (`Timer::predict`, `ComputeDevice::last`), else by the disk seeds (`seeds.rs`,
   below); an unmeasured pass ends its piece. A new pass site calls `self.cut_point(enc, label)` before

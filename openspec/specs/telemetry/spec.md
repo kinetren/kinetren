@@ -878,15 +878,30 @@ of a moment had one key, the earlier record was an incomplete composite.
 `kt-cli trace … export` SHALL report each export of a run: its frames, the timeline it covered against its
 wall (the real-time factor), the serial or pipelined form, each stage busy at all with its share of the wall,
 and how long its submissions waited for admission on the device rings, with the pieces cut and whether a
-display shared the device. A run without an export SHALL say so.
+display shared the device. It SHALL state the device's own time a frame (from the export's timed frames),
+the readback ring's depth, the most and the mean frames in flight and a frame's time from submission to
+collection — or, for a run recorded before those records, how long a collect waited — and the run's render
+log lines (`EXPORT` journal records) within the export. A run without an export SHALL say so.
 Why: kkt-26.11.15 N3 — the owner's render is slower than his preview; on his iGPU the export's frames are
 admitted last on the ring the display shares (loop-laps-regression D2), and only his run can say whether
-that, the work at nine times the preview's pixels, or a stage costs his render the time.
+that, the work at nine times the preview's pixels, or a stage costs his render the time. kkt-26.11.18 T3:
+his simple region took 52.7 ms from submission to readback for 1.06 ms of device work, which only the
+device time beside the latency shows; T4: the render's lines belong to the one trace he sends.
 
 #### Scenario: An export read back from its records
 - **WHEN** a run holds an export's stage records (compose 18 s, device wait 15 s, an idle readback, a 20 s wall over 10 s of timeline), two of its admissions on a ring with a display and a cut piece, and an admission of the preview before it
 - **THEN** the report reads 0.50× real time with four frame workers, compose 90 % and device wait 75 % of the wall, no readback line, two submissions that waited 3 s (15 % of the wall) with one piece cut beside a display; a run with no export says there is none
 - **TEST** t2791 (`src/apps/kt-cli/src/trace_query/tests.rs`)
+
+#### Scenario: The export view states the device time, the ring and the render's lines
+- **WHEN** a run holds an export with three timed export frames of 1, 1 and 4 ms, its ring record (depth 16,
+  at most 12 in flight, 30 summed over 3 submissions), its latency record (150 ms over 3 frames), two
+  `EXPORT` journal lines inside it and one after it; and a second run's export without ring records but
+  with three `export_frame` spans of 10, 15 and 20 ms
+- **THEN** the first report says 1.00 ms a frame of device work (p50 of 3), up to 12 in flight of 16 (mean
+  10.0), a frame back 50.0 ms after its submission, and lists the two lines inside the export and not the
+  later one; the second says a collect waited 15.0 ms (p50 of 3)
+- **TEST** t2962 (`src/apps/kt-cli/src/trace_query/tests.rs`)
 
 ### Requirement: `trace gpu` reads a compute job's pieces as one job
 `kt-cli trace … gpu` SHALL read the device records of a compute job's pieces as ONE job: the records a
@@ -916,3 +931,37 @@ frames were missing. render-ahead is accepted by that share.
 - **WHEN** a trace holds two laps of a loop, the first with moments not kept and frames of known device time harvested in each
 - **THEN** `trace loop` prints each lap's device share as the harvested device time over the lap's wall, and the share while frames were missing over the first lap alone
 - **TEST** t2926 (`src/apps/kt-cli/src/trace_query.rs`)
+
+### Requirement: A loop's report says why moments ahead were not kept and how long work waited for its ring
+Every render-ahead job record SHALL say what came of its moment (`b`: 0 kept, 1 incomplete, 3 refused by the
+display's memo, 4 short of its stream history). `kt-cli trace loop` SHALL print for every lap, beside the
+producer's kept and composed counts, how many were short of the history, incomplete otherwise and refused,
+and the sum of the waits of the ring admissions in the lap with their count.
+Why: kkt-26.11.18 T2 — "6 kept of 68 composed" did not say why; the dump had to be read record by record to
+find that every one was a stream stage short of its history, and that the device stood idle while each
+history piece waited for an empty ring.
+
+#### Scenario: A lap says why moments ahead were not kept
+- **WHEN** a lap holds five render-ahead jobs (one kept, two short of the history, one incomplete, one refused) and two admissions that waited 0.3 and 0.4 s
+- **THEN** `trace loop` prints "1 kept of 5 composed" with "2 short of the history, 1 incomplete, 1 refused by the memo" and "ring waits 0.7 s over 2"
+- **TEST** t2932 (`src/apps/kt-cli/src/trace_query/tests.rs`)
+### Requirement: The close is in the trace
+A close that goes on SHALL write the journal's `close asked` and a `Shutdown` record (`ASKED`); every wait
+of the close SHALL write a `Shutdown` span (`aux` who, `dur` how long, `b` 1 when it was left behind); the
+durability point (`DURABLE`), eframe's return (`RETURNED`) and a forced exit (`FORCED`, naming what was
+still waited for) SHALL be recorded too. The trace SHALL be flushed after `on_exit`, after eframe returns
+and before a forced exit. `kt-cli trace … shutdown` SHALL print the close, its waits and what each thread
+did after the close was asked; a run without a close SHALL say so with its last record.
+Why: close-while-busy (kkt-26.11.18 T1): the owner's three traces of 2026-11-18 had no word of the close —
+nothing recorded it, and a clean exit never flushed the writer's last batch — so a close that hung could
+not be told from a kill.
+
+#### Scenario: A close's waits are named
+- **WHEN** a close joins a thread past its bound and another within it
+- **THEN** both waits are `Shutdown` records with their names, durations and outcomes
+- **TEST** t2950 (`src/libs/kt-time/src/shutdown.rs`)
+
+#### Scenario: The live close is read back
+- **WHEN** the live scenario closes the busy program
+- **THEN** `kt-cli trace shutdown` of its run prints "the program closes" and no forced exit
+- **TEST** t2954 live scenario `src/scripts/live/close_busy.py`

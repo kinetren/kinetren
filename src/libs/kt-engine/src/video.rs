@@ -1624,6 +1624,12 @@ impl VideoRenderer {
         })
     }
 
+    /// The most positions a composite computes of a stream history itself (`None` — not paced): a
+    /// frame short by more waits for the prefetch thread's walk (ahead-kept D1).
+    pub fn stream_compose_steps(&self) -> Option<usize> {
+        self.stream_pacing.map(|p| p.compose_steps)
+    }
+
     /// The bytes the stream stages' order takes now (`None` — not paced).
     pub fn stream_order_bytes(&self) -> Option<usize> {
         self.pacing().map(|p| p.order_bytes)

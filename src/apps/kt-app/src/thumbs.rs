@@ -675,14 +675,19 @@ fn pump(shared: &Shared, st: &mut WorkerState, ctx: &kt_time::sched::Ctx) -> kt_
             None => None,
         };
         if let Some(ci) = ci {
-            let mut ready = shared.ready.lock().unwrap();
-            let mut order = shared.order.lock().unwrap();
-            ready.insert(key, Arc::new(ci));
-            order.push_back(key);
-            let mut shown = shared.shown.lock().unwrap();
-            evict_unshown(&mut order, MAX_READY, &mut shown, |old| {
-                ready.remove(old);
-            });
+            {
+                let mut ready = shared.ready.lock().unwrap();
+                let mut order = shared.order.lock().unwrap();
+                ready.insert(key, Arc::new(ci));
+                order.push_back(key);
+                let mut shown = shared.shown.lock().unwrap();
+                evict_unshown(&mut order, MAX_READY, &mut shown, |old| {
+                    ready.remove(old);
+                });
+            }
+            // after the locks (found-defects 750): the wake takes egui's context lock, and a UI
+            // frame holding that lock waits in `get` for `ready` — the two waited for each other
+            // until epaint's ten-second deadlock panic ended the editor at its start
             crate::wake::soon();
         }
     }

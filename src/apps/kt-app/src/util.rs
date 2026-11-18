@@ -339,9 +339,15 @@ pub fn spawn_media_watchdog(
                 offline.insert(*id);
             }
         }
-        let mut set = out.lock().unwrap();
-        if *set != offline {
+        let changed = {
+            let mut set = out.lock().unwrap();
+            let changed = *set != offline;
             *set = offline;
+            changed
+        };
+        // after the lock (found-defects 750): the wake takes egui's context lock, which a UI frame
+        // holds while it reads this set
+        if changed {
             crate::wake::now();
         }
         kt_time::sched::Pump::Idle

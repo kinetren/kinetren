@@ -146,6 +146,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   transport's generation and the project version, a reel/poster job its cancel flag. A stopped run is
   `StreamStop` in the trace and reads as incomplete, never kept; `stream_preroll` gives up between
   batches. An export sets none. t2258, t2259.
+- **A player's drop is bounded** (close-while-busy, kkt-26.11.18 T1, t2952): its build, render and
+  prefetch threads and every media worker are joined through `kt_time::shutdown` (2 s, left behind past
+  it); a worker stops its span between chunks once closed; the render-ahead producer composes under its
+  lane's `cancel_check` (`stop::CLOSED`). A new thread of the player joins the same way, and a new long
+  loop in one checks the stop between its steps.
 - **Every thread that submits GPU or compute work runs as a class** (`kt_time::sched::with_class`,
   gpu-arbiter): the compose thread now (its kept-moment recheck near), the prefetch thread and the
   render-ahead producer near, a media
@@ -174,7 +179,11 @@ Render graph, decode scheduler, transport, prefetch, export. The core builds wit
   device, a done flag, no wait); the side engine `ahead_gpu_setter` gives (bytes) only for a display with
   no sibling or `KT_RENDER_AHEAD_DEVICE=side`. Depth: `render_ahead::depth` —
   a moment's wall over the producer's own time a moment, capped by `kt_time::mem::room()`; never a
-  constant. A moment incomplete or refused by the memo is skipped for the lap. `KT_RENDER_AHEAD=off`
+  constant. A moment refused by the memo is skipped for the lap; an incomplete one WAITS for what it
+  lacked (`render_ahead::Waits`: a history short by `k` until `k − compose_steps` positions were walked,
+  else a walk or a decode), cleared each lap; the display composes a skipped or waiting moment on demand
+  (ahead-kept D1, t2931). A new walk of a stream history calls `kt_plugin_api::stream::walked`, or a
+  moment waiting on it is tried again only next lap. `KT_RENDER_AHEAD=off`
   for an A/B. t2334–t2336, t2920, t2921, t2925.
 - **The memory ledger sizes the preview's memos** (memory-ledger): the prefetch thread tells the
   display's executor the loop region's moments (`tell_loop` → `VideoGpuExec::keep_loop`; never from
@@ -297,6 +306,12 @@ in the source's state and arrive through the retune lane.
 - **Nothing the writer emits may depend on timing**: the audio is interleaved by the fixed rule
   (after frame `i`, the audio up to its end), and the progress counts are the WRITER's (frames and
   audio frames written) — t955 compares two exports' event streams element by element.
+- **The ring's frames in flight follow the device** (export-readback D1, t2961): after each `submit`
+  the compose thread collects every frame at the ring's front that `VideoGpuExec::done` reports
+  finished, and blocks in `collect` only when `readback_depth(w, h)` frames are in flight. Never
+  collect "when N are in flight": a device's latency, not its work, then sets the export's rate. The
+  profile and the trace carry the ring (`export_stage::RING`) and each frame's time back
+  (`LATENCY`); the clock there only measures.
 - **A pipelined chunk is counted by what its frames ask** (`pipe_chunks`, render-speed-no-card D5): the
   serial measure, the project's largest size times its most layers, is one frame on a project with a
   4K moment, and nothing then runs in parallel within a source.

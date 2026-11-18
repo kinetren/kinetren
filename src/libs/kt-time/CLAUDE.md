@@ -28,6 +28,10 @@ The time model of the whole engine. Zero dependencies (except serde).
   render thread mark themselves; a call that can stand on the disk or a build opens `wait(kind)`.
 - **`work::park_until_work`** parks a watcher until any counter moves; `add` pays one relaxed load
   while nobody is parked (t2241).
+- **`shutdown` is every wait of a close** (close-while-busy, t2950): `join`/`wait_until` give up at a
+  deadline (`WAIT` 2 s for an owner's drop), leave the thread behind, and write a `Shutdown` record (who,
+  how long, left). A new drop that joins a thread or waits for a lane goes through it; never an unbounded
+  `join()` on a close path. `left_behind()` is what a forced exit names.
 - **`mem` is the memory ledger** (memory-ledger, capability `media-index`, t2290, t2291): a keeper of
   pictures, mixes or device buffers opens an `Account` of its `Tenant` with its BASE (never cut) and
   reports `set(bytes)` (atomics: no lock, any thread). Growth above the bases is granted from ONE

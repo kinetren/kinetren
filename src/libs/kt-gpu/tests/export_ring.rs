@@ -3,6 +3,8 @@
 //! `submit`/`collect` give the bytes `execute_into` gives, frame for frame, and the pipelined
 //! export on the GPU writes the serial GPU export's frames (one device: byte for byte,
 //! invariant 11). Skipped without an adapter (`KT_REQUIRE_GPU=1` makes it a failure).
+//! t2960 (export-readback D1): the ring holds as many frames as its bytes allow, more than three
+//! at 1080p, and every one of them gives `execute_into`'s bytes.
 
 use kt_engine::export::{ExportConverter, ExportSink, render_pipelined, render_raw_video_range_with};
 use kt_engine::{ExportBackends, VideoGpuExec, VideoRenderer};
@@ -80,7 +82,7 @@ fn t1457_the_readback_ring_gives_the_executed_bytes() {
     assert_eq!(piped.0, serial, "the pipelined GPU export writes the serial GPU export's frames");
 
     // the ring directly: three in flight, collected in order, each equal to execute_into
-    assert!(fresh.readback_depth() >= 2);
+    assert!(fresh.readback_depth(q.width, q.height) >= 3);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig { max_audio_bytes: 1, max_video_bytes: 256 << 20 });
     let video = VideoRenderer::new(&p);
     let mut src = sources(&p);
@@ -100,7 +102,7 @@ fn t1457_the_readback_ring_gives_the_executed_bytes() {
     let mut got = Vec::new();
     for t in &ts {
         tickets.push_back(fresh.submit(&video.frame_plan(&cache, *t, q)).unwrap());
-        if tickets.len() == fresh.readback_depth() {
+        if tickets.len() == 3 {
             let mut out = Vec::new();
             fresh.collect(tickets.pop_front().unwrap(), &mut out).unwrap();
             got.push(out);
@@ -191,7 +193,9 @@ fn t2298_an_export_device_keeps_the_uploads_of_the_frames_in_flight() {
             cache.insert_video(kt_engine::source_id(media), Some(dq), kt_engine::video_cache_idx(pts), f.into());
         }
     }
-    let ring = export.readback_depth();
+    // an export's device keeps the uploads of its last three frames (export-readback D1: the ring
+    // may be deeper, a frame deeper in it holds its textures by reference)
+    let ring = 3;
     let most = ts.iter().map(|t| video.layers_at(*t, q).len()).max().unwrap();
     let (mut a, mut b) = (Vec::new(), Vec::new());
     let mut uploaded_total = 0usize;
@@ -212,4 +216,50 @@ fn t2298_an_export_device_keeps_the_uploads_of_the_frames_in_flight() {
         assert_eq!(export.last_stages().upload_bytes, 0, "read again at once, not uploaded at {t:?}");
     }
     assert!(preview.uploads_held() > (ring + 1) * most, "scene guard: the preview's cache holds more ({} of {uploaded_total})", preview.uploads_held());
+}
+
+/// t2960 (export-readback D1): the ring's bound is its bytes over the frame — more than three 1080p
+/// frames, never fewer than three, no deeper for a larger frame — and that many 1080p frames go in
+/// before the first comes out: the first reports done without being collected, and each collected
+/// frame is `execute_into`'s, byte for byte. The ring of three refused the fourth submission.
+#[test]
+fn t2960_the_ring_holds_its_bytes_worth_of_frames() {
+    kt_plugins_builtin::install();
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    let (hd, uhd, eight) = (gpu.readback_depth(1920, 1080), gpu.readback_depth(3840, 2160), gpu.readback_depth(7680, 4320));
+    assert!(hd > 3, "a 1080p ring holds {hd}");
+    assert!(uhd <= hd && eight <= uhd, "a larger frame gets no deeper ring: {hd}, {uhd}, {eight}");
+    assert!(eight >= 3 && uhd >= 3, "never fewer than three: {uhd}, {eight}");
+
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let q = Quality { width: 1920, height: 1080 };
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig { max_audio_bytes: 1, max_video_bytes: 1 << 30 });
+    let video = VideoRenderer::new(&p);
+    let mut src = sources(&p);
+    let ts: Vec<Tick> = (0..hd as i64).map(|i| Tick(90_000 * 3 + i * 3000)).collect();
+    for (media, pts, dq) in ts.iter().flat_map(|t| video.layers_at(*t, q)) {
+        let s = &mut src.iter_mut().find(|(m, _)| *m == media).unwrap().1;
+        let f = s.read_video_frame(pts, Some(dq)).unwrap();
+        cache.insert_video(kt_engine::source_id(media), Some(dq), kt_engine::video::video_cache_idx(pts), f.into());
+    }
+    let want: Vec<Vec<u8>> = ts
+        .iter()
+        .map(|t| {
+            let mut out = Vec::new();
+            gpu.execute_into(&video.frame_plan(&cache, *t, q), &mut out).unwrap();
+            out
+        })
+        .collect();
+    let ring = kt_gpu::test_engine().unwrap();
+    let tickets: Vec<u64> = ts.iter().map(|t| ring.submit(&video.frame_plan(&cache, *t, q)).expect("the ring takes its depth")).collect();
+    let deadline = kt_time::test_deadline();
+    while !ring.done(tickets[0]) {
+        assert!(std::time::Instant::now() < deadline, "the first frame never reported done");
+        std::thread::yield_now();
+    }
+    for (i, tk) in tickets.into_iter().enumerate() {
+        let mut out = Vec::new();
+        ring.collect(tk, &mut out).unwrap();
+        assert!(out == want[i], "ring frame {i} of {hd} differs from execute_into");
+    }
 }

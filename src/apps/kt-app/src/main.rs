@@ -30,6 +30,7 @@ mod input_work_tests;
 #[cfg(test)]
 mod frame_cost_tests;
 mod envclip;
+mod exit_watch;
 mod deck_face;
 mod eq_graph;
 mod ffmpeg_setup;

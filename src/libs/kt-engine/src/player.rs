@@ -1847,24 +1847,30 @@ impl Drop for Player {
         self.ahead.close();
         self.builds.shutdown();
         self.wake.notify();
+        // Every join is BOUNDED (close-while-busy, kkt-26.11.18 T1): a prefetch pass walking a
+        // Datamosh history ran 37 s on the owner's iGPU, and the close waited for it until he
+        // killed the process. Each thread sees the stop at its next check (the history walk at its
+        // next position); one past the bound is left behind and named in the trace.
+        let until = kt_time::shutdown::deadline();
         // a build is tens of ms on a large project, and it ends at the stop
         if let Some(t) = self.build_thread.take() {
-            let _ = t.join();
+            kt_time::shutdown::join("engine-build", t, until);
         }
         // not joined: a composite may take seconds, and this runs on the UI thread. It ends by
         // itself on what it holds.
         self.composer.stop();
         drop(self.compose_thread.take());
         if let Some(t) = self.render_thread.take() {
-            let _ = t.join();
+            kt_time::shutdown::join("audio-render", t, until);
         }
         if let Some(t) = self.prefetch_thread.take() {
-            let _ = t.join();
+            kt_time::shutdown::join("prefetch", t, until);
         }
-        // The render/prefetch threads are finished; the preview's thread may still hold the map
+        // The render/prefetch threads are finished (or left behind); the preview's thread may still
+        // hold the map
         let workers: Vec<_> = self.workers.write().unwrap().drain().collect();
         for (_, w) in workers {
-            w.shutdown();
+            w.shutdown_until(until);
         }
     }
 }

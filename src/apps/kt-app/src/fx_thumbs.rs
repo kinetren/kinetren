@@ -465,7 +465,11 @@ impl Drop for FxThumbService {
         // threads (gpu-render-hardening, D6, t1644): the lane closes and its running cell ends
         self.lane.close();
         let _join = kt_time::block::wait(kt_time::block::kind::JOIN);
-        self.lane.wait_until_idle();
+        // bounded (close-while-busy): a heavy chain's cell can take seconds; at the process's exit
+        // kt-gpu's exit hook and the exit's watcher bound what is left
+        let since = std::time::Instant::now();
+        let ended = self.lane.wait_idle(kt_time::shutdown::deadline());
+        kt_time::shutdown::record("effect-cells", since, ended);
     }
 }
 

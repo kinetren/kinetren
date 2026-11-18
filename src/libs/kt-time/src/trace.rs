@@ -209,10 +209,15 @@ pub enum Ev {
     /// (the sum of its passes), `b` its span from the first pass's start to the last pass's end, `aux`
     /// its role (0 preview, 1 offline, 2 export). The record's own time is the harvest's.
     GpuFrame = 111,
+
+    /// The program's close (close-while-busy, kkt-26.11.18 T1). `id` the [`shutdown`] kind: a wait of
+    /// the close (a span: `dur` how long it waited), the close asked, the exit forced past its bound.
+    /// `aux` who (a [`name`]), `b` 1 — still running at its bound and left behind, 0 — it ended.
+    Shutdown = 120,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 54] = [
+    pub const ALL: [Ev; 55] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -267,6 +272,7 @@ impl Ev {
         Ev::GpuExec,
         Ev::ExportStage,
         Ev::GpuFrame,
+        Ev::Shutdown,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -328,6 +334,7 @@ impl Ev {
             Ev::StreamWalk => "stream_walk",
             Ev::GpuExec => "gpu_exec",
             Ev::ExportStage => "export_stage",
+            Ev::Shutdown => "shutdown",
             Ev::GpuFrame => "gpu_frame",
         }
     }
@@ -348,6 +355,22 @@ pub mod stop {
     pub const PREFETCH: u32 = 2;
     /// A scheduled job (a reel strip, a poster) was cancelled.
     pub const JOB: u32 = 3;
+    /// The player closes (close-while-busy): the render-ahead producer's lane was closed.
+    pub const CLOSED: u32 = 4;
+}
+
+/// `Shutdown.id` (close-while-busy).
+pub mod shutdown {
+    /// A wait of the close: a thread joined, a lane drained, a job's answer taken.
+    pub const WAIT: u64 = 0;
+    /// The person asked the program to close (the window's cross, File → Quit).
+    pub const ASKED: u64 = 1;
+    /// The exit passed its bound and was forced; `aux` names what was still waited for.
+    pub const FORCED: u64 = 2;
+    /// The close's durability is done (the recovery written, the lock released): from here the exit is bounded.
+    pub const DURABLE: u64 = 3;
+    /// eframe returned: the app was dropped (its threads joined or left), the C exit hooks are next.
+    pub const RETURNED: u64 = 4;
 }
 
 /// `FrameDrop.aux`.
@@ -550,7 +573,13 @@ pub mod export_stage {
     pub const WAIT_WRITER_AUDIO: u32 = 16;
     /// The export as a whole: `a` the wall nanoseconds, `b` the timeline nanoseconds it covered.
     pub const WALL: u32 = 17;
-    pub const NAMES: [&str; 17] = [
+    /// The readback ring of one device (export-readback D2): `a` its bound, `b` the frames in flight
+    /// summed over the submissions, `c` the submissions, `id` the most in flight at once. Not a stage.
+    pub const RING: u32 = 18;
+    /// A frame from its submission to its collection: `a` nanoseconds summed, `b` the longest, `c` the
+    /// frames. Not a stage.
+    pub const LATENCY: u32 = 19;
+    pub const NAMES: [&str; 19] = [
         "decode",
         "compose",
         "readback",
@@ -568,6 +597,8 @@ pub mod export_stage {
         "writer/frame",
         "writer/audio",
         "wall",
+        "ring",
+        "latency",
     ];
     /// The stage's name (`?` — a stage this build does not know).
     pub fn name(aux: u32) -> &'static str {
@@ -1493,6 +1524,17 @@ pub mod testing {
     /// The records of a capture.
     pub fn recs(items: &[Item]) -> Vec<Rec> {
         items.iter().filter_map(|i| if let Item::Rec(r) = i { Some(*r) } else { None }).collect()
+    }
+
+    /// The text a [`name`] hash stands for among `items` (its first record), or "".
+    pub fn name_of(items: &[Item], h: u32) -> String {
+        items
+            .iter()
+            .find_map(|i| match i {
+                Item::Text(t) if t.kind == text::NAME && t.id == h as u64 => Some(t.s.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     /// Hold the writer (a full ring) while the guard lives.

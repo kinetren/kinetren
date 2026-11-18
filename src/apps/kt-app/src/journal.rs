@@ -771,7 +771,6 @@ mod tests {
             crate::app::autosave_path(),
             crate::project_lock::lock_file_for(Path::new("/x/t1310.kt")),
             crate::ffmpeg_setup::download_root(),
-            crate::render_dialog::RenderSetup::default().log_dir,
         ] {
             assert!(p.starts_with(&ours), "{p:?} is outside the test data directory {ours:?}");
         }

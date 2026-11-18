@@ -364,12 +364,18 @@ pub trait VideoGpuExec: Send + Sync {
         Ok(HeldOut::Unsupported)
     }
     fn info(&self) -> &GpuBackendInfo;
-    /// How many frames this executor can hold in flight between `submit` and `collect`
-    /// (export-throughput D5): 0 — it cannot, and the caller uses `execute_into`. An export
-    /// submits frame N+1 before it collects frame N, so the readback of one overlaps the work on
-    /// the next; the bytes are those of `execute_into` (the same plan, the same passes).
-    fn readback_depth(&self) -> usize {
+    /// How many frames of `w`×`h` this executor can hold in flight between `submit` and `collect`
+    /// (export-throughput D5; export-readback D1: a bound by the ring's bytes, not the depth used):
+    /// 0 — it cannot, and the caller uses `execute_into`. An export submits ahead and collects in
+    /// order; the bytes are those of `execute_into` (the same plan, the same passes).
+    fn readback_depth(&self, _w: u32, _h: u32) -> usize {
         0
+    }
+    /// Has the device finished the submitted frame `ticket` (export-readback D1)? Never waits: an
+    /// export hands on every finished frame at once and blocks in `collect` only on a full ring, so
+    /// the frames in flight follow the device's own latency. `true` — no way to ask: collect now.
+    fn done(&self, _ticket: u64) -> bool {
+        true
     }
     /// Hand a plan to the device without waiting for it; the ticket names it to `collect`. The
     /// plan's inputs are taken (uploaded) before this returns — the plan may be dropped.

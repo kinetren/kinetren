@@ -734,3 +734,96 @@ fn t2926_a_lap_reads_its_device_share() {
     let g = gpu(&run);
     assert!(g.contains("frames timed 4 (preview 4"), "{g}");
 }
+
+/// Test t2932 (ahead-kept D3): `trace loop` says why the producer's moments were not kept — short of
+/// the stream history, incomplete otherwise, refused by the memo — and how long submissions waited for
+/// their ring in the lap.
+#[test]
+fn t2932_a_lap_says_why_moments_ahead_were_not_kept() {
+    let mut run = looped();
+    let first = lap_bounds(&run)[0].0;
+    for (k, b) in [0u64, 4, 4, 1, 3].into_iter().enumerate() {
+        run.recs.push(rec(Ev::Job, first + (k as u64 + 1) * MS, |r| {
+            r.aux = trace::job::RENDER_AHEAD;
+            r.b = b;
+            r.c = 1;
+        }));
+    }
+    for w in [300 * MS, 400 * MS] {
+        run.recs.push(rec(Ev::GpuAdmit, first + 10 * MS, |r| r.dur = w));
+    }
+    run.recs.sort_by_key(|r| r.t);
+    let out = laps(&run);
+    println!("{out}");
+    let lap = out.lines().find(|l| l.split_whitespace().nth(1).is_some_and(|w| w.starts_with('+'))).unwrap();
+    assert!(lap.contains("ahead: 1 kept of 5 composed, up to 1 in flight (2 short of the history, 1 incomplete, 1 refused by the memo);"), "{lap}");
+    assert!(lap.contains("ring waits 0.7 s over 2;"), "{lap}");
+}
+
+/// t2962 (export-readback D2, D3): the export view states the device's own time a frame beside the
+/// ring — its depth, the most and the mean in flight and a frame's time back — and lists the render's
+/// journal lines inside the export, not a later one; a run recorded before the ring's records reads the
+/// collects' waits instead.
+#[test]
+fn t2962_trace_export_states_the_device_time_the_ring_and_the_render_log() {
+    use kt_time::trace::export_stage as st;
+    let s = 1_000 * MS;
+    let end = 30 * s;
+    let wall = |v: &mut Vec<Rec>| {
+        v.push(rec(Ev::ExportStage, end, |r| {
+            r.aux = st::WALL;
+            r.a = 10 * s;
+            r.b = 10 * s;
+            r.c = 3;
+            r.id = 4;
+        }));
+    };
+    let mut v = vec![];
+    for (i, ns) in [MS, MS, 4 * MS].into_iter().enumerate() {
+        v.push(rec(Ev::GpuFrame, 21 * s + i as u64 * MS, |r| {
+            r.a = ns;
+            r.aux = 2;
+        }));
+    }
+    // a preview frame is not the export's
+    v.push(rec(Ev::GpuFrame, 22 * s, |r| r.a = 40 * MS));
+    v.push(rec(Ev::ExportStage, end, |r| {
+        r.aux = st::RING;
+        r.a = 16;
+        r.b = 30;
+        r.c = 3;
+        r.id = 12;
+    }));
+    v.push(rec(Ev::ExportStage, end, |r| {
+        r.aux = st::LATENCY;
+        r.a = 150 * MS;
+        r.b = 60 * MS;
+        r.c = 3;
+    }));
+    wall(&mut v);
+    let mut run = run_of(v);
+    let text = |t: u64, line: &str| kt_time::trace::Text { t, id: 0, th: 1, kind: kt_time::trace::text::JOURNAL, s: line.into() };
+    run.texts = vec![
+        text(20 * s, "EXPORT encoder h264_vaapi opened"),
+        text(end + MS, "EXPORT done"),
+        text(end + 5 * s, "EXPORT phase: video"),
+        text(25 * s, "ACT something else"),
+    ];
+    let out = export(&run);
+    assert!(out.contains("device: 1.00 ms a frame of work (p50 of 3 timed frames)"), "{out}");
+    assert!(out.contains("readback: up to 12 in flight of 16 (mean 10.0), a frame back 50.0 ms after its submission"), "{out}");
+    assert!(!out.contains("  ring ") && !out.contains("  latency "), "the ring is not a stage line: {out}");
+    assert!(out.contains("render log:") && out.contains("encoder h264_vaapi opened") && out.contains("done"), "{out}");
+    assert!(!out.contains("phase: video") && !out.contains("something else"), "a line past the export, or not the render's: {out}");
+
+    let mut v = vec![];
+    for (i, ms) in [10u64, 15, 20].into_iter().enumerate() {
+        v.push(rec(Ev::Job, 21 * s + i as u64 * s, |r| {
+            r.aux = kt_time::trace::job::EXPORT_FRAME;
+            r.dur = ms * MS;
+        }));
+    }
+    wall(&mut v);
+    let out = export(&run_of(v));
+    assert!(out.contains("readback: a collect waited 15.0 ms (p50 of 3)"), "{out}");
+}

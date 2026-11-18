@@ -559,21 +559,22 @@ the report waited for the next start and a non-panic death left nothing.
 
 ### Requirement: A test never touches the person's data directory
 A test process SHALL NOT read or write the person's data directory (the journal, the crash report,
-recovery, project locks, the workspace, presets, recent projects and posters, the render log,
+recovery, project locks, the workspace, presets, recent projects and posters,
 eframe's storage, FFmpeg downloads). In a test build the data directory SHALL be a folder of the
 test process in the system temp directory — or the absolute `KINETREN_DATA_DIR` the test that
 started the process gave it — and every path of the program's data SHALL be derived from that one
 directory. No code outside the one resolver SHALL ask for the person's directories directly.
 Why: until 2026-11-01 the tests wrote into the owner's real `~/.local/share/kinetren`: his journal
 was full of test lines (`RENDER render log not written (/tmp/kt-t959-…)`) and rotated his own records
-away at 14:09, next to 7934 lock files, a recovery file and a workspace the tests had written.
+away at 14:09, next to 7934 lock files, a recovery file and a workspace the tests had written. The
+render log file is gone since export-readback (its lines are the telemetry's).
 
 #### Scenario: A test's data directory is its own
 - **WHEN** a kt-app test resolves the data directory and the paths derived from it, and writes a line
   into the journal
 - **THEN** the directory is not, and does not contain or lie inside, the directory the resolver gives
   for the person; it lies in the temp directory; the journal, crash report, recovery, lock, FFmpeg
-  download root, render log and user store paths lie inside it; the line is in the test's journal and
+  download root and user store paths lie inside it; the line is in the test's journal and
   not in the person's
 - **TEST** t1310 (`src/apps/kt-app/src/journal.rs`)
 
@@ -875,3 +876,33 @@ system, past six seconds.
 #### Scenario: The preview's device stalled past six seconds
 - **PATH** open the demo project → the preview shows its first frame → (the bench holds the preview's GL device for nine seconds) → click the ruler again and again: the cursor moves, the window keeps drawing, nothing closes → after the release click the ruler: the preview shows the clicked moment
 - **TEST** t2743 live scenario `src/scripts/live/gl_stall.py`
+
+### Requirement: Closing a busy program ends it within a bound, after its durability
+Closing the window or File → Quit SHALL end the process within a bound whatever the program is doing (a
+loop catching up, a stream history walking, the render-ahead producer, a decoder span, GPU or compute
+work in flight). `on_exit` SHALL first do the durability work, each wait bounded (the autosave in flight
+5 s, a Ctrl+S being written 30 s, the recovery file); from then on the rest of the exit (the poster, the
+offline engine's park, telemetry's last event, the drops that join threads, eframe's teardown, the C exit
+hooks) SHALL take at most `EXIT_BOUND` (8 s): past it a watcher records what was still waited for,
+flushes the trace and ends the process with `_exit(0)`. Every owner's drop joins its threads with a bound
+(`kt_time::shutdown`, 2 s) and leaves a thread past it behind; the replaced app of File → Open/New is
+released the same way on its `app-drop` thread.
+Why: close-while-busy (kkt-26.11.18 T1): the owner closed the window while a loop caught up and had to
+kill the process; the player's drop joined a prefetch pass that walked a Datamosh history for up to 37 s,
+and the decoder, the sound device's thread, the effect cells and kt-gpu's exit hook waited with no bound.
+
+#### Scenario: A close's wait is bounded and leaves a stuck thread behind
+- **WHEN** a close joins a thread that does not end by its deadline, and another that does
+- **THEN** the join returns at the deadline, the first is recorded as left behind and the second as ended
+- **TEST** t2950 (`src/libs/kt-time/src/shutdown.rs`)
+
+#### Scenario: A stuck exit is forced and names what it waited for
+- **WHEN** the exit's watcher passes its bound while a wait of the close left a thread behind
+- **THEN** a forced-exit record names that thread, the trace is flushed, and only then the process ends
+- **TEST** t2951 (`src/apps/kt-app/src/exit_watch.rs`)
+
+#### Scenario: The window closes while the loop catches up
+- **WHEN** the heavy project (Camera ISP → Datamosh → VHS Tape) is closed paused while its history walks, playing on its first laps, and by File → Quit while playing
+- **THEN** each process ends within 15 s of the close (a software rasterizer in Xvfb), by itself (no forced exit), and its trace names the close
+- **PATH** open the heavy project paused on its loop → the window's cross → the window goes and the process ends; again playing the loop's first laps → the cross → the process ends; again playing → File → Quit → the process ends
+- **TEST** t2954 live scenario `src/scripts/live/close_busy.py`

@@ -101,6 +101,7 @@ pub fn run(args: &[String]) -> i32 {
         "memory" => memory(run),
         "gpu" => gpu(run),
         "export" => export(run),
+        "shutdown" => shutdown(run),
         "dump" => dump(run, arg(1), arg(2)),
         "chrome" => match rest.get(1) {
             Some(out) => match std::fs::write(out, chrome(run)) {
@@ -111,7 +112,7 @@ pub fn run(args: &[String]) -> i32 {
         },
         _ => {
             eprintln!(
-                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|export|machine|memory|dump [from to]|chrome <out.json>"
+                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|export|shutdown|machine|memory|dump [from to]|chrome <out.json>"
             );
             return 2;
         }
@@ -119,6 +120,58 @@ pub fn run(args: &[String]) -> i32 {
     print!("{out}");
     0
 }
+
+/// The run's close (close-while-busy, kkt-26.11.18 T1): when it was asked, every wait of the close
+/// (who, how long, ended or left running), the durability point, a forced exit, and what each thread
+/// still did after the close was asked. A run with no close says so with its last record: killed, or
+/// a build before close-while-busy (it recorded no close).
+pub fn shutdown(run: &Run) -> String {
+    use kt_time::trace::shutdown as k;
+    let mut o = String::new();
+    let marks: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::Shutdown)).collect();
+    let last = run.recs.iter().map(|r| r.end()).max().unwrap_or(0);
+    let Some(asked) = marks.iter().find(|r| r.id == k::ASKED).map(|r| r.t) else {
+        let _ = writeln!(o, "no close in this run: its last record is at {} (killed, or a build that recorded no close)", s(last));
+        return o;
+    };
+    for r in &marks {
+        let who = run.name_of(r.aux);
+        let line = match r.id {
+            k::ASKED => format!("the program closes ({who})"),
+            k::DURABLE => "the work is safe (recovery written): the exit is bounded from here".to_string(),
+            k::FORCED => format!("the exit passed its bound and was FORCED; still waited for: {who}"),
+            k::RETURNED => "eframe returned: the app was dropped, the C exit hooks are next".to_string(),
+            _ => format!(
+                "waited {} for {who}{}",
+                ms(r.dur),
+                if r.b == 1 { " — still running at its bound, left behind" } else { "" }
+            ),
+        };
+        let _ = writeln!(o, "  {} {line}", s(r.t));
+    }
+    let _ = writeln!(o, "  the run's last record: {} ({} after the close was asked)", s(last), ms(last.saturating_sub(asked)));
+    // what each thread did after the close: its last record past the ask
+    let mut after: BTreeMap<String, (u64, &'static str, u64)> = BTreeMap::new();
+    for r in run.recs.iter().filter(|r| r.end() > asked && !is(r, Ev::Shutdown)) {
+        let name = Ev::from_u16(r.ev).map_or("?", |e| e.name());
+        let th = run.thread_of(r.th);
+        let e = after.entry(th).or_insert((0, name, 0));
+        e.2 += 1;
+        if r.end() >= e.0 {
+            e.0 = r.end();
+            e.1 = name;
+        }
+    }
+    if !after.is_empty() {
+        o.push_str("  after the close was asked:\n");
+        for (th, (end, name, n)) in after {
+            let _ = writeln!(o, "    {th:<24} {n:>5} records, the last {name} ending {}", s(end));
+        }
+    }
+    o
+}
+/// How long after an export's last record its render log lines may land (the result reaches the window).
+const LOG_GRACE_NS: u64 = 2_000_000_000;
 
 /// Where each export of the run spent its time (render-speed D2): its stage records, the share of the
 /// wall each stage was busy (summed over its threads), how it compares with real time, and what the
@@ -128,6 +181,7 @@ pub fn export(run: &Run) -> String {
     let mut o = String::new();
     let mut stages: Vec<&Rec> = Vec::new();
     let mut n = 0;
+    let mut last_end = 0;
     for r in run.recs.iter().filter(|r| is(r, Ev::ExportStage)) {
         if r.aux != st::WALL {
             stages.push(r);
@@ -135,6 +189,10 @@ pub fn export(run: &Run) -> String {
         }
         let (wall, timeline, frames, workers) = (r.a.max(1), r.b, r.c, r.id);
         let (from, to) = (r.t.saturating_sub(wall), r.t);
+        // the ring and a frame's time back are not stages (export-readback D2)
+        let ring = stages.iter().find(|s| s.aux == st::RING).copied();
+        let back = stages.iter().find(|s| s.aux == st::LATENCY).copied();
+        stages.retain(|s| s.aux != st::RING && s.aux != st::LATENCY);
         let _ = writeln!(
             o,
             "export {n}: {frames} frames, {:.2} s of the timeline in {:.2} s — {:.2}× real time ({})",
@@ -161,6 +219,57 @@ pub fn export(run: &Run) -> String {
             if admits > 0 { format!(" ({:.1} % of wall)", waited as f64 * 100.0 / wall as f64) } else { String::new() },
             if shown > 0 { " — a display shares the device" } else { "" }
         );
+        let p50 = |mut v: Vec<u64>| {
+            v.sort_unstable();
+            (v[v.len() / 2], v.len())
+        };
+        // the device's own time a frame beside the time a frame took to come back (export-readback D2)
+        let device: Vec<u64> = run
+            .recs
+            .iter()
+            .filter(|r| is(r, Ev::GpuFrame) && r.aux == 2 && r.t >= from && r.t <= to)
+            .map(|r| r.a)
+            .collect();
+        if !device.is_empty() {
+            let (ns, k) = p50(device);
+            let _ = writeln!(o, "  device: {:.2} ms a frame of work (p50 of {k} timed frames)", ns as f64 / 1e6);
+        }
+        match (ring, back) {
+            (Some(ring), Some(back)) if ring.c > 0 && back.c > 0 => {
+                let _ = writeln!(
+                    o,
+                    "  readback: up to {} in flight of {} (mean {:.1}), a frame back {:.1} ms after its submission (longest {:.1} ms)",
+                    ring.id,
+                    ring.a,
+                    ring.b as f64 / ring.c as f64,
+                    back.a as f64 / back.c as f64 / 1e6,
+                    back.b as f64 / 1e6
+                );
+            }
+            _ => {
+                // a run recorded before the ring's records: the collects' spans
+                let waits: Vec<u64> = run
+                    .recs
+                    .iter()
+                    .filter(|r| is(r, Ev::Job) && r.aux == kt_time::trace::job::EXPORT_FRAME && r.t >= from && r.t <= to)
+                    .map(|r| r.dur)
+                    .collect();
+                if !waits.is_empty() {
+                    let (ns, k) = p50(waits);
+                    let _ = writeln!(o, "  readback: a collect waited {:.1} ms (p50 of {k}); the ring's depth was not recorded", ns as f64 / 1e6);
+                }
+            }
+        }
+        // the render's own lines (export-readback D3): the journal's EXPORT records since the export
+        // before, up to a moment past this one's end (its last lines land as the result arrives)
+        let lines: Vec<_> = run.texts.iter().filter(|t| t.t > last_end && t.t <= to + LOG_GRACE_NS && t.s.starts_with("EXPORT ")).collect();
+        if !lines.is_empty() {
+            let _ = writeln!(o, "  render log:");
+            for t in lines {
+                let _ = writeln!(o, "    {} {}", s(t.t), t.s.trim_start_matches("EXPORT "));
+            }
+        }
+        last_end = to + LOG_GRACE_NS;
         n += 1;
     }
     if n == 0 {
@@ -1217,12 +1326,31 @@ pub fn laps(run: &Run) -> String {
         if !ahead.is_empty() {
             let kept = ahead.iter().filter(|r| r.b == 0).count();
             let deepest = ahead.iter().map(|r| r.c).max().unwrap_or(0);
-            let _ = write!(walk, "  ahead: {kept} kept of {} composed, up to {deepest} in flight;", ahead.len());
+            let _ = write!(walk, "  ahead: {kept} kept of {} composed, up to {deepest} in flight", ahead.len());
+            // why the rest were not kept (ahead-kept D3): short of the stream history (they wait for
+            // the walk), incomplete otherwise, refused by the display's memo
+            let why = [(4, "short of the history"), (1, "incomplete"), (3, "refused by the memo")]
+                .iter()
+                .filter_map(|&(b, w)| {
+                    let n = ahead.iter().filter(|r| r.b == b).count();
+                    (n > 0).then(|| format!("{n} {w}"))
+                })
+                .collect::<Vec<_>>();
+            if !why.is_empty() {
+                let _ = write!(walk, " ({})", why.join(", "));
+            }
+            walk.push(';');
         }
         // how busy the device was (render-ahead D7): the device time of the frames harvested in the lap
         let device = device_ns(run, a, b);
         if device > 0 {
             let _ = write!(walk, "  device {:.0} %;", device as f64 * 100.0 / (b - a).max(1) as f64);
+        }
+        // the time submissions waited for the ring while the device was not full (ahead-kept D3): a
+        // wait of whole seconds beside an idle device is the arbiter holding work back
+        let (waits, waited) = admit_waits(run, a, b);
+        if waited > 0 {
+            let _ = write!(walk, "  ring waits {:.1} s over {waits};", waited as f64 / NS);
         }
         if kept < frames.len() || frames.is_empty() {
             missing.0 += device;
@@ -1309,6 +1437,12 @@ pub fn laps(run: &Run) -> String {
 }
 
 /// The device time of the timed frames harvested in `[a, b)` (`GpuFrame`, render-ahead D7).
+/// Admissions that waited for their ring in `[a, b)` and the sum of their waits (`GpuAdmit` spans).
+pub fn admit_waits(run: &Run, a: u64, b: u64) -> (usize, u64) {
+    let w: Vec<u64> = run.recs.iter().filter(|r| is(r, Ev::GpuAdmit) && r.t >= a && r.t < b && r.dur > 0).map(|r| r.dur).collect();
+    (w.len(), w.iter().sum())
+}
+
 pub fn device_ns(run: &Run, a: u64, b: u64) -> u64 {
     run.recs.iter().filter(|r| is(r, Ev::GpuFrame) && r.t >= a && r.t < b).map(|r| r.a).sum()
 }
