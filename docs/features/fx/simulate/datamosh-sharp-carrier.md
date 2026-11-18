@@ -1,18 +1,18 @@
 ---
 id: F-FX-015
 title: Sharp Datamosh — the codec decides the break at its size, the picture is carried at the project's
-status: accepted
+status: done
 priority: B
 cost: M
 category: fx/simulate
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-plugin-api, kt-engine]
 invariants: [4, 7, 11]
 ui_rules: []
 round: kkt-26.11.18b
 point: U1
-tests: []
+tests: [2970, 2971, 2972, 2973, 2974, 2975]
 depends_on: [F-FX-011, F-FX-013]
 trackers: []
 services: []
@@ -114,7 +114,7 @@ resolution.
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/video-fx/
-Accepted (owner kkt-26.11.18b U1, change `mosh-sharp`): an opt-in row of Datamosh; the codec runs at `lines`, a carrier decoder executes its decisions at the layer's size. Paths: `src/plugins/fx-video-codec/src/{mosh,walk,codec}.rs`, `src/libs/kt-engine/src/video_stream.rs` (`stream_quality`); invariants 4, 7, 11.
+Done (owner kkt-26.11.18b U1, change `mosh-sharp`): an opt-in row of Datamosh; the codec runs at `lines`, a carrier decoder executes its decisions at the layer's size. Paths: `src/plugins/fx-video-codec/src/{mosh,walk,codec}.rs`, `src/libs/kt-engine/src/video_stream.rs` (`stream_quality`); invariants 4, 7, 11.
 
 ## Estimate
 
