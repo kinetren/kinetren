@@ -195,14 +195,16 @@ fn t2982_a_prerendered_moment_plays_from_disk_after_a_restart() {
     let root = tempfile::tempdir().unwrap();
     let Some((a, moments)) = player(root.path(), 0.61) else { return };
     prerender(&a, &moments);
-    // the disk's picture is the composite's bytes (the bytes path composes on demand)
+    // the disk's picture is the composite's bytes: the bytes path composes on demand with the tier off
+    let kept = a.disk_picture(moments[2]).unwrap();
+    a.set_render_cache(None);
     let mut buf = Vec::new();
     let deadline = kt_time::test_deadline();
     while !a.compose_preview_into(moments[2], &mut buf).1 {
         assert!(Instant::now() < deadline, "the moment never composed complete");
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(a.disk_picture(moments[2]).unwrap().rgba, buf, "the disk holds the composite's bytes");
+    assert_eq!(kept.rgba, buf, "the disk holds the composite's bytes");
     drop(a);
     // the restart
     let Some((b, _)) = player(root.path(), 0.61) else { return };

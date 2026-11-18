@@ -1576,6 +1576,14 @@ impl PreviewParts {
         })) {
             return Some(r);
         }
+        // the bytes path (a GL preview off the window's device, the harness): the disk tier's picture is
+        // the composite's bytes (render-cache-disk D3)
+        if let Target::Bytes(out) = &mut target
+            && self.disk_bytes(&video, aligned, q, out)
+        {
+            kt_time::work::bump(kt_time::work::Work::CompositeReplay);
+            return Some((q, true, true, Default::default(), t0.elapsed().as_nanos() as u64, Default::default()));
+        }
         let generation = self.transport.generation();
         let step = video.grid.frame_step();
         // the decode quality comes FROM THE REQUEST (R.46, item 318): a clip with a zooming
@@ -1767,6 +1775,45 @@ impl PreviewParts {
         self.rc.note_on_disk(t.0, dk, versions);
         self.note_kept(t, key);
         Some(key)
+    }
+
+    /// The moment `t` from disk as bytes (render-cache-disk D3, the bytes path): `true` — `out` holds the
+    /// composite the store kept for it on this executor's device.
+    pub(crate) fn disk_bytes(&self, video: &VideoRenderer, t: Tick, q: Quality, out: &mut Vec<u8>) -> bool {
+        use kt_time::trace::{self, render_cache as k, Ev};
+        if !self.rc.is_on() {
+            return false;
+        }
+        let exec = {
+            let g = self.video_gpu.lock().unwrap();
+            if g.poisoned.is_some() { None } else { g.exec.clone() }
+        };
+        let Some(exec) = exec else { return false };
+        let Some(store) = self.rc.store(exec.info()) else { return false };
+        let built = self.builds.latest();
+        let versions = self.versions();
+        let files = self.rc.files(&built.project, (built.seq, versions.1), false);
+        let (plan, leaves) = video.probe_durable(&self.cache, t, q);
+        let dk = crate::render_cache::disk_key(&plan, &leaves, &files);
+        let (w, h) = (plan.out_w, plan.out_h);
+        drop(plan);
+        if !store.contains(dk) {
+            return false;
+        }
+        let mut span = trace::span(Ev::RenderCache);
+        match store.get(dk).filter(|p| (p.w, p.h) == (w, h)) {
+            Some(p) => {
+                span.aux(k::RESTORE).a(t.0 as u64).b(p.rgba.len() as u64).c(dk);
+                *out = p.rgba;
+                self.rc.restores.fetch_add(1, Ordering::Relaxed);
+                self.rc.note_on_disk(t.0, dk, versions);
+                true
+            }
+            None => {
+                span.cancel();
+                false
+            }
+        }
     }
 
     /// Ask the layers of the moment `t` the cache lacks of the player's workers at `prio`; how many.
