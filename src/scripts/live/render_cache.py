@@ -4,9 +4,9 @@ prerendered to disk at rest, by itself, and plays from disk after a restart.
 
 The project is ours (`kt-cli showcase --heavy`): a one-second loop over the composition under Slowed,
 VHS Tape and Camera ISP, which the software rasterizer cannot compose in real time. The verdict:
-- playing measures the loop's moments slow; paused with the hands off, the program writes them to its
-  render cache by itself and then rests (the owner's one exception to "at rest costs nothing", bounded
-  by what was measured);
+- the frame on screen at the opening is composed and measured slow, and the loop plays and is measured
+  slow; with the hands off the program writes the slow run to its render cache by itself and then rests
+  (the owner's one exception to "at rest costs nothing", bounded by what was measured);
 - after a restart the loop plays from the disk: its run's trace counts moments restored from disk in the
   first lap.
 """
@@ -51,23 +51,27 @@ def main(out):
     one_second_loop(proj)
     with Live("render_cache", out, project=proj, own_process=True) as app:
         meter = Meter(app)
-        wait_quiet(meter, "after opening")
-        app.expect(cache_files(out) == 0, "the cache had files before anything was measured")
-        app.step("open", "the heavy project is open, a one-second loop over the composition")
+        # the frame on screen is composed at the opening and measured slow: with the hands off, the
+        # program writes it and its slow neighbours by itself, then rests
+        wait_quiet(meter, "after opening and its prerender")
+        opened = cache_files(out)
+        app.expect(opened > 0, "the program wrote slow moments to disk at rest after the opening")
+        app.step("open", f"the heavy project is open; at rest the program wrote {opened} slow moments to disk")
 
         app.key("space")
         app.until(lambda: app.playing(), timeout=10.0)
         app.expect(app.playing(), "playback started (no audio device?)")
         meter.over(8.0)
-        app.step("playing", "the loop plays: its moments are measured slow")
+        app.step("playing", "the loop plays")
         app.key("space")
         app.until(lambda: not app.playing(), timeout=10.0)
-        # hands off: the program prerenders the slow moments by itself, then rests
-        app.expect(app.until(lambda: cache_files(out) > 0, timeout=120.0), "nothing was written to the render cache at rest")
-        app.step("prerendering", "paused, the mouse still: the program writes the slow moments to disk")
-        wait_quiet(meter, "after the prerender")
+        wait_quiet(meter, "after the play and its prerender")
         written = cache_files(out)
+        app.expect(written >= opened, "the render cache kept its files")
         app.step("prerendered", f"{written} moments on disk; the program rests")
+        verdict = app.done()
+    if verdict:
+        return verdict
     first = trace_answer(out, "cache")
     print(first)
     if counted(first, "written ") == 0 or counted(first, "prerendered heavy: ") == 0:
@@ -84,6 +88,9 @@ def main(out):
         app.key("space")
         app.until(lambda: not app.playing(), timeout=10.0)
         wait_quiet(meter, "after pausing the restart")
+        verdict = app.done()
+    if verdict:
+        return verdict
     second = trace_answer(out, "cache")
     print(second)
     restored = counted(second, "restored ")
@@ -93,6 +100,7 @@ def main(out):
     if lap0 and " 0 restored" in lap0[0]:
         raise SystemExit(f"the first lap after the restart restored nothing: {lap0[0]}")
     print(f"render cache: {written} moments written at rest, {restored} restored after the restart")
+    return 0
 
 
 if __name__ == "__main__":
