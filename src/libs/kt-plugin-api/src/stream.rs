@@ -37,6 +37,13 @@ pub enum SecondFrom {
 pub trait StreamLayout {
     /// The size the host orders the stream's frames at (`lines`, the layer's aspect).
     fn size(&self) -> (u32, u32);
+    /// The codec's own size (mosh-sharp D2): the host orders the stream at `size()` — the layer's
+    /// size or the codec's, never above the layer's — and names here the size the codec encodes at
+    /// (`coded_size(lines, …)`); a kernel resamples its input to it when the two differ. By default
+    /// the input's size: the host ordered the stream at the codec's size.
+    fn coded(&self) -> (u32, u32) {
+        self.size()
+    }
     /// The first position of the main stream (the cut, or earlier when it starts in the event before).
     fn first(&self) -> i64;
     /// The event's own first position — the cut.
@@ -77,6 +84,16 @@ pub trait StreamLayout {
     fn shown_from(&self) -> Option<i64> {
         None
     }
+}
+
+/// The codec's size for `lines` at the aspect of a frame `w`×`h`: `lines` high (at least 16), the width
+/// rounded to the nearest and made even (mosh-sharp: the host's and the kernel's one formula; for a frame
+/// that already has this size it is the identity).
+pub fn coded_size(lines: u32, (w, h): (u32, u32)) -> (u32, u32) {
+    let lh = lines.max(16);
+    let (w, h) = (w.max(2) as u64, h.max(2) as u64);
+    let cw = ((lh as u64 * w + h / 2) / h) as u32;
+    ((cw.max(16) + 1) & !1, lh)
 }
 
 /// A host-owned slot for a kernel's compiled schedule of one layout (stream-layout-per-build). Opaque
@@ -179,8 +196,15 @@ pub struct StreamOut {
 
 /// A stream kernel (`VideoClass::Stream`).
 pub trait StreamKernel: Send + Sync {
-    /// The encoded height: the host orders the stream at `(even(lines × aspect), lines)`.
+    /// The encoded height: the host's `StreamLayout::coded` is `coded_size(lines, the layer's size)`.
     fn lines(&self, p: &[f64]) -> u32;
+    /// The kernel carries its picture at the stream's INPUT size (mosh-sharp: the codec decides at
+    /// `lines`, a carrier executes its decisions at the layer's size): the host then orders the stream
+    /// at the layer's size. `false` — the picture is the codec's, and the host orders the stream at the
+    /// codec's size, never above the layer's.
+    fn carried(&self, _p: &[f64]) -> bool {
+        false
+    }
     /// How many frames of the event before the stream starts in (0 — it starts at the cut).
     fn before(&self, p: &[f64]) -> u32;
     /// The second input.

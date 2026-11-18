@@ -1768,17 +1768,38 @@ pub(crate) fn draw_video_fx_params(
                 let mut v = p.get(row).unwrap_or(0.0) as usize;
                 ui.horizontal(|ui| {
                     ui.label(label);
-                    egui::ComboBox::from_id_salt(("mosh", row)).selected_text(items[v.min(items.len() - 1)]).show_ui(ui, |ui| {
+                    let r = egui::ComboBox::from_id_salt(("mosh", row)).selected_text(items[v.min(items.len() - 1)]).show_ui(ui, |ui| {
                         for (i, l) in items.iter().enumerate() {
-                            if ui.selectable_value(&mut v, i, *l).changed() {
+                            let r = ui.selectable_value(&mut v, i, *l);
+                            // the probe's name is built only for a dump (no allocation per frame)
+                            if cfg!(test) || crate::widgets::field_probe::on() {
+                                crate::widgets::field_probe::note(&format!("mosh.{row}.{i}"), r.rect);
+                            }
+                            if r.changed() {
                                 p.set(row, i as f64);
                                 ch.base = true;
                             }
                         }
                     });
+                    if cfg!(test) || crate::widgets::field_probe::on() {
+                        crate::widgets::field_probe::note(&format!("mosh.{row}"), r.response.rect);
+                    }
                 });
             };
             combo(ui, p, "lines", tr(k::fx::MOSH_LINES), &["144", "240", "360", "480", "720", "1080"], &mut ch);
+            // the carrier (mosh-sharp): the codec decides at its height, the picture is the layer's size;
+            // the picture's row only — the sound has no picture to carry
+            if p.id == "datamosh" {
+                ui.horizontal(|ui| {
+                    let mut on = p.get("sharp") == Some(1.0);
+                    let r = ui.checkbox(&mut on, tr(k::fx::MOSH_SHARP));
+                    crate::widgets::field_probe::note("mosh.sharp", r.rect);
+                    if r.changed() {
+                        p.set("sharp", if on { 1.0 } else { 0.0 });
+                        ch.base = true;
+                    }
+                });
+            }
             combo(ui, p, "block", tr(k::fx::MOSH_BLOCK), &["16×16", "8×8"], &mut ch);
             let from = [tr(k::fx::MOSH_OWN), tr(k::fx::MOSH_ABOVE), tr(k::fx::MOSH_BELOW)];
             combo(ui, p, "vectors_from", tr(k::fx::MOSH_FROM), &from, &mut ch);

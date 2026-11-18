@@ -59,6 +59,8 @@ pub struct Rows {
     pub gain_q8: i32,
     pub loss: f64,
     pub seed: u32,
+    /// The picture is carried at the stream's input size (mosh-sharp D1).
+    pub sharp: bool,
 }
 
 fn row(p: &[f64], i: usize, d: f64) -> f64 {
@@ -94,16 +96,21 @@ impl Rows {
             gain_q8: (row(p, RESIDUAL, 1.0).clamp(0.0, 1.0) * 256.0).round() as i32,
             loss: row(p, LOSS, 0.0).clamp(0.0, 1.0),
             seed: n(SEED, 0.0, 0.0, 9999.0) as u32,
+            sharp: row(p, SHARP, 0.0) >= 0.5,
         }
     }
 
     /// What the ENCODER's output depends on besides the source addresses and the per-frame
     /// quantiser: the structural rows.
-    fn enc_hash(&self, size: (u32, u32)) -> u64 {
+    fn enc_hash(&self, size: (u32, u32), coded: (u32, u32)) -> u64 {
         let mut h = mix(0x00c0_dec0, self.gop as u64);
         h = mix(h, self.cfg.bs as u64);
         h = mix(h, self.cfg.search as u64);
         h = mix(h, ((size.0 as u64) << 32) | size.1 as u64);
+        // the input resampled to the codec's size (mosh-sharp D3): both sizes name the encoder's bytes
+        if coded != size {
+            h = mix(h, ((coded.0 as u64) << 32) | coded.1 as u64);
+        }
         mix(h, self.before as u64)
     }
 
@@ -113,6 +120,10 @@ impl Rows {
         let mut h = mix(enc, 0x0b0e_a4ed);
         h = mix(h, self.swap as u64);
         h = mix(h, self.second as u64);
+        // a carried picture never answers for the codec's (mosh-sharp D4)
+        if self.sharp {
+            h = mix(h, 0x5ea7_c0de);
+        }
         mix(h, self.seed as u64)
     }
 }
@@ -185,7 +196,7 @@ pub struct Plan {
 impl Plan {
     pub fn new(r: Rows, lay: &dyn StreamLayout) -> Plan {
         let cut = lay.cut();
-        let enc = r.enc_hash(lay.size());
+        let enc = r.enc_hash(lay.size(), lay.coded());
         Plan {
             r,
             first: lay.first().min(cut),
@@ -494,10 +505,30 @@ pub(crate) fn clean_bytes(c: &Clean) -> usize {
     c.recon.bytes() * 3 + c.pkt.mv.len() * 4
 }
 
-/// The padded plane size of a layout.
+/// The padded plane size of the codec (the host's `coded`, mosh-sharp D2).
 pub(crate) fn padded(lay: &dyn StreamLayout) -> (usize, usize) {
+    let (w, h) = lay.coded();
+    (codec::pad16(w.max(16)), codec::pad16(h.max(16)))
+}
+
+/// The padded size of the stream's pictures: the carrier's (the input's) when sharp, else the codec's.
+pub(crate) fn pic_padded(r: &Rows, lay: &dyn StreamLayout) -> (usize, usize) {
+    if !r.sharp {
+        return padded(lay);
+    }
     let (w, h) = lay.size();
     (codec::pad16(w.max(16)), codec::pad16(h.max(16)))
+}
+
+/// The visible size of the stream's pictures (what `render` hands out).
+pub fn out_size(r: &Rows, lay: &dyn StreamLayout) -> (u32, u32) {
+    if r.sharp { lay.size() } else { lay.coded() }
+}
+
+/// The carrier's geometry at a position's rows.
+pub(crate) fn carry_cfg(r: &Rows, lay: &dyn StreamLayout) -> codec::Carry {
+    let (w, h) = padded(lay);
+    codec::Carry { codec: lay.coded(), vis: lay.size(), bs: r.cfg.bs, grid: (w / r.cfg.bs, h / r.cfg.bs), gain_q8: r.gain_q8 }
 }
 
 /// The layout's schedule compiled up to `n`.
@@ -532,6 +563,19 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
         }
     };
     for &(_, node, _) in &chain[start..] {
+        // the carrier reads the source frames themselves (mosh-sharp D4)
+        if r.sharp {
+            match node {
+                Node::Intra { p } | Node::Refresh { p } => {
+                    out.insert((Side::Main, p));
+                }
+                Node::Inter { p, .. } => {
+                    out.insert((Side::Main, p));
+                    out.insert((Side::Main, p - 1));
+                }
+                _ => {}
+            }
+        }
         match node {
             Node::Base | Node::Hold => {}
             Node::Intra { p } => need_clean(Side::Main, p, &mut out),
@@ -547,7 +591,11 @@ pub fn needs(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Vec<
         }
     }
     if lay.region_ident(n) != 0 {
-        need_clean(Side::Main, n, &mut out);
+        if r.sharp {
+            out.insert((Side::Main, n));
+        } else {
+            need_clean(Side::Main, n, &mut out);
+        }
     }
     // the earliest position first, both sides interleaved: a host that warms the needs in bounded
     // batches (the export's pre-roll, D6) then always advances the replay
@@ -577,8 +625,25 @@ pub fn held(r: Rows, lay: &dyn StreamLayout, n: i64, memo: &StreamMemo) -> Optio
 /// or the device failed.
 fn encode_at(input: &dyn StreamInput, side: Side, k: i64, prev: Option<&Planes>, cfg: &Cfg) -> Option<Clean> {
     let (w, h) = padded(input);
+    let (cw, ch) = input.coded();
     let mut out = None;
-    input.with_frame(side, k, &mut |f| out = codec::encode_rgba(f.rgba, f.w, f.h, w, h, prev, cfg));
+    input.with_frame(side, k, &mut |f| {
+        out = if (f.w, f.h) == (cw, ch) || f.rgba.len() < f.w as usize * f.h as usize * 4 {
+            codec::encode_rgba(f.rgba, f.w, f.h, w, h, prev, cfg)
+        } else {
+            // the input at another size than the codec's (mosh-sharp D3)
+            let small = codec::resample_rgba(f.rgba, f.w, f.h, cw, ch);
+            codec::encode_rgba(&small, cw, ch, w, h, prev, cfg)
+        }
+    });
+    out
+}
+
+/// The source frame at `k` as planes of the stream's picture size (the carrier's source, mosh-sharp).
+fn source_planes(r: &Rows, input: &dyn StreamInput, k: i64) -> Option<Planes> {
+    let (w, h) = pic_padded(r, input);
+    let mut out = None;
+    input.with_frame(Side::Main, k, &mut |f| out = Some(Planes::from_rgba(f.rgba, f.w, f.h, w, h)));
     out
 }
 
@@ -646,6 +711,13 @@ pub fn transform(r: &Rows, v: (i16, i16)) -> (i16, i16) {
 
 /// One P-frame of the broken decoder.
 fn decode_inter(r: &Rows, k: i64, rf: &Planes, own: &Clean, second: Option<&Clean>) -> Option<Planes> {
+    let (mv, res) = inter_packet(r, k, rf.w, own, second);
+    codec::decode(rf, &mv, r.cfg.bs, &res, r.gain_q8)
+}
+
+/// What the broken decoder applies at a P-frame (codec planes `w` wide): the vectors after the second
+/// input, the edit and the loss, and the residual with the lost blocks dropped.
+fn inter_packet<'a>(r: &Rows, k: i64, w: usize, own: &'a Clean, second: Option<&Clean>) -> (Vec<(i16, i16)>, std::borrow::Cow<'a, codec::Residual>) {
     let bs = r.cfg.bs;
     // an intra packet of the second input carries no motion: its vectors are zero
     let zeros = vec![(0, 0); if second.is_some_and(|c| c.pkt.intra) { own.pkt.mv.len() } else { 0 }];
@@ -664,19 +736,34 @@ fn decode_inter(r: &Rows, k: i64, rf: &Planes, own: &Clean, second: Option<&Clea
                 let a = lowbias32(h ^ 0x5bd1_e995);
                 let span = (2 * rr + 1) as u32;
                 *v = (((a % span) as i32 - rr) as i16, (((a >> 16) % span) as i32 - rr) as i16);
-                codec::drop_block_residual(&mut res, rf.w, bs, i);
+                codec::drop_block_residual(&mut res, w, bs, i);
             }
         }
-        return codec::decode(rf, &mv, bs, &res, r.gain_q8);
+        return (mv, std::borrow::Cow::Owned(res));
     }
-    codec::decode(rf, &mv, bs, &own.pkt.res, r.gain_q8)
+    (mv, std::borrow::Cow::Borrowed(&own.pkt.res))
+}
+
+/// One P-frame of the carrier (mosh-sharp D1): the decoder's packet executed at the picture size.
+fn carry_inter(s: &Plan, input: &dyn StreamInput, k: i64, p: i64, rf: &Planes, own: &Clean, second: Option<&Clean>) -> Option<Planes> {
+    let lay: &dyn StreamLayout = input;
+    let r = s.at(k);
+    let (w, h) = padded(lay);
+    let (mv, res) = inter_packet(&r, k, w, own, second);
+    let flags = codec::coded_flags(&res, w, h, r.cfg.bs);
+    let own_mv = if own.pkt.intra { vec![(0, 0); flags.len()] } else { own.pkt.mv.clone() };
+    let cur = source_planes(&s.r, input, p)?;
+    let prev = source_planes(&s.r, input, p - 1)?;
+    Some(codec::carry_planes(rf, &cur, &prev, &mv, &own_mv, &flags, &carry_cfg(&r, lay)))
 }
 
 /// `clean + (broken − clean) × coverage`, per plane; the coverage is at the stream's size, read
 /// with clamped coordinates over the padding, at half resolution for the chroma.
-fn region_blend(broken: &Planes, clean: &Planes, cov: &[u8], size: (u32, u32)) -> Planes {
+fn region_blend(broken: &Planes, clean: &Planes, cov: &[u8], size: (u32, u32), vis: (u32, u32)) -> Planes {
     let (sw, sh) = (size.0.max(1) as usize, size.1.max(1) as usize);
-    let at = |x: usize, y: usize| -> i32 { cov.get(y.min(sh - 1) * sw + x.min(sw - 1)).copied().unwrap_or(0) as i32 };
+    let (vw, vh) = (vis.0.max(1) as usize, vis.1.max(1) as usize);
+    // the coverage is at the input's size; the planes may be the codec's (mosh-sharp: the identity when equal)
+    let at = |x: usize, y: usize| -> i32 { cov.get((y * sh / vh).min(sh - 1) * sw + (x * sw / vw).min(sw - 1)).copied().unwrap_or(0) as i32 };
     // floor division (`div_euclid`): a truncating `/` rounds a negative difference the other way,
     // and a fully covered pixel came out one level off the broken picture (t1244)
     let mix_px = |b: u8, c: u8, a: i32| -> u8 { (c as i32 + ((b as i32 - c as i32) * a + 127).div_euclid(255)).clamp(0, 255) as u8 };
@@ -731,8 +818,14 @@ fn render_with(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo, brok
         return Some((pic, key));
     }
     let cov = cov?;
+    let vis = out_size(&r, lay);
+    if r.sharp {
+        // outside the region the intact picture is the source itself at the carrier's size
+        let src = source_planes(&r, input, n)?;
+        return Some((Arc::new(region_blend(&pic, &src, &cov, lay.size(), vis)), mix(key, rid)));
+    }
     let clean = clean_at(&s, input, memo, Side::Main, n)?;
-    Some((Arc::new(region_blend(&pic, &clean.recon, &cov, lay.size())), mix(key, rid)))
+    Some((Arc::new(region_blend(&pic, &clean.recon, &cov, lay.size(), vis)), mix(key, rid)))
 }
 
 /// The broken decoder's picture at `n` and its key, position by position (the reference).
@@ -740,7 +833,7 @@ fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Optio
     let lay: &dyn StreamLayout = input;
     let r = s.r;
     let chain = s.chain(n);
-    let (w, h) = padded(lay);
+    let (w, h) = pic_padded(&r, lay);
     let mut start = 0;
     let mut cur: Option<Arc<Planes>> = None;
     for i in (0..chain.len()).rev() {
@@ -762,6 +855,8 @@ fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Optio
         let pic: Arc<Planes> = match node {
             Node::Base => Arc::new(Planes::grey(w, h)),
             Node::Hold => cur.clone().unwrap_or_else(|| Arc::new(Planes::grey(w, h))),
+            // the carrier's keyframe is the source frame itself (mosh-sharp D1)
+            Node::Intra { p } | Node::Refresh { p } if r.sharp => Arc::new(source_planes(&r, input, p)?),
             Node::Intra { p } => Arc::new(clean_at(s, input, memo, Side::Main, p)?.recon.clone()),
             Node::Refresh { p } => {
                 let ik = s.intra(lay, p);
@@ -782,7 +877,11 @@ fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Optio
                     None
                 };
                 let rf = cur.clone().unwrap_or_else(|| Arc::new(Planes::grey(w, h)));
-                Arc::new(decode_inter(&s.at(k), k, &rf, &own, second.as_deref())?)
+                if r.sharp {
+                    Arc::new(carry_inter(s, input, k, p, &rf, &own, second.as_deref())?)
+                } else {
+                    Arc::new(decode_inter(&s.at(k), k, &rf, &own, second.as_deref())?)
+                }
             }
         };
         memo.put(dk, pic.clone(), pic.bytes());

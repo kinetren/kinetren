@@ -185,9 +185,12 @@ fn dct_basis() -> &'static [u8] {
 
 /// Every compute shader of the codec, as the device receives it, with the buffers a step of it reads
 /// and writes.
-pub fn shaders() -> [(&'static str, usize, usize); 6] {
+pub fn shaders() -> [(&'static str, usize, usize); 9] {
     [
         (CONVERT, 1, 3),
+        (RESAMPLE, 1, 1),
+        (CODED, 3, 1),
+        (CARRY, 6, 1),
         (SEARCH, 3, 1),
         (residual_shader(), 3, 1),
         (DECODE, 3, 1),
@@ -204,6 +207,12 @@ const VECTORS: &str = include_str!("wgsl/vectors.wgsl");
 const DROP: &str = include_str!("wgsl/drop.wgsl");
 
 const CONVERT: &str = include_str!("wgsl/convert.wgsl");
+/// The stream's input to the codec's size (mosh-sharp D3).
+const RESAMPLE: &str = include_str!("wgsl/resample.wgsl");
+/// The blocks a packet codes (mosh-sharp D1).
+const CODED: &str = include_str!("wgsl/coded.wgsl");
+/// The carrier decoder (mosh-sharp D1).
+const CARRY: &str = include_str!("wgsl/carry.wgsl");
 
 /// A plane as the shaders read it: its bytes, four samples to a word, padded to a whole word
 /// (gpu-pass-cost: a word per sample had quadrupled every upload and cost a pass over the plane).
@@ -418,6 +427,142 @@ pub fn drop_block_residual(res: &mut Residual, w: usize, bs: usize, i: usize) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// the stream's input and the carrier (mosh-sharp)
+// ---------------------------------------------------------------------------------------------
+
+/// One axis of the resample (D3): the first tap, the end of a box or the second bilinear tap, whether it
+/// is bilinear, and its fraction.
+fn axis(o: u32, s: u32, d: u32) -> (u32, u32, bool, u32) {
+    if d == s {
+        return (o, o + 1, false, 0);
+    }
+    if d < s {
+        let lo = o * s / d;
+        return (lo, ((o + 1) * s / d).max(lo + 1), false, 0);
+    }
+    let p = (((2 * o + 1) * s * 128 / d) as i32 - 128).max(0);
+    let i0 = (p >> 8) as u32;
+    (i0, (i0 + 1).min(s - 1), true, (p & 255) as u32)
+}
+
+fn taps(a: (u32, u32, bool, u32)) -> Vec<(u32, u32)> {
+    if a.2 { vec![(a.0, 256 - a.3), (a.1, a.3)] } else { (a.0..a.1).map(|i| (i, 1)).collect() }
+}
+
+/// RGBA `sw`×`sh` to `dw`×`dh`, opaque (D3): per axis a box when shrinking, bilinear when growing, the
+/// identity at equal sizes; the CPU reference of `wgsl/resample.wgsl`.
+pub fn resample_rgba(rgba: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Vec<u8> {
+    let mut out = vec![0u8; dw as usize * dh as usize * 4];
+    let xs: Vec<_> = (0..dw).map(|o| taps(axis(o, sw, dw))).collect();
+    for oy in 0..dh {
+        let ty = taps(axis(oy, sh, dh));
+        for (ox, tx) in xs.iter().enumerate() {
+            let (mut acc, mut ws) = ([0u32; 3], 0u32);
+            for &(y, wy) in &ty {
+                for &(x, wx) in tx {
+                    let i = (y as usize * sw as usize + x as usize) * 4;
+                    let w = wx * wy;
+                    for c in 0..3 {
+                        acc[c] += rgba[i + c] as u32 * w;
+                    }
+                    ws += w;
+                }
+            }
+            let o = (oy as usize * dw as usize + ox) * 4;
+            for c in 0..3 {
+                out[o + c] = ((acc[c] + ws / 2) / ws) as u8;
+            }
+            out[o + 3] = 255;
+        }
+    }
+    out
+}
+
+/// Which blocks of a residual carry anything (D1): per luma block of `bs` on planes `w` wide, bit 1 luma,
+/// 2 Cb, 4 Cr; the CPU reference of `wgsl/coded.wgsl`.
+pub fn coded_flags(res: &Residual, w: usize, h: usize, bs: usize) -> Vec<u32> {
+    let (mw, mh) = (w / bs, h / bs);
+    let (cs, cw) = (bs / 2, w / 2);
+    (0..mw * mh)
+        .map(|b| {
+            let (bx, by) = (b % mw, b / mw);
+            let luma = (0..bs).any(|y| res.y[(by * bs + y) * w + bx * bs..][..bs].iter().any(|&v| v != 0));
+            let chroma = |p: &[i16]| (0..cs).any(|y| p[(by * cs + y) * cw + bx * cs..][..cs].iter().any(|&v| v != 0));
+            luma as u32 | (chroma(&res.cb) as u32) << 1 | (chroma(&res.cr) as u32) << 2
+        })
+        .collect()
+}
+
+/// The carrier's geometry (D1): the codec's visible size, the carrier's visible size, the codec's block,
+/// its grid (blocks a row and rows) and the residual's gain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Carry {
+    pub codec: (u32, u32),
+    pub vis: (u32, u32),
+    pub bs: usize,
+    pub grid: (usize, usize),
+    pub gain_q8: i32,
+}
+
+impl Carry {
+    fn uniform(&self, pw: u32, ph: u32, plane: usize) -> Vec<u8> {
+        let shift = (plane > 0) as u32;
+        uniform(&[
+            pw.to_le_bytes(),
+            ph.to_le_bytes(),
+            self.codec.0.to_le_bytes(),
+            self.codec.1.to_le_bytes(),
+            self.vis.0.to_le_bytes(),
+            self.vis.1.to_le_bytes(),
+            (self.bs as u32).to_le_bytes(),
+            (self.grid.0 as u32).to_le_bytes(),
+            (self.grid.1 as u32).to_le_bytes(),
+            shift.to_le_bytes(),
+            self.gain_q8.to_le_bytes(),
+            (1u32 << plane).to_le_bytes(),
+        ])
+    }
+}
+
+/// A codec pel in carrier pels, rounded half away from zero.
+fn carry_scale(v: i32, num: u32, den: u32) -> i32 {
+    let (a, d) = (v * num as i32, den as i32);
+    if a >= 0 { (2 * a + d) / (2 * d) } else { -((-2 * a + d) / (2 * d)) }
+}
+
+/// One P-frame of the carrier (D1): the codec's applied vectors `mv` and own vectors `own` per block of
+/// its grid, its coded `flags`, executed on carrier planes — the reference `rf`, the source frame `cur` and
+/// the previous source frame `prev`, all of one padded size. The CPU reference of `wgsl/carry.wgsl`.
+pub fn carry_planes<'a>(rf: &'a Planes, cur: &'a Planes, prev: &'a Planes, mv: &[(i16, i16)], own: &[(i16, i16)], flags: &[u32], c: &Carry) -> Planes {
+    let mut out = Planes::grey(rf.w, rf.h);
+    for (plane, o) in [&mut out.y, &mut out.cb, &mut out.cr].into_iter().enumerate() {
+        let pick = |p: &'a Planes| -> &'a [u8] { [&p.y, &p.cb, &p.cr][plane] };
+        let (r, s, q) = (pick(rf), pick(cur), pick(prev));
+        let shift = (plane > 0) as u32;
+        let (w, h) = ((rf.w >> shift) as i32, (rf.h >> shift) as i32);
+        let at = |p: &[u8], x: i32, y: i32| p[(y.clamp(0, h - 1) * w + x.clamp(0, w - 1)) as usize] as i32;
+        for y in 0..h {
+            let by = (((y as u32) << shift) * c.codec.1 / (c.vis.1 * c.bs as u32)).min(c.grid.1 as u32 - 1) as usize;
+            for x in 0..w {
+                let bx = (((x as u32) << shift) * c.codec.0 / (c.vis.0 * c.bs as u32)).min(c.grid.0 as u32 - 1) as usize;
+                let b = by * c.grid.0 + bx;
+                let v = mv[b];
+                let (vx, vy) = (carry_scale(v.0 as i32, c.vis.0, c.codec.0) >> shift, carry_scale(v.1 as i32, c.vis.1, c.codec.1) >> shift);
+                let mut px = at(r, x + vx, y + vy);
+                if flags[b] & (1 << plane) != 0 {
+                    let ov = own[b];
+                    let (ox, oy) = (carry_scale(ov.0 as i32, c.vis.0, c.codec.0) >> shift, carry_scale(ov.1 as i32, c.vis.1, c.codec.1) >> shift);
+                    let d = at(s, x, y) - at(q, x + ox, y + oy);
+                    px += (d * c.gain_q8) >> 8;
+                }
+                o[(y * w + x) as usize] = px.clamp(0, 255) as u8;
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------
 // the batched walk's device program (stream-history-on-device D1)
 // ---------------------------------------------------------------------------------------------
 
@@ -483,6 +628,9 @@ struct StepRec {
 pub struct Batch {
     w: usize,
     h: usize,
+    /// The padded size of the walk's PICTURES: the codec's, or the carrier's (mosh-sharp).
+    pw: usize,
+    ph: usize,
     bufs: Vec<Init0>,
     fixed: Vec<bool>,
     free: HashMap<u64, Vec<usize>>,
@@ -522,6 +670,8 @@ impl Batch {
         Batch {
             w,
             h,
+            pw: w,
+            ph: h,
             bufs: Vec::new(),
             fixed: Vec::new(),
             free: HashMap::new(),
@@ -535,6 +685,17 @@ impl Batch {
             can_keep: compute::host().is_some_and(|h| h.keeps()),
             bytes: 0,
         }
+    }
+
+    /// The walk's pictures are carried at padded `w`×`h` (mosh-sharp), not at the codec's size.
+    pub fn with_picture(mut self, w: usize, h: usize) -> Batch {
+        (self.pw, self.ph) = (w, h);
+        self
+    }
+
+    /// The padded size of the walk's pictures.
+    pub fn picture(&self) -> (usize, usize) {
+        (self.pw, self.ph)
     }
 
     /// The padded luma size of its planes.
@@ -746,8 +907,31 @@ impl Batch {
     }
 
     fn convert_buf(&mut self, src: usize, sw: u32, sh: u32) -> Dev3 {
-        let (w, h) = (self.w as u32, self.h as u32);
         let out = self.planes();
+        self.convert_into(src, sw, sh, (self.w, self.h), out)
+    }
+
+    /// A frame (`src`, RGBA `sw`×`sh`) into the codec's planes, resampled to its visible size `to` first
+    /// when it has another (mosh-sharp D3); at `to` it is `convert_buf`.
+    pub fn convert_coded(&mut self, src: usize, sw: u32, sh: u32, to: (u32, u32)) -> Dev3 {
+        if (sw, sh) == to {
+            return self.convert_buf(src, sw, sh);
+        }
+        let dst = self.alloc(to.0 as u64 * to.1 as u64 * 4);
+        let u = uniform(&[sw.to_le_bytes(), sh.to_le_bytes(), to.0.to_le_bytes(), to.1.to_le_bytes()]);
+        self.step("datamosh:resample", RESAMPLE, u, &[src], &[dst], [to.0.div_ceil(8), to.1.div_ceil(8), 1]);
+        self.convert_buf(dst, to.0, to.1)
+    }
+
+    /// A frame into planes of the walk's picture size (the carrier's source).
+    pub fn convert_picture(&mut self, src: usize, sw: u32, sh: u32) -> Dev3 {
+        let (y, c) = ((self.pw * self.ph) as u64, (self.pw * self.ph / 4) as u64);
+        let out = [self.alloc(y), self.alloc(c), self.alloc(c)];
+        self.convert_into(src, sw, sh, (self.pw, self.ph), out)
+    }
+
+    fn convert_into(&mut self, src: usize, sw: u32, sh: u32, size: (usize, usize), out: Dev3) -> Dev3 {
+        let (w, h) = (size.0 as u32, size.1 as u32);
         let u = uniform(&[sw.to_le_bytes(), sh.to_le_bytes(), w.to_le_bytes(), h.to_le_bytes()]);
         self.step("datamosh:convert", CONVERT, u, &[src], &out, [(w / 8).div_ceil(8), (h / 2).div_ceil(8), 1]);
         out
@@ -842,6 +1026,28 @@ impl Batch {
         out
     }
 
+    /// The coded blocks of a residual (mosh-sharp D1): a flag word per block of `bs`.
+    pub fn coded(&mut self, res: Dev3, bs: usize) -> usize {
+        let mw = (self.w / bs) as u32;
+        let n = mw * (self.h / bs) as u32;
+        let flags = self.alloc(n as u64 * 4);
+        let u = uniform(&[(self.w as u32).to_le_bytes(), (bs as u32).to_le_bytes(), mw.to_le_bytes(), n.to_le_bytes()]);
+        self.step("datamosh:coded", CODED, u, &[res[0], res[1], res[2]], &[flags], [n.div_ceil(64), 1, 1]);
+        flags
+    }
+
+    /// A P-frame of the carrier (mosh-sharp D1) at the walk's picture size: `carry_planes` on the device.
+    #[allow(clippy::too_many_arguments)]
+    pub fn carry(&mut self, rf: Dev3, cur: Dev3, prev: Dev3, mv: usize, own: usize, flags: usize, c: &Carry) -> Dev3 {
+        let (y, ch) = ((self.pw * self.ph) as u64, (self.pw * self.ph / 4) as u64);
+        let out = [self.alloc(y), self.alloc(ch), self.alloc(ch)];
+        for i in 0..3 {
+            let (pw, ph) = if i == 0 { (self.pw as u32, self.ph as u32) } else { (self.pw as u32 / 2, self.ph as u32 / 2) };
+            self.step("datamosh:carry", CARRY, c.uniform(pw, ph, i), &[rf[i], cur[i], prev[i], mv, own, flags], &[out[i]], [(pw / 4).div_ceil(8), ph.div_ceil(8), 1]);
+        }
+        out
+    }
+
     /// Submit the batch and wait once; the buffers read, in `read`'s order. `None` — no device, or
     /// it failed (`compute::fail` says why).
     pub fn run(&self) -> Option<Got> {
@@ -881,13 +1087,18 @@ impl Batch {
 
     /// Planes from three buffers `run` brought back.
     pub fn planes_of(&self, got: &[Vec<u8>], at: [usize; 3]) -> Planes {
+        self.planes_sized(got, at, (self.w, self.h))
+    }
+
+    /// `planes_of` for planes of padded size `size` (the walk's pictures, mosh-sharp).
+    pub fn planes_sized(&self, got: &[Vec<u8>], at: [usize; 3], size: (usize, usize)) -> Planes {
         let take = |i: usize, n: usize| {
             let mut v = got.get(at[i]).cloned().unwrap_or_default();
             v.truncate(n);
             v
         };
-        let (y, c) = (self.w * self.h, self.w * self.h / 4);
-        Planes { w: self.w, h: self.h, y: take(0, y), cb: take(1, c), cr: take(2, c) }
+        let (y, c) = (size.0 * size.1, size.0 * size.1 / 4);
+        Planes { w: size.0, h: size.1, y: take(0, y), cb: take(1, c), cr: take(2, c) }
     }
 
     /// A clean output from the buffers `run` brought back (vectors, residual, reconstruction).

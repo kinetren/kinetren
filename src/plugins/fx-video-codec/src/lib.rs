@@ -48,6 +48,8 @@ pub mod rows {
     /// The stream's sound (sim-audio-pairs): the audio bitrate and the codec's prediction.
     pub const AUDIO_KBPS: usize = 17;
     pub const AUDIO_PREDICT: usize = 18;
+    /// The picture carried at the layer's size (mosh-sharp, F-FX-015).
+    pub const SHARP: usize = 19;
 }
 
 /// The datamosh: an own codec broken by its rows.
@@ -98,6 +100,8 @@ impl Datamosh {
             // the stream's sound (sim-audio-pairs): read by the audio half only
             ParamSpec::choice_row("audio_kbps", sound::KBPS, 3),
             ParamSpec::flag_row("audio_predict", true),
+            // 19 — the codec decides at `lines`, a carrier executes its decisions at the layer's size
+            ParamSpec::flag_row("sharp", false),
         ]
     }
 
@@ -124,6 +128,7 @@ impl Datamosh {
             f64_row,
             u32_row,
             RowDecl { store: Store::Choice(sound::KBPS), omit_default: true },
+            RowDecl { store: Store::Bool, omit_default: true },
             RowDecl { store: Store::Bool, omit_default: true },
         ]
     }
@@ -211,8 +216,8 @@ impl DatamoshSound {
                 decl: Decl {
                     state: true,
                     lookahead: Some(|_, _| sound::LA),
-                    // motion vectors have no audio meaning
-                    foreign_rows: &["mv_scale", "mv_rotate"],
+                    // motion vectors and the picture's carrier have no audio meaning (mosh-sharp D5)
+                    foreign_rows: &["mv_scale", "mv_rotate", "sharp"],
                     ..Decl::default()
                 },
                 ui: UiDecl {
@@ -258,6 +263,9 @@ impl StreamKernel for Datamosh {
     fn lines(&self, p: &[f64]) -> u32 {
         mosh::Rows::from(p).lines
     }
+    fn carried(&self, p: &[f64]) -> bool {
+        mosh::Rows::from(p).sharp
+    }
     fn before(&self, p: &[f64]) -> u32 {
         mosh::Rows::from(p).before
     }
@@ -291,7 +299,8 @@ impl StreamKernel for Datamosh {
             // the device failed on this very frame: the frame is not a missing one
             return if kt_plugin_api::compute::host().is_none() { pass_through(input, n, out) } else { None };
         };
-        let (w, h) = input.size();
+        // the carrier's picture at the input's size, or the codec's at its own (mosh-sharp D4)
+        let (w, h) = mosh::out_size(&mosh::Rows::from(p), input);
         // the conversion back stays here: a job of its own would wait behind the frame's other passes
         // on the device (stream-layout-per-build D4: 1.6 → 9.8 ms a stage run on llvmpipe)
         pic.to_rgba(w, h, out);
