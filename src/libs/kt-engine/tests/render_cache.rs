@@ -234,9 +234,8 @@ fn t2984_the_prerender_yields_to_the_person() {
     for t in &moments {
         p.note_preview_cost(*t, 1_000_000_000, (160, 90));
     }
-    // input every 100 ms for 2 s: nothing works, nothing is written
-    let until = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < until {
+    // input every 100 ms, twenty times (the stimulus, not a wait): nothing works, nothing is written
+    for _ in 0..20 {
         p.note_input();
         rc.kick();
         assert!(!rc.busy(), "the prerender worked while input came");

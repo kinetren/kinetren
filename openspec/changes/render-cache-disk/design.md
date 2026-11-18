@@ -159,8 +159,11 @@ only in one process's memory. Checked:
 ## Risks / Trade-offs
 
 - [The machine works at rest] → only after measured slow moments exist, after 1.5 s of no input, stopped at
-  the first input; the `idle` live scenario on a heavy project with no play measures no prerender (no costs
-  measured) — the owner's exception is scoped to what he played.
+  the first input. Every composite is measured, the paused frame on screen included: opening a heavy
+  project prerenders the slow run around the playhead by itself (live `render_cache`: 54 moments, 13 s of
+  work after the opening), then rests. The `idle` live scenario on the heavy project: quiet after the
+  opening, then 1 % of a core on a pause and 1 % with the effects window open — the program rests once
+  the measured run is on disk.
 - [Disk use] → a cap with eviction, other builds' folders removed at open.
 - [A stale picture] → the durable key repeats the plan key's inputs; a new input of a frame that reaches the
   plan key (a rule since R.53) and is hashed by `plan_hash` must be hashed by `durable_hash` too — t2981

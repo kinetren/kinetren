@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live scenario t2988 (render-cache-disk; the owner's kkt-26.11.17 S5 "Сам в фоне"): a slow loop is
+"""Live scenario t2988 (render-cache-disk; the owner's kkt-26.11.17 S5: "by itself in the background"): a slow loop is
 prerendered to disk at rest, by itself, and plays from disk after a restart.
 
 The project is ours (`kt-cli showcase --heavy`): a one-second loop over the composition under Slowed,

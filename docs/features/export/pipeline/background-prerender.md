@@ -1,18 +1,18 @@
 ---
 id: F-EXP-008
 title: Background prerender of slow regions to disk
-status: in-progress
+status: done
 priority: B
 cost: M
 category: export/pipeline
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: partial
+we_have: yes
 crates: [kt-engine, kt-app, kt-cli]
 invariants: [4, 7, 11, 12]
 ui_rules: [12]
-round: null
-point: null
-tests: []
+round: kkt-26.11.17
+point: change render-cache-disk (S5; architecture review 2026-11-17 R3)
+tests: [t2980, t2981, t2982, t2983, t2984, t2985, t2987, t2988]
 depends_on: []
 trackers: []
 services: []
@@ -72,32 +72,7 @@ after a restart too. The editor sees which part of the timeline is ready by a co
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/video-plan/
-
-### What already exists
-
-- The render-ahead producer keeps every composite it makes on the display's executor
-  (`src/libs/kt-engine/src/render_ahead.rs`), keyed by the plan (`present_key`), and the bars draw kept
-  moments (`Player::final_video_runs`, invariant 4).
-- The preview measures each moment's device time (`src/libs/kt-engine/src/preview_cost.rs`).
-- A disk tier with a content key exists for reel previews (`src/libs/kt-media/src/index.rs`,
-  `reel_*` tables) and for pass times (`src/libs/kt-gpu/src/seeds.rs`).
-
-### What is missing
-
-- A key that survives the process: the present key carries the frames' content serials, which are
-  numbered per process.
-- The disk store with a size cap and eviction, the restore into the display's memo, the trigger at rest.
-
-### What hinders
-
-- The owner's rule "the program at rest costs nothing": he made this one job its exception
-  (kkt-26.11.17 S5, "Сам в фоне"); it must stop at the first input and while playing or exporting.
-- Invariant 11: the export must not read what the preview wrote; a frame from disk must be the bytes the
-  preview's composite gives on the same device and program build.
-
-### Which invariants it touches
-
-4 (the bars), 7 (one composition path: the disk keeps its output), 11, 12 (no UI wait).
+Done in `render-cache-disk` (2026-11-18): composites of moments measured at least half a frame period are written at rest after 1.5 s with no input under a durable plan key, read before composing, never by the export.
 
 ## Estimate
 
