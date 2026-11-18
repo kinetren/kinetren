@@ -50,6 +50,7 @@ in the menu of a track's empty space.
 |---|---|
 | <kbd>I</kbd> / <kbd>O</kbd> | region start / end at the playhead; with no region, <kbd>I</kbd> starts a one-second region |
 | <kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>Shift</kbd>+<kbd>D</kbd> | jump back / forward and drag the left / right region edge along; with no region, select the stretch just jumped over |
+| <kbd>C</kbd> | cut out the region's interior from every track it crosses; the rest stays in place (also **Edit › Cut out the region interior**) |
 | <kbd>L</kbd> | loop the region on / off |
 | <kbd>M</kbd> | add a marker at the playhead, or remove the one next to it; with the playhead inside the region, add or remove a range marker over the region |
 | click a marker on the ruler | move the playhead onto it (a range marker's flags only drag) |

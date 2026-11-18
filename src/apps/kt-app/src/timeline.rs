@@ -2039,7 +2039,8 @@ impl KtApp {
                 self.delete_action();
                 ui.close();
             }
-            if ui.button(tr(k::tl::menu::PUNCH_OUT)).clicked() {
+            let key = self.start.controls.label(crate::controls::Cmd::PunchOut).to_string();
+            if crate::widgets::menu_item(ui, tr(k::tl::menu::PUNCH_OUT), Some(&key)) {
                 self.punch_out_action();
                 ui.close();
             }

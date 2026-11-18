@@ -63,3 +63,16 @@ The menu lives in the bin column and the window buttons in the meters column, bo
 ## Open Questions
 
 For the owner, in the report: whether "like Vegas" should move towards real VEGAS (plain wheel zoom, J/K/L); the order of the tiles after ours; whether the code should carry the language and the other preferences.
+
+## The region's cut-out on a key (region-cut-key, 2026-11-18, F-TL-015)
+
+The owner (`v26.10` line 35) asked for the region's cut "from the keyboard (is C free?)". `Cmd::PunchOut`
+(37) is bound to `C` in OUR layout only: Premiere's C is its Razor and the other borrowed layouts give
+C no meaning we share, so they leave it unbound (Edit menu and Customize reach it). The settings code
+keeps only diffs, so the new number changes no written code. The key, Edit › Cut out the region
+interior and the empty-space item run one body, `punch_out_action` (gap-keeping, `apply_batch_restoring`);
+without a region the key and the Edit item say "Nothing to cut out: draw a region first" (rule 16).
+Class walk (a region action reachable only from one right-click menu): Delete clips in the region — Del
+and Edit; Clear the region — Esc's cascade, a key in the borrowed layouts, the ruler menu; Loop — L;
+Marker over the region — M; Save area from the selection — menu only, left (a naming action, not an
+edit); the cut-out — fixed here.

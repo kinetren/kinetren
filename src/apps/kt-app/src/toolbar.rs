@@ -519,6 +519,14 @@ impl KtApp {
                 self.delete_action();
                 ui.close();
             }
+            // the empty-space item's body and its key (F-TL-015): a person who draws the region
+            // with the keyboard finds the cut here, with its key beside it
+            let (hit, r) = Self::menu_btn_probed(ui, tr(k::tl::menu::PUNCH_OUT), self.start.controls.label(Cmd::PunchOut));
+            crate::widgets::field_probe::note("menu.edit.punch_out", r);
+            if hit {
+                self.punch_out_action();
+                ui.close();
+            }
             // The option “trim stretches the animation together with the event”
             // (R.40). It lives in the EDIT menu, not the view: it changes the
             // result of editing, not how it is shown.
