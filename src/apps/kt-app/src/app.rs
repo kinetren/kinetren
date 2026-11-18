@@ -903,6 +903,7 @@ impl KtApp {
         // keeps none
         if !cfg!(test) {
             self.player.set_render_cache(Some(kt_engine::render_cache::Config {
+                codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
                 root: crate::journal::data_dir().join("render-cache"),
                 build: render_cache_build(),
                 base: base.clone(),
@@ -8091,6 +8092,16 @@ impl KtApp {
             kt_engine::VideoBackendStatus::Missing => {
                 ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
+        }
+        // the disk prerender (render-cache-disk): its hardware encoder, or why it writes nothing here
+        match self.player.render_cache().status() {
+            Some(Ok(enc)) if !enc.is_empty() => {
+                ui.weak(crate::tf!(k::perf::RENDER_CACHE_ON, enc));
+            }
+            Some(Err(why)) => {
+                ui.weak(crate::tf!(k::perf::RENDER_CACHE_OFF, why));
+            }
+            _ => {}
         }
         // what composing the preview costs (morpher-event-grid-cost, D1): the last frame and
         // the average of the last second — the number behind "the fps drops here"

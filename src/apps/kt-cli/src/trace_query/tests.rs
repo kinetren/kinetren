@@ -845,17 +845,27 @@ fn t2987_trace_cache_reads_the_tiers_work() {
     push(2, k::HEAVY, 60 * MS);
     push(3, k::LIGHT, 2 * MS);
     push(4, k::ABANDON, k::why::INPUT);
-    push(5, k::STORE, 3 << 20);
-    push(6, k::EVICT, 1 << 20);
     for i in 0..3 {
         push(first + (i + 1) * MS, k::RESTORE, 1 << 20);
     }
+    run.names.insert(91, "h264_vaapi".into());
+    run.recs.push(rec(Ev::RenderCache, 5, |r| {
+        r.aux = k::STORE;
+        r.id = 91;
+        r.a = 2;
+        r.b = 3 << 20;
+    }));
+    run.recs.push(rec(Ev::RenderCache, 6, |r| {
+        r.aux = k::EVICT;
+        r.a = 4;
+        r.b = 1 << 20;
+    }));
     run.recs.sort_by_key(|r| r.t);
     let out = cache(&run);
     println!("{out}");
     assert!(out.contains("restored 3 (3.0 MB read"), "{out}");
-    assert!(out.contains("written 1 (3.0 MB on disk)"), "{out}");
-    assert!(out.contains("evicted 1 (1.0 MB)"), "{out}");
+    assert!(out.contains("written 2 moments in 1 segments (3.0 MB on disk, encoder h264_vaapi)"), "{out}");
+    assert!(out.contains("evicted 4 moments in 1 segments (1.0 MB)"), "{out}");
     assert!(out.contains("prerendered heavy: 2 (device 50.0 ms a moment on average, 60.0 ms at most)"), "{out}");
     assert!(out.contains("prerendered light: 1"), "{out}");
     assert!(out.contains("stopped: input 1"), "{out}");

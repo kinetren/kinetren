@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 xxhash-rust = { workspace = true }
-miniz_oxide = { workspace = true }
 kt-time = { workspace = true }
 kt-model = { workspace = true }
 kt-media = { workspace = true }

@@ -1147,6 +1147,7 @@ fn preview_run(
     // measure a restart
     if let Some(dir) = &render_cache {
         player.set_render_cache(Some(kt_engine::render_cache::Config {
+            codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
             root: dir.into(),
             build: render_cache_build(),
             base: std::path::Path::new(path).parent().map(|p| p.to_path_buf()),

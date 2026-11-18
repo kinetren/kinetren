@@ -17,6 +17,7 @@
 //! No export reads or writes it (D5): the export's bytes never depend on what the preview kept.
 
 use crate::video_plan::{FramePlan, LayerInput, LayerSrc, PlanLayer};
+pub use kt_media::segment::{RawSegments, SegmentCodec, SegmentReader, SegmentWriter};
 use kt_model::MediaId;
 use kt_time::trace::{self, render_cache as rc, Ev};
 use std::cell::RefCell;
@@ -27,15 +28,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use xxhash_rust::xxh3::Xxh3;
 
-/// The files' format: a change of the header, the filter or the key's fields moves it.
-pub const FORMAT: u32 = 1;
+/// The layout's version: a change of the manifest, the folders or the key's fields moves it.
+pub const FORMAT: u32 = 2;
 /// The default cap of the store (D2); `KT_RENDER_CACHE_MB` overrides it.
 pub const DEFAULT_CAP: u64 = 2 << 30;
 /// How long no input must have come before the prerender works (D4: FCP's trigger, shorter).
 pub const QUIET: Duration = Duration::from_millis(1500);
-const MAGIC: &[u8; 4] = b"KTRC";
-const HEADER: usize = 24;
-const EXT: &str = "ktf";
+/// The most frames one segment holds (ten seconds at 25 fps): the eviction's grain.
+pub const SEGMENT_FRAMES: usize = 250;
+/// Readers kept open by the reader thread.
+const READERS: usize = 4;
+const MANIFEST: &str = "idx";
+const MANIFEST_HEAD: &str = "kinetren render cache segment";
 
 /// `KT_RENDER_CACHE=off`: no tier whatever the host set (an A/B).
 pub fn enabled() -> bool {
@@ -60,87 +64,123 @@ pub struct Picture {
     pub rgba: Vec<u8>,
 }
 
-/// The file's bytes: the header and the deflated left-pixel delta of the RGBA.
-pub fn encode(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
-    let mut d = Vec::with_capacity(rgba.len());
-    for (i, &v) in rgba.iter().enumerate() {
-        d.push(if i >= 4 { v.wrapping_sub(rgba[i - 4]) } else { v });
-    }
-    let z = miniz_oxide::deflate::compress_to_vec(&d, 1);
-    let mut out = Vec::with_capacity(HEADER + z.len());
-    out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&FORMAT.to_le_bytes());
-    out.extend_from_slice(&w.to_le_bytes());
-    out.extend_from_slice(&h.to_le_bytes());
-    out.extend_from_slice(&(rgba.len() as u32).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&z);
-    out
-}
-
-/// The picture of a file's bytes; `None` — not ours, another format, short or corrupt.
-pub fn decode(bytes: &[u8]) -> Option<Picture> {
-    if bytes.len() < HEADER || &bytes[..4] != MAGIC {
-        return None;
-    }
-    let word = |i: usize| u32::from_le_bytes(bytes[i..i + 4].try_into().unwrap());
-    if word(4) != FORMAT {
-        return None;
-    }
-    let (w, h, len) = (word(8), word(12), word(16) as usize);
-    if len != w as usize * h as usize * 4 {
-        return None;
-    }
-    let mut d = miniz_oxide::inflate::decompress_to_vec_with_limit(&bytes[HEADER..], len).ok()?;
-    if d.len() != len {
-        return None;
-    }
-    for i in 4..d.len() {
-        d[i] = d[i].wrapping_add(d[i - 4]);
-    }
-    Some(Picture { w, h, rgba: d })
-}
-
 fn hex(v: u64) -> String {
     format!("{v:016x}")
 }
 
-/// The folder of one build of the format: `v<FORMAT>-<build hash>`.
+/// The folder of one build of the layout: `v<FORMAT>-<build hash>`.
 fn build_dir_name(build: &str) -> String {
     format!("v{FORMAT}-{}", hex(xxhash_rust::xxh3::xxh3_64(build.as_bytes())))
 }
 
-struct Entry {
+/// A segment's manifest (D2, D7): a text file beside the video, the codec and the encoder that wrote
+/// it, the frame size and rate, and the durable key of every frame in order — serializable on its
+/// own, so a later reader (the cached final render, F-EXP-003) can tell what a file holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Manifest {
+    pub codec: String,
+    pub encoder: String,
+    pub w: u32,
+    pub h: u32,
+    pub fps: u32,
+    pub keys: Vec<u64>,
+}
+
+impl Manifest {
+    pub fn to_text(&self) -> String {
+        let mut s = format!(
+            "{MANIFEST_HEAD} v{FORMAT}\ncodec {}\nencoder {}\nsize {} {}\nfps {}\n",
+            self.codec, self.encoder, self.w, self.h, self.fps
+        );
+        for k in &self.keys {
+            s.push_str(&format!("key {}\n", hex(*k)));
+        }
+        s
+    }
+
+    pub fn parse(text: &str) -> Option<Manifest> {
+        let mut lines = text.lines();
+        if lines.next()? != format!("{MANIFEST_HEAD} v{FORMAT}") {
+            return None;
+        }
+        let mut m = Manifest { codec: String::new(), encoder: String::new(), w: 0, h: 0, fps: 0, keys: Vec::new() };
+        for l in lines {
+            let (k, v) = l.split_once(' ')?;
+            match k {
+                "codec" => m.codec = v.into(),
+                "encoder" => m.encoder = v.into(),
+                "size" => {
+                    let (a, b) = v.split_once(' ')?;
+                    m.w = a.parse().ok()?;
+                    m.h = b.parse().ok()?;
+                }
+                "fps" => m.fps = v.parse().ok()?,
+                "key" => m.keys.push(u64::from_str_radix(v, 16).ok()?),
+                _ => {}
+            }
+        }
+        (m.w > 0 && m.h > 0 && !m.keys.is_empty()).then_some(m)
+    }
+}
+
+struct Seg {
     bytes: u64,
-    /// The use order: larger is newer. Entries found at open are numbered by their file times, all
-    /// below `session`.
+    /// The use order: larger is newer; segments found at open are numbered by their file times,
+    /// all below `session`.
     last: u64,
+    w: u32,
+    h: u32,
+    keys: Vec<u64>,
 }
 
 #[derive(Default)]
 struct Index {
-    map: HashMap<u64, Entry>,
+    segs: HashMap<u64, Seg>,
+    /// Key → (segment, frame).
+    keys: HashMap<u64, (u64, u32)>,
     used: u64,
     seq: u64,
     /// Uses above this were made by this process.
     session: u64,
+    /// Bytes a frame took in the segments written so far (the room a moment needs).
+    frame_bytes: (u64, u64),
 }
 
 impl Index {
-    fn touch(&mut self, key: u64) {
-        self.seq += 1;
-        let s = self.seq;
-        if let Some(e) = self.map.get_mut(&key) {
-            e.last = s;
+    fn insert(&mut self, id: u64, seg: Seg) {
+        for (i, k) in seg.keys.iter().enumerate() {
+            self.keys.insert(*k, (id, i as u32));
         }
+        self.used += seg.bytes;
+        self.frame_bytes.0 += seg.bytes;
+        self.frame_bytes.1 += seg.keys.len() as u64;
+        self.segs.insert(id, seg);
+    }
+
+    fn remove(&mut self, id: u64) -> Option<Seg> {
+        let seg = self.segs.remove(&id)?;
+        for k in &seg.keys {
+            if self.keys.get(k).is_some_and(|(s, _)| *s == id) {
+                self.keys.remove(k);
+            }
+        }
+        self.used -= seg.bytes;
+        Some(seg)
     }
 }
 
-/// The disk tier's files of one build and one device (D2).
+/// A request of the reader thread: the segment, its frame, its size, where to answer.
+type ReadAsk = (PathBuf, u32, u32, u32, std::sync::mpsc::Sender<Option<Vec<u8>>>);
+
+/// The disk tier's segments of one build and one device (D2): videos written by the host's
+/// [`SegmentCodec`] and their manifests, bounded, least recently used out.
 pub struct DiskStore {
     dir: PathBuf,
     cap: u64,
+    codec: Arc<dyn SegmentCodec>,
     ix: Mutex<Index>,
+    /// The thread that owns every open segment reader (invariant 5: a decoder has one owner).
+    reader: Mutex<Option<(std::sync::mpsc::Sender<ReadAsk>, std::thread::JoinHandle<()>)>>,
 }
 
 /// Why a write kept nothing.
@@ -148,18 +188,52 @@ pub struct DiskStore {
 pub enum PutError {
     /// No room without evicting what this process used (the prerender's rule).
     Full,
+    /// No encoder of the codec opens on this machine: the reason (D2 — no hardware encoder, no tier).
+    NoEncoder(String),
     Io(String),
 }
 
+/// A segment being written by the prerender's thread: frames go to the encoder as they come, the
+/// manifest is written when it is committed.
+pub struct SegmentBuild {
+    id: u64,
+    writer: Box<dyn SegmentWriter>,
+    manifest: Manifest,
+}
+
+impl SegmentBuild {
+    pub fn push(&mut self, key: u64, rgba: &[u8]) -> Result<(), String> {
+        self.writer.push(rgba)?;
+        self.manifest.keys.push(key);
+        Ok(())
+    }
+
+    pub fn len(&self) -> usize {
+        self.manifest.keys.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.manifest.keys.is_empty()
+    }
+
+    pub fn encoder(&self) -> &str {
+        &self.manifest.encoder
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        (self.manifest.w, self.manifest.h)
+    }
+}
+
 impl DiskStore {
-    /// Open (create) `<root>/v<FORMAT>-<build>/<device>/`, read its index and remove the other builds'
-    /// folders under `root` (their pictures can never be asked again).
-    pub fn open(root: &Path, build: &str, device: &str, cap: u64) -> std::io::Result<DiskStore> {
+    /// Open (create) `<root>/v<FORMAT>-<build>/<device>/`, read its manifests (a video with none, or of
+    /// another codec, is removed) and remove the other builds' folders under `root`.
+    pub fn open(root: &Path, build: &str, device: &str, cap: u64, codec: Arc<dyn SegmentCodec>) -> std::io::Result<DiskStore> {
         let mine = build_dir_name(build);
         if let Ok(rd) = std::fs::read_dir(root) {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                let ours = name.starts_with('v') && name.contains('-') && name[1..].split('-').next().is_some_and(|n| n.parse::<u32>().is_ok());
+                let ours = name.starts_with('v') && name[1..].split('-').next().is_some_and(|n| n.parse::<u32>().is_ok());
                 if ours && name != mine && e.path().is_dir() {
                     let _ = std::fs::remove_dir_all(e.path());
                 }
@@ -167,27 +241,54 @@ impl DiskStore {
         }
         let dir = root.join(mine).join(hex(xxhash_rust::xxh3::xxh3_64(device.as_bytes())));
         std::fs::create_dir_all(&dir)?;
-        let mut found: Vec<(std::time::SystemTime, u64, u64)> = Vec::new();
+        let ext = codec.extension().to_string();
+        let mut found: Vec<(std::time::SystemTime, u64, Manifest, u64)> = Vec::new();
+        let mut videos: Vec<PathBuf> = Vec::new();
         for e in std::fs::read_dir(&dir)?.flatten() {
             let p = e.path();
-            let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
-            if p.extension().and_then(|x| x.to_str()) != Some(EXT) {
-                // a temporary file a crash left
+            let x = p.extension().and_then(|x| x.to_str()).unwrap_or("").to_string();
+            if x == ext {
+                videos.push(p);
+                continue;
+            }
+            let Some(id) = p.file_stem().and_then(|s| s.to_str()).and_then(|s| u64::from_str_radix(s, 16).ok()) else {
+                let _ = std::fs::remove_file(&p);
+                continue;
+            };
+            if x != MANIFEST {
+                // a temporary file a crash left, a format of another layout
                 let _ = std::fs::remove_file(&p);
                 continue;
             }
-            let (Ok(key), Ok(md)) = (u64::from_str_radix(stem, 16), e.metadata()) else { continue };
-            found.push((md.modified().unwrap_or(std::time::UNIX_EPOCH), key, md.len()));
+            let video = dir.join(format!("{}.{ext}", hex(id)));
+            let m = std::fs::read_to_string(&p).ok().and_then(|t| Manifest::parse(&t)).filter(|m| m.codec == codec.codec());
+            match (m, std::fs::metadata(&video)) {
+                (Some(m), Ok(md)) => {
+                    let t = e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+                    found.push((t, id, m, md.len()));
+                }
+                _ => {
+                    let _ = std::fs::remove_file(&p);
+                    let _ = std::fs::remove_file(&video);
+                }
+            }
         }
-        found.sort();
+        found.sort_by_key(|f| (f.0, f.1));
         let mut ix = Index::default();
-        for (_, key, bytes) in found {
+        for (_, id, m, bytes) in found {
             ix.seq += 1;
-            ix.used += bytes;
-            ix.map.insert(key, Entry { bytes, last: ix.seq });
+            let seg = Seg { bytes, last: ix.seq, w: m.w, h: m.h, keys: m.keys };
+            ix.insert(id, seg);
         }
         ix.session = ix.seq;
-        let store = DiskStore { dir, cap, ix: Mutex::new(ix) };
+        // a video whose manifest never came (a segment the process died writing)
+        for v in videos {
+            let id = v.file_stem().and_then(|s| s.to_str()).and_then(|s| u64::from_str_radix(s, 16).ok());
+            if id.is_none_or(|id| !ix.segs.contains_key(&id)) {
+                let _ = std::fs::remove_file(&v);
+            }
+        }
+        let store = DiskStore { dir, cap, codec, ix: Mutex::new(ix), reader: Mutex::new(None) };
         // a smaller cap than the folder holds: the oldest go now
         store.make_room(0, true);
         Ok(store)
@@ -197,95 +298,199 @@ impl DiskStore {
         &self.dir
     }
 
-    fn path(&self, key: u64) -> PathBuf {
-        self.dir.join(format!("{}.{EXT}", hex(key)))
+    pub fn codec(&self) -> &str {
+        self.codec.codec()
+    }
+
+    fn video(&self, id: u64) -> PathBuf {
+        self.dir.join(format!("{}.{}", hex(id), self.codec.extension()))
+    }
+
+    fn manifest_path(&self, id: u64) -> PathBuf {
+        self.dir.join(format!("{}.{MANIFEST}", hex(id)))
     }
 
     pub fn contains(&self, key: u64) -> bool {
-        self.ix.lock().unwrap().map.contains_key(&key)
+        self.ix.lock().unwrap().keys.contains_key(&key)
     }
 
-    /// The bytes the store holds, and the entries.
+    /// The bytes the store holds, and the frames.
     pub fn used(&self) -> (u64, usize) {
         let ix = self.ix.lock().unwrap();
-        (ix.used, ix.map.len())
+        (ix.used, ix.keys.len())
     }
 
     pub fn cap(&self) -> u64 {
         self.cap
     }
 
-    /// The picture under `key`; a file that does not read back is removed and is a miss.
+    /// The manifest of the segment that holds `key` (tests, diagnostics).
+    pub fn manifest_of(&self, key: u64) -> Option<Manifest> {
+        let id = self.ix.lock().unwrap().keys.get(&key)?.0;
+        std::fs::read_to_string(self.manifest_path(id)).ok().and_then(|t| Manifest::parse(&t))
+    }
+
+    /// The picture under `key`, decoded by the reader thread; a segment that does not read back is
+    /// removed and is a miss.
     pub fn get(&self, key: u64) -> Option<Picture> {
-        if !self.contains(key) {
-            return None;
-        }
-        let pic = std::fs::read(self.path(key)).ok().and_then(|b| decode(&b));
-        let mut ix = self.ix.lock().unwrap();
-        match pic {
-            Some(p) => {
-                ix.touch(key);
-                Some(p)
-            }
+        let (id, frame, w, h) = {
+            let mut ix = self.ix.lock().unwrap();
+            let (id, frame) = *ix.keys.get(&key)?;
+            ix.seq += 1;
+            let s = ix.seq;
+            let seg = ix.segs.get_mut(&id)?;
+            seg.last = s;
+            (id, frame, seg.w, seg.h)
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.ask((self.video(id), frame, w, h, tx))?;
+        match rx.recv().ok().flatten() {
+            Some(rgba) => Some(Picture { w, h, rgba }),
             None => {
-                if let Some(e) = ix.map.remove(&key) {
-                    ix.used -= e.bytes;
-                }
-                drop(ix);
-                let _ = std::fs::remove_file(self.path(key));
+                self.drop_segment(id);
                 None
             }
         }
     }
 
-    /// Evict until `bytes` more fit; `any` — this process's entries may go too. `false` — no room.
+    fn ask(&self, a: ReadAsk) -> Option<()> {
+        let mut g = self.reader.lock().unwrap();
+        if g.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel::<ReadAsk>();
+            let codec = self.codec.clone();
+            let t = std::thread::Builder::new()
+                .name("render-cache-read".into())
+                .spawn(move || read_loop(codec, rx))
+                .ok()?;
+            *g = Some((tx, t));
+        }
+        g.as_ref()?.0.send(a).ok()
+    }
+
+    fn drop_segment(&self, id: u64) {
+        let gone = self.ix.lock().unwrap().remove(id);
+        if gone.is_some() {
+            let _ = std::fs::remove_file(self.manifest_path(id));
+            let _ = std::fs::remove_file(self.video(id));
+        }
+    }
+
+    /// Evict until `bytes` more fit; `any` — this process's segments may go too. `false` — no room.
     fn make_room(&self, bytes: u64, any: bool) -> bool {
         let mut gone = Vec::new();
         let ok = {
             let mut ix = self.ix.lock().unwrap();
             while ix.used + bytes > self.cap {
                 let session = ix.session;
-                let oldest = ix.map.iter().filter(|(_, e)| any || e.last <= session).min_by_key(|(_, e)| e.last).map(|(k, _)| *k);
-                let Some(k) = oldest else { break };
-                let e = ix.map.remove(&k).unwrap();
-                ix.used -= e.bytes;
-                gone.push((k, e.bytes));
+                let oldest = ix.segs.iter().filter(|(_, s)| any || s.last <= session).min_by_key(|(_, s)| s.last).map(|(k, _)| *k);
+                let Some(id) = oldest else { break };
+                let s = ix.remove(id).unwrap();
+                gone.push((id, s.bytes, s.keys.len()));
             }
             ix.used + bytes <= self.cap
         };
-        for (k, b) in gone {
-            let _ = std::fs::remove_file(self.path(k));
-            trace::ev(Ev::RenderCache).aux(rc::EVICT).b(b).c(k).emit();
+        for (id, b, n) in gone {
+            let _ = std::fs::remove_file(self.manifest_path(id));
+            let _ = std::fs::remove_file(self.video(id));
+            trace::ev(Ev::RenderCache).aux(rc::EVICT).a(n as u64).b(b).c(id).emit();
         }
         ok
     }
 
-    /// Keep `rgba` under `key`. `evict_session` — entries this process used may be evicted for it;
-    /// the prerender passes `false` and stops when only those are left (D2). The file's bytes.
-    pub fn put(&self, key: u64, w: u32, h: u32, rgba: &[u8], evict_session: bool) -> Result<u64, PutError> {
-        let bytes = encode(w, h, rgba);
-        let n = bytes.len() as u64;
-        if !self.make_room(n, evict_session) {
+    /// The bytes a frame took on average so far (a guess of `w`×`h`/8 before anything was written).
+    pub fn frame_bytes(&self, w: u32, h: u32) -> u64 {
+        let ix = self.ix.lock().unwrap();
+        match ix.frame_bytes {
+            (b, n) if n > 0 => b / n,
+            _ => w as u64 * h as u64 / 8,
+        }
+    }
+
+    /// Would `bytes` more fit without evicting what this process used?
+    pub fn has_room(&self, bytes: u64) -> bool {
+        let ix = self.ix.lock().unwrap();
+        let stale: u64 = ix.segs.values().filter(|s| s.last <= ix.session).map(|s| s.bytes).sum();
+        ix.used - stale + bytes <= self.cap
+    }
+
+    /// Start a segment of `w`×`h` at `fps`: `NoEncoder` when the codec opens no encoder here.
+    pub fn begin(&self, w: u32, h: u32, fps: u32) -> Result<SegmentBuild, PutError> {
+        let id = {
+            let mut ix = self.ix.lock().unwrap();
+            ix.seq += 1;
+            // a new name for every segment of this folder: the time and the sequence
+            xxhash_rust::xxh3::xxh3_64(format!("{}|{}|{:?}", ix.seq, std::process::id(), std::time::SystemTime::now()).as_bytes())
+        };
+        let writer = self.codec.writer(&self.video(id), w, h, fps).map_err(PutError::NoEncoder)?;
+        let manifest = Manifest { codec: self.codec.codec().into(), encoder: writer.encoder().into(), w, h, fps, keys: Vec::new() };
+        Ok(SegmentBuild { id, writer, manifest })
+    }
+
+    /// Close a segment and keep it: its frames read from now. `evict_session` — what this process
+    /// used may be evicted for it (the prerender passes `false`: past the cap the segment is dropped).
+    /// The bytes on disk.
+    pub fn commit(&self, b: SegmentBuild, evict_session: bool) -> Result<u64, PutError> {
+        let SegmentBuild { id, writer, manifest } = b;
+        let video = writer.finish().map_err(PutError::Io)?;
+        if manifest.keys.is_empty() {
+            let _ = std::fs::remove_file(self.video(id));
+            return Ok(0);
+        }
+        let text = manifest.to_text();
+        let bytes = video + text.len() as u64;
+        if !self.make_room(bytes, evict_session) {
+            let _ = std::fs::remove_file(self.video(id));
             return Err(PutError::Full);
         }
-        let tmp = self.dir.join(format!("{}.tmp", hex(key)));
-        std::fs::write(&tmp, &bytes).map_err(|e| PutError::Io(e.to_string()))?;
-        std::fs::rename(&tmp, self.path(key)).map_err(|e| PutError::Io(e.to_string()))?;
+        let tmp = self.dir.join(format!("{}.tmp", hex(id)));
+        std::fs::write(&tmp, &text).map_err(|e| PutError::Io(e.to_string()))?;
+        std::fs::rename(&tmp, self.manifest_path(id)).map_err(|e| PutError::Io(e.to_string()))?;
         let mut ix = self.ix.lock().unwrap();
         ix.seq += 1;
         let last = ix.seq;
-        if let Some(old) = ix.map.insert(key, Entry { bytes: n, last }) {
-            ix.used -= old.bytes;
-        }
-        ix.used += n;
-        Ok(n)
+        ix.insert(id, Seg { bytes, last, w: manifest.w, h: manifest.h, keys: manifest.keys });
+        Ok(bytes)
     }
+}
 
-    /// Would a write of about `bytes` fit without evicting what this process used?
-    pub fn has_room(&self, bytes: u64) -> bool {
-        let ix = self.ix.lock().unwrap();
-        let stale: u64 = ix.map.values().filter(|e| e.last <= ix.session).map(|e| e.bytes).sum();
-        ix.used - stale + bytes <= self.cap
+impl Drop for DiskStore {
+    fn drop(&mut self) {
+        if let Some((tx, t)) = self.reader.lock().unwrap().take() {
+            drop(tx);
+            kt_time::shutdown::join("render-cache-read", t, kt_time::shutdown::deadline());
+        }
+    }
+}
+
+/// The reader thread: the open segment readers, the most recently used kept.
+fn read_loop(codec: Arc<dyn SegmentCodec>, rx: std::sync::mpsc::Receiver<ReadAsk>) {
+    let mut open: Vec<(PathBuf, Box<dyn SegmentReader>)> = Vec::new();
+    while let Ok((path, frame, w, h, reply)) = rx.recv() {
+        let i = match open.iter().position(|(p, _)| *p == path) {
+            Some(i) => i,
+            None => match codec.reader(&path) {
+                Ok(r) => {
+                    if open.len() >= READERS {
+                        open.remove(0);
+                    }
+                    open.push((path.clone(), r));
+                    open.len() - 1
+                }
+                Err(_) => {
+                    let _ = reply.send(None);
+                    continue;
+                }
+            },
+        };
+        let r = open.remove(i);
+        let mut out = Vec::new();
+        let got = {
+            let (p, mut rd) = r;
+            let ok = rd.frame(frame, w, h, &mut out).is_ok();
+            open.push((p, rd));
+            ok
+        };
+        let _ = reply.send(got.then_some(out));
     }
 }
 
@@ -548,8 +753,11 @@ pub fn candidates(
 type OnDisk = (u64, (u64, u64));
 
 /// What the host sets (D7).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Config {
+    /// What writes and reads the segments: the host's hardware video codec (kt-media
+    /// `segment::ffmpeg::FfmpegSegments`), a test's `RawSegments`.
+    pub codec: Arc<dyn SegmentCodec>,
     /// `<data>/render-cache`.
     pub root: PathBuf,
     /// The program's build and anything else that makes another picture of the same plan (the
@@ -585,6 +793,10 @@ pub struct RenderCache {
     heavy_for_tests: AtomicU64,
     /// The prerender parked with nothing left to do (or the cap full) since it last looked.
     settled: AtomicBool,
+    /// Why the tier writes nothing on this machine (no encoder of the codec opens), once found.
+    unavailable: Mutex<Option<String>>,
+    /// The encoder the last segment was written with.
+    encoder: Mutex<Option<String>>,
 }
 
 impl RenderCache {
@@ -592,6 +804,7 @@ impl RenderCache {
         *self.cfg.lock().unwrap() = cfg.filter(|_| enabled());
         *self.store.lock().unwrap() = None;
         *self.files.lock().unwrap() = None;
+        *self.unavailable.lock().unwrap() = None;
         self.on_disk.lock().unwrap().clear();
         self.disk_gen.fetch_add(1, Ordering::Relaxed);
         self.news.store(true, Ordering::Release);
@@ -612,7 +825,7 @@ impl RenderCache {
         {
             return Some(s.clone());
         }
-        match DiskStore::open(&cfg.root, &cfg.build, &id, cfg.cap) {
+        match DiskStore::open(&cfg.root, &cfg.build, &id, cfg.cap, cfg.codec.clone()) {
             Ok(s) => {
                 let s = Arc::new(s);
                 *g = Some((id, s.clone()));
@@ -679,6 +892,20 @@ impl RenderCache {
         (self.stores.load(Ordering::Relaxed), self.restores.load(Ordering::Relaxed))
     }
 
+    /// What the tier does on this machine, for the person (Diagnostics) and the bench: `None` — off
+    /// (no folder set); `Some(Err(why))` — it reads but writes nothing (no encoder of the codec opens,
+    /// the owner's rule: no processor codec); `Some(Ok(encoder))` — the encoder of the last segment,
+    /// empty before the first.
+    pub fn status(&self) -> Option<Result<String, String>> {
+        if !self.is_on() {
+            return None;
+        }
+        if let Some(why) = self.unavailable.lock().unwrap().clone() {
+            return Some(Err(why));
+        }
+        Some(Ok(self.encoder.lock().unwrap().clone().unwrap_or_default()))
+    }
+
     /// Whether the prerender is working on a moment now.
     pub fn busy(&self) -> bool {
         self.busy.load(Ordering::Acquire)
@@ -724,9 +951,9 @@ fn export_runs() -> bool {
 }
 
 /// What became of a moment the prerender took.
-#[derive(Debug, PartialEq, Eq)]
 enum Outcome {
-    Written,
+    /// Composed and measured heavy: its key, size and picture go into the open segment.
+    Heavy(u64, u32, u32, Vec<u8>),
     Light,
     OnDisk,
     Full,
@@ -738,8 +965,41 @@ enum Outcome {
 /// The state the prerender's knowledge belongs to: the build, the versions, the quality, the region.
 type StateKey = (u64, (u64, u64), kt_media::Quality, Option<(i64, i64)>);
 
+/// The segment the prerender writes: its moments in order, the moment that would continue it, the
+/// state it belongs to.
+struct OpenSeg {
+    build: SegmentBuild,
+    moments: Vec<(i64, u64)>,
+    next: i64,
+    state: StateKey,
+    store: Arc<DiskStore>,
+}
+
+/// Close the open segment and keep it (D2): its moments are on disk from now.
+fn commit(rc: &RenderCache, seg: &mut Option<OpenSeg>) {
+    let Some(s) = seg.take() else { return };
+    let encoder = s.build.encoder().to_string();
+    let n = s.moments.len();
+    match s.store.commit(s.build, false) {
+        Ok(bytes) if n > 0 => {
+            let id = trace::name(&encoder) as u64;
+            trace::ev(Ev::RenderCache).aux(rc::STORE).id(id).a(n as u64).b(bytes).c(s.moments[0].0 as u64).emit();
+            rc.stores.fetch_add(n as u64, Ordering::Relaxed);
+            for (t, k) in &s.moments {
+                rc.note_on_disk(*t, *k, s.state.1);
+            }
+            *rc.encoder.lock().unwrap() = Some(encoder);
+        }
+        Ok(_) => {}
+        Err(_) => {
+            trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::CAP).emit();
+        }
+    }
+}
+
 /// The player's `render-cache` thread (D4): parks with no clock while there is nothing to do; at rest,
-/// after the quiet, composes the moments [`candidates`] names one at a time and writes the heavy ones.
+/// after the quiet, composes the moments [`candidates`] names one at a time and writes the heavy ones
+/// into a segment, a run of consecutive moments one video file holds.
 pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::sync::atomic::AtomicBool>) {
     use std::collections::HashSet;
     let rc = parts.rc.clone();
@@ -749,13 +1009,16 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
     let mut scanned: Option<(StateKey, i64)> = None;
     let mut worked = false;
     let mut full = false;
+    let mut seg: Option<OpenSeg> = None;
     loop {
         let seen = rc.wake.seen();
         if stop.load(Ordering::Acquire) {
+            commit(&rc, &mut seg);
             return;
         }
         rc.news.store(false, Ordering::Release);
         if !rc.is_on() || parts.transport.is_playing() || export_runs() {
+            commit(&rc, &mut seg);
             if worked {
                 let why = if parts.transport.is_playing() { rc::why::PLAY } else { rc::why::EXPORT };
                 trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(why).emit();
@@ -775,6 +1038,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         let built = parts.builds.latest();
         if built.seq < parts.builds.want_seq() {
             // a build in flight: its version's moments are the ones to make (it lands within a quiet)
+            commit(&rc, &mut seg);
             rc.wake.wait_timeout(QUIET);
             continue;
         }
@@ -788,6 +1052,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             .map(|(s, e)| (kt_time::Tick::from_audio_frames(s).0, kt_time::Tick::from_audio_frames(e).0));
         let sk = (built.seq, versions, q, region);
         if state != Some(sk) {
+            commit(&rc, &mut seg);
             state = Some(sk);
             done.clear();
             tries.clear();
@@ -801,7 +1066,8 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             scanned = Some((sk, bucket));
             scan(&parts, &rc, &store, &display, &video, &built.project, (built.seq, versions), q, region, head);
         }
-        if full {
+        let unavailable = rc.unavailable.lock().unwrap().is_some();
+        if full || unavailable {
             rc.settled.store(true, Ordering::Release);
             rc.wake.wait_since(seen);
             continue;
@@ -816,7 +1082,10 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             region,
             head,
         );
-        let Some(&t) = list.first() else {
+        // the moment that continues the open segment first: a run stays one file
+        let next = seg.as_ref().map(|s| s.next).filter(|n| list.contains(n));
+        let Some(t) = next.or_else(|| list.first().copied()) else {
+            commit(&rc, &mut seg);
             if worked {
                 trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::DONE).emit();
                 worked = false;
@@ -827,23 +1096,57 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         };
         rc.settled.store(false, Ordering::Release);
         if let Some(left) = rc.quiet_left() {
+            commit(&rc, &mut seg);
             rc.wake.wait_timeout(left);
             continue;
+        }
+        if seg.as_ref().is_some_and(|s| s.next != t || s.build.len() >= SEGMENT_FRAMES) {
+            commit(&rc, &mut seg);
         }
         worked = true;
         rc.busy.store(true, Ordering::Release);
         let out = one(&parts, &rc, &store, &display, &video, &built.project, built.seq, t, q, versions, &stop);
         rc.busy.store(false, Ordering::Release);
         match out {
-            Outcome::Written | Outcome::Light | Outcome::OnDisk | Outcome::NoExec => {
+            Outcome::Heavy(dk, w, h, rgba) => {
+                done.insert(t);
+                if seg.as_ref().is_some_and(|s| s.build.size() != (w, h)) {
+                    commit(&rc, &mut seg);
+                }
+                if seg.is_none() {
+                    let fps = (kt_time::TICK_HZ / step).max(1) as u32;
+                    match store.begin(w, h, fps) {
+                        Ok(build) => seg = Some(OpenSeg { build, moments: Vec::new(), next: t, state: sk, store: store.clone() }),
+                        Err(PutError::NoEncoder(why)) => {
+                            // the owner's rule: no processor codec — the tier writes nothing here
+                            trace::ev(Ev::RenderCache).aux(rc::STOPPED).id(trace::name(&why) as u64).b(rc::why::NO_ENCODER).emit();
+                            *rc.unavailable.lock().unwrap() = Some(why);
+                            worked = false;
+                            continue;
+                        }
+                        Err(_) => continue,
+                    }
+                }
+                let s = seg.as_mut().unwrap();
+                if s.build.push(dk, &rgba).is_ok() {
+                    s.moments.push((t, dk));
+                    s.next = t + step;
+                } else {
+                    // a frame the encoder refused: the segment ends before it
+                    commit(&rc, &mut seg);
+                }
+            }
+            Outcome::Light | Outcome::OnDisk | Outcome::NoExec => {
                 done.insert(t);
             }
             Outcome::Full => {
+                commit(&rc, &mut seg);
                 full = true;
                 trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::CAP).emit();
                 worked = false;
             }
             Outcome::Stopped(why) => {
+                commit(&rc, &mut seg);
                 trace::ev(Ev::RenderCache).aux(rc::ABANDON).a(t as u64).b(why).emit();
             }
             Outcome::Incomplete => {
@@ -930,7 +1233,7 @@ fn one(
         rc.note_on_disk(t, dk, versions);
         return Outcome::OnDisk;
     }
-    if !store.has_room(w as u64 * h as u64 * 2) {
+    if !store.has_room(store.frame_bytes(w, h)) {
         return Outcome::Full;
     }
     let Some(exec) = parts.ahead.exec_for(display) else { return Outcome::NoExec };
@@ -1005,17 +1308,8 @@ fn one(
         return Outcome::Light;
     }
     trace::ev(Ev::RenderCache).aux(rc::HEAVY).a(t as u64).b(ns).c(dk).emit();
-    match store.put(dk, w, h, &buf, false) {
-        Ok(n) => {
-            span.c(1);
-            trace::ev(Ev::RenderCache).aux(rc::STORE).a(t as u64).b(n).c(dk).emit();
-            rc.stores.fetch_add(1, Ordering::Relaxed);
-            rc.note_on_disk(t, dk, versions);
-            Outcome::Written
-        }
-        Err(PutError::Full) => Outcome::Full,
-        Err(PutError::Io(_)) => Outcome::Incomplete,
-    }
+    span.c(1);
+    Outcome::Heavy(dk, w, h, buf)
 }
 
 #[cfg(test)]
@@ -1026,45 +1320,73 @@ mod tests {
         (0..w * h * 4).map(|i| (i as u8).wrapping_mul(seed).wrapping_add(seed)).collect()
     }
 
-    /// Test t2980 (render-cache-disk D2): the store keeps pictures losslessly within its cap, least
-    /// recently used out, a touched entry stays; another build's folder is removed at open; a
-    /// truncated file is a miss and removed; this process's entries are not evicted for the prerender.
+    /// Test t2980 (render-cache-disk D2): the store keeps segments within its cap, least recently used
+    /// out, a touched one stays; each frame reads back as written; the manifest names the codec, the
+    /// encoder, the size and every key; another build's folder is removed at open; a truncated segment
+    /// is a miss and removed; this process's segments are not evicted for the prerender; a codec with no
+    /// encoder refuses the segment.
     #[test]
-    fn t2980_the_store_keeps_pictures_losslessly_within_its_cap() {
+    fn t2980_the_store_keeps_segments_within_its_cap() {
         let root = tempfile::tempdir().unwrap();
         let other = root.path().join(build_dir_name("an older build"));
         std::fs::create_dir_all(other.join("dev")).unwrap();
-        std::fs::write(other.join("dev").join("x.ktf"), b"old").unwrap();
+        std::fs::write(other.join("dev").join("x.idx"), b"old").unwrap();
         let (w, h) = (32, 16);
-        let one = encode(w, h, &pic(3, w, h)).len() as u64;
-        let s = DiskStore::open(root.path(), "build A", "llvmpipe|vulkan", one * 3 + one / 2).unwrap();
+        let frame = (w * h * 4) as u64;
+        let codec: Arc<dyn SegmentCodec> = Arc::new(RawSegments);
+        // three segments of two frames fit, a fourth does not
+        let cap = 3 * (2 * frame + 300) + frame;
+        let s = DiskStore::open(root.path(), "build A", "llvmpipe|vulkan", cap, codec.clone()).unwrap();
         assert!(!other.exists(), "the other build's folder is removed at open");
+        let write = |s: &DiskStore, k: u64, evict: bool| {
+            let mut b = s.begin(w, h, 25).unwrap();
+            b.push(k, &pic(k as u8, w, h)).unwrap();
+            b.push(k + 100, &pic(k as u8 + 1, w, h)).unwrap();
+            s.commit(b, evict)
+        };
         for k in 1..=3u64 {
-            s.put(k, w, h, &pic(k as u8, w, h), true).unwrap();
+            write(&s, k, true).unwrap();
         }
-        assert_eq!(s.get(2).unwrap(), Picture { w, h, rgba: pic(2, w, h) }, "lossless");
+        assert_eq!(s.get(103).unwrap(), Picture { w, h, rgba: pic(4, w, h) }, "the second frame of a segment");
         assert_eq!(s.get(1).unwrap().rgba, pic(1, w, h));
-        // touched 2 then 1: 3 is the least recently used
-        s.put(4, w, h, &pic(4, w, h), true).unwrap();
-        assert!(!s.contains(3) && s.contains(1) && s.contains(2) && s.contains(4), "the least recently used goes first");
+        let m = s.manifest_of(2).unwrap();
+        assert_eq!((m.codec.as_str(), m.encoder.as_str(), m.w, m.h, m.fps, m.keys.clone()), ("raw", "raw", w, h, 25, vec![2, 102]));
+        assert_eq!(Manifest::parse(&m.to_text()), Some(m), "the manifest is its own text");
+        // segments 3 and 1 were read: 2 is the least recently used
+        write(&s, 4, true).unwrap();
+        assert!(!s.contains(2) && !s.contains(102) && s.contains(1) && s.contains(3) && s.contains(4), "the least recently used segment goes first");
         assert!(s.used().0 <= s.cap());
         // the prerender never evicts what this process used
-        assert_eq!(s.put(5, w, h, &pic(5, w, h), false), Err(PutError::Full));
-        assert!(!s.has_room(one));
+        assert_eq!(write(&s, 5, false), Err(PutError::Full));
+        assert!(!s.contains(5));
         drop(s);
-        // a second process: the entries are there; a truncated file is a miss and removed
-        let s = DiskStore::open(root.path(), "build A", "llvmpipe|vulkan", one * 3 + one / 2).unwrap();
-        assert_eq!(s.used().1, 3);
-        assert!(s.has_room(one), "the previous process's entries may go for the prerender");
-        let f = s.dir().join(format!("{}.{EXT}", hex(4)));
-        let b = std::fs::read(&f).unwrap();
-        std::fs::write(&f, &b[..b.len() / 2]).unwrap();
-        assert!(s.get(4).is_none() && !f.exists() && !s.contains(4), "a truncated file is a miss and removed");
-        assert_eq!(s.get(2).unwrap().rgba, pic(2, w, h));
+        // a second process: the segments are there; a truncated segment is a miss and removed
+        let s = DiskStore::open(root.path(), "build A", "llvmpipe|vulkan", cap, codec.clone()).unwrap();
+        assert_eq!(s.used().1, 6);
+        assert!(s.has_room(2 * frame + 300), "the previous process's segments may go for the prerender");
+        let id = s.ix.lock().unwrap().keys[&4].0;
+        let v = s.video(id);
+        std::fs::write(&v, b"short").unwrap();
+        assert!(s.get(104).is_none() && !v.exists() && !s.contains(4), "a truncated segment is a miss and removed");
+        assert_eq!(s.get(3).unwrap().rgba, pic(3, w, h));
         // another device has its own folder
-        let d = DiskStore::open(root.path(), "build A", "radv|vulkan", one * 4).unwrap();
+        let d = DiskStore::open(root.path(), "build A", "radv|vulkan", cap, codec).unwrap();
         assert_eq!(d.used().1, 0);
-        assert!(decode(b"KTRC").is_none() && decode(&b[..HEADER]).is_none());
+        // no encoder: no segment
+        struct NoEncoder;
+        impl SegmentCodec for NoEncoder {
+            fn codec(&self) -> &str {
+                "h264"
+            }
+            fn writer(&self, _: &Path, _: u32, _: u32, _: u32) -> Result<Box<dyn SegmentWriter>, String> {
+                Err("no hardware encoder opens".into())
+            }
+            fn reader(&self, _: &Path) -> Result<Box<dyn SegmentReader>, String> {
+                Err("none".into())
+            }
+        }
+        let n = DiskStore::open(root.path(), "build A", "x", cap, Arc::new(NoEncoder)).unwrap();
+        assert!(matches!(n.begin(w, h, 25), Err(PutError::NoEncoder(_))));
     }
 
     /// Test t2983 (render-cache-disk D4): the candidates are the heavy moments not done and their
@@ -1085,11 +1407,5 @@ mod tests {
         let v = candidates(&costs, step, heavy, done, has, Some((90, 115)), 480);
         assert_eq!(&v[..3], &[110, 100, 90], "the loop region's first");
         assert!(candidates(&costs, step, 1_000_000, done, has, None, 0).is_empty(), "nothing heavy: nothing");
-    }
-
-    #[test]
-    fn the_filter_round_trips_any_bytes() {
-        let raw: Vec<u8> = (0..4096u32).map(|i| (i * 7919 % 251) as u8).collect();
-        assert_eq!(decode(&encode(32, 32, &raw)).unwrap().rgba, raw);
     }
 }

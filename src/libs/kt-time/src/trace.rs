@@ -621,9 +621,10 @@ pub mod export_stage {
 pub mod render_cache {
     /// A moment read from disk into the display's memo.
     pub const RESTORE: u32 = 1;
-    /// A moment written.
+    /// A segment written: `a` its moments, `b` its bytes on disk, `c` its first moment's tick, `id`
+    /// the encoder's name.
     pub const STORE: u32 = 2;
-    /// An entry evicted to fit the cap.
+    /// A segment evicted to fit the cap: `a` its moments, `b` its bytes.
     pub const EVICT: u32 = 3;
     /// The prerender measured a moment heavy (at least half a frame period): it is written.
     pub const HEAVY: u32 = 4;
@@ -644,6 +645,9 @@ pub mod render_cache {
         pub const DONE: u64 = 5;
         pub const CLOSED: u64 = 6;
         pub const INCOMPLETE: u64 = 7;
+        /// No encoder of the codec opens on this machine (no hardware encoder): the tier writes
+        /// nothing; the record's `id` names the reason.
+        pub const NO_ENCODER: u64 = 8;
         pub fn name(b: u64) -> &'static str {
             match b {
                 INPUT => "input",
@@ -653,6 +657,7 @@ pub mod render_cache {
                 DONE => "nothing left",
                 CLOSED => "closed",
                 INCOMPLETE => "incomplete",
+                NO_ENCODER => "no hardware encoder",
                 _ => "?",
             }
         }

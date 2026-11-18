@@ -2273,7 +2273,6 @@ dependencies = [
  "kt-plugin-api",
  "kt-plugins-builtin",
  "kt-time",
- "miniz_oxide",
  "realfft",
  "rtrb",
  "serde_json",

@@ -137,9 +137,10 @@ fn t2981_the_durable_key_survives_a_process_and_follows_the_picture() {
     assert_ne!(key(&p, &c1, t, Q), k, "the file's modification time");
     // another build is another folder
     let root = tempfile::tempdir().unwrap();
-    let a = kt_engine::render_cache::DiskStore::open(root.path(), "build 1", "dev", 1 << 20).unwrap();
+    let raw = || std::sync::Arc::new(kt_engine::render_cache::RawSegments) as std::sync::Arc<dyn kt_engine::render_cache::SegmentCodec>;
+    let a = kt_engine::render_cache::DiskStore::open(root.path(), "build 1", "dev", 1 << 20, raw()).unwrap();
     let a_dir = a.dir().to_path_buf();
-    let b = kt_engine::render_cache::DiskStore::open(root.path(), "build 2", "dev", 1 << 20).unwrap();
+    let b = kt_engine::render_cache::DiskStore::open(root.path(), "build 2", "dev", 1 << 20, raw()).unwrap();
     assert_ne!(a_dir, b.dir(), "another build's folder");
     assert!(!a_dir.exists(), "the older build's folder is removed when the new one opens");
 }
@@ -160,7 +161,13 @@ fn player(root: &std::path::Path, opacity: f32) -> Option<(Player, Vec<Tick>)> {
     player.set_preview_quality(Quality { width: 160, height: 90 });
     player.set_video_gpu(Some(gpu));
     player.render_cache().set_heavy_for_tests(Some(1));
-    player.set_render_cache(Some(Config { root: root.to_path_buf(), build: "test build".into(), base: None, cap: 1 << 30 }));
+    player.set_render_cache(Some(Config {
+        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        root: root.to_path_buf(),
+        build: "test build".into(),
+        base: None,
+        cap: 1 << 30,
+    }));
     let grid = player.video_grid();
     let step = grid.frame_step();
     let start = grid.align_floor(Tick(4 * 90_000));

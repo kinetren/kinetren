@@ -139,8 +139,22 @@ pub fn cache(run: &Run) -> String {
     let bytes = |kind: u32| recs.iter().filter(|r| r.aux == kind).map(|r| r.b).sum::<u64>();
     let mb = |b: u64| format!("{:.1} MB", b as f64 / (1 << 20) as f64);
     let _ = writeln!(o, "restored {} ({} read, {} in reading)", count(k::RESTORE), mb(bytes(k::RESTORE)), ms(recs.iter().filter(|r| r.aux == k::RESTORE).map(|r| r.dur).sum()));
-    let _ = writeln!(o, "written {} ({} on disk)", count(k::STORE), mb(bytes(k::STORE)));
-    let _ = writeln!(o, "evicted {} ({})", count(k::EVICT), mb(bytes(k::EVICT)));
+    let moments = |kind: u32| recs.iter().filter(|r| r.aux == kind).map(|r| r.a).sum::<u64>();
+    let mut encoders: Vec<String> = recs.iter().filter(|r| r.aux == k::STORE).map(|r| run.name_of(r.id as u32)).collect();
+    encoders.sort();
+    encoders.dedup();
+    let _ = writeln!(
+        o,
+        "written {} moments in {} segments ({} on disk{})",
+        moments(k::STORE),
+        count(k::STORE),
+        mb(bytes(k::STORE)),
+        if encoders.is_empty() { String::new() } else { format!(", encoder {}", encoders.join(", ")) }
+    );
+    let _ = writeln!(o, "evicted {} moments in {} segments ({})", moments(k::EVICT), count(k::EVICT), mb(bytes(k::EVICT)));
+    for r in recs.iter().filter(|r| r.aux == k::STOPPED && r.b == k::why::NO_ENCODER) {
+        let _ = writeln!(o, "the cache writes nothing here: {}", run.name_of(r.id as u32));
+    }
     for (kind, name) in [(k::HEAVY, "heavy"), (k::LIGHT, "light")] {
         let ns: Vec<u64> = recs.iter().filter(|r| r.aux == kind).map(|r| r.b).collect();
         if ns.is_empty() {
