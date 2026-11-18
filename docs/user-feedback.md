@@ -2968,3 +2968,6 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 7. Future ("это на будущее"): the cached final render (FastCachedRender, `v26.10` item X1) uses the same
    cache logic as the prerender — the same keys, an index in or beside rendered files telling which
    segments can be reused.
+8. "я бы еще хотел чтобы ты добавил еще один чат который будет потихоньку фишки уже пилить, а то мы
+   над оптимизацией долго сидим уже" — a standing session builds small features one at a time, beside
+   the optimisation work (a fourth executor at his request).
