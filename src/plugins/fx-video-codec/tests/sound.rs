@@ -237,3 +237,17 @@ fn t1476_the_stream_is_a_function_of_rows_and_time() {
     let b = play(&vals, 48_000, 1.5, music);
     assert!(a == b, "two runs differ");
 }
+
+/// t2975 (mosh-sharp D5): the stream's sound does not read the picture's carrier — a mosh with a bloom
+/// sounds the same with `sharp` off and on.
+#[test]
+fn t2975_the_sound_does_not_read_the_carrier() {
+    let start = 48_000 * 2;
+    let sets = [("before", 12.0), ("mosh", 1.0), ("bloom", 1.0), ("loss", 0.3)];
+    let (soft, cs) = play(&values(&sets), start, 1.5, music);
+    let mut sharp_sets = sets.to_vec();
+    sharp_sets.push(("sharp", 1.0));
+    let (sharp, cp) = play(&values(&sharp_sets), start, 1.5, music);
+    assert_eq!(cs, cp, "the same frames concealed");
+    assert!(soft == sharp, "the same samples");
+}

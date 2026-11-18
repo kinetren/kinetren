@@ -4,13 +4,13 @@
 
 ## 2. Codec
 
-- [ ] 2.1 `resample` convert (input size → codec size), CPU reference and shader, same bytes
-- [ ] 2.2 The `sharp` row; the carrier step (`coded` flags, `carry`), CPU reference and shaders
-- [ ] 2.3 The reference walk and the batched walk carry at the input size; keys, needs, output size
+- [x] 2.1 `resample` convert (input size → codec size), CPU reference and shader, same bytes
+- [x] 2.2 The `sharp` row; the carrier step (`coded` flags, `carry`), CPU reference and shaders
+- [x] 2.3 The reference walk and the batched walk carry at the input size; keys, needs, output size
 
 ## 3. Host
 
-- [ ] 3.1 `StreamKernel::carried`, `stream::coded_size`; `stream_quality` follows the layer's size
+- [x] 3.1 `StreamKernel::carried`, `stream::coded_size`; `stream_quality` follows the layer's size
 
 ## 4. Checks
 

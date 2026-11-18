@@ -33,7 +33,7 @@ the codec's decisions; the softness is only its picture's size (F-FX-015, design
 #### Scenario: The stream's sound does not read the carrier
 - **WHEN** the stream's sound is rendered over a mosh with `sharp` off and on
 - **THEN** the samples are identical
-- **TEST** t2975 (`src/plugins/fx-video-codec/tests/sharp.rs`)
+- **TEST** t2975 (`src/plugins/fx-video-codec/tests/sound.rs`)
 
 #### Scenario: A person sharpens a 144-line mosh in the editor
 - **PATH** add two clips back to back → select the second → FX → Datamosh "Cut mosh" → set the encoded height to 144 → the preview shows the soft break → tick "Sharp" → the same break, with the clips' detail
@@ -60,5 +60,48 @@ against ~14 ms at the 360p preview (design D2).
 
 #### Scenario: The resample is an identity at the codec's size
 - **WHEN** a frame is resampled to its own size, shrunk 4× and grown 2×
-- **THEN** the identity returns the bytes, a flat colour stays the colour, and a shrink of a 4×4-pixel checker gives its mean grey
+- **THEN** the identity returns the bytes, a flat colour stays the colour, and a shrink of a one-pixel checker gives its mean grey
 - **TEST** t2973 (`src/plugins/fx-video-codec/tests/sharp.rs`)
+
+## MODIFIED Requirements
+
+### Requirement: The engine runs a stream stage in the plan's common code with random access
+A layer whose chain holds a `Stream` slot SHALL take as its pre-FX frame the stage's output,
+computed in the plan's common code before the executor runs, fitted to the layer's decode size
+and opaque; the slot SHALL be removed from the chain the executor sees. The order SHALL ask the
+stream's frames at the stream's input size (the requirement "A stream's input follows the layer's
+size") — the frame at N, and the history the memo does not cover — and no frame at the ordinary
+decode quality. The layer's content key SHALL carry the decoded
+frame's key. Export SHALL pre-roll the codec before a frame whose history the memo lacks, in
+batches bounded by its cache budget. A stream slot on a reel instance or a track stage SHALL be
+skipped.
+
+Why: invariants 4, 7 and 11 — the order equals the read, one composition code, the same bytes
+whatever the start (`datamosh-codec-path` design D3–D6); the input size since kkt-26.11.18b U2
+(`mosh-sharp` design D2).
+
+#### Scenario: A reset key on the event ends the mosh on the beat
+- **WHEN** the event carries a `reset` curve rising to on at a frame, with the `mosh` gate on
+- **THEN** the engine reads the slot's rows per frame with their curves: before the key the frame is far from the intact codec's, on and after it close to it; a seek to a frame after the key equals playing up to it
+- **TEST** t1246 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: Seeking to a frame equals playing up to it
+- **WHEN** a project with a cut-mosh is composed at frame N after composing 0 … N−1, and by a fresh renderer with a fresh memo directly at N
+- **THEN** the frames are byte-identical, and differ from the same project without the slot
+- **TEST** t1241 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: Export in chunks equals export in one go
+- **WHEN** a range containing a mosh is exported in one go, and again as three range exports — each with a fresh renderer, memo and cache, one starting inside the mosh (harder than a chunk boundary, which keeps the memo)
+- **THEN** the concatenated pieces are byte-identical to the whole
+- **TEST** t1242 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: The order asks what the stage reads
+- **WHEN** `layers_at` is asked at a frame inside a mosh with an empty memo, and again after that frame was composed
+- **THEN** the first answer holds the history at the stream's input size — 144 lines in a 90-line layer are ordered at the layer's size — (the event before included) and no other size; the second holds only the next frame's own source
+- **TEST** t1248 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
+#### Scenario: A person moshes a cut in the editor
+- **PATH** add two clips back to back on one track → select the second → FX → pick Datamosh "Cut mosh" → play across the cut → the first clip's picture keeps moving with the second clip's motion after the cut
+- **WHEN** the live scenario runs on our fixtures
+- **THEN** the frames after the cut differ from the same frames without the effect, and the screenshots of each step are saved
+- **TEST** live `datamosh.py` (`src/scripts/live/datamosh.py`, via `src/scripts/live-check.sh`)

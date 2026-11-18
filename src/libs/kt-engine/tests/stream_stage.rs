@@ -260,7 +260,7 @@ fn t1242_export_in_pieces_equals_one_go() {
     assert!(parts == whole, "the pieces differ from the whole");
 }
 
-/// t1248: the order of a stream layer is its codec-size stream: the history (the event before
+/// t1248: the order of a stream layer is its stream at the input size (mosh-sharp D2): the history (the event before
 /// included) with an empty memo, then only the next frame's own source.
 #[test]
 fn t1248_the_order_asks_what_the_stage_reads() {
@@ -275,7 +275,9 @@ fn t1248_the_order_asks_what_the_stage_reads() {
     let t = Tick(36 * STEP);
     let order = vr.layers_at(t, Q);
     let cq = order.iter().find(|(m, ..)| *m == MediaId(2)).expect("the mosh orders its source").2;
-    assert_eq!(cq.height, 144, "the stream is ordered at its encoded height");
+    // the input follows the layer (mosh-sharp D2): 144 lines in a 90-line layer are coded from the
+    // layer's own size, never decoded above it
+    assert_eq!((cq.width, cq.height), (Q.width, Q.height), "the stream is ordered at its input size, the layer's here");
     assert!(order.iter().all(|(_, _, q)| *q == cq), "no frame at the layer's ordinary quality: {order:?}");
     assert!(order.iter().any(|(m, ..)| *m == MediaId(1)), "the history reaches into the event before");
     assert!(order.iter().filter(|(m, ..)| *m == MediaId(2)).count() >= 7, "the history from the cut");

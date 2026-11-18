@@ -134,12 +134,12 @@ enum Put {
 
 /// What a batch brings back.
 enum Back {
-    Pic { key: u64, d: Dev3, put: Put },
+    Pic { key: u64, d: Dev3, put: Put, size: (usize, usize) },
     Clean { key: u64, c: DevClean, bs: usize },
 }
 
-/// A picture of the batch, after it ran: on the device or on the host.
-fn back_pic(b: &Batch, got: &Got, d: Dev3) -> Val {
+/// A picture of the batch, after it ran: on the device or on the host (`size` — its padded planes).
+fn back_pic(b: &Batch, got: &Got, d: Dev3, (w, h): (usize, usize)) -> Val {
     let ks = d.map(|id| b.kept(got, id));
     if ks.iter().all(|k| matches!(k, Kept::Held(_))) {
         let [Kept::Held(y), Kept::Held(cb), Kept::Held(cr)] = ks else { unreachable!() };
@@ -150,7 +150,6 @@ fn back_pic(b: &Batch, got: &Got, d: Dev3) -> Val {
         Kept::Held(_) => Vec::new(),
     };
     let [y, cb, cr] = ks;
-    let (w, h) = (b.width(), b.height());
     let take = |mut v: Vec<u8>, n: usize| {
         v.truncate(n);
         v
@@ -166,6 +165,10 @@ struct Walk<'a> {
     view: Option<i64>,
     w: usize,
     h: usize,
+    /// The padded size of the walk's pictures: the codec's, or the carrier's (mosh-sharp).
+    pic: (usize, usize),
+    /// The codec's visible size (the input is resampled to it, mosh-sharp D3).
+    coded: (u32, u32),
     b: Batch,
     /// Positions recorded into the current batch, and its first.
     positions: usize,
@@ -192,6 +195,10 @@ struct Walk<'a> {
     out_dev: Option<Dev3>,
     region: bool,
     checkpoints: u32,
+    /// The source frames of the current batch by side and position, as its buffers.
+    frames: HashMap<(Side, i64), (usize, u32, u32)>,
+    /// The carrier's source planes of the current batch, by position (mosh-sharp).
+    carried: HashMap<i64, Dev3>,
 }
 
 /// A source frame's RGBA and size, copied out of the host's cache.
@@ -207,7 +214,8 @@ enum Short {
 pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
     let lay: &dyn StreamLayout = input;
     let chain = s.chain(n);
-    let (w, h) = mosh::padded(lay);
+    let (w, h) = mosh::padded(&s.r, lay);
+    let pic = mosh::pic_padded(&s.r, lay);
     let mut start = 0;
     let mut cur: Option<Val> = None;
     for i in (0..chain.len()).rev() {
@@ -242,7 +250,9 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         view: lay.shown_from(),
         w,
         h,
-        b: Batch::new(w, h),
+        pic,
+        coded: lay.coded(),
+        b: Batch::new(w, h).with_picture(pic.0, pic.1),
         positions: 0,
         first: chain[start.min(chain.len() - 1)].0,
         cur,
@@ -254,17 +264,20 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         uploaded: HashMap::new(),
         packets: HashMap::new(),
         tables: HashMap::new(),
-        grey: Arc::new(Planes::grey(w, h)),
+        grey: Arc::new(Planes::grey(pic.0, pic.1)),
         out: None,
         out_dev: None,
-        region: lay.region_ident(n) != 0,
+        // a carried region blends with the source on the host (`mosh::render`), no clean encode here
+        region: lay.region_ident(n) != 0 && !s.r.sharp,
         checkpoints: 0,
+        frames: HashMap::new(),
+        carried: HashMap::new(),
     };
     let key = chain[chain.len() - 1].2;
     if start == chain.len() {
         // the frame asked is only on the device: it comes back alone, and to the memo as shown
         let pic = walk.cur.clone().expect("found above");
-        walk.keep(key, &pic, Put::Lru);
+        walk.keep(key, &pic, Put::Lru, walk.pic);
         let d = walk.dev(&pic);
         walk.out_dev = Some(d);
         walk.flush(false)?;
@@ -368,31 +381,59 @@ impl Walk<'_> {
         }
     }
 
-    /// The source frame at `q` on a side, converted on the device.
-    fn source(&mut self, side: Side, q: i64) -> Result<Dev3, Short> {
-        let (w, h) = (self.w, self.h);
+    /// The source frame at `q` on a side as a buffer of the current batch (once a batch); `Err(planes)` —
+    /// a malformed frame, given as planes of `size` the way the reference converts it.
+    fn frame(&mut self, side: Side, q: i64, size: (usize, usize)) -> Result<Result<(usize, u32, u32), Planes>, Short> {
+        if let Some(&f) = self.frames.get(&(side, q)) {
+            return Ok(Ok(f));
+        }
         // a frame the slots in front made on this device is read where it lies
         // (stream-front-on-device): no readback, no upload
-        match self.input.on_device(side, q) {
-            OnDevice::Held { w: sw, h: sh, held } if sw > 0 && sh > 0 && held.len >= sw as u64 * sh as u64 * 4 => {
-                return Ok(self.b.convert_held(held, sw, sh));
-            }
+        let f = match self.input.on_device(side, q) {
+            OnDevice::Held { w: sw, h: sh, held } if sw > 0 && sh > 0 && held.len >= sw as u64 * sh as u64 * 4 => (self.b.held(held), sw, sh),
             OnDevice::Missing => return Err(Short::Missing),
-            _ => {}
-        }
-        let mut got: Option<Result<Rgba, Planes>> = None;
-        self.input.with_frame(side, q, &mut |f| {
-            let n = f.w as usize * f.h as usize * 4;
-            got = Some(if f.w == 0 || f.h == 0 || f.rgba.len() < n {
-                Err(Planes::from_rgba(f.rgba, f.w, f.h, w, h))
-            } else {
-                Ok((f.rgba[..n].to_vec(), f.w, f.h))
-            });
-        });
-        match got.ok_or(Short::Missing)? {
-            Ok((rgba, sw, sh)) => Ok(self.b.convert(rgba, sw, sh)),
+            _ => {
+                let mut got: Option<Result<Rgba, Planes>> = None;
+                self.input.with_frame(side, q, &mut |f| {
+                    let n = f.w as usize * f.h as usize * 4;
+                    got = Some(if f.w == 0 || f.h == 0 || f.rgba.len() < n {
+                        Err(Planes::from_rgba(f.rgba, f.w, f.h, size.0, size.1))
+                    } else {
+                        Ok((f.rgba[..n].to_vec(), f.w, f.h))
+                    });
+                });
+                match got.ok_or(Short::Missing)? {
+                    Ok((rgba, sw, sh)) => (self.b.upload(rgba), sw, sh),
+                    Err(p) => return Ok(Err(p)),
+                }
+            }
+        };
+        self.frames.insert((side, q), f);
+        Ok(Ok(f))
+    }
+
+    /// The source frame at `q` on a side as the codec's planes, converted (and resampled to the codec's
+    /// size, mosh-sharp D3) on the device.
+    fn source(&mut self, side: Side, q: i64) -> Result<Dev3, Short> {
+        match self.frame(side, q, (self.w, self.h))? {
+            Ok((id, sw, sh)) => Ok(self.b.convert_coded(id, sw, sh, self.coded)),
             Err(p) => Ok(self.b.upload_planes(&p)),
         }
+    }
+
+    /// The source frame at `q` as planes of the carrier's size (mosh-sharp D1), once a batch.
+    fn carrier_source(&mut self, q: i64) -> Result<Dev3, Short> {
+        if let Some(&d) = self.carried.get(&q) {
+            return Ok(d);
+        }
+        let d = match self.frame(Side::Main, q, self.pic)? {
+            Ok((id, sw, sh)) => self.b.convert_picture(id, sw, sh),
+            Err(p) => self.b.upload_planes(&p),
+        };
+        // the carrier reads a position and the one before it
+        self.carried.retain(|&k, _| k >= q - 1);
+        self.carried.insert(q, d);
+        Ok(d)
     }
 
     /// The clean encoder's reconstruction at `j` on a side, where the walk or the memo holds it.
@@ -498,6 +539,8 @@ impl Walk<'_> {
         let pic: Val = match node {
             Node::Base => Val::Host(self.grey.clone()),
             Node::Hold => self.cur.clone().unwrap_or_else(|| Val::Host(self.grey.clone())),
+            // the carrier's keyframe is the source frame itself (mosh-sharp D1)
+            Node::Intra { p } | Node::Refresh { p } if s.r.sharp => Val::Dev(self.carrier_source(p)?),
             Node::Intra { p } => self.clean(Side::Main, p)?.recon(),
             Node::Refresh { p } => {
                 let ik = s.intra(self.lay(), p);
@@ -541,7 +584,17 @@ impl Walk<'_> {
                     let (mv, lost) = self.b.edit(src, bs, table, loss);
                     (mv, lost.map_or(own_res, |l| self.b.drop_lost(own_res, l, bs)))
                 };
-                Val::Dev(self.b.decode(rf, mv, res, bs, r.gain_q8))
+                if s.r.sharp {
+                    // the carrier executes the packet at the picture's size (mosh-sharp D1)
+                    let flags = self.b.coded(res, bs);
+                    let own_mv = own_mv.unwrap_or_else(|| self.b.zero_mv(bs));
+                    let cur = self.carrier_source(p)?;
+                    let prev = self.carrier_source(p - 1)?;
+                    let cfg = mosh::carry_cfg(&r, self.lay());
+                    Val::Dev(self.b.carry(rf, cur, prev, mv, own_mv, flags, &cfg))
+                } else {
+                    Val::Dev(self.b.decode(rf, mv, res, bs, r.gain_q8))
+                }
             }
         };
         // what comes back: the frame asked, what the host will show, the checkpoints (D4, D5)
@@ -556,7 +609,7 @@ impl Walk<'_> {
             None
         };
         if let Some(put) = put {
-            self.keep(dk, &pic, put);
+            self.keep(dk, &pic, put, self.pic);
         }
         if checkpoint {
             // the clean encoder's state at the checkpoint: a re-walk from here encodes nothing before it
@@ -565,7 +618,7 @@ impl Walk<'_> {
                     && q == k
                     && let Some(key) = s.clean(self.lay(), side, q)
                 {
-                    self.keep(mosh::recon_key(key), &c.recon(), Put::Pinned(rank(k)));
+                    self.keep(mosh::recon_key(key), &c.recon(), Put::Pinned(rank(k)), (self.w, self.h));
                 }
             }
         }
@@ -582,8 +635,8 @@ impl Walk<'_> {
         Ok(())
     }
 
-    /// Bring a picture back into the memo under `key` (a host one goes in at once).
-    fn keep(&mut self, key: u64, v: &Val, put: Put) {
+    /// Bring a picture of padded `size` back into the memo under `key` (a host one goes in at once).
+    fn keep(&mut self, key: u64, v: &Val, put: Put, size: (usize, usize)) {
         if let Put::Pinned(_) = put {
             self.checkpoints += 1;
         }
@@ -591,7 +644,7 @@ impl Walk<'_> {
             Val::Dev(_) | Val::Held(_) => {
                 let d = self.dev(v);
                 self.b.read3(d);
-                self.back.push(Back::Pic { key, d, put });
+                self.back.push(Back::Pic { key, d, put, size });
             }
             Val::Host(p) => self.put(key, p.clone(), put),
             Val::Recon(c) => self.put(key, Arc::new(c.recon.clone()), put),
@@ -619,6 +672,9 @@ impl Walk<'_> {
             add(c);
         }
         for (_, d) in &self.live {
+            live.extend_from_slice(d);
+        }
+        for d in self.carried.values() {
             live.extend_from_slice(d);
         }
         for (_, c) in self.last.iter().chain(&self.bloom).flatten() {
@@ -707,16 +763,18 @@ impl Walk<'_> {
     fn run_batch(&mut self) -> Option<()> {
         let s = self.s;
         let got = self.b.run()?;
-        let b = std::mem::replace(&mut self.b, Batch::new(self.w, self.h));
+        let b = std::mem::replace(&mut self.b, Batch::new(self.w, self.h).with_picture(self.pic.0, self.pic.1));
+        self.frames.clear();
+        self.carried.clear();
         let mut pics: HashMap<usize, Arc<Planes>> = HashMap::new();
-        let mut pic = |d: Dev3| -> Arc<Planes> { pics.entry(d[0]).or_insert_with(|| Arc::new(b.planes_of(&got.reads, b.read_index3(d)))).clone() };
+        let mut pic = |d: Dev3, size: (usize, usize)| -> Arc<Planes> { pics.entry(d[0]).or_insert_with(|| Arc::new(b.planes_sized(&got.reads, b.read_index3(d), size))).clone() };
         let mut reads = 0;
         let mut cleans: HashMap<usize, Arc<Clean>> = HashMap::new();
         for back in std::mem::take(&mut self.back) {
             match back {
-                Back::Pic { key, d, put } => {
+                Back::Pic { key, d, put, size } => {
                     reads += 1;
-                    self.put(key, pic(d), put);
+                    self.put(key, pic(d, size), put);
                 }
                 Back::Clean { key, c, bs } => {
                     let clean = Arc::new(b.clean_of(&got.reads, c.mv.map(|m| b.read_index(m)), b.read_index3(c.res), b.read_index3(c.recon), bs));
@@ -726,9 +784,10 @@ impl Walk<'_> {
             }
         }
         let mut kept: HashMap<usize, Val> = HashMap::new();
-        let mut back = |d: Dev3| -> Val { kept.entry(d[0]).or_insert_with(|| back_pic(&b, &got, d)).clone() };
+        let codec = (self.w, self.h);
+        let mut back = |d: Dev3, size: (usize, usize)| -> Val { kept.entry(d[0]).or_insert_with(|| back_pic(&b, &got, d, size)).clone() };
         if let Some(Val::Dev(d)) = self.cur {
-            let v = back(d);
+            let v = back(d, self.pic);
             // a host that keeps nothing: the resume point goes into the memo, as before D1
             if let (Val::Host(p), Some(k)) = (&v, self.at) {
                 self.put(s.dk(k), p.clone(), Put::Transient);
@@ -736,14 +795,14 @@ impl Walk<'_> {
             self.cur = Some(v);
         }
         if let Some(d) = self.out_dev.take() {
-            self.out = Some(pic(d));
+            self.out = Some(pic(d, self.pic));
         }
         for side in [Side::Main, Side::Second] {
             let i = side as usize;
             for slot in [&mut self.last[i], &mut self.bloom[i]] {
                 let Some((q, CleanVal::Dev(c))) = slot.take() else { continue };
                 let key = s.clean(self.input as &dyn StreamLayout, side, q);
-                *slot = Some((q, match (cleans.get(&c.recon[0]), back(c.recon)) {
+                *slot = Some((q, match (cleans.get(&c.recon[0]), back(c.recon, codec)) {
                     (Some(full), _) => CleanVal::Host(full.clone()),
                     (None, Val::Held(recon)) => {
                         let pkt = b.is_kept(c.res[0]).then(|| {
@@ -774,7 +833,7 @@ impl Walk<'_> {
         }
         // a refresh's I-frame beside the walk (found-defects 402)
         for (key, d) in std::mem::take(&mut self.live) {
-            match back(d) {
+            match back(d, codec) {
                 Val::Held(h) => self.memo.put_live(key, h.clone(), h.bytes()),
                 Val::Host(p) => self.memo.put(key, p.clone(), p.bytes()),
                 _ => {}
