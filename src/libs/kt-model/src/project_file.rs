@@ -77,12 +77,19 @@ pub const PROJECT_FILE_VERSION_ECHO: u32 = 3;
 /// settings on its next save — so it refuses instead.
 pub const PROJECT_FILE_VERSION_SOUND: u32 = 4;
 
+/// The version a file is written with WHEN a marker carries a note (marker-notes, `v26.10` U8). An
+/// older build reads a marker without the field and would drop the note on its next save — so it
+/// refuses instead.
+pub const PROJECT_FILE_VERSION_NOTES: u32 = 5;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_SOUND;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_NOTES;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_device_sound() {
+    if project.has_marker_notes() {
+        PROJECT_FILE_VERSION_NOTES
+    } else if project.has_device_sound() {
         PROJECT_FILE_VERSION_SOUND
     } else if project.has_ringing_echo() {
         PROJECT_FILE_VERSION_ECHO

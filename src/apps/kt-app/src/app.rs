@@ -318,6 +318,9 @@ pub struct KtApp {
     pub marker_edit: Option<MarkerEdit>,
     /// Request focus for the marker name field (once, on open).
     pub marker_edit_focus: bool,
+    /// Active inline input of a marker's NOTE (marker-notes, `v26.10` U8): multi-line, written as
+    /// one undo step when it closes.
+    pub marker_note: Option<MarkerNoteEdit>,
     /// Active inline input for the track name (item 2 round 10).
     pub lane_edit: Option<LaneEdit>,
     pub area_edit: Option<AreaEdit>,
@@ -1020,6 +1023,7 @@ impl KtApp {
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
+            marker_note: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -1353,6 +1357,7 @@ impl KtApp {
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
+            marker_note: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -3284,6 +3289,10 @@ impl KtApp {
         // it must be closed before anything else; focus is handed over by
         // `draw_speed_control` on the next frame
         if self.speed_entry.take().is_some() {
+            return;
+        }
+        // 0) a marker's note being typed: Esc cancels it (marker-notes), nothing else moves
+        if self.marker_note.take().is_some() {
             return;
         }
         // 1) the window ON TOP (shared-window-shell). Not a hand-kept list: the list lost the
@@ -9720,6 +9729,15 @@ pub struct MarkerEdit {
     pub buf: String,
     /// Marker just created: closing without Enter leaves it unnamed.
     pub is_new: bool,
+}
+
+/// Inline editing of a marker's note (marker-notes).
+#[derive(Debug, Clone)]
+pub struct MarkerNoteEdit {
+    pub at: i64,
+    pub buf: String,
+    /// Request focus for the field (once, on open).
+    pub focus: bool,
 }
 
 /// Inline editing of a track name (item 2, round 10).

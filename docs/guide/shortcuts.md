@@ -55,6 +55,7 @@ in the menu of a track's empty space.
 | <kbd>M</kbd> | add a marker at the playhead, or remove the one next to it; with the playhead inside the region, add or remove a range marker over the region |
 | click a marker on the ruler | move the playhead onto it (a range marker's flags only drag) |
 | drag a marker | move it |
+| right-click a marker › **Note…** | a field at the flag for the marker's note: <kbd>Enter</kbd> starts a new line, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or a click elsewhere keeps it, <kbd>Esc</kbd> leaves the note as it was; pointing at the flag reads the note in the status line |
 | drag the start / end flag of a range marker | move that edge; the other one stays |
 | drag a region edge | move it |
 | double-click a range marker on the ruler | region over it, with its events selected |

@@ -4396,9 +4396,9 @@ fn t207_double_click_on_marked_range_selects_it() {
 
     // ---- pure part: which range is under the click ----
     let markers = vec![
-        Marker { t: Tick(30_000), duration: Tick(60_000), name: "a".into(), color: None },
-        Marker { t: Tick(60_000), duration: Tick(60_000), name: "b".into(), color: None },
-        Marker { t: Tick(500_000), duration: Tick::ZERO, name: "point".into(), color: None },
+        Marker { t: Tick(30_000), duration: Tick(60_000), name: "a".into(), color: None, note: String::new() },
+        Marker { t: Tick(60_000), duration: Tick(60_000), name: "b".into(), color: None, note: String::new() },
+        Marker { t: Tick(500_000), duration: Tick::ZERO, name: "point".into(), color: None, note: String::new() },
     ];
     let tol = 4_000;
     assert_eq!(
@@ -4428,6 +4428,7 @@ fn t207_double_click_on_marked_range_selects_it() {
             duration: Tick(130_000),
             name: "chorus".into(),
             color: None,
+            note: String::new(),
         }];
         app.model = kt_model::TimelineModel::new(p);
     }
@@ -4635,6 +4636,7 @@ fn t201_render_file_name_follows_template() {
         duration: kt_time::Tick(90_000 * 4),
         name: "chorus".into(),
         color: None,
+        note: String::new(),
     });
     p.region = Some(Region { start: kt_time::Tick(90_000), end: kt_time::Tick(90_000 * 5) });
     app.model = kt_model::TimelineModel::new(p);
@@ -19155,6 +19157,7 @@ fn t926_copy_after_a_range_marker_double_click() {
                     duration: kt_time::Tick(len),
                     name: "m".into(),
                     color: None,
+                    note: String::new(),
                 }];
             });
         }
@@ -21605,4 +21608,71 @@ fn t3105_a_region_cropping_the_selected_event_copies_its_part() {
     let (clips, note) = copy(&mut h);
     assert!(clips.iter().all(|c| c.duration == kt_time::Tick(50_000)), "a region away from it: the event whole");
     assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT, 2));
+}
+
+/// Test 3113 (marker-notes, `v26.10` U8): a marker carries a multi-line note — the marker's
+/// right-click menu has "Note…", which opens a multi-line field at the flag; Enter is a new line, a
+/// click elsewhere keeps the text as ONE undo step, Esc cancels; the flag then shows the note glyph
+/// and the status line reads the note on hover.
+/// - **PATH** right-click a marker's flag → Note… → a multi-line field under the flag; type two
+///   lines (Enter between them) and click elsewhere → the note glyph stands after the flag; hover
+///   the flag → the status line reads both lines; Note… again, type more, Esc → the note as it was
+#[test]
+fn t3113_a_marker_note_is_typed_at_the_flag_and_read_on_hover() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    h.state_mut().apply(Command::AddMarker { at: Tick(60_000), duration: Tick::ZERO });
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let flag = egui::pos2(g.tick_to_x(60_000), g.rect.top() + crate::timeline::RULER_H - 4.0);
+    let note = |h: &Harness<'_, KtApp>| h.state().model.project().markers[0].note.clone();
+
+    right_click_at(&mut h, flag);
+    h.get_by_label(tr(k::tl::menu::MARKER_NOTE)).click();
+    h.step();
+    h.step();
+    assert!(h.state().marker_note.is_some(), "Note… opened no field");
+    let field = crate::widgets::field_probe::rect_of("tl.marker_note.field").expect("the note field is not drawn");
+    assert!(field.height() > 40.0, "the note field is one line: {field:?}");
+    let depth = h.state().model.undo_depth();
+    for ev in [
+        egui::Event::Text("take 3".into()),
+        egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+        egui::Event::Text("warmer".into()),
+    ] {
+        h.event(ev);
+        h.step();
+    }
+    assert_eq!(note(&h), "", "the note was written while typing");
+    // a click elsewhere keeps the text
+    let away = egui::pos2(g.tick_to_x(200_000), g.rect.center().y);
+    h.drag_at(away);
+    h.drop_at(away);
+    h.step();
+    h.step();
+    assert!(h.state().marker_note.is_none(), "the field stayed open after a click elsewhere");
+    assert_eq!(note(&h), "take 3\nwarmer", "the typed lines are not the marker's note");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the note is not one undo step");
+    assert!(crate::widgets::field_probe::rect_of("tl.marker_note_mark.60000").is_some(), "the flag shows no note glyph");
+
+    // hover: the status line reads the note
+    h.hover_at(flag);
+    h.step();
+    h.step();
+    assert_eq!(h.state().status_line_shown.0, "take 3 · warmer", "the hover does not read the note");
+
+    // Esc cancels an edit
+    right_click_at(&mut h, flag);
+    h.get_by_label(tr(k::tl::menu::MARKER_NOTE)).click();
+    h.step();
+    h.event(egui::Event::Text(" and more".into()));
+    h.step();
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().marker_note.is_none(), "Esc left the field open");
+    assert_eq!(note(&h), "take 3\nwarmer", "Esc changed the note");
 }

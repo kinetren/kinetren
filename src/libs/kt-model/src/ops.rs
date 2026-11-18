@@ -513,6 +513,10 @@ pub fn paste_block(
         if !m.name.is_empty() {
             cmds.push(Command::SetMarkerName { at: t, name: rename(&m.name) });
         }
+        // the note travels with the marker (marker-notes): a pasted remark keeps its text
+        if !m.note.is_empty() {
+            cmds.push(Command::SetMarkerNote { at: t, note: m.note.clone() });
+        }
     }
     for m in &block.morphers {
         let mut copy = m.clone();

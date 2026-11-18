@@ -430,6 +430,12 @@ pub enum Command {
         at: Tick,
         name: String,
     },
+    /// The marker's note (marker-notes, `v26.10` U8): any multi-line text, no namespace; typing
+    /// goes through apply_coalesced by the gesture token, as the name does.
+    SetMarkerNote {
+        at: Tick,
+        note: String,
+    },
     MoveMarker {
         from: Tick,
         to: Tick,
@@ -742,6 +748,7 @@ impl Command {
             | Command::AddMarker { .. }
             | Command::RemoveMarker { .. }
             | Command::SetMarkerName { .. }
+            | Command::SetMarkerNote { .. }
             | Command::MoveMarker { .. }
             | Command::SetMarkerDuration { .. }
             | Command::InsertTrack { .. }
@@ -804,6 +811,7 @@ impl Command {
             | Command::AddMarker { .. }
             | Command::RemoveMarker { .. }
             | Command::SetMarkerName { .. }
+            | Command::SetMarkerNote { .. }
             | Command::MoveMarker { .. }
             | Command::SetMarkerDuration { .. }
             | Command::InsertTrack { .. }
@@ -1058,6 +1066,7 @@ impl Band {
                 | Command::AddMarker { .. }
                 | Command::RemoveMarker { .. }
                 | Command::SetMarkerName { .. }
+                | Command::SetMarkerNote { .. }
                 | Command::MoveMarker { .. }
                 | Command::SetMarkerDuration { .. }
                 | Command::RemoveMedia { .. }
@@ -1844,6 +1853,11 @@ impl TimelineModel {
                     return Err(CommandError::MarkerNotFound(*at));
                 }
             }
+            Command::SetMarkerNote { at, .. } => {
+                if !p.markers.iter().any(|m| m.t == *at) {
+                    return Err(CommandError::MarkerNotFound(*at));
+                }
+            }
             Command::MoveMarker { from, to } => {
                 if !p.markers.iter().any(|m| m.t == *from) {
                     return Err(CommandError::MarkerNotFound(*from));
@@ -2497,8 +2511,13 @@ impl TimelineModel {
                     m.name = name;
                 }
             }
+            Command::SetMarkerNote { at, note } => {
+                if let Some(m) = p.markers.iter_mut().find(|m| m.t == at) {
+                    m.note = note;
+                }
+            }
             Command::MoveMarker { from, to } => {
-                // name, duration and color move TOGETHER with the marker
+                // name, duration, color and note move TOGETHER with the marker
                 let moved =
                     p.markers.iter().find(|m| m.t == from).cloned().unwrap_or(Marker::at(from));
                 p.markers.retain(|m| m.t != from);

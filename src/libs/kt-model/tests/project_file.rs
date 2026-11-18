@@ -110,6 +110,7 @@ fn rich_project() -> Project {
         duration: Tick(0),
         name: "scene".into(),
         color: Some("blue".into()),
+        note: String::new(),
     });
     p.region = Some(Region { start: Tick(0), end: Tick(100_000) });
     p.loop_enabled = true;
@@ -296,4 +297,54 @@ fn t822_the_file_is_indexable_in_git() {
     let y_pos = with.find("\"y\": 1").expect("y");
     let x_pos = with.find("\"x\": 2").expect("x");
     assert!(y_pos < x_pos, "and nested order too: y before x, as in the source");
+}
+
+// ---- t3111 (marker-notes, `v26.10` U8): a marker carries a multi-line note ----
+
+#[test]
+fn t3111_a_marker_note_is_kept_moved_pasted_and_written() {
+    use kt_model::ops::{PasteIds, PasteNames, copy_region_block, paste_block};
+    use kt_model::project_file::{PROJECT_FILE_VERSION_NOTES, version_for};
+    let mut m = TimelineModel::new(Project::new(settings()));
+    m.apply(Command::AddMarker { at: Tick(90_000), duration: Tick(45_000) }).unwrap();
+    let plain = to_text(m.project(), None);
+    let note = "re-shoot the close-up\n- colour: warmer\n- sound: wind".to_string();
+    m.apply(Command::SetMarkerNote { at: Tick(90_000), note: note.clone() }).unwrap();
+    assert_eq!(m.project().markers[0].note, note, "the note is not on the marker");
+    assert_eq!(m.project().markers[0].name, "", "a note is not the name");
+    // the name's namespace does not reach the note: two markers may carry one note
+    m.apply(Command::AddMarker { at: Tick(400_000), duration: Tick::ZERO }).unwrap();
+    m.apply(Command::SetMarkerNote { at: Tick(400_000), note: note.clone() }).unwrap();
+    assert!(m.apply(Command::SetMarkerNote { at: Tick(7), note: "x".into() }).is_err(), "a note on no marker");
+
+    // the file: version 5 by content, a field-exact round trip; a project without notes stays as it was
+    let text = to_text(m.project(), None);
+    assert_eq!(version_for(m.project()), PROJECT_FILE_VERSION_NOTES, "a note is not format 5");
+    let back = from_text(&text).expect("a file with a note reads");
+    assert_eq!(back.project.markers, m.project().markers, "the note did not survive the file");
+    assert!(!plain.contains("\"note\""), "a marker without a note writes a note field");
+
+    // a move carries the note; undo takes it off
+    m.apply(Command::MoveMarker { from: Tick(90_000), to: Tick(180_000) }).unwrap();
+    assert_eq!(m.project().markers.iter().find(|k| k.t == Tick(180_000)).unwrap().note, note, "the move lost the note");
+
+    // copy-paste of a region carries the marker's note
+    let block = copy_region_block(m.project(), Region { start: Tick(170_000), end: Tick(300_000) });
+    let (mut a, mut b, mut c, mut d, mut e) = (100u64, 100u64, 100u64, 100u64, 100u64);
+    let (cmds, _, _) = paste_block(
+        &block,
+        Tick(900_000),
+        PasteIds { clip: &mut a, group: &mut b, transition: &mut c, morph: &mut d, camera: &mut e },
+        &PasteNames::default(),
+    );
+    m.apply_batch(cmds).unwrap();
+    // the block is rebased to the region's start: the marker 10 000 ticks into it lands as far past the paste point
+    let pasted = m.project().markers.iter().find(|k| k.t == Tick(910_000)).expect("the marker was not pasted");
+    assert_eq!(pasted.note, note, "the pasted marker lost its note");
+
+    // clearing the note is an edit of its own, undone in one step
+    m.apply(Command::SetMarkerNote { at: Tick(400_000), note: String::new() }).unwrap();
+    assert!(m.project().markers.iter().find(|k| k.t == Tick(400_000)).unwrap().note.is_empty());
+    m.undo().expect("an undo step");
+    assert_eq!(m.project().markers.iter().find(|k| k.t == Tick(400_000)).unwrap().note, note, "undo did not bring the note back");
 }

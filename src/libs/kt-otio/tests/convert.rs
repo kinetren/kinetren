@@ -84,6 +84,7 @@ fn rich_project() -> Project {
         duration: Tick(30_000),
         name: "range".into(),
         color: None,
+        note: String::new(),
     });
     p.markers.push(Marker::named(Tick(120_000), "point"));
     p.region = Some(Region { start: Tick(10_000), end: Tick(60_000) });
@@ -1153,6 +1154,43 @@ fn t385_marker_comment_and_metadata_survive_roundtrip() {
     assert_eq!(m["name"], "remark");
     assert_eq!(m["comment"], "reshoot close-up", "marker comment lost");
     assert_eq!(m["metadata"]["resolve"]["flag"], "yellow", "foreign marker metadata lost");
+}
+
+/// Test 3112 (marker-notes, `v26.10` U8): a foreign marker's `comment` IS the marker's note — the
+/// person sees and edits it, and the export writes what the note says now: an edited note replaces
+/// the comment, a cleared one leaves none, and a note made in the editor goes out as a comment.
+#[test]
+fn t3112_a_marker_comment_is_its_note_both_ways() {
+    kt_plugins_builtin::install();
+    let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
+    "name":"","children":[],"source_range":null,"effects":[],"markers":[
+    {"OTIO_SCHEMA":"Marker.2","name":"remark","color":"RED","marked_range":
+    {"OTIO_SCHEMA":"TimeRange.1","duration":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":48,"rate":24}},
+    "comment":"reshoot close-up\nwarmer","metadata":{"resolve":{"flag":"yellow"}}}],
+    "enabled":true,"metadata":{}},
+    "global_start_time":null,"metadata":{}}"#;
+    let b = load_project(doc, None).expect("file with marker reads");
+    assert_eq!(b.project.markers[0].note, "reshoot close-up\nwarmer", "the comment is not the marker's note");
+
+    let comment = |p: &kt_model::Project| -> serde_json::Value {
+        let out = save_project(p, &b.retained, None);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        v["tracks"]["markers"][0]["comment"].clone()
+    };
+    let mut p = b.project.clone();
+    p.markers[0].note = "keep this take".into();
+    assert_eq!(comment(&p), "keep this take", "an edited note did not replace the comment");
+    p.markers[0].note.clear();
+    assert_eq!(comment(&p), "", "a cleared note still wrote the old comment");
+
+    let mut own = kt_model::Project::new(b.project.settings.clone());
+    own.markers.push(kt_model::Marker { note: "from the editor".into(), ..kt_model::Marker::at(kt_time::Tick(90_000)) });
+    let out = save_project(&own, &Default::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(v["tracks"]["markers"][0]["comment"], "from the editor", "a note made here did not go out as a comment");
+    let back = load_project(&out, None).expect("our export reads");
+    assert_eq!(back.project.markers[0].note, "from the editor", "the exported note did not come back");
 }
 
 /// Test 386 (R.49 A10): `Clip.enabled` is NOT fixed — it is not broken. A disabled
