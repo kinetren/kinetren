@@ -167,3 +167,28 @@ only in one process's memory. Checked:
   compares their fields; the file identity and the program build cover what a process numbers.
 - [A replaced file with the same size and time] → missed (the same blind spot as the sidecar's fast path,
   which hashes the content only when size or time moved).
+
+## Measurements
+
+Release `kt-cli`, llvmpipe (LLVM 20.1.2, Vulkan), the machine shared with other sessions (load average
+18–26 while measuring: the absolute numbers are noisy, the restart's are not). The project is ours:
+`kt-cli showcase --heavy` (fixture footage in `/dev/shm`), the one-second loop at its cursor (17.36 s)
+under Slowed, VHS Tape and Camera ISP, `kt-cli preview heavy.kt 17.36 18.36 --size 640x360 --loop 20`.
+Three runs one after the other: without the tier; with `--render-cache DIR` on an empty folder (the
+first process); again over the same folder (the restart).
+
+| | no tier | first process | restart |
+|---|---|---|---|
+| lap 0: frames shown / kept | 45 / 1 | 35 / 17 | 25 / 25 |
+| first lap shown wholly from kept frames | none in 20 laps | lap 6 | lap 0 |
+| V-fps over 20 s, incomplete composites | 5.6, 877 | 22.8, 63 | 25.0, 0 |
+| device busy per lap | 42–156 % | 57–132 % until lap 6, then 2 % | 2–6 % |
+| process CPU over the run | 9.5 cores | — | 0.2 cores |
+| restored from disk | — | 11 | 26 (lap 0: 25) |
+
+The first process prerendered at rest after its run: 54 moments measured heavy (device 233 ms a moment
+on average, 721 ms at most — the loop's 25 and the heavy moments next to it, the run growing to its
+measured end), 2 light (6 ms, not written), 30 MB on disk in 12.4 s; it then stopped ("nothing left").
+Its own lap 0 already restored 11 moments: the bench's settle composes on demand while paused, so those
+moments were measured and prerendered before the play began. The restart composed nothing: every frame
+of every lap came from the disk (`trace cache`: 25 restored in lap 0, 105 ms of reading for 26 moments).
