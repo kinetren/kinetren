@@ -544,6 +544,9 @@ pub fn candidates(
 
 // ---- the player's tier ---------------------------------------------------------------------------
 
+/// A moment the store holds: its durable key and the versions it was computed at.
+type OnDisk = (u64, (u64, u64));
+
 /// What the host sets (D7).
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -565,7 +568,7 @@ pub struct RenderCache {
     store: Mutex<Option<(String, Arc<DiskStore>)>>,
     files: Mutex<Option<(u64, u64, Arc<FileIds>)>>,
     /// Moments the store holds: tick → (durable key, the versions it was computed at).
-    on_disk: Mutex<BTreeMap<i64, (u64, (u64, u64))>>,
+    on_disk: Mutex<BTreeMap<i64, OnDisk>>,
     pub(crate) disk_gen: AtomicU64,
     /// The last input's trace clock (ns); 0 — none yet.
     last_input: AtomicU64,
@@ -580,6 +583,8 @@ pub struct RenderCache {
     pub(crate) busy: AtomicBool,
     /// A test's threshold of "heavy" in ns over the rule's half period (0 — the rule).
     heavy_for_tests: AtomicU64,
+    /// The prerender parked with nothing left to do (or the cap full) since it last looked.
+    settled: AtomicBool,
 }
 
 impl RenderCache {
@@ -679,8 +684,15 @@ impl RenderCache {
         self.busy.load(Ordering::Acquire)
     }
 
+    /// The prerender has nothing left to do at rest (or its cap is full) and works on nothing: the
+    /// bench waits for it. A kick clears it until the thread looked again.
+    pub fn settled(&self) -> bool {
+        self.settled.load(Ordering::Acquire) && !self.busy()
+    }
+
     /// Look for work now (a test that measured its moments by hand; the host after a setting).
     pub fn kick(&self) {
+        self.settled.store(false, Ordering::Release);
         self.news.store(true, Ordering::Release);
         self.wake.notify();
     }
@@ -784,12 +796,13 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         let step = video.grid.frame_step().max(1);
         let head = parts.transport.playhead().0;
         // the bars' scan: once per state and per five seconds of the playhead's place (no device)
-        let bucket = head.div_euclid(5 * kt_time::TICK_HZ as i64);
+        let bucket = head.div_euclid(5 * kt_time::TICK_HZ);
         if scanned != Some((sk, bucket)) {
             scanned = Some((sk, bucket));
             scan(&parts, &rc, &store, &display, &video, &built.project, (built.seq, versions), q, region, head);
         }
         if full {
+            rc.settled.store(true, Ordering::Release);
             rc.wake.wait_since(seen);
             continue;
         }
@@ -808,9 +821,11 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
                 trace::ev(Ev::RenderCache).aux(rc::STOPPED).b(rc::why::DONE).emit();
                 worked = false;
             }
+            rc.settled.store(true, Ordering::Release);
             rc.wake.wait_since(seen);
             continue;
         };
+        rc.settled.store(false, Ordering::Release);
         if let Some(left) = rc.quiet_left() {
             rc.wake.wait_timeout(left);
             continue;
@@ -863,7 +878,7 @@ fn scan(
         return;
     }
     let step = video.grid.frame_step().max(1);
-    let (a, b) = region.unwrap_or((head - 5 * kt_time::TICK_HZ as i64, head + 5 * kt_time::TICK_HZ as i64));
+    let (a, b) = region.unwrap_or((head - 5 * kt_time::TICK_HZ, head + 5 * kt_time::TICK_HZ));
     let files = rc.files(project, (stamp.0, stamp.1.1), false);
     let mut t = video.grid.align_floor(kt_time::Tick(a.max(0))).0;
     let (mut looked, mut found) = (0u64, 0u64);

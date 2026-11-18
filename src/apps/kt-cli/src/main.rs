@@ -1091,6 +1091,12 @@ fn largest_step(s: &[f32]) -> (f32, usize) {
     best
 }
 
+/// The build salt of the disk tier (render-cache-disk D1): the program's build and the FFmpeg it decodes
+/// with — another of either may be another picture of the same plan.
+fn render_cache_build() -> String {
+    format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
+}
+
 fn preview_run(
     project: &Project,
     path: &str,
@@ -1103,6 +1109,7 @@ fn preview_run(
     looped: Option<f64>,
     wav: Option<String>,
     device_open_ms: f64,
+    render_cache: Option<String>,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
@@ -1136,6 +1143,16 @@ fn preview_run(
     // the app's arrangement (render-ahead D3): the producer composes on the display's own device, the
     // side engine only under `KT_RENDER_AHEAD_DEVICE=side`; `KT_RENDER_AHEAD=off` is the "before"
     player.set_ahead_gpu(kt_gpu::side_engine().map(|e| e as std::sync::Arc<dyn kt_engine::VideoGpuExec>));
+    // the disk tier of composites as the editor sets it (render-cache-disk D7): two runs over one folder
+    // measure a restart
+    if let Some(dir) = &render_cache {
+        player.set_render_cache(Some(kt_engine::render_cache::Config {
+            root: dir.into(),
+            build: render_cache_build(),
+            base: std::path::Path::new(path).parent().map(|p| p.to_path_buf()),
+            cap: kt_engine::render_cache::cap_from_env(),
+        }));
+    }
     let opts = kt_engine::preview_bench::BenchOptions {
         from: Tick((from * kt_time::TICK_HZ as f64) as i64),
         to: Tick((to * kt_time::TICK_HZ as f64) as i64),
@@ -1249,6 +1266,24 @@ fn preview_run(
     );
     if let Some(g) = gpu_second {
         println!("  GPU over the run: {}", g.line());
+    }
+    if render_cache.is_some() {
+        // the run ends at rest: the prerender fills what was measured slow, as the editor does after Play
+        let rc = player.render_cache();
+        let (_, restored) = rc.counts();
+        player.pause();
+        rc.kick();
+        let t0 = std::time::Instant::now();
+        let deadline = t0 + std::time::Duration::from_secs(600);
+        while !rc.settled() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let (written, _) = rc.counts();
+        println!(
+            "  render cache: {restored} moments restored from disk while playing; at rest {written} written in {:.1} s{}",
+            t0.elapsed().as_secs_f64(),
+            if rc.settled() { "" } else { " (not done: the wait's bound)" }
+        );
     }
     if let Some(path) = &wav {
         write_wav_f32(path, &r.played).map_err(|e| format!("{path}: {e}"))?;
@@ -1736,7 +1771,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR]"
                 );
                 return 2;
             };
@@ -1758,7 +1793,8 @@ fn run(args: &[String]) -> i32 {
             let looped = opt("--loop").and_then(|s| s.parse::<f64>().ok());
             let wav = opt("--wav").cloned();
             let device_open_ms = opt("--device-open-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
-            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms) {
+            let render_cache = opt("--render-cache").cloned();
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
