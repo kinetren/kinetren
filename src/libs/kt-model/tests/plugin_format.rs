@@ -915,3 +915,23 @@ fn t1247_the_datamosh_keeps_its_text() {
     }
     assert!(FxInstance::all().iter().any(|f| f.tag() == "datamosh" && f.is_stream()), "the registry lists it as a stream stage");
 }
+
+/// t2977 (mosh-sharp-default, kkt-26.11.18b U7): a Datamosh ADDED now is sharp, while a slot saved
+/// before — without the row — reads off and writes back the same text: the reader does not change an
+/// old project's look.
+#[test]
+fn t2977_a_new_datamosh_is_sharp_an_old_one_keeps_its_look() {
+    kt_plugins_builtin::install();
+    let old = r#"{"kind":"datamosh","lines":"144","before":12,"mosh":1.0}"#;
+    let read: FxInstance = serde_json::from_str(old).unwrap();
+    let FxInstance::Plugin(p) = &read else { panic!("a plugin slot") };
+    assert_eq!(p.get("sharp"), Some(0.0), "a saved Datamosh without the row stays soft");
+    assert_eq!(serde_json::to_string(&read).unwrap(), old, "an old slot writes back its own text");
+    let fresh = FxInstance::builtin("datamosh");
+    let FxInstance::Plugin(p) = &fresh else { panic!("a plugin slot") };
+    assert_eq!(p.get("sharp"), Some(1.0), "a new Datamosh is sharp");
+    assert!(serde_json::to_string(&fresh).unwrap().contains(r#""sharp":true"#), "the file names it");
+    // its sound half is created with the same values (one device)
+    let FxInstance::Plugin(s) = FxInstance::builtin("datamosh_sound") else { panic!("a plugin slot") };
+    assert_eq!(s.get("sharp"), Some(1.0));
+}
