@@ -21313,3 +21313,82 @@ fn t2811_what_this_ffmpeg_cannot_do_is_shown_not_hidden() {
     assert!(texts.iter().any(|t| *t == format!("Opus — {na}")), "Opus is not shown unavailable: {texts:?}");
     assert!(texts.iter().any(|t| *t == format!("FLAC — {mp4}")), "FLAC in MP4: {texts:?}");
 }
+
+/// t3100 (F-MED-008, `v26.10` MW1): scrubbing a bin card writes the file's moment under the cursor
+/// over the thumbnail, in the program's timecode; it follows the cursor and leaves with it.
+#[test]
+fn t3100_bin_scrub_writes_the_moment_under_the_cursor() {
+    use kt_model::*;
+    let mut h = harness();
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let dur = h.state().thumbs.duration(MediaId(1)).expect("the fixture's length is known");
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let fps = h.state().model.project().settings.fps;
+    let shown = |h: &Harness<'static, KtApp>| -> Vec<String> {
+        crate::reach_tests::painted_texts(h)
+            .into_iter()
+            .filter(|t| card.contains(t.rect.center()) && t.drawn.contains(" F"))
+            .map(|t| t.drawn)
+            .collect()
+    };
+    assert!(shown(&h).is_empty(), "a timecode is written without a hover: {:?}", shown(&h));
+    let mut seen = Vec::new();
+    for frac in [0.5f32, 0.25] {
+        let x = card.left() + card.width() * frac;
+        h.hover_at(egui::pos2(x, card.center().y));
+        h.step();
+        let at = ((x - card.left()) / card.width()).clamp(0.0, 0.999) as f64;
+        let want = crate::util::format_timecode(kt_time::Tick((at * dur.0 as f64) as i64), fps);
+        let texts = shown(&h);
+        assert_eq!(texts, vec![want.clone()], "the moment under the cursor at {frac}");
+        let r = crate::widgets::field_probe::rect_of("bin.scrub.tc").expect("the label is probed");
+        assert!(card.contains_rect(r), "the label stays inside the thumbnail: {r:?} in {card:?}");
+        seen.push(want);
+    }
+    assert_ne!(seen[0], seen[1], "the moment follows the cursor");
+    h.hover_at(egui::pos2(card.right() + 200.0, card.center().y));
+    h.step();
+    assert!(shown(&h).is_empty(), "the timecode stays after the cursor left: {:?}", shown(&h));
+}
+
+/// t3101 (F-MED-008): the scrub's timecode shortens to the card instead of covering it — the
+/// narrowest card (56 points, `card_w`'s floor) still gets a label inside its thumbnail — and a
+/// hover frame on the same moment replays the laid-out label instead of formatting it again.
+#[test]
+fn t3101_bin_scrub_timecode_fits_a_narrow_card_and_is_laid_out_once() {
+    use kt_model::*;
+    let mut h = harness();
+    h.step();
+    let p = egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), egui::Rect::EVERYTHING);
+    let full = crate::util::format_timecode(kt_time::Tick(100 * 90_000 + 45_000), 25);
+    let wide = crate::bin_panel::scrub_timecode_galley(&p, full.clone(), 120.0);
+    assert_eq!(wide.text(), full, "a full card keeps the program's form");
+    let narrow = crate::bin_panel::scrub_timecode_galley(&p, full.clone(), 56.0 - 8.0);
+    assert!(narrow.size().x <= 48.0, "the narrow label fits: {:?} {}", narrow.size(), narrow.text());
+    assert!(full.contains(narrow.text()), "a shortened form is a part of the moment: {}", narrow.text());
+
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let at = egui::pos2(card.left() + card.width() * 0.4, card.center().y);
+    h.hover_at(at);
+    h.step();
+    let first = h.state().bin_scrub_tc.as_ref().map(|c| c.4.clone()).expect("laid out");
+    h.hover_at(at + egui::vec2(0.0, 3.0));
+    h.step();
+    let again = h.state().bin_scrub_tc.as_ref().map(|c| c.4.clone()).expect("kept");
+    assert!(std::sync::Arc::ptr_eq(&first, &again), "the same moment laid the label out again");
+}

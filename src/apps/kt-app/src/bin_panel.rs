@@ -962,6 +962,11 @@ impl KtApp {
                             egui::Color32::from_rgba_unmultiplied(255, 255, 255, 170),
                         ),
                     );
+                    // the moment under the cursor in the file's own time (F-MED-008, v26.10 MW1):
+                    // the same hover-x as the thumbnail, so the number and the picture agree
+                    let frac = ((pos.x - thumb_rect.left()) / thumb_rect.width()).clamp(0.0, 0.999);
+                    let moment = (frac as f64 * d.0 as f64) as i64;
+                    self.draw_scrub_timecode(&p, thumb_rect, id, moment);
                 }
             } else {
                 p.text(
@@ -1216,6 +1221,28 @@ impl KtApp {
         }
     }
 
+    /// The scrub's timecode over the bottom of the thumbnail, on a dark backing (F-MED-008). The
+    /// program's timecode form, shortened from the left and then of its frame when the card is
+    /// narrow; laid out once per moment and replayed as a galley on the other hover frames.
+    fn draw_scrub_timecode(&mut self, p: &egui::Painter, thumb: egui::Rect, id: MediaId, moment: i64) {
+        let fps = self.model.project().settings.fps;
+        let room = thumb.width() - 8.0;
+        let stale = !matches!(&self.bin_scrub_tc,
+            Some((m, t, f, w, _)) if *m == id && *t == moment && *f == fps && *w == room.to_bits());
+        if stale {
+            let full = crate::util::format_timecode(kt_time::Tick(moment), fps);
+            let g = scrub_timecode_galley(p, full, room);
+            self.bin_scrub_tc = Some((id, moment, fps, room.to_bits(), g));
+        }
+        let Some((_, _, _, _, g)) = &self.bin_scrub_tc else { return };
+        let size = g.size();
+        let at = egui::pos2(thumb.center().x - size.x / 2.0, thumb.bottom() - size.y - 3.0);
+        let back = egui::Rect::from_min_size(at, size).expand2(egui::vec2(3.0, 1.0));
+        p.rect_filled(back, 2.0, egui::Color32::from_black_alpha(170));
+        p.galley(at, g.clone(), egui::Color32::from_gray(230));
+        crate::widgets::field_probe::note("bin.scrub.tc", back);
+    }
+
     fn draw_bin_waveform(&self, p: &egui::Painter, rect: egui::Rect, id: MediaId) {
         let peaks = self.peaks.lock().unwrap();
         let Some(levels) = peaks.get(&id) else {
@@ -1297,4 +1324,24 @@ impl KtApp {
         }
         Some(tex)
     }
+}
+
+/// The scrub's timecode laid out to fit `room` (F-MED-008): the program's form, then shortened
+/// from the left and of its frame — "00:01:40.500 F12" → "01:40.500 F12" → "01:40.500" →
+/// "01:40". The shortest is taken when nothing fits.
+pub(crate) fn scrub_timecode_galley(p: &egui::Painter, full: String, room: f32) -> std::sync::Arc<egui::Galley> {
+    let no_hours = full.strip_prefix("00:").unwrap_or(&full).to_string();
+    let no_frame = no_hours.split(' ').next().unwrap_or(&no_hours).to_string();
+    let no_ms = no_frame.split('.').next().unwrap_or(&no_frame).to_string();
+    let font = egui::FontId::monospace(10.0);
+    let color = egui::Color32::from_gray(230);
+    let mut last = None;
+    for text in [full, no_hours, no_frame, no_ms] {
+        let g = p.layout_no_wrap(text, font.clone(), color);
+        if g.size().x <= room {
+            return g;
+        }
+        last = Some(g);
+    }
+    last.expect("four forms were laid out")
 }
