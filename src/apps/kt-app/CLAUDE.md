@@ -1153,3 +1153,13 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
   holding the menu a right click over an event opened nothing (found by t1276).
 - `font_tests::sources()` cuts every file at its FIRST `#[cfg(test)]`: UI code appended after a test
   module is invisible to t100/t125 (the menu body was, and t125 called its keys unused).
+
+## The effect chain is a node editor (fx-graph v1b)
+
+- `node_editor::chain_graph` is the ONE chain widget (the effects, morpher and track windows); the
+  strip is gone. It edits `ChainEdit` as the strip did — a new chain feature goes there, not into a
+  window. Nodes are `new_child` UIs clipped to the canvas (a widget outside it grows the window); the
+  zoom is a level of detail (accessibility rectangles ignore a layer transform: the harness and the
+  live scenarios press nodes by them). Ctrl+wheel switches detail ↔ chips, the plain wheel is the
+  window's. A node's row label is painted: the row's doors live on the form's label. Graph keys wait
+  for the key table (`controls.rs`). t2994, t2995, t2999, t3001, t3003, live `node_graph`.

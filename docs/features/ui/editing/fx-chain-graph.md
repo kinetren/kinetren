@@ -1,7 +1,7 @@
 ---
 id: F-UI-008
 title: Effects as a node graph — one editor in every window, picture and sound sockets, room for compositing
-status: candidate
+status: in-progress
 priority: B
 cost: XL
 category: ui/editing
@@ -12,7 +12,7 @@ invariants: [3, 7, 11, 12]
 ui_rules: [9, 13, 17]
 round: null
 point: change fx-graph
-tests: []
+tests: [t2990, t2991, t2992, t2993, t2994, t2995, t2998, t2999, t3001, t3003]
 depends_on: []
 trackers: []
 services: []

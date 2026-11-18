@@ -5,7 +5,7 @@
 //! them over two windows would mean making the person open a second one for a neighbouring
 //! field (rule 13 — space is dear, and so is attention).
 //!
-//! The chain strip is THE SAME `widgets::chain_strip` as for an event and
+//! The chain is THE SAME `node_editor::chain_graph` as for an event and
 //! for the morpher (rule 17): if they diverged, an effect on a track would behave
 //! differently from one on an event. There is deliberately no automation widget here:
 //! a track has no curves (its key is the timeline tick — that is the next change),
@@ -243,7 +243,7 @@ impl KtApp {
                         .filter(|r| if audio { r.audio_ok } else { r.video_ok })
                         .cloned()
                         .collect();
-                    let ch = crate::widgets::chain_strip(
+                    let ch = crate::node_editor::chain_graph(
                         ui,
                         ("track", w.id.0),
                         crate::widgets::ChainEdit {

@@ -113,6 +113,10 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   into generated passes, so `register` refuses a WGSL without `fn tap_<id>(` or one that reads a
   texture or the host's `P` (`impure_tap`, t2194); t2195 pins the built-in list.
 - The module is `generator`, not `gen`: `gen` is a reserved keyword in Rust 2024.
+- **A node shows at most three main rows** (fx-graph D4a): `UiDecl.main` names them (a number or a
+  choice of the passport), `main_rows` falls back to the first numeric smooth rows; `register`
+  refuses more than three, a row the passport lacks or of another type, and a paired video kind
+  without them (its first three would be meaningless). t2998 holds the built-in set, both halves.
 - Mandatory tests: t972 (`tests/registry.rs`) and every family's frozen-form test (t973,
   t1048) when a row or a declaration changes.
 - **A kernel that runs a compute shader names it** (pipeline-prewarm D6): `Plugin::compute_shaders`

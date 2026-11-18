@@ -60,6 +60,7 @@ mod maskctl;
 mod masks;
 mod meters;
 mod morpher_editor;
+mod node_editor;
 mod project_lock;
 mod plugins;
 mod pubparam;
@@ -75,6 +76,8 @@ mod window_fill_tests;
 mod welcome_prefs_tests;
 #[cfg(test)]
 mod vhs_tape_tests;
+#[cfg(test)]
+mod node_editor_tests;
 #[cfg(test)]
 mod pitch_tail_tests;
 mod reel_preview;

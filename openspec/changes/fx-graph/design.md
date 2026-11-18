@@ -275,6 +275,27 @@ The fit on a long chain (24 effects): zoomed out, every node is a header chip; H
 - **PATH** open the FX window and the morpher window on the heavy showcase project → leave the
   mouse still over a node → nothing moves → no frame is asked.
 
+### D4b. v1b as built (2026-11-19) — what differs from the plan above and why
+
+- **The zoom is a level of detail, not a scale.** egui's accessibility rectangles ignore a layer
+  transform, so a scaled graph would be pressed in the wrong place by the harness, the live
+  scenarios and a screen reader, and scaled text blurs. The graph shows the detailed nodes when
+  they fit the width, else chips wrapped into bands; nodes are child UIs clipped to the canvas, so
+  a wide graph never stretches its window.
+- **Ctrl+wheel switches detail ↔ chips, the plain wheel scrolls the window.** A graph that took
+  the wheel stopped the form below from scrolling (t1219 caught it).
+- **No graph keys yet.** M, X, Home, Shift+A and Tab collide with the timeline's keys (marker,
+  delete, start); they join the one key table (`controls.rs`, `ui-controls`) in v1c. Until then:
+  the switch and the cross on every node, the right-click menu, "Frame all", a double click.
+- **A node's slider row is the common number (`param_value`) and a slider**, its label painted:
+  the row's label with its doors (reset, publication) stays the form's (t682 caught a second,
+  weaker door). A curved row is named in the node and edited in the form.
+- **The effects window's default height grows by the graph's band** (520 → 600): the form keeps
+  the room it had.
+- **Each window keeps its chains as before**: the morpher is one editor of two lanes; the effects
+  window still shows each member event's chain as its own editor — one editor for an event and its
+  linked audio, the context groups and the key wire are v1c.
+
 ## D5. Cost at rest
 
 - The editor lays out once per key — model `revision()`, graph-area size, zoom, pan, selection,

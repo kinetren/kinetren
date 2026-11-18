@@ -456,7 +456,7 @@ impl KtApp {
                 let (mut fx, mut bypass, mut auto, split) = merge_chains(&ev.patch);
                 let mut src_on = !ev.patch.src_off;
                 let mut pv = crate::fx_thumbs::PickerCtx::for_scene(pv_svc, pv_scene.clone(), pv_decode);
-                let ch = crate::widgets::chain_strip(
+                let ch = crate::node_editor::chain_graph(
                     ui,
                     ("morphchain", ed.id.0),
                     crate::widgets::ChainEdit {

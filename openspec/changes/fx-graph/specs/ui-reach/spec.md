@@ -3,32 +3,36 @@
 ### Requirement: Every effect chain is edited in one node editor that fits its window
 The FX window (an event and its link partners), the track window, the morpher window and a
 composition instance's chain SHALL show and edit effects through ONE node editor in one style. It
-SHALL open framed (every node in view) and SHALL never scroll: Home frames all, the wheel zooms at
-the pointer, a middle drag pans, and below a readable zoom a node shows only its header. Picture and
+SHALL open framed (every node in view) and SHALL never scroll: the detailed nodes when they fit
+the width, else small chips wrapped into bands (the zoom is a LEVEL OF DETAIL — the text stays
+sharp and every widget keeps its real place); Ctrl+wheel over the graph switches detail and
+chips, a middle drag pans the detail, "Frame all" and a double click on empty space return the
+fit; the plain wheel stays the window's scroll. Picture and
 sound SHALL be two socket kinds and no wire SHALL join them. A simulated device SHALL be one node
 with a picture lane and a sound lane, each with its own switch. A morpher layer, a composition and a
 track stage SHALL be group nodes that Tab enters and leaves. A node SHALL show at most three main
 sliders per lane, named by the plugin's passport, and its height SHALL NOT grow with the passport;
 selecting a node SHALL open that slot's existing form beside the graph. Nodes SHALL be laid out by
 processing order; dragging a node SHALL change only its order. An effect SHALL be added by dragging a wire into empty canvas or
-Shift+A (the existing picker opens at the pointer) and inserted by dropping a node on a wire; M
-SHALL mute, X SHALL remove (a device: both halves). Every gesture SHALL be one undo step. A gesture
+the picker; a drag SHALL reorder within its lane by dropping a node on another; every node SHALL
+carry its switch and its cross, and a device's cross SHALL remove both halves. Graph keys (M, X,
+Home, Shift+A, Tab) SHALL join the one key table of `ui-controls` before they act. Every gesture SHALL be one undo step. A gesture
 the engine cannot execute yet (a branch, a second input, a cycle) SHALL be refused with a reason in
 the status line, changing nothing. No layout SHALL be stored and no window SHALL be added.
 Why: kkt-26.11.18b item 3 — "компактного удобного графа"; U7 — "Вместо полоски", "везде в окнах
 разных единым стилем в одном месте чтобы не скролить … типо как в blender"; R.63 — no new window;
 rule 17 — one widget. U8 — "2-3 ползунка, но … как уместить огромные эффекты типо isp".
 
-#### Scenario: An event and its linked audio in one node editor
-- **PATH** double click a video event linked to its audio → the FX window shows the node editor framed: Source, Geometry, Color Curves, Glow, Output on the picture wire, EQ on the sound wire → drag a wire from Glow's picture output into empty canvas → the picker gallery opens at the pointer → click VHS Tape → a VHS Tape node with a picture lane and a sound lane is inserted after Glow and EQ → its deck face opens beside the graph
-- **WHEN** the person adds VHS Tape through the node editor of a linked pair
-- **THEN** the video chain ends with `vhs_tape` after Glow, the audio chain with `vhs_tape_sound`; the geometry dump names the nodes, the lanes and the selected node; one undo step removes both
+#### Scenario: A device's halves stand in one column
+- **PATH** double click a morpher block carrying a Blur, VHS Tape and a Gain → the morpher window shows its node editor: the purple source node, Blur and VHS Tape on the picture lane, Gain and VHS Tape's sound (with the speaker) on the sound lane, the tape's two halves one above the other in one frame
+- **WHEN** the morpher window opens on a layer carrying a device and other effects of both kinds
+- **THEN** the device's halves share one column, the picture half above; Blur stays on the picture lane and Gain on the sound lane, each in its chain's order; the graph publishes its place (an event and its linked audio in ONE editor follows in v1c)
 - **TEST** t2994 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
-#### Scenario: Insert on a wire, refuse a branch, mute and remove a device
-- **PATH** drag the Glow node onto the wire between Geometry and VHS Tape → the wire highlights → release → Glow moves there → drag a wire from Glow's output onto a second input → it snaps back and the status line says branches are not executed yet → select VHS Tape → press M → both lanes dim → press X → the device goes with both halves → Ctrl+Z → it returns
-- **WHEN** the person reorders by dropping on a wire, tries a branch, mutes and removes a device
-- **THEN** the picture chain is reordered in one step; the branch changes nothing in the model; M sets both halves' bypass; the removal takes both halves with their curves and undo brings them back with their values
+#### Scenario: Reorder within a lane, refuse across, remove a device
+- **PATH** in the morpher's node editor drag Blur onto VHS Tape → Blur stands after the tape → drag Gain onto VHS Tape (another lane) → the status line says an effect stays on its lane, nothing changes → click the cross of VHS Tape's picture half → both halves go
+- **WHEN** the person reorders by dropping a node on another, tries the other lane, and removes a device
+- **THEN** the picture chain is reordered in one step; the drop across lanes changes nothing in the model; every node has its cross, and the device's cross takes both halves
 - **TEST** t2995 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: Layers, the track stage and the key are group nodes in the processing order
@@ -38,13 +42,13 @@ rule 17 — one widget. U8 — "2-3 ползунка, но … как умест
 - **TEST** t2996 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: A long chain fits without scrolling
-- **PATH** open the FX window on an event with 24 effects linked to three audio events → every node is in view as a header chip → wheel over VHS Tape → the view zooms there and its lanes show → press Home → everything fits again → the window shows no scrollbar over the graph
-- **WHEN** a chain is longer than the graph area and the event has several partners
-- **THEN** the opened view frames every node; zooming out past readability collapses nodes to headers; Home restores the fit; each audio partner is its own sound wire; no node label wraps
+- **PATH** open the FX window on an event with 24 effects → every node is in view as a chip → Ctrl+wheel over the graph → the detailed nodes with their sliders, a middle drag pans them → click "Frame all" → all the chips again, no scrollbar over the graph
+- **WHEN** a chain is longer than the graph area
+- **THEN** the opened view frames every node inside the window's width; Ctrl+wheel opens the detailed nodes; "Frame all" restores the fit; no node label wraps
 - **TEST** t3001 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: A huge device stays a small node with its main sliders
-- **PATH** add Camera ISP to an event with linked audio → the ISP node shows its look chip, two picture sliders and one sound slider, no more → drag the exposure slider in the node → the preview brightens → click the node's title → the full ISP panel opens beside the graph with all its blocks
+- **PATH** add Camera ISP to an event → the ISP node shows its exposure, gain and sharpening sliders, no more → drag the exposure slider in the node → the preview brightens → the full ISP panel stays below the graph with all its blocks
 - **WHEN** a device with tens of rows is added and its main slider is dragged in the node
 - **THEN** the node has at most three rows per lane and the same height whatever the passport holds; the drag sets that row in the MODEL in one undo step, exactly as the same row in the side form; the side form shows the whole device
 - **TEST** t2999 (`src/apps/kt-app/src/node_editor_tests.rs`)

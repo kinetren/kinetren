@@ -2168,3 +2168,13 @@ premiere = "Aquí no hay: borrado y recorte ripple (Shift+Delete, Q, W), cuchill
 resolve = "Aquí no hay: borrado ripple (Shift+Delete), cuchilla (B), páginas. Los medios entran arrastrando archivos a la ventana."
 final_cut = "Cmd aquí es Ctrl, Option es Alt. Aquí no hay: línea de tiempo magnética, cuchilla (B). Suprimir deja un hueco."
 after_effects = "Aquí no hay: capas ni sus teclas de propiedades (U, P, S, R, T). B y N fijan la región, J y K recorren los puntos, Ctrl+Shift+D divide un evento."
+
+[fx.graph]
+picture = "Imagen"
+sound = "Sonido"
+input = "Entrada"
+output = "Salida"
+fit = "Encuadrar todo"
+fit_hint = "Mostrar todo el grafo. Ctrl+rueda sobre el grafo alterna detalle y vista general, el botón central desplaza"
+lane_refused = "Un efecto se queda en su línea: imagen con imagen, sonido con sonido"
+curved = "Este valor sigue una curva: edítalo en el formulario de abajo"
