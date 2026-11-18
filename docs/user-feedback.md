@@ -2959,3 +2959,21 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    morpher; the morpher's and the FX chain's control becomes a compact graph (design shown to him
    before code).
 4. His question: is the disk prerender encoded or raw?
+5. "слабо я верю что ffv1 аппаратно ускорен.. у нас datamosh лагает как нехуй делать а ты тут для
+   превью это на постоянку предлагаешь" — the prerender must not put a CPU codec into the preview's
+   path; the processor is already the bottleneck.
+6. "блядь да сделай ты сжатие видео нормальное что ты мозг мне ебешь" — DECISION: the prerender is
+   compressed with a normal video codec on the machine's hardware encoder/decoder; no more questions
+   about it.
+7. Future ("это на будущее"): the cached final render (FastCachedRender, `v26.10` item X1) uses the same
+   cache logic as the prerender — the same keys, an index in or beside rendered files telling which
+   segments can be reused.
+8. "я бы еще хотел чтобы ты добавил еще один чат который будет потихоньку фишки уже пилить, а то мы
+   над оптимизацией долго сидим уже" — a standing session builds small features one at a time, beside
+   the optimisation work (a fourth executor at his request).
+9. His answers on `fx-graph` and Datamosh: the graph replaces the effects strip; "я бы хотел везде в окнах
+   разных единым стилем в одном месте чтобы не скролить, вообще может быть перейти на графовое
+   представление эффектов? типо как в blender? все таки у нас композинг должен быть и вообще говоря
+   более сложные графы впринципе.." — a node graph like Blender's is to be designed; the question on the
+   event window "вопроса не понял. контекст не ясен" — ask again with context; "Резко" ON for new
+   Datamosh instances (old projects keep their look).

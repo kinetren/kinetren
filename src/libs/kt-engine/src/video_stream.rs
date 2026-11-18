@@ -526,12 +526,28 @@ pub(super) fn link_stages(clips: &mut [VideoClip], cams: &[kt_model::CameraEvent
     }
 }
 
-/// The size the stream is ordered and read at: `lines` high, the aspect of the layer's frame.
+/// The size the stream is ordered and read at — its INPUT, where the slots in front of it run (mosh-sharp
+/// D2): the layer's base size when the kernel carries its picture there; else the codec's (`lines` high,
+/// the layer's aspect), but never above the layer's height. The layer's size is the preview's in the
+/// preview and the project's in an export, so the preview does the work it shows.
 pub(super) fn stream_quality(c: &VideoClip, st: &StreamStage, quality: Quality) -> Quality {
+    input_quality(clip_base_quality(c, quality), st.kernel().lines(&st.values), st.kernel().carried(&st.values))
+}
+
+/// The codec's own size: `lines` at the layer's aspect (with the input at the codec's size it IS the input).
+fn stream_coded(c: &VideoClip, st: &StreamStage, quality: Quality) -> (u32, u32) {
     let base = clip_base_quality(c, quality);
-    let h = st.kernel().lines(&st.values).max(16);
-    let w = ((h as u64 * base.width.max(2) as u64 + base.height.max(2) as u64 / 2) / base.height.max(2) as u64) as u32;
-    Quality { width: (w.max(16) + 1) & !1, height: h }
+    kt_plugin_api::stream::coded_size(st.kernel().lines(&st.values), (base.width, base.height))
+}
+
+/// `stream_quality` from the layer's base size, the codec's `lines` and whether the kernel carries.
+fn input_quality(base: Quality, lines: u32, carried: bool) -> Quality {
+    let layer = Quality { width: base.width.max(16), height: base.height.max(16) };
+    if carried || lines.max(16) > layer.height {
+        return layer;
+    }
+    let (width, height) = kt_plugin_api::stream::coded_size(lines, (base.width, base.height));
+    Quality { width, height }
 }
 
 fn ceil_div(a: i64, b: i64) -> i64 {
@@ -544,6 +560,8 @@ pub(super) struct ClipStream<'a> {
     st: &'a StreamStage,
     grid: &'a FpsGrid,
     pub q: Quality,
+    /// The codec's own size (`StreamLayout::coded`, mosh-sharp D2).
+    coded: (u32, u32),
     step: i64,
     first: i64,
     cut: i64,
@@ -568,7 +586,8 @@ impl<'a> ClipStream<'a> {
             None => ceil_div(clip.start.0 - clip.head_ext.0, step).min(cut),
         };
         let q = stream_quality(clip, st, quality);
-        ClipStream { clip, st, grid, q, step, first, cut, end, cache, plan: st.plan_cell(q), stopped: Default::default(), view: None }
+        let coded = stream_coded(clip, st, quality);
+        ClipStream { clip, st, grid, q, coded, step, first, cut, end, cache, plan: st.plan_cell(q), stopped: Default::default(), view: None }
     }
 
     /// The host's view, as the memo holds it (a tick): a walk keeps the pictures from there on.
@@ -612,6 +631,9 @@ impl<'a> ClipStream<'a> {
 impl StreamLayout for ClipStream<'_> {
     fn size(&self) -> (u32, u32) {
         (self.q.width, self.q.height)
+    }
+    fn coded(&self) -> (u32, u32) {
+        self.coded
     }
     fn first(&self) -> i64 {
         self.first
@@ -908,4 +930,23 @@ pub(super) fn run(
     };
     let frame = VideoFrame { pts, width: dq.width, height: dq.height, rgba: rgba.into_boxed_slice(), has_alpha: false };
     (Some(Arc::new(frame)), out.key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// t2974 (mosh-sharp D2): the stream's input follows the layer's size — the codec's size while it is
+    /// not above the layer, the layer's when it is or when the kernel carries its picture.
+    #[test]
+    fn t2974_input_follows_the_layer() {
+        let q = |width, height| Quality { width, height };
+        let (preview, project) = (q(640, 360), q(1920, 1080));
+        for (lines, soft_p, soft_e) in [(144, q(256, 144), q(256, 144)), (720, q(640, 360), q(1280, 720)), (1080, q(640, 360), q(1920, 1080))] {
+            assert_eq!(input_quality(preview, lines, false), soft_p, "soft {lines} in the preview");
+            assert_eq!(input_quality(project, lines, false), soft_e, "soft {lines} in the export");
+            assert_eq!(input_quality(preview, lines, true), preview, "sharp {lines} in the preview");
+            assert_eq!(input_quality(project, lines, true), project, "sharp {lines} in the export");
+        }
+    }
 }

@@ -515,3 +515,33 @@ next editor:
 - The transitions' `sin(π·k)`, spin's rotation and Camera ISP's per-frame scalars stay per pixel:
   replaced by constants they changed a 1080p frame by nothing measurable, and moving them to the CPU
   would move bytes.
+
+## A sharp datamosh and a stream input that follows the layer (mosh-sharp, archived 2026-11-18)
+
+kkt-26.11.18b U1/U2. The look of a low-`lines` mosh is the codec's DECISIONS (its coarse block grid,
+vectors, dropped keyframes, which blocks it codes); the softness was only its picture's size.
+
+- **The carrier** (`sharp` row, `mosh::carry_inter`, `walk.rs` `carrier_source`, `wgsl/carry.wgsl`,
+  `wgsl/coded.wgsl`): the codec still encodes at `lines`; the broken decoder is replaced by a carrier
+  that runs the same chain at the stream's input size. A pixel takes the codec block covering it (by
+  the visible sizes), predicts by that block's applied vector scaled to the carrier, and where the
+  block's residual (after the loss) is not empty in its plane adds `gain ×` the source's own
+  difference `src_p − src_{p−1}(x + own')`. An intact chain is the source exactly (t2971); the
+  quantiser acts through the skip decision. Rejected: a sharpening filter over the soft picture (an
+  imitation), the codec at the carrier's size (another grid, the search cost), the codec's residual
+  enlarged (soft again).
+- **The input follows the layer** (`video_stream::stream_quality`, `StreamLayout::coded`): the host
+  orders the stream — the decode and the slots in front — at the layer's size when the kernel carries
+  (`StreamKernel::carried`), else at the codec's size but never above the layer's. The host names
+  the codec's size in `coded()`; the kernel resamples (`codec::resample_rgba` = `wgsl/resample.wgsl`:
+  a box down, bilinear up, the identity at equal sizes) when the two differ. Row 734: Camera ISP in
+  front of a 720-line Datamosh no longer runs at 720 lines in a 360p preview. With `lines` at or
+  below the project's height and `sharp` off the export's bytes are the former ones.
+- **The class walked**: the second input's chain (same input size), the memo's want and the order
+  (they ask `stream_quality`), VHS Tape and Camera ISP inside chains (already at the layer's decode
+  size), generators and reel previews (their own sizes) — no other stage orders frames at a size of
+  its own.
+- The paired sound ignores `sharp` (a foreign row) and the carrier moves no node, so picture and
+  sound break at the same positions (t2975).
+- Preview and export decide from inputs resampled from different sizes: the same grid and breakages,
+  vectors that may differ where the motion is ambiguous.
