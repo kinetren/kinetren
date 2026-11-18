@@ -340,6 +340,9 @@ pub struct KtApp {
     pub tl_v_zoom: Option<f32>,
     /// Last successful preview bucket in the bin (scrubbing without flicker, item 11 round 6).
     pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
+    /// The bin scrub's timecode (F-MED-008): `(media, file tick, fps, card width, laid-out text)`,
+    /// rebuilt only when the moment under the cursor changes — a hover frame allocates nothing.
+    pub bin_scrub_tc: Option<(MediaId, i64, u32, u32, std::sync::Arc<egui::Galley>)>,
     /// Previous offline snapshot of the bin: detection of offline→online (item 1 round 7).
     pub bin_last_offline: std::collections::HashSet<kt_model::MediaId>,
     /// Media bin: free layout (item 7 round 8) instead of the grid.
@@ -1020,6 +1023,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_scrub_tc: None,
             bin_last_offline: std::collections::HashSet::new(),
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
@@ -1352,6 +1356,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_scrub_tc: None,
             bin_last_offline: std::collections::HashSet::new(),
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
