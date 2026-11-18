@@ -214,10 +214,14 @@ pub enum Ev {
     /// the close (a span: `dur` how long it waited), the close asked, the exit forced past its bound.
     /// `aux` who (a [`name`]), `b` 1 — still running at its bound and left behind, 0 — it ended.
     Shutdown = 120,
+    /// The disk tier of preview composites (render-cache-disk D6): `aux` the [`render_cache`] kind,
+    /// `a` the moment's tick, `b` bytes (a restore, a store, an eviction) or device ns (a measured
+    /// moment), `c` the durable key; a restore's span is the read and the inflate.
+    RenderCache = 121,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 55] = [
+    pub const ALL: [Ev; 56] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -273,6 +277,7 @@ impl Ev {
         Ev::ExportStage,
         Ev::GpuFrame,
         Ev::Shutdown,
+        Ev::RenderCache,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -336,6 +341,7 @@ impl Ev {
             Ev::ExportStage => "export_stage",
             Ev::Shutdown => "shutdown",
             Ev::GpuFrame => "gpu_frame",
+            Ev::RenderCache => "render_cache",
         }
     }
 }
@@ -357,6 +363,8 @@ pub mod stop {
     pub const JOB: u32 = 3;
     /// The player closes (close-while-busy): the render-ahead producer's lane was closed.
     pub const CLOSED: u32 = 4;
+    /// The disk prerender at rest (render-cache-disk D4): an input, Play, an export or the close.
+    pub const PRERENDER: u32 = 5;
 }
 
 /// `Shutdown.id` (close-while-busy).
@@ -551,6 +559,9 @@ pub mod job {
     /// `c` the moments in flight with it (itself included). The span ends at the submission; on a card the
     /// device finishes the moment after it.
     pub const RENDER_AHEAD: u32 = 13;
+    /// The disk prerender's composite of a moment at rest (render-cache-disk D4): `a` the moment's
+    /// tick, `b` its device ns, `c` 1 written, 0 light (not written), 2 abandoned.
+    pub const PRERENDER: u32 = 14;
 }
 
 /// `ExportStage.aux`: the stages of `kt_engine::export::ExportProfile`, in its report's order.
@@ -603,6 +614,53 @@ pub mod export_stage {
     /// The stage's name (`?` — a stage this build does not know).
     pub fn name(aux: u32) -> &'static str {
         aux.checked_sub(1).and_then(|i| NAMES.get(i as usize)).copied().unwrap_or("?")
+    }
+}
+
+/// `RenderCache.aux` (render-cache-disk D6).
+pub mod render_cache {
+    /// A moment read from disk into the display's memo.
+    pub const RESTORE: u32 = 1;
+    /// A segment written: `a` its moments, `b` its bytes on disk, `c` its first moment's tick, `id`
+    /// the encoder's name.
+    pub const STORE: u32 = 2;
+    /// A segment evicted to fit the cap: `a` its moments, `b` its bytes.
+    pub const EVICT: u32 = 3;
+    /// The prerender measured a moment heavy (at least half a frame period): it is written.
+    pub const HEAVY: u32 = 4;
+    /// The prerender measured a moment light: nothing written, its run ends there.
+    pub const LIGHT: u32 = 5;
+    /// The prerender stopped a moment: `b` why (the [`render_cache::why`] code).
+    pub const ABANDON: u32 = 6;
+    /// The bars' scan at rest: `a` moments looked at, `b` found on disk.
+    pub const SCAN: u32 = 7;
+    /// The prerender stopped: `b` why.
+    pub const STOPPED: u32 = 8;
+    /// Why the prerender stopped (`ABANDON`/`STOPPED` `b`).
+    pub mod why {
+        pub const INPUT: u64 = 1;
+        pub const PLAY: u64 = 2;
+        pub const EXPORT: u64 = 3;
+        pub const CAP: u64 = 4;
+        pub const DONE: u64 = 5;
+        pub const CLOSED: u64 = 6;
+        pub const INCOMPLETE: u64 = 7;
+        /// No encoder of the codec opens on this machine (no hardware encoder): the tier writes
+        /// nothing; the record's `id` names the reason.
+        pub const NO_ENCODER: u64 = 8;
+        pub fn name(b: u64) -> &'static str {
+            match b {
+                INPUT => "input",
+                PLAY => "play",
+                EXPORT => "export",
+                CAP => "the cap",
+                DONE => "nothing left",
+                CLOSED => "closed",
+                INCOMPLETE => "incomplete",
+                NO_ENCODER => "no hardware encoder",
+                _ => "?",
+            }
+        }
     }
 }
 

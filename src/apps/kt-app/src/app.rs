@@ -899,6 +899,17 @@ impl KtApp {
     /// is FIFO, so a sync an edit posts during the load runs after it.
     fn load_sources(&mut self) {
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        // the disk tier of preview composites under the data folder (render-cache-disk D7); the harness
+        // keeps none
+        if !cfg!(test) {
+            self.player.set_render_cache(Some(kt_engine::render_cache::Config {
+                codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
+                root: crate::journal::data_dir().join("render-cache"),
+                build: render_cache_build(),
+                base: base.clone(),
+                cap: kt_engine::render_cache::cap_from_env(),
+            }));
+        }
         let db = self.index_db_path();
         let doc = self.model.doc();
         let media: Vec<(MediaId, String, String)> = doc
@@ -8082,6 +8093,16 @@ impl KtApp {
                 ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
         }
+        // the disk prerender (render-cache-disk): its hardware encoder, or why it writes nothing here
+        match self.player.render_cache().status() {
+            Some(Ok(enc)) if !enc.is_empty() => {
+                ui.weak(crate::tf!(k::perf::RENDER_CACHE_ON, enc));
+            }
+            Some(Err(why)) => {
+                ui.weak(crate::tf!(k::perf::RENDER_CACHE_OFF, why));
+            }
+            _ => {}
+        }
         // what composing the preview costs (morpher-event-grid-cost, D1): the last frame and
         // the average of the last second — the number behind "the fps drops here"
         ui.weak(crate::tf!(
@@ -10951,6 +10972,11 @@ impl eframe::App for KtApp {
         // did (structured-telemetry); a hover frame records nothing, so the pointer over a still
         // place wakes no writer
         let _ui_frame = UiFrameTrace(std::time::Instant::now());
+        // the person acts: the disk prerender keeps its quiet from now (render-cache-disk D4) — an atomic
+        // stamp, no wake, no work
+        if ui.ctx().input(|i| !i.events.is_empty()) {
+            self.player.note_input();
+        }
         // LIVE BENCH (R.68): the bench command is executed BEFORE the frame — a scenario
         // that waited for the frame must already see the new project. Without
         // KT_LIVE_CTL there is just one OnceLock check here and not a single system operation.
@@ -11728,6 +11754,12 @@ impl KtApp {
             self.dirty_ui = true;
         }
     }
+}
+
+/// The build salt of the disk tier (render-cache-disk D1): the program's build and the FFmpeg it decodes
+/// with — another of either may be another picture of the same plan.
+fn render_cache_build() -> String {
+    format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
 }
 
 #[cfg(test)]

@@ -11,6 +11,8 @@
 //! - `frame <id>` — one frame's life;
 //! - `gpu` — the device rings (gpu-arbiter): admissions, waits, pieces and compute jobs by class,
 //!   device submits a second, stopped stream histories, the display's present latency;
+//! - `cache` — the disk tier of preview composites (render-cache-disk): restores, writes, evictions,
+//!   the prerender's measured moments and why it stopped;
 //! - `machine` — the run's start and its machine: processor, memory, OS, every adapter, the cards the
 //!   monitors hang off, the power choice, the devices opened;
 //! - `dump [from to]` (JSON lines, the machine first), `chrome <out.json>` (Perfetto / chrome://tracing).
@@ -102,6 +104,7 @@ pub fn run(args: &[String]) -> i32 {
         "gpu" => gpu(run),
         "export" => export(run),
         "shutdown" => shutdown(run),
+        "cache" => cache(run),
         "dump" => dump(run, arg(1), arg(2)),
         "chrome" => match rest.get(1) {
             Some(out) => match std::fs::write(out, chrome(run)) {
@@ -112,13 +115,73 @@ pub fn run(args: &[String]) -> i32 {
         },
         _ => {
             eprintln!(
-                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|export|shutdown|machine|memory|dump [from to]|chrome <out.json>"
+                "usage: kt-cli trace [<dir|file>] [--run N] summary|loading [from to]|loop|during <from> <to>|slow [n]|frame <id>|gpu|export|shutdown|cache|machine|memory|dump [from to]|chrome <out.json>"
             );
             return 2;
         }
     };
     print!("{out}");
     0
+}
+
+/// The disk tier of preview composites (render-cache-disk D6): per kind the count and the bytes, the
+/// moments restored per lap of a loop, the prerender's heavy and light moments with their device time,
+/// and why it stopped or abandoned a moment.
+pub fn cache(run: &Run) -> String {
+    use kt_time::trace::render_cache as k;
+    let mut o = String::new();
+    let recs: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::RenderCache)).collect();
+    if recs.is_empty() {
+        o.push_str("no render cache records: the tier was off, or nothing was measured slow\n");
+        return o;
+    }
+    let count = |kind: u32| recs.iter().filter(|r| r.aux == kind).count();
+    let bytes = |kind: u32| recs.iter().filter(|r| r.aux == kind).map(|r| r.b).sum::<u64>();
+    let mb = |b: u64| format!("{:.1} MB", b as f64 / (1 << 20) as f64);
+    let _ = writeln!(o, "restored {} ({} read, {} in reading)", count(k::RESTORE), mb(bytes(k::RESTORE)), ms(recs.iter().filter(|r| r.aux == k::RESTORE).map(|r| r.dur).sum()));
+    let moments = |kind: u32| recs.iter().filter(|r| r.aux == kind).map(|r| r.a).sum::<u64>();
+    let mut encoders: Vec<String> = recs.iter().filter(|r| r.aux == k::STORE).map(|r| run.name_of(r.id as u32)).collect();
+    encoders.sort();
+    encoders.dedup();
+    let _ = writeln!(
+        o,
+        "written {} moments in {} segments ({} on disk{})",
+        moments(k::STORE),
+        count(k::STORE),
+        mb(bytes(k::STORE)),
+        if encoders.is_empty() { String::new() } else { format!(", encoder {}", encoders.join(", ")) }
+    );
+    let _ = writeln!(o, "evicted {} moments in {} segments ({})", moments(k::EVICT), count(k::EVICT), mb(bytes(k::EVICT)));
+    for r in recs.iter().filter(|r| r.aux == k::STOPPED && r.b == k::why::NO_ENCODER) {
+        let _ = writeln!(o, "the cache writes nothing here: {}", run.name_of(r.id as u32));
+    }
+    for (kind, name) in [(k::HEAVY, "heavy"), (k::LIGHT, "light")] {
+        let ns: Vec<u64> = recs.iter().filter(|r| r.aux == kind).map(|r| r.b).collect();
+        if ns.is_empty() {
+            let _ = writeln!(o, "prerendered {name}: 0");
+            continue;
+        }
+        let mean = ns.iter().sum::<u64>() / ns.len() as u64;
+        let _ = writeln!(o, "prerendered {name}: {} (device {} a moment on average, {} at most)", ns.len(), ms(mean), ms(*ns.iter().max().unwrap()));
+    }
+    let scans: Vec<&&Rec> = recs.iter().filter(|r| r.aux == k::SCAN).collect();
+    if !scans.is_empty() {
+        let _ = writeln!(o, "scans for the bars: {} ({} moments looked at, {} found on disk)", scans.len(), scans.iter().map(|r| r.a).sum::<u64>(), scans.iter().map(|r| r.b).sum::<u64>());
+    }
+    let mut why: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for r in recs.iter().filter(|r| r.aux == k::ABANDON || r.aux == k::STOPPED) {
+        *why.entry(k::why::name(r.b)).or_default() += 1;
+    }
+    if !why.is_empty() {
+        let list: Vec<String> = why.iter().map(|(w, n)| format!("{w} {n}")).collect();
+        let _ = writeln!(o, "stopped: {}", list.join(", "));
+    }
+    let laps = lap_bounds(run);
+    for (i, (a, b, _, _)) in laps.iter().enumerate() {
+        let n = recs.iter().filter(|r| r.aux == k::RESTORE && r.t >= *a && r.t < *b).count();
+        let _ = writeln!(o, "  lap {i} {}: {n} restored", s(*a));
+    }
+    o
 }
 
 /// The run's close (close-while-busy, kkt-26.11.18 T1): when it was asked, every wait of the close
@@ -1541,6 +1604,7 @@ fn job_name(aux: u32) -> &'static str {
         j::EXPORT => "export",
         j::SHARED_BUILD => "shared_build",
         j::RENDER_AHEAD => "render_ahead",
+        j::PRERENDER => "prerender",
         _ => "?",
     }
 }

@@ -113,6 +113,9 @@ struct St {
     skipped: BTreeSet<i64>,
     /// Moments that came out incomplete and what they wait for (D1), until the lap ends.
     waiting: BTreeMap<i64, Waits>,
+    /// Moments the disk tier did not hold this lap (render-cache-disk D3), and the store's writes then.
+    disk_miss: BTreeSet<i64>,
+    disk_stores: u64,
     /// The playhead last seen: falling back is a new lap.
     head: i64,
     /// A moment's wall from its plan to its completion, and the producer's own time a moment (EMAs).
@@ -279,6 +282,13 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
             // a new lap tries every waiting moment again: never later than the skip it replaced, if a
             // walk ever moves a history without counting its positions
             st.waiting.clear();
+            st.disk_miss.clear();
+        }
+        // the prerender wrote since: a moment missed on disk may be there now
+        let stores = parts.rc.counts().0;
+        if st.disk_stores != stores {
+            st.disk_stores = stores;
+            st.disk_miss.clear();
         }
         st.head = head.0;
         st.retire();
@@ -336,6 +346,13 @@ fn pump(ra: &RenderAhead, parts: &PreviewParts, region: &Mutex<Option<(i64, i64)
                     continue;
                 }
             }
+        }
+        // the disk tier holds it (render-cache-disk D3): restored into the display's memo, no decode
+        if parts.rc.is_on() && !ra.st.lock().unwrap().disk_miss.contains(&t) {
+            if parts.restore_from_disk(&display, &video, Tick(t), q).is_some() {
+                return Pump::More;
+            }
+            ra.st.lock().unwrap().disk_miss.insert(t);
         }
         if !warm(Tick(t)) {
             // linear play: past the decoded window nothing is composable yet
