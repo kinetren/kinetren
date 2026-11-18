@@ -1,19 +1,20 @@
 # Tasks: fx-graph
 
-> Nothing below starts before the owner's go and his answers to O1–O5 (`design.md`). Tests reserved:
-> t2990–t3009.
+> Nothing below starts before the owner's go and his answers to Q1–Q5 (`design.md`, "Questions for
+> the owner"). Answered already (U7): the editor replaces the strip; one Blender-style node editor in
+> every window, no scrolling. Tests reserved: t2990–t3009.
 
 ## 0. Notes first
 
-- [x] 0.1 F-UI-008 `docs/features/ui/editing/fx-chain-graph.md`; editor keys `bitwig-6`, `reaper-7`;
+- [x] 0.1 F-UI-008 `docs/features/ui/editing/fx-chain-graph.md` (revision 2: Blender, Fusion, Nuke,
+      Natron, Houdini); editor keys `bitwig-6`, `reaper-7`, `houdini-21`, `natron-2.5`;
       `features-index.py --check` green
-- [x] 0.2 proposal, design (mockups, gestures, class walk, open decisions), spec deltas (`morpher`,
-      `audio-fx`, `ui-reach`); `openspec validate fx-graph --strict` green
+- [x] 0.2 proposal, design (engine mapping, v1/v2 stages, mockups, gestures, class walk, questions),
+      spec deltas (`morpher`, `audio-fx`, `ui-reach`); `openspec validate fx-graph --strict` green
 - [x] 0.3 registry `kkt-26.11.18b-index.md` row U3 → partial, `fx-graph`
-- [ ] 0.4 the owner's answers O1–O5 written into `docs/user-feedback.md` and into this design before
-      stage a
+- [ ] 0.4 his answers to Q1–Q5 written into `docs/user-feedback.md` and this design before v1a
 
-## 1. The patch holds both halves (stage a — the defect)
+## 1. v1a — the patch holds both halves (the defect)
 
 - [ ] 1.1 kt-model: one n-th-occurrence matcher shared by `sync_pairs_to_link_group` and a new
       `sync_pairs_in_patch`, called from `SetMorpher` (edited side from the command; leader rule for
@@ -21,30 +22,47 @@
 - [ ] 1.2 remove `MorphPatch::derived_pairs`; `chain_for`/`auto_for` return own enabled slots (warp
       and strength unchanged)
 - [ ] 1.3 `Project::normalize`: materialize the halves of older patches (the only migration place)
-- [ ] 1.4 tests t2990 (model), t2991 (old file byte-identical render), t2992 (picture untouched by the
-      sound half's switch, both-on equals an event-carried device); rewrite t1461b per its new text
-- [ ] 1.5 kt-app, without the graph yet: the morpher strip shows the sound half (it is now a slot) —
-      the owner's defect is closed even if stage b waits; t2993 on the strip, then on the graph
-- [ ] 1.6 the OTIO-loss row of sim-audio-pairs extended; kt-model CLAUDE.md "A simulated device…"
-      paragraph; What's new line; commit; `target-prune.py`
+- [ ] 1.4 tests t2990, t2991 (old file byte-identical render), t2992 (picture untouched by the sound
+      half's switch; both on equals an event-carried device); rewrite t1461b per its new text
+- [ ] 1.5 kt-app on today's strip: the sound half is a visible slot with its checkbox (t2993) — the
+      owner's complaint is closed before the editor exists
+- [ ] 1.6 OTIO-loss row of sim-audio-pairs extended; kt-model CLAUDE.md paragraph; What's new line;
+      commit; `target-prune.py`
 
-## 2. The graph widget (stage b)
+## 2. v1b — the node editor widget
 
-- [ ] 2.1 `fx_graph.rs`: rails, nodes, ties, head/lead, `+` gaps with the picker, drag within a rail,
-      `×`, on-dots, copy-paste and presets moved from `chain_strip`, `ChainCtx` right click
-- [ ] 2.2 layout cache keyed by revision/width/selection/folds/hover; one mesh; hover re-tint only
-- [ ] 2.3 i18n ×5 (rail names, refusal hint, group labels), font subsets if new glyphs
-- [ ] 2.4 tests t2994, t2995, t3001; `reach_tests.rs`, `layout_tests.rs` (t244/t218 per O2),
-      `font_tests.rs`/`i18n_tests.rs`; commit; prune
+- [ ] 2.1 `node_editor.rs`: canvas (fit on open, Home, wheel zoom at pointer, middle-drag pan,
+      collapse below readable zoom, H), layout by order, sockets by kind, Source/Output pinned
+- [ ] 2.2 nodes: effect, device (two lanes, two switches, crossing → two tied half-nodes), group
+      (layer, composition, track stage; Tab/Esc, breadcrumb), key wire
+- [ ] 2.3 gestures: link-drag into empty canvas → picker at the pointer; Shift+A; drop on a wire
+      inserts; M, X, Ctrl+C/V (the existing blocks), presets, right-click target; refusals with a
+      reason (branch, second input, cross-kind, cycle)
+- [ ] 2.4 layout cache by (revision, size, zoom, pan, selection, collapsed set, entered group); one
+      mesh; hover re-tint only
+- [ ] 2.5 i18n ×5 (socket kinds, refusals, breadcrumb, group labels), font subsets if new glyphs
+- [ ] 2.6 tests t2994, t2995, t3001; `reach_tests.rs`, `layout_tests.rs`, `font_tests.rs`,
+      `i18n_tests.rs`; commit; prune
 
-## 3. The three windows (stage c)
+## 3. v1c — the windows
 
-- [ ] 3.1 FX window: anchor + partners as rails; the forms below unchanged
-- [ ] 3.2 morpher window: two vectors as two rails (or one lane per O2), head before both
-- [ ] 3.3 track window: its rail, the key wire to the key track's compressor
-- [ ] 3.4 the context groups (layers bottom-up, track stage) per O3; t2996
-- [ ] 3.5 remove `widgets::chain_strip`; the live scenarios that clicked crumbs follow the graph
+- [ ] 3.1 FX window: the event and its partners in one editor, the form beside it (split remembered)
+- [ ] 3.2 morpher window: the purple Source-swap node, both vectors as lanes (t244/t218 rewritten)
+- [ ] 3.3 track window (key wire into the compressor's key socket); a composition instance's chain
+- [ ] 3.4 context groups per Q3; t2996
+- [ ] 3.5 remove `widgets::chain_strip`; the live scenarios that clicked crumbs follow the editor
       (`vhs_sound`, `stream_sound`, `camera_mic`, morpher ones); new live `morph_pair`
-- [ ] 3.6 cost at rest: t3003, live `idle` with both windows open on the heavy showcase (t3006);
-      load measured on a pause, hover, and with the windows open — numbers in the report
+- [ ] 3.6 cost at rest: t3003, live `idle` with both windows open on the heavy showcase (t3006); load
+      on a pause, hover and with the windows open — numbers in the report
 - [ ] 3.7 specs merged, What's new, commit; prune; the orchestrator runs `finish.sh` on the stage
+
+## 4. v1d — the Viewer
+
+- [ ] 4.1 the plan takes a cut point for one event (a shorter chain through the one plan builder);
+      Ctrl+Shift+click, badge, Esc; t2997; commit; prune
+
+## 5. v2 — a separate change, proposed after v1 is in his hands
+
+- [ ] 5.1 propose `fx-graph-dag`: slot ids and edges in the model and `.kt` (a line writes today's
+      bytes), Merge/Split, mask and key sockets fed by any node, the DAG in `video_plan` and the audio
+      node chain through the one plan, a line graph byte for byte; its OTIO-loss row

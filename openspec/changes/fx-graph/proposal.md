@@ -1,7 +1,8 @@
 # Proposal
 
 > PLANNING ONLY. The owner sees this design first; code starts on his word ("discussion is not a
-> go"). The decisions that are his are listed in `design.md`, section "Open decisions (the owner's)".
+> go"). Revision 2 after his answers (U7). The questions still his are in `design.md`, "Questions for
+> the owner", each with his words, today's state and a small mockup per option.
 
 ## Why
 
@@ -37,19 +38,22 @@ Two things are inside it:
   `Project::normalize` materializes the halves of patches read from older files. The sound half's
   switch-off keeps the device state: the halves share rows and timeline time, nothing else
   (sim-audio-pairs D3), so the picture is byte for byte the same with its sound half on or off.
-- **A compact chain graph replaces the chain strip** in the three windows that edit a chain — the
-  FX window (an event and its link partners), the morpher window, the track window (stage b, c).
-  Not a new window (R.63 ban). Two rails, picture above and sound below, laid out by ORDER (no stored
-  positions); a node is a chip with an on-dot and a short name; a paired device is two nodes with a
-  tie; a morpher layer reaching the event is a folded purple group after the event's chain; the track
-  stage and the sidechain key are the tail. Selecting a node opens its EXISTING form below (deck face,
-  ISP panel, passport grid, automation widget) — the forms are not touched.
-- **Gestures**: click = select (form below); click the on-dot = bypass; drag along a rail = reorder;
-  `+` at a rail's end or in a gap = the existing picker gallery inserting there; `×`/Delete = remove
-  (a device: both halves); Ctrl+C/V = the existing slot/chain blocks; click a group = unfold in place;
-  double click a layer group or the track tail = open that layer's/track's window.
-- **Cost at rest**: the graph is laid out once per (model revision, window width, selection,
-  fold state) and replayed; hover re-tints only; no animation; nothing asks a frame at rest.
+- **A node editor replaces the chain strip** (owner, U7: "Вместо полоски", "везде в окнах разных
+  единым стилем в одном месте чтобы не скролить … типо как в blender"), in every window that edits
+  effects — an event and its link partners, a track, a morpher layer, a composition's instance. Not a
+  new window (R.63). Blender-style: it opens framed and never scrolls (Home fits, wheel zooms, nodes
+  collapse to headers), picture and sound are two socket kinds, a simulated device is ONE node with a
+  picture lane and a sound lane each with its own switch, morpher layers / compositions / track
+  stages are group nodes (Tab enters), a sidechain key is a wire into the compressor's key socket.
+  The selected node's EXISTING form opens beside the graph. Effects are added by dragging a wire into
+  empty canvas (the picker opens there) or Shift+A; M mutes, X removes, Ctrl+Shift+click shows the
+  picture after a node in the preview (the Viewer).
+- **Staged.** v1 = the editor over today's model: it shows and edits the straight chains the engine
+  runs, and REFUSES a branch with a reason. v2 (a separate change) = branches, merges, mask and key
+  inputs that `video_plan` and the audio node chain execute through the one plan (invariant 7), with
+  slot ids and edges in the `.kt`. v3 is only a horizon (the timeline composite as a graph).
+- **Cost at rest**: laid out once per (revision, size, zoom, pan, selection, collapsed set); hover
+  re-tints; zoom/pan repaint only while moving; nothing asks a frame at rest.
 
 ## Capabilities
 
@@ -60,23 +64,23 @@ Two things are inside it:
 ### Modified Capabilities
 
 - `morpher`: a patch holds both halves of a paired device; the one-lane head-pinned strip becomes the
-  graph with the pinned head on the picture rail.
+  node editor with the purple source-swap node first.
 - `audio-fx`: "a simulated device is one across an A/V link group" — the morpher clause changes from
   derivation to real slots.
-- `ui-reach`: the chain graph — one widget for every chain, its gestures, its rails, and its cost at
-  rest.
+- `ui-reach`: the node editor — one widget for every chain, framed without scrolling, its sockets,
+  devices, groups, gestures, refusals and its cost at rest.
 
 ## Impact
 
 - Code: `src/libs/kt-model/src/project.rs` (`derived_pairs` gone; `chain_for`/`auto_for` simplified),
   `src/libs/kt-model/src/model.rs` (`sync_pairs_in_patch` beside `sync_pairs_to_link_group`, called
-  from `SetMorpher`), `Project::normalize`; kt-app: a new `fx_graph.rs` widget replacing
+  from `SetMorpher`), `Project::normalize`; kt-app: a new `node_editor.rs` widget replacing
   `widgets::chain_strip`, `fx_editor.rs`, `morpher_editor.rs` (`merge_chains`/`split_chains` become the
-  graph's rail mapping), `track_window.rs`; i18n ×5 for the few new labels and hints.
+  lane mapping), `track_window.rs`; i18n ×5 for the few new labels and hints.
 - Project format: no version bump. A patch carrying a paired kind gains the counterpart slot in its
   other chain on the next save (a canonicalization, as `migrate_gen_to_events`). The graph stores
   nothing. OTIO: no new loss — morphers already travel only in `metadata["kt"]`; the sim-audio-pairs
   row of "What OTIO export loses" gains "and the halves held by a morpher patch".
-- Tests reserved: t2990–t3009 (shared notes `fx-graph.md`). Rewritten by decision: t244 and t218 (the
-  morpher's "one lane" assertions) — only if the owner takes two rails (decision O2).
+- Tests reserved: t2990–t3009 (shared notes `fx-graph.md`). Rewritten by his answer "Вместо полоски": t244 and t218 (the
+  morpher's strip assertions), same claims on the node editor.
 - Feature note: `docs/features/ui/editing/fx-chain-graph.md` (F-UI-008).

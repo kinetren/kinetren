@@ -15,10 +15,10 @@ Why: two mutually exclusive kinds of morpher forced the user to create two event
 - **TEST** t247 (`src/libs/kt-engine/tests/video_warp.rs`)
 
 #### Scenario: One chain lane with a pinned head-replacement
-- **PATH** double click a morpher block carrying a Glow and a Gain → the morpher window opens with the graph: the purple head first, Glow on the picture rail, Gain on the sound rail → drag Glow along its rail → it moves; drag it onto the sound rail → it is refused with a hint → drop a file on the head → the source field takes it
+- **PATH** double click a morpher block carrying a Glow and a Gain → the morpher window opens with the node editor framed: the purple Source-swap node first, Glow on the picture wire, Gain on the sound wire → drag Glow onto the wire before the Output → it moves there → drag a wire from Glow's output to the sound socket of Gain → it snaps back with a hint → drop a file on the Source-swap node → the source field beside the graph takes it
 - **WHEN** the morpher window is open with effects of both kinds
-- **THEN** one graph shows them: the first node is the source replacement before both rails (it is not reordered, has no cross); picture effects lie on the picture rail and sound effects on the sound rail, and a drag never crosses rails; the source field accepts a file and can return the original source
-- **TEST** t244, t218 (`src/apps/kt-app/src/layout_tests.rs`, rewritten from the one-lane strip by the owner's decision O2)
+- **THEN** one node editor shows them: the first node is the source replacement (it is not reordered, has no remove), picture effects are wired picture to picture and sound effects sound to sound, a wire never joins the two kinds; the source field accepts a file and can return the original source
+- **TEST** t244, t218 (`src/apps/kt-app/src/layout_tests.rs`, rewritten from the strip by the owner's "Вместо полоски", kkt-26.11.18b line 21)
 
 ## ADDED Requirements
 
@@ -42,7 +42,7 @@ Why: kkt-26.11.18b item 3 — "нет возможности отключить 
 - **TEST** t2992 (`src/libs/kt-engine/tests/sim_pairs_morph.rs`)
 
 #### Scenario: The sound half's switch in the morpher window
-- **PATH** double click a morpher block carrying VHS Tape → the graph shows VHS Tape on the picture rail and "VHS Tape · sound" on the sound rail with a tie → click the sound node's on-dot → the node dims and the tie turns dotted → the picture rail is unchanged
+- **PATH** double click a morpher block carrying VHS Tape → the node editor shows one VHS Tape node with a picture lane and a sound lane → click the switch on the sound lane → the lane dims and the sound wire passes the node → the picture lane is unchanged
 - **WHEN** the person switches the sound half off in the morpher window
 - **THEN** the patch's audio bypass for that slot is on in the MODEL, the video chain is unchanged, and one undo step brings it back
-- **TEST** t2993 (`src/apps/kt-app/src/fx_graph_tests.rs`), live `morph_pair` (`src/scripts/live/morph_pair.py`)
+- **TEST** t2993 (`src/apps/kt-app/src/node_editor_tests.rs`), live `morph_pair` (`src/scripts/live/morph_pair.py`)

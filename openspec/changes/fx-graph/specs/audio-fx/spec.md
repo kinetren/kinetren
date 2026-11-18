@@ -33,10 +33,10 @@ kkt-26.11.18b item 3 — the derived half of a morpher could not be switched off
 
 #### Scenario: The deck's sound on the linked audio in the effects window
 - **PATH** a video event linked to its audio → VHS Tape added to the picture → the effects window
-  shows both halves on the graph's two rails, tied, each with the deck face and its Sound section
-  (Hi-Fi / Normal / Mix, mono/stereo linear tracks, Dolby B, the audio head) → click the sound half →
-  click "Normal (linear)" on its face → both halves switch to the linear track
+  shows one VHS Tape node with a picture lane and a sound lane; its deck face beside the graph has the
+  Sound section (Hi-Fi / Normal / Mix, mono/stereo linear tracks, Dolby B, the audio head) → click the
+  sound lane → click "Normal (linear)" on the face → both halves switch to the linear track
 - **WHEN** the person adds VHS Tape to the picture and presses "Normal (linear)" on the audio's face
-- **THEN** the audio chain holds `vhs_tape_sound`, two Sound sections are drawn, and both halves'
+- **THEN** the audio chain holds `vhs_tape_sound`, the Sound section is drawn for the selected half, and both halves'
   `audio_out` is Normal in the MODEL
 - **TEST** t1468 (`src/apps/kt-app/src/vhs_tape_tests.rs`), live `vhs_sound` (`src/scripts/live/vhs_sound.py`)

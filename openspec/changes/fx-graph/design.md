@@ -1,25 +1,34 @@
 # Design: fx-graph
 
+> Revision 2 (2026-11-18), after the owner's answers (kkt-26.11.18b lines 21–24, registry U7):
+> the graph REPLACES the strip; "везде в окнах разных единым стилем в одном месте чтобы не
+> скролить … графовое представление эффектов? типо как в blender? все таки у нас композинг должен
+> быть и вообще говоря более сложные графы". Revision 1's two-rail row is superseded by a node
+> editor; its defect fix (D1, D2) stands unchanged.
+
 ## Context
 
-- Claim: kkt-26.11.18b item 3 (registry row U3), quoted in `proposal.md`.
-- Feature note: `docs/features/ui/editing/fx-chain-graph.md` (F-UI-008) — the reconnaissance
-  (Resolve Color/Fusion, Nuke, Ableton Racks, Bitwig containers and modulators, REAPER routing,
-  Vegas, Premiere, FCP, AE Flowchart) and the verdict: a ROW graph laid out by order, relations drawn
-  on demand, folding groups; no free canvas.
+- Claims: kkt-26.11.18b item 3 (U3) and his answers (U7), quoted above and in `proposal.md`.
+- Feature note: `docs/features/ui/editing/fx-chain-graph.md` (F-UI-008) — Blender compositor and
+  geometry nodes, Resolve Fusion and Color, Nuke, Natron, Houdini networks, Ableton/Bitwig/REAPER,
+  and the five core editors. What makes a node editor fit without scrolling: one key to fit, nodes
+  that collapse to their header, groups that turn a sub-graph into one node, the form BESIDE the
+  graph rather than inside the node.
 - His standing decisions this design keeps (`docs/user-feedback.md`):
-  - R.33 S2 / C2 — ONE chain widget for events, morphers and tracks; rule 17 "one widget".
-  - R.35 item 3 — the morpher's source swap is the purple pinned HEAD of its chain, effects of both
-    kinds in one view. (Whether "one view" stays "one lane" is decision O2.)
-  - R.37 item 2 — the warp's off switch on the picture is the slot checkbox; no second switch of one
-    meaning (kt-app rule 9).
+  - R.33 S2 / C2 and rule 17 — ONE widget for every chain (now: one node editor).
+  - R.35 item 3 — the morpher's source swap is its purple first element (now: a purple source node).
+  - R.37 item 2 — the warp's off switch on the picture is the slot's own switch; no second switch of
+    one meaning (kt-app rule 9).
   - R.38 item 12 — the layer strength acts on picture AND sound at once.
-  - R.63 — no new window without an obvious purpose; parameters go where the person already is.
-  - R.66 — the window form contract: the body scrolls, buttons outside it, numbers only through the
-    common row, collapsible groups. The forms below the chain are not re-laid out by this change.
+  - R.63 — no new window; parameters go where the person already is. The node editor lives INSIDE
+    the existing windows; the picker opens inside it.
+  - R.66 — the form contract; the forms (deck face, ISP panel, passport grid, automation) are kept
+    and opened beside the graph for the selected node.
   - 2026-11-03 (sim-audio-pairs) — a device recording picture and sound simulates both, one device
-    state; the sound half is "visible and switchable off".
+    state; the sound half "visible and switchable off".
   - 2026-11-07 — the program at rest costs nothing, measured on a heavy project.
+  - Invariant 7 — one composition path: whatever graph the person draws, ONE plan builder turns it
+    into the plan and ONE executor (the GPU) runs it.
 
 ## D1. The defect: the sound half of a device in a morpher is a ghost
 
@@ -38,11 +47,11 @@ that kind" — and the count of what this side holds filters out bypassed slots
 | Place | What the render gets beyond the edited slots | Found |
 |---|---|---|
 | Morpher patch, paired device | the counterpart half (`derived_pairs`) | **the defect** — fixed here (D2) |
-| Morpher patch, time warp | `chain_for(Video)` adds the warp from `audio_fx` | the same ghost: the picture's slowing by a layer cannot be switched off alone, while on an event it can (R.37 slot checkbox). Decision O4 |
+| Morpher patch, time warp | `chain_for(Video)` adds the warp from `audio_fx` | the same ghost: the picture's slowing by a layer cannot be switched off alone, while on an event it can (R.37 slot checkbox). Question Q4 |
 | Morpher patch, layer strength | `chain_for(Audio)` adds `LayerMix` from `video_fx` | by his decision R.38 item 12 ("at once"); shown as one node with a tie and ONE dot — not a defect |
 | Event, paired device | — real slots on both events (`sync_pairs_to_link_group`) | clean |
 | Event, warp | — real slots on both events (`sync_warp_to_link_group`) | clean |
-| Track chain, paired device | nothing: a track has no partner track, VHS Tape on a video track has no sound | a gap of the same family (no pair at all); not fixed here, decision O5 |
+| Track chain, paired device | nothing: a track has no partner track, VHS Tape on a video track has no sound | a gap of the same family (no pair at all); not fixed here, question Q5 |
 | Composition instance chain | an instance is an event: the event rule | clean |
 | Preset / pasted chain into a patch | goes through `SetMorpher` → the new rule (D2) | covered |
 | Bake of a morpher | `apply_to` reads `chain_for` → real slots on the pieces, then the event rule | clean after D2 |
@@ -56,7 +65,7 @@ one undo step, including under `apply_coalesced`): `sync_pairs_in_patch(patch, e
 - The n-th paired slot on the edited side ↔ the n-th counterpart slot on the other side: values and
   curves copied from the edited side, a missing one appended at the end of the other chain, an extra
   one removed. **Presence is shared, bypass is each half's own.** The edited side is known to the
-  window (the rail the gesture was on); a model-only `SetMorpher` (paste, preset, kt-cli) without a
+  window (the lane the gesture was on); a model-only `SetMorpher` (paste, preset, kt-cli) without a
   side takes the picture side as the leader, the sound side when the picture holds no paired slot.
 - `derived_pairs` is removed; `chain_for`/`auto_for` return the patch's own enabled slots (plus the
   warp and the strength, unchanged).
@@ -70,158 +79,291 @@ one undo step, including under `apply_coalesced`): `sync_pairs_in_patch(patch, e
 - One text for both rules: the matching of the n-th occurrence moves into one helper used by
   `sync_pairs_to_link_group` and `sync_pairs_in_patch` (kt-model CLAUDE "one rule").
 
-## D3. The graph: two rails laid out by order
 
-One widget, `fx_graph`, replaces `widgets::chain_strip` everywhere it is called (FX window, morpher
-window, track window). It edits the SAME vectors through the SAME commands; it adds no model.
+## D3. What the engine executes today, and how a graph maps onto it
 
-- **Rails.** A picture rail and a sound rail. The FX window shows the anchor event and its link
-  partners as ONE graph: the video event's chain on the picture rail, the linked audio event's chain
-  on the sound rail (today: two strips one under another). An event without a partner shows one rail.
-  The morpher window shows `patch.video_fx` on the picture rail, `patch.audio_fx` on the sound rail,
-  the source swap as the purple pinned head before both (it acts on both kinds). The track window
-  shows its one rail.
-- **Nodes.** A chip: on-dot, short name elided at `SLOT_NAME_CHARS`, a kind glyph; height 22 px,
-  the grab pad of rule 1. The leading Geometry node and the generator source head keep their pinned
-  places (`ChainSel::Lead`, `HeadSlot`).
-- **Ties.** A paired device's halves are joined by a vertical tie (a diagonal when they stand at
-  different positions); the tie is a thin line always, emphasized while either half is selected or
-  hovered (the "relation on demand" trick). A switched-off half dims, its tie turns dotted.
-- **Groups (read-only context in the FX window).** After the event's own chain, each morpher layer
-  that reaches the event (bottom-up, the engine's order) is a FOLDED purple group: `◆ <layer name>
-  (n)`. Click unfolds it in place, showing its nodes greyed (they are edited in the morpher window);
-  double click opens that layer's morpher window. Then the track stage: `▤ <track> (n)` folded, with
-  an incoming key wire `← <key track>` on a compressor with a sidechain. Nothing about layers or
-  tracks is edited from an event's graph — one place to edit each thing.
-- **Order is the layout.** x = position in the processing order; nothing is stored. A long chain
-  scrolls horizontally inside the graph's own band (the wheel scrolls it while over it); the window
-  body below keeps its R.66 vertical scroll.
-- **The form.** The selected node's existing form opens below the graph exactly as today.
+| What the person would draw | What the engine runs today | v1 (editor over today's model) | v2 (the engine executes a DAG) |
+|---|---|---|---|
+| a line of effects on an event | `fx` vector → `plan_chain` (video), `AudioNode` chain (audio) | a line of nodes from the event's Source to its Output | the same; a line is the degenerate DAG, byte for byte |
+| a device on picture and sound | two slots in two chains (event pair, or patch after D2) | ONE node with a picture lane and a sound lane | the same node, lanes may be fed by different branches |
+| a morpher layer over events | patch slots appended to each target's chain, strength as `LayerMix` | a purple GROUP node after the event's chain (Tab to enter) | a group node; its inside may branch |
+| a composition (reel) placement | a nested layer / sub-mix (`LayerInput::Nest`, `NestFetcher`) | a GROUP node with the reel's name (double click enters the reel on the timeline) | a group node with published parameters as its sockets |
+| a track stage | the track's events composited, then its chain, level, blend down | a frame "Track" with its chain; Output → Composite | the same, or a Merge node per track (v3, below) |
+| a sidechain key | the key track's mix into the compressor (`track_window`) | a dashed sound wire from a "Key: <track>" node into the compressor's key socket | the same edge, any sound node as its source |
+| a mask | per-event/per-slot masks (`ClipMaskPlan`) | a mask badge on the node (opens the masks form) | a mask socket fed by any picture node (a luma/alpha matte) |
+| a branch / merge (blur only the highlights and add back) | **not expressible** | refused: the link-drag shows "branches arrive in v2" | `Split` implicit (one output, two wires), `Merge` node (mode, mix) |
+| transitions | a pair blended into one layer | not in the graph (they live on the timeline) | not in the graph |
+
+**v2 in the engine (a separate change, not this one):**
+
+- Model: a chain becomes `FxGraph { nodes: Vec<Node{id, kind, values, auto, bypass, masks, pos?}>,
+  edges: Vec<Edge{from:(id,port), to:(id,port)}> }`; slots get STABLE ids (today they are indices).
+  A graph that is a line serializes as today's `fx` vector (no new bytes for every existing project).
+- Video: `video_plan` builds per layer a DAG of passes instead of a `LayerChain`; `plan_chain` still
+  fuses each LINEAR run between a split and a merge (concatenation, point-wise runs, K× barriers
+  untouched); the executor gains multi-input passes — it already has two-input ones (the transition
+  pair, the stream stage's second input, the mask point). One plan builder, one executor: invariant 7
+  holds by construction; keys (`fx_hash`, `plan_key`, `durable_hash`) hash the edges too.
+- Audio: the `AudioNode` chain becomes a DAG evaluated in topological order on the render thread;
+  state keyed by (clip id, node id) — invariants 2 and 3; a split copies a buffer from the pool, a
+  merge sums in a fixed order (invariant 11).
+- Determinism: a line graph renders byte for byte as the chain (GOLDEN_VIDEO/AUDIO); a test
+  holds every built-in chain shape of the showcase.
+- **v3 (horizon, not planned):** the timeline's own composite as a graph (tracks as Merge nodes, a
+  Viewer anywhere). Named so v2's model does not close the door; nothing is promised.
+
+## D4. The node editor (v1)
+
+**One widget** `node_editor` replaces `widgets::chain_strip` in the FX window (an event and its link
+partners), the track window, the morpher window and the composition's instance chain. Same style,
+same keys, same nodes everywhere.
+
+- **Canvas.** Opens framed: every node fits the graph area (Home = frame all, as Blender). Wheel =
+  zoom at the pointer, middle drag (or Space+drag) = pan. Below a readable zoom a node shows only its
+  header (Blender's collapsed node); H collapses/expands the selected nodes by hand. No scrollbars:
+  the graph never scrolls, it zooms. The view (zoom, pan) is per window session.
+- **Layout.** v1 computes it from the order (columns by processing order, the picture lane above the
+  sound lane, groups and frames as boxes); nothing is stored (question Q1).
+- **Sockets.** Picture — yellow circle; sound — green circle; key (sidechain) — grey diamond. A wire
+  carries one kind; picture never connects to sound.
+- **Nodes.**
+  - Source (the event's media; for a morpher the purple source swap with its own switch; for a
+    generator its kind) and Output (→ the next stage). Pinned: they cannot be deleted or moved out of
+    order.
+  - Effect: header (switch, name, kind glyph, a curve mark ∿ if automated, a mask mark ◐) and its
+    sockets. Parameters are in the side form (question Q2).
+  - Device (VHS Tape, Datamosh, Camera ISP): ONE node, two lanes — "picture" and "sound", each with
+    its own switch; the header's switch (M) turns both. If its two halves stand at crossing positions
+    in their chains (VHS before Datamosh on the picture, after it on the sound), it draws as two
+    linked half-nodes with a dotted tie, so no wire runs backwards.
+  - Group: a morpher layer (purple), a composition (blue), a track stage (frame "Track"). Collapsed
+    to one node with its sockets and a count; Tab enters (the graph shows the inside, a breadcrumb on
+    top), Tab or Esc leaves. Inside an event's graph a layer group is read-only (edit it in its own
+    window: double click opens it).
+  - Geometry (the event's leading node) stays first after Source, as today.
+- **The form beside the graph.** The window is split: the graph (left, or top when the window is
+  narrow) and the selected node's EXISTING form (right/bottom): deck face, ISP panel, passport grid,
+  EQ graph, masks, automation. The split remembers its ratio. Nothing in the forms changes.
+- **Picker.** Shift+A, a right click on empty canvas, or dragging a wire end into empty space opens
+  the existing picker gallery as a panel inside the graph area at the pointer; the chosen effect is
+  inserted where the wire was dragged from (Blender's link-drag search). Dropping a node on a wire
+  inserts it there.
+- **Viewer.** Ctrl+Shift+click a node: the preview shows the picture AFTER that node (the chain cut
+  there, the plan's own code), with a "Viewer: <node>" badge; Ctrl+Shift+click empty canvas or Esc
+  returns. A sound node: solo the event's sound up to that node while playing. (Stage v1d — it needs
+  the plan to take a cut point; the cut chain is an ordinary shorter chain, invariant 7 holds.)
+- **What v1 refuses.** Connecting one output to two inputs, a second input to a node, a wire across
+  kinds, a cycle: the wire snaps back and the status line says why ("branches arrive in v2"). No
+  half-working branch is drawn.
 
 ### Mockups
 
-One event's chain (FX window; a video event linked to its audio; nothing selected):
+One event's graph (FX window; a video event linked to its audio; VHS Tape selected; the form right):
 
 ```
- Video 2 · "street.mp4"                                                     [⏻ chain]
- picture ●Geometry ─ ●Color Curves ─ ●Glow ─ +      ┊ ◆ Layer "grade" (3) ┊ ▤ Video 1 (1)
- sound   ●EQ ─ ●Compressor ─ +                      ┊ ◆ Layer "grade" (0) ┊ ▤ Audio 1 (2) ← key: Music
- ───────────────────────────────────────────────────────────────────────────────────────────
- (form of the selected node opens here — deck face / passport grid / automation, as today)
+┌ graph ─────────────────────────────────────────────────┐┌ VHS Tape ─────────────────┐
+│ ┌Source┐  ┌Geometry┐  ┌──VHS Tape─────┐  ┌Glow┐  ┌Out┐ ││ [deck face]               │
+│ │street├─●┤        ├─●┤● picture  [⏻] ├─●┤    ├─●┤   │ ││ Tape  Heads  Tracking     │
+│ │ .mp4 │  └────────┘  │               │  └────┘  │   │ ││ Sound: Hi-Fi | Normal     │
+│ │      ├─●──── EQ ───●┤● sound    [⏻] ├─●── Comp ─●┤   │ ││ ...                       │
+│ └──────┘              └───────────────┘          └───┘ ││ [automation]              │
+│  ●yellow = picture   ●green = sound      Home: fit all ││                           │
+└────────────────────────────────────────────────────────┘└───────────────────────────┘
 ```
 
-A paired device, its sound half switched off (VHS Tape selected):
+The device with its sound switched off (the sound lane dims, its wire bypasses the lane):
 
 ```
- picture ●Geometry ─ ●VHS Tape ─ ●Glow ─ +
-                      ┆ (dotted tie: one tape, sound half off)
- sound   ●EQ ─ ○VHS Tape · sound ─ +
- ───────────────────────────────────────────
- [VHS Tape — deck face: Tape · Heads · Tracking · Sound (Hi-Fi / Normal / Mix) ...]
+ ┌──VHS Tape─────┐
+─┤● picture  [⏻] ├─
+ │               │
+─┤○ sound    [ ] ├─   (dimmed; the sound passes through untouched)
+ └───────────────┘
 ```
 
-A morpher batch (morpher window; Datamosh and Camera ISP, Datamosh's sound off):
+A morpher batch (morpher window; Datamosh's sound off, Camera ISP whole):
 
 ```
- ◆ Source: (original)   [purple head, acts on both rails]
- picture ●Datamosh ─ ●Camera ISP ─ ●Layer strength ─ +
-           │              │               ║ (strength: one dot for both, R.38 item 12)
- sound   ○Datamosh · sound ─ ●Camera ISP · mic ─ +
+┌Source swap┐  ┌──Datamosh──────┐  ┌──Camera ISP──┐  ┌Strength┐  ┌Out┐
+│ (original)├─●┤● picture  [⏻]  ├─●┤● picture [⏻] ├─●┤  ⏻ 80% ├─●┤   │
+│  purple   ├─●┤○ sound    [ ]  ├─●┤● mic     [⏻] ├─●┤        ├─●┤   │
+└───────────┘  └────────────────┘  └──────────────┘  └────────┘  └───┘
+                                   (Strength: one switch for both, R.38 item 12)
 ```
 
-The same layer folded inside an event's graph (FX window):
+The same layer seen from an event under it, collapsed, then entered with Tab:
 
 ```
- picture ●Geometry ─ ●Glow ─ +   ┊ ◆ "mosh" (3) ▸ ┊ ▤ Video 1
- sound   ●EQ ─ +                 ┊ ◆ "mosh" (2) ▸ ┊ ▤ Audio 1
-                    click ▸ → ◆ "mosh" ▾ [ Datamosh · Camera ISP · strength ]  (greyed, read-only)
+ Source ─● Geometry ─● Glow ─● ┌◆ Layer "mosh" (3)┐ ─● ┌▤ Track Video 1 (1)┐ ─● Out
+ Source ─● EQ ──────────────●  │  picture ● sound ●│ ─● │ sound ● ← Key: Music│ ─● Out
+                               └──────────────────┘    └────────────────────┘
+ Tab on the layer →   Event › Layer "mosh"  (read-only here; double click opens its window)
+```
+
+The fit on a long chain (24 effects): zoomed out, every node is a header chip; Home re-fits:
+
+```
+ [Src]●[Geo]●[Crv]●[Glw]●[VHS]●[Bl]●[Shp]●[Grn]●[Mir]●[Zm]●[Pan]●[Grd]● … ●[Out]
+ [Src]●[EQ]●[VHS·s]●[Cmp]●[Lim]●──────────────────────────────────────●[Out]
 ```
 
 ### Gestures (PATH lines)
 
-- **PATH** double click a morpher block carrying VHS Tape → the morpher window opens with the graph:
-  the purple head, VHS Tape on the picture rail, "VHS Tape · sound" on the sound rail with a tie →
-  click the on-dot of "VHS Tape · sound" → the node dims, the tie turns dotted, the picture rail is
-  unchanged → play → the picture keeps the tape, the sound under the layer is clean.
-- **PATH** double click an event with linked audio → the FX window shows both rails → click `+` at
-  the end of the picture rail → the picker gallery opens in place → click VHS Tape → a node appears
-  on the picture rail and its sound half at the end of the sound rail, tied → the deck face opens
-  below.
-- **PATH** drag the "Glow" node right past "VHS Tape" on the picture rail → an insertion mark shows
-  between nodes while dragging → release → the order changes, one undo step; dragging onto the sound
-  rail shows the refusal mark and the hint "picture effects stay on the picture rail".
-- **PATH** hover "VHS Tape" → its `×` shows → click `×` → both halves go (the tie told it is one
-  device) → Ctrl+Z → both return with their values and curves.
-- **PATH** in the FX window click the folded group `◆ "mosh" (3) ▸` → it unfolds in place, greyed →
-  double click it → that morpher's window opens.
-- **PATH** move the mouse over the graph and leave it still with the window open on a project
-  carrying VHS Tape, Datamosh and Camera ISP → only the hover tint changes → no frame is asked at
-  rest.
+- **PATH** double click a morpher block carrying VHS Tape → the morpher window opens with the node
+  editor framed: the purple Source swap, a VHS Tape node with a picture lane and a sound lane → click
+  the switch on the sound lane → the lane dims, its wire passes the node → play → the picture keeps
+  the tape, the sound under the layer is clean → Ctrl+Z → the lane is lit again.
+- **PATH** double click an event with linked audio → the FX window shows the graph framed, the form
+  empty → drag from the Glow node's picture output into empty canvas → the picker gallery opens at
+  the pointer → click VHS Tape → a VHS Tape node is inserted after Glow with both lanes wired → its
+  deck face opens beside the graph.
+- **PATH** drag the Glow node onto the wire between Geometry and VHS Tape → the wire highlights →
+  release → Glow is inserted there, one undo step → drag a wire from Glow's output to a second
+  input → the wire snaps back and the status line reads "branches arrive in v2".
+- **PATH** select VHS Tape → press M → both lanes dim → press M again → both lit → press X → the
+  device is removed with both halves → Ctrl+Z → it returns with its values and curves.
+- **PATH** open the FX window on an event with 24 effects → every node fits as a header chip → wheel
+  over VHS Tape → the view zooms there and its lanes show → press Home → all fits again.
+- **PATH** in an event's graph press Tab on the collapsed layer "mosh" → the breadcrumb shows
+  "Event › Layer mosh", its nodes greyed → Tab → back → double click the layer → its morpher window
+  opens.
+- **PATH** Ctrl+Shift+click the Geometry node → the preview shows the picture after Geometry with a
+  "Viewer: Geometry" badge → Esc → the full picture returns.
+- **PATH** open the FX window and the morpher window on the heavy showcase project → leave the
+  mouse still over a node → nothing moves → no frame is asked.
 
-## D4. Cost at rest
+## D5. Cost at rest
 
-- The graph lays out once per key (model `revision()`, window width, selection, fold set, hover
-  node id) into cached galleys and one mesh for chips and wires; a hover frame re-tints the hovered
-  chip only (the `EventPaint` precedent). No animation exists in it; a fold toggles instantly.
-- Nothing in it polls: the folded layer/track groups are read from the per-revision index
-  (`tl_facts()`), not a walk of `effective_clips` per frame.
-- Checked by an idle test with the graph open (`kt_time::work` rows, t3003) and the live `idle`
-  scenario extended with an open FX window and an open morpher window on the showcase heavy project
-  (t3006).
+- The editor lays out once per key — model `revision()`, graph-area size, zoom, pan, selection,
+  collapsed set, entered group — into cached galleys and one mesh for nodes and tessellated wires; a
+  hover frame re-tints the hovered node only (the `EventPaint` precedent). Zoom and pan repaint only
+  while the wheel or the drag moves; Home jumps (no animated fly).
+- No polling: groups read the per-revision index (`tl_facts()`), not `effective_clips` per frame.
+- The Viewer asks one composite per change, as the preview does; at rest it costs nothing more.
+- Checked by an idle test with the editor open (`kt_time::work` rows, t3003) and live `idle` with the
+  FX and morpher windows open on the heavy showcase (t3006); load measured on a pause, with hover,
+  and with the windows open.
 
-## D5. What is migrated and what stays
+## D6. What is migrated and what stays
 
-- Migrated: every `chain_strip` call → `fx_graph`; `merge_chains`/`split_chains` → the graph's
-  rail-to-vector mapping (the morpher keeps its two vectors); the FX window's member strips → rails;
-  the strip's copy-paste, presets, master switch and right-click target (`ChainCtx`) move into the
-  graph unchanged.
-- Stays: every form under the chain (passport grid, deck face, ISP panel, EQ graph, masks,
-  automation widget), the picker gallery (R.54), the preset library (R.48), the windows themselves
-  and the registry `WINDOWS`. No window is added.
-- Removed: `widgets::chain_strip` (no second copy of the widget, rule 17), `derived_pairs`.
+- Migrated: every `chain_strip` call → `node_editor`; the strip's copy-paste (`FxSlotBlock`,
+  `FxChainBlock`), presets, master switch and right-click target move into the editor unchanged;
+  `merge_chains`/`split_chains` become the lane mapping.
+- Stays: every form (passport grid, deck face, ISP panel, EQ graph, masks, automation widget), the
+  picker gallery, the preset library, the windows and the registry `WINDOWS`. No window is added.
+- Removed: `widgets::chain_strip` (rule 17), `MorphPatch::derived_pairs`.
 
-## D6. Project format and OTIO
+## D7. Project format and OTIO
 
-- No format version change. `MorphPatch` keeps its fields; after D2 a patch with a paired kind
-  serializes the counterpart slot in its other vector. Files from before this change are
-  canonicalized by `normalize` on read (render byte-identical, t2991); a file written after reads in
-  an older build with the counterpart as an ordinary slot and the derivation adding nothing (the
-  derivation counted only enabled ones → a bypassed half would be re-derived there: an older build
-  shows the old defect, nothing breaks).
-- Graph layout: not stored (computed from order); fold state: per window session, not stored.
-- OTIO: morphers travel only in `metadata["kt"]`; the sim-audio-pairs row of "What OTIO export
-  loses" (`docs/ktprompts/v26.10-index.md`) gains "and the halves held by a morpher patch". No new
-  row.
+- v1: no version change, nothing stored for the graph (layout computed, view per session). After D2
+  a morpher patch with a paired kind serializes the counterpart slot in its other vector; older files
+  are canonicalized by `normalize` (render byte-identical, t2991).
+- v2: slot ids and edges; a project whose every graph is a line writes today's bytes; a branching one
+  writes `graph` fields and the next format version BY CONTENT (as masks did). OTIO cannot express a
+  branch: the export flattens nothing it cannot — the graph travels in `metadata["kt"]`, and a row
+  goes into "What OTIO export loses" with v2 ("effect graphs with branches: carried only in
+  `metadata["kt"]`; a foreign tool sees the clip without effects").
+- v1 OTIO: the sim-audio-pairs row gains "and the halves held by a morpher patch".
 
-## Open decisions (the owner's)
+## D8. Stages
 
-- **O1 — where the graph lives.**
-  (a) it replaces the strip inside the three existing windows (recommended: no new window, R.63);
-  (b) as (a), plus a docked band under the preview showing the selected event's graph (a panel takes
-      screen height permanently — rule 13);
-  (c) the strip stays, the graph is a toggle (two widgets of one meaning — against rule 17).
-- **O2 — the morpher: one lane or two rails.** R.35 item 3 made it one lane with both kinds mixed.
-  (a) two rails, picture and sound, the head before both (recommended: the tie of a device needs two
-      rows; t244/t218 are rewritten to "two rails, one head" with his OK);
-  (b) one lane as now, the sound half drawn right after its picture half with a small tie; no test
-      rewritten, but long batches wrap again.
-- **O3 — the context in an event's graph.**
-  (a) layers and track stage shown folded, read-only, double click opens their window (recommended);
-  (b) only the event's own chain (smaller, but the order of processing stays invisible);
-  (c) editable in place (two places to edit one layer — rejected by "one place to edit each thing",
-      offered only for completeness).
-- **O4 — the warp in a morpher.** Today a layer's Slowed slows picture and sound with one slot.
-  (a) make it a tied pair like a device (a picture warp node with its own dot, presence and `rate`
-      shared — the event rule of R.37 extended to the patch);
-  (b) leave it one slot for both (recommended for this change; the class walk records it).
-- **O5 — a device on a track chain has no sound half** (a track has no partner track).
-  (a) a separate change: a video track's device sounds on the audio track(s) the person names;
-  (b) leave it: a device on a track is picture-only, said in its form.
+- **v1a** (the defect): D1–D2 — the patch holds both halves; the morpher's sound lane is switchable.
+  Ships first, alone: it closes the owner's complaint even before the editor exists (on today's
+  strip the half becomes a visible slot).
+- **v1b** the `node_editor` widget: canvas, fit, collapse, nodes, lanes, devices, picker by link-drag,
+  insert on wire, M/X/H/Home/Tab, refusals.
+- **v1c** the four windows switched to it; groups (layer, composition, track stage, key); the strip
+  removed; live scenarios follow.
+- **v1d** the Viewer (Ctrl+Shift+click) — the plan takes a cut point.
+- **v2** (a separate change after v1 is in his hands): slot ids, edges, Merge/Split, mask and key
+  sockets fed by any node, the DAG in `video_plan` and the audio node chain, format by content.
+- **v3** horizon only: the timeline composite as a graph.
+
+## Questions for the owner
+
+Each quotes what he said, what is there today, and what each answer means.
+
+**Q1 — Can nodes be moved freely, like in Blender?** You wrote: "типо как в blender". Today nothing
+is placed by hand: the strip is a row. In Blender you drag nodes anywhere and the positions are
+saved.
+
+- (a) **Arranged automatically** (recommended for v1): the editor places nodes by processing order;
+  you never tidy them; nothing is saved in the project. Dragging a node only changes its ORDER (drop
+  it on a wire). Free placement comes with v2, when effects get permanent ids.
+- (b) **Free like Blender from v1**: you place nodes where you want, and the positions are saved in
+  the `.kt`. Needs permanent ids for every effect slot now — the project format changes in v1.
+
+```
+ (a)  Src ─● A ─● B ─● C ─● Out      always tidy, by order
+ (b)  Src ─● A               B ─● Out   wherever you put them
+            ╲─────● C ──────╱
+```
+
+**Q2 — Parameters inside the node, or beside it?** You wrote: "в одном месте чтобы не скролить".
+Today the form (the deck face, the sliders) is under the strip and the window scrolls.
+
+- (a) **Beside** (recommended): the graph on the left, the selected effect's full form on the right,
+  both always visible; nodes stay small, so the graph fits.
+- (b) **Beside, plus the 2–3 main sliders inside each node** (as Blender's nodes show values): quicker
+  tweaks without selecting, but nodes are taller and a long chain fits only zoomed out.
+
+```
+ (a) ┌Glow┐          (b) ┌Glow──────────┐
+     └────┘              │ amount ▮▮▮▯▯ │
+                         │ radius ▮▮▯▯▯ │
+                         └──────────────┘
+```
+
+**Q3 — In the effects window of ONE event, show what is applied to it AFTER its own effects?**
+(Revision 1's question, said plainly.) An event is also changed by the morpher layers above it and
+by its track's effects. Today you see that only by opening each morpher and the track window.
+
+- (a) **Show them, closed and read-only** (recommended): after the event's own nodes come boxes
+  "Layer mosh (3)" and "Track Video 1"; Tab peeks inside; double click opens that layer's or track's
+  own window to edit.
+- (b) **Only the event's own effects**: smaller, but you do not see what else touches the event.
+
+```
+ (a)  Src ─● Glow ─● [◆ Layer "mosh" (3)] ─● [▤ Track Video 1] ─● Out
+ (b)  Src ─● Glow ─● Out
+```
+
+**Q4 — Slowed in a morpher layer: separate switches for picture and sound?** You asked in R.37 that a
+slowed event's picture can be un-slowed by its own switch — that is so on events. In a morpher layer
+today ONE Slowed slows both picture and sound, and there is no way to slow only the sound.
+
+- (a) **Make it like a device**: the Slowed node gets a picture lane and a sound lane, each with a
+  switch; the speed and its curve stay shared.
+- (b) **Leave it one switch for both** in layers (recommended for now; it can follow later).
+
+```
+ (a) ┌Slowed─────────┐       (b) ┌Slowed────┐
+     │● picture  [⏻] │           │ [⏻] both │
+     │● sound    [⏻] │           └──────────┘
+     └───────────────┘
+```
+
+**Q5 — VHS Tape / Datamosh / ISP put on a whole TRACK: should it also sound?** Today on an event
+it does (the linked audio gets the sound half); on a video TRACK it is picture only — a track has no
+"linked" audio track.
+
+- (a) **A separate change**: the track's device node gets a sound lane wired to the audio track(s)
+  you pick in its form.
+- (b) **Leave it picture-only on tracks**; the node then shows no sound lane, and its form says so.
+
+```
+ (a) ┌▤ Track Video 1──────────┐       (b) ┌▤ Track Video 1─┐
+     │ VHS ● picture           │           │ VHS ● picture  │
+     │     ● sound → Audio 1   │           └────────────────┘
+     └─────────────────────────┘
+```
 
 ## Risks
 
-- t244/t218 pin the strip's look; rewriting them needs O2's answer (they are regression tests).
-- The FX window with many partners (an instance with several audio events) — more than two rails:
-  extra rails stack under the sound rail, each named; tested (t3001).
-- The live scenarios that click strip crumbs by label (`vhs_sound`, `stream_sound`, `camera_mic`,
-  the morpher ones) must follow the graph: their probes move with the widget.
+- t244/t218 pin the strip; they are rewritten to the node editor by his answer "вместо полоски"
+  (U7 line 21), with the same claims: the source swap first and unmovable, effects of both kinds in
+  one editor, the source field takes a file.
+- The live scenarios that click strip crumbs (`vhs_sound`, `stream_sound`, `camera_mic`, the morpher
+  ones) move to the editor's probes.
+- A node editor promises routing the engine lacks until v2: every refused gesture must say so in the
+  status line, never fail silently.
