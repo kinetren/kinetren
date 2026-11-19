@@ -78,7 +78,15 @@ def window():
     def walk(w):
         try:
             cls = w.get_wm_class()
-            if cls and WM_CLASS in cls and w.get_geometry().width > 400:
+            # only a window on screen: a stand keeps the program between scenarios, and a window it
+            # unmapped (a detached preview put back) reads (0, 0) and refuses the focus — two live
+            # scenarios aimed the File menu at it (found-defects 790)
+            if (
+                cls
+                and WM_CLASS in cls
+                and w.get_geometry().width > 400
+                and w.get_attributes().map_state == X.IsViewable
+            ):
                 return w
         except Exception:
             pass

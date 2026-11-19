@@ -295,6 +295,8 @@ struct PosterQueue {
     jobs: std::collections::VecDeque<PosterJob>,
     busy: bool,
     done: u64,
+    /// The job rendering now: `stop_posters` cancels it (found-defects 791).
+    current: Option<kt_time::sched::Token>,
 }
 
 fn poster_queue() -> &'static (std::sync::Mutex<PosterQueue>, std::sync::Condvar) {
@@ -346,6 +348,20 @@ pub fn posters_busy() -> bool {
     q.busy || !q.jobs.is_empty()
 }
 
+/// The program closes and its wait for the posters ran out (found-defects 791): the job in flight stops
+/// between its steps and the queued ones are dropped. An offline frame of a project that was still
+/// catching up (no kept moment to read) went on past the close's bound, held the offline engine's park
+/// and the GPU exit hook, and the exit's watcher forced the end.
+pub fn stop_posters() {
+    let (m, cv) = poster_queue();
+    let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
+    q.jobs.clear();
+    if let Some(t) = &q.current {
+        t.cancel(kt_time::sched::why_cancel::CLOSED);
+    }
+    cv.notify_all();
+}
+
 /// How many posters the service has finished (tests count them).
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn posters_done() -> u64 {
@@ -364,16 +380,18 @@ fn poster_pump(ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
         if ctx.paused() {
             return Pump::More;
         }
+        let token = kt_time::sched::Token::new();
         let job = {
             let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
             let Some(job) = q.jobs.pop_front() else { return Pump::Idle };
             q.busy = true;
+            q.current = Some(token.clone());
             job
         };
         {
             let mut _span = kt_time::trace::span(kt_time::trace::Ev::Job);
             _span.aux(kt_time::trace::job::POSTER);
-            let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), Default::default())
+            let ctl = crate::bg::BgCtl::from_flags(token, Default::default())
                 .in_class(kt_time::sched::Class::Background);
             let rgba = job
                 .kept
@@ -386,6 +404,7 @@ fn poster_pump(ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
         }
         let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
         q.busy = false;
+        q.current = None;
         q.done += 1;
         cv.notify_all();
     }
