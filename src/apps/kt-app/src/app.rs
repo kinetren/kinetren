@@ -11240,6 +11240,11 @@ impl eframe::App for KtApp {
         let since = std::time::Instant::now();
         let ended = crate::welcome::wait_posters(std::time::Duration::from_secs(3));
         record("poster", since, ended);
+        // past its budget the poster stops: it would hold the offline engine's park and the GPU exit
+        // hook past the exit's bound (found-defects 791)
+        if !ended {
+            crate::welcome::stop_posters();
+        }
         // a reel strip may be on the device: the process must not exit under it. A test's process
         // goes on after this close, and every later render would wait on the parked engine for good
         #[cfg(not(test))]

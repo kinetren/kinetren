@@ -126,7 +126,7 @@ pub mod test_tint {
     }
 }
 
-/// A test process that dies natively AFTER its test passed (found-defects 695, 783, 784: "double free
+/// A test process that dies natively AFTER its test passed (found-defects 695, 785, 784: "double free
 /// or corruption" at the exit of a reel test under a loaded full run, never reproduced alone) leaves a
 /// raw report naming the thread and the stack: `<temp>/kt-test-crashes/<binary>-<pid>.raw`, the test in
 /// its header; `kt_crash::symbolize_file` reads it with the same build. The system's core handler keeps
