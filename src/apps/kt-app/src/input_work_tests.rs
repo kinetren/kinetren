@@ -10,6 +10,7 @@
 //! (t1871, t1872); a command equal to what the model holds is no edit (t1873, t1874).
 
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use eframe::egui;
 use egui_kittest::Harness;
 use kt_model::{FxInstance, HasParams, ParamSpec, ParamType};
@@ -384,4 +385,104 @@ fn t2008_an_edit_hands_the_shared_snapshot_and_builds_nothing() {
         std::sync::Arc::ptr_eq(&app.player.project(), &app.model.doc_arc()),
         "the player holds a copy of the document, not the model's snapshot"
     );
+}
+
+// ---- chroma-key-eyedropper (kkt-26.11.01b B2): tests t3120–t3122 ----
+
+fn click(h: &mut Harness<'static, KtApp>, pos: egui::Pos2) {
+    h.hover_at(pos);
+    h.step();
+    h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.step();
+    h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.step();
+    h.step();
+}
+
+fn key_of(h: &Harness<'static, KtApp>) -> [f64; 3] {
+    let c = h.state().model.clip(kt_model::ClipId(1)).expect("the event");
+    ["key_r", "key_g", "key_b"].map(|n| c.fx[0].get_param(n).unwrap_or(-1.0))
+}
+
+/// Test t3120: the chroma key's pipette arms; the next click — on the preview's picture — takes the
+/// screen's colour into the key as one history step, and the click does nothing else (the preview
+/// does not start playing).
+#[test]
+fn t3120_the_key_colour_is_picked_from_the_preview() {
+    crate::plugins::install();
+    let mut h = fx_scene(FxInstance::builtin("greenscreen"), false);
+    h.step();
+    h.step();
+    crate::eyedropper::testing::set_screen(|_| Some([12, 201, 33]));
+    let pick = crate::widgets::field_probe::rect_of("fx.key.pick").expect("the key row has a pipette");
+    click(&mut h, pick.center());
+    assert!(crate::eyedropper::armed(), "the pipette did not arm");
+    assert_eq!(h.state().status_line_shown.0, tr(k::fx::EYEDROP_ARMED), "the status line does not say what to do");
+    let depth = h.state().model.undo_depth();
+    let preview = h.state().preview_rect.center();
+    click(&mut h, preview);
+    h.step();
+    assert!(!crate::eyedropper::armed(), "the pick did not put the pipette down");
+    assert_eq!(key_of(&h), [12.0, 201.0, 33.0], "the picked colour is not the key");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the pick is not one history step");
+    assert!(!h.state().player.transport.is_playing(), "the pick's click reached the preview and started playback");
+}
+
+/// Test t3121: Esc puts an armed pipette down and keeps the window; a second click on the pipette
+/// does the same; nothing is written.
+#[test]
+fn t3121_esc_or_the_pipette_again_puts_it_down() {
+    crate::plugins::install();
+    let mut h = fx_scene(FxInstance::builtin("greenscreen"), false);
+    h.step();
+    h.step();
+    let before = key_of(&h);
+    let pick = crate::widgets::field_probe::rect_of("fx.key.pick").expect("the key row has a pipette");
+    click(&mut h, pick.center());
+    assert!(crate::eyedropper::armed());
+    h.key_press(egui::Key::Escape);
+    h.step();
+    assert!(!crate::eyedropper::armed(), "Esc did not put the pipette down");
+    assert!(!h.state().fx_editors.is_empty(), "Esc closed the effects window instead");
+    click(&mut h, pick.center());
+    assert!(crate::eyedropper::armed());
+    click(&mut h, pick.center());
+    assert!(!crate::eyedropper::armed(), "the pipette pressed again did not put it down");
+    assert_eq!(key_of(&h), before, "putting the pipette down wrote a colour");
+}
+
+/// Test t3122: every colour button of the program has the pipette beside it (the class: a colour a
+/// person sets can be taken from the screen), and its texts are in all five catalogs.
+#[test]
+fn t3122_every_colour_button_has_the_eyedropper() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut bare = Vec::new();
+    for e in std::fs::read_dir(&dir).unwrap() {
+        let path = e.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if !name.ends_with(".rs") || name.ends_with("_tests.rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        let code = src.split("\n#[cfg(test)]").next().unwrap_or(&src);
+        let lines: Vec<&str> = code.lines().collect();
+        for (n, l) in lines.iter().enumerate() {
+            if !l.contains("color_edit_button_") || l.trim_start().starts_with("//") {
+                continue;
+            }
+            let near = lines[n..(n + 30).min(lines.len())].join("\n");
+            if !near.contains("eyedropper::button") {
+                bare.push(format!("{name}:{}", n + 1));
+            }
+        }
+    }
+    assert!(bare.is_empty(), "a colour button without the eyedropper (use widgets::rgb_button): {bare:?}");
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for key in [k::fx::EYEDROP_HINT, k::fx::EYEDROP_ARMED, k::fx::EYEDROP_NO_SCREEN] {
+            assert!(!tr(key).is_empty(), "{lang:?}: an empty eyedropper text");
+        }
+        assert!(tr(k::fx::EYEDROP_ARMED).contains("Esc"), "{lang:?}: the armed line does not say Esc");
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }

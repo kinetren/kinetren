@@ -108,6 +108,18 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
     })
 }
 
+/// A colour button with the screen eyedropper beside it (chroma-key-eyedropper, kkt-26.11.01b B2):
+/// every colour a person sets can be taken from the preview's frame or anywhere in the program.
+/// `salt` tells apart the rows of one `Ui`; `probe` names the pipette for a live scenario.
+pub fn rgb_button(ui: &mut egui::Ui, col: &mut [f32; 3], salt: &str, probe: Option<&str>) -> bool {
+    let mut changed = ui.color_edit_button_rgb(col).changed();
+    if let Some(rgb) = crate::eyedropper::button(ui, ui.id().with(("eyedrop", salt)), probe) {
+        *col = rgb.map(|v| v as f32 / 255.0);
+        changed = true;
+    }
+    changed
+}
+
 /// Colour eyedropper + HEX field for the DIRECT fields of the carrier (R.53, item 415).
 ///
 /// For a title, colours are not a `ParamSpec` and never were (“the first lawful exception”,
@@ -131,6 +143,11 @@ pub fn color_row_rgba(
             field_probe::note(name, resp.rect);
         }
         if resp.changed() {
+            changed = true;
+        }
+        // the screen eyedropper keeps the alpha it had (chroma-key-eyedropper)
+        if let Some([pr, pg, pb]) = crate::eyedropper::button(ui, ui.id().with(("eyedrop", label)), None) {
+            col = egui::Color32::from_rgba_unmultiplied(pr, pg, pb, col.to_srgba_unmultiplied()[3]);
             changed = true;
         }
         // HEX field: the canonical path form (rrggbbaa) and the same technique.
@@ -232,6 +249,13 @@ pub fn color_row<P: HasParams + ?Sized>(
             }
             if let Some(n) = alpha {
                 f.set_param(n, straight[3] as f64);
+            }
+            changed = true;
+        }
+        // the screen eyedropper (chroma-key-eyedropper): the three channels, the alpha stays
+        if let Some(rgb) = crate::eyedropper::button(ui, ui.id().with(("eyedrop", names[0])), None) {
+            for (n, v) in names.iter().zip(rgb) {
+                f.set_param(n, v as f64);
             }
             changed = true;
         }

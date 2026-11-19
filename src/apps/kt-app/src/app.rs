@@ -2466,6 +2466,7 @@ impl KtApp {
             };
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
                 && !guarded(self, pos)
+                && !crate::eyedropper::armed()
                 && let Some(dir) = resize_zone(win, pos, WIN_EDGE, WIN_CORNER)
             {
                 ctx.set_cursor_icon(resize_cursor(dir));
@@ -2476,6 +2477,15 @@ impl KtApp {
             }
         }
 
+        // the eyedropper's pick layer, over everything, and its line in the status bar
+        // (chroma-key-eyedropper)
+        match crate::eyedropper::overlay(&ctx) {
+            Some(Err(())) => self.warn(tr(k::fx::EYEDROP_NO_SCREEN)),
+            Some(Ok(())) if crate::eyedropper::armed() => {
+                self.hover_hint = Some(tr(k::fx::EYEDROP_ARMED).to_string());
+            }
+            _ => {}
+        }
         // hint — last, over the status bar (item 1 round 9)
         self.draw_status_hint(&ctx);
 
@@ -3303,6 +3313,10 @@ impl KtApp {
         }
         // 0) a marker's note being typed: Esc cancels it (marker-notes), nothing else moves
         if self.marker_note.take().is_some() {
+            return;
+        }
+        // 0) an armed eyedropper: Esc puts it down, the window under it stays (chroma-key-eyedropper)
+        if crate::eyedropper::cancel() {
             return;
         }
         // 1) the window ON TOP (shared-window-shell). Not a hand-kept list: the list lost the

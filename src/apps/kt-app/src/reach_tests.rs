@@ -6755,6 +6755,9 @@ fn no_teaching_layer_over_the_ui() {
         "marker-name-edit",
         // the marker's note typed at its flag (marker-notes), the same inline field as its name
         "marker-note-edit",
+        // the armed colour eyedropper (chroma-key-eyedropper): one transparent layer takes the pick's
+        // click so it acts on nothing under it; it exists only between the pipette and the click
+        "eyedropper",
         "lane-name-edit",
         "area-name-edit",
     ];
