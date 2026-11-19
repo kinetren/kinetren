@@ -8014,7 +8014,9 @@ fn t1219_the_camera_window_is_the_pipeline() {
     let win = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| {
         h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", kt_model::ClipId(1))))).expect("the effects window")
     };
-    h.hover_at(h.get_by_label(tr(k::isp::block::SENSOR)).rect().center());
+    // over the window's body (the effect graph above the panel can put the Sensor block below the
+    // harness window's fold, fx-graph v1b)
+    h.hover_at(win(&h).center());
     for _ in 0..30 {
         if win(&h).shrink(24.0).contains_rect(h.get_by_label(wb).rect()) {
             break;

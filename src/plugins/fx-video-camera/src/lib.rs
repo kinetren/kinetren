@@ -896,6 +896,8 @@ impl CameraIsp {
                     name: "Camera ISP",
                     category_key: "fxreg.cat.camera",
                     keywords_key: "fxreg.kw.camera_isp",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["exposure_ev", "analog_gain", "sharpen_amount"],
                     variants: VARIANTS,
                     ..UiDecl::default()
                 },
@@ -991,6 +993,8 @@ impl CameraIspSound {
                     name: "Camera ISP",
                     category_key: "fxreg.cat.camera",
                     keywords_key: "fxreg.kw.camera_isp_sound",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["mic_ns_strength", "mic_agc_max", "mic_kbps"],
                     // an audio entry has no variants: a sound has no thumbnail (R.54)
                     ..UiDecl::default()
                 },

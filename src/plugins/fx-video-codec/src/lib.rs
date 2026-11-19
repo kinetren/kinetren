@@ -155,6 +155,8 @@ impl Datamosh {
                     name: "Datamosh",
                     category_key: "fxreg.cat.style",
                     keywords_key: "fxreg.kw.datamosh",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["lines", "mosh", "loss"],
                     // the template is the intact codec (its look: the encoded height and the
                     // quantiser); every breakage is a named variant, the classic cut first
                     variants: VARIANTS,
@@ -233,6 +235,8 @@ impl DatamoshSound {
                     name: "Datamosh",
                     category_key: "fxreg.cat.style",
                     keywords_key: "fxreg.kw.datamosh_sound",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["audio_kbps", "loss", "gop"],
                     // an audio entry has no variants: a sound has no thumbnail (R.54)
                     ..UiDecl::default()
                 },

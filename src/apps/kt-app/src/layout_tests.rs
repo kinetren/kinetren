@@ -14958,11 +14958,7 @@ fn t749_formula_is_typed_whole_and_drawn() {
     // the field’s coordinate — from the REAL LAYOUT: TextEdit has no accessibility
     // node, but the “Formula” label is drawn next to it (technique t281)
     let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
-    let lr = crate::reach_tests::painted_texts(&h)
-        .into_iter()
-        .find(|t| t.src == label)
-        .map(|t| t.rect)
-        .expect("formula field label is drawn");
+    let lr = painted_in_fx_window(&mut h, ClipId(1), &label).expect("formula field label is drawn");
     let field = egui::pos2(lr.right() + 60.0, lr.center().y);
     h.hover_at(field);
     h.step();
@@ -15034,6 +15030,33 @@ fn t749_formula_is_typed_whole_and_drawn() {
     );
 }
 
+/// A painted text of the effects window, brought into the window by the wheel (fx-graph v1b): the
+/// node graph above the form can put a field below the harness window's fold, and a person turns
+/// the wheel over the window until it shows.
+pub(crate) fn painted_in_fx_window(h: &mut Harness<'_, KtApp>, clip: kt_model::ClipId, label: &str) -> Option<egui::Rect> {
+    let win = |h: &Harness<'_, KtApp>| h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", clip))));
+    for _ in 0..40 {
+        let w = win(h)?;
+        let found = crate::reach_tests::painted_texts(h).into_iter().find(|t| t.src == label).map(|t| t.rect);
+        if let Some(r) = found
+            && w.shrink(24.0).contains_rect(r)
+        {
+            return Some(r);
+        }
+        h.hover_at(w.center());
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -60.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        for _ in 0..3 {
+            h.step();
+        }
+    }
+    None
+}
+
 /// Test 750 (R.63 item 4): a click outside the field gives focus back, and the keys are alive AT ONCE.
 ///
 /// The owner: “if I start typing something in the formula field, the input focus
@@ -15067,11 +15090,7 @@ fn t750_click_outside_a_field_gives_the_keyboard_back() {
 
     // 1) click in the formula field and type — focus is there
     let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
-    let lr = crate::reach_tests::painted_texts(&h)
-        .into_iter()
-        .find(|t| t.src == label)
-        .map(|t| t.rect)
-        .expect("formula field label is drawn");
+    let lr = painted_in_fx_window(&mut h, ClipId(1), &label).expect("formula field label is drawn");
     let field = egui::pos2(lr.right() + 60.0, lr.center().y);
     let click = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2| {
         h.hover_at(pos);

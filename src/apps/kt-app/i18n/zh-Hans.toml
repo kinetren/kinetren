@@ -2169,3 +2169,13 @@ premiere = "这里没有：波纹删除和波纹修剪（Shift+Delete、Q、W）
 resolve = "这里没有：波纹删除（Shift+Delete）、刀片工具（B）、页面。媒体通过把文件拖到窗口导入。"
 final_cut = "这里 Cmd 对应 Ctrl，Option 对应 Alt。这里没有：磁性时间线、刀片工具（B）。Delete 会留下间隙。"
 after_effects = "这里没有：图层及其属性按键（U、P、S、R、T）。B 和 N 设置区间，J 和 K 在各点间移动，Ctrl+Shift+D 切分事件。"
+
+[fx.graph]
+picture = "画面"
+sound = "声音"
+input = "输入"
+output = "输出"
+fit = "显示全部"
+fit_hint = "显示整个图。在图上按 Ctrl+滚轮切换详细与总览，中键拖动平移"
+lane_refused = "效果留在自己的线上：画面对画面，声音对声音"
+curved = "此值随曲线变化：请在下方表单中编辑"

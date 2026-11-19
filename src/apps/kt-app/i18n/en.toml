@@ -2174,3 +2174,13 @@ premiere = "Not here: ripple delete and ripple trim (Shift+Delete, Q, W), the ra
 resolve = "Not here: ripple delete (Shift+Delete), the blade tool (B), the pages. Media comes in by dragging files onto the window."
 final_cut = "Cmd is Ctrl here, Option is Alt. Not here: the magnetic timeline, the blade tool (B). Delete leaves a gap."
 after_effects = "Not here: layers and their property keys (U, P, S, R, T). B and N set the region, J and K walk its stops, Ctrl+Shift+D splits an event."
+
+[fx.graph]
+picture = "Picture"
+sound = "Sound"
+input = "In"
+output = "Out"
+fit = "Frame all"
+fit_hint = "Show the whole graph. Ctrl+wheel over the graph switches detail and overview, a middle drag pans"
+lane_refused = "An effect stays on its own lane: picture with picture, sound with sound"
+curved = "This value follows a curve: edit it in the form below"

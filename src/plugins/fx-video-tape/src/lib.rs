@@ -195,6 +195,8 @@ impl VhsTape {
                     name: "VHS Tape",
                     category_key: "fxreg.cat.simulate",
                     keywords_key: "fxreg.kw.vhs_tape",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["speed", "tracking_um", "dropouts_per_s"],
                     variants: VARIANTS,
                     ..UiDecl::default()
                 },
@@ -244,6 +246,8 @@ impl VhsTapeSound {
                     name: "VHS Tape",
                     category_key: "fxreg.cat.simulate",
                     keywords_key: "fxreg.kw.vhs_tape_sound",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["audio_out", "tracking_um", "dropouts_per_s"],
                     // an audio entry has no variants: a sound has no thumbnail (R.54)
                     ..UiDecl::default()
                 },

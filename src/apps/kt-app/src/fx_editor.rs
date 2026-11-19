@@ -407,7 +407,9 @@ impl KtApp {
             title,
             crate::window_shell::Kind::Tool,
         )
-            .size([580.0, 520.0], [460.0, 320.0])
+            // the default height carries the node graph's band (fx-graph v1b) over the form's former
+            // room: the form keeps what it had
+            .size([580.0, 600.0], [460.0, 320.0])
             .remember("fx")
             .probe("win.fx")
             .show(ctx, |ui| {
@@ -544,7 +546,7 @@ impl KtApp {
                                     other => other,
                                 };
                             }
-                            ch = crate::widgets::chain_strip(
+                            ch = crate::node_editor::chain_graph(
                                 ui,
                                 ("fxchain", id.0),
                                 crate::widgets::ChainEdit {

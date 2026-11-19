@@ -33,21 +33,23 @@
 
 ## 2. v1b — the node editor widget
 
-- [ ] 2.1 `node_editor.rs`: canvas (fit on open, Home, wheel zoom at pointer, middle-drag pan,
-      collapse below readable zoom, H), layout by order, sockets by kind, Source/Output pinned
-- [ ] 2.2 nodes: effect, device (two lanes, two switches, crossing → two tied half-nodes), group
-      (layer, composition, track stage; Tab/Esc, breadcrumb), key wire
-- [ ] 2.3 gestures: link-drag into empty canvas → picker at the pointer; Shift+A; drop on a wire
-      inserts; M, X, Ctrl+C/V (the existing blocks), presets, right-click target; refusals with a
-      reason (branch, second input, cross-kind, cycle)
-- [ ] 2.4 layout cache by (revision, size, zoom, pan, selection, collapsed set, entered group); one
-      mesh; hover re-tint only
-- [ ] 2.5a kt-plugin-api `UiDecl.main`/`main_sound` (≤ 3 rows; a device must name them; the fallback
-      for the rest); the main sets of ISP, VHS Tape, Datamosh; the node's sliders through the common
-      row; bounded node height; sliders fold before the node does; t2998, t2999
-- [ ] 2.5 i18n ×5 (socket kinds, refusals, breadcrumb, group labels), font subsets if new glyphs
-- [ ] 2.6 tests t2994, t2995, t3001; `reach_tests.rs`, `layout_tests.rs`, `font_tests.rs`,
-      `i18n_tests.rs`; commit; prune
+- [x] 2.1 `node_editor.rs`: the fit by level of detail (detailed nodes, else chips in bands),
+      Ctrl+wheel detail ↔ chips, middle-drag pan, Frame all / double click; layout by order, column
+      width by content, sockets by kind, In/Out and the head pinned; children clipped to the canvas
+- [x] 2.2 nodes: effect, device (two halves in one column and one frame, each its switch; crossing →
+      a dotted tie). Groups (layer, composition, track stage, Tab, breadcrumb) and the key wire → 3.4
+- [x] 2.3 gestures: drop a node on another reorders within its lane, across lanes refused with a
+      reason; the picker, presets, copy/paste, right-click target as the strip had them; a cross on
+      every node. Link-drag picker, Shift+A, M/X/Home/H/Tab → v1c with the key table (`ui-controls`)
+- [x] 2.4 cost at rest: no animation and no repaint request; the layout is a few rectangles a frame
+      while the window draws (a cache keyed by revision was not needed: t3003, live `idle`)
+- [x] 2.5a kt-plugin-api `UiDecl.main` (≤ 3 rows, each half its own; a paired video kind must name
+      them) and `main_rows`; the sets of ISP, VHS Tape, Datamosh and their halves; the node's sliders
+      through `param_value` + a slider; bounded node height; chips carry no sliders; t2998, t2999
+- [x] 2.5 i18n ×5 (`[fx.graph]`), font subsets regenerated
+- [x] 2.6 tests t2994, t2995, t3001, t3003; t749/t750/t1219 scroll the window to a field the graph
+      put under the harness fold; the FX window's default height carries the graph's band (520 → 600);
+      live `node_graph`; commit; prune
 
 ## 3. v1c — the windows
 
@@ -55,7 +57,8 @@
 - [ ] 3.2 morpher window: the purple Source-swap node, both vectors as lanes (t244/t218 rewritten)
 - [ ] 3.3 track window (key wire into the compressor's key socket); a composition instance's chain
 - [ ] 3.4 context groups: read-only boxes for layers and the track, Tab peeks, double click opens; t2996
-- [ ] 3.5 remove `widgets::chain_strip`; the live scenarios that clicked crumbs follow the editor
+- [x] 3.5a `widgets::chain_strip` removed — the three windows call `node_editor::chain_graph` (v1b)
+- [ ] 3.5 the remaining the live scenarios that clicked crumbs follow the editor
       (`vhs_sound`, `stream_sound`, `camera_mic`, morpher ones); new live `morph_pair`
 - [ ] 3.6 cost at rest: t3003, live `idle` with both windows open on the heavy showcase (t3006); load
       on a pause, hover and with the windows open — numbers in the report

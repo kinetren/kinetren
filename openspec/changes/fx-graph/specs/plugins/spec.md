@@ -2,7 +2,7 @@
 
 ### Requirement: A passport names at most three main rows per lane
 A plugin's UI declaration SHALL be able to name its main rows: at most three, each an existing
-numeric or choice row of its passport; a paired device SHALL name them for its sound half too. A
+numeric or choice row of its passport; a device's sound half names its own in its own passport. A
 simulated device (a kind with a pair) SHALL name them, or the registry SHALL refuse it. A plugin that
 names none SHALL get its first three numeric smooth rows. The node editor SHALL show exactly these
 rows in a node.
