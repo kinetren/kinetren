@@ -2133,12 +2133,11 @@ fn t682_publishing_is_reachable_from_inside_a_reel_only() {
 
     // the parameter’s label is the UPPER one of the same-named ones: the same name also stands on
     // the curve-choice button below (lesson of t281)
-    let label_top =
-        |h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, label: &str| -> Option<egui::Rect> {
-            h.query_all_by_label_contains(label)
-                .map(|n| n.rect())
-                .min_by(|a, b| a.top().total_cmp(&b.top()))
-        };
+    // the parameter’s label is the UPPER one of the same-named ones (the same name also stands on
+    // the curve-choice button below, lesson of t281), brought above the window's buttons
+    let label_top = |h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, label: &str| -> Option<egui::Rect> {
+        crate::layout_tests::label_in_view(h, label)
+    };
     // the LANGUAGE is set by the harness, so the captions are asked for AFTER its
     // creation: a row assembled earlier would come in the default language,
     // and the test would look for an English word in a Russian window

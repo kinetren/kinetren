@@ -10273,7 +10273,7 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
 
     // the parameter label’s hint: we hover over it and read the STATUS LINE
     let label = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "size");
-    let rect = h.get_by_label(&label).rect();
+    let rect = label_in_view(&mut h, &label).expect("the size label");
     h.hover_at(rect.center());
     h.step();
     h.step();
@@ -15030,6 +15030,35 @@ fn t749_formula_is_typed_whole_and_drawn() {
     );
 }
 
+/// The topmost widget whose label contains `label`, brought above the effects window's buttons by
+/// the wheel over the window's body (fx-graph v1b-live, found-defects 812): the node graph over the
+/// form can put a row at the fold of the harness window, and a person turns the wheel until it shows.
+pub(crate) fn label_in_view(h: &mut Harness<'_, KtApp>, label: &str) -> Option<egui::Rect> {
+    use egui_kittest::kittest::Queryable;
+    for _ in 0..40 {
+        let r = h.query_all_by_label_contains(label).map(|n| n.rect()).min_by(|a, b| a.top().total_cmp(&b.top()))?;
+        // the harness opens the window at y 16, 520 high: its action buttons take its last ~50 px
+        if r.bottom() < 470.0 {
+            // the wheel scrolls smoothly: let it come to rest, then read the place again
+            for _ in 0..12 {
+                h.step();
+            }
+            return h.query_all_by_label_contains(label).map(|n| n.rect()).min_by(|a, b| a.top().total_cmp(&b.top()));
+        }
+        h.hover_at(egui::pos2(r.center().x, 250.0));
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -60.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        for _ in 0..3 {
+            h.step();
+        }
+    }
+    None
+}
+
 /// A painted text of the effects window, brought into the window by the wheel (fx-graph v1b): the
 /// node graph above the form can put a field below the harness window's fold, and a person turns
 /// the wheel over the window until it shows.
@@ -15448,11 +15477,7 @@ fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
     h.step();
 
     // right click on the label → “Publish…”
-    let rect = h
-        .query_all_by_label_contains(&free_row)
-        .map(|n| n.rect())
-        .min_by(|a, b| a.top().total_cmp(&b.top()))
-        .expect("no row label");
+    let rect = label_in_view(&mut h, &free_row).expect("no row label");
     let pos = rect.center();
     h.hover_at(pos);
     h.step();
