@@ -243,6 +243,7 @@ const ALLOWED_FIXED: &[(&str, &str, &str)] = &[
     ("settings_window.rs", "desired_width(120.0)", "the template name field shares its row with Save and Cancel"),
     ("timeline.rs", "desired_width(140.0)", "an inline name field on the timeline itself (a marker, an area): a panel, not a window"),
     ("timeline.rs", "desired_width(120.0)", "an inline name field on the timeline itself (a track label): a panel, not a window"),
+    ("timeline.rs", "desired_width(260.0)", "the marker note is a popup over the timeline at the flag, not a window: a reading width for several lines"),
     ("track_window.rs", "desired_width(160.0)", "the track name in the properties grid: egui's Grid sizes a column by its widest cell"),
     ("widgets.rs", "desired_width(72.0)", "a number field of the shared row sized for its longest value (R.33, one widget per meaning)"),
     ("widgets.rs", "content_rect().height() * 0.62", "a modal's body (no resize) stays content-sized and capped by the screen so its buttons show"),
