@@ -510,6 +510,34 @@ pub(crate) fn vaapi_device_dir_hint() -> String {
         .unwrap_or_else(|| "/dev/dri".into())
 }
 
+/// What decodes a source's pictures (hw-segment-decode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoDecode {
+    /// The platform's device: its name (`vaapi /dev/dri/renderD128`, `d3d11va`).
+    Hardware(String),
+    /// The processor, and why no device decodes (empty — none was asked for).
+    Software(String),
+}
+
+/// A render node's verdict for DECODING, asked once per process (hw-segment-decode D2): a segment
+/// reader opens per read, and a throwaway process per open would cost more than the decode it
+/// spares. The trial opens the device as the export's does; a driver that opens and then faults in
+/// the decode itself is not caught by it (its verdict is the device's).
+pub(crate) fn decode_device_verdict(node: &str) -> Result<(), String> {
+    type Seen = std::sync::Mutex<std::collections::HashMap<String, Result<(), String>>>;
+    static SEEN: std::sync::OnceLock<Seen> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    if let Some(v) = seen.lock().unwrap().get(node) {
+        return v.clone();
+    }
+    let v = match hw_trial::ask_device(node) {
+        hw_trial::Verdict::Passed(_) | hw_trial::Verdict::NotHosted => Ok(()),
+        hw_trial::Verdict::Refused(why) => Err(why),
+    };
+    seen.lock().unwrap().insert(node.to_string(), v.clone());
+    v
+}
+
 /// The VAAPI devices to try, in order (hw-encode-context D3): `KINETREN_VAAPI_DEVICE` alone when
 /// set, otherwise every `renderD128` … `renderD135` that exists.
 pub fn vaapi_device_paths() -> Vec<String> {
@@ -943,6 +971,28 @@ impl Source {
             Source::V7(s) => s.audio_debug_seeks(),
             Source::V8(s) => s.audio_debug_seeks(),
             Source::V9(s) => s.audio_debug_seeks(),
+        }
+    }
+
+    /// Open for decoding on the platform's device where it has one (hw-segment-decode): VAAPI on
+    /// Linux, D3D11VA on Windows; the processor only where none opens.
+    pub fn open_hw(path: &str, prebuilt: Option<PrebuiltIndex>) -> Result<Source, FfError> {
+        let (backend, _) = init().map_err(FfError::NotFound)?;
+        match backend {
+            Backend::V6(api) => v6::Source::open_hw(api, path, prebuilt).map(Source::V6),
+            Backend::V7(api) => v7::Source::open_hw(api, path, prebuilt).map(Source::V7),
+            Backend::V8(api) => v8::Source::open_hw(api, path, prebuilt).map(Source::V8),
+            Backend::V9(api) => v9::Source::open_hw(api, path, prebuilt).map(Source::V9),
+        }
+    }
+
+    /// What decodes this source's pictures (hw-segment-decode).
+    pub fn video_decode(&self) -> VideoDecode {
+        match self {
+            Source::V6(s) => s.video_decode(),
+            Source::V7(s) => s.video_decode(),
+            Source::V8(s) => s.video_decode(),
+            Source::V9(s) => s.video_decode(),
         }
     }
 

@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **Parts of the preview saved to disk play back on the graphics card.** The slow moments the program prepares on its own and keeps on disk are now read by your graphics card's video decoder, not by the processor; where the computer has none, the processor still reads them.
 - **The effect graph answers your keys.** With the mouse over an effect graph, Delete removes the selected effect, the mute key switches it off and on, and the zoom keys show the full nodes, the small chips or the whole graph — your own key bindings, not new ones; the timeline under the window does not react to them then.
 - **The effects window shows what else changes the event.** After the event's own effects its graph now shows, in the order they apply, a box for each morpher layer over it and one for its track's effects — with the track that ducks it, when it has one. Double click a box to open that layer's or that track's window. The track window draws the ducking key as a box wired into its compressor. The effects of an audio event or an audio track show as nodes again; they were missing from the graph.
 - **An effect's centre is set on the preview.** With Radial Blur selected in an effect's window, a crosshair stands on the picture at its centre: drag it where the rays should spread from, and the Center X and Y fields follow (with a curve on the centre, the key at the playhead moves). Center X and Y now stand side by side on one row, as every X/Y pair of an effect's parameters does.

@@ -172,6 +172,90 @@ struct VideoPath {
     /// Diagnostics: decoder recreations (backward) and decoded frames.
     backward_reopens: u64,
     frames_decoded: u64,
+    /// The device the decoder decodes on (hw-segment-decode), `None` — the processor.
+    hw: Option<HwDecode>,
+    /// What decodes the pictures, as the report and the trace name it.
+    decode: crate::VideoDecode,
+}
+
+/// A decode device (hw-segment-decode D1): VAAPI on Linux, D3D11VA on Windows. The decoder takes a
+/// reference of `device`; its pictures come in `pix` and are carried to the processor's memory
+/// (`av_hwframe_transfer_data`, NV12) before the conversion every picture takes.
+struct HwDecode {
+    device: *mut ffi::AVBufferRef,
+    pix: ffi::AVPixelFormat,
+    /// The device's name in the report (its render node, or the adapter).
+    name: String,
+}
+
+/// The decoder's `get_format`: the device's picture format when the decoder offers it, else the
+/// processor's (the last of the list: FFmpeg puts the software formats after the hardware ones).
+/// The device's format travels in `opaque`.
+unsafe extern "C" fn pick_hw_format(
+    ctx: *mut ffi::AVCodecContext,
+    list: *const ffi::AVPixelFormat,
+) -> ffi::AVPixelFormat {
+    unsafe {
+        let want = (*ctx).opaque as isize as ffi::AVPixelFormat;
+        let mut p = list;
+        let mut last = ffi::AV_PIX_FMT_NONE;
+        while *p != ffi::AV_PIX_FMT_NONE {
+            if *p == want {
+                return want;
+            }
+            last = *p;
+            p = p.add(1);
+        }
+        last
+    }
+}
+
+/// Open this platform's decode device, or why there is none (D2). On Linux each render node meets
+/// a throwaway process first, once per process (`crate::decode_device_verdict`); a node it refused
+/// is skipped with its reason.
+fn open_decode_device(api: &Api) -> Result<HwDecode, String> {
+    let hw = hw_api().map_err(|m| format!("hardware context functions missing: {m}"))?;
+    let create = |kind: ffi::AVHWDeviceType, node: Option<&str>| -> Result<*mut ffi::AVBufferRef, String> {
+        let c = node.map(|n| CString::new(n).map_err(|_| "device path contains NUL".to_string())).transpose()?;
+        let mut dev: *mut ffi::AVBufferRef = core::ptr::null_mut();
+        unsafe { (api.av_log_set_level)(8) };
+        let r = unsafe {
+            (hw.av_hwdevice_ctx_create)(
+                &mut dev,
+                kind,
+                c.as_ref().map_or(core::ptr::null(), |c| c.as_ptr()),
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        unsafe { (api.av_log_set_level)(16) };
+        if r >= 0 && !dev.is_null() { Ok(dev) } else { Err(format!("code {r}")) }
+    };
+    match crate::search::Os::NATIVE {
+        crate::search::Os::Linux => {
+            let mut why = Vec::new();
+            for node in crate::vaapi_device_paths() {
+                if let Err(refused) = crate::decode_device_verdict(&node) {
+                    why.push(format!("{node}: {refused}"));
+                    continue;
+                }
+                match create(ffi::AV_HWDEVICE_TYPE_VAAPI, Some(&node)) {
+                    Ok(device) => {
+                        return Ok(HwDecode { device, pix: ffi::AV_PIX_FMT_VAAPI, name: format!("vaapi {node}") });
+                    }
+                    Err(e) => why.push(format!("{node}: {e}")),
+                }
+            }
+            Err(if why.is_empty() {
+                format!("no VAAPI device (no render node in {})", crate::vaapi_device_dir_hint())
+            } else {
+                format!("no VAAPI device ({})", why.join(", "))
+            })
+        }
+        crate::search::Os::Windows => create(ffi::AV_HWDEVICE_TYPE_D3D11VA, None)
+            .map(|device| HwDecode { device, pix: ffi::AV_PIX_FMT_D3D11, name: "d3d11va".into() })
+            .map_err(|e| format!("no D3D11VA device ({e})")),
+    }
 }
 
 /// One thread's conversion to RGBA: a context per size.
@@ -630,6 +714,28 @@ impl Source {
     pub fn video_debug_stats(&self) -> (u64, u64) {
         self.video.as_ref().map(|v| (v.backward_reopens, v.frames_decoded)).unwrap_or((0, 0))
     }
+
+    /// Open for decoding on the platform's device where it has one (hw-segment-decode): the
+    /// processor only where none opens, and `video_decode` says which.
+    pub fn open_hw(
+        api: &'static Api,
+        path: &str,
+        prebuilt: Option<crate::PrebuiltIndex>,
+    ) -> Result<Source, FfError> {
+        let mut s = Self::open_with_index(api, path, prebuilt)?;
+        if let Some(v) = &mut s.video {
+            v.use_hw(api)?;
+        }
+        Ok(s)
+    }
+
+    /// What decodes this source's pictures.
+    pub fn video_decode(&self) -> crate::VideoDecode {
+        self.video
+            .as_ref()
+            .map(|v| v.decode.clone())
+            .unwrap_or_else(|| crate::VideoDecode::Software("no video stream".into()))
+    }
 }
 
 impl Drop for Source {
@@ -650,6 +756,11 @@ impl Drop for Source {
                 }
                 (api.avcodec_free_context)(&mut v.dec);
                 (api.avformat_close_input)(&mut v.fmt);
+            }
+            if let Some(h) = &mut v.hw
+                && let Ok(hwapi) = hw_api()
+            {
+                unsafe { (hwapi.av_buffer_unref)(&mut h.device) };
             }
         }
     }
@@ -874,7 +985,7 @@ impl VideoPath {
         let codec_id = unsafe { (*st.codecpar).codec_id };
         let stream_colour = stream_colour_tags(unsafe { &*st.codecpar });
         let threads = crate::decode_threads();
-        let dec = Self::open_decoder(api, fmt, stream_index, codec_id, &threads)?;
+        let dec = Self::open_decoder(api, fmt, stream_index, codec_id, &threads, None)?;
         Ok(VideoPath {
             fmt,
             dec,
@@ -895,6 +1006,8 @@ impl VideoPath {
             eof: false,
             backward_reopens: 0,
             frames_decoded: 0,
+            hw: None,
+            decode: crate::VideoDecode::Software(String::new()),
         })
     }
 
@@ -904,6 +1017,7 @@ impl VideoPath {
         stream_index: c_int,
         codec_id: ffi::AVCodecID,
         threads: &str,
+        hw: Option<&HwDecode>,
     ) -> Result<*mut ffi::AVCodecContext, FfError> {
         let st = unsafe { &**(*fmt).streams.add(stream_index as usize) };
         let codec = unsafe { (api.avcodec_find_decoder)(codec_id) };
@@ -917,6 +1031,19 @@ impl VideoPath {
             return Err(averr(api, "video codecpar", r));
         }
         unsafe { (*dec).pkt_timebase = st.time_base };
+        // the device (D1): the decoder holds its own reference, freed with the context; one thread,
+        // as the device decodes the picture and frame threads would only hold more surfaces
+        let threads = if let Some(h) = hw {
+            let hwapi = hw_api().map_err(FfError::Av)?;
+            unsafe {
+                (*dec).hw_device_ctx = (hwapi.av_buffer_ref)(h.device);
+                (*dec).opaque = h.pix as isize as *mut c_void;
+                (*dec).get_format = Some(pick_hw_format);
+            }
+            "1"
+        } else {
+            threads
+        };
         // threads=auto for ALL codecs: the libavcodec default is ONE thread,
         // and 4K was decoded on a single thread (item 14: “VLC is easy, we take a minute”).
         // The old MT ban for VP9/AV1 concerned the SHARED decoder with shared
@@ -935,6 +1062,59 @@ impl VideoPath {
         Ok(dec)
     }
 
+    /// Decode on this platform's device from now on (D1): the decoder is opened again with it.
+    /// No device — the processor goes on, and `decode` says why.
+    fn use_hw(&mut self, api: &Api) -> Result<(), FfError> {
+        match open_decode_device(api) {
+            Ok(h) => {
+                let dec =
+                    Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id, &self.threads, Some(&h))?;
+                unsafe { (api.avcodec_free_context)(&mut self.dec) };
+                self.dec = dec;
+                self.decode = crate::VideoDecode::Hardware(h.name.clone());
+                self.hw = Some(h);
+            }
+            Err(why) => self.decode = crate::VideoDecode::Software(why),
+        }
+        Ok(())
+    }
+
+    /// A picture on the device is carried to the processor's memory (NV12), its time and colour
+    /// tags with it; a picture the decoder made itself (it did not take the device for this
+    /// stream) says so in `decode`.
+    fn download(&mut self, api: &Api, frame: *mut ffi::AVFrame) -> Result<*mut ffi::AVFrame, FfError> {
+        let Some(h) = &self.hw else { return Ok(frame) };
+        if unsafe { (*frame).format } != h.pix {
+            if matches!(self.decode, crate::VideoDecode::Hardware(_)) {
+                self.decode =
+                    crate::VideoDecode::Software(format!("{}: the decoder did not take the device for this stream", h.name));
+            }
+            return Ok(frame);
+        }
+        let hwapi = hw_api().map_err(FfError::Av)?;
+        let mut sw = unsafe { (api.av_frame_alloc)() };
+        let r = unsafe { (hwapi.av_hwframe_transfer_data)(sw, frame, 0) };
+        let mut f = frame;
+        if r < 0 {
+            unsafe {
+                (api.av_frame_free)(&mut sw);
+                (api.av_frame_free)(&mut f);
+            }
+            return Err(averr(api, "video: picture from the device", r));
+        }
+        unsafe {
+            (*sw).pts = (*frame).pts;
+            (*sw).best_effort_timestamp = (*frame).best_effort_timestamp;
+            (*sw).colorspace = (*frame).colorspace;
+            (*sw).color_range = (*frame).color_range;
+            (*sw).color_primaries = (*frame).color_primaries;
+            (*sw).color_trc = (*frame).color_trc;
+            (*sw).sample_aspect_ratio = (*frame).sample_aspect_ratio;
+            (api.av_frame_free)(&mut f);
+        }
+        Ok(sw)
+    }
+
     /// Backward seek: container seek + FULL recreation of the decoder
     /// (safe for MT H.264).
     fn seek_and_reopen(&mut self, api: &Api, target_ts: i64) -> Result<(), FfError> {
@@ -950,7 +1130,8 @@ impl VideoPath {
             return Err(averr(api, "video seek", r));
         }
         unsafe { (api.avcodec_free_context)(&mut self.dec) };
-        self.dec = Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id, &self.threads)?;
+        self.dec =
+            Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id, &self.threads, self.hw.as_ref())?;
         self.last_pts = None;
         self.drop_cached_frames(api);
         self.eof = false;
@@ -974,7 +1155,10 @@ impl VideoPath {
     /// av_frame_free). None = end of stream. Updates last_pts.
     fn decode_next_frame(&mut self, api: &Api) -> Result<Option<*mut ffi::AVFrame>, FfError> {
         let mark = std::time::Instant::now();
-        let r = self.decode_next_frame_inner(api);
+        let r = self.decode_next_frame_inner(api).and_then(|f| match f {
+            Some(f) => self.download(api, f).map(Some),
+            None => Ok(None),
+        });
         crate::iostats::VDEC_NS.fetch_add(mark.elapsed().as_nanos() as u64, core::sync::atomic::Ordering::Relaxed);
         if matches!(r, Ok(Some(_))) {
             crate::iostats::VDEC_FRAMES.fetch_add(1, core::sync::atomic::Ordering::Relaxed);

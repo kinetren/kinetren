@@ -636,6 +636,9 @@ pub mod render_cache {
     pub const SCAN: u32 = 7;
     /// The prerender stopped: `b` why.
     pub const STOPPED: u32 = 8;
+    /// A segment reader opened (hw-segment-decode): `b` 1 — it decodes on the machine's device, 0 —
+    /// on the processor; `id` the device's name or why there is none (a [`name`]).
+    pub const READER: u32 = 9;
     /// Why the prerender stopped (`ABANDON`/`STOPPED` `b`).
     pub mod why {
         pub const INPUT: u64 = 1;
