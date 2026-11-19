@@ -602,12 +602,12 @@ impl Walk<'_> {
                 };
                 if s.r.sharp {
                     // the carrier executes the packet at the picture's size (mosh-sharp D1)
-                    let flags = self.b.coded(res, bs);
                     let own_mv = own_mv.unwrap_or_else(|| self.b.zero_mv(bs));
+                    let cfg = mosh::carry_cfg(&r, self.lay());
+                    let (flags, vecs) = self.b.coded(res, mv, own_mv, &cfg);
                     let cur = self.carrier_source(p)?;
                     let prev = self.carrier_source(p - 1)?;
-                    let cfg = mosh::carry_cfg(&r, self.lay());
-                    Val::Dev(self.b.carry(rf, cur, prev, mv, own_mv, flags, &cfg))
+                    Val::Dev(self.b.carry(rf, cur, prev, vecs, flags, &cfg))
                 } else {
                     Val::Dev(self.b.decode(rf, mv, res, bs, r.gain_q8))
                 }

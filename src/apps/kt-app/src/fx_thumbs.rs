@@ -1095,15 +1095,29 @@ mod tests {
     }
 
     /// t1644 (gpu-render-hardening, D6): dropping the service waits for its worker. A frame left on
-    /// the device at exit killed the process: t547 ended in SIGSEGV one run in three.
+    /// the device at exit killed the process: t547 ended in SIGSEGV one run in three. Since
+    /// close-while-busy the wait is bounded (`kt_time::shutdown::WAIT`) and a cell still rendering past
+    /// it is left behind BY NAME and ends by itself (found-defects 760: a full parallel run at load ~57
+    /// rendered the one cell past two seconds, and the drop's bound was read as "the worker outlived").
     #[test]
     fn t1644_dropping_the_service_waits_for_its_worker() {
         crate::plugins::install();
         let svc = FxThumbService::start();
         let shared = svc.shared.clone();
         svc.request(job(5, svc.generation()));
+        let since = std::time::Instant::now();
         drop(svc);
-        assert_eq!(Arc::strong_count(&shared), 1, "the worker outlived its service");
+        let waited = since.elapsed();
+        if Arc::strong_count(&shared) > 1 {
+            eprintln!("t1644: the cell outlived the drop's bound ({waited:?}), left behind by name");
+            assert!(waited >= kt_time::shutdown::WAIT, "the drop returned before its bound ({waited:?}) with the worker running");
+            assert!(kt_time::shutdown::left_behind().contains(&"effect-cells"), "the cell left behind is not named");
+            let deadline = kt_time::test_deadline();
+            while Arc::strong_count(&shared) > 1 {
+                assert!(std::time::Instant::now() < deadline, "the worker never ended");
+                std::thread::yield_now();
+            }
+        }
     }
 
     /// The service as a whole: a request reaches `get()`. A generator edit no longer needs a
