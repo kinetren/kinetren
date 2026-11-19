@@ -34,6 +34,14 @@ pub struct TrackWindow {
     pub open: bool,
 }
 
+/// A track's name as the timeline's header shows it (its label by its rank among its kind).
+pub(crate) fn track_name(p: &kt_model::Project, id: TrackId) -> Option<String> {
+    let i = p.tracks.iter().position(|t| t.id == id)?;
+    let t = &p.tracks[i];
+    let lane = p.tracks.iter().take(i).filter(|o| o.kind == t.kind).count() as u32;
+    Some(t.label(lane))
+}
+
 /// whether it is a compressor is a question asked three times in the ducking form.
 fn is_comp(f: &kt_model::FxInstance) -> bool {
     f.tag() == "compressor"
@@ -243,6 +251,13 @@ impl KtApp {
                         .filter(|r| if audio { r.audio_ok } else { r.video_ok })
                         .cloned()
                         .collect();
+                    let track_keys: Vec<(usize, String)> = {
+                        let p = self.model.project();
+                        fx.iter()
+                            .enumerate()
+                            .filter_map(|(i, f)| f.sidechain_key().and_then(|id| track_name(p, id)).map(|n| (i, n)))
+                            .collect()
+                    };
                     let ch = crate::node_editor::chain_graph(
                         ui,
                         ("track", w.id.0),
@@ -258,6 +273,9 @@ impl KtApp {
                                 save: &mut preset_save,
                                 action: &mut preset_action,
                             },
+                            context: Vec::new(),
+                            // the ducking key: a dashed wire from the key track into its compressor
+                            keys: track_keys,
                         },
                         audio,
                         &mut w.picker_query,

@@ -53,6 +53,10 @@ const CHIP_W: f32 = 124.0;
 const CHIP_H: f32 = 22.0;
 const CHIP_GAP: f32 = 12.0;
 const PAD: f32 = 3.0;
+/// A context box (a layer over the event, its track).
+const CTX_W: f32 = 150.0;
+/// A sidechain key's box under the lane.
+const KEY_H: f32 = 18.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Lane {
@@ -195,8 +199,10 @@ pub fn chain_graph(
         _ => Lane::Picture,
     };
     let (mut pic, mut snd) = (Vec::new(), Vec::new());
+    // a single-kind chain is ONE lane, the layout's first (its kind is only its colour): a sound
+    // chain put into the second slot was never laid out, and an audio event's nodes did not show
     for (i, f) in edit.fx.iter().enumerate() {
-        match if both { lane_of(f) } else { single } {
+        match if both { lane_of(f) } else { Lane::Picture } {
             Lane::Picture => pic.push(i),
             Lane::Sound => snd.push(i),
         }
@@ -211,13 +217,18 @@ pub fn chain_graph(
     let head_full = if edit.head.is_some() { HEAD_W } else { END_W };
     let head_chip = if edit.head.is_some() { CHIP_W } else { END_W };
     // a column is as wide as its widest node: one with sliders, or a narrow one without
-    let col_w: Vec<f32> = cols
+    let mut col_w: Vec<f32> = cols
         .iter()
         .map(|c| {
             let wide = c.iter().flatten().any(|&i| !main_specs(&edit.fx[i]).is_empty());
             if wide { NODE_W } else { NARROW_W }
         })
         .collect();
+    // the context boxes (the layers over the event, its track) are columns after the chain's own
+    let n_fx = cols.len();
+    let n_ctx = edit.context.len();
+    let total = n_fx + n_ctx;
+    col_w.extend(std::iter::repeat_n(CTX_W, n_ctx));
     let col_x: Vec<f32> = col_w.iter().scan(0.0, |acc, w| {
         let x = *acc;
         *acc += w + GAP;
@@ -229,19 +240,24 @@ pub fn chain_graph(
     let node_h = |i: usize| HEADER_H + main_specs(&edit.fx[i]).len() as f32 * ROW_H + NODE_PAD * 2.0;
     let lane_h: Vec<f32> = lanes
         .iter()
-        .map(|&l| {
+        .enumerate()
+        .map(|(n, &l)| {
             let li = lane_slots(l);
-            cols.iter().filter_map(|c| c[li]).map(node_h).fold(HEADER_H + NODE_PAD * 2.0, f32::max)
+            let nodes = cols.iter().filter_map(|c| c[li]).map(node_h).fold(HEADER_H + NODE_PAD * 2.0, f32::max);
+            // the first lane carries the context boxes: one with a key has a second line
+            let keyed = n == 0 && edit.context.iter().any(|b| b.key.is_some());
+            if keyed { nodes.max(HEADER_H + ROW_H) } else { nodes }
         })
         .collect();
     let per_band = (((aw - PAD * 2.0 - head_w - END_W - GAP * 2.0) / (CHIP_W + CHIP_GAP)).floor() as usize).max(1);
-    let bands = if detail { 1 } else { cols.len().div_ceil(per_band).max(1) };
+    let bands = if detail { 1 } else { total.div_ceil(per_band).max(1) };
     let band_h = if detail {
         lane_h.iter().sum::<f32>() + LANE_GAP * (lanes.len() as f32 - 1.0)
     } else {
         lanes.len() as f32 * CHIP_H + LANE_GAP * (lanes.len() as f32 - 1.0)
     };
-    let height = PAD * 2.0 + bands as f32 * band_h + (bands as f32 - 1.0) * LANE_GAP * 1.5;
+    let keys_h = if edit.keys.is_empty() { 0.0 } else { KEY_H + LANE_GAP };
+    let height = PAD * 2.0 + bands as f32 * band_h + (bands as f32 - 1.0) * LANE_GAP * 1.5 + keys_h;
     let (canvas, canvas_resp) = ui.allocate_exact_size(egui::vec2(aw, height), egui::Sense::click_and_drag());
     crate::widgets::field_probe::note("fx.graph", canvas);
     // Ctrl+wheel (or a pinch): detail ↔ chips — the plain wheel stays the window body's scroll, as
@@ -270,6 +286,7 @@ pub fn chain_graph(
 
     // geometry of every node
     let mut rects: Vec<Option<egui::Rect>> = vec![None; edit.fx.len()];
+    let mut ctx_rects: Vec<egui::Rect> = Vec::new();
     let mut ends: Vec<(Lane, egui::Rect, egui::Rect)> = Vec::new(); // (lane, in, out)
     let lane_y = |li: usize, band: usize| -> f32 {
         let base = canvas.top() + PAD + band as f32 * (band_h + LANE_GAP * 1.5);
@@ -295,13 +312,33 @@ pub fn chain_graph(
             let nh = if detail { node_h(i) } else { CHIP_H };
             rects[i] = Some(egui::Rect::from_min_size(egui::pos2(x, lane_y(li, band)), egui::vec2(w, nh.min(h))));
         }
-        let (last_band, last_k) = if detail || cols.is_empty() {
-            (0, cols.len())
+        if li == 0 {
+            for n in 0..n_ctx {
+                let c = n_fx + n;
+                let (band, k) = if detail { (0, c) } else { (c / per_band, c % per_band) };
+                let (w, x) = if detail {
+                    (CTX_W, x0 + head_w + GAP + col_x[c])
+                } else {
+                    (CHIP_W, x0 + head_w + GAP + k as f32 * (CHIP_W + CHIP_GAP))
+                };
+                let hh = if !detail {
+                    CHIP_H
+                } else if edit.context[n].key.is_some() {
+                    HEADER_H + ROW_H
+                } else {
+                    HEADER_H
+                };
+                ctx_rects.push(egui::Rect::from_min_size(egui::pos2(x, lane_y(li, band)), egui::vec2(w, hh)));
+            }
+        }
+        let cols_here = if li == 0 { total } else { n_fx };
+        let (last_band, last_k) = if detail || cols_here == 0 {
+            (0, cols_here)
         } else {
-            ((cols.len() - 1) / per_band, (cols.len() - 1) % per_band + 1)
+            ((cols_here - 1) / per_band, (cols_here - 1) % per_band + 1)
         };
         let out_x = if detail {
-            x0 + head_w + GAP + col_w.iter().map(|w| w + GAP).sum::<f32>()
+            x0 + head_w + GAP + col_w[..cols_here].iter().map(|w| w + GAP).sum::<f32>()
         } else {
             x0 + head_w + GAP + last_k as f32 * (CHIP_W + CHIP_GAP)
         };
@@ -322,6 +359,14 @@ pub fn chain_graph(
             wire(&painter, prev, to, color, prev_off);
             prev = egui::pos2(r.right(), r.top() + HEADER_H * 0.5);
             prev_off = edit.bypass[i];
+        }
+        if lslot == 0 {
+            for r in &ctx_rects {
+                let y = r.top() + r.height().min(HEADER_H) * 0.5;
+                wire(&painter, prev, egui::pos2(r.left(), y), color, prev_off);
+                prev = egui::pos2(r.right(), y);
+                prev_off = false;
+            }
         }
         wire(&painter, prev, egui::pos2(output.left(), output.top() + output.height().min(HEADER_H) * 0.5), color, prev_off);
     }
@@ -399,6 +444,54 @@ pub fn chain_graph(
             if h.label.chars().count() > crate::widgets::SLOT_NAME_CHARS {
                 resp.on_hover_text(h.label.clone());
             }
+        }
+    }
+
+    // the context boxes: read-only, a double click opens their own window
+    for (n, (b, r)) in edit.context.iter().zip(ctx_rects.iter()).enumerate() {
+        let (glyph, color) = match b.target {
+            crate::widgets::ContextTarget::Layer(_) => (crate::icons::CARET_RIGHT, crate::theme::MORPH_SLOT),
+            crate::widgets::ContextTarget::Track(_) => (crate::icons::CAT_VIDEO, ui.visuals().weak_text_color()),
+        };
+        painter.rect_filled(*r, 5.0, ui.visuals().faint_bg_color);
+        painter.rect_stroke(*r, 5.0, egui::Stroke::new(1.0, color), egui::StrokeKind::Inside);
+        let text = format!("{glyph} {} ({})", b.label, b.count);
+        // a chip has one line: the key follows the name after an arrow; the box's accessible label
+        // always names it
+        let shown = match (&b.key, detail) {
+            (Some(key), false) => format!("{text} {} {key}", crate::icons::ARROW_LEFT),
+            _ => text.clone(),
+        };
+        let spoken = match &b.key {
+            Some(key) => format!("{text} {}", crate::tf!(k::fx::graph::KEY, key)),
+            None => text.clone(),
+        };
+        let room = r.width() - 8.0;
+        let galley = node_name(ui, &shown, ui.visuals().text_color(), false, room).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Truncate),
+            room,
+            egui::TextStyle::Button,
+        );
+        let gy = r.top() + (r.height().min(HEADER_H) - galley.size().y) * 0.5;
+        painter.galley(egui::pos2(r.left() + 4.0, gy), galley, ui.visuals().text_color());
+        if let Some(key) = &b.key
+            && detail
+        {
+            painter.text(
+                egui::pos2(r.left() + 4.0, r.top() + HEADER_H + ROW_H * 0.5 - 2.0),
+                egui::Align2::LEFT_CENTER,
+                crate::tf!(k::fx::graph::KEY, key),
+                egui::TextStyle::Small.resolve(ui.style()),
+                ui.visuals().weak_text_color(),
+            );
+        }
+        let resp = ui.interact(r.intersect(canvas), egui::Id::new((&id, "ctx", n)), egui::Sense::click());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
+        crate::widgets::field_probe::note(&format!("fx.ctx.{n}"), *r);
+        let resp = crate::app::hint_into(hover, resp, tr(k::fx::graph::CONTEXT_HINT));
+        if resp.double_clicked() {
+            ch.open = Some(b.target);
         }
     }
 
@@ -519,6 +612,31 @@ pub fn chain_graph(
             }
         }
         let _ = drop_here;
+    }
+
+    // the sidechain keys: a box under the lane, a dashed wire into its compressor
+    for (slot, name) in &edit.keys {
+        let Some(r) = rects.get(*slot).copied().flatten() else { continue };
+        let kr = egui::Rect::from_min_size(
+            egui::pos2(r.left(), canvas.bottom() - PAD - KEY_H),
+            egui::vec2(r.width().min(CTX_W), KEY_H),
+        );
+        painter.rect_stroke(kr, 8.0, egui::Stroke::new(1.0, lane_color(Lane::Sound)), egui::StrokeKind::Inside);
+        let label = crate::tf!(k::fx::graph::KEY, name);
+        painter.text(
+            kr.left_center() + egui::vec2(6.0, 0.0),
+            egui::Align2::LEFT_CENTER,
+            &label,
+            egui::TextStyle::Small.resolve(ui.style()),
+            ui.visuals().text_color(),
+        );
+        painter.extend(egui::Shape::dashed_line(
+            &[kr.center_top(), egui::pos2(kr.center().x, r.bottom())],
+            egui::Stroke::new(1.2, lane_color(Lane::Sound)),
+            4.0,
+            3.0,
+        ));
+        crate::widgets::field_probe::note(&format!("fx.key.{slot}"), kr);
     }
 
     ui.data_mut(|d| d.insert_temp(view_id, view));
@@ -645,6 +763,16 @@ fn node_name(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool, max_w: 
 
 fn wire(painter: &egui::Painter, a: egui::Pos2, b: egui::Pos2, color: egui::Color32, dim: bool) {
     let c = if dim { color.gamma_multiply(0.4) } else { color };
+    if b.x < a.x - 1.0 {
+        // a wrap to the next band of chips: down the column gap, back along the gap above the
+        // destination's row, never across a node
+        let gx = a.x + CHIP_GAP * 0.5;
+        let gy = b.y - CHIP_H * 0.5 - LANE_GAP * 0.5;
+        let bx = b.x - CHIP_GAP * 0.5;
+        let pts = vec![a, egui::pos2(gx, a.y), egui::pos2(gx, gy), egui::pos2(bx, gy), egui::pos2(bx, b.y), b];
+        painter.add(egui::Shape::line(pts, egui::Stroke::new(1.6, c)));
+        return;
+    }
     let dx = ((b.x - a.x) * 0.5).max(12.0);
     let pts = [a, egui::pos2(a.x + dx, a.y), egui::pos2(b.x - dx, b.y), b];
     painter.add(egui::epaint::CubicBezierShape::from_points_stroke(pts, false, egui::Color32::TRANSPARENT, egui::Stroke::new(1.6, c)));

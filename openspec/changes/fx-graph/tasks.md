@@ -55,14 +55,21 @@
 
 - [ ] 3.1 FX window: the event and its partners in one editor, the form beside it (split remembered)
 - [ ] 3.2 morpher window: the purple Source-swap node, both vectors as lanes (t244/t218 rewritten)
-- [ ] 3.3 track window (key wire into the compressor's key socket); a composition instance's chain
-- [ ] 3.4 context groups: read-only boxes for layers and the track, Tab peeks, double click opens; t2996
+- [x] 3.3 track window: the key box with a dashed wire into its compressor (`ChainEdit.keys`); a
+      composition instance's chain already uses the editor (the head is its parameters)
+- [x] 3.4 context boxes: the layers over the event bottom up (`Project::layers_over`, the render's
+      `windows_on`) and its track's stage with its key, read-only, double click opens their window;
+      kept per model revision; t2996, live `node_graph`. Tab peek waits for the key table
 - [x] 3.5a `widgets::chain_strip` removed — the three windows call `node_editor::chain_graph` (v1b)
 - [ ] 3.5 the remaining the live scenarios that clicked crumbs follow the editor
       (`vhs_sound`, `stream_sound`, `camera_mic`, morpher ones); new live `morph_pair`
 - [ ] 3.6 cost at rest: t3003, live `idle` with both windows open on the heavy showcase (t3006); load
       on a pause, hover and with the windows open — numbers in the report
 - [ ] 3.7 specs merged, What's new, commit; prune; the orchestrator runs `finish.sh` on the stage
+
+- [x] 3.8 found on the way: a single-lane SOUND chain (an audio event, an audio track) laid its nodes
+      in the slot the layout never read — v1b drew no nodes there; wrapping wires between chip bands
+      now run in the gaps
 
 ## 4. v1d — the Viewer
 

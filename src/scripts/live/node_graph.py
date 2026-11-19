@@ -10,7 +10,10 @@ PATH (ui-reach spec, "Every effect chain is edited in one node editor that fits 
 1. double click the morpher block → its window: the node editor, Blur and VHS Tape on the picture
    lane, Gain and the tape's sound on the sound lane, the tape's two halves in one column;
 2. drag Blur onto VHS Tape → Blur stands after the tape (one lane, one undo step);
-3. double click the Camera ISP event → its effects window: the ISP node with its main sliders, the
+3. double click the audio event → its effects window: its nodes, then the layer's box and the track's
+   box with its key → double click the track's box → the track's window with the key box under its
+   compressor → double click the layer's box → the layer's window;
+4. double click the Camera ISP event → its effects window: the ISP node with its main sliders, the
    whole ISP panel below.
 """
 import json
@@ -37,7 +40,13 @@ def scene(dest):
             clip(2, "audio", 0, []),
             clip(3, "video", 8 * SEC, [{"kind": "camera_isp"}]),
         ],
-        "tracks": [{"id": 1, "kind": "video"}, {"id": 2, "kind": "audio"}, {"id": 3, "kind": "morph"}],
+        # the audio track ducks under the music track: its compressor is keyed by track 4
+        "tracks": [
+            {"id": 1, "kind": "video"},
+            {"id": 2, "kind": "audio", "fx": [{"kind": "compressor", "key": 4}]},
+            {"id": 3, "kind": "morph"},
+            {"id": 4, "kind": "audio"},
+        ],
         "morphers": [{
             "id": 1, "lane": 0, "start": 0, "duration": 6 * SEC,
             "targets": {"on": "clips", "ids": [1, 2]},
@@ -108,11 +117,29 @@ def main(out):
         app.step("framed", "Frame all → the whole graph in view again")
         app.key("Escape")
 
+        # what applies after the event: the layer's box and the track's box with its key
+        # above the volume rail (a double click on it resets the level)
+        app.double_click(app.x_at(3 * SEC), app.lane_y("audio", 0, frac=0.15))
+        app.expect(app.until(lambda: field(app, "fx.ctx.1") is not None), "the audio event's graph shows the layer and the track as boxes")
+        app.step("context", "double click on the audio event → after its own nodes: the layer's box and the track's box with its key")
+        app.double_click_probe("fx.ctx.1", "the track's box")
+        app.expect(app.until(lambda: field(app, "fx.key.0") is not None), "the track's window draws the key under its compressor")
+        app.hover_probe("fx.key.0", "the key box")
+        app.step("track-window", "double click on the track's box → the track's window: the key box wired into the compressor")
+        app.double_click_probe("fx.ctx.0", "the layer's box")
+        app.expect(app.until(lambda: field(app, "fx.head") is not None), "the layer's box opened the morpher's window")
+        app.step("layer-window", "double click on the layer's box → the morpher's own window")
+        for _ in range(3):
+            app.key("Escape")
+
         app.double_click(app.x_at(11 * SEC), app.lane_y("video", 0, frac=0.5))
         app.expect(app.until(lambda: field(app, "fx.graph") is not None and field(app, "fx.node.1") is not None),
                    "the ISP event's node editor")
         app.step("isp", "double click on the Camera ISP event → its node: the look's main sliders; the whole panel below")
         node = field(app, "fx.node.1")
+        app.hover_probe("fx.graph", "the graph's canvas")
+        app.click_probe("fx.node.1", "the ISP node")
+        app.step("isp-selected", "a click on the ISP node selects it; its whole panel stays below")
         if node:
             app.expect(node["h"] <= 22 + 3 * 22 + 4 + 1, f"the ISP node stays small: {node['h']} px")
     return app.done()

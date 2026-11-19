@@ -255,3 +255,85 @@ fn t3001_a_long_chain_fits_without_scrolling() {
     h.step();
     assert!(nodes(&h).iter().all(|r| r.height() < 30.0), "Frame all did not return the fit");
 }
+
+/// t2996 (fx-graph v1c, the owner's Q3 "Да, коробками"): what applies to an event AFTER its own
+/// effects stands in its graph as read-only boxes in the render's order — the morpher layers over
+/// it bottom up, then its track's stage with the sidechain key — and a double click on a layer's
+/// box opens that layer's window; the track window draws the key as a box wired into its compressor.
+/// - **PATH** double click an audio event under two morpher layers on a track whose compressor is
+///   keyed by the music track → its effects window shows the event's nodes, then two purple layer
+///   boxes, then the track's box with "Key: …" → double click the first layer box → that morpher's
+///   window opens → open the track's window → the key box stands under its compressor
+#[test]
+fn t2996_layers_and_the_track_stand_after_the_event() {
+    crate::plugins::install();
+    // a double click is two presses closer than egui's 0.3 s: the harness steps 20 ms
+    let mut h = crate::layout_tests::harness_lang_dt(crate::i18n::Lang::Ru, Some(0.02));
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine"));
+    let mut a = clip(1, ClipKind::Audio, vec![FxInstance::plugin("gain").unwrap()]);
+    a.link_group = None;
+    p.clips.push(a);
+    p.ensure_tracks(LaneKind::Audio, 2);
+    p.ensure_tracks(LaneKind::Morph, 2);
+    let music = p.track_at(LaneKind::Audio, 1).unwrap().id;
+    let mut comp = FxInstance::plugin("compressor").unwrap();
+    assert!(comp.set_sidechain_key(Some(music)));
+    let track = p.track_at(LaneKind::Audio, 0).unwrap().id;
+    if let Some(t) = p.track_at_mut(LaneKind::Audio, 0) {
+        t.fx = vec![comp];
+        t.fx_bypass = vec![false];
+    }
+    for (id, lane) in [(1u64, 0u32), (2, 1)] {
+        p.morphers.push(MorpherEvent {
+            id: MorphId(id),
+            lane,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(180_000),
+            targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+            patch: MorphPatch { audio_fx: vec![FxInstance::plugin("gain").unwrap()], ..Default::default() },
+            timed: true,
+            strength: 1.0,
+            fade_in: kt_time::Tick::ZERO,
+            fade_out: kt_time::Tick::ZERO,
+            enabled: true,
+        });
+    }
+    p.validate().unwrap();
+    let order = p.layers_over(&p.clips[0].clone());
+    assert_eq!(order.len(), 2, "both layers reach the event");
+    app.model = TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let boxes: Vec<egui::Rect> = (0..3).map(|n| crate::widgets::field_probe::rect_of(&format!("fx.ctx.{n}")).expect("a context box")).collect();
+    // the reading order: a band, then left to right (the chips wrap into bands)
+    let read = |r: &egui::Rect| (r.top().round() as i32, r.left().round() as i32);
+    assert!(read(&boxes[0]) < read(&boxes[1]) && read(&boxes[1]) < read(&boxes[2]), "the boxes are not in the render's order: {boxes:?}");
+    let gain = crate::widgets::field_probe::rect_of("fx.node.0").expect("the event's own node");
+    assert!(read(&gain) < read(&boxes[0]), "a layer stands before the event's own effects");
+    let first = tr(k::fx::graph::LAYER).replace("{0}", &order[0].0.to_string());
+    assert!(h.query_all_by_label_contains(&first).next().is_some(), "the first box is not the lower layer “{first}”");
+    let music_name = crate::track_window::track_name(h.state().model.project(), music).unwrap();
+    let key = tr(k::fx::graph::KEY).replace("{0}", &music_name);
+    assert!(h.query_all_by_label_contains(&key).next().is_some(), "the track's box does not name its key “{key}”");
+    // a double click on the first layer's box opens its window
+    let c = boxes[0].center();
+    h.hover_at(c);
+    h.step();
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: c, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+            h.step();
+        }
+    }
+    h.step();
+    h.step();
+    assert!(h.state().morph_editors.iter().any(|e| e.id == order[0] && e.open), "the layer's window did not open");
+    // the track window: the key box under the compressor
+    h.state_mut().open_track_window(track);
+    h.step();
+    h.step();
+    assert!(crate::widgets::field_probe::rect_of("fx.key.0").is_some(), "the track window draws no key box");
+}

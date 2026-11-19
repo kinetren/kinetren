@@ -1829,6 +1829,32 @@ pub struct ChainEdit<'a> {
     /// it is a source substitution. Its own checkbox, a purple label, it is not
     /// rearranged with the mouse and has no cross.
     pub head: Option<HeadSlot<'a>>,
+    /// What applies to the chain's output AFTER it (fx-graph v1c, the owner's Q3 "Да, коробками"):
+    /// the morpher layers over the event bottom up, then its track's stage. Shown as read-only
+    /// boxes; a double click asks their own window (`ChainChanged::open`).
+    pub context: Vec<ContextBox>,
+    /// Sidechain keys feeding slots of this chain: (slot, the key track's name) — a dashed wire
+    /// into the compressor (the track window).
+    pub keys: Vec<(usize, String)>,
+}
+
+/// One read-only box after a chain (fx-graph v1c).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextBox {
+    pub target: ContextTarget,
+    /// The layer's or the track's name as the timeline shows it.
+    pub label: String,
+    /// How many effects it holds.
+    pub count: usize,
+    /// The sidechain key of a track stage, by the key track's name.
+    pub key: Option<String>,
+}
+
+/// Whose window a context box opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextTarget {
+    Layer(kt_model::MorphId),
+    Track(kt_model::TrackId),
 }
 
 /// Pseudo-slot at the start of the strip.
@@ -1899,6 +1925,8 @@ pub struct ChainChanged {
     /// to the chain (the slot masks, shape-masks).
     pub moved: Option<(usize, usize)>,
     pub removed: Option<usize>,
+    /// A context box asked for its own window (a double click on it).
+    pub open: Option<ContextTarget>,
 }
 
 impl ChainChanged {
