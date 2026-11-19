@@ -1114,8 +1114,9 @@ fn graph(
                 egui::Stroke::new(1.0, col),
             ));
             view.key_marks.push((ci, ki, egui::pos2(x, y)));
-            // the keys of the active curve — the live scenario's targets (curve-key-selection)
-            if ci == view.active && crate::widgets::field_probe::on() {
+            // the keys of the active curve — the live scenario's targets (curve-key-selection); a key the
+            // graph's time window leaves out is clipped, nothing a person can press (found-defects 814)
+            if ci == view.active && rect.x_range().contains(x) && crate::widgets::field_probe::on() {
                 crate::widgets::field_probe::note(
                     &format!("auto.key.{ki}"),
                     egui::Rect::from_center_size(egui::pos2(x, y), egui::vec2(2.0 * r, 2.0 * r)),
