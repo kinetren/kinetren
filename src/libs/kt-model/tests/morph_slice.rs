@@ -567,6 +567,7 @@ fn t247_named_areas_and_references() {
         duration: Tick(1_000),
         name: "final".into(),
         color: None,
+        note: String::new(),
     });
     assert!(matches!(bad.validate(), Err(ProjectError::DuplicateName(..))));
 
@@ -624,12 +625,14 @@ fn t247_marks_give_windows_and_merge() {
         duration: Tick(20_000),
         name: "a".into(),
         color: None,
+        note: String::new(),
     });
     p.markers.push(Marker {
         t: Tick(45_000),
         duration: Tick(15_000),
         name: "b".into(),
         color: None,
+        note: String::new(),
     });
     let mut m = layer(Tick(0), Tick(1));
     m.targets =
@@ -644,7 +647,7 @@ fn t247_marks_give_windows_and_merge() {
     assert_eq!(eff[1].media, MediaId(2));
     // a point marker does not define a window
     let mut q = base();
-    q.markers.push(Marker { t: Tick(30_000), duration: Tick::ZERO, name: "t".into(), color: None });
+    q.markers.push(Marker { t: Tick(30_000), duration: Tick::ZERO, name: "t".into(), color: None, note: String::new() });
     let mut m = layer(Tick(0), Tick(1));
     m.targets = MorphTargets::Marks { names: vec!["t".into()] };
     q.morphers.push(m);
@@ -674,6 +677,7 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
         duration: Tick(20_000),
         name: "Insert".into(),
         color: None,
+        note: String::new(),
     });
     // a morpher on the FIRST clip and a morpher-reference to an area
     p.morphers.push(layer(Tick(0), Tick(45_000)));

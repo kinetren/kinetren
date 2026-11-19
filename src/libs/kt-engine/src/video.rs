@@ -2244,6 +2244,12 @@ impl VideoRenderer {
         self.plan_with(cache, t, quality, true)
     }
 
+    /// The probe plan and the leaves its durable key needs (render-cache-disk D1): what each frame's
+    /// per-process content serial stands for. `render_cache::disk_key` makes the key of the two.
+    pub fn probe_durable(&self, cache: &BurstCache, t: Tick, quality: Quality) -> (FramePlan<'_>, crate::render_cache::Leaves) {
+        crate::render_cache::with_leaves(|| self.plan_with(cache, t, quality, true))
+    }
+
     fn plan_with(&self, cache: &BurstCache, t: Tick, quality: Quality, probe: bool) -> FramePlan<'_> {
         let ctx = PlanCtx {
             probe,
@@ -2424,6 +2430,11 @@ fn layer_src<'a>(
         ),
         _ => None,
     };
+    // the durable key's leaf (render-cache-disk D1): what this frame's content serial stands for
+    // across processes — the file's identity, a generator's values; a stream stage reads other files
+    if clip.nest.is_none() {
+        crate::render_cache::note_leaf(source.0, Some(clip.media), clip.src_rev, clip.stream.is_some());
+    }
     let (frame, content) = if clip.nest.is_some() {
         (None, 0) // the subtree's input is assembled below
     } else if let Some((f, key)) = &streamed {

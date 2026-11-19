@@ -640,3 +640,35 @@ content and its declared kind. The reasons, in the order they cost something:
   t918 runs every openable window at the scales 1.0/1.1/1.2/1.25/1.5 for 300 frames and requires the
   outer rect to stay put.
 
+
+## The bin scrub's timecode (bin-scrub-timecode, 2026-11-18, F-MED-008)
+
+The owner (`v26.10` line 156): the bin scrub pages through a file but names no moment. The moment is
+the FILE's time (FCP's Skimmer Info shows source timecode: the bin has no project time yet), written
+with `format_timecode` at the project's fps from the same hover-x that picks the thumbnail, so the
+number and the picture cannot disagree; the picture is the nearest stored thumbnail, up to half a
+ladder step off. A dark chip over the thumbnail's bottom (no new strip, no label word), shortened on a
+narrow card: full → without "00:" → without the frame → without the milliseconds. The galley is kept
+per (media, moment, fps, room) in `KtApp::bin_scrub_tc`: a still pointer formats nothing (t3101).
+Class walk (a hover scrub that shows a moment's picture without its number): the bin's file cards —
+fixed; audio cards draw a waveform with no hover scrub; reel cards a mini-map; the timeline filmstrip
+is not hover-scrubbed (the playhead and ruler carry time); the FX picker follows the playhead. The
+second half of his line — a drag that places the file from the scrubbed moment — is his to decide.
+
+## The kind pickers' cells (kind-picker-previews, 2026-11-18, F-AUT-012)
+
+The owner (`v26.10` line 17): the generator and transition kind pickers were lists of names next to the
+effects picker's gallery. Both are now galleries of `fx_thumbs::kind_cell`, rendered by the effect
+cells' service with one more candidate form, `Swap` (a kind put in place of the event's generator or
+the transition's kind, curves dropped as the click drops them); the guard, lane, cache and pause are
+the service's. A transition cell is the cut at the MIDDLE of its window: at an edge every kind is the
+same frame A or B. A generator kind is a SOURCE's state, and the scene's sources and frame cache are
+keyed by the event's address: a candidate shared them and every cell showed the present kind (found
+by the live scenario `kind_picker_previews`, t3109's generator half is red on it); a generator
+candidate gets a context of its own project. The pickers stay ComboBoxes (t227, t511, the lessons'
+scenario find them so); a cell keeps its accessible name below the fold and in a popup's sizing pass,
+but is neither drawn, asked nor published there. Class walk: the right-click "Transition with
+next/previous" stays a menu of names (a picture popup inside a menu; the window shows the gallery);
+"Create a generator…" has no event yet, so no frame after the click; a track's blend modes are a
+candidate for a later change (a mode shows only over another layer); the morpher's source kind and the
+geometry fit name behaviours, not looks.

@@ -515,3 +515,92 @@ next editor:
 - The transitions' `sin(π·k)`, spin's rotation and Camera ISP's per-frame scalars stay per pixel:
   replaced by constants they changed a 1080p frame by nothing measurable, and moving them to the CPU
   would move bytes.
+
+## A sharp datamosh and a stream input that follows the layer (mosh-sharp, archived 2026-11-18)
+
+kkt-26.11.18b U1/U2. The look of a low-`lines` mosh is the codec's DECISIONS (its coarse block grid,
+vectors, dropped keyframes, which blocks it codes); the softness was only its picture's size.
+
+- **The carrier** (`sharp` row, `mosh::carry_inter`, `walk.rs` `carrier_source`, `wgsl/carry.wgsl`,
+  `wgsl/coded.wgsl`): the codec still encodes at `lines`; the broken decoder is replaced by a carrier
+  that runs the same chain at the stream's input size. A pixel takes the codec block covering it (by
+  the visible sizes), predicts by that block's applied vector scaled to the carrier, and where the
+  block's residual (after the loss) is not empty in its plane adds `gain ×` the source's own
+  difference `src_p − src_{p−1}(x + own')`. An intact chain is the source exactly (t2971); the
+  quantiser acts through the skip decision. Rejected: a sharpening filter over the soft picture (an
+  imitation), the codec at the carrier's size (another grid, the search cost), the codec's residual
+  enlarged (soft again).
+- **The input follows the layer** (`video_stream::stream_quality`, `StreamLayout::coded`): the host
+  orders the stream — the decode and the slots in front — at the layer's size when the kernel carries
+  (`StreamKernel::carried`), else at the codec's size but never above the layer's. The host names
+  the codec's size in `coded()`; the kernel resamples (`codec::resample_rgba` = `wgsl/resample.wgsl`:
+  a box down, bilinear up, the identity at equal sizes) when the two differ. Row 734: Camera ISP in
+  front of a 720-line Datamosh no longer runs at 720 lines in a 360p preview. With `lines` at or
+  below the project's height and `sharp` off the export's bytes are the former ones.
+- **The class walked**: the second input's chain (same input size), the memo's want and the order
+  (they ask `stream_quality`), VHS Tape and Camera ISP inside chains (already at the layer's decode
+  size), generators and reel previews (their own sizes) — no other stage orders frames at a size of
+  its own.
+- The paired sound ignores `sharp` (a foreign row) and the carrier moves no node, so picture and
+  sound break at the same positions (t2975).
+- Preview and export decide from inputs resampled from different sizes: the same grid and breakages,
+  vectors that may differ where the motion is ambiguous.
+
+## Sharp for new instances; the input resized only for a front (mosh-sharp-default, 2026-11-18)
+
+- `Decl::fresh` (kt-plugin-api): values a NEW instance takes over its passport's defaults; `PluginSlot::new`
+  applies them, `from_value` does not, so a saved slot without the row reads the passport default and
+  writes back the same text (t2977). Datamosh and its sound half declare `sharp` = 1 (owner, kkt-26.11.18b
+  U7: "Вкл. для новых"). A plugin that wants another default for new instances uses `fresh`, never the
+  passport default, or every saved project changes its look.
+- The carrier reads the source at `p` and `p−1`; the walk keeps the last source planes under
+  `mosh::src_key` (live tier on the device, transient on the host) and `needs` names `p−1` only when the
+  memo lacks it — else the steady state ordered the previous frame again (found-defects 761, t1248,
+  t2259 red once `sharp` became the default).
+- `stream_quality` takes the layer's size for a soft stream only when slots run in front of the stage
+  (found-defects 762): measured on llvmpipe, a 112-position walk at 144 lines cost 0.68 s from 256×144 and
+  0.87 s from 160×90 resampled (the resample's own dispatch and the convert after it, not its arithmetic
+  — a loop-free shader changed nothing); t2044's short loop under a parallel run showed 57 frames
+  instead of ~200. A sharp walk costs ~0.96 s there (row 763): the owner's default carries that cost.
+
+## fx-center-on-preview (2026-11-19, v26.10 T10)
+
+### D1. The selected slot's centre, in its own frame
+
+The crosshair follows the selection of an effects window (`ChainSel::Fx(i)`, a raw slot index): one
+effect's point at a time, as the masks edit one owner. The point is −1..1 across the frame the kernel
+sees (`radial_blur.wgsl`: `cx = 0.5 + center_x / 2` of the pass's width). A slot before the Geometry
+node works on the source, which the node places on the canvas; after it, on the canvas
+(`ClipEvent::geometry_pos`). `maskctl::slot_frame_view` gives that map — the one the slot's masks use
+(placed or plain `MaskSpace`), so the crosshair lands where the rays spread from.
+
+### D2. One step, the field's rules
+
+A drag takes a gesture token at its start and writes through `apply_coalesced`: one undo step. Only a
+real change is written (input-without-work). A pair with a live curve gets a key at the playhead's
+material moment (`clip_material_at`, `insert_key`) through `SetFxAuto`, as the field edits the curve
+it shows (R.43 item 291); the base stays.
+
+### D3. Where it is drawn
+
+From the one place in `draw_preview` where the R.64 frame and the masks are, after the frame: egui
+gives the pointer to the last registered interactor, so the crosshair wins over the frame's body. Not
+while masks are edited (they own the picture) and not during playback (the frame's rule).
+
+### D4. The pair on one row
+
+`params_grid_bound` laid parameters two a row by position: Radial Blur's Amount took Center X's row
+and Center Y fell to the next. An `_x` followed by its `_y` is now one row of its own; the rest stays
+two a row. The node inside the chain strip is `fx-graph`'s and is not touched.
+
+### Class walk
+
+The mechanism: a point parameter set only by numbers, its halves apart. Checked:
+- every effect passport: only Radial Blur has a centre pair today; Twirl, Lens Distort, Ripple,
+  Kaleidoscope and Vignette fix their centre at the frame's middle in the kernel — a centre for them is
+  a kernel and passport change (noted, not done);
+- Drop Shadow's `offset_x`/`offset_y` (px) — a vector, not a point on the frame; its pair is now one
+  row; dragging it on the preview is not asked for;
+- generators' `plate_pad_x/_y`, `offset_x/_y`: one row by the same grid rule where the grid draws them;
+- the Geometry node's position, anchor and rotation already have the R.64 frame;
+- masks have their own on-preview editor (shape-masks).

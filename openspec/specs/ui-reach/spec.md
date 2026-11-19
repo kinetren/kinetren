@@ -915,6 +915,7 @@ index entry pointing at a heading is that address.
 ### Requirement: Selecting segments is reachable by mouse and keyboard and is said
 The segment selection of the automation graph SHALL be said where the person acts: the graph's
 hover hint over a segment names the gestures (Ctrl+click, Shift+click, a drag over empty space), the
+hover hint over a key names Shift+click on a key and the joint drag of the selection, the
 selection row names what it edits (the bounds of one segment or the count), and the segment menu
 header names how many segments it touches. The selection row's controls SHALL be reachable by Tab in
 the window's order, a typed value SHALL apply on Enter, and the row SHALL carry a button that clears
@@ -933,6 +934,12 @@ nobody can discover is the same "nowhere to write them" (rule 16: a control says
 - **THEN** the hover hint names Ctrl+click, Shift+click and the sweep; the row caption names the count; the menu header names the count; every new key exists in en, ru, es, zh-Hans and ar
 - **PATH** hover a segment → the status line explains how to select several → Ctrl+click a second segment → the row says "Selected segments: 2" → right click on one → the menu header says 2 segments
 - **TEST** t1122 (`src/apps/kt-app/src/segfield_tests.rs`), live scenario `src/scripts/live/segfields.py` (`./scripts/live-check.sh`)
+
+#### Scenario: Hovering a key says how keys are selected and moved together
+- **WHEN** the pointer hovers a key of the curve graph; the catalogs are read
+- **THEN** the status line names the key's place and then Shift+click and the drag of a selected key; the text exists in all five catalogs
+- **PATH** hover a key → the status line reads "key: … · Shift+click: take this key in or out of the selection · drag a selected key: move the whole selection"
+- **TEST** t3116 (`src/apps/kt-app/src/segfield_tests.rs`)
 
 ### Requirement: A lesson step is re-checked when what it reads changes
 The re-check of the current step SHALL follow every input of its predicate, not only the model
@@ -1529,3 +1536,63 @@ CLAUDE.md: "a slow effect costs frames, never the Undo".
 - **THEN** each consequence lands on the live model within a frame or a few, and the journal notes no UI frame of 400 ms or more
 - **PATH** Home, Space → playback over the moshed events, the picture lags; double click a moshed event → its effects window opens; picker → type "datamosh" → click a cell → a second Datamosh in the chain; Ctrl+Z → it is gone; Done → the window closes; Space → playback stops
 - **TEST** live `ui_wait` (`src/scripts/live/ui_wait.py`)
+
+### Requirement: The bin's scrub writes the moment under the cursor
+While the pointer scrubs a file card of the media bin, the card SHALL write the moment of the file
+under the cursor over the bottom of its thumbnail, in the program's timecode form at the project's
+fps, taken from the same hover position that picks the thumbnail. The label SHALL stay inside the
+thumbnail, shortening on a narrow card (without the hours, then the frame, then the milliseconds),
+SHALL leave with the pointer, and SHALL be laid out once per moment, asking for no decode.
+Why: the owner, `v26.10` line 156 — "можно таки отображать там внутри таймкод курсора"; a scrub
+without a number says only "roughly here" (F-MED-008).
+
+#### Scenario: The scrub names the moment and follows the cursor
+- **WHEN** a 12 s video file is in the bin and the pointer hovers its card at half, then at a quarter of the thumbnail's width, then leaves the card
+- **THEN** the thumbnail carries exactly the timecode of the hovered fraction of the file each time, inside the thumbnail, the two differ, and nothing is written after the pointer left
+- **PATH** hover a file card in the bin → a dark chip at the bottom of the thumbnail reads "00:00:06.000 F00" → move left → the chip reads an earlier moment as the picture pages back → move off the card → the chip is gone
+- **TEST** t3100 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A narrow card shortens the label; a still moment is not laid out again
+- **WHEN** the label is laid out for a 120-point card and for the 56-point narrowest card; the pointer rests on one moment for two hover frames
+- **THEN** the wide card keeps the full form, the narrow one a shortened part of it that fits; the second frame replays the same laid-out label
+- **PATH** narrow the bin column to its least → hover a file card → the chip reads a shorter form ("01:40.500" instead of "00:01:40.500 F12") inside the thumbnail → keep the pointer still → nothing changes
+- **TEST** t3101 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: The generator and transition kind pickers are galleries of the frame after the click
+The kind picker of a generator event (its window's head) and of a transition (its window) SHALL show
+every kind as a cell under its family heading, as the effects picker does: the frame the preview shows
+after the click on that cell, on the project the player plays — a generator kind as the event at the
+cursor with that kind at its defaults, a transition kind as the cut at the middle of its window with
+that kind — rendered by the effect cells' service with its misclick guard, cache and pause while
+playing; a cell not yet computed SHALL say Loading, a sound generator's cell SHALL show its name
+without a picture. The current kind SHALL be outlined; a click on a cell SHALL pick it and close the
+gallery. The gallery SHALL be as wide as the window it opens from and as tall as the screen allows.
+Why: `v26.10` line 17, the owner: "нет превью генераторов при выборе в окне, у переходов так же нету …
+в половине программы нормальный интерфейс (как у эффектов …) а у половины обрубки".
+
+#### Scenario: A kind candidate is what the click puts
+- **WHEN** a transition kind candidate and a generator kind candidate are put into a project
+- **THEN** the transition has that kind with no curves, the generator event that kind at its defaults
+  with no curves, the events are unchanged otherwise and the track is soloed; a transition or an
+  event the project does not hold gives no scene
+- **PATH** in a transition's or a generator event's window, click the Kind field → each cell shows the
+  frame with only that kind changed, the other events and effects as they are
+- **TEST** t3108 (`src/apps/kt-app/src/fx_thumbs.rs`)
+
+#### Scenario: A transition kind's cell is the cut after the click
+- **WHEN** the cells of Iris and Crossfade are rendered for a cut at the middle of its window
+- **THEN** each is byte for byte the frame the offline path composes with that kind there, and the
+  two differ
+- **PATH** open a transition's window, click the Kind field → the Iris cell shows the round iris
+  between the two clips, the Crossfade cell their mix, as the preview shows each after the click
+- **TEST** t3109 (`src/apps/kt-app/src/fx_thumbs.rs`)
+
+#### Scenario: The transition kind picker is a gallery of cells
+- **WHEN** a transition's window is open past the misclick guard and its Kind field is clicked, then
+  the Iris cell is clicked
+- **THEN** every visible kind is a picture cell, the current one has a cell, the cells asked the
+  service; after the click the transition is Iris and the gallery is closed
+- **PATH** double-click a transition → its window; click the Kind field → a gallery of pictures by
+  family, each the cut at the middle of the window with that kind ("Loading" for the first second);
+  click the Iris picture → the window shows Iris, the gallery is gone
+- **TEST** t3110 (`src/apps/kt-app/src/layout_tests.rs`)

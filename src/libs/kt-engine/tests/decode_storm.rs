@@ -301,7 +301,9 @@ fn mosh_project() -> Project {
     p.media.push(MediaRef::new(MediaId(1), "synth:1"));
     p.media.push(MediaRef::new(MediaId(2), "synth:2"));
     let mut f = FxInstance::plugin("datamosh").expect("datamosh is built in");
-    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0), ("qp", 14.0)] {
+    // the classic soft mosh these tests were written for: its stream is ordered at the codec's size (a
+    // new Datamosh is sharp since kkt-26.11.18b U7; the order and the walk are the same code either way)
+    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0), ("qp", 14.0), ("sharp", 0.0)] {
         assert!(f.set_param(name, v), "{name}");
     }
     p.clips.push(clip(1, 1, 0, 2 * SEC, vec![]));
@@ -563,6 +565,36 @@ fn t2145_a_kept_moment_needs_no_history() {
     assert!(!of(&items, Ev::DecReq).iter().any(|r| r.cause == frame), "no decode was asked for it");
     assert!(!of(&items, Ev::FrameWait).iter().any(|r| r.id == frame), "it waited for nothing");
     assert!(player.final_video_runs().0.iter().any(|r| r.contains(&t.0)), "the bars show the moment as kept");
+}
+
+/// t2978 (poster-from-kept, found-defects 767): an offline job takes the moment the preview already
+/// holds — its kept composite, read back at the preview's size — with no history walked and no decode
+/// asked; a moment the preview does not hold gives nothing, and the job composes it itself.
+#[test]
+fn t2978_a_kept_moment_is_read_back_without_its_history() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let (player, _ring) = mosh_player(CacheConfig { max_audio_bytes: 16 << 20, max_video_bytes: 256 << 20 });
+    let t = Tick(5 * SEC);
+    present_until_complete(&player, t);
+    kt_engine::video::stream_memo().clear();
+    for m in [1, 2] {
+        player.cache.invalidate_source(kt_engine::source_id(MediaId(m)));
+    }
+    let read = player.kept_picture_reader(t);
+    let mut pic = None;
+    let items = trace::testing::capture(|| pic = read());
+    let pic = pic.expect("the kept composite is read back");
+    let q = player.preview_quality();
+    assert_eq!((pic.w, pic.h), (q.width, q.height), "at the preview's size");
+    assert_eq!(pic.rgba.len(), (q.width * q.height * 4) as usize);
+    assert!(pic.rgba.chunks_exact(4).any(|p| p[..3] != [0, 0, 0]), "a picture, not an empty buffer");
+    assert!(of(&items, Ev::StreamRun).is_empty() && of(&items, Ev::StreamWalk).is_empty(), "no history walked");
+    assert!(of(&items, Ev::DecReq).is_empty(), "no decode asked");
+    // a moment the preview never composed: nothing — the poster composes it offline
+    assert!(player.kept_picture_reader(Tick(3 * SEC))().is_none(), "an unkept moment gives nothing");
 }
 
 /// t2150: the look-ahead asks nothing for the moments whose composite is kept, and asks the rest

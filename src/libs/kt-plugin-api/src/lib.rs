@@ -965,6 +965,11 @@ pub struct Decl {
     /// that ask every automatable row to act (t322) skip them; the registry refuses a name the
     /// passport lacks.
     pub foreign_rows: &'static [&'static str],
+    /// What a NEW instance takes over its passport's defaults (mosh-sharp-default, kkt-26.11.18b U7):
+    /// the owner's choice for what is added from now on. A row missing from a file still reads the
+    /// passport's default, so a project saved before keeps its look (`project-format`); the registry
+    /// refuses a name the passport lacks.
+    pub fresh: &'static [(&'static str, f64)],
 }
 
 /// A time-warp declaration (D11.5): which rows the host's warp machinery reads.
@@ -995,6 +1000,7 @@ impl Default for Decl {
             alpha: barrier::AlphaRel::Preserves,
             pair: None,
             foreign_rows: &[],
+            fresh: &[],
         }
     }
 }
@@ -1018,6 +1024,29 @@ pub struct UiDecl {
     /// The picker shows this kind on the sample with TRANSPARENT margins (R.54): an effect that
     /// draws only under alpha (drop_shadow) is identical by construction on an opaque frame.
     pub alpha_sample: bool,
+    /// The rows a node of the effect graph shows as sliders (fx-graph D4a, the owner's "2-3
+    /// ползунка"): at most `MAX_MAIN_ROWS`, each a number or a choice of the passport. Empty — the
+    /// first numeric smooth rows (`main_rows`); a simulated device names its own (`register`
+    /// refuses a paired video kind without them, t2998 holds both halves).
+    pub main: &'static [&'static str],
+}
+
+/// The most rows a node of the effect graph shows: a device with eighty rows stays a small node,
+/// its whole panel is the form beside the graph (fx-graph D4a).
+pub const MAX_MAIN_ROWS: usize = 3;
+
+/// The rows a node shows (fx-graph D4a): the declared `UiDecl.main`, or the first numeric smooth
+/// rows of the passport, at most `MAX_MAIN_ROWS`.
+pub fn main_rows(m: &Manifest) -> Vec<&str> {
+    if !m.ui.main.is_empty() {
+        return m.ui.main.iter().take(MAX_MAIN_ROWS).copied().collect();
+    }
+    m.passport
+        .iter()
+        .filter(|r| r.ty == ParamType::Num && r.kind == ParamKind::Smooth)
+        .take(MAX_MAIN_ROWS)
+        .map(|r| &*r.name)
+        .collect()
 }
 
 /// One picker variant of a plugin (D7): its caption key and the values it sets.
@@ -1531,6 +1560,22 @@ impl Registry {
         if !id_ok {
             return refuse("the id is not lower snake_case");
         }
+        // the node's main rows (fx-graph D4a): at most three, each a number or a choice it has; a
+        // simulated device names its own — "the first three" of Camera ISP would be three quantum
+        // efficiencies
+        if m.ui.main.len() > MAX_MAIN_ROWS {
+            return refuse("more main rows than a node shows");
+        }
+        for name in m.ui.main {
+            match m.passport.iter().find(|r| r.name == *name) {
+                Some(r) if matches!(r.ty, ParamType::Num | ParamType::Choice { .. }) => {}
+                Some(_) => return refuse("a main row that is neither a number nor a choice"),
+                None => return refuse("a main row the passport lacks"),
+            }
+        }
+        if m.media == Media::VideoFx && m.decl.pair.is_some() && m.ui.main.is_empty() {
+            return refuse("a simulated device without its main rows");
+        }
         if self.get(m.media.family(), &m.id).is_some() {
             return refuse("an id registered twice in its family");
         }
@@ -1702,6 +1747,9 @@ impl Registry {
         }
         if let Some(r) = m.decl.foreign_rows.iter().find(|r| !m.passport.iter().any(|s| s.name == **r)) {
             return Err(Refusal { id: m.id.to_string(), reason: format!("a foreign row `{r}` the passport lacks") });
+        }
+        if let Some((r, _)) = m.decl.fresh.iter().find(|(r, _)| !m.passport.iter().any(|s| s.name == *r)) {
+            return Err(Refusal { id: m.id.to_string(), reason: format!("a fresh value for `{r}` the passport lacks") });
         }
         // a simulated device's pair (sim-audio-pairs): one passport, declared by the video half
         if let Some(a) = m.decl.pair {

@@ -391,6 +391,34 @@ pub fn copy_clips(p: &Project, ids: &[ClipId]) -> ClipBlock {
     ClipBlock { clips, transitions, ..extras }
 }
 
+/// Copy of the selected events and their link partners CROPPED to the region (kkt-26.11.01b B10,
+/// change region-crops-copy): only the parts under `r`, nothing of the other tracks, rebased to the
+/// start of the earliest crop. The crop is `clip_slice`, the same piece as Split, punch-out and
+/// `copy_region_block`; the extras (morphers by target, cameras, areas, markers) follow the crop's
+/// window as `copy_clips` follows the whole events'.
+pub fn copy_clips_in(p: &Project, ids: &[ClipId], r: Region) -> ClipBlock {
+    let groups: Vec<GroupId> =
+        p.clips.iter().filter(|c| ids.contains(&c.id)).filter_map(|c| c.link_group).collect();
+    let mut clips: Vec<ClipEvent> = p
+        .clips
+        .iter()
+        .filter(|c| ids.contains(&c.id) || c.link_group.is_some_and(|g| groups.contains(&g)))
+        .filter(|c| r.intersects_clip(c))
+        .filter_map(|c| {
+            let t0 = c.start.max(r.start);
+            let t1 = (c.start + c.duration).min(r.end);
+            (t1 - t0 >= MIN_CLIP_DURATION).then(|| clip_slice(c, TickRange::new(t0, t1), c.id))
+        })
+        .collect();
+    let Some(base) = clips.iter().map(|c| c.start).min() else { return ClipBlock::default() };
+    for c in &mut clips {
+        c.start = c.start - base;
+    }
+    let transitions = surviving_transitions(p, &clips);
+    let extras = block_extras(p, &clips, Some(base), block_len(&clips));
+    ClipBlock { clips, transitions, ..extras }
+}
+
 /// Paste of a block at position `at`: fresh ids, each old group → one new one,
 /// transitions are retargeted to the new ids. Returns (commands, end of the block) —
 /// the cursor jumps to the end for chain-paste. A paste with a collision on a track
@@ -484,6 +512,10 @@ pub fn paste_block(
         cmds.push(Command::AddMarker { at: t, duration: m.duration });
         if !m.name.is_empty() {
             cmds.push(Command::SetMarkerName { at: t, name: rename(&m.name) });
+        }
+        // the note travels with the marker (marker-notes): a pasted remark keeps its text
+        if !m.note.is_empty() {
+            cmds.push(Command::SetMarkerNote { at: t, note: m.note.clone() });
         }
     }
     for m in &block.morphers {

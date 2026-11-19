@@ -158,22 +158,9 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
 /// reason as `sync_warp_to_link_group`: SetFx also comes from paste, presets, a morpher bake and
 /// kt-cli.
 fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
-    let reg = crate::plugin_slot::registry();
     let Some(src) = p.clips.iter().find(|c| c.id == id) else { return };
     let Some(group) = src.link_group else { return };
-    // the paired slots of the source, in chain order: (counterpart id, values, curves)
-    let mine: Vec<(String, Vec<f64>, Vec<ParamCurve>)> = src
-        .fx
-        .iter()
-        .enumerate()
-        .filter_map(|(i, f)| match f {
-            FxInstance::Plugin(slot) => {
-                let other = reg.counterpart(&slot.id)?;
-                Some((other.to_string(), slot.values.clone(), src.fx_auto.get(i).cloned().unwrap_or_default()))
-            }
-            _ => None,
-        })
-        .collect();
+    let mine = paired_halves(&src.fx, &src.fx_auto);
     // the kinds this event could pair: every paired kind of its own class (a kind removed from the
     // source must leave the partner too)
     let kind = src.kind;
@@ -185,68 +172,121 @@ fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
         .collect();
     for pid in partners {
         let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
-        // the partner's slots of a kind that pairs with the source's class
-        let theirs: Vec<(usize, String)> = c
-            .fx
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| match f {
-                FxInstance::Plugin(slot) if reg.counterpart(&slot.id).is_some() => Some((i, slot.id.clone())),
-                _ => None,
-            })
-            .collect();
-        // match the n-th occurrence of each kind
-        let mut used = vec![false; theirs.len()];
-        let mut keep: Vec<usize> = Vec::new();
-        let mut add: Vec<(String, Vec<f64>, Vec<ParamCurve>)> = Vec::new();
-        for (other, values, curves) in &mine {
-            match theirs.iter().enumerate().find(|(k, (_, tid))| !used[*k] && tid == other) {
-                Some((k, (i, _))) => {
-                    used[k] = true;
-                    keep.push(*i);
-                    if let FxInstance::Plugin(slot) = &mut c.fx[*i] {
-                        slot.values = values.clone();
-                    }
-                    if c.fx_auto.len() <= *i {
-                        c.fx_auto.resize(*i + 1, Vec::new());
-                    }
-                    c.fx_auto[*i] = curves.clone();
-                }
-                None => add.push((other.clone(), values.clone(), curves.clone())),
+        let removed = mirror_halves(&mine, &mut c.fx, &mut c.fx_auto, &mut c.fx_bypass);
+        for i in removed {
+            if i < c.masks.slots.len() {
+                c.masks.slots.remove(i);
             }
-        }
-        // a slot of the partner whose half left the source goes too (from the back: indices stay)
-        for (k, (i, _)) in theirs.iter().enumerate().rev() {
-            if used[k] {
-                continue;
-            }
-            c.fx.remove(*i);
-            if *i < c.fx_auto.len() {
-                c.fx_auto.remove(*i);
-            }
-            if *i < c.fx_bypass.len() {
-                c.fx_bypass.remove(*i);
-            }
-            if *i < c.masks.slots.len() {
-                c.masks.slots.remove(*i);
-            }
-            if c.geometry_pos > *i {
+            if c.geometry_pos > i {
                 c.geometry_pos -= 1;
             }
         }
-        for (other, values, curves) in add {
-            let Some(mut slot) = crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Fx, &other) else { continue };
-            slot.values = values;
-            c.fx.push(FxInstance::Plugin(slot));
-            c.fx_auto.resize(c.fx.len(), Vec::new());
-            if let Some(last) = c.fx_auto.last_mut() {
-                *last = curves;
-            }
-        }
-        while c.fx_auto.last().is_some_and(|v| v.is_empty()) {
-            c.fx_auto.pop();
-        }
         c.masks.canonicalize();
+    }
+}
+
+/// The paired slots of a chain, in chain order: (counterpart id, values, curves).
+fn paired_halves(fx: &[FxInstance], auto: &[Vec<ParamCurve>]) -> Vec<(String, Vec<f64>, Vec<ParamCurve>)> {
+    let reg = crate::plugin_slot::registry();
+    fx.iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f {
+            FxInstance::Plugin(slot) => {
+                let other = reg.counterpart(&slot.id)?;
+                Some((other.to_string(), slot.values.clone(), auto.get(i).cloned().unwrap_or_default()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The one rule of a device's two halves (sim-audio-pairs, fx-graph D2): the n-th paired slot of
+/// the leading chain (`mine`, from `paired_halves`) matches the n-th slot of its counterpart in the
+/// other chain — values and curves copied, a missing one appended at the end, an extra one removed.
+/// The other chain's bypass is left as it is: each half's switch is its own. Returns the removed
+/// indices, last first, for an owner that keeps more lists parallel to the chain (masks).
+fn mirror_halves(
+    mine: &[(String, Vec<f64>, Vec<ParamCurve>)],
+    fx: &mut Vec<FxInstance>,
+    auto: &mut Vec<Vec<ParamCurve>>,
+    bypass: &mut Vec<bool>,
+) -> Vec<usize> {
+    let reg = crate::plugin_slot::registry();
+    // the other chain's slots of a paired kind
+    let theirs: Vec<(usize, String)> = fx
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f {
+            FxInstance::Plugin(slot) if reg.counterpart(&slot.id).is_some() => Some((i, slot.id.clone())),
+            _ => None,
+        })
+        .collect();
+    // match the n-th occurrence of each kind
+    let mut used = vec![false; theirs.len()];
+    let mut add: Vec<(String, Vec<f64>, Vec<ParamCurve>)> = Vec::new();
+    for (other, values, curves) in mine {
+        match theirs.iter().enumerate().find(|(k, (_, tid))| !used[*k] && tid == other) {
+            Some((k, (i, _))) => {
+                used[k] = true;
+                if let FxInstance::Plugin(slot) = &mut fx[*i] {
+                    slot.values = values.clone();
+                }
+                if auto.len() <= *i {
+                    auto.resize(*i + 1, Vec::new());
+                }
+                auto[*i] = curves.clone();
+            }
+            None => add.push((other.clone(), values.clone(), curves.clone())),
+        }
+    }
+    // a slot whose half left the leading chain goes too (from the back: indices stay)
+    let mut removed = Vec::new();
+    for (k, (i, _)) in theirs.iter().enumerate().rev() {
+        if used[k] {
+            continue;
+        }
+        fx.remove(*i);
+        if *i < auto.len() {
+            auto.remove(*i);
+        }
+        if *i < bypass.len() {
+            bypass.remove(*i);
+        }
+        removed.push(*i);
+    }
+    for (other, values, curves) in add {
+        let Some(mut slot) = crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Fx, &other) else { continue };
+        slot.values = values;
+        fx.push(FxInstance::Plugin(slot));
+        auto.resize(fx.len(), Vec::new());
+        if let Some(last) = auto.last_mut() {
+            *last = curves;
+        }
+    }
+    while auto.last().is_some_and(|v| v.is_empty()) {
+        auto.pop();
+    }
+    removed
+}
+
+/// A device's halves held by a morpher patch (fx-graph D2): the patch's picture and sound chains
+/// carry both halves as real slots by the rule of a link group (`mirror_halves`), each half with its
+/// own bypass — the switch that lets a layer keep VHS Tape on the picture and leave the sound clean
+/// (kkt-26.11.18b U3). The leading chain is the one whose paired slots (kind, values, curves)
+/// differ from `before` — the side the person edited; with no difference, or no `before` (a new
+/// layer), the picture leads, unless it holds no paired slot and the sound does.
+pub(crate) fn sync_pairs_in_patch(patch: &mut MorphPatch, before: Option<&MorphPatch>) {
+    let v = paired_halves(&patch.video_fx, &patch.video_auto);
+    let a = paired_halves(&patch.audio_fx, &patch.audio_auto);
+    let video_leads = match before {
+        Some(b) if paired_halves(&b.video_fx, &b.video_auto) != v => true,
+        Some(b) if paired_halves(&b.audio_fx, &b.audio_auto) != a => false,
+        _ => !v.is_empty() || a.is_empty(),
+    };
+    if video_leads {
+        mirror_halves(&v, &mut patch.audio_fx, &mut patch.audio_auto, &mut patch.audio_bypass);
+    } else {
+        mirror_halves(&a, &mut patch.video_fx, &mut patch.video_auto, &mut patch.video_bypass);
     }
 }
 
@@ -429,6 +469,12 @@ pub enum Command {
     SetMarkerName {
         at: Tick,
         name: String,
+    },
+    /// The marker's note (marker-notes, `v26.10` U8): any multi-line text, no namespace; typing
+    /// goes through apply_coalesced by the gesture token, as the name does.
+    SetMarkerNote {
+        at: Tick,
+        note: String,
     },
     MoveMarker {
         from: Tick,
@@ -742,6 +788,7 @@ impl Command {
             | Command::AddMarker { .. }
             | Command::RemoveMarker { .. }
             | Command::SetMarkerName { .. }
+            | Command::SetMarkerNote { .. }
             | Command::MoveMarker { .. }
             | Command::SetMarkerDuration { .. }
             | Command::InsertTrack { .. }
@@ -804,6 +851,7 @@ impl Command {
             | Command::AddMarker { .. }
             | Command::RemoveMarker { .. }
             | Command::SetMarkerName { .. }
+            | Command::SetMarkerNote { .. }
             | Command::MoveMarker { .. }
             | Command::SetMarkerDuration { .. }
             | Command::InsertTrack { .. }
@@ -1058,6 +1106,7 @@ impl Band {
                 | Command::AddMarker { .. }
                 | Command::RemoveMarker { .. }
                 | Command::SetMarkerName { .. }
+                | Command::SetMarkerNote { .. }
                 | Command::MoveMarker { .. }
                 | Command::SetMarkerDuration { .. }
                 | Command::RemoveMedia { .. }
@@ -1844,6 +1893,11 @@ impl TimelineModel {
                     return Err(CommandError::MarkerNotFound(*at));
                 }
             }
+            Command::SetMarkerNote { at, .. } => {
+                if !p.markers.iter().any(|m| m.t == *at) {
+                    return Err(CommandError::MarkerNotFound(*at));
+                }
+            }
             Command::MoveMarker { from, to } => {
                 if !p.markers.iter().any(|m| m.t == *from) {
                     return Err(CommandError::MarkerNotFound(*from));
@@ -2497,8 +2551,13 @@ impl TimelineModel {
                     m.name = name;
                 }
             }
+            Command::SetMarkerNote { at, note } => {
+                if let Some(m) = p.markers.iter_mut().find(|m| m.t == at) {
+                    m.note = note;
+                }
+            }
             Command::MoveMarker { from, to } => {
-                // name, duration and color move TOGETHER with the marker
+                // name, duration, color and note move TOGETHER with the marker
                 let moved =
                     p.markers.iter().find(|m| m.t == from).cloned().unwrap_or(Marker::at(from));
                 p.markers.retain(|m| m.t != from);
@@ -2604,13 +2663,15 @@ impl TimelineModel {
                 Self::clip_mut_on(p, id).overrides.retain(|x| x.pub_id != pub_id);
             }
             Command::SetSettings { settings } => p.settings = settings,
-            Command::AddMorpher(m) => {
+            Command::AddMorpher(mut m) => {
                 p.ensure_tracks(LaneKind::Morph, m.lane + 1);
+                sync_pairs_in_patch(&mut m.patch, None);
                 p.morphers.push(m);
             }
-            Command::SetMorpher(m) => {
+            Command::SetMorpher(mut m) => {
                 p.ensure_tracks(LaneKind::Morph, m.lane + 1);
                 if let Some(slot) = p.morphers.iter_mut().find(|x| x.id == m.id) {
+                    sync_pairs_in_patch(&mut m.patch, Some(&slot.patch));
                     *slot = m;
                 }
             }

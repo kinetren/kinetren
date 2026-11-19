@@ -48,6 +48,8 @@ pub mod rows {
     /// The stream's sound (sim-audio-pairs): the audio bitrate and the codec's prediction.
     pub const AUDIO_KBPS: usize = 17;
     pub const AUDIO_PREDICT: usize = 18;
+    /// The picture carried at the layer's size (mosh-sharp, F-FX-015).
+    pub const SHARP: usize = 19;
 }
 
 /// The datamosh: an own codec broken by its rows.
@@ -98,6 +100,8 @@ impl Datamosh {
             // the stream's sound (sim-audio-pairs): read by the audio half only
             ParamSpec::choice_row("audio_kbps", sound::KBPS, 3),
             ParamSpec::flag_row("audio_predict", true),
+            // 19 — the codec decides at `lines`, a carrier executes its decisions at the layer's size
+            ParamSpec::flag_row("sharp", false),
         ]
     }
 
@@ -125,6 +129,7 @@ impl Datamosh {
             u32_row,
             RowDecl { store: Store::Choice(sound::KBPS), omit_default: true },
             RowDecl { store: Store::Bool, omit_default: true },
+            RowDecl { store: Store::Bool, omit_default: true },
         ]
     }
 
@@ -141,12 +146,17 @@ impl Datamosh {
                     pair: Some("datamosh_sound"),
                     // the stream's sound rows: the picture never reads them
                     foreign_rows: &["audio_kbps", "audio_predict"],
+                    // a Datamosh added from now on is sharp; a saved one keeps its value (the owner,
+                    // kkt-26.11.18b U7: "Вкл. для новых")
+                    fresh: FRESH,
                     ..Decl::default()
                 },
                 ui: UiDecl {
                     name: "Datamosh",
                     category_key: "fxreg.cat.style",
                     keywords_key: "fxreg.kw.datamosh",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["lines", "mosh", "loss"],
                     // the template is the intact codec (its look: the encoded height and the
                     // quantiser); every breakage is a named variant, the classic cut first
                     variants: VARIANTS,
@@ -184,7 +194,11 @@ pub const VARIANTS: &[UiVariant] = &[
     },
 ];
 
-/// The passport's defaults.
+/// What a new Datamosh takes over the passport's defaults (mosh-sharp-default): `sharp` on. The
+/// passport's default stays off, so a file without the row reads as it was saved.
+pub const FRESH: &[(&str, f64)] = &[("sharp", 1.0)];
+
+/// The passport's defaults (what a file's missing row reads as; a new instance adds `FRESH`).
 pub fn defaults() -> Vec<f64> {
     Datamosh::passport().iter().map(|s| s.default).collect()
 }
@@ -211,14 +225,18 @@ impl DatamoshSound {
                 decl: Decl {
                     state: true,
                     lookahead: Some(|_, _| sound::LA),
-                    // motion vectors have no audio meaning
-                    foreign_rows: &["mv_scale", "mv_rotate"],
+                    // motion vectors and the picture's carrier have no audio meaning (mosh-sharp D5)
+                    foreign_rows: &["mv_scale", "mv_rotate", "sharp"],
+                    // the pair's halves are created together with one set of values
+                    fresh: FRESH,
                     ..Decl::default()
                 },
                 ui: UiDecl {
                     name: "Datamosh",
                     category_key: "fxreg.cat.style",
                     keywords_key: "fxreg.kw.datamosh_sound",
+                    // the node's sliders (fx-graph D4a): the rest is the panel beside the graph
+                    main: &["audio_kbps", "loss", "gop"],
                     // an audio entry has no variants: a sound has no thumbnail (R.54)
                     ..UiDecl::default()
                 },
@@ -258,6 +276,9 @@ impl StreamKernel for Datamosh {
     fn lines(&self, p: &[f64]) -> u32 {
         mosh::Rows::from(p).lines
     }
+    fn carried(&self, p: &[f64]) -> bool {
+        mosh::Rows::from(p).sharp
+    }
     fn before(&self, p: &[f64]) -> u32 {
         mosh::Rows::from(p).before
     }
@@ -291,7 +312,8 @@ impl StreamKernel for Datamosh {
             // the device failed on this very frame: the frame is not a missing one
             return if kt_plugin_api::compute::host().is_none() { pass_through(input, n, out) } else { None };
         };
-        let (w, h) = input.size();
+        // the carrier's picture at the input's size, or the codec's at its own (mosh-sharp D4)
+        let (w, h) = mosh::out_size(&mosh::Rows::from(p), input);
         // the conversion back stays here: a job of its own would wait behind the frame's other passes
         // on the device (stream-layout-per-build D4: 1.6 → 9.8 ms a stage run on llvmpipe)
         pic.to_rgba(w, h, out);

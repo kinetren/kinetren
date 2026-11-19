@@ -50,10 +50,12 @@ in the menu of a track's empty space.
 |---|---|
 | <kbd>I</kbd> / <kbd>O</kbd> | region start / end at the playhead; with no region, <kbd>I</kbd> starts a one-second region |
 | <kbd>Shift</kbd>+<kbd>A</kbd> / <kbd>Shift</kbd>+<kbd>D</kbd> | jump back / forward and drag the left / right region edge along; with no region, select the stretch just jumped over |
+| <kbd>C</kbd> | cut out the region's interior from every track it crosses; the rest stays in place (also **Edit › Cut out the region interior**) |
 | <kbd>L</kbd> | loop the region on / off |
 | <kbd>M</kbd> | add a marker at the playhead, or remove the one next to it; with the playhead inside the region, add or remove a range marker over the region |
 | click a marker on the ruler | move the playhead onto it (a range marker's flags only drag) |
 | drag a marker | move it |
+| right-click a marker › **Note…** | a field at the flag for the marker's note: <kbd>Enter</kbd> starts a new line, <kbd>Ctrl</kbd>+<kbd>Enter</kbd> or a click elsewhere keeps it, <kbd>Esc</kbd> leaves the note as it was; pointing at the flag reads the note in the status line |
 | drag the start / end flag of a range marker | move that edge; the other one stays |
 | drag a region edge | move it |
 | double-click a range marker on the ruler | region over it, with its events selected |
@@ -164,11 +166,14 @@ The mask keys work only while nothing else has the keyboard focus.
 | click a card in the media bin | place it at the playhead |
 | click the frame of a bin group | select the whole group |
 | <kbd>Ctrl</kbd>+click / <kbd>Shift</kbd>+click a card | add it to the bin selection or take it out |
-| drag a card | onto the timeline, or to another spot in the bin |
+| drag a card | onto the timeline, or to another spot in the bin; on the timeline the whole file lands with the moment you pressed on (the scrubbed one) under the mouse |
+| <kbd>Alt</kbd> / <kbd>Alt</kbd>+<kbd>Shift</kbd> while a card is over a track | the file's start / its end lands under the mouse instead; pressed or released before the drop, the ghost follows |
 | drag across the bin background | select cards with a frame; <kbd>Ctrl</kbd> or <kbd>Shift</kbd> adds to the selection |
 | double-click a generator card | its parameters |
 | click / drag / cross on a slot of the effect chain | select / reorder / remove |
 | double-click a parameter label | reset the parameter to its default |
+| the pipette beside a colour, then a click anywhere in the program | take the colour of the screen under the pointer (the preview's frame, a thumbnail); <kbd>Esc</kbd> puts the pipette down |
+| drag the crosshair on the preview (an effect with a centre selected in its window) | move the effect's centre; with a curve on it, the key at the playhead |
 | right-click a parameter label inside a reel | publish the parameter of the composition |
 | click empty space in the curve graph | add a key to the active curve |
 | drag / double-click / right-click a key | move it / delete it / its menu |
@@ -177,7 +182,9 @@ The mask keys work only while nothing else has the keyboard focus.
 | drag a segment's handle; <kbd>Shift</kbd>+drag sideways | the curve's tension or amplitude; the number of periods |
 | right-click a segment of the curve graph | select it and open its shape menu (on a selected segment the menu acts on the whole selection) |
 | <kbd>Ctrl</kbd>+click / <kbd>Shift</kbd>+click a segment | add it to the segment selection or take it out / select the run up to it |
-| drag across empty space in the curve graph | select the segments it covers; <kbd>Ctrl</kbd> adds to the selection |
+| drag across empty space in the curve graph | select the segments it covers; <kbd>Ctrl</kbd> or <kbd>Shift</kbd> adds to the selection |
+| <kbd>Shift</kbd>+click a key | take it into the selection or out of it (the ends of selected segments are selected keys) |
+| drag a selected key | move every selected key together: the same time and value shift, stopping before an unselected key |
 | <kbd>Ctrl</kbd>+click the key-before / key-after button | lock every curve of the slot, not just one |
 | <kbd>Tab</kbd> / <kbd>Enter</kbd> in a formula field | complete a name / apply |
 | drag a point of the equalizer graph | its frequency and gain |

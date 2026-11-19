@@ -369,9 +369,15 @@ Ctrl+C copy every event of every track inside the loop.
 
 #### Scenario: Copy after a double-click on a range marker
 - **WHEN** a range marker crosses three events and is double-clicked; Ctrl+C; separately a range marker that crosses exactly one event is double-clicked; Ctrl+C
-- **THEN** with three events the region block is copied (cropped to the marker's range, the marker travels with it), as before the change; with one event that event is copied whole, because it is the one selected event, and the status line says "the selected event"
-- **PATH** double-click the ribbon of a range marker over three events → region over it, three events highlighted → Ctrl+C → "Copied the region: 3" → double-click a range marker over one event → one event highlighted → Ctrl+C → "Copied the selected event: 1"
+- **THEN** with three events the region block is copied (cropped to the marker's range, the marker travels with it), as before the change; with one event the marker's range crops that one selected event, so its part under the marker and its partner's are copied (kkt-26.11.01b B10, change region-crops-copy) and the status line says "the selected event's part under the region"
+- **PATH** double-click the ribbon of a range marker over three events → region over it, three events highlighted → Ctrl+C → "Copied the region: 3" → double-click a range marker inside one event → one event highlighted → Ctrl+C → "Copied the selected event's part under the region: 2"
 - **TEST** t926 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: A region that crops the one selected event copies its part
+- **WHEN** one event with an audio partner is selected and a region covers its first part and part of another event on the same track; Ctrl+C; Ctrl+V at a free place; then a region that does not touch the selected event; Ctrl+C
+- **THEN** the first clipboard holds the selected event and its partner cropped to the region and nothing of the other event, the paste puts these two parts; with the region away from the event the whole event is copied as before
+- **PATH** click an event → drag a region over its first part that also crosses the event before it → Ctrl+C → the status line "Copied the selected event's part under the region: 2" → move the playhead to empty time → Ctrl+V → only that part of the event and of its audio appear
+- **TEST** t3105 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Triple click on an event sets the region over it
 - **WHEN** an event with an audio partner and no FX window open is triple-clicked on its body (harness step 0.02 s between clicks); separately with the FX window of another event already open
@@ -1778,3 +1784,65 @@ the audio twin of a partial picture.
 - **WHEN** the meter's probe asks a moment whose bursts the source has not delivered, then the same moment once they are cached
 - **THEN** the first answer is `None`; the second is the tone's level
 - **TEST** t2532 (`src/libs/kt-engine/tests/no_partial.rs`)
+
+### Requirement: Marker over the region is always new; stretching is its own item
+The region-edge menu's "Marker over the region" SHALL add a new range marker over the region and
+SHALL NOT change a marker that stands at the region's start: an equal range SHALL be removed (the
+toggle of the M gesture), a different marker SHALL stay and the refusal SHALL name "Stretch the marker
+over the region". That item SHALL be offered only when a marker at the region's start has another
+length, and SHALL give it the region's length, keeping its name.
+Why: the owner, `v26.10` line 33 — "это полезно, надо вынести в отдельный пункт … а этот пункт надо
+чтобы всегда … создавал новый, а не менял текущий"; his answer of 2026-11-07 (в.4 "а").
+
+#### Scenario: New, refused, stretched, toggled
+- **WHEN** a region 30 000–90 000 ticks; right click on its start edge → "Marker over the region"; then a point marker stands at 30 000 → the same item; then → "Stretch the marker over the region"; then the menu is opened again and "Marker over the region" is clicked
+- **THEN** the first click adds a 60 000-tick range and no stretch item is offered; over the point marker the stretch item is offered, the new item leaves the point marker and the notice names the stretch item; the stretch item gives the marker the region's length and is then not offered; the last click removes the equal range
+- **PATH** draw a region → right-click its edge on the ruler → "Marker over the region" → a range marker spans the region → put a point marker at the region's start → right-click the edge → two items now → "Marker over the region" → the status line says a marker is already there and which item changes it → right-click → "Stretch the marker over the region" → the point marker spans the region
+- **TEST** t3104 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: A marker's note is typed at its flag and read on hover
+The marker's right-click menu SHALL offer "Note…", which opens a multi-line field at the marker's
+flag: Enter SHALL start a new line, Ctrl+Enter or a click elsewhere SHALL keep the text as one undo
+step, Esc SHALL leave the note as it was. A marker with a note SHALL show the note glyph after its
+name on the time-label row, and hovering its flag SHALL read the note in the status line.
+Why: `v26.10` line 34, the owner: "нужен механизм заметок(чтобы прям можно было текст писать
+многострочный…)".
+
+#### Scenario: A note is typed at the flag and read on hover
+- **WHEN** a marker's menu gives Note…, two lines are typed with Enter between them and a click lands
+  elsewhere; the flag is hovered; Note… is opened again, more is typed and Esc pressed
+- **THEN** the field is multi-line, nothing is written while typing, the click keeps both lines as one
+  undo step, the note glyph is drawn, the status line reads "take 3 · warmer", and Esc changes nothing
+- **PATH** right-click a marker's flag → Note… → a multi-line field under the flag; type two lines
+  (Enter between them) and click elsewhere → the note glyph stands after the flag; hover the flag →
+  the status line reads both lines; Note… again, type more, Esc → the note as it was
+- **TEST** t3113 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: A bin card lands with the scrubbed moment under the mouse
+A bin card dragged onto a track SHALL place the whole file with the file moment its press was on (on
+the scrub strip) under the mouse. Holding Alt over the track SHALL put the event's start under the
+mouse, Alt+Shift its end; the modifiers SHALL be read every frame, so pressing or releasing them
+mid-drag moves the landing before the drop. Before the release the drop ghost SHALL be the event —
+its length at the start the drop will use, with a tick at the mouse — and the status line SHALL name
+which point lands under the mouse and the keys for the others, in all five catalogs. While carried, the card's strip
+SHALL show the pressed moment, and the card SHALL NOT write its own hover text.
+Why: `v26.10` MW1 and his answer U9 of kkt-26.11.18b: "целиком, момент под мышью. а если прожали alt
+то начало события будет под курсором … чтобы уже визуально до вставки была голограма события".
+
+#### Scenario: The scrubbed moment lands under the mouse
+- **WHEN** a 12 s file's card is pressed at the middle of its strip and dropped on V1 at 20 s
+- **THEN** the event is the whole file and starts so that its 6 s moment is at 20 s (within the magnet); the status line said the moment lands under the mouse
+- **PATH** hover the card, the timecode reads the middle → press there and carry to V1 → the ghost is 12 s long with its middle at the mouse, the status line names the moment, Alt and Alt+Shift → release → the event stands where the ghost was
+- **TEST** t3117 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `src/scripts/live/bin_drag_moment.py` (`./scripts/live-check.sh`)
+
+#### Scenario: Alt and Alt+Shift pressed mid-drag move the landing
+- **WHEN** the same drag has Alt pressed once the card is over the track; then again with Alt+Shift
+- **THEN** with Alt the event starts at the mouse, with Alt+Shift it ends there; the status line names the start, then the end
+- **PATH** carry the card over V1 → press Alt → the ghost jumps to start at the mouse → release → the event starts there; again with Alt+Shift → the ghost ends at the mouse → release
+- **TEST** t3118 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: The ghost is the real event
+- **WHEN** the card is over the track before the release; the catalogs are read
+- **THEN** the ghost's width is the file's length on the view's scale; the carried card's strip shows the pressed moment's timecode; the three landing texts exist in all five catalogs and name Alt
+- **PATH** carry the card over V1 → the green ghost is as long as the file, a white tick at the mouse
+- **TEST** t3119 (`src/apps/kt-app/src/layout_tests.rs`)

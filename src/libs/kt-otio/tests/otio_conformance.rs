@@ -89,6 +89,7 @@ fn sample() -> Project {
         duration: Tick(30_000),
         name: "range".into(),
         color: None,
+        note: String::new(),
     });
     p.region = Some(Region { start: Tick(10_000), end: Tick(60_000) });
     p.loop_enabled = true;

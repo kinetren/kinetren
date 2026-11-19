@@ -135,3 +135,13 @@ sees the event unmasked (the "What OTIO export loses" row).
 - **Decision**: `Indexed` (the first event of an id, the scan's answer) in validation, a map in reconcile (t2062). An overlapped transition still scans for a third event (found-defects row 156).
 
 The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.
+
+## A marker's note (marker-notes, 2026-11-18, F-COL-020)
+
+The owner (`v26.10` U8) asked for multi-line notes. `Marker.note` is a plain string outside the name
+namespace (two markers may share one; markers stay addressed by time, R.35 item 4). The `.kt` file is
+format 5 only when a note exists: an older build would read the marker without the field and drop the
+note on its next save. OTIO `Marker.2.comment` is the note both ways; `MarkerExtra` keeps only
+metadata and extra, and the writer falls back to a comment a pre-5 passthrough still holds when the
+note is empty, so an old project does not lose a comment it never showed. OTIO expresses the note:
+no row in "What OTIO export loses".

@@ -1751,21 +1751,21 @@ impl MorphPatch {
                 || self.source_in_delta.0 != 0)
     }
 
-    /// The halves of simulated devices (sim-audio-pairs) this kind's chain gets from the OTHER
-    /// kind's enabled slots, with their curves: the n-th enabled paired slot over there gives its
-    /// counterpart here unless this side already holds an n-th one of that kind itself. One text for
-    /// `chain_for` and `auto_for`, so a curve never lands on another slot.
-    fn derived_pairs(&self, kind: ClipKind) -> Vec<(FxInstance, Vec<ParamCurve>)> {
+    /// The halves of simulated devices a patch written before fx-graph rendered without holding
+    /// them: the n-th ENABLED paired slot of the other kind gave its counterpart, with its curves,
+    /// unless this side already held an n-th one itself. Since fx-graph D2 a patch holds both halves
+    /// as slots (`model::sync_pairs_in_patch`); this is the old derivation, read only by
+    /// `materialize_pairs`, so an old project renders as before. One difference, on purpose: a half
+    /// the patch held switched off by hand stays the held one (the old code derived a second,
+    /// enabled half beside it — the defect), so such a layer now plays the device's sound off.
+    fn legacy_derived_pairs(&self, kind: ClipKind) -> Vec<(FxInstance, Vec<ParamCurve>)> {
         let reg = crate::plugin_slot::registry();
-        let (own, own_off, other, other_off, other_auto) = match kind {
-            ClipKind::Video => (&self.video_fx, &self.video_bypass, &self.audio_fx, &self.audio_bypass, &self.audio_auto),
-            ClipKind::Audio => (&self.audio_fx, &self.audio_bypass, &self.video_fx, &self.video_bypass, &self.video_auto),
+        let (own, other, other_off, other_auto) = match kind {
+            ClipKind::Video => (&self.video_fx, &self.audio_fx, &self.audio_bypass, &self.audio_auto),
+            ClipKind::Audio => (&self.audio_fx, &self.video_fx, &self.video_bypass, &self.video_auto),
         };
-        let count = |fx: &[FxInstance], off: &[bool], id: &str| {
-            fx.iter()
-                .enumerate()
-                .filter(|(i, f)| !off.get(*i).copied().unwrap_or(false) && matches!(f, FxInstance::Plugin(p) if p.id == id))
-                .count()
+        let count = |fx: &[FxInstance], id: &str| {
+            fx.iter().filter(|f| matches!(f, FxInstance::Plugin(p) if p.id == id)).count()
         };
         let mut seen: Vec<(String, usize)> = Vec::new();
         let mut out = Vec::new();
@@ -1785,7 +1785,10 @@ impl MorphPatch {
                     1
                 }
             };
-            if n <= count(own, own_off, here) {
+            // a half this side holds SWITCHED OFF counts as held: the old derivation put an enabled
+            // one beside it (the defect of kkt-26.11.18b U3), and re-deriving it on every read would
+            // turn the switch back on after a save
+            if n <= count(own, here) {
                 continue;
             }
             let Some(mut slot) = crate::plugin_slot::PluginSlot::new(kt_plugin_api::Family::Fx, here) else { continue };
@@ -1793,6 +1796,29 @@ impl MorphPatch {
             out.push((FxInstance::Plugin(slot), other_auto.get(i).cloned().unwrap_or_default()));
         }
         out
+    }
+
+    /// Gives a patch read from an older file the halves it used to derive (fx-graph D2): each
+    /// derived half is appended to its chain with its curves, where `chain_for` appended it, so the
+    /// render does not move; the next edit of the layer aligns the halves by the one rule.
+    pub fn materialize_pairs(&mut self) {
+        let to_audio = self.legacy_derived_pairs(ClipKind::Audio);
+        let to_video = self.legacy_derived_pairs(ClipKind::Video);
+        for (chain, auto, add) in [
+            (&mut self.audio_fx, &mut self.audio_auto, to_audio),
+            (&mut self.video_fx, &mut self.video_auto, to_video),
+        ] {
+            for (f, curves) in add {
+                chain.push(f);
+                auto.resize(chain.len(), Vec::new());
+                if let Some(last) = auto.last_mut() {
+                    *last = curves;
+                }
+            }
+            while auto.last().is_some_and(|v| v.is_empty()) {
+                auto.pop();
+            }
+        }
     }
 
     /// ENABLED effects of the patch for a clip of this kind. A disabled slot
@@ -1814,9 +1840,8 @@ impl MorphPatch {
         // `split_chains` in the UI rest on this — but it is not a pixel filter,
         // but a rule for choosing the source frame. Without this the layer would slow
         // the sound and not the picture: a desync that nobody asked for.
-        // the other half of each simulated device (sim-audio-pairs): a layer that puts VHS Tape on
-        // the picture puts the same tape on the sound of the events it covers
-        out.extend(self.derived_pairs(kind).into_iter().map(|(f, _)| f));
+        // the other half of each simulated device is a slot of the patch itself (fx-graph D2): a
+        // layer's VHS Tape sound is in `audio_fx`, with its own bypass
         if kind == ClipKind::Video {
             out.extend(
                 self.audio_fx
@@ -1859,7 +1884,6 @@ impl MorphPatch {
             .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
             .map(|(i, _)| pick(i))
             .collect();
-        out.extend(self.derived_pairs(kind).into_iter().map(|(_, a)| a));
         if kind == ClipKind::Video {
             out.extend(
                 self.audio_fx
@@ -2733,6 +2757,11 @@ pub struct Marker {
     /// Color of OTIO Marker.2 — round-trip of foreign files; the UI draws in its own style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// The marker's NOTE (marker-notes, `v26.10` U8, F-COL-020): multi-line text of a remark,
+    /// separate from the name — the name is an address of named ranges and areas, the note any
+    /// phrase. OTIO Marker.2 `comment` carries it. A file with a note is format 5.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
 }
 
 fn tick_is_zero(t: &Tick) -> bool {
@@ -2790,10 +2819,10 @@ pub fn unique_name(taken: &[String], wanted: &str, stem: &str) -> String {
 
 impl Marker {
     pub fn at(t: Tick) -> Marker {
-        Marker { t, duration: Tick::ZERO, name: String::new(), color: None }
+        Marker { t, duration: Tick::ZERO, name: String::new(), color: None, note: String::new() }
     }
     pub fn named(t: Tick, name: impl Into<String>) -> Marker {
-        Marker { t, duration: Tick::ZERO, name: name.into(), color: None }
+        Marker { t, duration: Tick::ZERO, name: name.into(), color: None, note: String::new() }
     }
     /// End of the range (== the start for a point marker).
     pub fn end(&self) -> Tick {
@@ -2820,12 +2849,14 @@ impl<'de> Deserialize<'de> for Marker {
                 name: String,
                 #[serde(default)]
                 color: Option<String>,
+                #[serde(default)]
+                note: String,
             },
         }
         Ok(match Repr::deserialize(d)? {
             Repr::Bare(t) => Marker::at(Tick(t)),
-            Repr::Full { t, duration, name, color } => {
-                Marker { t: Tick(t), duration: Tick(duration.max(0)), name, color }
+            Repr::Full { t, duration, name, color, note } => {
+                Marker { t: Tick(t), duration: Tick(duration.max(0)), name, color, note }
             }
         })
     }
@@ -6399,6 +6430,11 @@ impl Project {
         })
     }
 
+    /// Whether a marker carries a note (marker-notes): the file is then format 5.
+    pub fn has_marker_notes(&self) -> bool {
+        self.markers.iter().any(|m| !m.note.is_empty())
+    }
+
     pub fn has_masks(&self) -> bool {
         self.clips.iter().any(|c| !c.masks.is_empty())
             || self.tracks.iter().any(|t| !t.masks.is_empty())
@@ -6758,6 +6794,23 @@ impl Project {
         self.ensure_tracks(LaneKind::Camera, need.camera);
         self.assign_track_ids();
         perm
+    }
+
+    /// The morpher layers that change this event, in the order they apply (bottom up, then by id) —
+    /// what the effects window shows after the event's own chain (fx-graph v1c, his answer Q3). The
+    /// render's own rule: a layer counts where `windows_on` gives it a window. A walk of the
+    /// project: the caller keeps the answer per model revision.
+    pub fn layers_over(&self, c: &ClipEvent) -> Vec<MorphId> {
+        let rows = self.rows();
+        let zones = ZoneIndex::new(self);
+        let mut out: Vec<(std::cmp::Reverse<usize>, MorphId)> = self
+            .morphers
+            .iter()
+            .filter(|m| !m.windows_on(c, self, &zones, &rows).is_empty())
+            .map(|m| (std::cmp::Reverse(m.row_in(&rows)), m.id))
+            .collect();
+        out.sort();
+        out.into_iter().map(|(_, id)| id).collect()
     }
 
     /// Clips after the morphers are applied are the ONLY exit point of clips to the
@@ -7299,6 +7352,11 @@ impl Project {
         // fixed on READ, because files of R.52..R.58 kept them in the media
         // path.
         self.migrate_gen_to_events();
+        // a device's halves are slots of a morpher patch (fx-graph D2): fixed on READ, because files
+        // before it held one half and the render derived the other
+        for m in self.morphers.iter_mut().chain(self.sequences.iter_mut().flat_map(|q| q.morphers.iter_mut())) {
+            m.patch.materialize_pairs();
+        }
         // track number = row rank (R.56, item 449): fixed on READ, because
         // old files (and foreign imports) know only numbers. The permutation is handed
         // outward — the format reader needs it for its own side maps

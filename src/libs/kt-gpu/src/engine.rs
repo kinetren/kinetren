@@ -1962,6 +1962,20 @@ impl VideoGpuExec for GpuFxEngine {
         true
     }
 
+    fn read_kept(&self, key: u64, out: &mut Vec<u8>) -> Option<(u32, u32)> {
+        self.yield_to_display();
+        let _hold = crate::holds::within(self.role(), "read_kept");
+        let _gate = self.compiled.gl_gate();
+        let mut g = self.inner.lock().unwrap();
+        g.guarded(|g| {
+            let Some((tex, w, h)) = g.present_memo.get_texture(key) else { return Ok(None) };
+            g.read_kept(&tex, w, h, out)?;
+            Ok(Some((w, h)))
+        })
+        .ok()
+        .flatten()
+    }
+
     fn keep(&self, key: u64, w: u32, h: u32, rgba: &[u8]) {
         let _hold = crate::holds::within(self.role(), "keep");
         let _gate = self.compiled.gl_gate();

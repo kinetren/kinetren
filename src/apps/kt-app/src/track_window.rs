@@ -5,7 +5,7 @@
 //! them over two windows would mean making the person open a second one for a neighbouring
 //! field (rule 13 — space is dear, and so is attention).
 //!
-//! The chain strip is THE SAME `widgets::chain_strip` as for an event and
+//! The chain is THE SAME `node_editor::chain_graph` as for an event and
 //! for the morpher (rule 17): if they diverged, an effect on a track would behave
 //! differently from one on an event. There is deliberately no automation widget here:
 //! a track has no curves (its key is the timeline tick — that is the next change),
@@ -32,6 +32,14 @@ pub struct TrackWindow {
     pub selected: crate::widgets::ChainSel,
     pub focus: bool,
     pub open: bool,
+}
+
+/// A track's name as the timeline's header shows it (its label by its rank among its kind).
+pub(crate) fn track_name(p: &kt_model::Project, id: TrackId) -> Option<String> {
+    let i = p.tracks.iter().position(|t| t.id == id)?;
+    let t = &p.tracks[i];
+    let lane = p.tracks.iter().take(i).filter(|o| o.kind == t.kind).count() as u32;
+    Some(t.label(lane))
 }
 
 /// whether it is a compressor is a question asked three times in the ducking form.
@@ -243,7 +251,14 @@ impl KtApp {
                         .filter(|r| if audio { r.audio_ok } else { r.video_ok })
                         .cloned()
                         .collect();
-                    let ch = crate::widgets::chain_strip(
+                    let track_keys: Vec<(usize, String)> = {
+                        let p = self.model.project();
+                        fx.iter()
+                            .enumerate()
+                            .filter_map(|(i, f)| f.sidechain_key().and_then(|id| track_name(p, id)).map(|n| (i, n)))
+                            .collect()
+                    };
+                    let ch = crate::node_editor::chain_graph(
                         ui,
                         ("track", w.id.0),
                         crate::widgets::ChainEdit {
@@ -258,6 +273,9 @@ impl KtApp {
                                 save: &mut preset_save,
                                 action: &mut preset_action,
                             },
+                            context: Vec::new(),
+                            // the ducking key: a dashed wire from the key track into its compressor
+                            keys: track_keys,
                         },
                         audio,
                         &mut w.picker_query,

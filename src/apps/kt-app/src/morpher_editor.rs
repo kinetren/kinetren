@@ -215,7 +215,7 @@ impl KtApp {
         // a window closed: its queued cells are dropped, and with the last cell window its sources
         if editors.iter().any(|e| !e.open) {
             self.fx_thumbs.bump_generation();
-            if editors.iter().all(|e| !e.open) && self.fx_editors.is_empty() {
+            if editors.iter().all(|e| !e.open) && self.fx_editors.is_empty() && self.transition_editors.is_empty() {
                 self.fx_thumbs.forget_scene();
             }
         }
@@ -456,7 +456,7 @@ impl KtApp {
                 let (mut fx, mut bypass, mut auto, split) = merge_chains(&ev.patch);
                 let mut src_on = !ev.patch.src_off;
                 let mut pv = crate::fx_thumbs::PickerCtx::for_scene(pv_svc, pv_scene.clone(), pv_decode);
-                let ch = crate::widgets::chain_strip(
+                let ch = crate::node_editor::chain_graph(
                     ui,
                     ("morphchain", ed.id.0),
                     crate::widgets::ChainEdit {
@@ -478,6 +478,9 @@ impl KtApp {
                             hint: tr(k::mrph::SRC_SLOT_HINT),
                             color: crate::theme::MORPH_SLOT,
                         }),
+                        // a layer is itself a context of the events under it: nothing comes after it here
+                        context: Vec::new(),
+                        keys: Vec::new(),
                     },
                     // BOTH kinds: a patch carries a video and an audio chain, and the one strip
                     // shows them together (`split_chains` sorts the pick into its chain)

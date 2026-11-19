@@ -253,6 +253,9 @@ pub struct KtApp {
     pub preview_click_at: Option<std::time::Instant>,
     /// Mouse position during file DnD (X11 polling; None on Wayland).
     pub dnd_hover: Option<egui::Pos2>,
+    /// A bin card over the lanes this frame: where its event would start and its length
+    /// (bin-drag-moment) — the drop ghost draws the real event.
+    pub dnd_bin: Option<(i64, Option<Tick>)>,
     /// Timeline geometry cache of the last frame (drop, item 2 v1.4).
     pub tl_geom: Option<crate::timeline::TlGeom>,
     /// KT_GEOM_DUMP — path for the geometry dump to live scenarios (R.27).
@@ -318,6 +321,9 @@ pub struct KtApp {
     pub marker_edit: Option<MarkerEdit>,
     /// Request focus for the marker name field (once, on open).
     pub marker_edit_focus: bool,
+    /// Active inline input of a marker's NOTE (marker-notes, `v26.10` U8): multi-line, written as
+    /// one undo step when it closes.
+    pub marker_note: Option<MarkerNoteEdit>,
     /// Active inline input for the track name (item 2 round 10).
     pub lane_edit: Option<LaneEdit>,
     pub area_edit: Option<AreaEdit>,
@@ -340,6 +346,9 @@ pub struct KtApp {
     pub tl_v_zoom: Option<f32>,
     /// Last successful preview bucket in the bin (scrubbing without flicker, item 11 round 6).
     pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
+    /// The bin scrub's timecode (F-MED-008): `(media, file tick, fps, card width, laid-out text)`,
+    /// rebuilt only when the moment under the cursor changes — a hover frame allocates nothing.
+    pub bin_scrub_tc: Option<(MediaId, i64, u32, u32, std::sync::Arc<egui::Galley>)>,
     /// Previous offline snapshot of the bin: detection of offline→online (item 1 round 7).
     pub bin_last_offline: std::collections::HashSet<kt_model::MediaId>,
     /// Media bin: free layout (item 7 round 8) instead of the grid.
@@ -352,6 +361,11 @@ pub struct KtApp {
     pub(crate) bin_list: BinList,
     /// Which card is being dragged inside the bin (free mode).
     pub bin_drag: Option<crate::bin_panel::BinDragState>,
+    /// The file moment under the press that started dragging a card, and the file's length
+    /// (bin-drag-moment): the event lands with that moment under the mouse.
+    pub bin_press_moment: Option<(MediaId, i64, Tick)>,
+    /// An effect's centre being dragged on the preview (fx-center-on-preview).
+    pub center_drag: Option<crate::centerctl::CenterDrag>,
     /// Card groups of the bin (item 13 round 11): they live here; they go into
     /// the project together with the rest of UiState.
     pub bin_groups: Vec<kt_model::BinGroup>,
@@ -899,6 +913,17 @@ impl KtApp {
     /// is FIFO, so a sync an edit posts during the load runs after it.
     fn load_sources(&mut self) {
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        // the disk tier of preview composites under the data folder (render-cache-disk D7); the harness
+        // keeps none
+        if !cfg!(test) {
+            self.player.set_render_cache(Some(kt_engine::render_cache::Config {
+                codec: std::sync::Arc::new(kt_media::segment::ffmpeg::FfmpegSegments::from_env()),
+                root: crate::journal::data_dir().join("render-cache"),
+                build: render_cache_build(),
+                base: base.clone(),
+                cap: kt_engine::render_cache::cap_from_env(),
+            }));
+        }
         let db = self.index_db_path();
         let doc = self.model.doc();
         let media: Vec<(MediaId, String, String)> = doc
@@ -982,6 +1007,7 @@ impl KtApp {
             speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
+            dnd_bin: None,
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
@@ -1006,6 +1032,7 @@ impl KtApp {
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
+            marker_note: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -1020,10 +1047,13 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_scrub_tc: None,
             bin_last_offline: std::collections::HashSet::new(),
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_press_moment: None,
+            center_drag: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,
@@ -1314,6 +1344,7 @@ impl KtApp {
             speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
+            dnd_bin: None,
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
@@ -1338,6 +1369,7 @@ impl KtApp {
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
+            marker_note: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -1352,10 +1384,13 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_scrub_tc: None,
             bin_last_offline: std::collections::HashSet::new(),
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_press_moment: None,
+            center_drag: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,
@@ -2435,6 +2470,7 @@ impl KtApp {
             };
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
                 && !guarded(self, pos)
+                && !crate::eyedropper::armed()
                 && let Some(dir) = resize_zone(win, pos, WIN_EDGE, WIN_CORNER)
             {
                 ctx.set_cursor_icon(resize_cursor(dir));
@@ -2445,6 +2481,15 @@ impl KtApp {
             }
         }
 
+        // the eyedropper's pick layer, over everything, and its line in the status bar
+        // (chroma-key-eyedropper)
+        match crate::eyedropper::overlay(&ctx) {
+            Some(Err(())) => self.warn(tr(k::fx::EYEDROP_NO_SCREEN)),
+            Some(Ok(())) if crate::eyedropper::armed() => {
+                self.hover_hint = Some(tr(k::fx::EYEDROP_ARMED).to_string());
+            }
+            _ => {}
+        }
         // hint — last, over the status bar (item 1 round 9)
         self.draw_status_hint(&ctx);
 
@@ -2566,7 +2611,7 @@ impl KtApp {
     /// When something on a clock needs a frame while nothing moves: the earliest of them. A new
     /// timed state belongs here, or it waits for the mouse. Background threads do not: they call
     /// `wake`.
-    fn rest_wake(&self) -> Option<std::time::Duration> {
+    pub(crate) fn rest_wake(&self) -> Option<std::time::Duration> {
         use std::time::Duration;
         let left = |at: std::time::Instant, ttl: Duration| ttl.saturating_sub(at.elapsed());
         let ttl = Duration::from_millis(STATUS_TTL_MS);
@@ -3268,6 +3313,14 @@ impl KtApp {
         // it must be closed before anything else; focus is handed over by
         // `draw_speed_control` on the next frame
         if self.speed_entry.take().is_some() {
+            return;
+        }
+        // 0) a marker's note being typed: Esc cancels it (marker-notes), nothing else moves
+        if self.marker_note.take().is_some() {
+            return;
+        }
+        // 0) an armed eyedropper: Esc puts it down, the window under it stays (chroma-key-eyedropper)
+        if crate::eyedropper::cancel() {
             return;
         }
         // 1) the window ON TOP (shared-window-shell). Not a hand-kept list: the list lost the
@@ -5215,6 +5268,41 @@ impl KtApp {
         };
     }
 
+    /// "Marker over the region" (the region-edge menu, marker-region-split): ALWAYS a new range
+    /// marker over the region, never a change of the one there. An equal range is removed — the
+    /// toggle M has; a different marker at the region's start stays as it is, and the refusal names
+    /// the item that changes it (rule 16). One marker per tick is the model's rule.
+    pub fn marker_over_region_new(&mut self, r: Region) {
+        let dur = r.end - r.start;
+        match self.model.project().markers.iter().find(|m| m.t == r.start) {
+            Some(m) if m.duration == dur => {
+                self.apply(Command::RemoveMarker { at: r.start });
+            }
+            Some(_) => self.note(tr(k::msg::MARKER_REGION_TAKEN)),
+            None => {
+                if self.apply(Command::AddMarker { at: r.start, duration: dur }) {
+                    self.marker_edit = Some(MarkerEdit { at: r.start.0, buf: String::new(), is_new: true });
+                    self.marker_edit_focus = true;
+                }
+            }
+        }
+    }
+
+    /// The marker "Stretch the marker over the region" would change: the one at the region's start
+    /// whose length is not the region's (`None` — the item is not offered).
+    pub fn marker_to_stretch(&self, r: Region) -> Option<Tick> {
+        let dur = r.end - r.start;
+        self.model.project().markers.iter().find(|m| m.t == r.start && m.duration != dur).map(|m| m.t)
+    }
+
+    /// "Stretch the marker over the region": the marker at the region's start takes the region's
+    /// length, its name kept (what "Marker over the region" did before the split).
+    pub fn stretch_marker_over_region(&mut self, r: Region) {
+        if let Some(at) = self.marker_to_stretch(r) {
+            self.apply(Command::SetMarkerDuration { at, duration: r.end - r.start });
+        }
+    }
+
     /// Region in/out from the cursor; without a region — a seed [cursor, cursor+1 s].
     pub fn set_region_edge_from_cursor(&mut self, set_start: bool) {
         let at = self.player.transport.playhead();
@@ -5290,7 +5378,8 @@ impl KtApp {
         // WHAT COPY TAKES (selection-copy-target, ktprompts 26.10.18 item 4: "if I selected one
         // event, copy-paste must take it, not the region I selected"). Three rules, in order:
         // exactly ONE event selected (link partners count as one — a click on a video event
-        // selects an A/V pair) → that event whole, the region is left as it is; otherwise a region
+        // selects an A/V pair) → that event whole, or its part under a region that crops it (B10),
+        // the region is left as it is; otherwise a region
         // → the region block, as before; otherwise → the selected events. Several selected events
         // keep the region first: the range marker's double-click selects the events it crosses
         // AND sets the region, and its copy must stay cropped to the marker.
@@ -5309,7 +5398,18 @@ impl KtApp {
             units.dedup();
             units.len() == 1
         };
+        // kkt-26.11.01b B10 (the owner's rule as taken 2026-11-01): a region that CROPS the one
+        // selected event copies that event's part under the region and nothing of the other tracks;
+        // a region that does not touch it leaves the whole event.
+        let crops = |p: &kt_model::Project, r: Region| {
+            ids.iter().filter_map(|id| p.clips.iter().find(|c| c.id == *id)).any(|c| {
+                r.intersects_clip(c) && (r.start > c.start || r.end < c.start + c.duration)
+            })
+        };
         let (mut block, what) = match self.model.project().region {
+            Some(r) if one_event && crops(self.model.project(), r) => {
+                (kt_model::ops::copy_clips_in(self.model.project(), &ids, r), k::msg::COPIED_EVENT_PART)
+            }
             _ if one_event => (kt_model::ops::copy_clips(self.model.project(), &ids), k::msg::COPIED_EVENT),
             Some(r) => (kt_model::ops::copy_region_block(self.model.project(), r), k::msg::COPIED_REGION),
             // without a region — everything selected (each with its own link group)
@@ -5823,8 +5923,13 @@ impl KtApp {
         self.apply_batch(cmds);
     }
 
-    /// Cutting the interior of a region (context menu).
+    /// Cutting the interior of a region: the empty-space menu, Edit and its key (one body, rule 17).
+    /// Without a region it says so instead of doing nothing (rule 16).
     pub fn punch_out_action(&mut self) {
+        if self.model.project().region.is_none() {
+            self.note(tr(k::msg::PUNCH_OUT_NO_REGION));
+            return;
+        }
         if let Some(r) = self.model.project().region {
             let mut next = self.next_clip_id();
             let cmds = kt_model::ops::punch_out_region(self.model.project(), r, &mut next);
@@ -7519,6 +7624,9 @@ impl KtApp {
             // handles at a time; otherwise the frame, from this same single place
             if !self.mask_controls(ui, &painter, img_rect, (q.width, q.height)) {
                 self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
+                // an effect's centre over the frame, after it: the smaller target wins the pointer
+                // (fx-center-on-preview)
+                self.center_controls(ui, &painter, img_rect, (q.width, q.height));
             }
             // the show button — AFTER the frame: egui gives the pointer to the last
             // registered interactor, and the frame body (moving) covers the whole frame —
@@ -8082,6 +8190,16 @@ impl KtApp {
                 ui.weak(tr(k::perf::VIDEO_FX_NONE));
             }
         }
+        // the disk prerender (render-cache-disk): its hardware encoder, or why it writes nothing here
+        match self.player.render_cache().status() {
+            Some(Ok(enc)) if !enc.is_empty() => {
+                ui.weak(crate::tf!(k::perf::RENDER_CACHE_ON, enc));
+            }
+            Some(Err(why)) => {
+                ui.weak(crate::tf!(k::perf::RENDER_CACHE_OFF, why));
+            }
+            _ => {}
+        }
         // what composing the preview costs (morpher-event-grid-cost, D1): the last frame and
         // the average of the last second — the number behind "the fps drops here"
         ui.weak(crate::tf!(
@@ -8243,6 +8361,37 @@ impl KtApp {
         }
     }
 
+    /// The key table's commands that act on the effect graph under the pointer (fx-graph v1c):
+    /// Delete removes its selected node, the mute key switches it, zoom to fit is Frame all, zoom
+    /// in/out the detailed nodes or the chips. The graph said where it stood in the frame before
+    /// (`node_editor::hover_slot`); a key pressed over it is taken from the timeline and left for
+    /// the graph's next draw — the same scoping as the mask keys on the preview.
+    fn graph_keys(&mut self, ctx: &egui::Context, k: &mut crate::controls::Pressed) {
+        use crate::controls::Cmd;
+        use crate::node_editor::GraphKey;
+        let Some((vid, rect, frame)) = ctx.data(|d| d.get_temp::<(egui::Id, egui::Rect, u64)>(crate::node_editor::hover_slot())) else {
+            return;
+        };
+        let fresh = frame + 1 >= ctx.cumulative_frame_nr();
+        let over = ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p));
+        if !fresh || !over {
+            return;
+        }
+        for (cmd, key) in [
+            (Cmd::Delete, GraphKey::Remove),
+            (Cmd::TrackMute, GraphKey::Mute),
+            (Cmd::ZoomFit, GraphKey::Fit),
+            (Cmd::ZoomIn, GraphKey::Detail),
+            (Cmd::ZoomOut, GraphKey::Chips),
+        ] {
+            if k.iter().any(|c| c == cmd) {
+                k.remove(cmd);
+                ctx.data_mut(|d| d.insert_temp(crate::node_editor::key_slot(), (vid, key)));
+                ctx.request_repaint();
+            }
+        }
+    }
+
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // GATE — TEXT INPUT, not “something is focused” (R.63 item 4).
         //
@@ -8323,6 +8472,8 @@ impl KtApp {
         if mask_del {
             k.remove(Cmd::Delete);
         }
+        // THE EFFECT GRAPH under the pointer takes the table's Delete, mute and zoom keys first
+        self.graph_keys(ctx, &mut k);
         // EVERY PRESS, IN ORDER (test-hygiene, found-defects 99/166): a slow frame reads several
         // keys at once, and a set of the frame's commands made → → → ← no step at all. A command
         // that opens a window or writes the file runs once a frame; one that opens a text field
@@ -8385,6 +8536,7 @@ impl KtApp {
                 Cmd::Copy => self.copy_selection(),
                 Cmd::Paste => self.paste_at_cursor(),
                 Cmd::RegionClear => self.clear_region(),
+                Cmd::PunchOut => self.punch_out_action(),
                 Cmd::ZoomIn => self.zoom_at_playhead(0.8),
                 Cmd::ZoomOut => self.zoom_at_playhead(1.25),
                 Cmd::ZoomFit => self.zoom_fit(),
@@ -9641,6 +9793,15 @@ pub struct MarkerEdit {
     pub buf: String,
     /// Marker just created: closing without Enter leaves it unnamed.
     pub is_new: bool,
+}
+
+/// Inline editing of a marker's note (marker-notes).
+#[derive(Debug, Clone)]
+pub struct MarkerNoteEdit {
+    pub at: i64,
+    pub buf: String,
+    /// Request focus for the field (once, on open).
+    pub focus: bool,
 }
 
 /// Inline editing of a track name (item 2, round 10).
@@ -10951,6 +11112,11 @@ impl eframe::App for KtApp {
         // did (structured-telemetry); a hover frame records nothing, so the pointer over a still
         // place wakes no writer
         let _ui_frame = UiFrameTrace(std::time::Instant::now());
+        // the person acts: the disk prerender keeps its quiet from now (render-cache-disk D4) — an atomic
+        // stamp, no wake, no work
+        if ui.ctx().input(|i| !i.events.is_empty()) {
+            self.player.note_input();
+        }
         // LIVE BENCH (R.68): the bench command is executed BEFORE the frame — a scenario
         // that waited for the frame must already see the new project. Without
         // KT_LIVE_CTL there is just one OnceLock check here and not a single system operation.
@@ -11128,6 +11294,11 @@ impl eframe::App for KtApp {
         let since = std::time::Instant::now();
         let ended = crate::welcome::wait_posters(std::time::Duration::from_secs(3));
         record("poster", since, ended);
+        // past its budget the poster stops: it would hold the offline engine's park and the GPU exit
+        // hook past the exit's bound (found-defects 791)
+        if !ended {
+            crate::welcome::stop_posters();
+        }
         // a reel strip may be on the device: the process must not exit under it. A test's process
         // goes on after this close, and every later render would wait on the parked engine for good
         #[cfg(not(test))]
@@ -11728,6 +11899,12 @@ impl KtApp {
             self.dirty_ui = true;
         }
     }
+}
+
+/// The build salt of the disk tier (render-cache-disk D1): the program's build and the FFmpeg it decodes
+/// with — another of either may be another picture of the same plan.
+fn render_cache_build() -> String {
+    format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
 }
 
 #[cfg(test)]

@@ -455,3 +455,75 @@ the status items to 190 points in every language.
   "Loading"). The first fix also asserted that the ask was still pending after its frame and that its
   answer landed later — a timing assumption of its own, red in the third finish.sh; the test now
   asserts nothing about when an answer lands.
+
+## "Marker over the region" split (marker-region-split, 2026-11-18, F-TL-016)
+
+The owner (`v26.10` line 33; his answer of 2026-11-07, в.4): the region-edge item did three things under
+one name. Now "Marker over the region" (`marker_over_region_new`) ALWAYS adds a range; an equal range is
+removed (M's toggle); a different marker at the region's start is not changed — the model keeps one
+marker per tick, so the item refuses with a notice naming "Stretch the marker over the region"
+(`stretch_marker_over_region`), offered only when `marker_to_stretch` finds one. M keeps its R.24
+behaviour, stretch included (t142 is frozen; his words were about the menu item). The live dump carries
+`markers` as [tick, length] for scenarios. Class walk (one name, results by hidden state): "Marker here",
+"Clear the region", the marker menu's items and the empty-space region items each have one result; only
+this item changed.
+
+## A marker's note at its flag (marker-notes, 2026-11-18)
+
+The inline-field pattern of the marker's name, multi-line: Enter is a new line, so the note is kept
+by Ctrl+Enter or a click elsewhere (a stray click does not throw a typed note away) and Esc cancels;
+one `SetMarkerNote` when it closes. The note glyph (Phosphor `note`) stands after the name on the
+time-label row (rule 13), the text is read in the status line on hover (rule 10), its lines joined by
+" · ". Class walk (a remark with only a name to hold it): areas, events, tracks, the bin's media and
+groups have names only and no request; reels have their public parameters' author text. "с пометками"
+is read as free text with lines; a checklist or styled text would be a question to him.
+
+## bin-drag-moment (2026-11-19, v26.10 MW1, kkt-26.11.18b U9)
+
+### D1. The moment is the press point
+
+The scrub strip already maps the pointer's x to the file's time (F-MED-008). The press that starts a
+drag on that strip is the moment the person was looking at, so the card records it at
+`drag_started` (`KtApp::bin_press_moment`) and the carry-out payload `BinDrag(media, moment, length)`
+takes it. A press off the strip (the name, an audio or generator card) carries moment 0: the start
+lands under the mouse, as before.
+
+### D2. Which point lands under the mouse
+
+`timeline::BinLanding` from the modifiers of THIS frame: none — the moment; Alt — the start; Alt+Shift
+— the end (his "еще какую-то комбинацию": Shift is added to Alt, the end being the start's mirror; the
+right button he also named is the context menu and stays so). The tick under the mouse is snapped
+first (the magnet catches what is under the mouse), then the start is that tick minus the offset,
+held at the time floor; a start held at the floor shows in the ghost, which is drawn from the same
+number as the drop. Alt pressed with the button is the window manager's move on many Linux desktops;
+pressed after the drag began it reaches the program — the live scenario presses it so.
+
+### D3. The ghost is the event
+
+The silhouette was a fixed ~3 s mark at the mouse for every drop. For a bin card the length is known
+(the thumb service's duration; a reel's content end), so the ghost is that length from the start the
+drop will use, with a white tick at the mouse. A file dropped from the system is opened only on the
+drop: its ghost stays the mark.
+
+### D4. The card's hover text
+
+egui keeps a dragged widget "hovered"; the card's file-and-loudness text, drawn after the timeline,
+replaced the drop's line in the status bar for the whole carry. A dragged card writes no hover text.
+
+### D5. The carried card holds its moment
+
+The card's strip follows the pointer's x (F-MED-008); while carried, the pointer is far right of the
+card, so the strip showed the file's last frame and its timecode — not what lands under the mouse.
+A carried card scrubs at its press point: the picture and the timecode are the moment that lands.
+Found in the first live run (screenshot `01-step-moment`).
+
+### Class walk
+
+The mechanism: a drop places by the start alone, whatever the person aimed at. Checked:
+- bin card → timeline track: done here (files, generators, reels by their length);
+- file from the system (X11 DnD): no moment exists before the open, the length is not known until it;
+  the start at the mouse and the ~3 s mark stay;
+- bin card → morpher source (`morpher_editor.rs`): a source substitution, not a placement; the moment
+  is carried but not used — a source-in from it is not asked for;
+- "Place at the cursor" in the card's menu: places at the playhead, no pointer and no moment; unchanged;
+- dragging an event on the timeline: the grab point already stays under the mouse (`DragState.grab`).

@@ -1242,6 +1242,14 @@ impl KtApp {
                 )
             })
             .collect();
+        let markers = self
+            .model
+            .project()
+            .markers
+            .iter()
+            .map(|m| format!("[{},{}]", m.t.0, m.duration.0))
+            .collect::<Vec<_>>()
+            .join(",");
         // WHERE WE STAND (R.50, B4): without this all future scenarios would silently
         // check the wrong list of events — `clips` above gives the content of the CURRENT reel,
         // and from outside that is the root, and inside it the reel.
@@ -1276,9 +1284,9 @@ impl KtApp {
             .unwrap_or_default();
         let json = format!(
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
-             \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
+             \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\"markers\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"morphers\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"posters_busy\":{},\"rest_clock_ms\":{},\"analysis\":{},\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
              \"on_display\":{},\"ui_only\":{},\"picture\":{},\"complete_taken\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
@@ -1303,6 +1311,9 @@ impl KtApp {
             self.base_rate,
             fields.join(","),
             clips.join(","),
+            // markers as [tick, length] (marker-region-split): the region-edge items are read off
+            // the live model, not off the ruler's pixels
+            markers,
             nest,
             self.clipboard.clips.len(),
             status_shown,
@@ -1317,6 +1328,18 @@ impl KtApp {
             self.key_clock.double_s,
             // who asked for the frames that read no input (the bench's rest checks name it)
             crate::bench::rest_wakes().replace('"', "'"),
+            // the sound device paused at rest and its callbacks seen to stand (a rest check waits for
+            // it before it counts the sound's wakes: found-defects 764)
+            self.audio.as_ref().is_some_and(|a| a.ctl().paused.load(ord)),
+            // a poster queued by Ctrl+S or a close renders in the background (found-defects 767)
+            crate::welcome::posters_busy(),
+            // the earliest state on a clock that will ask a frame with no input (a status line's
+            // expiry, the misclick guard, the autosave): -1 — none. A rest check waits out the short
+            // ones before it counts frames (found-defects 768)
+            self.rest_wake().map_or(-1, |d| d.as_millis().min(i64::MAX as u128) as i64),
+            // the analysis jobs running or queued: "showing starts nothing" is a count, not a
+            // screen difference a hover's own hint makes (found-defects 815)
+            self.analysis.queued() + usize::from(self.analysis.current().is_some()),
             self.model.project().morphers.len(),
             // the preview compose cost (morpher-event-grid-cost): what the panel shows, as numbers
             self.perf.compose_ms_last,
@@ -2039,7 +2062,8 @@ impl KtApp {
                 self.delete_action();
                 ui.close();
             }
-            if ui.button(tr(k::tl::menu::PUNCH_OUT)).clicked() {
+            let key = self.start.controls.label(crate::controls::Cmd::PunchOut).to_string();
+            if crate::widgets::menu_item(ui, tr(k::tl::menu::PUNCH_OUT), Some(&key)) {
                 self.punch_out_action();
                 ui.close();
             }
@@ -3226,9 +3250,14 @@ impl KtApp {
                 // it comes first as at the press: over a region edge the ruler gives the end
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 zone_hint = Some(tr(k::tl::hint::MARKER_END));
-            } else if marker_at(self, pos).is_some() {
+            } else if let Some(mt) = marker_at(self, pos) {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                zone_hint = Some(tr(k::tl::hint::MARKER));
+                // a marker with a note: the status line reads the note (the one place of hints,
+                // rule 10); its lines are joined, the line is one
+                match self.model.project().markers.iter().find(|k| k.t.0 == mt).filter(|k| !k.note.is_empty()) {
+                    Some(k) => hint_owned = Some(k.note.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(" · ")),
+                    None => zone_hint = Some(tr(k::tl::hint::MARKER)),
+                }
             } else if region_edge_at(self, pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 zone_hint = Some(tr(k::tl::hint::REGION_EDGE));
@@ -5314,18 +5343,30 @@ impl KtApp {
         // (item 5 round 8): the payload from the egui drag gives the position itself.
         let bin_drag_pos = egui::DragAndDrop::payload::<crate::bin_panel::BinDrag>(ui.ctx())
             .map(|p| *p)
-            .and_then(|p| ui.input(|i| i.pointer.hover_pos()).map(|pos| (p.0, pos)));
-        if let Some((media, pos)) = bin_drag_pos
+            .zip(ui.input(|i| i.pointer.hover_pos()));
+        self.dnd_bin = None;
+        if let Some((drag, pos)) = bin_drag_pos
             && let Some(g) = self.tl_geom.clone()
             && g.in_lanes(pos)
             && let Some((kind, lane)) = g.lane_at_y(pos.y)
         {
             self.dnd_hover = Some(pos);
+            // the whole file lands; WHICH of its points is under the mouse is read every frame,
+            // so a modifier pressed or let go mid-drag moves the ghost before the drop
+            // (bin-drag-moment, the owner's U9: "до момента отпускания зажать альт … чтобы уже
+            // визуально до вставки была голограма события")
+            let (alt, shift) = ui.input(|i| (i.modifiers.alt, i.modifiers.shift));
+            let landing = BinLanding::of(alt, shift);
+            let under = self.snap(x_to_tick(pos.x), None);
+            let start = (under - landing.offset(drag.1, drag.2)).max(self.time_floor());
+            self.dnd_bin = Some((start, drag.2));
+            self.hover_hint = Some(tr(landing.hint()).to_string());
             if ui.input(|i| i.pointer.any_released()) {
                 let _ = egui::DragAndDrop::take_payload::<crate::bin_panel::BinDrag>(ui.ctx());
-                let at = self.snap(x_to_tick(pos.x).max(self.time_floor()), None);
-                self.place_media_at(media, Tick(at), Some((kind, lane)));
+                self.bin_press_moment = None;
+                self.place_media_at(drag.0, Tick(start), Some((kind, lane)));
                 self.dnd_hover = None;
+                self.dnd_bin = None;
             }
         }
         if let Some(pos) = self.dnd_hover
@@ -5346,9 +5387,14 @@ impl KtApp {
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(140, 235, 170, 160)),
                 egui::StrokeKind::Inside,
             );
-            let at = self.snap(g.x_to_tick(pos.x).max(self.time_floor()), None);
+            // a bin card knows where it lands and how long it is (bin-drag-moment); a file from
+            // the system is opened only on the drop, so its ghost stays a ~3 s mark at the mouse
+            let (at, len) = match self.dnd_bin {
+                Some((start, len)) => (start, len.map_or(90_000 * 3, |l| l.0)),
+                None => (self.snap(g.x_to_tick(pos.x).max(self.time_floor()), None), 90_000 * 3),
+            };
             let x0 = g.tick_to_x(at);
-            let ghost_w = (((90_000.0 * 3.0) / self.ticks_per_px) as f32).max(3.0); // ~3 s, min 3 px
+            let ghost_w = ((len as f64 / self.ticks_per_px) as f32).max(3.0); // min 3 px
             let ghost = egui::Rect::from_min_max(
                 egui::pos2(x0, top + 1.0),
                 egui::pos2((x0 + ghost_w).min(rect.right()), top + lane_h - 3.0),
@@ -5364,6 +5410,14 @@ impl KtApp {
                 [egui::pos2(x0, rect.top() + RULER_H), egui::pos2(x0, rect.bottom())],
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(160, 240, 180, 180)),
             );
+            if self.dnd_bin.is_some() {
+                // the point of the file that is under the mouse — a tick through the ghost
+                painter.line_segment(
+                    [egui::pos2(pos.x, top + 1.0), egui::pos2(pos.x, top + lane_h - 3.0)],
+                    egui::Stroke::new(1.5, egui::Color32::WHITE),
+                );
+                crate::widgets::field_probe::note("tl.drop_ghost", ghost);
+            }
         }
 
         // ---- vertical scrollbar (item 12 round 6) ----
@@ -5749,9 +5803,11 @@ impl KtApp {
             // the flag (item 3 round 12: a separate strip for markers stood empty).
             // It is drawn after the ruler, so the amber name covers
             // the grey time digit, and not the other way round.
+            let mut name_w = 0.0;
             if !m.name.is_empty() {
                 let font = egui::FontId::proportional(10.5);
                 let g = full_painter.layout_no_wrap(m.name.clone(), font, amber);
+                name_w = g.size().x + 4.0;
                 let at = egui::pos2(x + 7.0, top + 1.0);
                 // backing: the name lies over the time digit, and without it they
                 // merge into a mess (checked live, item 3 round 12)
@@ -5761,6 +5817,68 @@ impl KtApp {
                     egui::Color32::from_rgba_unmultiplied(12, 13, 16, 235),
                 );
                 full_painter.galley(at, g, amber);
+            }
+            // a marker with a NOTE (marker-notes): the note glyph after the name (or after the
+            // flag), on the same row — the text itself is the hover's status line
+            if !m.note.is_empty() {
+                let font = egui::FontId::proportional(10.5);
+                let g = full_painter.layout_no_wrap(crate::icons::MARKER_NOTE.to_string(), font, amber);
+                let at = egui::pos2(x + 7.0 + name_w, top + 1.0);
+                let r = egui::Rect::from_min_size(at, g.size());
+                full_painter.rect_filled(r.expand2(egui::vec2(2.0, 0.0)), 2.0, egui::Color32::from_rgba_unmultiplied(12, 13, 16, 235));
+                full_painter.galley(at, g, amber);
+                // the probe's name is built only where a dump or a harness reads it (no allocation per frame)
+                if cfg!(test) || crate::widgets::field_probe::on() {
+                    crate::widgets::field_probe::note(&format!("tl.marker_note_mark.{}", m.t.0), r);
+                }
+            }
+        }
+
+        // ---- inline marker NOTE entry (marker-notes, `v26.10` U8) ----------------
+        // Multi-line: Enter is a new line; Ctrl+Enter or a click elsewhere keeps the text (a note
+        // typed is not thrown away by a stray click), Esc cancels. One undo step when it closes.
+        if let Some(ed) = self.marker_note.clone() {
+            let x = tick_to_x(ed.at);
+            let mut buf = ed.buf.clone();
+            let mut focus = ed.focus;
+            let mut done: Option<bool> = None;
+            egui::Area::new(egui::Id::new("marker-note-edit"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(x + 6.0, rect.top() + TIME_TOP))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        let r = ui.add(
+                            egui::TextEdit::multiline(&mut buf)
+                                .id(egui::Id::new("marker-note-field"))
+                                .hint_text(tr(k::tl::field::MARKER_NOTE))
+                                .desired_rows(4)
+                                .desired_width(260.0),
+                        );
+                        crate::widgets::field_probe::note("tl.marker_note.field", r.rect);
+                        if focus {
+                            r.request_focus();
+                            focus = false;
+                        }
+                        let ctrl_enter = ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
+                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            done = Some(false);
+                        } else if ctrl_enter || (r.lost_focus() && !r.has_focus()) {
+                            done = Some(true);
+                        }
+                    });
+                });
+            match done {
+                Some(true) => {
+                    self.marker_note = None;
+                    // a trailing newline from Ctrl+Enter or the end of typing is not part of the note
+                    let note = buf.trim_end().to_string();
+                    let same = self.model.project().markers.iter().any(|m| m.t.0 == ed.at && m.note == note);
+                    if !same {
+                        self.apply(Command::SetMarkerNote { at: Tick(ed.at), note });
+                    }
+                }
+                Some(false) => self.marker_note = None,
+                None => self.marker_note = Some(crate::app::MarkerNoteEdit { buf, focus, ..ed }),
             }
         }
 
@@ -6911,21 +7029,33 @@ impl KtApp {
             Some(CtxTarget::RegionEdge(t)) => {
                 // PARITY with gesture M (the user’s item 11): with a selected region
                 // both ways give a marker-RANGE, not a point.
-                // The item name says what exactly will result (item 4).
-                let on_region = self
-                    .model
-                    .project()
-                    .region
-                    .map(|r| r.start.0 <= t && t <= r.end.0)
-                    .unwrap_or(false);
-                let label = if on_region {
-                    tr(k::tl::menu::MARKER_REGION)
-                } else {
-                    tr(k::tl::menu::MARKER_HERE)
-                };
-                if ui.button(label).clicked() {
-                    self.marker_here(Tick(t));
-                    ui.close();
+                // The item name says what exactly will result (item 4). Since marker-region-split
+                // (the owner, 2026-11-07 answer 4) the item ALWAYS makes a new range, and changing
+                // the marker that stands at the region's start is an item of its own.
+                let region = self.model.project().region.filter(|r| r.start.0 <= t && t <= r.end.0);
+                match region {
+                    Some(r) => {
+                        let b = ui.button(tr(k::tl::menu::MARKER_REGION));
+                        crate::widgets::field_probe::note("tl.marker_region", b.rect);
+                        if b.clicked() {
+                            self.marker_over_region_new(r);
+                            ui.close();
+                        }
+                        if self.marker_to_stretch(r).is_some() {
+                            let b = ui.button(tr(k::tl::menu::MARKER_STRETCH));
+                            crate::widgets::field_probe::note("tl.marker_stretch", b.rect);
+                            if b.clicked() {
+                                self.stretch_marker_over_region(r);
+                                ui.close();
+                            }
+                        }
+                    }
+                    None => {
+                        if ui.button(tr(k::tl::menu::MARKER_HERE)).clicked() {
+                            self.marker_here(Tick(t));
+                            ui.close();
+                        }
+                    }
                 }
                 if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
                     self.clear_region();
@@ -6945,6 +7075,15 @@ impl KtApp {
                     self.marker_edit =
                         Some(crate::app::MarkerEdit { at: m, buf: name, is_new: false });
                     self.marker_edit_focus = true;
+                    ui.close();
+                }
+                // the marker's note (marker-notes): any text, several lines
+                let note = self.model.project().markers.iter().find(|k| k.t.0 == m).map(|k| k.note.clone()).unwrap_or_default();
+                let b = ui.button(tr(k::tl::menu::MARKER_NOTE));
+                crate::widgets::field_probe::note("tl.marker_note", b.rect);
+                if b.clicked() {
+                    self.marker_edit = None;
+                    self.marker_note = Some(crate::app::MarkerNoteEdit { at: m, buf: note, focus: true });
                     ui.close();
                 }
                 let is_range =
@@ -6973,6 +7112,43 @@ impl KtApp {
             }
             _ => self.empty_place_menu(ui),
         });
+    }
+}
+
+
+/// Which point of a bin card's file lands under the mouse (bin-drag-moment, the owner's U9 of
+/// kkt-26.11.18b): the scrubbed moment by default, its start with Alt, its end with Alt+Shift.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BinLanding {
+    Moment,
+    Start,
+    End,
+}
+
+impl BinLanding {
+    pub(crate) fn of(alt: bool, shift: bool) -> Self {
+        match (alt, shift) {
+            (true, true) => Self::End,
+            (true, false) => Self::Start,
+            _ => Self::Moment,
+        }
+    }
+
+    /// From the event's start to the point under the mouse.
+    pub(crate) fn offset(self, moment: i64, len: Option<Tick>) -> i64 {
+        match self {
+            Self::Moment => moment,
+            Self::Start => 0,
+            Self::End => len.map_or(0, |l| l.0),
+        }
+    }
+
+    pub(crate) fn hint(self) -> crate::i18n::Key {
+        match self {
+            Self::Moment => k::hint::BIN_DROP_MOMENT,
+            Self::Start => k::hint::BIN_DROP_START,
+            Self::End => k::hint::BIN_DROP_END,
+        }
     }
 }
 

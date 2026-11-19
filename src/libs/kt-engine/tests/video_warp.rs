@@ -195,6 +195,7 @@ fn t247_layer_never_slices_a_stretched_clip() {
             duration: Tick(SEC),
             name: "Insert".into(),
             color: None,
+            note: String::new(),
         });
         p.ensure_tracks(kt_model::LaneKind::Morph, 1);
         p.morphers.push(MorpherEvent {

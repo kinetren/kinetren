@@ -125,7 +125,14 @@ def main(out):
         cx, cy = app.preview_center()
         box = (cx - 200, cy - 110, 400, 220)
 
-        # 1) the picture is visible AT ONCE
+        # 1) the picture is visible AT ONCE — once the source is open: in stage 21's finish run the
+        # project opening's media, thumbnail and index jobs stood 12.5 s together on the loaded
+        # machine and the preview said "Loading…" all that time (found-defects 816); the claim is
+        # that a still needs no decode to show, read after the program says it shows a picture
+        app.expect(
+            app.until(lambda: app.geom()["compose"]["picture"], timeout=60),
+            "the preview shows a picture, not Loading…",
+        )
         sd = looks_like_picture(app, box)
         app.expect(sd > 0.15, f"in the preview a picture, not an empty frame (spread {sd:.2f})")
         app.step("still-start", "picture in the preview at the start of the event")

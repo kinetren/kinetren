@@ -62,6 +62,11 @@ impl PreviewCosts {
         }
     }
 
+    /// Every measured moment's device ns (the disk prerender's choice, render-cache-disk D4).
+    pub fn snapshot(&self) -> BTreeMap<i64, u64> {
+        self.at.iter().map(|(t, s)| (*t, s.ns)).collect()
+    }
+
     /// The cost over `[a, b)`, or `None` when no moment there was measured.
     pub fn over(&self, a: Tick, b: Tick) -> Option<PreviewCost> {
         if b.0 <= a.0 {

@@ -1,7 +1,7 @@
 ---
 id: F-AUT-005
 title: Keyframe editing traps
-status: candidate
+status: in-progress
 priority: B
 cost: M
 category: automation/keyframes
@@ -10,11 +10,11 @@ we_have: partial
 crates: [kt-app, kt-model]
 invariants: [11]
 ui_rules: [1, 14, 17, 20]
-round: null
-point: null
-tests: []
+round: features-slow
+point: change curve-key-selection
+tests: [t3114, t3115, t3116]
 depends_on: [F-AUT-001, F-AUT-002]
-checked: 2026-09-08
+checked: 2026-11-19
 trackers: [kde-invent, kde-bugzilla, shotcut, olive]
 ---
 
@@ -134,7 +134,7 @@ The fourfold difference between kde-invent and shotcut is read not as "Kdenlive 
 
 ### What is missing
 
-- **Multiple selection does not exist at all.** `AutoView.sel` is an
+- ~~**Multiple selection does not exist at all.**~~ Done by `curve-key-selection` (see Verdict); the rest of this item still holds. `AutoView.sel` is an
   `Option<(usize, usize)>`: exactly one key of exactly one curve. So there is neither
   a box, nor batch moving, nor "set one value for five keys" (Kdenlive #828),
   nor scaling of a group's timing (the AE gesture). The user asked for this directly
@@ -172,6 +172,14 @@ ADDRESS: `src/apps/kt-app/src/automation.rs` — the class is possible, and noth
 | Breaks compatibility | no |
 
 ## Verdict
+
+**Done in `curve-key-selection` (2026-11-19, the owner's `v26.10` A1 and his answer U9 of kkt-26.11.18b).**
+The selection and the batch move: the ends of the selected segments are selected keys (one selection,
+not two — the Resolve trap of the Cons), Shift+click takes a key in or out, Shift on a sweep adds
+segments, and a drag of any selected key moves all of them by one time shift (the grabbed key on the
+frame grid) and one value shift, stopping before an unselected key — so the batch never makes two keys
+on one tick (trap 3). Still open: the timing stretch of a group (the AE gesture), copy-paste of
+selected keys, one snapped insertion point, Delete in the widget, and the single drag's trap 3.
 
 We take it, but not as a "multiple selection feature", but as a repair of the single gestures — the trackers show exactly this order: a batch of keys is five times
 rarer than single edits in both compared trackers. First one insertion point with snapping to the grid instead of four different ones, a ban on two keys

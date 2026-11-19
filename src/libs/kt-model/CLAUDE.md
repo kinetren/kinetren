@@ -280,8 +280,14 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
   SetFxBypass): a paired kind (`Decl.pair`, `Registry::counterpart`) on one event puts its
   counterpart on every linked event of the OTHER kind — the n-th to the n-th, values and curves
   copied, presence shared. Bypass and masks are each side's own: the audio half's checkbox is "the
-  device's sound off". A morpher patch derives the other half in `chain_for`/`auto_for`
-  (`derived_pairs`, one text for both). t1461.
+  device's sound off". t1461.
+- **A morpher patch HOLDS both halves as slots** (fx-graph D2, kkt-26.11.18b U3: the derived half had
+  no switch): `sync_pairs_in_patch` in `AddMorpher`/`SetMorpher` runs the SAME matcher
+  (`paired_halves` + `mirror_halves`) as the link group; the leading chain is the one whose paired
+  slots differ from the patch before the command. `chain_for`/`auto_for` derive nothing.
+  `normalize` gives an older patch the halves the render derived (`materialize_pairs`, the only
+  migration place); a half held switched off counts as held, or a save would turn it back on.
+  t2990–t2992.
 
 ## Named areas (R.35 item 2)
 - `MarkedArea { name, start, duration, lanes, color }` in `Project.areas`.

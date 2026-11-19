@@ -827,3 +827,47 @@ fn t2962_trace_export_states_the_device_time_the_ring_and_the_render_log() {
     let out = export(&run_of(v));
     assert!(out.contains("readback: a collect waited 15.0 ms (p50 of 3)"), "{out}");
 }
+
+/// Test t2987 (render-cache-disk D6): `trace cache` prints the tier's counts and bytes per kind, the
+/// restores of a lap, the prerender's heavy and light moments with their device time, and why it stopped.
+#[test]
+fn t2987_trace_cache_reads_the_tiers_work() {
+    use kt_time::trace::render_cache as k;
+    let mut run = looped();
+    let first = lap_bounds(&run)[0].0;
+    let mut push = |t: u64, aux: u32, b: u64| {
+        run.recs.push(rec(Ev::RenderCache, t, |r| {
+            r.aux = aux;
+            r.b = b;
+        }))
+    };
+    push(1, k::HEAVY, 40 * MS);
+    push(2, k::HEAVY, 60 * MS);
+    push(3, k::LIGHT, 2 * MS);
+    push(4, k::ABANDON, k::why::INPUT);
+    for i in 0..3 {
+        push(first + (i + 1) * MS, k::RESTORE, 1 << 20);
+    }
+    run.names.insert(91, "h264_vaapi".into());
+    run.recs.push(rec(Ev::RenderCache, 5, |r| {
+        r.aux = k::STORE;
+        r.id = 91;
+        r.a = 2;
+        r.b = 3 << 20;
+    }));
+    run.recs.push(rec(Ev::RenderCache, 6, |r| {
+        r.aux = k::EVICT;
+        r.a = 4;
+        r.b = 1 << 20;
+    }));
+    run.recs.sort_by_key(|r| r.t);
+    let out = cache(&run);
+    println!("{out}");
+    assert!(out.contains("restored 3 (3.0 MB read"), "{out}");
+    assert!(out.contains("written 2 moments in 1 segments (3.0 MB on disk, encoder h264_vaapi)"), "{out}");
+    assert!(out.contains("evicted 4 moments in 1 segments (1.0 MB)"), "{out}");
+    assert!(out.contains("prerendered heavy: 2 (device 50.0 ms a moment on average, 60.0 ms at most)"), "{out}");
+    assert!(out.contains("prerendered light: 1"), "{out}");
+    assert!(out.contains("stopped: input 1"), "{out}");
+    assert!(out.lines().any(|l| l.contains("lap 0") && l.contains("3 restored")), "{out}");
+}

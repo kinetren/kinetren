@@ -4396,9 +4396,9 @@ fn t207_double_click_on_marked_range_selects_it() {
 
     // ---- pure part: which range is under the click ----
     let markers = vec![
-        Marker { t: Tick(30_000), duration: Tick(60_000), name: "a".into(), color: None },
-        Marker { t: Tick(60_000), duration: Tick(60_000), name: "b".into(), color: None },
-        Marker { t: Tick(500_000), duration: Tick::ZERO, name: "point".into(), color: None },
+        Marker { t: Tick(30_000), duration: Tick(60_000), name: "a".into(), color: None, note: String::new() },
+        Marker { t: Tick(60_000), duration: Tick(60_000), name: "b".into(), color: None, note: String::new() },
+        Marker { t: Tick(500_000), duration: Tick::ZERO, name: "point".into(), color: None, note: String::new() },
     ];
     let tol = 4_000;
     assert_eq!(
@@ -4428,6 +4428,7 @@ fn t207_double_click_on_marked_range_selects_it() {
             duration: Tick(130_000),
             name: "chorus".into(),
             color: None,
+            note: String::new(),
         }];
         app.model = kt_model::TimelineModel::new(p);
     }
@@ -4635,6 +4636,7 @@ fn t201_render_file_name_follows_template() {
         duration: kt_time::Tick(90_000 * 4),
         name: "chorus".into(),
         color: None,
+        note: String::new(),
     });
     p.region = Some(Region { start: kt_time::Tick(90_000), end: kt_time::Tick(90_000 * 5) });
     app.model = kt_model::TimelineModel::new(p);
@@ -10271,7 +10273,7 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
 
     // the parameter label’s hint: we hover over it and read the STATUS LINE
     let label = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "size");
-    let rect = h.get_by_label(&label).rect();
+    let rect = label_in_view(&mut h, &label).expect("the size label");
     h.hover_at(rect.center());
     h.step();
     h.step();
@@ -14956,11 +14958,7 @@ fn t749_formula_is_typed_whole_and_drawn() {
     // the field’s coordinate — from the REAL LAYOUT: TextEdit has no accessibility
     // node, but the “Formula” label is drawn next to it (technique t281)
     let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
-    let lr = crate::reach_tests::painted_texts(&h)
-        .into_iter()
-        .find(|t| t.src == label)
-        .map(|t| t.rect)
-        .expect("formula field label is drawn");
+    let lr = painted_in_fx_window(&mut h, ClipId(1), &label).expect("formula field label is drawn");
     let field = egui::pos2(lr.right() + 60.0, lr.center().y);
     h.hover_at(field);
     h.step();
@@ -15032,6 +15030,62 @@ fn t749_formula_is_typed_whole_and_drawn() {
     );
 }
 
+/// The topmost widget whose label contains `label`, brought above the effects window's buttons by
+/// the wheel over the window's body (fx-graph v1b-live, found-defects 812): the node graph over the
+/// form can put a row at the fold of the harness window, and a person turns the wheel until it shows.
+pub(crate) fn label_in_view(h: &mut Harness<'_, KtApp>, label: &str) -> Option<egui::Rect> {
+    use egui_kittest::kittest::Queryable;
+    for _ in 0..40 {
+        let r = h.query_all_by_label_contains(label).map(|n| n.rect()).min_by(|a, b| a.top().total_cmp(&b.top()))?;
+        // the harness opens the window at y 16, 520 high: its action buttons take its last ~50 px
+        if r.bottom() < 470.0 {
+            // the wheel scrolls smoothly: let it come to rest, then read the place again
+            for _ in 0..12 {
+                h.step();
+            }
+            return h.query_all_by_label_contains(label).map(|n| n.rect()).min_by(|a, b| a.top().total_cmp(&b.top()));
+        }
+        h.hover_at(egui::pos2(r.center().x, 250.0));
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -60.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        for _ in 0..3 {
+            h.step();
+        }
+    }
+    None
+}
+
+/// A painted text of the effects window, brought into the window by the wheel (fx-graph v1b): the
+/// node graph above the form can put a field below the harness window's fold, and a person turns
+/// the wheel over the window until it shows.
+pub(crate) fn painted_in_fx_window(h: &mut Harness<'_, KtApp>, clip: kt_model::ClipId, label: &str) -> Option<egui::Rect> {
+    let win = |h: &Harness<'_, KtApp>| h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", clip))));
+    for _ in 0..40 {
+        let w = win(h)?;
+        let found = crate::reach_tests::painted_texts(h).into_iter().find(|t| t.src == label).map(|t| t.rect);
+        if let Some(r) = found
+            && w.shrink(24.0).contains_rect(r)
+        {
+            return Some(r);
+        }
+        h.hover_at(w.center());
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -60.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        for _ in 0..3 {
+            h.step();
+        }
+    }
+    None
+}
+
 /// Test 750 (R.63 item 4): a click outside the field gives focus back, and the keys are alive AT ONCE.
 ///
 /// The owner: “if I start typing something in the formula field, the input focus
@@ -15065,11 +15119,7 @@ fn t750_click_outside_a_field_gives_the_keyboard_back() {
 
     // 1) click in the formula field and type — focus is there
     let label = crate::i18n::tr(crate::i18n::k::fx::FORMULA).to_string();
-    let lr = crate::reach_tests::painted_texts(&h)
-        .into_iter()
-        .find(|t| t.src == label)
-        .map(|t| t.rect)
-        .expect("formula field label is drawn");
+    let lr = painted_in_fx_window(&mut h, ClipId(1), &label).expect("formula field label is drawn");
     let field = egui::pos2(lr.right() + 60.0, lr.center().y);
     let click = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2| {
         h.hover_at(pos);
@@ -15427,11 +15477,7 @@ fn t753b_confirming_a_publication_keeps_you_where_you_stand() {
     h.step();
 
     // right click on the label → “Publish…”
-    let rect = h
-        .query_all_by_label_contains(&free_row)
-        .map(|n| n.rect())
-        .min_by(|a, b| a.top().total_cmp(&b.top()))
-        .expect("no row label");
+    let rect = label_in_view(&mut h, &free_row).expect("no row label");
     let pos = rect.center();
     h.hover_at(pos);
     h.step();
@@ -19141,7 +19187,7 @@ fn t925_several_or_none_selected_keep_the_region_first() {
 }
 
 /// Test 926: Copy after a double-click on a range marker — three crossing events copy the region
-/// (cropped, as before); one crossing event is the one selected event and is copied whole.
+/// (cropped, as before); one crossing event is the one selected event, cropped by the marker (B10).
 #[test]
 fn t926_copy_after_a_range_marker_double_click() {
     use kt_model::*;
@@ -19155,6 +19201,7 @@ fn t926_copy_after_a_range_marker_double_click() {
                     duration: kt_time::Tick(len),
                     name: "m".into(),
                     color: None,
+                    note: String::new(),
                 }];
             });
         }
@@ -19165,8 +19212,10 @@ fn t926_copy_after_a_range_marker_double_click() {
         let (clips, note) = copy(&mut h);
         assert_eq!(clips.len(), want_n, "marker over {len}: copied {} events", clips.len());
         if whole {
-            assert!(clips.iter().all(|c| c.duration == kt_time::Tick(50_000)), "one event: copied whole");
-            assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT, 2));
+            // kkt-26.11.01b B10 (change region-crops-copy, the owner's rule of 2026-11-01): the marker's
+            // range crops the one selected event, so its part under the marker is copied
+            assert!(clips.iter().all(|c| c.duration == kt_time::Tick(len)), "one event: its part under the marker");
+            assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT_PART, 2));
         } else {
             assert_eq!(note, crate::tf!(k::msg::COPIED_REGION, want_n));
         }
@@ -21312,4 +21361,482 @@ fn t2811_what_this_ffmpeg_cannot_do_is_shown_not_hidden() {
     let texts = shown_texts(&h);
     assert!(texts.iter().any(|t| *t == format!("Opus — {na}")), "Opus is not shown unavailable: {texts:?}");
     assert!(texts.iter().any(|t| *t == format!("FLAC — {mp4}")), "FLAC in MP4: {texts:?}");
+}
+
+/// t3100 (F-MED-008, `v26.10` MW1): scrubbing a bin card writes the file's moment under the cursor
+/// over the thumbnail, in the program's timecode; it follows the cursor and leaves with it.
+#[test]
+fn t3100_bin_scrub_writes_the_moment_under_the_cursor() {
+    use kt_model::*;
+    let mut h = harness();
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let dur = h.state().thumbs.duration(MediaId(1)).expect("the fixture's length is known");
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let fps = h.state().model.project().settings.fps;
+    let shown = |h: &Harness<'static, KtApp>| -> Vec<String> {
+        crate::reach_tests::painted_texts(h)
+            .into_iter()
+            .filter(|t| card.contains(t.rect.center()) && t.drawn.contains(" F"))
+            .map(|t| t.drawn)
+            .collect()
+    };
+    assert!(shown(&h).is_empty(), "a timecode is written without a hover: {:?}", shown(&h));
+    let mut seen = Vec::new();
+    for frac in [0.5f32, 0.25] {
+        let x = card.left() + card.width() * frac;
+        h.hover_at(egui::pos2(x, card.center().y));
+        h.step();
+        let at = ((x - card.left()) / card.width()).clamp(0.0, 0.999) as f64;
+        let want = crate::util::format_timecode(kt_time::Tick((at * dur.0 as f64) as i64), fps);
+        let texts = shown(&h);
+        assert_eq!(texts, vec![want.clone()], "the moment under the cursor at {frac}");
+        let r = crate::widgets::field_probe::rect_of("bin.scrub.tc").expect("the label is probed");
+        assert!(card.contains_rect(r), "the label stays inside the thumbnail: {r:?} in {card:?}");
+        seen.push(want);
+    }
+    assert_ne!(seen[0], seen[1], "the moment follows the cursor");
+    h.hover_at(egui::pos2(card.right() + 200.0, card.center().y));
+    h.step();
+    assert!(shown(&h).is_empty(), "the timecode stays after the cursor left: {:?}", shown(&h));
+}
+
+/// t3101 (F-MED-008): the scrub's timecode shortens to the card instead of covering it — the
+/// narrowest card (56 points, `card_w`'s floor) still gets a label inside its thumbnail — and a
+/// hover frame on the same moment replays the laid-out label instead of formatting it again.
+#[test]
+fn t3101_bin_scrub_timecode_fits_a_narrow_card_and_is_laid_out_once() {
+    use kt_model::*;
+    let mut h = harness();
+    h.step();
+    let p = egui::Painter::new(h.ctx.clone(), egui::LayerId::background(), egui::Rect::EVERYTHING);
+    let full = crate::util::format_timecode(kt_time::Tick(100 * 90_000 + 45_000), 25);
+    let wide = crate::bin_panel::scrub_timecode_galley(&p, full.clone(), 120.0);
+    assert_eq!(wide.text(), full, "a full card keeps the program's form");
+    let narrow = crate::bin_panel::scrub_timecode_galley(&p, full.clone(), 56.0 - 8.0);
+    assert!(narrow.size().x <= 48.0, "the narrow label fits: {:?} {}", narrow.size(), narrow.text());
+    assert!(full.contains(narrow.text()), "a shortened form is a part of the moment: {}", narrow.text());
+
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let at = egui::pos2(card.left() + card.width() * 0.4, card.center().y);
+    h.hover_at(at);
+    h.step();
+    let first = h.state().bin_scrub_tc.as_ref().map(|c| c.4.clone()).expect("laid out");
+    h.hover_at(at + egui::vec2(0.0, 3.0));
+    h.step();
+    let again = h.state().bin_scrub_tc.as_ref().map(|c| c.4.clone()).expect("kept");
+    assert!(std::sync::Arc::ptr_eq(&first, &again), "the same moment laid the label out again");
+}
+
+/// t3102 (F-TL-015, `v26.10` U9): `C` cuts out the region's interior, and the Edit menu item with
+/// `C` in its chord column does exactly the same; the part outside the region stays in place.
+#[test]
+fn t3102_c_and_the_edit_item_cut_out_the_region() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::Region;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    {
+        let app = h.state_mut();
+        app.selected.clear();
+        app.model.set_region(Region::normalized(Tick(20_000), Tick(40_000)));
+        app.player.seek(Tick(30_000));
+    }
+    h.step();
+    let ranges = |h: &Harness<'_, KtApp>| {
+        let mut v: Vec<(i64, i64)> =
+            h.state().model.project().clips.iter().map(|c| (c.start.0, c.duration.0)).collect();
+        v.sort_unstable();
+        v
+    };
+    let before = ranges(&h);
+    let inside = |v: &[(i64, i64)]| v.iter().any(|r| r.0 < 40_000 && r.0 + r.1 > 20_000);
+    assert!(inside(&before), "the scene has an event under the region");
+
+    h.key_press(egui::Key::C);
+    h.step();
+    let by_key = ranges(&h);
+    assert!(!inside(&by_key), "C left material inside the region: {by_key:?}");
+    assert!(
+        by_key.iter().any(|r| r.0 + r.1 == 20_000) && by_key.iter().any(|r| r.0 == 40_000),
+        "the remainders do not stay at the region's edges: {by_key:?}"
+    );
+
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(ranges(&h), before, "one undo restores the cut");
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    let item = format!("{}\t{}", tr(k::tl::menu::PUNCH_OUT), "C");
+    let labels = menu_labels(&mut h);
+    assert!(h.query_by_label(&item).is_some(), "the Edit menu has no “{item}”; visible: {labels:?}");
+    h.get_by_label(&item).click();
+    h.step();
+    h.step();
+    assert_eq!(ranges(&h), by_key, "the Edit item and C cut differently");
+}
+
+/// t3103 (F-TL-015): with no region `C` changes nothing and says why (rule 16); the other layouts
+/// leave `C` to their own tools — the command has no key there.
+#[test]
+fn t3103_c_without_a_region_says_so_and_other_styles_leave_c_alone() {
+    use crate::controls::{Choice, Cmd, Controls, Style};
+    use crate::i18n::{k, tr};
+    let (mut h, _) = harness_three_clips_dt(None);
+    h.state_mut().model.set_region(None);
+    h.step();
+    let before = h.state().model.project().clips.clone();
+    h.key_press(egui::Key::C);
+    h.step();
+    assert_eq!(h.state().model.project().clips, before, "C without a region edited the project");
+    assert_eq!(
+        h.state().notices.back().map(|n| n.text.clone()),
+        Some(tr(k::msg::PUNCH_OUT_NO_REGION).to_string()),
+        "C without a region stayed silent"
+    );
+    assert_eq!(Controls::default().label(Cmd::PunchOut), "C", "our layout: C");
+    for s in Style::ALL.into_iter().filter(|s| *s != Style::Own) {
+        let c = Controls::new(Choice::of(s));
+        assert_eq!(c.label(Cmd::PunchOut), "", "{s:?} binds the cut-out to a key of its own tools");
+    }
+}
+
+/// t3104 (marker-region-split, the owner 2026-11-07 answer 4, `v26.10` U7): the region-edge menu's
+/// "Marker over the region" ALWAYS makes a new range and never changes the marker at the region's
+/// start; changing it is "Stretch the marker over the region", offered only when there is one to
+/// stretch. Probed from where the person acts: a right click on the region's edge.
+#[test]
+fn t3104_marker_over_the_region_is_new_and_stretching_is_its_own_item() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    let r = Region { start: Tick(30_000), end: Tick(90_000) };
+    h.state_mut().model.set_region(Some(r));
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let at = egui::pos2(g.tick_to_x(r.start.0), g.rect.center().y);
+    let markers = |h: &Harness<'_, KtApp>| -> Vec<(i64, i64)> {
+        h.state().model.project().markers.iter().map(|m| (m.t.0, m.duration.0)).collect()
+    };
+
+    // no marker there: the new item makes the range; nothing to stretch, so no stretch item
+    right_click_at(&mut h, at);
+    assert!(h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_none(), "a stretch item with nothing to stretch");
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    h.state_mut().marker_edit = None;
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 60_000)], "the item makes a range over the region");
+
+    // a point marker at the region's start: the new item leaves it and says which item changes it
+    h.state_mut().apply(Command::RemoveMarker { at: Tick(30_000) });
+    h.state_mut().apply(Command::AddMarker { at: Tick(30_000), duration: Tick::ZERO });
+    h.step();
+    right_click_at(&mut h, at);
+    let labels = menu_labels(&mut h);
+    assert!(
+        h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_some(),
+        "no stretch item over a point marker; visible: {labels:?}"
+    );
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 0)], "“Marker over the region” changed the existing marker");
+    assert_eq!(
+        h.state().notices.back().map(|n| n.text.clone()),
+        Some(tr(k::msg::MARKER_REGION_TAKEN).to_string()),
+        "the refusal is silent"
+    );
+
+    // the stretch item stretches it, and is then gone (nothing left to stretch)
+    right_click_at(&mut h, at);
+    h.get_by_label(tr(k::tl::menu::MARKER_STRETCH)).click();
+    h.step();
+    assert_eq!(markers(&h), vec![(30_000, 60_000)], "the stretch item did not stretch the marker");
+    right_click_at(&mut h, at);
+    assert!(h.query_by_label(tr(k::tl::menu::MARKER_STRETCH)).is_none(), "a stretch item over an equal range");
+    // an equal range: the new item removes it — the toggle M has
+    h.get_by_label(tr(k::tl::menu::MARKER_REGION)).click();
+    h.step();
+    assert!(markers(&h).is_empty(), "a repeat removes the equal range: {:?}", markers(&h));
+}
+
+/// Test 3110 (kind-picker-previews, `v26.10` G6): the transition kind picker is a gallery of cells as
+/// the effects picker — a cell per kind under its family, the current kind marked, each cell asking
+/// the effect cells' service for the cut after its click once the misclick guard passed — and a click
+/// on a cell changes the kind and closes the gallery.
+/// - **PATH** double-click a transition → its window; click the Kind field → a gallery of pictures
+///   by family, each the cut at the middle of the window with that kind ("Loading" for the first
+///   second); click the Iris picture → the window shows Iris, the gallery is gone.
+#[test]
+fn t3110_transition_kind_picker_is_a_gallery_of_cells() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_model::{TransitionId, TransitionKind};
+    let mut h = harness_sized(1600.0, 900.0);
+    transition_scene(&mut h);
+    h.step();
+    h.step();
+    // the misclick guard is a second from the window's opening: the test does not sleep
+    h.state_mut().transition_editors[0].opened_at = std::time::Instant::now() - std::time::Duration::from_secs(2);
+    let fade = crate::transition_editor::kind_name(&TransitionKind::Crossfade);
+    h.get(by().role(Role::ComboBox).value(fade)).click();
+    h.step();
+    h.step();
+    let iris = TransitionKind::builtin("iris");
+    let cell = crate::widgets::field_probe::rect_of("trkind.iris").expect("the Iris cell is not published");
+    assert!(
+        cell.width() >= crate::fx_registry::CELL_DRAW_W - 0.5,
+        "a kind is not a picture cell but a row: {cell:?}"
+    );
+    assert!(crate::widgets::field_probe::rect_of("trkind.crossfade").is_some(), "the current kind has no cell");
+    assert!(h.state().fx_thumbs.asked() > 0, "the cells asked the service for nothing");
+    h.get_by_label(crate::transition_editor::kind_name(&iris)).click();
+    h.step();
+    h.step();
+    let kind = h.state().model.project().transitions.iter().find(|t| t.id == TransitionId(1)).unwrap().kind.clone();
+    assert_eq!(kind.tag(), "iris", "the click on the cell did not change the kind");
+    assert!(h.query_by_label(fade).is_none(), "the gallery stayed open after the pick");
+}
+
+/// t3105 (kkt-26.11.01b B10, change region-crops-copy): a region that CROPS the one selected event
+/// copies that event's part under the region (with its partner's) and nothing of the other event it
+/// crosses; a region away from the event leaves the whole event, as t924 holds for a covering one.
+#[test]
+fn t3105_a_region_cropping_the_selected_event_copies_its_part() {
+    use kt_model::*;
+    let (mut h, g) = copy_scene();
+    // event 2 (100 000–150 000, partner 4) is clicked; the region 40 000–130 000 also crosses event 1
+    clicks(&mut h, egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6)), 1);
+    set_region(&mut h, 40_000, 130_000);
+    let (clips, note) = copy(&mut h);
+    let mut ids: Vec<u64> = clips.iter().map(|c| c.id.0).collect();
+    ids.sort();
+    assert_eq!(ids, vec![2, 4], "the event and its partner only, not event 1 under the region");
+    assert!(
+        clips.iter().all(|c| c.duration == kt_time::Tick(30_000) && c.start == kt_time::Tick(0)),
+        "the part under the region, rebased: {:?}",
+        clips.iter().map(|c| (c.start, c.duration)).collect::<Vec<_>>()
+    );
+    assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT_PART, 2));
+    let n0 = h.state().model.project().clips.len();
+    h.state_mut().player.seek(kt_time::Tick(600_000));
+    h.event(egui::Event::Paste(String::new()));
+    h.step();
+    let p = h.state().model.project();
+    assert_eq!(p.clips.len(), n0 + 2, "the paste puts the two parts");
+    assert!(
+        p.clips.iter().filter(|c| c.start == kt_time::Tick(600_000)).all(|c| c.duration == kt_time::Tick(30_000)),
+        "the pasted parts are the region's length"
+    );
+    // a region away from the event: the whole event (the paste selected what it put: select 2 again)
+    h.state_mut().selected = [ClipId(2)].into_iter().collect();
+    set_region(&mut h, 0, 40_000);
+    let (clips, note) = copy(&mut h);
+    assert!(clips.iter().all(|c| c.duration == kt_time::Tick(50_000)), "a region away from it: the event whole");
+    assert_eq!(note, crate::tf!(k::msg::COPIED_EVENT, 2));
+}
+
+/// Test 3113 (marker-notes, `v26.10` U8): a marker carries a multi-line note — the marker's
+/// right-click menu has "Note…", which opens a multi-line field at the flag; Enter is a new line, a
+/// click elsewhere keeps the text as ONE undo step, Esc cancels; the flag then shows the note glyph
+/// and the status line reads the note on hover.
+/// - **PATH** right-click a marker's flag → Note… → a multi-line field under the flag; type two
+///   lines (Enter between them) and click elsewhere → the note glyph stands after the flag; hover
+///   the flag → the status line reads both lines; Note… again, type more, Esc → the note as it was
+#[test]
+fn t3113_a_marker_note_is_typed_at_the_flag_and_read_on_hover() {
+    use crate::i18n::{k, tr};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(None);
+    h.state_mut().apply(Command::AddMarker { at: Tick(60_000), duration: Tick::ZERO });
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let flag = egui::pos2(g.tick_to_x(60_000), g.rect.top() + crate::timeline::RULER_H - 4.0);
+    let note = |h: &Harness<'_, KtApp>| h.state().model.project().markers[0].note.clone();
+
+    right_click_at(&mut h, flag);
+    h.get_by_label(tr(k::tl::menu::MARKER_NOTE)).click();
+    h.step();
+    h.step();
+    assert!(h.state().marker_note.is_some(), "Note… opened no field");
+    let field = crate::widgets::field_probe::rect_of("tl.marker_note.field").expect("the note field is not drawn");
+    assert!(field.height() > 40.0, "the note field is one line: {field:?}");
+    let depth = h.state().model.undo_depth();
+    for ev in [
+        egui::Event::Text("take 3".into()),
+        egui::Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+        egui::Event::Text("warmer".into()),
+    ] {
+        h.event(ev);
+        h.step();
+    }
+    assert_eq!(note(&h), "", "the note was written while typing");
+    // a click elsewhere keeps the text
+    let away = egui::pos2(g.tick_to_x(200_000), g.rect.center().y);
+    h.drag_at(away);
+    h.drop_at(away);
+    h.step();
+    h.step();
+    assert!(h.state().marker_note.is_none(), "the field stayed open after a click elsewhere");
+    assert_eq!(note(&h), "take 3\nwarmer", "the typed lines are not the marker's note");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the note is not one undo step");
+    assert!(crate::widgets::field_probe::rect_of("tl.marker_note_mark.60000").is_some(), "the flag shows no note glyph");
+
+    // hover: the status line reads the note
+    h.hover_at(flag);
+    h.step();
+    h.step();
+    assert_eq!(h.state().status_line_shown.0, "take 3 · warmer", "the hover does not read the note");
+
+    // Esc cancels an edit
+    right_click_at(&mut h, flag);
+    h.get_by_label(tr(k::tl::menu::MARKER_NOTE)).click();
+    h.step();
+    h.event(egui::Event::Text(" and more".into()));
+    h.step();
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().marker_note.is_none(), "Esc left the field open");
+    assert_eq!(note(&h), "take 3\nwarmer", "Esc changed the note");
+}
+
+/// A bin card dragged from `frac` of its scrub strip onto video lane 0 at `at`; `mods` are pressed
+/// once the card is over the lane (mid-drag, as the owner does). Returns the placed event's start,
+/// the file's length, the ghost's probe rect and the hint seen before the drop (bin-drag-moment).
+/// What `bin_drop` saw: the placed start, the file's length, the ghost, the hint, the tolerance and
+/// the carried card's timecode texts.
+type BinDropSeen = (i64, i64, Option<egui::Rect>, Option<String>, f64, Vec<String>);
+
+fn bin_drop(frac: f32, mods: egui::Modifiers, at: i64) -> BinDropSeen {
+    use kt_model::*;
+    let mut h = harness_lang(crate::i18n::Lang::En);
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let dur = h.state().thumbs.duration(MediaId(1)).expect("the fixture's length is known").0;
+    {
+        let app = h.state_mut();
+        app.view_start = 0.0;
+        app.ticks_per_px = 3000.0;
+    }
+    h.step();
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let g = h.state().tl_geom.clone().expect("timeline geometry");
+    let target = egui::pos2(g.tick_to_x(at), g.lane_y(ClipKind::Video, 0, 0.5));
+    let press = egui::pos2(card.left() + card.width() * frac, card.center().y);
+    h.hover_at(press);
+    h.step();
+    h.drag_at(press);
+    h.step();
+    h.hover_at(press + egui::vec2(8.0, 0.0));
+    h.step();
+    for f in [0.3, 0.6, 1.0] {
+        h.hover_at(press + (target - press) * f);
+        h.step();
+    }
+    if mods != egui::Modifiers::NONE {
+        h.event(egui::Event::ModifiersChanged(mods));
+        h.hover_at(target);
+        h.step();
+    }
+    h.step();
+    let ghost = crate::widgets::field_probe::rect_of("tl.drop_ghost");
+    let hint = h.state().hover_hint.clone();
+    // what the carried card's strip says: the moment it was pressed on, not the pointer's
+    let card_tc: Vec<String> = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .filter(|t| card.contains(t.rect.center()) && t.drawn.contains(" F"))
+        .map(|t| t.drawn)
+        .collect();
+    h.drop_at(target);
+    h.step();
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.step();
+    let deadline = kt_time::test_deadline();
+    let placed = |h: &Harness<'static, KtApp>| {
+        h.state().model.project().clips.iter().find(|c| c.media == MediaId(1) && c.kind == ClipKind::Video).map(|c| c.start.0)
+    };
+    while placed(&h).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let start = placed(&h).expect("the card was placed");
+    let tol = crate::timeline::snap_threshold(3000.0) as f64 + 2.0 * 3000.0;
+    (start, dur, ghost, hint, tol, card_tc)
+}
+
+/// t3117 (F-MED-009, `v26.10` MW1, U9 of kkt-26.11.18b): a card dragged from the middle of its scrub
+/// strip lands WHOLE with that moment under the mouse.
+#[test]
+fn t3117_a_bin_card_lands_with_the_scrubbed_moment_under_the_mouse() {
+    let at = 20 * 90_000;
+    let (start, dur, _, hint, tol, _) = bin_drop(0.5, egui::Modifiers::NONE, at);
+    let moment = (0.5 * dur as f64) as i64;
+    assert!(
+        ((start + moment - at) as f64).abs() <= tol,
+        "the scrubbed moment is not under the mouse: start {start}, moment {moment}, mouse {at}"
+    );
+    assert!(start < at - 90_000, "the file landed from its start at the mouse, as before: {start}");
+    assert_eq!(hint.as_deref(), Some(tr(k::hint::BIN_DROP_MOMENT)), "the status line does not say the landing");
+}
+
+/// t3118: Alt pressed mid-drag puts the event's start under the mouse, Alt+Shift its end.
+#[test]
+fn t3118_alt_lands_the_start_and_alt_shift_the_end_under_the_mouse() {
+    let at = 20 * 90_000;
+    let (start, _, _, hint, tol, _) = bin_drop(0.5, egui::Modifiers::ALT, at);
+    assert!(((start - at) as f64).abs() <= tol, "Alt did not put the start under the mouse: {start} vs {at}");
+    assert_eq!(hint.as_deref(), Some(tr(k::hint::BIN_DROP_START)));
+    let mods = egui::Modifiers { alt: true, shift: true, ..Default::default() };
+    let (start, dur, _, hint, tol, _) = bin_drop(0.5, mods, at);
+    assert!(((start + dur - at) as f64).abs() <= tol, "Alt+Shift did not put the end under the mouse: {start}+{dur} vs {at}");
+    assert_eq!(hint.as_deref(), Some(tr(k::hint::BIN_DROP_END)));
+}
+
+/// t3119: before the drop the ghost is the event itself — the file's length at its landing — and the
+/// three landing texts exist in every catalog.
+#[test]
+fn t3119_the_drop_ghost_is_the_real_event() {
+    let at = 20 * 90_000;
+    let (start, dur, ghost, _, _, card_tc) = bin_drop(0.5, egui::Modifiers::NONE, at);
+    let fps = harness().state().model.project().settings.fps;
+    let ghost = ghost.expect("the drop ghost is drawn");
+    let want_w = (dur as f64 / 3000.0) as f32;
+    assert!((ghost.width() - want_w).abs() <= 3.0, "the ghost is not the file's length: {} vs {want_w}", ghost.width());
+    let _ = start;
+    let want = crate::util::format_timecode(kt_time::Tick((0.5 * dur as f64) as i64), fps);
+    assert_eq!(card_tc, vec![want], "the carried card's strip does not hold the pressed moment");
+    for lang in [crate::i18n::Lang::En, crate::i18n::Lang::Ru, crate::i18n::Lang::Es, crate::i18n::Lang::Zh, crate::i18n::Lang::Ar] {
+        crate::i18n::set_lang(lang);
+        for key in [k::hint::BIN_DROP_MOMENT, k::hint::BIN_DROP_START, k::hint::BIN_DROP_END] {
+            assert!(tr(key).contains("Alt"), "{lang:?}: a landing text does not name Alt");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::En);
 }

@@ -214,3 +214,85 @@ fn t1486_the_stream_and_the_camera_sound_on_the_linked_audio() {
         assert!(h.state().model.clip(ClipId(2)).unwrap().fx.is_empty(), "{kind}: the sound outlived its device");
     }
 }
+
+/// t2993 (fx-graph D2; capability `morpher`): a morpher layer's device shows its sound half in the
+/// morpher window, and that half's own checkbox switches the device's sound off for the layer —
+/// the picture half stays on, in the MODEL, and one undo brings the sound back.
+/// - **PATH** double click a morpher block carrying VHS Tape → the morpher window shows "VHS Tape"
+///   and its sound half marked with the speaker in the chain → click the checkbox of the sound half →
+///   the half is struck through → the picture half stays on
+#[test]
+fn t2993_a_layer_s_device_sound_switches_off_in_the_morpher_window() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    for (id, kind) in [(1, ClipKind::Video), (2, ClipKind::Audio)] {
+        p.clips.push(ClipEvent {
+            r#gen: None,
+            gen_auto: Vec::new(),
+            overrides: Vec::new(),
+            geometry: Default::default(),
+            geometry_pos: 0,
+            geometry_auto: Vec::new(),
+            id: ClipId(id),
+            link_group: Some(GroupId(1)),
+            kind,
+            lane: 0,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(180_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+            masks: Default::default(),
+        });
+    }
+    p.ensure_tracks(LaneKind::Morph, 1);
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    assert!(app.apply(Command::AddMorpher(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(180_000),
+        targets: MorphTargets::Clips { ids: vec![ClipId(1), ClipId(2)] },
+        patch: MorphPatch { video_fx: vec![FxInstance::builtin("vhs_tape")], ..Default::default() },
+        timed: true,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
+        enabled: true,
+    })));
+    app.open_morph_editor(MorphId(1));
+    h.step();
+    h.step();
+    // the two halves carry one name; the strip marks the sound half with the speaker
+    let sound = format!("{} {}", crate::icons::CAT_VOLUME, crate::fx_editor::fx_display_name(&FxInstance::builtin("vhs_tape_sound")));
+    let label = h.query_by_label(&sound).unwrap_or_else(|| panic!("the morpher window does not show the sound half “{sound}”")).rect();
+    // the half's own checkbox: the nearest one left of its label on the same row
+    let boxes: Vec<egui::Rect> = h.query_all_by_role(egui::accesskit::Role::CheckBox).map(|n| n.rect()).collect();
+    let cb = boxes
+        .iter()
+        .filter(|r| (r.center().y - label.center().y).abs() < 8.0 && r.right() <= label.left() + 1.0)
+        .max_by(|a, b| a.right().total_cmp(&b.right()))
+        .copied()
+        .expect("the sound half has no checkbox of its own");
+    let depth = h.state().model.undo_depth();
+    click(&mut h, cb.center());
+    let m = &h.state().model;
+    let patch = &m.project().morphers[0].patch;
+    assert_eq!(patch.audio_bypass.first().copied(), Some(true), "the sound half did not switch off");
+    assert!(!patch.video_bypass.first().copied().unwrap_or(false), "the picture half switched off with it");
+    let eff = m.project().effective_clips();
+    let a = eff.iter().find(|c| c.kind == ClipKind::Audio).unwrap();
+    assert!(a.active_fx().iter().all(|f| f.tag() != "vhs_tape_sound"), "the layer's tape still sounds");
+    assert_eq!(m.undo_depth(), depth + 1, "the switch is not one history step");
+}

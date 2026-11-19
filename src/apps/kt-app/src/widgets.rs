@@ -108,6 +108,18 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
     })
 }
 
+/// A colour button with the screen eyedropper beside it (chroma-key-eyedropper, kkt-26.11.01b B2):
+/// every colour a person sets can be taken from the preview's frame or anywhere in the program.
+/// `salt` tells apart the rows of one `Ui`; `probe` names the pipette for a live scenario.
+pub fn rgb_button(ui: &mut egui::Ui, col: &mut [f32; 3], salt: &str, probe: Option<&str>) -> bool {
+    let mut changed = ui.color_edit_button_rgb(col).changed();
+    if let Some(rgb) = crate::eyedropper::button(ui, ui.id().with(("eyedrop", salt)), probe) {
+        *col = rgb.map(|v| v as f32 / 255.0);
+        changed = true;
+    }
+    changed
+}
+
 /// Colour eyedropper + HEX field for the DIRECT fields of the carrier (R.53, item 415).
 ///
 /// For a title, colours are not a `ParamSpec` and never were (“the first lawful exception”,
@@ -131,6 +143,11 @@ pub fn color_row_rgba(
             field_probe::note(name, resp.rect);
         }
         if resp.changed() {
+            changed = true;
+        }
+        // the screen eyedropper keeps the alpha it had (chroma-key-eyedropper)
+        if let Some([pr, pg, pb]) = crate::eyedropper::button(ui, ui.id().with(("eyedrop", label)), None) {
+            col = egui::Color32::from_rgba_unmultiplied(pr, pg, pb, col.to_srgba_unmultiplied()[3]);
             changed = true;
         }
         // HEX field: the canonical path form (rrggbbaa) and the same technique.
@@ -232,6 +249,13 @@ pub fn color_row<P: HasParams + ?Sized>(
             }
             if let Some(n) = alpha {
                 f.set_param(n, straight[3] as f64);
+            }
+            changed = true;
+        }
+        // the screen eyedropper (chroma-key-eyedropper): the three channels, the alpha stays
+        if let Some(rgb) = crate::eyedropper::button(ui, ui.id().with(("eyedrop", names[0])), None) {
+            for (n, v) in names.iter().zip(rgb) {
+                f.set_param(n, v as f64);
             }
             changed = true;
         }
@@ -1108,6 +1132,14 @@ pub(crate) mod field_probe {
         SEEN.with(|v| v.borrow().get(name).copied())
     }
 
+    /// Forget a place, so a test can ask whether a later frame published it again.
+    #[cfg(test)]
+    pub(crate) fn forget(name: &str) {
+        SEEN.with(|v| {
+            v.borrow_mut().remove(name);
+        });
+    }
+
     /// Take the accumulated data (the geometry dump is written every 100 ms).
     pub(crate) fn take() -> Vec<(String, egui::Rect)> {
         RECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
@@ -1788,10 +1820,32 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     }
     let mut changed = ParamsChanged::default();
     egui::Grid::new(id).num_columns(4).spacing([8.0, 4.0]).show(ui, |ui| {
-        for pair in specs.chunks(2) {
-            for spec in pair {
-                changed |= param_row_bound(ui, f, spec, bind.as_deref_mut(), pubc);
+        // two fields a row, but an `<stem>_x`/`<stem>_y` pair is ONE row of its own (`v26.10` T10:
+        // "параметры центра X Y … находятся на разных строках"): a point reads as one value
+        let (mut i, mut in_row) = (0, 0);
+        while i < specs.len() {
+            let stem = specs[i].name.strip_suffix("_x");
+            let paired =
+                stem.is_some_and(|st| specs.get(i + 1).is_some_and(|n| n.name.strip_suffix("_y") == Some(st)));
+            if paired {
+                if in_row == 1 {
+                    ui.end_row();
+                }
+                changed |= param_row_bound(ui, f, &specs[i], bind.as_deref_mut(), pubc);
+                changed |= param_row_bound(ui, f, &specs[i + 1], bind.as_deref_mut(), pubc);
+                ui.end_row();
+                (i, in_row) = (i + 2, 0);
+                continue;
             }
+            changed |= param_row_bound(ui, f, &specs[i], bind.as_deref_mut(), pubc);
+            in_row += 1;
+            if in_row == 2 {
+                ui.end_row();
+                in_row = 0;
+            }
+            i += 1;
+        }
+        if in_row == 1 {
             ui.end_row();
         }
     });
@@ -1829,6 +1883,32 @@ pub struct ChainEdit<'a> {
     /// it is a source substitution. Its own checkbox, a purple label, it is not
     /// rearranged with the mouse and has no cross.
     pub head: Option<HeadSlot<'a>>,
+    /// What applies to the chain's output AFTER it (fx-graph v1c, the owner's Q3 "Да, коробками"):
+    /// the morpher layers over the event bottom up, then its track's stage. Shown as read-only
+    /// boxes; a double click asks their own window (`ChainChanged::open`).
+    pub context: Vec<ContextBox>,
+    /// Sidechain keys feeding slots of this chain: (slot, the key track's name) — a dashed wire
+    /// into the compressor (the track window).
+    pub keys: Vec<(usize, String)>,
+}
+
+/// One read-only box after a chain (fx-graph v1c).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextBox {
+    pub target: ContextTarget,
+    /// The layer's or the track's name as the timeline shows it.
+    pub label: String,
+    /// How many effects it holds.
+    pub count: usize,
+    /// The sidechain key of a track stage, by the key track's name.
+    pub key: Option<String>,
+}
+
+/// Whose window a context box opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextTarget {
+    Layer(kt_model::MorphId),
+    Track(kt_model::TrackId),
 }
 
 /// Pseudo-slot at the start of the strip.
@@ -1899,6 +1979,8 @@ pub struct ChainChanged {
     /// to the chain (the slot masks, shape-masks).
     pub moved: Option<(usize, usize)>,
     pub removed: Option<usize>,
+    /// A context box asked for its own window (a double click on it).
+    pub open: Option<ContextTarget>,
 }
 
 impl ChainChanged {
@@ -1952,364 +2034,12 @@ pub fn elided_name(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -
     egui::WidgetText::Galley(ui.fonts_mut(|f| f.layout_job(job)))
 }
 
-fn slot_text(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -> egui::WidgetText {
-    elided_name(ui, name, color, off)
-}
-
-/// The chain strip: master checkbox, slots (on/off checkbox, name, cross),
-/// mouse rearrangement, picker and copy-paste. `kinds` — the picker filter (a bool: audio or
-/// video; the morpher passes `PickKinds::Both`).
-#[allow(clippy::too_many_arguments)]
 /// Who owns the strip and where to report a right click (R.49, item 363).
 /// The strip does not know `KtApp` and must not know it — it is a widget; it accepts
 /// the target address from outside and gives the result back outside as well.
 pub struct ChainCtx<'a> {
     pub chain: kt_model::ClipId,
     pub picked: &'a mut Option<crate::ctx_menu::PanelTarget>,
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn chain_strip(
-    ui: &mut egui::Ui,
-    id: impl std::hash::Hash + std::fmt::Debug + Copy,
-    mut edit: ChainEdit<'_>,
-    kinds: impl Into<crate::fx_registry::PickKinds>,
-    query: &mut String,
-    clipboard: &mut Option<kt_model::ops::FxChainBlock>,
-    src_in: kt_time::Tick,
-    hover: &mut Option<String>,
-    ctx: &mut ChainCtx<'_>,
-    // Context of picker thumbnails (R.54). `None` — we draw no pictures:
-    // the audio chain (a sound thumbnail cannot be drawn) and harness tests without a
-    // service. The strip knows nothing else about thumbnails — it is a widget.
-    preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
-) -> ChainChanged {
-    let kinds = kinds.into();
-    let mut ch = ChainChanged::default();
-    edit.bypass.resize(edit.fx.len(), false);
-    edit.auto.resize(edit.fx.len(), Vec::new());
-    let mut remove: Option<usize> = None;
-    let mut swap: Option<(usize, usize)> = None;
-
-    ui.horizontal_wrapped(|ui| {
-        // master checkbox: switches off the WHOLE chain, without touching the slot states
-        if crate::app::hint_into(
-            hover,
-            ui.checkbox(edit.master_on, tr(k::fx::CHAIN_ON)),
-            tr(k::fx::CHAIN_ON_HINT),
-        )
-        .changed()
-        {
-            ch.master = true;
-        }
-        ui.separator();
-        // the pinned head: its own checkbox, a purple label, no drag
-        // and no cross — it is not an effect
-        if let Some(h) = edit.head.as_mut() {
-            if let Some(on) = h.on.as_deref_mut()
-                && crate::app::hint_into(hover, ui.checkbox(on, ""), h.hint).changed()
-            {
-                ch.head = true;
-            }
-            let head_on = h.on.as_deref().copied().unwrap_or(true);
-            let text = slot_text(ui, &h.label, h.color, !head_on);
-            let resp = crate::app::hint_into(
-                hover,
-                ui.selectable_label(*edit.selected == ChainSel::Head, text),
-                h.hint,
-            );
-            crate::widgets::field_probe::note("fx.head", resp.rect);
-            if resp.clicked() {
-                *edit.selected = ChainSel::Head;
-                crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("effect selected: {} (the head)", h.label));
-            }
-            // the head also responds to the right button (item 363): it has
-            // exactly one action — its own checkbox, and staying silent about it is not allowed.
-            // There is no checkbox (a generator source) — the menu does not lie with an item,
-            // it names the head: the name is truncated, and the full one must be visible somewhere.
-            let head_label = h.label.clone();
-            let switchable = h.on.is_some();
-            let mut head_toggle = false;
-            resp.clone().context_menu(|ui| {
-                *ctx.picked = Some(crate::ctx_menu::PanelTarget::FxHead { chain: ctx.chain });
-                ui.label(egui::RichText::new(head_label.clone()).strong());
-                if switchable {
-                    let label = if head_on { tr(k::fx::DISABLE) } else { tr(k::fx::ENABLE) };
-                    if ui.button(label).clicked() {
-                        head_toggle = true;
-                        ui.close();
-                    }
-                }
-            });
-            if head_toggle && let Some(on) = h.on.as_deref_mut() {
-                *on = !head_on;
-                ch.head = true;
-            }
-            // the full name — in the hint: the truncated one is visible, but which file
-            // is substituted can be learned in no other way
-            if h.label.chars().count() > SLOT_NAME_CHARS {
-                resp.on_hover_text(h.label.clone());
-            }
-            if !edit.fx.is_empty() {
-                ui.label(crate::icons::CARET_RIGHT);
-            }
-        }
-        for i in 0..edit.fx.len() {
-            let off = edit.bypass[i];
-            // the enable checkbox of the slot (morphers had none at all)
-            let mut on = !off;
-            if crate::app::hint_into(
-                hover,
-                ui.checkbox(&mut on, ""),
-                if off { tr(k::fx::ENABLE) } else { tr(k::fx::DISABLE) },
-            )
-            .changed()
-            {
-                edit.bypass[i] = !on;
-                ch.bypass = true;
-            }
-            // The slot name: both the selection by click and the drag source.
-            //
-            // ONE interaction `click_and_drag`, not `dnd_drag_source`
-            // around the label (R.38 item 6, verbatim: “in fx-chain widgets
-            // it is troublesome to activate the input of parameters”). In egui 0.36
-            // `dnd_drag_source` registers OVER the content a
-            // rectangle with `Sense::drag()` and does it AFTER the content —
-            // `hit_test` gives `click: None`, and `.clicked()` inside
-            // NEVER fires. The repository idiom (bin_panel.rs,
-            // automation.rs, meters.rs, timeline.rs) — to parse
-            // `drag_started()`/`clicked()` on one interaction.
-            let slot_id = egui::Id::new((&id, "slot", i));
-            let name = crate::fx_editor::fx_display_name(&edit.fx[i]);
-            let text = slot_text(ui, name, ui.visuals().text_color(), off);
-            let drawn = ui.selectable_label(*edit.selected == ChainSel::Fx(i), text);
-            // the grab area is wider than the drawing (rule 1 of the checklist): one should not
-            // have to aim at a label one line high
-            let resp = crate::app::hint_into(
-                hover,
-                ui.interact(
-                    drawn.rect.expand2(egui::vec2(0.0, SLOT_GRAB_PAD)),
-                    slot_id,
-                    egui::Sense::click_and_drag(),
-                ),
-                tr(k::fx::SLOT_HINT),
-            );
-            // the slot hands its rectangle to live scenarios: the strip is the
-            // only way to select a slot, and a scenario must not guess offsets
-            // inside the window (R.27)
-            if crate::widgets::field_probe::on() {
-                crate::widgets::field_probe::note(&format!("fx.slot.{i}"), resp.rect);
-            }
-            if resp.clicked() {
-                *edit.selected = ChainSel::Fx(i);
-                // the person's choice, by the name the strip shows (telemetry-journal)
-                crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("effect selected: {name} (slot {i})"));
-            }
-            if resp.drag_started() {
-                egui::DragAndDrop::set_payload(ui.ctx(), i);
-            }
-            if name.chars().count() > SLOT_NAME_CHARS {
-                resp.clone().on_hover_text(name.to_string());
-            }
-            // released another slot over this one — we rearrange
-            if let Some(from) = resp.dnd_release_payload::<usize>()
-                && *from != i
-            {
-                swap = Some((*from, i));
-            }
-            // Right click on a slot (R.49, item 363): before this round the slot
-            // answered with a hover hint and was SILENT on the right button —
-            // and a user who has learned the right button on the timeline presses
-            // it everywhere. No new keys: the items are the same actions that
-            // already exist as a checkbox and a cross.
-            resp.context_menu(|ui| {
-                *ctx.picked =
-                    Some(crate::ctx_menu::PanelTarget::FxSlot { chain: ctx.chain, slot: i });
-                ui.label(egui::RichText::new(name).strong());
-                let label = if off { tr(k::fx::ENABLE) } else { tr(k::fx::DISABLE) };
-                if ui.button(label).clicked() {
-                    edit.bypass[i] = !off;
-                    ch.bypass = true;
-                    ui.close();
-                }
-                if ui.button(tr(k::fx::REMOVE_SLOT)).clicked() {
-                    remove = Some(i);
-                    ui.close();
-                }
-            });
-            if crate::app::hint_into(
-                hover,
-                ui.small_button(crate::icons::CLEAR),
-                tr(k::fx::REMOVE_SLOT),
-            )
-            .clicked()
-            {
-                remove = Some(i);
-            }
-            if i + 1 < edit.fx.len() {
-                ui.label(crate::icons::CARET_RIGHT);
-            }
-        }
-    });
-
-    ui.horizontal_wrapped(|ui| {
-        let head_name = edit.head.as_ref().map(|h| h.label.clone());
-        match crate::fx_registry::fx_picker_with_head(
-            ui,
-            (&id, "add"),
-            kinds,
-            query,
-            head_name.as_deref(),
-            edit.presets.rows,
-            hover,
-            preview,
-        ) {
-            Some(crate::fx_registry::Picked::Preset(i)) => {
-                if let Some(row) = edit.presets.rows.get(i) {
-                    // insertion of a preset — the SAME function as insertion from the
-                    // clipboard: keys move “input to input”
-                    kt_model::ops::append_chain_block(
-                        edit.fx,
-                        edit.bypass,
-                        edit.auto,
-                        &row.block,
-                        src_in,
-                    );
-                    *edit.selected = ChainSel::Fx(edit.fx.len().saturating_sub(1));
-                    ch.fx = true;
-                    ch.bypass = true;
-                    ch.auto = true;
-                }
-            }
-            Some(crate::fx_registry::Picked::PresetAction(a)) => {
-                *edit.presets.action = Some(a);
-            }
-            Some(crate::fx_registry::Picked::Fx(tmpl)) => {
-                edit.fx.push(tmpl);
-                edit.bypass.push(false);
-                edit.auto.push(Vec::new());
-                *edit.selected = ChainSel::Fx(edit.fx.len() - 1);
-                ch.fx = true;
-            }
-            // the head is not “added” — it is pinned; the picker only helps
-            // to FIND it by search, on a par with the effects
-            Some(crate::fx_registry::Picked::Head) => *edit.selected = ChainSel::Head,
-            None => {}
-        }
-        // save the chain as a preset (R.48): the file itself is written by the owner of the
-        // window — the strip only passes it the block
-        if !edit.fx.is_empty()
-            && crate::app::hint_into(
-                hover,
-                ui.button(tr(k::fx::SAVE_PRESET)),
-                tr(k::fx::SAVE_PRESET_HINT),
-            )
-            .clicked()
-        {
-            *edit.presets.save = Some(kt_model::ops::FxChainBlock {
-                slots: edit
-                    .fx
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| kt_model::ops::FxSlotBlock {
-                        fx: f.clone(),
-                        bypass: edit.bypass[i],
-                        curves: edit.auto.get(i).cloned().unwrap_or_default(),
-                        masks: Vec::new(),
-                    })
-                    .collect(),
-                src_in,
-                fx_off: !*edit.master_on,
-            });
-        }
-        // copy-paste of the chain (the model — kt_model::ops, R.33)
-        if !edit.fx.is_empty()
-            && crate::app::hint_into(
-                hover,
-                ui.button(tr(k::fx::COPY_CHAIN)),
-                tr(k::fx::COPY_CHAIN_HINT),
-            )
-            .clicked()
-        {
-            let block = kt_model::ops::FxChainBlock {
-                slots: edit
-                    .fx
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| kt_model::ops::FxSlotBlock {
-                        fx: f.clone(),
-                        bypass: edit.bypass[i],
-                        curves: edit.auto.get(i).cloned().unwrap_or_default(),
-                        masks: Vec::new(),
-                    })
-                    .collect(),
-                src_in,
-                fx_off: !*edit.master_on,
-            };
-            if let Ok(json) = serde_json::to_string_pretty(&block) {
-                ui.ctx().copy_text(json);
-            }
-            *clipboard = Some(block);
-        }
-        let can_paste = clipboard.is_some();
-        if crate::app::hint_into(
-            hover,
-            ui.add_enabled(can_paste, egui::Button::new(tr(k::fx::PASTE_CHAIN))),
-            tr(k::fx::PASTE_CHAIN_HINT),
-        )
-        .clicked()
-            && let Some(b) = clipboard.clone()
-        {
-            // ONE truth of insertion: the same function that the presets call
-            // (R.48). Keys move “input to input” — for an event these are
-            // the ticks of the material, for a morpher the time of the block.
-            kt_model::ops::append_chain_block(edit.fx, edit.bypass, edit.auto, &b, src_in);
-            *edit.selected = ChainSel::Fx(edit.fx.len().saturating_sub(1));
-            ch.fx = true;
-            ch.bypass = true;
-            ch.auto = true;
-        }
-    });
-
-    if let Some((from, to)) = swap {
-        let slot = edit.fx.remove(from);
-        edit.fx.insert(to, slot);
-        let b = edit.bypass.remove(from);
-        edit.bypass.insert(to, b);
-        {
-            let a = &mut *edit.auto;
-            let c = a.remove(from);
-            a.insert(to, c);
-            ch.auto = true;
-        }
-        *edit.selected = ChainSel::Fx(to);
-        ch.fx = true;
-        ch.bypass = true;
-        ch.moved = Some((from, to));
-    }
-    if let Some(i) = remove {
-        ch.removed = Some(i);
-        edit.fx.remove(i);
-        edit.bypass.remove(i);
-        if i < edit.auto.len() {
-            edit.auto.remove(i);
-            ch.auto = true;
-        }
-        // the selection moves to the surviving slot, and the head stays the head
-        if let Some(sel) = edit.selected.fx() {
-            *edit.selected = if edit.fx.is_empty() {
-                ChainSel::Head
-            } else {
-                ChainSel::Fx(sel.min(edit.fx.len() - 1))
-            };
-        }
-        ch.fx = true;
-        ch.bypass = true;
-    }
-    if edit.fx.is_empty() {
-        ui.weak(tr(k::fx::CHAIN_EMPTY));
-    }
-    ch
 }
 
 /// The media picker of the project with search — the same gesture as the effect picker.

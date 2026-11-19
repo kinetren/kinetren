@@ -11,6 +11,7 @@ use crate::i18n::{k, tr};
 use crate::thumbs::{THUMB_STEP_LADDER, ThumbKey, ThumbState, thumb_key_t, thumb_source_step};
 use eframe::egui;
 use kt_model::{Command, MediaId};
+use kt_time::Tick;
 
 const PREVIEW_W: f32 = 128.0;
 const PREVIEW_H: f32 = 72.0;
@@ -72,9 +73,11 @@ fn raw_wheel_y(ui: &egui::Ui) -> f32 {
     })
 }
 
-/// The payload of dragging a card out of the bin (item 5 of round 8).
+/// The payload of dragging a card out of the bin (item 5 of round 8): the media, the file
+/// moment the press was on (0 off the scrub strip) and the file's length when it is known
+/// (bin-drag-moment, the owner's U9 of kkt-26.11.18b).
 #[derive(Clone, Copy, Debug)]
-pub struct BinDrag(pub MediaId);
+pub struct BinDrag(pub MediaId, pub i64, pub Option<Tick>);
 
 /// The state of dragging a card inside the bin (item 8 of round 9).
 #[derive(Clone, Debug)]
@@ -504,7 +507,19 @@ impl KtApp {
         // carry-out of a card to the timeline (item 5 of round 8): from then on it is led by the usual
         // ghost silhouette of the timeline, as on a file drop from the system
         if let Some(id) = drag_out {
-            egui::DragAndDrop::set_payload(ui.ctx(), BinDrag(id));
+            let (moment, len) = match self.bin_press_moment {
+                Some((m, t, d)) if m == id => (t, Some(d)),
+                // a reel has no file: its length is its content's (`place_reel_at` places that)
+                _ => (
+                    0,
+                    self.model
+                        .doc()
+                        .sequence(id)
+                        .map(|q| q.end().max(kt_model::MIN_CLIP_DURATION))
+                        .or_else(|| self.thumbs.duration(id)),
+                ),
+            };
+            egui::DragAndDrop::set_payload(ui.ctx(), BinDrag(id, moment, len));
         }
         if pending {
             // the thumbnail loads — a soft retry, not 60 fps
@@ -818,6 +833,9 @@ impl KtApp {
             ui.id().with(("bin-card", id.0)),
             egui::Sense::click_and_drag(),
         );
+        if resp.drag_started() {
+            self.bin_press_moment = None;
+        }
         // A card the bin's scroll hides is not painted (ui-frame-cost): its mini-map walks the
         // reel's events, its thumbnail and waveform are looked up, and the bin of a big
         // project is several screens tall. It still answers and is probed above.
@@ -914,8 +932,23 @@ impl KtApp {
                 self.draw_bin_waveform(&p, thumb_rect, id);
             } else if !is_synth && !is_off {
                 let dur = self.thumbs.duration_or_probe(id);
-                // moment: hover-x → fraction of the file; without hover — the poster
-                let (t, tol) = match (resp.hover_pos(), dur) {
+                // a drag starting on the scrub strip carries the moment it was pressed on
+                // (bin-drag-moment): the event lands with that moment under the mouse
+                if resp.drag_started()
+                    && let Some(d) = dur
+                    && d.0 > 0
+                    && let Some(o) = ui.input(|i| i.pointer.press_origin())
+                    && thumb_rect.contains(o)
+                {
+                    let frac = ((o.x - thumb_rect.left()) / thumb_rect.width()).clamp(0.0, 0.999);
+                    self.bin_press_moment = Some((id, (frac as f64 * d.0 as f64) as i64, d));
+                }
+                // moment: hover-x → fraction of the file; without hover — the poster. While the
+                // card is carried, the strip holds the moment it was pressed on (bin-drag-moment):
+                // that one lands under the mouse, not the pointer's far-off x
+                let scrub_pos =
+                    if resp.dragged() { ui.input(|i| i.pointer.press_origin()) } else { resp.hover_pos() };
+                let (t, tol) = match (scrub_pos, dur) {
                     (Some(pos), Some(d)) if d.0 > 0 => {
                         let frac = ((pos.x - thumb_rect.left()) / thumb_rect.width()).clamp(0.0, 0.999);
                         let step = thumb_source_step(d, BIN_SCRUB_SLOTS * card_w, card_w);
@@ -949,7 +982,7 @@ impl KtApp {
                         egui::Color32::WHITE,
                     );
                 }
-                if let (Some(pos), Some(d)) = (resp.hover_pos(), dur)
+                if let (Some(pos), Some(d)) = (scrub_pos, dur)
                     && d.0 > 0
                 {
                     p.line_segment(
@@ -962,6 +995,11 @@ impl KtApp {
                             egui::Color32::from_rgba_unmultiplied(255, 255, 255, 170),
                         ),
                     );
+                    // the moment under the cursor in the file's own time (F-MED-008, v26.10 MW1):
+                    // the same hover-x as the thumbnail, so the number and the picture agree
+                    let frac = ((pos.x - thumb_rect.left()) / thumb_rect.width()).clamp(0.0, 0.999);
+                    let moment = (frac as f64 * d.0 as f64) as i64;
+                    self.draw_scrub_timecode(&p, thumb_rect, id, moment);
                 }
             } else {
                 p.text(
@@ -1156,8 +1194,10 @@ impl KtApp {
         // would mean starting decode of dozens of files — a direct relative of invariant 8
         // (“scroll/zoom does not generate decode requests”). Until it is measured, it is said so:
         // “not measured yet”, rather than an invented zero.
-        // built only under the pointer: a lock and two strings per card were a frame's cost
-        if resp.hovered() {
+        // built only under the pointer: a lock and two strings per card were a frame's cost.
+        // Not while the card is dragged: egui keeps a dragged widget "hovered", and the card's
+        // text drawn after the timeline hid the drop's landing line (bin-drag-moment)
+        if resp.hovered() && !resp.dragged() {
             let loud = match self.loudness.lock().unwrap().get(&id) {
                 Some((lufs, dbtp, _)) => {
                     crate::tf!(k::bin::LOUDNESS, format!("{lufs:.1}"), format!("{dbtp:.1}"))
@@ -1214,6 +1254,28 @@ impl KtApp {
                 }
             }
         }
+    }
+
+    /// The scrub's timecode over the bottom of the thumbnail, on a dark backing (F-MED-008). The
+    /// program's timecode form, shortened from the left and then of its frame when the card is
+    /// narrow; laid out once per moment and replayed as a galley on the other hover frames.
+    fn draw_scrub_timecode(&mut self, p: &egui::Painter, thumb: egui::Rect, id: MediaId, moment: i64) {
+        let fps = self.model.project().settings.fps;
+        let room = thumb.width() - 8.0;
+        let stale = !matches!(&self.bin_scrub_tc,
+            Some((m, t, f, w, _)) if *m == id && *t == moment && *f == fps && *w == room.to_bits());
+        if stale {
+            let full = crate::util::format_timecode(kt_time::Tick(moment), fps);
+            let g = scrub_timecode_galley(p, full, room);
+            self.bin_scrub_tc = Some((id, moment, fps, room.to_bits(), g));
+        }
+        let Some((_, _, _, _, g)) = &self.bin_scrub_tc else { return };
+        let size = g.size();
+        let at = egui::pos2(thumb.center().x - size.x / 2.0, thumb.bottom() - size.y - 3.0);
+        let back = egui::Rect::from_min_size(at, size).expand2(egui::vec2(3.0, 1.0));
+        p.rect_filled(back, 2.0, egui::Color32::from_black_alpha(170));
+        p.galley(at, g.clone(), egui::Color32::from_gray(230));
+        crate::widgets::field_probe::note("bin.scrub.tc", back);
     }
 
     fn draw_bin_waveform(&self, p: &egui::Painter, rect: egui::Rect, id: MediaId) {
@@ -1297,4 +1359,24 @@ impl KtApp {
         }
         Some(tex)
     }
+}
+
+/// The scrub's timecode laid out to fit `room` (F-MED-008): the program's form, then shortened
+/// from the left and of its frame — "00:01:40.500 F12" → "01:40.500 F12" → "01:40.500" →
+/// "01:40". The shortest is taken when nothing fits.
+pub(crate) fn scrub_timecode_galley(p: &egui::Painter, full: String, room: f32) -> std::sync::Arc<egui::Galley> {
+    let no_hours = full.strip_prefix("00:").unwrap_or(&full).to_string();
+    let no_frame = no_hours.split(' ').next().unwrap_or(&no_hours).to_string();
+    let no_ms = no_frame.split('.').next().unwrap_or(&no_frame).to_string();
+    let font = egui::FontId::monospace(10.0);
+    let color = egui::Color32::from_gray(230);
+    let mut last = None;
+    for text in [full, no_hours, no_frame, no_ms] {
+        let g = p.layout_no_wrap(text, font.clone(), color);
+        if g.size().x <= room {
+            return g;
+        }
+        last = Some(g);
+    }
+    last.expect("four forms were laid out")
 }

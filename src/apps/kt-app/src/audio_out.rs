@@ -79,7 +79,6 @@ impl AudioOutput {
         self.ctl.error.lock().unwrap().take()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn ctl(&self) -> &OutputCtl {
         &self.ctl
     }

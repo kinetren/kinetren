@@ -16,6 +16,7 @@ pub mod mix;
 pub mod fxstore;
 pub mod incremental;
 pub mod render_ahead;
+pub mod render_cache;
 pub mod compose_queue;
 pub mod player;
 pub mod prefetch;
@@ -38,7 +39,7 @@ pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use flight::{FlightRecorder, Snap as FlightSnap};
 pub use fxstore::FxStateStore;
 pub use player::{
-    AudioShared, Player, Sources, VideoBackendStatus, VideoCost, callback_step, hold_builds_for_tests,
+    AudioShared, KeptReader, Player, Sources, VideoBackendStatus, VideoCost, callback_step, hold_builds_for_tests,
     hold_start_bursts_for_tests,
     lookahead_windows,
     reverse_frames, varispeed_fill, Wake,

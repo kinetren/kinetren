@@ -632,14 +632,16 @@ the GOP is limited to 60 for some reason, and probably the other parameters too"
 A layer whose chain holds a `Stream` slot SHALL take as its pre-FX frame the stage's output,
 computed in the plan's common code before the executor runs, fitted to the layer's decode size
 and opaque; the slot SHALL be removed from the chain the executor sees. The order SHALL ask the
-stream's frames at the codec's size — the frame at N, and the history the memo does not cover —
-and no frame at the ordinary decode quality. The layer's content key SHALL carry the decoded
+stream's frames at the stream's input size (the requirement "A stream's input follows the layer's
+size") — the frame at N, and the history the memo does not cover — and no frame at the ordinary
+decode quality. The layer's content key SHALL carry the decoded
 frame's key. Export SHALL pre-roll the codec before a frame whose history the memo lacks, in
 batches bounded by its cache budget. A stream slot on a reel instance or a track stage SHALL be
 skipped.
 
 Why: invariants 4, 7 and 11 — the order equals the read, one composition code, the same bytes
-whatever the start (`datamosh-codec-path` design D3–D6).
+whatever the start (`datamosh-codec-path` design D3–D6); the input size since kkt-26.11.18b U2
+(`mosh-sharp` design D2).
 
 #### Scenario: A reset key on the event ends the mosh on the beat
 - **WHEN** the event carries a `reset` curve rising to on at a frame, with the `mosh` gate on
@@ -658,7 +660,7 @@ whatever the start (`datamosh-codec-path` design D3–D6).
 
 #### Scenario: The order asks what the stage reads
 - **WHEN** `layers_at` is asked at a frame inside a mosh with an empty memo, and again after that frame was composed
-- **THEN** the first answer holds the history at the codec size (the event before included) and no frame at the layer's ordinary quality; the second holds only the next frame's own source
+- **THEN** the first answer holds the history at the stream's input size — 144 lines in a 90-line layer are ordered at the layer's size — (the event before included) and no other size; the second holds only the next frame's own source
 - **TEST** t1248 (`src/libs/kt-engine/tests/stream_stage.rs`)
 
 #### Scenario: A person moshes a cut in the editor
@@ -1178,6 +1180,7 @@ Why: found-defects rows 361, 362, 363 (per-sample-costs).
 - **WHEN** Camera ISP runs with defocus for every source curve, two radii, opaque and alpha, at K 1 and 2, with the table and under `cpu::with_general` (the per-tap form)
 - **THEN** the frames are equal byte for byte, and the graph holds the table pass only with defocus
 - **TEST** t2683 (`src/libs/kt-gpu/tests/camera_isp.rs`)
+
 ### Requirement: A stream stage's walk keeps its state on the compute device
 A history walk of a stream stage SHALL keep the decoder's picture and the clean encoder's state on the
 compute device between its batches and leave them in the stream memo's live tier at its end; a later
@@ -1220,3 +1223,110 @@ same-size bilinear.
 - **WHEN** random frames from 1×1 to 1920×1080 are fitted to their own size
 - **THEN** the result is the general bilinear's and the frame itself
 - **TEST** t2702 (`src/libs/kt-fx/tests/fx_thumb.rs`)
+
+### Requirement: A sharp datamosh carries the codec's decisions at the layer's size
+The kind `datamosh` SHALL have a structural flag row `sharp`: ON for a Datamosh added from now on
+(`Decl::fresh`, every way a new instance is made), OFF where a saved slot lacks the row — its passport
+default — so a project saved before keeps its look. With it on, the codec SHALL
+still encode at `lines` and decide there the stream's schedule and breakages, its block grid, its motion
+vectors and which blocks are coded; a carrier decoder SHALL execute the same dependency chain at the
+stream's input size instead of the broken decoder at `lines`: an intra or refresh node is the source frame;
+a hold node the reference; an inter node predicts every carrier pixel from the reference by the applied
+vector of the codec block covering it, scaled by the ratio of the visible sizes, and, where that block's
+residual is not empty in the plane, adds `gain ×` the source's own difference (the frame minus the previous
+frame moved by the packet's own vector, scaled likewise). The carrier SHALL be computed by the batched walk
+on the device with the bytes of the per-position reference. The paired sound SHALL not read the row.
+
+Why: kkt-26.11.18b U1 — "на 144p получаются красивые изломы но они мыльные … не пиксилизацию включить а
+чтобы именно расчет был такой хитрый чтобы оно в разрешение проекта превращалось если я хочу". The look is
+the codec's decisions; the softness is only its picture's size (F-FX-015, design D1). On for new instances: kkt-26.11.18b U7
+("«Резко» по умолчанию для новых Datamosh? — Вкл. для новых").
+
+#### Scenario: An intact sharp stream is the source
+- **WHEN** a moving picture goes through the codec at 144 lines with `sharp` on and no breakage, the input at 4× the codec's size
+- **THEN** every frame of the stream equals the source frame at the input size (converted to the codec's planes and back)
+- **TEST** t2971 (`src/plugins/fx-video-codec/tests/sharp.rs`)
+
+#### Scenario: The sharp break is the soft break in detail
+- **WHEN** a cut mosh (shot A still, shot B moving) is rendered at 144 lines soft and sharp with the input at 4× the codec's size
+- **THEN** the sharp frames after the cut keep A's texture moved by B's motion — the sharp frame shrunk to the codec's size is closer to the soft frame than to B's source — and the sharp frame carries more fine detail than the soft frame enlarged
+- **TEST** t2972 (`src/plugins/fx-video-codec/tests/sharp.rs`)
+
+#### Scenario: The batched walk carries the reference's bytes
+- **WHEN** frames inside a cut mosh with bloom, a vector edit and macroblock loss are rendered with `sharp` on by the batched walk and by the per-position reference, and soft with the input above the codec's size
+- **THEN** the bytes and keys are identical
+- **TEST** t2970 (`src/plugins/fx-video-codec/tests/sharp.rs`)
+
+#### Scenario: The stream's sound does not read the carrier
+- **WHEN** the stream's sound is rendered over a mosh with `sharp` off and on
+- **THEN** the samples are identical
+- **TEST** t2975 (`src/plugins/fx-video-codec/tests/sound.rs`)
+
+#### Scenario: A person sharpens a 144-line mosh in the editor
+- **PATH** add two clips back to back → select the second → FX → Datamosh "Cut mosh" → set the encoded height to 144 → the preview shows the break with the clips' detail (a new Datamosh is sharp) → untick "Sharp" → the same break, soft → tick it again → the window open, the program at rest
+- **WHEN** the live scenario runs on our fixtures
+- **THEN** the new Datamosh's file names `sharp`; the soft frame differs from the sharp one and has less fine detail, and its file leaves the row out; with the window open the program runs nothing at rest once its poster and status clocks ran out; the screenshots of each step are saved
+- **TEST** live `datamosh_sharp.py` (`src/scripts/live/datamosh_sharp.py`, via `src/scripts/live-check.sh`) — t2976
+
+#### Scenario: A new Datamosh is sharp, a saved one keeps its look
+- **WHEN** a slot `{"kind":"datamosh","lines":"144","before":12,"mosh":1.0}` saved before is read, and a new Datamosh (and its sound half) is made
+- **THEN** the saved slot reads `sharp` off and writes back the same text; the new one is sharp and its file names `"sharp":true`
+- **TEST** t2977 (`src/libs/kt-model/tests/plugin_format.rs`)
+
+### Requirement: A stream's input follows the layer's size
+The host SHALL order a stream stage's frames, and run the slots in front of it, at the stream's INPUT size:
+the layer's base size when the kernel carries its picture (`StreamKernel::carried`); otherwise the codec's
+size (`lines` high, the layer's aspect, `stream::coded_size`), but the layer's base size when `lines` is
+above the layer's height AND slots run in front of the stage (with nothing in front the decoder gives the
+codec's size and nothing is resampled). The kernel SHALL resample an input of another size to its codec's size, by the
+same integer rule on the device and on the processor, and with the input at the codec's size SHALL read it
+as before. In the preview the layer's size is the preview quality's, in an export the project's.
+
+Why: kkt-26.11.18b U2 — "тут бы конечно как-то учитывать настройки превью проекта чтобы поменьше работы
+было"; row 734: Camera ISP in front of a 720-line Datamosh cost 59 ms a history position on his iGPU
+against ~14 ms at the 360p preview (design D2). Only a front gains: with nothing in front the resample
+cost a software device's walk a quarter more and t2044 missed its frames under load (found-defects 762).
+
+#### Scenario: The input size follows the layer
+- **WHEN** a Datamosh event's stream size is asked at a 640×360 preview and at 1920×1080 with `lines` 144, 720 and 1080, soft and sharp
+- **THEN** soft with slots in front: 256×144 at both; 640×360 and 1280×720 for 720 lines; 640×360 and 1920×1080 for 1080 lines; soft with nothing in front: the codec's size (1280×720 for 720 lines in the preview); sharp: 640×360 and 1920×1080 at every `lines`
+- **TEST** t2974 (`src/libs/kt-engine/src/video_stream.rs`)
+
+#### Scenario: The resample is an identity at the codec's size
+- **WHEN** a frame is resampled to its own size, shrunk 4× and grown 2×
+- **THEN** the identity returns the bytes, a flat colour stays the colour, and a shrink of a one-pixel checker gives its mean grey
+- **TEST** t2973 (`src/plugins/fx-video-codec/tests/sharp.rs`)
+
+### Requirement: An effect's centre is dragged on the preview
+When the selected slot of an open effects window has a centre pair (`center_x`/`center_y`), the paused
+preview SHALL show a crosshair at that centre in the frame the slot works on (the source placed by the
+Geometry node before it, the canvas after it). Dragging it SHALL write the pair in one history step —
+the base, or the key at the playhead when the pair has a curve. There SHALL be no crosshair during
+playback or for an effect without a centre. The parameters grid SHALL keep every `_x`/`_y` pair on
+one row. The hover text SHALL exist in all five catalogs.
+Why: `v26.10` line 52 (T10): "Radial Blur имеет параметры центра X Y, и эти параметр находятся на
+разных строках. Мало того - я еще не могу как в том же Vegas указать центр по самой превью".
+
+#### Scenario: The centre is dragged
+- **WHEN** a Radial Blur slot is selected and its crosshair is dragged a quarter of the picture right and up
+- **THEN** the crosshair started at the picture's middle; the centre is (0.5, −0.5) as one history step; the crosshair stands where it was dropped
+- **PATH** double click a clip → + effect… → Radial Blur → a crosshair at the middle of the preview → drag it up and right → the rays spread from there, Center X/Y read 0.5 and −0.5
+- **TEST** t3123 (`src/apps/kt-app/src/input_work_tests.rs`), live scenario `src/scripts/live/fx_center.py` (`./scripts/live-check.sh`)
+
+#### Scenario: A curve gets its key
+- **WHEN** the centre's X has a curve and the crosshair is dragged
+- **THEN** a key at the playhead's material moment holds the new X; the base is unchanged
+- **PATH** a centre with a curve → drag the crosshair → a key appears on the graph at the cursor
+- **TEST** t3124 (`src/apps/kt-app/src/input_work_tests.rs`)
+
+#### Scenario: Only where a centre is
+- **WHEN** a Blur slot is selected; then Radial Blur during playback; the catalogs are read
+- **THEN** no crosshair for the blur, none during playback; the hover text exists in all five catalogs
+- **PATH** select Blur → no crosshair → select Radial Blur, press Play → the crosshair hides until the pause
+- **TEST** t3125 (`src/apps/kt-app/src/input_work_tests.rs`)
+
+#### Scenario: X and Y on one row
+- **WHEN** Radial Blur's parameters are drawn
+- **THEN** Center X and Center Y stand on one row, Amount on the row before
+- **PATH** select Radial Blur → Parameters: Amount; Center X and Center Y side by side
+- **TEST** t3126 (`src/apps/kt-app/src/input_work_tests.rs`)

@@ -22,6 +22,8 @@ pub struct TransitionEditor {
     pub backup: TransitionEvent,
     pub gesture: u64,
     pub open: bool,
+    /// When the window opened: the kind cells' misclick guard counts from it (kind-picker-previews).
+    pub opened_at: std::time::Instant,
 }
 
 /// the kind's category for grouping in the picker. The families are the very three
@@ -71,6 +73,7 @@ impl KtApp {
             backup: t,
             gesture: self.gesture_counter,
             open: true,
+            opened_at: std::time::Instant::now(),
         });
     }
 
@@ -78,6 +81,13 @@ impl KtApp {
         let mut editors = std::mem::take(&mut self.transition_editors);
         for ed in &mut editors {
             self.draw_one_transition_editor(ctx, ed);
+        }
+        // a window closed: its queued kind cells are dropped, and with the last cell window its sources
+        if editors.iter().any(|e| !e.open) {
+            self.fx_thumbs.bump_generation();
+            if editors.iter().all(|e| !e.open) && self.fx_editors.is_empty() && self.morph_editors.is_empty() {
+                self.fx_thumbs.forget_scene();
+            }
         }
         editors.retain(|e| e.open);
         self.transition_editors = editors;
@@ -113,6 +123,21 @@ impl KtApp {
             .or(cur.b)
             .and_then(|id| self.model.clip(id).map(|c| c.kind == kt_model::ClipKind::Audio))
             .unwrap_or(false);
+        // The kind cells (kind-picker-previews, `v26.10` G6): the frame after the click — the cut
+        // composed with that kind at the MIDDLE of the window, where both sides show (at an edge every
+        // kind is the same frame A or B), on the project the player plays. Nothing is opened before
+        // the misclick guard; the cells are Loading until then.
+        let scene = cur.a.or(cur.b).map(|side| crate::fx_thumbs::Scene {
+            project: self.player.project(),
+            rev: self.scene_rev(),
+            place: crate::fx_thumbs::Place::Clip(side),
+            t: kt_time::Tick(w0.0 + win_len / 2),
+            base: self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()),
+            index_db: self.index_db_path(),
+        });
+        let decode_ok = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
+        let mut pv = scene.map(|sc| crate::fx_thumbs::PickerCtx::for_scene(&self.fx_thumbs, sc, decode_ok));
+        let host_w_cell = std::cell::Cell::new(0.0f32);
         let shown = crate::window_shell::Shell::new(
             egui::Id::new(("transition", ed.id)),
             crate::tf!(k::trn::TITLE, ed.id.0),
@@ -128,30 +153,41 @@ impl KtApp {
                 if !audio_only {
                     ui.horizontal(|ui| {
                         ui.label(tr(k::trn::KIND));
+                        host_w_cell.set(ui.clip_rect().width());
                         let kind = egui::ComboBox::from_id_salt(("trkind", ed.id))
                             .selected_text(kind_name(&t.kind))
+                            .height(crate::widgets::popup_list_height(ui))
+                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                             .show_ui(ui, |ui| {
-                                let mut cat: Option<Key> = None;
-                                for k in TransitionKind::all() {
-                                    let c = kind_category(k);
-                                    if cat != Some(c) {
-                                        if cat.is_some() {
-                                            ui.separator();
+                                // a gallery of cells by family, as the effects picker (G6)
+                                crate::fx_thumbs::gallery_width(ui, host_w_cell.get());
+                                let all = TransitionKind::all();
+                                let mut i = 0;
+                                while i < all.len() {
+                                    let c = kind_category(&all[i]);
+                                    let n = all[i..].iter().take_while(|k| kind_category(k) == c).count();
+                                    ui.label(egui::RichText::new(tr(c)).small().weak());
+                                    ui.horizontal_wrapped(|ui| {
+                                        for k in &all[i..i + n] {
+                                            let same = k.tag() == t.kind.tag();
+                                            let swap = crate::fx_thumbs::Swap::Transition(ed.id, k.clone());
+                                            let probe = format!("trkind.{}", k.tag());
+                                            let r = crate::fx_thumbs::kind_cell(ui, pv.as_mut(), Some(&swap), kind_name(k), same, &probe);
+                                            if r.clicked() {
+                                                if !same {
+                                                    // changing the kind = its DEFAULTS: the parameters differ
+                                                    // between kinds, there is nothing to carry over
+                                                    t.kind = k.clone();
+                                                    changed = true;
+                                                }
+                                                ui.close();
+                                            }
                                         }
-                                        ui.label(tr(c));
-                                        cat = Some(c);
-                                    }
-                                    let same = k.tag() == t.kind.tag();
-                                    let r = ui.selectable_label(same, kind_name(k));
-                                    crate::widgets::field_probe::note(&format!("trkind.{}", k.tag()), r.rect);
-                                    if r.clicked() && !same {
-                                        // changing the kind = its DEFAULTS: the parameters differ
-                                        // between kinds, there is nothing to carry over
-                                        t.kind = k.clone();
-                                        changed = true;
-                                    }
+                                    });
+                                    i += n;
                                 }
                             });
+                        crate::widgets::field_probe::note("tr.kind.pick", kind.response.rect);
                         crate::widgets::lesson_mark::control(ui, "tr.kind", &kind.response);
                     });
                     // ---- kind parameters: the same grid as for effects -------
@@ -243,7 +279,7 @@ impl KtApp {
                             };
                             let get = |n: &str| t.kind.get_param(n).unwrap_or(0.0) as f32 / 255.0;
                             let mut c = [get(names[0]), get(names[1]), get(names[2])];
-                            if ui.color_edit_button_rgb(&mut c).changed() {
+                            if crate::widgets::rgb_button(ui, &mut c, "trn", None) {
                                 for (n, v) in names.iter().zip(c) {
                                     t.kind.set_param(n, (v * 255.0).round() as f64);
                                 }

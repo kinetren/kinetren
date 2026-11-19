@@ -2945,3 +2945,46 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    about real time; he finds that unacceptable.
 4. "объедини лог рендера в телеметрию, нахуя ты его выделил отдельно то?!?" — no separate render
    log file: the render's lines live in the telemetry like everything else.
+
+## 2026-11-18 — his answer on Datamosh's size (`kkt-26.11.18b`)
+
+1. "на 144p получаются красивые изломы но они мыльные … чтобы именно расчет был такой хитрый чтобы
+   оно в разрешение проекта превращалось если я хочу" — an opt-in way to keep the break of a small
+   codec size while the picture stays sharp at the project's resolution; pixelation is NOT the answer.
+2. "да - тут бы конечно как-то учитывать настройки превью проекта чтобы поменьше работы было" — yes
+   to found-defects 734: the Datamosh history and what is in front of it follow the preview settings.
+3. "когда морфером добавляю датамош / vhstape / isp - нет возможности отключить морфинг эффекта для
+   аудио … в морфере и впринципе в fx-chain управление дебильное получается, нужно что-то типо
+   компактного удобного графа делать" — the audio half of a paired effect must be switchable in a
+   morpher; the morpher's and the FX chain's control becomes a compact graph (design shown to him
+   before code).
+4. His question: is the disk prerender encoded or raw?
+5. "слабо я верю что ffv1 аппаратно ускорен.. у нас datamosh лагает как нехуй делать а ты тут для
+   превью это на постоянку предлагаешь" — the prerender must not put a CPU codec into the preview's
+   path; the processor is already the bottleneck.
+6. "блядь да сделай ты сжатие видео нормальное что ты мозг мне ебешь" — DECISION: the prerender is
+   compressed with a normal video codec on the machine's hardware encoder/decoder; no more questions
+   about it.
+7. Future ("это на будущее"): the cached final render (FastCachedRender, `v26.10` item X1) uses the same
+   cache logic as the prerender — the same keys, an index in or beside rendered files telling which
+   segments can be reused.
+8. "я бы еще хотел чтобы ты добавил еще один чат который будет потихоньку фишки уже пилить, а то мы
+   над оптимизацией долго сидим уже" — a standing session builds small features one at a time, beside
+   the optimisation work (a fourth executor at his request).
+9. His answers on `fx-graph` and Datamosh: the graph replaces the effects strip; "я бы хотел везде в окнах
+   разных единым стилем в одном месте чтобы не скролить, вообще может быть перейти на графовое
+   представление эффектов? типо как в blender? все таки у нас композинг должен быть и вообще говоря
+   более сложные графы впринципе.." — a node graph like Blender's is to be designed; the question on the
+   event window "вопроса не понял. контекст не ясен" — ask again with context; "Резко" ON for new
+   Datamosh instances (old projects keep their look).
+10. His answers on the graph's revision (U8): the nodes are laid out automatically in chain order
+   (no free placement in v1); "я бы хотел 2-3 ползунка, но и нужно учесть как уместить огромные
+   эффекты типо isp чтобы не нагромождали" — two or three main sliders inside a node, with a bound so
+   a big effect does not crowd the graph; the event window shows the morpher layers and the track's
+   effects over it as read-only boxes; VHS Tape, Datamosh and Camera ISP on a whole video track get
+   their sound as a separate change.
+11. His answers on A1 and MW1 (U9, 2026-11-19): the keys of the selected curve segments are selected
+   and move together, Shift+click adds single keys or more segments; a bin card dragged to the
+   timeline lands whole with the scrubbed moment under the mouse; Alt puts the event's start under
+   the cursor, another combination its end; the modifier may change mid-drag and the event's ghost
+   shows where it lands before the drop.

@@ -143,3 +143,52 @@ Why: the owner, L2: "получить "код сохранения" настро
 - **THEN** the refusal is shown and nothing changed; the choice is in force; the new start has it; the tile brings its changes back
 - **PATH** under the tiles the Settings code with Copy → reinstall → enter the code in the field → Apply → the tile, the panels and the keys are back
 - **TEST** t1713 (`src/apps/kt-app/src/controls_tests.rs`)
+
+### Requirement: The region's interior is cut out by a key and the Edit menu
+"Cut out the region interior" SHALL be a command of the key table, bound to `C` in our layout and
+unbound in the borrowed layouts, and SHALL have an Edit menu item with its chord; the key, the Edit
+item and the empty-space item SHALL run one body, which cuts out the interior of the region from
+every event it crosses and leaves the rest in place, as one undo step. Without a region the key and
+the Edit item SHALL say so and change nothing.
+Why: the owner, `v26.10` line 35 — "нужна функция cut(ножницы) региона и чтобы еще с клавиатуры
+можно было (кнопка "C" свободна?)"; the action lived only in the empty-space menu (F-TL-015).
+
+#### Scenario: C and Edit › Cut out the region interior give the same cut
+- **WHEN** a region 20 000–40 000 ticks lies over an event and `C` is pressed; the cut is undone and Edit › "Cut out the region interior" (chord `C`) is clicked
+- **THEN** no material is left inside the region, the remainders end and start at its edges, one undo restores the events, and the Edit item gives exactly the cut `C` gave
+- **PATH** draw a region over part of an event (I, O) → press C → the event's middle is gone, both remainders stay where they were → Ctrl+Z → the event is whole → Edit menu → "Cut out the region interior" with C on the right → click → the same gap
+- **TEST** t3102 (`src/apps/kt-app/src/layout_tests.rs`)
+
+#### Scenario: No region, other layouts
+- **WHEN** there is no region and `C` is pressed; the key list of every borrowed layout is read
+- **THEN** the project is unchanged and the notice says "Nothing to cut out: draw a region first"; our layout prints `C` for the command, every borrowed layout prints no key
+- **PATH** clear the region → press C → nothing is cut, the status line says to draw a region first
+- **TEST** t3103 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: A colour is taken from the screen with the eyedropper
+Every colour button of the program SHALL carry an eyedropper beside it. A click on it SHALL arm it:
+the cursor becomes a crosshair and the status line says to click a colour. While armed, the next
+click anywhere in the program window SHALL be taken by the eyedropper alone — nothing under it acts
+— and SHALL write the screen's colour under the pointer into that row as one history step. Esc, or the
+eyedropper again, SHALL put it down without writing. Where the screen cannot be read the bell SHALL
+say so. The texts SHALL exist in all five catalogs.
+Why: kkt-26.11.01b line 3 (B2): "greenscreen не имеет пипетки, чтобы ткнуть в тот же кадр превью или
+еще где-либо взять цвет с экрана".
+
+#### Scenario: The key colour is picked from the preview's frame
+- **WHEN** a Greenscreen slot's pipette is clicked, then the preview's picture is clicked
+- **THEN** the status line said to click a colour; the key colour is the screen's colour there, written as one history step; the preview did not start playing; the pipette is down
+- **PATH** double click a clip → its effects window → + effect… → Greenscreen → the pipette beside Key → the cursor is a crosshair, the status line says to click a colour → click the preview's picture → Key shows the frame's colour, the background goes transparent
+- **TEST** t3120 (`src/apps/kt-app/src/input_work_tests.rs`), live scenario `src/scripts/live/eyedropper.py` (`./scripts/live-check.sh`)
+
+#### Scenario: Esc or the pipette again puts it down
+- **WHEN** the pipette is armed and Esc is pressed; then armed and clicked again
+- **THEN** each time it is down, the effects window is still open and no colour was written
+- **PATH** the pipette → crosshair → Esc → the arrow is back, the window stays → the pipette twice → the arrow is back
+- **TEST** t3121 (`src/apps/kt-app/src/input_work_tests.rs`)
+
+#### Scenario: Every colour button has it
+- **WHEN** the kt-app sources are read for colour buttons; the catalogs are read
+- **THEN** every colour button has the eyedropper call beside it; the three eyedropper texts exist in all five catalogs and the armed line names Esc
+- **PATH** any colour row — a title's fill, a tint, a transition's colour — shows the pipette after its colour swatch
+- **TEST** t3122 (`src/apps/kt-app/src/input_work_tests.rs`)

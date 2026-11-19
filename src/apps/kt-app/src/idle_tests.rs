@@ -374,3 +374,65 @@ fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
         eprintln!("t2813: 240 frames with the render settings open cost {:?} of processor", b.saturating_sub(a));
     }
 }
+
+/// Test t3003 (fx-graph v1b): the effects window's node editor over a heavy event (Datamosh, VHS
+/// Tape, Camera ISP) costs nothing at rest: still, or with the pointer moving over the graph, it
+/// asks for no frame of its own.
+/// - **PATH** a project with an event carrying Datamosh, VHS Tape and Camera ISP → double click it →
+///   the effects window's node editor stands open; the mouse rests, then moves over the nodes:
+///   nothing redraws by itself
+#[test]
+fn t3003_an_open_node_editor_costs_nothing_at_rest() {
+    use kt_model::*;
+    crate::plugins::install();
+    let mut h = rest_harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    let fx = ["datamosh", "vhs_tape", "camera_isp"].iter().map(|id| FxInstance::plugin(id).expect(id)).collect::<Vec<_>>();
+    p.clips.push(ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![false; 3],
+        fx_auto: vec![],
+        fx,
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    // past the window's misclick guard, which asks for the frame that ends it
+    for ed in app.fx_editors.iter_mut() {
+        ed.opened_at -= crate::fx_thumbs::DECODE_GUARD * 2;
+    }
+    for _ in 0..6 {
+        h.step();
+    }
+    let graph = crate::widgets::field_probe::rect_of("fx.graph").expect("the node editor is open");
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "the open node editor asks for a frame in {:?}", next_repaint(&h));
+    for i in 0..30 {
+        h.input_mut().events.push(egui::Event::PointerMoved(graph.left_center() + egui::vec2(8.0 + i as f32 * 12.0, 0.0)));
+        h.step();
+    }
+    // the pointer rests where it stopped: the frames of the last move settle
+    for _ in 0..6 {
+        h.step();
+    }
+    assert!(next_repaint(&h) > Duration::from_secs(3600), "after a hover the node editor asks for a frame in {:?}", next_repaint(&h));
+}
