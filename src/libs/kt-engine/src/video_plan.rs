@@ -437,6 +437,12 @@ pub trait VideoGpuExec: Send + Sync {
     /// Keep under `key` a complete composite another executor made (the slow-chain device's
     /// bytes), so the moment plays without work on the next lap.
     fn keep(&self, _key: u64, _w: u32, _h: u32, _rgba: &[u8]) {}
+    /// Read the composite kept under `key` back into `out` (tightly packed RGBA), waiting for the
+    /// device: its size, or `None` — not kept (poster-from-kept: an offline job takes a moment the
+    /// preview already composed instead of composing it again). Never on the UI thread.
+    fn read_kept(&self, _key: u64, _out: &mut Vec<u8>) -> Option<(u32, u32)> {
+        None
+    }
     /// The loop the preview plays: `Some(moments)` — keep every composite of it (the executor asks the
     /// memory ledger for them at the size it presents, memory-ledger D4), `None` — no loop.
     fn keep_loop(&self, _moments: Option<usize>) {}
