@@ -74,10 +74,15 @@
 - [x] 3.9 the key table's Delete, mute and zoom commands act on the graph under the pointer
       (`KtApp::graph_keys`, `node_editor::GraphKey`); no new key; t3002
 
-## 4. v1d — the Viewer
+- [ ] 3.10 one editor for an event and its linked audio (design D10): the virtual chain of the pair,
+      split back with the lead and the slot masks; one master switch per lane; per-member presets
+      and copy/paste in its section; window tests rewritten where they meet a pair; a new test
 
-- [ ] 4.1 the plan takes a cut point for one event (a shorter chain through the one plan builder);
-      Ctrl+Shift+click, badge, Esc; t2997; commit; prune
+## 4. v1d — the Viewer (design D11)
+
+- [ ] 4.1 `fx_thumbs` scene with the chain cut after a slot; Ctrl+Shift+click on a node and the
+      menu item; the picture in the preview's place with its badge; Esc / empty click / Play return;
+      t2997; live step; commit; prune
 
 ## 5. Follow-ups named by his answers (separate changes)
 
