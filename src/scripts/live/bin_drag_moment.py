@@ -48,7 +48,7 @@ def main(out):
             seen = {}
 
             def look():
-                seen["ghost"] = field(app, "tl.drop_ghost")
+                seen["ghost"] = field(app, "tl.drop_ghost") if app.has_probe("tl.drop_ghost", tries=1) else None
                 app.step(name, what)
 
             app.hover(*press)

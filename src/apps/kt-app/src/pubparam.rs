@@ -1105,6 +1105,11 @@ fn draw_value_row(
                 *rgba = col.to_srgba_unmultiplied();
                 changed = true;
             }
+            // the screen eyedropper (chroma-key-eyedropper): the alpha stays
+            if let Some([pr, pg, pb]) = crate::eyedropper::button(ui, ui.id().with(("eyedrop", &probe)), None) {
+                *rgba = [pr, pg, pb, rgba[3]];
+                changed = true;
+            }
         }
         ParamValue::Flag(b) => {
             let r = ui.checkbox(b, "");

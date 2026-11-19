@@ -172,6 +172,7 @@ The mask keys work only while nothing else has the keyboard focus.
 | double-click a generator card | its parameters |
 | click / drag / cross on a slot of the effect chain | select / reorder / remove |
 | double-click a parameter label | reset the parameter to its default |
+| the pipette beside a colour, then a click anywhere in the program | take the colour of the screen under the pointer (the preview's frame, a thumbnail); <kbd>Esc</kbd> puts the pipette down |
 | right-click a parameter label inside a reel | publish the parameter of the composition |
 | click empty space in the curve graph | add a key to the active curve |
 | drag / double-click / right-click a key | move it / delete it / its menu |
