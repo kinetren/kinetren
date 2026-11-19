@@ -21676,3 +21676,123 @@ fn t3113_a_marker_note_is_typed_at_the_flag_and_read_on_hover() {
     assert!(h.state().marker_note.is_none(), "Esc left the field open");
     assert_eq!(note(&h), "take 3\nwarmer", "Esc changed the note");
 }
+
+/// A bin card dragged from `frac` of its scrub strip onto video lane 0 at `at`; `mods` are pressed
+/// once the card is over the lane (mid-drag, as the owner does). Returns the placed event's start,
+/// the file's length, the ghost's probe rect and the hint seen before the drop (bin-drag-moment).
+/// What `bin_drop` saw: the placed start, the file's length, the ghost, the hint, the tolerance and
+/// the carried card's timecode texts.
+type BinDropSeen = (i64, i64, Option<egui::Rect>, Option<String>, f64, Vec<String>);
+
+fn bin_drop(frac: f32, mods: egui::Modifiers, at: i64) -> BinDropSeen {
+    use kt_model::*;
+    let mut h = harness_lang(crate::i18n::Lang::En);
+    let video = crate::util::tests::fixture("testsrc_12s.mp4");
+    h.state_mut().apply(Command::AddMedia { id: MediaId(1), path: video });
+    let deadline = kt_time::test_deadline();
+    while h.state().thumbs.duration_or_probe(MediaId(1)).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let dur = h.state().thumbs.duration(MediaId(1)).expect("the fixture's length is known").0;
+    {
+        let app = h.state_mut();
+        app.view_start = 0.0;
+        app.ticks_per_px = 3000.0;
+    }
+    h.step();
+    h.step();
+    let card = h.state().bin_card_rects.iter().find(|(m, _)| *m == MediaId(1)).map(|c| c.1).expect("the card");
+    let g = h.state().tl_geom.clone().expect("timeline geometry");
+    let target = egui::pos2(g.tick_to_x(at), g.lane_y(ClipKind::Video, 0, 0.5));
+    let press = egui::pos2(card.left() + card.width() * frac, card.center().y);
+    h.hover_at(press);
+    h.step();
+    h.drag_at(press);
+    h.step();
+    h.hover_at(press + egui::vec2(8.0, 0.0));
+    h.step();
+    for f in [0.3, 0.6, 1.0] {
+        h.hover_at(press + (target - press) * f);
+        h.step();
+    }
+    if mods != egui::Modifiers::NONE {
+        h.event(egui::Event::ModifiersChanged(mods));
+        h.hover_at(target);
+        h.step();
+    }
+    h.step();
+    let ghost = crate::widgets::field_probe::rect_of("tl.drop_ghost");
+    let hint = h.state().hover_hint.clone();
+    // what the carried card's strip says: the moment it was pressed on, not the pointer's
+    let card_tc: Vec<String> = crate::reach_tests::painted_texts(&h)
+        .into_iter()
+        .filter(|t| card.contains(t.rect.center()) && t.drawn.contains(" F"))
+        .map(|t| t.drawn)
+        .collect();
+    h.drop_at(target);
+    h.step();
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.step();
+    let deadline = kt_time::test_deadline();
+    let placed = |h: &Harness<'static, KtApp>| {
+        h.state().model.project().clips.iter().find(|c| c.media == MediaId(1) && c.kind == ClipKind::Video).map(|c| c.start.0)
+    };
+    while placed(&h).is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let start = placed(&h).expect("the card was placed");
+    let tol = crate::timeline::snap_threshold(3000.0) as f64 + 2.0 * 3000.0;
+    (start, dur, ghost, hint, tol, card_tc)
+}
+
+/// t3117 (F-MED-009, `v26.10` MW1, U9 of kkt-26.11.18b): a card dragged from the middle of its scrub
+/// strip lands WHOLE with that moment under the mouse.
+#[test]
+fn t3117_a_bin_card_lands_with_the_scrubbed_moment_under_the_mouse() {
+    let at = 20 * 90_000;
+    let (start, dur, _, hint, tol, _) = bin_drop(0.5, egui::Modifiers::NONE, at);
+    let moment = (0.5 * dur as f64) as i64;
+    assert!(
+        ((start + moment - at) as f64).abs() <= tol,
+        "the scrubbed moment is not under the mouse: start {start}, moment {moment}, mouse {at}"
+    );
+    assert!(start < at - 90_000, "the file landed from its start at the mouse, as before: {start}");
+    assert_eq!(hint.as_deref(), Some(tr(k::hint::BIN_DROP_MOMENT)), "the status line does not say the landing");
+}
+
+/// t3118: Alt pressed mid-drag puts the event's start under the mouse, Alt+Shift its end.
+#[test]
+fn t3118_alt_lands_the_start_and_alt_shift_the_end_under_the_mouse() {
+    let at = 20 * 90_000;
+    let (start, _, _, hint, tol, _) = bin_drop(0.5, egui::Modifiers::ALT, at);
+    assert!(((start - at) as f64).abs() <= tol, "Alt did not put the start under the mouse: {start} vs {at}");
+    assert_eq!(hint.as_deref(), Some(tr(k::hint::BIN_DROP_START)));
+    let mods = egui::Modifiers { alt: true, shift: true, ..Default::default() };
+    let (start, dur, _, hint, tol, _) = bin_drop(0.5, mods, at);
+    assert!(((start + dur - at) as f64).abs() <= tol, "Alt+Shift did not put the end under the mouse: {start}+{dur} vs {at}");
+    assert_eq!(hint.as_deref(), Some(tr(k::hint::BIN_DROP_END)));
+}
+
+/// t3119: before the drop the ghost is the event itself — the file's length at its landing — and the
+/// three landing texts exist in every catalog.
+#[test]
+fn t3119_the_drop_ghost_is_the_real_event() {
+    let at = 20 * 90_000;
+    let (start, dur, ghost, _, _, card_tc) = bin_drop(0.5, egui::Modifiers::NONE, at);
+    let fps = harness().state().model.project().settings.fps;
+    let ghost = ghost.expect("the drop ghost is drawn");
+    let want_w = (dur as f64 / 3000.0) as f32;
+    assert!((ghost.width() - want_w).abs() <= 3.0, "the ghost is not the file's length: {} vs {want_w}", ghost.width());
+    let _ = start;
+    let want = crate::util::format_timecode(kt_time::Tick((0.5 * dur as f64) as i64), fps);
+    assert_eq!(card_tc, vec![want], "the carried card's strip does not hold the pressed moment");
+    for lang in [crate::i18n::Lang::En, crate::i18n::Lang::Ru, crate::i18n::Lang::Es, crate::i18n::Lang::Zh, crate::i18n::Lang::Ar] {
+        crate::i18n::set_lang(lang);
+        for key in [k::hint::BIN_DROP_MOMENT, k::hint::BIN_DROP_START, k::hint::BIN_DROP_END] {
+            assert!(tr(key).contains("Alt"), "{lang:?}: a landing text does not name Alt");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+}

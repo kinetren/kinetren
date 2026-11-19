@@ -1015,7 +1015,7 @@ class Live:
         self._after_gesture(mark, "triple click" if n == 3 else "double click")
         self._clicked_at = time.time()
 
-    def drag(self, x0, y0, x1, y1, steps=6, mods=()):
+    def drag(self, x0, y0, x1, y1, steps=6, mods=(), mods_mid=(), before_release=None):
         """Drag LIKE A HUMAN: hover → press → nudge a little → move
         in several steps → release. A jump straight to the target counts in egui
         as the start of the drag already at the end point, and the object does not move
@@ -1052,6 +1052,13 @@ class Live:
         # the last position must get into a FRAME before the release: otherwise the gesture
         # “undershoots” by 10–20 % of the path (item 199, analysis in R.33)
         self.wait_frame(1, what="frame with last drag position", soft=True)
+        # modifiers pressed MID-DRAG (bin-drag-moment): pressed with the button they are the
+        # window manager's (Alt+drag moves windows); pressed after the drag began they are ours
+        if mods_mid:
+            self._mods(mods_mid, True)
+            self.wait_frame(2, what="frame with the mid-drag modifiers", soft=True)
+        if before_release:
+            before_release()
         mark = self.seen()
         probe.button(False, pause=0.0)
         self._after_gesture(mark, "drag release")
@@ -1065,6 +1072,8 @@ class Live:
         # “the frames stopped coming” simply never happens. Silence is the answer to
         # the question “the picture has settled”, not to “the gesture has been applied”.
         self.wait_frame(2, what="frame with gesture applied", soft=True)
+        if mods_mid:
+            self._mods(mods_mid, False)
         if mods:
             self._mods(mods, False)
 

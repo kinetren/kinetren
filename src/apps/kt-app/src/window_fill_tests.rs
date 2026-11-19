@@ -235,6 +235,7 @@ const ALLOWED_FIXED: &[(&str, &str, &str)] = &[
     ("app.rs", "set_max_width(440.0)", "the question on close is a modal (egui's Modal has no resize): its text wraps at a reading width"),
     ("app.rs", "desired_width(180.0)", "the paste-prefix field shares its row with the side switch after it; an endless field would push the switch out"),
     ("automation.rs", "desired_width(220.0)", "the formula field shares its row with its marks; R.67 item 3 was fields growing past the window"),
+    ("timeline.rs", "desired_width(260.0)", "a marker's note field is a popup at its flag (no window to fill): a reading width, and an endless field would cover the ruler"),
     ("bin_panel.rs", "desired_width(150.0)", "the media bin's search: a panel whose width the owner set (R.13), not a window"),
     ("pubparam.rs", "desired_width(180.0)", "a handle's name in the author's list shares its row with the move buttons and the default"),
     ("pubparam.rs", "desired_width(200.0)", "a text value in a parameter grid: egui's Grid sizes a column by its widest cell, an endless field takes the row"),
