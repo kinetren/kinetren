@@ -253,6 +253,9 @@ pub struct KtApp {
     pub preview_click_at: Option<std::time::Instant>,
     /// Mouse position during file DnD (X11 polling; None on Wayland).
     pub dnd_hover: Option<egui::Pos2>,
+    /// A bin card over the lanes this frame: where its event would start and its length
+    /// (bin-drag-moment) — the drop ghost draws the real event.
+    pub dnd_bin: Option<(i64, Option<Tick>)>,
     /// Timeline geometry cache of the last frame (drop, item 2 v1.4).
     pub tl_geom: Option<crate::timeline::TlGeom>,
     /// KT_GEOM_DUMP — path for the geometry dump to live scenarios (R.27).
@@ -358,6 +361,9 @@ pub struct KtApp {
     pub(crate) bin_list: BinList,
     /// Which card is being dragged inside the bin (free mode).
     pub bin_drag: Option<crate::bin_panel::BinDragState>,
+    /// The file moment under the press that started dragging a card, and the file's length
+    /// (bin-drag-moment): the event lands with that moment under the mouse.
+    pub bin_press_moment: Option<(MediaId, i64, Tick)>,
     /// Card groups of the bin (item 13 round 11): they live here; they go into
     /// the project together with the rest of UiState.
     pub bin_groups: Vec<kt_model::BinGroup>,
@@ -999,6 +1005,7 @@ impl KtApp {
             speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
+            dnd_bin: None,
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
@@ -1043,6 +1050,7 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_press_moment: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,
@@ -1333,6 +1341,7 @@ impl KtApp {
             speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
+            dnd_bin: None,
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
@@ -1377,6 +1386,7 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_press_moment: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,
@@ -2456,6 +2466,7 @@ impl KtApp {
             };
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
                 && !guarded(self, pos)
+                && !crate::eyedropper::armed()
                 && let Some(dir) = resize_zone(win, pos, WIN_EDGE, WIN_CORNER)
             {
                 ctx.set_cursor_icon(resize_cursor(dir));
@@ -2466,6 +2477,15 @@ impl KtApp {
             }
         }
 
+        // the eyedropper's pick layer, over everything, and its line in the status bar
+        // (chroma-key-eyedropper)
+        match crate::eyedropper::overlay(&ctx) {
+            Some(Err(())) => self.warn(tr(k::fx::EYEDROP_NO_SCREEN)),
+            Some(Ok(())) if crate::eyedropper::armed() => {
+                self.hover_hint = Some(tr(k::fx::EYEDROP_ARMED).to_string());
+            }
+            _ => {}
+        }
         // hint — last, over the status bar (item 1 round 9)
         self.draw_status_hint(&ctx);
 
@@ -3293,6 +3313,10 @@ impl KtApp {
         }
         // 0) a marker's note being typed: Esc cancels it (marker-notes), nothing else moves
         if self.marker_note.take().is_some() {
+            return;
+        }
+        // 0) an armed eyedropper: Esc puts it down, the window under it stays (chroma-key-eyedropper)
+        if crate::eyedropper::cancel() {
             return;
         }
         // 1) the window ON TOP (shared-window-shell). Not a hand-kept list: the list lost the
@@ -11230,6 +11254,11 @@ impl eframe::App for KtApp {
         let since = std::time::Instant::now();
         let ended = crate::welcome::wait_posters(std::time::Duration::from_secs(3));
         record("poster", since, ended);
+        // past its budget the poster stops: it would hold the offline engine's park and the GPU exit
+        // hook past the exit's bound (found-defects 791)
+        if !ended {
+            crate::welcome::stop_posters();
+        }
         // a reel strip may be on the device: the process must not exit under it. A test's process
         // goes on after this close, and every later render would wait on the parked engine for good
         #[cfg(not(test))]

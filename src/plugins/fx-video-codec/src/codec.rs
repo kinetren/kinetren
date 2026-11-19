@@ -189,7 +189,7 @@ pub fn shaders() -> [(&'static str, usize, usize); 9] {
     [
         (CONVERT, 1, 3),
         (RESAMPLE, 1, 1),
-        (CODED, 3, 1),
+        (CODED, 5, 2),
         (CARRY, 6, 1),
         (SEARCH, 3, 1),
         (residual_shader(), 3, 1),
@@ -505,22 +505,30 @@ pub struct Carry {
 }
 
 impl Carry {
-    fn uniform(&self, pw: u32, ph: u32, plane: usize) -> Vec<u8> {
+    /// The carry pass's uniform for one plane of padded `pw`×`ph`; `lw` — the padded luma width, where
+    /// the grid table's rows begin.
+    fn uniform(&self, pw: u32, ph: u32, plane: usize, lw: u32) -> Vec<u8> {
         let shift = (plane > 0) as u32;
         uniform(&[
             pw.to_le_bytes(),
             ph.to_le_bytes(),
-            self.codec.0.to_le_bytes(),
-            self.codec.1.to_le_bytes(),
-            self.vis.0.to_le_bytes(),
-            self.vis.1.to_le_bytes(),
-            (self.bs as u32).to_le_bytes(),
             (self.grid.0 as u32).to_le_bytes(),
-            (self.grid.1 as u32).to_le_bytes(),
             shift.to_le_bytes(),
             self.gain_q8.to_le_bytes(),
             (1u32 << plane).to_le_bytes(),
+            lw.to_le_bytes(),
+            [0; 4],
         ])
+    }
+
+    /// The codec block covering each luma column of padded width `lw`, then each luma row of padded
+    /// height `lh` (sharp-cost: the carrier's pixels look it up instead of dividing).
+    fn grid_table(&self, lw: usize, lh: usize) -> Vec<u8> {
+        let (bw, bh) = (self.grid.0 as u32 - 1, self.grid.1 as u32 - 1);
+        let bs = self.bs as u32;
+        let cols = (0..lw as u32).map(|x| (x * self.codec.0 / (self.vis.0 * bs)).min(bw));
+        let rows = (0..lh as u32).map(|y| (y * self.codec.1 / (self.vis.1 * bs)).min(bh));
+        cols.chain(rows).flat_map(|v| v.to_le_bytes()).collect()
     }
 }
 
@@ -631,6 +639,8 @@ pub struct Batch {
     /// The padded size of the walk's PICTURES: the codec's, or the carrier's (mosh-sharp).
     pw: usize,
     ph: usize,
+    /// The carrier's block tables uploaded in this batch, by geometry (sharp-cost).
+    grids: HashMap<GridKey, usize>,
     bufs: Vec<Init0>,
     fixed: Vec<bool>,
     free: HashMap<u64, Vec<usize>>,
@@ -654,6 +664,10 @@ pub struct Got {
     pub held: Vec<compute::Held>,
 }
 
+/// The geometry a carrier's block table is made for: the codec's and the carrier's visible sizes, the
+/// block and the grid.
+type GridKey = ((u32, u32), (u32, u32), usize, (usize, usize));
+
 /// A buffer of a finished batch the walk goes on from: on the device, or its bytes.
 pub enum Kept {
     Held(compute::Held),
@@ -672,6 +686,7 @@ impl Batch {
             h,
             pw: w,
             ph: h,
+            grids: HashMap::new(),
             bufs: Vec::new(),
             fixed: Vec::new(),
             free: HashMap::new(),
@@ -1026,24 +1041,47 @@ impl Batch {
         out
     }
 
-    /// The coded blocks of a residual (mosh-sharp D1): a flag word per block of `bs`.
-    pub fn coded(&mut self, res: Dev3, bs: usize) -> usize {
+    /// The packet's decisions per block for the carrier (mosh-sharp D1, sharp-cost): the coded flags of
+    /// a residual and the applied (`mv`) and own vectors in carrier pels. `(flags, vecs)`.
+    pub fn coded(&mut self, res: Dev3, mv: usize, own: usize, c: &Carry) -> (usize, usize) {
+        let bs = c.bs;
         let mw = (self.w / bs) as u32;
         let n = mw * (self.h / bs) as u32;
         let flags = self.alloc(n as u64 * 4);
-        let u = uniform(&[(self.w as u32).to_le_bytes(), (bs as u32).to_le_bytes(), mw.to_le_bytes(), n.to_le_bytes()]);
-        self.step("datamosh:coded", CODED, u, &[res[0], res[1], res[2]], &[flags], [n.div_ceil(64), 1, 1]);
-        flags
+        let vecs = self.alloc(n as u64 * 16);
+        let u = uniform(&[
+            (self.w as u32).to_le_bytes(),
+            (bs as u32).to_le_bytes(),
+            mw.to_le_bytes(),
+            n.to_le_bytes(),
+            c.codec.0.to_le_bytes(),
+            c.codec.1.to_le_bytes(),
+            c.vis.0.to_le_bytes(),
+            c.vis.1.to_le_bytes(),
+        ]);
+        self.step("datamosh:coded", CODED, u, &[res[0], res[1], res[2], mv, own], &[flags, vecs], [n.div_ceil(64), 1, 1]);
+        (flags, vecs)
     }
 
     /// A P-frame of the carrier (mosh-sharp D1) at the walk's picture size: `carry_planes` on the device.
     #[allow(clippy::too_many_arguments)]
-    pub fn carry(&mut self, rf: Dev3, cur: Dev3, prev: Dev3, mv: usize, own: usize, flags: usize, c: &Carry) -> Dev3 {
+    pub fn carry(&mut self, rf: Dev3, cur: Dev3, prev: Dev3, vecs: usize, flags: usize, c: &Carry) -> Dev3 {
         let (y, ch) = ((self.pw * self.ph) as u64, (self.pw * self.ph / 4) as u64);
         let out = [self.alloc(y), self.alloc(ch), self.alloc(ch)];
+        // the block table, once a batch per geometry (an upload is never handed out again)
+        let gk = (c.codec, c.vis, c.bs, c.grid);
+        let grid = match self.grids.get(&gk) {
+            Some(&g) => g,
+            None => {
+                let g = self.upload(c.grid_table(self.pw, self.ph));
+                self.grids.insert(gk, g);
+                g
+            }
+        };
+        let lw = self.pw as u32;
         for i in 0..3 {
             let (pw, ph) = if i == 0 { (self.pw as u32, self.ph as u32) } else { (self.pw as u32 / 2, self.ph as u32 / 2) };
-            self.step("datamosh:carry", CARRY, c.uniform(pw, ph, i), &[rf[i], cur[i], prev[i], mv, own, flags], &[out[i]], [(pw / 4).div_ceil(8), ph.div_ceil(8), 1]);
+            self.step("datamosh:carry", CARRY, c.uniform(pw, ph, i, lw), &[rf[i], cur[i], prev[i], vecs, flags, grid], &[out[i]], [(pw / 4).div_ceil(8), ph.div_ceil(8), 1]);
         }
         out
     }

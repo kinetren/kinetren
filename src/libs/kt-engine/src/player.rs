@@ -733,6 +733,17 @@ impl Player {
         store.get(crate::render_cache::disk_key(&plan, &leaves, &files))
     }
 
+    /// What the preview already holds for the moment `t` of the current version (poster-from-kept):
+    /// a reader to run OFF the UI thread (it waits for the device), giving the kept composite at the
+    /// preview's quality, or the disk tier's picture of it; `None` from the reader — the preview holds
+    /// neither, or the build is not the version asked now (an edit in flight). The bytes are those
+    /// the preview showed: the same plan key, so the same picture.
+    pub fn kept_picture_reader(&self, t: Tick) -> KeptReader {
+        let parts = self.preview_parts();
+        let want = self.builds.want_seq();
+        Box::new(move || parts.kept_picture(t, want))
+    }
+
     pub fn play(&self) {
         self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
         self.shared.first_sound_us.store(0, Ordering::Release);
@@ -1368,6 +1379,9 @@ fn locked<'a, T>(m: &'a Mutex<T>, frame: u64, what: &'static str) -> std::sync::
     g
 }
 
+/// A job that reads what the preview holds for one moment (`Player::kept_picture_reader`).
+pub type KeptReader = Box<dyn FnOnce() -> Option<crate::render_cache::Picture> + Send>;
+
 /// What a composite needs of the player, shared with its thread.
 #[derive(Clone)]
 pub(crate) struct PreviewParts {
@@ -1736,6 +1750,29 @@ impl PreviewParts {
     /// The moment `t` from disk into the display's memo (render-cache-disk D3): `Some(key)` — the key the
     /// display now holds it under (already held, or restored now); `None` — the tier is off, the
     /// moment has no key or the store does not hold it. Asks no decode and runs no stage.
+    /// `Player::kept_picture_reader`'s body: the kept composite of `t`, read back, or the disk tier's.
+    pub(crate) fn kept_picture(&self, t: Tick, want: u64) -> Option<crate::render_cache::Picture> {
+        let built = self.builds.latest();
+        if built.seq != want {
+            return None;
+        }
+        let display = self.display_exec()?;
+        let q = self.quality();
+        let t = built.video.grid.align_floor(t);
+        let key = display.present_key(&built.video.probe_plan(&self.cache, t, q))?;
+        let mut rgba = Vec::new();
+        if let Some((w, h)) = display.read_kept(key, &mut rgba) {
+            return Some(crate::render_cache::Picture { w, h, rgba });
+        }
+        if !self.rc.is_on() {
+            return None;
+        }
+        let store = self.rc.store(display.info())?;
+        let files = self.rc.files(&built.project, (built.seq, self.versions().1), false);
+        let (plan, leaves) = built.video.probe_durable(&self.cache, t, q);
+        store.get(crate::render_cache::disk_key(&plan, &leaves, &files))
+    }
+
     pub(crate) fn restore_from_disk(&self, display: &Arc<dyn VideoGpuExec>, video: &VideoRenderer, t: Tick, q: Quality) -> Option<u64> {
         use kt_time::trace::{self, render_cache as k, Ev};
         if !self.rc.is_on() {

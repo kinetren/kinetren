@@ -284,6 +284,10 @@ pub struct PosterJob {
     pub project: kt_model::Project,
     pub base: Option<std::path::PathBuf>,
     pub at: kt_time::Tick,
+    /// What the preview already holds for `at` (poster-from-kept, found-defects 767): asked first, so a
+    /// poster of a moment the person just looked at composes nothing — a Datamosh's history was walked
+    /// again for 22 s of a software device after every Ctrl+S.
+    pub kept: Option<kt_engine::KeptReader>,
 }
 
 #[derive(Default)]
@@ -291,6 +295,8 @@ struct PosterQueue {
     jobs: std::collections::VecDeque<PosterJob>,
     busy: bool,
     done: u64,
+    /// The job rendering now: `stop_posters` cancels it (found-defects 791).
+    current: Option<kt_time::sched::Token>,
 }
 
 fn poster_queue() -> &'static (std::sync::Mutex<PosterQueue>, std::sync::Condvar) {
@@ -342,6 +348,20 @@ pub fn posters_busy() -> bool {
     q.busy || !q.jobs.is_empty()
 }
 
+/// The program closes and its wait for the posters ran out (found-defects 791): the job in flight stops
+/// between its steps and the queued ones are dropped. An offline frame of a project that was still
+/// catching up (no kept moment to read) went on past the close's bound, held the offline engine's park
+/// and the GPU exit hook, and the exit's watcher forced the end.
+pub fn stop_posters() {
+    let (m, cv) = poster_queue();
+    let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
+    q.jobs.clear();
+    if let Some(t) = &q.current {
+        t.cancel(kt_time::sched::why_cancel::CLOSED);
+    }
+    cv.notify_all();
+}
+
 /// How many posters the service has finished (tests count them).
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn posters_done() -> u64 {
@@ -360,26 +380,43 @@ fn poster_pump(ctx: &kt_time::sched::Ctx) -> kt_time::sched::Pump {
         if ctx.paused() {
             return Pump::More;
         }
+        let token = kt_time::sched::Token::new();
         let job = {
             let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
             let Some(job) = q.jobs.pop_front() else { return Pump::Idle };
             q.busy = true;
+            q.current = Some(token.clone());
             job
         };
         {
             let mut _span = kt_time::trace::span(kt_time::trace::Ev::Job);
             _span.aux(kt_time::trace::job::POSTER);
-            let ctl = crate::bg::BgCtl::from_flags(kt_time::sched::Token::new(), Default::default())
+            let ctl = crate::bg::BgCtl::from_flags(token, Default::default())
                 .in_class(kt_time::sched::Class::Background);
-            if let Some(rgba) = crate::reel_preview::render_poster(&ctl, &job.project, job.base.as_deref(), job.at) {
+            let rgba = job
+                .kept
+                .and_then(|read| read())
+                .map(|p| fit_poster(&p))
+                .or_else(|| crate::reel_preview::render_poster(&ctl, &job.project, job.base.as_deref(), job.at));
+            if let Some(rgba) = rgba {
                 write_poster(&job.out, rgba);
             }
         }
         let mut q = m.lock().unwrap_or_else(|e| e.into_inner());
         q.busy = false;
+        q.current = None;
         q.done += 1;
         cv.notify_all();
     }
+}
+
+/// A picture the preview holds, fitted to the poster's size (the frame's canvas at another scale).
+fn fit_poster(p: &kt_engine::render_cache::Picture) -> Vec<u8> {
+    use crate::reel_preview::{POSTER_H, POSTER_W};
+    let src = kt_fx::video::Frame { w: p.w, h: p.h, rgba: p.rgba.clone(), has_alpha: false };
+    let mut out = vec![0u8; (POSTER_W * POSTER_H * 4) as usize];
+    kt_fx::video::fit_into(&src, POSTER_W, POSTER_H, &mut out);
+    out
 }
 
 /// PNG by tmp + rename: the window never reads half a file.
@@ -988,7 +1025,9 @@ impl crate::app::KtApp {
         let Some(out) = self.start.store.poster_path(path) else { return };
         let project = self.model.project().clone();
         let at = crate::reel_preview::poster_moment(&project, self.player.transport.playhead());
-        request_poster(PosterJob { out, project, base: path.parent().map(|p| p.to_path_buf()), at });
+        // the reader waits for the device: it runs on the posters' lane, never here
+        let kept = Some(self.player.kept_picture_reader(at));
+        request_poster(PosterJob { out, project, base: path.parent().map(|p| p.to_path_buf()), at, kept });
     }
 }
 

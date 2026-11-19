@@ -61,6 +61,12 @@ rule 17 — one widget. U8 — "2-3 ползунка, но … как умест
 - **THEN** the preview's frame equals the frame of the same event whose chain ends at that node, built by the one plan; Esc returns the frame of the whole chain
 - **TEST** t2997 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
+#### Scenario: A chain of sound draws its nodes
+- **PATH** double click an audio event carrying Gain and Pitch Shift → its effects window shows both as nodes between In and Out
+- **WHEN** the effects window opens on an audio event (or an audio track's window on its chain)
+- **THEN** every slot is a node; a single-kind chain is one lane whatever its kind (found-defects 811)
+- **TEST** t3000 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
 #### Scenario: The node editor costs nothing at rest
 - **PATH** open the FX window and the morpher window on the heavy showcase project carrying VHS Tape, Datamosh and Camera ISP → move the mouse over a node and leave it still → only the hover tint changes → wait → no frame is asked
 - **WHEN** the editor is open and nothing moves

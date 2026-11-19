@@ -2133,12 +2133,11 @@ fn t682_publishing_is_reachable_from_inside_a_reel_only() {
 
     // the parameter’s label is the UPPER one of the same-named ones: the same name also stands on
     // the curve-choice button below (lesson of t281)
-    let label_top =
-        |h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, label: &str| -> Option<egui::Rect> {
-            h.query_all_by_label_contains(label)
-                .map(|n| n.rect())
-                .min_by(|a, b| a.top().total_cmp(&b.top()))
-        };
+    // the parameter’s label is the UPPER one of the same-named ones (the same name also stands on
+    // the curve-choice button below, lesson of t281), brought above the window's buttons
+    let label_top = |h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, label: &str| -> Option<egui::Rect> {
+        crate::layout_tests::label_in_view(h, label)
+    };
     // the LANGUAGE is set by the harness, so the captions are asked for AFTER its
     // creation: a row assembled earlier would come in the default language,
     // and the test would look for an English word in a Russian window
@@ -6433,6 +6432,7 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
         project: app.model.project().clone(),
         base: Some(projects.clone()),
         at: kt_time::Tick(90_000),
+        kept: None,
     });
     drop(app);
     assert!(crate::welcome::wait_posters(kt_time::TEST_WAIT), "the poster job hung");
@@ -6754,6 +6754,9 @@ fn no_teaching_layer_over_the_ui() {
         "marker-name-edit",
         // the marker's note typed at its flag (marker-notes), the same inline field as its name
         "marker-note-edit",
+        // the armed colour eyedropper (chroma-key-eyedropper): one transparent layer takes the pick's
+        // click so it acts on nothing under it; it exists only between the pipette and the click
+        "eyedropper",
         "lane-name-edit",
         "area-name-edit",
     ];

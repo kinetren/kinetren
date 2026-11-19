@@ -424,9 +424,9 @@ impl KtApp {
             title,
             crate::window_shell::Kind::Tool,
         )
-            // the default height carries the node graph's band (fx-graph v1b) over the form's former
-            // room: the form keeps what it had
-            .size([580.0, 600.0], [460.0, 320.0])
+            // 520 high, as before the node graph (fx-graph v1b-live, found-defects 810): 600 put the
+            // window's buttons over the timeline's first rows, and a click on a track closed it
+            .size([580.0, 520.0], [460.0, 320.0])
             .remember("fx")
             .probe("win.fx")
             .show(ctx, |ui| {
@@ -1722,7 +1722,7 @@ pub(crate) fn draw_video_fx_params(
             ui.horizontal(|ui| {
                 let mut col = key.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::KEY_COLOR));
-                if ui.color_edit_button_rgb(&mut col).changed() {
+                if crate::widgets::rgb_button(ui, &mut col, "key", Some("fx.key.pick")) {
                     ch.base |= write_rgb8(p, key, col);
                 }
             });
@@ -1742,7 +1742,7 @@ pub(crate) fn draw_video_fx_params(
             ui.horizontal(|ui| {
                 let mut col = line.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::LINE_COLOR));
-                if ui.color_edit_button_rgb(&mut col).changed() {
+                if crate::widgets::rgb_button(ui, &mut col, "line", None) {
                     ch.base |= write_rgb8(p, line, col);
                 }
             });
@@ -1756,13 +1756,13 @@ pub(crate) fn draw_video_fx_params(
                 let shadow = ["shadow_r", "shadow_g", "shadow_b"];
                 let mut sh = rgb(p, shadow);
                 ui.label(tr(k::fx::SHADOW_COLOR));
-                if ui.color_edit_button_rgb(&mut sh).changed() {
+                if crate::widgets::rgb_button(ui, &mut sh, "shadow", None) {
                     ch.base |= write_rgb8(p, shadow, sh);
                 }
                 let high = ["high_r", "high_g", "high_b"];
                 let mut hi = rgb(p, high);
                 ui.label(tr(k::fx::HIGH_COLOR));
-                if ui.color_edit_button_rgb(&mut hi).changed() {
+                if crate::widgets::rgb_button(ui, &mut hi, "high", None) {
                     ch.base |= write_rgb8(p, high, hi);
                 }
             });
@@ -1773,7 +1773,7 @@ pub(crate) fn draw_video_fx_params(
             ui.horizontal(|ui| {
                 let mut col = tint.map(|n| p.get(n).unwrap_or(0.0) as f32 / 255.0);
                 ui.label(tr(k::fx::TINT));
-                if ui.color_edit_button_rgb(&mut col).changed() {
+                if crate::widgets::rgb_button(ui, &mut col, "tint", None) {
                     ch.base |= write_rgb8(p, tint, col);
                 }
             });

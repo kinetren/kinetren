@@ -166,11 +166,13 @@ The mask keys work only while nothing else has the keyboard focus.
 | click a card in the media bin | place it at the playhead |
 | click the frame of a bin group | select the whole group |
 | <kbd>Ctrl</kbd>+click / <kbd>Shift</kbd>+click a card | add it to the bin selection or take it out |
-| drag a card | onto the timeline, or to another spot in the bin |
+| drag a card | onto the timeline, or to another spot in the bin; on the timeline the whole file lands with the moment you pressed on (the scrubbed one) under the mouse |
+| <kbd>Alt</kbd> / <kbd>Alt</kbd>+<kbd>Shift</kbd> while a card is over a track | the file's start / its end lands under the mouse instead; pressed or released before the drop, the ghost follows |
 | drag across the bin background | select cards with a frame; <kbd>Ctrl</kbd> or <kbd>Shift</kbd> adds to the selection |
 | double-click a generator card | its parameters |
 | click / drag / cross on a slot of the effect chain | select / reorder / remove |
 | double-click a parameter label | reset the parameter to its default |
+| the pipette beside a colour, then a click anywhere in the program | take the colour of the screen under the pointer (the preview's frame, a thumbnail); <kbd>Esc</kbd> puts the pipette down |
 | right-click a parameter label inside a reel | publish the parameter of the composition |
 | click empty space in the curve graph | add a key to the active curve |
 | drag / double-click / right-click a key | move it / delete it / its menu |

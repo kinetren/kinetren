@@ -279,7 +279,7 @@ impl KtApp {
                             };
                             let get = |n: &str| t.kind.get_param(n).unwrap_or(0.0) as f32 / 255.0;
                             let mut c = [get(names[0]), get(names[1]), get(names[2])];
-                            if ui.color_edit_button_rgb(&mut c).changed() {
+                            if crate::widgets::rgb_button(ui, &mut c, "trn", None) {
                                 for (n, v) in names.iter().zip(c) {
                                     t.kind.set_param(n, (v * 255.0).round() as f64);
                                 }

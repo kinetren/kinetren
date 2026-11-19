@@ -201,6 +201,7 @@ pub fn chain_graph(
     let (mut pic, mut snd) = (Vec::new(), Vec::new());
     // a single-kind chain is ONE lane, the layout's first (its kind is only its colour): a sound
     // chain put into the second slot was never laid out, and an audio event's nodes did not show
+    // (found-defects 811)
     for (i, f) in edit.fx.iter().enumerate() {
         match if both { lane_of(f) } else { Lane::Picture } {
             Lane::Picture => pic.push(i),
