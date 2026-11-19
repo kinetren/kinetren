@@ -335,6 +335,13 @@ pub fn wait_posters(timeout: std::time::Duration) -> bool {
     true
 }
 
+/// The service has a poster queued or rendering (the live bench's dump: a rest check waits it out,
+/// found-defects 767).
+pub fn posters_busy() -> bool {
+    let q = poster_queue().0.lock().unwrap_or_else(|e| e.into_inner());
+    q.busy || !q.jobs.is_empty()
+}
+
 /// How many posters the service has finished (tests count them).
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn posters_done() -> u64 {

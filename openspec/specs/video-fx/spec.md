@@ -1263,9 +1263,9 @@ the codec's decisions; the softness is only its picture's size (F-FX-015, design
 - **TEST** t2975 (`src/plugins/fx-video-codec/tests/sound.rs`)
 
 #### Scenario: A person sharpens a 144-line mosh in the editor
-- **PATH** add two clips back to back → select the second → FX → Datamosh "Cut mosh" → set the encoded height to 144 → the preview shows the soft break → tick "Sharp" → the same break, with the clips' detail
+- **PATH** add two clips back to back → select the second → FX → Datamosh "Cut mosh" → set the encoded height to 144 → the preview shows the break with the clips' detail (a new Datamosh is sharp) → untick "Sharp" → the same break, soft → tick it again → the window open, the program at rest
 - **WHEN** the live scenario runs on our fixtures
-- **THEN** the sharp frame differs from the soft one and has more fine detail; the screenshots of each step are saved
+- **THEN** the new Datamosh's file names `sharp`; the soft frame differs from the sharp one and has less fine detail, and its file leaves the row out; with the window open the program runs nothing at rest once its poster and status clocks ran out; the screenshots of each step are saved
 - **TEST** live `datamosh_sharp.py` (`src/scripts/live/datamosh_sharp.py`, via `src/scripts/live-check.sh`) — t2976
 
 #### Scenario: A new Datamosh is sharp, a saved one keeps its look

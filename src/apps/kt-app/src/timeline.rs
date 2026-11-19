@@ -1286,7 +1286,7 @@ impl KtApp {
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\"markers\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"morphers\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"posters_busy\":{},\"rest_clock_ms\":{},\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
              \"on_display\":{},\"ui_only\":{},\"picture\":{},\"complete_taken\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
@@ -1328,6 +1328,15 @@ impl KtApp {
             self.key_clock.double_s,
             // who asked for the frames that read no input (the bench's rest checks name it)
             crate::bench::rest_wakes().replace('"', "'"),
+            // the sound device paused at rest and its callbacks seen to stand (a rest check waits for
+            // it before it counts the sound's wakes: found-defects 764)
+            self.audio.as_ref().is_some_and(|a| a.ctl().paused.load(ord)),
+            // a poster queued by Ctrl+S or a close renders in the background (found-defects 767)
+            crate::welcome::posters_busy(),
+            // the earliest state on a clock that will ask a frame with no input (a status line's
+            // expiry, the misclick guard, the autosave): -1 — none. A rest check waits out the short
+            // ones before it counts frames (found-defects 768)
+            self.rest_wake().map_or(-1, |d| d.as_millis().min(i64::MAX as u128) as i64),
             self.model.project().morphers.len(),
             // the preview compose cost (morpher-event-grid-cost): what the panel shows, as numbers
             self.perf.compose_ms_last,
