@@ -253,6 +253,9 @@ pub struct KtApp {
     pub preview_click_at: Option<std::time::Instant>,
     /// Mouse position during file DnD (X11 polling; None on Wayland).
     pub dnd_hover: Option<egui::Pos2>,
+    /// A bin card over the lanes this frame: where its event would start and its length
+    /// (bin-drag-moment) — the drop ghost draws the real event.
+    pub dnd_bin: Option<(i64, Option<Tick>)>,
     /// Timeline geometry cache of the last frame (drop, item 2 v1.4).
     pub tl_geom: Option<crate::timeline::TlGeom>,
     /// KT_GEOM_DUMP — path for the geometry dump to live scenarios (R.27).
@@ -358,6 +361,9 @@ pub struct KtApp {
     pub(crate) bin_list: BinList,
     /// Which card is being dragged inside the bin (free mode).
     pub bin_drag: Option<crate::bin_panel::BinDragState>,
+    /// The file moment under the press that started dragging a card, and the file's length
+    /// (bin-drag-moment): the event lands with that moment under the mouse.
+    pub bin_press_moment: Option<(MediaId, i64, Tick)>,
     /// Card groups of the bin (item 13 round 11): they live here; they go into
     /// the project together with the rest of UiState.
     pub bin_groups: Vec<kt_model::BinGroup>,
@@ -999,6 +1005,7 @@ impl KtApp {
             speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
+            dnd_bin: None,
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
@@ -1043,6 +1050,7 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_press_moment: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,
@@ -1333,6 +1341,7 @@ impl KtApp {
             speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
+            dnd_bin: None,
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
@@ -1377,6 +1386,7 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_press_moment: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,

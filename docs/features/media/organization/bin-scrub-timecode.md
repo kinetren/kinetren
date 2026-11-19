@@ -69,7 +69,7 @@ no verbatim user statement about a timecode during a bin scrub within the search
 
 ## How it fits Kinotrain
 CAPABILITY: openspec/specs/ui-reach/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md`.
-The scrub's own hover-x gives the moment; `bin_panel.rs` writes it with `format_timecode` on a dark chip over the thumbnail, shortened on a narrow card, laid out once per moment. The drag-from-moment half is a question to the owner.
+The scrub's own hover-x gives the moment; `bin_panel.rs` writes it with `format_timecode` on a dark chip over the thumbnail, shortened on a narrow card, laid out once per moment. The drag-from-moment half is F-MED-009 (`bin-drag-moment`).
 
 ## Estimate
 
