@@ -6433,6 +6433,7 @@ fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
         project: app.model.project().clone(),
         base: Some(projects.clone()),
         at: kt_time::Tick(90_000),
+        kept: None,
     });
     drop(app);
     assert!(crate::welcome::wait_posters(kt_time::TEST_WAIT), "the poster job hung");
