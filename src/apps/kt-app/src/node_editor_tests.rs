@@ -362,3 +362,56 @@ fn t3000_an_audio_event_s_chain_draws_its_nodes() {
         assert!(crate::widgets::field_probe::rect_of(&format!("fx.node.{i}")).is_some(), "the audio event's node {i} is not drawn");
     }
 }
+
+/// A key of the table pressed as a person does: down and up with its modifiers.
+fn press(h: &mut Harness<'_, KtApp>, chord: crate::controls::Chord) {
+    let modifiers = egui::Modifiers { alt: chord.alt, ctrl: chord.ctrl, shift: chord.shift, command: chord.ctrl, mac_cmd: false };
+    for pressed in [true, false] {
+        h.event(egui::Event::Key { key: chord.key, physical_key: None, pressed, repeat: false, modifiers });
+    }
+    h.step();
+    h.step();
+}
+
+/// t3002 (fx-graph v1c): the key table's own commands act on the graph under the pointer — the
+/// mute key switches the selected node, Delete removes it, zoom in opens the detailed nodes and zoom
+/// to fit returns the fit (in a style that binds zoom keys; the owner's zooms with the wheel) — and
+/// the timeline's event under the window stays untouched.
+/// - **PATH** in an event's effects window click the Blur node → with the pointer over the graph press
+///   the mute key → Blur is struck through → press Delete → Blur goes, the event stays on the timeline
+///   → press zoom in → the detailed nodes → press zoom to fit → the fit again
+#[test]
+fn t3002_the_table_s_keys_act_on_the_graph_under_the_pointer() {
+    use crate::controls::Cmd;
+    crate::plugins::install();
+    let fx: Vec<FxInstance> = (0..10).map(|i| if i == 0 { FxInstance::blur(2) } else { FxInstance::builtin("vignette") }).collect();
+    let mut h = fx_harness(fx);
+    let blur = node_label(&h, crate::fx_editor::fx_display_name(&FxInstance::blur(2)));
+    h.hover_at(blur.center());
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: blur.center(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    h.step();
+    h.step();
+    let keys = |h: &Harness<'_, KtApp>, c: Cmd| h.state().start.controls.choice.keys_of(c).first().copied().expect("a bound key");
+    let mute = keys(&h, Cmd::TrackMute);
+    press(&mut h, mute);
+    let c = h.state().model.project().clips[0].clone();
+    assert_eq!(c.fx_bypass.first().copied(), Some(true), "the mute key did not switch the selected node");
+    let del = keys(&h, Cmd::Delete);
+    press(&mut h, del);
+    let p = h.state().model.project();
+    assert_eq!(p.clips.len(), 1, "Delete over the graph deleted the timeline's event");
+    assert!(p.clips[0].fx.iter().all(|f| f.tag() != "blur"), "Delete over the graph did not remove the selected node");
+    let nodes = || (1..10).filter_map(|i| crate::widgets::field_probe::rect_of(&format!("fx.node.{i}"))).collect::<Vec<_>>();
+    assert!(nodes().iter().all(|r| r.height() < 30.0), "the scene starts from the chips");
+    // the owner's own style zooms with the wheel and binds no zoom key: the zoom keys are a style's
+    h.state_mut().start.controls = crate::controls::Controls::new(crate::controls::Choice::of(crate::controls::Style::Premiere));
+    let zin = keys(&h, Cmd::ZoomIn);
+    press(&mut h, zin);
+    assert!(nodes().iter().any(|r| r.height() > 30.0), "zoom in over the graph did not open the detailed nodes");
+    let fit = keys(&h, Cmd::ZoomFit);
+    press(&mut h, fit);
+    assert!(nodes().iter().all(|r| r.height() < 30.0), "zoom to fit over the graph did not return the fit");
+}

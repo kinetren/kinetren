@@ -72,6 +72,32 @@ struct View {
     pan: f32,
 }
 
+/// A command of the key table acting on the graph under the pointer (fx-graph v1c): the table's
+/// own keys, scoped by where the pointer is, as the mask keys are on the preview — no new key and
+/// no second meaning to learn. `KtApp::graph_keys` takes them before the timeline does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GraphKey {
+    /// Delete: the selected node goes (a device: both halves, the model's rule)
+    Remove,
+    /// the mute key: the selected node's switch
+    Mute,
+    /// zoom to fit: Frame all
+    Fit,
+    /// zoom in / out: the detailed nodes / the chips
+    Detail,
+    Chips,
+}
+
+/// Where a graph was under the pointer in the frame before: (its view, its canvas, the frame).
+pub(crate) fn hover_slot() -> egui::Id {
+    egui::Id::new("kt_fx_graph_hover")
+}
+
+/// A command for the graph of a view, left by `KtApp::graph_keys` for the graph's next draw.
+pub(crate) fn key_slot() -> egui::Id {
+    egui::Id::new("kt_fx_graph_key")
+}
+
 /// A column of the layout: the slot on each lane (picture, sound).
 type Col = [Option<usize>; 2];
 
@@ -190,6 +216,24 @@ pub fn chain_graph(
     edit.auto.resize(edit.fx.len(), Vec::new());
     let view_id = egui::Id::new((&id, "fx_graph_view"));
     let mut view: View = ui.data(|d| d.get_temp(view_id)).unwrap_or_default();
+    // a key of the table pressed over this graph in the frame before
+    let mut key_remove: Option<usize> = None;
+    if let Some((vid, key)) = ui.data(|d| d.get_temp::<(egui::Id, GraphKey)>(key_slot()))
+        && vid == view_id
+    {
+        ui.data_mut(|d| d.remove::<(egui::Id, GraphKey)>(key_slot()));
+        match (key, edit.selected.fx()) {
+            (GraphKey::Remove, Some(i)) if i < edit.fx.len() && !edit.fx[i].is_lead_geometry() => key_remove = Some(i),
+            (GraphKey::Mute, Some(i)) if i < edit.bypass.len() => {
+                edit.bypass[i] = !edit.bypass[i];
+                ch.bypass = true;
+            }
+            (GraphKey::Fit, _) => view = View::default(),
+            (GraphKey::Detail, _) => view.detail = Some(true),
+            (GraphKey::Chips, _) => view.detail = Some(false),
+            _ => {}
+        }
+    }
 
     toolbar(ui, &id, &mut edit, kinds, query, clipboard, src_in, hover, preview, &mut ch, &mut view);
 
@@ -261,6 +305,11 @@ pub fn chain_graph(
     let height = PAD * 2.0 + bands as f32 * band_h + (bands as f32 - 1.0) * LANE_GAP * 1.5 + keys_h;
     let (canvas, canvas_resp) = ui.allocate_exact_size(egui::vec2(aw, height), egui::Sense::click_and_drag());
     crate::widgets::field_probe::note("fx.graph", canvas);
+    // the table's keys act here while the pointer is over the graph (`KtApp::graph_keys`)
+    if ui.rect_contains_pointer(canvas) {
+        let frame = ui.ctx().cumulative_frame_nr();
+        ui.data_mut(|d| d.insert_temp(hover_slot(), (view_id, canvas, frame)));
+    }
     // Ctrl+wheel (or a pinch): detail ↔ chips — the plain wheel stays the window body's scroll, as
     // everywhere in the program (a graph that ate the wheel stopped the form from scrolling)
     if canvas_resp.hovered() {
@@ -497,7 +546,7 @@ pub fn chain_graph(
     }
 
     // the nodes
-    let mut remove: Option<usize> = None;
+    let mut remove: Option<usize> = key_remove;
     let mut moved: Option<(usize, usize)> = None;
     for (i, r) in rects.iter().enumerate() {
         let Some(r) = *r else { continue };

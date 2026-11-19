@@ -17,8 +17,10 @@ sliders per lane, named by the plugin's passport, and its height SHALL NOT grow 
 selecting a node SHALL open that slot's existing form beside the graph. Nodes SHALL be laid out by
 processing order; dragging a node SHALL change only its order. An effect SHALL be added by dragging a wire into empty canvas or
 the picker; a drag SHALL reorder within its lane by dropping a node on another; every node SHALL
-carry its switch and its cross, and a device's cross SHALL remove both halves. Graph keys (M, X,
-Home, Shift+A, Tab) SHALL join the one key table of `ui-controls` before they act. Every gesture SHALL be one undo step. A gesture
+carry its switch and its cross, and a device's cross SHALL remove both halves. While the pointer is over a graph,
+the key table's own commands SHALL act on it: Delete on the selected node, the mute key on its
+switch, zoom to fit as Frame all, zoom in/out as detail/chips — no new key, the timeline does not
+get them. Every gesture SHALL be one undo step. A gesture
 the engine cannot execute yet (a branch, a second input, a cycle) SHALL be refused with a reason in
 the status line, changing nothing. No layout SHALL be stored and no window SHALL be added.
 Why: kkt-26.11.18b item 3 — "компактного удобного графа"; U7 — "Вместо полоски", "везде в окнах
@@ -60,6 +62,12 @@ rule 17 — one widget. U8 — "2-3 ползунка, но … как умест
 - **WHEN** the person views the output of a node in the middle of a chain
 - **THEN** the preview's frame equals the frame of the same event whose chain ends at that node, built by the one plan; Esc returns the frame of the whole chain
 - **TEST** t2997 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: The table's keys act on the graph under the pointer
+- **PATH** in an event's effects window click the Blur node → with the pointer over the graph press the mute key → Blur is struck through → press Delete → Blur goes, the event stays on the timeline → press zoom in → the detailed nodes → press zoom to fit → the fit again
+- **WHEN** the person presses the key table's mute, Delete and zoom keys with the pointer over the graph
+- **THEN** the selected node's bypass is switched and then the node removed in the MODEL, the timeline keeps its event and its tracks' switches; zoom in and zoom to fit change the graph's view (in a style that binds them)
+- **TEST** t3002 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: A chain of sound draws its nodes
 - **PATH** double click an audio event carrying Gain and Pitch Shift → its effects window shows both as nodes between In and Out

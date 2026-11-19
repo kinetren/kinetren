@@ -71,6 +71,9 @@
       in the slot the layout never read — v1b drew no nodes there; wrapping wires between chip bands
       now run in the gaps
 
+- [x] 3.9 the key table's Delete, mute and zoom commands act on the graph under the pointer
+      (`KtApp::graph_keys`, `node_editor::GraphKey`); no new key; t3002
+
 ## 4. v1d — the Viewer
 
 - [ ] 4.1 the plan takes a cut point for one event (a shorter chain through the one plan builder);

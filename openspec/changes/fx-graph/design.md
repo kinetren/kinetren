@@ -284,9 +284,13 @@ The fit on a long chain (24 effects): zoomed out, every node is a header chip; H
   a wide graph never stretches its window.
 - **Ctrl+wheel switches detail ↔ chips, the plain wheel scrolls the window.** A graph that took
   the wheel stopped the form below from scrolling (t1219 caught it).
-- **No graph keys yet.** M, X, Home, Shift+A and Tab collide with the timeline's keys (marker,
-  delete, start); they join the one key table (`controls.rs`, `ui-controls`) in v1c. Until then:
-  the switch and the cross on every node, the right-click menu, "Frame all", a double click.
+- **No new keys: the table's own commands act on the graph under the pointer** (v1c). Blender's
+  M, X, Home, Shift+A and Tab would collide with the timeline's keys (marker, delete, start) and
+  bypass the one key table (`controls.rs`, `ui-controls`). Instead, while the pointer is over a
+  graph, Delete removes its selected node, the mute key switches it, zoom to fit is Frame all and
+  zoom in/out are detail/chips — in every style, with the person's own bindings
+  (`KtApp::graph_keys`, the mask keys' precedent on the preview). The picker by Shift+A and Tab's
+  peek are not taken: the "+ effect" button and the double click on a box do it.
 - **A node's slider row is the common number (`param_value`) and a slider**, its label painted:
   the row's label with its doors (reset, publication) stays the form's (t682 caught a second,
   weaker door). A curved row is named in the node and edited in the form.
