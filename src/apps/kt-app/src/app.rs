@@ -1801,6 +1801,8 @@ impl KtApp {
         // in the test there are not” — the counter guard would check the wrong thing.
         crate::bench::tick();
         self.key_clock.begin_frame();
+        // one gesture's click count before any widget reads it (found-defects 817)
+        crate::clicks::begin_frame(ui.ctx());
         if crate::bench::enabled() {
             let events = ui.ctx().input(|i| i.events.len());
             crate::bench::note_inputs(events as u64);
@@ -7488,7 +7490,7 @@ impl KtApp {
             let at = self.key_clock.frame_at;
             let delay = preview_click_delay_ms(&self.key_clock);
             let pending_ms = self.preview_click_at.map(|t| at.saturating_duration_since(t).as_millis());
-            let (action, op) = preview_click_step(pending_ms, resp.clicked(), resp.double_clicked(), delay);
+            let (action, op) = preview_click_step(pending_ms, resp.clicked(), crate::clicks::double(&resp), delay);
             match op {
                 PendingOp::Arm => self.preview_click_at = Some(at),
                 PendingOp::Clear => self.preview_click_at = None,
@@ -7766,7 +7768,7 @@ impl KtApp {
                 self.player.set_playback_rate(self.base_rate);
             }
         }
-        if resp.double_clicked() {
+        if crate::clicks::double(&resp) {
             self.base_rate = 1.0;
             self.shuttle_override = None;
             self.player.set_playback_rate(1.0);
@@ -8755,10 +8757,28 @@ impl KeyClock {
     /// (found-defects 166, `formula` and `lessons` under the full live run). Its windows widen
     /// by the busy frame, as the double Space does; on a card that is ~16 ms.
     pub fn widen_clicks(&mut self, ctx: &egui::Context) {
+        self.widen_by(ctx, self.busy);
+    }
+
+    /// Before egui reads a frame's input (`raw_input_hook`): the gap since the last frame began
+    /// widens the windows too when that frame asked for this one at once. egui judges the click
+    /// read NOW with the windows set a frame ago, so a frame slower than the ones before it (the
+    /// frame that read a double click's first click, 155 ms under load, then its present) split
+    /// the two clicks past a window that did not know it yet (found-defects 817).
+    pub fn widen_before_input(&mut self, ctx: &egui::Context) {
+        let gap = if self.animating {
+            std::time::Instant::now().duration_since(self.frame_at).min(Self::BUSY_MAX)
+        } else {
+            std::time::Duration::ZERO
+        };
+        self.widen_by(ctx, self.busy.max(gap));
+    }
+
+    fn widen_by(&mut self, ctx: &egui::Context, busy: std::time::Duration) {
         if !self.widen {
             return;
         }
-        let busy = self.busy.as_secs_f64();
+        let busy = busy.as_secs_f64();
         let (double, click) = (DOUBLE_CLICK_S + busy, CLICK_HOLD_S + busy);
         self.double_s = double;
         if ctx.options(|o| (o.input_options.max_double_click_delay - double).abs() > 0.002) {
@@ -11104,6 +11124,10 @@ impl Drop for UiFrameTrace {
 static LOADING_TRACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl eframe::App for KtApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, _raw_input: &mut egui::RawInput) {
+        self.key_clock.widen_before_input(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         kt_time::work::bump(kt_time::work::Work::UiFrame);
         // a frame of a refused surface reconfigure's hold is spent (gpu-errors-survive)

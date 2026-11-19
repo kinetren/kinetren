@@ -724,7 +724,7 @@ impl KtApp {
                 _ => {}
             }
         }
-        if resp.double_clicked()
+        if crate::clicks::double(&resp)
             && edit.tool == MaskTool::Edit
             && let (Some(p), Some(m)) = (pointer, &cur)
             && matches!(m.shape, MaskShape::Path { .. })

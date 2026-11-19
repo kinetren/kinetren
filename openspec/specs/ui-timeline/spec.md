@@ -385,6 +385,12 @@ Ctrl+C copy every event of every track inside the loop.
 - **PATH** triple-click the body of an event → the FX window flashes open on the second click and is gone after the third → the region band over exactly the event and its audio → press L → the loop plays exactly the event
 - **TEST** t927 (`src/apps/kt-app/src/layout_tests.rs`)
 
+#### Scenario: A click elsewhere does not turn a double click into a triple
+- **WHEN** an event is clicked, and 0.06 s later another event is double-clicked (inside egui's triple window, twice the double-click window; the program widens that window by its busy frame, up to 2.6 s for a triple); then the same event is clicked a third time
+- **THEN** the double click opens the second event's FX window and sets no region (a triple is three clicks of ONE gesture: the click before the third must itself be a double, `clicks::effective`); the third click of this gesture is the triple of t927 and sets the region over the event. Every double and triple click of the program is read through `clicks::double`/`clicks::triple` (found-defects 817)
+- **PATH** click one event → double-click another event right away → its effects window opens, no region band → click it a third time → the window closes, the region band stands over the event
+- **TEST** t3127 (`src/apps/kt-app/src/layout_tests.rs`)
+
 #### Scenario: Triple click on a reel and on the level line
 - **WHEN** a reel instance is triple-clicked on its body; separately the level line of an audio event set to −6 dB is triple-clicked
 - **THEN** on the reel the region covers the instance and the reel is NOT left expanded (the second click's expansion is undone); on the level line the gain is 0 dB (the double click's reset, one history step) and the region is unchanged
@@ -1670,6 +1676,16 @@ stamps an input with the frame that read it: a gesture's length is known to a bu
 - **PATH** on a loaded machine the person double-clicks an event → its effects window opens, as on a
   free machine
 - **TEST** t2214 (`src/apps/kt-app/src/layout_tests.rs`); live `formula`, `lessons`, `forms`
+
+#### Scenario: The click windows widen before egui reads the input
+- **WHEN** the frame before asked for this one at once and began 450 ms ago while the measured busy
+  frame is 20 ms; separately a frame that did not ask for the next began 5 s ago
+- **THEN** before egui reads this frame's input (`raw_input_hook`) its double-click window is
+  0.3 s + 0.45 s and its click window 0.8 s + 0.45 s — the gap the window set a frame ago did not
+  know yet; after a rest the windows stay 0.3 s + the busy frame (found-defects 817)
+- **PATH** on a loaded machine the person clicks an event, the frame that reads it is slow, the
+  second click lands a frame later → the effects window opens
+- **TEST** t3128 (`src/apps/kt-app/src/layout_tests.rs`); live `formula`
 
 ### Requirement: The memory numbers say what they count and name the whole process
 The status bar SHALL show the decoded frames held against the bound they may grow to now, and the

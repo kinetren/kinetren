@@ -364,7 +364,7 @@ impl KtApp {
                 KtApp::release_pointer_after_wm_grab(ctx);
             }
         }
-        if bg.double_clicked() {
+        if crate::clicks::double(&bg) {
             let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
@@ -653,7 +653,7 @@ impl KtApp {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             KtApp::release_pointer_after_wm_grab(ui.ctx());
         }
-        if bg.double_clicked() {
+        if crate::clicks::double(&bg) {
             let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
@@ -764,7 +764,7 @@ impl KtApp {
                     } else {
                         self.hint_key(r, k::tb::TIMECODE, Cmd::GotoTimecode)
                     };
-                    if r.double_clicked() && !editing {
+                    if crate::clicks::double(&r) && !editing {
                         self.tc_edit = Some(String::new());
                         self.tc_edit_focus = true;
                     }
