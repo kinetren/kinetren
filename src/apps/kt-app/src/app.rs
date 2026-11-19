@@ -324,6 +324,8 @@ pub struct KtApp {
     /// Active inline input of a marker's NOTE (marker-notes, `v26.10` U8): multi-line, written as
     /// one undo step when it closes.
     pub marker_note: Option<MarkerNoteEdit>,
+    /// The Viewer (fx-graph D11): the preview shows the picture after a node of one event's chain.
+    pub viewer: Option<crate::node_editor::Viewer>,
     /// Active inline input for the track name (item 2 round 10).
     pub lane_edit: Option<LaneEdit>,
     pub area_edit: Option<AreaEdit>,
@@ -1033,6 +1035,7 @@ impl KtApp {
             marker_edit: None,
             marker_edit_focus: false,
             marker_note: None,
+            viewer: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -1370,6 +1373,7 @@ impl KtApp {
             marker_edit: None,
             marker_edit_focus: false,
             marker_note: None,
+            viewer: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -3219,8 +3223,27 @@ impl KtApp {
         }
     }
 
+    /// The Viewer on (the picture after a node) or off (fx-graph D11): the player gets the project
+    /// with the event's chain cut, or the whole one again.
+    pub(crate) fn set_viewer(&mut self, v: Option<crate::node_editor::Viewer>) {
+        if self.viewer == v {
+            return;
+        }
+        crate::tele_journal::record(
+            crate::tele_journal::Kind::Act,
+            &match &v {
+                Some(v) => format!("viewer on: after {} (event {})", v.name, v.clip.0),
+                None => "viewer off".to_string(),
+            },
+        );
+        self.viewer = v;
+        self.push_project_to_player();
+    }
+
     /// Start playback from the current position (resume semantics, item 15).
     pub fn on_play(&mut self) {
+        // playing is the edit's picture: the Viewer ends
+        self.set_viewer(None);
         self.follow_playhead = true;
         self.player.play();
     }
@@ -3309,6 +3332,11 @@ impl KtApp {
 
     /// Esc cascade (item 11): windows → active drag → region+selection.
     pub fn escape_action(&mut self) {
+        // 0) the Viewer: Esc gives the whole picture back first, the window stays
+        if self.viewer.is_some() {
+            self.set_viewer(None);
+            return;
+        }
         // 0) number input of speed (R.57) — it lives IN PLACE of the band, and
         // it must be closed before anything else; focus is handed over by
         // `draw_speed_control` on the next frame
@@ -4569,10 +4597,16 @@ impl KtApp {
         // the model's shared snapshot of this state at the root (edit-without-rebuild): the windows
         // that publish from it and the player hold one copy, not one each; the player builds it on
         // its own thread
-        let p = match self.model.editing() {
+        let mut p = match self.model.editing() {
             Some(_) => std::sync::Arc::new(self.model.reel_document()),
             None => self.model.doc_arc(),
         };
+        // the Viewer (fx-graph D11): the player holds the project with one event's chain cut
+        if let Some(v) = &self.viewer {
+            let mut q = (*p).clone();
+            v.cut(&mut q);
+            p = std::sync::Arc::new(q);
+        }
         self.player.set_project_at(p, self.model.revision());
     }
 
@@ -7647,6 +7681,15 @@ impl KtApp {
             if LOADING_TRACED.swap(show_overlay, std::sync::atomic::Ordering::Relaxed) != show_overlay {
                 let at = self.preview_key.map_or(0, |k| k.0);
                 kt_time::trace::ev(kt_time::trace::Ev::Loading).aux(show_overlay as u32).a(at as u64).b(self.preview_catching_up).emit();
+            }
+            // the Viewer's badge: the picture is the one after a node, not the edit's
+            if let Some(v) = &self.viewer {
+                let text = crate::tf!(k::fx::graph::VIEWER, v.name);
+                let at = img_rect.left_top() + egui::vec2(10.0, 14.0);
+                let galley = painter.layout_no_wrap(text, egui::FontId::proportional(14.0), egui::Color32::from_gray(240));
+                painter.rect_filled(egui::Rect::from_min_size(at, galley.size()).expand(4.0), 3.0, crate::theme::ACCENT);
+                painter.galley(at, galley, egui::Color32::from_gray(240));
+                crate::widgets::field_probe::note("preview.viewer", img_rect);
             }
             if show_overlay {
                 // the README's hero waits for a frame without it (a picture mid-load is not one)

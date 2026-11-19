@@ -276,6 +276,9 @@ impl KtApp {
                             context: Vec::new(),
                             // the ducking key: a dashed wire from the key track into its compressor
                             keys: track_keys,
+                            lane_of: None,
+                            master2: None,
+                            viewer: false,
                         },
                         audio,
                         &mut w.picker_query,

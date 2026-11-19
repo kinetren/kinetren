@@ -381,6 +381,11 @@ into lanes by kind (`merge_chains`/`split_chains`). The pair editor takes the sa
 - **Cost.** Nothing new at rest: the virtual chain is built in the window's frame from vectors the
   window already clones.
 
+**As built (2026-11-19):** presets and copy/paste stay on the pair's one toolbar (they act on the
+pair, a pasted or preset slot taking its kind's lane) — one bar instead of one per section; the
+detailed graph opens only within 40 % of the window's visible height, so a pair's two lanes of
+sliders open as chips and the form keeps its room (Ctrl+wheel opens the detail).
+
 ## D11. v1d — the Viewer: the picture after a node
 
 The owner's Blender reference has Ctrl+Shift+click "show this node's output". A frame cut after a
@@ -401,6 +406,13 @@ moment, the event's chain changed, its track soloed" on the offline device, keye
 - **Tests.** t2997: the Viewer's frame equals the frame of the same event whose chain ends at that
   node, composed by the plan; Esc returns the frame of the whole chain; a live step with a
   screenshot.
+
+**As built (2026-11-19):** not through the picker cells (they compose at 320×180 for a 160×90
+cell) but through the player itself: while the Viewer is on, `push_project_to_player` hands the
+player the model's project with that one event's chain cut after the node. The preview then
+composes it by its own path at its own size and quality, and a sound node is heard up to it; the
+model never changes, and Esc, Play, an empty-canvas Ctrl+Shift+click or closing the window hand the
+whole project back.
 
 ## His answers (kkt-26.11.18b U8) and what they fix
 
