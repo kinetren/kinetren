@@ -1009,6 +1009,8 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
     let mut scanned: Option<(StateKey, i64)> = None;
     let mut worked = false;
     let mut full = false;
+    // the size an encoder was seen to open at (found-defects 813): asked before any moment composes
+    let mut opens: Option<(u32, u32)> = None;
     let mut seg: Option<OpenSeg> = None;
     loop {
         let seen = rc.wake.seen();
@@ -1102,6 +1104,25 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         }
         if seg.as_ref().is_some_and(|s| s.next != t || s.build.len() >= SEGMENT_FRAMES) {
             commit(&rc, &mut seg);
+        }
+        // an encoder at this size, asked BEFORE a moment composes (found-defects 813): the tier learnt
+        // there was none only at its first heavy frame, and on a machine without one every quiet
+        // composed and measured moments it could never write — the rest after a pause was not at rest
+        if opens != Some((q.width, q.height)) {
+            let fps = (kt_time::TICK_HZ / step).max(1) as u32;
+            match store.begin(q.width, q.height, fps) {
+                Ok(probe) => {
+                    // an empty segment leaves no file
+                    let _ = store.commit(probe, false);
+                    opens = Some((q.width, q.height));
+                }
+                Err(PutError::NoEncoder(why)) => {
+                    trace::ev(Ev::RenderCache).aux(rc::STOPPED).id(trace::name(&why) as u64).b(rc::why::NO_ENCODER).emit();
+                    *rc.unavailable.lock().unwrap() = Some(why);
+                    continue;
+                }
+                Err(_) => {}
+            }
         }
         worked = true;
         rc.busy.store(true, Ordering::Release);

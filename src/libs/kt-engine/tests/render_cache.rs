@@ -285,6 +285,49 @@ fn t2984_the_prerender_yields_to_the_person() {
     }
 }
 
+/// Test t2989 (found-defects 813): on a machine whose codec opens no encoder, the prerender says so and
+/// composes nothing: no moment is drawn at rest for a tier that can never write it.
+#[test]
+fn t2989_no_encoder_composes_nothing() {
+    struct NoEncoder;
+    impl kt_engine::render_cache::SegmentCodec for NoEncoder {
+        fn codec(&self) -> &str {
+            "h264"
+        }
+        fn writer(&self, _: &std::path::Path, _: u32, _: u32, _: u32) -> Result<Box<dyn kt_engine::render_cache::SegmentWriter>, String> {
+            Err("no hardware encoder opens".into())
+        }
+        fn reader(&self, _: &std::path::Path) -> Result<Box<dyn kt_engine::render_cache::SegmentReader>, String> {
+            Err("none".into())
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let Some((p, moments)) = player(root.path(), 0.73) else { return };
+    p.set_render_cache(Some(Config {
+        codec: std::sync::Arc::new(NoEncoder),
+        root: root.path().to_path_buf(),
+        build: "test build".into(),
+        base: None,
+        cap: 1 << 30,
+    }));
+    let rc = p.render_cache();
+    let items = kt_time::trace::testing::capture(|| {
+        for t in &moments {
+            p.note_preview_cost(*t, 1_000_000_000, (160, 90));
+        }
+        rc.kick();
+        let deadline = kt_time::test_deadline();
+        while !matches!(rc.status(), Some(Err(_))) {
+            assert!(Instant::now() < deadline, "the tier never said it has no encoder");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let recs = kt_time::trace::testing::recs(&items);
+    let composed = recs.iter().filter(|r| r.ev == kt_time::trace::Ev::Job as u16 && r.aux == kt_time::trace::job::PRERENDER).count();
+    assert_eq!(composed, 0, "the prerender composed moments it could never write");
+    assert_eq!(rc.counts().0, 0);
+}
+
 /// Test t2985 (render-cache-disk D3): a new player with the loop region over prerendered moments draws
 /// them bright after its scan at rest; an edit of the event takes them off the bars.
 #[test]
