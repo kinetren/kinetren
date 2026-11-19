@@ -739,6 +739,7 @@ echo_hint_cut = "Cut: a reverb or an echo before the pitch sounds only inside th
 echo_hint_ring = "Rings on: their echo goes on after the event ends, as without the pitch."
 radius = "Radius:"
 key_color = "Key:"
+center_drag_hint = "Drag: the effect's centre on the frame (as its Center X/Y fields; with a curve — the key at the playhead)"
 eyedrop_hint = "Eyedropper: click, then click the colour anywhere in the program — the preview's frame, a thumbnail, another window"
 eyedrop_armed = "Click the colour to take · Esc puts the eyedropper down"
 eyedrop_no_screen = "The eyedropper cannot read the screen here (Wayland): type the colour or use the colour button"

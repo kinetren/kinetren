@@ -103,8 +103,8 @@ impl MaskEdit {
 }
 
 /// The overlay's map: reference px ↔ canvas px ↔ screen.
-struct View {
-    sp: MaskSpace,
+pub(crate) struct View {
+    pub(crate) sp: MaskSpace,
     inv: [f64; 6],
     img: egui::Rect,
     canvas: (f64, f64),
@@ -115,14 +115,14 @@ impl View {
         let [a, b, c, d, e, f] = self.sp.xf;
         (a * p.0 + b * p.1 + c, d * p.0 + e * p.1 + f)
     }
-    fn to_screen(&self, p: (f64, f64)) -> egui::Pos2 {
+    pub(crate) fn to_screen(&self, p: (f64, f64)) -> egui::Pos2 {
         let q = self.to_canvas(p);
         egui::pos2(
             self.img.left() + (q.0 / self.canvas.0) as f32 * self.img.width(),
             self.img.top() + (q.1 / self.canvas.1) as f32 * self.img.height(),
         )
     }
-    fn screen_to_ref(&self, s: egui::Pos2) -> (f64, f64) {
+    pub(crate) fn screen_to_ref(&self, s: egui::Pos2) -> (f64, f64) {
         let q = (
             ((s.x - self.img.left()) / self.img.width().max(1.0)) as f64 * self.canvas.0,
             ((s.y - self.img.top()) / self.img.height().max(1.0)) as f64 * self.canvas.1,
@@ -459,6 +459,26 @@ impl KtApp {
         Some(View { inv: invert(sp.xf), sp, img, canvas: canvas_f })
     }
 
+    /// The map of the frame an effect slot works on (fx-center-on-preview): a slot BEFORE the
+    /// Geometry node sees the source, placed on the canvas by the node; a slot after it sees the
+    /// canvas itself (`ClipEvent::geometry_pos`).
+    pub(crate) fn slot_frame_view(&self, c: ClipId, slot: usize, img: egui::Rect, canvas: (u32, u32)) -> Option<View> {
+        let canvas_f = (canvas.0.max(2) as f64, canvas.1.max(2) as f64);
+        let project_h = self.model.project().settings.height.max(1) as f64;
+        let clip = self.model.clip(c)?;
+        if clip.kind != ClipKind::Video {
+            return None;
+        }
+        let sp = if slot < clip.geometry_pos {
+            let pl = self.geom_placement(c, canvas_f)?;
+            let r = self.player.source_view(clip.media).unwrap_or(canvas_f);
+            MaskSpace::placed(&pl, r, canvas_f, canvas_f, project_h)
+        } else {
+            MaskSpace::plain(canvas_f.0, canvas_f.1, canvas.0, canvas.1, project_h)
+        };
+        Some(View { inv: invert(sp.xf), sp, img, canvas: canvas_f })
+    }
+
     /// A point of the owner's reference frame (normalized) on the screen — the same map the overlay
     /// draws with (for the tests that act where a person acts).
     #[cfg(test)]
@@ -469,7 +489,7 @@ impl KtApp {
     }
 
     /// Is the owner on screen now (its event under the playhead)?
-    fn mask_owner_live(&self, owner: MaskOwner) -> bool {
+    pub(crate) fn mask_owner_live(&self, owner: MaskOwner) -> bool {
         match owner {
             MaskOwner::Picture(c) | MaskOwner::Slot(c, _) => self.model.clip(c).is_some_and(|c| {
                 let t = self.player.transport.playhead();

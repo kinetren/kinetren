@@ -364,6 +364,8 @@ pub struct KtApp {
     /// The file moment under the press that started dragging a card, and the file's length
     /// (bin-drag-moment): the event lands with that moment under the mouse.
     pub bin_press_moment: Option<(MediaId, i64, Tick)>,
+    /// An effect's centre being dragged on the preview (fx-center-on-preview).
+    pub center_drag: Option<crate::centerctl::CenterDrag>,
     /// Card groups of the bin (item 13 round 11): they live here; they go into
     /// the project together with the rest of UiState.
     pub bin_groups: Vec<kt_model::BinGroup>,
@@ -1051,6 +1053,7 @@ impl KtApp {
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
             bin_press_moment: None,
+            center_drag: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,
@@ -1387,6 +1390,7 @@ impl KtApp {
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
             bin_press_moment: None,
+            center_drag: None,
             bin_groups: Vec::new(),
             bin_sel: Default::default(),
             bin_rubber: None,
@@ -7620,6 +7624,9 @@ impl KtApp {
             // handles at a time; otherwise the frame, from this same single place
             if !self.mask_controls(ui, &painter, img_rect, (q.width, q.height)) {
                 self.geometry_controls(ui, &painter, img_rect, (q.width, q.height));
+                // an effect's centre over the frame, after it: the smaller target wins the pointer
+                // (fx-center-on-preview)
+                self.center_controls(ui, &painter, img_rect, (q.width, q.height));
             }
             // the show button — AFTER the frame: egui gives the pointer to the last
             // registered interactor, and the frame body (moving) covers the whole frame —
