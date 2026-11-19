@@ -478,6 +478,9 @@ impl KtApp {
                             hint: tr(k::mrph::SRC_SLOT_HINT),
                             color: crate::theme::MORPH_SLOT,
                         }),
+                        // a layer is itself a context of the events under it: nothing comes after it here
+                        context: Vec::new(),
+                        keys: Vec::new(),
                     },
                     // BOTH kinds: a patch carries a video and an audio chain, and the one strip
                     // shows them together (`split_chains` sorts the pick into its chain)

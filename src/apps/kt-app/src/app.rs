@@ -8354,6 +8354,37 @@ impl KtApp {
         }
     }
 
+    /// The key table's commands that act on the effect graph under the pointer (fx-graph v1c):
+    /// Delete removes its selected node, the mute key switches it, zoom to fit is Frame all, zoom
+    /// in/out the detailed nodes or the chips. The graph said where it stood in the frame before
+    /// (`node_editor::hover_slot`); a key pressed over it is taken from the timeline and left for
+    /// the graph's next draw — the same scoping as the mask keys on the preview.
+    fn graph_keys(&mut self, ctx: &egui::Context, k: &mut crate::controls::Pressed) {
+        use crate::controls::Cmd;
+        use crate::node_editor::GraphKey;
+        let Some((vid, rect, frame)) = ctx.data(|d| d.get_temp::<(egui::Id, egui::Rect, u64)>(crate::node_editor::hover_slot())) else {
+            return;
+        };
+        let fresh = frame + 1 >= ctx.cumulative_frame_nr();
+        let over = ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p));
+        if !fresh || !over {
+            return;
+        }
+        for (cmd, key) in [
+            (Cmd::Delete, GraphKey::Remove),
+            (Cmd::TrackMute, GraphKey::Mute),
+            (Cmd::ZoomFit, GraphKey::Fit),
+            (Cmd::ZoomIn, GraphKey::Detail),
+            (Cmd::ZoomOut, GraphKey::Chips),
+        ] {
+            if k.iter().any(|c| c == cmd) {
+                k.remove(cmd);
+                ctx.data_mut(|d| d.insert_temp(crate::node_editor::key_slot(), (vid, key)));
+                ctx.request_repaint();
+            }
+        }
+    }
+
     fn handle_keys(&mut self, ctx: &egui::Context) {
         // GATE — TEXT INPUT, not “something is focused” (R.63 item 4).
         //
@@ -8434,6 +8465,8 @@ impl KtApp {
         if mask_del {
             k.remove(Cmd::Delete);
         }
+        // THE EFFECT GRAPH under the pointer takes the table's Delete, mute and zoom keys first
+        self.graph_keys(ctx, &mut k);
         // EVERY PRESS, IN ORDER (test-hygiene, found-defects 99/166): a slow frame reads several
         // keys at once, and a set of the frame's commands made → → → ← no step at all. A command
         // that opens a window or writes the file runs once a frame; one that opens a text field

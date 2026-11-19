@@ -64,6 +64,9 @@ pub struct FxEditor {
     pub preview_t: Option<kt_time::Tick>,
     /// When the window was opened — the misclick guard for decode ORDERS (item 430).
     pub opened_at: std::time::Instant,
+    /// What applies after each member's chain (fx-graph v1c): the morpher layers over it and its
+    /// track's stage, kept per model revision — finding the layers walks the project.
+    pub context: Option<(u64, Vec<(ClipId, Vec<crate::widgets::ContextBox>)>)>,
     pub open: bool,
 }
 
@@ -196,6 +199,7 @@ impl KtApp {
             gen_warn: std::collections::HashMap::new(),
             preview_t: None,
             opened_at: std::time::Instant::now(),
+            context: None,
             open: true,
         });
     }
@@ -366,6 +370,19 @@ impl KtApp {
         };
         let mut open = ed.open;
         let members = ed.members.clone();
+        let rev = self.model.revision();
+        if ed.context.as_ref().is_none_or(|(r, _)| *r != rev) {
+            let p = self.model.project();
+            let boxes = members
+                .iter()
+                .filter_map(|id| p.clips.iter().find(|c| c.id == *id))
+                .map(|c| (c.id, context_of(p, c)))
+                .collect();
+            ed.context = Some((rev, boxes));
+        }
+        let ctx_boxes: Vec<(ClipId, Vec<crate::widgets::ContextBox>)> =
+            ed.context.as_ref().map(|c| c.1.clone()).unwrap_or_default();
+        let mut open_ctx: Option<crate::widgets::ContextTarget> = None;
         // ---- context of picker thumbnails (R.54, item 432) -------------------
         // WYSIWYG: the cell shows exactly what will result after the click, at the cursor's
         // moment inside the event (frozen while playing).
@@ -561,6 +578,12 @@ impl KtApp {
                                         save: &mut preset_save,
                                         action: &mut preset_action,
                                     },
+                                    context: ctx_boxes
+                                        .iter()
+                                        .find(|(c, _)| c == id)
+                                        .map(|(_, b)| b.clone())
+                                        .unwrap_or_default(),
+                                    keys: Vec::new(),
                                 },
                                 clip.kind == ClipKind::Audio,
                                 &mut query,
@@ -576,6 +599,9 @@ impl KtApp {
                                 if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
                             );
                             ed.picker_query = query;
+                            if let Some(t) = ch.open {
+                                open_ctx = Some(t);
+                            }
                             // the SLOT MASKS follow their slots (shape-masks): the same move /
                             // removal in the strip's own indices (the lead spliced in, empty)
                             if (ch.moved.is_some() || ch.removed.is_some()) && !clip.masks.slots.is_empty() {
@@ -1118,6 +1144,12 @@ impl KtApp {
         }
         if !open {
             ed.open = false;
+        }
+        // a context box asked its own window: the layer's or the track's (fx-graph v1c)
+        match open_ctx {
+            Some(crate::widgets::ContextTarget::Layer(m)) => self.open_morph_editor(m),
+            Some(crate::widgets::ContextTarget::Track(t)) => self.open_track_window(t),
+            None => {}
         }
         self.fx_clipboard = fx_clip;
         // The clipboard read order — AFTER the drawing and in the BACKGROUND (R.61): one cannot read
@@ -1928,4 +1960,37 @@ pub(crate) fn draw_video_fx_params(
         _ => {}
     }
     ch
+}
+
+/// The read-only boxes after an event's chain (fx-graph v1c, the owner's Q3): the morpher layers
+/// that change it, bottom up (`Project::layers_over`, the render's rule), then its track's stage
+/// when the track carries effects, with its sidechain key.
+fn context_of(p: &kt_model::Project, c: &kt_model::ClipEvent) -> Vec<crate::widgets::ContextBox> {
+    use crate::widgets::{ContextBox, ContextTarget};
+    let mut out: Vec<ContextBox> = p
+        .layers_over(c)
+        .into_iter()
+        .filter_map(|id| p.morphers.iter().find(|m| m.id == id))
+        .map(|m| ContextBox {
+            target: ContextTarget::Layer(m.id),
+            label: crate::tf!(k::fx::graph::LAYER, m.id.0),
+            count: m.patch.chain_for(c.kind).len(),
+            key: None,
+        })
+        .collect();
+    let lane = match c.kind {
+        ClipKind::Video => LaneKind::Video,
+        ClipKind::Audio => LaneKind::Audio,
+    };
+    if let Some(t) = p.track_at(lane, c.lane)
+        && !t.fx.is_empty()
+    {
+        out.push(ContextBox {
+            target: ContextTarget::Track(t.id),
+            label: crate::track_window::track_name(p, t.id).unwrap_or_default(),
+            count: t.fx.len(),
+            key: kt_model::sidechain_keys(&t.fx).next().and_then(|k| crate::track_window::track_name(p, k)),
+        });
+    }
+    out
 }

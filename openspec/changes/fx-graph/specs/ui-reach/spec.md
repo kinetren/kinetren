@@ -9,14 +9,18 @@ sharp and every widget keeps its real place); Ctrl+wheel over the graph switches
 chips, a middle drag pans the detail, "Frame all" and a double click on empty space return the
 fit; the plain wheel stays the window's scroll. Picture and
 sound SHALL be two socket kinds and no wire SHALL join them. A simulated device SHALL be one node
-with a picture lane and a sound lane, each with its own switch. A morpher layer, a composition and a
-track stage SHALL be group nodes that Tab enters and leaves. A node SHALL show at most three main
+with a picture lane and a sound lane, each with its own switch. After an event's own nodes the morpher layers
+over it (bottom up, the render's rule) and its track's stage SHALL stand as read-only boxes; a
+double click on one SHALL open its own window. A sidechain key SHALL be drawn as a box wired into
+its compressor. A node SHALL show at most three main
 sliders per lane, named by the plugin's passport, and its height SHALL NOT grow with the passport;
 selecting a node SHALL open that slot's existing form beside the graph. Nodes SHALL be laid out by
 processing order; dragging a node SHALL change only its order. An effect SHALL be added by dragging a wire into empty canvas or
 the picker; a drag SHALL reorder within its lane by dropping a node on another; every node SHALL
-carry its switch and its cross, and a device's cross SHALL remove both halves. Graph keys (M, X,
-Home, Shift+A, Tab) SHALL join the one key table of `ui-controls` before they act. Every gesture SHALL be one undo step. A gesture
+carry its switch and its cross, and a device's cross SHALL remove both halves. While the pointer is over a graph,
+the key table's own commands SHALL act on it: Delete on the selected node, the mute key on its
+switch, zoom to fit as Frame all, zoom in/out as detail/chips — no new key, the timeline does not
+get them. Every gesture SHALL be one undo step. A gesture
 the engine cannot execute yet (a branch, a second input, a cycle) SHALL be refused with a reason in
 the status line, changing nothing. No layout SHALL be stored and no window SHALL be added.
 Why: kkt-26.11.18b item 3 — "компактного удобного графа"; U7 — "Вместо полоски", "везде в окнах
@@ -36,10 +40,10 @@ rule 17 — one widget. U8 — "2-3 ползунка, но … как умест
 - **TEST** t2995 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: Layers, the track stage and the key are group nodes in the processing order
-- **PATH** double click an event under two morpher layers on a track whose compressor is keyed by the music track → the editor shows the event's nodes, then the lower layer's purple group, the upper's, then the Track group with a dashed key wire from "Key: Music" → press Tab on the lower layer → the breadcrumb reads "Event › Layer", its nodes greyed → Tab → back → double click it → its morpher window opens
-- **WHEN** the FX window opens on an event reached by layers and a keyed track stage
-- **THEN** the groups stand in the engine's order (event, layers bottom-up, track), their nodes are not editable there, and the double click opens the existing morpher window, no other
-- **TEST** t2996 (`src/apps/kt-app/src/node_editor_tests.rs`)
+- **PATH** double click an audio event under two morpher layers on a track whose compressor is keyed by the music track → its effects window shows the event's nodes, then two purple layer boxes, then the track's box with "Key: …" → double click the first layer box → that morpher's window opens → open the track's window → the key box stands under its compressor, wired into it
+- **WHEN** the effects window opens on an event reached by layers and a keyed track stage
+- **THEN** the boxes stand in the render's order (the event's nodes, the layers bottom up, the track), they edit nothing there, the track's box names its key, and a double click opens the existing window of the box, no other; the track window draws the key box with a dashed wire into its compressor
+- **TEST** t2996 (`src/apps/kt-app/src/node_editor_tests.rs`), live `node_graph` (`src/scripts/live/node_graph.py`)
 
 #### Scenario: A long chain fits without scrolling
 - **PATH** open the FX window on an event with 24 effects → every node is in view as a chip → Ctrl+wheel over the graph → the detailed nodes with their sliders, a middle drag pans them → click "Frame all" → all the chips again, no scrollbar over the graph
@@ -58,6 +62,12 @@ rule 17 — one widget. U8 — "2-3 ползунка, но … как умест
 - **WHEN** the person views the output of a node in the middle of a chain
 - **THEN** the preview's frame equals the frame of the same event whose chain ends at that node, built by the one plan; Esc returns the frame of the whole chain
 - **TEST** t2997 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+#### Scenario: The table's keys act on the graph under the pointer
+- **PATH** in an event's effects window click the Blur node → with the pointer over the graph press the mute key → Blur is struck through → press Delete → Blur goes, the event stays on the timeline → press zoom in → the detailed nodes → press zoom to fit → the fit again
+- **WHEN** the person presses the key table's mute, Delete and zoom keys with the pointer over the graph
+- **THEN** the selected node's bypass is switched and then the node removed in the MODEL, the timeline keeps its event and its tracks' switches; zoom in and zoom to fit change the graph's view (in a style that binds them)
+- **TEST** t3002 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: A chain of sound draws its nodes
 - **PATH** double click an audio event carrying Gain and Pitch Shift → its effects window shows both as nodes between In and Out

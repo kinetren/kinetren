@@ -6796,6 +6796,23 @@ impl Project {
         perm
     }
 
+    /// The morpher layers that change this event, in the order they apply (bottom up, then by id) —
+    /// what the effects window shows after the event's own chain (fx-graph v1c, his answer Q3). The
+    /// render's own rule: a layer counts where `windows_on` gives it a window. A walk of the
+    /// project: the caller keeps the answer per model revision.
+    pub fn layers_over(&self, c: &ClipEvent) -> Vec<MorphId> {
+        let rows = self.rows();
+        let zones = ZoneIndex::new(self);
+        let mut out: Vec<(std::cmp::Reverse<usize>, MorphId)> = self
+            .morphers
+            .iter()
+            .filter(|m| !m.windows_on(c, self, &zones, &rows).is_empty())
+            .map(|m| (std::cmp::Reverse(m.row_in(&rows)), m.id))
+            .collect();
+        out.sort();
+        out.into_iter().map(|(_, id)| id).collect()
+    }
+
     /// Clips after the morphers are applied are the ONLY exit point of clips to the
     /// engine, export and drawing (v1 effectiveClipForRender/renderClips):
     /// the engine knows nothing about morphers. The order of application is deterministic —
