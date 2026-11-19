@@ -35,20 +35,28 @@ use kt_model::{GeneratorKind, HasParams, TextAlign, TextAnchor};
 /// it in the UI is unclear”. Now the same list hangs in the
 /// main menu too, and no second list of kinds was created for it.
 pub fn generator_menu(ui: &mut egui::Ui) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR), None)
+    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR))
 }
 
-/// The same "Create a generator…" for a clip track's right-click menu
-/// (generators-placement-and-audio D1): only the kinds that land on a track of `stream` — picture
-/// kinds on a video track, sound kinds on an audio track — so the clip lands where the click was.
-pub fn generator_menu_for(ui: &mut egui::Ui, stream: kt_model::ClipKind) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR), Some(stream))
+/// "Create a generator…" on a clip track's right-click menu (generator-from-track, `v26.10` G1): ONE
+/// plain item — "Не вижу смысла делать выпадающие меню с перечислением всех видов … Достаточно в самом
+/// окне менять тип". It gives the first kind that lands on the track (a solid colour on a video track,
+/// a tone on an audio one); the window it opens picks the kind in its gallery (G6).
+pub fn generator_item_for(ui: &mut egui::Ui, stream: kt_model::ClipKind) -> Option<GeneratorKind> {
+    let r = ui.button(tr(k::bin::menu::NEW_GENERATOR));
+    crate::widgets::field_probe::note("gen.new", r.rect);
+    crate::widgets::lesson_mark::item(ui, k::bin::menu::NEW_GENERATOR, r.rect);
+    if !r.clicked() {
+        return None;
+    }
+    GeneratorKind::all().into_iter().find(|kd| lands_on(kd, stream))
 }
+
 
 /// The same menu under another caption: “create” and “change kind” — ONE list of kinds (rule 17),
 /// and a new kind reaches both entries by itself.
 pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, label, None, None)
+    generator_kind_menu_keyed(ui, label, None)
 }
 
 /// Whether the kind is a SOUND kind: it synthesizes its burst and has no picture.
@@ -63,20 +71,18 @@ pub(crate) fn lands_on(kind: &GeneratorKind, stream: kt_model::ClipKind) -> bool
 }
 
 /// `key` — the catalog key of the caption: the item outlines itself when a tour step points at
-/// it (tour-lessons-fixes D3), wherever the menu is drawn. `stream` — the track's kind, when the
-/// menu hangs on a track.
+/// it (tour-lessons-fixes D3), wherever the menu is drawn.
 fn generator_kind_menu_keyed(
     ui: &mut egui::Ui,
     label: &str,
     key: Option<crate::i18n::Key>,
-    stream: Option<kt_model::ClipKind>,
 ) -> Option<GeneratorKind> {
     let mut picked = None;
     let mr = ui.menu_button(label, |ui| {
         for grp in GenGroup::ALL {
             let kinds: Vec<_> = GeneratorKind::all()
                 .into_iter()
-                .filter(|k| GenGroup::of(k) == grp && stream.is_none_or(|s| lands_on(k, s)))
+                .filter(|k| GenGroup::of(k) == grp)
                 .collect();
             if kinds.is_empty() {
                 continue;
@@ -646,7 +652,14 @@ pub fn draw_gen_section(
             .show_ui(ui, |ui| {
                 crate::fx_thumbs::gallery_width(ui, host_w);
                 for grp in GenGroup::ALL {
-                    let kinds: Vec<GeneratorKind> = GeneratorKind::all().into_iter().filter(|kd| GenGroup::of(kd) == grp).collect();
+                    // only the kinds that land on THIS event's stream (generator-from-track): a sound
+                    // event's gallery is the sound kinds, a picture event's the picture kinds — the
+                    // other stream's kinds cannot become this event, and on an audio event they
+                    // pushed the sound kinds under the popup's fold
+                    let kinds: Vec<GeneratorKind> = GeneratorKind::all()
+                        .into_iter()
+                        .filter(|kd| GenGroup::of(kd) == grp && lands_on(kd, clip.kind))
+                        .collect();
                     if kinds.is_empty() {
                         continue;
                     }

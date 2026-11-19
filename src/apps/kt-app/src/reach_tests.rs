@@ -1633,8 +1633,11 @@ fn t560_generator_is_reachable_from_the_main_menu() {
     );
     assert!(edit.contains("gen_ui::generator_menu(ui)"), "the Edit menu has no “Create a generator…” item");
     let timeline = read("apps/kt-app/src/timeline.rs");
+    // a track's right-click item is ONE plain item since generator-from-track (`v26.10` G1, the
+    // owner: "Не вижу смысла делать выпадающие меню с перечислением всех видов"): it creates the
+    // track's first kind and the window's gallery changes it
     assert!(
-        timeline.contains("gen_ui::generator_menu_for(ui, kind)"),
+        timeline.contains("gen_ui::generator_item_for(ui, kind)"),
         "a clip track's right-click menu has no “Create a generator…” item"
     );
     let bin = read("apps/kt-app/src/bin_panel.rs");
@@ -7703,11 +7706,9 @@ fn t1089_lesson_three_teaches_transition_with_previous() {
             .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with(item)))
             .expect("the item");
         assert!(outlined.intersects(node.rect()), "the outline {outlined:?} misses the item {:?}", node.rect());
-        node.hover();
+        // one plain item since generator-from-track (`v26.10` G1): a dissolve, its window opens
+        node.click();
     }
-    h.step();
-    h.step();
-    h.get_by_label(tr(k::trn::kind::CROSSFADE)).click();
     h.step();
     h.step();
     assert!(h.state().start.store.tour.is_done(3, 1), "Transition with previous did not close the step");
