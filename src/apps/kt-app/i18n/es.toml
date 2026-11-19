@@ -739,6 +739,7 @@ echo_hint_cut = "Se corta: la reverberación o el eco antes del tono solo suenan
 echo_hint_ring = "Sigue sonando: su eco continúa tras el final del evento, como sin el tono."
 radius = "Radio:"
 key_color = "Clave:"
+center_drag_hint = "Arrastra: el centro del efecto en el cuadro (como sus campos Centro X/Y; con curva, la clave en el cursor)"
 eyedrop_hint = "Cuentagotas: pulsa y luego haz clic en el color en cualquier parte del programa — el cuadro de la vista previa, una miniatura, otra ventana"
 eyedrop_armed = "Haz clic en el color que quieres · Esc deja el cuentagotas"
 eyedrop_no_screen = "El cuentagotas no puede leer la pantalla aquí (Wayland): escribe el color o usa el botón de color"

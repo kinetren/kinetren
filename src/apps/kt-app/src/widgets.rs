@@ -1132,6 +1132,14 @@ pub(crate) mod field_probe {
         SEEN.with(|v| v.borrow().get(name).copied())
     }
 
+    /// Forget a place, so a test can ask whether a later frame published it again.
+    #[cfg(test)]
+    pub(crate) fn forget(name: &str) {
+        SEEN.with(|v| {
+            v.borrow_mut().remove(name);
+        });
+    }
+
     /// Take the accumulated data (the geometry dump is written every 100 ms).
     pub(crate) fn take() -> Vec<(String, egui::Rect)> {
         RECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
@@ -1812,10 +1820,32 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     }
     let mut changed = ParamsChanged::default();
     egui::Grid::new(id).num_columns(4).spacing([8.0, 4.0]).show(ui, |ui| {
-        for pair in specs.chunks(2) {
-            for spec in pair {
-                changed |= param_row_bound(ui, f, spec, bind.as_deref_mut(), pubc);
+        // two fields a row, but an `<stem>_x`/`<stem>_y` pair is ONE row of its own (`v26.10` T10:
+        // "параметры центра X Y … находятся на разных строках"): a point reads as one value
+        let (mut i, mut in_row) = (0, 0);
+        while i < specs.len() {
+            let stem = specs[i].name.strip_suffix("_x");
+            let paired =
+                stem.is_some_and(|st| specs.get(i + 1).is_some_and(|n| n.name.strip_suffix("_y") == Some(st)));
+            if paired {
+                if in_row == 1 {
+                    ui.end_row();
+                }
+                changed |= param_row_bound(ui, f, &specs[i], bind.as_deref_mut(), pubc);
+                changed |= param_row_bound(ui, f, &specs[i + 1], bind.as_deref_mut(), pubc);
+                ui.end_row();
+                (i, in_row) = (i + 2, 0);
+                continue;
             }
+            changed |= param_row_bound(ui, f, &specs[i], bind.as_deref_mut(), pubc);
+            in_row += 1;
+            if in_row == 2 {
+                ui.end_row();
+                in_row = 0;
+            }
+            i += 1;
+        }
+        if in_row == 1 {
             ui.end_row();
         }
     });

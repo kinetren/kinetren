@@ -486,3 +486,125 @@ fn t3122_every_colour_button_has_the_eyedropper() {
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }
+
+// ---- fx-center-on-preview (v26.10 T10): tests t3123–t3125 ----
+
+fn center_of(h: &Harness<'static, KtApp>) -> [f64; 2] {
+    let c = h.state().model.clip(kt_model::ClipId(1)).expect("the event");
+    crate::centerctl::PAIR.map(|n| c.fx[0].get_param(n).unwrap_or(f64::NAN))
+}
+
+fn drag_by(h: &mut Harness<'static, KtApp>, from: egui::Pos2, by: egui::Vec2) {
+    h.hover_at(from);
+    h.step();
+    h.event(egui::Event::PointerButton { pos: from, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.step();
+    for f in [0.1, 0.4, 0.7, 1.0] {
+        h.hover_at(from + by * f);
+        h.step();
+    }
+    h.event(egui::Event::PointerButton { pos: from + by, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    h.step();
+    h.step();
+}
+
+fn radial_scene() -> Harness<'static, KtApp> {
+    crate::plugins::install();
+    let mut h = fx_scene(FxInstance::builtin("radial_blur"), false);
+    h.state_mut().player.seek(kt_time::Tick(45_000));
+    for _ in 0..4 {
+        h.step();
+    }
+    h
+}
+
+/// Test t3123: the radial blur's centre is a crosshair at its place on the frame; a drag moves it,
+/// writes the pair as one history step and the crosshair follows.
+#[test]
+fn t3123_an_effect_centre_is_dragged_on_the_preview() {
+    let mut h = radial_scene();
+    let img = h.state().preview_img_rect;
+    let r = crate::widgets::field_probe::rect_of("fx.center").expect("the centre crosshair is drawn");
+    assert!((r.center() - img.center()).length() < 2.0, "the default centre is not the frame's middle: {r:?} in {img:?}");
+    let depth = h.state().model.undo_depth();
+    drag_by(&mut h, r.center(), egui::vec2(img.width() * 0.25, -img.height() * 0.25));
+    let c = center_of(&h);
+    assert!((c[0] - 0.5).abs() < 0.03 && (c[1] + 0.5).abs() < 0.03, "the centre is not where it was dragged: {c:?}");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "the drag is not one history step");
+    let r2 = crate::widgets::field_probe::rect_of("fx.center").expect("still drawn");
+    let want = egui::pos2(img.left() + img.width() * 0.75, img.top() + img.height() * 0.25);
+    assert!((r2.center() - want).length() < 3.0, "the crosshair did not follow: {r2:?} vs {want:?}");
+}
+
+/// Test t3124: with a curve on the centre the drag writes the key at the playhead, not the base.
+#[test]
+fn t3124_a_centre_with_a_curve_gets_its_key_at_the_playhead() {
+    let mut h = radial_scene();
+    {
+        let app = h.state_mut();
+        let mut c = app.model.clip(kt_model::ClipId(1)).unwrap().clone();
+        c.fx_auto[0] = vec![kt_model::ParamCurve {
+            param: "center_x".into(),
+            keys: kt_model::AutoKey::linear(vec![kt_model::AutoKey::at(kt_time::Tick(0), 0.0), kt_model::AutoKey::at(kt_time::Tick(180_000), 0.0)]),
+            source: Default::default(),
+        }];
+        assert!(app.apply(kt_model::Command::SetFxAuto { id: c.id, auto: c.fx_auto.clone() }));
+    }
+    for _ in 0..3 {
+        h.step();
+    }
+    let base = center_of(&h)[0];
+    let img = h.state().preview_img_rect;
+    let r = crate::widgets::field_probe::rect_of("fx.center").expect("the crosshair");
+    drag_by(&mut h, r.center(), egui::vec2(img.width() * 0.25, 0.0));
+    let c = h.state().model.clip(kt_model::ClipId(1)).unwrap().clone();
+    assert_eq!(c.fx[0].get_param("center_x"), Some(base), "the base moved under a live curve");
+    let keys = &c.fx_auto[0][0].keys;
+    assert!(keys.iter().any(|k| k.t == kt_time::Tick(45_000) && (k.v - 0.5).abs() < 0.03), "no key at the playhead: {keys:?}");
+}
+
+/// Test t3125: no crosshair while playing, none for an effect without a centre; the hint is in all
+/// five catalogs.
+#[test]
+fn t3125_the_crosshair_only_where_a_centre_is() {
+    crate::plugins::install();
+    crate::widgets::field_probe::forget("fx.center");
+    let mut h = fx_scene(FxInstance::blur(8), false);
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(crate::widgets::field_probe::rect_of("fx.center").is_none(), "a blur without a centre shows a crosshair");
+    let mut h = radial_scene();
+    assert!(crate::widgets::field_probe::rect_of("fx.center").is_some());
+    h.state_mut().player.transport.set_playing(true);
+    crate::widgets::field_probe::forget("fx.center");
+    for _ in 0..2 {
+        h.step();
+    }
+    assert!(crate::widgets::field_probe::rect_of("fx.center").is_none(), "the crosshair covers the picture during playback");
+    h.state_mut().player.transport.set_playing(false);
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        assert!(!tr(k::fx::CENTER_DRAG_HINT).is_empty(), "{lang:?}: no centre hint");
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test t3126 (`v26.10` T10's first half): an `_x`/`_y` pair of an effect's parameters stands on ONE
+/// row of the grid — the radial blur's Center X and Center Y side by side, Amount on a row before them.
+#[test]
+fn t3126_a_centre_pair_is_one_row() {
+    let h = radial_scene();
+    let texts = crate::reach_tests::painted_texts(&h);
+    let y_of = |src: &str| {
+        texts
+            .iter()
+            .filter(|t| t.src == src)
+            .map(|t| t.rect.center().y)
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap_or_else(|| panic!("“{src}” is not drawn"))
+    };
+    let (cx, cy, amount) = (y_of(tr(k::fxp::CENTER_X)), y_of(tr(k::fxp::CENTER_Y)), y_of(tr(k::fxp::AMOUNT)));
+    assert!((cx - cy).abs() < 3.0, "Center X and Center Y are on different rows: {cx} vs {cy}");
+    assert!(amount < cx - 3.0, "Amount shares the pair's row: {amount} vs {cx}");
+}

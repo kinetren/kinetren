@@ -11,6 +11,7 @@ mod analysis;
 mod app;
 mod audio_out;
 mod automation;
+mod centerctl;
 mod eyedropper;
 mod bench;
 mod bg;
