@@ -45,13 +45,16 @@ def main(out):
                 break
             app.hover(card_x, y)
         app.shot("hovered")
-        # the analysis progress window would appear in the bottom-right corner — the screen
-        # would change noticeably; we check that this did not happen
-        d = app.screen_diff(before)
+        # read from the program, not off the screen: a hovered card's own hint (its path and
+        # "loudness not measured yet" in the status line) and the timeline row the pointer left
+        # changed 2.2 % of the screen in stage 21's finish run (found-defects 815) — the hint IS
+        # the free showing; the claim is that no analysis job runs and no progress window opens
+        app.wait_still()
+        g = app.geom()
         app.expect(
-            d < 0.02,
-            f"hovering over the bin started something (the screen changed by {d:.1%}) — "
-            f"showing must be free",
+            g.get("analysis", -1) == 0 and g.get("windows", -1) == 0,
+            f"hovering over the bin started something (analysis jobs {g.get('analysis')}, "
+            f"windows {g.get('windows')}) — showing must be free",
         )
 
         # --- 2. by direct request — it counts and speaks ------------------
