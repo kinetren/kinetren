@@ -407,9 +407,9 @@ impl KtApp {
             title,
             crate::window_shell::Kind::Tool,
         )
-            // the default height carries the node graph's band (fx-graph v1b) over the form's former
-            // room: the form keeps what it had
-            .size([580.0, 600.0], [460.0, 320.0])
+            // 520 high, as before the node graph (fx-graph v1b-live, found-defects 810): 600 put the
+            // window's buttons over the timeline's first rows, and a click on a track closed it
+            .size([580.0, 520.0], [460.0, 320.0])
             .remember("fx")
             .probe("win.fx")
             .show(ctx, |ui| {

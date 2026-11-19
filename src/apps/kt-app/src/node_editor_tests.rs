@@ -255,3 +255,28 @@ fn t3001_a_long_chain_fits_without_scrolling() {
     h.step();
     assert!(nodes(&h).iter().all(|r| r.height() < 30.0), "Frame all did not return the fit");
 }
+
+/// t3000 (fx-graph v1b-live, found-defects 811): a single-lane SOUND chain draws its nodes — an
+/// audio event's effects window shows its Gain and Pitch Shift as nodes, not In → Out alone.
+/// - **PATH** double click an audio event carrying Gain and Pitch Shift → its effects window shows
+///   both as nodes between In and Out
+#[test]
+fn t3000_an_audio_event_s_chain_draws_its_nodes() {
+    crate::plugins::install();
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:sine"));
+    let mut a = clip(1, ClipKind::Audio, vec![FxInstance::plugin("gain").unwrap(), FxInstance::plugin("pitch_shift").unwrap()]);
+    a.link_group = None;
+    a.fx_bypass = vec![false, false];
+    p.clips.push(a);
+    p.validate().unwrap();
+    app.model = TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    for i in 0..2 {
+        assert!(crate::widgets::field_probe::rect_of(&format!("fx.node.{i}")).is_some(), "the audio event's node {i} is not drawn");
+    }
+}
