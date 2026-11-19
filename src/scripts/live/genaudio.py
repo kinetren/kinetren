@@ -78,10 +78,15 @@ def main(out):
         # 4) play the tone: the meters move
         app.key("Home")
         app.key("space")
+        # time stands until the device hands out its first frames (invariant 6), and on a loaded
+        # machine the sound server can take seconds to open it (found-defects 425: 13.3 s in stage
+        # 21's finish run, when 6 s of polling all fell before the first sound): the meters are read
+        # once the sound has left, while the cursor is still inside the 5-s tone
+        app.expect(app.until(lambda: app.playhead() > 0, timeout=60), "the sound started after Space")
         lit = []
         for _ in range(30):
             g = app.geom()
-            if g.get("playing"):
+            if g.get("playing") and int(g.get("playhead", 0)) < 4.5 * SEC:
                 lit.append(max(g.get("meter_db", [-120, -120])))
             if len([v for v in lit if v > -40]) >= 3:
                 break

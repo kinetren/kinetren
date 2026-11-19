@@ -1286,7 +1286,7 @@ impl KtApp {
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\"markers\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"posters_busy\":{},\"rest_clock_ms\":{},\"morphers\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"posters_busy\":{},\"rest_clock_ms\":{},\"analysis\":{},\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
              \"on_display\":{},\"ui_only\":{},\"picture\":{},\"complete_taken\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
@@ -1337,6 +1337,9 @@ impl KtApp {
             // expiry, the misclick guard, the autosave): -1 — none. A rest check waits out the short
             // ones before it counts frames (found-defects 768)
             self.rest_wake().map_or(-1, |d| d.as_millis().min(i64::MAX as u128) as i64),
+            // the analysis jobs running or queued: "showing starts nothing" is a count, not a
+            // screen difference a hover's own hint makes (found-defects 815)
+            self.analysis.queued() + usize::from(self.analysis.current().is_some()),
             self.model.project().morphers.len(),
             // the preview compose cost (morpher-event-grid-cost): what the panel shows, as numbers
             self.perf.compose_ms_last,
