@@ -1195,3 +1195,43 @@ fn t2952_a_closing_decoder_stops_between_chunks() {
     assert_eq!(wait.b, 0, "the decoder stopped between chunks (it was left running: no stop check in its span)");
     assert!(counts.lock().unwrap().pictures < 32, "the span ran to its end");
 }
+
+/// t3357 (disk-bytes-once D3, found-defects 774): on the bytes path (a GL preview off the window's
+/// device) a moment the executor keeps is shown from the kept composite by the probe plan's key, with
+/// no stream stage run and no decode asked, after the stage's history memo and the cache dropped
+/// everything; before, the bytes path found it only by the full plan, which ran the stage first.
+#[test]
+fn t3357_a_kept_moment_on_the_bytes_path_needs_no_history() {
+    let _g = serial();
+    if no_device() {
+        return;
+    }
+    let (player, _ring) = mosh_player(CacheConfig { max_audio_bytes: 16 << 20, max_video_bytes: 256 << 20 });
+    // the GL preview's engine: off the window's device, it keeps its bytes-path composites
+    let e = kt_gpu::test_engine().expect("a device");
+    e.keep_composites_for_bytes();
+    player.set_video_gpu(Some(e));
+    let t = Tick(5 * SEC);
+    player.seek(t);
+    let mut buf = Vec::new();
+    let deadline = kt_time::test_deadline();
+    while !player.compose_preview_into(t, &mut buf).1 {
+        assert!(std::time::Instant::now() < deadline, "the frame at {t:?} never came");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let first = buf.clone();
+    kt_engine::video::stream_memo().clear();
+    for m in [1, 2] {
+        player.cache.invalidate_source(kt_engine::source_id(MediaId(m)));
+    }
+    let walked = kt_plugin_api::stream::positions_walked();
+    let mut complete = false;
+    let items = trace::testing::capture(|| complete = player.compose_preview_into(t, &mut buf).1);
+    assert!(complete, "the kept moment is complete at once");
+    assert_eq!(buf, first, "the kept composite's bytes");
+    let execs = of(&items, Ev::FrameExec);
+    assert!(execs.iter().any(|e| e.aux & trace::exec::MEMO_HIT != 0), "shown from the kept composite: {execs:?}");
+    assert!(of(&items, Ev::StreamRun).is_empty(), "no stream stage ran");
+    assert!(of(&items, Ev::DecReq).is_empty(), "no decode was asked");
+    assert_eq!(kt_plugin_api::stream::positions_walked(), walked, "the history did not walk");
+}
