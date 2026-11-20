@@ -1,7 +1,7 @@
 ---
 id: F-FX-016
 title: A simulated device on a whole video track sounds on the track's linked audio track
-status: in-progress
+status: done
 priority: B
 cost: S
 category: fx/simulate
@@ -12,7 +12,7 @@ invariants: [1, 2, 3, 11]
 ui_rules: [4, 9, 17, 20]
 round: kkt-26.11.18b
 point: change track-device-sound
-tests: []
+tests: [t3230, t3231, t3232, t3233, t3234, t3235, t3236]
 depends_on: [F-FX-012, F-FX-013, F-FX-014, F-UI-008]
 trackers: []
 services: []
@@ -69,10 +69,7 @@ patching threads. The demand is the owner's (kkt-26.11.18b line 29).
 ## How it fits Kinotrain
 
 CAPABILITY: openspec/specs/audio-fx/
-The pair rule lives in `src/libs/kt-model/src/model.rs` (`mirror_halves`); the track stage's sound
-runs in `kt_fx::TrackProcessor` (`src/libs/kt-fx/src/audio/mod.rs`), which reads timeline frames;
-the window is `src/apps/kt-app/src/track_window.rs` with the pair editor of `node_editor`.
-Invariants 2, 3 (the half is an ordinary track slot), 11 (one device state from rows + time).
+Done for VHS Tape and Camera ISP (`Track.sound`, the event's pair rule, the track window's pair graph); Datamosh on a track waits for a track stream stage (found-defects 820).
 
 ## Estimate
 
@@ -87,7 +84,7 @@ Invariants 2, 3 (the half is an ordinary track slot), 11 (one device state from 
 
 ## Verdict
 
-**Take** (his answer "Дать звук отдельно", 2026-11-18): a video track links one audio track as its
+**Done** (change `track-device-sound`, archived 2026-11-20; his answer "Дать звук отдельно", 2026-11-18): a video track links one audio track as its
 sound (by default the one of the same number), and its devices' sound halves are real slots of that
 track's chain, mirrored by the event rule.
 

@@ -17,4 +17,4 @@
 - [x] 3.3 live `track_sound` with a screenshot per step; live `idle` on the heavy showcase with the track window open
 
 ## 4. Close
-- [ ] 4.1 specs' tests, nextest of touched crates, clippy, What's new, registry U8, found-defects rows, target-prune, archive
+- [x] 4.1 specs' tests, nextest of touched crates, clippy, What's new, registry U8, found-defects rows, target-prune, archive
