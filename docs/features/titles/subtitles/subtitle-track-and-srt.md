@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-TXT-001]
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-TXT-004 — Subtitle track, SRT/VTT and text-based editing
@@ -149,6 +149,19 @@ Everything found live is from the Boris FX forum (Vegas), where the complaints c
 subtitle track as such.
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+- **The verdict on recognition is revised by the owner** (2026-11-01, `docs/user-feedback.md`, "the
+  second list"): speech to text is taken, local, "a Whisper-class model downloaded on a click, as FFmpeg
+  on Windows" — the weights are not shipped, they are fetched on request (the pattern of
+  `src/apps/kt-app/src/ffmpeg_setup.rs`), so the objection "we do not drag anything inside" no longer
+  applies. Text editing is taken with it (B5: walk the text, search, a selection of words is a region).
+- F-TXT-001 is done: `src/libs/kt-text/` rasterizes titles with vendored Noto Sans and harfrust; burn-in
+  reuses it (no second text path). CJK/Arabic glyphs are still absent from the vendored set.
+- The design is the OpenSpec change `subtitles-and-text-editing` (words in MATERIAL time, a fifth track
+  kind for captions in timeline time, SRT/VTT, burn-in as a procedural layer of the one plan).
+- CAPABILITY: openspec/specs/generators/
 
 ### What already exists
 

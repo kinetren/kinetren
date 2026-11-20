@@ -15,7 +15,7 @@ point: null
 tests: []
 depends_on: [F-TL-001]
 trackers: [kde-bugzilla, kde-invent, otio, pitivi, shotcut, olive]
-checked: 2026-09-08
+checked: 2026-11-20
 ---
 
 # F-TL-008 — Closing gaps on a track — one, the whole track, the whole project
@@ -172,6 +172,12 @@ has become an object, it has to be created, split, glued and saved - that is,
 the price of the decision "the hole is an entity" is visible on the bare format, without UI.
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+The owner's ★1 (2026-11-01) asks for "закрыть все дыры на треке"; designed by selection (a track =
+an empty selection) in the OpenSpec change `ripple-and-trim-modes`, `ops::close_gaps` beside
+`src/libs/kt-model/src/ops.rs`. CAPABILITY: openspec/specs/ui-timeline/
 
 ### What already exists
 
