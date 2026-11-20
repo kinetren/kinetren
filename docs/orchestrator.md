@@ -184,6 +184,15 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
   found-defects row, change, executor) so his answer leads straight to the place to fix. A report
   that asks him something adds the row in the same turn; an answer moves it to "Answered".
 
+## Three execute, two prepare (2026-11-20)
+
+Owner: "еще пару чатов изучать что-то, улучшать по спекам. подготавливать архитектурные вещи - спеки.
+но не выполнять их. выполняют только трое." At most three sessions write code (executors). Two more
+are spec sessions: they study the code and the specs, write `docs/features/` notes, OpenSpec
+proposals and designs, and revise specs, on their own branches, with no code and no `apply`. Their
+designs wait for the owner's questions to be answered (rows in `owner-checks.md`) and are then taken by
+an executor. A free executor gets its next work in the same turn.
+
 ## Standing go (2026-11-09)
 
 "когда эти закончат - продолжай другие делать по таблице" — the owner's word to start, without asking

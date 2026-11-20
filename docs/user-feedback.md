@@ -2995,3 +2995,7 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    чтобы помнить куда пойти и что чинить по моим замечаниям" — the orchestrator's requests to him live
    in `docs/owner-checks.md`, each with the links to where his answer leads (`docs/orchestrator.md`,
    "Reports to the owner").
+2. "у тебя там два чата свободных - ты не хочешь что-то еще делать параллельно? и еще пару чатов изучать
+   что-то, улучшать по спекам. подготавливать архитектурные вещи - спеки. но не выполнять их. выполняют
+   только трое." — free executors get work at once; two more sessions only study and prepare
+   architecture and specs (proposals, designs, feature notes), never code; three sessions execute.
