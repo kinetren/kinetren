@@ -332,7 +332,7 @@ Why: accumulating squares in f32 over ten minutes drifts by 0.37 LU against a to
 - **TEST** t408, t410 (`src/apps/kt-app/src/analysis.rs`)
 
 ### Requirement: Sync by sound — by peak pyramid, with an honest refusal
-The offset between two recordings SHALL be computed on the peak pyramid (without decoding) over the positive part of the first difference of the envelope — the transients are shared between different microphones, the shapes of the envelopes are not. Sign: a positive lag = "B is later". Below a confidence of 0.30 there is no answer — a refusal instead of a guess. The command SHALL only move (without trim and link), convert "material → timeline" by the single rule of the chunk, and MUST NOT pin the event to zero.
+The offset between two recordings SHALL be computed as capability `media-index` states it ("Sync by sound — by peak pyramid, sign is correct, refusal instead of a guess", the rule's home; below a confidence of 0.30 there is no answer). The command SHALL only move (without trim and link), convert "material → timeline" by the single rule of the chunk, and MUST NOT pin the event to zero.
 Why: a shift "by eye" is worse than a refusal — the editor will hear a flanger and look for the cause anywhere; a value pinned to zero looks synchronized while the materials are out of step.
 
 #### Scenario: Different microphones, sign, refusal

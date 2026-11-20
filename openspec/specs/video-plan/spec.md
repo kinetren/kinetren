@@ -219,7 +219,7 @@ this immediately gives a permanent cache miss and a black frame; the conform rul
 
 ### Requirement: The cache is the only truth about coverage
 The coverage bars SHALL be `coverage()` of the cache by the DECODE quality of the clip (for a clip cut by a morpher layer — the union of the qualities of the pieces), and not a separate bookkeeping and not a poll by the preview's Quality. Memoized composites MUST NOT be visible to
-prefetch and pin. Over the decoded ranges the bars SHALL draw what plays without work: the moments whose presented composite the executor still holds and the current plan still asks (`Player::final_video_runs`), and the frames the audio render thread's final mix holds (`Player::final_audio_runs`); and the moments the disk tier holds (requirement "Slow moments are prerendered to disk at rest").
+prefetch and pin. Over the decoded ranges the bars SHALL draw what plays without work: the moments whose presented composite the executor still holds and the current plan still asks (`Player::final_video_runs`), and the frames the audio render thread's final mix holds (`Player::final_audio_runs`); and the moments the disk tier holds (requirement "Slow moments are prerendered at rest as hardware-encoded video and played from it").
 Why: the cache is quality-exact; a clip with a step, warmed properly, would look entirely cold when polled by Quality — a lie in the user's eyes. A decoded range still needs its composite and its effects: the bars promised a free play that was not (kkt-26.11.07b, "не рабочий кэш").
 
 #### Scenario: The bars ask about the decode quality

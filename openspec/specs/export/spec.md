@@ -178,10 +178,10 @@ of the old engine: the preview showed one thing, and the file contained another.
 - **TEST** t184 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 ### Requirement: An export needs a device; a device's error stops it
-The GPU executor SHALL be passed explicitly by the product (kt-app/kt-cli). With no executor an
-export SHALL fail at its start with `ExportError::NoDevice` ("no video device"), and the render
-window SHALL say so (`BackendLine::None`). A GPU error in the middle of an export, `TooLarge`
-included, MUST be an export error.
+The GPU executor SHALL be passed explicitly by the product (kt-app/kt-cli), and the render window SHALL
+say when there is none (`BackendLine::None`). The refusal with `ExportError::NoDevice` and a GPU error as
+an export error are capability `video-plan`'s rule ("The GPU is the one executor"); this requirement keeps
+the export's scenarios.
 Why: the CPU composite is deleted (compute-kernels-render, owner, 2026-11-04), so no second way to
 compose a frame exists, and an export that writes no picture must not look like one that did.
 
@@ -233,7 +233,7 @@ platform is admitted.
 - **TEST** t859 (`src/libs/kt-engine/tests/golden_export.rs`)
 
 ### Requirement: Export chunk is computed from memory, layers and decode quality
-The SERIAL export (a project with a stream stage, the export's fallback order) SHALL decode frames in batches via span reads (by the same path as the preview) and
+The SERIAL export (the reference export, `ExportOptions.serial` / `kt-cli export --serial`; a stream stage takes the pipeline, "A stream stage takes the pipelined export") SHALL decode frames in batches via span reads (by the same path as the preview) and
 composite from the cache; the batch size MUST be computed from the cache budget (no more than half),
 the frame size at the LARGEST decode quality (decode scale step S gives S² memory), and the number
 of simultaneous video layers (a blending layer counts as two frames; a pair inside a reel is counted).
@@ -279,9 +279,9 @@ our render was shorter than melt by 605 frames (found by cross-render).
 
 ### Requirement: Loudness is measured in the export pass, without master gain
 Export SHALL report the integrated loudness, the true peak and the LRA (BS.1770/EBU R128)
-of the finished mix, feeding the meter with the FINISHED chunk buffer — not a single extra decode or
-pass. The master gain MUST NOT take part in the measurement and MUST NOT exist in the project
-model: it is a monitoring loudness that lives only in the player. There is no "normalize" button —
+of the finished mix, measured as capability `audio-render` states it ("Loudness — BS.1770 / EBU R 128",
+the rule's home: the finished buffer, no extra pass, no master gain). The master gain MUST NOT exist in the
+project model: it is a monitoring loudness that lives only in the player. There is no "normalize" button —
 a reference line "to −23 LUFS: +N dB" is shown.
 Why: the number in the preview and the number in the file match BY CONSTRUCTION only if one
 code counts both over the same material; normalizing after the fact would mean re-encoding the file.
@@ -780,7 +780,7 @@ the window and nothing on disk. kkt-26.11.18 T4: "объедини лог рен
 выделил отдельно то?!?" — every line already went into the journal and the trace, and `render.log` was a
 third copy the owner had to collect apart from the trace he sends.
 
-#### Scenario: The log is bounded, rotated and named
+#### Scenario: The log is bounded, journaled and named
 - **WHEN** the harness runs a scripted job that emits 1000 log lines and an error, with the data
   directory in a temp folder and the telemetry journal bound to a test journal; then presses Open log
 - **THEN** the window's log holds the last 800 lines, each starting with an elapsed stamp, and is

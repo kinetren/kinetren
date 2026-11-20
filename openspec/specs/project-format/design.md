@@ -1,5 +1,18 @@
 # Project format — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code hold now.
+
+- **The project file's version is set BY CONTENT** (`project_file::version_for`, formats 1–7), and the
+  reader reads every format up to `PROJECT_FILE_READS`; "a format-3 file is refused" and "formats 1 and 2"
+  are history.
+- **Open reads only `.kt`** (R.70): the refusal naming an old envelope version is the exchange reader's
+  (`kt_otio::load_project`, behind the import door), not the editor's Open.
+- **The `kt` envelope** has reached v17; the table in "Version of the `kt` envelope" stops at v10, and the
+  later versions are named by the later requirements.
+
 ## What hurt and for whom
 
 The old proprietary `.ktproj` was a closed JSON with no compatibility with anyone, and its reader forgave errors: a broken field meant "an empty project", and a user who saved such an "empty" lost the edit. The owner demanded a full move to OpenTimelineIO: "read and write other people's files, do not break what we cannot read there when saving, and add our own so that nobody breaks ours either". No living Rust implementations of OTIO were found (stubs, FFI to C++, AGPL) — the format was implemented ourselves, with techniques borrowed from the reference C++/Python library 0.18.x: a typed metadata envelope, passthrough of unknown schemas, `OTIO_SCHEMA` versions.
