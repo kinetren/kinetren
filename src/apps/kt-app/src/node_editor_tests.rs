@@ -575,3 +575,34 @@ fn t3235_a_track_device_and_its_sound_track_are_one_graph() {
     let p = h.state().model.project();
     assert_eq!((p.track(v1).cloned(), p.track(a1).cloned()), before, "Cancel left a track changed");
 }
+
+/// t3237 (found-defects 820): Datamosh picked in a video TRACK's window is refused aloud — a stream
+/// stage decodes an event's own stream and the engine skips the slot on a track — and the chain
+/// stays as it was; another effect from the same picker lands.
+/// - **PATH** right click Video 1's header → Track properties → open the graph's picker → type
+///   "mosh" → click Datamosh → the status line says Datamosh breaks an event's own stream and a
+///   track has none, the graph holds no Datamosh node → pick Blur → it stands on the track
+#[test]
+fn t3237_datamosh_on_a_track_is_refused_with_its_reason() {
+    crate::plugins::install();
+    let mut h = harness();
+    let v1 = h.state().model.project().track_at(LaneKind::Video, 0).unwrap().id;
+    h.state_mut().open_track_window(v1);
+    h.step();
+    h.step();
+    let pick = |h: &mut Harness<'_, KtApp>, query: &str, tag: &str| {
+        click_at(h, crate::widgets::field_probe::rect_of("fxreg.add").expect("the graph's picker").center());
+        h.event(egui::Event::Text(query.into()));
+        h.step();
+        h.step();
+        let cell = crate::widgets::field_probe::rect_of(&format!("fxreg.tpl.{tag}")).unwrap_or_else(|| panic!("no {tag} in the picker"));
+        click_at(h, cell.center());
+    };
+    pick(&mut h, "mosh", "datamosh");
+    let app = h.state();
+    assert!(app.model.project().track(v1).unwrap().fx.is_empty(), "Datamosh landed on the track");
+    let said = app.error_status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(said, tr(k::track::NO_STREAM), "the refusal did not name its reason");
+    pick(&mut h, "blur", "blur");
+    assert_eq!(h.state().model.project().track(v1).unwrap().fx.len(), 1, "an ordinary effect did not land");
+}

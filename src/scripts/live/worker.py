@@ -39,6 +39,9 @@ from _channel import channel_dir, keep_channel  # noqa: E402
 RUST = os.path.abspath(os.path.join(HERE, "..", ".."))
 KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
+# the test's guard (kt_live.TEST_DEADLINE, `kt_time::test_deadline()`): a wait for what MUST happen
+# waits up to it while the program lives, never a clock limit of its own (found-defects 822)
+TEST_DEADLINE = 600.0
 SCREEN = os.environ.get("KT_LIVE_SCREEN", "1920x1080x24")
 # how many threads of software rendering are given to ONE kt-app: without a limit one
 # llvmpipe takes about seven cores, and the workers took cores from each other —
@@ -243,8 +246,9 @@ class Bench:
         self.proc = subprocess.Popen(
             [KT_APP, self.blank], stdout=log, stderr=log, env=self.env()
         )
-        # we wait for DRAWN frames: the program reports their number itself
-        deadline = time.time() + 60
+        # we wait for DRAWN frames: the program reports their number itself, up to the test's
+        # guard while it lives (found-defects 822: a fixed limit is a claim about the load)
+        deadline = time.time() + TEST_DEADLINE
         while time.time() < deadline:
             if self.proc.poll() is not None:
                 raise SystemExit(f"stand did not come up, see {self.dir}/kt-app.log")
@@ -268,9 +272,16 @@ class Bench:
         # “restored” that small size — and at it the zoom and view differ,
         # and gesture coordinates drifted into track labels.
         last, stable = None, 0.0
-        deadline = time.time() + 20
+        deadline = time.time() + TEST_DEADLINE
         while time.time() < deadline:
-            g = probe.origin(probe.window())
+            try:
+                g = probe.origin(probe.window())
+            except SystemExit:
+                # not mapped yet, or the walk met a window that closed under it: ask again
+                if self.proc.poll() is not None:
+                    raise SystemExit(f"stand ended, see {self.dir}/kt-app.log")
+                time.sleep(0.1)
+                continue
             if g == last:
                 stable += 0.1
                 if stable >= 0.6:
@@ -278,6 +289,8 @@ class Bench:
             else:
                 last, stable = g, 0.0
             time.sleep(0.1)
+        if last is None:
+            raise SystemExit(f"the stand's window was never found, see {self.dir}/kt-app.log")
         x, y, w, h = last
         with open(os.path.join(self.dir, "window.json"), "w") as f:
             json.dump({"x": x, "y": y, "w": w, "h": h}, f)
