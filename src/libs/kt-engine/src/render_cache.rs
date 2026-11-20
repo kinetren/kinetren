@@ -470,6 +470,13 @@ fn read_loop(codec: Arc<dyn SegmentCodec>, rx: std::sync::mpsc::Receiver<ReadAsk
             Some(i) => i,
             None => match codec.reader(&path) {
                 Ok(r) => {
+                    // which decoder reads the tier (row 775: the device's, the processor only where
+                    // none opens) — once per reader, not per moment
+                    let (hw, what) = match r.decoder() {
+                        Ok(d) => (1, d),
+                        Err(why) => (0, why),
+                    };
+                    trace::ev(Ev::RenderCache).aux(rc::READER).b(hw).id(trace::name(&what) as u64).emit();
                     if open.len() >= READERS {
                         open.remove(0);
                     }

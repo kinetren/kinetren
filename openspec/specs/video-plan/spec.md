@@ -1703,6 +1703,11 @@ render.
 - **THEN** the default opens a hardware encoder or refuses naming why, leaving no file; the forced segment names its encoder and every frame reads back alone within the codec's tolerance
 - **TEST** t2986 (`src/libs/kt-media/tests/segment.rs`)
 
+#### Scenario: A segment is read by the hardware decoder, the processor only without one
+- **WHEN** a segment is read on this machine (no render node here), and in a child process on the fake VA driver of `fixtures/fake_va` (its encoder writes I_PCM macroblocks, its VLD entry point reads them back) a segment its encoder wrote is read out of order and twice
+- **THEN** on this machine the reader names the processor and why (no VAAPI device) and reads every frame as the processor's decoder does; on the fake device every decoder of the file decodes on it (`vaapi <node>`, also the ones a later read adds), each frame is within the RGB → 4:2:0 → RGB round trip of the frame written (mean ≤ 3) and within swscale's rounding of NV12 against yuv420p of the processor's decode (mean ≤ 2), and the driver counts at least the pictures read; the disk tier's reader records which decoder reads (`render_cache` aux `READER`). Windows asks D3D11VA the same way (found-defects 775)
+- **TEST** t3129 (`src/libs/kt-media/tests/segment.rs`)
+
 #### Scenario: The durable key survives a process and follows what the picture is made of
 - **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality and the build salt
 - **THEN** the first keys are equal; each change gives another key

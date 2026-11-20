@@ -20,6 +20,11 @@ pub trait SegmentWriter: Send {
 pub trait SegmentReader: Send {
     /// Frame `index` as straight RGBA of `w`×`h` into `out`.
     fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String>;
+    /// What decodes the segment: `Ok(device)` — the platform's hardware decoder, `Err(why)` — the
+    /// processor and why (hw-segment-decode; the restore's trace names it).
+    fn decoder(&self) -> Result<String, String> {
+        Err("no decoder: raw frames".into())
+    }
 }
 
 /// What makes and reads segments on this machine.
@@ -151,6 +156,13 @@ pub mod ffmpeg {
     }
 
     impl SegmentReader for Reader {
+        fn decoder(&self) -> Result<String, String> {
+            match self.src.video_decode() {
+                kt_ffmpeg::VideoDecode::Hardware(d) => Ok(d),
+                kt_ffmpeg::VideoDecode::Software(why) => Err(why),
+            }
+        }
+
         fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String> {
             let f = self
                 .src
@@ -209,7 +221,9 @@ pub mod ffmpeg {
         }
 
         fn reader(&self, path: &Path) -> Result<Box<dyn SegmentReader>, String> {
-            let src = crate::ffmpeg::FfmpegSource::open(&path.to_string_lossy()).map_err(|e| format!("{e:?}"))?;
+            // the owner's rule (row 775): the segments decode on the machine's device, the processor
+            // only where none opens — the encoder that wrote them was a device's too
+            let src = crate::ffmpeg::FfmpegSource::open_hw(&path.to_string_lossy()).map_err(|e| format!("{e:?}"))?;
             let (num, den) = src.info().fps.unwrap_or((25, 1));
             let step = kt_time::TICK_HZ * den.max(1) as i64 / num.max(1) as i64;
             Ok(Box::new(Reader { src, step }))

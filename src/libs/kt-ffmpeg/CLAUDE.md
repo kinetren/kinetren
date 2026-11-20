@@ -72,6 +72,12 @@ with libav*"), `export` (the encoder cascade).
   `KINETREN_VAAPI_DEVICE`/`KT_DRI_DIR` would steer all of them. Processes (kt-cli tests) use the
   variables. The proof on hardware is opt-in and loud: `KT_EXPECT_HW=vaapi` (`make hw-test`) makes
   t963 fail unless VAAPI opens.
+- **A decoder on the device is asked for, never assumed** (hw-segment-decode): `Source::open_hw`
+  opens the video decoder with VAAPI / D3D11VA and a `get_format` that takes the device's format
+  when offered; `download` carries each picture to NV12 before the usual conversion, and
+  `video_decode` reports `Software(why)` when no device opened or the decoder did not take it.
+  Decoding asks a node's trial once per process (`decode_device_verdict`), unlike the export's
+  encoder. The fake VA driver decodes its own I_PCM files (t3129).
 - **The download is a ROOT** (`<local>/ffmpeg`), not one folder: the Windows plan tries every
   version folder in it, newest first (numeric), so an earlier pin's download keeps working
   (t864); temporary `.partial-<pid>` entries are not candidates.

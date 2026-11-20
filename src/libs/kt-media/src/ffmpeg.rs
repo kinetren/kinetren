@@ -24,6 +24,8 @@ pub struct FfmpegSource {
     /// When each decoder last read a run (a counter of runs, not a clock).
     cursor_used: [u64; MAX_CURSORS],
     runs: u64,
+    /// Opened for the device (hw-segment-decode): the decoders added later open the same way.
+    hw: bool,
 }
 
 /// Decoders per file at most (D9): each 4K decoder holds its threads' frame pools.
@@ -52,6 +54,24 @@ impl From<kt_ffmpeg::FfError> for MediaError {
 impl FfmpegSource {
     pub fn open(path: &str) -> Result<FfmpegSource, MediaError> {
         Self::from_inner(path, kt_ffmpeg::Source::open(path)?)
+    }
+
+    /// Open for decoding on the platform's device (hw-segment-decode): the disk tier's segments,
+    /// which the owner wants off the processor. The processor only where no device opens.
+    pub fn open_hw(path: &str) -> Result<FfmpegSource, MediaError> {
+        let mut s = Self::from_inner(path, kt_ffmpeg::Source::open_hw(path, None)?)?;
+        s.hw = true;
+        Ok(s)
+    }
+
+    /// What decodes this source's pictures: the device only when every decoder of the file is on it
+    /// (a decoder `cursor_for` added opens as the first did).
+    pub fn video_decode(&self) -> kt_ffmpeg::VideoDecode {
+        std::iter::once(&self.inner)
+            .chain(&self.cursors)
+            .map(|s| s.video_decode())
+            .find(|d| matches!(d, kt_ffmpeg::VideoDecode::Software(_)))
+            .unwrap_or_else(|| self.inner.video_decode())
     }
 
     /// Opening through the sidecar index DB: the packet index (the pts of audio packets
@@ -105,7 +125,17 @@ impl FfmpegSource {
         };
         let src_size = (p.width.max(2), p.height.max(2));
         let has_alpha = p.has_alpha;
-        Ok(FfmpegSource { inner, info, src_size, has_alpha, path: path.to_string(), cursors: Vec::new(), cursor_used: [0; MAX_CURSORS], runs: 0 })
+        Ok(FfmpegSource {
+            inner,
+            info,
+            src_size,
+            has_alpha,
+            path: path.to_string(),
+            cursors: Vec::new(),
+            cursor_used: [0; MAX_CURSORS],
+            runs: 0,
+            hw: false,
+        })
     }
 
     /// The decoder for a run of keys starting at `start` (D9): the one that reaches it by
@@ -133,7 +163,12 @@ impl FfmpegSource {
         if (behind_all || (0..all).all(held)) && all < cursors_for_size(self.src_size) {
             let (a, v) = self.inner.packet_index();
             let prebuilt = kt_ffmpeg::PrebuiltIndex { audio_pts: a.to_vec(), video_keyframes: v.to_vec() };
-            if let Ok(s) = kt_ffmpeg::Source::open_with_index(&self.path, Some(prebuilt)) {
+            let opened = if self.hw {
+                kt_ffmpeg::Source::open_hw(&self.path, Some(prebuilt))
+            } else {
+                kt_ffmpeg::Source::open_with_index(&self.path, Some(prebuilt))
+            };
+            if let Ok(s) = opened {
                 self.cursors.push(s);
                 return all;
             }
