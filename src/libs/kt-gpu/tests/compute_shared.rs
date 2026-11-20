@@ -45,7 +45,7 @@ fn t3818_one_device_where_the_window_computes() {
     let list = vec![warp.clone(), igpu.clone(), gl_card.clone(), card.clone()];
     assert_eq!(kt_gpu::compute::compute_pick(&list).map(|a| a.name.as_str()), Some("Radeon RX"));
     assert_eq!(kt_gpu::compute::compute_pick(&list).map(|a| a.backend), Some(Vulkan), "never a GL adapter");
-    assert_eq!(kt_gpu::compute::compute_pick(&[warp.clone()]), None, "WARP is never the host's");
+    assert_eq!(kt_gpu::compute::compute_pick(std::slice::from_ref(&warp)), None, "WARP is never the host's");
     let pick = kt_gpu::compute::compute_pick(&list);
     assert_eq!(kt_gpu::compute::share_refusal(&info(&card), pick), None, "the window on the card the host picks");
     assert!(kt_gpu::compute::share_refusal(&info(&gl_card), pick).is_some(), "a GL window computes nothing");

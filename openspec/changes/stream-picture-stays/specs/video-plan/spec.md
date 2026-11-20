@@ -36,9 +36,9 @@ and uploaded again, between two devices of the same chip (stream-picture-stays D
 
 ### Requirement: One device per adapter where the window can compute
 Where the window's backend has compute (Vulkan, DX12, Metal) and its adapter is the compute host's, the
-program SHALL open the window's device itself through kt-gpu's one instance, with the compute host's and the
-pass timer's features, hand it to the window (eframe's existing-device setup), and install the compute host
-over the same device and queue. On GL, or with the two on different adapters, the compute host SHALL stay a
+window's device (eframe's, asking the pass timer's features, which are the compute host's) SHALL be the
+process's one context, and the compute host SHALL open over that same device and queue before anything else
+opens it; the preview's engine is built on the same context. On GL, or with the two on different adapters, the compute host SHALL stay a
 device of its own, and the machine facts in the trace SHALL say which and why. A device loss SHALL poison
 the preview and the compute host together; the interface's save and the close path's durability SHALL NOT
 need the device.
@@ -48,13 +48,13 @@ defects 663); the compute-backends decision keeps one API, wgpu, so one device p
 share (stream-picture-stays D2).
 
 #### Scenario: The compute host over an existing device
-- **WHEN** a device is opened and the compute host installed over it, then a Datamosh walk runs
-- **THEN** the walk's frames are held on that device and equal the walk on a device of its own
+- **WHEN** a window's device is shared and the compute host opens, and an engine on it leaves a frame on the device
+- **THEN** the host's device is the window's (the same `Arc`), and a compute job reads the held frame as it lies — the bytes `execute_once` reads back
 - **TEST** t3817 (`src/libs/kt-gpu/tests/compute_shared.rs`)
 
 #### Scenario: The setup picks one device or two
-- **WHEN** the window's setup is resolved for a Vulkan adapter with compute, for GL, and for a hybrid pair whose window is on the other chip
-- **THEN** the first is one device shared, the others two, each named in the machine facts
+- **WHEN** the decision is asked for a Vulkan window on the adapter the host picks, a GL window, a hybrid pair whose window is on the integrated chip, no adapter for the host, and a lone integrated chip
+- **THEN** the first and the last share, the others do not, each with its reason (the trace's `gpu.compute.shares_display`, the run journal's GPU line); the host's pick skips WARP and GL and prefers a card
 - **TEST** t3818 (`src/libs/kt-gpu/tests/compute_shared.rs`)
 
 #### Scenario: A lost shared device poisons both, and the work is saved
