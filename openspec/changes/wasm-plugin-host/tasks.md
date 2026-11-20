@@ -1,6 +1,6 @@
 # Tasks: wasm-plugin-host
 
-> DESIGN ONLY until the owner answers Q1–Q3 and the orchestrator's go. Tests: t3957–t3961 (t3962–t3963 spare).
+> DESIGN ONLY until the owner answers Q1–Q3 and the orchestrator's go. Tests: t3957–t3961.
 
 ## 0. Notes
 
