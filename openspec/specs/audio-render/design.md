@@ -1,5 +1,17 @@
 # Audio render — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **Ducking is the live sidechain** (R.65, sidechain-ducking): the snapshot (`duck_spans` in
+  `ducking.rs`, `duck_curve_commands`), "a live sidechain" under Rejected and "the next change" are
+  history; a guard asserts the old names are absent (`kt-app/src/analysis.rs`).
+- **Look-ahead and pre-roll homes moved**: `MIN_PREROLL_FRAMES` is in `kt-plugin-api/src/lib.rs`,
+  the limiter's look-ahead in `src/plugins/fx-audio-dynamics`, `PITCH_LOOKAHEAD_FRAMES` (4608, 96 ms)
+  in `src/plugins/fx-audio-modulation`; "La ≤ 20 ms" is the limiter's cap only.
+
 ## What hurt and for whom
 
 The old engine crackled on slowed&reverb for six independent reasons: the warp computed at the source's frequency (44.1 kHz → a burst skipped every ~230 ms), stateful FX without locks were pulled by four threads (a poisoned delay line), the resampler duplicated the last sample every 1024 frames (a 46.9 Hz crackle), every parameter edit zeroed the buffers, tails were cut at the event boundary, and any UI hiccup recreated the FX nodes. The owner came with this in the very first round, and a regression test was filed for each item (t1–t7).

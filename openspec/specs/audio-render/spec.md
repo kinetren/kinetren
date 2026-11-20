@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The timeline's audio engine: assembling the mix from events (transition and overlap weights, gain, track summing, reverse and warp) into f32 48 kHz/2ch, owning the state of the FX chains, the price of the place, look-ahead, loudness measurement, and offline audio analysis (ducking, sync).
+The timeline's audio engine: assembling the mix from events (transition and overlap weights, gain, track summing, reverse and warp) into f32 48 kHz/2ch, owning the state of the FX chains, the price of the place, look-ahead, loudness measurement, and offline audio analysis (loudness, sync). Ducking is the live sidechain (R.65), not an analysis.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ Why: the warp path, which computed at the source's frequency, produced periodic 
 - **TEST** t7 (`src/libs/kt-engine/tests/audio_engine.rs`), t11 (`src/libs/kt-engine/tests/golden_export.rs`)
 
 ### Requirement: FX state is owned only by the audio render thread
-The state of the FX chains (`FxStateStore`) SHALL belong to the audio render thread; prefetch, meters, and UI MUST NOT touch it and MUST NOT place mutexes around it. Prefetch fills only the PRE-FX cache of the decoded source. The FINAL MIX the render thread produced (after the effects, the track stages and the nested reels, before the master gain) MAY be kept by that same thread and handed out again for a covered range instead of running the effects (requirement "A covered range keeps its final mix"); nothing else produces or reads it, and the bars see it only as that thread publishes it. The sub-mix of a nested reel MUST NOT enter the `BurstCache`, and its state is keyed by the INSTANCE, not by the reel.
+The state of the FX chains (`FxStateStore`) SHALL belong to the audio render thread; prefetch, meters, and UI MUST NOT touch it and MUST NOT place mutexes around it. Prefetch fills only the PRE-FX cache of the decoded source. The meters' probe keeps a SEPARATE `FxStateStore` of its own (the builder syncs it, the UI reads it under its own lock; transport, "the probe"): it never touches the render thread's store. The FINAL MIX the render thread produced (after the effects, the track stages and the nested reels, before the master gain) MAY be kept by that same thread and handed out again for a covered range instead of running the effects (requirement "A covered range keeps its final mix"); nothing else produces or reads it, and the bars see it only as that thread publishes it. The sub-mix of a nested reel MUST NOT enter the `BurstCache`, and its state is keyed by the INSTANCE, not by the reel.
 Why: four threads without locks over a shared delay line poisoned the reverb (defect b). Keeping the effects' output was rejected while it meant "the bytes depend on the read history"; the owner chose to keep it as a prerender does (kkt-26.11.07b, "вариант А"): a covered range keeps the sound it was first heard with, and plays almost for free.
 
 #### Scenario: A warm cache gives the same sound as the cold reference
@@ -294,7 +294,7 @@ Why: iterating over all events for every frame gave 92 ms/s with 2000 distant ev
 
 ### Requirement: Submix of a nested reel — a virtual media under the fetcher
 A nested reel SHALL be a virtual source beneath the fetcher, not a branch in the mixer: the weights, the windows, and the f32 summation order know nothing about reels. The sub-mix is rendered ONLY FORWARD along the reel's time; reverse and stretching of the instance act on the samples of the finished mix.
-The pre-roll of a move is a function of the project (the tail of the longest-tailed chain), the block = 4× the pre-roll; the value of a burst is a pure function of its index. The order of bursts goes down to the real sources, and the raw path over an embedding MUST sound.
+The pre-roll of a move is a function of the project (the longest tail plus look-ahead over the event chains, the track stages and the nested reels, at least `MIN_PREROLL_FRAMES`), the block = 4× the pre-roll in bursts, clamped to 32…256; the value of a burst is a pure function of its index. The order of bursts goes down to the real sources, and the raw path over an embedding MUST sound.
 Why: playing a reel backward means computing a third result that belongs to no one; a ring size dependent on the memory budget would make the bytes depend on the budget (capability `compositions`).
 
 #### Scenario: Law E for audio
@@ -403,7 +403,7 @@ Why: the owner's decision R.63/R.65 — a live device instead of a snapshot; ali
 #### Scenario: A cycle, a dead key, muting the key
 - **WHEN** an attempt is made to assign keys in a circle; then the key track is deleted; then the key is muted
 - **THEN** the cycle command is rejected with a named error and the model is untouched; with a dead key the device sounds like an ordinary compressor (no panic and no silence); with a muted key there is no ducking
-- **TEST** t771 (`src/libs/kt-engine/tests/sidechain.rs`), t772 (`src/libs/kt-model/tests/model.rs`)
+- **TEST** t771 (`src/libs/kt-engine/tests/sidechain.rs`), t772 (`src/libs/kt-model/tests/sidechain.rs`)
 
 ### Requirement: A chain's cost does not depend on the process run
 The render of the same chain over the same input SHALL cost the same class of time in every process run of the same build: no effect's cost, and no source's cost, may depend on where the allocator placed its buffers, on floating-point state the engine does not set, or on bytes a value does not use (the payload a dataless enum variant leaves from its stack frame). When the cost depends on the machine (for example, the core type the render thread lands on), the engine does not pin threads; the requirement then records it as a property of the machine, with the experiment that reproduces it. The fix of a placement, number-format or unused-bytes cause SHALL keep the sound byte for byte.

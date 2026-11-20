@@ -1,5 +1,27 @@
 # Video composition — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **The CPU executor is gone** (compute-kernels-render, owner 2026-11-04): "one frame plan, two
+  executors", "CPU is the reference and the full fallback", an export's `TooLarge` re-run on the CPU,
+  costs counted through `FxScratch`, `compose_from_cache*`, the SIMD files `video_simd.rs` (engine and
+  kt-fx), the deferred AVX2 of the fused geometry pass, `kt-cli preview --cpu`, D4–D5 "the CPU path
+  composes ahead" (`compose_ahead.rs`, `compose_export_with`, `may_hold`) and "the export refuses a
+  software rasterizer in favour of CPU workers": none exists. The GPU is the one executor; `TooLarge`
+  gives no picture; an export with no device refuses; an export composes on software adapters too.
+- **Post-FX memoisation** (`postfx_key_hash`, a post-FX kind in the burst cache) is gone: the
+  executor's readback and present memos keyed by `plan_key` hold composites.
+- **"No compute on the GPU"** (samplers and a mask rasterizer rejected for lack of compute) holds for
+  GL only: on Vulkan a compute host runs the stream stages.
+- **gpu-arbiter / gpu-throughput**: "half a frame period", "at most three lower flights",
+  `loop_fill::width`, `AHEAD_PIECES`/`RING_LOWER_PIECES` are superseded by render-ahead D5: the bound is
+  one frame period, pieces are half of it, with no piece count.
+- **render-cache-disk D2** ("lossless files") is superseded by render-cache-codec: hardware H.264
+  segments.
+
 ## What hurt and for whom
 
 Each video effect was a separate rasterization into a buffer of output size, with 8-bit quantization between steps; the source was also shrunk in Quality by the decoder. On the owner's chain "2×2 grid → 3D pan → 2×2 grid → 3D pan → zoom back", after the second grid only a quarter of the detail remained, and the zoom showed mush made of enlarged pixels. The complaint, word for word, came down to "there is essentially no compositing"; the owner's proposal was tessellation and UV mapping "from scale"; the intuition is right per pixel, not per vertex. The second thing that hurt: 3D was computed only on the GPU — the CPU reference had holes, and export without a GPU refused. The third: three callers (preview, prefetch, export) each glued Quality onto the request themselves and matched only because they read one variable; on export with large frames this already produced "a black render with rare surviving frames" when a chunk did not survive until composition.

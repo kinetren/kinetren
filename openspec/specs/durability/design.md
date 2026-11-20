@@ -1,5 +1,18 @@
 # Keeping the work safe — the reasons
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **A second copy's recovery** is `<name>.recovery.kt.<pid>.kt`, not `.otio`.
+- **The journal keeps a fan of four previous runs**, not one `.log.1`.
+- **`WAIT_BG`** is gone: tests wait with `kt_time::test_deadline()` (t1671).
+- **A software-rendered kt-app** counts as a load of about seven (live-check), not nine; Windows
+  directory sync is write-through (spec), not deferred.
+- **Opening a project builds nothing on the UI thread** (scheduler-followups); "opening still builds
+  on the UI thread" is history.
+
 ## What hurt and for whom
 
 Feature reconnaissance found 47 of the editor's own defects, and most of them were about LOSING WORK, not about missing features: autosave wrote OVER the user's file (exactly one state existed on disk, so there was nowhere to roll back to); `write + rename` without a single `fsync` anywhere in the tree (after a power cut the project file in place could be left zero bytes long); a refusal by the revision guard looked like success (the unsaved-changes asterisk went out, and there was no file with the edits); two copies of the program silently overwrote each other; a panic left neither a report nor a record; recovery was offered only "if the project was not found"; and "New"/"Open"/the window close button asked nothing.

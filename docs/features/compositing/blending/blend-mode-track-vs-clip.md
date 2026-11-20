@@ -118,7 +118,7 @@ the formula `out = lerp(below, blend(below, above), α × level)` is written as 
 embedding (`src/libs/kt-engine/src/video.rs`, `track_stage_layer`), so a "hole" in an event
 shows the lower track, not black. The choice of mode is the track window
 (`src/apps/kt-app/src/track_window.rs`), the check against the analytic formula and GPU is
-t737 (`src/libs/kt-engine/tests/track_blend.rs`, `src/libs/kt-gpu/tests/parity.rs`).
+t737 (`src/libs/kt-engine/tests/track_video.rs`, `src/libs/kt-gpu/tests/parity.rs`).
 The clip blend mode is POSTPONED: an event already has a level and transitions, and mixing
 two axes in one round would mean deciding for the owner.
 

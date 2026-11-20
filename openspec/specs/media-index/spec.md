@@ -150,8 +150,8 @@ different SAR gave byte-for-byte one frame — anamorphic was inexpressible.
 - **TEST** t13 (`src/libs/kt-engine/tests/viewport.rs`), t315 (`src/libs/kt-engine/tests/decode_sharpness.rs`, capability `video-plan`)
 
 ### Requirement: Live playback goes through the MediaWorker priority queue
-One thread SHALL own the decoder instance (`&mut self`). Playback, prefetch and
-thumbnails MUST NOT touch the decoder directly — only by requests into the queue with priorities
+One thread SHALL own the decoder instance (`&mut self`). Playback and prefetch MUST NOT touch the
+decoder directly — only by requests into the queue with priorities
 Playback > NearPrefetch > FarPrefetch > Thumbnail and generation cancellation; at equal priority
 requests FORWARD from the decoder's cursor are served, backward — when forward is empty; a key is served
 no more than once per submission; what is already in the cache is not decoded. Playback MUST NOT block
@@ -198,7 +198,8 @@ time) — that is, defect l came back in other clothes: the sound waited for the
 - **TEST** t758 (`src/libs/kt-engine/tests/video_stall.rs`), live scenario `src/scripts/live/seekjump.py`
 
 ### Requirement: The offline path opens its own short-lived source under three conditions
-The index service, offline analysis, export and kt-cli MAY open THEIR OWN instance of the source,
+The index service, offline analysis, the thumbnail and effect-cell lanes, export and kt-cli MAY open
+THEIR OWN instance of the source,
 bypassing the queue, only if all three conditions are met: the source is shared with nobody, the pace
 is not promised (nobody waits for real time from it), the task is finite and cancellable. A violation of
 any — back to the queue. A finite task SHALL be built on a frame with progress, pause,
@@ -229,9 +230,10 @@ maintained on insert/evict, without parallel bookkeeping — and, for what plays
 the two stores that hold the final products: the executor's present memo and the audio render
 thread's final-mix store (capabilities `video-plan`, `audio-render`). Quality SHALL be part of the
 key (the audio key has no quality); a quality with a different size MUST NOT satisfy the request.
-The cache stores PRE-FX data; video post-FX is a separate kind, invisible to coverage, prefetch and pin,
-but living in the video budget and removed by `invalidate_source`. The final mix is not in the burst
-cache: the audio render thread keeps it.
+The cache stores PRE-FX data only (`BurstKind` is `Audio | Video{quality}`). A composite's result is
+kept by the executor's present memo, a stream stage's history by its stream memo (capability
+`video-plan`), and the final mix by the audio render thread (`audio-render`); none of them is in the
+burst cache.
 Pin (the head of the loop region) excludes records from eviction, but not from coverage. The probe `contains`
 MUST NOT touch the LRU and the epoch. Records evicted or overwritten before the first read
 SHALL be counted by a separate counter (no-read drops).
@@ -693,7 +695,8 @@ target is past the decoder's deferred frame SHALL decide between decoding on and
 forward bound, never decode every picture up to it; every key of a span SHALL be decided so.
 A span asked at several decode qualities SHALL decode each picture once and convert it to every
 quality asked at it. The export's own source of a file read at two places at once SHALL give each
-place its own decoder (at most two per file), chosen by the requests alone. The binaries SHALL fix
+place its own decoder (as many per file as its picture size allows, the rule "Every read of a file
+chooses its decoder per key"), chosen by the requests alone. The binaries SHALL fix
 the allocator's mmap threshold at 1 MiB before anything else, so a freed frame-sized buffer goes
 back to the system instead of a thread's arena.
 Why: the showcase export (export-throughput, 2026-11-03) died within three seconds with
@@ -820,18 +823,20 @@ or joined into one line at the end.
 - **TEST** t949 (`src/apps/kt-app/src/ffmpeg_setup.rs`)
 
 ### Requirement: Hardware-context functions are optional symbols
-The FFmpeg functions needed only for hardware encoding contexts (`av_hwdevice_ctx_create`,
+The FFmpeg functions needed only for hardware contexts — the encoders' and, since hw-segment-decode, the
+prerender segments' decoder (`open_decode_device`) — (`av_hwdevice_ctx_create`,
 `av_hwframe_ctx_alloc`, `av_hwframe_ctx_init`, `av_hwframe_get_buffer`,
 `av_hwframe_transfer_data`, `av_buffer_ref`, `av_buffer_unref`) SHALL be resolved in a table of
 their own after the required table has loaded. If any of them is missing, loading SHALL still
 succeed with the hardware table absent, the search report SHALL say which function is missing,
-and every encoder candidate that needs a device context SHALL be skipped (capability `export`).
+every encoder candidate that needs a device context SHALL be skipped (capability `export`), and a
+prerender segment SHALL be decoded on the processor.
 The struct layouts these functions use (`AVHWFramesContext`, the device and pixel-format enums)
 SHALL come from the version module of the loaded major, generated from the vendored
 `libavutil/hwcontext.h` of each supported major, like every other type.
 Why: invariant 10 promises one binary for every FFmpeg the machine has; a trimmed or custom build
-without `hwcontext` must keep opening media. Today every symbol in `api.rs` is required, so one
-more required name would turn a working machine into "FFmpeg not found".
+without `hwcontext` must keep opening media. Before this rule every symbol in `api.rs` was required, so
+one more required name would have turned a working machine into "FFmpeg not found".
 
 #### Scenario: A missing hardware function does not fail the load
 - **WHEN** the hardware table is loaded through a resolver that knows every name, then through
@@ -850,12 +855,18 @@ and its frames by it alone.
 Why: the serial was a count per cache, and an engine outlives a cache. A new cache on a used engine got
 the old cache's pictures. No shipped path pairs them today (a render builds its own engine, the preview
 has one cache), so no file was wrong, but only because of how the program is arranged: t1457, which
-pairs them, went red when the numbering of the export's cache changed.
+pairs them, went red when the numbering of the export's cache changed. The offline engine also serves a
+fresh cache per job and addresses an uploaded frame by its serial (design D6).
 
 #### Scenario: Two caches never share a serial
 - **WHEN** fifty frames are inserted into each of two caches at the same addresses
 - **THEN** all hundred serials differ
 - **TEST** t1607 (`src/libs/kt-cache/src/lib.rs`)
+
+#### Scenario: Two caches share no serial
+- **WHEN** frames are inserted into two caches
+- **THEN** no serial appears in both
+- **TEST** t1574 (`src/libs/kt-cache/src/lib.rs`)
 
 ### Requirement: An offline job can hold cache entries it still needs
 The burst cache SHALL offer a per-key hold: taking one on a present entry or at its insertion, in one
@@ -875,16 +886,6 @@ that way (capability `export`). A pin is one bit, and one frame is needed by sev
   and fall to zero after the second release, then the next insert evicts it; the absent key answers
   "not present" and holds nothing; an overwrite keeps the holds
 - **TEST** t1600 (`src/libs/kt-cache/src/lib.rs`)
-
-### Requirement: A frame's serial is unique across caches
-The serial number of a frame in `BurstCache` SHALL be unique in the process, whichever cache gave it.
-Why: the offline engine serves a fresh cache per job and addresses an uploaded frame by its serial;
-with a serial per cache it could take a frame of one project for another's (design D6).
-
-#### Scenario: Two caches share no serial
-- **WHEN** frames are inserted into two caches
-- **THEN** no serial appears in both
-- **TEST** t1574 (`src/libs/kt-cache/src/lib.rs`)
 
 ### Requirement: The end of a file is met once
 A decoder SHALL treat the keyframes the packet scan found as what the file holds, whatever its header

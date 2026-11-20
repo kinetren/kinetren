@@ -1,5 +1,15 @@
 # Telemetry — why it is built this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **Not only the exit event**: `app_heartbeat` every 5 minutes and `app_crashed` from the crash report
+  are sent; "a heartbeat for crashes" under Rejected is history.
+- **The switch is in File › Preferences** (`prefs_window.rs`), not View / `toolbar.rs`.
+- **`load-report.txt` was removed**: the load watch writes to the journal.
+
 ## What was missing and who asked
 
 Before public distribution the owner had no way to know whether anyone runs Kinetren, how

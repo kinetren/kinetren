@@ -7,6 +7,10 @@ lasts, and whether it closed cleanly. The report is anonymous, goes to one PostH
 project, is on by default with a visible off switch, and never costs the person a frame of
 UI or a second of exit.
 
+The same capability holds what the program records LOCALLY and never sends: the journal, the
+structured trace and its queries (`kt-cli trace`), the GPU timing, the load watch, the telemetry
+journal and the native-crash report.
+
 ## Requirements
 
 ### Requirement: Start, heartbeat and close, and a missing close is the unclean-exit signal
@@ -311,8 +315,8 @@ step.
 ### Requirement: Telemetry enters the application through one door
 Code outside `telemetry.rs` SHALL talk to telemetry only through `telemetry::signal(Signal)` —
 a free function that is a no-op when telemetry is off or not installed — plus the start-up and
-UI plumbing that exists for the switch (`install`, `global`, the notice and hint texts, the View
-checkbox). `Signal` is a small enum of FACTS (`Commands(&[Command], &model)`, `Command`,
+UI plumbing that exists for the switch (`install`, `global`, the notice and hint texts, the
+Preferences checkbox). `Signal` is a small enum of FACTS (`Commands(&[Command], &model)`, `Command`,
 `Gesture` (one edit per gesture), `Undo`, `Redo`, `Saved`, `ProjectOpened(how, &Project)`,
 `ExportEnded(&RenderJob)`, `Gpu(&AdapterInfo, software)`, `Frame { ctx, playing }`,
 `CrashReport(&Path)`, `Exit`); classifying, counting, bucketing, building events and deciding what to send live in
@@ -687,7 +691,7 @@ the machine allowed (memory-ledger).
 #### Scenario: A sizing is a record and the query reads it
 - **WHEN** a trace holds two ledger sizings, the second taking back a stream grant, and a sizing that changed nothing
 - **THEN** it holds two `mem_budget` records and the changed `mem_grant` records only; `kt-cli trace memory` prints both sizings and the stream tenant's last cap
-- **TEST** t2300 (`src/apps/kt-cli/src/trace_query.rs`)
+- **TEST** t2300 (`src/apps/kt-cli/src/trace_query/tests.rs`)
 
 ### Requirement: A long frame says how long it waited for a processor
 A UI frame of 100 ms or more SHALL be noted with how much of it the UI thread stood ready with no
@@ -930,7 +934,7 @@ frames were missing. render-ahead is accepted by that share.
 #### Scenario: A lap reads its device share
 - **WHEN** a trace holds two laps of a loop, the first with moments not kept and frames of known device time harvested in each
 - **THEN** `trace loop` prints each lap's device share as the harvested device time over the lap's wall, and the share while frames were missing over the first lap alone
-- **TEST** t2926 (`src/apps/kt-cli/src/trace_query.rs`)
+- **TEST** t2926 (`src/apps/kt-cli/src/trace_query/tests.rs`)
 
 ### Requirement: A loop's report says why moments ahead were not kept and how long work waited for its ring
 Every render-ahead job record SHALL say what came of its moment (`b`: 0 kept, 1 incomplete, 3 refused by the
