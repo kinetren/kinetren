@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: []
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-EXP-003 — Smart render — copying untouched pieces without re-encoding
@@ -280,6 +280,13 @@ chosen automatically from five candidates on someone else's machine. So we can g
 "compatible junction", nor can we check it by byte equality. The right form of refusal is an error with a
 named reason ("the source is h264 High@4.0, the export will open as
 libx264 Main@3.1 — a copy is impossible"), not a silent re-encoding.
+
+**2026-11-20, the owner's later word.** `v26.10` X1 and `kkt-26.11.18b` U5 ("кэшированный финальный рендер …
+среди уже отрендеренных файлов искать … по индексам каким-то что можем переиспользовать") ask for mechanism
+No. 2 between our OWN renders: an earlier export at the same settings, the same encoder and the same device
+is the "preview file". That removes this verdict's objection for that case (one encoder, one settings
+fingerprint, parameter sets carried in-band), not for the source-copy hybrid. Designed in
+`openspec/changes/cached-final-render/` (future, design only).
 
 ## Sources
 
