@@ -229,7 +229,12 @@ fn open_decode_device(api: &Api) -> Result<HwDecode, String> {
             )
         };
         unsafe { (api.av_log_set_level)(16) };
-        if r >= 0 && !dev.is_null() { Ok(dev) } else { Err(format!("code {r}")) }
+        if r >= 0 && !dev.is_null() {
+            crate::hw_device_opened();
+            Ok(dev)
+        } else {
+            Err(format!("code {r}"))
+        }
     };
     match crate::search::Os::NATIVE {
         crate::search::Os::Linux => {

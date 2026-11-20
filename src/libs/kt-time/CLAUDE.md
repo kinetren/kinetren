@@ -32,6 +32,11 @@ The time model of the whole engine. Zero dependencies (except serde).
   deadline (`WAIT` 2 s for an owner's drop), leave the thread behind, and write a `Shutdown` record (who,
   how long, left). A new drop that joins a thread or waits for a lane goes through it; never an unbounded
   `join()` on a close path. `left_behind()` is what a forced exit names.
+- **The process ends before the native libraries' destructors** (found-defects 784/785, t3230):
+  `shutdown::end_before_libraries` (glibc `on_exit`) runs the `before_exit` steps, flushes the trace
+  and C's stdio and `_exit`s with the status `exit` was given. Code that loads a native library with
+  destructors (a GPU device, FFmpeg, a libva driver, the sound server's client) calls it right after
+  the load, once per library: the threads a bounded close leaves behind may still be inside it.
 - **`mem` is the memory ledger** (memory-ledger, capability `media-index`, t2290, t2291): a keeper of
   pictures, mixes or device buffers opens an `Account` of its `Tenant` with its BASE (never cut) and
   reports `set(bytes)` (atomics: no lock, any thread). Growth above the bases is granted from ONE

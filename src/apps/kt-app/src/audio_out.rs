@@ -416,6 +416,10 @@ fn output_loop<D: Device>(
                 };
                 match device.open(sink, &ctl) {
                     Ok(s) => {
+                        // the sound server's client libraries are behind the process's end, once
+                        // (found-defects 784/785)
+                        static END: std::sync::Once = std::sync::Once::new();
+                        END.call_once(kt_time::shutdown::end_before_libraries);
                         let open_us = opened.elapsed().as_micros() as u64;
                         let first_us = first_callback(&first);
                         ctl.open_us.store(open_us, Ordering::Relaxed);

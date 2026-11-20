@@ -896,6 +896,11 @@ and the decoder, the sound device's thread, the effect cells and kt-gpu's exit h
 - **THEN** the join returns at the deadline, the first is recorded as left behind and the second as ended
 - **TEST** t2950 (`src/libs/kt-time/src/shutdown.rs`)
 
+#### Scenario: The process ends before the native libraries' destructors
+- **WHEN** a process registers a library's destructor (as a library loaded before the end), registers a last step, calls `kt_time::shutdown::end_before_libraries`, leaves a thread working, and exits with status 7; separately the same without the end
+- **THEN** with the end the last step runs, the status stays 7 and the library's destructor never runs; without it the destructor runs and the step does not. The end is registered after every native library the program loads: each GPU device (kt-gpu `errors::watch`, so llvmpipe's libLLVM and a card driver's statics), FFmpeg's libraries, the first hardware (libva) device, the first sound device; its last steps are the GPU's background work waited for, the trace and C's stdio flushed (found-defects 784/785, 695, 172)
+- **TEST** t3230 (`src/libs/kt-time/tests/end.rs`)
+
 #### Scenario: A stuck exit is forced and names what it waited for
 - **WHEN** the exit's watcher passes its bound while a wait of the close left a thread behind
 - **THEN** a forced-exit record names that thread, the trace is flushed, and only then the process ends

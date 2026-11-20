@@ -1724,6 +1724,11 @@ render.
 - **THEN** the candidates are the heavy moments not on disk and their unmeasured neighbours, the loop region's first, then nearest the playhead; a light moment and the moments past it are not candidates
 - **TEST** t2983 (`src/libs/kt-engine/src/render_cache.rs`)
 
+#### Scenario: A heavy run is one segment from its start
+- **WHEN** a run of six moments is measured heavy, the playhead stands in its middle, and the tier prerenders it
+- **THEN** the candidates come in runs of consecutive moments (the loop region's first, then by distance to the head), each from its start, and the whole run lies in one segment that starts before its first moment; taken by distance to the head with the sides alternating, the part behind the head went into a segment per moment (found-defects 776)
+- **TEST** t3231 (`src/libs/kt-engine/tests/render_cache.rs`), t2983
+
 #### Scenario: The prerender yields to the person
 - **WHEN** heavy moments are measured and the player stands paused while input keeps coming; then the input stops; then Play is pressed while it works; then an export vote is up
 - **THEN** nothing is composed while input came within 1.5 s; after the quiet it writes; Play abandons the moment in work and nothing is written while playing; nothing runs under the export vote
