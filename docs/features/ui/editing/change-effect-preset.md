@@ -53,7 +53,8 @@ too (the slot is the same object; invariant 3 here: the audio processor keeps it
 
 ## Cons
 
-- Rows with automation: a preset gives values, a curve gives values over time — one must win (a decision).
+- Rows with automation: a preset gives values, a curve gives values over time — one must win. The owner decided
+  (2026-11-20, `kkt-26.11.20` A4): an effect's preset replaces the whole effect, curves too; Undo returns them.
 
 ## What users say
 
@@ -101,7 +102,9 @@ NO QUOTES: no web access in this spec session (2026-11-20) for outside quotes; e
 ## Verdict
 
 Take it: a "Preset" menu at the head of every slot's form listing the kind's variants and the user's
-single-slot presets, applying values in one undo step and reading "(custom)" after any edit, as Vegas does.
+single-slot presets, replacing the whole effect (values and curves) in one undo step and reading "(custom)" after
+any edit, as Vegas does. A CHAIN preset is not a replacement: it joins the existing chain on the graph, its nodes
+arrive selected, and the extra ones are deleted or moved with the mouse (the owner, A4).
 
 ## Sources
 

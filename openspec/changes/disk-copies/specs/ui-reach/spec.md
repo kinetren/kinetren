@@ -17,4 +17,5 @@ Why: the owner, A10 — a switch "как в превью" beside, never "про�
 #### Scenario: No "proxy" anywhere in the interface
 - **WHEN** the five catalogs are scanned
 - **THEN** no entry contains "proxy" or "прокси" (or the word in the other three languages' catalogs)
+- **PATH** switch the language to Russian → open the switch beside the quality and a clip card's menu → every item reads "копии на диске", none "прокси"
 - **TEST** t3450 (`src/apps/kt-app/src/i18n_tests.rs`)
