@@ -12,4 +12,4 @@
 ## 3. Live and checks
 
 - [x] 3.1 `Live.new_generator` / `pick_generator_kind`; twelve scenarios moved; genaudio selects the beep for Edit's tone
-- [ ] 3.2 live scenarios green, idle check, specs, clippy, target-prune
+- [x] 3.2 live scenarios green, idle check, specs, clippy, target-prune

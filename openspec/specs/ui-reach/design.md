@@ -710,3 +710,6 @@ The mechanism: a menu enumerating kinds that a window already picks. Checked: th
 kind field and the generator window's (galleries, G6), the effects picker (a gallery, R.54 — choosing
 WHICH effect to add is the action itself, not a kind to change later), the fade items (no kind), the
 morpher's source (a file, not a kind).
+
+## generator-menu-one-item (2026-11-20, kkt-26.11.20 A1)
+
