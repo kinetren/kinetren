@@ -162,21 +162,89 @@ pub fn host_device() -> Option<Arc<ComputeDevice>> {
     OPENED.get().cloned()
 }
 
-pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
-    // the prewarm opens it on its own thread at a project's opening: the exit waits (pipeline-prewarm D10)
-    let _busy = crate::exit::busy().ok_or("the process is exiting")?;
-    // the process's one instance and opening lock (segv-crashes): see `context::instance`
-    let g = crate::context::opening();
-    let instance = crate::context::instance(&g, wgpu::Backends::PRIMARY);
-    // WARP is listed beside a real device (lavapipe on a Windows runner): pick past it
-    let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY));
-    adapters.retain(|a| !a.get_info().name.to_lowercase().contains("microsoft basic render"));
-    adapters.sort_by_key(|a| match a.get_info().device_type {
+/// The window's device, when the compute host runs on it (stream-picture-stays D2): set by
+/// [`share_display`] before the host opens.
+static SHARED: std::sync::OnceLock<crate::GpuContext> = std::sync::OnceLock::new();
+
+/// How the compute host orders the adapters it may open: past WARP (listed beside a real device, as
+/// lavapipe on a Windows runner), a discrete card, then an integrated one, then the rest.
+fn compute_rank(name: &str, kind: wgpu::DeviceType) -> Option<u8> {
+    if name.to_lowercase().contains("microsoft basic render") {
+        return None;
+    }
+    Some(match kind {
         wgpu::DeviceType::DiscreteGpu => 0,
         wgpu::DeviceType::IntegratedGpu => 1,
         _ => 2,
-    });
-    let adapter = adapters.into_iter().next().ok_or("no compute device")?;
+    })
+}
+
+/// The adapter the compute host opens of `adapters` on its own: the first of the best rank on a
+/// primary backend (Vulkan, Metal, DX12).
+pub fn compute_pick(adapters: &[crate::AdapterFact]) -> Option<&crate::AdapterFact> {
+    let primary = |b: wgpu::Backend| matches!(b, wgpu::Backend::Vulkan | wgpu::Backend::Metal | wgpu::Backend::Dx12);
+    adapters.iter().filter(|a| primary(a.backend)).filter_map(|a| Some((compute_rank(&a.name, a.kind)?, a))).min_by_key(|(r, _)| *r).map(|(_, a)| a)
+}
+
+/// Why the compute host does not run on the window's device `display`, or `None` — it does
+/// (stream-picture-stays D2; the owner, kkt-26.11.20 Q51: "Сделать сейчас"). On GL the window's device
+/// computes nothing; on another adapter than the one the host would open (a hybrid laptop's window
+/// on the integrated chip, the host on the card) the host keeps its own device.
+pub fn share_refusal(display: &wgpu::AdapterInfo, pick: Option<&crate::AdapterFact>) -> Option<&'static str> {
+    if crate::display_is_ui_only(display) {
+        return Some("the window's backend is GL: no compute on it");
+    }
+    let Some(p) = pick else { return Some("no adapter the compute host would open") };
+    let same = p.backend == display.backend && p.vendor == display.vendor && p.device == display.device && p.name == display.name;
+    (!same).then_some("the compute host would open another adapter")
+}
+
+/// The window's device as the process's one context (stream-picture-stays D2): the preview's engine
+/// and, where [`share_refusal`] allows, the compute host run on this very `Arc`, so a buffer the host
+/// keeps is the engine's to read (`held::on` compares the device pointer). Called before anything
+/// opens the host; a later call keeps the first context.
+pub fn share_display(device: &wgpu::Device, queue: &wgpu::Queue, info: wgpu::AdapterInfo) -> crate::GpuContext {
+    static DISPLAY: std::sync::OnceLock<crate::GpuContext> = std::sync::OnceLock::new();
+    let ctx = DISPLAY
+        .get_or_init(|| {
+            let ctx = crate::GpuContext::from_parts(Arc::new(device.clone()), Arc::new(queue.clone()), info.clone());
+            let facts = crate::adapter_facts();
+            let why = share_refusal(&info, compute_pick(&facts));
+            kt_time::trace::machine("gpu.compute.shares_display", why.unwrap_or("yes"));
+            if why.is_none() {
+                let _ = SHARED.set(ctx.clone());
+            }
+            ctx
+        })
+        .clone();
+    // another window's device (a second harness in one process): its own context, nothing shared
+    if *ctx.device != *device {
+        return crate::GpuContext::from_parts(Arc::new(device.clone()), Arc::new(queue.clone()), info);
+    }
+    ctx
+}
+
+/// Whether the compute host runs on the window's device (tests, the trace's facts).
+pub fn shares_display() -> bool {
+    SHARED.get().is_some()
+}
+
+pub fn open_device() -> Result<Arc<ComputeDevice>, String> {
+    // the prewarm opens it on its own thread at a project's opening: the exit waits (pipeline-prewarm D10)
+    let _busy = crate::exit::busy().ok_or("the process is exiting")?;
+    if let Some(ctx) = SHARED.get() {
+        crate::context::trace_device("compute", &ctx.adapter_info, &ctx.device);
+        return Ok(ComputeDevice::on_context(ctx));
+    }
+    // the process's one instance and opening lock (segv-crashes): see `context::instance`
+    let g = crate::context::opening();
+    let instance = crate::context::instance(&g, wgpu::Backends::PRIMARY);
+    let mut adapters: Vec<(u8, wgpu::Adapter)> = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY))
+        .into_iter()
+        .filter_map(|a| Some((compute_rank(&a.get_info().name, a.get_info().device_type)?, a)))
+        .collect();
+    adapters.sort_by_key(|(r, _)| *r);
+    let adapter = adapters.into_iter().next().map(|(_, a)| a).ok_or("no compute device")?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("kt-gpu compute"),
         required_features: crate::pass_time::wanted_features(&adapter),

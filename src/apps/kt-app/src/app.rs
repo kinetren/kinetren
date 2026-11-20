@@ -829,11 +829,8 @@ impl KtApp {
                 crate::wake::now();
             })
         } else {
-            let ctx = kt_gpu::GpuContext::from_parts(
-                std::sync::Arc::new(rs.device.clone()),
-                std::sync::Arc::new(rs.queue.clone()),
-                rs.adapter.get_info(),
-            );
+            // the window's one context: the compute host's too where it shares the device (D2)
+            let ctx = kt_gpu::compute::share_display(&rs.device, &rs.queue, rs.adapter.get_info());
             std::thread::Builder::new().name("engine-build".into()).spawn(move || {
                 let _ = tx.send(kt_gpu::GpuFxEngine::new_kept(ctx).map_err(|e| e.to_string()));
                 crate::wake::now();
@@ -11581,6 +11578,12 @@ pub fn run() -> eframe::Result {
             // thread while the preview's thread composes on the same device (gpu-errors-survive)
             if let Some(rs) = &cc.wgpu_render_state {
                 kt_gpu::errors::watch(&rs.device, kt_gpu::errors::role::DISPLAY);
+                // ONE device per adapter (stream-picture-stays D2): before anything opens the compute
+                // host, the window's device becomes its device where the backend computes and the host
+                // would pick this adapter, so a Datamosh frame is composed where it was decoded
+                kt_gpu::compute::share_display(&rs.device, &rs.queue, rs.adapter.get_info());
+                let why = kt_gpu::compute::share_refusal(&rs.adapter.get_info(), kt_gpu::compute::compute_pick(&kt_gpu::adapter_facts()));
+                crate::journal::log("GPU", &format!("compute on the window's device: {}", why.unwrap_or("yes")));
             }
             // before the first KtApp: every app of this process takes the same telemetry
             crate::telemetry::install(crate::telemetry::Telemetry::for_process(

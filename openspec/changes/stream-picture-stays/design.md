@@ -23,11 +23,11 @@
   and Metal; no CUDA or OpenCL; one text per kernel. The owner's acceleration scope (2026-11-04): all math,
   plain WGSL compute, ARM needed. One device per adapter keeps that: no new API, the same WGSL.
 
-## D1. Measure the crossing (stage 1)
+## D1. The crossing in the trace (evidence; Q1 b: not a gate)
 
 A `StreamCross` trace record per frame read back for a layer: bytes, processor microseconds of the
 row conversion, upload bytes, the kernel or generator id. `kt-cli trace <dir> loop` prints per lap: "stream
-frames crossed: N, X MB, Y ms of a core". The owner's Q1 reads it from his run. No behaviour changes.
+frames crossed: N, X MB, Y ms of a core". It proves the crossing gone (t3821); the owner chose to share without waiting for it.
 
 ## D2. One device per adapter
 
@@ -41,6 +41,15 @@ When the window's backend has compute (Vulkan, DX12, Metal):
 3. `compute::open` installs a `ComputeDevice` over that same device and queue, with its own pool, pipeline
    cache and timestamps, and the same arbiter ring (the ring is per adapter already).
 
+**As built (stage D2):** eframe keeps creating the window's device (`WgpuSetup::CreateNew`, its descriptor
+already asks the pass timer's `TIMESTAMP_QUERY`/`PIPELINE_CACHE`, the same features the compute host asks),
+so its less travelled `Existing` path is not needed. In the app's creation closure, before anything can open
+the compute host, `kt_gpu::compute::share_display` wraps the window's device as the process's one
+`GpuContext`; where `share_refusal` allows (not GL, and the window's adapter is the one `compute_pick`
+would open) the host opens over that same `Arc` (`ComputeDevice::on_context`), and the preview's engine is
+built on it too (`init_video_gpu`), so `held::on`'s pointer compare holds. The trace's machine fact
+`gpu.compute.shares_display` says `yes` or why not. t3817, t3818.
+
 On GL, or when the compute host's adapter differs from the display's (a hybrid laptop whose window is on
 the integrated chip while the compute picks the card), nothing changes: two devices, and the crossing.
 The trace's machine facts say which ("one device per adapter: yes/no, why").
@@ -51,6 +60,13 @@ can be reconfigured. If it cannot, the close path's durability steps still run (
 recovery file and Ctrl+S do not need the GPU.
 
 ## D3. A held layer input
+
+**Found while building (2026-11-20):** the crossing is not only in `render`. The codec's walk reads every
+SHOWN position back into the memo as host planes (`walk::keep` → `read3`, `Put::Lru`), so the prefetch
+thread's walk ahead already crosses for each frame it will show, and `render` then converts the memo's host
+planes to RGBA. Holding the picture means the shown positions stay in the memo's live tier as `HeldPic`
+(device memory, `LIVE_BYTES`) where the host shares the window's device, and the bytes path reads one back
+only when an executor on another device asks.
 
 - `LayerInput` gains `Held(HeldLayer { held: Held, w, h, form: Planes8 | Rgba8, content })`. `content` is
   the same content key the bytes path puts on the layer (the kernel's output key), so every memo key is
