@@ -112,6 +112,10 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         // text-counter-source: the running value's start and a timecode's frame rate
         "count_from" => tr(k::genp::COUNT_FROM),
         "count_fps" => tr(k::genp::COUNT_FPS),
+        // gen-backgrounds: the moving backgrounds
+        "speed" => tr(k::genp::SPEED),
+        "cells" => tr(k::genp::CELLS),
+        "pattern" => tr(k::genp::PATTERN),
         _ => return None,
     })
 }

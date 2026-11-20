@@ -151,6 +151,67 @@ const SHAPE_COLOR: &[(&str, &str)] = &[("color", "trn.color")];
 const GRADIENT: &str = include_str!("wgsl/gradient.wgsl");
 const CORNERS: &str = include_str!("wgsl/corners.wgsl");
 const NOISE: &str = include_str!("wgsl/noise.wgsl");
+
+// ---- the moving backgrounds (gen-backgrounds, `v26.10` G5) ----------------------------------------
+
+const MESHGRAD: &str = include_str!("wgsl/meshgrad.wgsl");
+const PLASMA: &str = include_str!("wgsl/plasma.wgsl");
+const PARTICLES: &str = include_str!("wgsl/particles.wgsl");
+const PATTERN: &str = include_str!("wgsl/pattern.wgsl");
+
+/// The phase of a moving background: material seconds × speed (the preamble's one float).
+fn phase(pts: Tick, speed: f64) -> f32 {
+    (pts.0 as f64 / 90_000.0 * speed) as f32
+}
+
+fn rgbf(p: &[f64], i: usize) -> [f32; 4] {
+    [p[i] as f32, p[i + 1] as f32, p[i + 2] as f32, 0.0]
+}
+
+fn aspect(w: u32, h: u32) -> f32 {
+    w.max(1) as f32 / h.max(1) as f32
+}
+
+/// A moving mesh gradient (rows: color×3, color2×3, color3×3, speed, softness): three colour blobs on
+/// slow orbits, blended by soft weights — the "modern" backdrop, not a linear ramp.
+fn meshgrad(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let v = [rgbf(p, 0), rgbf(p, 3), rgbf(p, 6), [phase(pts, p[9]), p[10] as f32, aspect(w, h), 0.0]];
+    shader_frame("generator:meshgrad", MESHGRAD, w, h, [0, 0], v)
+}
+
+/// Plasma (rows: color×3, color2×3, color3×3, speed, scale): travelling sine fields through a palette.
+fn plasma(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let v = [rgbf(p, 0), rgbf(p, 3), rgbf(p, 6), [phase(pts, p[9]), p[10] as f32, aspect(w, h), 0.0]];
+    shader_frame("generator:plasma", PLASMA, w, h, [0, 0], v)
+}
+
+/// Floating particles (rows: bg×3, color×3, strength, count, size, softness, speed, seed): soft bokeh
+/// discs drifting up over a backdrop.
+fn particles(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let mut c = rgbf(p, 3);
+    c[3] = p[6] as f32;
+    let v = [rgbf(p, 0), c, [phase(pts, p[10]), p[8] as f32, p[9] as f32, aspect(w, h)], [0.0; 4]];
+    shader_frame("generator:particles", PARTICLES, w, h, [p[7] as u32, p[11] as u32], v)
+}
+
+/// Moving patterns (rows: pattern, color×3, color2×3, cells, angle_deg, ratio, speed, softness).
+fn pattern(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let v = [
+        rgbf(p, 1),
+        rgbf(p, 4),
+        [phase(pts, p[10]), p[7] as f32, p[8].to_radians() as f32, p[9] as f32],
+        [aspect(w, h), p[11] as f32, 0.0, 0.0],
+    ];
+    shader_frame("generator:pattern", PATTERN, w, h, [p[0] as u32, 0], v)
+}
+
+/// The patterns, as the file writes them.
+const PATTERNS: &[&str] = &["stripes", "dots", "grid", "waves"];
+
+/// The eyedropper groups of the moving backgrounds.
+const THREE_COLORS: &[(&str, &str)] = &[("color", "genp.color1"), ("color2", "genp.color2"), ("color3", "genp.color3")];
+const PARTICLE_COLORS: &[(&str, &str)] = &[("bg", "genp.bg_color"), ("color", "genp.color")];
+const TWO_COLORS: &[(&str, &str)] = &[("color", "genp.color1"), ("color2", "genp.color2")];
 const RECT: &str = include_str!("wgsl/rect.wgsl");
 const ELLIPSE: &str = include_str!("wgsl/ellipse.wgsl");
 const LINE: &str = include_str!("wgsl/line.wgsl");
@@ -364,5 +425,144 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
             line,
         )
         .with_shader(LINE)),
+        // ---- gen-backgrounds (`v26.10` G5): the moving backgrounds -------------------------------
+        // a moving mesh gradient: three colour blobs on slow orbits
+        Arc::new(kind(
+            "meshgrad",
+            "genkind.meshgrad",
+            BG,
+            [
+                rgb3(["color_r", "color_g", "color_b"], [255.0, 94.0, 98.0]),
+                rgb3(["color2_r", "color2_g", "color2_b"], [255.0, 195.0, 113.0]),
+                rgb3(["color3_r", "color3_g", "color3_b"], [104.0, 58.0, 183.0]),
+                vec![smooth("speed", 0.0, 2.0, 0.08, 0.01, ParamUnit::Ratio), smooth("softness", 0.1, 1.0, 0.45, 0.01, ParamUnit::Norm)],
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                false,
+                true,
+                false,
+                &[
+                    PathTok { key: "c", val: PathVal::Hex3("color") },
+                    PathTok { key: "c2", val: PathVal::Hex3("color2") },
+                    PathTok { key: "c3", val: PathVal::Hex3("color3") },
+                    PathTok { key: "sp", val: PathVal::Num("speed") },
+                    PathTok { key: "so", val: PathVal::Num("softness") },
+                ],
+                THREE_COLORS,
+            ),
+            meshgrad,
+        )
+        .with_shader(MESHGRAD)),
+        // plasma through a palette of three colours
+        Arc::new(kind(
+            "plasma",
+            "genkind.plasma",
+            BG,
+            [
+                rgb3(["color_r", "color_g", "color_b"], [18.0, 24.0, 60.0]),
+                rgb3(["color2_r", "color2_g", "color2_b"], [0.0, 170.0, 200.0]),
+                rgb3(["color3_r", "color3_g", "color3_b"], [240.0, 90.0, 160.0]),
+                vec![smooth("speed", 0.0, 2.0, 0.08, 0.01, ParamUnit::Ratio), smooth("scale", 1.0, 30.0, 8.0, 0.1, ParamUnit::Ratio)],
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                false,
+                true,
+                false,
+                &[
+                    PathTok { key: "c", val: PathVal::Hex3("color") },
+                    PathTok { key: "c2", val: PathVal::Hex3("color2") },
+                    PathTok { key: "c3", val: PathVal::Hex3("color3") },
+                    PathTok { key: "sp", val: PathVal::Num("speed") },
+                    PathTok { key: "sc", val: PathVal::Num("scale") },
+                ],
+                THREE_COLORS,
+            ),
+            plasma,
+        )
+        .with_shader(PLASMA)),
+        // floating particles: soft bokeh discs drifting up over a backdrop
+        Arc::new(kind(
+            "particles",
+            "genkind.particles",
+            BG,
+            [
+                rgb3(["bg_r", "bg_g", "bg_b"], [10.0, 12.0, 24.0]),
+                rgb3(["color_r", "color_g", "color_b"], [255.0, 214.0, 150.0]),
+                vec![
+                    smooth("strength", 0.0, 1.0, 0.8, 0.01, ParamUnit::Norm),
+                    count("count", 4.0, 200.0, 60.0),
+                    smooth("size", 0.005, 0.1, 0.02, 0.001, ParamUnit::Percent),
+                    smooth("softness", 0.0, 1.0, 0.5, 0.01, ParamUnit::Norm),
+                    smooth("speed", 0.0, 1.0, 0.05, 0.005, ParamUnit::Ratio),
+                    count("seed", 0.0, 9999.0, 1.0),
+                ],
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                false,
+                true,
+                false,
+                &[
+                    PathTok { key: "bg", val: PathVal::Hex3("bg") },
+                    PathTok { key: "c", val: PathVal::Hex3("color") },
+                    PathTok { key: "st", val: PathVal::Num("strength") },
+                    PathTok { key: "n", val: PathVal::Int("count", 4, 200) },
+                    PathTok { key: "sz", val: PathVal::Num("size") },
+                    PathTok { key: "so", val: PathVal::Num("softness") },
+                    PathTok { key: "sp", val: PathVal::Num("speed") },
+                    PathTok { key: "seed", val: PathVal::Int("seed", 0, 9999) },
+                ],
+                PARTICLE_COLORS,
+            ),
+            particles,
+        )
+        .with_shader(PARTICLES)),
+        // moving patterns: stripes, dots, a grid or waves, at an angle, drifting
+        Arc::new(kind(
+            "pattern",
+            "genkind.pattern",
+            BG,
+            [
+                vec![Row::Choice("pattern", PATTERNS)],
+                rgb3(["color_r", "color_g", "color_b"], [240.0, 240.0, 240.0]),
+                rgb3(["color2_r", "color2_g", "color2_b"], [30.0, 30.0, 40.0]),
+                vec![
+                    count("cells", 2.0, 80.0, 12.0),
+                    smooth("angle_deg", -180.0, 180.0, 30.0, 1.0, ParamUnit::Deg),
+                    smooth("ratio", 0.05, 0.95, 0.5, 0.01, ParamUnit::Norm),
+                    smooth("speed", -2.0, 2.0, 0.1, 0.01, ParamUnit::Ratio),
+                    smooth("softness", 0.0, 0.5, 0.04, 0.005, ParamUnit::Norm),
+                ],
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                false,
+                true,
+                false,
+                &[
+                    PathTok { key: "pt", val: PathVal::Choice("pattern", PATTERNS) },
+                    PathTok { key: "c", val: PathVal::Hex3("color") },
+                    PathTok { key: "c2", val: PathVal::Hex3("color2") },
+                    PathTok { key: "cl", val: PathVal::Int("cells", 2, 80) },
+                    PathTok { key: "an", val: PathVal::Num("angle_deg") },
+                    PathTok { key: "ra", val: PathVal::Num("ratio") },
+                    PathTok { key: "sp", val: PathVal::Num("speed") },
+                    PathTok { key: "so", val: PathVal::Num("softness") },
+                ],
+                TWO_COLORS,
+            ),
+            pattern,
+        )
+        .with_shader(PATTERN)),
     ]
 }

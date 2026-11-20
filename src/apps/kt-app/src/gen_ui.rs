@@ -869,6 +869,10 @@ pub(crate) fn choice_label(row: &str, key: &str) -> Option<&'static str> {
         ("color", "brown") => tr(k::genc::BROWN),
         ("curve", "log") => tr(k::genc::LOG),
         ("curve", "linear") => tr(k::genc::LINEAR),
+        ("pattern", "stripes") => tr(k::genc::STRIPES),
+        ("pattern", "dots") => tr(k::genc::DOTS),
+        ("pattern", "grid") => tr(k::genc::GRID),
+        ("pattern", "waves") => tr(k::genc::WAVES),
         _ => return None,
     })
 }
