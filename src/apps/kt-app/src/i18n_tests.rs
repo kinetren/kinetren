@@ -769,3 +769,22 @@ fn t876_update_texts_in_every_language() {
     }
     i18n::set_lang(Lang::Ru);
 }
+
+/// t3711 (owner kkt-26.11.20 A2): the File menu's render item is "Render…" in every catalog — never
+/// a container name ("Render to MP4…") and never the word of the Export submenu beside it: zh and
+/// ar called it "Export…", so the menu had two "Export" items, one of them a submenu of OTIO. (Arabic
+/// is stored in visual order, so its "…" stands first.)
+#[test]
+fn t3711_render_item_is_render_in_every_catalog() {
+    use crate::i18n::k;
+    for lang in Lang::ALL {
+        let t = &tables::TABLES[lang as usize];
+        let render = t[k::menu::file::RENDER.0 as usize];
+        let export = t[k::menu::file::EXPORT.0 as usize];
+        assert!(!render.contains("MP4"), "{lang:?}: {render}");
+        assert_ne!(render.trim_matches('…'), export, "{lang:?}: the render item reads as the Export submenu");
+        // the toolbar button's hint says the same word as the menu
+        let hint = t[k::tb::RENDER.0 as usize];
+        assert!(hint.contains(render.trim_matches('…')), "{lang:?}: the toolbar says {hint:?}, the menu {render:?}");
+    }
+}

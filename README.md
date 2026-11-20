@@ -200,7 +200,7 @@ the same zip from source.
 
 The welcome window offers a five-lesson tour, templates and your recent projects. Drop
 video files on the window and they land on the timeline. **Space** plays, **S** splits,
-double-click an event for its effects, **Ctrl+S** saves, and **File → Render to MP4…**
+double-click an event for its effects, **Ctrl+S** saves, and **File → Render…**
 exports. **Help → Guide…** searches this documentation from inside the program. The
 [getting started guide](docs/guide/getting-started.md) walks through a first edit, and
 [Keyboard and mouse](docs/guide/shortcuts.md) lists every key.

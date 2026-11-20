@@ -9,7 +9,7 @@ Source — [`kkt-26.11.20.txt`](kkt-26.11.20.txt) (verbatim, his answers of 20.1
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
 | A1 | 4 | Edit menu and bin: one "Create a generator…" item, the kind by the selected track (video → solid colour, audio → tone), none selected → solid colour | done `generator-menu-one-item`: t3712, t1164, t3713 (a kind change keeps the sound pair), live `genaudio`, `lessons` | `generator-menu-one-item` | 23 |
-| A2 | 5 | "Render to MP4…" becomes "Render…" | no: feature, change `render-settings` follow-up, no note (a catalog line) | executor features-slow | 23 |
+| A2 | 5 | "Render to MP4…" becomes "Render…" | done `render-settings` follow-up (branch render-menu-name): t3711 (every catalog; zh and ar said "Export…" beside the Export submenu), live `lessons` clicks File › Render… | `render-menu-name` | 23 |
 | A3 | 6 | export default: BT.709 at HD and above, BT.601 below, as the decode | no: defect, capability `export` (found-defects 1054) | executor mosh-sharp | 23 |
 | A4 | 7–8 | an effect's preset replaces the whole effect (curves too, Undo returns); a chain preset is joined to the existing chain on the graph, the extra nodes selected and deleted with the mouse | no: feature, change `fx-preset-change` (F-UI-010) revised by the decision | spec-features, then an executor | 23 |
 | A5 | 9–10 | graph v2: picture branches first, no inputs from other layers in v2 | no: feature, change `fx-graph-dag` (Q3 a, Q4 a) | executor fx-graph | 23 |
