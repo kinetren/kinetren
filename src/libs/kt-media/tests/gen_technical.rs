@@ -67,3 +67,23 @@ fn t3701_the_safe_areas_are_guides_over_a_transparent_frame() {
         assert!(px(&f, w, w / 2, h / 2)[3] > 0, "{w}: no centre cross");
     }
 }
+
+/// Test 3706 (text-counter-source): a title that runs a value draws a new frame as its value changes
+/// (the Quality cache does not hold it), and a typed title draws the same frame at any time.
+#[test]
+fn t3706_a_running_title_draws_its_value() {
+    let mut cd = GeneratorKind::default_text();
+    assert!(cd.set_value("source", &kt_model::ParamValue::Choice("countdown".into())));
+    cd.set_param("count_from", 10.0);
+    let mut src = GeneratorSource::new(cd);
+    let (w, h) = (160, 90);
+    let a = frame(&mut src, 0, w, h);
+    let b = frame(&mut src, 3 * 90_000, w, h);
+    assert!(a.iter().any(|v| *v != 0), "the countdown draws something");
+    assert_ne!(a, b, "0:10 and 0:07 draw the same frame");
+    assert_eq!(frame(&mut src, 0, w, h), a, "the same moment draws the same bytes");
+    let mut typed = GeneratorKind::default_text();
+    assert!(typed.set_value("text", &kt_model::ParamValue::Text("Hello".into())));
+    let mut src = GeneratorSource::new(typed);
+    assert_eq!(frame(&mut src, 0, w, h), frame(&mut src, 3 * 90_000, w, h), "a typed title moves by itself");
+}

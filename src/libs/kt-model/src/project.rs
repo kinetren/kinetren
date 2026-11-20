@@ -6464,6 +6464,15 @@ impl Project {
         self.markers.iter().any(|m| !m.note.is_empty())
     }
 
+    /// Whether a title runs a value — a timecode, a stopwatch, a countdown (text-counter-source): the
+    /// file is then format 7. An older build would read such a title as its typed text and save it so.
+    pub fn has_text_sources(&self) -> bool {
+        let runs = |c: &ClipEvent| {
+            matches!(&c.r#gen, Some(crate::GeneratorKind::Text { source, .. }) if !source.is_static())
+        };
+        self.clips.iter().any(runs) || self.sequences.iter().any(|s| s.clips.iter().any(runs))
+    }
+
     pub fn has_masks(&self) -> bool {
         self.clips.iter().any(|c| !c.masks.is_empty())
             || self.tracks.iter().any(|t| !t.masks.is_empty())

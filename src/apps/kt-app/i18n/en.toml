@@ -1343,6 +1343,13 @@ timecode = "Timecode"
 
 # Title window (R.52 C3).
 [titlew]
+source_note = "The value runs with the event’s own time; put {} in the text to place it inside words"
+count_format = "Format:"
+source_countdown = "Countdown"
+source_stopwatch = "Stopwatch"
+source_timecode = "Timecode"
+source_static = "Typed"
+source = "Text:"
 preset_roll = "End credits"
 preset_crawl = "Crawl"
 preset_typewriter = "Typewriter"
@@ -1373,6 +1380,8 @@ align_r = "Right"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+count_fps = "Timecode frame rate"
+count_from = "Start (s)"
 cut43 = "4:3 cut"
 thirds = "Rule of thirds"
 center = "Centre cross"
