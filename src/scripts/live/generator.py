@@ -130,12 +130,9 @@ def main(out):
         app.key("Escape")
         app.until(lambda: int(app.geom().get("windows", 0)) == 0)
         app.key("ctrl+z")
-        back = None
-        for _ in range(20):
-            back = app.pixel(*preview)
-            if max(back) < 40:
-                break
-            poll_step(0.3)
+        # the undone frame is composed on its own thread: wait for the consequence, not a clock
+        app.until(lambda: max(app.pixel(*preview)) < 40)
+        back = app.pixel(*preview)
         app.expect(
             back is not None and max(back) < 40,
             f"undo must bring back the black solid: {back}",

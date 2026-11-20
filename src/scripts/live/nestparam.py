@@ -331,6 +331,7 @@ def main(out):
         width = g["timeline"]["right"] - g["timeline"]["left"]
         past = geometry()["x"] + int(g["timeline"]["left"] + max(width / 8.0, 40.0)) + 8
         app.double_click(max(app.x_at(inner[0][0] + inner[0][1] // 2), past), y)
+        app.expect(app.until(lambda: app.has_probe("titlew.text", tries=2)), "the template title's window opened")
         app.click_probe("titlew.text", "template title text field")
         for ch in ["z", "z"]:
             app.key(ch)
