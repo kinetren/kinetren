@@ -65,7 +65,7 @@ impl std::fmt::Debug for AudioSeries {
 impl AudioSeries {
     /// A series from its stored bytes; `None` when they are not whole records.
     pub fn from_bytes(bytes: Vec<u8>) -> Option<AudioSeries> {
-        if bytes.len() % REC != 0 {
+        if !bytes.len().is_multiple_of(REC) {
             return None;
         }
         let hash = fnv1a(&bytes);

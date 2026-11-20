@@ -16,4 +16,4 @@
 ## 4. The jobs
 
 - [x] 4.1 kt-app background job; the render computes a missing series; kt-cli export; t3719
-- [ ] 4.2 live scenario `gen_reactive`, idle check, What's new, registry row
+- [x] 4.2 live scenario `gen_reactive`, idle check, What's new, registry row

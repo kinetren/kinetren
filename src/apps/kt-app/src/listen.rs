@@ -91,10 +91,4 @@ impl ListenService {
     pub fn take_fresh(&self) -> bool {
         self.fresh.swap(false, Ordering::AcqRel)
     }
-
-    /// Wait until nothing is queued or running (tests).
-    #[cfg(test)]
-    pub(crate) fn wait_idle(&self) -> bool {
-        self.lane.wait_idle(kt_time::test_deadline())
-    }
 }

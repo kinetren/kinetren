@@ -1378,7 +1378,7 @@ impl VideoRenderer {
                 let heard = match &c.r#gen {
                     Some(k) if k.listen_lane().is_some() => {
                         let path = |id: MediaId| project.media.iter().find(|m| m.id == id).map(|m| m.path.as_str());
-                        crate::listen::feed_for(&effective, c, &path).key()
+                        crate::listen::feed_for(effective, c, &path).key()
                     }
                     _ => 0,
                 };
