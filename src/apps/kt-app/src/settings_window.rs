@@ -151,7 +151,10 @@ impl KtApp {
                 crate::widgets::window_body(ui, |ui| {
                 // GROUPS modeled on “Transform” (R.66): frame, audio,
                 // curves. The collapsed state belongs to the window, not to the project.
-                crate::widgets::group(ui, "settings.frame", tr(k::grp::FRAME), |ui| {
+                // the groups are cards in columns (fx-form-width): a card is never narrower than
+                // the window's own minimum, the width its rows are made to fit
+                let mut flow = crate::widgets::CardFlow::new(ui, "settings_groups", 420.0);
+                flow.group("settings.frame", tr(k::grp::FRAME), |ui| {
                 egui::Grid::new("project_settings_grid").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SIZE));
                     ui.horizontal(|ui| {
@@ -220,7 +223,7 @@ impl KtApp {
                     ui.end_row();
                 });
                 });
-                crate::widgets::group(ui, "settings.audio", tr(k::grp::AUDIO), |ui| {
+                flow.group("settings.audio", tr(k::grp::AUDIO), |ui| {
                 egui::Grid::new("project_settings_audio").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SAMPLE_RATE));
                     ui.label(format!("{} Hz", cur.sample_rate));
@@ -242,7 +245,7 @@ impl KtApp {
                     ui.end_row();
                 });
                 });
-                crate::widgets::group(ui, "settings.curves", tr(k::grp::CURVES), |ui| {
+                flow.group("settings.curves", tr(k::grp::CURVES), |ui| {
                 egui::Grid::new("project_settings_curves").num_columns(2).show(ui, |ui| {
                     ui.label(tr(k::settings::SHAPE));
                     ui.horizontal(|ui| {
@@ -269,6 +272,7 @@ impl KtApp {
                     ui.end_row();
                 });
                 });
+                flow.end(ui);
                 if let Some(e) = &d.error {
                     ui.colored_label(crate::app::HINT_ERROR, e);
                 }

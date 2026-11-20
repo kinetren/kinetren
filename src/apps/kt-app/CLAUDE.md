@@ -576,6 +576,14 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   bounds is exactly the mismatch that made Gain −24…24 in one
   window and −48…24 in another. Parameter labels come from the `[fxp]` catalogue,
   not from literals in the code.
+- **A form uses the width it is given** (fx-form-width, kkt-26.11.07 line 13). The shared grid
+  lays ONE field a row (an `_x`/`_y` pair stays one row) into as many columns as `form_cols` fits
+  by the measured labels; a form of groups lays them as cards into the shortest column
+  (`widgets::CardFlow`, a card's minimum is the window's own minimum width). A new form of rows
+  draws through these, never a `vertical` that takes the whole row (the ducking halves did). A
+  harness test aims at a field by its published rectangle (`field_probe::rect_of(<param>)`), not
+  between two labels. Guards t3591, t3593 (every kind at 420/560/1600 pt), t3593b (every
+  registry window widened), t3594, live `form_width`.
 - **The chain strip is one for all places** (`widgets::chain_strip`): both the
   event and the morpher. It has the master checkbox, a checkbox and a cross on each
   slot, reordering with the MOUSE, and copy-paste. A new place with a chain MUST

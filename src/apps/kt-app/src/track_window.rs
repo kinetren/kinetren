@@ -532,8 +532,13 @@ impl KtApp {
                         set_key(&mut fx, &mut bypass, cur_key);
                     }
                     // TWO COMPRESSORS SIDE BY SIDE, one widget edits both
+                    // each half its share of the width: a `vertical` in a row takes all the room
+                    // left, and the shared grid flows into it (fx-form-width), leaving the speech
+                    // compressor a sliver
+                    let half = ((ui.available_width() - 3.0 * ui.spacing().item_spacing.x) / 2.0).max(1.0);
+                    let col = egui::Layout::top_down(egui::Align::Min);
                     ui.horizontal_top(|ui| {
-                        ui.vertical(|ui| {
+                        ui.allocate_ui_with_layout(egui::vec2(half, 0.0), col, |ui| {
                             ui.label(egui::RichText::new(tr(k::msg::DUCK_BG)).small());
                             match fx.iter_mut().position(|f| is_comp(f)) {
                                 Some(i) => {
@@ -558,7 +563,7 @@ impl KtApp {
                         });
                         ui.separator();
                         // SPEECH COMPRESSOR — the real one, from the key's chain
-                        ui.vertical(|ui| {
+                        ui.allocate_ui_with_layout(egui::vec2(half, 0.0), col, |ui| {
                             ui.label(egui::RichText::new(tr(k::msg::DUCK_KEY_SIDE)).small());
                             let Some(key_id) = cur_key else {
                                 ui.label(
