@@ -104,6 +104,7 @@ fn rings(p: &[f64], t: Tick, w: u32, h: u32) -> Box<[u8]> {
 }
 
 const SPECTRUM_COLORS: &[(&str, &str)] = &[("color", "genp.bottom_color"), ("color2", "genp.top_color")];
+const ONE_COLOR: &[(&str, &str)] = &[("color", "trn.color")];
 
 pub fn plugins() -> Vec<Arc<dyn Plugin>> {
     let _ = COMMON;
@@ -139,7 +140,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                         PathTok { key: "fe", val: PathVal::Unit("feather") },
                         PathTok { key: "c", val: PathVal::Hex4("color") },
                     ],
-                    &[],
+                    ONE_COLOR,
                 ),
                 waveform,
             )
@@ -223,7 +224,7 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                         PathTok { key: "fe", val: PathVal::Unit("feather") },
                         PathTok { key: "c", val: PathVal::Hex4("color") },
                     ],
-                    &[],
+                    ONE_COLOR,
                 ),
                 rings,
             )

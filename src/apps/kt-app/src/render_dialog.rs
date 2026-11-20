@@ -835,6 +835,7 @@ impl KtApp {
         }
         let mut opts_thread = opts.clone();
         let out_path_thread = out_path.clone();
+        let db_path = self.index_db_path();
         let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
             // an export pauses the background classes while it runs (one-scheduler): its vote is
             // down when the body returns, whatever the window does after
@@ -854,6 +855,16 @@ impl KtApp {
                 decode_threads: kt_gpu::memory::decode_threads(free, rw, rh),
                 rgba_threads: kt_gpu::memory::rgba_threads(free, rw, rh),
             };
+            // what the audio-reactive generators hear, before their sources are raised
+            // (gen-audio-reactive): the file never depends on whether the background job finished
+            let mut db = db_path.as_ref().and_then(|p| kt_media::index::MediaIndexDb::open(p).ok());
+            kt_engine::listen::ensure(
+                &project,
+                &|path| resolve_media_path(base.as_deref(), path),
+                &|f| crate::util::open_source(f).ok(),
+                db.as_mut().map(|d| d as &mut dyn kt_media::listen::SeriesStore),
+                &|| ctl.should_stop(),
+            );
             let ((a, _), (v, _)) = kt_ffmpeg::with_decode_settings(settings, || {
                 (open_all(&project, base.as_deref()), open_all(&project, base.as_deref()))
             });

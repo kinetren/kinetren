@@ -10,6 +10,7 @@
 mod analysis;
 mod app;
 mod audio_out;
+mod listen;
 mod automation;
 mod centerctl;
 mod clicks;

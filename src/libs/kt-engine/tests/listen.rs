@@ -50,11 +50,15 @@ fn clip(id: u64, kind: ClipKind, lane: u32, media: u64, start: i64, dur: i64, so
 
 /// A waveform on V1 over 0..8 s hearing track `track`; a music file on A1 at 2..6 s from its 1 s.
 fn project(track: f64) -> Project {
+    project_with(track, "t3715-music.wav")
+}
+
+fn project_with(track: f64, music: &str) -> Project {
     kt_plugins_builtin::install();
     let mut p = Project::new(settings());
     let wave = GeneratorKind::plugin_with("waveform", &[("track", track)]).expect("the waveform kind");
     p.media.push(MediaRef::new(MediaId(1), gen_kind_path(&wave)));
-    p.media.push(MediaRef::new(MediaId(2), "t3715-music.wav"));
+    p.media.push(MediaRef::new(MediaId(2), music));
     let mut g = clip(1, ClipKind::Video, 0, 1, 0, 8 * SEC, 0);
     g.r#gen = Some(wave);
     p.clips.push(g);
@@ -92,4 +96,39 @@ fn t3715_the_feed_follows_the_track_it_hears() {
     assert_eq!((m.0[0].from, m.0[0].offset), (Tick(3 * SEC), -2 * SEC), "the piece follows the event");
     assert_ne!(m.key(), f.key(), "the key moves with it");
     assert!(feed(&project(2.0)).0.is_empty(), "track 2 hears nothing");
+}
+
+/// Test 3719 (gen-audio-reactive): a render prepares what its generators hear before any is raised —
+/// `listen::ensure` computes the missing series from a source of its own and keeps it in the store; a
+/// second preparation opens nothing; a stopped one keeps nothing; a file that does not open is silence.
+#[test]
+fn t3719_a_render_computes_what_its_generators_hear_first() {
+    use std::cell::Cell;
+    struct Mem(Option<AudioSeries>);
+    impl kt_media::listen::SeriesStore for Mem {
+        fn get(&mut self, _: &std::path::Path) -> Option<AudioSeries> {
+            self.0.clone()
+        }
+        fn put(&mut self, _: &std::path::Path, s: &AudioSeries) {
+            self.0 = Some(s.clone());
+        }
+    }
+    let sine = || -> Option<Box<dyn kt_media::MediaSource>> {
+        Some(Box::new(kt_media::synthetic::SyntheticSource::new(Tick(6 * SEC), kt_media::synthetic::AudioPattern::Sine { hz: 1000.0 })))
+    };
+    let opened = Cell::new(0);
+    let p = project_with(1.0, "t3719-music.wav");
+    // stopped: nothing kept
+    kt_engine::listen::ensure(&p, &|k| k.to_string(), &|_| sine(), None, &|| true);
+    assert!(kt_engine::listen::get("t3719-music.wav").is_none() && feed(&p).0.is_empty(), "a stopped preparation keeps nothing");
+    let mut store = Mem(None);
+    kt_engine::listen::ensure(&p, &|k| format!("/abs/{k}"), &|f| { assert_eq!(f, "/abs/t3719-music.wav"); opened.set(opened.get() + 1); sine() }, Some(&mut store), &|| false);
+    assert_eq!(opened.get(), 1, "the file is read once");
+    assert!(store.0.is_some(), "the store keeps it");
+    assert_eq!(feed(&p).0.len(), 1, "the generator hears it");
+    kt_engine::listen::ensure(&p, &|k| k.to_string(), &|_| { opened.set(opened.get() + 1); sine() }, Some(&mut store), &|| false);
+    assert_eq!(opened.get(), 1, "known: nothing is opened again");
+    let lost = project_with(1.0, "t3719-missing.wav");
+    kt_engine::listen::ensure(&lost, &|k| k.to_string(), &|_| None, None, &|| false);
+    assert!(feed(&lost).0.is_empty(), "a file that does not open is silence");
 }

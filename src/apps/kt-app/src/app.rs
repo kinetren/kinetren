@@ -2148,6 +2148,11 @@ impl KtApp {
         // the index not having been built, and the person saw placeholders
         // instead of waveforms without a single word about the cause. Once per address:
         // the service may retry, and the message need not be repeated.
+        // a series an audio-reactive generator hears arrived: its feed holds it from now on
+        // (gen-audio-reactive); the player's builder rebuilds the generators' states
+        if crate::listen::service().take_fresh() {
+            self.player.sync_generators(&self.model.doc_arc());
+        }
         for e in self.index.take_errors() {
             if self.index_errs_said.insert(e.clone()) {
                 self.warn(crate::tf!(k::msg::INDEX_FAILED, e));
@@ -5025,6 +5030,21 @@ impl KtApp {
         self.edited_title().is_some()
     }
 
+    /// Ask the series of the files the audio-reactive generators hear (gen-audio-reactive): after an
+    /// edit and at the first sync of an opening; nothing when no generator listens.
+    fn ask_listened(&self) {
+        let heard = kt_engine::listen::heard_paths(self.model.doc());
+        if heard.is_empty() {
+            return;
+        }
+        let base = self.project_path.as_deref().and_then(|p| p.parent());
+        let files = heard.into_iter().map(|k| {
+            let f = resolve_media_path(base, &k);
+            (k, f)
+        });
+        crate::listen::service().ask(self.index_db_path(), files.collect());
+    }
+
     pub(crate) fn sync_media_sources(&mut self) {
         // A cheap check BEFORE building the map (R.53, item 413): sync is called from
         // every edit wrapper, that is, on EVERY frame of any
@@ -5037,6 +5057,7 @@ impl KtApp {
         }
         self.media_synced_rev = self.model_rev;
         self.media_sync_builds += 1;
+        self.ask_listened();
         let cur: HashMap<MediaId, String> =
             self.model.doc().media.iter().map(|m| (m.id, m.path.clone())).collect();
         if !self.media_synced {

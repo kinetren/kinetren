@@ -1494,6 +1494,16 @@ fn load_project_file(input: &str) -> Result<(Project, Retained), i32> {
 fn load_project_resolved(input: &str) -> Result<Project, i32> {
     let (mut p, _) = load_project_file(input)?;
     kt_otio::resolve_project_media(&mut p, std::path::Path::new(input).parent());
+    // what the audio-reactive generators hear, before any of them is raised (gen-audio-reactive): a
+    // render never depends on a background job; the sidecar keeps the series between runs
+    let mut db = kt_media::index::MediaIndexDb::open(&std::path::Path::new(input).with_extension("ktindex.db")).ok();
+    kt_engine::listen::ensure(
+        &p,
+        &|path| path.to_string(),
+        &|f| kt_media::factory::open_indexed(f, None).ok(),
+        db.as_mut().map(|d| d as &mut dyn kt_media::listen::SeriesStore),
+        &|| false,
+    );
     Ok(p)
 }
 

@@ -1309,6 +1309,10 @@ corner_br = "Нижний правый"
 tc_note = "Показывает время МАТЕРИАЛА: клип от нуля с началом материала 0 совпадает с часами таймлайна"
 
 [genkind]
+levelrings = "Кольца уровня"
+spectrum = "Спектр"
+waveform = "Форма волны"
+group_reactive = "Реагирует на звук"
 progress = "Полоса прогресса"
 plate = "Плашка нижней трети"
 frame = "Рамка"
@@ -1390,6 +1394,18 @@ align_r = "Справа"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+top_color = "Верх"
+bottom_color = "Низ"
+hold = "Держать пики"
+spacing = "Шаг"
+rings = "Колец"
+react = "Отклик"
+gap = "Зазор"
+bottom = "Базовая линия"
+style = "Вид"
+gain = "Усиление"
+height = "Высота"
+track = "Слушает дорожку"
 fill_color = "Заливка"
 track_color = "Дорожка"
 accent_color = "Акцент"
@@ -1469,6 +1485,10 @@ tone = "Тон 1 кГц"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+style_bars = "Столбцы"
+style_mirror = "Зеркально"
+style_filled = "Заливка"
+style_line = "Линия"
 waves = "Волны"
 grid = "Сетка"
 dots = "Точки"

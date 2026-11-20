@@ -112,3 +112,27 @@ pub fn heard_paths(project: &Project) -> Vec<String> {
     }
     out
 }
+
+/// Compute and keep every series `project`'s listening generators hear and the registry lacks — what
+/// a render does before its first frame, so its bytes never depend on whether a background job had
+/// finished (invariant 11). `file` resolves a media path to the file to open, `open` opens a short-lived
+/// source of the caller's own (invariant 5's offline door), `store` keeps and gives back series.
+/// A file that does not open is heard as silence.
+pub fn ensure(
+    project: &Project,
+    file: &dyn Fn(&str) -> String,
+    open: &dyn Fn(&str) -> Option<Box<dyn kt_media::MediaSource>>,
+    mut store: Option<&mut dyn kt_media::listen::SeriesStore>,
+    stop: &dyn Fn() -> bool,
+) {
+    for key in heard_paths(project) {
+        if get(&key).is_some() {
+            continue;
+        }
+        let f = file(&key);
+        let st = store.as_mut().map(|s| &mut **s as &mut dyn kt_media::listen::SeriesStore);
+        if let Some(s) = kt_media::listen::series_for(std::path::Path::new(&f), st, || open(&f), stop) {
+            put(&key, Arc::new(s));
+        }
+    }
+}
