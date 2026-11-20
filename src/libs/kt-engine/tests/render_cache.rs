@@ -528,3 +528,43 @@ fn t3317_a_segment_is_written_from_planes() {
         assert!(mean < 3.0, "moment {}: read back {mean:.2} from its composite", t.0);
     }
 }
+
+/// Test t3600 (found-defects 826): a run of which ONE moment is measured — its costs arrive one at a time,
+/// as when the playhead steps — is prerendered from the moments before it, in one segment: the
+/// prerender takes the unmeasured moments up to `RUN_REACH` on each side, so the run does not grow a
+/// moment a pass, a segment each.
+#[test]
+fn t3600_a_run_known_by_one_moment_is_one_segment() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((p, moments)) = player(root.path(), 0.66) else { return };
+    p.set_render_cache(None);
+    p.seek(moments[3]);
+    p.note_preview_cost(moments[3], 1_000_000_000, (160, 90));
+    p.set_render_cache(Some(Config {
+        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        root: root.path().to_path_buf(),
+        build: "test build".into(),
+        base: None,
+        cap: 1 << 30,
+    }));
+    let items = kt_time::trace::testing::capture(|| {
+        p.render_cache().kick();
+        let deadline = kt_time::test_deadline();
+        while !moments.iter().all(|t| p.disk_picture(*t).is_some()) {
+            assert!(Instant::now() < deadline, "the prerender never wrote the run: {:?}", p.render_cache().counts());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    let stores: Vec<(u64, u64)> = kt_time::trace::testing::recs(&items)
+        .iter()
+        .filter(|r| r.ev == kt_time::trace::Ev::RenderCache as u16 && r.aux == kt_time::trace::render_cache::STORE)
+        .map(|r| (r.c, r.a))
+        .collect();
+    let step = p.video_grid().frame_step();
+    let holding: Vec<&(u64, u64)> = stores
+        .iter()
+        .filter(|(first, n)| moments.iter().any(|t| (*first as i64) <= t.0 && t.0 < *first as i64 + *n as i64 * step))
+        .collect();
+    assert_eq!(holding.len(), 1, "the run is one segment; written (first tick, moments): {stores:?}");
+    assert!((holding[0].0 as i64) < moments[0].0, "it starts before the run's first moment: {stores:?}");
+}
