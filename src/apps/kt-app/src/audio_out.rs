@@ -17,16 +17,19 @@ use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// How long the device stays open after the transport stopped (kept-mix-settle D5): the device's
-/// own buffer has played out long before, and a Space released and pressed again within it does not
-/// pay a reopen. Past it the stream is dropped and nothing of the sound wakes on a pause.
+/// How long the device keeps playing after the transport stopped (kept-mix-settle D5): the device's
+/// own buffer has played out long before, and a Space released and pressed again within it changes
+/// nothing. Past it the stream is PAUSED and kept for the next Play (play-start-and-prefetch D6: a resume
+/// returns in microseconds, an open took up to seconds); it is closed only when the pause fails or the
+/// paused stream keeps calling back. Nothing of the sound wakes on a pause.
 pub const CLOSE_AFTER_REST: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The sound output: a thread of its own (`audio-output`) owns the device's stream, opens it when
-/// the transport plays and drops it once the transport has stood for [`CLOSE_AFTER_REST`]
-/// (kept-mix-settle, found-defects 274: open, cpal's ALSA worker and PipeWire's data loop woke
-/// 24 and 48 times a second on a pause handing out silence). `cpal::Stream` is not `Send` and its
-/// open blocks: the UI thread never opens it.
+/// The sound output: a thread of its own (`audio-output`) owns the device's stream, opens it at the
+/// first Play, pauses it once the transport has stood for [`CLOSE_AFTER_REST`] and resumes it on the
+/// next Play; the stream is closed only when a pause fails or a paused stream keeps calling back
+/// (kept-mix-settle, found-defects 274: open, cpal's ALSA worker and PipeWire's data loop woke 24 and
+/// 48 times a second on a pause handing out silence; play-start-and-prefetch D6). `cpal::Stream` is
+/// not `Send` and its open blocks: the UI thread never opens it.
 pub struct AudioOutput {
     ctl: Arc<OutputCtl>,
     wake: Arc<kt_engine::Wake>,

@@ -63,7 +63,8 @@ pub enum BitDepth {
 /// The RGB→YUV matrix: used by the conversion AND written as the tag (D6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Matrix {
-    /// What `sws` did by default and what the preview's decode does: the default.
+    /// swscale's own default, and the encoding default (the decode no longer assumes it: an untagged
+    /// HD source decodes as BT.709 since source-colour-matrix).
     #[default]
     Bt601,
     Bt709,
