@@ -3,8 +3,9 @@
 //
 // The logic is a port of the former rsmpeg variant:
 // two independent demuxers per file, a packet index on open,
-// sample-accurate audio seek, threads=1 for VP9/AV1, recreation of the
-// video decoder on backward seek, swscale into RGBA.
+// sample-accurate audio seek, threads=auto for every codec (the decoder is recreated on a backward
+// seek, so frame threads are safe), the source's own colour matrix and range into RGBA
+// (source-colour-matrix), and the platform's decode device where one is asked (hw-segment-decode).
 
 use crate::colour::{ColourTags, SourceColour};
 use crate::{FfError, Probe, RgbaFrame};
