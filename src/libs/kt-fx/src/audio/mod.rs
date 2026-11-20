@@ -354,6 +354,13 @@ impl TrackProcessor {
                 .filter_map(|(slot, f)| AudioNode::build(f, self.opts.pitch_engine).map(|n| (slot, n)))
                 .collect();
             self.fingerprint = chain_fingerprint(fx);
+            // a track's `pos` is the timeline frame: its frame 0 is timeline frame 0, on the
+            // project's grid — where a device's sound half on the track reads its device
+            // (track-device-sound; the default placement assumed 25 fps)
+            let at = self.opts.placement(0);
+            for (_, node) in &mut self.nodes {
+                node.place(at);
+            }
         }
         for (slot, node) in &mut self.nodes {
             node.apply(&fx[*slot], structural);

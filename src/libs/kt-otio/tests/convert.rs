@@ -3128,3 +3128,28 @@ fn t828_former_marker_is_refused_by_open_and_repaired_by_import() {
     // today's file is not taken by the import door's repair: Open is its door
     assert!(matches!(kt_otio::import_interchange(&text, None), Err(kt_otio::Error::ProjectFile)));
 }
+
+/// t3234 (track-device-sound; capability `project-format`): a video track's sound track travels in
+/// the track envelope as `sound`, raises the file to v17 and reads back; without a link the version
+/// stays.
+#[test]
+fn t3234_a_track_sound_link_in_the_exchange_file() {
+    kt_plugins_builtin::install();
+    use kt_model::LaneKind;
+    let mut p = rich_project();
+    p.validate().unwrap();
+    let text0 = save_project(&p, &Retained::default(), None);
+    assert!(kt_otio::kt_version(&parse_document(&text0).unwrap()).unwrap() < kt_otio::KT_META_V17);
+    assert!(!text0.contains("\"sound\""));
+    let a = p.track_at(LaneKind::Audio, 0).unwrap().id;
+    p.track_at_mut(LaneKind::Video, 0).unwrap().sound = Some(a);
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    assert_eq!(kt_otio::kt_version(&parse_document(&text).unwrap()), Some(kt_otio::KT_META_V17));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let kt_tracks = v["metadata"]["kt"]["tracks"].as_array().expect("track envelope");
+    assert!(kt_tracks.iter().any(|t| t["sound"] == a.0), "the link is not in the envelope");
+    let b = load_project(&text, None).expect("readable");
+    assert_eq!(b.project.tracks, p.tracks, "the link did not survive the round trip");
+    assert_eq!(save_project(&b.project, &b.retained, None), text, "write idempotence");
+}
