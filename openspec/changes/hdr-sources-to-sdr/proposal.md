@@ -84,7 +84,7 @@
 - **kt-plugin-api:** `Precision` in the manifest; float kernels for the effects that have them.
 - **kt-engine:** the plan carries the precision; the island's conversions; export's 10-bit HDR from f16;
   the prerender's Main10 segments.
-- **kt-model:** `ProjectSettings.precision`, `Sequence.precision: Option<_>`; project file format 8 by
+- **kt-model:** `ProjectSettings.precision`, `Sequence.precision: Option<_>`; the next free project file format by
   content.
 - **kt-app:** the settings' control, the chain's mark, the display surface.
 - **kt-otio:** the precision goes into `metadata["kt"]`; a row in "What OTIO export loses".
