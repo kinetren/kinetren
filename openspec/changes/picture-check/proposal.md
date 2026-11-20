@@ -1,7 +1,7 @@
 # Proposal: picture-check
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` T15 (no). Note F-EXP-009. Test numbers:
-> pending a new block from the orchestrator.
+> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` T15 (no). Note F-EXP-009. Tests reserved:
+> t3908–t3910.
 
 ## Why
 

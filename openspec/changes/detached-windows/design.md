@@ -31,7 +31,7 @@ An immediate viewport is laid out when the parent frame runs; it must not be PAI
 The shell keeps per detached window a stamp of what its body shows (the model revision it read, its own input
 counter, a wake addressed to it); when the stamp is unchanged and the child has no input, the shell skips the
 child's body and asks no repaint of its viewport (`ctx.request_repaint_of(id)` only on change). Acceptance is
-measured (tPENDING-3): playing with a detached effects window open over a static chain, the child surface
+measured (t3903): playing with a detached effects window open over a static chain, the child surface
 presents no frames while the main window keeps its V-fps; a parameter drag in the child repaints only the
 child and the preview.
 

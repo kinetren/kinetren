@@ -1,7 +1,7 @@
 # Proposal: detached-windows
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` W2 (partial). Note F-UI-012. Test
-> numbers: pending a new block from the orchestrator (the spec session's t3400–t3599 is used up).
+> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` W2 (partial). Note F-UI-012. Tests reserved:
+> t3901–t3903 (the block t3900–t4099).
 
 ## Why
 

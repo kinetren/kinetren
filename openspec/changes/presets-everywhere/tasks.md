@@ -1,22 +1,22 @@
 # Tasks: presets-everywhere
 
-> DESIGN ONLY until the owner answers Q1–Q2. Test numbers pending (tPENDING-4..7). After `fx-preset-change`.
+> DESIGN ONLY until the owner answers Q1–Q2. Tests: t3904–t3907. After `fx-preset-change`.
 
 ## 0. Notes
 
 - [x] 0.1 note F-AUT-013
 - [x] 0.2 proposal, design (D1–D5, class walk), deltas `automation`, `ui-reach`; `openspec validate presets-everywhere --strict`
-- [ ] 0.3 test numbers from the orchestrator; the owner's answers folded in
+- [ ] 0.3 the owner's answers folded in
 
 ## 1. The model (kt-model)
 
-- [ ] 1.1 blocks for transitions, generator values, masks, cameras, patches, geometry; paste by each domain; tPENDING-4
-- [ ] 1.2 `take_from` with a checklist, stretch/keep, skip-and-count; tPENDING-6
+- [ ] 1.1 blocks for transitions, generator values, masks, cameras, patches, geometry; paste by each domain; t3904
+- [ ] 1.2 `take_from` with a checklist, stretch/keep, skip-and-count; t3906
 
 ## 2. The interface (kt-app)
 
-- [ ] 2.1 `PresetStore` per kind (the chain file unchanged), factory presets per Q2; tPENDING-5
-- [ ] 2.2 `entity_head` on every entity form + the guard; the pick mode; the checklist window (registry row with reason); i18n ×5; tPENDING-7
+- [ ] 2.1 `PresetStore` per kind (the chain file unchanged), factory presets per Q2; t3905
+- [ ] 2.2 `entity_head` on every entity form + the guard; the pick mode; the checklist window (registry row with reason); i18n ×5; t3907
 - [ ] 2.3 the planned live scenario `take_from` written with the scenario
 
 ## 3. Close

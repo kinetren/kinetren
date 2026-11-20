@@ -1,7 +1,7 @@
 # Proposal: presets-everywhere
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` A2, A3 (partial). Note F-AUT-013. Test
-> numbers: pending a new block from the orchestrator.
+> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` A2, A3 (partial). Note F-AUT-013. Tests reserved:
+> t3904–t3907.
 
 ## Why
 

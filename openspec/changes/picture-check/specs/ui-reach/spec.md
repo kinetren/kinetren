@@ -12,4 +12,4 @@ Why: F-EXP-009 trick 1 — half of the mistakes are in the edit; rule 20.
 - **WHEN** an edit with a one-frame leftover after a cut and a 10-frame gap is checked from the Edit menu, the flash row clicked, then "Mark all"
 - **THEN** the list shows a flash at its time and a gap; the click puts the playhead on the leftover and selects it; "Mark all" adds two range markers; one Undo removes both
 - **PATH** click "Edit" → "Check the edit" → the Diagnostics window's Edit check section lists "flash 1 frame at 00:00:12:03" and "gap 10 frames" → click the flash row → the playhead jumps, the leftover is selected → click "Mark all" → two range markers on the ruler → Ctrl+Z → gone
-- **TEST** tPENDING-9 (`src/libs/kt-model/tests/lint.rs`), tPENDING-10 (`src/apps/kt-app/src/reach_tests.rs`)
+- **TEST** t3909 (`src/libs/kt-model/tests/lint.rs`), t3910 (`src/apps/kt-app/src/reach_tests.rs`)

@@ -1,7 +1,6 @@
 # Tasks: detached-windows
 
-> DESIGN ONLY until the owner answers Q1–Q2. Test numbers pending (tPENDING-1..3) — a block is asked of the
-> orchestrator.
+> DESIGN ONLY until the owner answers Q1–Q2. Tests: t3901–t3903.
 
 ## 0. Notes
 
@@ -11,9 +10,9 @@
 
 ## 1. Build (kt-app)
 
-- [ ] 1.1 `Shell::detachable`, the detached host (immediate viewport, own title row, StartDrag/BeginResize with the pointer release), dock by button and by drop; tPENDING-1
-- [ ] 1.2 the settings store: detached flag, size, position (not on Wayland); the guards t779/t921/t1125 for both hosts; tPENDING-2
-- [ ] 1.3 the per-surface repaint gate; the `idle` and a playing measurement; tPENDING-3
+- [ ] 1.1 `Shell::detachable`, the detached host (immediate viewport, own title row, StartDrag/BeginResize with the pointer release), dock by button and by drop; t3901
+- [ ] 1.2 the settings store: detached flag, size, position (not on Wayland); the guards t779/t921/t1125 for both hosts; t3902
+- [ ] 1.3 the per-surface repaint gate; the `idle` and a playing measurement; t3903
 - [ ] 1.4 i18n ×5; the planned live scenario `detached` written with the scenario
 
 ## 2. Close
