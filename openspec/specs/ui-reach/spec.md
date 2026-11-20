@@ -163,6 +163,12 @@ on a named area named a key that the area does not touch.
 - **THEN** in no language does a catalog value contain "(Del"; the area has the delete item without a chord, the camera has it with a chord; for a clip the chord is shown only when there is no region (otherwise Del cuts the region)
 - **TEST** t393 (`src/apps/kt-app/src/layout_tests.rs`)
 
+#### Scenario: The File menu's render item says Render in every language
+- **WHEN** the File menu is read in each of the five catalogs (owner, kkt-26.11.20 A2: "«Рендер…»")
+- **THEN** its render item names no container ("Render to MP4…" is gone: the window writes MOV, MKV and WebM too) and differs from the Export submenu beside it (zh and ar said "Export…", two Export items in one menu); the toolbar button's hint says the same word
+- **PATH** the person clicks File: the item above Project settings reads Render… (渲染… in Chinese, التصيير… in Arabic), the Export submenu above it holds only OpenTimelineIO…; a hover on the toolbar's render button says the same word in the status line
+- **TEST** t3711 (`src/apps/kt-app/src/i18n_tests.rs`)
+
 #### Scenario: The hint reaches the status line in the same frame
 - **WHEN** the pointer hovers over a toolbar button, a window button or the bin
 - **THEN** the rendered status line (`status_line_shown`, not an internal field) begins with the hint of this object with the kind "hover"; not a single `egui::Order::Tooltip` layer exists in egui's memory

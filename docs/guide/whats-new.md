@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **In Chinese and Arabic the File menu no longer has two Export items.** The render item now says Render there, as in the other languages; Export is only the submenu of OpenTimelineIO.
 - **Six new shapes and plates.** Edit › Create a generator › Shapes now has Polygon, Star, Arrow, Border frame, Lower-third plate (a bar with an accent stripe, which can slide in with a curve on its Reveal) and Progress bar (fills by itself over the time you set). They are drawn over whatever is on the tracks below, with smooth edges, and every colour has the eyedropper and its own transparency.
 - **Four moving backgrounds.** Edit › Create a generator › Background now has Moving gradient (soft blobs of three colours drifting into each other), Plasma, Particles (soft glowing dots floating up) and Pattern (stripes, dots, a grid or waves, drifting at an angle). They move by themselves — no keyframes — at the speed you set, and their colours can be taken with the eyedropper.
 - **A title can be a timecode, a stopwatch or a countdown.** In a Text generator's window, the new Text row chooses Typed, Timecode, Stopwatch or Countdown. A stopwatch counts up from its start, a countdown counts down to zero and stays there, in the format you pick (1:05, 1:05.3, 0:01:05 or 65.3), and a timecode runs at its frame rate. It is a title like any other: font, size, colours, outline, shadow, backing and animation all work on it. Write {} in the text to put the value inside words, like "Round ends in {}".
