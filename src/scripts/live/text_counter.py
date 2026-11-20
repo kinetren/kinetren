@@ -41,7 +41,7 @@ def main(out):
     os.environ["KT_AUTOSAVE_SECS"] = "600"
 
     with Live("text_counter", out, project=proj) as app:
-        app.key("Home")
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         app.click_probe("menu.edit", "the Edit menu")
         app.hover_probe("gen.new", "Create a generator…")
         app.hover_probe("gen.new.group.titles", "Titles and countdown")

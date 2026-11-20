@@ -39,7 +39,7 @@ def main(out):
     os.environ["KT_AUTOSAVE_SECS"] = "600"
 
     with Live("gen_technical", out, project=proj) as app:
-        app.key("Home")
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         create(app, "syncflash", "Sync flash")
         clips = app.until(lambda: len(app.live_clips()) >= 3)
         app.expect(clips, f"the flash and its beep were added: {app.live_clips()}")

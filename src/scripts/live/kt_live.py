@@ -627,7 +627,45 @@ class Live:
                     return
                 _poll(0.05)
             raise Failure("the program drew not a single frame — the window stayed empty")
-        raise Failure("the kt-app window did not appear")
+        self._window_evidence()
+        raise Failure("the kt-app window did not appear (see window-tree.txt beside the screenshots)")
+
+    def _window_evidence(self):
+        """What the X server holds when the window was not found (found-defects 954, 824): the display,
+        the program's pid and whether it lives, the window manager, and every top-level window with its
+        class, map state and size — the next one names its cause instead of a bare timeout."""
+        lines = [f"DISPLAY={os.environ.get('DISPLAY')} pid={self.proc.pid if self.proc else None} "
+                 f"alive={self.proc is not None and self.proc.poll() is None}"]
+        try:
+            wm = subprocess.run(["pgrep", "-a", "openbox"], capture_output=True, text=True).stdout.strip()
+            lines.append(f"openbox: {wm or 'none'}")
+        except OSError as e:
+            lines.append(f"openbox: {e}")
+        try:
+            from Xlib import X as _X
+            states = {_X.IsUnmapped: "unmapped", _X.IsUnviewable: "unviewable", _X.IsViewable: "viewable"}
+
+            def walk(w, depth):
+                try:
+                    g = w.get_geometry()
+                    a = w.get_attributes()
+                    cls = w.get_wm_class()
+                    lines.append(f"{'  ' * depth}{w.id:#x} {cls} {states.get(a.map_state, a.map_state)} "
+                                 f"{g.width}x{g.height}+{g.x}+{g.y} override={a.override_redirect}")
+                    if depth < 3:
+                        for c in w.query_tree().children:
+                            walk(c, depth + 1)
+                except Exception as e:  # a window that went away during the walk
+                    lines.append(f"{'  ' * depth}{w.id:#x} gone: {e}")
+
+            walk(probe.root, 0)
+        except Exception as e:
+            lines.append(f"no tree: {e}")
+        try:
+            with open(os.path.join(self.out, "window-tree.txt"), "w") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError:
+            pass
 
     # ---- waiting for a FRAME, not for the clock (R.68) ---------------------------------
 

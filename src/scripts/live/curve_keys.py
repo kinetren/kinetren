@@ -48,7 +48,7 @@ def main(out):
     with Live("curve_keys", out, project=path) as app:
         # 1) the FX window, a curve, five keys. The graph's time window follows the timeline's view: the
         # project's start in view first, so the event's first key (its start) is inside the graph
-        app.key("Home")
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         app.expect(app.until(lambda: app.geom()["view_start"] <= 0), f"the project's start is in view: {app.geom()['view_start']}")
         app.double_click(app.x_at(1 * SEC), app.lane_y("video", 0, frac=0.5))
         app.expect(app.has_probe("fx.cancel"), "the effects window opened")
@@ -103,8 +103,8 @@ def main(out):
         # view that has moved past the start leaves it out — a person brings the start back first
         # (found-defects 814: under load the view stood at 7.2 s and the click aimed 15 px past the window)
         if "auto.key.0" not in probes(app):
-            app.key("Home")
-            app.expect(app.until(lambda: "auto.key.0" in probes(app)), "Home brought the first key into the graph")
+            app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
+            app.expect(app.until(lambda: "auto.key.0" in probes(app)), "Shift+Home brought the first key into the graph")
         app.click(*at(probes(app)["auto.key.0"]))
         poll_step(0.3)
         start = key_xs(app)

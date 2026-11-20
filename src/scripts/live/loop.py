@@ -76,11 +76,13 @@ def main(out):
         # The view FOLLOWS the cursor, so by this moment the start of the project
         # has slid past the left edge: `x_at(1 s)` gave x = −613, the click went
         # PAST THE WINDOW, and the check turned green on a stale pixel. We return the
-        # start into the view (Home = nav_prev) and make sure the moment is really
+        # start into the view (Shift+Home: the project's start) and make sure the moment is really
         # visible — otherwise the check will again measure the wrong thing.
-        app.key("Home")
-        geom = app.geom()
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         target = 1 * SEC
+        # the consequence, not the dump right after the key (test-stability)
+        app.until(lambda: app.geom()["view_start"] <= target)
+        geom = app.geom()
         app.expect(
             geom["view_start"] <= target,
             f"project start returned into view: view_start={geom['view_start']}",
@@ -103,7 +105,7 @@ def main(out):
         # cursor before it, Space: the picture must follow the sound round the loop. The new
         # region starts clear of the old one's end (6 s): a press within the edge's grab
         # zone would drag that edge instead and leave the cursor inside.
-        app.key("Home")
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         x0, x1 = app.x_at(int(6.5 * SEC)), app.x_at(int(10.5 * SEC))
         app.expect(
             0 < x0 < x1,

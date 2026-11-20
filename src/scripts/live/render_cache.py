@@ -60,6 +60,10 @@ def main(out):
         # the frame on screen is composed at the opening and measured slow: with the hands off, the
         # program writes it and its slow neighbours by itself, then rests
         wait_quiet(meter, "after opening and its prerender")
+        # the program's own word that the prerender is done (found-defects 950): at load ~300 the
+        # program got so little processor that its share read as quiet while the prerender still
+        # composed, and the first segment was committed 5 s after the "quiet"
+        app.until(lambda: app.geom().get("rc_settled") and cache_files(out) > 0, timeout=300)
         opened = cache_files(out)
         app.expect(opened > 0, "the program wrote slow moments to disk at rest after the opening")
         app.step("open", f"the heavy project is open; at rest the program wrote {opened} slow moments to disk")
@@ -72,6 +76,7 @@ def main(out):
         app.key("space")
         app.until(lambda: not app.playing(), timeout=10.0)
         wait_quiet(meter, "after the play and its prerender")
+        app.until(lambda: app.geom().get("rc_settled"), timeout=300)
         written = cache_files(out)
         app.expect(written >= opened, "the render cache kept its files")
         app.step("prerendered", f"{written} moments on disk; the program rests")

@@ -149,7 +149,7 @@ def main(out):
         # back to the judged frame for the undo below. The view follows the playhead: Home brings the
         # project's start back into view before the ruler is clicked there (a click computed for a
         # moment off screen left the window, and the Ctrl+Z after it went to another window)
-        app.key("Home")
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         judged = int(2.5 * SEC)
         app.expect(app.until(lambda: app.geom()["view_start"] <= judged), f"the judged moment is back in view: view_start={app.geom()['view_start']}")
         app.click(app.x_at(judged), app.ruler_y())
