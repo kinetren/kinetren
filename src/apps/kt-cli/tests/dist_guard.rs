@@ -1317,3 +1317,53 @@ fn t3238_the_live_rig_waits_for_the_window() {
     let worker = std::fs::read_to_string(dir.join("worker.py")).unwrap();
     assert_eq!(worker.matches("deadline = time.time() + TEST_DEADLINE").count(), 2, "the stand's start waits are not the test's guard");
 }
+
+/// t3239 (found-defects 824): a live wait that finds no window names why and ends at once when the
+/// program cannot bring one. `_why` is run on stand-ins with no display: a process that ended is
+/// dead with its code; a supervisor whose child ended is dead (the crash window is not the
+/// program's); a live one with no askable X server is "still starting". The stand and `kt_live`
+/// ask `_why.dead` in every wait for the window and print the start line (display, pid, log).
+#[test]
+fn t3239_a_window_wait_names_why_and_ends_on_a_dead_program() {
+    let dir = repo().join("src/scripts/live");
+    let script = r#"
+import subprocess, sys, time
+sys.path.insert(0, sys.argv[1])
+import _why
+log = sys.argv[2]
+open(log, "w").write("\nfirst line of the program\nsecond\n")
+p = subprocess.Popen(["sh", "-c", "exit 3"]); p.wait()
+seen = []
+assert _why.dead(p, seen), "an ended program is not dead"
+s = _why.state(":9999", p, log, seen)
+assert "ended (code 3)" in s and "first line of the program" in s, s
+sup = subprocess.Popen(["sh", "-c", "sleep 30 & wait; exec sleep 30"])
+deadline = time.time() + 600
+seen = []
+while not seen and time.time() < deadline:
+    _why.dead(sup, seen); time.sleep(0.05)
+assert seen, "the child was never seen"
+s = _why.state(":9999", sup, log, seen)
+assert "still starting" in s, s
+subprocess.run(["kill", str(seen[0])])
+while not _why.dead(sup, seen) and time.time() < deadline:
+    time.sleep(0.05)
+assert _why.dead(sup, seen), "a supervisor whose child ended is not dead"
+assert "editor process ended" in _why.state(":9999", sup, log, seen)
+sup.kill(); sup.wait()
+print("ok")
+"#;
+    let log = std::env::temp_dir().join(format!("t3239-{}.log", std::process::id()));
+    let out = std::process::Command::new("python3")
+        .args(["-c", script, dir.to_str().unwrap(), log.to_str().unwrap()])
+        .output()
+        .expect("python3");
+    let _ = std::fs::remove_file(&log);
+    assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let worker = std::fs::read_to_string(dir.join("worker.py")).unwrap();
+    let kt_live = std::fs::read_to_string(dir.join("kt_live.py")).unwrap();
+    for (name, text) in [("worker.py", &worker), ("kt_live.py", &kt_live)] {
+        assert!(text.contains("_why.dead("), "{name} does not end its window wait on a dead program");
+        assert!(text.contains("_why.start_line("), "{name} does not print its start line");
+    }
+}

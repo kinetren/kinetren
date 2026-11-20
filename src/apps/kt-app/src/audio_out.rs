@@ -976,6 +976,22 @@ mod tests {
         }
     }
 
+    /// Wait until the output thread has done its designed passes and stopped: no pass over 100 ms,
+    /// up to the test's guard. The pass after a close or a pause's check comes when the thread runs,
+    /// not at a time the test can name: under load it landed inside the quiet window that followed
+    /// the flag the test had read (found-defects 782). A thread that never stops fails at the guard.
+    fn settled(out: &AudioOutput) {
+        let deadline = kt_time::test_deadline();
+        loop {
+            let p0 = out.ctl().passes.load(Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(100));
+            if out.ctl().passes.load(Ordering::Relaxed) == p0 {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "the output thread never stood still");
+        }
+    }
+
     /// Does the output thread stand still over `d` (a pause parks it with no clock)?
     fn parked(out: &AudioOutput, d: Duration) -> bool {
         let p0 = out.ctl().passes.load(Ordering::Relaxed);
@@ -990,7 +1006,10 @@ mod tests {
         let rest = Duration::from_millis(150);
         let (player, out) = player_with(Double::default(), rest);
         let ctl = out.ctl();
-        std::thread::sleep(Duration::from_millis(50));
+        // the thread has STARTED (its first pass), not "50 ms have passed": under load it had not,
+        // and its first pass landed inside the quiet window (found-defects 782)
+        wait("the output thread started", || ctl.passes.load(Ordering::Relaxed) > 0);
+        settled(&out);
         assert!(!ctl.open.load(Ordering::Acquire), "a device open before Play");
         assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes on a pause");
         player.play();
@@ -1002,6 +1021,10 @@ mod tests {
         let paused = std::time::Instant::now();
         wait("the device closed at rest", || !ctl.open.load(Ordering::Acquire));
         assert!(paused.elapsed() >= rest, "closed before its rest: {:?}", paused.elapsed());
+        // the close has its designed passes after the flag (a device that pauses checks, `PAUSE_CHECK`
+        // later, that no callback lands; one that cannot pause is closed and passes once more): the
+        // quiet is measured once they are done (found-defects 782)
+        settled(&out);
         assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes on a pause after a play");
         assert_eq!(ctl.opens.load(Ordering::Relaxed), 1);
     }

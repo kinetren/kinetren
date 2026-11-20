@@ -36,6 +36,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from _channel import channel_dir, keep_channel  # noqa: E402
+import _why  # noqa: E402
 RUST = os.path.abspath(os.path.join(HERE, "..", ".."))
 KT_APP = os.path.join(RUST, "target", "debug", "kinetren")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
@@ -170,6 +171,7 @@ class Bench:
         # run, and a shared `bench/` meant a shared command channel and a shared geometry
         # dump — the workers opened projects in each other’s places and read others’
         # frames. This is what looked like “parallelism paints everything”.
+        self.display = display
         self.dir = os.path.join(out, "bench" + display.replace(":", ""))
         os.makedirs(self.dir, exist_ok=True)
         # the dump and the command file on tmpfs (test-hygiene, `kt_live.channel_dir`)
@@ -242,16 +244,30 @@ class Bench:
         for p in [self.ctl, self.geom] + glob.glob(glob.escape(self.geom) + ".*"):
             if os.path.exists(p):
                 os.unlink(p)
-        log = open(os.path.join(self.dir, "kt-app.log"), "a")
+        log_path = os.path.join(self.dir, "kt-app.log")
+        log = open(log_path, "a")
+        offset = log.tell()
         self.proc = subprocess.Popen(
             [KT_APP, self.blank], stdout=log, stderr=log, env=self.env()
         )
+        # WHO AND WHERE (found-defects 824): a stand that never shows its window names whether the
+        # program died, never reached its display or is still starting — printed while it waits
+        seen = []
+        why = lambda: _why.state(self.display, self.proc, log_path, seen, offset)  # noqa: E731
+        said = time.time()
+
+        def waiting():
+            nonlocal said
+            if _why.dead(self.proc, seen):
+                raise SystemExit(f"stand: {why()}")
+            if time.time() - said >= 30.0:
+                said = time.time()
+                print(f"stand still waiting: {why()}", flush=True)
         # we wait for DRAWN frames: the program reports their number itself, up to the test's
         # guard while it lives (found-defects 822: a fixed limit is a claim about the load)
         deadline = time.time() + TEST_DEADLINE
         while time.time() < deadline:
-            if self.proc.poll() is not None:
-                raise SystemExit(f"stand did not come up, see {self.dir}/kt-app.log")
+            waiting()
             try:
                 with open(self.geom) as f:
                     if int(json.load(f).get("frame", 0)) >= 2:
@@ -260,7 +276,8 @@ class Bench:
                 pass
             time.sleep(0.05)
         else:
-            raise SystemExit("the stand drew not a single frame")
+            raise SystemExit(f"the stand drew not a single frame: {why()}")
+        print(f"stand {_why.start_line(self.display, self.proc.pid, log_path, offset)}", flush=True)
         # WINDOW REFERENCE — X-window geometry IN PIXELS, not the canvas size from
         # the dump: the form-contract scenario (R.66) sets the window low, and the
         # next one must get it back. The egui canvas size is in POINTS, and restoring
@@ -278,8 +295,7 @@ class Bench:
                 g = probe.origin(probe.window())
             except SystemExit:
                 # not mapped yet, or the walk met a window that closed under it: ask again
-                if self.proc.poll() is not None:
-                    raise SystemExit(f"stand ended, see {self.dir}/kt-app.log")
+                waiting()
                 time.sleep(0.1)
                 continue
             if g == last:
@@ -290,7 +306,7 @@ class Bench:
                 last, stable = g, 0.0
             time.sleep(0.1)
         if last is None:
-            raise SystemExit(f"the stand's window was never found, see {self.dir}/kt-app.log")
+            raise SystemExit(f"the stand's window was never found: {why()}")
         x, y, w, h = last
         with open(os.path.join(self.dir, "window.json"), "w") as f:
             json.dump({"x": x, "y": y, "w": w, "h": h}, f)
