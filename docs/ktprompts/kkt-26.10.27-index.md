@@ -14,11 +14,11 @@ help notes F-HLP-023/027/028/029.
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
 | K1 | 1–2 | wine: Play on a loop region freezes the picture until a click | no: defect → transport | `loop-play-latency-hold` | loop-play-latency-hold |
-| K2 | 4 | the morpher window grows wider forever on another system | no: defect → ui-reach | `shared-window-shell` | shared-window-shell |
-| K3 | 6 | `kinetren-mime.xml` is not fully translated | no: defect → distribution | `i18n-gaps` | i18n-gaps |
-| K4 | 8 | the FFmpeg download window says nothing (speed, where) | no: feature, no note → media-index | `ffmpeg-download-window-info` | ffmpeg-download-window-info |
-| K5 | 10 | the render window is poorer than the C++ one | no: feature, no note → export | `render-window-v1-parity` (takes U1, T12 of v26.10) | render-window-v1-parity |
-| K6 | 12 | a Flatpak release with hardware encoding in render | no: feature, no note → distribution, export | `hw-encode-context` → `flatpak-flathub` (takes T16 of v26.10) | hw-encode-context |
+| K2 | 4 | the morpher window grows wider forever on another system | done `shared-window-shell`, t918, t923, live `winshell`: no window grows by itself, the owner's morpher scene at zoom 1.1/1.2 | `shared-window-shell` | shared-window-shell |
+| K3 | 6 | `kinetren-mime.xml` is not fully translated | done `i18n-gaps`, t930, t931: every catalog language is in the desktop and MIME files | `i18n-gaps` | i18n-gaps |
+| K4 | 8 | the FFmpeg download window says nothing (speed, where) | done `ffmpeg-download-window-info`, t950, t951, t952: the window says source, speed, time left and where it went | `ffmpeg-download-window-info` | ffmpeg-download-window-info |
+| K5 | 10 | the render window is poorer than the C++ one | done `render-window-v1-parity`, t954, t956, t957, t958: the encoder named, rows from the run, counters stop, Replace asked | `render-window-v1-parity` (takes U1, T12 of v26.10) | render-window-v1-parity |
+| K6 | 12 | a Flatpak release with hardware encoding in render | partial: `hw-encode-context` done (t961, t964, t25: hardware encoders found and offered); the Flatpak release is `flatpak-flathub` | `hw-encode-context` → `flatpak-flathub` (takes T16 of v26.10) | hw-encode-context |
 | K7 | 14 | effects and transitions lag far behind CapCut | no: feature, no note → video-fx, transitions | `effects-transitions-catchup` (after K8; takes F1/F2 of v26.10) | effects-transitions-catchup |
 | K8 | 16 | the plugin system first: build time, one interface | no: feature → F-EXT-003 | `plugin-api-stage1` (takes P1–P6 of v26.10) | plugin-api-stage1 |
 | K9 | 18 | no guide inside the program | no: feature → F-HLP-028 | `welcome-window-and-tour` | welcome-window-and-tour |
