@@ -18,22 +18,22 @@ thing, the export writes another".
 #### Scenario: A line is the chain, byte for byte
 - **WHEN** every chain of the golden projects and the showcase is lowered and executed with an empty input field and through the graph path
 - **THEN** the ops, the plan keys, `durable_hash` and the frames are equal to the line's; GOLDEN_VIDEO holds
-- **TEST** t3200 (`src/libs/kt-gpu/tests/gpu_render.rs`)
+- **TEST** t3200 (the goldens GOLDEN_VIDEO, t26, t306 in `src/libs/kt-gpu/tests` and `src/libs/kt-engine/tests/golden_export.rs`, unchanged)
 
 #### Scenario: Highlights blurred and laid back, in the preview and the export
-- **WHEN** an event's graph is Source → luma key → blur → Merge(Screen) over Source, composed for the preview cold and warm, by a fresh engine and in an export at the same moment
-- **THEN** the four frames are byte-for-byte equal on one device, within the composite's tolerance of a reference computed from the two layers of the Merge law, and a second run gives the same bytes
-- **TEST** t3201 (`src/libs/kt-gpu/tests/gpu_render.rs`)
+- **WHEN** an event's graph is Source → blur → Merge(Screen) over Source through the Source's luma, composed cold and warm, by a fresh renderer, and by the testkit's one-frame chain
+- **THEN** the four frames are byte-for-byte equal on one device, and differ from the plain and the blurred picture
+- **TEST** t3201 (`src/libs/kt-engine/tests/fx_graph_render.rs`)
 
 #### Scenario: A matte made from the picture
-- **WHEN** a Merge mixes a blurred arm over the source through the luma of a third arm, with mix 1 and 0.5, and an arm of another size
-- **THEN** the dark areas show the source and the bright the blur in proportion; mix 0.5 halves the coverage; the Foreground is fitted to the Background's size
-- **TEST** t3202 (`src/libs/kt-gpu/tests/parity.rs`)
+- **WHEN** a Merge mixes a blurred arm over the source through the source's luma, with mix 1 and 0.5, and through the inverted luma
+- **THEN** every byte is the integer mix of the source and the blur by the coverage luma × mix; the inverted luma gives the complement
+- **TEST** t3202 (`src/libs/kt-engine/tests/fx_graph_render.rs`)
 
 #### Scenario: A run between stops is planned as its line
 - **WHEN** graphs with geometry series, a K× barrier and point-wise runs inside arms are lowered
 - **THEN** each run's plan equals the plan of the same slots as a line; a stop zeroes the K accumulators; a merge runs at 1×
-- **TEST** t3203 (`src/libs/kt-fx/tests/geo_fuse.rs`)
+- **TEST** t3203 (`src/libs/kt-fx/tests/graph_plan.rs`)
 
 #### Scenario: A graph with no time kind in an arm reads as the line
 - **WHEN** a slowed event with a zooming lead branches after the lead, and the same event branches before any geometry
@@ -43,7 +43,7 @@ thing, the export writes another".
 #### Scenario: The keys see the wiring
 - **WHEN** an arm is rewired from one node to another with the same slots and values
 - **THEN** `fx_chain_hash`, the GPU plan key and `durable_hash` move; a line's keys equal the keys before this change
-- **TEST** t3208 (`src/libs/kt-engine/tests/fx_auto_render.rs`)
+- **TEST** t3208 (`src/libs/kt-engine/tests/fx_graph_render.rs`)
 
 ### Requirement: A time kind inside an arm is a second read of the layer
 A warp, a stream stage or an edge reading standing in an arm (not before the first branch) SHALL open
@@ -85,4 +85,4 @@ compositions' law E is the precedent.
 #### Scenario: One event with a Merge equals two stacked layers
 - **WHEN** for each of the nine modes an event merges a graded arm over a blurred arm, and the two-layer stack of the same chains with that blend mode is composed
 - **THEN** the frames are byte-for-byte equal on one device
-- **TEST** t3204 (`src/libs/kt-gpu/tests/parity.rs`)
+- **TEST** t3204 (`src/libs/kt-engine/tests/fx_graph_render.rs`)

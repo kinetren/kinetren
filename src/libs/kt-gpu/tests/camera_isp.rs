@@ -70,6 +70,7 @@ fn run_frame(
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
     };
     let p = FramePlan {
         t: Tick(90_000),
@@ -261,6 +262,7 @@ fn camera_isp_gpu_cost_per_1080p_frame() {
             blend_mode: kt_model::BlendMode::Normal,
             lead: None,
             masks: Vec::new(),
+            fx_in: &[],
         };
         let p = FramePlan {
             t: Tick(90_000 + id as i64),
@@ -296,6 +298,7 @@ fn gpu_bytes(engine: &kt_gpu::GpuFxEngine, id: u64, fx: &[FxInstance], fr: &Arc<
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
     };
     let p = FramePlan { t: Tick(90_000), out_w: w, out_h: h, layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }] };
     let mut out = Vec::new();

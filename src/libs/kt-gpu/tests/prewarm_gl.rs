@@ -50,6 +50,7 @@ fn t2128_a_prewarmed_gl_engine_keeps_composing() {
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
     };
     let plan = FramePlan { t: Tick(0), out_w: w, out_h: h, layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }] };
     let mut out = Vec::new();

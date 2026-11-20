@@ -52,6 +52,144 @@ pub enum PlanOp {
     /// Strength slot `fx[idx]` (LayerMix): the executor mixes the snapshot with the
     /// current state.
     Mix { idx: usize },
+    /// Keep the current frame in register `reg` (fx-graph-dag D3): a value an arm reads later.
+    /// `at` — the chain position it stands at (before slot `at`).
+    Hold { reg: usize, at: usize },
+    /// Make register `reg`'s frame current: slot `at` reads that value.
+    Load { reg: usize, at: usize },
+    /// The Merge slot `fx[idx]`: the current frame is the Background, register `fg` the
+    /// Foreground, `matte` the register and the rule of its coverage.
+    Merge { idx: usize, fg: usize, matte: Option<(usize, kt_model::MatteFrom)> },
+}
+
+/// A graph step the lowering puts before a slot (fx-graph-dag D3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphStep {
+    Hold { reg: usize },
+    Load { reg: usize },
+}
+
+/// A Merge's registers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MergeIn {
+    pub fg: usize,
+    pub matte: Option<(usize, kt_model::MatteFrom)>,
+}
+
+/// A chain graph lowered into a straight program (fx-graph-dag D3): the steps before each slot,
+/// the slots that reach no Output (skipped), each Merge's registers. A pure function of the wiring:
+/// the same chain gives the same program on every executor (invariant 7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lowered {
+    pub before: Vec<Vec<GraphStep>>,
+    pub dead: Vec<bool>,
+    /// `None` on a Merge with no Foreground wired: it passes its Background.
+    pub merges: Vec<Option<MergeIn>>,
+    /// The registers the program uses (at most `fx_graph::MAX_HELD`).
+    pub regs: usize,
+}
+
+impl Lowered {
+    /// The chain positions a geometry window or a point-wise run must not cross: a position with
+    /// graph steps, a skipped slot, a Merge.
+    fn cuts(&self) -> Vec<usize> {
+        (0..self.dead.len())
+            .filter(|&i| !self.before[i].is_empty() || self.dead[i] || self.merges[i].is_some())
+            .collect()
+    }
+}
+
+/// Lower a chain's wiring (`fx_in`, aligned with `fx`). `None` for a line: the plan is today's.
+/// The rule: every value read by anything but the next slot's main input is held right after it is
+/// made (the Source before the first live slot); a slot whose main input is not the current frame
+/// loads it; a register is free after its last reader.
+pub fn lower(fx: &[FxInstance], fx_in: &[kt_model::SlotInputs]) -> Option<Lowered> {
+    use kt_model::fx_graph::{self, Socket};
+    if fx_graph::is_line(fx_in) {
+        return None;
+    }
+    let n = fx.len();
+    // a line written out as entries is the line: the planner does not rest on its caller's form
+    let mut canon = fx_in.to_vec();
+    fx_graph::canonical(&mut canon, n);
+    if canon.is_empty() {
+        return None;
+    }
+    let fx_in = &canon[..];
+    let live = fx_graph::reaches_output(fx_in, n);
+    // value v: -1 the Source, j a slot; index v + 1
+    let mut held = vec![false; n + 1];
+    let mut last = vec![-1isize; n + 1];
+    // the frame current before a live slot is the previous LIVE slot's (a dangling one runs nothing)
+    let mut prev: isize = -1;
+    for i in (0..n).filter(|&i| live[i]) {
+        for (node, socket) in fx_graph::reads_of(fx_in, i) {
+            let v = match node {
+                fx_graph::Node::Source => -1,
+                fx_graph::Node::Slot(j) => j as isize,
+            };
+            let trivial = socket == Socket::Main && v == prev;
+            last[(v + 1) as usize] = last[(v + 1) as usize].max(i as isize);
+            held[(v + 1) as usize] |= !trivial;
+        }
+        prev = i as isize;
+    }
+    let mut before: Vec<Vec<GraphStep>> = vec![Vec::new(); n];
+    let mut merges: Vec<Option<MergeIn>> = vec![None; n];
+    let mut regs: Vec<Option<isize>> = Vec::new();
+    let mut reg_of = vec![usize::MAX; n + 1];
+    let mut pending: Option<isize> = held[0].then_some(-1);
+    let mut cur: isize = -1;
+    let alloc = |regs: &mut Vec<Option<isize>>, v: isize| -> usize {
+        match regs.iter().position(Option::is_none) {
+            Some(r) => {
+                regs[r] = Some(v);
+                r
+            }
+            None => {
+                regs.push(Some(v));
+                regs.len() - 1
+            }
+        }
+    };
+    let mut peak = 0;
+    for i in (0..n).filter(|&i| live[i]) {
+        if let Some(v) = pending.take() {
+            let r = alloc(&mut regs, v);
+            reg_of[(v + 1) as usize] = r;
+            before[i].push(GraphStep::Hold { reg: r });
+        }
+        peak = peak.max(regs.len());
+        let s = fx_graph::inputs(fx_in, i);
+        let pos = |x: kt_model::FxIn| match fx_graph::resolve(i, x) {
+            fx_graph::Node::Source => -1,
+            fx_graph::Node::Slot(j) => j as isize,
+        };
+        let bg = pos(s.main);
+        if bg != cur {
+            before[i].push(GraphStep::Load { reg: reg_of[(bg + 1) as usize] });
+        }
+        if fx[i].is_merge()
+            && let Some(fg) = s.second
+        {
+            merges[i] = Some(MergeIn {
+                fg: reg_of[(pos(fg) + 1) as usize],
+                matte: s.matte.map(|m| (reg_of[(pos(m.from) + 1) as usize], m.by)),
+            });
+        }
+        cur = i as isize;
+        // the registers whose last reader this slot was are free again
+        for v in regs.iter_mut() {
+            if v.is_some_and(|val| last[(val + 1) as usize] <= i as isize) {
+                *v = None;
+            }
+        }
+        if held[i + 1] {
+            pending = Some(i as isize);
+        }
+    }
+    let dead = live.iter().map(|l| !l).collect();
+    Some(Lowered { before, dead, merges, regs: peak })
 }
 
 pub struct ChainPlan {
@@ -117,6 +255,8 @@ enum RawKind {
     PointRun { i: usize, j: usize },
     Snapshot,
     Mix { idx: usize },
+    Graph { at: usize, steps: Vec<GraphStep> },
+    Merge { idx: usize, m: MergeIn },
 }
 
 /// Whether the stage fuses into a point-wise run (fused-pointwise-runs): the plugin contract's answer,
@@ -203,16 +343,57 @@ fn segment(
     burst_index: i64,
     stops: &[usize],
     lead: Option<LeadCtx>,
+    graph: Option<&Lowered>,
 ) -> Vec<RawKind> {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
     let (mut w, mut h) = (in_w, in_h);
     let mut raw: Vec<RawKind> = Vec::new();
+    // the windows stop at the snapshot points and at every graph position (fx-graph-dag D3)
+    let cut: Vec<usize>;
+    let snaps = stops;
+    let stops: &[usize] = match graph {
+        Some(g) => {
+            let mut all = snaps.to_vec();
+            all.extend(g.cuts());
+            all.sort_unstable();
+            all.dedup();
+            cut = all;
+            &cut
+        }
+        None => snaps,
+    };
+    // a register's frame size: a Load makes it current again
+    let mut reg_wh: Vec<(u32, u32)> = vec![(0, 0); graph.map_or(0, |g| g.regs)];
     let mut idx = 0usize;
     while idx < fx.len() {
-        if stops.contains(&idx) {
+        if snaps.contains(&idx) {
             raw.push(RawKind::Snapshot);
         }
+        if let Some(g) = graph {
+            if g.dead[idx] {
+                idx += 1;
+                continue;
+            }
+            if !g.before[idx].is_empty() {
+                for st in &g.before[idx] {
+                    match *st {
+                        GraphStep::Hold { reg } => reg_wh[reg] = (w, h),
+                        GraphStep::Load { reg } => (w, h) = reg_wh[reg],
+                    }
+                }
+                raw.push(RawKind::Graph { at: idx, steps: g.before[idx].clone() });
+            }
+        }
         let f = &fx[idx];
+        if f.is_merge() {
+            // a Merge with no Foreground (or a line's Merge) passes its Background; the size of a
+            // merge is its Background's (design D3)
+            if let Some(m) = graph.and_then(|g| g.merges[idx]) {
+                raw.push(RawKind::Merge { idx, m });
+            }
+            idx += 1;
+            continue;
+        }
         if is_geo_active(f, lead, out_w, out_h) {
             // GPU uniform budgets (primes/slots/tap ops) are known only
             // after the program is built — build it and, if it does not fit,
@@ -308,7 +489,7 @@ fn tail_zooms(raw: &[RawKind]) -> (Vec<(f64, f64)>, (f64, f64)) {
                 tm.1 *= 1.0 / lens.1.max(1e-9);
             }
             RawKind::Barrier { .. } | RawKind::PointRun { .. } => tail[ri] = tm,
-            RawKind::Snapshot | RawKind::Mix { .. } => tm = (1.0, 1.0),
+            RawKind::Snapshot | RawKind::Mix { .. } | RawKind::Graph { .. } | RawKind::Merge { .. } => tm = (1.0, 1.0),
         }
     }
     (tail, tm)
@@ -345,7 +526,7 @@ pub fn chain_head_zoom_in(
             _ => None,
         })
         .collect();
-    let raw = segment(fx, out_w, out_h, out_w, out_h, u, cam3d, 0, &stops, lead);
+    let raw = segment(fx, out_w, out_h, out_w, out_h, u, cam3d, 0, &stops, lead, None);
     let (_, head) = tail_zooms(&raw);
     head.0.max(head.1).max(1.0)
 }
@@ -391,6 +572,28 @@ pub fn plan_chain_in(
     stops: &[usize],
     lead: Option<LeadCtx>,
 ) -> ChainPlan {
+    plan_graph_in(fx, None, in_w, in_h, in_scale, out_w, out_h, u, cam3d, burst_index, stops, lead)
+}
+
+/// The same for a chain graph (fx-graph-dag D3): `graph` is `lower`'s program (`None` — a line,
+/// the plan of `plan_chain_in` byte for byte). Every graph position is a stop: the geometry series,
+/// the point-wise runs and the K× barriers fuse only between them, and a run between two stops is
+/// planned as the line made of its slots.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_graph_in(
+    fx: &[FxInstance],
+    graph: Option<&Lowered>,
+    in_w: u32,
+    in_h: u32,
+    in_scale: u32,
+    out_w: u32,
+    out_h: u32,
+    u: f64,
+    cam3d: Option<Cam3d>,
+    burst_index: i64,
+    stops: &[usize],
+    lead: Option<LeadCtx>,
+) -> ChainPlan {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
     let s = in_scale.max(1);
     debug_assert!(
@@ -401,7 +604,7 @@ pub fn plan_chain_in(
     debug_assert!(s == 1 || !stops.contains(&0), "leading stop forbids a decode stage");
 
     // --- A: segmentation and 1× programs (items 311-312) ---
-    let raw = segment(fx, in_w / s, in_h / s, out_w, out_h, u, cam3d, burst_index, stops, lead);
+    let raw = segment(fx, in_w / s, in_h / s, out_w, out_h, u, cam3d, burst_index, stops, lead, graph);
 
     // --- B: backward — net zoom of the tail at each barrier ---
     let (tail, _) = tail_zooms(&raw);
@@ -431,7 +634,7 @@ pub fn plan_chain_in(
                     kmap[ri] = s;
                 }
             }
-            RawKind::Snapshot | RawKind::Mix { .. } => {
+            RawKind::Snapshot | RawKind::Mix { .. } | RawKind::Graph { .. } | RawKind::Merge { .. } => {
                 resampled = true; // stops are always at 1× — there are no leading barriers further on
                 sq = (1.0, 1.0);
             }
@@ -441,20 +644,23 @@ pub fn plan_chain_in(
     // --- D: assembly. Input 1× and all K == 1 — ready 1× programs (bytes of
     // items 311-313); otherwise the runs are rebuilt with conjugation (k_in, k_out).
     if s == 1 && kmap.iter().all(|&k| k == 1) {
-        let ops = raw
-            .into_iter()
-            .map(|r| match r {
-                RawKind::Run { i, j, exec, .. } => PlanOp::Run { i, j, exec },
-                RawKind::Barrier { idx } => PlanOp::Barrier { idx, res_scale: 1 },
-                RawKind::PointRun { i, j } => PlanOp::PointRun { i, j, res_scale: 1 },
-                RawKind::Snapshot => PlanOp::Snapshot,
-                RawKind::Mix { idx } => PlanOp::Mix { idx },
-            })
-            .collect();
+        let mut ops = Vec::with_capacity(raw.len());
+        for r in raw {
+            match r {
+                RawKind::Run { i, j, exec, .. } => ops.push(PlanOp::Run { i, j, exec }),
+                RawKind::Barrier { idx } => ops.push(PlanOp::Barrier { idx, res_scale: 1 }),
+                RawKind::PointRun { i, j } => ops.push(PlanOp::PointRun { i, j, res_scale: 1 }),
+                RawKind::Snapshot => ops.push(PlanOp::Snapshot),
+                RawKind::Mix { idx } => ops.push(PlanOp::Mix { idx }),
+                RawKind::Graph { at, steps } => ops.extend(steps.iter().map(|st| graph_op(st, at))),
+                RawKind::Merge { idx, m } => ops.push(PlanOp::Merge { idx, fg: m.fg, matte: m.matte }),
+            }
+        }
         return ChainPlan { ops };
     }
     let mut ops = Vec::with_capacity(raw.len());
     let (mut w, mut h) = (in_w, in_h);
+    let mut reg_wh: Vec<(u32, u32)> = vec![(0, 0); graph.map_or(0, |g| g.regs)];
     let mut cur_k = s;
     for ri in 0..raw.len() {
         match &raw[ri] {
@@ -512,7 +718,30 @@ pub fn plan_chain_in(
                 debug_assert_eq!(cur_k, 1, "layer-mix blend must be 1x");
                 ops.push(PlanOp::Mix { idx: *idx });
             }
+            RawKind::Graph { at, steps } => {
+                // a held frame is at 1×: a branch point is the trunk's end, and the engine takes the
+                // decode step from the trunk alone, whose last op ends at 1× before a stop
+                debug_assert_eq!(cur_k, 1, "a graph step must be 1x");
+                for st in steps {
+                    match *st {
+                        GraphStep::Hold { reg } => reg_wh[reg] = (w, h),
+                        GraphStep::Load { reg } => (w, h) = reg_wh[reg],
+                    }
+                }
+                ops.extend(steps.iter().map(|st| graph_op(st, *at)));
+            }
+            RawKind::Merge { idx, m } => {
+                debug_assert_eq!(cur_k, 1, "a merge must be 1x");
+                ops.push(PlanOp::Merge { idx: *idx, fg: m.fg, matte: m.matte });
+            }
         }
     }
     ChainPlan { ops }
+}
+
+fn graph_op(st: &GraphStep, at: usize) -> PlanOp {
+    match *st {
+        GraphStep::Hold { reg } => PlanOp::Hold { reg, at },
+        GraphStep::Load { reg } => PlanOp::Load { reg, at },
+    }
 }

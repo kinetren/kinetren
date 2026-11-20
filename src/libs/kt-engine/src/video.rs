@@ -69,6 +69,8 @@ pub(crate) struct VideoClip {
     media: MediaId,
     reversed: bool,
     fx: Vec<kt_model::FxInstance>,
+    /// The chain's wiring aligned with `fx`, the lead included (fx-graph-dag); empty — a line.
+    fx_in: Vec<kt_model::SlotInputs>,
     /// Compiled automation of the chain (R.30; compilation — R.59,
     /// item 467). `None` — there are no live curves, and then the layer's chain
     /// is BORROWED: a clip without curves pays neither an allocation nor a single
@@ -864,7 +866,7 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
             }
             let fx = c.active_fx();
             let auto = c.active_fx_auto();
-            let (fx, auto) = materialize_lead(c, fx, auto);
+            let (fx, auto, fx_in) = materialize_lead(c, fx, auto);
             let plan = kt_model::AutoPlan::compile(&fx, &auto);
             let lead = Some(
                 kt_fx::conform::LeadCtx::new(
@@ -878,6 +880,7 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
             );
             let zoom = clip_head_zoom(
                 &fx,
+                kt_model::fx_graph::trunk_len(&fx_in, fx.len()),
                 plan.as_ref(),
                 c.start,
                 c.start + c.duration,
@@ -991,13 +994,16 @@ fn clip_order_quality(clip: &VideoClip, quality: Quality) -> Quality {
 /// curves (`auto`) get an empty slot at the same position, so that indices
 /// stay parallel; `LayerMix.from`, pointing at a slot after the
 /// insertion point, is shifted by one. An audio event has no such node.
+#[allow(clippy::type_complexity)]
 fn materialize_lead(
     c: &kt_model::ClipEvent,
     mut fx: Vec<kt_model::FxInstance>,
     mut auto: Vec<Vec<kt_model::ParamCurve>>,
-) -> (Vec<kt_model::FxInstance>, Vec<Vec<kt_model::ParamCurve>>) {
+) -> (Vec<kt_model::FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<kt_model::SlotInputs>) {
+    // the active chain's wiring (fx-graph-dag): a dropped slot's readers read its input
+    let mut fx_in = c.active_fx_in();
     if c.kind != ClipKind::Video {
-        return (fx, auto);
+        return (fx, auto, fx_in);
     }
     let want = c.geometry_pos.min(c.fx.len());
     let pos = (0..want).filter(|&i| !c.fx_bypass.get(i).copied().unwrap_or(false)).count();
@@ -1009,6 +1015,8 @@ fn materialize_lead(
             *from += 1;
         }
     }
+    // the lead stands on the wire into slot `pos`, and the Source of a graph is the frame after it
+    kt_model::fx_graph::insert_lead(&mut fx_in, fx.len(), pos);
     fx.insert(pos, c.geometry.node());
     if auto.len() >= pos {
         auto.insert(pos, c.geometry_auto.clone());
@@ -1016,7 +1024,7 @@ fn materialize_lead(
         auto.resize(pos, Vec::new());
         auto.push(c.geometry_auto.clone());
     }
-    (fx, auto)
+    (fx, auto, fx_in)
 }
 
 /// Maximum net zoom of the chain over the clip duration (R.46, item 320).
@@ -1029,6 +1037,9 @@ fn materialize_lead(
 #[allow(clippy::too_many_arguments)]
 fn clip_head_zoom(
     fx: &[kt_model::FxInstance],
+    // the slots before the first branch (fx-graph-dag D3): the decode step is the trunk's — a held
+    // frame at the step would reach a merge at the wrong size; a line is all trunk
+    trunk: usize,
     plan: Option<&kt_model::AutoPlan>,
     start: Tick,
     end: Tick,
@@ -1105,7 +1116,7 @@ fn clip_head_zoom(
             Cam3d { cam, world_scale: 1.0 }
         });
         let u = (t.0 - start.0) as f64 / span as f64;
-        best = best.max(kt_fx::plan::chain_head_zoom_in(&owned, pw, ph, u, cam3d, lead));
+        best = best.max(kt_fx::plan::chain_head_zoom_in(&owned[..trunk.min(owned.len())], pw, ph, u, cam3d, lead));
     }
     best
 }
@@ -1389,9 +1400,18 @@ impl VideoRenderer {
                 // at position `geometry_pos` (in the count of active slots):
                 // the model's slot indices do not move, and the engine's chain is
                 // one sequence, as in Vegas.
-                let (fx, auto) = materialize_lead(c, fx, auto);
-                let stream = StreamStage::of(&fx, &auto).map(Box::new);
-                let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
+                let (fx, auto, fx_in) = materialize_lead(c, fx, auto);
+                // the layer READS by its trunk (fx-graph-dag D2): the warp and the stream stage are
+                // those before the first branch; a time kind in an arm is a read of its own
+                let trunk = kt_model::fx_graph::trunk_len(&fx_in, fx.len());
+                let stream = StreamStage::of(&fx[..trunk], &auto[..trunk.min(auto.len())]).map(Box::new);
+                let warp = kt_model::clip_warp_of(
+                    &fx[..trunk],
+                    &auto[..trunk.min(auto.len())],
+                    c.source_in,
+                    c.duration,
+                    c.reversed,
+                );
                 let content = nest.map(|(_, h)| h).unwrap_or(0);
                 let fx_hash = fx_chain_hash(
                     &fx,
@@ -1417,10 +1437,17 @@ impl VideoRenderer {
                 } else {
                     fx_hash
                 };
+                // the wiring joins the key only when present (fx-graph-dag D3): a line's keys stay
+                let fx_hash = if fx_in.is_empty() {
+                    fx_hash
+                } else {
+                    xxhash_rust::xxh3::xxh3_64(format!("{fx_hash}|{fx_in:?}").as_bytes())
+                };
                 let crop =
                     [c.geometry.crop_l, c.geometry.crop_t, c.geometry.crop_r, c.geometry.crop_b];
                 let head_zoom = clip_head_zoom(
                     &fx,
+                    trunk,
                     auto_plan.as_ref(),
                     c.start,
                     c.start + c.duration,
@@ -1441,6 +1468,7 @@ impl VideoRenderer {
                     media: addr,
                     reversed: c.reversed,
                     fx,
+                    fx_in,
                     auto_plan,
                     fx_hash,
                     fade_in: None,
@@ -2558,6 +2586,7 @@ fn layer_src<'a>(
         src_scale,
         input,
         fx,
+        fx_in: &clip.fx_in,
         // the decoded stream's key joins the post-FX memo's: the same chain over another mosh is
         // another picture (the stream reads frames of OTHER events, which `fx_hash` does not see)
         fx_hash: match &streamed {
@@ -2644,6 +2673,7 @@ fn track_stage_layer<'a>(
                 project_h: ctx.project_size.1.max(1) as f64,
             }]
         },
+        fx_in: &[],
     };
     // track level — the composite alpha; mode — a separate axis
     let alpha_k = ((st.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32).min(4096);

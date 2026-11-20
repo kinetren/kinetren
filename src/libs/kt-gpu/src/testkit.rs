@@ -156,6 +156,7 @@ pub fn mix(dst: &mut Vec<u8>, a: &VideoFrame, b: &VideoFrame, k: u32, m: TransMi
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
     };
     let layers = vec![PlanLayer::Dissolve { a: side(a, 1), b: side(b, 2), k, alpha_k: 4096, mix: m }];
     let plan = FramePlan { t: Tick(0), out_w: a.width, out_h: a.height, layers };
@@ -167,6 +168,35 @@ pub fn chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame {
     let plan = chain_plan(fx, frame, ctx);
     let mut rgba = Vec::new();
     engine().execute_into(&plan, &mut rgba).expect("GPU execute");
+    let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
+    Frame { w: ctx.out_w, h: ctx.out_h, rgba, has_alpha }
+}
+
+/// A chain GRAPH over one frame, through the composite (fx-graph-dag): `fx_in` aligned with `fx`.
+pub fn graph(fx: &[FxInstance], fx_in: &[kt_model::SlotInputs], frame: Frame, ctx: &VideoFxCtx) -> Frame {
+    let mut plan = chain_plan(fx, frame, ctx);
+    if let PlanLayer::One { src, .. } = &mut plan.layers[0] {
+        src.fx_in = fx_in;
+        src.fx_hash = xxhash_rust::xxh3::xxh3_64(format!("{fx:?}|{fx_in:?}").as_bytes());
+    }
+    let mut rgba = Vec::new();
+    engine().execute_into(&plan, &mut rgba).expect("GPU execute");
+    let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
+    Frame { w: ctx.out_w, h: ctx.out_h, rgba, has_alpha }
+}
+
+/// Two layers of ONE frame stacked, each with its chain, the upper with a blend mode, both at full
+/// level — the Merge law's reference (fx-graph-dag D5).
+pub fn stack(lower: &[FxInstance], upper: &[FxInstance], mode: kt_model::BlendMode, frame: Frame, ctx: &VideoFxCtx) -> Frame {
+    let copy = Frame { w: frame.w, h: frame.h, rgba: frame.rgba.clone(), has_alpha: frame.has_alpha };
+    let mut a = chain_plan(lower, copy, ctx);
+    let b = chain_plan(upper, frame, ctx);
+    let PlanLayer::One { src: mut src_b, .. } = b.layers.into_iter().next().expect("one layer") else { unreachable!() };
+    src_b.blend_mode = mode;
+    src_b.source = SourceId(4);
+    a.layers.push(PlanLayer::One { src: src_b, alpha_k: 4096, scale_alpha: false, fade: None });
+    let mut rgba = Vec::new();
+    engine().execute_into(&a, &mut rgba).expect("GPU execute");
     let has_alpha = rgba.chunks_exact(4).any(|p| p[3] != 255);
     Frame { w: ctx.out_w, h: ctx.out_h, rgba, has_alpha }
 }
@@ -204,6 +234,7 @@ fn chain_plan<'a>(fx: &'a [FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame
         blend_mode: kt_model::BlendMode::Normal,
         lead: ctx.lead,
         masks: Vec::new(),
+        fx_in: &[],
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
     FramePlan { t: Tick(ctx.burst_index), out_w: ctx.out_w, out_h: ctx.out_h, layers }

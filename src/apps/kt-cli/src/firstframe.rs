@@ -110,6 +110,7 @@ pub fn run(args: &[String]) -> i32 {
             blend_mode: kt_model::BlendMode::Normal,
             lead: None,
             masks: Vec::new(),
+            fx_in: &[],
         };
         let plan = FramePlan {
             t: Tick(tick),

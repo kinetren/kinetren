@@ -131,6 +131,7 @@ fn layer_plan(w: u32, h: u32) -> kt_engine::FramePlan<'static> {
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
     };
     kt_engine::FramePlan {
         t: kt_time::Tick(90_000),

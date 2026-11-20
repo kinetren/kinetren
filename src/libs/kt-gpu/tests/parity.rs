@@ -97,6 +97,7 @@ impl Src {
             blend_mode: kt_model::BlendMode::Normal,
             lead: self.lead,
             masks: Vec::new(),
+            fx_in: &[],
         }
     }
 }

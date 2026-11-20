@@ -122,6 +122,7 @@ fn run(engine: &dyn VideoGpuExec, id: u64, fx: Vec<FxInstance>, alpha: bool) -> 
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
     };
     let p = FramePlan {
         t: Tick(90_000),

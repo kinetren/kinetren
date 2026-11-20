@@ -60,6 +60,7 @@ fn layer<'a>(fx: &'a [FxInstance], frame: &Arc<VideoFrame>, id: u64) -> PlanLaye
             blend_mode: kt_model::BlendMode::Normal,
             lead: None,
             masks: Vec::new(),
+            fx_in: &[],
         },
         alpha_k: 4096,
         scale_alpha: false,

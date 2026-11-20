@@ -250,9 +250,11 @@ enum Pipe {
     MaskAlpha,
     /// The export's RGB → YUV conversion into a word texture (export-host-copy D3).
     Yuv,
+    /// A Merge's matte (fx-graph-dag D3): a coverage made from a picture.
+    Matte,
 }
 
-pub(crate) const PIPE_COUNT: usize = 9;
+pub(crate) const PIPE_COUNT: usize = 10;
 
 impl Pipe {
     /// What the telemetry journal's GPU record calls the pass (gpu-pass-cost).
@@ -267,6 +269,7 @@ impl Pipe {
             Pipe::GridTile => "grid_tile",
             Pipe::MaskAlpha => "mask",
             Pipe::Yuv => "yuv",
+            Pipe::Matte => "matte",
         }
     }
 }
@@ -354,6 +357,23 @@ enum FxOp {
         key: u64,
         has_alpha: bool,
     },
+    /// Keep the current frame in a register (fx-graph-dag D3): a marker, like `Snapshot`.
+    Hold { reg: usize },
+    /// Make a register's frame current.
+    Load { reg: usize },
+    /// A Merge: the current frame is the Background, `fg` the Foreground's register. Two composite
+    /// passes over a transparent accumulator — the Background at full level, the Foreground with
+    /// the blend mode at `k` — then `Unpremul`: the layer composite's own kernels (the Merge law).
+    /// With a matte the Foreground goes at full level and the result is mixed with the Background
+    /// by the matte's coverage × `k`.
+    Merge {
+        fg: usize,
+        blend_id: u32,
+        k: u32,
+        bg_alpha: bool,
+        fg_alpha: bool,
+        matte: Option<(usize, kt_model::MatteFrom, bool)>,
+    },
 }
 
 /// The coverage as an uploadable frame (the byte in `.r`) and its upload key: a hash of the
@@ -400,8 +420,11 @@ impl FxOp {
             }
             // a snapshot spawns no passes; when the sizes have diverged, mixing is completed
             // by resampling the dry side
-            FxOp::Snapshot { .. } | FxOp::MaskSnapshot => 0,
+            FxOp::Snapshot { .. } | FxOp::MaskSnapshot | FxOp::Hold { .. } | FxOp::Load { .. } => 0,
             FxOp::Mix { .. } | FxOp::MaskMix { .. } => 2,
+            // a Merge: the Foreground's fit, two composite passes, `Unpremul`; a matte adds its fit, its
+            // coverage pass and the mix (an upper bound: the fits run only when the sizes differ)
+            FxOp::Merge { matte, .. } => if matte.is_some() { 7 } else { 4 },
             FxOp::GeomTile { .. } => 2,
             _ => 1,
         }
@@ -483,6 +506,8 @@ fn chain_ops(
     src_has_alpha: bool,
     // mask application points (shape-masks), at the chain positions
     masks: &[kt_fx::mask::MaskOp],
+    // the chain's wiring aligned with `fx` (fx-graph-dag D3): empty — a line
+    fx_in: &[kt_model::SlotInputs],
 ) -> ChainOps {
     let (mut w, mut h) = (src_w, src_h);
     // the maximum of INTERMEDIATE sizes (K×-segments, item 314): resolve_chain
@@ -510,18 +535,32 @@ fn chain_ops(
     stops.extend(kt_fx::mask::mask_stops(masks));
     stops.sort_unstable();
     stops.dedup();
-    let plan = kt_fx::plan::plan_chain_in(
-        fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &stops, lead,
+    // a graph is lowered by the one planner into a straight program (fx-graph-dag D3)
+    let graph = kt_fx::plan::lower(fx, fx_in);
+    let plan = kt_fx::plan::plan_graph_in(
+        fx, graph.as_ref(), src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &stops, lead,
     );
+    // a register's frame: (size, the alpha fold there)
+    let mut regs: Vec<(u32, u32, bool, bool)> = vec![(0, 0, false, false); graph.as_ref().map_or(0, |g| g.regs)];
     let s = src_scale.max(1);
     let in_logical = (src_w / s, src_h / s);
     // the chain position the next plan op starts at (mask points are emitted at positions)
     let mut pos = 0usize;
     // the alpha at the mask snapshot (the dry side's flag of the mix)
     let mut snap_alpha = false;
-    let mask_points = |at: usize, ops: &mut Vec<FxOp>, w: u32, h: u32, cur_alpha: bool, snap_alpha: &mut bool| -> bool {
+    // the points at `at`: `close` the masks that complete slot `at - 1` (its mix, the alpha
+    // points), `open` the dry snapshot of slot `at`. A graph's steps at `at` stand between the two:
+    // a Hold keeps the masked output, a Load changes the frame the snapshot takes (fx-graph-dag)
+    let mask_points = |at: usize, close: bool, open: bool, ops: &mut Vec<FxOp>, w: u32, h: u32, cur_alpha: bool, snap_alpha: &mut bool| -> bool {
         use kt_fx::mask::MaskOpKind;
         let mut produced = false;
+        if !close {
+            if open && masks.iter().any(|o| matches!(o.kind, MaskOpKind::Mix { from } if from == at)) {
+                ops.push(FxOp::MaskSnapshot);
+                *snap_alpha = cur_alpha;
+            }
+            return false;
+        }
         for op in masks.iter().filter(|o| o.at == at && matches!(o.kind, MaskOpKind::Mix { .. })) {
             let sp = kt_fx::mask::mask_space(op, fx, in_logical, (out_w, out_h), (w, h), lead);
             let (cov, key) = coverage_frame(&kt_fx::mask::rasterize_cached(&op.masks, &sp, w, h));
@@ -534,12 +573,14 @@ fn chain_ops(
             ops.push(FxOp::MaskAlpha { cov, key, has_alpha: cur_alpha || produced });
             produced = true;
         }
-        if masks.iter().any(|o| matches!(o.kind, MaskOpKind::Mix { from } if from == at)) {
+        if open && masks.iter().any(|o| matches!(o.kind, MaskOpKind::Mix { from } if from == at)) {
             ops.push(FxOp::MaskSnapshot);
             *snap_alpha = cur_alpha || produced;
         }
         produced
     };
+    // position `pos` is closed but not yet opened (a graph step stood there)
+    let mut half_open = false;
     // open snapshots: (op position, frame size there) — for the strength-0 skip below
     // (op index, size, the alpha fold at the snapshot)
     let mut snaps: Vec<(usize, u32, u32, Option<bool>)> = Vec::new();
@@ -547,24 +588,71 @@ fn chain_ops(
         // where this op starts in the chain; the mask points standing there come first
         let span = match &op {
             kt_fx::plan::PlanOp::Run { i, j, .. } | kt_fx::plan::PlanOp::PointRun { i, j, .. } => Some((*i, *j)),
-            kt_fx::plan::PlanOp::Barrier { idx, .. } | kt_fx::plan::PlanOp::Mix { idx } => {
-                Some((*idx, *idx + 1))
-            }
-            kt_fx::plan::PlanOp::Snapshot => None,
+            kt_fx::plan::PlanOp::Barrier { idx, .. }
+            | kt_fx::plan::PlanOp::Mix { idx }
+            | kt_fx::plan::PlanOp::Merge { idx, .. } => Some((*idx, *idx + 1)),
+            kt_fx::plan::PlanOp::Snapshot | kt_fx::plan::PlanOp::Hold { .. } | kt_fx::plan::PlanOp::Load { .. } => None,
         };
         let start = span.map(|(i, _)| i);
-        if let Some(st) = start {
+        // a graph step stands at the position of the next slot op: the masks completing the slot
+        // before it close first, the next slot's snapshot opens after it
+        let graph_at = match &op {
+            kt_fx::plan::PlanOp::Hold { at, .. } | kt_fx::plan::PlanOp::Load { at, .. } => Some(*at),
+            _ => None,
+        };
+        if let Some(st) = start.or(graph_at) {
             while pos <= st {
                 let cur = if has_alpha_known { has_alpha } else { src_has_alpha };
-                if !masks.is_empty() && mask_points(pos, &mut ops, w, h, cur, &mut snap_alpha) {
+                let open = start.is_some() || pos < st;
+                if !masks.is_empty() && mask_points(pos, !half_open, open, &mut ops, w, h, cur, &mut snap_alpha) {
                     // the alpha rule (R.53): a mask PRODUCES transparency
                     has_alpha_known = true;
                     has_alpha = true;
                 }
-                pos += 1;
+                if open {
+                    half_open = false;
+                    pos += 1;
+                } else {
+                    half_open = true;
+                    break;
+                }
             }
         }
         match op {
+            kt_fx::plan::PlanOp::Hold { reg, .. } => {
+                regs[reg] = (w, h, has_alpha_known, has_alpha);
+                ops.push(FxOp::Hold { reg });
+            }
+            kt_fx::plan::PlanOp::Load { reg, .. } => {
+                (w, h, has_alpha_known, has_alpha) = regs[reg];
+                ops.push(FxOp::Load { reg });
+            }
+            kt_fx::plan::PlanOp::Merge { idx, fg, matte } => {
+                let FxInstance::Merge { mode, mix } = &fx[idx] else {
+                    debug_assert!(false, "a merge op on a non-merge slot");
+                    continue;
+                };
+                // a picture merge takes the layer blend modes; a sound mode on the picture lane is
+                // refused by the editor, and plays as Normal
+                let blend = match mode {
+                    kt_model::MergeMode::Blend(b) => *b,
+                    _ => kt_model::BlendMode::Normal,
+                };
+                let blend_id = kt_model::BlendMode::ALL.iter().position(|m| *m == blend).unwrap_or(0) as u32;
+                let k = (mix.clamp(0.0, 1.0) * 4096.0).round() as u32;
+                let fold = |known: bool, a: bool| if known { a } else { src_has_alpha };
+                let bg_alpha = fold(has_alpha_known, has_alpha);
+                let (_, _, fk, fa) = regs[fg];
+                let fg_alpha = fold(fk, fa);
+                let matte = matte.map(|(r, by)| {
+                    let (_, _, mk, ma) = regs[r];
+                    (r, by, fold(mk, ma))
+                });
+                ops.push(FxOp::Merge { fg, blend_id, k, bg_alpha, fg_alpha, matte });
+                // the merge's size is its Background's; its alpha is either side's
+                has_alpha_known = true;
+                has_alpha = bg_alpha || fg_alpha;
+            }
             kt_fx::plan::PlanOp::Snapshot => {
                 snaps.push((ops.len(), w, h, has_alpha_known.then_some(has_alpha)));
                 ops.push(FxOp::Snapshot { alpha: has_alpha_known.then_some(has_alpha) })
@@ -721,10 +809,11 @@ fn chain_ops(
     if !masks.is_empty() {
         while pos <= fx.len() {
             let cur = if has_alpha_known { has_alpha } else { src_has_alpha };
-            if mask_points(pos, &mut ops, w, h, cur, &mut snap_alpha) {
+            if mask_points(pos, !half_open, true, &mut ops, w, h, cur, &mut snap_alpha) {
                 has_alpha_known = true;
                 has_alpha = true;
             }
+            half_open = false;
             pos += 1;
         }
     }
@@ -998,6 +1087,7 @@ pub(crate) const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("grid_tile", include_str!("shaders/grid_tile.wgsl")),
     ("mask", include_str!("shaders/mask.wgsl")),
     ("yuv", include_str!("shaders/yuv.wgsl")),
+    ("matte", include_str!("shaders/matte.wgsl")),
 ];
 
 pub(crate) const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -3386,7 +3476,7 @@ impl Inner {
             let (cw, ch) = fit.unwrap_or((sw, sh));
             let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
                 // the sub-composite always has alpha (see below)
-                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true, &src.masks);
+                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true, &src.masks, src.fx_in);
             self.bind_runs(&mut ops);
             if fit.is_some() {
                 ops.insert(
@@ -3422,6 +3512,7 @@ impl Inner {
             src.lead,
             frame.has_alpha,
             &src.masks,
+            src.fx_in,
         );
         self.bind_runs(&mut ops);
         // The K×-gaps of the plan (item 314) MUST fit within the device texture limit;
@@ -3496,8 +3587,100 @@ impl Inner {
         let mut snap: Option<(wgpu::TextureView, u32, u32, bool)> = None;
         // the dry side of an effect slot's masks (shape-masks), kept apart from the morpher's
         let mut msnap: Option<(wgpu::TextureView, u32, u32)> = None;
+        // the graph's held frames (fx-graph-dag D3): a held texture stays out of the pool to the end
+        let mut held: Vec<Option<(wgpu::TextureView, u32, u32)>> = Vec::new();
         for op in &chain.ops {
             match op {
+                FxOp::Hold { reg } => {
+                    if held.len() <= *reg {
+                        held.resize(*reg + 1, None);
+                    }
+                    if let Some(t) = owned.take() {
+                        held[*reg] = Some((t.view.clone(), w, h));
+                        retired.push(t);
+                    } else {
+                        held[*reg] = Some((view.clone(), w, h));
+                    }
+                }
+                FxOp::Load { reg } => {
+                    let Some(Some((v, hw, hh))) = held.get(*reg).cloned() else { continue };
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = v;
+                    (w, h) = (hw, hh);
+                }
+                FxOp::Merge { fg, blend_id, k, bg_alpha, fg_alpha, matte } => {
+                    let Some(Some((fv, fw, fh))) = held.get(*fg).cloned() else { continue };
+                    // a frame fitted to the Background's size by the `fit_into` bilinear
+                    let mut fit = |this: &mut Self, retired: &mut Vec<Tex>, v: wgpu::TextureView, sw: u32, sh: u32| {
+                        if (sw, sh) == (w, h) {
+                            return v;
+                        }
+                        let t = this.pool.acquire(&this.device, w, h);
+                        let u = UniformData {
+                            u: [w, h, sw, sh, 0, 0, 0, 0],
+                            f: [0.0, 0.0, sw as f32, sh as f32, 0.0, 0.0, 0.0, 0.0],
+                            ..Default::default()
+                        };
+                        this.pass(enc, Pipe::Resample, &t.view, &v, &dummy, &dummy, u);
+                        let out = t.view.clone();
+                        retired.push(t);
+                        out
+                    };
+                    let fg_view = fit(self, &mut retired, fv, fw, fh);
+                    let matte_view = matte.and_then(|(r, by, ma)| {
+                        held.get(r).cloned().flatten().map(|(mv, mw, mh)| (fit(self, &mut retired, mv, mw, mh), by, ma))
+                    });
+                    // the Background at full level over a transparent accumulator, then the Foreground
+                    // by its mode at its level: the composite's own passes (the Merge law)
+                    let acc0 = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData { u: [0, 4096, *bg_alpha as u32, 0, 1, 0, 0, 0], ..Default::default() };
+                    self.pass(enc, Pipe::Composite, &acc0.view, &dummy, &view, &dummy, u);
+                    let level = if matte_view.is_some() { 4096 } else { *k };
+                    let mode = if *blend_id != 0 {
+                        4
+                    } else if level < 4096 {
+                        1
+                    } else {
+                        0
+                    };
+                    let acc1 = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData {
+                        u: [mode, level, *fg_alpha as u32, 0, 0, if mode == 4 { *blend_id } else { 0 }, 0, 0],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::Composite, &acc1.view, &acc0.view, &fg_view, &dummy, u);
+                    let merged = self.pool.acquire(&self.device, w, h);
+                    self.pass(enc, Pipe::Unpremul, &merged.view, &acc1.view, &dummy, &dummy, UniformData::default());
+                    self.pool.release(acc0);
+                    self.pool.release(acc1);
+                    let dst = match matte_view {
+                        None => merged,
+                        Some((mv, by, ma)) => {
+                            let by = match by {
+                                kt_model::MatteFrom::Alpha => 0,
+                                kt_model::MatteFrom::Luma => 1,
+                                kt_model::MatteFrom::InvAlpha => 2,
+                                kt_model::MatteFrom::InvLuma => 3,
+                            };
+                            let cov = self.pool.acquire(&self.device, w, h);
+                            let u = UniformData { u: [by, ma as u32, *k, 0, 0, 0, 0, 0], ..Default::default() };
+                            self.pass(enc, Pipe::Matte, &cov.view, &mv, &dummy, &dummy, u);
+                            let out = self.pool.acquire(&self.device, w, h);
+                            let u = UniformData { u: [0, *bg_alpha as u32, 1, 1, 0, 0, 0, 0], ..Default::default() };
+                            self.pass(enc, Pipe::LayerMix, &out.view, &view, &merged.view, &cov.view, u);
+                            self.pool.release(cov);
+                            self.pool.release(merged);
+                            out
+                        }
+                    };
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
                 FxOp::Snapshot { alpha } => {
                     let dry_alpha = alpha.unwrap_or(chain.src_has_alpha);
                     // the current result still lives in `owned` (or it is the source
@@ -4015,6 +4198,11 @@ fn plan_hash(plan: &FramePlan<'_>) -> u64 {
             }
         }
         h.update(&s.fx_hash.to_le_bytes());
+        // the chain's wiring (fx-graph-dag D3): the same slots wired otherwise are another
+        // picture; a line adds nothing, so its keys stay
+        if !s.fx_in.is_empty() {
+            h.update(format!("{:?}", s.fx_in).as_bytes());
+        }
         // the masks evaluated at THIS frame (shape-masks): an animated mask on a still frame
         // must not return another frame's composite; maskless layers add nothing
         if !s.masks.is_empty() {

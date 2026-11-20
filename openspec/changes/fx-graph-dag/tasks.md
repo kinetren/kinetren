@@ -34,18 +34,20 @@
 
 ## 2. v2b — the picture
 
-- [ ] 2.1 kt-fx: lowering in `plan_chain_in` (`Hold`/`Load`/`Merge` as stops, liveness); t3203
-- [ ] 2.2 kt-gpu: the held set, the Merge pass (blend kernels + `LayerMix` with a coverage), the
+- [x] 2.1 kt-fx: lowering in `plan_chain_in` (`Hold`/`Load`/`Merge` as stops, liveness); t3203
+- [x] 2.2 kt-gpu: the held set, the Merge pass (blend kernels + `LayerMix` with a coverage), the
       `matte_from` pass; alpha flags per side; t3200, t3201, t3202, t3204
-- [ ] 2.3 kt-engine: decode step only before the first branch; masks' dry side = the slot's input;
-      t3205, t3206
-- [ ] 2.3a `clip_warp`, `chain_context` and the stream stage read the TRUNK's time kinds only; a
-      Merge stops being inert (`FxInstance::is_inert`)
+- [~] 2.3 kt-engine: decode step only before the first branch (done: `clip_head_zoom` reads the
+      trunk); masks' dry side = the slot's input (done in `chain_ops`: a graph step stands between
+      a mask's close and the next slot's open); t3205, t3206 to write
+- [x] 2.3a `clip_warp` and the stream stage read the TRUNK's time kinds only (the picture's
+      `chain_context` is the sound's, v2c); a Merge is a slot of the active chain again; the lead
+      enters the wiring by `fx_graph::insert_lead`
 - [ ] 2.3b kt-engine reads: `layers_at`/`wanted_frames` per read, stream history keyed (event, read),
       `Input(k)` into the layer program, the read law; t3226, t3228
 - [ ] 2.3c kt-app: the coverage strip draws a row per read; the performance panel and `kt-cli probe`
       name the reads
-- [ ] 2.4 keys: `fx_chain_hash`, `plan_hash`, `durable_hash`, post-FX key hash `fx_in` when present;
+- [x] 2.4 keys: `fx_chain_hash`, `plan_hash`, `durable_hash`, post-FX key hash `fx_in` when present;
       t3208
 - [ ] 2.5 Viewer by ancestors; picker cells insert on the selected node's arm; t3207
 - [ ] 2.6 pass-cost rows, prewarm ids, the ledger counts held frames

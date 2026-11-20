@@ -729,6 +729,7 @@ what the model holds costs nothing. A new mutation path that writes the canon mu
   batch validation refuses.
 - **The pair's speed is the trunk's**: `sync_warp_to_link_group` treats a warp in an arm as none;
   `SetFxIn` re-runs it. One warp slot per chain stays (`TwoTimeWarps`).
-- **Until the picture lowering (v2b) a Merge is inert** (`FxInstance::is_inert`): it leaves the
-  active chain like a missing plugin, its readers reading its Background.
+- **A Merge is a slot of the active chain** (v2b): the planner lowers the graph (`kt_fx::plan::lower`);
+  a Merge with no Foreground passes its Background. The engine materializes the leading Geometry node
+  into the wiring with `fx_graph::insert_lead` (the Source of every later slot is the frame after it).
 - The file is format 8 by content (`has_fx_graph`). Tests t3209–t3210, t3222–t3224.

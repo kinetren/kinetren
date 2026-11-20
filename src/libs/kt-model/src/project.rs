@@ -5247,11 +5247,11 @@ impl FxInstance {
         matches!(self, FxInstance::Missing(_))
     }
 
-    /// A slot the active chain leaves out, its curves with it: a missing plugin, and a Merge while the
-    /// engine runs chains as lines (fx-graph-dag v2a: a Merge whose Foreground is not wired passes its
-    /// Background, and the lowering of v2b is what wires one). The keys are the chain's without it.
+    /// A slot the active chain leaves out, its curves with it: a missing plugin. (A Merge is a slot
+    /// of the active chain since fx-graph-dag v2b: the planner lowers it; with no Foreground wired it
+    /// passes its Background.) The keys are the chain's without it.
     pub fn is_inert(&self) -> bool {
-        self.is_missing() || self.is_merge()
+        self.is_missing()
     }
 
     /// Audio effect? (video FX live in the same clip chain but are handled by the

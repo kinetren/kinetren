@@ -518,3 +518,26 @@ pub fn splice(target: &mut Vec<SlotInputs>, n0: usize, patch: &[SlotInputs], m: 
     }
     canonical(target, n0 + m);
 }
+
+/// The engine's leading Geometry node materialized at `pos` of an active chain of `n` slots: it
+/// stands on the wire into slot `pos` (`insert_slot`), and the Source of every later slot is the
+/// frame after it — design D1's Source is "the decoded frame after the leading Geometry node"
+/// (the lead stands before the first branch, so with `pos > 0` no later slot reads the Source).
+pub fn insert_lead(fx_in: &mut Vec<SlotInputs>, n: usize, pos: usize) {
+    if fx_in.is_empty() {
+        return;
+    }
+    insert_slot(fx_in, n, pos);
+    if pos != 0 {
+        return;
+    }
+    let lead = |i: usize, x: FxIn| if x == FxIn::Source { encode(i, Node::Slot(0)) } else { x };
+    for (i, s) in fx_in.iter_mut().enumerate().skip(1) {
+        s.main = lead(i, s.main);
+        s.second = s.second.map(|x| lead(i, x));
+        if let Some(m) = s.matte.as_mut() {
+            m.from = lead(i, m.from);
+        }
+    }
+    canonical(fx_in, n + 1);
+}

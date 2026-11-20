@@ -35,6 +35,7 @@ fn compose(engine: &GpuFxEngine, frame: &Arc<VideoFrame>, cases: &[Vec<FxInstanc
                 blend_mode: kt_model::BlendMode::Normal,
                 lead: None,
                 masks: Vec::new(),
+                fx_in: &[],
             };
             let plan = FramePlan {
                 t: Tick(i as i64 * 3600),

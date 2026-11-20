@@ -565,3 +565,13 @@ keeps the set asks nothing (t2127). The export prewarms its devices and waits (`
   thread (t2669).
 - **Builders run under `kt_model::with_sequence_index`**: a new entry that builds (a renderer, the
   generator list) wraps itself the same way, or every `project.sequence(id)` scans the reels.
+
+## Effect graphs (fx-graph-dag)
+
+- `VideoClip.fx_in` is the ACTIVE chain's wiring with the lead materialized (`materialize_lead` →
+  `fx_graph::insert_lead`); `LayerSrc.fx_in` hands it to the executor; `fx_hash` mixes it in only
+  when present (a line's keys stay).
+- **A layer reads by its TRUNK**: the warp (`clip_warp_of`), the stream stage and the decode step
+  (`clip_head_zoom`'s `trunk`) are those of the slots before the first branch. A time kind in an arm
+  is a read of its own (design D2) — until that stage lands it is transparent in the arm.
+- Tests t3201, t3202, t3204, t3208 (`tests/fx_graph_render.rs`).

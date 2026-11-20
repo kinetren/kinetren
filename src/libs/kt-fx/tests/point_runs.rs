@@ -29,6 +29,9 @@ fn ops(fx: &[FxInstance], stops: &[usize]) -> Vec<String> {
             PlanOp::PointRun { i, j, res_scale } => format!("run{i}..{j}@{res_scale}"),
             PlanOp::Snapshot => "snap".into(),
             PlanOp::Mix { idx } => format!("mix{idx}"),
+            PlanOp::Hold { reg, .. } => format!("hold{reg}"),
+            PlanOp::Load { reg, .. } => format!("load{reg}"),
+            PlanOp::Merge { idx, fg, .. } => format!("merge{idx}<{fg}"),
         })
         .collect()
 }
