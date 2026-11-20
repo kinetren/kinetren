@@ -719,6 +719,11 @@ pub fn draw_gen_section(
                 out.changed.base = true;
             }
         }
+        // WHERE THE TEXT COMES FROM (text-counter-source, `v26.10` G5/G3): the typed text, or a value
+        // that runs with the material time; the typed text is then a template with `{}` for it
+        if draw_title_source(ui, kind) {
+            out.changed.base = true;
+        }
         warn.refresh(kind);
         for w in [&warn.missing, &warn.font].into_iter().flatten() {
             ui.colored_label(egui::Color32::from_rgb(255, 105, 97), w);
@@ -762,6 +767,14 @@ pub fn draw_gen_section(
     let mut skip: Vec<&str> = Vec::new();
     for (_, names) in groups {
         skip.extend_from_slice(names);
+    }
+    // a title's running-value rows only where they count (rule 9: no dead control)
+    if let GeneratorKind::Text { source, .. } = kind {
+        if source.is_static() {
+            skip.extend_from_slice(&["count_from", "count_fps"]);
+        } else if *source != kt_model::TextSource::Timecode {
+            skip.push("count_fps");
+        }
     }
     for (i, (label, names)) in groups.iter().enumerate() {
         if widgets::color_row(
@@ -892,6 +905,53 @@ fn choice_rows(ui: &mut egui::Ui, kind: &mut GeneratorKind) -> bool {
 
 /// The parts of the title form that are not expressed by
 /// a number (“the first legitimate exception” F-TXT-001):
+/// The title's source and, for a stopwatch or a countdown, its format (text-counter-source): two
+/// rows of buttons, the same look as the alignment. `true` — changed.
+fn draw_title_source(ui: &mut egui::Ui, g: &mut GeneratorKind) -> bool {
+    use kt_model::{CountFormat, TextSource};
+    let GeneratorKind::Text { source, count_format, .. } = g else { return false };
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(tr(k::titlew::SOURCE));
+        for (v, key, tag) in [
+            (TextSource::Static, k::titlew::SOURCE_STATIC, "static"),
+            (TextSource::Timecode, k::titlew::SOURCE_TIMECODE, "timecode"),
+            (TextSource::Stopwatch, k::titlew::SOURCE_STOPWATCH, "stopwatch"),
+            (TextSource::Countdown, k::titlew::SOURCE_COUNTDOWN, "countdown"),
+        ] {
+            let r = ui.add(egui::Button::selectable(*source == v, tr(key)).frame_when_inactive(true));
+            if cfg!(test) || crate::widgets::field_probe::on() {
+                crate::widgets::field_probe::note(&format!("titlew.source.{tag}"), r.rect);
+            }
+            if r.clicked() && *source != v {
+                *source = v;
+                changed = true;
+            }
+        }
+    });
+    if matches!(*source, TextSource::Stopwatch | TextSource::Countdown) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(tr(k::titlew::COUNT_FORMAT));
+            for (v, label) in [
+                (CountFormat::MSs, "1:05"),
+                (CountFormat::MSsT, "1:05.3"),
+                (CountFormat::HMmSs, "0:01:05"),
+                (CountFormat::STenths, "65.3"),
+            ] {
+                let r = ui.add(egui::Button::selectable(*count_format == v, label).frame_when_inactive(true));
+                if r.clicked() && *count_format != v {
+                    *count_format = v;
+                    changed = true;
+                }
+            }
+        });
+    }
+    if !source.is_static() {
+        ui.weak(tr(k::titlew::SOURCE_NOTE));
+    }
+    changed
+}
+
 /// family, style, alignment, anchor, layer colours and the drawing order.
 fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorKind) -> bool {
     let mut changed = false;

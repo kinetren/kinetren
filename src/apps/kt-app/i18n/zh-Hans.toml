@@ -1343,6 +1343,13 @@ timecode = "时间码"
 
 # Title window (R.52 C3).
 [titlew]
+source_note = "数值随事件自身的时间走；在文本中写 {} 可把它嵌入文字"
+count_format = "格式："
+source_countdown = "倒计时"
+source_stopwatch = "秒表"
+source_timecode = "时间码"
+source_static = "输入的文本"
+source = "文本："
 preset_roll = "片尾字幕"
 preset_crawl = "滚动字幕"
 preset_typewriter = "打字机"
@@ -1373,6 +1380,8 @@ align_r = "右对齐"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+count_fps = "时间码帧率"
+count_from = "起始（秒）"
 cut43 = "4:3 裁切"
 thirds = "三分法"
 center = "中心十字"

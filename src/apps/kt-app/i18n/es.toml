@@ -1343,6 +1343,13 @@ timecode = "Código de tiempo"
 
 # Title window (R.52 C3).
 [titlew]
+source_note = "El valor corre con el tiempo propio del evento; ponga {} en el texto para colocarlo entre palabras"
+count_format = "Formato:"
+source_countdown = "Cuenta atrás"
+source_stopwatch = "Cronómetro"
+source_timecode = "Código de tiempo"
+source_static = "Escrito"
+source = "Texto:"
 preset_roll = "Créditos finales"
 preset_crawl = "Rótulo deslizante"
 preset_typewriter = "Máquina de escribir"
@@ -1373,6 +1380,8 @@ align_r = "Derecha"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+count_fps = "Cuadros por segundo del código"
+count_from = "Inicio (s)"
 cut43 = "Corte 4:3"
 thirds = "Regla de tercios"
 center = "Cruz central"

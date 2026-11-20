@@ -70,7 +70,9 @@ fn digest(kind: &GeneratorKind) -> u64 {
 #[rustfmt::skip]
 const GOLDEN: &[(&str, u64)] = &[
     ("solid", 0xd41eb0b2d6a14f6c),
-    ("text", 0x333866116f96e81b),
+    // text-counter-source added two number rows to the title (`count_from`, `count_fps`): the "tuned"
+    // case sets them, so its path and text carry them; the default case did not move (t3704)
+    ("text", 0x8a6a5e1ff842bd72),
     ("gradient", 0xd6878afb4fd5f672),
     ("corners", 0xf332abd0c1f54d31),
     ("checker", 0x4d275b93bac63f67),
