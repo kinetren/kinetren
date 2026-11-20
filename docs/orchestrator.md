@@ -197,6 +197,10 @@ an executor. A free executor gets its next work in the same turn.
 from its own block: fx-graph t3200–t3299, spec-engine t3300–t3399, spec-features t3400–t3599, mosh-sharp
 t3600–t3699, features-slow t3700–t3799. A collision found at a merge is renumbered on the later branch.
 
+**found-defects rows by block** (2026-11-20, after rows 819–823 were taken twice): fx-graph 900–949,
+mosh-sharp 950–999, features-slow 1000–1049, spec-engine 1050–1099, spec-features 1100–1149; the
+orchestrator takes the next free number below 900.
+
 **A design-only change names a planned live scenario without its path** ("planned live scenario `scopes`"):
 the guards t804 and t799 read active changes too, so a path to a scenario not yet written turns orch red.
 The executor that applies the change writes `src/scripts/live/<name>.py` and the path together. Every UI
