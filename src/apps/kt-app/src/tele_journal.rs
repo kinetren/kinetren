@@ -319,14 +319,10 @@ fn writer(path: &Path, rotate: u64, rx: mpsc::Receiver<Msg>, written: &AtomicU64
             }
             written.fetch_add(lines, Ordering::Release);
             // a writer still running between the count and its park, as a preempted one is on a loaded
-            // machine (runnable, not sleeping): t1964
+            // machine (runnable, not sleeping): t1964 holds it here until it has seen it run
             #[cfg(test)]
-            {
-                let ms = tests::AFTER_COUNT_MS.load(Ordering::Acquire);
-                let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-                while std::time::Instant::now() < until {
-                    std::hint::spin_loop();
-                }
+            while tests::HOLD_AFTER_COUNT.load(Ordering::Acquire) {
+                std::hint::spin_loop();
             }
         }
         for b in barriers {
@@ -723,14 +719,15 @@ mod tests {
 
     /// Test t1964 (telemetry-journal): with nothing to write, the journal's thread does not wake.
     #[cfg(target_os = "linux")]
-    /// The writer's stay after it counted a record (t1964; one test process per test under nextest).
-    pub(super) static AFTER_COUNT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    /// The writer stays running after it counted a record while this is set (t1964; one test process
+    /// per test under nextest). A flag the test clears, not a span: the stay is a stimulus, not a wait.
+    pub(super) static HOLD_AFTER_COUNT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
     #[test]
     fn t1964_no_wakeups_at_rest() {
-        // the writer stays awake 200 ms past its count of a record, as a preempted one does under load
+        // the writer stays running past its count of a record, as a preempted one does under load
         // (found-defects 141): the rest is read only once it has parked
-        AFTER_COUNT_MS.store(200, Ordering::Release);
+        HOLD_AFTER_COUNT.store(true, Ordering::Release);
         let j = fresh("t1964", FakeClock::new(T0, 0), ROTATE_BYTES);
         j.record(Kind::Run, "start");
         wait_written(&j, 1);
@@ -752,6 +749,9 @@ mod tests {
             // the state follows the command name's closing parenthesis
             s.rsplit_once(')').and_then(|(_, r)| r.trim_start().chars().next()).unwrap_or('?')
         };
+        // the stimulus took: the writer is past its count and running, not parked
+        assert_eq!(state(), 'R', "the held writer is not running");
+        HOLD_AFTER_COUNT.store(false, Ordering::Release);
         let deadline = kt_time::test_deadline();
         let before = loop {
             let a = switches();

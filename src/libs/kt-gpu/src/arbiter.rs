@@ -898,7 +898,10 @@ mod tests {
         let shown = r.note_display(b / 4);
         assert_eq!(r.in_flight_ns(), b + b / 4, "the present is not in the flight");
         drop(low);
-        let now = Instant::now();
+        // the ring's own moment of the present, not a clock read after it: a stretch between the two
+        // moved the next present closer than the test assumed and ate the margin (class of
+        // found-defects 825)
+        let now = r.lock().last_display.unwrap();
         submitted_at(&r, &shown, now);
         {
             let st = r.lock();
@@ -911,9 +914,9 @@ mod tests {
         drop(shown);
         // the display behind: its frame ends long past its next present
         let late = r.note_display(8 * b);
-        submitted_at(&r, &late, Instant::now());
+        let now = r.lock().last_display.unwrap();
+        submitted_at(&r, &late, now);
         let st = r.lock();
-        let now = Instant::now();
         let end = drain(&st, now, false).display_end.unwrap();
         assert!(end > r.display_next(&st, now));
         for c in [Class::Near, Class::Background, Class::Offline] {
