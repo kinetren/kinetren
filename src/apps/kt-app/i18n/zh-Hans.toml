@@ -1309,6 +1309,10 @@ corner_br = "右下"
 tc_note = "显示素材时间：从零开始且素材起点为 0 的片段与时间线时钟一致"
 
 [genkind]
+pattern = "图案"
+particles = "粒子"
+plasma = "等离子"
+meshgrad = "流动渐变"
 safearea = "安全区"
 syncflash = "同步闪光"
 group_audio = "音频"
@@ -1380,6 +1384,12 @@ align_r = "右对齐"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+bg_color = "背景"
+color3 = "颜色 3"
+color2 = "颜色 2"
+color1 = "颜色 1"
+cells = "横向格数"
+speed = "速度"
 count_fps = "时间码帧率"
 count_from = "起始（秒）"
 cut43 = "4:3 裁切"
@@ -1439,6 +1449,10 @@ tone = "1 kHz 测试音"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+waves = "波浪"
+grid = "网格"
+dots = "圆点"
+stripes = "条纹"
 both = "双声道"
 left = "左"
 right = "右"

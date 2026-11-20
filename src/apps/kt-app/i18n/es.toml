@@ -1309,6 +1309,10 @@ corner_br = "Inferior derecha"
 tc_note = "Muestra el tiempo del MATERIAL: un clip desde cero con inicio 0 coincide con el reloj de la línea de tiempo"
 
 [genkind]
+pattern = "Patrón"
+particles = "Partículas"
+plasma = "Plasma"
+meshgrad = "Degradado en movimiento"
 safearea = "Zonas seguras"
 syncflash = "Destello de sincronía"
 group_audio = "Audio"
@@ -1380,6 +1384,12 @@ align_r = "Derecha"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+bg_color = "Fondo"
+color3 = "Color 3"
+color2 = "Color 2"
+color1 = "Color 1"
+cells = "Celdas a lo ancho"
+speed = "Velocidad"
 count_fps = "Cuadros por segundo del código"
 count_from = "Inicio (s)"
 cut43 = "Corte 4:3"
@@ -1439,6 +1449,10 @@ tone = "Tono de 1 kHz"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+waves = "Ondas"
+grid = "Rejilla"
+dots = "Puntos"
+stripes = "Rayas"
 both = "Ambos"
 left = "Izquierdo"
 right = "Derecho"

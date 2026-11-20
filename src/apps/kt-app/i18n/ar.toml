@@ -1309,6 +1309,10 @@ corner_br = "أسفل يمين"
 tc_note = "يعرض زمن المادة: مقطع من الصفر ببداية مادة 0 يطابق ساعة الخط الزمني"
 
 [genkind]
+pattern = "نقش"
+particles = "جسيمات"
+plasma = "بلازما"
+meshgrad = "تدرج متحرك"
 safearea = "المناطق الآمنة"
 syncflash = "وميض المزامنة"
 group_audio = "الصوت"
@@ -1380,6 +1384,12 @@ align_r = "يمين"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+bg_color = "الخلفية"
+color3 = "اللون 3"
+color2 = "اللون 2"
+color1 = "اللون 1"
+cells = "الخلايا عرضًا"
+speed = "السرعة"
 count_fps = "معدل إطارات الرمز الزمني"
 count_from = "البداية (ث)"
 cut43 = "قص 4:3"
@@ -1439,6 +1449,10 @@ tone = "نغمة 1 كيلوهرتز"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+waves = "أمواج"
+grid = "شبكة"
+dots = "نقاط"
+stripes = "خطوط"
 both = "كلاهما"
 left = "يسار"
 right = "يمين"

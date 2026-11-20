@@ -1309,6 +1309,10 @@ corner_br = "Нижний правый"
 tc_note = "Показывает время МАТЕРИАЛА: клип от нуля с началом материала 0 совпадает с часами таймлайна"
 
 [genkind]
+pattern = "Узор"
+particles = "Частицы"
+plasma = "Плазма"
+meshgrad = "Движущийся градиент"
 safearea = "Безопасные зоны"
 syncflash = "Синхровспышка"
 group_audio = "Звук"
@@ -1380,6 +1384,12 @@ align_r = "Справа"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+bg_color = "Фон"
+color3 = "Цвет 3"
+color2 = "Цвет 2"
+color1 = "Цвет 1"
+cells = "Ячеек по ширине"
+speed = "Скорость"
 count_fps = "Частота кадров таймкода"
 count_from = "Начало (с)"
 cut43 = "Кадр 4:3"
@@ -1439,6 +1449,10 @@ tone = "Тон 1 кГц"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+waves = "Волны"
+grid = "Сетка"
+dots = "Точки"
+stripes = "Полосы"
 both = "Оба"
 left = "Левый"
 right = "Правый"
