@@ -194,6 +194,42 @@ pub struct StreamOut {
     pub key: u64,
 }
 
+/// A render left on the compute host's device (stream-picture-stays D3): three 8-bit planes, luma
+/// `pw`×`ph` (padded) and chroma half of it in each direction, the picture cropped to `w`×`h`, and its
+/// key as [`StreamOut::key`]. Its RGBA is [`planes_to_rgba`] of the planes.
+#[derive(Debug, Clone)]
+pub struct HeldStreamOut {
+    pub planes: [crate::compute::Held; 3],
+    pub pw: u32,
+    pub ph: u32,
+    pub w: u32,
+    pub h: u32,
+    pub key: u64,
+}
+
+/// Three 8-bit planes (luma `pw` wide, chroma `pw / 2` wide, half the rows) to opaque RGBA cropped to
+/// `w`×`h`, chroma by nearest neighbour, in integer arithmetic (stream-round-trips D5): the one
+/// conversion a stream's picture takes, on the processor here and as the device pass in kt-gpu, so the
+/// two give the same bytes (stream-picture-stays D3, invariant 11).
+pub fn planes_to_rgba(y: &[u8], cb: &[u8], cr: &[u8], pw: usize, w: usize, h: usize, out: &mut Vec<u8>) {
+    out.clear();
+    out.resize(w * h * 4, 255);
+    let cw = pw / 2;
+    for (yy, row) in out.chunks_exact_mut((w * 4).max(1)).enumerate().take(h) {
+        let ys = &y[yy * pw..yy * pw + w];
+        let cbs = &cb[(yy / 2) * cw..(yy / 2) * cw + w.div_ceil(2)];
+        let crs = &cr[(yy / 2) * cw..(yy / 2) * cw + w.div_ceil(2)];
+        for (xx, (o, &l)) in row.chunks_exact_mut(4).zip(ys).enumerate() {
+            let l = l as i32;
+            let cb = cbs[xx / 2] as i32 - 128;
+            let cr = crs[xx / 2] as i32 - 128;
+            o[0] = (l + ((359 * cr + 128) >> 8)).clamp(0, 255) as u8;
+            o[1] = (l - ((88 * cb + 183 * cr + 128) >> 8)).clamp(0, 255) as u8;
+            o[2] = (l + ((454 * cb + 128) >> 8)).clamp(0, 255) as u8;
+        }
+    }
+}
+
 /// A stream kernel (`VideoClass::Stream`).
 pub trait StreamKernel: Send + Sync {
     /// The encoded height: the host's `StreamLayout::coded` is `coded_size(lines, the layer's size)`.
@@ -243,6 +279,13 @@ pub trait StreamKernel: Send + Sync {
         memo: &StreamMemo,
         out: &mut Vec<u8>,
     ) -> Option<StreamOut>;
+    /// Frame `n` left where the compute host made it (stream-picture-stays D3), for an executor on
+    /// that device to convert there; `None` — not held (no host keeping buffers, a picture finished on
+    /// the processor), and the host asks [`StreamKernel::render`]. A frame this gives, `render` gives as
+    /// [`planes_to_rgba`] of the same planes.
+    fn render_held(&self, _p: &[f64], _input: &dyn StreamInput, _n: i64, _memo: &StreamMemo) -> Option<HeldStreamOut> {
+        None
+    }
 }
 
 /// One memo entry: opaque to the host, sized for the bound.

@@ -780,3 +780,38 @@ fn t2707_the_pipelined_export_walks_the_stream_in_order() {
         }
     }
 }
+
+/// t3814 (stream-picture-stays D3, found-defects 663): the mosh's picture stays on the compute host's
+/// device as the layer's input — an engine on that device composes it with no read back, and an engine
+/// on another device reads it back; both give the same bytes, and the frame is moshed.
+#[test]
+fn t3814_a_held_stream_picture_composes_where_it_lies() {
+    use kt_engine::VideoGpuExec;
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let Some(on_host) = kt_gpu::front_on_compute() else { return };
+    let n = Tick(38 * STEP);
+    let p = project(true);
+    let (vr, cache) = (renderer(&p), big_cache());
+    warm(&vr, &cache, n);
+    let plan = vr.frame_plan(&cache, n, Q);
+    let is_held = |plan: &kt_engine::FramePlan<'_>| plan.layers.iter().any(|l| matches!(l, kt_engine::video_plan::PlanLayer::One { src, .. } if src.input.held().is_some()));
+    assert!(is_held(&plan), "the mosh layer's input is held");
+    let (on, back) = kt_gpu::held_pictures();
+    let mut here = vec![];
+    assert!(on_host.execute_once(&plan, &mut here).unwrap(), "complete on the host's device");
+    assert_eq!(kt_gpu::held_pictures(), (on + 1, back), "converted where it lies");
+    drop(plan);
+    let (there, complete) = kt_gpu::testkit::compose(&vr, &cache, n, Q);
+    assert!(complete);
+    assert_eq!(kt_gpu::held_pictures().1, back + 1, "another device reads it back");
+    assert_eq!(here, there, "the same bytes either way");
+    let plain = project(false);
+    let (pv, pc) = (renderer(&plain), big_cache());
+    warm(&pv, &pc, n);
+    assert_ne!(kt_gpu::testkit::compose(&pv, &pc, n, Q).0, there, "the frame is moshed");
+}

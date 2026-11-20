@@ -5,10 +5,11 @@ The trace SHALL record every stream-stage or compute-generator frame read back t
 the processor time of its conversion and the bytes uploaded again. `kt-cli trace … loop` SHALL sum them
 per lap.
 
-A stream stage or a compute generator whose output lies on the device of the executor composing the frame
-SHALL hand the plan that buffer (a held layer input), not bytes. The executor SHALL convert it into the
-layer's picture on the device with the processor conversion's integer arithmetic, so the composite is
-byte-equal to the bytes path. Any other executor SHALL read the buffer back as before. The held form SHALL
+A stream stage whose picture the compute host keeps on its device, at the layer's decode size, SHALL hand
+the plan that buffer (a held layer input, `LayerInput::Held`), not bytes. An executor on that device SHALL
+convert it into the layer's picture with one pass in the processor conversion's integer arithmetic
+(`kt_plugin_api::stream::planes_to_rgba`), so the composite is byte-equal to the bytes path. Any other
+executor SHALL read the planes back through the compute host and convert them on the processor. The held form SHALL
 NOT change any key, the plan's completeness or the coverage.
 
 Why: found-defects 663 — every shown Datamosh frame was read back as planes, converted on the processor
@@ -20,18 +21,18 @@ and uploaded again, between two devices of the same chip (stream-picture-stays D
 - **TEST** t3812 (`src/libs/kt-engine/tests/stream_cross.rs`), t3813 (`src/apps/kt-cli/src/trace_query/tests.rs`)
 
 #### Scenario: A held layer composes as the bytes did
-- **WHEN** a Datamosh layer and a compute generator are composed on the compute host's own device, held, and on it again through the bytes path
-- **THEN** the two composites are equal byte for byte and the held one read nothing back
-- **TEST** t3814 (`src/libs/kt-gpu/tests/stream_held.rs`)
+- **WHEN** a Datamosh frame inside the mosh is planned, then composed by an engine on the compute host's device and by one on another device
+- **THEN** the layer's input is held; the first converts it on the device and reads nothing back, the second reads it back; the two composites are equal byte for byte and differ from the unmoshed frame
+- **TEST** t3814 (`src/libs/kt-engine/tests/stream_stage.rs`)
 
 #### Scenario: The planes are converted as the processor converts them
-- **WHEN** decoded planes of even and odd widths and heights are converted on the device and on the processor
-- **THEN** the RGBA bytes are equal
+- **WHEN** planes of every byte value, padded 16×16 to 80×48, cropped to even and odd widths and heights down to 1×1, are composed held on the shared device and as the processor's conversion
+- **THEN** the composites are equal, converted on the device with nothing read back
 - **TEST** t3815 (`src/libs/kt-gpu/tests/stream_held.rs`)
 
 #### Scenario: Another device reads back
 - **WHEN** the composing executor is not on the compute host's device
-- **THEN** the stage gives bytes, as before, and the composite is the same
+- **THEN** it reads the planes back through the compute host, and the composite is the bytes path's
 - **TEST** t3816 (`src/libs/kt-gpu/tests/stream_held.rs`)
 
 ### Requirement: One device per adapter where the window can compute

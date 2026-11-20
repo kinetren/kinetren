@@ -13,8 +13,9 @@
 
 ## 2. The held layer input
 
-- [ ] 2.1 `LayerInput::Held`, `StreamKernel::render_held` (Datamosh), the compute generator's twin; `accepts`
-- [ ] 2.2 the planes → RGBA pass, integer, equal to the processor's; t3814–t3816
+- [x] 2.1 `LayerInput::Held`, `StreamKernel::render_held` (Datamosh: the walk's picture at `n` kept live, never read back); no `accepts` — an executor on another device reads the planes back itself
+- [x] 2.2 the planes → RGBA pass, integer, equal to the processor's (`planes_to_rgba`, one formula); t3814–t3816
+- [ ] 2.3 the shown positions a walk ahead computes stay held in the memo (design D3 "found while building"); the compute generator's twin
 
 ## 3. One device per adapter (after Q1)
 
