@@ -19275,6 +19275,39 @@ fn clicks_no_hover(h: &mut Harness<'_, KtApp>, pos: egui::Pos2, n: usize) {
     h.step();
 }
 
+/// Test 3127: a click elsewhere just before a double click on an event leaves it a double click
+/// (found-defects 817). egui counted the double click's second click as a triple, because the click
+/// two before it (here on another event; in live `formula` the effects window's "Done", 2.5 s before
+/// under a widened window) fell in twice the double-click window: no FX window opened, a region was
+/// set over the event and the cursor jumped to its start. A triple is three clicks of one gesture.
+#[test]
+fn t3130_a_click_elsewhere_does_not_make_a_double_click_a_triple() {
+    use kt_model::*;
+    use crate::clicks::effective;
+    // egui's count, the count of the click before, whether it follows that one in the window
+    assert_eq!(effective(3, 2, true), 3, "the third click of one gesture is a triple");
+    assert_eq!(effective(3, 1, true), 2, "a triple whose first click was elsewhere is a double");
+    assert_eq!(effective(3, 1, false), 1, "nor a double when it does not follow the click before");
+    assert_eq!(effective(2, 1, true), 2);
+    assert_eq!(effective(1, 2, false), 1);
+    let (mut h, g) = copy_scene();
+    let elsewhere = egui::pos2(g.tick_to_x(25_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    let pos = egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    clicks(&mut h, elsewhere, 1);
+    let region = h.state().model.project().region;
+    // a double click on the second event 0.06 s later: inside egui's triple window (0.6 s)
+    clicks(&mut h, pos, 2);
+    assert!(
+        h.state().fx_editors.iter().any(|e| e.open && e.members.contains(&ClipId(2))),
+        "the double click opened the event's FX window"
+    );
+    assert_eq!(h.state().model.project().region, region, "no region was set over the event");
+    // and the third click of THIS gesture is still the triple of t927
+    clicks_no_hover(&mut h, pos, 1);
+    let r = h.state().model.project().region.expect("the gesture's triple click set no region");
+    assert_eq!((r.start.0, r.end.0), (100_000, 150_000));
+}
+
 /// Test 928: a triple click on a reel instance and on the level line.
 #[test]
 fn t928_triple_click_on_a_reel_and_on_the_level_line() {
@@ -20259,6 +20292,38 @@ fn t2214_click_windows_widen_by_the_busy_frame() {
     let (double, click) = opts(&h);
     assert!((double - (DOUBLE_CLICK_S + 0.45)).abs() < 0.01, "the double click window: {double}");
     assert!((click - (CLICK_HOLD_S + 0.45)).abs() < 0.01, "the click window: {click}");
+}
+
+/// Test 3128 (found-defects 817): the windows widen BEFORE egui reads a frame's input, by the gap
+/// since the frame before began when that frame asked for this one at once. egui judges a click
+/// with the windows set a frame ago; a frame slower than the ones before it (the one that read a
+/// double click's first click, 155 ms under load, then its present) split the two clicks past a
+/// window that did not know that gap yet.
+#[test]
+fn t3131_click_windows_widen_by_the_gap_before_input() {
+    use crate::app::{CLICK_HOLD_S, DOUBLE_CLICK_S};
+    let mut h = harness();
+    h.step();
+    let opts = |h: &Harness<'static, KtApp>| {
+        h.ctx.options(|o| (o.input_options.max_double_click_delay, o.input_options.max_click_duration))
+    };
+    let ctx = h.ctx.clone();
+    let clock = &mut h.state_mut().key_clock;
+    clock.widen = true;
+    clock.busy = std::time::Duration::from_millis(20);
+    clock.animating = true;
+    clock.frame_at = std::time::Instant::now() - std::time::Duration::from_millis(450);
+    clock.widen_before_input(&ctx);
+    let (double, click) = opts(&h);
+    assert!(double >= DOUBLE_CLICK_S + 0.45 - 0.01 && double < DOUBLE_CLICK_S + 0.6, "the double click window: {double}");
+    assert!(click >= CLICK_HOLD_S + 0.45 - 0.01, "the click window: {click}");
+    // a frame that did not ask for the next at once: its gap is a rest, not work
+    let clock = &mut h.state_mut().key_clock;
+    clock.animating = false;
+    clock.frame_at = std::time::Instant::now() - std::time::Duration::from_secs(5);
+    clock.widen_before_input(&ctx);
+    let (double, _) = opts(&h);
+    assert!((double - (DOUBLE_CLICK_S + 0.02)).abs() < 0.01, "a rest does not widen: {double}");
 }
 
 /// USABILITY 2: "if I hold Ctrl+space we rewind in reverse". During playback the release

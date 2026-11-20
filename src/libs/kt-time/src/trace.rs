@@ -218,10 +218,14 @@ pub enum Ev {
     /// `a` the moment's tick, `b` bytes (a restore, a store, an eviction) or device ns (a measured
     /// moment), `c` the durable key; a restore's span is the read and the inflate.
     RenderCache = 121,
+    /// A primary click as the UI read it (found-defects 817): `a` egui's count (1–3), `b` the count
+    /// the program kept (`clicks::effective`: a triple only after a double), `c` µs since the click
+    /// before, `aux` egui's double-click window then, ms. Only frames that read a click record it.
+    Click = 122,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 56] = [
+    pub const ALL: [Ev; 57] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -278,6 +282,7 @@ impl Ev {
         Ev::GpuFrame,
         Ev::Shutdown,
         Ev::RenderCache,
+        Ev::Click,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -342,6 +347,7 @@ impl Ev {
             Ev::Shutdown => "shutdown",
             Ev::GpuFrame => "gpu_frame",
             Ev::RenderCache => "render_cache",
+            Ev::Click => "click",
         }
     }
 }

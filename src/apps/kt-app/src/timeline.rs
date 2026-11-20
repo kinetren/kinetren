@@ -2831,7 +2831,7 @@ impl KtApp {
                 self.drag = None;
             }
             // double-click on the track header — rename (item 2 round 10)
-            else if gutter_resp.double_clicked()
+            else if crate::clicks::double(&gutter_resp)
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
                 && let Some((kind, lane)) = geom.key_at_y(pos.y)
             {
@@ -3506,7 +3506,7 @@ impl KtApp {
                 // selecting a region (the owner’s decision, item 8).
                 // The hit zone follows the DRAWN triangle (the display clock)
                 let head_x = tick_to_x(self.player.video_playhead().0);
-                if response.double_clicked()
+                if crate::clicks::double(&response)
                     && let Some(start) = pick_range_marker(
                         &self.model.project().markers,
                         x_to_tick(pos.x),
@@ -3541,7 +3541,7 @@ impl KtApp {
                 // (the floor is 40 px before it), and the first events stay ordinary events.
                 self.jump_click(x_to_tick(pos.x), edge_heat(pos.x), rect.width() as f64 * tpp, tpp);
             } else if let Some((inst, left)) =
-                band_edge_at(self, pos).filter(|_| !response.double_clicked())
+                band_edge_at(self, pos).filter(|_| !crate::clicks::double(&response))
                 && response.drag_started()
             {
                 // The EDGE of the window of an expanded strip comes BEFORE all other targets in its rows:
@@ -3559,7 +3559,7 @@ impl KtApp {
                     self.drag = Some(Drag::NestWindow { inst, left, cur });
                 }
             } else if let Some((cid, left)) =
-                camera_edge_at(self, pos).filter(|_| !response.double_clicked())
+                camera_edge_at(self, pos).filter(|_| !crate::clicks::double(&response))
                 && response.drag_started()
             {
                 self.select_camera_only(cid);
@@ -3569,7 +3569,7 @@ impl KtApp {
                 }
             } else if let Some(cid) = camera_at(self, pos) {
                 self.select_camera_only(cid);
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     self.open_camera_editor(cid);
                 } else if response.drag_started()
                     && let Some(orig) = self.model.project().cameras.iter().find(|c| c.id == cid)
@@ -3584,7 +3584,7 @@ impl KtApp {
                 }
             } else if let Some((mid, left)) = morph_edge_at(self, pos).filter(|_| {
                 // double-click on the edge is still “open window”
-                !response.double_clicked()
+                !crate::clicks::double(&response)
             }) && response.drag_started()
             {
                 self.select_morph_only(mid);
@@ -3594,7 +3594,7 @@ impl KtApp {
                 }
             } else if let Some(mid) = morpher_at(self, pos) {
                 self.select_morph_only(mid);
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     self.open_morph_editor(mid);
                 } else if response.drag_started()
                     && let Some(orig) = self.model.project().morphers.iter().find(|m| m.id == mid)
@@ -3607,7 +3607,7 @@ impl KtApp {
                         moved: false,
                     });
                 }
-            } else if response.double_clicked()
+            } else if crate::clicks::double(&response)
                 && let Some(tid) = transition_body_at(self, pos)
             {
                 // double-click on the transition window = its properties (parity with
@@ -3616,7 +3616,7 @@ impl KtApp {
                 // (R.51) has no drag zones at all, but it does have a window.
                 self.open_transition_editor(tid);
             } else if let Some((tid, tz)) = transition_at(self, pos) {
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     // double-click on the handles/seam = the same properties window
                     self.open_transition_editor(tid);
                 } else if response.drag_started() {
@@ -3665,7 +3665,7 @@ impl KtApp {
                     // of the group moves the whole group (the selection is not broken)
                     self.select_only(id);
                 }
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     // double-click opens FX — exactly what the clip hint has promised since R.18
                     // (before R.33 it was misleading: a click set the region, and FX were hidden
                     // in the RMB menu). The region by event stayed on Shift+double-click
@@ -3719,7 +3719,7 @@ impl KtApp {
                 // delayed: every FX window would open 300 ms late to spare the rare triple click.
                 // The level line keeps its own double click (the reset) and ignores the third.
                 let after_level = self.pending_double == Some((id, DoubleEffect::LevelReset));
-                if response.triple_clicked() && !shift_held && zone != ClipZone::Level && !after_level {
+                if crate::clicks::triple(&response) && !shift_held && zone != ClipZone::Level && !after_level {
                     self.region_from_event(id);
                     match self.pending_double.take() {
                         Some((pid, DoubleEffect::OpenedFx)) if pid == id => {
@@ -3730,7 +3730,7 @@ impl KtApp {
                         Some((pid, DoubleEffect::ToggledNest)) if pid == id => self.expand_in_place(id),
                         _ => {}
                     }
-                } else if response.double_clicked() {
+                } else if crate::clicks::double(&response) {
                     // handled above
                 } else if response.drag_started() {
                     match zone {

@@ -1654,7 +1654,7 @@ fn param_label_widget(
         }
         _ => hint(&r, tr(k::fx::HINT_RESET)),
     }
-    r.double_clicked()
+    crate::clicks::double(&r)
 }
 
 /// The same row, but aware of curves.

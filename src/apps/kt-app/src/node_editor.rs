@@ -325,7 +325,7 @@ pub fn chain_graph(
     if canvas_resp.dragged_by(egui::PointerButton::Middle) {
         view.pan = (view.pan - canvas_resp.drag_delta().x).clamp(0.0, (detail_w - aw).max(0.0));
     }
-    if canvas_resp.double_clicked() {
+    if crate::clicks::double(&canvas_resp) {
         view = View::default();
     }
     if !detail {
@@ -540,7 +540,7 @@ pub fn chain_graph(
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
         crate::widgets::field_probe::note(&format!("fx.ctx.{n}"), *r);
         let resp = crate::app::hint_into(hover, resp, tr(k::fx::graph::CONTEXT_HINT));
-        if resp.double_clicked() {
+        if crate::clicks::double(&resp) {
             ch.open = Some(b.target);
         }
     }
@@ -616,7 +616,7 @@ pub fn chain_graph(
                     *edit.selected = ChainSel::Fx(i);
                     crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("effect selected: {name} (slot {i})"));
                 }
-                if resp.double_clicked() && !detail {
+                if crate::clicks::double(&resp) && !detail {
                     // a chip opens to the detailed nodes, scrolled to it
                     view.detail = Some(true);
                     view.pan = ((r.left() - canvas.left()) - aw * 0.5).max(0.0);
