@@ -13,11 +13,11 @@ Why: the owner, 2026-11-07: "половина ширины этой портян
 #### Scenario: The camera ISP form fills a wide window
 - **WHEN** the camera ISP slot's form is opened at 420, at its default and at 1600 points wide
 - **THEN** at 1600 its groups stand in several columns, unused width is at most a quarter, the form is shorter than at the default; at 420 every slider is at least 120 points
-- **PATH** double-click an event with Camera ISP → its effects window → drag the window's right edge to the screen's width → the stage groups move side by side into columns, the sheet becomes short → drag it narrow → one column, every slider still usable
-- **TEST** t3591 (`src/apps/kt-app/src/layout_tests.rs`), planned live scenario `form_width` (t3592)
+- **PATH** double-click an event with Camera ISP → its effects window → drag the window's corner to the screen's width → the pipeline blocks move side by side into columns, the sheet becomes short → drag it narrow → one column, every row inside the window
+- **TEST** t3591 (`src/apps/kt-app/src/form_width_tests.rs`), live scenario `form_width` (t3592)
 
 #### Scenario: Every kind and window passes the width guard
-- **WHEN** the guard lays out every registered kind's form and every registry window at the three widths
-- **THEN** each passes the three checks or is listed with a reason of at least 25 characters; the list names only existing kinds and windows; on the code before this change the camera ISP and VHS tape forms fail
+- **WHEN** the guard lays out every registered kind's form at the three widths, and opens every registry window at its default width and a short height, then widens it by its corner
+- **THEN** each kind passes the three checks, and each window's form is no taller when widened and, when it scrolls, gets shorter; a form or window that cannot is listed with a reason of at least 25 characters; the lists name only existing kinds and windows; on the code before this change the camera ISP and VHS tape forms fail, and the render window (groups stacked) fails
 - **PATH** there is no gesture: the guard lays out every kind's form and every registry window at three widths and names each form that leaves width unused or grows taller when widened
-- **TEST** t3593, t3594 (`src/apps/kt-app/src/reach_tests.rs`)
+- **TEST** t3593, t3593b, t3594 (`src/apps/kt-app/src/form_width_tests.rs`)

@@ -926,12 +926,16 @@ impl KtApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
-                self.render_preset_group(ui);
-                self.render_video_group(ui);
-                self.render_size_group(ui, &proj, max_src);
-                self.render_audio_group(ui);
+                // the groups are cards in columns (fx-form-width): a card is never narrower than
+                // the window's own minimum, the width its rows are made to fit
+                let mut flow = crate::widgets::CardFlow::new(ui, "render_groups", 440.0);
+                flow.card(|ui| self.render_preset_group(ui));
+                flow.card(|ui| self.render_video_group(ui));
+                flow.card(|ui| self.render_size_group(ui, &proj, max_src));
+                flow.card(|ui| self.render_audio_group(ui));
                 let cost = self.render_cost();
-                self.render_file_group(ui, region, full_len, &cost);
+                flow.card(|ui| self.render_file_group(ui, region, full_len, &cost));
+                flow.end(ui);
                 if !self.render_setup.missing.is_empty() {
                     ui.add_space(4.0);
                     ui.colored_label(

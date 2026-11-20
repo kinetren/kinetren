@@ -63,3 +63,31 @@ Layout runs only in a window's drawn frame; the label measurements are cached; n
 
 - **Fixed narrow windows** — the owner made windows fill their area; the fix is to use it.
 - **A per-window hand layout** — the class returns with the next kind; one flow in the shared widget.
+
+## Applied (2026-11-20, base `ea0aff6f`) — what the code does and where it differs
+
+- **One field a row.** The shared grid drew two fields a row in ONE column: at 420 pt the camera ISP
+  and the VHS tape rows reached x = 491 / 450, past their window. Now a grid row holds one field
+  (an `_x`/`_y` pair stays one row), and the columns of the flow give the density back:
+  `form_cols(avail, min_col)`, `min_col` = the longest label shown (measured in the current
+  language) + the 72 pt number field (+ its pair). Rows fill column after column
+  (`grid_part` per column, the same 4 sub-columns). The "120 pt slider" of D1 does not exist in the
+  shared row (only the Transform form has sliders, and it keeps its own layout): check 3 of D3 reads
+  "no row reaches past the narrow form's edge".
+- **Group cards: `widgets::CardFlow`.** A card goes into the column that is shortest AS DRAWN (no
+  estimate); `end` gives the parent the flow's whole width. A card's minimum is the window's own
+  minimum width (the width its rows are made to fit): render 440, settings 420; the ISP's blocks
+  measure their widest row. Applied to the ISP pipeline blocks, project settings and render.
+- **Not moved:** the camera window's groups stand between free rows (the ortho switch, the length
+  line) and stay stacked; its parameter grid flows inside its group. The morpher's groups wrap the
+  node graph. Both pass the guard.
+- **Found by the guard on the way:** the track window's two ducking compressors stood in a row of
+  `vertical`s — the first took all the width left and the second got a sliver. Each half now
+  gets an equal share.
+- **The window half of the guard (t3593b)** reads each window body's scroll content: a window is
+  set to its default width and 600 pt tall, then widened to 1600 pt; its form must be no taller
+  (unless it only fills its body — the track window's graph canvas) and, if it scrolled, must
+  get shorter. The render window with its groups stacked fails it: 696 pt in a 524 pt body, no
+  shorter when wide.
+- `t281` aimed at the "rate" field between the "rate" and "mix" labels on one row; it now aims
+  at the field's own published rectangle (the assertion on the model is unchanged).

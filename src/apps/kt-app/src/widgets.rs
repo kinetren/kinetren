@@ -627,6 +627,8 @@ fn fill_scroll<R>(
         egui::pos2(out.inner_rect.right(), ui.min_rect().bottom()),
     );
     fill_probe::note(ui, r);
+    #[cfg(test)]
+    fill_probe::note_content(ui, out.content_size.y);
     out.inner
 }
 
@@ -657,6 +659,23 @@ pub(crate) mod fill_probe {
             let v = d.get_temp_mut_or_insert_with::<(u64, egui::Rect)>(id, || (pass, rect));
             *v = if v.0 == pass { (pass, v.1.union(rect)) } else { (pass, rect) };
         });
+    }
+
+    /// The height of what a window's bodies hold (the form guard: a scrolling form that is no
+    /// shorter in a wider window leaves the width unused).
+    #[cfg(test)]
+    pub fn note_content(ui: &egui::Ui, h: f32) {
+        let id = egui::Id::new(("kt_fill_content", ui.layer_id()));
+        let pass = ui.ctx().cumulative_pass_nr();
+        ui.ctx().data_mut(|d| {
+            let v = d.get_temp_mut_or_insert_with::<(u64, f32)>(id, || (pass, h));
+            *v = if v.0 == pass { (pass, v.1.max(h)) } else { (pass, h) };
+        });
+    }
+
+    #[cfg(test)]
+    pub fn content(ctx: &egui::Context, layer: egui::LayerId) -> Option<f32> {
+        ctx.data(|d| d.get_temp::<(u64, f32)>(egui::Id::new(("kt_fill_content", layer)))).map(|(_, h)| h)
     }
 
     #[cfg(test)]
@@ -1155,6 +1174,18 @@ pub(crate) mod field_probe {
     #[cfg(test)]
     pub(crate) fn rect_of(name: &str) -> Option<egui::Rect> {
         SEEN.with(|v| v.borrow().get(name).copied())
+    }
+
+    /// Forget every place (a form guard lays one form out at a time).
+    #[cfg(test)]
+    pub(crate) fn clear_seen() {
+        SEEN.with(|v| v.borrow_mut().clear());
+    }
+
+    /// The union of every place noted since `clear_seen`.
+    #[cfg(test)]
+    pub(crate) fn seen_union() -> egui::Rect {
+        SEEN.with(|v| v.borrow().values().fold(egui::Rect::NOTHING, |a, r| a.union(*r)))
     }
 
     /// Forget a place, so a test can ask whether a later frame published it again.
@@ -1843,34 +1874,151 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     if specs.is_empty() {
         return ParamsChanged::default();
     }
+    // the form flows into columns by its width (fx-form-width D1): rows are read top to bottom,
+    // column after column, and a column never gets narrower than its readable minimum
+    let rows = grid_rows(&specs);
+    let min_col = form_min_col(ui, f.params_scope(), &specs, &rows);
+    let cols = form_cols(ui.available_width(), min_col).min(rows.len());
+    if cols <= 1 {
+        return grid_part(ui, egui::Id::new(&id), f, &specs, &rows, bind, pubc);
+    }
+    let mut changed = ParamsChanged::default();
+    let col_w = (ui.available_width() - FORM_COL_GAP * (cols - 1) as f32) / cols as f32;
+    let n = rows.len();
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = FORM_COL_GAP;
+        for c in 0..cols {
+            let part = &rows[c * n / cols..(c + 1) * n / cols];
+            ui.allocate_ui_with_layout(egui::vec2(col_w, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_min_width(col_w);
+                changed |= grid_part(ui, egui::Id::new(&id).with(c), f, &specs, part, bind.as_deref_mut(), pubc);
+            });
+        }
+    });
+    changed
+}
+
+/// Cards in columns (fx-form-width D1): a form of groups lays each group into the column that is
+/// shortest so far, measured as drawn, so a wide window shows several groups side by side and a
+/// group is never split. `card` draws one; `end` gives the parent the room the columns took.
+pub struct CardFlow {
+    cols: Vec<egui::Ui>,
+    /// The flow's whole width: its columns take it all, the last one's margin included.
+    span: egui::Rangef,
+    top: f32,
+}
+
+impl CardFlow {
+    /// A flow over the parent's width; `min_col` is a card's readable minimum.
+    pub fn new(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, min_col: f32) -> Self {
+        let avail = ui.available_width();
+        let n = form_cols(avail, min_col);
+        let col_w = (avail - FORM_COL_GAP * (n - 1) as f32) / n as f32;
+        let at = ui.cursor().min;
+        let cols = (0..n)
+            .map(|c| {
+                let x = at.x + c as f32 * (col_w + FORM_COL_GAP);
+                let rect = egui::Rect::from_min_size(egui::pos2(x, at.y), egui::vec2(col_w, f32::INFINITY));
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt((&id, c))
+                        .max_rect(rect)
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                child.set_width(col_w);
+                child
+            })
+            .collect();
+        Self { cols, span: egui::Rangef::new(at.x, at.x + avail), top: at.y }
+    }
+
+    /// Draw one card into the shortest column.
+    pub fn card<R>(&mut self, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+        let c = (0..self.cols.len())
+            .min_by(|a, b| self.cols[*a].min_rect().bottom().total_cmp(&self.cols[*b].min_rect().bottom()))
+            .unwrap_or(0);
+        body(&mut self.cols[c])
+    }
+
+    /// A collapsible group (`group`) as a card.
+    pub fn group<R>(&mut self, id: &str, title: &str, body: impl FnOnce(&mut egui::Ui) -> R) -> Option<R> {
+        self.card(|ui| group(ui, id, title, body))
+    }
+
+    /// Give the parent the room the columns took.
+    pub fn end(self, ui: &mut egui::Ui) {
+        let bottom = self.cols.iter().map(|c| c.min_rect().bottom()).fold(self.top, f32::max);
+        ui.advance_cursor_after_rect(egui::Rect::from_min_max(
+            egui::pos2(self.span.min, self.top),
+            egui::pos2(self.span.max, bottom),
+        ));
+    }
+}
+
+/// The most columns a form takes, and the gap between them (fx-form-width D1): past four a row
+/// is read across a whole screen.
+pub const FORM_MAX_COLS: usize = 4;
+pub const FORM_COL_GAP: f32 = 16.0;
+
+/// How many columns of `min_col` fit into `avail` (at least one, at most `FORM_MAX_COLS`).
+pub fn form_cols(avail: f32, min_col: f32) -> usize {
+    (((avail + FORM_COL_GAP) / (min_col + FORM_COL_GAP)).floor() as usize).clamp(1, FORM_MAX_COLS)
+}
+
+/// The width a number field of the shared row is given (`param_value`'s `desired_width`).
+const FORM_FIELD_W: f32 = 72.0;
+
+/// The readable minimum of a column of the shared grid: a row holds one field — its label (the
+/// longest of the rows shown, measured in the current language) and its number — and an X/Y pair
+/// holds two.
+fn form_min_col(ui: &egui::Ui, scope: kt_model::ParamScope, specs: &[ParamSpec], rows: &[std::ops::Range<usize>]) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let label = specs
+        .iter()
+        .map(|s| {
+            ui.painter()
+                .layout_no_wrap(param_label_scoped(scope, &s.name), font.clone(), egui::Color32::WHITE)
+                .size()
+                .x
+        })
+        .fold(0.0f32, f32::max);
+    let gap = 8.0;
+    let per_row = rows.iter().map(|r| r.len()).max().unwrap_or(1) as f32;
+    per_row * (label + gap + FORM_FIELD_W) + (per_row - 1.0) * gap
+}
+
+/// The shared grid's rows: one field a row (the columns of the flow give the density), but an
+/// `<stem>_x`/`<stem>_y` pair is ONE row (`v26.10` T10: "параметры центра X Y … находятся на разных
+/// строках"): a point reads as one value.
+fn grid_rows(specs: &[ParamSpec]) -> Vec<std::ops::Range<usize>> {
+    let mut rows = Vec::new();
+    let mut i = 0;
+    while i < specs.len() {
+        let stem = specs[i].name.strip_suffix("_x");
+        let paired = stem.is_some_and(|st| specs.get(i + 1).is_some_and(|n| n.name.strip_suffix("_y") == Some(st)));
+        let n = if paired { 2 } else { 1 };
+        rows.push(i..i + n);
+        i += n;
+    }
+    rows
+}
+
+/// One column of the shared grid: the rows given, each on its grid row.
+fn grid_part<P: HasParams + ?Sized>(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    f: &mut P,
+    specs: &[ParamSpec],
+    rows: &[std::ops::Range<usize>],
+    mut bind: Option<&mut CurveBind<'_>>,
+    pubc: Option<&PublishCtx>,
+) -> ParamsChanged {
     let mut changed = ParamsChanged::default();
     egui::Grid::new(id).num_columns(4).spacing([8.0, 4.0]).show(ui, |ui| {
-        // two fields a row, but an `<stem>_x`/`<stem>_y` pair is ONE row of its own (`v26.10` T10:
-        // "параметры центра X Y … находятся на разных строках"): a point reads as one value
-        let (mut i, mut in_row) = (0, 0);
-        while i < specs.len() {
-            let stem = specs[i].name.strip_suffix("_x");
-            let paired =
-                stem.is_some_and(|st| specs.get(i + 1).is_some_and(|n| n.name.strip_suffix("_y") == Some(st)));
-            if paired {
-                if in_row == 1 {
-                    ui.end_row();
-                }
-                changed |= param_row_bound(ui, f, &specs[i], bind.as_deref_mut(), pubc);
-                changed |= param_row_bound(ui, f, &specs[i + 1], bind.as_deref_mut(), pubc);
-                ui.end_row();
-                (i, in_row) = (i + 2, 0);
-                continue;
+        for r in rows {
+            for spec in &specs[r.clone()] {
+                changed |= param_row_bound(ui, f, spec, bind.as_deref_mut(), pubc);
             }
-            changed |= param_row_bound(ui, f, &specs[i], bind.as_deref_mut(), pubc);
-            in_row += 1;
-            if in_row == 2 {
-                ui.end_row();
-                in_row = 0;
-            }
-            i += 1;
-        }
-        if in_row == 1 {
             ui.end_row();
         }
     });
