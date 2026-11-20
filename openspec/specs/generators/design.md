@@ -178,7 +178,7 @@ two titles on one media could not carry different text. The single entry "Create
 - The timecode and the countdown show the time of the MATERIAL — the source cannot see the timeline's clock
   by construction (`src/libs/kt-media/src/generator.rs`); a hint in the form
   says this directly.
-- The 3×5 pixel font and `Canvas` — common `src/libs/kt-media/src/pixfont.rs`
+- The 3×5 pixel font and `Canvas` — common `src/libs/kt-plugin-api/src/pixfont.rs`
   (placeholder, timecode, countdown); this is NOT the rasterization of user text.
 - Everything that shows the frame of a generator event (filmstrip, bar, picker gallery)
   asks `clip_source_addr`/`gen_source_addr`

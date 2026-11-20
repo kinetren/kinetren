@@ -184,12 +184,10 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
 - A refusal of rubato when the ratio changes IS CHECKED (`Warp::rejected`, `src/libs/kt-fx/src/audio/warp.rs`):
   it used to be swallowed, and a curve wider than the window ±32 silently stuck at the previous ratio; a curve
   below 0.25 builds the resampler in extended mode.
-- Ducking (`kt_engine::ducking::duck_spans`, `src/libs/kt-engine/src/ducking.rs`): RMS with a window of
-  960 / step of 480, merging of pauses < 300 ms and dropping of spans < 150 ms (otherwise the curve "hiccups" between
-  words); the window is not broken at a chunk boundary. The analysis reads the sources with ITS OWN fetcher —
-  the cache is warm only around the cursor. The command `duck_curve_commands`
-  (`src/libs/kt-model/src/ops.rs`): keys via `clip_material_at`, the existing `db` curve
-  is REPLACED, one `apply_batch`.
+- Ducking by an offline snapshot (`kt_engine::ducking::duck_spans`, `duck_curve_commands`) is GONE (R.65,
+  the owner's decision): the live sidechain compressor with a key (capability `audio-fx`, "sidechain") replaced
+  it; t774 (`src/apps/kt-app/src/analysis.rs`) guards that no ducking task, function or job exists. The
+  snapshot's rules (RMS window 960/480, merging pauses < 300 ms) are history.
 - Checklist "add an audio effect" (`src/libs/kt-fx/CLAUDE.md`): `class() -> Audio` must not be forgotten — the kind would silently become Video2d; a branch in `chain_tail` for the tail, `chain_lookahead` for the look-ahead, the kt-app registry entry and the catalogs in ×5 languages (capability `ui-timeline`).
 - Chain presets and inserting a chain block with curves — capability `automation`
   (`src/apps/kt-app/src/user_store.rs`, `kt_model::append_chain_block`).
