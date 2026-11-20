@@ -1,6 +1,6 @@
 # Tasks: window-chrome
 
-> DESIGN ONLY until the owner answers Q1 and the orchestrator's go. Tests: t3935–t3941 (t3942 spare).
+> DESIGN ONLY until the owner answers Q1 and the orchestrator's go. Tests: t3935–t3941.
 
 ## 0. Notes
 
