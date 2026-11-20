@@ -1,5 +1,5 @@
 ---
-id: F-FX-017
+id: F-FX-018
 title: Datamosh over a whole track — the edit's own cuts broken, with what was composed there
 status: candidate
 priority: C
@@ -19,7 +19,7 @@ services: []
 checked: 2026-11-20
 ---
 
-# F-FX-017 — Datamosh over a whole track — the edit's own cuts broken, with what was composed there
+# F-FX-018 — Datamosh over a whole track — the edit's own cuts broken, with what was composed there
 
 ## Essence
 

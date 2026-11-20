@@ -4,7 +4,7 @@
 
 ## 0. Notes first
 
-- [x] 0.1 feature note F-FX-017 (`docs/features/fx/simulate/datamosh-on-a-track.md`); proposal, design (D1–D8, class walk D7), deltas `video-fx`, `audio-fx`, `ui-reach`; `openspec validate track-stream-stage --strict`
+- [x] 0.1 feature note F-FX-018 (`docs/features/fx/simulate/datamosh-on-a-track.md`); proposal, design (D1–D8, class walk D7), deltas `video-fx`, `audio-fx`, `ui-reach`; `openspec validate track-stream-stage --strict`
 
 ## 1. Layout and host
 
