@@ -2439,6 +2439,7 @@ fn read_foreign_nest(
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     if both {
         let other = match kind {
@@ -2786,6 +2787,7 @@ fn read_nest(
         geometry_pos: meta.as_ref().map(|m| m.geometry_pos).unwrap_or(0),
         geometry_auto: meta.as_ref().map(|m| m.geometry_auto.clone()).unwrap_or_default(),
         masks: meta.as_ref().map(|m| m.masks.clone()).unwrap_or_default(),
+        fx_in: Vec::new(),
     })
 }
 
@@ -3016,6 +3018,7 @@ fn clip_from_otio(
         fx,
         fx_auto,
         fx_bypass: bypass,
+        fx_in: Vec::new(),
     };
     // slowed&reverb keyframes of the old pattern — into the shared mechanism (R.33):
     // they no longer have their own domain

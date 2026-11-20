@@ -46,6 +46,7 @@ fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p

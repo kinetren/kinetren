@@ -50,6 +50,7 @@ fn project(fx: FxInstance, auto: Vec<ParamCurve>, pattern: &str) -> Project {
         fx_auto: vec![auto],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().expect("a valid case");
     p

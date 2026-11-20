@@ -1253,6 +1253,7 @@ impl KtApp {
                         slots: vec![],
                         src_in: kt_time::Tick(0),
                         fx_off: false,
+                        fx_in: Vec::new(),
                     },
                     name: old.clone(),
                     rename_of: Some(old),
@@ -1602,6 +1603,8 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Geometry { lead: true, .. } => "• Geometry",
         FxInstance::Geometry { .. } => "Geometry",
         FxInstance::CamMotion { .. } => "CamMotion",
+        // routing of the graph (fx-graph-dag D1); its caption joins the catalogues with the editor (v2d)
+        FxInstance::Merge { .. } => "Merge",
         // a plugin names itself in its manifest (plugin-api-stage1, D7)
         FxInstance::Plugin(p) => p.manifest().ui.name,
         // a plugin this build lacks: the id from the file, said as such

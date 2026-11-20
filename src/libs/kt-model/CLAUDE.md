@@ -712,3 +712,23 @@ what the model holds costs nothing. A new mutation path that writes the canon mu
 - **`RowCurves` / `MasksPlan`** compile a carrier's curves to rows once; `apply`/`at` are the by-name
   bits (`set_param_idx` IS the row's `set_param` — a new `HasParams` with plugin rows says so).
   `apply_curves`, `kind_at`, `params_at` count `Cost::ParamByName`: they are for the UI, not a frame.
+
+## Effect graphs (fx-graph-dag)
+
+- **The wiring is ONE sparse list parallel to the slots**: `ClipEvent.fx_in`, `Track.fx_in`,
+  `MorphPatch.{video_in,audio_in}`, `FxChainBlock.fx_in`. Inputs name earlier slots or the Source,
+  so slot order stays processing order. Every rule lives in `fx_graph.rs`; a new place that reads
+  or edits wiring calls it, never re-derives it.
+- **A line is the EMPTY list** (`fx_graph::canonical`, on every command and in `normalize`): a
+  line's file, `Debug` and hashes do not move. A writer that keeps entries equal to the line breaks
+  byte stability.
+- **Every slot removal goes through `fx_graph::remove_slot`** (readers read the removed slot's main
+  input), every insertion on a wire through `insert_slot`; a bypassed or inert slot drops out of an
+  active chain the same way (`without`, `active_fx_in`, `MorphPatch::in_for`). A new path that
+  removes slots from a chain (a mirror, a bake, a migration) and skips it leaves wiring that the
+  batch validation refuses.
+- **The pair's speed is the trunk's**: `sync_warp_to_link_group` treats a warp in an arm as none;
+  `SetFxIn` re-runs it. One warp slot per chain stays (`TwoTimeWarps`).
+- **Until the picture lowering (v2b) a Merge is inert** (`FxInstance::is_inert`): it leaves the
+  active chain like a missing plugin, its readers reading its Background.
+- The file is format 8 by content (`has_fx_graph`). Tests t3209–t3210, t3222–t3224.

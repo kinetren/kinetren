@@ -13,17 +13,22 @@
 
 ## 1. v2a — the model and the file
 
-- [ ] 1.1 kt-model: `fx_in` (`SlotInputs`, `FxIn`, `MatteFrom`) on every chain carrier (event,
+- [x] 1.1 kt-model: `fx_in` (`SlotInputs`, `FxIn`, `MatteFrom`) on every chain carrier (event,
       track, morpher patch's two chains); `FxInstance::Merge` (core, not in the plugin registry)
-- [ ] 1.2 validation: earlier slots only, one lane, `second`/`matte` only on Merge and a compressor's
+- [x] 1.2 validation: earlier slots only, one lane, `second`/`matte` only on Merge and a compressor's
       key, the lead before any branch, `MAX_HELD`, `MAX_READS`; the stable topological re-sort for a
       forward wire; t3209
-- [ ] 1.2b `fx_reads`: a graph's reads as derived chains (ancestors of an arm time kind, nested);
-      a graph without arm time kinds has one read equal to its Output path; t3227
-- [ ] 1.3 one removal helper re-wiring readers; the morpher splice offsets inputs; the pair rules
+- [x] 1.2b `fx_reads`: a graph's reads as derived chains (ancestors of an arm time kind, nested);
+      a graph without arm time kinds has one read equal to its Output path; t3209b (the engine's
+      order and strip per read stay t3227, v2b)
+- [x] 1.2c the pair's speed is the trunk's: an arm's warp counts as none for the link group, a
+      rewire re-runs the mirror; one warp slot per chain stays (D11.5); t3209c
+- [x] 1.2d until v2b a Merge is inert (it leaves the active chain like a missing plugin, its
+      readers reading its Background): a graph ships only with its lowering
+- [x] 1.3 one removal helper re-wiring readers; the morpher splice offsets inputs; the pair rules
       mirror presence and values, not wires; t3222, t3223
-- [ ] 1.4 copy/paste blocks and presets carry relative inputs (`append_chain_block`); t3224
-- [ ] 1.5 `.kt`: `in`, `merge`, format by content (the next free number at merge); t3210
+- [x] 1.4 copy/paste blocks and presets carry relative inputs (`append_chain_block`); t3224
+- [x] 1.5 `.kt`: `in`, `merge`, format by content (the next free number at merge); t3210
 - [ ] 1.6 kt-otio: `in` in `Effect.1` metadata, `kt:merge`, envelope v17 by content; t3211; the row
       in "What OTIO export loses" (`docs/ktprompts/v26.10-index.md`)
 
@@ -34,6 +39,8 @@
       `matte_from` pass; alpha flags per side; t3200, t3201, t3202, t3204
 - [ ] 2.3 kt-engine: decode step only before the first branch; masks' dry side = the slot's input;
       t3205, t3206
+- [ ] 2.3a `clip_warp`, `chain_context` and the stream stage read the TRUNK's time kinds only; a
+      Merge stops being inert (`FxInstance::is_inert`)
 - [ ] 2.3b kt-engine reads: `layers_at`/`wanted_frames` per read, stream history keyed (event, read),
       `Input(k)` into the layer program, the read law; t3226, t3228
 - [ ] 2.3c kt-app: the coverage strip draws a row per read; the performance panel and `kt-cli probe`

@@ -86,7 +86,11 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
     // the slot is looked up BY KIND, not by index: audio may have
     // [Gain, Slowed], video [Blur, Slowed, Mirror]
     let warp_slot = |c: &ClipEvent| c.fx.iter().position(|f| f.warps_time());
-    let mine = warp_slot(src);
+    // a warp inside an ARM is that arm's read (fx-graph-dag D2), not the speed at which the event
+    // consumes its source: the pair's one speed is the trunk's, and an arm's is its own
+    let in_arm = |c: &ClipEvent, i: usize| i >= crate::fx_graph::trunk_len(&c.fx_in, c.fx.len());
+    // …so an arm's warp counts as none: moving the warp into an arm takes the partner's off
+    let mine = warp_slot(src).filter(|i| !in_arm(src, *i));
     let (tmpl, rate_curve) = match mine {
         Some(i) => (
             Some(src.fx[i].clone()),
@@ -102,6 +106,9 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
         .collect();
     for pid in partners {
         let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
+        if warp_slot(c).is_some_and(|i| in_arm(c, i)) {
+            continue;
+        }
         match (warp_slot(c), &tmpl) {
             // both have it — we carry over ONLY the speed and its curve
             (Some(j), Some(t)) => {
@@ -132,6 +139,7 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
             }
             // it disappeared from one — we remove it from the partner along with its curves
             (Some(j), None) => {
+                crate::fx_graph::remove_slot(&mut c.fx_in, c.fx.len(), j);
                 c.fx.remove(j);
                 if j < c.fx_auto.len() {
                     c.fx_auto.remove(j);
@@ -172,7 +180,7 @@ fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
         .collect();
     for pid in partners {
         let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
-        let removed = mirror_halves(&mine, &mut c.fx, &mut c.fx_auto, &mut c.fx_bypass);
+        let removed = mirror_halves(&mine, &mut c.fx, &mut c.fx_auto, &mut c.fx_bypass, &mut c.fx_in);
         for i in removed {
             if i < c.masks.slots.len() {
                 c.masks.slots.remove(i);
@@ -212,7 +220,7 @@ fn sync_pairs_to_sound_track(p: &mut Project, id: TrackId, had_pair: bool) {
             let Some(sound) = p.track(id).and_then(|t| t.sound) else { return };
             if let Some(a) = p.track_mut(sound) {
                 let mut auto = Vec::new();
-                mirror_halves_where(&mine, &mut a.fx, &mut auto, &mut a.fx_bypass, track_pairs);
+                mirror_halves_where(&mine, &mut a.fx, &mut auto, &mut a.fx_bypass, &mut a.fx_in, track_pairs);
             }
         }
         LaneKind::Audio => {
@@ -221,7 +229,7 @@ fn sync_pairs_to_sound_track(p: &mut Project, id: TrackId, had_pair: bool) {
             let mine = track_halves(&t.fx);
             if let Some(v) = p.track_mut(video) {
                 let mut auto = Vec::new();
-                mirror_halves_where(&mine, &mut v.fx, &mut auto, &mut v.fx_bypass, track_pairs);
+                mirror_halves_where(&mine, &mut v.fx, &mut auto, &mut v.fx_bypass, &mut v.fx_in, track_pairs);
             }
         }
         _ => {}
@@ -256,7 +264,7 @@ fn relink_track_sound(p: &mut Project, id: TrackId, was: Option<TrackId>) {
         && let Some(a) = p.track_mut(old)
     {
         let mut auto = Vec::new();
-        mirror_halves_where(&[], &mut a.fx, &mut auto, &mut a.fx_bypass, track_pairs);
+        mirror_halves_where(&[], &mut a.fx, &mut auto, &mut a.fx_bypass, &mut a.fx_in, track_pairs);
     }
     // the video track leads into its new sound track (`had_pair` true: no default link here)
     sync_pairs_to_sound_track(p, id, true);
@@ -287,8 +295,9 @@ fn mirror_halves(
     fx: &mut Vec<FxInstance>,
     auto: &mut Vec<Vec<ParamCurve>>,
     bypass: &mut Vec<bool>,
+    fx_in: &mut Vec<crate::fx_graph::SlotInputs>,
 ) -> Vec<usize> {
-    mirror_halves_where(mine, fx, auto, bypass, |_| true)
+    mirror_halves_where(mine, fx, auto, bypass, fx_in, |_| true)
 }
 
 /// `mirror_halves` over the paired kinds `takes` admits in the other chain (a track admits no
@@ -298,6 +307,7 @@ fn mirror_halves_where(
     fx: &mut Vec<FxInstance>,
     auto: &mut Vec<Vec<ParamCurve>>,
     bypass: &mut Vec<bool>,
+    fx_in: &mut Vec<crate::fx_graph::SlotInputs>,
     takes: impl Fn(&str) -> bool,
 ) -> Vec<usize> {
     let reg = crate::plugin_slot::registry();
@@ -334,6 +344,8 @@ fn mirror_halves_where(
         if used[k] {
             continue;
         }
+        // a slot that read the removed half reads its input (fx-graph-dag D6: one removal rule)
+        crate::fx_graph::remove_slot(fx_in, fx.len(), *i);
         fx.remove(*i);
         if *i < auto.len() {
             auto.remove(*i);
@@ -373,9 +385,9 @@ pub(crate) fn sync_pairs_in_patch(patch: &mut MorphPatch, before: Option<&MorphP
         _ => !v.is_empty() || a.is_empty(),
     };
     if video_leads {
-        mirror_halves(&v, &mut patch.audio_fx, &mut patch.audio_auto, &mut patch.audio_bypass);
+        mirror_halves(&v, &mut patch.audio_fx, &mut patch.audio_auto, &mut patch.audio_bypass, &mut patch.audio_in);
     } else {
-        mirror_halves(&a, &mut patch.video_fx, &mut patch.video_auto, &mut patch.video_bypass);
+        mirror_halves(&a, &mut patch.video_fx, &mut patch.video_auto, &mut patch.video_bypass, &mut patch.video_in);
     }
 }
 
@@ -506,6 +518,12 @@ pub enum Command {
         id: ClipId,
         masks: crate::mask::EventMasks,
     },
+    /// The event chain's wiring (fx-graph-dag D1): a full replacement, canonical on apply. A gesture
+    /// that moves slots sends it with `SetFx` in one batch; the batch's validation sees both.
+    SetFxIn {
+        id: ClipId,
+        fx_in: Vec<crate::fx_graph::SlotInputs>,
+    },
     /// Generator values ON THE EVENT (R.59, stage 2).
     ///
     /// Does not touch the frame plan (`touches_render_plan() == false`): the source's address
@@ -600,6 +618,11 @@ pub enum Command {
         id: TrackId,
         fx: Vec<FxInstance>,
         bypass: Vec<bool>,
+    },
+    /// The track stage's wiring (fx-graph-dag D1), as `SetFxIn`.
+    SetTrackFxIn {
+        id: TrackId,
+        fx_in: Vec<crate::fx_graph::SlotInputs>,
     },
     SetTrackFxOff {
         id: TrackId,
@@ -775,6 +798,7 @@ impl Command {
             | Command::SetFx { id, .. }
             | Command::SetFxAuto { id, .. }
             | Command::SetMasks { id, .. }
+            | Command::SetFxIn { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -828,6 +852,7 @@ impl Command {
             | Command::SetFx { id, .. }
             | Command::SetFxAuto { id, .. }
             | Command::SetMasks { id, .. }
+            | Command::SetFxIn { id, .. }
             | Command::SetClipGen { id, .. }
             | Command::SetClipGenAuto { id, .. }
             | Command::UnlinkClip { id }
@@ -884,6 +909,7 @@ impl Command {
             | Command::SetTrackProps { .. }
             | Command::SetTrackFx { .. }
             | Command::SetTrackMasks { .. }
+            | Command::SetTrackFxIn { .. }
             | Command::SetTrackFxOff { .. }
             | Command::SetLaneOrder { .. }
             | Command::AddArea(_)
@@ -931,6 +957,7 @@ impl Command {
             | Command::SetFx { .. }
             | Command::SetFxAuto { .. }
             | Command::SetMasks { .. }
+            | Command::SetFxIn { .. }
             | Command::ApplyGenToAll { .. }
             | Command::LinkClips { .. }
             | Command::UnlinkClip { .. }
@@ -948,6 +975,7 @@ impl Command {
             | Command::SetTrackProps { .. }
             | Command::SetTrackFx { .. }
             | Command::SetTrackMasks { .. }
+            | Command::SetTrackFxIn { .. }
             | Command::SetTrackFxOff { .. }
             | Command::RemoveMedia { .. }
             | Command::SetSettings { .. }
@@ -1184,6 +1212,7 @@ impl Band {
                 | Command::SetFx { .. }
                 | Command::SetFxAuto { .. }
                 | Command::SetMasks { .. }
+                | Command::SetFxIn { .. }
                 | Command::SetClipGen { .. }
                 | Command::SetClipGenAuto { .. }
                 | Command::ApplyGenToAll { .. }
@@ -1212,6 +1241,7 @@ impl Band {
                 | Command::SetTrackProps { .. }
                 | Command::SetTrackFx { .. }
                 | Command::SetTrackMasks { .. }
+                | Command::SetTrackFxIn { .. }
                 | Command::SetTrackFxOff { .. }
                 | Command::AddCamera(_)
                 | Command::SetCamera(_)
@@ -1857,6 +1887,18 @@ impl TimelineModel {
                 let c = find(*id)?;
                 crate::check_event_masks(*id, c.kind, c.fx.len(), masks)
                     .map_err(CommandError::InvalidClip)?;
+            }
+            Command::SetFxIn { id, fx_in } => {
+                let c = find(*id)?;
+                crate::fx_graph::check(&c.fx, fx_in, c.geometry_pos)
+                    .map_err(|e| CommandError::InvalidClip(ProjectError::BadGraph(*id, e.slot, e.why)))?;
+            }
+            Command::SetTrackFxIn { id, fx_in } => {
+                let Some(t) = p.track(*id) else {
+                    return Err(CommandError::TrackNotFound(*id));
+                };
+                crate::fx_graph::check(&t.fx, fx_in, 0)
+                    .map_err(|e| CommandError::InvalidClip(ProjectError::BadTrackGraph(*id, e.slot, e.why)))?;
             }
             Command::SetTrackMasks { id, masks } => {
                 let Some(t) = p.track(*id) else {
@@ -2569,6 +2611,9 @@ impl TimelineModel {
                 // …and so do the masks of the extra slots (shape-masks)
                 c.masks.slots.truncate(fx.len());
                 c.masks.canonicalize();
+                // …and so does the wiring (fx-graph-dag): a gesture that moves slots of a graph
+                // sends `SetFxIn` in the same batch, whose validation sees the two together
+                crate::fx_graph::canonical(&mut c.fx_in, fx.len());
                 // the leading “Geometry” node (R.62) stood behind the end of
                 // the shortened chain — it is pressed against its end
                 c.geometry_pos = c.geometry_pos.min(fx.len());
@@ -2583,6 +2628,20 @@ impl TimelineModel {
             Command::SetTrackMasks { id, masks } => {
                 if let Some(t) = p.track_mut(id) {
                     t.masks = masks;
+                }
+            }
+            Command::SetFxIn { id, mut fx_in } => {
+                let c = Self::clip_mut_on(p, id);
+                crate::fx_graph::canonical(&mut fx_in, c.fx.len());
+                c.fx_in = fx_in;
+                // a rewire can move the warp between the trunk and an arm: the pair's speed is the
+                // trunk's (fx-graph-dag D2)
+                sync_warp_to_link_group(p, id);
+            }
+            Command::SetTrackFxIn { id, mut fx_in } => {
+                if let Some(t) = p.track_mut(id) {
+                    crate::fx_graph::canonical(&mut fx_in, t.fx.len());
+                    t.fx_in = fx_in;
                 }
             }
             Command::SetFxAuto { id, auto } => {
@@ -2675,6 +2734,7 @@ impl TimelineModel {
             Command::SetTrackFx { id, fx, bypass } => {
                 let had_pair = p.track(id).is_some_and(|t| !track_halves(&t.fx).is_empty());
                 if let Some(t) = p.track_mut(id) {
+                    crate::fx_graph::canonical(&mut t.fx_in, fx.len());
                     t.fx = fx;
                     t.fx_bypass = bypass;
                 }

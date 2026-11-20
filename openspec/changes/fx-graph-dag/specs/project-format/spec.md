@@ -16,7 +16,7 @@ Why: an older build would open the arms as a line and save them so; the preceden
 #### Scenario: A graph raises the format; a line does not move
 - **WHEN** a project of lines is written; a Merge and an arm are added and it is written and read; an input naming a later slot is put in the text by hand
 - **THEN** the first text is unchanged and keeps its version; the second is format 6 with `in` and `merge`, reads back equal and is refused by a build that reads 5; the third is refused with the slot's address
-- **TEST** t3210 (`src/libs/kt-model/tests/project_file.rs`), t3209 (`src/libs/kt-model/tests/fx_graph.rs`)
+- **TEST** t3210, t3209, t3209b, t3209c (`src/libs/kt-model/tests/fx_graph.rs`)
 
 #### Scenario: The OTIO door keeps the wiring
 - **WHEN** the branching project is exported to `.otio` and imported

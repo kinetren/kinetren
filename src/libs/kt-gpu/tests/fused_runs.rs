@@ -250,6 +250,7 @@ fn project() -> Project {
         fx: vec![instance("color_grade", true), instance("posterize", true), instance("duotone", true), instance("vignette", true)],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }];
     p.normalize();
     p.validate().unwrap();

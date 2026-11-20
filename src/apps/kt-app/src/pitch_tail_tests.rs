@@ -38,6 +38,7 @@ fn harness_with_pitch() -> Harness<'static, KtApp> {
         opacity: 1.0,
         fx_off: false,
         masks: Default::default(),
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);

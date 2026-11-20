@@ -183,6 +183,7 @@ fn t1050_a_missing_generator_kind_is_kept_and_named() {
         fx_auto: Vec::new(),
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     let text = to_text(&p, None);
     let read = from_text(&text).expect("a file with a missing generator kind opens");

@@ -51,6 +51,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32) -> ClipEvent {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

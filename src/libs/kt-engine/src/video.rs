@@ -230,7 +230,7 @@ impl ClipMaskPlan {
             Vec::new()
         } else {
             (0..c.fx.len())
-                .filter(|&i| !c.fx_bypass.get(i).copied().unwrap_or(false) && !c.fx[i].is_missing())
+                .filter(|&i| !c.fx_bypass.get(i).copied().unwrap_or(false) && !c.fx[i].is_inert())
                 .collect()
         };
         let want = c.geometry_pos.min(c.fx.len());

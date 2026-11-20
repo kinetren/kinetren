@@ -1628,6 +1628,12 @@ pub struct MorphPatch {
     pub video_auto: Vec<Vec<ParamCurve>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_auto: Vec<Vec<ParamCurve>>,
+    /// The two chains' wiring (fx-graph-dag D6), as `ClipEvent::fx_in`: the patch's Source is the
+    /// target's Output; spliced, the inputs are offset by the target's length.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video_in: Vec<crate::fx_graph::SlotInputs>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_in: Vec<crate::fx_graph::SlotInputs>,
 }
 
 /// Manual `Deserialize`: accepts three forms — the flat one (R.35) and both
@@ -1708,6 +1714,8 @@ impl<'de> Deserialize<'de> for MorphPatch {
                 audio_bypass: f.audio_bypass,
                 video_auto: f.video_auto,
                 audio_auto: f.audio_auto,
+                audio_in: Vec::new(),
+                video_in: Vec::new(),
             },
         })
     }
@@ -1869,6 +1877,17 @@ impl MorphPatch {
         out
     }
 
+    /// The wiring in the same order in which `chain_for` hands out the slots (fx-graph-dag D6): a
+    /// disabled slot's readers read its input; the other lane's warp or strength slots at the tail
+    /// are the line.
+    pub fn in_for(&self, kind: ClipKind) -> Vec<crate::fx_graph::SlotInputs> {
+        let (fx, off, fx_in) = match kind {
+            ClipKind::Video => (&self.video_fx, &self.video_bypass, &self.video_in),
+            ClipKind::Audio => (&self.audio_fx, &self.audio_bypass, &self.audio_in),
+        };
+        crate::fx_graph::without(fx_in, fx.len(), |i| off.get(i).copied().unwrap_or(false))
+    }
+
     /// The curves in the same order in which `chain_for` hands out the slots:
     /// disabled ones skipped, for video at the tail — the warp slots from audio.
     /// If the order diverged, the curve would shift onto another effect.
@@ -1976,11 +1995,15 @@ impl MorphPatch {
             c.fx.clear();
             c.fx_bypass.clear();
             c.fx_auto.clear();
+            c.fx_in.clear();
             c.fx_off = false;
         }
         // fx_bypass shorter than the chain = the appended slots are enabled
         // (active_fx treats a missing flag as false)
         let auto = self.auto_for(c.kind);
+        // the patch's graph follows its target's Output (fx-graph-dag D6)
+        let (n0, m) = (c.fx.len(), add.len());
+        crate::fx_graph::splice(&mut c.fx_in, n0, &self.in_for(c.kind), m);
         c.fx.extend(add);
         // layer curves (R.38 item 13) — in the target's MATERIAL domain: the layer has its own
         // time (0..duration of the block), the event has the material, and the engine
@@ -3107,6 +3130,9 @@ pub struct Track {
     pub fx_off: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub fx_auto: Vec<Vec<ParamCurve>>,
+    /// The track stage's wiring (fx-graph-dag D1), as `ClipEvent::fx_in`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub fx_in: Vec<crate::fx_graph::SlotInputs>,
     /// Masks of the track's composite, canvas space, static (shape-masks).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub masks: Vec<crate::mask::Mask>,
@@ -3168,6 +3194,7 @@ impl Track {
             fx_auto: Vec::new(),
             masks: Vec::new(),
             sound: None,
+            fx_in: Vec::new(),
         }
     }
 
@@ -3210,7 +3237,7 @@ impl Track {
         self.fx
             .iter()
             .enumerate()
-            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_missing())
+            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_inert())
             .map(|(_, f)| f.clone())
             .collect()
     }
@@ -3912,6 +3939,12 @@ pub struct ClipEvent {
     /// (an old reader would silently lose them — the R.29 rule).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fx_auto: Vec<Vec<ParamCurve>>,
+    /// The chain's wiring (fx-graph-dag D1): slot `i`'s inputs when they are not the slot before,
+    /// parallel to `fx`, shorter = the tail is the line, EMPTY = a line (not written, so a line's
+    /// file is byte for byte as before). Canonical by `fx_graph::canonical`; checked by
+    /// `fx_graph::check`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fx_in: Vec<crate::fx_graph::SlotInputs>,
     /// The master switch of the WHOLE event chain (R.33, the user's
     /// request: “there is no master checkbox to switch off the current
     /// fx-chain”). It differs from slot bypass in that it does not touch their
@@ -3985,7 +4018,7 @@ impl ClipEvent {
         self.fx
             .iter()
             .enumerate()
-            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_missing())
+            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_inert())
             .map(|(_, f)| f.clone())
             .collect()
     }
@@ -4000,9 +4033,20 @@ impl ClipEvent {
         self.fx
             .iter()
             .enumerate()
-            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_missing())
+            .filter(|(i, f)| !self.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_inert())
             .map(|(i, _)| self.fx_auto.get(i).cloned().unwrap_or_default())
             .collect()
+    }
+
+    /// The wiring aligned with `active_fx()` (fx-graph-dag D1): a dropped slot's readers read its
+    /// input, as a bypassed slot passes it. Empty for a line.
+    pub fn active_fx_in(&self) -> Vec<crate::fx_graph::SlotInputs> {
+        if self.fx_off || self.fx_in.is_empty() {
+            return Vec::new();
+        }
+        crate::fx_graph::without(&self.fx_in, self.fx.len(), |i| {
+            self.fx_bypass.get(i).copied().unwrap_or(false) || self.fx[i].is_inert()
+        })
     }
 }
 
@@ -5145,6 +5189,16 @@ pub enum FxInstance {
         #[serde(default)]
         keyframes: Vec<CamKeyframe>,
     },
+    /// A Merge (fx-graph-dag D1): Background ← the slot's main input, Foreground ← its second, an
+    /// optional matte; the picture mode is a layer blend mode (the composite's kernels), the sound's
+    /// a sum or a crossfade. A core kind like `LayerMix`: routing, not a plugin (the plugin contract
+    /// stays single-input).
+    Merge {
+        #[serde(default)]
+        mode: crate::fx_graph::MergeMode,
+        #[serde(default = "default_one")]
+        mix: f64,
+    },
     // Mirror and EventGrid are plugins since plugin-api-stage1 (src/plugins/fx-video-distort, D11.3).
     // ---- 3D effects (R.29: category Video3d; since R.44 both backends compute them) ----
     // Pan3d is a plugin since plugin-api-stage1 (src/plugins/fx-video-distort, 4.1c-4): its pinned
@@ -5193,6 +5247,13 @@ impl FxInstance {
         matches!(self, FxInstance::Missing(_))
     }
 
+    /// A slot the active chain leaves out, its curves with it: a missing plugin, and a Merge while the
+    /// engine runs chains as lines (fx-graph-dag v2a: a Merge whose Foreground is not wired passes its
+    /// Background, and the lowering of v2b is what wires one). The keys are the chain's without it.
+    pub fn is_inert(&self) -> bool {
+        self.is_missing() || self.is_merge()
+    }
+
     /// Audio effect? (video FX live in the same clip chain but are handled by the
     /// VideoRenderer).
     pub fn is_audio(&self) -> bool {
@@ -5209,6 +5270,18 @@ impl FxInstance {
 
     /// A STREAM source stage (datamosh-codec-path, D1/D2): the engine runs it on the event's source
     /// in the plan's common code; the chain planner passes it through like an audio slot.
+    pub fn is_merge(&self) -> bool {
+        matches!(self, FxInstance::Merge { .. })
+    }
+
+    /// A TIME kind (fx-graph-dag D2): it decides how the layer READS its source — the warp, a stream
+    /// stage, a reading across the event's edges. In an arm it opens a second read of the layer.
+    pub fn is_time_kind(&self) -> bool {
+        self.warps_time()
+            || self.is_stream()
+            || matches!(self, FxInstance::Plugin(p) if p.manifest().decl.reads_across_edges)
+    }
+
     pub fn is_stream(&self) -> bool {
         matches!(self, FxInstance::Plugin(p)
             if p.manifest().decl.video_class == Some(kt_plugin_api::VideoClass::Stream))
@@ -5223,6 +5296,7 @@ impl FxInstance {
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::Geometry { .. } => "geometry",
             FxInstance::CamMotion { .. } => "cam_motion",
+            FxInstance::Merge { .. } => "merge",
             FxInstance::Plugin(p) => p.tag(),
             // the file's id is `MissingSlot::id`; the tag of a slot nothing can run is fixed
             FxInstance::Missing(_) => "missing",
@@ -5240,6 +5314,7 @@ impl FxInstance {
             vec![
                 FxInstance::gain(0.0),
                 FxInstance::LayerMix { amount: 1.0, from: 0 },
+                FxInstance::Merge { mode: crate::fx_graph::MergeMode::default(), mix: 1.0 },
                 FxInstance::slowed_reverb(0.85, 0.35, 100.0),
                 FxInstance::builtin("filter"),
                 FxInstance::builtin("eq"),
@@ -5452,6 +5527,10 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_g
     },
     CamMotion {
         time_scale: f64, 0.05, 8.0, 1.0, 0.01, Ratio, Smooth;
+    },
+    // fx-graph-dag D1: the Foreground's share, a curve like any parameter
+    Merge {
+        mix: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
 }}
 
@@ -6241,6 +6320,12 @@ pub enum ProjectError {
     MasksOnAudio(ClipId),
     #[error("clip {0:?}: masks name an effect slot past the end of the chain")]
     MasksPastChain(ClipId),
+    #[error("clip {0:?}: the effect graph is refused at slot {1}: {2:?}")]
+    BadGraph(ClipId, usize, crate::fx_graph::GraphWhy),
+    #[error("track {0:?}: the effect graph is refused at slot {1}: {2:?}")]
+    BadTrackGraph(TrackId, usize, crate::fx_graph::GraphWhy),
+    #[error("morpher {0:?}: the effect graph is refused at slot {1}: {2:?}")]
+    BadPatchGraph(MorphId, usize, crate::fx_graph::GraphWhy),
     #[error("track {0:?}: {1}")]
     BadTrackMasks(TrackId, crate::mask::MaskError),
     #[error("track {0:?}: masks belong to video tracks")]
@@ -6471,6 +6556,24 @@ impl Project {
             matches!(&c.r#gen, Some(crate::GeneratorKind::Text { source, .. }) if !source.is_static())
         };
         self.clips.iter().any(runs) || self.sequences.iter().any(|s| s.clips.iter().any(runs))
+    }
+
+    /// Whether a chain anywhere is a graph — wired inputs or a Merge (fx-graph-dag D7): the file is
+    /// then format 8.
+    pub fn has_fx_graph(&self) -> bool {
+        let merge = |fx: &[FxInstance]| fx.iter().any(FxInstance::is_merge);
+        let reel = |clips: &[ClipEvent], tracks: &[Track], morphers: &[MorpherEvent]| {
+            clips.iter().any(|c| !c.fx_in.is_empty() || merge(&c.fx))
+                || tracks.iter().any(|t| !t.fx_in.is_empty() || merge(&t.fx))
+                || morphers.iter().any(|m| {
+                    !m.patch.video_in.is_empty()
+                        || !m.patch.audio_in.is_empty()
+                        || merge(&m.patch.video_fx)
+                        || merge(&m.patch.audio_fx)
+                })
+        };
+        reel(&self.clips, &self.tracks, &self.morphers)
+            || self.sequences.iter().any(|s| reel(&s.clips, &s.tracks, &s.morphers))
     }
 
     pub fn has_masks(&self) -> bool {
@@ -7400,6 +7503,16 @@ impl Project {
         // before it held one half and the render derived the other
         for m in self.morphers.iter_mut().chain(self.sequences.iter_mut().flat_map(|q| q.morphers.iter_mut())) {
             m.patch.materialize_pairs();
+            crate::fx_graph::canonical(&mut m.patch.video_in, m.patch.video_fx.len());
+            crate::fx_graph::canonical(&mut m.patch.audio_in, m.patch.audio_fx.len());
+        }
+        // a chain's wiring is canonical (fx-graph-dag D1): a line is the empty list, so a file that
+        // wrote a line's entries by hand reads, hashes and writes as the line
+        for c in self.clips.iter_mut().chain(self.sequences.iter_mut().flat_map(|q| q.clips.iter_mut())) {
+            crate::fx_graph::canonical(&mut c.fx_in, c.fx.len());
+        }
+        for t in self.tracks.iter_mut().chain(self.sequences.iter_mut().flat_map(|q| q.tracks.iter_mut())) {
+            crate::fx_graph::canonical(&mut t.fx_in, t.fx.len());
         }
         // track number = row rank (R.56, item 449): fixed on READ, because
         // old files (and foreign imports) know only numbers. The permutation is handed
@@ -7522,9 +7635,17 @@ impl Project {
                     return Err(ProjectError::TrackCurvesUnsupported(t.id));
                 }
                 check_track_masks(t)?;
+                crate::fx_graph::check(&t.fx, &t.fx_in, 0)
+                    .map_err(|e| ProjectError::BadTrackGraph(t.id, e.slot, e.why))?;
             }
             for c in reel.clips() {
                 check_clip_masks(c)?;
+                check_clip_graph(c)?;
+            }
+            for m in reel.morphers() {
+                for (fx, fx_in) in [(&m.patch.video_fx, &m.patch.video_in), (&m.patch.audio_fx, &m.patch.audio_in)] {
+                    crate::fx_graph::check(fx, fx_in, 0).map_err(|e| ProjectError::BadPatchGraph(m.id, e.slot, e.why))?;
+                }
             }
             self.validate_reel(reel, seq, &sources, &media_ids, &mut clip_ids)?;
             // Links of ONE reel (R.61): the address is resolvable, does not cross the reel boundary,
@@ -8078,6 +8199,11 @@ impl Project {
         p.validate()?;
         Ok(p)
     }
+}
+
+/// The wiring of an event's chain (fx-graph-dag D1): ONE check for `validate` and for `SetFxIn`.
+pub fn check_clip_graph(c: &ClipEvent) -> Result<(), ProjectError> {
+    crate::fx_graph::check(&c.fx, &c.fx_in, c.geometry_pos).map_err(|e| ProjectError::BadGraph(c.id, e.slot, e.why))
 }
 
 /// The masks of an event: video only, slot lists within the chain, each list valid

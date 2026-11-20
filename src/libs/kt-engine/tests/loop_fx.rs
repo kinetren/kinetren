@@ -100,6 +100,7 @@ fn clip(id: u64, media: u64, lane: u32, start: i64, dur: i64, src_in: i64) -> Cl
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

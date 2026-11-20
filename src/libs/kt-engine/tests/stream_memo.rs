@@ -120,6 +120,7 @@ fn clip(id: u64, media: u64, start: i64, dur: i64, fx: Vec<FxInstance>) -> ClipE
         opacity: 1.0,
         fx_off: false,
         masks: Default::default(),
+        fx_in: Vec::new(),
     }
 }
 

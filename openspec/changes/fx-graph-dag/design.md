@@ -155,6 +155,12 @@ graph has one read and asks exactly what its line asks (invariants 4, 5, 8; t320
 The leading Geometry node stays on the trunk: it places the frame on the canvas and sets the decode
 step for the layer; an arm that needs its own placement takes a Geometry/Transform slot of its own.
 
+**The pair's speed is the trunk's** (applied in v2a). A link pair consumes its source at one speed
+(R.37); with reads, that speed is the trunk's warp. An arm's warp is the arm's own reading, so the
+mirror treats it as no warp: moving Slowed into an arm of the picture takes it off the linked sound
+in the same step, moving it back puts it on again. A chain still holds ONE warp slot (D11.5's
+`TwoTimeWarps`), so an arm with its own speed means a trunk at 1×.
+
 ## D3. The picture: `plan_chain` lowers a graph into a straight program
 
 One builder, one executor (invariant 7). The graph is lowered where the chain is planned today.

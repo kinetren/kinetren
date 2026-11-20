@@ -60,6 +60,7 @@ pub fn owner_case() -> Project {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {

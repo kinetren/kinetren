@@ -863,6 +863,7 @@ mod tests {
             fx: vec![FxInstance::plugin("vhs_tape").unwrap()],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.validate().unwrap();
         p

@@ -51,6 +51,7 @@ fn clip_with(rate_keys: Vec<AutoKey>) -> ClipEvent {
         geometry_pos: 0,
         geometry_auto: Vec::new(),
         masks: Default::default(),
+        fx_in: Vec::new(),
     }
 }
 

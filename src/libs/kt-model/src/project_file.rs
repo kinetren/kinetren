@@ -92,12 +92,19 @@ pub const PROJECT_FILE_VERSION_TRACK_SOUND: u32 = 6;
 /// the typed text instead — so it is told the version and refuses.
 pub const PROJECT_FILE_VERSION_TEXT_SOURCE: u32 = 7;
 
+/// The version a file is written with WHEN a chain branches or holds a Merge (fx-graph-dag D7). An
+/// older build would read the slots as a line and run the arms one after another, then save them so
+/// — so it is told the version and refuses.
+pub const PROJECT_FILE_VERSION_FX_GRAPH: u32 = 8;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_TEXT_SOURCE;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_FX_GRAPH;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_text_sources() {
+    if project.has_fx_graph() {
+        PROJECT_FILE_VERSION_FX_GRAPH
+    } else if project.has_text_sources() {
         PROJECT_FILE_VERSION_TEXT_SOURCE
     } else if project.has_track_sound() {
         PROJECT_FILE_VERSION_TRACK_SOUND

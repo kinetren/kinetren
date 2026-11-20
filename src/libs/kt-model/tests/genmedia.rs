@@ -206,6 +206,7 @@ fn t475_set_media_path_command() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     let mut m = TimelineModel::new(p);
 
@@ -424,6 +425,7 @@ fn t656_generator_values_live_on_the_event() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let json = serde_json::to_string(&plain).unwrap();
     assert!(!json.contains("\"gen\""), "field gen ended up in a file without a generator: {json}");
@@ -498,6 +500,7 @@ fn t657_generator_values_are_validated_against_the_media() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p
     };

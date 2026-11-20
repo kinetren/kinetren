@@ -96,6 +96,7 @@ fn t212_keys_stick_to_material_through_edits() {
         }]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     let mut m = TimelineModel::new(p);
@@ -270,6 +271,7 @@ fn clip_with_fx() -> ClipEvent {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 
@@ -491,6 +493,7 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
             .collect(),
         src_in: src.source_in,
         fx_off: src.fx_off,
+        fx_in: Vec::new(),
     };
     let target = m.clip(ClipId(2)).unwrap().clone();
     let (mut fx, mut bypass, mut auto) =
@@ -526,6 +529,7 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
         slots: vec![block.slots[0].clone()],
         src_in: block.src_in,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &one, target.source_in);
     assert_eq!(fx.len(), before + 1, "slot was not added");
@@ -599,6 +603,7 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(mk(1, ClipKind::Video));
     p.clips.push(mk(2, ClipKind::Audio));
@@ -711,6 +716,7 @@ fn t342_append_chain_block_is_one_truth() {
         src_in: Tick(45_000),
         // the donor’s master switch is off: the receiver does NOT inherit this
         fx_off: true,
+        fx_in: Vec::new(),
     };
 
     // event → MORPHER: the morpher’s domain is the block time, entry = 0
@@ -734,6 +740,7 @@ fn t342_append_chain_block_is_one_truth() {
         }],
         src_in: Tick(0),
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let (mut fx2, mut bypass2, mut auto2) = (vec![], vec![], vec![]);
     ops::append_chain_block(&mut fx2, &mut bypass2, &mut auto2, &from_morph, Tick(30_000));
@@ -1088,6 +1095,7 @@ fn t747b_rate_curve_from_old_file_sounds_piecewise_linear() {
         fx_auto: vec![vec![c.clone()]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let from_old = clip_warp(&clip).expect("warp is present");
     clip.fx_auto = vec![vec![linear.clone()]];
@@ -1199,6 +1207,7 @@ fn t787c_layer_formula_over_keys_and_removal() {
         fx_auto: vec![vec![curve]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let step = 3000;
     let layered = ParamCurve {

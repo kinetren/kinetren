@@ -53,6 +53,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
         fx_auto: auto,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p
@@ -555,6 +556,7 @@ fn t327_print_dense_chain_cost() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
@@ -637,6 +639,7 @@ fn bench_pitch_cost() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         p.validate().unwrap();
         let r = AudioRenderer::new(&p);

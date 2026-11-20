@@ -38,6 +38,7 @@ fn harness_with_tape() -> Harness<'static, KtApp> {
         opacity: 1.0,
         fx_off: false,
         masks: Default::default(),
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -137,6 +138,7 @@ fn t1468_the_deck_s_sound_is_on_the_linked_audio() {
             opacity: 1.0,
             fx_off: false,
             masks: Default::default(),
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
@@ -200,6 +202,7 @@ fn t1486_the_stream_and_the_camera_sound_on_the_linked_audio() {
                 opacity: 1.0,
                 fx_off: false,
                 masks: Default::default(),
+                fx_in: Vec::new(),
             });
         }
         p.validate().unwrap();
@@ -255,6 +258,7 @@ fn t2993_a_layer_s_device_sound_switches_off_in_the_morpher_window() {
             opacity: 1.0,
             fx_off: false,
             masks: Default::default(),
+            fx_in: Vec::new(),
         });
     }
     p.ensure_tracks(LaneKind::Morph, 1);

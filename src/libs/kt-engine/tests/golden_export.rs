@@ -72,6 +72,7 @@ fn golden_project() -> Project {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         },
         // R.24: the former overlap [1.5 s, 2 s) is converted to an end-to-end join C = 1.75 s +
         // a transition (the window is the same) — the render bytes must match the old
@@ -99,6 +100,7 @@ fn golden_project() -> Project {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         },
         // crossfade: DC through the transition with the second ramp clip
         ClipEvent {
@@ -124,6 +126,7 @@ fn golden_project() -> Project {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         },
         // slowed with automation + reverb on a separate track
         ClipEvent {
@@ -172,6 +175,7 @@ fn golden_project() -> Project {
             fx: vec![kt_model::FxInstance::plugin_with("slowed_reverb", &[0.7, 0.4, 85.0, 0.32, 0.58, 0.95, 0.0, 0.0, 1.0]).unwrap()],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         },
         // video: two layers with overlap (z-composite)
         ClipEvent {
@@ -197,6 +201,7 @@ fn golden_project() -> Project {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         },
         ClipEvent {
             r#gen: None,
@@ -221,6 +226,7 @@ fn golden_project() -> Project {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         },
     ];
     p.transitions.push(TransitionEvent {
@@ -537,6 +543,7 @@ fn generator_project() -> (Project, Sources) {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     // the background — the whole scene; the solid enters at 30_000 (frame No. 10) as the upper layer
     let mut g2 = clip(2, 0, 30_000, 60_000, 2);

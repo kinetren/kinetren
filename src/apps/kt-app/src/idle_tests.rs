@@ -253,6 +253,7 @@ fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(clip(1, 0, vec![mosh, FxInstance::plugin("vhs_tape").expect("vhs_tape")]));
     p.validate().unwrap();
@@ -334,6 +335,7 @@ fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -413,6 +415,7 @@ fn t3003_an_open_node_editor_costs_nothing_at_rest() {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
