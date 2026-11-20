@@ -123,3 +123,26 @@ binding a render.
   against the 1.06 ms composite measured, but measured by the existing `GpuFrame` records.
 - A hardware encoder that needs a line alignment different from libav's frame: the plane copy into the
   `AVFrame` absorbs it (the worker copies with the frame's line sizes).
+
+## As built (stage 2)
+
+- **The reference lives in kt-engine** (`kt_engine::yuv`), not kt-gpu: kt-gpu depends on kt-engine, and the
+  export (kt-engine), the pass (kt-gpu) and the trait's default must all reach the one formula. The
+  coefficients are computed in integers from the rational Kr, Kb (no float, no libm), and each chroma's
+  three weights sum to zero, so every grey is the exact middle; t3312 compares every primary with the
+  formula by hand.
+- **The pass is a FRAGMENT pass** (`shaders/yuv.wgsl`, `Pipe::Yuv`): the export's devices on a machine
+  without a card are GL (llvmpipe, no compute, no storage — kt-gpu's "fragment passes, not compute"), so a
+  compute pass would have run nowhere here. The target is a word texture (Rgba8Uint, 4096 texels a row,
+  a texel a 32-bit word of the packed planes): its rows are 16384 bytes, a multiple of the copy's 256, so
+  the slot holds the planes with no gap and `collect` takes them in one copy. The uniform carries the Y
+  weights as u32 bits and the chroma weights as f32 VALUES (all below 2^24 in magnitude): no integer is
+  passed as a float's bits, where a small one would be a denormal a device may flush.
+- **The trait** (`VideoGpuExec`): `readback_depth_yuv`, `submit_yuv`, `execute_once_yuv`; the default of
+  the last is the reference over `execute_once`'s RGBA, so an executor without the pass writes the same
+  bytes (t3318). The ring counts the planes' bytes (`ring_depth_bytes`, t3315). An export's sink says its
+  layout (`ExportSink::yuv_layout`); the muxer's converter (`MuxConverter`) is the reference plus a plane
+  copy into the `AVFrame` (`VideoFrame::fill_packed`) — swscale converts no export frame any more.
+- An odd canvas: the GPU path reports the composite incomplete (its layers decode at the even size); the
+  pass converts the same composite as the reference does (t3313 compares the bytes). 4:2:0 encoders take
+  even sizes only.

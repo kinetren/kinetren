@@ -133,6 +133,7 @@ pub fn probe_output(api: &'static Api, path: &str) -> Result<crate::format::Outp
                 let fr = if fr.num > 0 { fr } else { (*st).r_frame_rate };
                 out.fps = (fr.num, fr.den);
                 out.color = ((*par).color_space as u32, (*par).color_range as u32, (*par).color_primaries as u32, (*par).color_trc as u32);
+                out.chroma_location = (*par).chroma_location as u32;
                 out.video_tag = (*par).codec_tag;
             } else if (*par).codec_type == ffi::AVMEDIA_TYPE_AUDIO && out.audio_codec.is_none() {
                 out.audio_codec = Some(codec_name((*par).codec_id));
@@ -342,11 +343,16 @@ pub struct Muxer {
     audio_fmt: ffi::AVSampleFormat,
     /// The conversion's matrix and range (D6), for every converter this muxer makes.
     colour: (crate::format::Matrix, crate::format::Range),
+    /// The encoder's input format as the closed set names it (export-host-copy D3).
+    input_pix: crate::encoders::PixFmt,
     frame_size: usize,
     encoder_name: String,
     report: crate::OpenReport,
     /// Encoded packet bytes written so far: [video, audio].
     bytes: [u64; 2],
+    /// A device encoder's surface get and upload so far, ns (export-host-copy D1): apart from the
+    /// encode, so a trace says which binds.
+    surface_upload_ns: u64,
     /// A device encoder (D3/D4): the table, the device and frames contexts, and the surface each
     /// NV12 frame is uploaded to. All null for a system-memory encoder.
     hw: Option<&'static HwApi>,
@@ -518,7 +524,9 @@ impl Muxer {
                 // the keyframe interval and the B-frames asked (D1); intra-only: every frame a key
                 (*ctx).gop_size = if intra { 1 } else { form.gop_frames(cfg.fps) as c_int };
                 (*ctx).max_b_frames = if intra { 0 } else { form.b_frames as c_int };
-                // the tags state the conversion (D6)
+                // the tags state the conversion (D6), the chroma's place too (export-host-copy D2: the
+                // conversion sites it left, as a player assumes of an untagged stream)
+                (*ctx).chroma_sample_location = ffi::AVCHROMA_LOC_LEFT;
                 (*ctx).colorspace = match form.matrix {
                     crate::format::Matrix::Bt601 => ffi::AVCOL_SPC_SMPTE170M,
                     crate::format::Matrix::Bt709 => ffi::AVCOL_SPC_BT709,
@@ -577,6 +585,7 @@ impl Muxer {
             ))
         })?;
         let enc_name = enc_name.as_str();
+        let input_pix = vpix;
         let vpix = av_pix(vpix);
 
         // --- audio encoder of the asked codec, its own sample format (D7); none — no stream ---
@@ -711,10 +720,12 @@ impl Muxer {
             audio_fifo: Vec::new(),
             audio_fmt,
             colour,
+            input_pix,
             frame_size,
             encoder_name: enc_name.to_string(),
             report,
             bytes: [0, 0],
+            surface_upload_ns: 0,
             hw,
             hw_device,
             hw_frames,
@@ -734,6 +745,18 @@ impl Muxer {
         (self.bytes[0], self.bytes[1])
     }
 
+    pub fn surface_upload_ns(&self) -> u64 {
+        self.surface_upload_ns
+    }
+
+    /// The encoder's planes, packed (export-host-copy D4): copied into the frame and encoded, no
+    /// conversion here.
+    pub fn write_video_planes(&mut self, planes: &[u8]) -> Result<(), FfError> {
+        self.vframe.fill_packed(planes)?;
+        let f = self.vframe.frame;
+        self.encode_video_frame(f)
+    }
+
     pub fn write_video(&mut self, rgba: &[u8]) -> Result<(), FfError> {
         self.conv.convert(rgba, &mut self.vframe)?;
         let f = self.vframe.frame;
@@ -748,6 +771,16 @@ impl Muxer {
     }
 
     /// A frame a `VideoConverter` fills, of this muxer's size and pixel format.
+    /// What the encoder takes (export-host-copy D3): its input format, the matrix and the range — the
+    /// layout an exact conversion writes for it.
+    pub fn input_layout(&self) -> (crate::encoders::PixFmt, crate::format::Matrix, crate::format::Range) {
+        (self.input_pix, self.colour.0, self.colour.1)
+    }
+
+    pub fn video_size(&self) -> (u32, u32) {
+        (self.width as u32, self.height as u32)
+    }
+
     pub fn alloc_video_frame(&self) -> Result<VideoFrame, FfError> {
         VideoFrame::alloc(self.api, self.conv.pix, self.width, self.height)
     }
@@ -769,6 +802,7 @@ impl Muxer {
             (*frame).pts = self.video_pts;
             // a device encoder: the NV12 frame goes to a surface of the frames context (D4)
             if let Some(hw) = self.hw {
+                let since = std::time::Instant::now();
                 let r = (hw.av_hwframe_get_buffer)(self.hw_frames, self.hwframe, 0);
                 if r < 0 {
                     return Err(averr(api, "getting a VAAPI surface", r));
@@ -779,6 +813,7 @@ impl Muxer {
                     return Err(averr(api, "uploading a frame to the surface", r));
                 }
                 (*self.hwframe).pts = self.video_pts;
+                self.surface_upload_ns += since.elapsed().as_nanos() as u64;
             }
         }
         self.video_pts += 1;
@@ -1088,6 +1123,47 @@ impl VideoFrame {
             }
             Ok(VideoFrame { api, frame })
         }
+    }
+}
+
+impl VideoFrame {
+    /// Fill the frame from the encoder format's planes packed tightly one after another, rows of the
+    /// picture's width, in the order the frame takes them (export-host-copy D3): a copy row by row
+    /// into the frame's own line sizes. 16-bit samples little-endian.
+    pub fn fill_packed(&mut self, packed: &[u8]) -> Result<(), FfError> {
+        let api = self.api;
+        unsafe {
+            let r = (api.av_frame_make_writable)(self.frame);
+            if r < 0 {
+                return Err(averr(api, "making the frame writable", r));
+            }
+            let f = &mut *self.frame;
+            let (w, h) = (f.width as usize, f.height as usize);
+            let (cw, ch2) = (w.div_ceil(2), h.div_ceil(2));
+            // (row bytes, rows) per plane of the format
+            let planes: Vec<(usize, usize)> = match f.format {
+                x if x == ffi::AV_PIX_FMT_YUV420P => vec![(w, h), (cw, ch2), (cw, ch2)],
+                x if x == ffi::AV_PIX_FMT_NV12 => vec![(w, h), (cw * 2, ch2)],
+                x if x == ffi::AV_PIX_FMT_YUV420P10LE => vec![(w * 2, h), (cw * 2, ch2), (cw * 2, ch2)],
+                x if x == ffi::AV_PIX_FMT_P010LE => vec![(w * 2, h), (cw * 4, ch2)],
+                x if x == ffi::AV_PIX_FMT_YUV422P10LE => vec![(w * 2, h), (cw * 2, h), (cw * 2, h)],
+                other => return Err(FfError::Av(format!("no packed layout for the pixel format {other}"))),
+            };
+            let need: usize = planes.iter().map(|(b, r)| b * r).sum();
+            if packed.len() < need {
+                return Err(FfError::Av(format!("planes of {} bytes, the frame takes {need}", packed.len())));
+            }
+            let mut at = 0;
+            for (i, (row, rows)) in planes.into_iter().enumerate() {
+                let dst = f.data[i];
+                let ls = f.linesize[i] as usize;
+                for y in 0..rows {
+                    core::ptr::copy_nonoverlapping(packed.as_ptr().add(at + y * row), dst.add(y * ls), row);
+                }
+                at += row * rows;
+            }
+        }
+        Ok(())
     }
 }
 

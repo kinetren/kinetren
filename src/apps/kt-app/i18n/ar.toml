@@ -1343,6 +1343,13 @@ timecode = "رمز زمني"
 
 # Title window (R.52 C3).
 [titlew]
+source_note = "تسير القيمة مع زمن الحدث نفسه؛ ضع {} في النص لإدراجها بين الكلمات"
+count_format = "التنسيق:"
+source_countdown = "عد تنازلي"
+source_stopwatch = "ساعة إيقاف"
+source_timecode = "الرمز الزمني"
+source_static = "المكتوب"
+source = "النص:"
 preset_roll = "تترات النهاية"
 preset_crawl = "شريط متحرك"
 preset_typewriter = "آلة كاتبة"
@@ -1373,6 +1380,8 @@ align_r = "يمين"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+count_fps = "معدل إطارات الرمز الزمني"
+count_from = "البداية (ث)"
 cut43 = "قص 4:3"
 thirds = "قاعدة الأثلاث"
 center = "صليب المركز"
@@ -1500,6 +1509,7 @@ title = "المسار: {0}"
 sound = "صوت الجهاز"
 sound_none = "لا شيء"
 sound_hint = "المسار الصوتي الذي يُسمع فيه VHS Tape أو Camera ISP لهذا المسار — الجهاز نفسه، بمفتاحه على خط الصوت."
+no_stream = "يكسر Datamosh دفق الفيديو الخاص بالحدث؛ وليس للمسار دفق خاص، لذا لا يُضاف هنا. ضعه على الأحداث أو على طبقة مورفر فوقها."
 name = "الاسم"
 level = "المستوى"
 opacity = "العتامة"

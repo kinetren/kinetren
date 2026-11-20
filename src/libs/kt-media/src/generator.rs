@@ -129,8 +129,12 @@ impl GeneratorSource {
 /// included here: its animation became ordinary curves (R.59, stage 2), and the
 /// curves are seen by `GenState::animated`.
 fn depends_on_time(kind: &GeneratorKind) -> bool {
-    // a plugin kind declares it (D13); the title moves only by its curves
-    kind.kernel().is_some_and(|g| g.decl().live)
+    // a plugin kind declares it (D13); a title moves by its curves — and by itself when it runs a
+    // value (text-counter-source): a timecode, a stopwatch, a countdown
+    match kind {
+        GeneratorKind::Text { source, .. } => !source.is_static(),
+        _ => kind.kernel().is_some_and(|g| g.decl().live),
+    }
 }
 
 /// A plugin kind's level when it sounds with its values (D13): the host's one `tone_1k` plays it.
@@ -164,7 +168,7 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
         },
         // the factory opens a missing kind as a named placeholder; a source built by hand shows nothing
         GeneratorKind::Missing(_) => vec![0u8; n * 4].into_boxed_slice(),
-        GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind, w, h), w, h),
+        GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind, pts, w, h), w, h),
         // --- R.53 (items 419-422): shapes, backdrop, countdown, tables ------
     }
 }
@@ -199,13 +203,13 @@ fn tone_1k(idx: i64, db: f64, gate: impl Fn(i64) -> bool) -> AudioBurst {
 /// `text_params`: the window and the frame MUST see the same values.
 pub fn title_layout(kind: &GeneratorKind, w: u32, h: u32) -> Option<kt_text::LayoutInfo> {
     matches!(kind, GeneratorKind::Text { .. })
-        .then(|| kt_text::layout_info(&text_params(kind, w, h), w, h))
+        .then(|| kt_text::layout_info(&text_params(kind, Tick(0), w, h), w, h))
 }
 
 /// THE ONLY function that converts a stored title (kt-model) into the input of the
 /// rasterizer (kt-text): there is no second parser (kt-text/CLAUDE.md):
 /// the window and the frame MUST see the same values.
-fn text_params(kind: &GeneratorKind, w: u32, h: u32) -> kt_text::TextParams {
+fn text_params(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> kt_text::TextParams {
     let GeneratorKind::Text {
         text,
         family,
@@ -244,6 +248,7 @@ fn text_params(kind: &GeneratorKind, w: u32, h: u32) -> kt_text::TextParams {
         plate_b,
         plate_a,
         order,
+        ..
     } = kind
     else {
         unreachable!("text_params is only called for GeneratorKind::Text");
@@ -271,7 +276,12 @@ fn text_params(kind: &GeneratorKind, w: u32, h: u32) -> kt_text::TextParams {
         kt_model::TextLayer::Fill => kt_text::Layer::Fill,
     };
     kt_text::TextParams {
-        text: text.clone(),
+        // a running source (text-counter-source) puts its value at `pts` in place of the typed text
+        text: if matches!(kind, GeneratorKind::Text { source: kt_model::TextSource::Static, .. }) {
+            text.clone()
+        } else {
+            kt_model::title_text_at(kind, pts).into_owned()
+        },
         family: family.clone(),
         style: if *bold { kt_text::FaceStyle::Bold } else { kt_text::FaceStyle::Regular },
         size: *size,

@@ -1277,3 +1277,43 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         assert!(seen.contains(e), "the list names a limit that is gone: {e:?}");
     }
 }
+
+/// t3238 (found-defects 822): the live rig waits for the program's window as a consequence, up to
+/// the test's guard. `ui-probe.window()` answers at once and exits when no window is found, so a
+/// bare call is a clock limit of zero: every call in `scripts/live` goes through `kt_live.the_window`
+/// or stands in a `try` that catches the exit; the start waits (`_wait_window`, the stand's first
+/// frame and its settled geometry) are bounded by `TEST_DEADLINE`, not by a number of seconds.
+#[test]
+fn t3238_the_live_rig_waits_for_the_window() {
+    let dir = repo().join("src/scripts/live");
+    let mut bare = Vec::new();
+    for e in std::fs::read_dir(&dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.extension().and_then(|x| x.to_str()) != Some("py") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&p).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let mut in_door = false;
+        for (i, l) in lines.iter().enumerate() {
+            if l.starts_with("def ") {
+                in_door = l.starts_with("def the_window(");
+            }
+            let code = l.split('#').next().unwrap_or("");
+            // prose names the call in backticks (a docstring): not a call
+            if !code.contains("probe.window()") || code.contains("`probe.window()`") || in_door {
+                continue;
+            }
+            let before = lines[i.saturating_sub(3)..i].iter().any(|b| b.trim_start().starts_with("try:"));
+            let after = lines[i + 1..(i + 6).min(lines.len())].iter().any(|a| a.contains("SystemExit"));
+            if !(before && after) {
+                bare.push(format!("{}:{}", p.file_name().unwrap().to_string_lossy(), i + 1));
+            }
+        }
+    }
+    assert!(bare.is_empty(), "a bare window lookup in the live rig (use kt_live.the_window): {bare:?}");
+    let kt_live = std::fs::read_to_string(dir.join("kt_live.py")).unwrap();
+    assert!(kt_live.contains("def _wait_window(self, timeout=TEST_DEADLINE)"), "the start wait is not the test's guard");
+    let worker = std::fs::read_to_string(dir.join("worker.py")).unwrap();
+    assert_eq!(worker.matches("deadline = time.time() + TEST_DEADLINE").count(), 2, "the stand's start waits are not the test's guard");
+}

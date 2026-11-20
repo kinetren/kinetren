@@ -14,6 +14,24 @@ pub trait SegmentWriter: Send {
     fn finish(self: Box<Self>) -> Result<u64, String>;
     /// The encoder that opened (the entry's header and the trace name it).
     fn encoder(&self) -> &str;
+    /// The planes the encoder takes (export-host-copy D4): the composing device converts a moment to
+    /// them and `push_planes` copies them in. `None` — this writer takes RGBA.
+    fn planes(&self) -> Option<SegmentPlanes> {
+        None
+    }
+    /// Encode the next frame from the `planes` layout's packed planes.
+    fn push_planes(&mut self, _planes: &[u8]) -> Result<(), String> {
+        Err("this segment writer takes RGBA".into())
+    }
+}
+
+/// An encoder's input layout as kt-engine's exact conversion names it (`kt_engine::yuv::YuvPix::code`:
+/// 0 yuv420p, 1 nv12, 2 yuv420p10le, 3 p010le, 4 yuv422p10le), its matrix and its range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SegmentPlanes {
+    pub code: u32,
+    pub bt709: bool,
+    pub full: bool,
 }
 
 /// Reads frames of one segment by index. Owned by one thread (invariant 5).
@@ -137,6 +155,24 @@ pub mod ffmpeg {
         }
         fn encoder(&self) -> &str {
             &self.encoder
+        }
+        fn planes(&self) -> Option<SegmentPlanes> {
+            let (pix, matrix, range) = self.mux.as_ref()?.input_layout();
+            use kt_ffmpeg::encoders::PixFmt;
+            Some(SegmentPlanes {
+                code: match pix {
+                    PixFmt::Yuv420p => 0,
+                    PixFmt::Nv12 => 1,
+                    PixFmt::Yuv420p10 => 2,
+                    PixFmt::P010 => 3,
+                    PixFmt::Yuv422p10 => 4,
+                },
+                bt709: matrix == kt_ffmpeg::format::Matrix::Bt709,
+                full: range == kt_ffmpeg::format::Range::Full,
+            })
+        }
+        fn push_planes(&mut self, planes: &[u8]) -> Result<(), String> {
+            self.mux.as_mut().ok_or("closed")?.write_video_planes(planes).map_err(|e| e.to_string())
         }
     }
 

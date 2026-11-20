@@ -734,6 +734,37 @@ impl Muxer {
         }
     }
 
+    /// The video's size.
+    pub fn video_size(&self) -> (u32, u32) {
+        match self {
+            Muxer::V6(m) => m.video_size(),
+            Muxer::V7(m) => m.video_size(),
+            Muxer::V8(m) => m.video_size(),
+            Muxer::V9(m) => m.video_size(),
+        }
+    }
+
+    /// What the encoder takes: its input format, the matrix and the range (export-host-copy D3).
+    pub fn input_layout(&self) -> (encoders::PixFmt, format::Matrix, format::Range) {
+        match self {
+            Muxer::V6(m) => m.input_layout(),
+            Muxer::V7(m) => m.input_layout(),
+            Muxer::V8(m) => m.input_layout(),
+            Muxer::V9(m) => m.input_layout(),
+        }
+    }
+
+    /// A device encoder's surface get and upload so far, ns (export-host-copy D1); 0 for a
+    /// processor encoder. Part of `write_video_frame`'s time: an export takes it out of the encode.
+    pub fn surface_upload_ns(&self) -> u64 {
+        match self {
+            Muxer::V6(m) => m.surface_upload_ns(),
+            Muxer::V7(m) => m.surface_upload_ns(),
+            Muxer::V8(m) => m.surface_upload_ns(),
+            Muxer::V9(m) => m.surface_upload_ns(),
+        }
+    }
+
     /// `finish`, and the encoded video bytes in the end (the trial asks whether any came out).
     pub(crate) fn finish_counted(self) -> Result<u64, FfError> {
         match self {
@@ -775,6 +806,16 @@ impl Muxer {
     }
 
     /// The next frame, already converted, to the encoder.
+    /// The encoder's planes, packed (export-host-copy D4): the disk prerender's segments.
+    pub fn write_video_planes(&mut self, planes: &[u8]) -> Result<(), FfError> {
+        match self {
+            Muxer::V6(m) => m.write_video_planes(planes),
+            Muxer::V7(m) => m.write_video_planes(planes),
+            Muxer::V8(m) => m.write_video_planes(planes),
+            Muxer::V9(m) => m.write_video_planes(planes),
+        }
+    }
+
     pub fn write_video_frame(&mut self, f: &VideoFrame) -> Result<(), FfError> {
         match (self, f) {
             (Muxer::V6(m), VideoFrame::V6(f)) => m.write_video_frame(f),
@@ -831,6 +872,18 @@ pub enum VideoFrame {
     V7(v7::VideoFrame),
     V8(v8::VideoFrame),
     V9(v9::VideoFrame),
+}
+
+impl VideoFrame {
+    /// Fill from the encoder format's tightly packed planes (export-host-copy D3).
+    pub fn fill_packed(&mut self, packed: &[u8]) -> Result<(), FfError> {
+        match self {
+            VideoFrame::V6(f) => f.fill_packed(packed),
+            VideoFrame::V7(f) => f.fill_packed(packed),
+            VideoFrame::V8(f) => f.fill_packed(packed),
+            VideoFrame::V9(f) => f.fill_packed(packed),
+        }
+    }
 }
 
 /// Open source — dynamic dispatch by version.

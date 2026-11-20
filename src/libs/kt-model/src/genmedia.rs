@@ -126,6 +126,21 @@ pub enum GeneratorKind {
         offset_x: f64,
         #[serde(default)]
         offset_y: f64,
+        /// Where the shown text comes from (text-counter-source, `v26.10` G5/G3): the typed text, or
+        /// a value that runs with the MATERIAL time — a timecode, a stopwatch, a countdown. The typed
+        /// text is then a template: `{}` stands for the value, and without it the value is the text.
+        /// Not written at its default: a file without such a title is byte for byte the former one.
+        #[serde(default, skip_serializing_if = "TextSource::is_static")]
+        source: TextSource,
+        /// How a stopwatch or a countdown writes its value.
+        #[serde(default, skip_serializing_if = "CountFormat::is_default")]
+        count_format: CountFormat,
+        /// The value at the material start, seconds (a countdown counts down from it).
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        count_from: f64,
+        /// The frame rate a timecode counts its frames by.
+        #[serde(default = "default_count_fps", skip_serializing_if = "is_default_count_fps")]
+        count_fps: f64,
     },
     /// A plugin-backed kind (plugin-api-stage1, D13): `kind` is its id, the rows follow its
     /// passport. Untagged and LAST: a `kind` no variant above names is tried here, in the
@@ -232,6 +247,111 @@ pub fn text_anim_values(kind: &mut GeneratorKind, anim: TextAnim) {
     *reveal_soft = if anim == TextAnim::Fade { 1.0 } else { 0.0 };
     *offset_x = 0.0;
     *offset_y = 0.0;
+}
+
+/// Where a title's shown text comes from (text-counter-source).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextSource {
+    /// The typed text.
+    #[default]
+    Static,
+    /// `hh:mm:ss:ff` of the material time from `count_from`, at `count_fps`.
+    Timecode,
+    /// Counts up from `count_from`.
+    Stopwatch,
+    /// Counts down from `count_from` to zero and stays there.
+    Countdown,
+}
+
+impl TextSource {
+    pub fn is_static(&self) -> bool {
+        *self == TextSource::Static
+    }
+}
+
+/// How a stopwatch or a countdown writes its value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CountFormat {
+    /// `1:05`
+    #[default]
+    MSs,
+    /// `1:05.3`
+    MSsT,
+    /// `0:01:05`
+    HMmSs,
+    /// `65.3`
+    STenths,
+}
+
+impl CountFormat {
+    pub fn is_default(&self) -> bool {
+        *self == CountFormat::default()
+    }
+}
+
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
+}
+
+fn default_count_fps() -> f64 {
+    30.0
+}
+
+fn is_default_count_fps(v: &f64) -> bool {
+    *v == default_count_fps()
+}
+
+/// The text a title shows at the material tick `pts` (text-counter-source): the typed text for a
+/// static title; otherwise the running value put in place of `{}` in the typed text, or the value
+/// alone when the text has no `{}`. Integer ticks throughout: a frame is a function of `pts`.
+pub fn title_text_at(kind: &GeneratorKind, pts: kt_time::Tick) -> std::borrow::Cow<'_, str> {
+    let GeneratorKind::Text { text, source, count_format, count_from, count_fps, .. } = kind else {
+        return std::borrow::Cow::Borrowed("");
+    };
+    if *source == TextSource::Static {
+        return std::borrow::Cow::Borrowed(text.as_str());
+    }
+    let value = count_value(*source, *count_format, *count_from, *count_fps, pts.0.max(0));
+    std::borrow::Cow::Owned(if text.contains("{}") { text.replacen("{}", &value, 1) } else { value })
+}
+
+/// The running value of a non-static source, at the material tick `t` (≥ 0).
+fn count_value(source: TextSource, format: CountFormat, from_s: f64, fps: f64, t: i64) -> String {
+    let from = (from_s.clamp(0.0, 359_999.0) * 90_000.0).round() as i64;
+    match source {
+        TextSource::Static => String::new(),
+        TextSource::Timecode => {
+            let fps = (fps.round() as i64).clamp(1, 120);
+            let v = from + t;
+            let secs = v / 90_000;
+            let ff = (v % 90_000) * fps / 90_000;
+            format!("{:02}:{:02}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60, ff)
+        }
+        // a stopwatch shows what has passed (floor), a countdown what is left (ceiling): at 0.2 s of a
+        // 5-second countdown it still says 5, and it says 0 only when the time is up
+        TextSource::Stopwatch => format_count(format, from + t, false),
+        TextSource::Countdown => format_count(format, (from - t).max(0), true),
+    }
+}
+
+/// `ticks` written in `format`; `up` rounds up to the shown unit.
+fn format_count(format: CountFormat, ticks: i64, up: bool) -> String {
+    let unit: i64 = match format {
+        CountFormat::MSs | CountFormat::HMmSs => 90_000,
+        CountFormat::MSsT | CountFormat::STenths => 9_000,
+    };
+    let n = if up { (ticks + unit - 1) / unit } else { ticks / unit };
+    match format {
+        CountFormat::MSs => format!("{}:{:02}", n / 60, n % 60),
+        CountFormat::HMmSs => format!("{}:{:02}:{:02}", n / 3600, n % 3600 / 60, n % 60),
+        CountFormat::MSsT => {
+            let s = n / 10;
+            format!("{}:{:02}.{}", s / 60, s % 60, n % 10)
+        }
+        CountFormat::STenths => format!("{}.{}", n / 10, n % 10),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -446,6 +566,10 @@ impl GeneratorKind {
             reveal_soft: 0.0,
             offset_x: 0.0,
             offset_y: 0.0,
+            source: TextSource::Static,
+            count_format: CountFormat::default(),
+            count_from: 0.0,
+            count_fps: default_count_fps(),
         }
     }
 
@@ -490,6 +614,9 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_id
         reveal_soft: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
         offset_x: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
         offset_y: f64, -4.0, 4.0, 0.0, 0.001, Percent, Smooth;
+        // text-counter-source: the running value's start and a timecode's frame rate, AT THE END
+        count_from: f64, 0.0, 359999.0, 0.0, 1.0, Sec, Smooth;
+        count_fps: f64, 1.0, 120.0, 30.0, 1.0, None, Structural;
     },
     // R.53 (item 419): fractions of ITS OWN axis for sizes and positions, fractions of the HEIGHT for
     // isotropic lengths — the backing survives a change of project format
@@ -570,14 +697,18 @@ impl HasParams for GeneratorKind {
                 text_spec("family", false),
                 choice_spec("align", TEXT_ALIGN_KEYS),
                 choice_spec("anchor", TEXT_ANCHOR_KEYS),
+                choice_spec("source", TEXT_SOURCE_KEYS),
+                choice_spec("count_format", COUNT_FORMAT_KEYS),
             ],
             _ => Vec::new(),
         }
     }
 
     fn get_value(&self, name: &str) -> Option<ParamValue> {
-        if let GeneratorKind::Text { text, family, align, anchor, .. } = self {
+        if let GeneratorKind::Text { text, family, align, anchor, source, count_format, .. } = self {
             match name {
+                "source" => return Some(ParamValue::Choice(TEXT_SOURCE_KEYS[*source as usize].into())),
+                "count_format" => return Some(ParamValue::Choice(COUNT_FORMAT_KEYS[*count_format as usize].into())),
                 "text" => return Some(ParamValue::Text(text.clone())),
                 "family" => return Some(ParamValue::Text(family.clone())),
                 "align" => return Some(ParamValue::Choice(align_key(*align).into())),
@@ -589,8 +720,18 @@ impl HasParams for GeneratorKind {
     }
 
     fn set_value(&mut self, name: &str, v: &ParamValue) -> bool {
-        if let GeneratorKind::Text { text, family, align, anchor, .. } = self {
+        if let GeneratorKind::Text { text, family, align, anchor, source, count_format, .. } = self {
             match (name, v) {
+                ("source", ParamValue::Choice(k)) => {
+                    let Some(i) = TEXT_SOURCE_KEYS.iter().position(|x| x == k) else { return false };
+                    *source = [TextSource::Static, TextSource::Timecode, TextSource::Stopwatch, TextSource::Countdown][i];
+                    return true;
+                }
+                ("count_format", ParamValue::Choice(k)) => {
+                    let Some(i) = COUNT_FORMAT_KEYS.iter().position(|x| x == k) else { return false };
+                    *count_format = [CountFormat::MSs, CountFormat::MSsT, CountFormat::HMmSs, CountFormat::STenths][i];
+                    return true;
+                }
                 ("text", ParamValue::Text(s)) => {
                     *text = s.clone();
                     return true;
@@ -622,6 +763,10 @@ fn is_flag_row(p: &crate::plugin_slot::PluginSlot, name: &str) -> bool {
 }
 
 const TEXT_ALIGN_KEYS: &[&str] = &["left", "center", "right"];
+/// In `TextSource` order (text-counter-source).
+pub const TEXT_SOURCE_KEYS: &[&str] = &["static", "timecode", "stopwatch", "countdown"];
+/// In `CountFormat` order.
+pub const COUNT_FORMAT_KEYS: &[&str] = &["m_ss", "m_ss_t", "h_mm_ss", "s_tenths"];
 const TEXT_ANCHOR_KEYS: &[&str] = &[
     "top_left",
     "top_center",
@@ -870,8 +1015,25 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             reveal_soft,
             offset_x,
             offset_y,
+            source,
+            count_format,
+            count_from,
+            count_fps,
         } => {
             // defaults are not written; f64 — the shortest exact Display form
+            // the running value of text-counter-source: its source, format, start and frame rate
+            if *source != TextSource::Static {
+                push("src", TEXT_SOURCE_KEYS[*source as usize].into());
+            }
+            if !count_format.is_default() {
+                push("cf", COUNT_FORMAT_KEYS[*count_format as usize].into());
+            }
+            if *count_from != 0.0 {
+                push("cfr", format!("{count_from}"));
+            }
+            if *count_fps != default_count_fps() {
+                push("cfps", format!("{count_fps}"));
+            }
             if !text.is_empty() {
                 push("t", escape_gen_value(text));
             }
@@ -1077,9 +1239,23 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             reveal_soft,
             offset_x,
             offset_y,
+            source,
+            count_format,
+            count_from,
+            count_fps,
         } => {
             let n = || val.parse::<f64>().ok().filter(|v| v.is_finite());
             match key {
+                "src" => {
+                    let i = TEXT_SOURCE_KEYS.iter().position(|k| *k == val)?;
+                    *source = [TextSource::Static, TextSource::Timecode, TextSource::Stopwatch, TextSource::Countdown][i];
+                }
+                "cf" => {
+                    let i = COUNT_FORMAT_KEYS.iter().position(|k| *k == val)?;
+                    *count_format = [CountFormat::MSs, CountFormat::MSsT, CountFormat::HMmSs, CountFormat::STenths][i];
+                }
+                "cfr" => *count_from = n()?,
+                "cfps" => *count_fps = n()?,
                 // LEGACY keys of the animation mode (R.53): the kind no longer
                 // carries them, so they are caught by the full parse
                 // (`parse_gen_path_full`), and they do not reach here.

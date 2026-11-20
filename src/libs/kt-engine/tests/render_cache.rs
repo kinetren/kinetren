@@ -407,3 +407,124 @@ fn t3201_a_heavy_run_is_one_segment_from_its_start() {
         "the segment holds the whole run from its start: {stores:?}"
     );
 }
+
+/// A segment codec whose encoder takes NV12 (BT.709, limited), as a VAAPI one does: its writer
+/// records the planes it is given and counts the RGBA frames; its reader turns the planes back into
+/// RGBA by a plain inverse (nearest chroma) — the test's "codec tolerance".
+struct Nv12Segments {
+    planes: std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    rgba: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+struct Nv12Writer {
+    file: std::fs::File,
+    planes: std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    rgba: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+const NV12: kt_media::segment::SegmentPlanes = kt_media::segment::SegmentPlanes { code: 1, bt709: true, full: false };
+impl kt_media::segment::SegmentWriter for Nv12Writer {
+    fn push(&mut self, _rgba: &[u8]) -> Result<(), String> {
+        self.rgba.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err("this test encoder takes NV12".into())
+    }
+    fn finish(self: Box<Self>) -> Result<u64, String> {
+        self.file.metadata().map(|m| m.len()).map_err(|e| e.to_string())
+    }
+    fn encoder(&self) -> &str {
+        "test-nv12"
+    }
+    fn planes(&self) -> Option<kt_media::segment::SegmentPlanes> {
+        Some(NV12)
+    }
+    fn push_planes(&mut self, planes: &[u8]) -> Result<(), String> {
+        use std::io::Write;
+        self.planes.lock().unwrap().push(planes.to_vec());
+        self.file.write_all(planes).map_err(|e| e.to_string())
+    }
+}
+struct Nv12Reader(std::fs::File);
+impl kt_media::segment::SegmentReader for Nv12Reader {
+    fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let (wu, hu) = (w as usize, h as usize);
+        let n = wu * hu + wu.div_ceil(2) * 2 * hu.div_ceil(2);
+        let mut p = vec![0u8; n];
+        self.0.seek(SeekFrom::Start(index as u64 * n as u64)).map_err(|e| e.to_string())?;
+        self.0.read_exact(&mut p).map_err(|e| e.to_string())?;
+        out.clear();
+        let (kr, kb) = (0.2126f64, 0.0722f64);
+        for y in 0..hu {
+            for x in 0..wu {
+                let yy = (p[y * wu + x] as f64 - 16.0) / 219.0;
+                let c = wu * hu + (y / 2) * wu.div_ceil(2) * 2 + (x / 2) * 2;
+                let cb = (p[c] as f64 - 128.0) / 224.0;
+                let cr = (p[c + 1] as f64 - 128.0) / 224.0;
+                let r = yy + 2.0 * (1.0 - kr) * cr;
+                let b = yy + 2.0 * (1.0 - kb) * cb;
+                let g = (yy - kr * r - kb * b) / (1.0 - kr - kb);
+                for v in [r, g, b] {
+                    out.push((v * 255.0).round().clamp(0.0, 255.0) as u8);
+                }
+                out.push(255);
+            }
+        }
+        Ok(())
+    }
+}
+impl kt_media::segment::SegmentCodec for Nv12Segments {
+    fn codec(&self) -> &str {
+        "test-nv12"
+    }
+    fn writer(&self, path: &std::path::Path, _w: u32, _h: u32, _fps: u32) -> Result<Box<dyn kt_media::segment::SegmentWriter>, String> {
+        Ok(Box::new(Nv12Writer {
+            file: std::fs::File::create(path).map_err(|e| e.to_string())?,
+            planes: self.planes.clone(),
+            rgba: self.rgba.clone(),
+        }))
+    }
+    fn reader(&self, path: &std::path::Path) -> Result<Box<dyn kt_media::segment::SegmentReader>, String> {
+        Ok(Box::new(Nv12Reader(std::fs::File::open(path).map_err(|e| e.to_string())?)))
+    }
+}
+
+/// Test t3317 (export-host-copy D4): the prerender hands an encoder that takes planes the planes made
+/// on the composing device — no RGBA reaches it, every moment's planes are the exact conversion of the
+/// moment's composite, each moment reads back within the codec's tolerance, and the durable keys are
+/// those an RGBA codec's tier writes.
+#[test]
+fn t3317_a_segment_is_written_from_planes() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((p, moments)) = player(root.path(), 0.64) else { return };
+    let planes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let rgba = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    p.set_render_cache(Some(Config {
+        codec: std::sync::Arc::new(Nv12Segments { planes: planes.clone(), rgba: rgba.clone() }),
+        root: root.path().join("nv12"),
+        build: "test build".into(),
+        base: None,
+        cap: 1 << 30,
+    }));
+    prerender(&p, &moments);
+    assert_eq!(rgba.load(std::sync::atomic::Ordering::Relaxed), 0, "no RGBA frame reached the encoder");
+    let back: Vec<Vec<u8>> = moments.iter().map(|t| p.disk_picture(*t).expect("on disk").rgba.to_vec()).collect();
+    // the moments' composites, the tier off, converted by the reference: each is among the planes written
+    p.set_render_cache(None);
+    let layout = kt_engine::yuv::YuvLayout { pix: kt_engine::yuv::YuvPix::Nv12, matrix: kt_engine::yuv::YuvMatrix::Bt709, full: false };
+    let written = planes.lock().unwrap().clone();
+    for t in &moments {
+        let mut buf = Vec::new();
+        let deadline = kt_time::test_deadline();
+        while !p.compose_preview_into(*t, &mut buf).1 {
+            assert!(Instant::now() < deadline, "the moment never composed complete");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut want = Vec::new();
+        kt_engine::yuv::convert(&layout, &buf, 160, 90, &mut want);
+        assert!(written.contains(&want), "moment {}: its planes are the exact conversion of its composite", t.0);
+        let i = moments.iter().position(|m| m == t).unwrap();
+        // RGB: the encoder keeps no alpha
+        let rgb = |v: &[u8]| v.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect::<Vec<u8>>();
+        let (a, b) = (rgb(&back[i]), rgb(&buf));
+        let mean = a.iter().zip(&b).map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs() as f64).sum::<f64>() / a.len() as f64;
+        assert!(mean < 3.0, "moment {}: read back {mean:.2} from its composite", t.0);
+    }
+}

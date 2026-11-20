@@ -87,12 +87,19 @@ pub const PROJECT_FILE_VERSION_NOTES: u32 = 5;
 /// leaving its devices' sound halves unmirrored — so it refuses instead.
 pub const PROJECT_FILE_VERSION_TRACK_SOUND: u32 = 6;
 
+/// The version a file is written with WHEN a title runs a value — a timecode, a stopwatch, a countdown
+/// (text-counter-source). An older build reads the title without its source and would show and save
+/// the typed text instead — so it is told the version and refuses.
+pub const PROJECT_FILE_VERSION_TEXT_SOURCE: u32 = 7;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_TRACK_SOUND;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_TEXT_SOURCE;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_track_sound() {
+    if project.has_text_sources() {
+        PROJECT_FILE_VERSION_TEXT_SOURCE
+    } else if project.has_track_sound() {
         PROJECT_FILE_VERSION_TRACK_SOUND
     } else if project.has_marker_notes() {
         PROJECT_FILE_VERSION_NOTES

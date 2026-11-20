@@ -109,6 +109,9 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "flash" => tr(k::genp::FLASH),
         "action_safe" => tr(k::genp::ACTION_SAFE),
         "title_safe" => tr(k::genp::TITLE_SAFE),
+        // text-counter-source: the running value's start and a timecode's frame rate
+        "count_from" => tr(k::genp::COUNT_FROM),
+        "count_fps" => tr(k::genp::COUNT_FPS),
         _ => return None,
     })
 }

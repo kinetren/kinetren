@@ -47,8 +47,34 @@ const KEEP_UPLOAD_FRAMES: u64 = 3;
 
 /// The ring's bound for frames of `w`×`h` (export-readback D1).
 pub(crate) fn ring_depth(w: u32, h: u32) -> usize {
-    let bytes = ((w * 4).next_multiple_of(256) as u64 * h as u64).max(1);
-    ((RING_BYTES / bytes) as usize).clamp(RING_MIN, RING_MAX)
+    ring_depth_bytes((w * 4).next_multiple_of(256) as u64 * h as u64)
+}
+
+/// The ring's bound for frames of `bytes` each (export-host-copy D3: a frame read back as an
+/// encoder's planes counts its planes' bytes).
+pub(crate) fn ring_depth_bytes(bytes: u64) -> usize {
+    ((RING_BYTES / bytes.max(1)) as usize).clamp(RING_MIN, RING_MAX)
+}
+
+/// The word texture's width the conversion pass writes (export-host-copy D3): 4096 texels, a row of
+/// 16384 bytes — a multiple of the copy's 256, so the slot holds the planes with no gap between rows.
+const YUV_TW: u32 = 4096;
+
+/// A planes readback's size: its bytes, and the word texture's width and rows.
+fn yuv_target(l: &kt_engine::yuv::YuvLayout, w: u32, h: u32) -> (usize, u32, u32) {
+    let n = l.frame_bytes(w, h);
+    let words = n.div_ceil(4) as u32;
+    (n, YUV_TW, words.div_ceil(YUV_TW).max(1))
+}
+
+/// The pass's uniform: the layout, the size and the reference's own coefficients (shaders/yuv.wgsl).
+fn yuv_uniform(l: &kt_engine::yuv::YuvLayout, w: u32, h: u32) -> UniformData {
+    let k = l.coeffs();
+    UniformData {
+        u: [w, h, l.pix.code(), YUV_TW, k.y[0] as u32, k.y[1] as u32, k.y[2] as u32, k.off_y as u32],
+        f: [k.cb[0] as f32, k.cb[1] as f32, k.cb[2] as f32, k.off_c as f32, k.cr[0] as f32, k.cr[1] as f32, k.cr[2] as f32, k.max as f32],
+        ..Default::default()
+    }
 }
 
 /// A staging buffer of the readback ring and the map callback's verdict.
@@ -69,6 +95,8 @@ struct InFlight {
     gpu: Option<wgpu::SubmissionIndex>,
     out_w: u32,
     out_h: u32,
+    /// A frame read back as an encoder's planes: their layout (export-host-copy D3).
+    planes: Option<kt_engine::yuv::YuvLayout>,
 }
 
 /// Uniform of all passes: 2×vec4<u32> + 2×vec4<f32> + mat4 (see common.wgsl).
@@ -220,9 +248,11 @@ enum Pipe {
     GridTile,
     /// Mask alpha (shape-masks): the frame's alpha × the uploaded coverage.
     MaskAlpha,
+    /// The export's RGB → YUV conversion into a word texture (export-host-copy D3).
+    Yuv,
 }
 
-pub(crate) const PIPE_COUNT: usize = 8;
+pub(crate) const PIPE_COUNT: usize = 9;
 
 impl Pipe {
     /// What the telemetry journal's GPU record calls the pass (gpu-pass-cost).
@@ -236,6 +266,7 @@ impl Pipe {
             Pipe::Premul => "premul",
             Pipe::GridTile => "grid_tile",
             Pipe::MaskAlpha => "mask",
+            Pipe::Yuv => "yuv",
         }
     }
 }
@@ -966,6 +997,7 @@ pub(crate) const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("premul", include_str!("shaders/premul.wgsl")),
     ("grid_tile", include_str!("shaders/grid_tile.wgsl")),
     ("mask", include_str!("shaders/mask.wgsl")),
+    ("yuv", include_str!("shaders/yuv.wgsl")),
 ];
 
 pub(crate) const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -1995,6 +2027,43 @@ impl VideoGpuExec for GpuFxEngine {
         ring_depth(w, h)
     }
 
+    fn readback_depth_yuv(&self, w: u32, h: u32, layout: &kt_engine::yuv::YuvLayout) -> usize {
+        let (_, _, th) = yuv_target(layout, w, h);
+        if th > self.inner.lock().unwrap().max_dim { 0 } else { ring_depth_bytes(layout.frame_bytes(w, h) as u64) }
+    }
+
+    fn submit_yuv(&self, plan: &FramePlan<'_>, layout: &kt_engine::yuv::YuvLayout) -> Result<u64, GpuExecError> {
+        self.yield_to_display();
+        let _hold = crate::holds::within(self.role(), "submit");
+        let _gate = self.compiled.gl_gate();
+        self.inner.lock().unwrap().guarded(|g| g.submit_as(plan, Some(layout)))
+    }
+
+    /// A frame worker's or the serial export's frame as planes made on this device (export-host-copy
+    /// D3): a submission of its own, collected at once; with frames of the ring in flight (another
+    /// caller's), the reference over the RGBA instead — the same bytes.
+    fn execute_once_yuv(
+        &self,
+        plan: &FramePlan<'_>,
+        layout: &kt_engine::yuv::YuvLayout,
+        out: &mut Vec<u8>,
+    ) -> Result<bool, GpuExecError> {
+        let (idle, max_dim) = { let g = self.inner.lock().unwrap(); (g.in_flight.is_empty(), g.max_dim) };
+        let (_, _, th) = yuv_target(layout, plan.out_w, plan.out_h);
+        if !idle || th > max_dim {
+            let mut rgba = Vec::new();
+            let c = self.execute_once(plan, &mut rgba)?;
+            if rgba.is_empty() {
+                out.clear();
+            } else {
+                kt_engine::yuv::convert(layout, &rgba, plan.out_w, plan.out_h, out);
+            }
+            return Ok(c);
+        }
+        let ticket = self.submit_yuv(plan, layout)?;
+        self.collect(ticket, out)
+    }
+
     fn done(&self, ticket: u64) -> bool {
         let _hold = crate::holds::within(self.role(), "done");
         let _gate = self.compiled.gl_gate();
@@ -2060,11 +2129,20 @@ impl Inner {
     /// readback memo is neither asked nor filled: an export composes every moment once, and the
     /// memo's copy of each 1080p frame (8 MB) was pure cost.
     fn submit(&mut self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
+        self.submit_as(plan, None)
+    }
+
+    /// `submit`, the frame read back as RGBA or, with `planes`, converted on the device after the
+    /// composite and read back as the layout's packed planes (export-host-copy D3).
+    fn submit_as(&mut self, plan: &FramePlan<'_>, planes: Option<&kt_engine::yuv::YuvLayout>) -> Result<u64, GpuExecError> {
         let (ow, oh) = (plan.out_w, plan.out_h);
         if ow > self.max_dim || oh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: ow, h: oh });
         }
-        let depth = ring_depth(ow, oh);
+        let depth = match planes {
+            Some(l) => ring_depth_bytes(l.frame_bytes(ow, oh) as u64),
+            None => ring_depth(ow, oh),
+        };
         if self.in_flight.len() >= depth {
             return Err(GpuExecError::Validation("readback ring full: collect before submitting".into()));
         }
@@ -2088,10 +2166,19 @@ impl Inner {
             self.last_cost.add(j.cost());
         }
         if jobs.is_empty() {
-            self.in_flight.push_back(InFlight { ticket, slot: usize::MAX, complete, gpu: None, out_w: ow, out_h: oh });
+            self.in_flight.push_back(InFlight {
+                ticket,
+                slot: usize::MAX,
+                complete,
+                gpu: None,
+                out_w: ow,
+                out_h: oh,
+                planes: planes.copied(),
+            });
             return Ok(ticket);
         }
-        let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
+        // the conversion pass takes one uniform slot
+        let total: u32 = jobs.iter().map(|j| j.slot_units()).sum::<u32>() + planes.is_some() as u32;
         if total > self.arena_slots {
             let slots = total.next_power_of_two();
             crate::created();
@@ -2111,24 +2198,37 @@ impl Inner {
         self.piece = Some(crate::arbiter::Piece::begin(&self.arb, self.timer.last_frame(Role::Export)));
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
         let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
+        // the encoder's planes made here, after the composite (export-host-copy D3): a word texture
+        // of the packed bytes, copied into the slot instead of the composite
+        let words = planes.map(|l| {
+            let (_, tw, th) = yuv_target(l, ow, oh);
+            let t = self.pool.acquire(&self.device, tw, th);
+            let dummy = self.dummy.view.clone();
+            self.pass(&mut enc, Pipe::Yuv, &t.view, &result.view, &dummy, &dummy, yuv_uniform(l, ow, oh));
+            t
+        });
         self.timer.end(&mut enc, Role::Export, meta);
-        let padded_bpr = (ow * 4).next_multiple_of(256);
+        let (copy_w, copy_h) = match &words {
+            Some(t) => (t.w, t.h),
+            None => (ow, oh),
+        };
+        let padded_bpr = (copy_w * 4).next_multiple_of(256);
         let i = (0..depth)
             .find(|i| !self.in_flight.iter().any(|f| f.slot == *i))
             .expect("fewer frames in flight than the depth leave a slot free");
-        let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == ow && r.h == oh);
+        let fits = matches!(&self.ring[i], Some(r) if r.bpr == padded_bpr && r.w == copy_w && r.h == copy_h);
         if !fits {
             crate::created();
             self.ring[i] = Some(RingSlot {
                 buf: self.device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("kt-gpu readback ring"),
-                    size: padded_bpr as u64 * oh as u64,
+                    size: padded_bpr as u64 * copy_h as u64,
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 }),
                 bpr: padded_bpr,
-                w: ow,
-                h: oh,
+                w: copy_w,
+                h: copy_h,
                 mapped: Default::default(),
             });
             let bytes: u64 = self.ring.iter().flatten().map(|r| r.buf.size()).sum();
@@ -2139,7 +2239,7 @@ impl Inner {
         let slot = self.ring[i].as_ref().unwrap();
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &result.texture,
+                texture: words.as_ref().map_or(&result.texture, |t| &t.texture),
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -2149,10 +2249,10 @@ impl Inner {
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bpr),
-                    rows_per_image: Some(oh),
+                    rows_per_image: Some(copy_h),
                 },
             },
-            wgpu::Extent3d { width: ow, height: oh, depth_or_array_layers: 1 },
+            wgpu::Extent3d { width: copy_w, height: copy_h, depth_or_array_layers: 1 },
         );
         kt_time::work::bump(kt_time::work::Work::DeviceSubmit);
         self.staged.flush(&self.queue, &self.arena);
@@ -2174,7 +2274,10 @@ impl Inner {
         // the accumulator goes back to the pool: a later frame writing it is ordered after this
         // copy on the one queue
         self.pool.release(result);
-        self.in_flight.push_back(InFlight { ticket, slot: i, complete, gpu: Some(sub), out_w: ow, out_h: oh });
+        if let Some(t) = words {
+            self.pool.release(t);
+        }
+        self.in_flight.push_back(InFlight { ticket, slot: i, complete, gpu: Some(sub), out_w: ow, out_h: oh, planes: planes.copied() });
         Ok(ticket)
     }
 
@@ -2207,6 +2310,11 @@ impl Inner {
         let Some(sub) = f.gpu else {
             out.clear();
             out.resize(n, 0);
+            // an empty plan is a black frame: its planes are the black frame's (export-host-copy D3)
+            if let Some(l) = &f.planes {
+                let rgba = std::mem::take(out);
+                kt_engine::yuv::convert(l, &rgba, f.out_w, f.out_h, out);
+            }
             return Ok(f.complete);
         };
         let mark = Instant::now();
@@ -2222,13 +2330,19 @@ impl Inner {
             return Err(GpuExecError::DeviceLost);
         }
         out.clear();
-        out.reserve(n);
         {
             let slice = slot.buf.slice(..);
             let data = slice.get_mapped_range().map_err(|_| GpuExecError::DeviceLost)?;
-            for row in 0..f.out_h as usize {
-                let s = row * slot.bpr as usize;
-                out.extend_from_slice(&data[s..s + f.out_w as usize * 4]);
+            match &f.planes {
+                // the planes are packed rows of the word texture with no gap: their bytes, in one copy
+                Some(l) => out.extend_from_slice(&data[..l.frame_bytes(f.out_w, f.out_h)]),
+                None => {
+                    out.reserve(n);
+                    for row in 0..f.out_h as usize {
+                        let s = row * slot.bpr as usize;
+                        out.extend_from_slice(&data[s..s + f.out_w as usize * 4]);
+                    }
+                }
             }
         }
         slot.buf.unmap();

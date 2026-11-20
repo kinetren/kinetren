@@ -1343,6 +1343,13 @@ timecode = "Timecode"
 
 # Title window (R.52 C3).
 [titlew]
+source_note = "The value runs with the event’s own time; put {} in the text to place it inside words"
+count_format = "Format:"
+source_countdown = "Countdown"
+source_stopwatch = "Stopwatch"
+source_timecode = "Timecode"
+source_static = "Typed"
+source = "Text:"
 preset_roll = "End credits"
 preset_crawl = "Crawl"
 preset_typewriter = "Typewriter"
@@ -1373,6 +1380,8 @@ align_r = "Right"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+count_fps = "Timecode frame rate"
+count_from = "Start (s)"
 cut43 = "4:3 cut"
 thirds = "Rule of thirds"
 center = "Centre cross"
@@ -1502,6 +1511,7 @@ title = "Track: {0}"
 sound = "Device sound"
 sound_none = "None"
 sound_hint = "The audio track that plays the sound of this track's VHS Tape or Camera ISP — the same device, with its own switch on the sound lane."
+no_stream = "Datamosh breaks an event’s own video stream; a track has none, so it is not added here. Put it on the events or on a morpher layer over them."
 name = "Name"
 level = "Level"
 opacity = "Opacity"

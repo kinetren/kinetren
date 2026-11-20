@@ -1343,6 +1343,13 @@ timecode = "Тайм-код"
 
 # Title window (R.52 C3).
 [titlew]
+source_note = "Значение идёт по собственному времени события; поставьте {} в тексте, чтобы вписать его в слова"
+count_format = "Формат:"
+source_countdown = "Обратный отсчёт"
+source_stopwatch = "Секундомер"
+source_timecode = "Таймкод"
+source_static = "Набранный"
+source = "Текст:"
 preset_roll = "Финальные титры"
 preset_crawl = "Бегущая строка"
 preset_typewriter = "Машинка"
@@ -1373,6 +1380,8 @@ align_r = "Справа"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+count_fps = "Частота кадров таймкода"
+count_from = "Начало (с)"
 cut43 = "Кадр 4:3"
 thirds = "Правило третей"
 center = "Перекрестие в центре"
@@ -1500,6 +1509,7 @@ title = "Дорожка: {0}"
 sound = "Звук устройства"
 sound_none = "Нет"
 sound_hint = "Аудиодорожка, где звучит VHS Tape или Camera ISP этой дорожки — то же устройство, со своим выключателем на звуковой линии."
+no_stream = "Datamosh ломает собственный видеопоток события; у дорожки его нет, поэтому сюда он не добавляется. Поставьте его на события или на слой морфера над ними."
 name = "Имя"
 level = "Уровень"
 opacity = "Непрозрачность"

@@ -287,3 +287,56 @@ fn t3702_the_technical_kinds_are_created_from_edit() {
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }
+
+/// Test 3705 (text-counter-source): a title's window chooses where its text comes from; a countdown
+/// shows its format and its start, a typed title shows neither (no dead control).
+/// - **PATH** Edit → Create a generator… → Titles and countdown → Text → its window → Text: Countdown →
+///   the Format row and the Start field appear → Text: Typed → they go
+#[test]
+fn t3705_a_title_chooses_its_source_in_its_window() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+    hover_item(&mut h, tr(k::genkind::GROUP_TITLES));
+    h.get_by_label(kind_label("text")).click();
+    for _ in 0..4 {
+        h.step();
+    }
+    let painted = |h: &Harness<'_, KtApp>, src: &str| crate::reach_tests::painted_texts(h).iter().any(|t| t.src == src);
+    let from = tr(k::genp::COUNT_FROM);
+    let at = crate::widgets::field_probe::rect_of("titlew.source.countdown").expect("the source row");
+    h.hover_at(at.center());
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at.center(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        h.step();
+    }
+    for _ in 0..3 {
+        h.step();
+    }
+    let made = h.state().model.project().clips.iter().find_map(|c| c.r#gen.clone()).expect("the title");
+    assert!(matches!(made, GeneratorKind::Text { source: kt_model::TextSource::Countdown, .. }), "the click did not set the source: {made:?}");
+    assert!(painted(&h, tr(k::titlew::COUNT_FORMAT)), "a countdown shows its format row");
+    crate::layout_tests::reveal_until(&mut h, from);
+    assert!(painted(&h, from), "a countdown shows its start");
+    // back to the typed text: with the grid still in view (its size row drawn), the start row is gone
+    let id = h.state().model.project().clips.iter().find(|c| c.r#gen.is_some()).map(|c| c.id).expect("the title");
+    let mut typed = made.clone();
+    assert!(typed.set_value("source", &kt_model::ParamValue::Choice("static".into())));
+    assert!(h.state_mut().apply(kt_model::Command::SetClipGen { id, kind: Some(typed) }));
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(painted(&h, tr(k::genp::SIZE)), "the grid left the view");
+    assert!(!painted(&h, from), "a typed title shows the counter's start");
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for key in [k::titlew::SOURCE, k::titlew::SOURCE_STATIC, k::titlew::SOURCE_TIMECODE, k::titlew::SOURCE_STOPWATCH, k::titlew::SOURCE_COUNTDOWN, k::titlew::COUNT_FORMAT, k::titlew::SOURCE_NOTE, k::genp::COUNT_FROM, k::genp::COUNT_FPS] {
+            assert!(!tr(key).is_empty(), "{lang:?}: an empty text");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}

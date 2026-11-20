@@ -139,6 +139,8 @@ impl KtApp {
         // pasting a chain may bring envelopes; a track has nowhere to put them —
         // we say so ALOUD (rule 16)
         let mut curves_dropped = false;
+        // a stream device put on a track — refused aloud (found-defects 820)
+        let mut stream_refused = false;
         let mut mask_out: Option<(crate::maskctl::MaskOwner, Option<Vec<kt_model::Mask>>, crate::masks::ListOut)> = None;
         let mut changed_fx = false;
         let mut hover: Option<String> = None;
@@ -394,6 +396,30 @@ impl KtApp {
                             sound_edit = Some((st.id, af, ab, !a_on));
                         }
                     }
+                    // DATAMOSH ON A TRACK — A REFUSAL WITH A REASON (found-defects 820). A stream
+                    // stage decodes an EVENT's own stream (the event before it on the lane, its
+                    // history); a track has no stream of its own, the engine skips the slot there,
+                    // and a dead slot is rule 9. One door after the graph: the picker, a paste and a
+                    // preset all land here. Slots an older project already holds stay as they are.
+                    if track.kind == LaneKind::Video {
+                        let had = track.fx.iter().filter(|f| f.is_stream()).count();
+                        if fx.iter().filter(|f| f.is_stream()).count() > had {
+                            let mut kept = 0;
+                            let mut i = 0;
+                            while i < fx.len() {
+                                if fx[i].is_stream() && kept >= had {
+                                    fx.remove(i);
+                                    if i < bypass.len() {
+                                        bypass.remove(i);
+                                    }
+                                    continue;
+                                }
+                                kept += usize::from(fx[i].is_stream());
+                                i += 1;
+                            }
+                            stream_refused = true;
+                        }
+                    }
                     // A CURVE ON A TRACK — A REFUSAL WITH A REASON, not silence.
                     // The strip is shared with the event (rule 17), and the person can at any moment
                     // insert into it a chain with automation. If we dropped it silently, he would see
@@ -604,6 +630,9 @@ impl KtApp {
         // the key reaches it with the same press.
         if curves_dropped {
             self.refuse(tr(k::track::CURVES_DROPPED));
+        }
+        if stream_refused {
+            self.refuse(tr(k::track::NO_STREAM));
         }
         if let Some((owner, list, out)) = mask_out.take() {
             if let Some(list) = list

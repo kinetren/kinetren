@@ -868,3 +868,54 @@ fn t945b_strength_zero_skips_the_layer_on_gpu() {
     let _ = cpu_and_gpu(&e, &mut VideoRenderer::new(&p), &cache, q, Tick(3_000));
     assert!(e.last_cost().subsamples > 0, "a strength above 0 must run the layer on the GPU");
 }
+
+/// Test t3313 (export-host-copy D3): composites of even and odd sizes, converted by the pass on the
+/// test device into each of the five layouts (both matrices, both ranges), read back through the ring
+/// and through a frame worker's `execute_once_yuv`, equal the CPU reference over the same composite's
+/// RGBA byte for byte.
+#[test]
+fn t3313_the_device_pass_equals_the_reference() {
+    use kt_engine::VideoGpuExec;
+    use kt_engine::yuv::{YuvLayout, YuvMatrix, YuvPix, convert};
+    kt_plugins_builtin::install();
+    let Some(e) = test_engine() else { return };
+    let t = Tick(17 * 3000);
+    // an odd size is the project's own (an odd quality of a 128×72 project leaves layers unasked)
+    for q in [Quality { width: 128, height: 72 }, Quality { width: 97, height: 41 }] {
+        let mut p = project();
+        p.settings.width = q.width;
+        p.settings.height = q.height;
+        let video = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> = sources().into_iter().collect();
+        for (media, src_pts, lq) in video.layers_at(t, q) {
+            let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(lq)).unwrap();
+            cache.insert_video(kt_engine::source_id(media), Some(lq), kt_engine::video::video_cache_idx(src_pts), frame.into());
+        }
+        let plan = video.frame_plan(&cache, t, q);
+        let mut rgba = Vec::new();
+        // the odd canvas's composite is reported incomplete by the GPU path (its layers decode at the
+        // even 96×40): the conversion converts whatever composite there is, the same one both ways
+        let complete = e.execute_once(&plan, &mut rgba).unwrap();
+        assert!(complete || q.width % 2 == 1, "the composite of {q:?} is complete");
+        assert_eq!(rgba.len(), (q.width * q.height * 4) as usize);
+        for pix in [YuvPix::Yuv420p, YuvPix::Nv12, YuvPix::Yuv420p10, YuvPix::P010, YuvPix::Yuv422p10] {
+            for matrix in [YuvMatrix::Bt601, YuvMatrix::Bt709] {
+                for full in [false, true] {
+                    let l = YuvLayout { pix, matrix, full };
+                    let mut want = Vec::new();
+                    convert(&l, &rgba, q.width, q.height, &mut want);
+                    assert!(e.readback_depth_yuv(q.width, q.height, &l) > 0, "the test device converts");
+                    let ticket = e.submit_yuv(&plan, &l).unwrap();
+                    let mut ring = Vec::new();
+                    assert_eq!(e.collect(ticket, &mut ring).unwrap(), complete);
+                    let first = ring.iter().zip(&want).position(|(a, b)| a != b);
+                    assert!(ring == want, "{l:?} {}×{}: the ring's planes differ from the reference at {first:?} ({} against {} bytes)", q.width, q.height, ring.len(), want.len());
+                    let mut once = Vec::new();
+                    assert_eq!(e.execute_once_yuv(&plan, &l, &mut once).unwrap(), complete);
+                    assert!(once == want, "{l:?}: a worker's planes differ from the reference");
+                }
+            }
+        }
+    }
+}

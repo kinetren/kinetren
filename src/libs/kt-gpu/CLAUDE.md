@@ -288,6 +288,12 @@ is no picture, and an export refuses.
   `queue.write_buffer` and later passes are ordered after earlier submissions on the one queue;
   never write a buffer of a frame in flight by mapping it. The ring neither asks nor fills the
   readback memo (an export composes every moment once). t1457 holds the ring to `execute_into`.
+- **An export frame is read back as the encoder's planes** (export-host-copy D3): `submit_yuv` runs
+  `shaders/yuv.wgsl` (`Pipe::Yuv`, a fragment pass into a 4096-texel-wide word texture) after the
+  composite, and the slot holds the packed planes; `ring_depth_bytes` counts their bytes. The pass is a
+  mirror of `kt_engine::yuv::convert`, byte for byte (t3313): an edit of one is an edit of the other in
+  the same commit, and a new encoder input format gets its layout in `kt_engine::yuv` and its arm in the
+  pass. Integers only; the uniform carries the Y weights as u32 bits, the chroma weights as f32 values.
 - `UploadCache` keeps up to four evicted textures per size for reuse.
 - `export_engine()`: the export's device is HighPerformance (`new_headless_for_export`; the UI and the offline
   engine ask `display_power_preference`: a discrete card that alone drives the monitors, else

@@ -585,3 +585,17 @@ Why: an older build would drop the link on its next save and leave the halves un
 - **WHEN** a project with Video 1 linked to Audio 1 is written and read, exported to `.otio` and imported; the same project without the link is written; a file naming a video track as a sound track is read
 - **THEN** the first reads back equal at format 6, the exchange file carries `sound` at v17 and imports equal; the second keeps format 1 and its text; the third is refused with the track's address
 - **TEST** t3233 (`src/libs/kt-model/tests/sim_pairs.rs`), t3234 (`src/libs/kt-otio/tests/convert.rs`)
+
+### Requirement: A running title is written by content
+A title's source, format, start and frame rate SHALL be written only when they differ from the typed
+text's defaults, so a project without a running title is written byte for byte as before; a project with
+one SHALL be format 7, which an older build refuses by its version instead of showing and saving the typed
+text. The source SHALL travel through the `gen:` path as well.
+Why: an older build reads the title without the new fields and would save it without them (the rule of
+marker-notes and track-device-sound: the version by content).
+
+#### Scenario: Written by content
+- **WHEN** a countdown title round-trips through its gen path and serde; a typed title is serialized; a project holds a typed title, then a countdown title
+- **THEN** both round trips return the same title; the typed title writes no new field; the project is format 1, then format 7
+- **PATH** save a project with a typed title → the file is as before; switch it to Countdown and save → the file says format 7
+- **TEST** t3704 (`src/libs/kt-model/tests/text_source.rs`)

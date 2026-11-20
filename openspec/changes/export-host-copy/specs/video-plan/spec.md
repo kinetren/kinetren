@@ -10,4 +10,4 @@ costs nothing"); it read back RGBA and converted it by swscale per moment.
 #### Scenario: A segment is written from planes
 - **WHEN** the prerender writes three moments to a segment through the test codec
 - **THEN** the writer receives planes of the encoder's layout, no processor conversion runs, each moment reads back within the codec's tolerance, and the keys are those of before
-- **TEST** t3317 (`src/libs/kt-engine/src/render_cache.rs`)
+- **TEST** t3317 (`src/libs/kt-engine/tests/render_cache.rs`)

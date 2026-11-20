@@ -222,6 +222,32 @@ def _poll(seconds=0.02):
     time.sleep(seconds)
 
 
+# THE TEST'S GUARD (test-stability, t1671): `kt_time::test_deadline()` is ten minutes against a
+# hang, no claim about speed. A wait for something that MUST happen (the program's window, a frame,
+# a command of the stand) waits up to it while the program lives; a clock limit of its own is a
+# claim about the machine's load (found-defects 822: "the kt-app window did not appear" at a load
+# average of 28, green alone on the second try).
+TEST_DEADLINE = 600.0
+
+
+def the_window(proc=None, what="the program's window"):
+    """THE PROGRAM'S X WINDOW, waited for (found-defects 822). `ui-probe.window()` answers at once
+    and exits when no window is found: under load the window is not mapped yet, or the walk met a
+    window that closed under it (a splash, a menu), and the scenario died on its first gesture.
+    This asks again until the window is there, up to the test's guard, failing at once if the
+    program itself ended. The ONE door to the window: every caller goes through it."""
+    deadline = time.time() + TEST_DEADLINE
+    while True:
+        try:
+            return probe.window()
+        except SystemExit:
+            if proc is not None and proc.poll() is not None:
+                raise Failure(f"{what}: the program ended (code {proc.returncode})")
+            if time.time() >= deadline:
+                raise Failure(f"{what} did not appear within the test's guard ({TEST_DEADLINE:.0f} s)")
+            _poll(0.1)
+
+
 # THE PROGRAM'S FRAME TIME, as the last wait observed it. A frame of the software render takes
 # about QUIET_FRAME on a free machine; under load it stretches, and everything measured in
 # seconds on a free machine has to stretch with it.
@@ -423,7 +449,7 @@ class Live:
         want = json.load(open(os.path.join(BENCH, "window.json")))
         now = geometry()
         if any(abs(now[k] - want[k]) > 4 for k in ("x", "y", "w", "h")):
-            win = probe.window()
+            win = the_window(what="the stand's window")
             win.configure(x=want["x"], y=want["y"], width=want["w"], height=want["h"])
             probe.d.sync()
             self._raised = False
@@ -492,7 +518,7 @@ class Live:
         fixed 30 s under the full live run, drawing all the while, and three scenarios went red
         on a program that was alive and working. A stand that draws is waited for up to the ten
         minutes of a test's guard."""
-        give_up = time.time() + 600.0
+        give_up = time.time() + TEST_DEADLINE
         frame, still_since = -1, time.time()
         while time.time() < give_up:
             try:
@@ -568,7 +594,7 @@ class Live:
             )
         return False
 
-    def _wait_window(self, timeout=180.0):
+    def _wait_window(self, timeout=TEST_DEADLINE):
         """Wait for the window and the DRAWN frames.
 
         Before R.68 “frame drawn” was checked by a screenshot: xwd plus
@@ -739,7 +765,7 @@ class Live:
     def resize(self, w, h):
         """Change the size of the program window (R.66): the form contract is checked
         in a LOW window — where the content outgrows the screen."""
-        win = probe.window()
+        win = the_window(self.proc if self.own else None)
         win.configure(width=int(w), height=int(h))
         probe.d.sync()
         self._raised = False
@@ -1082,7 +1108,7 @@ class Live:
         this Space/Ctrl+S goes nowhere (the mouse works without focus)."""
         from Xlib import X
 
-        w = probe.window()
+        w = the_window(self.proc if self.own else None)
         try:
             w.set_input_focus(X.RevertToParent, X.CurrentTime)
             w.configure(stack_mode=X.Above)
@@ -1912,7 +1938,7 @@ def pattern_media(out_dir, name, seconds, fps=30, size="640x360"):
 
 def geometry():
     """Bounds of the kt-app window in screen coordinates."""
-    x, y, w, h = probe.origin(probe.window())
+    x, y, w, h = probe.origin(the_window(_CURRENT[0].proc if _CURRENT[0] and _CURRENT[0].own else None))
     return {"x": x, "y": y, "w": w, "h": h}
 
 
