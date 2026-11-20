@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: []
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-MED-002 — Proxies — editing on light copies, rendering from originals
@@ -125,6 +125,17 @@ The difference "proxy versus optimised media" in Resolve is explained on the BMD
 What could NOT be found: a live quote about a proxy that fell out of sync with the original in duration or timecode ("proxies out of sync"). I searched `creativecow.net`, `community.adobe.com` and through search queries like "proxy different duration / out of sync / timecode mismatch" — the results go either to reddit (unavailable from this environment) or to video tutorials, from which there is nothing to quote. The requirement of matching frame rate is confirmed by the primary source (Larry Jordan); the duration mismatch itself is so far only documented.
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+- The preview presents on the device and keeps composites in memory and on disk (render-cache-disk,
+  `src/libs/kt-engine/src/render_cache.rs`): its durable key notes a file leaf by path, size and mtime, so
+  a proxy must be noted as the opened file or a restart replays proxy frames as the original's.
+- `MuxConfig.fps` is still an integer (`src/libs/kt-ffmpeg/src/lib.rs`) while `Probe.fps` is rational —
+  the drift above still stands.
+- The owner took this as candidate ★18 (2026-11-01); the design is the OpenSpec change `proxies`
+  (all-intra MKV with the original's timestamps and copied audio, the original's natives reported).
+- CAPABILITY: openspec/specs/media-index/
 
 ### What already exists
 
