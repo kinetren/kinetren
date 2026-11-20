@@ -96,8 +96,8 @@ kinetren-cache/
   export. It also runs once after a project opens. It takes `lock` per folder.
 - **Under Q2 a** it trims across folders: least recently used folder first, the open project's folder
   last. Under Q2 b it trims each folder alone.
-- **Within a folder** the tenants go in this order: `render/`, `history/`, `mix/`, then `reels/`, then
-  `media/`. Inside a tenant the least recently used entry goes first, by `usage.tsv`, never by the file
+- **Within a folder** the tenants go in this order: `history/`, `mix/`, `render/`, then `reels/`, then
+  `media/` (the composites outlive the history under them: `durable-history-and-mix` D2). Inside a tenant the least recently used entry goes first, by `usage.tsv`, never by the file
   system's access time (often off).
 - The prerender's own rule stays: it never evicts what this process used.
 - `KT_RENDER_CACHE_MB` keeps working as a cap on `render/` for tests and the live check.

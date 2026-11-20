@@ -37,15 +37,22 @@ The trace gains a `Restart` summary over the first minute after a project opens:
 again (bursts the mix store would have held had it been kept: approximated by bursts whose scene equals a
 scene the PREVIOUS run's trace wrote as kept — the trace carries the kept scenes' count, not the bytes).
 `kt-cli trace summary` prints "after the start: N history positions walked (M ms of device), K covered
-audio bursts rendered again". Owner Q1 decides from his trace whether stages 2–3 follow.
+audio bursts rendered again". The owner chose to build all stages now (Q1 b, kkt-26.11.20), so the line is
+telemetry, not a gate: it shows what the tiers saved on his next restart.
 
-## D2. One blob store, three tenants
+## D2. Two tenants of the project's cache folder
 
-`render_cache::DiskStore` splits into a generic `BlobStore` (folder rules, cap, LRU, the "used in this
-process" mark, manifests) and its users: the composites (as today, segments by the hardware codec), stream
-entries (one file per entry or packed per stage, D3) and mix runs (D5). One cap for all three (the
-owner's disk is short), the composites first in value: eviction takes stream entries and mix runs before
-composites of the same age. `KT_RENDER_CACHE=off` turns all off.
+The owner moved every cache of a project into a folder beside it (kkt-26.11.20 line 19, change
+`project-cache-folder`). The two tiers are its tenants `history/<build>/<device>/` and `mix/<build>/`, beside
+the prerender's `render/`. They share its rules:
+- the entry header and the atomic write (`project-cache-folder` D1);
+- other builds' (and devices') folders removed at open;
+- the limit pass at rest, which takes the prerender, history and mix before the media index, least
+  recently used first, never what this process used.
+
+`render_cache::DiskStore`'s folder rules become the cache folder's, and the three stores are its users.
+Stream entries are one file per stage run (D3); mix runs are one file per run (D5).
+`KT_RENDER_CACHE=off` turns all three off.
 
 ## D3. The stream memo's backing store
 
@@ -53,7 +60,9 @@ composites of the same age. `KT_RENDER_CACHE=off` turns all off.
   EntryCodec>` with `version() -> u32`, `encode(&dyn Any) -> Option<Vec<u8>>` (exact bytes of the entry;
   `None` — this entry type is not stored) and `decode(&[u8]) -> Option<Arc<dyn Any + Send + Sync>>`. A kernel
   without one is never stored (today's behaviour). Datamosh encodes `Planes` (its picture planes and the
-  clean encoder's reconstruction) as raw planes or LZ4 per Q2.
+  clean encoder's reconstruction) as the exact raw planes; the HOST compresses every stored entry with LZ4
+  (the owner's Q2 b; D9), so the kernel stays one exact encoding and any later kernel's entries are
+  compressed alike.
 - **The durable salt of a stage**: `xxh3` of the program build salt (with the FFmpeg version), the kernel id
   and its codec version, and the identities of every file the stage reads (render-cache-disk's
   `Leaves` "every file for a stream stage", path + size + mtime ns). Disk key = `mix(entry key, salt)`. The
@@ -123,12 +132,44 @@ burst shown bright is handed out with no decode and no effect run once loaded.
 | Pass-time measurements, compiled run shapes | yes (pass-time disk cache) / per process | unchanged |
 | Loudness/sync analysis | yes (sidecar) | unchanged |
 
-## D8. Stages
+## D8. Stages (all now, the owner's Q1 b)
 
-1. D1: the restart line in the trace. t3336, t3337.
-2. D2 + D3: the blob store, the entry codec, Datamosh's codec, the memo's backing, writes at rest. t3338–t3345.
+1. D1: the restart line and the compression ratio in the trace. t3336, t3337.
+2. D2 + D3: the tenants in the cache folder, the entry codec, Datamosh's codec, LZ4 in the host, the
+   memo's backing, writes at rest. t3338–t3345.
 3. D5 + D6: the mix runs, the handoff, the bars. t3346–t3352.
 Spare: t3353–t3355.
+
+## D9. Why the history is stored without loss, and why LZ4 (the owner's question)
+
+The owner asked: "почему история datamosh без сжатия если сам по себе datamosh это и есть сжатие?"
+
+- **What a checkpoint holds.** Datamosh runs a real encoder and decoder (`fx-video-codec` `walk.rs`). Two
+  pictures make the walk's state at a frame:
+  - the decoder's reference picture: the last frame it painted, onto which the next frame's motion
+    vectors and residual are applied;
+  - the clean encoder's reconstruction: what the encoder believes the decoder holds.
+
+  These are decoded pictures (`Planes`: Y, Cb, Cr), the codec's MEMORY, not its compressed output.
+- **Why not store the compressed packets.** They are small, but a P-frame packet says only "take blocks
+  of the previous picture, move them, add this correction". Datamosh removes the keyframes, so the
+  picture at frame k exists only by applying all k packets from the event's start. Replaying the packets
+  IS the walk. A checkpoint exists to start the walk from frame k in one step, so it has to be the picture
+  itself.
+- **Why it must be exact.** Every later frame of the event is painted on the checkpoint. A lossy form
+  (JPEG, or the hardware H.264 the preview's prerender uses) changes some values. The motion then carries
+  that change into every later frame, the event after a restart differs from an uninterrupted play, and
+  the export differs from the preview. Invariant 11 promises the same bytes with and without a cache. So
+  the store may only shrink the bytes reversibly.
+- **Why LZ4.** It is lossless and unpacks at several GB/s on one core: a 1080p checkpoint (two pictures,
+  ~6 MB) comes back in a few milliseconds, far below the walk of even a few frames. Its ratio on camera
+  pictures is modest, about 1.3–2×; the flat and smeared areas a mosh makes compress better.
+- **Rejected:**
+  - a stronger compressor (zstd at high levels) unpacks several times slower, for maybe 30 % more;
+  - raw (the former recommendation) holds fewer checkpoints in the same limit.
+- **The ratio is measured:** each write records its raw and stored bytes; `trace cache` prints the
+  tenant's ratio. If the owner's projects show LZ4 below 1.2×, the trace says so, and a later change can
+  weigh zstd's fast levels.
 
 ## Risks
 
