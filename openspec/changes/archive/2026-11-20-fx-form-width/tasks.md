@@ -14,7 +14,7 @@
 ## 2. The guard
 
 - [x] 2.1 the three-width guard over every kind and registry window, `FORM_EXEMPT` with reasons; red on the old code first; t3593, t3594
-- [ ] 2.2 the live scenario `form_width` written with its scenario (screenshots at three widths), t3592
+- [x] 2.2 the live scenario `form_width` written with its scenario (screenshots at three widths), t3592
 
 ## 3. Close
 
