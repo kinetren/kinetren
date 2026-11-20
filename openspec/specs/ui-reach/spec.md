@@ -1617,7 +1617,7 @@ Why: `v26.10` line 12 (G1): "Не вижу смысла делать выпад�
 - **WHEN** an event butted to the next is right-clicked and "Transition with next" pressed
 - **THEN** the menu lists no kinds; a dissolve joins them as one history step; its window is open
 - **PATH** right click on the event → "Transition with next" → the dissolve, its window with the Kind field open
-- **TEST** t3127 (`src/apps/kt-app/src/layout_tests.rs`), t1089 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/lessons.py`
+- **TEST** t3127 (`src/apps/kt-app/src/layout_tests.rs`), t1089 (`src/apps/kt-app/src/reach_tests.rs`), live scenarios `src/scripts/live/trans_next.py` and `src/scripts/live/lessons.py`
 
 #### Scenario: A sound event's gallery is the sound kinds
 - **WHEN** a generator is created from the audio track's menu and its Kind field opened
