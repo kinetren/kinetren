@@ -1,0 +1,37 @@
+Answers of the owner, 2026-11-20, to the orchestrator's questions Q1–Q54 (docs/owner-checks.md), asked in chat
+after stage 22 (release kt26.11.20-ea0aff6f). Each line: the question number, the option he chose, his own words verbatim.
+
+1. Q1 generator from Edit/bin: "Один пункт, по дорожке (Recommended)"
+2. Q2 render menu item: "«Рендер…» (Recommended)"
+3. Q50 export colour standard: "709 от HD, 601 ниже (Recommended)"
+4. Q52 preset change: "я думаю если это пресет конкретного эффекта - то заменяется.
+5. если это прессет цепочки - то можно просто к существующей цепочке на графе соединить ту что с пресета или мышкой быстро выделить и удалить лишнее или соединить"
+6. Q3 graph v2 order: "Сначала картинка (Recommended)"
+7. Q4 graph v2 outside inputs: "Не в v2 (Recommended)"
+8. Q5 Slowed/Datamosh/pitch in a branch: "Разрешить в ветке"
+9. Q51 Datamosh frame between two devices: "Сделать сейчас"
+10. Q6/Q7 scopes: "Окно, кадр превью (Recommended)"
+11. Q8 ripple across the edit point: "п.1. но я не очень понимаю о чем речь вообще - запиши на будущее чтобы я проверил"
+12. Q11–Q13 proxies: "адаптивный? как играем в превью так и храним? и если выбрали лучшее качество то рендерим лучшее чем есть.
+13. ну и не мешает сделать рядом переключатель где будет "как в превью" или чет такое
+14. не называй это прокси никогда. неудачное название. пусть будет постоянный кэш или что-то такое более компактное.
+15. просто кэш тоже нельзя - не понятно что он не в озу."
+16. Q14–Q16 subtitles: "п.1. и на будущее - все что у нас качается - надо переносить и делать архитектурно в виде некоторой библиотеки, типо как плагины чтоли их же тоже можно будет качать. вот и сделат библиотеку плагинов."
+17. Q17/Q18 card decoding: "Вкл. + галочка"
+18. Q19 export through dma-buf: "Сделать сейчас"
+19. Q23/Q24 Datamosh history and the heard mix across a restart: "я не очень понимаю почему история datamosh без сжатия если сам по себе datamosh это и есть сжатие? нет? ну если нет давай хотя бы LZ4. и давай сделаем следующее - у нас не будет все в одной базе sqlite хранится а будет подпапка в папке проекта с разными кешами, вот с тем же превью кэшем"
+20. Q25 reverb tail after a seek: "Всегда полный хвост (Recommended)"
+21. Q20 export from the preview prerender: "Опция «черновой рендер»"
+22. Q21/Q22 cached render: "Да; индекс в видео (SEI)"
+23. Q26 9:16: "Каждое по своей геометрии (Recommended)"
+24. Q27 safe areas: "Пресеты платформ (Recommended)"
+25. Q28 multicam: "Композиция ракурсов (Recommended)"
+26. Q29/Q30 multicam sound and grid: "п.1 и сделай опцию звук за ракурсом"
+27. Q31 shared events: "Строить сейчас"
+28. Q32–Q35 tracker and wand: "первые два, по умолчанию - самые удобные и точные. позже сеть - нейросеть"
+29. Q36/Q37 3DNR: "64 кадра + rolling shutter и мерцание (Recommended)"
+30. Q38/Q39/Q46/Q47 keyer: "Все ключи на новую модель"
+31. Q40–Q42 Datamosh on a track: "Разрез на входящем, пауза рвёт (Recommended)"
+32. Q44/Q45 Mirror: "Старые отражают как раньше, остальное потом (Recommended)"
+33. Q48/Q49 HDR: "нужно от настроек проекта-композиции определять, если включено то тракт f16 чтобы было нормально, если нет - то быстрый i8"
+34. Q53/Q54 preview zoom: "Контуры; не запоминать (Recommended)"
