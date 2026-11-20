@@ -1,10 +1,10 @@
 ---
 id: F-MED-002
-title: Proxies — editing on light copies, rendering from originals
+title: Disk copies of media — editing on light copies kept on disk, rendering from originals
 status: candidate
 priority: B
 cost: L
-category: media/proxies
+category: media/disk-copies
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
 we_have: no
 crates: [kt-model, kt-media, kt-ffmpeg, kt-cache, kt-engine, kt-otio, kt-app]
@@ -17,7 +17,12 @@ depends_on: []
 checked: 2026-11-20
 ---
 
-# F-MED-002 — Proxies — editing on light copies, rendering from originals
+# F-MED-002 — Disk copies of media — editing on light copies kept on disk, rendering from originals
+
+> The industry calls these copies "proxies" (the word is kept below only where another editor uses it).
+> The owner, 2026-11-20 (`docs/ktprompts/kkt-26.11.20.txt` lines 15–18): "не называй это прокси никогда", nor a
+> bare "cache" — the name must say the copies are on disk, not in memory. Our name is chosen by his answer
+> (change `disk-copies`, Q1).
 
 ## Essence
 
@@ -133,8 +138,11 @@ What could NOT be found: a live quote about a proxy that fell out of sync with t
   a proxy must be noted as the opened file or a restart replays proxy frames as the original's.
 - `MuxConfig.fps` is still an integer (`src/libs/kt-ffmpeg/src/lib.rs`) while `Probe.fps` is rational —
   the drift above still stands.
-- The owner took this as candidate ★18 (2026-11-01); the design is the OpenSpec change `proxies`
+- The owner took this as candidate ★18 (2026-11-01); the design is the OpenSpec change `disk-copies`
   (all-intra MKV with the original's timestamps and copied audio, the original's natives reported).
+- The owner, 2026-11-20 (A10): adaptive — the copies are kept at the size the preview plays, a better copy is
+  made when a higher quality is chosen, a switch beside the quality offers "as in the preview"; the copies live
+  in the project's cache folder (A14, change `project-cache-folder`), never named "proxy".
 - CAPABILITY: openspec/specs/media-index/
 
 ### What already exists
