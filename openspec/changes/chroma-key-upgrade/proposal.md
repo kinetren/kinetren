@@ -23,9 +23,10 @@ return the luminance.
 
 - **A colour-difference model** (`model = difference`): the matte is the pixel's key-channel excess over the
   balance-weighted mix of the other two, relative to the screen's own excess (Keylight's Screen Balance;
-  green ≈ 0.5, blue ≈ 0.95), with clip black and clip white. The old distance model stays for existing
-  projects byte for byte (`model = distance`, the absent row's meaning); a key added from now on is created
-  with `difference`.
+  green ≈ 0.5, blue ≈ 0.95), with clip black and clip white. **Every greenscreen uses it** (the owner, A22:
+  "Все ключи на новую модель"): the distance model is removed; an existing slot's rows (key colour, tolerance,
+  softness, spill) are read by the new model through a fixed mapping, so old projects open and key better, and
+  look different from before.
 - **Matte operations**: clip black / clip white, shrink/grow (choke, px), edge softness (alpha blur, px).
 - **Despill with luminance restore**: the excess is removed, then the pixel's luma is restored to the
   original's (Keylight's Soft Colour) or to a chosen replacement colour's; a despill bias picks how strong.
@@ -62,6 +63,10 @@ return the luminance.
 - Feature note: F-MSK-004 refreshed.
 
 ## Questions to the owner
+
+Decided (2026-11-20, `kkt-26.11.20` A22, his Q38–Q39): "Все ключи на новую модель" — Q1 (b), every greenscreen
+switches to the difference model and old projects look different after opening; Q2 (a), Analyze looks at five
+frames spread over the event. The questions as asked:
 
 **Q1. New keys use the new model; old projects keep the old?** Your words: "откровенно плохого качества -
 его надо доработать". The rule of effects (kt-fx): the default of a new parameter equals the previous

@@ -2,8 +2,7 @@
 
 ### Requirement: The key is analyzed and inspected where it is edited
 The greenscreen's head in the effects window SHALL offer "Analyze"; the node editor's Viewer on a key node
-SHALL offer the views Composite, Matte, Status and Screen, shown by the preview only and never rendered; a
-legacy-model slot's form SHALL offer "Use the new key", which switches the model in one undo step.
+SHALL offer the views Composite, Matte, Status and Screen, shown by the preview only and never rendered.
 Why: F-MSK-004 trick 1 — a key cannot be tuned without seeing its matte; UI rules 13, 17.
 
 #### Scenario: Key a shot by mouse

@@ -80,6 +80,12 @@ effects. An event-level mosh imitates this through "the event before". A track-l
 
 ## Questions for the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A23, his Q40–Q42): "Разрез на входящем, пауза рвёт" — Q1 (a), the mosh cut falls
+on the first frame of the incoming event; Q2 (a), a gap ends the stream; Q3 (a) as recommended (an event's own
+Datamosh allowed on a track with one).
+
+The questions as asked:
+
 **Q1. Where does a mosh "cut" fall under a transition?**
 
 The classic mosh breaks at the cut, where the new shot's keyframe would be. A dissolve has no single

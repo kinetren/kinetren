@@ -64,6 +64,11 @@ flicker) were moved here. The owner chose the real recursive filter and asked fo
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A21, his Q36–Q37): Q1 (a), the trail capped at 64 frames; Q2 (a), rolling
+shutter and flicker in the same change.
+
+The questions as asked:
+
 **Q1. How long may a trail be?** The recursion's memory decays as α^k; the warm-up `W` is the frames after
 which a frame's influence is under half a code value, and a seek walks up to `W + G` frames before the
 picture appears. With strength α = 0.9, W ≈ 60; with α = 0.97, W ≈ 205.
