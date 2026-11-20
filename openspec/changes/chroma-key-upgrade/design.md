@@ -1,7 +1,7 @@
 # Design: chroma-key-upgrade
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `069046f5`. Q1–Q2 in `proposal.md`; the defaults follow the
-> recommended options.
+> DESIGN ONLY, revision 2 (2026-11-20), base `e56a543c`: the owner's A22 — every key moves to the new model (D8).
+> Revision 1 (base `069046f5`) kept old slots on the distance model.
 
 ## Context
 
@@ -55,7 +55,7 @@ integer passes).
   equally to all channels (clamped) — light hair stays light;
 - `replace`: the removed amount is replaced by `bias × replacement colour` (a warm grey by default);
 - `none`: subtraction only (today's behaviour on the difference model).
-The distance model keeps today's despill byte for byte.
+There is no distance model after this change (D8).
 
 ## D4. Views (preview only)
 
@@ -83,9 +83,9 @@ No screen found → an error naming why ("no saturated green or blue area").
 
 ## D6. Format, OTIO, idle
 
-New rows omitted at defaults (`model` absent = `distance`, the old meaning); a key created from the picker
-from now on writes `model: difference` (the picker's variant sets it). A file with any new row: the next
-free version by content. OTIO: rows in metadata. Idle: the analysis is a click; views compose once per change.
+New rows (balance, clip black/white, choke, soften, despill mode, bias) are omitted at their defaults; there is no
+`model` row. A file with any new row at a non-default value: the next free version by content. A file written
+before this change reads as it is: its rows are mapped by D8 at evaluation, the text is unchanged on write-back. OTIO: rows in metadata. Idle: the analysis is a click; views compose once per change.
 
 ## D7. Class walk — "a key's quality from a formula that ignores the screen"
 
@@ -97,7 +97,26 @@ free version by content. OTIO: rows in metadata. Idle: the analysis is a click; 
 | magic-wand mask (change) | colour distance per seed | its own space choice (RGB/luma/chroma) |
 | pro keyer (change) | clean plate, linear | builds on D1 in linear light |
 
+## D8. Every key on the new model (the owner's A22)
+
+The distance kernel (`greenscreen.wgsl`'s distance branch, the tap form's) is deleted. An existing slot's rows
+are read by the difference model:
+- key colour → the screen colour S (as before);
+- `tolerance` (1..200, an RGB distance) → `clip_black = clamp(tolerance / 441, 0.02, 0.6)` (441 = the RGB cube's
+  diagonal): a larger tolerance took more of the screen's neighbourhood, a higher clip black does the same;
+- `softness` → `clip_white = min(1, clip_black + max(softness / 441, 0.05))`;
+- `spill` → `bias`, despill mode `restore`;
+- balance from S's dominant channel (green 0.5, blue 0.95); choke and soften 0.
+A slot whose new rows are set reads them instead. The mapping lives in one function of the plugin
+(`legacy_rows_to_difference`) and is covered by a test on the golden projects.
+
+The stored reference frames with a greenscreen slot change: they are re-stored in the same commit that deletes the
+distance kernel, the commit naming the owner's decision (A22). This is the owner's explicit decision about a
+regression test's references, not a weakening: the scenario that held "old keys keep their bytes" becomes "old
+keys open with the new model".
+
 ## Rejected
 
-- **Changing old slots' look** (Q1 b) — rule 20; the kt-fx default rule.
+- **Keeping old slots on the distance model** (revision 1, Q1 a) — the owner chose every key on the new model;
+  two models would keep the poor one alive in old projects.
 - **A neural matte** — the owner's base for keys is an algorithm (2026-11-01).

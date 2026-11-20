@@ -5,9 +5,10 @@ The greenscreen SHALL offer a colour-difference model: the screen-ness of a pixe
 over the balance-weighted mix of the other two channels relative to the screen colour's own excess, remapped
 by clip black and clip white into the alpha; then the alpha SHALL be choked and softened by the given pixels,
 and the despill SHALL remove the excess by its bias and restore the pixel's luma (or replace it with a chosen
-colour, or neither). A slot without the model row SHALL keep the distance model and today's bytes; a key
-added from the picker SHALL start with the difference model.
-Why: F-MSK-004 — a distance means different things on green and blue; subtraction greys light hair.
+colour, or neither). Every greenscreen SHALL use this model: a slot written before it SHALL be read through a
+fixed mapping of its key colour, tolerance, softness and spill, and the distance model SHALL NOT exist.
+Why: F-MSK-004 — a distance means different things on green and blue; subtraction greys light hair; the owner,
+2026-11-20 (A22) — "Все ключи на новую модель".
 
 #### Scenario: Green and blue screens key equally
 - **WHEN** a synthetic subject (skin, white shirt, light hair strands) over a green and over a blue screen with noise is keyed with balance 0.5 and 0.95
@@ -19,9 +20,9 @@ Why: F-MSK-004 — a distance means different things on green and blue; subtract
 - **THEN** with restore their luma equals the original's within one code value and the green excess is gone; with subtraction they are darker by the removed green
 - **TEST** t3559 (`src/libs/kt-gpu/tests/parity.rs`)
 
-#### Scenario: Old keys keep their bytes
-- **WHEN** the golden projects with greenscreen slots written before this change are composed
-- **THEN** the frames equal the stored references; the files are written back with the same text
+#### Scenario: Old keys open with the new model
+- **WHEN** the golden projects with greenscreen slots written before this change are opened, composed and saved
+- **THEN** every slot keys with the difference model through the mapping (its matte over the fixture's known alpha is no worse than the distance model's was); the files are written back with the same text; the re-stored reference frames match
 - **TEST** t3560 (`src/libs/kt-gpu/tests/gpu_render.rs`), t3561 (`src/libs/kt-model/tests/plugin_format.rs`)
 
 ### Requirement: Analyze sets the key from the picture in one step

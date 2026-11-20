@@ -1,7 +1,8 @@
 # Proposal: point-tracker
 
-> DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3520–t3534.
+> DESIGN ONLY (spec session, 2026-11-20), revision 2 after the owner's answer (`kkt-26.11.20` A20): the planar
+> tracker joins now; the defaults are the most convenient and exact. The change keeps its name. Tests reserved:
+> t3520–t3534.
 
 ## Why
 
@@ -19,7 +20,17 @@ exports"); and a broken track is the normal case, so tracking is a session with 
 
 ## What Changes
 
-- **A tracker belongs to an event** and holds 1–4 track points. Each point has a feature box and a search
+- **Two tracker kinds behind one address** (the owner, 2026-11-20: "первые два"): a POINT tracker (AE's, below)
+  and a PLANAR tracker (Mocha's): the person outlines a flat surface with four corners, and per material frame the
+  tracker stores the plane's homography with a confidence, refined over the whole region, not from a few points;
+  a mask of the event may be named as the area to ignore (a hand passing over a sign). Its channels are the four
+  corners, the centre, angle, scale and the homography; Corner pin and "Attach event…" with full perspective are
+  its natural gestures.
+- **The defaults are the most convenient and exact** (the owner): one click places a point with boxes sized to the
+  picture (feature 1/24 of the shorter side, 24–96 px; search 3× with motion prediction); one "Track" runs both
+  directions from the frame under the playhead; matching always on the native-size frame, sub-pixel; the planar
+  kind refines on the full region every frame; the threshold 60 % (point) and 70 % (plane).
+- **A point tracker belongs to an event** and holds 1–4 track points. Each point has a feature box and a search
   box (AE's two rectangles), and per MATERIAL frame a sample (x, y, confidence). Samples are tied to the
   material, so trims, moves and splits never shift them (the keys' rule, R.33).
 - **Tracking is a session**: from the frame under the playhead, forward or backward, one frame or
@@ -53,26 +64,19 @@ exports"); and a broken track is the normal case, so tracking is a session with 
 
 ## Impact
 
-- kt-model: `ClipEvent.trackers: Vec<Tracker>`, `ParamOwner::Tracker { id }`, link resolution reads
+- kt-model: `ClipEvent.trackers: Vec<Tracker>` (`TrackerKind::Points | Plane`); a mask's transform gains a
+  perspective form (a homography link) for "Mask follows" a plane; `ParamOwner::Tracker { id }`, link resolution reads
   samples (linear between material frames), validation, `SetTrackers`.
-- kt-media / kt-engine: the tracking job (offline source, luma pyramid, ZNCC), progress, stop rules.
+- kt-media / kt-engine: the tracking job (offline source, luma pyramid, ZNCC; for the plane, feature matches, a
+  robust homography and a region refinement), progress, stop rules.
 - kt-app: the tracker mode on the preview, head controls, the apply menu, i18n ×5.
 - Format: the next free `.kt` version by content; samples one line per second of material.
 - OTIO: a row in "What OTIO export loses".
 - Idle: nothing runs until a run is asked; drawing points is a cached mesh.
-- Feature note: F-MSK-005 refreshed (point first, planar later).
+- Feature note: F-MSK-005 refreshed (point and planar now).
 
 ## Questions to the owner
 
-**Q1. Point tracker first, planar later?** Your words: "Крутой pointracker, или как это называется в
-AE". Note F-MSK-005 preferred a planar tracker (Mocha) as the general case.
-- (a) **AE's point tracker now (1–4 points: position, rotation/scale, corner pin), planar later as another
-  tracker kind behind the same address** (*recommended*: what you asked for; corner pin from four points
-  covers screens and signs).
-- (b) Planar first.
-
-**Q2. Where are the tracker's controls?** UI rule 22; masks are edited on the preview (shape-masks).
-- (a) **On the preview, as the masks are: right click → "Track point"; while a tracker is selected the
-  preview head shows track backward/forward (continuous and one frame), the threshold and Apply; the
-  event's effects window lists its trackers in a section** (*recommended*).
-- (b) A Tracker window like AE's panel.
+Decided (2026-11-20, A20, his Q32–Q33): the point AND the planar tracker now, the defaults the most convenient and
+exact ("первые два, по умолчанию - самые удобные и точные"); the controls on the preview as the masks are, the
+effects window lists the trackers (Q2 a). No open question.

@@ -67,6 +67,12 @@ the cache and the interface, not invariant 5.
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A18, his Q28–Q30): Q1 (a), a composition of angles; Q2 (a) "п.1 и сделай опцию
+звук за ракурсом" — one chosen sound by default, and an "Audio follows the angle" option on the instance (D2's
+`AudioSel` follow form); Q3 (a), the grid in the preview area.
+
+The questions as asked:
+
 **Q1. What is a multicam structurally?** Your words: "тот же морфер - спокойно меняет сурсы туда-сюда.
 Но это не значит что … через ui морфера "в тупую"". Today a morpher layer swaps a source over a TIME
 WINDOW for the events under it, cutting them at its edges.
