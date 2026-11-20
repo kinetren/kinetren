@@ -852,6 +852,9 @@ pub struct RenderCache {
     /// The prerender is working on a moment now (tests).
     pub(crate) busy: AtomicBool,
     /// A test's threshold of "heavy" in ns over the rule's half period (0 — the rule).
+    /// The quiet a test sets (ns, 0 — `QUIET`): a stimulus of input a test thread paces with its own
+    /// sleeps, which a loaded machine stretches past 1.5 s (found-defects 828).
+    quiet_for_tests: AtomicU64,
     heavy_for_tests: AtomicU64,
     /// The prerender parked with nothing left to do (or the cap full) since it last looked.
     settled: AtomicBool,
@@ -925,7 +928,10 @@ impl RenderCache {
             return None;
         }
         let since = trace::now_ns().saturating_sub(last);
-        let q = QUIET.as_nanos() as u64;
+        let q = match self.quiet_for_tests.load(Ordering::Acquire) {
+            0 => QUIET.as_nanos() as u64,
+            ns => ns,
+        };
         (since < q).then(|| Duration::from_nanos(q - since))
     }
 
@@ -988,6 +994,11 @@ impl RenderCache {
 
     /// Tests: "heavy" is `ns` and more instead of half a frame period (`None` — the rule). A software
     /// rasterizer composes a test's small picture far under any period.
+    /// Set the quiet (`None` — `QUIET`), for tests.
+    pub fn set_quiet_for_tests(&self, quiet: Option<Duration>) {
+        self.quiet_for_tests.store(quiet.map_or(0, |q| (q.as_nanos() as u64).max(1)), Ordering::Release);
+    }
+
     pub fn set_heavy_for_tests(&self, ns: Option<u64>) {
         self.heavy_for_tests.store(ns.unwrap_or(0), Ordering::Release);
     }

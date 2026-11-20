@@ -394,15 +394,21 @@ fn t2337_side_work_holds_the_slow_route_for_one_piece() {
 
     // heavy side frames run; the route's frames wait one piece, not a heavy frame. `on`: the
     // engine the heavy frames compose on (the former arrangement: the route's own)
+    // returns the route's waits and the heavy frames' own walls IN THE SAME WINDOW (found-defects 825):
+    // a wall measured solo earlier and compared with waits measured now judged two different loads —
+    // under a full parallel run the route's frames waited longer than the solo heavy frame had taken
     let route_waits = |on: &Arc<GpuFxEngine>| {
         let stop = AtomicBool::new(false);
         let mut waits = Vec::new();
+        let heavies = std::sync::Mutex::new(Vec::new());
         std::thread::scope(|s| {
             s.spawn(|| {
                 let _c = with_class(Class::Background);
                 let mut out = Vec::new();
                 while !stop.load(Ordering::Acquire) {
+                    let t = Instant::now();
                     on.execute_once(&heavy_p, &mut out).expect("heavy beside the route");
+                    heavies.lock().unwrap().push(t.elapsed());
                     assert!(out == heavy_solo, "a cut heavy frame changed its bytes");
                 }
             });
@@ -419,21 +425,29 @@ fn t2337_side_work_holds_the_slow_route_for_one_piece() {
             }
             stop.store(true, Ordering::Release);
         });
-        waits
+        let mut h = heavies.into_inner().unwrap();
+        h.sort();
+        (waits, h.get(h.len() / 2).copied().unwrap_or(heavy_time))
     };
     // before (row 290): cells, strips and posters on the route's own engine
-    let before = route_waits(&slow);
+    let (before, _) = route_waits(&slow);
     let cuts0 = arbiter::pieces_cut();
-    let waits = route_waits(&side);
+    let (waits, heavy_now) = route_waits(&side);
     let cuts = arbiter::pieces_cut() - cuts0;
     let worst = waits.iter().max().copied().unwrap_or_default();
     let round = |w: &[Duration]| w.iter().map(|d| ms(*d).round()).collect::<Vec<_>>();
     eprintln!(
-        "t2337: heavy frame {:.1} ms; route frames beside heavy work on its own engine {:?} ms, on the side engine {:?} ms, {cuts} cuts",
+        "t2337: heavy frame {:.1} ms solo, {:.1} ms (median) beside the route; route frames beside heavy work on its own engine {:?} ms, on the side engine {:?} ms, {cuts} cuts",
         ms(heavy_time),
+        ms(heavy_now),
         round(&before),
         round(&waits)
     );
     assert!(cuts > 0, "no heavy side frame was cut on the route's ring");
-    assert!(worst < heavy_time, "a route frame waited {:.1} ms, a whole heavy frame is {:.1} ms", ms(worst), ms(heavy_time));
+    assert!(
+        worst < heavy_now,
+        "a route frame waited {:.1} ms, a whole heavy frame beside it took {:.1} ms (median)",
+        ms(worst),
+        ms(heavy_now)
+    );
 }

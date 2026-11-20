@@ -241,15 +241,22 @@ fn t2984_the_prerender_yields_to_the_person() {
     for t in &moments {
         p.note_preview_cost(*t, 1_000_000_000, (160, 90));
     }
-    // input every 100 ms, twenty times (the stimulus, not a wait): nothing works, nothing is written
-    for _ in 0..20 {
+    // input every 100 ms, twenty times (the stimulus, not a wait): nothing works, nothing is written.
+    // The quiet is ten seconds while it comes (found-defects 828): this thread paces the stimulus with
+    // its own sleeps, and a loaded machine let one of them pass the 1.5-s quiet — the prerender then
+    // rightly worked "while input came"
+    rc.set_quiet_for_tests(Some(Duration::from_secs(10)));
+    for i in 0..20 {
         p.note_input();
         rc.kick();
         assert!(!rc.busy(), "the prerender worked while input came");
-        std::thread::sleep(Duration::from_millis(100));
+        // one sleep stretched past the real quiet, as a loaded machine stretched it
+        std::thread::sleep(Duration::from_millis(if i == 10 { 2_000 } else { 100 }));
     }
     assert_eq!(rc.counts().0, 0, "written while input came");
-    // the quiet: it writes
+    // the quiet: it writes (the real quiet again)
+    rc.set_quiet_for_tests(None);
+    rc.kick();
     let deadline = kt_time::test_deadline();
     while rc.counts().0 == 0 {
         assert!(Instant::now() < deadline, "nothing was written after the quiet");
@@ -270,13 +277,23 @@ fn t2984_the_prerender_yields_to_the_person() {
     // an export's vote: paused, nothing runs
     let vote = kt_time::sched::Vote::new(kt_time::sched::why::EXPORT);
     vote.set(true);
-    p.pause();
-    let n = rc.counts().0;
-    for _ in 0..20 {
-        assert!(!rc.busy(), "the prerender worked under an export");
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    assert_eq!(rc.counts().0, n, "written under an export");
+    let since = kt_time::trace::now_ns();
+    // the counter of moments written moves when a segment is COMMITTED, and the segment open when the
+    // vote came is committed a moment later (found-defects 828: 251 against 250 under load): what may
+    // not happen under the vote is a moment's work STARTING
+    let items = kt_time::trace::testing::capture(|| {
+        p.pause();
+        for _ in 0..20 {
+            assert!(!rc.busy(), "the prerender worked under an export");
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    });
+    let started: Vec<u64> = kt_time::trace::testing::recs(&items)
+        .iter()
+        .filter(|r| r.ev == kt_time::trace::Ev::Job as u16 && r.aux == kt_time::trace::job::PRERENDER && r.t > since)
+        .map(|r| r.a)
+        .collect();
+    assert!(started.is_empty(), "moments composed under an export: {started:?}");
     drop(vote);
     rc.kick();
     while !moments.iter().all(|t| p.disk_picture(*t).is_some()) {

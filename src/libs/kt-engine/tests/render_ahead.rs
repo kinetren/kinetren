@@ -243,7 +243,11 @@ impl Card {
         Some(Arc::new(Card {
             inner,
             info,
-            delay: std::time::Duration::from_millis(40),
+            // the device's latency a moment: large against the scheduling noise a loaded machine adds
+            // to a run's wall (found-defects 827: at 40 ms the latency was 720 ms over the waited run,
+            // and the in-flight run's wall not explained by its work, 180 ms quiet, passed half of it
+            // under a full parallel run); at 200 ms the latency is 3.6 s
+            delay: std::time::Duration::from_millis(200),
             flag,
             live: Default::default(),
             peak: AtomicUsize::new(0),
