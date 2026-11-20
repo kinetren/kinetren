@@ -203,9 +203,9 @@ Why: the reference failure — the M gesture with a region made a range label, w
 a point one; two entries with two copies — the same "two tracks from one +M".
 
 #### Scenario: A generator is created from the main menu and from the bin with one list
-- **WHEN** the "Create a generator" submenu is opened from the Edit menu, from a clip track's right-click menu and from the bin's background menu; the File menu is opened
-- **THEN** the list of kinds is built by one body for all three entries (the track's filtered by its kind), creation puts the media and the clip in one history step, the track entry at the clicked track and time; File offers no generator item
-- **PATH** click "Edit" → "Create a generator" → the groups; right click on a track → "Create a generator" first; right click on the bin's background → "Create a generator"; click "File" → no such row
+- **WHEN** "Create a generator…" is found in the Edit menu, a clip track's right-click menu and the bin's background menu; the File menu is opened
+- **THEN** all three draw one plain item by one body (no list of kinds, kkt-26.11.20 A1); creation puts the media and the clip in one history step, the track entry at the clicked track and time, Edit and the bin at the cursor on the selected event's track; File offers no generator item
+- **PATH** click "Edit" → one "Create a generator…" item; right click on a track → "Create a generator…" first; right click on the bin's background → "Create a generator…"; click "File" → no such row
 - **TEST** t560 (`src/apps/kt-app/src/reach_tests.rs`), t1165 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 #### Scenario: The publish door is one and reachable only from inside
@@ -836,14 +836,15 @@ a crossfade the program never makes, an effect added with nothing said about it.
   restarted; then "Start over" is used
 - **THEN** a demo copy opens from the data directory (generators only, no missing media); "Show"
   opens the menu root and "Create a generator…" carries the static accent outline (the program
-  never moves the person's pointer); the step closes by itself when the title event exists,
+  never moves the person's pointer), then the generator window's Kind field does; the step closes by itself when the title event exists,
   without pressing anything in the panel, and the cut step closes when the event at the marker is in
   two pieces; after the restart the welcome window offers "Continue the tour — lesson 1, step 3" and
   the progress is intact; "Start over" clears it and makes a new demo copy
 - **PATH** start Kinetren for the first time → the welcome window, "Start the tour" focused → click
   it → the demo project opens and a panel on the right reads "Lesson 1 of 5 · The first edit" with
   step 1 "Add a title" and a "Show" button → click "Show" → the Edit menu opens and "Create a
-  generator…" carries an accent outline → Create a generator… → Titles and countdown → Text → a title
+  generator…" carries an accent outline → Create a generator… → a solid colour and its window, the
+  Kind field outlined (the step stays open) → Kind → Text → a title
   event appears on the timeline and step 1 turns into a check mark, step 2 "Cut the event at the
   marker" appears → put the playhead on the marker and press S → the event is in two pieces and step 2
   is checked → close the panel and quit → start again → the welcome window's primary tile reads
@@ -1688,3 +1689,25 @@ Why: a run waited the whole guard on four stands with an empty log and nothing s
 - **WHEN** the diagnosis is run on a process that ended with code 3 and on a stand-in supervisor whose child is killed, with no askable display
 - **THEN** the first is dead and named "ended (code 3)" with its first log line; the live one is "still starting" while its child lives and dead, "the editor process ended", once the child ends; the stand and `kt_live` ask it in their window waits and print the start line
 - **TEST** t3239 (`src/apps/kt-cli/tests/dist_guard.rs`)
+
+### Requirement: Edit and the bin create a generator by the selected track
+The Edit menu's and the bin background menu's "Create a generator…" SHALL be one plain item with the
+same body as a track's item. It SHALL create the first kind that lands on the track of the earliest
+selected event (a solid colour on a video track, a tone on an audio track), at the cursor on that track.
+With nothing selected it SHALL create a solid colour on video track 1. Its window SHALL open, and the
+kind SHALL be changed in the window's gallery. A kind change, from the gallery or from the bin card,
+SHALL keep the generator's sound pair in step in the same history step: a kind that sounds beside its
+picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none.
+Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорожке (Recommended)".
+
+#### Scenario: Edit and the bin by the selected track
+- **WHEN** nothing is selected and Edit → "Create a generator…" is pressed; then an event on video track 2 is selected and the bin's background menu's item is pressed
+- **THEN** neither menu lists kinds; a solid colour stands at the cursor on video track 1, then one on video track 2; the first opens its window
+- **PATH** nothing selected → Edit → "Create a generator…" → a solid colour on V1 at the cursor, its window open; click an event on V2 → right click the bin's empty space → "Create a generator…" → a solid colour on V2 at the cursor
+- **TEST** t3712 (`src/apps/kt-app/src/gen_audio_tests.rs`), t1164 (`src/apps/kt-app/src/gen_audio_tests.rs`), live scenario `src/scripts/live/genaudio.py` (`./scripts/live-check.sh`)
+
+#### Scenario: A kind change keeps the sound pair
+- **WHEN** Sync flash is picked in a new generator's Kind gallery; then Safe areas; then Ctrl+Z; then the bin card's Change kind → Safe areas
+- **THEN** the flash has its beep event on A1, linked, under it; Safe areas leave the picture event alone; one Ctrl+Z gives both back; the card's change takes the beep again
+- **PATH** Edit → "Create a generator…" → Kind → Sync flash → a beep event on A1 under the flash → Kind → Safe areas → the beep is gone → Ctrl+Z → the flash and its beep → right click the bin card → Change kind → Signal check → Safe areas → the beep is gone
+- **TEST** t3713 (`src/apps/kt-app/src/gen_audio_tests.rs`), t3702 (`src/apps/kt-app/src/gen_audio_tests.rs`), live scenario `src/scripts/live/gen_technical.py`

@@ -5121,9 +5121,86 @@ impl KtApp {
     /// of parameters opened, but there was nothing in the preview — a title had to be typed
     /// blind, then go to the bin and place the card by hand.
     /// Ctrl+Z returns everything at once, because the batch is one.
-    /// Create a generator at the cursor — the bin's entry (one body with Edit and the track menu).
+    /// Create a generator of `kind` at the cursor on track 1 of its streams: the tests' and the
+    /// harness's shortcut (the person's entries go through `create_generator_by_selection`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn create_generator(&mut self, kind: kt_model::GeneratorKind) {
         self.create_generator_at(kind, self.player.transport.playhead(), None);
+    }
+
+    /// A generator's kind changed — in its window's gallery or from its bin card — as ONE history
+    /// step: the media path, and every picture event's sound pair kept in step with the new kind
+    /// (generator-menu-one-item D2). A kind that sounds beside its picture (Sync flash) gives each
+    /// picture event of the media its sound event on audio track 1, linked to it, as the menu used
+    /// to; a kind with no sound takes the generator's sound events away (they would hold silence).
+    /// The window's gallery is the one way to a kind since kkt-26.11.20 A1.
+    pub(crate) fn gen_kind_switch_cmds(&self, media: MediaId, kind: &kt_model::GeneratorKind) -> Vec<Command> {
+        let set = Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(kind) };
+        let sounds = kt_media::MediaSource::info(&kt_media::generator::GeneratorSource::new(kind.clone())).has_audio;
+        let clips = &self.model.project().clips;
+        let pictures: Vec<&ClipEvent> = clips.iter().filter(|c| c.media == media && c.kind == ClipKind::Video).collect();
+        let pair_of = |v: &ClipEvent| {
+            clips
+                .iter()
+                .filter(|p| p.kind == ClipKind::Audio && p.media == media && p.link_group.is_some() && p.link_group == v.link_group)
+                .map(|p| p.id)
+                .collect::<Vec<_>>()
+        };
+        if !sounds {
+            // the sound halves go first: the media's new kind is no sound kind
+            let mut cmds: Vec<Command> =
+                pictures.iter().flat_map(|v| pair_of(v)).map(|id| Command::RemoveClip { id }).collect();
+            cmds.push(set);
+            return cmds;
+        }
+        let mut cmds = vec![set];
+        let (mut next_id, mut next_group) = (self.next_clip_id(), self.next_group_id());
+        for v in pictures.into_iter().filter(|v| pair_of(v).is_empty()) {
+            let group = v.link_group.unwrap_or_else(|| {
+                next_group += 1;
+                GroupId(next_group - 1)
+            });
+            let id = ClipId(next_id);
+            next_id += 1;
+            let a = ClipEvent {
+                id,
+                kind: ClipKind::Audio,
+                lane: 0,
+                link_group: Some(group),
+                fx: Vec::new(),
+                fx_auto: Vec::new(),
+                fx_bypass: Vec::new(),
+                fx_off: false,
+                opacity: 1.0,
+                geometry: Default::default(),
+                geometry_pos: 0,
+                geometry_auto: Vec::new(),
+                masks: Default::default(),
+                ..v.clone()
+            };
+            cmds.push(Command::AddClip(a));
+            if v.link_group.is_none() {
+                cmds.push(Command::LinkClips { ids: vec![v.id, id], group });
+            }
+        }
+        cmds
+    }
+
+    /// "Create a generator…" from Edit or the bin (kkt-26.11.20 A1: one item, by the track): the
+    /// kind by the selected track — the track of the earliest selected event (a solid colour on
+    /// video, a tone on audio), created there at the cursor; nothing selected → a solid colour on
+    /// video track 1. The window it opens changes the kind.
+    pub fn create_generator_by_selection(&mut self) {
+        let lane = self
+            .selected
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .min_by_key(|c| (c.start, c.id))
+            .map(|c| (c.kind, c.lane));
+        let stream = lane.map_or(ClipKind::Video, |(kind, _)| kind);
+        if let Some(kd) = crate::gen_ui::first_kind_for(stream) {
+            self.create_generator_at(kd, self.player.transport.playhead(), lane);
+        }
     }
 
     /// Create a generator at `at` (generators-placement-and-audio D1): Edit and the bin pass the

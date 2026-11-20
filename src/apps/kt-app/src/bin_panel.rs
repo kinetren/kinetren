@@ -533,8 +533,9 @@ impl KtApp {
         }
         if let Some((id, kd)) = to_kind {
             // the media path carries ONLY the VIEW, the event values are re-dressed by
-            // the model itself (`fit_gen_to_media`) — one command
-            self.apply(kt_model::Command::SetMediaPath { id, path: kt_model::gen_kind_path(&kd) });
+            // the model itself (`fit_gen_to_media`); the sound pairs follow the kind — one step
+            let cmds = self.gen_kind_switch_cmds(id, &kd);
+            self.apply_batch(cmds);
         }
         if let Some(id) = to_place {
             self.place_media_at_cursor(id);
@@ -584,7 +585,7 @@ impl KtApp {
         let resp = ui.interact(view, ui.id().with("bin-bg"), egui::Sense::click());
         let mut free: Option<bool> = None;
         let mut picked = false;
-        let mut new_gen: Option<kt_model::GeneratorKind> = None;
+        let mut new_gen = false;
         let mut new_reel = false;
         resp.context_menu(|ui| {
             picked = true;
@@ -599,8 +600,9 @@ impl KtApp {
             ui.separator();
             // generators (R.52) — THE SAME BODY as in the main menu
             // (rule 17): there is no second list of kinds
-            if let Some(kd) = crate::gen_ui::generator_menu(ui) {
-                new_gen = Some(kd);
+            if crate::gen_ui::generator_item(ui) {
+                new_gen = true;
+                ui.close();
             }
             // AN EMPTY REEL (R.55, C6). Until this round `AddSequence`
             // was constructed only inside the collapse and unlink actions:
@@ -615,8 +617,8 @@ impl KtApp {
         if picked {
             self.set_panel_target(crate::ctx_menu::PanelTarget::BinEmpty);
         }
-        if let Some(kd) = new_gen {
-            self.create_generator(kd);
+        if new_gen {
+            self.create_generator_by_selection();
         }
         if new_reel {
             self.create_empty_reel();

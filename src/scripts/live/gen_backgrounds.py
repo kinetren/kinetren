@@ -35,10 +35,7 @@ def grid(app, frame):
 
 
 def create(app, tag, what):
-    app.click_probe("menu.edit", "the Edit menu")
-    app.hover_probe("gen.new", "Create a generator…")
-    app.hover_probe("gen.new.group.bg", "the Background group")
-    app.click_probe(f"gen.new.{tag}", what)
+    app.new_generator(tag, what=what)
 
 
 def main(out):

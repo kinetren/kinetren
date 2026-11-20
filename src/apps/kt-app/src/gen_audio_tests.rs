@@ -39,6 +39,63 @@ fn right_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
     h.step();
 }
 
+fn press_probe(h: &mut Harness<'_, KtApp>, name: &str) {
+    let at = crate::widgets::field_probe::rect_of(name).unwrap_or_else(|| panic!("no {name}")).center();
+    h.hover_at(at);
+    h.step();
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.step();
+    h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    for _ in 0..3 {
+        h.step();
+    }
+}
+
+/// Edit › "Create a generator…" (one item since kkt-26.11.20 A1), then the kind `tag` picked in the
+/// window's Kind gallery — the person's path to any picture kind. The window stays open.
+pub(crate) fn create_from_edit(h: &mut Harness<'_, KtApp>, tag: &str) {
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    hover_item(h, tr(k::bin::menu::NEW_GENERATOR));
+    h.get_by_label(tr(k::bin::menu::NEW_GENERATOR)).click();
+    for _ in 0..4 {
+        h.step();
+    }
+    if crate::gen_ui::first_kind_for(ClipKind::Video).is_some_and(|kd| kd.tag() == tag) {
+        return;
+    }
+    pick_kind(h, tag);
+}
+
+/// Pick `tag` in the open generator window's Kind gallery, scrolling the gallery to its cell.
+pub(crate) fn pick_kind(h: &mut Harness<'_, KtApp>, tag: &str) {
+    let cell = format!("genw.kind.{tag}");
+    crate::widgets::field_probe::forget(&cell);
+    press_probe(h, "genw.kind.pick");
+    // a cell under the gallery's fold is not drawn: the person scrolls the gallery to it
+    let pick = crate::widgets::field_probe::rect_of("genw.kind.pick").expect("the Kind field");
+    let over = pick.center() + egui::vec2(0.0, 160.0);
+    // (the gallery may open scrolled: down first, then back up)
+    for i in 0..80 {
+        if crate::widgets::field_probe::rect_of(&cell).is_some() {
+            break;
+        }
+        let dy = if i < 40 { -60.0 } else { 60.0 };
+        h.hover_at(over);
+        h.event(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, dy), modifiers: egui::Modifiers::NONE, phase: egui::TouchPhase::Move });
+        h.step();
+        h.step();
+    }
+    // the wheel scrolls with an animation: the cell is pressed where it comes to rest
+    for _ in 0..12 {
+        h.step();
+    }
+    crate::widgets::field_probe::forget(&cell);
+    h.step();
+    press_probe(h, &cell);
+}
+
 fn kind_label(tag: &str) -> &'static str {
     crate::gen_ui::kind_name(&GeneratorKind::default_for_tag(tag).expect("a registered kind"))
 }
@@ -100,16 +157,24 @@ fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }
 
-/// Test 1164: Edit → Create a generator → Audio → Tone with the cursor at 3 s gives ONE audio clip
-/// at 3 s on audio track 1 — no video clip — in one history step, and opens its form.
-/// PATH: click "Edit" → hover "Create a generator" → hover "Audio" → click "Tone".
+/// Test 1164: Edit → "Create a generator…" with an event of audio track 2 selected and the cursor at
+/// 3 s gives ONE sound clip at 3 s on audio track 2 — no video clip — in one history step, and opens
+/// its form. The kind goes by the selected track (kkt-26.11.20 A1: one item, by the track); File
+/// does not offer the item.
+/// - **PATH** click an event on audio track 2 → click "Edit" → click "Create a generator…" (no list of
+///   kinds) → a tone at the cursor on audio track 2, its window open
 #[test]
 fn t1164_edit_creates_a_sound_generator_at_the_cursor() {
     let mut h = crate::layout_tests::harness();
+    h.state_mut().insert_lane_after_row(LaneKind::Audio, Some((LaneKind::Audio, 0)));
+    let tone = crate::gen_ui::first_kind_for(ClipKind::Audio).expect("a sound kind");
+    h.state_mut().create_generator_at(tone.clone(), Tick(20 * 90_000), Some((ClipKind::Audio, 1)));
+    h.state_mut().fx_editors.clear();
+    let sel = h.state().model.project().clips.iter().max_by_key(|c| c.id.0).map(|c| c.id).expect("the event");
     h.state().player.seek(Tick(3 * 90_000));
     h.step();
     let before = h.state().model.project().clips.len();
-    // File no longer offers it
+    // File does not offer it (its Esc clears the selection too: the event is selected after it)
     h.get_by_label(tr(k::menu::file::TITLE)).click();
     h.step();
     h.step();
@@ -120,23 +185,74 @@ fn t1164_edit_creates_a_sound_generator_at_the_cursor() {
     );
     h.key_press(egui::Key::Escape);
     h.step();
+    h.state_mut().selected = [sel].into_iter().collect();
     h.get_by_label(tr(k::menu::edit::TITLE)).click();
     h.step();
     h.step();
     hover_item(&mut h, gen_item);
-    hover_item(&mut h, tr(k::genkind::GROUP_AUDIO));
-    h.get_by_label(kind_label("tone")).click();
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(!labels.iter().any(|l| l.starts_with(tr(k::genkind::GROUP_AUDIO))), "Edit lists kinds again: {labels:?}");
+    h.get_by_label(gen_item).click();
     h.step();
     h.step();
     let made = new_clips(&h, before);
     assert_eq!(made.len(), 1, "one clip: a sound kind has no picture: {made:?}");
     let c = &made[0];
-    assert_eq!((c.kind, c.lane, c.start), (ClipKind::Audio, 0, Tick(3 * 90_000)), "at the cursor on audio track 1");
-    assert_eq!(c.r#gen.as_ref().map(|g| g.tag()), Some("tone"));
+    assert_eq!((c.kind, c.lane, c.start), (ClipKind::Audio, 1, Tick(3 * 90_000)), "at the cursor on the selected audio track");
+    assert_eq!(c.r#gen.as_ref().map(|g| g.tag()), Some(tone.tag()));
     assert!(h.state().fx_editors.iter().any(|e| e.clip == c.id), "the form opens on the new event");
     h.state_mut().undo();
     h.step();
     assert_eq!(h.state().model.project().clips.len(), before, "one history step");
+}
+
+/// Test 3712 (generator-menu-one-item, kkt-26.11.20 A1): Edit and the bin's empty-space menu hold ONE
+/// "Create a generator…" item, one body: nothing selected → a solid colour on video track 1 at the
+/// cursor; an event of video track 2 selected → a solid colour on video track 2. Its window opens, the
+/// kind is changed there.
+/// - **PATH** nothing selected → Edit → "Create a generator…" → a solid colour on V1 at the cursor, its
+///   window open; click an event on V2 → right click the bin's empty space → "Create a generator…" →
+///   a solid colour on V2 at the cursor
+#[test]
+fn t3712_edit_and_the_bin_create_by_the_selected_track() {
+    let mut h = crate::layout_tests::harness();
+    h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Video, 0)));
+    h.state_mut().selected.clear();
+    h.state().player.seek(Tick(4 * 90_000));
+    h.step();
+    let solid = crate::gen_ui::first_kind_for(ClipKind::Video).expect("a picture kind").tag();
+    let before = h.state().model.project().clips.len();
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+    h.get_by_label(tr(k::bin::menu::NEW_GENERATOR)).click();
+    h.step();
+    h.step();
+    let made = new_clips(&h, before);
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert_eq!((made[0].kind, made[0].lane, made[0].start), (ClipKind::Video, 0, Tick(4 * 90_000)), "nothing selected: video track 1");
+    assert_eq!(made[0].r#gen.as_ref().map(|g| g.tag()), Some(solid));
+    assert!(h.state().fx_editors.iter().any(|e| e.clip == made[0].id), "its window opens");
+    h.state_mut().fx_editors.clear();
+    // an event on V2 selected; the bin's empty space
+    h.state_mut().create_generator_at(GeneratorKind::solid(9, 9, 9), Tick(30 * 90_000), Some((ClipKind::Video, 1)));
+    h.state_mut().fx_editors.clear();
+    let sel = h.state().model.project().clips.iter().max_by_key(|c| c.id.0).map(|c| c.id).expect("the event");
+    h.state_mut().selected = [sel].into_iter().collect();
+    h.step();
+    let before = h.state().model.project().clips.len();
+    let bin = h.state().bin_rect;
+    assert!(bin.is_positive(), "the bin did not report its rectangle");
+    right_click_at(&mut h, egui::pos2(bin.center().x, bin.bottom() - 10.0));
+    let labels = crate::layout_tests::menu_labels(&mut h);
+    assert!(!labels.iter().any(|l| l.starts_with(tr(k::genkind::GROUP_BG))), "the bin lists kinds again: {labels:?}");
+    h.get_by_label(tr(k::bin::menu::NEW_GENERATOR)).click();
+    h.step();
+    h.step();
+    let made = new_clips(&h, before);
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert_eq!((made[0].kind, made[0].lane, made[0].start), (ClipKind::Video, 1, Tick(4 * 90_000)), "the selected event's track");
 }
 
 /// Test 1165: a right click on a track's body creates AT THE CLICKED PLACE — with ONE plain item since
@@ -259,14 +375,7 @@ fn t3702_the_technical_kinds_are_created_from_edit() {
     let mut h = crate::layout_tests::harness();
     for (tag, clips) in [("syncflash", 2usize), ("safearea", 1)] {
         let before = h.state().model.project().clips.len();
-        h.get_by_label(tr(k::menu::edit::TITLE)).click();
-        h.step();
-        h.step();
-        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
-        hover_item(&mut h, tr(k::genkind::GROUP_CHECK));
-        h.get_by_label(kind_label(tag)).click();
-        h.step();
-        h.step();
+        create_from_edit(&mut h, tag);
         let made = new_clips(&h, before);
         assert_eq!(made.len(), clips, "{tag}: {made:?}");
         assert!(made.iter().all(|c| c.r#gen.as_ref().map(|g| g.tag()) == Some(tag)), "{tag}: the kind");
@@ -297,15 +406,7 @@ fn t3702_the_technical_kinds_are_created_from_edit() {
 fn t3705_a_title_chooses_its_source_in_its_window() {
     crate::plugins::install();
     let mut h = crate::layout_tests::harness();
-    h.get_by_label(tr(k::menu::edit::TITLE)).click();
-    h.step();
-    h.step();
-    hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
-    hover_item(&mut h, tr(k::genkind::GROUP_TITLES));
-    h.get_by_label(kind_label("text")).click();
-    for _ in 0..4 {
-        h.step();
-    }
+    create_from_edit(&mut h, "text");
     let painted = |h: &Harness<'_, KtApp>, src: &str| crate::reach_tests::painted_texts(h).iter().any(|t| t.src == src);
     let from = tr(k::genp::COUNT_FROM);
     let at = crate::widgets::field_probe::rect_of("titlew.source.countdown").expect("the source row");
@@ -353,14 +454,7 @@ fn t3708_the_moving_backgrounds_are_created_from_edit() {
     let mut h = crate::layout_tests::harness();
     for tag in ["meshgrad", "plasma", "particles", "pattern"] {
         let before = h.state().model.project().clips.len();
-        h.get_by_label(tr(k::menu::edit::TITLE)).click();
-        h.step();
-        h.step();
-        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
-        hover_item(&mut h, tr(k::genkind::GROUP_BG));
-        h.get_by_label(kind_label(tag)).click();
-        h.step();
-        h.step();
+        create_from_edit(&mut h, tag);
         let made = new_clips(&h, before);
         assert_eq!(made.len(), 1, "{tag}: {made:?}");
         assert_eq!(made[0].r#gen.as_ref().map(|g| g.tag()), Some(tag), "{tag}: the kind");
@@ -403,14 +497,7 @@ fn t3710_the_shapes_and_plates_are_created_from_edit() {
     let tags = ["polygon", "star", "arrow", "frame", "plate", "progress"];
     for tag in tags {
         let before = h.state().model.project().clips.len();
-        h.get_by_label(tr(k::menu::edit::TITLE)).click();
-        h.step();
-        h.step();
-        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
-        hover_item(&mut h, tr(k::genkind::GROUP_SHAPES));
-        h.get_by_label(kind_label(tag)).click();
-        h.step();
-        h.step();
+        create_from_edit(&mut h, tag);
         let made = new_clips(&h, before);
         assert_eq!(made.len(), 1, "{tag}: {made:?}");
         assert_eq!(made[0].r#gen.as_ref().map(|g| g.tag()), Some(tag), "{tag}: the kind");
@@ -433,4 +520,47 @@ fn t3710_the_shapes_and_plates_are_created_from_edit() {
         }
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test 3713 (generator-menu-one-item D2): a kind changed in the window keeps the generator's sound
+/// in step — Sync flash brings its beep event on audio track 1, linked to the picture; a kind with
+/// no sound (Safe areas) takes that beep away; one Ctrl+Z gives the flash and its beep back.
+/// - **PATH** Edit → "Create a generator…" → the window's Kind field → Sync flash → a beep event
+///   appears on A1 under the flash → Kind → Safe areas → the beep is gone → Ctrl+Z → the flash and
+///   its beep again → right click the bin card → Change kind → Signal check → Safe areas → the beep is
+///   gone again
+#[test]
+fn t3713_a_kind_switch_keeps_the_sound_pair_in_step() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    let before = h.state().model.project().clips.len();
+    create_from_edit(&mut h, "syncflash");
+    let made = new_clips(&h, before);
+    assert_eq!(made.len(), 2, "the flash and its beep: {made:?}");
+    let (v, a) = (made.iter().find(|c| c.kind == ClipKind::Video).expect("picture"), made.iter().find(|c| c.kind == ClipKind::Audio).expect("beep"));
+    assert!(v.link_group.is_some() && v.link_group == a.link_group, "the beep is linked to its picture");
+    assert_eq!((a.lane, a.start, a.duration, a.media), (0, v.start, v.duration, v.media), "the beep lies under the flash on A1");
+    assert_eq!(a.r#gen.as_ref().map(|g| g.tag()), Some("syncflash"));
+    pick_kind(&mut h, "safearea");
+    let now = new_clips(&h, before);
+    assert_eq!(now.len(), 1, "the safe areas have no sound: {now:?}");
+    assert_eq!(now[0].r#gen.as_ref().map(|g| g.tag()), Some("safearea"));
+    h.state_mut().undo();
+    h.step();
+    let back = new_clips(&h, before);
+    assert_eq!(back.len(), 2, "one Ctrl+Z gives the flash and its beep back: {back:?}");
+    assert!(back.iter().all(|c| c.r#gen.as_ref().map(|g| g.tag()) == Some("syncflash")));
+    // the bin card's "Change kind" is the same body
+    h.state_mut().fx_editors.clear();
+    h.step();
+    let media = back[0].media;
+    let card = h.state().bin_card_rect(media).expect("the generator's bin card");
+    right_click_at(&mut h, card.center());
+    hover_item(&mut h, tr(k::genw::CHANGE_KIND));
+    hover_item(&mut h, tr(k::genkind::GROUP_CHECK));
+    h.get_by_label(kind_label("safearea")).click();
+    h.step();
+    h.step();
+    let now = new_clips(&h, before);
+    assert_eq!(now.len(), 1, "the card's kind change takes the beep too: {now:?}");
 }

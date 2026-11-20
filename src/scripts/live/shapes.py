@@ -22,16 +22,8 @@ SEC = 90000
 
 
 def new_generator(app, group, kind):
-    """Create a generator via the bin background menu: group, then kind."""
-    win = geometry()
-    b = app.geom()["bin"]
-    app.right_click(
-        win["x"] + int((b["left"] + b["right"]) / 2),
-        win["y"] + int(b["bottom"]) - 10,
-    )
-    app.click_probe("gen.new", "item “Create a generator”")
-    app.click_probe(f"gen.new.group.{group}", f"group “{group}” in the submenu")
-    app.click_probe(f"gen.new.{kind}", f"kind “{kind}” in the submenu")
+    """Create a generator via the bin background menu's one item, the kind in its window."""
+    app.new_generator(kind, via="bin", what=f"the {kind} cell of {group}")
 
 
 def main(out):
