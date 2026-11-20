@@ -836,6 +836,7 @@ dewarp read past the sensor, and a barrel lens past the frame (camera-isp-edges)
   filmed with blooming 0 and 1
 - **THEN** raw NR at least halves the noise variance of the flat part and keeps the edge step within
   12 LSB; with blooming the raw of the spot's neighbour rises by more than 200 DN
+- **TEST** t1223 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
 #### Scenario: The frame's edges are picture, not smears
 - **WHEN** a frame whose brightness is a sawtooth along each axis (rising from every edge inward)

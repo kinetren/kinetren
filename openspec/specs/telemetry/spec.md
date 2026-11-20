@@ -687,7 +687,7 @@ the machine allowed (memory-ledger).
 #### Scenario: A sizing is a record and the query reads it
 - **WHEN** a trace holds two ledger sizings, the second taking back a stream grant, and a sizing that changed nothing
 - **THEN** it holds two `mem_budget` records and the changed `mem_grant` records only; `kt-cli trace memory` prints both sizings and the stream tenant's last cap
-- **TEST** t2300 (`src/apps/kt-cli/src/trace_query.rs`)
+- **TEST** t2300 (`src/apps/kt-cli/src/trace_query/tests.rs`)
 
 ### Requirement: A long frame says how long it waited for a processor
 A UI frame of 100 ms or more SHALL be noted with how much of it the UI thread stood ready with no
@@ -930,7 +930,7 @@ frames were missing. render-ahead is accepted by that share.
 #### Scenario: A lap reads its device share
 - **WHEN** a trace holds two laps of a loop, the first with moments not kept and frames of known device time harvested in each
 - **THEN** `trace loop` prints each lap's device share as the harvested device time over the lap's wall, and the share while frames were missing over the first lap alone
-- **TEST** t2926 (`src/apps/kt-cli/src/trace_query.rs`)
+- **TEST** t2926 (`src/apps/kt-cli/src/trace_query/tests.rs`)
 
 ### Requirement: A loop's report says why moments ahead were not kept and how long work waited for its ring
 Every render-ahead job record SHALL say what came of its moment (`b`: 0 kept, 1 incomplete, 3 refused by the

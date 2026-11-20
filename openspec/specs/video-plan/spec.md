@@ -437,7 +437,7 @@ Why: a chain appended to every event gives a different picture at transitions an
 #### Scenario: Blend modes against the formula
 - **WHEN** each mode is applied to a pair of tracks with known colors; the track level is 0.5; on the track with Multiply — a hole; the same plans on the GPU
 - **THEN** the result equals the analytical formula; Normal is byte-for-byte as before; 0.5 — half the way to the result of the mode, not the mode over a semi-transparent layer; in the hole the lower layers are visible without darkening; the frames are within the tolerance class of transitions of their stored frames
-- **TEST** t737 (`src/libs/kt-engine/tests/track_blend.rs`, `src/libs/kt-gpu/tests/parity.rs`)
+- **TEST** t737 (`src/libs/kt-engine/tests/track_video.rs`, `src/libs/kt-gpu/tests/parity.rs`)
 
 #### Scenario: Video mute and solo
 - **WHEN** a track is muted; then two of three are soloed; then mute is removed

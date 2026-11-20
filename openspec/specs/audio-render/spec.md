@@ -403,7 +403,7 @@ Why: the owner's decision R.63/R.65 — a live device instead of a snapshot; ali
 #### Scenario: A cycle, a dead key, muting the key
 - **WHEN** an attempt is made to assign keys in a circle; then the key track is deleted; then the key is muted
 - **THEN** the cycle command is rejected with a named error and the model is untouched; with a dead key the device sounds like an ordinary compressor (no panic and no silence); with a muted key there is no ducking
-- **TEST** t771 (`src/libs/kt-engine/tests/sidechain.rs`), t772 (`src/libs/kt-model/tests/model.rs`)
+- **TEST** t771 (`src/libs/kt-engine/tests/sidechain.rs`), t772 (`src/libs/kt-model/tests/sidechain.rs`)
 
 ### Requirement: A chain's cost does not depend on the process run
 The render of the same chain over the same input SHALL cost the same class of time in every process run of the same build: no effect's cost, and no source's cost, may depend on where the allocator placed its buffers, on floating-point state the engine does not set, or on bytes a value does not use (the payload a dataless enum variant leaves from its stack frame). When the cost depends on the machine (for example, the core type the render thread lands on), the engine does not pin threads; the requirement then records it as a property of the machine, with the experiment that reproduces it. The fix of a placement, number-format or unused-bytes cause SHALL keep the sound byte for byte.
