@@ -2999,3 +2999,27 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    что-то, улучшать по спекам. подготавливать архитектурные вещи - спеки. но не выполнять их. выполняют
    только трое." — free executors get work at once; two more sessions only study and prepare
    architecture and specs (proposals, designs, feature notes), never code; three sessions execute.
+
+## 2026-11-20 — his answers to Q1–Q54 (verbatim: `docs/ktprompts/kkt-26.11.20.txt`, rows A1–A26)
+
+1. **Never "proxy".** "не называй это прокси никогда. неудачное название. пусть будет постоянный кэш или
+   что-то такое более компактное. просто кэш тоже нельзя - не понятно что он не в озу." The proxies
+   become an adaptive durable store at the quality the preview plays, rendered better when a better
+   quality is chosen, with a switch "as in the preview" beside it. Its name says it is on disk.
+2. **Everything downloaded is one library.** "все что у нас качается - надо переносить и делать
+   архитектурно в виде некоторой библиотеки, типо как плагины … вот и сделат библиотеку плагинов."
+   FFmpeg on Windows, the speech model, font packs and plugins go through one download library.
+3. **Caches live in a folder of the project, not in one sqlite base.** "у нас не будет все в одной базе
+   sqlite хранится а будет подпапка в папке проекта с разными кешами, вот с тем же превью кэшем".
+   Stored Datamosh history is compressed (LZ4 at least).
+4. **HDR by the project's setting.** "нужно от настроек проекта-композиции определять, если включено то
+   тракт f16 чтобы было нормально, если нет - то быстрый i8".
+5. **A preset of one effect replaces it; a chain preset is joined on the graph** ("мышкой быстро
+   выделить и удалить лишнее или соединить").
+6. **Build now, no measurement first:** shared events, the Datamosh frame on one device, export through
+   dma-buf, the Datamosh history on disk. Card decoding on by default WITH a checkbox in Settings.
+7. **Tracker: point and planar now**, "по умолчанию - самые удобные и точные", a neural wand later.
+8. Every chroma key moves to the new model; multicam gets an "audio follows the angle" option; a "draft
+   render" option may take the preview's prerender; the cached render's index lives inside the video (SEI).
+9. A case he does not follow yet is written down for him to check later (ripple across an edit point,
+   owner-checks C9), not decided over his head.
