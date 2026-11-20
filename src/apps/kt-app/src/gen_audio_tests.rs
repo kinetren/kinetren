@@ -50,15 +50,16 @@ fn new_clips(h: &Harness<'_, KtApp>, before: usize) -> Vec<ClipEvent> {
     v.split_off(before.min(v.len()))
 }
 
-/// Test 1163: the menu rows — the 19 former ones in their order, then the five sound kinds, all in
+/// Test 1163: the menu rows — the 19 former ones and the two technical ones of gen-technical
+/// (`v26.10` G5: the sync flash, the safe areas) in their order, then the five sound kinds, all in
 /// the Audio group, each named in the catalog, every row and every choice variant captioned.
 #[test]
 fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     crate::plugins::install();
     let all = GeneratorKind::all();
-    assert_eq!(all.len(), 24, "19 picture rows + 5 sound rows");
-    let tags: Vec<&str> = all[19..].iter().map(|k| k.tag()).collect();
-    assert_eq!(tags, SOUND, "the sound rows follow the former 19 in BUILTIN_IDS order");
+    assert_eq!(all.len(), 26, "21 picture rows + 5 sound rows");
+    let tags: Vec<&str> = all[21..].iter().map(|k| k.tag()).collect();
+    assert_eq!(tags, SOUND, "the sound rows follow the 21 picture rows in BUILTIN_IDS order");
     for k in &all {
         let sound = SOUND.contains(&k.tag());
         assert_eq!(crate::gen_ui::is_sound(k), sound, "{}: a sound kind is exactly a synthesizing one", k.tag());
@@ -71,7 +72,7 @@ fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     }
     for lang in crate::i18n::Lang::ALL {
         crate::i18n::set_lang(lang);
-        for k in &all[19..] {
+        for k in &all[21..] {
             let name = crate::gen_ui::kind_name(k);
             assert_ne!(name, k.tag(), "{lang:?}: {} has no catalog name", k.tag());
             let GeneratorKind::Plugin(p) = k else { unreachable!() };
@@ -243,4 +244,46 @@ fn t3128_a_sound_events_gallery_is_the_sound_kinds() {
         assert!(crate::widgets::field_probe::rect_of(&format!("genw.kind.{tag}")).is_some(), "the sound kind {tag} is not in the gallery");
     }
     assert!(crate::widgets::field_probe::rect_of("genw.kind.solid").is_none(), "a picture kind is in a sound event's gallery");
+}
+
+/// Test 3702 (gen-technical, `v26.10` G5): the sync flash and the safe areas are reached from Edit ›
+/// Create a generator › Signal check; the flash lands with its sound on audio track 1 beside its
+/// picture, the safe areas as a picture alone; their rows have captions in every language.
+/// - **PATH** Edit → Create a generator… → Signal check → Sync flash → a picture event and its beep on
+///   A1 at the cursor, its window open; again → Safe areas → one picture event (transparent over what
+///   is under it)
+#[test]
+fn t3702_the_technical_kinds_are_created_from_edit() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    for (tag, clips) in [("syncflash", 2usize), ("safearea", 1)] {
+        let before = h.state().model.project().clips.len();
+        h.get_by_label(tr(k::menu::edit::TITLE)).click();
+        h.step();
+        h.step();
+        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+        hover_item(&mut h, tr(k::genkind::GROUP_CHECK));
+        h.get_by_label(kind_label(tag)).click();
+        h.step();
+        h.step();
+        let made = new_clips(&h, before);
+        assert_eq!(made.len(), clips, "{tag}: {made:?}");
+        assert!(made.iter().all(|c| c.r#gen.as_ref().map(|g| g.tag()) == Some(tag)), "{tag}: the kind");
+        h.state_mut().fx_editors.clear();
+        h.step();
+    }
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for k in ["syncflash", "safearea"] {
+            let kind = GeneratorKind::default_for_tag(k).expect("the kind");
+            for s in kind.param_specs().iter().filter(|s| s.ty == ParamType::Num && s.unit != kt_model::ParamUnit::Rgb8) {
+                let l = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, &s.name);
+                assert_ne!(l, s.name.as_ref(), "{lang:?}: {k}.{} has no caption", s.name);
+            }
+            for f in kind.flag_specs() {
+                assert_ne!(crate::widgets::flag_label(f.name), f.name, "{lang:?}: {k} flag {} has no caption", f.name);
+            }
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }

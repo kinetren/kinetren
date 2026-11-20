@@ -1309,6 +1309,8 @@ corner_br = "أسفل يمين"
 tc_note = "يعرض زمن المادة: مقطع من الصفر ببداية مادة 0 يطابق ساعة الخط الزمني"
 
 [genkind]
+safearea = "المناطق الآمنة"
+syncflash = "وميض المزامنة"
 group_audio = "الصوت"
 tone = "نغمة"
 audio_noise = "ضجيج صوتي"
@@ -1371,6 +1373,13 @@ align_r = "يمين"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+cut43 = "قص 4:3"
+thirds = "قاعدة الأثلاث"
+center = "صليب المركز"
+title_safe = "منطقة العناوين الآمنة"
+action_safe = "منطقة الحركة الآمنة"
+flash = "إطارات الوميض"
+interval = "الفاصل"
 freq = "التردد"
 freq_start = "تردد البداية"
 freq_end = "تردد النهاية"

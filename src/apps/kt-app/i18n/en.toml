@@ -1309,6 +1309,8 @@ corner_br = "Bottom right"
 tc_note = "Shows MATERIAL time: a clip from zero with source start 0 matches the timeline clock"
 
 [genkind]
+safearea = "Safe areas"
+syncflash = "Sync flash"
 group_audio = "Audio"
 tone = "Tone"
 audio_noise = "Audio noise"
@@ -1371,6 +1373,13 @@ align_r = "Right"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+cut43 = "4:3 cut"
+thirds = "Rule of thirds"
+center = "Centre cross"
+title_safe = "Title safe"
+action_safe = "Action safe"
+flash = "Flash frames"
+interval = "Interval"
 freq = "Frequency"
 freq_start = "Start frequency"
 freq_end = "End frequency"

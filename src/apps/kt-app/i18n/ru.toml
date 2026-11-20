@@ -1309,6 +1309,8 @@ corner_br = "Нижний правый"
 tc_note = "Показывает время МАТЕРИАЛА: клип от нуля с началом материала 0 совпадает с часами таймлайна"
 
 [genkind]
+safearea = "Безопасные зоны"
+syncflash = "Синхровспышка"
 group_audio = "Звук"
 tone = "Тон"
 audio_noise = "Звуковой шум"
@@ -1371,6 +1373,13 @@ align_r = "Справа"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+cut43 = "Кадр 4:3"
+thirds = "Правило третей"
+center = "Перекрестие в центре"
+title_safe = "Зона титров"
+action_safe = "Зона действия"
+flash = "Кадров вспышки"
+interval = "Интервал"
 freq = "Частота"
 freq_start = "Начальная частота"
 freq_end = "Конечная частота"

@@ -1309,6 +1309,8 @@ corner_br = "Inferior derecha"
 tc_note = "Muestra el tiempo del MATERIAL: un clip desde cero con inicio 0 coincide con el reloj de la línea de tiempo"
 
 [genkind]
+safearea = "Zonas seguras"
+syncflash = "Destello de sincronía"
 group_audio = "Audio"
 tone = "Tono"
 audio_noise = "Ruido de audio"
@@ -1371,6 +1373,13 @@ align_r = "Derecha"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+cut43 = "Corte 4:3"
+thirds = "Regla de tercios"
+center = "Cruz central"
+title_safe = "Zona de títulos"
+action_safe = "Zona de acción"
+flash = "Cuadros de destello"
+interval = "Intervalo"
 freq = "Frecuencia"
 freq_start = "Frecuencia inicial"
 freq_end = "Frecuencia final"
