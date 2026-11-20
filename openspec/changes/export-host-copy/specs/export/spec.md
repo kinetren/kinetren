@@ -15,7 +15,7 @@ device, and its C and SIMD paths differ.
 #### Scenario: The formula's values
 - **WHEN** black, white, the six primaries and secondaries, and a one-pixel stripe pattern are converted by the reference for BT.601 and BT.709, limited and full, 8 and 10 bit, 4:2:0 and 4:2:2
 - **THEN** each Y, Cb and Cr equals the value computed by hand from the Q15 coefficients, the stripes give the left-sited chroma, and odd widths and heights repeat the edge
-- **TEST** t3312 (`src/libs/kt-gpu/src/yuv.rs`)
+- **TEST** t3312 (`src/libs/kt-engine/src/yuv.rs`)
 
 #### Scenario: The device pass equals the reference byte for byte
 - **WHEN** composites of odd and even sizes are converted by the pass on the test device into each of the five layouts
@@ -23,9 +23,9 @@ device, and its C and SIMD paths differ.
 - **TEST** t3313 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 #### Scenario: The export reads back planes and stays reproducible
-- **WHEN** a two-second project is exported pipelined and serially to libx264 (yuv420p), and pipelined twice to a forced NV12 encoder
-- **THEN** the pipelined and serial files are equal, the two NV12 runs are equal, the bytes read back per frame are the layout's (1.5 per pixel), and the convert stage only copies planes
-- **TEST** t3314 (`src/libs/kt-engine/tests/export_options.rs`)
+- **WHEN** a second of the demo project is exported pipelined to a sink that takes yuv420p and then P010 planes — on one device twice and on three devices
+- **THEN** every frame arrives as the layout's planes (the layout's bytes, 1.5 or 3 a pixel), none as RGBA for the worker to convert, the frames are the CPU reference over the RGBA export's frames, and the runs write the same frames
+- **TEST** t3314 (`src/libs/kt-gpu/tests/export_ring.rs`); t1451 (pipelined = serial) keeps holding
 
 #### Scenario: The ring counts the layout's bytes
 - **WHEN** the ring depth is asked for 1080p RGBA, yuv420p and p010le readbacks
@@ -33,11 +33,11 @@ device, and its C and SIMD paths differ.
 - **TEST** t3315 (`src/libs/kt-gpu/tests/export_ring.rs`)
 
 #### Scenario: A path without the pass writes the same bytes
-- **WHEN** one frame is converted by the reference on the processor (the GL bytes path's way) and by the pass on the device
-- **THEN** the planes are equal
-- **TEST** t3318 (`src/libs/kt-engine/tests/export_options.rs`)
+- **WHEN** an export runs on a device with the pass, and again on the same device behind an executor that reads back RGBA only (the path without the pass), into NV12 and 4:2:2 10-bit planes
+- **THEN** the second path's workers convert by the reference, and the frames of the two are equal
+- **TEST** t3318 (`src/libs/kt-gpu/tests/export_ring.rs`)
 
 #### Scenario: The file says where its chroma sits
-- **WHEN** an export with BT.709 limited is read back by the output probe
+- **WHEN** a file written through the export's exact conversion with BT.709 limited is read back by the output probe
 - **THEN** it reports the matrix, the range and the left chroma location, and a saturated red comes back within 6 codes through the decode that reads the tags
 - **TEST** t3319 (`src/libs/kt-engine/tests/render_settings.rs`)

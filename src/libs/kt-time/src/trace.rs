@@ -596,7 +596,10 @@ pub mod export_stage {
     /// A frame from its submission to its collection: `a` nanoseconds summed, `b` the longest, `c` the
     /// frames. Not a stage.
     pub const LATENCY: u32 = 19;
-    pub const NAMES: [&str; 19] = [
+    /// A device encoder's surface get and upload (export-host-copy D1), apart from `ENCODE`: `a` busy
+    /// nanoseconds, `b` the wall, `c` the frames. A stage, recorded after the sixteen.
+    pub const SURFACE_UPLOAD: u32 = 20;
+    pub const NAMES: [&str; 20] = [
         "decode",
         "compose",
         "readback",
@@ -616,6 +619,7 @@ pub mod export_stage {
         "wall",
         "ring",
         "latency",
+        "surface upload",
     ];
     /// The stage's name (`?` — a stage this build does not know).
     pub fn name(aux: u32) -> &'static str {

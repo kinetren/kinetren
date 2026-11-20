@@ -264,6 +264,17 @@ pub fn export(run: &Run) -> String {
             timeline as f64 / wall as f64,
             if workers == 0 { "serial".to_string() } else { format!("pipelined, {workers} frame workers") }
         );
+        // every move of a frame after the composite, per frame (export-host-copy D1): what binds a card
+        // export once the latency is hidden
+        let per = |aux: u32| stages.iter().filter(|s| s.aux == aux).map(|s| s.a).sum::<u64>() as f64 / frames.max(1) as f64 / 1e6;
+        let _ = writeln!(
+            o,
+            "  a frame: copy out {:.2} ms, convert {:.2} ms, surface upload {:.2} ms, encode {:.2} ms",
+            per(st::COPY_OUT),
+            per(st::CONVERT),
+            per(st::SURFACE_UPLOAD),
+            per(st::ENCODE)
+        );
         for s in stages.drain(..) {
             if s.a == 0 {
                 continue;

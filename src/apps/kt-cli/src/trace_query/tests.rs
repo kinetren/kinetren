@@ -871,3 +871,36 @@ fn t2987_trace_cache_reads_the_tiers_work() {
     assert!(out.contains("stopped: input 1"), "{out}");
     assert!(out.lines().any(|l| l.contains("lap 0") && l.contains("3 restored")), "{out}");
 }
+
+/// t3316 (export-host-copy D1, found-defects 741): the export view states every move of a frame after
+/// the composite — copy out, convert, the device encoder's surface upload and the encode without it — per
+/// frame, and the surface upload as a stage line of its own.
+#[test]
+fn t3316_trace_export_names_copy_convert_and_upload() {
+    use kt_time::trace::export_stage as st;
+    let s = 1_000 * MS;
+    let end = 30 * s;
+    let mut v = vec![];
+    for (aux, ns) in [(st::COPY_OUT, 132 * MS), (st::CONVERT, 300 * MS), (st::ENCODE, 600 * MS), (st::SURFACE_UPLOAD, 90 * MS)] {
+        v.push(rec(Ev::ExportStage, end, |r| {
+            r.aux = aux;
+            r.a = ns;
+            r.b = 10 * s;
+            r.c = 60;
+            r.id = 4;
+        }));
+    }
+    v.push(rec(Ev::ExportStage, end, |r| {
+        r.aux = st::WALL;
+        r.a = 10 * s;
+        r.b = 2 * s;
+        r.c = 60;
+        r.id = 4;
+    }));
+    let out = export(&run_of(v));
+    assert!(
+        out.contains("a frame: copy out 2.20 ms, convert 5.00 ms, surface upload 1.50 ms, encode 10.00 ms"),
+        "{out}"
+    );
+    assert!(out.contains("  surface upload"), "the upload is a stage line of its own: {out}");
+}

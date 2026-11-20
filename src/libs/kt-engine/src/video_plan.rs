@@ -383,9 +383,43 @@ pub trait VideoGpuExec: Send + Sync {
         Err(GpuExecError::Unsupported("no pipelined readback"))
     }
     /// Wait for a submitted frame and copy it into `out`: Ok(complete) as `execute_into`.
-    /// Tickets are collected in the order they were submitted.
+    /// Tickets are collected in the order they were submitted. A frame of `submit_yuv` comes back
+    /// as its layout's packed planes.
     fn collect(&self, _ticket: u64, _out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         Err(GpuExecError::Unsupported("no pipelined readback"))
+    }
+    /// `readback_depth` of frames read back as an encoder's planes (export-host-copy D3): the ring
+    /// counts the layout's bytes. 0 — this executor has no conversion pass: read RGBA and convert by
+    /// the reference.
+    fn readback_depth_yuv(&self, _w: u32, _h: u32, _layout: &crate::yuv::YuvLayout) -> usize {
+        0
+    }
+    /// `submit` whose frame the device converts to `layout`'s planes after the composite, and
+    /// `collect` reads back as those planes (export-host-copy D3) — the reference's bytes exactly.
+    fn submit_yuv(&self, _plan: &FramePlan<'_>, _layout: &crate::yuv::YuvLayout) -> Result<u64, GpuExecError> {
+        Err(GpuExecError::Unsupported("no conversion pass"))
+    }
+    /// `execute_once` into `layout`'s packed planes: the device's pass where the executor has one,
+    /// else the CPU reference over its RGBA (`crate::yuv::convert`) — the same bytes either way.
+    fn execute_once_yuv(
+        &self,
+        plan: &FramePlan<'_>,
+        layout: &crate::yuv::YuvLayout,
+        out: &mut Vec<u8>,
+    ) -> Result<bool, GpuExecError> {
+        thread_local! {
+            static RGBA: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        RGBA.with(|b| {
+            let mut rgba = b.borrow_mut();
+            let complete = self.execute_once(plan, &mut rgba)?;
+            if rgba.len() < plan.out_w as usize * plan.out_h as usize * 4 {
+                out.clear();
+                return Ok(complete);
+            }
+            crate::yuv::convert(layout, &rgba, plan.out_w, plan.out_h, out);
+            Ok(complete)
+        })
     }
     /// What the last `execute_into` ran (morpher-event-grid-cost, D1): passes, sub-samples,
     /// snapshots and mixes of its op list; zero for a frame served from its readback memo.
