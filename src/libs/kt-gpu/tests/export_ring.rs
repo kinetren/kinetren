@@ -263,3 +263,217 @@ fn t2960_the_ring_holds_its_bytes_worth_of_frames() {
         assert!(out == want[i], "ring frame {i} of {hd} differs from execute_into");
     }
 }
+
+/// Test t3315 (export-host-copy D3): a frame read back as an encoder's planes counts the planes'
+/// bytes: at 4K the ring holds 256 MiB over 8-bit 4:2:0 (16, its top), over P010 (10) and over RGBA
+/// (8), and the word texture of an 8K 4:2:2 10-bit frame fits the device.
+#[test]
+fn t3315_the_ring_counts_the_layout_s_bytes() {
+    use kt_engine::yuv::{YuvLayout, YuvMatrix, YuvPix};
+    kt_plugins_builtin::install();
+    let Some(gpu) = kt_gpu::test_engine() else { return };
+    let l = |pix| YuvLayout { pix, matrix: YuvMatrix::Bt709, full: false };
+    let mib = 256u64 * 1024 * 1024;
+    let want = |bytes: u64| ((mib / bytes) as usize).clamp(3, 16);
+    let (w, h) = (3840u32, 2160u32);
+    assert_eq!(gpu.readback_depth(w, h), want(w as u64 * 4 * h as u64), "RGBA");
+    assert_eq!(gpu.readback_depth_yuv(w, h, &l(YuvPix::Yuv420p)), want(w as u64 * h as u64 * 3 / 2), "yuv420p");
+    assert_eq!(gpu.readback_depth_yuv(w, h, &l(YuvPix::P010)), want(w as u64 * h as u64 * 3), "p010le");
+    assert_eq!(
+        (gpu.readback_depth(w, h), gpu.readback_depth_yuv(w, h, &l(YuvPix::Yuv420p)), gpu.readback_depth_yuv(w, h, &l(YuvPix::P010))),
+        (8, 16, 10)
+    );
+    assert!(gpu.readback_depth_yuv(7680, 4320, &l(YuvPix::Yuv422p10)) > 0, "an 8K 4:2:2 10-bit frame's word texture fits");
+}
+
+/// What a planes sink saw: the frames' hashes, and how many came as RGBA to convert.
+struct PlanesConv {
+    layout: kt_engine::yuv::YuvLayout,
+    w: u32,
+    h: u32,
+    converted: Arc<std::sync::atomic::AtomicUsize>,
+    bad: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ExportConverter for PlanesConv {
+    type Frame = Vec<u8>;
+    fn convert(&mut self, rgba: &[u8], out: &mut Vec<u8>) -> std::io::Result<()> {
+        self.converted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        kt_engine::yuv::convert(&self.layout, rgba, self.w, self.h, out);
+        Ok(())
+    }
+    fn fill_planes(&mut self, planes: &[u8], out: &mut Vec<u8>) -> std::io::Result<()> {
+        if planes.len() != self.layout.frame_bytes(self.w, self.h) {
+            self.bad.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        out.clear();
+        out.extend_from_slice(planes);
+        Ok(())
+    }
+}
+struct PlanesSink {
+    layout: kt_engine::yuv::YuvLayout,
+    w: u32,
+    h: u32,
+    frames: Vec<u64>,
+    converted: Arc<std::sync::atomic::AtomicUsize>,
+    bad: Arc<std::sync::atomic::AtomicUsize>,
+}
+impl ExportSink for PlanesSink {
+    type Frame = Vec<u8>;
+    type Converter = PlanesConv;
+    fn converter(&self) -> std::io::Result<PlanesConv> {
+        Ok(PlanesConv { layout: self.layout, w: self.w, h: self.h, converted: self.converted.clone(), bad: self.bad.clone() })
+    }
+    fn alloc_frame(&self) -> std::io::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+    fn write_video(&mut self, f: &Vec<u8>) -> std::io::Result<()> {
+        self.frames.push(fnv(f));
+        Ok(())
+    }
+    fn write_audio(&mut self, _: &[f32]) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn yuv_layout(&self) -> Option<kt_engine::yuv::YuvLayout> {
+        Some(self.layout)
+    }
+}
+
+/// RGBA frames kept whole: the reference's input.
+#[derive(Default)]
+struct Rgba(Vec<Vec<u8>>);
+impl ExportSink for Rgba {
+    type Frame = Vec<u8>;
+    type Converter = CopyConv;
+    fn converter(&self) -> std::io::Result<CopyConv> {
+        Ok(CopyConv)
+    }
+    fn alloc_frame(&self) -> std::io::Result<Vec<u8>> {
+        Ok(Vec::new())
+    }
+    fn write_video(&mut self, f: &Vec<u8>) -> std::io::Result<()> {
+        self.0.push(f.clone());
+        Ok(())
+    }
+    fn write_audio(&mut self, _: &[f32]) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Test t3314 (export-host-copy D3): a sink that takes planes gets every frame as the layout's planes
+/// made on the composing device — the ring of one card-like device and the frame workers of several —
+/// never as RGBA to convert, each of the layout's bytes (1.5 a pixel for yuv420p, 3 for P010), and
+/// the frames are the CPU reference over the RGBA export's frames; two runs write the same frames.
+#[test]
+fn t3314_the_export_reads_back_planes_and_stays_reproducible() {
+    use kt_engine::yuv::{YuvLayout, YuvMatrix, YuvPix};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    kt_plugins_builtin::install();
+    let Some(one) = kt_gpu::test_engine() else { return };
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let q = Quality { width: 320, height: 180 };
+    let range = (Tick(90_000 * 3), Tick(90_000 * 4));
+    let never = Arc::new(AtomicBool::new(false));
+    let single = ExportBackends { video_gpu: Some(one as Arc<dyn VideoGpuExec>), ..Default::default() };
+    let mut rgba = Rgba::default();
+    render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &single, &never, None, &mut rgba).unwrap();
+    assert!(rgba.0.len() >= 30);
+    for pix in [YuvPix::Yuv420p, YuvPix::P010] {
+        let layout = YuvLayout { pix, matrix: YuvMatrix::Bt709, full: false };
+        let want: Vec<u64> = rgba
+            .0
+            .iter()
+            .map(|f| {
+                let mut out = Vec::new();
+                kt_engine::yuv::convert(&layout, f, q.width, q.height, &mut out);
+                fnv(&out)
+            })
+            .collect();
+        let several = || {
+            let more: Vec<Arc<dyn VideoGpuExec>> =
+                (0..2).map(|_| kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>).collect();
+            ExportBackends {
+                video_gpu: Some(kt_gpu::test_engine().unwrap() as Arc<dyn VideoGpuExec>),
+                video_gpu_more: more,
+                devices: kt_engine::export::DeviceCount::Script(vec![3]),
+            }
+        };
+        for (what, backends) in [("one device", single.clone()), ("one device again", single.clone()), ("three devices", several())] {
+            let mut sink = PlanesSink {
+                layout,
+                w: q.width,
+                h: q.height,
+                frames: Vec::new(),
+                converted: Arc::new(AtomicUsize::new(0)),
+                bad: Arc::new(AtomicUsize::new(0)),
+            };
+            render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &backends, &never, None, &mut sink).unwrap();
+            assert_eq!(sink.converted.load(Ordering::Relaxed), 0, "{pix:?} {what}: a frame came as RGBA to convert");
+            assert_eq!(sink.bad.load(Ordering::Relaxed), 0, "{pix:?} {what}: planes of another size");
+            assert!(sink.frames == want, "{pix:?} {what}: the planes are the reference over the RGBA export's frames");
+        }
+    }
+}
+
+/// A device that reads back RGBA only: the path without a conversion pass (a GL bytes path, a test
+/// executor) — the trait's default planes, the reference over its RGBA.
+struct RgbaOnly(Arc<kt_gpu::GpuFxEngine>);
+impl VideoGpuExec for RgbaOnly {
+    fn execute_into(&self, plan: &kt_engine::FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        self.0.execute_into(plan, out)
+    }
+    fn execute_once(&self, plan: &kt_engine::FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        self.0.execute_once(plan, out)
+    }
+    fn info(&self) -> &kt_engine::GpuBackendInfo {
+        self.0.info()
+    }
+    fn readback_depth(&self, w: u32, h: u32) -> usize {
+        self.0.readback_depth(w, h)
+    }
+    fn done(&self, ticket: u64) -> bool {
+        self.0.done(ticket)
+    }
+    fn submit(&self, plan: &kt_engine::FramePlan<'_>) -> Result<u64, kt_engine::GpuExecError> {
+        self.0.submit(plan)
+    }
+    fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+        self.0.collect(ticket, out)
+    }
+}
+
+/// Test t3318 (export-host-copy D3): a device with no conversion pass reads back RGBA and the frame
+/// worker converts it by the reference; its export's frames equal those of the device that converts
+/// in its pass, layout by layout — the same bytes whichever path a machine takes.
+#[test]
+fn t3318_a_path_without_the_pass_writes_the_same_bytes() {
+    use kt_engine::yuv::{YuvLayout, YuvMatrix, YuvPix};
+    use std::sync::atomic::AtomicUsize;
+    kt_plugins_builtin::install();
+    let Some(one) = kt_gpu::test_engine() else { return };
+    let p = kt_model::demo::demo_project(kt_model::demo::DemoSources::Synth);
+    let q = Quality { width: 320, height: 180 };
+    let range = (Tick(90_000 * 3), Tick(90_000 * 4));
+    let never = Arc::new(AtomicBool::new(false));
+    for pix in [YuvPix::Nv12, YuvPix::Yuv422p10] {
+        let layout = YuvLayout { pix, matrix: YuvMatrix::Bt601, full: true };
+        let run = |gpu: Arc<dyn VideoGpuExec>| {
+            let mut sink = PlanesSink {
+                layout,
+                w: q.width,
+                h: q.height,
+                frames: Vec::new(),
+                converted: Arc::new(AtomicUsize::new(0)),
+                bad: Arc::new(AtomicUsize::new(0)),
+            };
+            let b = ExportBackends { video_gpu: Some(gpu), ..Default::default() };
+            render_pipelined(&p, sources(&p), sources(&p), q, Some(range), &b, &never, None, &mut sink).unwrap();
+            (sink.frames, sink.converted.load(std::sync::atomic::Ordering::Relaxed))
+        };
+        let (pass, converted_pass) = run(one.clone() as Arc<dyn VideoGpuExec>);
+        let (reference, converted_ref) = run(Arc::new(RgbaOnly(one.clone())) as Arc<dyn VideoGpuExec>);
+        assert_eq!(converted_pass, 0, "{pix:?}: the device converted every frame");
+        assert!(converted_ref > 0, "{pix:?}: without the pass the workers convert");
+        assert!(pass.len() >= 30 && pass == reference, "{pix:?}: the two paths wrote different frames");
+    }
+}

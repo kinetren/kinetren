@@ -18,13 +18,13 @@
 
 ## 2. The exact conversion on the device
 
-- [ ] 2.1 kt-gpu `yuv.rs`: the Q15 reference for the five layouts, left siting; t3312
-- [ ] 2.2 the WGSL pass (integer only) and layout-sized ring slots; `ring_depth` by layout bytes; t3313, t3315
-- [ ] 2.3 `VideoGpuExec`: readback with `OutLayout` (submit/collect and `execute_into`); kt-engine
+- [x] 2.1 kt-gpu `yuv.rs`: the Q15 reference for the five layouts, left siting; t3312
+- [x] 2.2 the WGSL pass (integer only) and layout-sized ring slots; `ring_depth` by layout bytes; t3313, t3315
+- [x] 2.3 `VideoGpuExec`: readback with `OutLayout` (submit/collect and `execute_into`); kt-engine
       pipelined and serial exports carry planes; frame workers copy planes into the `AVFrame`; t3314, t3318
-- [ ] 2.4 kt-ffmpeg: `VideoConverter` → the reference (planes in, `AVFrame` out); the `chroma_location`
+- [x] 2.4 kt-ffmpeg: `VideoConverter` → the reference (planes in, `AVFrame` out); the `chroma_location`
       tag; t3319; t2806 and t2805 still green
-- [ ] 2.5 `cargo test` kt-gpu, kt-engine, kt-ffmpeg; clippy; target-prune; commit
+- [x] 2.5 `cargo test` kt-gpu, kt-engine, kt-ffmpeg; clippy; target-prune; commit
 
 ## 3. The prerender
 

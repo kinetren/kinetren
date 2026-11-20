@@ -295,19 +295,78 @@ pub trait ExportSink {
     fn surface_upload_ns(&self) -> u64 {
         0
     }
+    /// The planes the encoder takes (export-host-copy D3): the device converts a frame to them and
+    /// the worker only copies them. `None` — the frames stay RGBA.
+    fn yuv_layout(&self) -> Option<crate::yuv::YuvLayout> {
+        None
+    }
 }
 
 /// RGBA → the sink's frame format, one per worker thread.
 pub trait ExportConverter: Send {
     type Frame;
     fn convert(&mut self, rgba: &[u8], out: &mut Self::Frame) -> std::io::Result<()>;
+    /// The sink's `yuv_layout` planes, packed, into its frame: a copy.
+    fn fill_planes(&mut self, _planes: &[u8], _out: &mut Self::Frame) -> std::io::Result<()> {
+        Err(std::io::Error::other("this sink takes RGBA"))
+    }
+}
+
+/// The muxer's frames by the exact conversion (export-host-copy D2): RGBA through the reference,
+/// planes copied as they came from the device. swscale no longer converts an export.
+pub struct MuxConverter {
+    layout: crate::yuv::YuvLayout,
+    w: u32,
+    h: u32,
+    planes: Vec<u8>,
+}
+
+impl ExportConverter for MuxConverter {
+    type Frame = kt_media::muxer::VideoFrame;
+    fn convert(&mut self, rgba: &[u8], out: &mut Self::Frame) -> std::io::Result<()> {
+        crate::yuv::convert(&self.layout, rgba, self.w, self.h, &mut self.planes);
+        out.fill_packed(&self.planes).map_err(std::io::Error::other)
+    }
+    fn fill_planes(&mut self, planes: &[u8], out: &mut Self::Frame) -> std::io::Result<()> {
+        out.fill_packed(planes).map_err(std::io::Error::other)
+    }
+}
+
+/// The exact layout of what a muxer's encoder takes.
+pub fn mux_layout(m: &kt_media::muxer::Muxer) -> crate::yuv::YuvLayout {
+    use crate::yuv::{YuvLayout, YuvMatrix, YuvPix};
+    use kt_media::muxer::PixFmt;
+    let (pix, matrix, range) = m.input_layout();
+    YuvLayout {
+        pix: match pix {
+            PixFmt::Yuv420p => YuvPix::Yuv420p,
+            PixFmt::Nv12 => YuvPix::Nv12,
+            PixFmt::Yuv420p10 => YuvPix::Yuv420p10,
+            PixFmt::P010 => YuvPix::P010,
+            PixFmt::Yuv422p10 => YuvPix::Yuv422p10,
+        },
+        matrix: match matrix {
+            kt_media::muxer::format::Matrix::Bt601 => YuvMatrix::Bt601,
+            kt_media::muxer::format::Matrix::Bt709 => YuvMatrix::Bt709,
+        },
+        full: range == kt_media::muxer::format::Range::Full,
+    }
+}
+
+/// A muxer's converter: the exact conversion of its layout.
+pub fn mux_converter(m: &kt_media::muxer::Muxer, w: u32, h: u32) -> MuxConverter {
+    MuxConverter { layout: mux_layout(m), w, h, planes: Vec::new() }
 }
 
 impl ExportSink for kt_media::muxer::Muxer {
     type Frame = kt_media::muxer::VideoFrame;
-    type Converter = kt_media::muxer::VideoConverter;
+    type Converter = MuxConverter;
     fn converter(&self) -> std::io::Result<Self::Converter> {
-        self.video_converter().map_err(std::io::Error::other)
+        let (w, h) = self.video_size();
+        Ok(mux_converter(self, w, h))
+    }
+    fn yuv_layout(&self) -> Option<crate::yuv::YuvLayout> {
+        Some(mux_layout(self))
     }
     fn alloc_frame(&self) -> std::io::Result<Self::Frame> {
         self.alloc_video_frame().map_err(std::io::Error::other)
@@ -573,7 +632,8 @@ enum Job<'a> {
     /// A frame whose plan the compose thread built: a project with a stream stage, whose history
     /// advances in frame order (stream-round-trips D6, found-defects 490).
     Planned { t: Tick, plan: crate::video_plan::FramePlan<'a> },
-    Convert { t: Tick, rgba: Vec<u8>, complete: bool },
+    /// The device's readback: RGBA, or the encoder's packed planes (export-host-copy D3).
+    Convert { t: Tick, rgba: Vec<u8>, planes: bool, complete: bool },
 }
 
 struct Done<F> {
@@ -700,6 +760,8 @@ pub(crate) fn run<S: ExportSink>(
         let mut done_rxs = Vec::new();
         let mut back_txs = Vec::new();
         let mut worker_parts = Vec::new();
+        // the planes the encoder takes, made on the composing device (export-host-copy D3)
+        let layout = sink.yuv_layout();
         for _ in 0..workers {
             let (jt, jr) = bounded::<Job<'_>>(1);
             let (dt, dr) = bounded::<Done<S::Frame>>(2);
@@ -798,7 +860,7 @@ pub(crate) fn run<S: ExportSink>(
                     let idle = Instant::now();
                     let Ok(job) = jr.recv() else { break };
                     ExportProfile::add(prof.map(|p| &p.wait_workers_ns), idle);
-                    let (t, rgba, complete) = match job {
+                    let (t, rgba, planes, complete) = match job {
                         Job::Compose { t } | Job::Planned { t, .. } => {
                             let mut buf = pool_rx.try_recv().unwrap_or_default();
                             let mark = Instant::now();
@@ -808,9 +870,13 @@ pub(crate) fn run<S: ExportSink>(
                                 _ => video_ref.frame_plan(cache_ref, t, quality),
                             };
                             ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
-                            let mut complete = e
-                                .execute_once(&plan, &mut buf)
-                                .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                            // the encoder's planes made on this worker's device (export-host-copy D3)
+                            let once = |plan: &crate::video_plan::FramePlan<'_>, buf: &mut Vec<u8>| match &layout {
+                                Some(l) => e.execute_once_yuv(plan, l, buf),
+                                None => e.execute_once(plan, buf),
+                            };
+                            let mut complete =
+                                once(&plan, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                             // the chunk holds every frame it could decode (each asked alone again):
                             // an incomplete frame is composed again before it is written (gpu-leftovers D5)
                             for _ in 0..crate::export::RETRIES {
@@ -818,9 +884,8 @@ pub(crate) fn run<S: ExportSink>(
                                     break;
                                 }
                                 let plan = video_ref.frame_plan(cache_ref, t, quality);
-                                complete = e
-                                    .execute_once(&plan, &mut buf)
-                                    .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                                complete =
+                                    once(&plan, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                             }
                             ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                             if let Some(p) = prof {
@@ -830,15 +895,19 @@ pub(crate) fn run<S: ExportSink>(
                                 p.gpu_wait_ns.fetch_add(s.wait_ns, Ordering::Relaxed);
                                 p.copy_ns.fetch_add(s.copy_ns, Ordering::Relaxed);
                             }
-                            (t, buf, complete)
+                            (t, buf, layout.is_some(), complete)
                         }
-                        Job::Convert { t, rgba, complete } => (t, rgba, complete),
+                        Job::Convert { t, rgba, planes, complete } => (t, rgba, planes, complete),
                     };
                     // asked here: the chunk still holds what it has, so what is absent never came
                     let lost = (!complete).then(|| (t, video_ref.absent_layers(cache_ref, t, quality)));
                     let Ok(mut frame) = br.recv() else { break };
                     let mark = Instant::now();
-                    conv.convert(&rgba, &mut frame)?;
+                    if planes && !rgba.is_empty() {
+                        conv.fill_planes(&rgba, &mut frame)?;
+                    } else {
+                        conv.convert(&rgba, &mut frame)?;
+                    }
                     ExportProfile::add(prof.map(|p| &p.convert_ns), mark);
                     let _ = pool_tx.send(rgba);
                     if dt.send(Done { frame, lost }).is_err() {
@@ -869,6 +938,15 @@ pub(crate) fn run<S: ExportSink>(
                 let w = dispatch.borrow_mut().pick(prof);
                 order_tx.send(w).is_ok() && job_txs[w].send(job).is_ok()
             };
+            // the frames in flight come back as the encoder's planes when the device converts
+            // (export-host-copy D3); `planes` is fixed for the export by the first frame's size
+            let ring_planes = std::cell::Cell::new(false);
+            let once = |gpu: &Arc<dyn crate::VideoGpuExec>, plan: &crate::video_plan::FramePlan<'_>, buf: &mut Vec<u8>, planes: bool| {
+                match (&layout, planes) {
+                    (Some(l), true) => gpu.execute_once_yuv(plan, l, buf),
+                    _ => gpu.execute_once(plan, buf),
+                }
+            };
             let collect = |gpu: &Arc<dyn crate::VideoGpuExec>, i: u64, ticket: u64, at: Instant| -> std::io::Result<bool> {
                 let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
                 let mark = Instant::now();
@@ -891,11 +969,11 @@ pub(crate) fn run<S: ExportSink>(
                         break;
                     }
                     let plan = video_ref.frame_plan(cache_ref, frame_tick(i), quality);
-                    complete =
-                        gpu.execute_once(&plan, &mut buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                    complete = once(gpu, &plan, &mut buf, ring_planes.get())
+                        .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                 }
                 ExportProfile::add(prof.map(|p| &p.readback_ns), mark);
-                Ok(send(i, Job::Convert { t: frame_tick(i), rgba: buf, complete }))
+                Ok(send(i, Job::Convert { t: frame_tick(i), rgba: buf, planes: ring_planes.get(), complete }))
             };
             loop {
                 // a submitted frame stays in flight across chunks while the next chunk is ready;
@@ -943,30 +1021,45 @@ pub(crate) fn run<S: ExportSink>(
                     };
                     let mark = Instant::now();
                     let plan = video_ref.frame_plan(cache_ref, t, quality);
-                    // the ring's bound for this size (export-readback D1); 0 — no ring
-                    let depth = gpu.readback_depth(plan.out_w, plan.out_h);
+                    // the ring's bound for this size (export-readback D1), by the planes' bytes when the
+                    // device converts (export-host-copy D3); 0 — no ring
+                    let yuv_depth = layout.as_ref().map_or(0, |l| gpu.readback_depth_yuv(plan.out_w, plan.out_h, l));
+                    let (depth, planes) =
+                        if yuv_depth > 0 { (yuv_depth, true) } else { (gpu.readback_depth(plan.out_w, plan.out_h), false) };
                     if depth == 0 {
                         let mut buf = rgba_pool_rx.try_recv().unwrap_or_default();
-                        let mut complete = gpu
-                            .execute_once(&plan, &mut buf)
-                            .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                        let planes = layout.is_some();
+                        let mut complete =
+                            once(gpu, &plan, &mut buf, planes).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                         for _ in 0..crate::export::RETRIES {
                             if complete {
                                 break;
                             }
                             let plan = video_ref.frame_plan(cache_ref, t, quality);
-                            complete = gpu
-                                .execute_once(&plan, &mut buf)
+                            complete = once(gpu, &plan, &mut buf, planes)
                                 .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                         }
                         ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
-                        if !send(i, Job::Convert { t, rgba: buf, complete }) {
+                        if !send(i, Job::Convert { t, rgba: buf, planes, complete }) {
                             return Ok(());
                         }
                         continue;
                     }
                     ExportProfile::add(prof.map(|p| &p.plan_ns), mark);
-                    let ticket = gpu.submit(&plan).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                    // a frame in flight comes back in the form it was submitted in
+                    if planes != ring_planes.get() {
+                        while let Some((j, tk, at)) = pending.pop_front() {
+                            if !collect(gpu, j, tk, at)? {
+                                return Ok(());
+                            }
+                        }
+                        ring_planes.set(planes);
+                    }
+                    let ticket = match (&layout, planes) {
+                        (Some(l), true) => gpu.submit_yuv(&plan, l),
+                        _ => gpu.submit(&plan),
+                    }
+                    .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
                     ExportProfile::add(prof.map(|p| &p.compose_ns), mark);
                     if let Some(p) = prof {
                         let s = gpu.last_stages();

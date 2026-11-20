@@ -384,3 +384,46 @@ fn t2806_the_colour_tags_are_the_conversion() {
         assert!(d(*b, [230, 20, 20]) <= 6, "file {i} comes back as written: {b:?}");
     }
 }
+
+/// t3319 (export-host-copy D2): a file written through the export's exact conversion (BT.709
+/// limited, yuv420p) states its matrix, its range and the LEFT chroma location the conversion sited
+/// its chroma at, and a saturated red comes back within 6 codes through the decode that reads the tags.
+#[test]
+fn t3319_the_file_says_where_its_chroma_sits() {
+    use kt_engine::export::ExportConverter;
+    if !has_encoder("libx264") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("left.mp4").to_string_lossy().into_owned();
+    let mut mux = kt_media::muxer::Muxer::open(&kt_media::muxer::MuxConfig {
+        path: path.clone(),
+        width: 64,
+        height: 64,
+        fps: 30,
+        quality: 0,
+        video_bitrate: None,
+        audio_bitrate: 128_000,
+        force_encoder: Some("libx264".into()),
+        threads: 1,
+        format: OutputFormat { matrix: Matrix::Bt709, range: Range::Limited, ..Default::default() },
+    })
+    .unwrap();
+    let red: Vec<u8> = [230u8, 20, 20, 255].repeat(64 * 64);
+    let mut conv = kt_engine::export::mux_converter(&mux, 64, 64);
+    let mut frame = mux.alloc_video_frame().unwrap();
+    for _ in 0..3 {
+        conv.convert(&red, &mut frame).unwrap();
+        mux.write_video_frame(&frame).unwrap();
+    }
+    mux.finish().unwrap();
+    let f = probe_output(&path).unwrap();
+    assert_eq!((f.color.0, f.color.1), (1, 1), "BT.709, limited");
+    assert_eq!(f.chroma_location, 1, "the chroma sited left (AVCHROMA_LOC_LEFT)");
+    let mut src = kt_media::ffmpeg::FfmpegSource::open(&path).unwrap();
+    let fr = src.read_video_frame(Tick(0), Some(Quality { width: 64, height: 64 })).unwrap();
+    let c = 32 * 64 * 4 + 32 * 4;
+    let back = [fr.rgba[c] as i32, fr.rgba[c + 1] as i32, fr.rgba[c + 2] as i32];
+    let d = (0..3).map(|k| (back[k] - [230, 20, 20][k]).abs()).max().unwrap();
+    assert!(d <= 6, "the red comes back as written: {back:?}");
+}

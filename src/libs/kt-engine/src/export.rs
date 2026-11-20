@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-pub use crate::export_pipeline::{ExportConverter, ExportProfile, ExportSink};
+pub use crate::export_pipeline::{ExportConverter, ExportProfile, ExportSink, MuxConverter, mux_converter, mux_layout};
 
 /// Export progress (ETA/speed is computed by the UI — wall-clock is not ours, inv. 10).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -239,13 +239,14 @@ pub fn render_raw_video_range_with(
     progress: impl FnMut(u64),
     emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
-    render_raw_video_profiled(project, sources, quality, range, backends, cancel, None, &|_, _| {}, progress, emit)
+    render_raw_video_planes(project, sources, quality, range, backends, cancel, None, None, &|_, _| {}, progress, emit)
 }
 
 /// The serial video pass with its stage times (export-throughput D6): `profile` only receives
-/// clock readings, the render does not see them.
+/// clock readings, the render does not see them. Each frame's RGBA, or with `layout` the encoder's
+/// packed planes made on the composing device (export-host-copy D3), to `emit`.
 #[allow(clippy::too_many_arguments)]
-fn render_raw_video_profiled(
+fn render_raw_video_planes(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     quality: Quality,
@@ -253,6 +254,7 @@ fn render_raw_video_profiled(
     backends: &ExportBackends,
     cancel: &Arc<AtomicBool>,
     profile: Option<&ExportProfile>,
+    layout: Option<crate::yuv::YuvLayout>,
     incomplete: &(dyn Fn(Tick, &[MediaId]) + Sync),
     mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
@@ -337,9 +339,11 @@ fn render_raw_video_profiled(
             span.aux(kt_time::trace::job::EXPORT_FRAME).a(t.0 as u64);
             let plan = video.frame_plan(&cache, t, quality);
             // composed once, no memo, its runs in the settled form (gpu-leftovers D3)
-            let mut complete = gpu
-                .execute_once(&plan, &mut frame_buf)
-                .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+            let once = |plan: &crate::video_plan::FramePlan<'_>, buf: &mut Vec<u8>| match &layout {
+                Some(l) => gpu.execute_once_yuv(plan, l, buf),
+                None => gpu.execute_once(plan, buf),
+            };
+            let mut complete = once(&plan, &mut frame_buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
             // an incomplete frame is not written as it came (gpu-leftovers D5, found-defects 522): what
             // it lacks is decoded alone and the frame composed again; only what the input cannot give
             // twice in a row is written without its layer and named below
@@ -356,9 +360,7 @@ fn render_raw_video_profiled(
                     }
                 }
                 let plan = video.frame_plan(&cache, t, quality);
-                complete = gpu
-                    .execute_once(&plan, &mut frame_buf)
-                    .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
+                complete = once(&plan, &mut frame_buf).map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?;
             }
             ExportProfile::add(profile.map(|p| &p.compose_ns), mark);
             if !complete {
@@ -792,9 +794,10 @@ pub fn export_mp4_with_backends(
         let vstats = {
             let v_done = v_done.clone();
             let report = report.clone();
-            let mut conv = muxer.video_converter().map_err(|e| cleanup_on_err(ExportError::Io(std::io::Error::other(e))))?;
+            // the encoder's planes from the composing device, copied into the frame (export-host-copy D3)
+            let layout = crate::export_pipeline::mux_layout(&muxer);
             let mut vf = muxer.alloc_video_frame().map_err(|e| cleanup_on_err(ExportError::Io(std::io::Error::other(e))))?;
-            render_raw_video_profiled(
+            render_raw_video_planes(
                 project,
                 video_sources,
                 quality,
@@ -802,6 +805,7 @@ pub fn export_mp4_with_backends(
                 backends,
                 cancel,
                 profile,
+                Some(layout),
                 &incomplete,
                 |done| {
                     wait_paused();
@@ -810,9 +814,9 @@ pub fn export_mp4_with_backends(
                         report(ExportPhase::Video);
                     }
                 },
-                |rgba| {
+                |planes| {
                     let mark = Instant::now();
-                    conv.convert(rgba, &mut vf).map_err(std::io::Error::other)?;
+                    vf.fill_packed(planes).map_err(std::io::Error::other)?;
                     ExportProfile::add(profile.map(|p| &p.convert_ns), mark);
                     let mark = Instant::now();
                     let up = muxer.surface_upload_ns();
