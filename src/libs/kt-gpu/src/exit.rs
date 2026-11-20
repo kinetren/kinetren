@@ -24,7 +24,22 @@ unsafe extern "C" {
 pub const EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 extern "C" fn at_exit() {
-    EXITING.store(true, Ordering::Release);
+    wait_background();
+}
+
+/// A device opened: the process ends before its driver's destructors (`kt_time::shutdown::
+/// end_before_libraries`), and the background work in flight is waited for first, whichever of the
+/// two ends the process.
+pub(crate) fn device_opened() {
+    kt_time::shutdown::before_exit(wait_background);
+    kt_time::shutdown::end_before_libraries();
+}
+
+/// Stop new background work and wait for the work in flight, at most `EXIT_WAIT`; once.
+fn wait_background() {
+    if EXITING.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let since = std::time::Instant::now();
     let mut n = BUSY.lock().unwrap_or_else(|e| e.into_inner());
     while *n > 0 {

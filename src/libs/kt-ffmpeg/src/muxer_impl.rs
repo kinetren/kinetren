@@ -188,6 +188,7 @@ fn open_vaapi_device(hw: &HwApi) -> Result<(*mut ffi::AVBufferRef, String), Stri
             (hw.av_hwdevice_ctx_create)(&mut dev, ffi::AV_HWDEVICE_TYPE_VAAPI, c.as_ptr(), core::ptr::null_mut(), 0)
         };
         if r >= 0 && !dev.is_null() {
+            crate::hw_device_opened();
             return Ok((dev, path));
         }
         why.push(format!("{path}: code {r}"));
@@ -234,6 +235,7 @@ pub fn hw_open_device(api: &'static Api, node: &str) -> Result<String, String> {
     };
     unsafe { (api.av_log_set_level)(16) };
     if r >= 0 && !dev.is_null() {
+        crate::hw_device_opened();
         let vendor = vaapi_vendor(dev);
         unsafe { (hw.av_buffer_unref)(&mut dev) };
         Ok(vendor)

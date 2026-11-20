@@ -395,6 +395,8 @@ pub fn rescan_with(env: &dyn search::Env) -> Result<BackendInfo, String> {
             }
         };
         let _ = LOADED.set((backend, info.clone()));
+        // FFmpeg and what it loads are behind the process's end (found-defects 784/785)
+        kt_time::shutdown::end_before_libraries();
         Ok(info)
     });
     let mut st = state();
@@ -508,6 +510,13 @@ pub(crate) fn vaapi_device_dir_hint() -> String {
         .dri_dir
         .or_else(|| std::env::var("KT_DRI_DIR").ok().filter(|d| !d.is_empty()))
         .unwrap_or_else(|| "/dev/dri".into())
+}
+
+/// A hardware device opened: its driver (a libva driver, loaded by the first one) is behind the
+/// process's end, once (found-defects 784/785).
+pub(crate) fn hw_device_opened() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(kt_time::shutdown::end_before_libraries);
 }
 
 /// What decodes a source's pictures (hw-segment-decode).

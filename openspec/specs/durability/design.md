@@ -322,3 +322,36 @@ device of its own and shows its bytes; our calls into a GL device queue at its g
 six-second panic hits any waiter); who holds a device is recorded (`kt_gpu::holds`) and listed in a
 panic report. Reasons, the walk of every path into the window's device and what was rejected:
 `openspec/changes/archive/2026-11-16-gl-context-holder/design.md`.
+
+## The process ends before the native libraries' destructors (found-defects 784/785)
+
+Mechanism. A kt-app test process died after its test passed — "double free or corruption" (SIGABRT)
+or SIGSEGV, always in a whole-run under load, never alone (rows 695, 784, 785; row 172 before them).
+`exit` runs the hooks registered before it, newest first, and among them are the destructors of the
+native libraries the process loaded: libLLVM under llvmpipe (every wgpu device on a machine without a
+card, the test machines included), a GPU driver's C++ statics, a libva driver. The threads a bounded
+close leaves behind (`kt_time::shutdown` gives up after 2 s and names them: a player's compose or
+prefetch pass, a reel strip or poster job on a scheduler lane, the render-ahead producer, the export's
+workers) still draw, compile or decode inside those libraries then; a destructor frees what they use.
+kt-gpu's `exit` hook (row 172) waited only for the work marked `Busy` — warm-ups and compiles — and
+llvmpipe runs submitted work on its own threads after `submit` returns, so no guard could cover a draw.
+No report of the crash itself exists: the native-crash handler went into the test processes after the
+last one (row 784), and 100+ runs under gdb did not die; the mechanism is the one rows 172 and the
+editor's own forced exit (`exit_watch`) already named.
+
+Decision. `kt_time::shutdown::end_before_libraries` registers (glibc `on_exit`) an end that runs the
+program's own last steps (`before_exit`: the GPU's background work waited for and the pass timings
+written, then the trace and C's stdio flushed) and `_exit`s with the status `exit` was given. It is
+registered after each native library loads, so it stands before that library's destructors: nothing a
+library frees at exit is the program's, and the memory goes with the process. Rejected: waiting for
+every thread at exit (the close is bounded on purpose, a hung driver must not keep the process); a
+`Busy` guard on every submit (llvmpipe works after `submit`; a poll at exit would race new submits).
+On Windows nothing changes (no `on_exit`; llvmpipe/libLLVM is the Linux case).
+
+Class walk — every place that loads a native library with destructors, and its registration:
+wgpu devices — display, headless, export, compute, D3D12 (`kt_gpu::errors::watch`, which every
+device passes, kt-app's display included); FFmpeg's libraries (`kt_ffmpeg` after the load); libva
+drivers (`hw_device_opened`: the encoder's device, the segment decoder's, the report's); the sound
+server's client (cpal → ALSA → PipeWire: kt-app `audio_out` at the first open); eframe's windowing
+libraries (loaded before the display device, which registers after them). Not native or without
+destructors: SQLite (bundled, static), the fonts, our own Rust (statics are never dropped).
