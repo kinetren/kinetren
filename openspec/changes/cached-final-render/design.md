@@ -26,7 +26,8 @@ Goals: a second render of a project after a small fix costs only the GOPs the fi
 window shows what is cached; nothing reused can be stale; a render without the option is unchanged.
 
 Non-goals: copying the SOURCE's packets (F-EXP-003's first mechanism, its own verdict); reuse across
-program builds or devices; reuse of the preview's tier (Q1).
+program builds or devices; reuse of the preview's tier by a final render (the draft render, D7, is its
+own mode).
 
 ## D1. The unit of reuse is a closed GOP of an earlier export
 
@@ -84,17 +85,34 @@ that some decoders refuse; the owner's X1 itself says "управление би
 - Audio is always rendered and encoded (cheap; its encoder priming and frame grid make packet copies
   fragile); invariant 1 unchanged.
 
-## D5. The index and where renders are found
+## D5. The index inside the video (the owner's Q3 b)
 
-Per Q3. Recommended form: `<output>.kt-render` beside the file — text, as the prerender's manifests:
-the fingerprint, then one line per GOP (`gop <first frame> <frames> <byte offset> <packets>`), then one
-key per frame (16 hex digits, the documented layout). The project keeps nothing; the data folder keeps a
-list of the project's earlier renders (path, size, mtime, xxh3 of the index), checked before use: a
-moved or edited output is not a candidate until found again (the render window offers "Look in folder…").
-A file whose index or fingerprint does not verify is skipped with its reason.
+**The form.** The index is one user-data-unregistered SEI (H.264 payload type 5, HEVC prefix SEI type 5)
+per GOP. It carries our UUID and a version, then:
+- in every GOP: the GOP's first frame number, its frame count, the durable key of each frame (16 bytes
+  each, the documented layout), and the xxh3-64 of the GOP's other NAL units (the SEI itself excluded),
+  so a damaged or edited GOP does not verify;
+- in the first GOP also the fingerprint (D3) and the program build.
 
-SEI (Q3 b): one user-data-unregistered SEI per GOP with a UUID of ours, carrying the GOP's keys; the
-render window's tool strips it by re-muxing with the `filter_units` bitstream filter.
+The SEI is written into the access unit of the GOP's IDR, after the parameter sets. Per GOP of 2 s at 25
+fps it is about 0.8 KB, under 0.05 % of a typical file. The keys are hashes: they show that two frames
+are the same picture, not what the picture is.
+
+**Where it can live.** Cached renders are offered for H.264 and HEVC, the codecs that carry SEI (MKV and
+MP4 alike). For ProRes, VP9 and AV1 the window's step says "the cached render needs H.264 or HEVC".
+AV1's metadata OBU could carry it later.
+
+**Finding earlier renders.** The project's cache folder keeps `renders.tsv` (change
+`project-cache-folder`): each finished cached render's path, size, modification time and fingerprint. A
+candidate is read by demuxing only, with no decode: its SEIs give the GOP table and keys. The table read
+is kept in the cache folder, keyed by the file's identity, so a second lookup reads nothing. A moved
+output is not a candidate until found again (the render window offers "Look in folder…", which reads
+the SEIs of the files there). A GOP whose hash does not verify is skipped with its reason.
+
+**Stripping it.** The render window's "Remove the render index" makes a copy of a file without our SEIs,
+re-muxed with the `filter_units` bitstream filter (`remove_types` for our SEI only, by UUID through a
+packet-level filter of ours where `filter_units` cannot match a UUID). No re-encode is done, and the
+pictures are byte-identical. A stripped file is no longer a candidate.
 
 ## D6. The render window
 
@@ -104,13 +122,29 @@ language of the timeline, invariant 4's honesty: a GOP shown cached IS copied). 
 copied GOPs at the copy's speed. The finished render's summary says "copied N of M seconds from F
 files". UI rules (`src/apps/kt-app/CLAUDE.md`) and a `- **PATH**` line apply to its scenarios when built.
 
-## D7. Found-defects 773: the preview's tier stays out of the export
+## D7. The draft render, and why the final render never reads the prerender (found-defects 773)
 
-The tier holds the preview's size and quality, lossy, possibly in a run form the export does not use. A
-final render made of those frames would be worse than its own and not byte-stable (the preview's kept
-set changes run to run). The cached render reuses only exports' own GOPs — composed in the settled form
-at the export's size by the export's path — so reuse never puts a preview-only frame into a render.
-Q1 b (a draft render) is the only way the tier would reach a file; recommended against.
+**The final render** (cached or not) never reads the preview's prerender. The tier holds the preview's
+size and quality, lossy, possibly in a run form the export does not use. A final render made of those
+frames would be worse than its own and not byte-stable, since the preview's kept set changes run to run.
+The cached render reuses only exports' own GOPs, composed in the settled form at the export's size.
+
+**The draft render** (the owner's Q1 b) is a separate option in the render window, "Draft (from the
+preview's prerender)":
+- a moment the prerender holds for the current state is decoded from its segment and scaled to the
+  draft's size;
+- every other moment is composed at the preview's quality, with the export's path otherwise;
+- the size defaults to the preview's size; the person may pick the project's size, and the window warns
+  that frames are upscaled;
+- the file is tagged as a draft (container title "Draft — Kinetren", a `kinetren_draft=1` metadata key);
+- the summary says how many seconds came from the prerender;
+- it writes no render index (its frames are not an export's) and is never a candidate for a cached
+  render;
+- its bytes are not stable run to run, and the window says so;
+- the audio is rendered as for any export.
+
+**Why it pays:** a heavy loop the preview already prerendered goes into a look-at file at the decoder's
+speed instead of the composite's.
 
 ## D8. Invariant 11 for a cached render
 
@@ -125,7 +159,8 @@ keeps t2805/t11. Q2 is the owner's amendment of invariant 11 for this mode.
 | Place | Relation |
 |---|---|
 | `render_cache::durable_hash`, `Leaves` | the shared key; its layout becomes a contract (video-plan delta); a new plan field hashed by `plan_hash` must reach it (render-cache-disk's rule) |
-| Prerender manifests `<id>.idx` | same key form; not a reuse source for exports (D7) |
+| Prerender manifests `<id>.idx` | same key form; never a source for a final render; the draft render's source (D7) |
+| The project's cache folder | `renders.tsv` and the read GOP tables of candidates (`project-cache-folder`) |
 | Kept composites / render-ahead / present memo | in-process, serial-keyed; not involved |
 | Export pipelined and serial | the writer gains the copy path; compose/convert skip copied frames |
 | Encoder cascade | the fingerprint names the encoder actually opened; a different machine's cascade yields another fingerprint |
@@ -137,13 +172,15 @@ keeps t2805/t11. Q2 is the owner's amendment of invariant 11 for this mode.
 | `.kt` format | untouched |
 | Windows | same design; MF encoders' in-band headers to be checked per encoder (the cascade's trial) |
 
-## D10. Stages (when the owner says go)
+## D10. Stages (the owner answered; the orchestrator gives the go)
 
-1. The index: fingerprint, per-frame keys at the export's quality, GOP table, written beside a normal
-   export (no reuse yet). t3322–t3324.
+1. The index: fingerprint, per-frame keys at the export's quality, per-GOP hash, written as SEI inside an
+   H.264/HEVC export (no reuse yet); `renders.tsv`; the strip tool. t3322–t3324, t3870, t3871.
 2. Keyframes at edit points and in-band parameter sets under the option. t3325, t3326.
 3. The copy path in the writer, candidate lookup, re-stamping, encoder restart around copies. t3327–t3331.
 4. The render window step and the summary; kt-cli `export --cached`. t3332–t3334.
+5. The draft render: the option, the prerender's frames scaled, the draft tag, the summary; kt-cli
+   `export --draft`. t3872–t3876.
 
 ## Risks
 

@@ -38,3 +38,27 @@ an untagged HD file (found-defects 1054, hdr-sources-to-sdr D4).
 - **WHEN** a preset saved with `matrix=bt601` before this change renders a 1080p project
 - **THEN** the file is BT.601, and the default preset's text form says `matrix=auto`
 - **TEST** t3809 (`src/libs/kt-engine/tests/render_settings.rs`)
+
+## ADDED Requirements
+
+### Requirement: A 16-bit project exports SDR, HDR10 or HLG
+An export of a 16-bit project SHALL offer three outputs:
+- **SDR:** the display's tone map, then the conversion of "The colour tags are the conversion's";
+- **HDR10:** the BT.2020 PQ encoding, tagged with BT.2020 matrix and primaries and SMPTE ST 2084;
+- **HLG:** tagged ARIB STD-B67.
+
+HDR10 and HLG SHALL be offered only with an encoder that takes 10 bits, and SHALL be written at 10 bits.
+HDR10 SHALL carry the mastering display and the content light levels measured over the export. The RGB→YUV
+conversion from f16 SHALL be integer by table, so the bytes are equal between runs on one device.
+Why: kkt-26.11.20 A25 — the 16-bit path exists to show and deliver HDR right; the 10-bit encoders exist
+in the cascade (hdr-sources-to-sdr D14).
+
+#### Scenario: HDR10 and HLG are written as tagged
+- **WHEN** a 16-bit project with an HDR clip is exported as HDR10 with libx265, as HLG with prores_ks, and twice as HDR10
+- **THEN** the files read back with the transfer, primaries and matrix written, the HDR10 one carries mastering display and MaxCLL/MaxFALL equal to the measured ones, the two HDR10 runs are byte-equal, and decoding the HDR10 file in a 16-bit plan gives the export's linear picture within the 10-bit quantization
+- **TEST** t3893, t3894 (`src/libs/kt-engine/tests/render_settings.rs`)
+
+#### Scenario: An 8-bit encoder offers SDR only
+- **WHEN** a 16-bit project is exported with h264_nvenc or a VAAPI encoder chosen
+- **THEN** the window offers SDR only and says the encoder takes 8 bits, and the SDR file equals the display's tone map within the 8-bit conversion
+- **TEST** t3895 (`src/libs/kt-engine/tests/render_settings.rs`)

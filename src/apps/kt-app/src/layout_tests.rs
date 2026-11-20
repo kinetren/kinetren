@@ -8793,26 +8793,15 @@ fn t281_typed_key_value_reaches_the_model() {
     h.step();
     h.step();
 
-    // the field of the LIVE parameter sits in the grid between its own label and the label
-    // of the next parameter — we aim where a person would. `DragValue`
-    // does not create its own node in the accessibility tree, so it cannot be found by its label:
-    // we take the coordinate from the REAL layout.
-    let (lbl_rate, lbl_mix) =
-        (crate::widgets::param_label("rate"), crate::widgets::param_label("mix"));
-    // the parameter label occurs twice: in the value grid and as the curve-selection button
-    // in the automation panel BELOW. We need the UPPER one — the grid
-    // is drawn before the graph.
-    let top_label = |h: &Harness<'_, KtApp>, lbl: &str| -> egui::Rect {
-        h.query_all_by_label(lbl)
-            .map(|n| n.rect())
-            .min_by(|a, b| a.top().total_cmp(&b.top()))
-            .unwrap_or_else(|| panic!("the label of parameter {lbl:?} is not drawn"))
-    };
-    let r = top_label(&h, &lbl_rate);
-    let (x0, y) = (r.right(), r.center().y);
-    let x1 = top_label(&h, &lbl_mix).left();
-    assert!(x1 > x0 + 8.0, "there must be room for a field between the parameter labels");
-    let pos = egui::pos2((x0 + x1) * 0.5, y);
+    // the field of the LIVE parameter: `DragValue` does not create its own node in the
+    // accessibility tree, so it cannot be found by its label — we take its rectangle from the REAL
+    // layout, as the program publishes it (one field a row since fx-form-width: the field stands
+    // after its label, no longer between two labels).
+    let lbl_rate = crate::widgets::param_label("rate");
+    assert!(h.query_all_by_label(&lbl_rate).next().is_some(), "the label of parameter {lbl_rate:?} is not drawn");
+    let field = crate::widgets::field_probe::rect_of("rate").expect("the rate field is drawn");
+    assert!(field.width() > 8.0, "there must be room for the field: {field:?}");
+    let pos = field.center();
 
     // a click on the field switches it to input mode; then characters and Enter
     h.hover_at(pos);

@@ -1375,12 +1375,8 @@ impl KtApp {
             // itself re-dresses the event values (`fit_gen_to_media`), so the command is one.
             if let Some(kind) = e.switch_kind {
                 let Some(media) = self.model.clip(e.clip).map(|c| c.media) else { continue };
-                self.gesture_counter += 1;
-                let g = self.gesture_counter;
-                self.apply_coalesced(
-                    Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(&kind) },
-                    g,
-                );
+                let cmds = self.gen_kind_switch_cmds(media, &kind);
+                self.apply_batch(cmds);
                 continue;
             }
             // A preset sets EVERYTHING (values and curves) — also its own history step: pressed it,

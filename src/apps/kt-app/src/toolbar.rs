@@ -500,8 +500,8 @@ impl KtApp {
             // "WHY THE HELL LEAVE IT IN FILE?!"). Created at the cursor; the tour step's target
             // outlines itself inside, wherever the menu is drawn.
             ui.separator();
-            if let Some(kd) = crate::gen_ui::generator_menu(ui) {
-                self.create_generator_at(kd, self.player.transport.playhead(), None);
+            if crate::gen_ui::generator_item(ui) {
+                self.create_generator_by_selection();
                 ui.close();
             }
             ui.separator();

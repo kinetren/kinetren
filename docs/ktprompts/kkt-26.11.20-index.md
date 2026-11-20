@@ -8,8 +8,8 @@ Source — [`kkt-26.11.20.txt`](kkt-26.11.20.txt) (verbatim, his answers of 20.1
 
 | # | Line | Claim (brief) | State | Address | Stage |
 |---|---|---|---|---|---|
-| A1 | 4 | Edit menu and bin: one "Create a generator…" item, the kind by the selected track (video → solid colour, audio → tone), none selected → solid colour | no: feature, change `generator-from-track` (F-TXT-007 family) | executor features-slow | 23 |
-| A2 | 5 | "Render to MP4…" becomes "Render…" | no: feature, change `render-settings` follow-up, no note (a catalog line) | executor features-slow | 23 |
+| A1 | 4 | Edit menu and bin: one "Create a generator…" item, the kind by the selected track (video → solid colour, audio → tone), none selected → solid colour | done `generator-menu-one-item`: t3712, t1164, t3713 (a kind change keeps the sound pair), live `genaudio`, `lessons` | `generator-menu-one-item` | 23 |
+| A2 | 5 | "Render to MP4…" becomes "Render…" | done `render-settings` follow-up (branch render-menu-name): t3711 (every catalog; zh and ar said "Export…" beside the Export submenu), live `lessons` clicks File › Render… | `render-menu-name` | 23 |
 | A3 | 6 | export default: BT.709 at HD and above, BT.601 below, as the decode | no: defect, capability `export` (found-defects 1054) | executor mosh-sharp | 23 |
 | A4 | 7–8 | an effect's preset replaces the whole effect (curves too, Undo returns); a chain preset is joined to the existing chain on the graph, the extra nodes selected and deleted with the mouse | no: feature, change `fx-preset-change` (F-UI-010) revised by the decision | spec-features, then an executor | 23 |
 | A5 | 9–10 | graph v2: picture branches first, no inputs from other layers in v2 | no: feature, change `fx-graph-dag` (Q3 a, Q4 a) | executor fx-graph | 23 |
@@ -17,7 +17,7 @@ Source — [`kkt-26.11.20.txt`](kkt-26.11.20.txt) (verbatim, his answers of 20.1
 | A7 | 12 | the Datamosh frame shares one device with the window now, no measurement first | no: defect, capability `video-plan`, change `stream-picture-stays` (Q51 b) | executor mosh-sharp | 23 |
 | A8 | 13 | scopes in their own window, the preview frame while playing, a full one on a pause | no: feature, change `scopes` (Q6 a, Q7 a) | executor | 24 |
 | A9 | 14 | ripple across an edit point refuses and highlights the obstacle; he does not understand the case yet and asks to be shown it later | question: does the ripple refusal read right when he tries it? (owner-checks C9) | change `ripple-and-trim-modes` | 24 |
-| A10 | 15–18 | the "proxies" become an adaptive durable store at the preview's quality, a better quality rendered when chosen, a switch "as in the preview" beside; never named "proxy", nor bare "cache" (it must read as not in memory) | no: feature, change `proxies` redesigned and renamed | spec-features | 23 |
+| A10 | 15–18 | the "proxies" become an adaptive durable store at the preview's quality, a better quality rendered when chosen, a switch "as in the preview" beside; never named "proxy", nor bare "cache" (it must read as not in memory) | no: feature, change `proxies` redesigned and renamed `disk-copies` (name pending the owner, Q1 there) | spec-features | 23 |
 | A11 | 19 | subtitles: whisper.cpp pinned by sha256, the Text tab beside the bin, fonts by click; everything downloaded becomes one library, like plugins, which can be downloaded too — a plugin library | no: feature, change `subtitles-and-text-editing` (Q14–Q16 a) and a new design `download-library` (FFmpeg, whisper, fonts, plugins) | spec-engine | 23 |
 | A12 | 20 | decoding on the card: on by default, with a checkbox in Settings | no: feature, change `device-decode-sources` (Q17 a, Q18 b) | executor | 24 |
 | A13 | 21 | export through dma-buf into VAAPI built now | no: feature, change `export-host-copy` (Q19 b) | executor mosh-sharp | 24 |

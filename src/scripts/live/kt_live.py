@@ -1494,6 +1494,38 @@ class Live:
         probe.d.sync()
         self._after_gesture(mark, f"wheel {ticks}")
 
+    def new_generator(self, tag, via="edit", what=None):
+        """Create a generator the person's way (kkt-26.11.20 A1): Edit or the bin's empty space →
+        the ONE "Create a generator…" item (a solid colour with nothing selected, the selected
+        track's first kind otherwise) → its window; any other kind is then picked in the window's
+        Kind gallery. The window stays open."""
+        if via == "edit":
+            self.click_probe("menu.edit", "the Edit menu")
+        else:
+            win = geometry()
+            b = self.geom()["bin"]
+            self.right_click(win["x"] + int((b["left"] + b["right"]) / 2), win["y"] + int(b["bottom"]) - 10)
+        self.click_probe("gen.new", "Create a generator…")
+        self.expect(self.until(lambda: self.has_probe("genw.kind.pick", tries=2)), "the new generator's window opened with its Kind field")
+        if tag != "solid":
+            self.pick_generator_kind(tag, what)
+
+    def pick_generator_kind(self, tag, what=None):
+        """Pick `tag` in the open generator window's Kind gallery. A cell under the gallery's fold
+        is not drawn (and publishes no rectangle): the wheel turns over the gallery until it is."""
+        cell = f"genw.kind.{tag}"
+        self.click_probe("genw.kind.pick", "the window's Kind field")
+        self.expect(self.until(lambda: any(f["param"].startswith("genw.kind.") and f["param"] != "genw.kind.pick" for f in self.geom().get("fields", []))), "the Kind gallery opened")
+        win = geometry()
+        for i in range(30):
+            if self.has_probe(cell, tries=2):
+                break
+            p = self._probe_rect("genw.kind.pick")
+            self.wheel(win["x"] + int(p["x"] + p["w"] / 2), win["y"] + int(p["y"] + p["h"] + 160), 3 if i < 15 else -3)
+        self.settle()
+        self.click_probe(cell, what or f"the {tag} cell")
+        self.expect(self.wait_gone(cell), f"the gallery closed after picking {tag}")
+
     def scroll_probe_into_view(self, name, anchor, what=None, tries=12, below=None):
         """Scroll the wheel over the widget `anchor` until the rectangle `name` is in the visible part
         (bottom below the edge — scroll down; top above it — scroll up). The edge is `below`:

@@ -5,7 +5,8 @@ The decode SHALL read a picture's transfer (`AVColorTransfer`) with its matrix, 
 tag the picture lacks is taken from the stream. Where the stream carries them, it SHALL also read the
 mastering display's peak and MaxCLL.
 
-A picture SHALL be mapped to the working space (BT.709 primaries, BT.709 SDR encoding, 8-bit RGBA) by one
+In a plan of 8-bit precision (the default; capability `video-plan`, "A project and a composition choose
+their picture precision") a picture SHALL be mapped to the working space (BT.709 primaries, BT.709 SDR encoding, 8-bit RGBA) by one
 integer pipeline:
 - a PQ or HLG transfer takes the HDR path: scale and upsample to 16-bit 4:4:4, matrix, EOTF, gamut to
   BT.709 in linear light, tone map, out-of-gamut colours toward their luminance, SDR encoding;
@@ -63,3 +64,34 @@ see them, so the map belongs at the decode, not in the plan (hdr-sources-to-sdr 
 - **WHEN** `kt-cli probe` runs over a project with an HLG clip, and its trace is read
 - **THEN** the probe prints "HDR HLG → SDR, peak 1000" for the clip, and the trace's decode record of its frames names the path
 - **TEST** t3810 (`src/apps/kt-cli/tests/cli.rs`), t3811 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+### Requirement: In a 16-bit plan the decode gives linear light without a tone map
+In a plan of 16-bit float precision the decode SHALL convert every picture by the same integer pipeline up
+to linear light, as follows:
+- the gamut SHALL be converted to BT.2020;
+- the result SHALL be scaled so that the HDR reference white (203 cd/m², BT.2408) and an SDR source's white
+  are 1.0;
+- an HLG source SHALL take the BT.2100 OOTF at 1000 cd/m²;
+- there SHALL be no tone map;
+- the result SHALL be written as `Rgba16Float` through an exact integer table, premultiplied.
+
+The frame SHALL carry its pixel format, and the frames cache key SHALL carry the precision. The bytes SHALL
+be the same on every processor.
+Why: kkt-26.11.20 line 33 ("если включено то тракт f16 чтобы было нормально"): the 16-bit path keeps an
+HDR source's 10 bits and its highlights for the effects, the display and an HDR export
+(hdr-sources-to-sdr D9, D10).
+
+#### Scenario: An HDR source keeps its highlights and steps
+- **WHEN** the PQ fixture with a 1000 cd/m² patch and the 10-bit ramp are decoded in a 16-bit plan
+- **THEN** the 203 cd/m² patch reads 1.0 within one f16 step, the 1000 cd/m² patch about 4.93, the ramp holds every one of its source steps in order, and no value is clipped
+- **TEST** t3881 (`src/libs/kt-media/tests/ffmpeg_conformance.rs`)
+
+#### Scenario: An SDR source's white is 1.0 and its bits are exact everywhere
+- **WHEN** an SDR BT.709 fixture is decoded in a 16-bit plan in a scalar and a row-parallel run, and its table output is compared with a stored frame
+- **THEN** its white is 1.0, its black 0.0, and the f16 bytes equal the stored frame in both runs
+- **TEST** t3882 (`src/libs/kt-ffmpeg/src/colour.rs`)
+
+#### Scenario: Two precisions do not share a cache entry
+- **WHEN** the same clip is shown by an 8-bit and a 16-bit plan
+- **THEN** the frames cache holds two entries of the two formats, each counted by its bytes in the ledger, and the bars of each plan draw only its own
+- **TEST** t3883 (`src/libs/kt-cache/src/lib.rs`)

@@ -80,16 +80,18 @@ def main(out):
         # --- lesson 1 ------------------------------------------------------------------------
         app.expect(app.has_probe("welcome.tour"), "the first start offers the tour")
         app.click_probe("welcome.tour", "Start the tour")
-        app.expect(app.has_probe("lessons.panel"), "the lessons panel opened")
+        app.expect(app.until(lambda: app.has_probe("lessons.panel", tries=2), timeout=60), "the lessons panel opened")
         app.expect(app.has_probe("lessons.step"), "the current step is drawn as its own lines")
         app.step("l1-start", "lesson 1: the step as lines with keycaps, the Show button")
         app.click_probe("lessons.show", "Show")
         app.expect(app.has_probe("lesson.mark.menu"), "Show opened the menu and the generator item is outlined")
         app.expect(not done(1), "Show did not perform the step")
-        app.step("l1-show", "the Edit menu open, Create a generator… and its group outlined")
-        app.hover_probe("gen.new", "Create a generator…")
-        app.hover_probe("gen.new.group.titles", "Titles and countdown")
-        app.click_probe("gen.new.text", "Text")
+        app.step("l1-show", "the Edit menu open, Create a generator… outlined")
+        app.click_probe("gen.new", "Create a generator…")
+        app.expect(app.until(lambda: app.has_probe("lesson.mark.genw.kind", tries=2)), "its window opened, the Kind field outlined")
+        app.expect(not done(1), "a solid colour did not close the title step")
+        app.step("l1-kind", "a solid colour and its window; the Kind field outlined, the step names Text")
+        app.pick_generator_kind("text", "the Text cell")
         app.expect(closed(1, 1), "the title step closed by itself")
         # the title's window stays OPEN on purpose for the loop step (kkt-26.11.01 item 2)
         app.expect(app.has_probe("win.fx"), "the title's window is open")
@@ -173,7 +175,13 @@ def main(out):
         app.expect(app.has_probe("win.transition"), "the double-click opened the transition window")
         app.expect(app.has_probe("lesson.mark.tr.kind"), "the kind field is outlined")
         app.click_probe("tr.kind", "the outlined kind field")
-        kinds = [f["param"] for f in app.geom().get("fields", []) if f["param"].startswith("trkind.") and f["param"] != "trkind.crossfade"]
+
+        def other_kinds():
+            return [f["param"] for f in app.geom().get("fields", []) if f["param"].startswith("trkind.") and f["param"] != "trkind.crossfade"]
+
+        # the popup publishes its tiles a frame after the click: read the list once it is there
+        app.until(lambda: bool(other_kinds()))
+        kinds = other_kinds()
         app.expect(bool(kinds), f"the kind list is open: {kinds[:5]}")
         if kinds:
             app.click_probe(kinds[0], "another kind")
@@ -183,7 +191,7 @@ def main(out):
 
         # --- lesson 4 ------------------------------------------------------------------------
         app.click_probe("lessons.next", "Next lesson")
-        app.expect(app.has_probe("lessons.panel"), "lesson 4 opened")
+        app.expect(app.until(lambda: app.has_probe("lessons.panel", tries=2), timeout=60), "lesson 4 opened")
         app.click_probe("lessons.show", "Show")
         app.expect(app.has_probe("lesson.mark.morpher"), "Show brought the BATCH block into view, outlined")
         app.expect(not app.has_probe("win.morpher", tries=2), "Show did not open the morpher (item 5)")

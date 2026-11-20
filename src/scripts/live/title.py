@@ -38,9 +38,8 @@ def main(out):
             win["y"] + int(b["bottom"]) - 10,
         )
         app.click_probe("gen.new", "item “Create a generator”")
-        # R.53: the title lies in the group “Titles and counter”
-        app.hover_probe("gen.new.group.titles", "group “Titles and countdown”")
-        app.click_probe("gen.new.text", "kind “Text” in the submenu")
+        app.expect(app.until(lambda: app.has_probe("genw.kind.pick", tries=2)), "the generator's window opened")
+        app.pick_generator_kind("text", "the Text cell in the window's gallery")
         app.expect(
             app.has_probe("titlew.text"),
             "the TITLE WINDOW opened (routing past the common window)",

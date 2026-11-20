@@ -65,6 +65,11 @@ excludes.
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A17, his Q26–Q27): Q1 (a), each event is fitted into the format by its own
+geometry; Q2 (a), platform safe-area presets.
+
+The questions as asked:
+
 **Q1. How does an event WITHOUT an override sit in a 9:16 format?** Your words: "у каждого своя поправка
 геометрии события поверх общей". Today the conform rule fits/fills each event's SOURCE into the raster.
 - (a) **Each event is re-conformed into the format's raster with its master geometry** (*recommended*: a
