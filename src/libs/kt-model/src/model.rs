@@ -185,6 +185,83 @@ fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
     }
 }
 
+/// A device on a whole video track (track-device-sound, kkt-26.11.18b line 29):
+/// its sound half lives in the chain of the track's SOUND track, mirrored by the event rule
+/// (`mirror_halves`) — presence and values both ways, each half's bypass its own. A track has no
+/// curves, so only values travel. Called after the chain of track `id` changed; `had_pair` — the
+/// chain held a paired slot before.
+///
+/// The default link: a video track that gets its FIRST paired slot and has no sound track takes the
+/// audio track of the same number, if it is free — where linked media puts the file's sound. Only
+/// then: a link the person cleared stays cleared while the device stays (kt-app rule 20).
+fn sync_pairs_to_sound_track(p: &mut Project, id: TrackId, had_pair: bool) {
+    let Some(t) = p.track(id) else { return };
+    match t.kind {
+        LaneKind::Video => {
+            let mine = track_halves(&t.fx);
+            if t.sound.is_none() && !had_pair && !mine.is_empty() {
+                let rank = p.tracks.iter().filter(|o| o.kind == LaneKind::Video).position(|o| o.id == id);
+                let same = rank.and_then(|r| p.tracks.iter().filter(|o| o.kind == LaneKind::Audio).nth(r)).map(|o| o.id);
+                if let Some(a) = same
+                    && crate::sound_link_ok(&p.tracks, id, Some(a))
+                    && let Some(t) = p.track_mut(id)
+                {
+                    t.sound = Some(a);
+                }
+            }
+            let Some(sound) = p.track(id).and_then(|t| t.sound) else { return };
+            if let Some(a) = p.track_mut(sound) {
+                let mut auto = Vec::new();
+                mirror_halves_where(&mine, &mut a.fx, &mut auto, &mut a.fx_bypass, track_pairs);
+            }
+        }
+        LaneKind::Audio => {
+            // the sound half edited from its own track: the picture half follows (one deck)
+            let Some(video) = p.tracks.iter().find(|v| v.sound == Some(id)).map(|v| v.id) else { return };
+            let mine = track_halves(&t.fx);
+            if let Some(v) = p.track_mut(video) {
+                let mut auto = Vec::new();
+                mirror_halves_where(&mine, &mut v.fx, &mut auto, &mut v.fx_bypass, track_pairs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether a paired kind takes part on a track: a STREAM device (Datamosh) does not. A stream slot on
+/// a track stage is skipped by the engine (`video-fx`: the stage needs an event's stream), so its
+/// picture does nothing there, and a sound half would be the sound of a device that is not on the
+/// picture.
+fn track_pairs(id: &str) -> bool {
+    let reg = crate::plugin_slot::registry();
+    let Some(f) = FxInstance::plugin(id) else { return true };
+    let video = if f.is_audio() { reg.counterpart(id).and_then(FxInstance::plugin) } else { Some(f) };
+    !video.is_some_and(|v| v.is_stream())
+}
+
+/// A track chain's paired slots that take part on a track (`track_pairs`).
+fn track_halves(fx: &[FxInstance]) -> Vec<(String, Vec<f64>, Vec<ParamCurve>)> {
+    let keep: Vec<FxInstance> = fx
+        .iter()
+        .filter(|f| !matches!(f, FxInstance::Plugin(s) if !track_pairs(&s.id)))
+        .cloned()
+        .collect();
+    paired_halves(&keep, &[])
+}
+
+/// A video track's sound track changed from `was` (track-device-sound): the halves leave the former
+/// sound track and come to the new one, in the same step.
+fn relink_track_sound(p: &mut Project, id: TrackId, was: Option<TrackId>) {
+    if let Some(old) = was
+        && let Some(a) = p.track_mut(old)
+    {
+        let mut auto = Vec::new();
+        mirror_halves_where(&[], &mut a.fx, &mut auto, &mut a.fx_bypass, track_pairs);
+    }
+    // the video track leads into its new sound track (`had_pair` true: no default link here)
+    sync_pairs_to_sound_track(p, id, true);
+}
+
 /// The paired slots of a chain, in chain order: (counterpart id, values, curves).
 fn paired_halves(fx: &[FxInstance], auto: &[Vec<ParamCurve>]) -> Vec<(String, Vec<f64>, Vec<ParamCurve>)> {
     let reg = crate::plugin_slot::registry();
@@ -211,13 +288,25 @@ fn mirror_halves(
     auto: &mut Vec<Vec<ParamCurve>>,
     bypass: &mut Vec<bool>,
 ) -> Vec<usize> {
+    mirror_halves_where(mine, fx, auto, bypass, |_| true)
+}
+
+/// `mirror_halves` over the paired kinds `takes` admits in the other chain (a track admits no
+/// stream device: track-device-sound).
+fn mirror_halves_where(
+    mine: &[(String, Vec<f64>, Vec<ParamCurve>)],
+    fx: &mut Vec<FxInstance>,
+    auto: &mut Vec<Vec<ParamCurve>>,
+    bypass: &mut Vec<bool>,
+    takes: impl Fn(&str) -> bool,
+) -> Vec<usize> {
     let reg = crate::plugin_slot::registry();
     // the other chain's slots of a paired kind
     let theirs: Vec<(usize, String)> = fx
         .iter()
         .enumerate()
         .filter_map(|(i, f)| match f {
-            FxInstance::Plugin(slot) if reg.counterpart(&slot.id).is_some() => Some((i, slot.id.clone())),
+            FxInstance::Plugin(slot) if reg.counterpart(&slot.id).is_some() && takes(&slot.id) => Some((i, slot.id.clone())),
             _ => None,
         })
         .collect();
@@ -1964,6 +2053,7 @@ impl TimelineModel {
                     || !(TRACK_GAIN_MIN_DB..=TRACK_GAIN_MAX_DB).contains(&props.gain_db)
                     || !props.height.is_finite()
                     || props.height < 0.0
+                    || !crate::sound_link_ok(&p.tracks, *id, props.sound)
                 {
                     return Err(CommandError::TrackPropOutOfRange(*id));
                 }
@@ -2574,15 +2664,21 @@ impl TimelineModel {
             }
             Command::RemoveTrack { kind, at } => p.remove_track(kind, at),
             Command::SetTrackProps { id, props } => {
+                let was = p.track(id).and_then(|t| t.sound);
                 if let Some(t) = p.track_mut(id) {
                     t.set_props(&props);
                 }
+                if was != props.sound {
+                    relink_track_sound(p, id, was);
+                }
             }
             Command::SetTrackFx { id, fx, bypass } => {
+                let had_pair = p.track(id).is_some_and(|t| !track_halves(&t.fx).is_empty());
                 if let Some(t) = p.track_mut(id) {
                     t.fx = fx;
                     t.fx_bypass = bypass;
                 }
+                sync_pairs_to_sound_track(p, id, had_pair);
             }
             Command::SetTrackFxOff { id, off } => {
                 if let Some(t) = p.track_mut(id) {

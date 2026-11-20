@@ -288,6 +288,14 @@ of the velocity envelope of Vegas). It follows that there are TWO AXES, and they
   `normalize` gives an older patch the halves the render derived (`materialize_pairs`, the only
   migration place); a half held switched off counts as held, or a save would turn it back on.
   t2990–t2992.
+- **A video TRACK's device sounds on its sound track** (track-device-sound, kkt-26.11.18b line 29):
+  `Track.sound` (a `TrackProps` field, one-to-one, `sound_link_ok`) names the audio track whose
+  chain holds the halves; `sync_pairs_to_sound_track` after `SetTrackFx` (both directions) and
+  `relink_track_sound` after a link change run the SAME `mirror_halves`, filtered by `track_pairs`:
+  a stream device (Datamosh) does not pair on a track (the engine skips a stream slot on a track
+  stage). The default link (the audio track of the same number) is made only when a video track
+  gets its FIRST paired slot — a cleared link stays cleared (rule 20). `remove_track` clears a link
+  to the removed track. Format 6 by content. t3230, t3231, t3233.
 
 ## Named areas (R.35 item 2)
 - `MarkedArea { name, start, duration, lanes, color }` in `Project.areas`.

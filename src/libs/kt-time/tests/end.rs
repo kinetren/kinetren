@@ -1,4 +1,4 @@
-//! The process ends before the native libraries' destructors (found-defects 784/785). t3230.
+//! The process ends before the native libraries' destructors (found-defects 784/785). t3600.
 
 use std::path::{Path, PathBuf};
 
@@ -49,7 +49,7 @@ fn run(armed: bool, dir: &Path) -> std::process::ExitStatus {
         .unwrap()
 }
 
-/// Test t3230 (found-defects 784/785): a test process died natively after its test passed —
+/// Test t3600 (found-defects 784/785): a test process died natively after its test passed —
 /// `exit` ran the destructors of libraries loaded before it (libLLVM under llvmpipe, a driver's C++
 /// statics) while threads a bounded close left behind still drew in them. Once
 /// `end_before_libraries` is registered after a library loads, `exit` ends the process before that
@@ -65,7 +65,7 @@ fn t3200_the_process_ends_before_the_libraries_destructors() {
         return; // glibc's `on_exit`; elsewhere the end is the C `exit` as before
     }
     for armed in [true, false] {
-        let d = std::env::temp_dir().join(format!("kt-t3230-{}-{armed}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("kt-t3600-{}-{armed}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         let status = run(armed, &d);

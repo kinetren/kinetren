@@ -1488,6 +1488,9 @@ template_saved = "Plantilla guardada: {0}"
 
 [track]
 title = "Pista: {0}"
+sound = "Sonido del dispositivo"
+sound_none = "Ninguna"
+sound_hint = "La pista de audio donde suena VHS Tape o Camera ISP de esta pista: el mismo dispositivo, con su interruptor en la línea de sonido."
 name = "Nombre"
 level = "Nivel"
 opacity = "Opacidad"

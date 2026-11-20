@@ -82,12 +82,19 @@ pub const PROJECT_FILE_VERSION_SOUND: u32 = 4;
 /// refuses instead.
 pub const PROJECT_FILE_VERSION_NOTES: u32 = 5;
 
+/// The version a file is written with WHEN a video track names its sound track (track-device-sound).
+/// An older build reads the track without the field and would drop the link on its next save,
+/// leaving its devices' sound halves unmirrored — so it refuses instead.
+pub const PROJECT_FILE_VERSION_TRACK_SOUND: u32 = 6;
+
 /// The highest version this build reads.
-pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_NOTES;
+pub const PROJECT_FILE_READS: u32 = PROJECT_FILE_VERSION_TRACK_SOUND;
 
 /// The version this project needs — by its content.
 pub fn version_for(project: &Project) -> u32 {
-    if project.has_marker_notes() {
+    if project.has_track_sound() {
+        PROJECT_FILE_VERSION_TRACK_SOUND
+    } else if project.has_marker_notes() {
         PROJECT_FILE_VERSION_NOTES
     } else if project.has_device_sound() {
         PROJECT_FILE_VERSION_SOUND

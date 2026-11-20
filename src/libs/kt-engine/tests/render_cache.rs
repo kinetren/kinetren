@@ -360,7 +360,7 @@ fn t2985_the_bars_draw_what_the_disk_holds_for_this_state() {
     }
 }
 
-/// Test t3231 (found-defects 776): with the playhead in the middle of a heavy run the prerender
+/// Test t3601 (found-defects 776): with the playhead in the middle of a heavy run the prerender
 /// writes the whole run into ONE segment, from its start: taken by distance to the head, both sides
 /// alternating, the part behind the head went into a segment per moment (54 moments in 14–16 files).
 #[test]

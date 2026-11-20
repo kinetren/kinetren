@@ -338,3 +338,16 @@ build of kt-app running beside them; the printed ratios at load 57–101 equal t
   literal `+0.0`, so the sums agree but for the sign of an exact zero, where the full sum answers.
 - Not done, they would move bytes: divisions by per-block constants as reciprocals (VHS Tape's sound,
   the vocoder's bins). Figures: archive `2026-11-15-per-sample-costs/design.md`. t2680 holds every path.
+
+## A device on a whole video track sounds on its sound track (track-device-sound, 2026-11-20)
+
+The owner's answer (kkt-26.11.18b line 29, Q5 a): a video track names ONE audio track as its sound
+(`Track.sound`, one-to-one — two video tracks mirroring into one chain would fight over its n-th
+slot); by default the audio track of the same number, where linked media lands the file's sound
+(Premiere's source patching, Resolve's auto track selector), made only when the track gets its first
+device. The halves are mirrored by the event rule (`mirror_halves`), each half's switch its own; the
+sound half runs in the audio track's stage, seated at timeline zero (`TrackProcessor` now seats its
+nodes on the project's grid; it seated none before, found-defects 819). Datamosh does not pair on a
+track: the engine skips a stream slot on a track stage, so its picture does nothing there
+(found-defects 820, not fixed). The track's deck equals the event's to float rounding, not to the
+bit: the stage sums and chunks its own way (t3232).

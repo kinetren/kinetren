@@ -351,3 +351,115 @@ fn t1485_a_device_s_sound_rows_raise_the_format() {
     let newer = text.replace("\"kinetren\": 4", &format!("\"kinetren\": {}", project_file::PROJECT_FILE_READS + 1));
     assert!(matches!(project_file::from_text(&newer), Err(project_file::ProjectFileError::TooNew { .. })));
 }
+
+// ---- track-device-sound (kkt-26.11.18b line 29) ----
+
+fn track(m: &TimelineModel, id: TrackId) -> Track {
+    m.project().track(id).cloned().unwrap()
+}
+
+fn track_ids(t: &Track) -> Vec<String> {
+    t.fx.iter().map(|f| f.tag().to_string()).collect()
+}
+
+/// A project with Video 1, Video 2, Audio 1 (a gain), Audio 2.
+fn track_project() -> (Project, [TrackId; 4]) {
+    let mut p = project();
+    p.ensure_tracks(LaneKind::Video, 2);
+    p.ensure_tracks(LaneKind::Audio, 2);
+    let id = |p: &Project, k, l| p.track_at(k, l).unwrap().id;
+    let ids = [id(&p, LaneKind::Video, 0), id(&p, LaneKind::Video, 1), id(&p, LaneKind::Audio, 0), id(&p, LaneKind::Audio, 1)];
+    p.track_mut(ids[2]).unwrap().fx = vec![FxInstance::plugin("gain").unwrap()];
+    (p, ids)
+}
+
+/// t3230 (capability `audio-fx`): VHS Tape on a whole video track sounds on its sound track — the
+/// audio track of the same number by default; values both ways, each half's switch its own, removal
+/// takes both, each one undo step.
+#[test]
+fn t3230_a_track_device_sounds_on_its_sound_track() {
+    kt_plugins_builtin::install();
+    let (p, [v1, _v2, a1, _a2]) = track_project();
+    let mut m = TimelineModel::new(p);
+    let tape = FxInstance::plugin("vhs_tape").unwrap();
+    m.apply(Command::SetTrackFx { id: v1, fx: vec![tape], bypass: vec![] }).unwrap();
+    assert_eq!(track(&m, v1).sound, Some(a1), "the default sound track is the audio track of the same number");
+    assert_eq!(track_ids(&track(&m, a1)), ["gain", "vhs_tape_sound"]);
+    m.undo().unwrap();
+    assert_eq!(track(&m, v1).sound, None, "one undo takes the link too");
+    assert_eq!(track_ids(&track(&m, a1)), ["gain"]);
+    m.redo().unwrap();
+    // the picture's tracking reaches the sound half
+    let mut v = track(&m, v1);
+    v.fx[0].set_param("tracking_um", 12.0);
+    m.apply(Command::SetTrackFx { id: v1, fx: v.fx, bypass: v.fx_bypass }).unwrap();
+    assert_eq!(track(&m, a1).fx[1].get_param("tracking_um"), Some(12.0));
+    // the sound half's audio output, set on the audio track, reaches the picture half
+    let mut a = track(&m, a1);
+    a.fx[1].set_param("audio_out", 1.0);
+    m.apply(Command::SetTrackFx { id: a1, fx: a.fx.clone(), bypass: a.fx_bypass.clone() }).unwrap();
+    assert_eq!(track(&m, v1).fx[0].get_param("audio_out"), Some(1.0), "the deck is one");
+    // the sound half switched off alone
+    m.apply(Command::SetTrackFx { id: a1, fx: a.fx.clone(), bypass: vec![false, true] }).unwrap();
+    assert_eq!(track(&m, a1).fx_bypass, [false, true]);
+    assert_eq!(track_ids(&track(&m, a1)), ["gain", "vhs_tape_sound"], "a switched-off half stays");
+    assert!(track(&m, v1).fx_bypass.iter().all(|b| !b), "the picture half stays on");
+    // removal takes both
+    m.apply(Command::SetTrackFx { id: v1, fx: vec![], bypass: vec![] }).unwrap();
+    assert_eq!(track_ids(&track(&m, a1)), ["gain"]);
+    // Camera ISP pairs on a track too; Datamosh does not: a stream slot on a track stage is skipped
+    // by the engine, so its sound would be the sound of a device that is not on the picture
+    let isp = FxInstance::plugin("camera_isp").unwrap();
+    let mosh = FxInstance::plugin("datamosh").unwrap();
+    m.apply(Command::SetTrackFx { id: v1, fx: vec![mosh, isp], bypass: vec![] }).unwrap();
+    assert_eq!(track_ids(&track(&m, a1)), ["gain", "camera_isp_sound"]);
+}
+
+/// t3231 (capability `audio-fx`): the link moves the halves, a cleared link stays cleared, an audio
+/// track is the sound of one video track, removing the sound track clears the link.
+#[test]
+fn t3231_the_link_moves_clears_and_stays_one_to_one() {
+    kt_plugins_builtin::install();
+    let (p, [v1, v2, a1, a2]) = track_project();
+    let mut m = TimelineModel::new(p);
+    m.apply(Command::SetTrackFx { id: v1, fx: vec![FxInstance::plugin("vhs_tape").unwrap()], bypass: vec![] }).unwrap();
+    let props = |m: &TimelineModel, id, s| TrackProps { sound: s, ..track(m, id).props() };
+    m.apply(Command::SetTrackProps { id: v1, props: props(&m, v1, Some(a2)) }).unwrap();
+    assert_eq!(track_ids(&track(&m, a1)), ["gain"], "the half left the former sound track");
+    assert_eq!(track_ids(&track(&m, a2)), ["vhs_tape_sound"]);
+    m.apply(Command::SetTrackProps { id: v1, props: props(&m, v1, None) }).unwrap();
+    assert!(track(&m, a2).fx.is_empty(), "clearing takes the half off");
+    // an edit of the device does not bring the link back (rule 20)
+    let mut v = track(&m, v1);
+    v.fx[0].set_param("tracking_um", 5.0);
+    m.apply(Command::SetTrackFx { id: v1, fx: v.fx, bypass: v.fx_bypass }).unwrap();
+    assert_eq!(track(&m, v1).sound, None);
+    assert!(track(&m, a1).fx.len() == 1 && track(&m, a2).fx.is_empty());
+    // one-to-one: Video 2 cannot name Audio 1 while Video 1 does
+    m.apply(Command::SetTrackProps { id: v1, props: props(&m, v1, Some(a1)) }).unwrap();
+    assert!(m.apply(Command::SetTrackProps { id: v2, props: props(&m, v2, Some(a1)) }).is_err());
+    // nor a video track, nor itself
+    assert!(m.apply(Command::SetTrackProps { id: v2, props: props(&m, v2, Some(v1)) }).is_err());
+    // removing the sound track clears the link
+    m.apply(Command::RemoveTrack { kind: LaneKind::Audio, at: 0 }).unwrap();
+    assert_eq!(track(&m, v1).sound, None);
+}
+
+/// t3233 (capability `project-format`): a sound link writes format 6 and reads back; without it the
+/// file keeps its version; a link to a video track is refused with the track's address.
+#[test]
+fn t3233_a_track_sound_link_raises_the_format() {
+    kt_plugins_builtin::install();
+    let (mut p, [v1, v2, a1, _]) = track_project();
+    let plain = project_file::to_text(&p, None);
+    assert!(plain.contains("\"kinetren\": 1"));
+    assert!(!plain.contains("\"sound\""));
+    p.track_mut(v1).unwrap().sound = Some(a1);
+    let text = project_file::to_text(&p, None);
+    assert!(text.contains("\"kinetren\": 6"), "the link did not raise the format");
+    assert_eq!(project_file::from_text(&text).unwrap().project, p);
+    let newer = text.replace("\"kinetren\": 6", &format!("\"kinetren\": {}", project_file::PROJECT_FILE_READS + 1));
+    assert!(matches!(project_file::from_text(&newer), Err(project_file::ProjectFileError::TooNew { .. })));
+    p.track_mut(v1).unwrap().sound = Some(v2);
+    assert!(matches!(p.validate(), Err(ProjectError::BadTrackSound(t)) if t == v1));
+}
