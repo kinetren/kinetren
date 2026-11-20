@@ -1490,6 +1490,9 @@ template_saved = "Template saved: {0}"
 
 [track]
 title = "Track: {0}"
+sound = "Device sound"
+sound_none = "None"
+sound_hint = "The audio track that plays the sound of this track's VHS Tape or Camera ISP — the same device, with its own switch on the sound lane."
 name = "Name"
 level = "Level"
 opacity = "Opacity"

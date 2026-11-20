@@ -1488,6 +1488,9 @@ template_saved = "模板已保存：{0}"
 
 [track]
 title = "轨道：{0}"
+sound = "设备声音"
+sound_none = "无"
+sound_hint = "播放此轨道 VHS Tape 或 Camera ISP 声音的音频轨道——同一设备，声音线上有独立开关。"
 name = "名称"
 level = "电平"
 opacity = "不透明度"

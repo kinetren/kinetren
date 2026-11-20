@@ -44,6 +44,15 @@ One rule, the event's: `sync_pairs_to_sound_track(tracks, id)` after `SetTrackFx
 - Bypass is each side's own; tracks have no curves, so only values are mirrored.
 - The same apply step, so one undo step (`apply_coalesced` keeps the window's session as one).
 
+## D2a. Datamosh does not pair on a track
+
+The engine skips a stream slot on a track stage (`video-fx`: "A stream slot on a reel instance or a
+track stage SHALL be skipped" — the stage decodes an EVENT's stream). Datamosh on a video track
+therefore does nothing to the picture, and its sound half reads the event layout it does not have.
+`track_pairs` keeps stream devices out of the track rule (both directions); VHS Tape and Camera ISP
+pair. The owner's answer names all three; Datamosh on a track needs a track-level stream stage first
+— recorded as found, not fixed.
+
 ## D3. The engine
 
 - The sound half on the audio track is an ordinary audio plugin slot of a track stage: built,
@@ -54,6 +63,10 @@ One rule, the event's: `sync_pairs_to_sound_track(tracks, id)` after `SetTrackFx
   device from rows + time, never from the other half's state). Inside a reel both tracks are the
   reel's, in the reel's time.
 - Nothing else changes: the video track's picture half is untouched by the sound half's switch.
+- Measured: the VHS and ISP sound halves read only `Placement.start` (0 on a track, which the
+  default already gave); Datamosh's sound reads the fps grid, and it does not pair on a track. The
+  seat is kept for any later half that reads the grid. t3232 holds the track's deck against the
+  event's to float rounding: the stage sums and chunks its own way, never to the bit.
 
 ## D4. The window
 
@@ -63,7 +76,11 @@ One rule, the event's: `sync_pairs_to_sound_track(tracks, id)` after `SetTrackFx
   sends nothing (D10's lesson: a stale side re-pairs a removed device). The sound track's edits join
   the window's session and its Cancel (as the ducking key track's do).
 - "Device sound" row (a combo: the free audio tracks of the reel, and "None"), shown while the chain
-  holds a paired device or a link exists (rule 9: no dead control).
+  holds a paired non-stream device or a link exists (rule 9: no dead control).
+- Cancel: the window snapshots every audio track's chain at opening — the model links the default
+  track or the row picks another, and the halves land there before the window could snapshot it
+  (the harness found the first form, a snapshot at the first edit, restoring a chain that already
+  held the half).
 - An audio track that is a video track's sound shows its chain as before; its halves carry the
   speaker mark.
 

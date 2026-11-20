@@ -185,7 +185,7 @@ fn sync_pairs_to_link_group(p: &mut Project, id: ClipId) {
     }
 }
 
-/// A device on a whole video track (track-device-sound, kkt-26.11.18b line 29 "Дать звук отдельно"):
+/// A device on a whole video track (track-device-sound, kkt-26.11.18b line 29):
 /// its sound half lives in the chain of the track's SOUND track, mirrored by the event rule
 /// (`mirror_halves`) — presence and values both ways, each half's bypass its own. A track has no
 /// curves, so only values travel. Called after the chain of track `id` changed; `had_pair` — the

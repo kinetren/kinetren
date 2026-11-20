@@ -515,3 +515,63 @@ fn t2997_the_viewer_shows_the_picture_after_a_node() {
     assert_eq!(tags_in(&h.state().player.project()), Some(vec!["blur".to_string(), "vignette".to_string()]), "the whole chain did not come back");
     assert!(h.state().fx_editors.iter().any(|e| e.open), "Esc closed the window instead of ending the Viewer");
 }
+
+/// t3235 (track-device-sound, kkt-26.11.18b line 29): VHS Tape on a whole video
+/// track — its window draws the track and its sound track as one graph, the tape's halves one
+/// column; the sound half's switch reaches the audio track only; "Device sound: None" takes the
+/// half off; Cancel restores both tracks.
+/// - **PATH** right click Video 1's header → Track properties → the track window opens → add VHS
+///   Tape → the graph shows the picture lane and the sound lane with the tape's two halves in one
+///   column, and the row "Device sound: Audio 1" appears → click the sound half's switch → it is
+///   off, the picture half stays on → pick "None" in the row → the sound lane goes, the row stays
+#[test]
+fn t3235_a_track_device_and_its_sound_track_are_one_graph() {
+    crate::plugins::install();
+    let mut h = harness();
+    let app = h.state_mut();
+    let v1 = app.model.project().track_at(LaneKind::Video, 0).unwrap().id;
+    let a1 = app.model.project().track_at(LaneKind::Audio, 0).unwrap().id;
+    let before = (app.model.project().track(v1).cloned(), app.model.project().track(a1).cloned());
+    app.open_track_window(v1);
+    h.step();
+    // the tape, as the picker's click sends it: the model links the sound track of the same number
+    {
+        let app = h.state_mut();
+        let g = app.track_win.as_ref().unwrap().gesture;
+        app.apply_coalesced(Command::SetTrackFx { id: v1, fx: vec![FxInstance::builtin("vhs_tape")], bypass: vec![] }, g);
+    }
+    h.step();
+    h.step();
+    assert_eq!(h.state().model.project().track(v1).unwrap().sound, Some(a1));
+    assert!(crate::widgets::field_probe::rect_of("track.sound").is_some(), "the Device sound row is not drawn");
+    let tape = node_label(&h, "VHS Tape");
+    let tape_sound = node_label(&h, &sound("VHS Tape"));
+    assert!((tape.left() - tape_sound.left()).abs() < 1.0, "the halves are not one column: {tape:?} {tape_sound:?}");
+    assert!(tape_sound.top() > tape.bottom(), "the sound half is not under the picture half");
+    let boxes: Vec<egui::Rect> = h.query_all_by_role(egui::accesskit::Role::CheckBox).map(|n| n.rect()).collect();
+    let cb = boxes
+        .iter()
+        .filter(|r| (r.center().y - tape_sound.center().y).abs() < 8.0 && r.right() <= tape_sound.left() + 1.0)
+        .max_by(|a, b| a.right().total_cmp(&b.right()))
+        .copied()
+        .expect("the sound half's checkbox");
+    click_at(&mut h, cb.center());
+    let p = h.state().model.project();
+    let a = p.track(a1).unwrap();
+    let ai = a.fx.iter().position(|f| f.tag() == "vhs_tape_sound").expect("the audio track holds the sound half");
+    assert_eq!(a.fx_bypass.get(ai).copied(), Some(true), "the sound half's switch did not reach the audio track");
+    assert!(!p.track(v1).unwrap().fx_bypass.first().copied().unwrap_or(false), "the picture half went off with it");
+    // "Device sound: None"
+    click_at(&mut h, crate::widgets::field_probe::rect_of("track.sound").unwrap().center());
+    let none = crate::widgets::field_probe::rect_of("track.sound.none").expect("the None item");
+    click_at(&mut h, none.center());
+    let p = h.state().model.project();
+    assert_eq!(p.track(v1).unwrap().sound, None);
+    assert!(p.track(a1).unwrap().fx.is_empty(), "clearing the link left the half");
+    assert!(h.query_by_label(&sound("VHS Tape")).is_none(), "the sound lane stayed");
+    assert!(crate::widgets::field_probe::rect_of("track.sound").is_some(), "the row went with the link");
+    // Cancel restores both tracks
+    click_at(&mut h, crate::widgets::field_probe::rect_of("track.cancel").unwrap().center());
+    let p = h.state().model.project();
+    assert_eq!((p.track(v1).cloned(), p.track(a1).cloned()), before, "Cancel left a track changed");
+}

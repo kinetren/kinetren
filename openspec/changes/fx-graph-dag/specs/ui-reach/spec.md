@@ -27,6 +27,7 @@ executes them.
 - **TEST** t3207 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: A branched graph costs nothing at rest
+- **PATH** open the heavy showcase → double click an event whose graph branches → its effects window shows the arms → the mouse rests, then moves over the nodes → nothing redraws by itself
 - **WHEN** the FX window shows a branched graph on the heavy showcase, on a pause, with the mouse moving over it
 - **THEN** no frame is asked at rest; a hover asks no layout; the work counters of the idle check stay at their rest values
 - **TEST** t3221 (`src/apps/kt-app/src/idle_tests.rs`)

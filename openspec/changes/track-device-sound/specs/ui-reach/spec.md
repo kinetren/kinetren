@@ -17,6 +17,7 @@ widget; rule 9, no dead control.
 - **TEST** t3235 (`src/apps/kt-app/src/node_editor_tests.rs`), live `track_sound` (`src/scripts/live/track_sound.py`)
 
 #### Scenario: The track window costs nothing at rest
+- **PATH** a video track carrying VHS Tape and Camera ISP, linked to Audio 1 → Track properties → the track window's graph shows both lanes → the mouse rests, then moves over the nodes → nothing redraws by itself
 - **WHEN** the track window of a video track with a device and its sound track is open on a pause, with the mouse moving over it
 - **THEN** no frame is asked at rest and a hover asks no layout
 - **TEST** t3236 (`src/apps/kt-app/src/idle_tests.rs`)

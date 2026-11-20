@@ -11,13 +11,15 @@ n-th slot of a paired kind matches the n-th counterpart, values copied, a missin
 extra one removed), in the same undo step; each half's bypass SHALL stay its own. Changing the link
 SHALL move the halves; clearing it or removing the sound track SHALL take them off. The sound half
 SHALL run in the audio track's stage, seated at timeline frame 0 with the project's frame grid, so it
-derives the device at the timeline moment the picture half reads.
+derives the device at the timeline moment the picture half reads. A stream device (Datamosh) SHALL
+NOT pair on a track: the engine skips a stream slot on a track stage, so its picture does nothing
+there and a sound half would be the sound of a device absent from the picture.
 Why: kkt-26.11.18b line 29, "Дать звук отдельно"; CLAUDE.md — a simulated device that records
 picture and sound simulates both, driven by the same device state.
 
 #### Scenario: VHS Tape on a video track sounds on its sound track
 - **WHEN** VHS Tape is put on Video 1's chain with Audio 1 present; its tracking is edited; the sound half's audio output is set from the audio track; the sound half is switched off; the tape is removed
-- **THEN** Video 1's sound track is Audio 1 and Audio 1's chain holds `vhs_tape_sound`; the tracking reaches it; the audio output reaches the picture half; switched off it stays in the chain bypassed and the picture half stays on; removal takes both; each step is one undo step
+- **THEN** Video 1's sound track is Audio 1 and Audio 1's chain holds `vhs_tape_sound`; the tracking reaches it; the audio output reaches the picture half; switched off it stays in the chain bypassed and the picture half stays on; removal takes both; each step is one undo step; Camera ISP put with Datamosh gives Audio 1 `camera_isp_sound` alone
 - **TEST** t3230 (`src/libs/kt-model/tests/sim_pairs.rs`)
 
 #### Scenario: The link moves, clears and stays one-to-one
@@ -26,6 +28,6 @@ picture and sound simulates both, driven by the same device state.
 - **TEST** t3231 (`src/libs/kt-model/tests/sim_pairs.rs`)
 
 #### Scenario: The track's deck is heard where the picture drops
-- **WHEN** a video track carries VHS Tape with a head clogged and its sound track carries the half over a tone event at a 30 fps project; then the half is switched off
-- **THEN** the track's sound equals the sound of the same half on an event at timeline zero, sample for sample, and its dropouts fall in the fields the picture half drops; switched off the track sounds the dry tone and the picture's bytes do not move
+- **WHEN** an audio track's chain carries the tape's sound half with a head clogged over a tone event that starts off the tape's field grid, at a 30 fps project; then the half is switched off
+- **THEN** past the first quarter the track's sound equals the same half carried by the event itself to float rounding (the stage sums and chunks its own way), so the deck is read at the same timeline moment; switched off the track sounds the dry tone byte for byte
 - **TEST** t3232 (`src/libs/kt-engine/tests/sim_pairs.rs`)

@@ -352,7 +352,7 @@ fn t1485_a_device_s_sound_rows_raise_the_format() {
     assert!(matches!(project_file::from_text(&newer), Err(project_file::ProjectFileError::TooNew { .. })));
 }
 
-// ---- track-device-sound (kkt-26.11.18b line 29 "Дать звук отдельно") ----
+// ---- track-device-sound (kkt-26.11.18b line 29) ----
 
 fn track(m: &TimelineModel, id: TrackId) -> Track {
     m.project().track(id).cloned().unwrap()

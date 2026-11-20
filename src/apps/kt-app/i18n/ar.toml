@@ -1488,6 +1488,9 @@ template_saved = "تم حفظ القالب: {0}"
 
 [track]
 title = "المسار: {0}"
+sound = "صوت الجهاز"
+sound_none = "لا شيء"
+sound_hint = "المسار الصوتي الذي يُسمع فيه VHS Tape أو Camera ISP لهذا المسار — الجهاز نفسه، بمفتاحه على خط الصوت."
 name = "الاسم"
 level = "المستوى"
 opacity = "العتامة"
