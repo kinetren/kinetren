@@ -43,6 +43,8 @@ def main(out):
         create(app, "syncflash", "Sync flash")
         clips = app.until(lambda: len(app.live_clips()) >= 3)
         app.expect(clips, f"the flash and its beep were added: {app.live_clips()}")
+        # the first frames after opening may not have drawn the picture yet: wait for its probe
+        app.until(lambda: field(app, "preview.frame") is not None)
         frame = field(app, "preview.frame")
         app.expect(frame is not None, "the preview's picture is published")
         if not frame:

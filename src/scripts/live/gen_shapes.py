@@ -38,6 +38,8 @@ def main(out):
 
     with Live("gen_shapes", out, project=proj) as app:
         app.key("Home")
+        # the first frames after opening may not have drawn the picture yet: wait for its probe
+        app.until(lambda: field(app, "preview.frame") is not None)
         frame = field(app, "preview.frame")
         app.expect(frame is not None, "the preview's picture is published")
         if not frame:
