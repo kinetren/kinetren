@@ -644,7 +644,7 @@ SHALL clear only if no edit came while the file was written; a save in flight is
 the program exits. A file brought onto the timeline, a card placed from the bin, Undo and Redo of a
 media's arrival and a file that came back SHALL open their file, swap or release a decoder on the
 media lane, and the gesture lands when it answers. Autosave writes on a background lane that waits
-out playback. On these gestures the UI thread SHALL make no blocking call.
+out playback, except the insurance autosave ("The insurance autosave reaches the recovery file while playing"). On these gestures the UI thread SHALL make no blocking call.
 Why: `found-defects.md` row 98 (Ctrl+S stood 6.7 s on a busy disk) and row 148 (the UI thread opened
 files and joined a decoder on media gestures); the owner: "No interface action waits".
 

@@ -427,7 +427,7 @@ invalidation before stopping the worker allowed it to write a stub frame back af
 ### Requirement: Sync by sound — by peak pyramid, sign is correct, refusal instead of a guess
 The offset of two records SHALL be computed on the peak pyramid (without decode) over the positive part of the first
 difference of the envelope; a positive lag = "B later", swapping the arguments gives a minus of the same
-offset; below the confidence threshold — a refusal, not zero. The command SHALL only move (not trim,
+offset; below the confidence threshold (0.30) — a refusal, not zero. The command SHALL only move (not trim,
 not link), compute the material by the single rule "event ↔ material" (reverse), and alignment
 that leads beyond the start of the project is to be rejected, not pressed to zero. Refusals are named by
 different reasons; the event's menu item and the main menu item share one body.
@@ -980,7 +980,7 @@ order, one job at a time), a pool sized from this machine's cores at run time (a
 to 6) that always keeps one worker for the person's answers, cancellation by tokens (a lane closes
 with its owner), per-class counters. While a player plays or an export runs, the visible and
 background classes SHALL start nothing and a running job SHALL wait at its next checkpoint; they
-resume when playback stops. A worker with nothing to run SHALL park with no clock. A ready LRU of
+resume when playback stops. The one exception is the insurance autosave (capability `durability`, "The insurance autosave reaches the recovery file while playing"). A worker with nothing to run SHALL park with no clock. A ready LRU of
 thumbnails or effect cells SHALL never evict what the last two UI frames drew. Decoder owners stay
 threads of their own (invariant 5); a lane's job drops any source it opened before it ends.
 Why: the owner, kkt-26.11.08 H15 (the scheduler may pause thumbnails, analysis and the index while
