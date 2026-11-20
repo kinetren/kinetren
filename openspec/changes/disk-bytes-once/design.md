@@ -56,3 +56,14 @@ equal the stored picture), t3357 (a kept moment on the bytes path is shown with 
 probe path, the stream's walk counter does not move), t3358 (the live `render_cache` under
 `WGPU_BACKEND=gl` counts restores ≤ the moments, not ×10; the kt-cli `preview --render-cache` line).
 Spare: t3359, t3360.
+
+## As built
+
+- `show_kept` takes `Kept::Display(options)` or `Kept::Bytes(via, out)`; the bytes target's executor is
+  `via` (the slow route's) or the player's; `read_kept` must answer the probe plan's output size. A kept
+  moment on the bytes path is now found by the probe key whether or not the executor keeps bytes; a
+  disk moment is kept by `restore_from_disk` on that executor (`keep` + `read_kept`). `disk_bytes` is gone.
+- t3358 is the live `render_cache` scenario, not kt-cli: `kt-cli preview` presents on its display
+  device (`register_display`), so it runs the display path and could not show the bytes path's defect;
+  the live stand's preview is GL (llvmpipe), the bytes path. Measured: 27 moments of the loop, eight laps
+  after the restart, 27 restores (each once, all in one lap).

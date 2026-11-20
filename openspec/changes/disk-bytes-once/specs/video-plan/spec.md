@@ -17,9 +17,9 @@ stream stage's history (disk-bytes-once D1–D3).
 #### Scenario: A kept moment on the bytes path needs no history
 - **WHEN** a Datamosh moment kept by the bytes path's executor is composed again after its stream memo is cleared
 - **THEN** it is shown from the kept memo, and the stream's walk counter and the decode requests do not move
-- **TEST** t3357 (`src/libs/kt-engine/tests/render_cache_bytes.rs`)
+- **TEST** t3357 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 #### Scenario: The live GL run restores each moment once
-- **WHEN** the live `render_cache` scenario plays ten laps under `WGPU_BACKEND=gl` and kt-cli `preview --render-cache` plays the same range
-- **THEN** the restores counted are at most the moments of the range, not ten times them
-- **TEST** t3358 (`src/apps/kt-cli/tests/cli.rs`)
+- **WHEN** the live `render_cache` scenario (the stand's preview is GL: the bytes path) restarts and plays its one-second loop eight laps
+- **THEN** the restores its trace counts are at most the moments written, not eight times them
+- **TEST** t3358 (live `render_cache`, `src/scripts/live/render_cache.py`)

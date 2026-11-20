@@ -8,7 +8,7 @@
 
 ## 1. The fix
 
-- [ ] 1.1 `show_kept` takes the target: `present_kept` for the display, `read_kept` for bytes; the bytes
+- [x] 1.1 `show_kept` takes the target: `present_kept` for the display, `read_kept` for bytes; the bytes
       path's executor; `restore_from_disk` for both; `disk_bytes` removed
-- [ ] 1.2 t3356, t3357 (kt-engine), t3358 (kt-cli and the live `render_cache` under GL)
-- [ ] 1.3 found-defects 774 closed; `cargo test -p kt-engine`, clippy, target-prune; commit
+- [x] 1.2 t3356, t3357 (kt-engine), t3358 (kt-cli and the live `render_cache` under GL)
+- [x] 1.3 found-defects 774 closed; `cargo test -p kt-engine`, clippy, target-prune; commit

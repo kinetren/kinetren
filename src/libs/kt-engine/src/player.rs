@@ -264,6 +264,13 @@ pub enum VideoBackendStatus {
     Poisoned { info: GpuBackendInfo, reason: String },
 }
 
+/// Where a kept moment is shown (disk-bytes-once D1): the display, or bytes read back from the bytes
+/// path's executor (`via`, else the player's).
+pub(crate) enum Kept<'a, 'b> {
+    Display(PresentOptions),
+    Bytes(Option<&'a Arc<dyn VideoGpuExec>>, &'b mut Vec<u8>),
+}
+
 impl Player {
     /// `sources` — open sources by media id (ownership passes to the workers).
     pub fn new(
@@ -1525,7 +1532,7 @@ impl PreviewParts {
             trace::ev(Ev::FrameAsk).id(frame).a(aligned.0 as u64).aux(trace::ask::PLAYING | trace::ask::PRESENT).emit();
             trace::with_cause(frame)
         });
-        if let Some(r) = self.show_kept(&video, frame, aligned, q, Some(o)) {
+        if let Some(r) = self.show_kept(&video, frame, aligned, q, Kept::Display(o)) {
             // a composite asked and served from what is kept, counted as `compose_at` counts it
             kt_time::work::bump(kt_time::work::Work::Composite);
             if own {
@@ -1584,19 +1591,16 @@ impl PreviewParts {
         // the moment's composite comes from a plan that runs no stream stage, so a covered frame is
         // found without its history, its decodes or the look-ahead's leftovers — the plan of a
         // kept frame used to wait for a history the memo had dropped, and showed "Loading".
-        if let Some(r) = self.show_kept(&video, frame, aligned, q, kept_on.or(match &target {
-            Target::Display(o) => Some(*o),
-            Target::Bytes(_) => None,
-        })) {
+        // the bytes path (a GL preview off the window's device, kt-cli, the harness) finds a kept or
+        // stored moment the same way, and reads the kept composite back (disk-bytes-once D1, found-defects
+        // 774): a disk moment is restored ONCE into the executor's memo, never read from the store again
+        let kept = match (kept_on, &mut target) {
+            (Some(o), _) => self.show_kept(&video, frame, aligned, q, Kept::Display(o)),
+            (None, Target::Display(o)) => self.show_kept(&video, frame, aligned, q, Kept::Display(*o)),
+            (None, Target::Bytes(out)) => self.show_kept(&video, frame, aligned, q, Kept::Bytes(via, out)),
+        };
+        if let Some(r) = kept {
             return Some(r);
-        }
-        // the bytes path (a GL preview off the window's device, the harness): the disk tier's picture is
-        // the composite's bytes (render-cache-disk D3)
-        if let Target::Bytes(out) = &mut target
-            && self.disk_bytes(&video, aligned, q, out)
-        {
-            kt_time::work::bump(kt_time::work::Work::CompositeReplay);
-            return Some((q, true, true, Default::default(), t0.elapsed().as_nanos() as u64, Default::default()));
         }
         let generation = self.transport.generation();
         let step = video.grid.frame_step();
@@ -1814,45 +1818,6 @@ impl PreviewParts {
         Some(key)
     }
 
-    /// The moment `t` from disk as bytes (render-cache-disk D3, the bytes path): `true` — `out` holds the
-    /// composite the store kept for it on this executor's device.
-    pub(crate) fn disk_bytes(&self, video: &VideoRenderer, t: Tick, q: Quality, out: &mut Vec<u8>) -> bool {
-        use kt_time::trace::{self, render_cache as k, Ev};
-        if !self.rc.is_on() {
-            return false;
-        }
-        let exec = {
-            let g = self.video_gpu.lock().unwrap();
-            if g.poisoned.is_some() { None } else { g.exec.clone() }
-        };
-        let Some(exec) = exec else { return false };
-        let Some(store) = self.rc.store(exec.info()) else { return false };
-        let built = self.builds.latest();
-        let versions = self.versions();
-        let files = self.rc.files(&built.project, (built.seq, versions.1), false);
-        let (plan, leaves) = video.probe_durable(&self.cache, t, q);
-        let dk = crate::render_cache::disk_key(&plan, &leaves, &files);
-        let (w, h) = (plan.out_w, plan.out_h);
-        drop(plan);
-        if !store.contains(dk) {
-            return false;
-        }
-        let mut span = trace::span(Ev::RenderCache);
-        match store.get(dk).filter(|p| (p.w, p.h) == (w, h)) {
-            Some(p) => {
-                span.aux(k::RESTORE).a(t.0 as u64).b(p.rgba.len() as u64).c(dk);
-                *out = p.rgba;
-                self.rc.restores.fetch_add(1, Ordering::Relaxed);
-                self.rc.note_on_disk(t.0, dk, versions);
-                true
-            }
-            None => {
-                span.cancel();
-                false
-            }
-        }
-    }
-
     /// Ask the layers of the moment `t` the cache lacks of the player's workers at `prio`; how many.
     pub(crate) fn request_layers(&self, video: &VideoRenderer, t: Tick, q: Quality, prio: Priority) -> usize {
         let step = video.grid.frame_step();
@@ -1879,8 +1844,9 @@ impl PreviewParts {
         }
     }
 
-    /// Show the moment's kept composite if the display's executor holds it, by a probe plan that
-    /// runs no stream stage (structured-telemetry).
+    /// Show the moment's kept composite if the executor holds it, by a probe plan that runs no stream
+    /// stage (structured-telemetry) — on the display, or read back into bytes from the bytes path's
+    /// executor (disk-bytes-once D1). Not held: the disk tier's picture is restored into the memo once.
     #[allow(clippy::type_complexity)]
     fn show_kept(
         &self,
@@ -1888,16 +1854,24 @@ impl PreviewParts {
         frame: u64,
         t: Tick,
         q: Quality,
-        on: Option<PresentOptions>,
+        to: Kept<'_, '_>,
     ) -> Option<(Quality, bool, bool, kt_fx::video::FrameCost, u64, crate::video_plan::GpuStages)> {
         use kt_time::trace::{self, Ev};
-        let o = on?;
-        let exec = self.display_exec()?;
+        let exec = match &to {
+            Kept::Display(_) => self.display_exec()?,
+            Kept::Bytes(via, _) => match via {
+                Some(e) => Arc::clone(e),
+                None => {
+                    let g = self.video_gpu.lock().unwrap();
+                    if g.poisoned.is_some() { None } else { g.exec.clone() }?
+                }
+            },
+        };
         let t0 = std::time::Instant::now();
         let mut plan_span = trace::span(Ev::FramePlan);
-        let key = {
+        let (key, size) = {
             let probe = video.probe_plan(&self.cache, t, q);
-            exec.present_key(&probe)?
+            (exec.present_key(&probe)?, (probe.out_w, probe.out_h))
         };
         let plan_ns = t0.elapsed().as_nanos() as u64;
         plan_span.id(frame).a(key).c(trace::route::DISPLAY);
@@ -1905,7 +1879,11 @@ impl PreviewParts {
         // not held: the disk tier may have it (render-cache-disk D3)
         let key = if exec.holds(key) { key } else { self.restore_from_disk(&exec, video, t, q)? };
         let mut exec_span = trace::span(Ev::FrameExec);
-        if !exec.present_kept(key, o) {
+        let shown = match to {
+            Kept::Display(o) => exec.present_kept(key, o),
+            Kept::Bytes(_, out) => exec.read_kept(key, out) == Some(size),
+        };
+        if !shown {
             exec_span.cancel();
             return None;
         }
