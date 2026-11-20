@@ -699,7 +699,7 @@ Why: R.67, verbatim from the owner: "I can EITHER draw the points myself, or set
 #### Scenario: A layer over keys, and removal separately
 - **WHEN** a curve with three keys and a zigzag on the second segment is given a layer `k * 0.5 + 0.1`; then the layer is removed; then a link and the layer `k + src` are set; then the link is removed
 - **THEN** with the layer the values equal `0.5·k + 0.1` at every probe, and the keys and the zigzag are intact; without the layer — exactly the former `k`; with the link and the layer — `k + src`; after removing the link the layer remains, `src` = 0; each step is one history step; the file carries the layer and reads back as the same curve
-- **TEST** t787c (`src/libs/kt-model/tests/fx_auto.rs`), t787d (`src/libs/kt-otio/tests/convert.rs`)
+- **TEST** t787c (`src/libs/kt-model/tests/fx_auto.rs`), t787b (`src/libs/kt-otio/tests/convert.rs`)
 
 #### Scenario: The formula's `t` counts from the start of the material, and the preview is the same
 - **WHEN** a layer curve with `t` (seconds) sits on an event with an input point at 10 s; the render asks for the value at material 12 s; the graph preview is built for the window 11..13 s and for the window 5..20 s
@@ -819,7 +819,7 @@ is what a person expects (AE's "Mask Path"); the tracker (T1) drives a point thr
 
 #### Scenario: Commands, undo and the chain's parallel lists
 - **WHEN** masks are set on an event, a slot and a track by commands and undone; the chain is shortened by `SetFx`; a slot with masks is copied and pasted
-- **THEN** each command is one undo step; `fx_masks` is trimmed with the chain; the pasted slot carries its masks with keys re-hung on the target's entry
+- **THEN** each command is one undo step; the slot masks (`masks.slots`) are trimmed with the chain; the pasted slot carries its masks with keys re-hung on the target's entry
 - **TEST** t1262 (`src/libs/kt-model/tests/masks.rs`)
 
 ### Requirement: The segment shape lives on the key and has its own parameters, the warp speed included

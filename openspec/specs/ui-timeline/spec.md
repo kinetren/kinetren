@@ -114,7 +114,7 @@ Why: "the preview disappeared without trace", "AGAIN I cannot change the width o
 #### Scenario: The width of the media bin and of the cards
 - **WHEN** the bin's cards are moved onto the timeline, the poster is selected
 - **THEN** the bin's layout does not change from the move; the poster is the most informative frame (flat frames are filtered out); the limit of the column's width is not squeezed "by analogy" with its neighbours
-- **TEST** t87 (`src/apps/kt-app/src/layout_tests.rs`), t87 (`src/apps/kt-app/src/thumbs.rs`)
+- **TEST** t87 (`src/apps/kt-app/src/thumbs.rs`)
 
 #### Scenario: The height of each track is its own, and this is a convenience, not an edit
 - **WHEN** the bottom edge of a row in the gutter is dragged, the menu item resets the height
@@ -145,8 +145,8 @@ A new strip, row or column SHALL be introduced only when it is proven that
 the content cannot be placed in an already occupied place. The name of a label SHALL be written on
 the time caption row, the name of a bin group — in the gap of the frame's top line,
 a long track name — as a tag with a backing a row BELOW the clip's name, the name of a transition
-kind — inside the transition window. A long name SHALL be truncated by one helper,
-rather than stretching the strip. Obvious captions ("zoom:", "FPS:", "(loop)") and
+kind — inside the transition window. A long name SHALL be truncated rather than stretch the strip, by the one helper of the rule "Text
+fits" (capability `ui-reach`). Obvious captions ("zoom:", "FPS:", "(loop)") and
 duplicating a highlight with text MUST NOT exist.
 Why: the strip for labels stood empty in any project without labels; "do not make a mess out of letters… write the names of the tracks EXACTLY under the names of the clips".
 
@@ -475,7 +475,7 @@ interface, space does not lead to pause until I close the effect window".
 #### Scenario: One window per link group
 - **WHEN** FX is opened from the partner of the pair
 - **THEN** a second window is not created; the window drives both chains in the collapsed forms; the rollback returns both; for the video instance of warp the reverb handles are hidden and the frame mode is shown; the reverb handles are visible exactly once
-- **TEST** t219, t248c (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t219, t248c (`t248_video_warp_shows_only_what_matters`, `src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Automation in the FX window — one history step
 - **WHEN** a curve is added, keys are added, slots are moved, Cancel is pressed
@@ -500,7 +500,7 @@ interface, space does not lead to pause until I close the effect window".
 #### Scenario: Camera window
 - **WHEN** double-click on the camera block; edits; the camera is deleted
 - **THEN** the window opens; the edits are one undo step; the window of the dead camera closes
-- **TEST** t231b (`src/apps/kt-app/src/layout_tests.rs`)
+- **TEST** t231b (`t231_camera_editor_opens_and_edits`, `src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Morpher window: targets, time, one strip with the morph slot
 - **WHEN** the morpher is open in "below" / by-targets mode; "+M" is pressed in the toolbar

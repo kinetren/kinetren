@@ -417,7 +417,7 @@ manifest instead of being re-promised by each crate.
   plugin `wobble_grid` is registered; the project is opened, played and saved
 - **THEN** the factory raises a placeholder source labelled with the id, FFmpeg and the sidecar DB
   are not touched, one notice names the id, and the saved file keeps the path and the values
-- **TEST** t973b (`src/libs/kt-media/src/factory.rs`)
+- **TEST** t973b (`src/libs/kt-engine/tests/plugin_missing.rs`)
 
 ### Requirement: Sound kinds — synthesized from the sample number, no picture, AES17 levels
 The sound generator kinds (`tone`, `audio_noise`, `sweep`, `beep`, `silence`, family

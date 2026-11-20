@@ -619,7 +619,7 @@ Why: "enter N levels to understand where the frame comes from" — a drawback of
 #### Scenario: Reel tree in probe
 - **WHEN** probe runs on a project with a nested reel
 - **THEN** it prints the tree, the event path, and the literal `is a NESTED REEL`
-- **TEST** t452b (`src/apps/kt-cli/tests/cli.rs`)
+- **TEST** t452b (inside `t290_probe_reports_what_layers_changed`, `src/apps/kt-cli/tests/cli.rs`)
 
 ### Requirement: Instance override curves — the same shapes, sources and block as the slot
 An override of a public parameter SHALL accept a curve with any segment shape (including a segment formula), a formula layer and a source (a formula, a link inside the reel), and the instance window SHALL show for it THE SAME "curve as parameter" block as the effect slot and the generator: the shape of all segments with parameters, the layer, the link, delete. The axis of the override curve is the instance's time; source resolution happens in this domain when overlaid on the content of the reel, before conversion to the target's time. A refusal (an address across the reel boundary) SHALL be named in the status line, not wipe the field.

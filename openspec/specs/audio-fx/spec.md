@@ -280,7 +280,7 @@ Why: the owner of R.63 — "everywhere meaningless copy-pastes of the same code 
 #### Scenario: Neutrality and cost
 - **WHEN** the golden chains are run without a single key; then a chain with a key during silence in the key
 - **THEN** `GOLDEN_AUDIO`, t2, t3, and the t322 harness are green without regeneration; with silence in the key the output equals the input (up to makeup), and there are no allocations in the processing
-- **TEST** t768 (`src/libs/kt-fx/tests/sidechain.rs`), t322 (`src/libs/kt-fx/tests/audio_registry.rs`)
+- **TEST** t768 (`src/libs/kt-fx/tests/sidechain.rs`), t322 (`src/libs/kt-engine/tests/audio_fx_registry.rs`)
 
 ### Requirement: Audio catch-up — presets over existing nodes before new nodes
 The audio part of the catch-up (wave W7 of F-FX-007, "voice presets": telephone, megaphone, radio,
