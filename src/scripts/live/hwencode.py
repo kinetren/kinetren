@@ -68,7 +68,7 @@ def main(out):
             app.click_probe("render.start", "Render…")
 
             # 3) an error in the window, the program alive
-            app.expect(app.has_probe("render.open_log", tries=120), "the window ends with the error")
+            app.expect(app.until(lambda: app.has_probe("render.open_log", tries=1), timeout=900), "the window ends with the error")
             app.expect(not os.path.exists(target), "no file was left")
             app.step("error", "the render failed with the reason: the driver crashed in a test process")
 
@@ -81,7 +81,7 @@ def main(out):
             app.click_probe("render.encoder.libx264", "libx264")
             app.click_probe("render.start", "Render…")
             replace_if_asked(app)
-            app.expect(app.has_probe("render.open_file", tries=240), "the render finished on software")
+            app.expect(app.until(lambda: app.has_probe("render.open_file", tries=1), timeout=900), "the render finished on software")
             app.step("software", "the render finished, the editor never left")
             app.click_probe("render.close", "Close")
             app.expect(app.wait_gone("render.close"), "the window closed")
@@ -95,7 +95,7 @@ def main(out):
             app.click_probe("file.render", "File → Render…")
             app.click_probe("render.start", "Render…")
             replace_if_asked(app)
-            app.expect(app.has_probe("render.open_file", tries=240), "the render finished on hardware")
+            app.expect(app.until(lambda: app.has_probe("render.open_file", tries=1), timeout=900), "the render finished on hardware")
             app.step("hardware", "Video: h264_vaapi (hardware · the device) · nv12 · QP 23")
             with open(target, "rb") as f:
                 app.expect(f.read(12)[4:8] == b"ftyp", "the file on disk is an MP4")

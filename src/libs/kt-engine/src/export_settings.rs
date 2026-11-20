@@ -106,7 +106,11 @@ pub fn pairs(o: &ExportOptions) -> Vec<(String, String)> {
         ("bframes", f.b_frames.to_string()),
         ("speed", speed_word(f.speed).into()),
         ("depth", if f.depth == BitDepth::Ten { "10" } else { "8" }.into()),
-        ("matrix", if f.matrix == Matrix::Bt709 { "bt709" } else { "bt601" }.into()),
+        ("matrix", match f.matrix {
+            None => "auto",
+            Some(Matrix::Bt601) => "bt601",
+            Some(Matrix::Bt709) => "bt709",
+        }.into()),
         ("range", if f.range == Range::Full { "full" } else { "limited" }.into()),
         ("audio", audio_word(f.audio).into()),
         ("abitrate", bits_text(o.audio_bitrate)),
@@ -173,9 +177,10 @@ pub fn apply(o: &mut ExportOptions, key: &str, v: &str) -> Result<(), String> {
         }
         "matrix" => {
             f.matrix = match v.to_ascii_lowercase().as_str() {
-                "bt601" => Matrix::Bt601,
-                "bt709" => Matrix::Bt709,
-                _ => return Err(bad("bt601 or bt709")),
+                "auto" => None,
+                "bt601" => Some(Matrix::Bt601),
+                "bt709" => Some(Matrix::Bt709),
+                _ => return Err(bad("auto, bt601 or bt709")),
             }
         }
         "range" => {
@@ -260,7 +265,7 @@ mod tests {
                 b_frames: 3,
                 speed: Speed::Slowest,
                 depth: BitDepth::Ten,
-                matrix: Matrix::Bt709,
+                matrix: Some(Matrix::Bt709),
                 range: Range::Full,
                 audio: AudioCodec::Flac,
                 title: "A = b".into(),

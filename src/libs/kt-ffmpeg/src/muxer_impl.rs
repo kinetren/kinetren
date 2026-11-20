@@ -548,7 +548,7 @@ impl Muxer {
                 // the tags state the conversion (D6), the chroma's place too (export-host-copy D2: the
                 // conversion sites it left, as a player assumes of an untagged stream)
                 (*ctx).chroma_sample_location = ffi::AVCHROMA_LOC_LEFT;
-                (*ctx).colorspace = match form.matrix {
+                (*ctx).colorspace = match form.matrix_at(width as u32, height as u32) {
                     crate::format::Matrix::Bt601 => ffi::AVCOL_SPC_SMPTE170M,
                     crate::format::Matrix::Bt709 => ffi::AVCOL_SPC_BT709,
                 };
@@ -720,7 +720,7 @@ impl Muxer {
             Some((hw, dev, frames, _)) => (Some(*hw), *dev, *frames),
             None => (None, core::ptr::null_mut(), core::ptr::null_mut()),
         };
-        let colour = (form.matrix, form.range);
+        let colour = (form.matrix_at(width as u32, height as u32), form.range);
         let conv = VideoConverter::new(api, width, height, vpix, colour)?;
         Ok(Muxer {
             api,
