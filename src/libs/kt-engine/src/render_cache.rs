@@ -748,10 +748,24 @@ pub fn candidates(
             }
         }
     }
-    let mut v: Vec<i64> = out.into_iter().collect();
-    let inside = |t: i64| region.is_some_and(|(s, e)| s <= t && t < e);
-    v.sort_by_key(|&t| (!inside(t), (t - head).abs(), t));
-    v
+    // a run of consecutive moments is taken from its START (found-defects 776): a segment goes on
+    // only forward, and taking each moment by its distance to the head, both sides alternating, cut
+    // the part of a run behind the head into a segment per moment — 54 moments in 14–16 files.
+    // Runs go by the loop region first, then by their distance to the head.
+    let mut runs: Vec<Vec<i64>> = Vec::new();
+    for t in out {
+        match runs.last_mut() {
+            Some(r) if r.last().is_some_and(|&l| l + step == t) => r.push(t),
+            _ => runs.push(vec![t]),
+        }
+    }
+    let inside = |r: &[i64]| region.is_some_and(|(s, e)| r.iter().any(|&t| s <= t && t < e));
+    let dist = |r: &[i64]| {
+        let (a, b) = (r[0], r[r.len() - 1]);
+        if (a..=b).contains(&head) { 0 } else { (a - head).abs().min((b - head).abs()) }
+    };
+    runs.sort_by_key(|r| (!inside(r), dist(r), r[0]));
+    runs.concat()
 }
 
 // ---- the player's tier ---------------------------------------------------------------------------
@@ -1418,8 +1432,9 @@ mod tests {
     }
 
     /// Test t2983 (render-cache-disk D4): the candidates are the heavy moments not done and their
-    /// unmeasured neighbours with a picture, the loop region's first, then by distance to the head; a
-    /// light moment and what lies past it are not candidates.
+    /// unmeasured neighbours with a picture, in runs of consecutive moments — the loop region's first,
+    /// then by distance to the head, each from its start (found-defects 776); a light moment and what
+    /// lies past it are not candidates.
     #[test]
     fn t2983_the_prerender_picks_what_was_measured_slow() {
         let step = 10;
@@ -1431,9 +1446,14 @@ mod tests {
         let v = candidates(&costs, step, heavy, done, has, None, 480);
         // 300 is on disk, its unmeasured neighbours are still measured; 120 is light, 130 lies past it,
         // 510 has no picture
-        assert_eq!(v, vec![490, 500, 310, 290, 110, 100, 90], "nearest the head");
+        assert_eq!(v, vec![490, 500, 310, 290, 90, 100, 110], "runs nearest the head, each from its start");
         let v = candidates(&costs, step, heavy, done, has, Some((90, 115)), 480);
-        assert_eq!(&v[..3], &[110, 100, 90], "the loop region's first");
+        assert_eq!(&v[..3], &[90, 100, 110], "the loop region's first");
+        // the head inside a run (found-defects 776): the whole run from its start, not outward from
+        // the head, so it goes into one segment
+        let run: BTreeMap<i64, u64> = (0..12).map(|i| (1000 + i * step, 5000)).collect();
+        let v = candidates(&run, step, heavy, |_| false, |_| true, None, 1060);
+        assert_eq!(v, (99..=112).map(|i| i * step).collect::<Vec<_>>(), "one run, its start first");
         assert!(candidates(&costs, step, 1_000_000, done, has, None, 0).is_empty(), "nothing heavy: nothing");
     }
 }

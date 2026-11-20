@@ -359,3 +359,51 @@ fn t2985_the_bars_draw_what_the_disk_holds_for_this_state() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// Test t3201 (found-defects 776): with the playhead in the middle of a heavy run the prerender
+/// writes the whole run into ONE segment, from its start: taken by distance to the head, both sides
+/// alternating, the part behind the head went into a segment per moment (54 moments in 14–16 files).
+#[test]
+fn t3201_a_heavy_run_is_one_segment_from_its_start() {
+    let root = tempfile::tempdir().unwrap();
+    let Some((p, moments)) = player(root.path(), 0.63) else { return };
+    // the run is measured whole before the tier looks (a played loop measures it so): with the tier
+    // on, the seek's own compose made the middle moment the only one known for a pass
+    p.set_render_cache(None);
+    p.seek(moments[moments.len() / 2]);
+    for t in &moments {
+        p.note_preview_cost(*t, 1_000_000_000, (160, 90));
+    }
+    p.set_render_cache(Some(Config {
+        codec: std::sync::Arc::new(kt_engine::render_cache::RawSegments),
+        root: root.path().to_path_buf(),
+        build: "test build".into(),
+        base: None,
+        cap: 1 << 30,
+    }));
+    let items = kt_time::trace::testing::capture(|| prerender(&p, &moments));
+    let stores: Vec<(u64, u64)> = kt_time::trace::testing::recs(&items)
+        .iter()
+        .filter(|r| r.ev == kt_time::trace::Ev::RenderCache as u16 && r.aux == kt_time::trace::render_cache::STORE)
+        .map(|r| (r.c, r.a))
+        .collect();
+    // the test tier counts every measured moment heavy, so the prerender walks on past the run; what
+    // matters is that the run went into one segment, started before its first moment
+    let step = p.video_grid().frame_step();
+    let holding: Vec<&(u64, u64)> = stores
+        .iter()
+        .filter(|(first, n)| moments.iter().any(|t| (*first as i64) <= t.0 && t.0 < *first as i64 + *n as i64 * step))
+        .collect();
+    assert_eq!(
+        holding.len(),
+        1,
+        "the run of {} moments {:?} is in one segment; written (first tick, moments): {stores:?}",
+        moments.len(),
+        moments.iter().map(|t| t.0).collect::<Vec<_>>()
+    );
+    let (first, n) = *holding[0];
+    assert!(
+        (first as i64) <= moments[0].0 && moments[moments.len() - 1].0 < first as i64 + n as i64 * step,
+        "the segment holds the whole run from its start: {stores:?}"
+    );
+}
