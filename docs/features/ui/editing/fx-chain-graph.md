@@ -11,12 +11,12 @@ crates: [kt-app, kt-model, kt-engine, kt-fx]
 invariants: [3, 7, 11, 12]
 ui_rules: [9, 13, 17]
 round: null
-point: change fx-graph
+point: change fx-graph (v1), fx-graph-dag (v2)
 tests: [t2990, t2991, t2992, t2993, t2994, t2995, t2998, t2999, t3001, t3003]
 depends_on: []
 trackers: []
 services: []
-checked: 2026-11-18
+checked: 2026-11-20
 ---
 
 # F-UI-008 — Effects as a node graph — one editor in every window, picture and sound sockets, room for compositing
@@ -69,6 +69,17 @@ later the same editor carries branches and merges the engine learns to execute. 
    morpher layers and compositions.
 4. **The row graphs (Ableton, Bitwig, Resolve Color) win where the order is fixed**: the person never
    arranges nodes. Free placement pays only once the routing is free.
+5. **A merge has a background, a foreground and a mask input — the background sets the size.**
+   Nuke's Merge ("A over B": B is the background, the output keeps B's format, a `mask` input and a
+   `mix` knob on every node), Fusion's Merge (Background, Foreground, Effect Mask) and Resolve
+   Color's key input on a node and its Parallel/Layer mixer nodes all split the same three roles.
+   Blender's Mix node takes a Fac socket for the same per-pixel weight. The non-obvious detail is
+   the mask input: "blur only the highlights" is not a special effect but a merge whose mask is a
+   key of the picture itself. Resolve's Layer Mixer gives the lower input priority — an order rule
+   the person must learn; naming the roles avoids it. None of the NLEs (Vegas, Premiere, FCP) branch
+   inside an event: they stack tracks with blend modes or track mattes, which is our timeline
+   composite — the Merge law of `fx-graph-dag` (one event with a Merge = two stacked layers) ties
+   the two together.
 
 ## Pros
 
@@ -120,8 +131,9 @@ CAPABILITY: openspec/specs/ui-reach/
 ### What hinders
 
 The model is `fx: Vec<FxInstance>` with parallel `fx_auto`/`fx_bypass`/mask vectors addressed by
-INDEX: a slot has no id, so a node cannot keep a position or be wired across chains until slots get
-stable ids (a format change, v2).
+INDEX. v2 (`fx-graph-dag`) keeps the index: a slot's inputs may name only EARLIER slots, so the slot
+order is a processing order, a line needs no new field, and no machine that addresses slots by index
+changes. Free placement and wires across chains would need stable ids; neither is planned.
 
 ### Which invariants it touches
 
