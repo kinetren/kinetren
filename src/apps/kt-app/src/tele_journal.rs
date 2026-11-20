@@ -717,12 +717,14 @@ mod tests {
         assert!(read(&j).trim_end().ends_with(&format!("second {:04} kinetren 100, prefetch 90", n - 1)));
     }
 
-    /// Test t1964 (telemetry-journal): with nothing to write, the journal's thread does not wake.
-    #[cfg(target_os = "linux")]
     /// The writer stays running after it counted a record while this is set (t1964; one test process
     /// per test under nextest). A flag the test clears, not a span: the stay is a stimulus, not a wait.
+    /// On every target: the writer reads it in any test build (the Windows build broke when the
+    /// test's `cfg` came to stand on this static, found-defects 901).
     pub(super) static HOLD_AFTER_COUNT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+    /// Test t1964 (telemetry-journal): with nothing to write, the journal's thread does not wake.
+    #[cfg(target_os = "linux")]
     #[test]
     fn t1964_no_wakeups_at_rest() {
         // the writer stays running past its count of a record, as a preempted one does under load
