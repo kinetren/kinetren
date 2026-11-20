@@ -72,22 +72,23 @@ pub fn with_decode_settings<R>(s: DecodeSettings, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// The settings a source opened now on this thread takes: the scope's, else the process-wide ones.
+pub fn opening_settings() -> DecodeSettings {
+    SCOPED.with(|c| c.get()).unwrap_or_else(|| DecodeSettings {
+        decode_threads: DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed),
+        rgba_threads: RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed),
+    })
+}
+
 #[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn rgba_threads() -> usize {
-    match SCOPED.with(|c| c.get()) {
-        Some(s) => s.rgba_threads.max(1) as usize,
-        None => RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed).max(1) as usize,
-    }
+    opening_settings().rgba_threads.max(1) as usize
 }
 
 /// What the `threads` option of a video decoder says.
 #[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn decode_threads() -> String {
-    let n = match SCOPED.with(|c| c.get()) {
-        Some(s) => s.decode_threads,
-        None => DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed),
-    };
-    match n {
+    match opening_settings().decode_threads {
         0 => "auto".to_string(),
         n => n.to_string(),
     }
