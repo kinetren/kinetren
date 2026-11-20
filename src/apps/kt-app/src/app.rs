@@ -5121,7 +5121,9 @@ impl KtApp {
     /// of parameters opened, but there was nothing in the preview — a title had to be typed
     /// blind, then go to the bin and place the card by hand.
     /// Ctrl+Z returns everything at once, because the batch is one.
-    /// Create a generator at the cursor — the bin's entry (one body with Edit and the track menu).
+    /// Create a generator of `kind` at the cursor on track 1 of its streams: the tests' and the
+    /// harness's shortcut (the person's entries go through `create_generator_by_selection`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn create_generator(&mut self, kind: kt_model::GeneratorKind) {
         self.create_generator_at(kind, self.player.transport.playhead(), None);
     }
