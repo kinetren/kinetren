@@ -216,6 +216,112 @@ const RECT: &str = include_str!("wgsl/rect.wgsl");
 const ELLIPSE: &str = include_str!("wgsl/ellipse.wgsl");
 const LINE: &str = include_str!("wgsl/line.wgsl");
 
+// ---- the shapes and plates (gen-shapes, `v26.10` G5) -----------------------------------------------
+
+const POLYGON: &str = concat!(include_str!("wgsl/sdf.wgsl"), include_str!("wgsl/polygon.wgsl"));
+const STAR: &str = concat!(include_str!("wgsl/sdf.wgsl"), include_str!("wgsl/star.wgsl"));
+const ARROW: &str = concat!(include_str!("wgsl/sdf.wgsl"), include_str!("wgsl/arrow.wgsl"));
+const FRAME: &str = concat!(include_str!("wgsl/sdf.wgsl"), include_str!("wgsl/frame.wgsl"));
+const PLATE: &str = concat!(include_str!("wgsl/sdf.wgsl"), include_str!("wgsl/plate.wgsl"));
+const PROGRESS: &str = concat!(include_str!("wgsl/sdf.wgsl"), include_str!("wgsl/progress.wgsl"));
+
+/// The colour of `rows[i..i+4]` as the shaders read it (0..255, alpha 0..255).
+fn rgba_at(p: &[f64], i: usize) -> [f32; 4] {
+    [u8v(p[i]) as f32, u8v(p[i + 1]) as f32, u8v(p[i + 2]) as f32, u8v(p[i + 3]) as f32]
+}
+
+/// A feather in pixels: a fraction of the height, at least 1/256 px.
+fn feather_px(f: f64, h: u32) -> f32 {
+    (f * h.max(1) as f64).max(1.0 / 256.0) as f32
+}
+
+/// A regular polygon (rows: cx, cy, size, sides, angle_deg, feather, color×4).
+fn polygon(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (fw, fh) = (w.max(1) as f32, h.max(1) as f32);
+    let v = [
+        rgba_at(p, 6),
+        [p[0] as f32 * fw, p[1] as f32 * fh, p[2] as f32 * fh, p[3] as f32],
+        [p[4].to_radians() as f32, feather_px(p[5], h), 0.0, 0.0],
+        [0.0; 4],
+    ];
+    shader_frame("generator:polygon", POLYGON, w, h, [0, 0], v)
+}
+
+/// A star (rows: cx, cy, size, points, inner, angle_deg, feather, color×4).
+fn star(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (fw, fh) = (w.max(1) as f32, h.max(1) as f32);
+    let v = [
+        rgba_at(p, 7),
+        [p[0] as f32 * fw, p[1] as f32 * fh, p[2] as f32 * fh, p[3] as f32],
+        [p[5].to_radians() as f32, feather_px(p[6], h), p[4] as f32, 0.0],
+        [0.0; 4],
+    ];
+    shader_frame("generator:star", STAR, w, h, [0, 0], v)
+}
+
+/// An arrow (rows: x1, y1, x2, y2, thickness, head, feather, color×4).
+fn arrow(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (fw, fh) = (w.max(1) as f32, h.max(1) as f32);
+    let head = p[5] as f32 * fh;
+    let v = [
+        rgba_at(p, 7),
+        [p[0] as f32 * fw, p[1] as f32 * fh, p[2] as f32 * fw, p[3] as f32 * fh],
+        [p[4] as f32 * fh / 2.0, head, head * 0.6, feather_px(p[6], h)],
+        [0.0; 4],
+    ];
+    shader_frame("generator:arrow", ARROW, w, h, [0, 0], v)
+}
+
+/// A border frame (rows: inset, thickness, radius, feather, color×4).
+fn border(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (fw, fh) = (w.max(1) as f32, h.max(1) as f32);
+    let inset = p[0] as f32 * fh;
+    let half = [(fw / 2.0 - inset).max(1.0), (fh / 2.0 - inset).max(1.0)];
+    let v = [
+        rgba_at(p, 4),
+        [fw / 2.0, fh / 2.0, half[0], half[1]],
+        [(p[2] as f32 * fh).min(half[0].min(half[1])), (p[1] as f32 * fh).max(1.0), feather_px(p[3], h), 0.0],
+        [0.0; 4],
+    ];
+    shader_frame("generator:frame", FRAME, w, h, [0, 0], v)
+}
+
+/// A lower-third plate (rows: left, top, w, h, radius, accent, reveal, feather, color×4, color2×4).
+fn plate(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (fw, fh) = (w.max(1) as f32, h.max(1) as f32);
+    let (pw, ph) = (p[2] as f32 * fw, p[3] as f32 * fh);
+    let v = [
+        rgba_at(p, 8),
+        [p[0] as f32 * fw, p[1] as f32 * fh, pw, ph],
+        [(p[4] as f32 * fh).min(pw.min(ph) / 2.0), p[5] as f32 * fh, p[6] as f32, feather_px(p[7], h)],
+        rgba_at(p, 12),
+    ];
+    shader_frame("generator:plate", PLATE, w, h, [0, 0], v)
+}
+
+/// A progress bar filling with the material time (rows: left, top, w, h, radius, fill_time, feather,
+/// color×4 — the track, color2×4 — the fill).
+fn progress(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (fw, fh) = (w.max(1) as f32, h.max(1) as f32);
+    let (pw, ph) = (p[2] as f32 * fw, p[3] as f32 * fh);
+    let done = (pts.0.max(0) as f64 / 90_000.0 / p[5].max(0.01)).clamp(0.0, 1.0) as f32;
+    let v = [
+        rgba_at(p, 7),
+        [p[0] as f32 * fw, p[1] as f32 * fh, pw, ph],
+        [(p[4] as f32 * fh).min(pw.min(ph) / 2.0), done, feather_px(p[6], h), 0.0],
+        rgba_at(p, 11),
+    ];
+    shader_frame("generator:progress", PROGRESS, w, h, [0, 0], v)
+}
+
+/// The colour rows of a stem with alpha.
+fn rgba4(st: [&'static str; 4], d: [f64; 4]) -> Vec<Row> {
+    vec![rgb(st[0], d[0]), rgb(st[1], d[1]), rgb(st[2], d[2]), rgb(st[3], d[3])]
+}
+
+const PLATE_COLORS: &[(&str, &str)] = &[("color", "genp.plate_color"), ("color2", "genp.accent_color")];
+const PROGRESS_COLORS: &[(&str, &str)] = &[("color", "genp.track_color"), ("color2", "genp.fill_color")];
+
 /// The `pixel` texts of the family's shader kinds.
 pub const SHADERS: [&str; 6] = [
     GRADIENT,
@@ -425,6 +531,239 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
             line,
         )
         .with_shader(LINE)),
+        // ---- gen-shapes (`v26.10` G5): shapes and plates --------------------------------------------
+        // a regular polygon: sides, size (a fraction of the height), rotation
+        Arc::new(kind(
+            "polygon",
+            "genkind.polygon",
+            SHAPES,
+            [
+                vec![
+                    pct("cx", 0.0, 1.0, 0.5),
+                    pct("cy", 0.0, 1.0, 0.5),
+                    pct("size", 0.01, 1.0, 0.25),
+                    count("sides", 3.0, 12.0, 6.0),
+                    smooth("angle_deg", -180.0, 180.0, 0.0, 1.0, ParamUnit::Deg),
+                    pct("feather", 0.0, 0.05, 0.002),
+                ],
+                rgba([255.0, 255.0, 255.0, 255.0]),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                true,
+                false,
+                false,
+                &[
+                    PathTok { key: "cx", val: PathVal::Unit("cx") },
+                    PathTok { key: "cy", val: PathVal::Unit("cy") },
+                    PathTok { key: "sz", val: PathVal::Unit("size") },
+                    PathTok { key: "n", val: PathVal::Int("sides", 3, 12) },
+                    PathTok { key: "an", val: PathVal::Num("angle_deg") },
+                    PathTok { key: "fe", val: PathVal::Unit("feather") },
+                    PathTok { key: "c", val: PathVal::Hex4("color") },
+                ],
+                SHAPE_COLOR,
+            ),
+            polygon,
+        )
+        .with_shader(POLYGON)),
+        // a star: its points and how deep the valleys go (its own number: a kind of its own)
+        Arc::new(kind(
+            "star",
+            "genkind.star",
+            SHAPES,
+            [
+                vec![
+                    pct("cx", 0.0, 1.0, 0.5),
+                    pct("cy", 0.0, 1.0, 0.5),
+                    pct("size", 0.01, 1.0, 0.25),
+                    count("points", 3.0, 12.0, 5.0),
+                    smooth("inner", 0.1, 0.95, 0.45, 0.01, ParamUnit::Norm),
+                    smooth("angle_deg", -180.0, 180.0, 0.0, 1.0, ParamUnit::Deg),
+                    pct("feather", 0.0, 0.05, 0.002),
+                ],
+                rgba([255.0, 210.0, 60.0, 255.0]),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                true,
+                false,
+                false,
+                &[
+                    PathTok { key: "cx", val: PathVal::Unit("cx") },
+                    PathTok { key: "cy", val: PathVal::Unit("cy") },
+                    PathTok { key: "sz", val: PathVal::Unit("size") },
+                    PathTok { key: "n", val: PathVal::Int("points", 3, 12) },
+                    PathTok { key: "in", val: PathVal::Unit("inner") },
+                    PathTok { key: "an", val: PathVal::Num("angle_deg") },
+                    PathTok { key: "fe", val: PathVal::Unit("feather") },
+                    PathTok { key: "c", val: PathVal::Hex4("color") },
+                ],
+                SHAPE_COLOR,
+            ),
+            star,
+        )
+        .with_shader(STAR)),
+        // an arrow from (x1, y1) to (x2, y2) with its head
+        Arc::new(kind(
+            "arrow",
+            "genkind.arrow",
+            SHAPES,
+            [
+                vec![
+                    pct("x1", 0.0, 1.0, 0.3),
+                    pct("y1", 0.0, 1.0, 0.6),
+                    pct("x2", 0.0, 1.0, 0.7),
+                    pct("y2", 0.0, 1.0, 0.4),
+                    pct("thickness", 0.002, 0.1, 0.02),
+                    pct("head", 0.01, 0.3, 0.08),
+                    pct("feather", 0.0, 0.05, 0.002),
+                ],
+                rgba([255.0, 255.0, 255.0, 255.0]),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                true,
+                false,
+                false,
+                &[
+                    PathTok { key: "x1", val: PathVal::Unit("x1") },
+                    PathTok { key: "y1", val: PathVal::Unit("y1") },
+                    PathTok { key: "x2", val: PathVal::Unit("x2") },
+                    PathTok { key: "y2", val: PathVal::Unit("y2") },
+                    PathTok { key: "th", val: PathVal::Unit("thickness") },
+                    PathTok { key: "hd", val: PathVal::Unit("head") },
+                    PathTok { key: "fe", val: PathVal::Unit("feather") },
+                    PathTok { key: "c", val: PathVal::Hex4("color") },
+                ],
+                SHAPE_COLOR,
+            ),
+            arrow,
+        )
+        .with_shader(ARROW)),
+        // a border frame round the picture
+        Arc::new(kind(
+            "frame",
+            "genkind.frame",
+            SHAPES,
+            [
+                vec![
+                    pct("inset", 0.0, 0.45, 0.04),
+                    pct("thickness", 0.001, 0.2, 0.01),
+                    pct("radius", 0.0, 0.5, 0.02),
+                    pct("feather", 0.0, 0.05, 0.002),
+                ],
+                rgba([255.0, 255.0, 255.0, 255.0]),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                true,
+                false,
+                false,
+                &[
+                    PathTok { key: "in", val: PathVal::Unit("inset") },
+                    PathTok { key: "th", val: PathVal::Unit("thickness") },
+                    PathTok { key: "rad", val: PathVal::Unit("radius") },
+                    PathTok { key: "fe", val: PathVal::Unit("feather") },
+                    PathTok { key: "c", val: PathVal::Hex4("color") },
+                ],
+                SHAPE_COLOR,
+            ),
+            border,
+        )
+        .with_shader(FRAME)),
+        // a lower-third plate: a bar with an accent stripe, its reveal a number a curve can animate
+        Arc::new(kind(
+            "plate",
+            "genkind.plate",
+            SHAPES,
+            [
+                vec![
+                    pct("left", 0.0, 1.0, 0.06),
+                    pct("top", 0.0, 1.0, 0.76),
+                    pct("w", 0.05, 1.0, 0.5),
+                    pct("h", 0.02, 0.5, 0.1),
+                    pct("radius", 0.0, 0.1, 0.008),
+                    pct("accent", 0.0, 0.1, 0.012),
+                    smooth("reveal", 0.0, 1.0, 1.0, 0.01, ParamUnit::Norm),
+                    pct("feather", 0.0, 0.05, 0.001),
+                ],
+                rgba4(["color_r", "color_g", "color_b", "color_a"], [20.0, 24.0, 32.0, 220.0]),
+                rgba4(["color2_r", "color2_g", "color2_b", "color2_a"], [255.0, 170.0, 40.0, 255.0]),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                true,
+                false,
+                false,
+                &[
+                    PathTok { key: "l", val: PathVal::Unit("left") },
+                    PathTok { key: "t", val: PathVal::Unit("top") },
+                    PathTok { key: "w", val: PathVal::Unit("w") },
+                    PathTok { key: "h", val: PathVal::Unit("h") },
+                    PathTok { key: "rad", val: PathVal::Unit("radius") },
+                    PathTok { key: "ac", val: PathVal::Unit("accent") },
+                    PathTok { key: "rv", val: PathVal::Unit("reveal") },
+                    PathTok { key: "fe", val: PathVal::Unit("feather") },
+                    PathTok { key: "c", val: PathVal::Hex4("color") },
+                    PathTok { key: "c2", val: PathVal::Hex4("color2") },
+                ],
+                PLATE_COLORS,
+            ),
+            plate,
+        )
+        .with_shader(PLATE)),
+        // a progress bar that fills with the material time over its fill time
+        Arc::new(kind(
+            "progress",
+            "genkind.progress",
+            SHAPES,
+            [
+                vec![
+                    pct("left", 0.0, 1.0, 0.1),
+                    pct("top", 0.0, 1.0, 0.9),
+                    pct("w", 0.05, 1.0, 0.8),
+                    pct("h", 0.002, 0.2, 0.012),
+                    pct("radius", 0.0, 0.1, 0.006),
+                    smooth("fill_time", 0.5, 3600.0, 10.0, 0.5, ParamUnit::Sec),
+                    pct("feather", 0.0, 0.05, 0.001),
+                ],
+                rgba4(["color_r", "color_g", "color_b", "color_a"], [255.0, 255.0, 255.0, 60.0]),
+                rgba4(["color2_r", "color2_g", "color2_b", "color2_a"], [255.0, 255.0, 255.0, 235.0]),
+            ]
+            .into_iter()
+            .flatten()
+            .collect(),
+            decl(
+                true,
+                true,
+                false,
+                &[
+                    PathTok { key: "l", val: PathVal::Unit("left") },
+                    PathTok { key: "t", val: PathVal::Unit("top") },
+                    PathTok { key: "w", val: PathVal::Unit("w") },
+                    PathTok { key: "h", val: PathVal::Unit("h") },
+                    PathTok { key: "rad", val: PathVal::Unit("radius") },
+                    PathTok { key: "ft", val: PathVal::Num("fill_time") },
+                    PathTok { key: "fe", val: PathVal::Unit("feather") },
+                    PathTok { key: "c", val: PathVal::Hex4("color") },
+                    PathTok { key: "c2", val: PathVal::Hex4("color2") },
+                ],
+                PROGRESS_COLORS,
+            ),
+            progress,
+        )
+        .with_shader(PROGRESS)),
         // ---- gen-backgrounds (`v26.10` G5): the moving backgrounds -------------------------------
         // a moving mesh gradient: three colour blobs on slow orbits
         Arc::new(kind(
