@@ -193,6 +193,15 @@ proposals and designs, and revise specs, on their own branches, with no code and
 designs wait for the owner's questions to be answered (rows in `owner-checks.md`) and are then taken by
 an executor. A free executor gets its next work in the same turn.
 
+**Test numbers by block** (2026-11-20, after three collisions in one day): each session takes numbers only
+from its own block: fx-graph t3200–t3299, spec-engine t3300–t3399, spec-features t3400–t3599, mosh-sharp
+t3600–t3699, features-slow t3700–t3799. A collision found at a merge is renumbered on the later branch.
+
+**A design-only change names a planned live scenario without its path** ("planned live scenario `scopes`"):
+the guards t804 and t799 read active changes too, so a path to a scenario not yet written turns orch red.
+The executor that applies the change writes `src/scripts/live/<name>.py` and the path together. Every UI
+scenario in a design carries its PATH line.
+
 ## Standing go (2026-11-09)
 
 "когда эти закончат - продолжай другие делать по таблице" — the owner's word to start, without asking
