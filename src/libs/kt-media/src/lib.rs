@@ -166,6 +166,7 @@ pub mod frame_alloc;
 pub mod ffmpeg;
 pub mod generator;
 pub mod index;
+pub mod listen;
 #[cfg(feature = "ffmpeg")]
 pub mod muxer;
 // The 3×5 font moved into the plugin API with the generators (plugin-api-stage1, D13).
