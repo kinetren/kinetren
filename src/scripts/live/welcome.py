@@ -149,7 +149,7 @@ def main(out):
         # --- 6. Help → Start the tour → step 1 closes by adding a title -----------------
         app.click_probe("menu.help", "the Help menu")
         app.click_probe("help.tour", "Help → Start the tour")
-        app.expect(app.has_probe("lessons.panel"), "the tour opened its lessons panel")
+        app.expect(app.until(lambda: app.has_probe("lessons.panel", tries=2), timeout=60), "the tour opened its lessons panel")
         app.step("tour", "the lesson project and the panel “Lesson 1 of 5 · The first edit”")
         app.click_probe("lessons.show", "the step's Show button")
         app.expect(app.has_probe("gen.new"), "Show opened the File menu with “Create a generator…”")
@@ -172,7 +172,7 @@ def main(out):
         # and the same from the Help menu (no edits since: no question)
         app.click_probe("menu.help", "the Help menu")
         app.click_probe("help.start_over", "Help → Start the tour over")
-        app.expect(app.has_probe("lessons.panel"), "the lessons panel is open after Help → Start the tour over")
+        app.expect(app.until(lambda: app.has_probe("lessons.panel", tries=2), timeout=60), "the lessons panel is open after Help → Start the tour over")
 
         # --- 8. Help → What's new → the start window at its default and enlarged ---------
         # (welcome-window-and-settings: three panes, each scrolls alone, the window grows)

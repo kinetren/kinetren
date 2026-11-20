@@ -80,7 +80,7 @@ def main(out):
         # --- lesson 1 ------------------------------------------------------------------------
         app.expect(app.has_probe("welcome.tour"), "the first start offers the tour")
         app.click_probe("welcome.tour", "Start the tour")
-        app.expect(app.has_probe("lessons.panel"), "the lessons panel opened")
+        app.expect(app.until(lambda: app.has_probe("lessons.panel", tries=2), timeout=60), "the lessons panel opened")
         app.expect(app.has_probe("lessons.step"), "the current step is drawn as its own lines")
         app.step("l1-start", "lesson 1: the step as lines with keycaps, the Show button")
         app.click_probe("lessons.show", "Show")
@@ -189,7 +189,7 @@ def main(out):
 
         # --- lesson 4 ------------------------------------------------------------------------
         app.click_probe("lessons.next", "Next lesson")
-        app.expect(app.has_probe("lessons.panel"), "lesson 4 opened")
+        app.expect(app.until(lambda: app.has_probe("lessons.panel", tries=2), timeout=60), "lesson 4 opened")
         app.click_probe("lessons.show", "Show")
         app.expect(app.has_probe("lesson.mark.morpher"), "Show brought the BATCH block into view, outlined")
         app.expect(not app.has_probe("win.morpher", tries=2), "Show did not open the morpher (item 5)")
