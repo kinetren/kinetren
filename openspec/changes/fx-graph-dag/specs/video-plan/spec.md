@@ -8,12 +8,12 @@ segmentation stop, so that geometry series, point-wise runs and K× barriers fus
 linear runs between them and the plan of a run equals the plan of a line made of the same slots. The
 GPU SHALL execute the lowered program as it executes a chain; at most `MAX_HELD` frames SHALL be
 held at once. A chain whose every slot takes the slot before (a line) SHALL lower to exactly the
-ops, keys and bytes it had before branches existed. The warp, the stream stage, the leading Geometry
-node and the decode scale step SHALL belong to the trunk (the slots before the first branch): a layer
-reads one source at one material moment, so the frames asked, the coverage bars and the stream
-history are those of the line. The Viewer SHALL cut a chain to the chosen node's ancestors.
+ops, keys and bytes it had before branches existed. The leading Geometry
+node SHALL stand before the first branch. A graph without a time kind in an arm SHALL read one source
+at one material moment, so the frames asked, the coverage strip and the stream history are those of
+the line. The Viewer SHALL cut a chain to the chosen node's ancestors.
 Why: invariant 7 — one composition path; a second planner for graphs would be "the preview shows one
-thing, the export writes another". The trunk keeps invariants 4, 5 and 8 unchanged.
+thing, the export writes another".
 
 #### Scenario: A line is the chain, byte for byte
 - **WHEN** every chain of the golden projects and the showcase is lowered and executed with an empty input field and through the graph path
@@ -35,7 +35,7 @@ thing, the export writes another". The trunk keeps invariants 4, 5 and 8 unchang
 - **THEN** each run's plan equals the plan of the same slots as a line; a stop zeroes the K accumulators; a merge runs at 1×
 - **TEST** t3203 (`src/libs/kt-fx/tests/geo_fuse.rs`)
 
-#### Scenario: The trunk keeps reading as the line
+#### Scenario: A graph with no time kind in an arm reads as the line
 - **WHEN** a slowed event with a zooming lead branches after the lead, and the same event branches before any geometry
 - **THEN** the frames asked by the order equal the line's; the first keeps its decode step, the second gets step 1; a mask on a slot inside an arm takes the slot's own input as its dry side
 - **TEST** t3205 (`src/libs/kt-engine/tests/decode_scale.rs`), t3206 (`src/libs/kt-gpu/tests/parity.rs`)
@@ -44,6 +44,33 @@ thing, the export writes another". The trunk keeps invariants 4, 5 and 8 unchang
 - **WHEN** an arm is rewired from one node to another with the same slots and values
 - **THEN** `fx_chain_hash`, the GPU plan key and `durable_hash` move; a line's keys equal the keys before this change
 - **TEST** t3208 (`src/libs/kt-engine/tests/fx_auto_render.rs`)
+
+### Requirement: A time kind inside an arm is a second read of the layer
+A warp, a stream stage or an edge reading standing in an arm (not before the first branch) SHALL open
+a read: a derived clip of the same event whose chain is that slot's ancestors with the slot as its
+Output, reading exactly as an event with that chain would (its own material moment, decode step,
+stream history keyed by event and read). The layer's program SHALL take the read's finished frame in
+place of that slot's output. The order (`layers_at`, `wanted_frames`) SHALL list every read's frames,
+the event's coverage strip SHALL draw a row per read and show the event warm only where every read is,
+and a layer SHALL have at most `MAX_READS` reads.
+Why: the owner's answer Q3 b (kkt-26.11.20 A6), "Разрешить в ветке" at the cost of a second read; a
+read shaped as today's clip keeps invariants 4, 5 and 8 per read instead of inventing a second
+reading machine.
+
+#### Scenario: The read law
+- **WHEN** an event merges an arm holding Slowed (0.5×) over an arm holding a blur, and separately two copies of the event are stacked, the upper with the Slowed path as a line, the lower with the blur
+- **THEN** the frames are byte-for-byte equal on one device, in the preview and in the export
+- **TEST** t3226 (`src/libs/kt-gpu/tests/parity.rs`)
+
+#### Scenario: The order and the strip see both reads
+- **WHEN** a slowed arm is added to an event that reads frames 0..48 on its trunk
+- **THEN** `wanted_frames` lists the trunk's frames and the arm's half-rate frames; the prefetch warms both and the composite misses none; the strip draws two rows; removing the arm returns the line's order exactly
+- **TEST** t3227 (`src/libs/kt-engine/tests/fx_reads.rs`)
+
+#### Scenario: Datamosh in an arm keeps its own history
+- **WHEN** Datamosh stands both on the trunk of one event and in an arm of another event over the same file, played across a seek
+- **THEN** each keeps its own history keyed by event and read; the arm's frames equal those of an event whose chain is the arm's path; the stream memo budget counts both
+- **TEST** t3228 (`src/libs/kt-engine/tests/fx_reads.rs`)
 
 ### Requirement: A Merge is the layer composite's operation — the Merge law
 A Merge node SHALL fit its Foreground to its Background's size and blend it by the layer blend

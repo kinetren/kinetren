@@ -1,7 +1,9 @@
 # Design: fx-graph-dag (fx-graph v2: branches and merges the engine executes)
 
-> DESIGN ONLY, revision 1 (2026-11-20). Base: orch `3488fbe1` (fx-graph v1a–v1d merged). The
-> owner's questions are at the end; nothing here is built before his word.
+> Revision 2 (2026-11-20). Base: orch `5e7a8ea9`. The owner answered (kkt-26.11.20 A5, A6; owner-checks
+> Q3–Q5, numbered Q1–Q3 in this design): picture branches first (Q1 a), no inputs from other layers in
+> v2 (Q2 a), Slowed, Datamosh and the pitch ALLOWED inside a branch at the cost of a second read (Q3 b).
+> Revision 1 recommended Q3 a (a trunk rule); D2 "Reads" replaces it.
 
 ## Context
 
@@ -39,7 +41,8 @@ What the engine already has that v2 grows from (read on `3488fbe1`):
 
 **Non-Goals (v2)**
 
-- Inputs from outside the layer: another track's picture, a generator node as a second source (Q2).
+- Inputs from outside the layer: another track's picture, a generator node as a second source (Q2 a,
+  his answer "Не в v2").
 - The timeline composite itself as a graph (v3 horizon, D5).
 - Multi-input plugin kernels: the plugin contract stays single-input; Merge is core.
 - Picture↔sound wires (sound driving a picture parameter is modulation, not routing).
@@ -78,8 +81,9 @@ MatteFrom = Alpha | Luma | InvAlpha | InvLuma
   graph off, as today.
 - **Validation** (`Project::validate`, the same place that checks chains today): inputs earlier; a
   picture slot's inputs are picture slots and a sound slot's sound slots (the lanes never join); a
-  `second` or `matte` only on a Merge (and a compressor's key, D4); the trunk-only kinds (D2) have
-  no branch before them; at most `MAX_HELD = 4` frames held at once by the lowered program (D3).
+  `second` or `matte` only on a Merge (and a compressor's key, D4); the leading Geometry node has no
+  branch before it; at most `MAX_HELD = 4` frames held at once by the lowered program (D3) and at most
+  `MAX_READS = 4` reads per layer (D2).
   A file breaking any of these is refused with the slot's address, as a broken chain is today.
 - **`Debug` of `ClipEvent` gains the field.** `content_hash`, the per-event memo key and the kept
   mix's `AudioClip.fp` are made from it, so every revision hash moves ONCE with the build that adds
@@ -101,27 +105,55 @@ MatteFrom = Alpha | Luma | InvAlpha | InvLuma
 | a compressor keyed by a filtered copy of its input | yes (sound) | the compressor's key socket ← an arm of the same chain |
 | a morpher layer's patch that branches | yes | the patch graph spliced after the target's Output (D6) |
 | a device (VHS / Datamosh / ISP) on both lanes | yes | each half wired in its own lane; the pair rule mirrors presence and values, NOT wires |
-| Slowed / Datamosh / the pitch's edge reading inside an arm | **no** (Q3) | refused: they stand on the trunk, before the first branch |
-| another track's picture as an input or matte | **no** (Q2) | refused; the track window's masks and the composite stay |
-| a generator node as a second source | **no** (Q2) | refused |
+| Slowed / Datamosh / the pitch's edge reading inside an arm | **yes** (Q3 b) | the arm opens a second READ of the layer's source (below) |
+| the leading Geometry node inside an arm | **no** | it places the frame and sets the decode step; an arm's own placement is a Transform/Geometry slot |
+| another track's picture as an input or matte | **no** (Q2 a) | refused; the track window's masks and the composite stay |
+| a generator node as a second source | **no** (Q2 a) | refused |
 | a loop (feedback) | never | impossible by D1's order; a frame's past is a stream stage's job |
 | a wire from picture to sound | never | the lanes never join (v1 rule) |
 | a dangling node | kept | drawn dim, not run, saved |
 
-**The trunk.** The chain's input up to its first branch point. Four kinds stand only there:
+**The trunk** is the chain's input up to its first branch point. **A time kind** is a slot that
+decides how the layer READS its source rather than what it does to a frame: the warp (Slowed's rate,
+`warp_rate`), the stream stage (Datamosh's codec path, whose `front` is the picture slots before it)
+and the pitch's edge reading (`reads_across_edges`, the context gate). On the trunk a time kind is
+what it is today. Inside an arm (his answer Q3 b, "Разрешить в ветке") it opens a **read**.
 
-- the warp (Slowed's rate): it decides WHICH source frame the layer reads; an arm with its own speed
-  would read another frame, a second decode per layer;
-- the stream stage (Datamosh's codec path): it decodes the event's own stream with a history; its
-  `front` is "the picture slots before it", which in a graph is the trunk;
-- the pitch's edge reading (`reads_across_edges`, the context gate): it reads past the event's
-  edges;
-- the leading Geometry node (the lead and `geometry_pos`): it places the frame on the canvas.
+**Reads.** A layer has read 0, the trunk's: one source at one material moment, as today. A time kind
+`T` in an arm opens read `k`: a derived clip of the same event whose chain is the ancestors of `T`
+with `T` as its Output. That derived chain reads EXACTLY as an event whose chain it were would read:
+its own trunk time kinds decide its material moment (`clip_warp_of` over its slots: today's rule, the
+first warp slot counts), its stream stage keeps its own history, its edge reading its own window. Its
+own arm time kinds open nested reads by the same rule. The layer's lowered program takes read `k`'s
+finished frame in place of `T`'s output (`Input(k)`, D3); the ancestors that only `T` needs run in
+read `k`, the shared ones run in read 0 as well. So a read is not a new reading machine: it is one
+more clip shaped as today's, and every engine rule about reading applies to it unchanged:
 
-The trunk is what keeps every engine invariant about READING untouched: a layer still reads one
-source at one material moment, so `layers_at`, `wanted_frames`, the coverage bars, the decode scale
-step and the stream history ask exactly what they ask today (invariants 4, 5, 8). Q3 asks whether
-he wants speed inside an arm at the price of a second read.
+- `layers_at` / `wanted_frames` list each read's frames (a read with Datamosh: its stream frames;
+  with frame blending: both sides), so the prefetch warms both and the composite reads exactly what
+  was warmed (invariant 4);
+- the decode scale step is per read, from that read's leading geometry series (a read shares the
+  trunk's lead, so in practice the same step);
+- the stream history is keyed by (event, read): Datamosh in an arm keeps a SECOND history, counted
+  by the stream memo budget and the memory ledger as its own;
+- the coverage strip of the event draws one row per read, and the event is warm only where every
+  read is (the bars "show two reads", the cost he accepted); the performance panel and `kt-cli
+  probe` name the reads and their decode cost;
+- the sound: an arm's warp reads its own source window (`chain_source_window_ext` per read), its own
+  `fill_source`; the kept final mix's scene hash follows the event's `Debug`, which carries `fx_in`.
+
+**The read law.** An event whose graph merges arm B (holding a time kind) over arm A renders the
+picture of two stacked copies of the event, the upper with B's path as a LINE (Slowed and all) and
+the lower with A — the Merge law (D5) extended to time: one law, so a read cannot invent a new
+meaning for speed or history. t3226.
+
+**The cost, stated.** Every read is a decode, a cache footprint and a run of its exclusive ancestors:
+two reads cost the layer twice the reading. `MAX_READS = 4` per layer bounds it; a fifth is refused
+by the editor with the reason, and by the reader with the slot's address. Without an arm time kind a
+graph has one read and asks exactly what its line asks (invariants 4, 5, 8; t3205).
+
+The leading Geometry node stays on the trunk: it places the frame on the canvas and sets the decode
+step for the layer; an arm that needs its own placement takes a Geometry/Transform slot of its own.
 
 ## D3. The picture: `plan_chain` lowers a graph into a straight program
 
@@ -160,12 +192,15 @@ never touches it: every pass writes a fresh pool texture today). `Merge`:
 The alpha flags travel per side as they do for `Mix` (vhs-tape-simulation's t1052 lesson): each
 held frame keeps its own fold.
 
-**What around the plan follows from the trunk rule, and what changes:**
+**What around the plan follows from the reads, and what changes:**
 
 - the decode scale step: `ss_taps(head_zoom)` is taken from the leading geometry series only when it
   stands before the first branch; a chain that branches first gets step 1 (a held S× frame would
   otherwise reach a merge at the wrong size);
-- the stream stage's `front` = the trunk's picture slots before it — today's slots, unchanged;
+- the stream stage's `front` = the picture slots before it in its read — on the trunk today's slots,
+  in an arm the derived chain's (D2);
+- `Input(k)`: a read's finished frame enters the layer's program as a held frame does; it counts
+  against `MAX_HELD` while live;
 - slot masks inside an arm: the mask's dry side is the slot's own input (the frame current just
   before the slot), so `MaskOp::Mix { from }` takes the lowered position, not `i`;
 - the layer strength (`LayerMix`) stays a spliced marker on the trunk after the target's Output (D6);
@@ -204,9 +239,11 @@ of the passes a merge reuses (EXACT for `Normal`/integer modes, as the composite
   as a reorder is today (`chain_fingerprint` hashes `fx_in` when present); a value edit on a graph is
   `set_params` as on a line;
 - the warp, the stream's sound (`datamosh_sound` reads the picture's schedule) and the pitch's edge
-  reading stay on the trunk (D2), so `chain_source_window_ext`, `fill_source`, the mirror axis and
-  the kept final mix's scene hash (`AudioClip.fp` from the model event's `Debug`, which now carries
-  `fx_in`) need no new rule.
+  reading in an arm open a sound read (D2): the processor gets a source window and a `fill_source`
+  per read, the arm's warp consumes its own source exclusively and cleanly as the chain's input does
+  today; the stream's sound follows its read's schedule; the kept final mix's scene hash
+  (`AudioClip.fp` from the model event's `Debug`, which now carries `fx_in`) needs no new rule;
+  t3229.
 
 ## D5. How it relates to compositing
 
@@ -294,26 +331,29 @@ the trunk runs on the lane's line; each arm is a parallel row below it, wires ro
   dropping a wire from a node onto a Merge's Foreground or Matte socket connects it; dragging a wire
   off a socket disconnects (the node then dangles, dim).
 - **Insert on a wire** (v1) works on any wire, trunk or arm.
-- **Refusals** (rule 16, as errors in the status line): a trunk-only kind into an arm ("Slowed,
-  Datamosh and the pitch's edge reading stay before the first branch"), a fifth held branch, a wire
-  across lanes, a wire that would close a loop.
+- **A time kind in an arm** is accepted (Q3 b) and the arm's node row says it is a second read
+  ("reads the source again"), so the cost he accepted is visible where it is made.
+- **Refusals** (rule 16, as errors in the status line): the leading Geometry into an arm, a fifth
+  held branch, a fifth read, a branch on the sound lane until v2c, a wire across lanes, a wire that
+  would close a loop.
 - **Viewer** (Ctrl+Shift+click, v1d) on any node of any arm.
 - **Cost at rest**: as v1 (D5 of fx-graph): laid out once per revision/size/zoom/selection.
 
 ## D9. The class walk: everything a chain touches
 
 The change's mechanism: "a chain is a line" is assumed wherever a chain is read. Every reader was
-walked on `3488fbe1`; each is either unchanged by the trunk rule, or named in D3–D8:
+walked on `3488fbe1` and again on `5e7a8ea9` for the reads; each is either unchanged, or named in D2–D8:
 
 | Where | Reads a chain as | v2 |
 |---|---|---|
 | `plan_chain` (kt-fx) | runs and stops | lowers the graph; stops at Hold/Load/Merge (D3) |
 | kt-gpu chain loop | ops with 2 held frames | a held set; Merge, matte pass (D3) |
 | `layer_src`, `LayerChain`, curve memo | the vector | unchanged (curves resolved per slot) |
-| decode scale step, `head_zoom` | the leading geo series | only before the first branch (D3) |
-| stream stage `front`, `after_chain` | slots before it | the trunk (D2) |
-| frame blending, warp map, `clip_material_pos` | the warp slot | trunk (D2) — unchanged |
-| prefetch / `layers_at` / coverage bars | one source per layer | unchanged (D2) |
+| decode scale step, `head_zoom` | the leading geo series | per read; the lead only before the first branch (D2, D3) |
+| stream stage `front`, `after_chain`, stream history | slots before it | per read, history keyed (event, read) (D2) |
+| frame blending, warp map, `clip_material_pos` | the warp slot | per read, today's rule over the read's chain (D2) |
+| prefetch / `layers_at` / coverage strips | one source per layer | every read listed; a strip row per read (D2) |
+| stream memo budget, memory ledger | per event | per read (D2) |
 | masks (`ClipMaskPlan`, `MaskOp`) | slot positions | `from` = the slot's lowered input (D3) |
 | morpher splice, `LayerMix` | append + strength marker | offset inputs (D6) |
 | pair rules | n-th occurrence | presence mirrored, wires not (D6) |
@@ -338,13 +378,17 @@ walked on `3488fbe1`; each is either unchanged by the trunk rule, or named in D3
 
 ## D10. Stages
 
-- **v2a — model and format**: `fx_in`, Merge, validation, the morpher splice, pairs, copy/paste,
-  presets, `.kt` format by content, OTIO `in`/`kt:merge`/v17, the OTIO-loss row. Engine unchanged:
-  a branch is accepted by the model and refused by nothing, so v2a ships together with v2b.
-- **v2b — the picture**: lowering, the held set, Merge and matte passes, keys, decode step rule,
-  masks in arms, Viewer by ancestors, picker cells, cost rows, prewarm. Tests t3200–t3209.
-- **v2c — the sound**: the processor's graph, PDC alignment, in-chain key, tails, fingerprint.
-  Tests t3212–t3217. (Q1: with v2b or after it.)
+- **v2a — model and format**: `fx_in`, Merge, validation (`MAX_HELD`, `MAX_READS`, the lead), the
+  read split as a model function (`fx_reads`: the derived chains of a graph), the morpher splice,
+  pairs, copy/paste, presets, `.kt` format by content, OTIO `in`/`kt:merge`/v17, the OTIO-loss row.
+  The engine still runs lines: until v2b the player and the export run a branched chain's Output
+  path as a line and the editor makes no branch, so v2a is merged only together with v2b.
+- **v2b — the picture**: lowering, the held set, Merge and matte passes, reads in the engine
+  (`layers_at`, stream history per read, strip rows), keys, decode step rule, masks in arms, Viewer
+  by ancestors, picker cells, cost rows, prewarm. Tests t3200–t3209, t3226–t3228. A branch on the
+  sound lane is refused by the editor with "sound branches come next" (Q1 a).
+- **v2c — the sound**: the processor's graph, PDC alignment, in-chain key, tails, fingerprint, sound
+  reads. Tests t3212–t3217, t3229. After v2b (Q1 a, "Сначала картинка").
 - **v2d — the editor**: branch gestures, Merge in the picker, the arms' layout, refusals; live
   scenario `node_graph_branch` with a screenshot per step; the idle check on the heavy showcase with
   a branched chain. Tests t3218–t3225.
@@ -355,32 +399,17 @@ walked on `3488fbe1`; each is either unchanged by the trunk rule, or named in D3
   GOLDEN_AUDIO) and t3210 (a line project's file text is unchanged).
 - **Memory**: a held frame per live branch per layer; bounded by `MAX_HELD` and counted by the
   ledger. On the owner's 4K render a layer with four held frames costs 4 × 33 MB more at its peak.
-- **The trunk rule may feel like a wall** (Q3).
+- **A read doubles the layer's reading** (Q3 b, accepted by the owner): bounded by `MAX_READS`, shown
+  on the strip and in the performance panel, so a slow branched layer names its own cause.
 - **The plugin contract stays single-input**: a plugin that wants two inputs (a displacement map) is
   a later change.
 
-## Questions for the owner
+## The owner's answers (kkt-26.11.20, rows A5, A6)
 
-Each question is put to him with his words, today's state and what each option means (his rule).
-
-- **Q1 — the order of delivery.** His words (U3): "нет возможности отключить морфинг эффекта для
-  аудио … нужно что-то типо компактного удобного графа". Today: v1 shows both lanes; neither can
-  branch. (a) **Picture first** (recommended): v2a+v2b ship; a branch on the sound lane is refused
-  with "sound branches come next" until v2c, which follows in the same change. Earlier delivery; the
-  showcase uses of branches are visual (highlights, mattes). (b) **Both together**: nothing ships
-  until the sound graph (PDC alignment, in-chain key) is done too.
-- **Q2 — inputs from outside the layer.** Today: an event's chain reads only its own picture;
-  another track can reach it only through the composite below (blend modes) or a track's masks.
-  (a) **Not in v2** (recommended): a graph works inside one layer; a matte comes from the layer's
-  own picture. Prefetch, the coverage bars and the cache keys do not change. (b) **A track matte in
-  v2** (Premiere's Track Matte Key, AE's track matte): a Merge's Matte or an input may be another
-  track's picture; the event then waits for that track's frame too, the prefetch reads both, and an
-  edit on the other track invalidates this event. That is compositing across layers — a stage of its
-  own, and the first step toward v3.
-- **Q3 — speed, Datamosh and the pitch inside a branch.** Today: Slowed decides which source frame
-  the layer reads, Datamosh decodes the event's own stream with its history, the pitch reads past the
-  event's edges — each once per layer. (a) **Only before the first branch** (recommended): the
-  editor refuses moving them into an arm and says why; one read per layer, no change to loading,
-  the bars or the history. (b) **Allowed in an arm**: an arm with its own speed reads its own source
-  frames — the layer's decode and cache cost doubles, the coverage bars show two reads, Datamosh in
-  an arm keeps a second history.
+- **Q1 — the order of delivery** (owner-checks Q3): "Сначала картинка (Recommended)" — (a): v2a+v2b,
+  then v2c; a sound branch is refused with its reason until v2c.
+- **Q2 — inputs from outside the layer** (owner-checks Q4): "Не в v2 (Recommended)" — (a): a graph
+  works inside one layer; a matte comes from the layer's own picture.
+- **Q3 — speed, Datamosh and the pitch inside a branch** (owner-checks Q5): "Разрешить в ветке" — (b):
+  an arm with a time kind is a second read (D2), the layer's decode and cache cost doubles, the
+  coverage strip shows two reads, Datamosh in an arm keeps a second history.

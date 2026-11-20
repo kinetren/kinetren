@@ -1,8 +1,8 @@
 # Proposal
 
-> DESIGN ONLY. The owner sees this design first; code starts on his word ("discussion is not a
-> go"). The questions that are his are at the end of `design.md`, each with his words, today's state
-> and what each option means.
+> The owner answered (kkt-26.11.20 A5, A6): picture first, no inputs from other layers in v2, and
+> Slowed, Datamosh and the pitch allowed inside a branch at the cost of a second read. v2a started
+> on 2026-11-20.
 
 ## Why
 
@@ -45,11 +45,13 @@ through one path (invariant 7), and the audio render thread executes them on the
 - **The sound processor runs a graph** in slot order on pool buffers, aligning branches by their
   look-ahead before a merge (the layer strength's dry ring, generalised) and summing in a fixed
   order (invariant 11).
-- **Time and history stay on the trunk.** Slowed (the warp), the stream stage (Datamosh), the
-  pitch's edge reading and the leading Geometry node stand before the first branch: each layer still
-  reads exactly one source at one material moment, so prefetch, coverage, the cache keys and the
-  stream history do not change (invariants 4, 5, 8). A wire that would put one inside a branch is
-  refused with the reason (owner question Q3).
+- **Time and history in a branch are a second read** (his answer Q3 b). Slowed (the warp), the
+  stream stage (Datamosh) and the pitch's edge reading inside an arm make that arm read the source
+  again: a derived clip of the same event whose chain is the arm's path, reading exactly as an event
+  with that line would. Prefetch, the coverage strip (a row per read), the decode step and the
+  stream history (a second one for Datamosh) work per read; a graph without such an arm reads one
+  source as today (invariants 4, 5, 8). At most four reads per layer. The leading Geometry node
+  stays before the first branch.
 - **The editor draws and makes branches**: a wire dragged from a node's output into empty canvas
   starts a branch there; a wire dropped on a Merge's socket connects it; arms are laid out
   automatically as parallel rows (his U8 answer: automatic layout, nothing stored).
@@ -69,7 +71,8 @@ through one path (invariant 7), and the audio render thread executes them on the
 
 - `video-plan`: a chain is a graph; one plan builder lowers it; the Merge law; a line graph is the
   chain byte for byte.
-- `audio-fx`: the sound chain executes a graph; branches aligned by look-ahead; the trunk-only kinds.
+- `audio-fx`: the sound chain executes a graph; branches aligned by look-ahead; an arm's time kind
+  reads its own source window.
 - `morpher`: a patch's graph is spliced after its target's output.
 - `project-format`: the wiring and Merge raise the file by content; OTIO carries the wiring in the
   envelope.
@@ -78,7 +81,7 @@ through one path (invariant 7), and the audio render thread executes them on the
 ## Impact
 
 - kt-model: `FxInput` per slot, the Merge kind, validation (earlier slots only, one lane, the
-  trunk-only kinds, at most `MAX_HELD` live branches), the morpher splice, copy/paste and presets
+  lead before any branch, at most `MAX_HELD` live branches and `MAX_READS` reads), the reads of a graph, the morpher splice, copy/paste and presets
   carry the inputs, `project_file` and `normalize`.
 - kt-fx: `plan_chain` lowers a graph (`Hold`/`Load`/`Merge` ops); `ClipProcessor` executes a graph.
 - kt-gpu: the held set, the Merge pass (the layer blend kernels + the strength mix pass with a
