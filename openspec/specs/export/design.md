@@ -1,5 +1,21 @@
 # Export and headless rendering — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **No CPU composite** (compute-kernels-render): "`GpuRequired` removed because the CPU path is
+  complete", "slower but possible", the GPU↔CPU `FrameTol` seams, "CPU frame workers", the 861 s → 95 s
+  CPU path and `KT_VIDEO_GPU` are history. With no device an export refuses (`ExportError::NoDevice`);
+  several software adapters compose (`kt_gpu::export_engines`).
+- **The pause waits on an event**, not a 40 ms cooperative loop.
+- **The render log** is the journal's: no `render.log` ring on disk.
+- **The ring** follows the device's latency (`RING_MIN = 3`), not "three frames in flight".
+- **The BT.601 default's reason** ("the decode converts every source with BT.601") is stale since
+  source-colour-matrix: the decode picks BT.709 for HD from tags or size. The default itself is still
+  BT.601 (found-defects row of this audit asks whether it should follow).
+
 ## What hurt and for whom
 
 The old engine kept two composition codes: one for the preview and another for export, with its own pool and a different Quality — the file contained something other than what the editor showed (defect n). Export wrote raw rgb24+s16le into temporary files (tmpfs → gigabytes in RAM) and then muxed them with an external `ffmpeg` (defect o). The owner hurt concretely over the course of the rounds: "the render now shows a black picture" (a chunk did not fit into the cache), "the render is broken" (the bottom track was lost on a multi-layer edit with FX), "missing sources must not be a blocker", a file name without the project and region, and above all the complaint "here the sound is from another event", the analysis of which took hours, because there was no way to ask the engine "what are you reading at this point".

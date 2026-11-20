@@ -129,7 +129,7 @@ be made by the shared planner in kt-fx; the executor MUST execute the ready plan
 geometric effects SHALL be executed in one pass of inverse mappings
 without intermediate rasterizations; a series of length 1 without minification SHALL go through the earlier
 kernels byte-for-byte; at K = 1 and step 1 the whole plan is byte-for-byte as before.
-Non-local barriers (Blur/Glow/Edges/VHS) SHALL be executed at K× when "compression above +
+Non-local barriers (every barrier-class kind, capability `video-fx`) SHALL be executed at K× when "compression above +
 zoom below", K — the quantum of min(zoom of the tail, compression), the ceiling of the buffer side
 `MAX_INTER_DIM = 4096` is a project constant, not a device limit. The layer strength stops
 zero the accumulators: mixing is always at 1×. There MUST NOT be any merge switches — neither in the UI nor in env. A change of the program `geom.rs`/`plan.rs` build and of `geom_fused.wgsl`,
@@ -221,7 +221,7 @@ this immediately gives a permanent cache miss and a black frame; the conform rul
 
 ### Requirement: The cache is the only truth about coverage
 The coverage bars SHALL be `coverage()` of the cache by the DECODE quality of the clip (for a clip cut by a morpher layer — the union of the qualities of the pieces), and not a separate bookkeeping and not a poll by the preview's Quality. Memoized composites MUST NOT be visible to
-prefetch and pin. Over the decoded ranges the bars SHALL draw what plays without work: the moments whose presented composite the executor still holds and the current plan still asks (`Player::final_video_runs`), and the frames the audio render thread's final mix holds (`Player::final_audio_runs`).
+prefetch and pin. Over the decoded ranges the bars SHALL draw what plays without work: the moments whose presented composite the executor still holds and the current plan still asks (`Player::final_video_runs`), and the frames the audio render thread's final mix holds (`Player::final_audio_runs`); and the moments the disk tier holds (requirement "Slow moments are prerendered to disk at rest").
 Why: the cache is quality-exact; a clip with a step, warmed properly, would look entirely cold when polled by Quality — a lie in the user's eyes. A decoded range still needs its composite and its effects: the bars promised a free play that was not (kkt-26.11.07b, "не рабочий кэш").
 
 #### Scenario: The bars ask about the decode quality
@@ -1391,8 +1391,9 @@ piece (267 in 267).
 Work a person waits for — the catch-up of a stream history, the Loading of a paused frame, a loop's first
 laps, a render or export, thumbnails and strips he scrolls to, an analysis he started — SHALL use the idle
 device and the idle cores within the limits the owner set: the display first (the ring's bound), and rest
-costs nothing (no work at rest, invariant 12). A path that can split its work without changing a byte SHALL
-split it across cores; a CPU executor SHALL take a device's work only where its bytes equal the device's,
+costs nothing (no work at rest, invariant 12, except the prerender of slow moments to disk after a quiet
+spell, render-cache-disk). A path that can split its work without changing a byte SHALL
+split it across cores; processor-side work (a span's conversion, a stream stage's host side) SHALL take a device's work only where its bytes equal the device's,
 or by a choice that does not follow the load (invariant 11). It is measured from pass timestamps and thread
 time, not wall-clock guesses.
 Why: found-defects 485 — the owner, kkt-26.11.10b K3: "не грузит проц - ленится как будто опять или

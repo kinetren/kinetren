@@ -7,6 +7,10 @@ lasts, and whether it closed cleanly. The report is anonymous, goes to one PostH
 project, is on by default with a visible off switch, and never costs the person a frame of
 UI or a second of exit.
 
+The same capability holds what the program records LOCALLY and never sends: the journal, the
+structured trace and its queries (`kt-cli trace`), the GPU timing, the load watch, the telemetry
+journal and the native-crash report.
+
 ## Requirements
 
 ### Requirement: Start, heartbeat and close, and a missing close is the unclean-exit signal
@@ -311,8 +315,8 @@ step.
 ### Requirement: Telemetry enters the application through one door
 Code outside `telemetry.rs` SHALL talk to telemetry only through `telemetry::signal(Signal)` —
 a free function that is a no-op when telemetry is off or not installed — plus the start-up and
-UI plumbing that exists for the switch (`install`, `global`, the notice and hint texts, the View
-checkbox). `Signal` is a small enum of FACTS (`Commands(&[Command], &model)`, `Command`,
+UI plumbing that exists for the switch (`install`, `global`, the notice and hint texts, the
+Preferences checkbox). `Signal` is a small enum of FACTS (`Commands(&[Command], &model)`, `Command`,
 `Gesture` (one edit per gesture), `Undo`, `Redo`, `Saved`, `ProjectOpened(how, &Project)`,
 `ExportEnded(&RenderJob)`, `Gpu(&AdapterInfo, software)`, `Frame { ctx, playing }`,
 `CrashReport(&Path)`, `Exit`); classifying, counting, bucketing, building events and deciding what to send live in

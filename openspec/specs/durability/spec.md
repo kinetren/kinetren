@@ -183,7 +183,7 @@ the other. On Windows the lock was a stub "always free", and two copies wrote on
 
 #### Scenario: The second copy has its own tmp and recovery
 - **WHEN** the temporary name and the recovery target are computed while the project is busy
-- **THEN** the tmp contains the pid and the full project name; the recovery of the second copy differs from the owner's and remains `.otio`
+- **THEN** the tmp contains the pid and the full project name; the recovery of the second copy differs from the owner's (`<name>.recovery.kt.<pid>.kt`)
 - **TEST** t363 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: The first Ctrl+S on an occupied project asks once
@@ -288,7 +288,7 @@ Why: a reused number hung someone else's envelope (name, markers, references of 
 - **TEST** t382 (`src/apps/kt-app/src/layout_tests.rs`)
 
 ### Requirement: Workspace ≠ project
-The width of the meters panel, zoom, scroll and cursor SHALL be stored in the user store (`workspace.json`: the width is shared, the view is per project), while in `.otio` they remain passthrough: what was read is what gets written. An empty store MUST yield to the values from the file; a filled store takes precedence over the file; a store of a future version is read but not overwritten. Track names and heights, groups and the bin layout SHALL remain in the project. Convenience edits (region, loop, zoom, bin layout, track name) MUST NOT give an asterisk; content edits do.
+The width of the meters panel, zoom, scroll and cursor SHALL be stored in the user store (`workspace.json`: the width is shared, the view is per project), while in the project file they remain passthrough: what was read is what gets written. An empty store MUST yield to the values from the file; a filled store takes precedence over the file; a store of a future version is read but not overwritten. Track names and heights, groups and the bin layout SHALL remain in the project. Convenience edits (region, loop, zoom, bin layout, track name) MUST NOT give an asterisk; content edits do.
 Why: you open a colleague's project and lose your own width; you save it and impose yours on them; passthrough keeps byte stability and old builds working; the boundary "convenience/content" moves along with the features and is held only by a test.
 
 #### Scenario: Foreign values are not overwritten by ours
@@ -335,7 +335,7 @@ Why: `cargo test` builds a separate binary and does not rebuild `target/debug/kt
 
 #### Scenario: Live data-safety scenarios
 - **WHEN** `src/scripts/live-check.sh` starts Xvfb with a separate `XDG_DATA_HOME` and `KT_AUTOSAVE_SECS`
-- **THEN** `recover.py` (SIGKILL → offer to recover, twice) and `unsaved.py` (the close button asks, "Stay" holds, "Do not save" does not touch the file) are green; screenshots and `.otio` are in `target/live-out`
+- **THEN** `recover.py` (SIGKILL → offer to recover, twice) and `unsaved.py` (the close button asks, "Stay" holds, "Do not save" does not touch the file) are green; screenshots and the saved `.kt` files are in `target/live-out`
 - **TEST** live `recover.py`, `unsaved.py` (`src/scripts/live/recover.py`, `src/scripts/live/unsaved.py`)
 
 #### Scenario: The cost of each stage and the five-minute budget

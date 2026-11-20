@@ -1,5 +1,15 @@
 # Transport — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **The output device is paused at rest, not closed** (play-start-and-prefetch D5, found-defects
+  516): a paused cpal/PipeWire stream wakes nothing and resumes in 20 µs; it is closed only when a pause
+  fails or keeps calling back. "The stream hands out silence at rest" and "closed after 1 s" are history.
+- **Pause has no clock** (one-scheduler): threads wait on the `Wake` count with no safety timeout.
+
 ## What hurt and for whom
 
 - **Starvation of the ring stopped the clock.** When the ring was empty, the callback repeated the last

@@ -146,8 +146,7 @@ each step resampled again; the net unit must return the detail.
 
 ### Requirement: K× barriers carry detail; the kernels are resolution-invariant
 Barriers — every registered video kind of the barrier class, built-in or plugin, with no per-kind
-list (today blur, glow, edges, vhs, noise, greenscreen, sharpen, pixelate, chromatic_aberration,
-radial_blur, drop_shadow, halftone) — SHALL be executed at K× resolution under "compression
+list (the class is `VideoClass::Barrier` in each kind's declaration) — SHALL be executed at K× resolution under "compression
 above + zoom below": K = quantum of min(net zoom of the tail, net compression from the start),
 ceiling 4, ceiling of the buffer side `MAX_INTER_DIM = 4096` — a project constant,
 not a device limit. The kernel MUST be invariant to K (pixel geometry ×K,
@@ -973,7 +972,7 @@ ran a thread per 8×8 block with three 64-float arrays, which a card spills to s
 
 #### Scenario: The Camera ISP keeps its picture
 - **WHEN** the ISP's GPU graph runs after the rewrite of its helpers, raw-front, raw NR and YUV
-- **THEN** it agrees with the CPU kernel within its tolerance and its consequences hold
+- **THEN** it agrees with its stored frame within its tolerance and its consequences hold
 - **TEST** t1217 (`src/libs/kt-gpu/tests/camera_isp.rs`)
 
 #### Scenario: Datamosh keeps its bytes

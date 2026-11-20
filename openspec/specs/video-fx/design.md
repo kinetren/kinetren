@@ -1,5 +1,24 @@
 # Video effects — why it is so
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **The CPU executor is gone**: "both backends execute it", Pan3d's CPU homography and "export
+  without a GPU is legal", "all four executors" (CPU barrier, CPU tap), `exec_geom_cpu`,
+  `map_pos_rec` on the CPU, `video_simd.rs`, the deferred AVX2 of the fused pass, post-FX CPU
+  memoisation (`postfx_key_hash`), and on D3D12 "WARP renders effects on the CPU" (WARP is
+  `GpuInitError::Unsupported`: no device, no picture). There is no CPU or SIMD copy of a kernel.
+- **Paths moved to the plugins**: the barrier kernels, `render_fx_thumb` and `GOLDEN_ALL` named in
+  `kt-fx/src/video.rs` and `kt-fx/tests/video_fx.rs` live in the plugin families' WGSL and tests;
+  `pan3d_forward` is in `src/plugins/fx-video-distort/src/pan3d.rs`.
+- **FX thumbnails** are composed by `frame_plan` on the offline side engine, and the service opens
+  its own sources on its scheduler lane; `set_busy` is gone (the lane pauses by the scheduler's votes).
+- **Datamosh's stage runs on the compute device** (stream-history-on-device, stream-front-on-device):
+  "a CPU-only source stage" is history; D4's reason against a GPU twin held to a tolerance stands —
+  the codec runs as exact compute jobs.
+
 ## What hurt and for whom
 
 - There were 11 kinds, and the owner directly asked for "not enough effects for video,

@@ -15,7 +15,7 @@ not by the number of frames successfully read from the ring. Starvation of the r
 SHALL produce audible silence and an increase of the callback underrun counter, but MUST NOT
 stop time. The single exception — until the FIRST frame has arrived after a start or flush:
 then consumption is zero, and silence is output, not the material before the seek.
-In the callback — no allocations, no locks; the wall clock in the render paths is forbidden.
+In the callback — no allocations, no locks; the wall clock in the OFFLINE render paths is forbidden (invariant 11; the live start's grace `START_AUDIO_GRACE` is a wall wait by design).
 Why: starvation that froze the playhead made the whole programme play slower than real time, and the owner saw
 it as "the event is slowed down".
 

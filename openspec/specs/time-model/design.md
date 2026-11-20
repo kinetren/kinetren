@@ -1,5 +1,13 @@
 # Time model — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **"`.otio` stores only ticks"** now reads: the project file `.kt` (R.70) stores only ticks; OTIO is
+  an import/export door.
+
 ## What hurt and for whom
 
 The old engine (C++ v1) kept time in milliseconds and in the source's frame rate. Two
