@@ -347,6 +347,9 @@ pub struct Muxer {
     report: crate::OpenReport,
     /// Encoded packet bytes written so far: [video, audio].
     bytes: [u64; 2],
+    /// A device encoder's surface get and upload so far, ns (export-host-copy D1): apart from the
+    /// encode, so a trace says which binds.
+    surface_upload_ns: u64,
     /// A device encoder (D3/D4): the table, the device and frames contexts, and the surface each
     /// NV12 frame is uploaded to. All null for a system-memory encoder.
     hw: Option<&'static HwApi>,
@@ -715,6 +718,7 @@ impl Muxer {
             encoder_name: enc_name.to_string(),
             report,
             bytes: [0, 0],
+            surface_upload_ns: 0,
             hw,
             hw_device,
             hw_frames,
@@ -732,6 +736,10 @@ impl Muxer {
 
     pub fn bytes(&self) -> (u64, u64) {
         (self.bytes[0], self.bytes[1])
+    }
+
+    pub fn surface_upload_ns(&self) -> u64 {
+        self.surface_upload_ns
     }
 
     pub fn write_video(&mut self, rgba: &[u8]) -> Result<(), FfError> {
@@ -769,6 +777,7 @@ impl Muxer {
             (*frame).pts = self.video_pts;
             // a device encoder: the NV12 frame goes to a surface of the frames context (D4)
             if let Some(hw) = self.hw {
+                let since = std::time::Instant::now();
                 let r = (hw.av_hwframe_get_buffer)(self.hw_frames, self.hwframe, 0);
                 if r < 0 {
                     return Err(averr(api, "getting a VAAPI surface", r));
@@ -779,6 +788,7 @@ impl Muxer {
                     return Err(averr(api, "uploading a frame to the surface", r));
                 }
                 (*self.hwframe).pts = self.video_pts;
+                self.surface_upload_ns += since.elapsed().as_nanos() as u64;
             }
         }
         self.video_pts += 1;

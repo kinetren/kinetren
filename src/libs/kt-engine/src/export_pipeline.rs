@@ -48,8 +48,10 @@ pub struct ExportProfile {
     /// GPU only: waiting for a submitted frame and copying it out (pipelined readback).
     pub readback_ns: AtomicU64,
     pub convert_ns: AtomicU64,
-    /// The video encoder and the muxer (`write_video_frame`).
+    /// The video encoder and the muxer (`write_video_frame`), without a device encoder's surface upload.
     pub encode_ns: AtomicU64,
+    /// A device encoder's surface get and upload (export-host-copy D1).
+    pub surface_upload_ns: AtomicU64,
     /// The audio renderer (mix + FX).
     pub audio_ns: AtomicU64,
     /// The audio encoder and the muxer (`write_audio`).
@@ -91,6 +93,16 @@ impl ExportProfile {
     pub(crate) fn add(slot: Option<&AtomicU64>, since: Instant) {
         if let Some(s) = slot {
             s.fetch_add(since.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+    }
+
+    /// A frame's write since `since`, of which `upload` ns were the device encoder's surface upload:
+    /// counted apart (export-host-copy D1).
+    pub(crate) fn encode_apart(prof: Option<&ExportProfile>, since: Instant, upload: u64) {
+        if let Some(p) = prof {
+            let all = since.elapsed().as_nanos() as u64;
+            p.encode_ns.fetch_add(all.saturating_sub(upload), Ordering::Relaxed);
+            p.surface_upload_ns.fetch_add(upload.min(all), Ordering::Relaxed);
         }
     }
 
@@ -148,6 +160,13 @@ impl ExportProfile {
                 .c(self.latency_frames.load(Ordering::Relaxed))
                 .emit();
         }
+        kt_time::trace::ev(Ev::ExportStage)
+            .id(workers)
+            .aux(export_stage::SURFACE_UPLOAD)
+            .a(self.surface_upload_ns.load(Ordering::Relaxed))
+            .b(wall)
+            .c(frames)
+            .emit();
         kt_time::trace::ev(Ev::ExportStage).id(workers).aux(export_stage::WALL).a(wall).b(timeline_ns).c(frames).emit();
     }
 
@@ -179,6 +198,7 @@ impl ExportProfile {
             .into_iter()
             .enumerate()
             .map(|(i, v)| (kt_time::trace::export_stage::name(i as u32 + 1), v.load(Ordering::Relaxed)))
+            .chain([("surface upload", self.surface_upload_ns.load(Ordering::Relaxed))])
             .filter(|(_, ns)| *ns * 100 >= wall)
             .collect();
         busy.sort_by_key(|(_, ns)| std::cmp::Reverse(*ns));
@@ -218,6 +238,7 @@ impl ExportProfile {
             ("readback", &self.readback_ns),
             ("convert", &self.convert_ns),
             ("encode", &self.encode_ns),
+            ("surface up", &self.surface_upload_ns),
             ("audio", &self.audio_ns),
             ("audio encode", &self.audio_encode_ns),
         ] {
@@ -270,6 +291,10 @@ pub trait ExportSink {
     fn bytes(&self) -> (u64, u64) {
         (0, 0)
     }
+    /// A device encoder's surface upload so far, ns (export-host-copy D1): taken out of the encode.
+    fn surface_upload_ns(&self) -> u64 {
+        0
+    }
 }
 
 /// RGBA → the sink's frame format, one per worker thread.
@@ -295,6 +320,9 @@ impl ExportSink for kt_media::muxer::Muxer {
     }
     fn bytes(&self) -> (u64, u64) {
         kt_media::muxer::Muxer::bytes(self)
+    }
+    fn surface_upload_ns(&self) -> u64 {
+        kt_media::muxer::Muxer::surface_upload_ns(self)
     }
 }
 
@@ -1062,8 +1090,9 @@ fn write_all<S: ExportSink>(
             (hooks.incomplete)(*t, media);
         }
         let mark = Instant::now();
+        let up = sink.surface_upload_ns();
         sink.write_video(&done.frame)?;
-        ExportProfile::add(prof.map(|p| &p.encode_ns), mark);
+        ExportProfile::encode_apart(prof, mark, sink.surface_upload_ns() - up);
         let _ = back_txs[w].send(done.frame);
         gate.set(i + 1);
         (hooks.video_done)(i + 1);

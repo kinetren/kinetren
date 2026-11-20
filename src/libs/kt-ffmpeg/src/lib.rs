@@ -734,6 +734,17 @@ impl Muxer {
         }
     }
 
+    /// A device encoder's surface get and upload so far, ns (export-host-copy D1); 0 for a
+    /// processor encoder. Part of `write_video_frame`'s time: an export takes it out of the encode.
+    pub fn surface_upload_ns(&self) -> u64 {
+        match self {
+            Muxer::V6(m) => m.surface_upload_ns(),
+            Muxer::V7(m) => m.surface_upload_ns(),
+            Muxer::V8(m) => m.surface_upload_ns(),
+            Muxer::V9(m) => m.surface_upload_ns(),
+        }
+    }
+
     /// `finish`, and the encoded video bytes in the end (the trial asks whether any came out).
     pub(crate) fn finish_counted(self) -> Result<u64, FfError> {
         match self {

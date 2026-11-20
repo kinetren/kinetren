@@ -11,10 +11,10 @@
 
 ## 1. Measure every move
 
-- [ ] 1.1 `ExportProfile::upload_ns` around the writer's surface get + transfer; `encode_ns` without it;
+- [x] 1.1 `ExportProfile::upload_ns` around the writer's surface get + transfer; `encode_ns` without it;
       `ExportStage` record (kt-time export_stage name list)
-- [ ] 1.2 `trace … export` prints copy out, convert, upload per frame; t3316
-- [ ] 1.3 found-defects 741: the row points here
+- [x] 1.2 `trace … export` prints copy out, convert, upload per frame; t3316
+- [x] 1.3 found-defects 741: the row points here
 
 ## 2. The exact conversion on the device
 

@@ -815,8 +815,9 @@ pub fn export_mp4_with_backends(
                     conv.convert(rgba, &mut vf).map_err(std::io::Error::other)?;
                     ExportProfile::add(profile.map(|p| &p.convert_ns), mark);
                     let mark = Instant::now();
+                    let up = muxer.surface_upload_ns();
                     muxer.write_video_frame(&vf).map_err(std::io::Error::other)?;
-                    ExportProfile::add(profile.map(|p| &p.encode_ns), mark);
+                    ExportProfile::encode_apart(profile, mark, muxer.surface_upload_ns() - up);
                     store_bytes(&muxer);
                     Ok(())
                 },
