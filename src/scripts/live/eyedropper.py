@@ -61,7 +61,9 @@ def main(out):
         app.click_probe("fx.key.pick", "the pipette again")
         app.expect(app.has_probe("eyedrop.layer"), "the pick layer is up again")
 
-        # 3) a click on the preview's picture takes its colour
+        # 3) a click on the preview's picture takes its colour — once there IS a picture (found-defects
+        # 953: under load the click took the dark of "Loading…", [5, 5, 5])
+        app.expect(app.until(lambda: app.geom()["compose"]["picture"], timeout=120), "the preview shows the frame")
         cx, cy = app.preview_center()
         app.click(cx, cy)
         app.expect(app.wait_gone("eyedrop.layer"), "the pick put the pipette down")

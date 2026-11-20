@@ -94,7 +94,7 @@ def main(out):
         )
         import datetime
         since = datetime.datetime.now().astimezone()
-        app.key("Home")
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         app.step("open", f"the heavy showcase with Datamosh at its extremes on {n} events")
 
         app.key("space")

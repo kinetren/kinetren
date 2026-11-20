@@ -80,7 +80,7 @@ def main(out):
         app.key("Escape")
 
         # 4) play the tone: the meters move
-        app.key("Home")
+        app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
         app.key("space")
         # time stands until the device hands out its first frames (invariant 6), and on a loaded
         # machine the sound server can take seconds to open it (found-defects 425: 13.3 s in stage

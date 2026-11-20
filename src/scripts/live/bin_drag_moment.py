@@ -52,6 +52,10 @@ def main(out):
                 app.step(name, what)
 
             app.hover(*press)
+            # the card knows its file's length before the press (found-defects 952): its scrub timecode
+            # is drawn only then, and a press before it carries the moment 0 — the ghost started at the
+            # mouse under load
+            app.expect(app.until(lambda: app.has_probe("bin.scrub.tc", tries=1)), f"{name}: the card knows its length")
             app.drag(press[0], press[1], drop[0], drop[1], steps=8, mods_mid=mods, before_release=look)
             ghost = seen.get("ghost")
             app.expect(ghost is not None, f"{name}: the drop ghost is drawn before the release")

@@ -55,7 +55,7 @@ def travel(app, seconds=PLAY_WINDOW):
     The count starts AFTER the cursor has really moved: the first
     run in software rendering goes to warm-up (decode, first texture
     fill), and a measurement “from pressing space” would measure that, not the tempo."""
-    app.key("Home")
+    app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
     app.key("space")
     app.wait_playhead(lambda t: t > 0, "cursor moved", timeout=15)
     t0 = app.playhead()
