@@ -1,7 +1,7 @@
 ---
 id: F-TL-005
 title: Multicam editing
-status: researched
+status: candidate
 priority: C
 cost: XL
 category: timeline/structure
@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-SPD-004, F-TL-004]
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-TL-005 — Multicam editing
@@ -122,6 +122,18 @@ This is exactly the scenario for which multicam is set up (an interview on two c
 I additionally searched for feedback on performance ("multicam performance", "FCP multicam vs premiere", "resolve sync bin multicam") — threads were found (forum.blackmagicdesign.com: "Multicam 2x2 performance issue", 12.07.2025; "Choppy multicam playback", four angles; "Switch Multicam Angle grayed out", 08.01.2026), but forum.blackmagicdesign.com returns 403 for a direct load of the thread, the mobile mirror fails the certificate check, and reddit is unavailable from this environment. I did not quote from the search-engine snippets.
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+- Both blockers of the verdict are gone: nesting is done (F-TL-004, compositions R.50–R.59,
+  `Project::resolve_reel` and `expand_instance` in `src/libs/kt-model/src/`), and sync is done
+  (F-SPD-004, `src/libs/kt-media/src/sync.rs`, `offset_from_pyramids`).
+- The owner asked for it (kkt-26.11.01 M1): convenient, built on what the morpher can do (swap sources)
+  but not through the morpher's UI, "не выкидывать фичи куда-попало".
+- The design is the OpenSpec change `multicam`: a composition of angles and an angle choice per instance
+  piece (Premiere/Resolve), so the Vegas-takes path above is not the recommendation any more — a
+  composition gives per-angle grading inside. The owner chooses (its Q1).
+- CAPABILITY: openspec/specs/compositions/
 
 ### What already exists
 

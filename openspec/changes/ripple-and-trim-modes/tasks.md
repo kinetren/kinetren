@@ -25,7 +25,7 @@
 - [ ] 2.2 toolbar three-state button, red outline and playhead, the mode hint (rule 19); t3423, t3424
 - [ ] 2.3 `plan_move` classes for slip/slide/roll; error-style stops; refusals highlight the obstacle (rule 16); t3422, t3427
 - [ ] 2.4 i18n ×5, font subsets; layout_tests, reach_tests, i18n_tests, font_tests green
-- [ ] 2.5 live scenario `src/scripts/live/ripple.py` (delete with ripple, region cut, slip to the stop), a screenshot per step; t3425
+- [ ] 2.5 planned live scenario `ripple` (delete with ripple, region cut, slip to the stop), a screenshot per step; t3425
 
 ## 3. Close
 

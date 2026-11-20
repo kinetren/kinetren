@@ -71,7 +71,7 @@ an explicit command or a visibly armed mode.
 - **WHEN** the auto-ripple button is pressed once, a region is drawn over the middle of an interview event and `C` is pressed, then the button is pressed twice more
 - **THEN** after the first press the selection outline and the playhead are red and the status line says how to turn it off; `C` removes the region and closes the hole; after the third press the mode is off and the outline is the normal colour; the project file written while off has no mode field
 - **PATH** click the auto-ripple button → outline and playhead turn red → drag a region over the event → press C → the hole closes, the tail moved left → click the button twice → normal colours
-- **TEST** t3423 (`src/apps/kt-app/src/reach_tests.rs`), t3424 (`src/apps/kt-app/src/layout_tests.rs`), live scenario `src/scripts/live/ripple.py` (t3425)
+- **TEST** t3423 (`src/apps/kt-app/src/reach_tests.rs`), t3424 (`src/apps/kt-app/src/layout_tests.rs`), planned live scenario `ripple` (t3425)
 
 ### Requirement: Roll, slip and slide are drags with their own stops
 A drag at the joint of two butt-joined events with the roll modifier SHALL trim both by the same amount;
@@ -84,6 +84,7 @@ Why: F-TL-002 — slip first, slide only explicit (it changes what was not dragg
 #### Scenario: Slip keeps place and length and stops visibly
 - **WHEN** an event with a key at a material frame is slipped by +1 s, then past the end of its 10 s material
 - **THEN** start and duration are unchanged, `source_in` grew by 1 s, the key stays on its material frame (it moved left on screen with the frames); the second drag stops at the material's end with the edge drawn red and the hint in the error style
+- **PATH** hold the slip modifier and drag the event's body right by 1 s → the event stays in place, the picture inside moves, the key mark moves with the frames → drag on past the material's end → the drag stops, the event's edge turns red, the status line says the material ended
 - **TEST** t3426 (`src/libs/kt-model/tests/ripple.rs`), t3427 (`src/apps/kt-app/src/reach_tests.rs`)
 
 #### Scenario: Slide trims only butt-joined neighbours

@@ -25,7 +25,7 @@
 
 - [ ] 3.1 bin card menu, badges, the switch with its count, `UiState.proxies`; i18n ×5; t3447
 - [ ] 3.2 the job as a `Background` lane job; the one-time hint for slow decode (Q3 a)
-- [ ] 3.3 live scenario `src/scripts/live/proxies.py`, a screenshot per step; t3448
+- [ ] 3.3 planned live scenario `proxies`, a screenshot per step; t3448
 - [ ] 3.4 idle: live `idle` with a ready proxy and the switch on
 
 ## 4. Close
