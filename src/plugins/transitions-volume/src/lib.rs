@@ -1,9 +1,9 @@
 //! The volumetric transition kinds as plugins (plugin-api-stage1, stage 5, D12): the 2.5D exchange,
-//! the panels and the cylinders. Each kernel is the former `TransMix::of` arm (its `pack`),
-//! `kernel()` arm (its `pixel`) and `trans_ext` arm (its `ext`: the panels' inverse homographies in
-//! f64, rounded once to f32, so both backends read the same bits) of kt-engine's `transitions.rs`,
-//! verbatim; its WGSL is the former `trans()` arm of composite.wgsl. t1019 holds the pixels against
-//! the enum, t224 the GPU against the stored frames (FrameTol::GEOM for the panels), t973 the file text.
+//! the panels and the cylinders. Each kernel is the former `TransMix::of` arm (its `pack`) and
+//! `trans_ext` arm (its `ext`: the panels' inverse homographies in f64, rounded once to f32) of
+//! kt-engine's `transitions.rs`, verbatim; its WGSL is the former `trans()` arm of composite.wgsl.
+//! t1019 holds the packed numbers and the `ext` to a golden digest, t224 the GPU against the stored
+//! frames (FrameTol::GEOM for the panels), t973 the file text.
 
 use kt_plugin_api::math::FrozenMath;
 use std::sync::Arc;

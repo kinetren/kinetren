@@ -1,8 +1,8 @@
 //! Export. Invariants 7 and 9:
 //! - a SINGLE render path: the same AudioRenderer/VideoRenderer as the preview
 //!   (a different clock — “as ready”, a different Quality — the project's resolution);
-//! - zero temporary files: rawvideo(RGBA) → ffmpeg stdin, audio f32le →
-//!   named pipe; ffmpeg muxes on the fly, backpressure via the pipes.
+//! - zero temporary files: the frames and the audio go to libavcodec/libavformat in this process
+//!   (`kt_media::muxer`), which encode and mux on the fly; no external binary, no pipe.
 //!   (The old engine wrote gigabytes of rgb24+s16le into tmpfs — defect o.)
 //!
 //! `render_raw_*` hands raw streams to the callbacks — the golden tests stand on this
@@ -24,7 +24,7 @@ use std::time::Instant;
 
 pub use crate::export_pipeline::{ExportConverter, ExportProfile, ExportSink, MuxConverter, mux_converter, mux_layout};
 
-/// Export progress (ETA/speed is computed by the UI — wall-clock is not ours, inv. 10).
+/// Export progress (ETA/speed is computed by the UI — wall-clock is not ours, inv. 11).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExportProgress {
     pub audio_frames: u64,
@@ -105,7 +105,6 @@ pub struct ExportStats {
     pub stages: String,
 }
 
-/// Export range: [0, end of the last clip].
 /// Export video cache budget.
 pub const EXPORT_VIDEO_CACHE_BYTES: usize = 192 * 1024 * 1024;
 
@@ -497,6 +496,10 @@ impl IncompleteRuns {
     }
 }
 
+/// Times a paused export's wait found the pause still on (t2261): once when it paused, once more per
+/// wake that was not its resume — with a timer it was every 40 ms.
+pub static PAUSE_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// The stream stages' PRE-ROLL before frame `t` (datamosh-codec-path, D6): while the frame names
 /// source frames the cache lacks (a range starting inside a mosh, an evicted memo entry), decode the
 /// EARLIEST of them in a batch bounded by half the cache's video budget and advance the codecs over
@@ -504,10 +507,6 @@ impl IncompleteRuns {
 /// ends it too. Every offline path with its own sources runs it before a composite — the export,
 /// and the reel strip and project poster (decode-request-storm: they read the whole history into a
 /// 16–64 MB cache at once, which dropped its front before the composite read it).
-/// Times a paused export's wait found the pause still on (t2261): once when it paused, once more per
-/// wake that was not its resume — with a timer it was every 40 ms.
-pub static PAUSE_WAITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 pub fn stream_preroll(
     video: &VideoRenderer,
     cache: &BurstCache,
@@ -554,8 +553,6 @@ pub enum ExportError {
     // the message alone: a person reads it in the render window, and "io" names a Rust type
     #[error("{0}")]
     Io(#[from] std::io::Error),
-    #[error("ffmpeg exited with {0}")]
-    FfmpegFailed(std::process::ExitStatus),
     #[error("audio thread panicked")]
     AudioThread,
     #[error("export cancelled")]
@@ -564,8 +561,6 @@ pub enum ExportError {
     NoDevice(String),
 }
 
-/// Full export: range (region), cancel (kill ffmpeg + deletion of the
-/// partial file), progress callback (called from both threads).
 /// Export settings (item 5): codec choice, quality, bitrate, resolution.
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
@@ -591,7 +586,8 @@ pub struct ExportOptions {
     pub encoder_threads: Option<u32>,
     /// The machine is short of memory: half the frame cache, four encoder threads (gpu-render-hardening, D1).
     pub tight: bool,
-    /// Collects the busy time of every stage (`kt-cli export --time`).
+    /// Collects the busy time of every stage for the caller (`kt-cli export --time` prints it); with
+    /// `None` the export keeps its own, and every export writes it into the trace when it ends.
     pub profile: Option<Arc<ExportProfile>>,
     /// Container, codec, rate mode, GOP, depth, colour, audio codec, metadata (render-settings D1).
     pub format: kt_media::muxer::OutputFormat,

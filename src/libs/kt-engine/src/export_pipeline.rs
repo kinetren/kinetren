@@ -38,9 +38,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Where an export's time goes (export-throughput D6): the BUSY nanoseconds of every stage,
-/// summed over the threads of the stage, and the wall time of the whole export. Read by
-/// `kt-cli export --time`. The clock is read only into this record, which the caller asked for;
-/// it never steers the render (invariant 11).
+/// summed over the threads of the stage, and the wall time of the whole export. Every export keeps
+/// one and writes it into the trace at its end (render-speed D2); `kt-cli export --time` prints it and
+/// the render window journals its summary. The clock is read only into this record; it never steers
+/// the render (invariant 11).
 #[derive(Debug, Default)]
 pub struct ExportProfile {
     pub decode_ns: AtomicU64,

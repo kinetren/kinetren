@@ -1028,6 +1028,11 @@ of a file opened meanwhile took the render's settings, or reset ones.
 - **THEN** the first sees the render's counts inside, the other and the first after it see the defaults
 - **TEST** t2262 (`src/libs/kt-ffmpeg/src/lib.rs`)
 
+#### Scenario: kt-cli export opens its sources in the scope
+- **WHEN** `kt-cli export` opens its sources (found-defects 1059: it set the counts process-wide, and they outlived the export)
+- **THEN** the sources open with the render's counts and the process's counts stay the defaults after it; no process-wide set is left in kt-cli but the preview tools'
+- **TEST** t3602 (`src/apps/kt-cli/src/main.rs`)
+
 ### Requirement: An export composes an incomplete frame again before it writes it
 Every export (serial and pipelined) SHALL ask a frame its decode span did not give alone, up to two times,
 before anything composes it; a frame that still comes out incomplete SHALL have its missing frames decoded

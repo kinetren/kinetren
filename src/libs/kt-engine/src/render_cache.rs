@@ -6,9 +6,10 @@
 //!   but the frames' per-process content serials — mixed with what those serials stood for, collected
 //!   while the plan is built ([`Leaves`]): a file's path, size and modification time, a generator's
 //!   values, every file of the project for a stream stage. Salted by the format, the program's build
-//!   and the device: the folder `<root>/v1-<build>/<device>/`.
-//! - **The store** (D2): [`DiskStore`], one lossless file per moment (a left-pixel byte delta,
-//!   deflated), bounded, least recently used out; the folders of other builds go at open.
+//!   and the device: the folder `<root>/v<FORMAT>-<build>/<device>/`.
+//! - **The store** (D2): [`DiskStore`], segments of up to [`SEGMENT_FRAMES`] moments, each a video
+//!   written by the host's [`SegmentCodec`] (a hardware encoder) with a manifest beside it, bounded,
+//!   least recently used out; the folders of other builds go at open.
 //! - **The reads** (D3) are the player's (`PreviewParts::restore_from_disk`), before anything composes.
 //! - **The prerender** (D4) is the player's `render-cache` thread ([`run_prerender`]): at rest, after
 //!   [`QUIET`] with no input, the moments the cost map measured at least half a frame period
