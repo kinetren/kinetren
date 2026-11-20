@@ -60,7 +60,7 @@ def main(out):
             app.step("running", "the progress window runs")
 
             # 3) the finish: the program did not fold at 100 %
-            app.expect(app.has_probe("render.close", tries=240), "the render finished, the window draws")
+            app.expect(app.until(lambda: app.has_probe("render.close", tries=1), timeout=900), "the render finished, the window draws")
             app.expect(app.has_probe("render.open_file"), "Open file is offered")
             app.step("done", "the summary line, Open file and Open folder, Close at the right")
 
