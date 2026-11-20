@@ -35,7 +35,7 @@
 
 ## 5. The 16-bit path (kkt-26.11.20 A25; after the owner's Q1–Q4 of the revised proposal)
 
-- [ ] 5.1 `Precision` on `ProjectSettings` and `Sequence`; project file format 8 by content; OTIO
+- [ ] 5.1 `Precision` on `ProjectSettings` and `Sequence`; the next free project file format by content; OTIO
       `metadata["kt"]` and a row in "What OTIO export loses"; t3877–t3880
 - [ ] 5.2 the decode to linear BT.2020 f16 (D10), `VideoFrame.format`, the cache key's precision;
       t3881–t3883

@@ -134,7 +134,7 @@ so a preset made before this change, which stored `bt601`, keeps it.
   precision the plan reads).
 - Changing it is an edit: undo returns it; the player rebuilds as for any settings edit; caches of the
   other precision stay until evicted.
-- **The file:** the field is written only when it is `Rgba16F`. Such a file is project-file format 8 by
+- **The file:** the field is written only when it is `Rgba16F`. Such a file is the next free project-file format (taken at merge) by
   content (`version_for`; an old reader refuses it, naming the version, as the format rules require). An
   8-bit project is byte-identical to before.
 - **The OTIO door** writes it into `metadata["kt"]` and adds a row in "What OTIO export loses" (other
@@ -242,7 +242,7 @@ Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics w
 | thumbnails, reel strips, posters | 8-bit | 8-bit, tone-mapped |
 | memory ledger | 4 B/px | 8 B/px in every tenant (`tex_bytes` by format) |
 | durable keys, render index | as today | the precision in the key |
-| project file | unchanged | format 8 when 16-bit |
+| project file | unchanged | the next free format when 16-bit |
 | OTIO | unchanged | `metadata["kt"]`, a row in "What OTIO export loses" |
 
 ## D16. Stages and tests
@@ -265,7 +265,7 @@ Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics w
 5. Facts and `kt-cli probe` print the path (t3810); the trace names it (t3811).
 
 6. The 16-bit path (after the owner's Q1–Q4):
-   - the precision setting, the file's format 8, OTIO (t3877–t3880);
+   - the precision setting, the file's next free format, OTIO (t3877–t3880);
    - the decode to linear f16, exact on every processor (t3881–t3883);
    - the pool by format, the core float shaders, `FrameTol` float classes (t3884–t3887);
    - the effect's precision, the island and its mark, the colour family's float kernels (t3888–t3891);
