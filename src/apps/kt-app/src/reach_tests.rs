@@ -1628,10 +1628,12 @@ fn t560_generator_is_reachable_from_the_main_menu() {
     let file = body("tr(k::menu::file::TITLE)", "tr(k::menu::edit::TITLE)");
     let edit = body("tr(k::menu::edit::TITLE)", "tr(k::menu::view::TITLE)");
     assert!(
-        !file.contains("gen_ui::generator_menu"),
+        !file.contains("gen_ui::generator_item"),
         "File offers “Create a generator” again — the owner moved it out (kkt-26.11.01 item 4)"
     );
-    assert!(edit.contains("gen_ui::generator_menu(ui)"), "the Edit menu has no “Create a generator…” item");
+    // ONE plain item on Edit and the bin too since kkt-26.11.20 A1 ("Один пункт, по дорожке"): the
+    // kind by the selected track, the window's gallery changes it
+    assert!(edit.contains("gen_ui::generator_item(ui)"), "the Edit menu has no “Create a generator…” item");
     let timeline = read("apps/kt-app/src/timeline.rs");
     // a track's right-click item is ONE plain item since generator-from-track (`v26.10` G1, the
     // owner: "Не вижу смысла делать выпадающие меню с перечислением всех видов"): it creates the
@@ -1642,7 +1644,7 @@ fn t560_generator_is_reachable_from_the_main_menu() {
     );
     let bin = read("apps/kt-app/src/bin_panel.rs");
     assert!(
-        bin.contains("gen_ui::generator_menu(ui)"),
+        bin.contains("gen_ui::generator_item(ui)"),
         "the bin menu builds its own list of kinds — if they diverged, a new kind would appear \
          in one entry and not in the other (rule 17)"
     );
@@ -6608,30 +6610,33 @@ fn t988_a_lesson_step_closes_on_the_project_state() {
     let gen_item = tr(k::bin::menu::NEW_GENERATOR);
     assert!(h.query_all_by_label_contains(gen_item).count() > 1, "Show did not open the Edit menu");
     assert!(h.state().lesson_marks_menu(k::bin::menu::NEW_GENERATOR), "the item is not the outlined target");
-    // the person's own gesture: Create a generator… → Titles and countdown → Text
-    // the lesson paragraph names the same item; the menu's own node STARTS with it
+    // the person's own gesture: Create a generator… (one item, kkt-26.11.20 A1) → its window, the
+    // Kind field outlined → Text
     {
         use egui_kittest::kittest::NodeT;
         h.query_all_by_label_contains(gen_item)
             .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with(gen_item)))
             .expect("the Edit menu item")
-            .hover();
+            .click();
     }
-    h.step();
-    h.step();
-    let group = tr(k::genkind::GROUP_TITLES);
-    {
-        use egui_kittest::kittest::NodeT;
-        h.query_all_by_label_contains(group)
-            .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with(group)))
-            .expect("the generator group")
-            .hover();
+    for _ in 0..4 {
+        h.step();
     }
-    h.step();
-    h.step();
-    h.get_by_label(crate::gen_ui::kind_name(&kt_model::GeneratorKind::default_for_tag("text").unwrap())).click();
-    h.step();
-    h.step();
+    assert!(!h.state().start.store.tour.is_done(1, 1), "a solid colour closed the title step");
+    assert!(crate::widgets::lesson_mark::seen("genw.kind").is_some(), "the window's Kind field is not outlined");
+    crate::widgets::field_probe::forget("genw.kind.text");
+    for name in ["genw.kind.pick", "genw.kind.text"] {
+        let at = crate::widgets::field_probe::rect_of(name).unwrap_or_else(|| panic!("no {name}")).center();
+        h.hover_at(at);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+            h.step();
+        }
+        for _ in 0..3 {
+            h.step();
+        }
+    }
     assert!(h.state().start.store.tour.is_done(1, 1), "the title step did not close by itself");
     assert!(h.query_all_by_label_contains(&lesson_line(k::lessons::L1_S2)).count() > 0, "step 2 is not shown");
 

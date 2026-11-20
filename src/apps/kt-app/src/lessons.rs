@@ -60,7 +60,7 @@ pub enum Target {
 /// The named controls a lesson may point at. Each is marked by a `lesson_mark::control("<name>"`
 /// call in the program's sources (t1092): a renamed control cannot leave a dead step.
 #[cfg_attr(not(test), allow(dead_code))]
-pub const CONTROLS: &[&str] = &["fxreg.add", "fx.auto_add", "tb.loop", "tb.render", "tr.kind", "render.start"];
+pub const CONTROLS: &[&str] = &["fxreg.add", "fx.auto_add", "tb.loop", "tb.render", "tr.kind", "render.start", "genw.kind"];
 
 /// When a step is done — a closed set, evaluated by one pure function (`done`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +138,7 @@ pub const CUT_MARKER: &str = "CUT HERE";
 
 /// Where "Create a generator…" lives. ONE constant: `generators-placement-and-audio` moved the
 /// item out of File into Edit by editing this path; the lesson's text and "Show" follow it.
-pub const GENERATOR_MENU: &[Key] = &[k::menu::edit::TITLE, k::bin::menu::NEW_GENERATOR, k::genkind::GROUP_TITLES];
+pub const GENERATOR_MENU: &[Key] = &[k::menu::edit::TITLE, k::bin::menu::NEW_GENERATOR];
 const FILE_RENDER: &[Key] = &[k::menu::file::TITLE, k::menu::file::RENDER];
 
 const fn step(text: &'static [Key], targets: &'static [Target], done: Predicate) -> Step {
@@ -151,8 +151,12 @@ pub const LESSONS: &[Lesson] = &[
         title: k::lessons::L1,
         steps: &[
             Step {
-                args: &[Arg::Path(GENERATOR_MENU), Arg::Gen("text")],
-                ..step(&[k::lessons::L1_S1, k::lessons::L1_S1_B], &[Target::Menu(GENERATOR_MENU)], Predicate::HasGenerator("text"))
+                args: &[Arg::Path(GENERATOR_MENU), Arg::Gen("text"), Arg::Label(k::trn::KIND)],
+                ..step(
+                    &[k::lessons::L1_S1, k::lessons::L1_S1_B, k::lessons::L1_S1_C],
+                    &[Target::Menu(GENERATOR_MENU), Target::Control("genw.kind")],
+                    Predicate::HasGenerator("text"),
+                )
             },
             step(
                 &[k::lessons::L1_S2, k::lessons::L1_S2_B, k::lessons::L1_S2_C],

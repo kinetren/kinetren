@@ -203,9 +203,9 @@ Why: the reference failure — the M gesture with a region made a range label, w
 a point one; two entries with two copies — the same "two tracks from one +M".
 
 #### Scenario: A generator is created from the main menu and from the bin with one list
-- **WHEN** the "Create a generator" submenu is opened from the Edit menu, from a clip track's right-click menu and from the bin's background menu; the File menu is opened
-- **THEN** the list of kinds is built by one body for all three entries (the track's filtered by its kind), creation puts the media and the clip in one history step, the track entry at the clicked track and time; File offers no generator item
-- **PATH** click "Edit" → "Create a generator" → the groups; right click on a track → "Create a generator" first; right click on the bin's background → "Create a generator"; click "File" → no such row
+- **WHEN** "Create a generator…" is found in the Edit menu, a clip track's right-click menu and the bin's background menu; the File menu is opened
+- **THEN** all three draw one plain item by one body (no list of kinds, kkt-26.11.20 A1); creation puts the media and the clip in one history step, the track entry at the clicked track and time, Edit and the bin at the cursor on the selected event's track; File offers no generator item
+- **PATH** click "Edit" → one "Create a generator…" item; right click on a track → "Create a generator…" first; right click on the bin's background → "Create a generator…"; click "File" → no such row
 - **TEST** t560 (`src/apps/kt-app/src/reach_tests.rs`), t1165 (`src/apps/kt-app/src/gen_audio_tests.rs`)
 
 #### Scenario: The publish door is one and reachable only from inside
@@ -836,14 +836,15 @@ a crossfade the program never makes, an effect added with nothing said about it.
   restarted; then "Start over" is used
 - **THEN** a demo copy opens from the data directory (generators only, no missing media); "Show"
   opens the menu root and "Create a generator…" carries the static accent outline (the program
-  never moves the person's pointer); the step closes by itself when the title event exists,
+  never moves the person's pointer), then the generator window's Kind field does; the step closes by itself when the title event exists,
   without pressing anything in the panel, and the cut step closes when the event at the marker is in
   two pieces; after the restart the welcome window offers "Continue the tour — lesson 1, step 3" and
   the progress is intact; "Start over" clears it and makes a new demo copy
 - **PATH** start Kinetren for the first time → the welcome window, "Start the tour" focused → click
   it → the demo project opens and a panel on the right reads "Lesson 1 of 5 · The first edit" with
   step 1 "Add a title" and a "Show" button → click "Show" → the Edit menu opens and "Create a
-  generator…" carries an accent outline → Create a generator… → Titles and countdown → Text → a title
+  generator…" carries an accent outline → Create a generator… → a solid colour and its window, the
+  Kind field outlined (the step stays open) → Kind → Text → a title
   event appears on the timeline and step 1 turns into a check mark, step 2 "Cut the event at the
   marker" appears → put the playhead on the marker and press S → the event is in two pieces and step 2
   is checked → close the panel and quit → start again → the welcome window's primary tile reads

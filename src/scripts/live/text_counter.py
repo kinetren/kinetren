@@ -42,10 +42,7 @@ def main(out):
 
     with Live("text_counter", out, project=proj) as app:
         app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
-        app.click_probe("menu.edit", "the Edit menu")
-        app.hover_probe("gen.new", "Create a generator…")
-        app.hover_probe("gen.new.group.titles", "Titles and countdown")
-        app.click_probe("gen.new.text", "Text")
+        app.new_generator("text", what="the Text cell")
         app.expect(app.has_probe("titlew.source.stopwatch"), "the title's window shows its source row")
         app.step("window", "a Text generator: its window, the Text row with Typed, Timecode, Stopwatch, Countdown")
         app.click_probe("titlew.source.stopwatch", "Stopwatch")

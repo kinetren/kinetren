@@ -23,10 +23,7 @@ def field(app, name):
 
 
 def create(app, tag, what):
-    app.click_probe("menu.edit", "the Edit menu")
-    app.hover_probe("gen.new", "Create a generator…")
-    app.hover_probe("gen.new.group.shapes", "the Shapes group")
-    app.click_probe(f"gen.new.{tag}", what)
+    app.new_generator(tag, what=what)
     app.key("Escape")
 
 

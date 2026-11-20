@@ -113,8 +113,9 @@ def make_generator(app, group, kind, at_ticks):
         win["y"] + int(b["bottom"]) - 10,
     )
     app.click_probe("gen.new", "item “Create a generator”")
-    app.hover_probe(f"gen.new.group.{group}", f"group “{group}”")
-    app.click_probe(f"gen.new.{kind}", f"kind “{kind}” in the submenu")
+    app.expect(app.until(lambda: app.has_probe("genw.kind.pick", tries=2)), "the generator's window opened")
+    if kind != "solid":
+        app.pick_generator_kind(kind, f"kind “{kind}” of “{group}” in its window")
     # a created generator opens its own effects window — we close it, otherwise
     # it overlaps the bin and the timeline
     app.key("Escape")
