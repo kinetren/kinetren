@@ -14,7 +14,7 @@ round: "R.49"
 point: 370
 tests: [403, 404, 405, 406, 407, 411, 412]
 depends_on: []
-checked: 2026-09-15
+checked: 2026-11-20
 ---
 
 # F-AUD-005 — Loudness normalization to standards — LUFS, EBU R128, true peak
@@ -134,6 +134,8 @@ number serves exactly one scenario (broadcasting) and pushes everyone else into 
 ## How it fits Kinotrain
 CAPABILITY: openspec/specs/audio-render/ — the contract is in `spec.md`, the "why" and the paths in the code are in `design.md`.
 The LUFS/peak meter is computed by the offline service on f64 sums; the export measures with the same meter; normalization is a command, not an automatic action.
+
+Since 2026-11-20: the owner's T14 (no emphasis, no per-channel view, no norms) is designed in change `loudness-norms`.
 
 ## Estimate
 
