@@ -179,6 +179,10 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 - In Russian, short, what he can now do or no longer suffers from; the version after a stage's
   `finish.sh`; for UI work the live screenshots.
 - Name what is not done and why; never a session's note as proof — check the diff and the images.
+- **Every request to him goes into [`owner-checks.md`](owner-checks.md)** (owner, 2026-11-20): what
+  he is asked to check or decide, on which release, and beside it the orchestrator's links (claim,
+  found-defects row, change, executor) so his answer leads straight to the place to fix. A report
+  that asks him something adds the row in the same turn; an answer moves it to "Answered".
 
 ## Standing go (2026-11-09)
 
