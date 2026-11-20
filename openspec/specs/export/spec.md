@@ -1148,6 +1148,11 @@ than the preview (F-EXP-006 trick).
   with another would come back 12 or more codes off, so the conversion follows the label
 - **TEST** t2806 (`src/libs/kt-engine/tests/render_settings.rs`)
 
+#### Scenario: A fractional frame rate and a frame's own time are written as they are
+- **WHEN** 48 frames are written at the rate 24000/1001, and five frames at their own times 0, 3000, 9000, 10000, 19000 in a time base of 1/90000
+- **THEN** the first stream's rate is 24000/1001 and it lasts 2.002 s (an integer grid wrote 24 and 2.000 s); the second's packets stand at those times, their gaps in the same ratios (`MuxConfig.frame_rate` is a rational, `time_base` and `write_video_frame_at` serve a proxy that keeps its source's times; found-defects 823 — the project's own rate is F-SPD-005)
+- **TEST** t3601 (`src/libs/kt-engine/tests/render_settings.rs`)
+
 #### Scenario: The same settings write the same bytes
 - **WHEN** the same project is exported twice with libx265, libvpx-vp9 and prores_ks, each
   with fixed encoder threads
