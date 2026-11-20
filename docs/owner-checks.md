@@ -74,11 +74,18 @@ a row; it does not close the row.
 | Q40 | 2026-11-20 | **Datamosh on a whole track: where the "cut" falls under a transition.** (a) recommended: at the first frame of the incoming event; (b) at the middle of the transition. | `track-stream-stage` Q1, note F-FX-018, row 820 |
 | Q41 | 2026-11-20 | **Datamosh on a track: does a gap end the smear?** (a) recommended: yes, the next event starts clean; (b) the black is part of the stream, the shot smears into and out of black. | `track-stream-stage` Q2 |
 | Q42 | 2026-11-20 | **An event's own Datamosh under a track's Datamosh.** (a) recommended: allowed, costs more (shows as Loading); (b) refused with a reason. | `track-stream-stage` Q3 |
-| Q43 | 2026-11-20 | **Export colour standard.** HD files are written as BT.601; most HD deliveries are BT.709, and players that ignore the tag shift colours. (a) recommended: BT.709 at HD and above, as the decode already does; (b) keep BT.601 everywhere. | found-defects 1054, `kt-ffmpeg/src/format.rs` |
+| Q43 | 2026-11-20 | *(superseded by Q50)* **Export colour standard.** HD files are written as BT.601; most HD deliveries are BT.709, and players that ignore the tag shift colours. (a) recommended: BT.709 at HD and above, as the decode already does; (b) keep BT.601 everywhere. | found-defects 1054, `kt-ffmpeg/src/format.rs` |
 | Q44 | 2026-11-20 | **Mirror like Vegas (reflect around an angle).** (a) recommended: old Mirrors keep flipping, a new Mirror reflects (angle 90°, centre in the middle); (b) one mode only, old flips converted on open. | `geometry-fx-flex` Q1, note F-FX-019 |
 | Q45 | 2026-11-20 | **The rest of the geometry-effects audit** (Kaleidoscope, Twirl, Ripple, Lens, Pixelate…). (a) recommended: ranked rows in the catalogue, built one by one later; (b) build every gap now. | `geometry-fx-flex` Q2 |
 | Q46 | 2026-11-20 | **Pro keyer: the clean plate** ("учитывающий неравномерность фона"). (a) recommended: made from each frame by itself, "Use this frame" holds one; (b) a held frame required first. | `pro-keyer` Q1, note F-MSK-009 |
 | Q47 | 2026-11-20 | **Light wrap** (background light on the subject's edge; needs the layer below). (a) recommended: later, with inputs from other layers; (b) now, as a track-level stage. | `pro-keyer` Q2 |
+| Q48 | 2026-11-20 | **HDR footage (iPhone HLG, BT.2020/PQ) now looks pale.** What does the program compute in? (a) recommended: SDR BT.709 8-bit as today, HDR mapped once at decode by a fixed curve; (b) a linear-light 16-bit/float working space like Resolve (a large rework). | `hdr-sources-to-sdr` Q1, note F-CLR-009, rows 724/1054 |
+| Q49 | 2026-11-20 | **HDR output** (writing HDR files). (a) recommended: later, its own change; (b) not planned. | `hdr-sources-to-sdr` Q2 |
+| Q50 | 2026-11-20 | **Export's default colour standard** (replaces Q43). (a) BT.709 at HD and above, BT.601 below, as the decode does; (b) always BT.709. | `hdr-sources-to-sdr` Q3, row 1054 |
+| Q51 | 2026-11-20 | **Datamosh frame travels between two devices of one card.** (a) recommended: measure first, share the device only if your trace shows it costs over a tenth of a frame; (b) share now. | `stream-picture-stays` Q1, row 663 |
+| Q52 | 2026-11-20 | **Changing an added effect's preset** ("ПОМЕНЯТЬ ЕГО ПРЕСЕТ"): a row with a curve. (a) recommended: the curve stays, the menu says "2 rows keep their curves"; (b) the preset replaces everything, curves removed (Undo brings them back). | `fx-preset-change` Q1, note F-UI-010 |
+| Q53 | 2026-11-20 | **Preview zoomed out: outside the frame.** (a) recommended: outlines and handles only; (b) the picture too (costlier). | `preview-canvas-and-gizmos` Q1, note F-UI-011 |
+| Q54 | 2026-11-20 | **Is the preview zoom remembered?** (a) recommended: no, every opening starts at Fit, Ctrl+0 returns; (b) remembered per project. | `preview-canvas-and-gizmos` Q2 |
 
 ## Answered
 
