@@ -355,6 +355,9 @@ with its cure:
   stretch one sleep on purpose so the test proves it;
 - **an effect of the size of the noise** (t2920: a 720-ms simulated latency against a run's
   scheduling noise): make the simulated effect dominate (200 ms a moment, 3.6 s).
+- **a state read before the thread reached it** (t1964, found-defects 141: the writer's switches read
+  when its count of a record moved, a few instructions before it parks): wait for the state itself
+  (`S` and switches that stand), and keep a seam that holds the thread runnable past the count.
 A counter that moves later than the event it counts (t2984: moments written count at the segment's
 commit) is the same class: assert the event (a job started, from the trace), not the counter. A
 retry is never the cure (t1671).

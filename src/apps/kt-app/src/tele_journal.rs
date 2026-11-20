@@ -318,6 +318,16 @@ fn writer(path: &Path, rotate: u64, rx: mpsc::Receiver<Msg>, written: &AtomicU64
                 len += buf.len() as u64;
             }
             written.fetch_add(lines, Ordering::Release);
+            // a writer still running between the count and its park, as a preempted one is on a loaded
+            // machine (runnable, not sleeping): t1964
+            #[cfg(test)]
+            {
+                let ms = tests::AFTER_COUNT_MS.load(Ordering::Acquire);
+                let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+                while std::time::Instant::now() < until {
+                    std::hint::spin_loop();
+                }
+            }
         }
         for b in barriers {
             let _ = b.send(());
@@ -713,8 +723,14 @@ mod tests {
 
     /// Test t1964 (telemetry-journal): with nothing to write, the journal's thread does not wake.
     #[cfg(target_os = "linux")]
+    /// The writer's stay after it counted a record (t1964; one test process per test under nextest).
+    pub(super) static AFTER_COUNT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     #[test]
     fn t1964_no_wakeups_at_rest() {
+        // the writer stays awake 200 ms past its count of a record, as a preempted one does under load
+        // (found-defects 141): the rest is read only once it has parked
+        AFTER_COUNT_MS.store(200, Ordering::Release);
         let j = fresh("t1964", FakeClock::new(T0, 0), ROTATE_BYTES);
         j.record(Kind::Run, "start");
         wait_written(&j, 1);
@@ -727,7 +743,24 @@ mod tests {
                 .filter_map(|l| l.split_whitespace().last()?.parse::<u64>().ok())
                 .sum::<u64>()
         };
-        let before = switches();
+        // at rest means PARKED (found-defects 141): `wait_written` returns at the writer's count of the
+        // record, a few instructions before it parks in `recv`; a writer preempted there under load parked
+        // after `before` was read, and its own way to the park read as a wakeup. So the count is taken once
+        // the writer sleeps and its switches stand between two looks.
+        let state = || {
+            let s = std::fs::read_to_string(format!("/proc/self/task/{tid}/stat")).unwrap();
+            // the state follows the command name's closing parenthesis
+            s.rsplit_once(')').and_then(|(_, r)| r.trim_start().chars().next()).unwrap_or('?')
+        };
+        let deadline = kt_time::test_deadline();
+        let before = loop {
+            let a = switches();
+            std::thread::sleep(Duration::from_millis(50));
+            if state() == 'S' && switches() == a {
+                break a;
+            }
+            assert!(std::time::Instant::now() < deadline, "the journal's writer never parked");
+        };
         std::thread::sleep(Duration::from_millis(1_500));
         assert_eq!(switches(), before, "the journal's writer woke with nothing to write");
         // and a record still wakes it at once
