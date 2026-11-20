@@ -28,7 +28,7 @@
 
 ## 3. The prerender
 
-- [ ] 3.1 `render_cache` writer asks the layout; `SegmentWriter` takes planes; t3317
+- [x] 3.1 `render_cache` writer asks the layout; `SegmentWriter` takes planes; t3317
 - [ ] 3.2 idle-load check on the heavy showcase while the prerender runs and after (owner rule)
-- [ ] 3.3 kt-gpu `CLAUDE.md`: "a new encoder input format gets its exact layout in `yuv.rs` and the pass";
+- [x] 3.3 kt-gpu `CLAUDE.md`: "a new encoder input format gets its exact layout in `yuv.rs` and the pass";
       What's new line ("exports on a card spend less processor time")

@@ -193,6 +193,22 @@ pub enum PutError {
     Io(String),
 }
 
+/// A segment writer's layout in the exact conversion's terms.
+fn yuv_of(p: kt_media::segment::SegmentPlanes) -> crate::yuv::YuvLayout {
+    use crate::yuv::{YuvLayout, YuvMatrix, YuvPix};
+    YuvLayout {
+        pix: match p.code {
+            0 => YuvPix::Yuv420p,
+            1 => YuvPix::Nv12,
+            2 => YuvPix::Yuv420p10,
+            3 => YuvPix::P010,
+            _ => YuvPix::Yuv422p10,
+        },
+        matrix: if p.bt709 { YuvMatrix::Bt709 } else { YuvMatrix::Bt601 },
+        full: p.full,
+    }
+}
+
 /// A segment being written by the prerender's thread: frames go to the encoder as they come, the
 /// manifest is written when it is committed.
 pub struct SegmentBuild {
@@ -204,6 +220,19 @@ pub struct SegmentBuild {
 impl SegmentBuild {
     pub fn push(&mut self, key: u64, rgba: &[u8]) -> Result<(), String> {
         self.writer.push(rgba)?;
+        self.manifest.keys.push(key);
+        Ok(())
+    }
+
+    /// The planes the segment's encoder takes, as the exact conversion names them (export-host-copy
+    /// D4); `None` — it takes RGBA.
+    pub fn planes(&self) -> Option<crate::yuv::YuvLayout> {
+        self.writer.planes().map(yuv_of)
+    }
+
+    /// The next frame as the `planes` layout's packed planes, made on the composing device.
+    pub fn push_planes(&mut self, key: u64, planes: &[u8]) -> Result<(), String> {
+        self.writer.push_planes(planes)?;
         self.manifest.keys.push(key);
         Ok(())
     }
@@ -1032,6 +1061,9 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
     let mut full = false;
     // the size an encoder was seen to open at (found-defects 813): asked before any moment composes
     let mut opens: Option<(u32, u32)> = None;
+    // the planes the segments' encoder takes, learnt from the same probe: a moment is converted on the
+    // composing device and the encoder gets planes (export-host-copy D4)
+    let mut layout: Option<crate::yuv::YuvLayout> = None;
     let mut seg: Option<OpenSeg> = None;
     loop {
         let seen = rc.wake.seen();
@@ -1133,6 +1165,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             let fps = (kt_time::TICK_HZ / step).max(1) as u32;
             match store.begin(q.width, q.height, fps) {
                 Ok(probe) => {
+                    layout = probe.planes();
                     // an empty segment leaves no file
                     let _ = store.commit(probe, false);
                     opens = Some((q.width, q.height));
@@ -1147,7 +1180,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         }
         worked = true;
         rc.busy.store(true, Ordering::Release);
-        let out = one(&parts, &rc, &store, &display, &video, &built.project, built.seq, t, q, versions, &stop);
+        let out = one(&parts, &rc, &store, &display, &video, &built.project, built.seq, t, q, versions, layout, &stop);
         rc.busy.store(false, Ordering::Release);
         match out {
             Outcome::Heavy(dk, w, h, rgba) => {
@@ -1170,7 +1203,11 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
                     }
                 }
                 let s = seg.as_mut().unwrap();
-                if s.build.push(dk, &rgba).is_ok() {
+                let pushed = match layout {
+                    Some(_) => s.build.push_planes(dk, &rgba),
+                    None => s.build.push(dk, &rgba),
+                };
+                if pushed.is_ok() {
                     s.moments.push((t, dk));
                     s.next = t + step;
                 } else {
@@ -1263,6 +1300,7 @@ fn one(
     t: i64,
     q: kt_media::Quality,
     versions: (u64, u64),
+    layout: Option<crate::yuv::YuvLayout>,
     stop: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Outcome {
     use kt_time::Tick;
@@ -1315,12 +1353,18 @@ fn one(
             if video.has_stream_stages() {
                 crate::video::stop_when(trace::stop::PRERENDER, check.clone(), || video.stream_advance(&parts.cache, Tick(t), q));
             }
+            // the segment's planes made on the composing device (export-host-copy D4), else RGBA
             let out = crate::video::stop_when(trace::stop::PRERENDER, check.clone(), || {
                 let plan = video.frame_plan(&parts.cache, Tick(t), q);
-                (exec.execute_into(&plan, &mut buf), plan.out_w, plan.out_h)
+                let r = match &layout {
+                    Some(l) => exec.execute_once_yuv(&plan, l, &mut buf),
+                    None => exec.execute_into(&plan, &mut buf),
+                };
+                (r, plan.out_w, plan.out_h)
             });
+            let want = |w: u32, h: u32| layout.map_or(w as usize * h as usize * 4, |l| l.frame_bytes(w, h));
             match out {
-                (Ok(true), w, h) if buf.len() == w as usize * h as usize * 4 => break (w, h),
+                (Ok(true), w, h) if buf.len() == want(w, h) => break (w, h),
                 (Ok(_), _, _) => {}
                 (Err(_), _, _) => {
                     span.c(2);

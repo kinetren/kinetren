@@ -236,6 +236,7 @@ mod tests {
 
     /// A sample of a packed frame: plane `p`, column `x` of its row `y` (`k`-th of a pair in a
     /// semi-planar plane).
+    #[allow(clippy::too_many_arguments)]
     fn sample(l: &YuvLayout, f: &[u8], w: u32, h: u32, p: usize, x: usize, y: usize, k: usize) -> i32 {
         let pl = l.planes(w, h)[p];
         let s = if l.pix.ten_bit() { 2 } else { 1 };

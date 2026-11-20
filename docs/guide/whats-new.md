@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **Rendering spends less processor time.** The picture of every frame is turned into the video's own colour format by the graphics card, the same way on every machine, and only that smaller picture travels back to the processor; the slow moments the program keeps on disk are prepared the same way.
 - **Right-click menus make the thing, the window picks its kind.** Right-click a track and choose Create a generator: a solid colour (a tone on an audio track) appears where you clicked and its window opens, where the pictures of all the kinds are. Right-click an event and choose Transition with next or previous: a dissolve is made and its window opens with the same kind pictures. No more long lists of kinds in those menus.
 - **A double click right after another click stays a double click.** On a busy machine, double-clicking an event soon after clicking somewhere else — the effects window's Done, another event — could be taken for a triple click: the effects window did not open, a region was set over the event and the cursor jumped to its start. Now three clicks count as a triple only when they are one gesture on one place, everywhere in the program.
 - **Parts of the preview saved to disk play back on the graphics card.** The slow moments the program prepares on its own and keeps on disk are now read by your graphics card's video decoder, not by the processor; where the computer has none, the processor still reads them.

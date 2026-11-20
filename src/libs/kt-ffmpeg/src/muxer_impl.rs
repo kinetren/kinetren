@@ -749,6 +749,14 @@ impl Muxer {
         self.surface_upload_ns
     }
 
+    /// The encoder's planes, packed (export-host-copy D4): copied into the frame and encoded, no
+    /// conversion here.
+    pub fn write_video_planes(&mut self, planes: &[u8]) -> Result<(), FfError> {
+        self.vframe.fill_packed(planes)?;
+        let f = self.vframe.frame;
+        self.encode_video_frame(f)
+    }
+
     pub fn write_video(&mut self, rgba: &[u8]) -> Result<(), FfError> {
         self.conv.convert(rgba, &mut self.vframe)?;
         let f = self.vframe.frame;

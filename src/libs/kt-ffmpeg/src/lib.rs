@@ -806,6 +806,16 @@ impl Muxer {
     }
 
     /// The next frame, already converted, to the encoder.
+    /// The encoder's planes, packed (export-host-copy D4): the disk prerender's segments.
+    pub fn write_video_planes(&mut self, planes: &[u8]) -> Result<(), FfError> {
+        match self {
+            Muxer::V6(m) => m.write_video_planes(planes),
+            Muxer::V7(m) => m.write_video_planes(planes),
+            Muxer::V8(m) => m.write_video_planes(planes),
+            Muxer::V9(m) => m.write_video_planes(planes),
+        }
+    }
+
     pub fn write_video_frame(&mut self, f: &VideoFrame) -> Result<(), FfError> {
         match (self, f) {
             (Muxer::V6(m), VideoFrame::V6(f)) => m.write_video_frame(f),
