@@ -15,7 +15,7 @@ point: null
 tests: [t2290, t2291, t2292, t2293, t2297, t2299, t2301]
 depends_on: []
 trackers: [mlt, shotcut, kde-bugzilla, kde-invent, pitivi, olive, otio]
-checked: 2026-09-08
+checked: 2026-11-20
 ---
 
 # F-RES-011 — Memory and large projects: who evicts and by what rule
@@ -243,6 +243,16 @@ that we already have — only ours is about OUR cache and carries a number, whil
 about the system.
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+- One memory ledger (`memory-ledger`, `src/libs/kt-time/src/mem.rs`) sizes every frame, composite, mix and device
+  cache from one budget; the Diagnostics window prints its tenants in one line; the status bar and the Diagnostics
+  both read the process's resident memory (frames-cache-growth), so the owner's two disagreeing counters (v26.10 Q1)
+  now count the same thing.
+- Still missing (v26.10 Q3): a breakdown of the WHOLE resident memory by sections, not only the caches, drawn as a
+  bar, and the project's memory on disk (the sidecar `ktindex`, the cache folder). Designed in change
+  `memory-breakdown`.
 
 ADDRESS: `src/libs/kt-cache/src/lib.rs` — the class "what was read is not released, the project ran into the amount of RAM" (kde-invent #970, #1012) is impossible for us: the cache has hard byte budgets, an LRU with pin and an interval-set of coverage that is updated by the same operations as the cache itself. The class "the cache is cramped, and there is nothing to enlarge it with" is POSSIBLE and is not caught by anything: `src/libs/kt-engine/src/player.rs:189` takes `CacheConfig::default()` (512 MB video + 64 MB audio), and nowhere in `src/` is there a single place where this number can be changed — even though `src/apps/kt-app/src/app.rs:5039` already prints "the cache is cramped" to the user.
 
