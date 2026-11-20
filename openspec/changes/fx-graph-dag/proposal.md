@@ -55,8 +55,8 @@ through one path (invariant 7), and the audio render thread executes them on the
 - **The editor draws and makes branches**: a wire dragged from a node's output into empty canvas
   starts a branch there; a wire dropped on a Merge's socket connects it; arms are laid out
   automatically as parallel rows (his U8 answer: automatic layout, nothing stored).
-- **Format by content**: a file with a branch or a Merge is project format 6 (the next free number
-  at merge) and `metadata["kt"]` v17; a line project keeps its version and bytes. OTIO export keeps
+- **Format by content**: a file with a branch or a Merge is project format 8 (the next free number
+  at merge) and `metadata["kt"]` v18; a line project keeps its version and bytes. OTIO export keeps
   writing the chain as its ordered `Effect.1` list and carries the wiring in each effect's `kt`
   metadata; a foreign editor never ran our `kt:` effects, and now also could not read their
   wiring — a row in "What OTIO export loses".

@@ -29,7 +29,7 @@
       mirror presence and values, not wires; t3222, t3223
 - [x] 1.4 copy/paste blocks and presets carry relative inputs (`append_chain_block`); t3224
 - [x] 1.5 `.kt`: `in`, `merge`, format by content (the next free number at merge); t3210
-- [ ] 1.6 kt-otio: `in` in `Effect.1` metadata, `kt:merge`, envelope v17 by content; t3211; the row
+- [x] 1.6 kt-otio: `in` in `Effect.1` metadata, `kt:merge`, envelope v18 by content; t3211; the row
       in "What OTIO export loses" (`docs/ktprompts/v26.10-index.md`)
 
 ## 2. v2b — the picture

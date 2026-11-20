@@ -302,18 +302,18 @@ Where the two levels meet:
 
 - **`.kt`**: a slot whose inputs are not the line writes `"in": {"main": …, "second": …, "matte":
   [… , "luma"]}` next to its kind; a Merge writes `"kind": "merge"`. The version is set BY CONTENT:
-  a project with any `"in"` or Merge is the next free format number at merge time (6 on
-  `3488fbe1`, after the notes' 5); every other project keeps its version and its text (t3210). An
-  older build refuses a format-6 file naming the version, instead of opening it as lines and
+  a project with any `"in"` or Merge is the next free format number at merge time (8 on
+  `5e7a8ea9`, after the text sources' 7); every other project keeps its version and its text (t3210). An
+  older build refuses a format-8 file naming the version, instead of opening it as lines and
   running the arms in sequence.
 - **OTIO export** (`kt-otio convert.rs`, "the FX chain into standard `Effect.1`"): the chain stays
   an ordered `Effect.1` list with `effect_name: "kt:<kind>"` (slot order is processing order, so the
   list is a valid order); each effect's `metadata["kt"]` gains `in` when not the line; Merge is
-  `kt:merge`. The envelope version is v17 by content. Import reads it back (t3211).
+  `kt:merge`. The envelope version is v18 by content. Import reads it back (t3211).
 - **What OTIO export loses** — a row added with v2a in `docs/ktprompts/v26.10-index.md`:
   "fx-graph-dag | effect graphs with branches and Merge nodes (inputs per slot, the Merge's
   Background/Foreground/Matte) | the effects stay an ordered `Effect.1` list; the wiring is carried
-  only in each effect's `metadata["kt"]` (v17 by content); a foreign editor that applied the list
+  only in each effect's `metadata["kt"]` (v18 by content); a foreign editor that applied the list
   would run the arms one after another". A foreign editor never ran our `kt:` effects (the existing
   rows); what is new is that the list's ORDER alone no longer describes the picture. OTIO has no
   effect-graph schema (`Effect` is a flat list on an `Item`), so there is no standard to map to.
@@ -377,7 +377,7 @@ walked on `3488fbe1` and again on `5e7a8ea9` for the reads; each is either uncha
 | sidechain key (track) | the key track | unchanged; in-chain key added (D4) |
 | copy/paste, presets, `append_chain_block` | blocks | relative inputs (D6) |
 | `.kt`, `normalize`, validation | the vector | `in`, Merge, format by content (D1, D7) |
-| kt-otio | `Effect.1` list | `in` in metadata, `kt:merge`, v17 (D7) |
+| kt-otio | `Effect.1` list | `in` in metadata, `kt:merge`, v18 (D7) |
 | legacy import (`legacy_import.rs`) | old forms | nothing: no old file has a graph |
 | `kt-cli probe` | effective events | prints the graph's arms per event |
 | telemetry journal | graph edits | the wire gestures are recorded like other edits |
@@ -386,7 +386,7 @@ walked on `3488fbe1` and again on `5e7a8ea9` for the reads; each is either uncha
 
 - **v2a — model and format**: `fx_in`, Merge, validation (`MAX_HELD`, `MAX_READS`, the lead), the
   read split as a model function (`fx_reads`: the derived chains of a graph), the morpher splice,
-  pairs, copy/paste, presets, `.kt` format by content, OTIO `in`/`kt:merge`/v17, the OTIO-loss row.
+  pairs, copy/paste, presets, `.kt` format by content, OTIO `in`/`kt:merge`/v18, the OTIO-loss row.
   The engine still runs lines: until v2b the player and the export run a branched chain's Output
   path as a line and the editor makes no branch, so v2a is merged only together with v2b.
 - **v2b — the picture**: lowering, the held set, Merge and matte passes, reads in the engine

@@ -720,8 +720,8 @@ what the model holds costs nothing. A new mutation path that writes the canon mu
   so slot order stays processing order. Every rule lives in `fx_graph.rs`; a new place that reads
   or edits wiring calls it, never re-derives it.
 - **A line is the EMPTY list** (`fx_graph::canonical`, on every command and in `normalize`): a
-  line's file, `Debug` and hashes do not move. A writer that keeps entries equal to the line breaks
-  byte stability.
+  line's file does not move, and its `Debug` (the content hashes) moved ONCE, with the build that
+  added the field (design D1). A writer that keeps entries equal to the line breaks byte stability.
 - **Every slot removal goes through `fx_graph::remove_slot`** (readers read the removed slot's main
   input), every insertion on a wire through `insert_slot`; a bypassed or inert slot drops out of an
   active chain the same way (`without`, `active_fx_in`, `MorphPatch::in_for`). A new path that
