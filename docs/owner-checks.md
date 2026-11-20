@@ -75,6 +75,10 @@ a row; it does not close the row.
 | Q41 | 2026-11-20 | **Datamosh on a track: does a gap end the smear?** (a) recommended: yes, the next event starts clean; (b) the black is part of the stream, the shot smears into and out of black. | `track-stream-stage` Q2 |
 | Q42 | 2026-11-20 | **An event's own Datamosh under a track's Datamosh.** (a) recommended: allowed, costs more (shows as Loading); (b) refused with a reason. | `track-stream-stage` Q3 |
 | Q43 | 2026-11-20 | **Export colour standard.** HD files are written as BT.601; most HD deliveries are BT.709, and players that ignore the tag shift colours. (a) recommended: BT.709 at HD and above, as the decode already does; (b) keep BT.601 everywhere. | found-defects 1054, `kt-ffmpeg/src/format.rs` |
+| Q44 | 2026-11-20 | **Mirror like Vegas (reflect around an angle).** (a) recommended: old Mirrors keep flipping, a new Mirror reflects (angle 90°, centre in the middle); (b) one mode only, old flips converted on open. | `geometry-fx-flex` Q1, note F-FX-019 |
+| Q45 | 2026-11-20 | **The rest of the geometry-effects audit** (Kaleidoscope, Twirl, Ripple, Lens, Pixelate…). (a) recommended: ranked rows in the catalogue, built one by one later; (b) build every gap now. | `geometry-fx-flex` Q2 |
+| Q46 | 2026-11-20 | **Pro keyer: the clean plate** ("учитывающий неравномерность фона"). (a) recommended: made from each frame by itself, "Use this frame" holds one; (b) a held frame required first. | `pro-keyer` Q1, note F-MSK-009 |
+| Q47 | 2026-11-20 | **Light wrap** (background light on the subject's edge; needs the layer below). (a) recommended: later, with inputs from other layers; (b) now, as a track-level stage. | `pro-keyer` Q2 |
 
 ## Answered
 
