@@ -1,6 +1,6 @@
 //! Blurring and glowing video effects as barrier plugins (plugin-api-barriers, stage 3): blur, glow,
 //! sharpen, radial_blur, drop_shadow. The mip of blur, glow, sharpen and drop_shadow is the host's
-//! resample (the `Resample` node on the GPU); each kernel below is the former kt-fx kernel verbatim.
+//! resample (the `Resample` node on the GPU); each kernel below is a WGSL pass graph, no CPU twin.
 
 use std::sync::Arc;
 
