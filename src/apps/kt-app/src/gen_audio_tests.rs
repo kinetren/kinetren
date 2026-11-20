@@ -50,16 +50,17 @@ fn new_clips(h: &Harness<'_, KtApp>, before: usize) -> Vec<ClipEvent> {
     v.split_off(before.min(v.len()))
 }
 
-/// Test 1163: the menu rows — the 19 former ones, the four moving backgrounds of gen-backgrounds and
+/// Test 1163: the menu rows — the 19 former ones, the six shapes of gen-shapes, the four moving
+/// backgrounds of gen-backgrounds and
 /// the two technical ones of gen-technical (`v26.10` G5) in their order, then the five sound kinds, all in
 /// the Audio group, each named in the catalog, every row and every choice variant captioned.
 #[test]
 fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     crate::plugins::install();
     let all = GeneratorKind::all();
-    assert_eq!(all.len(), 30, "25 picture rows + 5 sound rows");
-    let tags: Vec<&str> = all[25..].iter().map(|k| k.tag()).collect();
-    assert_eq!(tags, SOUND, "the sound rows follow the 25 picture rows in BUILTIN_IDS order");
+    assert_eq!(all.len(), 36, "31 picture rows + 5 sound rows");
+    let tags: Vec<&str> = all[31..].iter().map(|k| k.tag()).collect();
+    assert_eq!(tags, SOUND, "the sound rows follow the 31 picture rows in BUILTIN_IDS order");
     for k in &all {
         let sound = SOUND.contains(&k.tag());
         assert_eq!(crate::gen_ui::is_sound(k), sound, "{}: a sound kind is exactly a synthesizing one", k.tag());
@@ -72,7 +73,7 @@ fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     }
     for lang in crate::i18n::Lang::ALL {
         crate::i18n::set_lang(lang);
-        for k in &all[25..] {
+        for k in &all[31..] {
             let name = crate::gen_ui::kind_name(k);
             assert_ne!(name, k.tag(), "{lang:?}: {} has no catalog name", k.tag());
             let GeneratorKind::Plugin(p) = k else { unreachable!() };
@@ -386,6 +387,49 @@ fn t3708_the_moving_backgrounds_are_created_from_edit() {
         }
         for key in ["stripes", "dots", "grid", "waves"] {
             assert!(crate::gen_ui::choice_label("pattern", key).is_some(), "{lang:?}: pattern {key} has no caption");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test 3710 (gen-shapes, `v26.10` G5): the six shapes and plates are reached from Edit › Create a
+/// generator › Shapes, each one picture event; every row and colour is captioned in every language.
+/// - **PATH** Edit → Create a generator… → Shapes → Polygon / Star / Arrow / Border frame / Lower-third
+///   plate / Progress bar → a picture event at the cursor over what is under it, its window open
+#[test]
+fn t3710_the_shapes_and_plates_are_created_from_edit() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    let tags = ["polygon", "star", "arrow", "frame", "plate", "progress"];
+    for tag in tags {
+        let before = h.state().model.project().clips.len();
+        h.get_by_label(tr(k::menu::edit::TITLE)).click();
+        h.step();
+        h.step();
+        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+        hover_item(&mut h, tr(k::genkind::GROUP_SHAPES));
+        h.get_by_label(kind_label(tag)).click();
+        h.step();
+        h.step();
+        let made = new_clips(&h, before);
+        assert_eq!(made.len(), 1, "{tag}: {made:?}");
+        assert_eq!(made[0].r#gen.as_ref().map(|g| g.tag()), Some(tag), "{tag}: the kind");
+        h.state_mut().fx_editors.clear();
+        h.step();
+    }
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for tag in tags {
+            let kind = GeneratorKind::default_for_tag(tag).expect("the kind");
+            assert_ne!(crate::gen_ui::kind_name(&kind), tag, "{lang:?}: {tag} has no name");
+            let GeneratorKind::Plugin(p) = &kind else { unreachable!() };
+            for spec in p.specs().iter().filter(|s| s.unit != kt_model::ParamUnit::Rgb8) {
+                let label = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, &spec.name);
+                assert_ne!(label, spec.name.as_ref(), "{lang:?}: {tag}.{} has no caption", spec.name);
+            }
+            for (key, _) in crate::gen_ui::color_groups(&kind) {
+                assert!(!tr(*key).is_empty(), "{lang:?}: {tag}: a colour caption is empty");
+            }
         }
     }
     crate::i18n::set_lang(crate::i18n::Lang::Ru);

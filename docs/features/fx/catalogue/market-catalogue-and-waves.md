@@ -67,8 +67,8 @@ listed.
   `zoom`, `spin`, `whip`, `blur_dissolve`, `pixelate`, `glitch`, `flash`, `dip`, `blinds`,
   `checker`, `blocks`, `spiral`, `split`, `squeeze`, `stretch`, `swap`, `shake`, `film_burn`,
   `light_leaks`, `zoom_blur`, `flip`, `cube`, `door`, `page_peel`, `page_roll`.
-- **Generators (26):** `solid`, `text`, `gradient`, `corners`, `checker`, `noise`, `smpte`,
-  `timecode`, `transparent`, `rect`, `ellipse`, `line`, `meshgrad`, `plasma`, `particles`, `pattern`, `leader`, `table`, `window`, `tone`,
+- **Generators (32):** `solid`, `text`, `gradient`, `corners`, `checker`, `noise`, `smpte`,
+  `timecode`, `transparent`, `rect`, `ellipse`, `line`, `polygon`, `star`, `arrow`, `frame`, `plate`, `progress`, `meshgrad`, `plasma`, `particles`, `pattern`, `leader`, `table`, `window`, `tone`,
   `audio_noise`, `sweep`, `beep`, `silence`, `syncflash`, `safearea`.
 
 **What people use, against what we have.** Verdict vocabulary: `have` · `wave Wn` · `deferred

@@ -116,6 +116,16 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "speed" => tr(k::genp::SPEED),
         "cells" => tr(k::genp::CELLS),
         "pattern" => tr(k::genp::PATTERN),
+        // gen-shapes: shapes and plates
+        "sides" => tr(k::genp::SIDES),
+        "points" => tr(k::genp::POINTS),
+        "inner" => tr(k::genp::INNER),
+        "head" => tr(k::genp::HEAD),
+        "inset" => tr(k::genp::INSET),
+        "left" => tr(k::genp::LEFT),
+        "top" => tr(k::genp::TOP),
+        "accent" => tr(k::genp::ACCENT),
+        "fill_time" => tr(k::genp::FILL_TIME),
         _ => return None,
     })
 }

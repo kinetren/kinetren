@@ -238,6 +238,20 @@ pub(crate) fn color_alpha(kind: &GeneratorKind) -> Option<&'static str> {
     None
 }
 
+/// The alpha row of ONE colour group (`<stem>_a` of its `<stem>_r` row), when the kind has it
+/// (gen-shapes): a kind with two colours that both have alpha (a plate and its accent, a progress
+/// bar's track and fill) gives each eyedropper its own alpha — one shared alpha wrote the first
+/// colour's from the second's eyedropper.
+pub(crate) fn color_alpha_of(kind: &GeneratorKind, names: [&str; 3]) -> Option<&'static str> {
+    let GeneratorKind::Plugin(p) = kind else { return color_alpha(kind) };
+    let stem = names[0].strip_suffix("_r")?;
+    p.manifest()
+        .passport
+        .iter()
+        .find(|s| s.name.strip_suffix("_a") == Some(stem))
+        .map(|s| static_name(&s.name))
+}
+
 /// A missing kind's name is its id: interned once per id (only a file from a build with more
 /// plugins carries one, and the name is drawn every frame).
 fn missing_name(id: &str) -> &'static str {
@@ -763,10 +777,10 @@ pub fn draw_gen_section(
 
     // ---- colours: Rgb8 triples — with eyedroppers (rule 13) -------------------
     let groups = color_groups(kind);
-    let alpha = color_alpha(kind);
     let mut skip: Vec<&str> = Vec::new();
     for (_, names) in groups {
         skip.extend_from_slice(names);
+        skip.extend(color_alpha_of(kind, *names));
     }
     // a title's running-value rows only where they count (rule 9: no dead control)
     if let GeneratorKind::Text { source, .. } = kind {
@@ -782,7 +796,7 @@ pub fn draw_gen_section(
             tr(*label),
             kind,
             *names,
-            alpha,
+            color_alpha_of(kind, *names),
             (i == 0).then_some("genw.color"),
             ctx.pubc,
         ) {
