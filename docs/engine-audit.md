@@ -669,3 +669,67 @@ Also fixed: found-defects 463 (t2230's race). The rule that follows went into `d
 | M10 not measured | **108**, **53**, **55** (RGBA one thread per file), **56** (cold disk), **86** (blending on the CPU, not measured), **93** (preview on VHS unsteady, cause unknown), **68** (hardware encode unproven) |
 | M11 wall-clock tests | **126**, **101**, **106**, **141**, **146**, **133**, **89**, 130 (closed), **70**, **102**, **31**, **32** (build/CI time) |
 | Owner question, not a defect | **142** (VHS 1135×576 grid in the preview) |
+
+## Measurement plan — the caches' bases on a small machine (found-defects 330, 2026-11-20)
+
+A plan, not a change: nothing here is built until the numbers say what to build.
+
+**The question.** The memory ledger grants growth only. The bases are constants:
+- decoded frames: 512 + 64 MB;
+- present memo: 512 MB (`kt-gpu/src/engine.rs`);
+- upload, transient and readback: 256, 128 and 64 MB;
+- stream memo: 256 MB (`video_stream.rs`);
+- kept mix: 64 MB (`mix.rs`);
+- compute pool: 1 GiB (`kt-gpu/src/compute.rs`).
+
+That is about 2.8 GB with one device before any growth, on any machine. Does the program fit and play on
+a 4 GB machine (and 8 GB), and if not, which tenant binds first?
+
+**Setup** (no GUI, kt-cli only, release build; one run at a time on an otherwise idle machine; each run on
+its own copy of the project):
+- `systemd-run --user --scope -p MemoryMax=<limit> -p MemorySwapMax=0 -- target/release/kt-cli … --trace <dir>`,
+  with limits unconstrained, 8G, 4G and 3G.
+- The footage on disk, NOT in `/dev/shm`: tmpfs pages are charged to the cgroup and would eat the limit.
+- Two adapters:
+  - llvmpipe (`WGPU_BACKEND=gl` or the software Vulkan), where every device byte is process memory: the
+    worst case, and what a machine without a card has;
+  - the machine's own GPU, where the integrated card's memory is shared RAM but not reliably charged to
+    the cgroup. Its number is read from the ledger's tenants, not from the cgroup.
+- Record `memory.peak` and `memory.events` (oom, oom_kill, high) of the scope after each run.
+
+**Scenarios** (the heavy showcase, `kt-cli showcase … --heavy`, and one 4K-source project):
+
+| # | Command | What it stresses |
+|---|---|---|
+| 1 | `kt-cli preview heavy.kt 30 60 --size 640x360 --loop 360` | the kept composites and the frames cache over a loop |
+| 2 | the same at `--size 1280x720` | the present memo at a working size |
+| 3 | `kt-cli preview` over a Datamosh range | the stream memo, checkpoints and the compute pool |
+| 4 | `kt-cli export heavy.kt` at 1080p | the export's devices (`engines_for`), chunks, holds and look-ahead |
+| 5 | `kt-cli preview` on the 4K project | the decoded-frames base against 4K frames (~33 MB each) |
+
+**Read per run:**
+- `kt-cli trace <dir> memory`: the peak resident memory, each tenant's used bytes at the peak, the
+  budget records (`MemBudget`, `MemGrant`);
+- `kt-cli trace <dir> summary`: V-fps, V-skipped and Loading for the previews; the export's time and
+  profile (`--time`);
+- the scope's `memory.peak` and `memory.events`.
+
+**Table to fill** (into row 330): for each scenario × limit × adapter: completed / OOM-killed; peak
+(cgroup) and peak (trace); the top three tenants at the peak; V-fps or export seconds against
+unconstrained.
+
+**Decision rule:**
+- **4G completes every scenario with no OOM**, V-fps within 10 % of unconstrained and the export within
+  20 %: close the row as "measured, no change". The bases fit, and the ledger's growth is the only
+  variable.
+- **An OOM or a thrash** (V-fps falling past 30 %, or the trace showing evictions of frames read in the
+  same pass): the tenants at the peak name the design. The expected one is bases taken from `room()` at
+  start, a share of the available memory in the ledger's order of value (kept mix, present memo, frames,
+  stream memo, compute pool), with today's constants as the ceiling. The prefetch window, the stream
+  pacing and the export chunks already derive from the bases and follow without new rules.
+- **3G is the export's** (kt-engine CLAUDE.md: a chunk or look-ahead change is checked under
+  `MemoryMax=3G` more than once). A 3G failure of scenario 4 alone is the export's own row, not the
+  bases'.
+
+**Cost:** no code. Every counter is in the trace today. An executor runs it in about an hour of machine
+time, and target-prune follows.
