@@ -931,14 +931,18 @@ impl Player {
         auto: Vec<kt_model::ParamCurve>,
     ) -> bool {
         let addr = crate::gen_source_addr(clip);
-        let state = kt_model::GenState { kind, auto };
+        let mut state = kt_model::GenState::of(kind, auto);
         // the builder's generator sync reads the newest project under the same lock: it cannot
         // retune a source back to the values this edit replaces
         let _g = self.media.gen_lock.lock().unwrap();
         let live = self.media.gen_states.lock().unwrap().get(&addr).cloned();
         match live {
             Some(old) if !kt_media::factory::can_retune_gen(&old, &state) => false,
-            Some(_) => {
+            // what an audio-reactive kind hears is a fact of the project (`gen_sources`): a value edit
+            // keeps it, another track is the builder's (gen-audio-reactive)
+            Some(old) if old.kind.listen_lane() != state.kind.listen_lane() => false,
+            Some(old) => {
+                state.feed = old.feed;
                 // the values of the stored project must remain truthful:
                 // `Player::project()` is read by export and diagnostics
                 let p = {

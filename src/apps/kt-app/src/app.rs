@@ -4895,7 +4895,7 @@ impl KtApp {
                 if let Some(k) = &c.r#gen {
                     cur.insert(
                         c.id,
-                        kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
+                        kt_model::GenState::of(k.clone(), c.gen_auto.clone()),
                     );
                 }
             }

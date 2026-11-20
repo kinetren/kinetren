@@ -15,6 +15,7 @@ pub mod flight;
 pub mod mix;
 pub mod fxstore;
 pub mod incremental;
+pub mod listen;
 pub mod render_ahead;
 pub mod render_cache;
 pub mod compose_queue;

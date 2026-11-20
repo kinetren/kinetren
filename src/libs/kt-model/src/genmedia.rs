@@ -519,6 +519,12 @@ impl GeneratorKind {
     }
 
     /// The generator kernel of a plugin kind.
+    /// The audio track (0-based lane) an audio-reactive kind hears; `None` for every other kind.
+    pub fn listen_lane(&self) -> Option<u32> {
+        self.kernel()?.listen()?;
+        Some((self.get_param("track").unwrap_or(1.0).round().max(1.0) as u32) - 1)
+    }
+
     pub fn kernel(&self) -> Option<&'static dyn kt_plugin_api::generator::GenKernel> {
         match self {
             GeneratorKind::Plugin(p) => p.plugin()?.generator(),
@@ -934,11 +940,59 @@ pub fn gen_kind_path(k: &GeneratorKind) -> String {
 pub struct GenState {
     pub kind: GeneratorKind,
     pub auto: Vec<ParamCurve>,
+    /// What an audio-reactive kind hears (gen-audio-reactive): the pieces of analysis series of the
+    /// track it listens to, in its own material time. Built by the engine's `gen_sources` from the
+    /// project and the series known; empty for every other kind. Part of the state, so a new series
+    /// or a moved piece retunes the source like a value edit, and the frame key moves (invariant 4).
+    pub feed: GenFeed,
+}
+
+/// The listened pieces of a generator, earliest first, not overlapping.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GenFeed(pub Vec<FeedPiece>);
+
+/// One listened piece: generator material ticks `from..to` hear `series` at `t + offset`.
+#[derive(Debug, Clone)]
+pub struct FeedPiece {
+    pub from: Tick,
+    pub to: Tick,
+    pub offset: i64,
+    pub series: std::sync::Arc<kt_plugin_api::audio_series::AudioSeries>,
+}
+
+impl PartialEq for FeedPiece {
+    // a series is megabytes: its content hash stands for it
+    fn eq(&self, o: &FeedPiece) -> bool {
+        (self.from, self.to, self.offset, self.series.hash()) == (o.from, o.to, o.offset, o.series.hash())
+    }
+}
+
+impl GenFeed {
+    /// The piece heard at generator material tick `t` and the series tick there.
+    pub fn at(&self, t: Tick) -> Option<(&kt_plugin_api::audio_series::AudioSeries, i64)> {
+        self.0.iter().find(|p| p.from <= t && t < p.to).map(|p| (p.series.as_ref(), t.0 + p.offset))
+    }
+
+    /// A hash of what the feed hears (the engine's keys carry it); 0 — hears nothing.
+    pub fn key(&self) -> u64 {
+        let mut h: u64 = 0;
+        for p in &self.0 {
+            for w in [p.from.0 as u64, p.to.0 as u64, p.offset as u64, p.series.hash()] {
+                h = (h ^ w).wrapping_mul(0x0000_0100_0000_01b3).rotate_left(17);
+            }
+        }
+        h
+    }
 }
 
 impl GenState {
     pub fn new(kind: GeneratorKind) -> GenState {
-        GenState { kind, auto: Vec::new() }
+        GenState { kind, auto: Vec::new(), feed: GenFeed::default() }
+    }
+
+    /// A state of values and curves that hears nothing.
+    pub fn of(kind: GeneratorKind, auto: Vec<ParamCurve>) -> GenState {
+        GenState { kind, auto, feed: GenFeed::default() }
     }
 
     /// The kind WITH VALUES at the moment `pts` of the material. Without curves —

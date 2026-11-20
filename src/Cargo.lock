@@ -1597,6 +1597,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "generators-reactive"
+version = "0.1.0"
+dependencies = [
+ "kt-plugin-api",
+]
+
+[[package]]
 name = "generators-test"
 version = "0.1.0"
 dependencies = [
@@ -2314,6 +2321,7 @@ version = "0.1.0"
 dependencies = [
  "fx-video-color",
  "generators-basic",
+ "generators-reactive",
  "generators-test",
  "kt-cache",
  "kt-engine",
@@ -2398,6 +2406,7 @@ dependencies = [
  "fx-video-tape",
  "generators-audio",
  "generators-basic",
+ "generators-reactive",
  "generators-test",
  "kt-plugin-api",
  "transitions-basic",
