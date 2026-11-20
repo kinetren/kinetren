@@ -17,6 +17,24 @@ fn video_encoders(codec: crate::format::VideoCodec) -> Vec<crate::encoders::Enco
     crate::encoders::codec_candidates(crate::search::Os::NATIVE, codec)
 }
 
+/// The video's time base (found-defects 823): the caller's, else `den/num` of the frame rate — one tick a
+/// frame, 1001/24000 for 23.976.
+fn video_time_base(cfg: &crate::MuxConfig) -> ffi::AVRational {
+    match cfg.time_base {
+        Some((n, d)) => tb(n, d),
+        None => tb(cfg.frame_rate.den.max(1) as c_int, cfg.frame_rate.num.max(1) as c_int),
+    }
+}
+
+/// One frame's length in the video's time base, at least one tick.
+fn frame_ticks(cfg: &crate::MuxConfig) -> i64 {
+    let b = video_time_base(cfg);
+    let (rn, rd) = (cfg.frame_rate.num.max(1) as i64, cfg.frame_rate.den.max(1) as i64);
+    // a second of the base is b.den/b.num ticks; a frame lasts rd/rn of a second
+    let (n, d) = (b.den as i64 * rd, b.num as i64 * rn);
+    ((n + d / 2) / d.max(1)).max(1)
+}
+
 fn av_pix(p: crate::encoders::PixFmt) -> ffi::AVPixelFormat {
     match p {
         crate::encoders::PixFmt::Yuv420p => ffi::AV_PIX_FMT_YUV420P,
@@ -334,7 +352,10 @@ pub struct Muxer {
     pkt: *mut ffi::AVPacket,
     width: c_int,
     height: c_int,
-    fps: c_int,
+    /// The video encoder's time base and one frame's ticks in it (found-defects 823): `den/num` of the
+    /// rate and 1, or the caller's base and the frame's length in it.
+    vtb: ffi::AVRational,
+    frame_ticks: i64,
     video_pts: i64,
     audio_pts: i64,
     /// Audio accumulator up to the encoder frame size (aac = 1024).
@@ -514,15 +535,15 @@ impl Muxer {
             unsafe {
                 (*ctx).width = width;
                 (*ctx).height = height;
-                (*ctx).time_base = tb(1, cfg.fps as c_int);
-                (*ctx).framerate = tb(cfg.fps as c_int, 1);
+                (*ctx).time_base = video_time_base(cfg);
+                (*ctx).framerate = tb(cfg.frame_rate.num as c_int, cfg.frame_rate.den.max(1) as c_int);
                 (*ctx).pix_fmt = av_pix(pix);
                 if let Some((hw, _, frames, _)) = &device {
                     (*ctx).pix_fmt = ffi::AV_PIX_FMT_VAAPI;
                     (*ctx).hw_frames_ctx = (hw.av_buffer_ref)(*frames);
                 }
                 // the keyframe interval and the B-frames asked (D1); intra-only: every frame a key
-                (*ctx).gop_size = if intra { 1 } else { form.gop_frames(cfg.fps) as c_int };
+                (*ctx).gop_size = if intra { 1 } else { form.gop_frames(cfg.frame_rate.rounded()) as c_int };
                 (*ctx).max_b_frames = if intra { 0 } else { form.b_frames as c_int };
                 // the tags state the conversion (D6), the chroma's place too (export-host-copy D2: the
                 // conversion sites it left, as a player assumes of an untagged stream)
@@ -638,7 +659,7 @@ impl Muxer {
             return Err(FfError::Av("failed to create streams".into()));
         }
         unsafe {
-            (*vst).time_base = tb(1, cfg.fps as c_int);
+            (*vst).time_base = video_time_base(cfg);
             (api.avcodec_parameters_from_context)((*vst).codecpar, venc);
             // H.265 in MP4/MOV as `hvc1`: Apple's players refuse the default `hev1` (D8)
             if form.video == crate::format::VideoCodec::H265
@@ -714,7 +735,8 @@ impl Muxer {
             pkt: unsafe { (api.av_packet_alloc)() },
             width,
             height,
-            fps: cfg.fps as c_int,
+            vtb: video_time_base(cfg),
+            frame_ticks: frame_ticks(cfg),
             video_pts: 0,
             audio_pts: 0,
             audio_fifo: Vec::new(),
@@ -796,6 +818,14 @@ impl Muxer {
         self.encode_video_frame(f.frame)
     }
 
+    /// `write_video_frame` at `pts` in the video's time base (`MuxConfig.time_base`): a proxy keeps its
+    /// source's times, variable rate included (found-defects 823, change `proxies`). Later frames written
+    /// without a pts follow it a frame apart.
+    pub fn write_video_frame_at(&mut self, f: &VideoFrame, pts: i64) -> Result<(), FfError> {
+        self.video_pts = pts;
+        self.write_video_frame(f)
+    }
+
     fn encode_video_frame(&mut self, frame: *mut ffi::AVFrame) -> Result<(), FfError> {
         let api = self.api;
         unsafe {
@@ -816,7 +846,7 @@ impl Muxer {
                 self.surface_upload_ns += since.elapsed().as_nanos() as u64;
             }
         }
-        self.video_pts += 1;
+        self.video_pts += self.frame_ticks;
         let f = if self.hw.is_some() { self.hwframe } else { frame };
         self.encode(f, true)
     }
@@ -872,7 +902,7 @@ impl Muxer {
     fn encode(&mut self, frame: *mut ffi::AVFrame, video: bool) -> Result<(), FfError> {
         let api = self.api;
         let (enc, stream_idx, tb_src) = if video {
-            (self.venc, self.vstream_idx, tb(1, self.fps))
+            (self.venc, self.vstream_idx, self.vtb)
         } else {
             (self.aenc, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
         };
@@ -881,7 +911,7 @@ impl Muxer {
         // with zero duration on every major (the track ended at that frame's start); FFmpeg 6–8
         // kept the frame only because the edit list was rounded up to milliseconds, FFmpeg 9
         // writes an exact one and the frame was cut off (t33: 59 of 60).
-        unsafe { (*frame).duration = if video { 1 } else { self.frame_size as i64 } };
+        unsafe { (*frame).duration = if video { self.frame_ticks } else { self.frame_size as i64 } };
         // EAGAIN = “encoder is full, frame NOT accepted” — a retry is required
         // after draining the queue. Previously the frame was silently LOST while the PTS grid
         // continued: a video of the same length with “jumps” (item 9 — frame drops
@@ -932,7 +962,7 @@ impl Muxer {
                 // not) still writes a packet that lasts one frame — see `encode`
                 if (*self.pkt).duration == 0 {
                     let video = stream_idx == self.vstream_idx;
-                    (*self.pkt).duration = if video { 1 } else { self.frame_size as i64 };
+                    (*self.pkt).duration = if video { self.frame_ticks } else { self.frame_size as i64 };
                 }
                 let st = &**(*self.fmt).streams.add(stream_idx as usize);
                 (api.av_packet_rescale_ts)(self.pkt, tb_src, st.time_base);
@@ -971,7 +1001,7 @@ impl Muxer {
         }
         // flush the encoders
         unsafe { (api.avcodec_send_frame)(self.venc, core::ptr::null()) };
-        self.drain(self.venc, self.vstream_idx, tb(1, self.fps))?;
+        self.drain(self.venc, self.vstream_idx, self.vtb)?;
         if !self.aenc.is_null() {
             unsafe { (api.avcodec_send_frame)(self.aenc, core::ptr::null()) };
             self.drain(self.aenc, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))?;

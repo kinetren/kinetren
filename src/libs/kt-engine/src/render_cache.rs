@@ -753,6 +753,10 @@ pub fn restored_key(present: u64, durable: u64) -> u64 {
 /// The moments the prerender should compose, in order (D4): the moments measured at least `heavy_ns`
 /// and not `done`, and the unmeasured neighbours of such moments that have a picture (`has_layer`) and
 /// are not `done`; those inside the loop `region` first, then by their distance to `head`.
+/// How far on each side of a heavy moment the prerender takes its unmeasured neighbours (found-defects
+/// 826): a light one is composed once and ends the run, a heavy one goes into the run's segment.
+pub const RUN_REACH: i64 = 8;
+
 pub fn candidates(
     costs: &BTreeMap<i64, u64>,
     step: i64,
@@ -771,8 +775,16 @@ pub fn candidates(
         if !done(t) {
             out.insert(t);
         }
-        for n in [t - step, t + step] {
-            if n >= 0 && !costs.contains_key(&n) && !done(n) && has_layer(n) {
+        // the unmeasured moments around it, up to `RUN_REACH` on each side (found-defects 826): with one
+        // neighbour, a run whose costs arrived one at a time (the playhead stepping, a scrub) grew a
+        // moment a pass, each a segment of its own — a segment goes on only forward. A measured moment
+        // (heavy: its own entry; light: the run's end), one on disk or one with no picture ends the reach
+        for dir in [-1i64, 1] {
+            for k in 1..=RUN_REACH {
+                let n = t + dir * k * step;
+                if n < 0 || costs.contains_key(&n) || done(n) || !has_layer(n) {
+                    break;
+                }
                 out.insert(n);
             }
         }
@@ -840,6 +852,9 @@ pub struct RenderCache {
     /// The prerender is working on a moment now (tests).
     pub(crate) busy: AtomicBool,
     /// A test's threshold of "heavy" in ns over the rule's half period (0 — the rule).
+    /// The quiet a test sets (ns, 0 — `QUIET`): a stimulus of input a test thread paces with its own
+    /// sleeps, which a loaded machine stretches past 1.5 s (found-defects 828).
+    quiet_for_tests: AtomicU64,
     heavy_for_tests: AtomicU64,
     /// The prerender parked with nothing left to do (or the cap full) since it last looked.
     settled: AtomicBool,
@@ -913,7 +928,10 @@ impl RenderCache {
             return None;
         }
         let since = trace::now_ns().saturating_sub(last);
-        let q = QUIET.as_nanos() as u64;
+        let q = match self.quiet_for_tests.load(Ordering::Acquire) {
+            0 => QUIET.as_nanos() as u64,
+            ns => ns,
+        };
         (since < q).then(|| Duration::from_nanos(q - since))
     }
 
@@ -976,6 +994,11 @@ impl RenderCache {
 
     /// Tests: "heavy" is `ns` and more instead of half a frame period (`None` — the rule). A software
     /// rasterizer composes a test's small picture far under any period.
+    /// Set the quiet (`None` — `QUIET`), for tests.
+    pub fn set_quiet_for_tests(&self, quiet: Option<Duration>) {
+        self.quiet_for_tests.store(quiet.map_or(0, |q| (q.as_nanos() as u64).max(1)), Ordering::Release);
+    }
+
     pub fn set_heavy_for_tests(&self, ns: Option<u64>) {
         self.heavy_for_tests.store(ns.unwrap_or(0), Ordering::Release);
     }
@@ -1483,21 +1506,23 @@ mod tests {
     fn t2983_the_prerender_picks_what_was_measured_slow() {
         let step = 10;
         let heavy = 1000;
-        // heavy 100, 110; light 120; unmeasured 90, 130; heavy 300 (done); heavy 500
+        // heavy 100, 110; light 120; unmeasured before 100; heavy 300 (done); heavy 500
         let costs: BTreeMap<i64, u64> = [(100, 2000), (110, 1500), (120, 10), (300, 5000), (500, 1000)].into();
         let done = |t: i64| t == 300;
         let has = |t: i64| t != 510;
         let v = candidates(&costs, step, heavy, done, has, None, 480);
         // 300 is on disk, its unmeasured neighbours are still measured; 120 is light, 130 lies past it,
         // 510 has no picture
-        assert_eq!(v, vec![490, 500, 310, 290, 90, 100, 110], "runs nearest the head, each from its start");
+        let range = |a: i64, b: i64| (a / step..=b / step).map(|i| i * step).collect::<Vec<_>>();
+        let want = [range(420, 500), range(310, 380), range(220, 290), range(20, 110)].concat();
+        assert_eq!(v, want, "runs nearest the head, each from its start, reaching RUN_REACH unmeasured moments");
         let v = candidates(&costs, step, heavy, done, has, Some((90, 115)), 480);
-        assert_eq!(&v[..3], &[90, 100, 110], "the loop region's first");
+        assert_eq!(&v[..3], &[20, 30, 40], "the loop region's run first, from its start");
         // the head inside a run (found-defects 776): the whole run from its start, not outward from
         // the head, so it goes into one segment
         let run: BTreeMap<i64, u64> = (0..12).map(|i| (1000 + i * step, 5000)).collect();
         let v = candidates(&run, step, heavy, |_| false, |_| true, None, 1060);
-        assert_eq!(v, (99..=112).map(|i| i * step).collect::<Vec<_>>(), "one run, its start first");
+        assert_eq!(v, (92..=119).map(|i| i * step).collect::<Vec<_>>(), "one run, its start first");
         assert!(candidates(&costs, step, 1_000_000, done, has, None, 0).is_empty(), "nothing heavy: nothing");
     }
 }

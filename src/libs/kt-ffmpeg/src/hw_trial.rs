@@ -68,7 +68,7 @@ fn trial_device(path: &str) -> Result<String, String> {
     }
 }
 
-/// `<name> <width> <height> <fps> <quality> <bitrate, 0 = none>`
+/// `<name> <width> <height> <fps as num/den> <quality> <bitrate, 0 = none>`
 fn trial_encoder(args: &[String]) -> Result<String, String> {
     let [name, width, height, fps, quality, bitrate] = args else {
         return Err("bad trial arguments".into());
@@ -79,7 +79,12 @@ fn trial_encoder(args: &[String]) -> Result<String, String> {
         path: TRIAL_SINK.into(),
         width,
         height,
-        fps: number(fps)?,
+        // `num/den` (found-defects 823), or a whole rate
+        frame_rate: match fps.split_once('/') {
+            Some((n, d)) => crate::Rate { num: number(&n.to_string())?, den: number(&d.to_string())?.max(1) },
+            None => crate::Rate::whole(number(fps)?),
+        },
+        time_base: None,
         quality: number(quality)?,
         video_bitrate: Some(number(bitrate)?).filter(|b| *b > 0),
         audio_bitrate: 128_000,
@@ -119,7 +124,7 @@ pub fn ask_encoder(name: &str, cfg: &crate::MuxConfig) -> Verdict {
         name.to_string(),
         cfg.width.to_string(),
         cfg.height.to_string(),
-        cfg.fps.to_string(),
+        format!("{}/{}", cfg.frame_rate.num, cfg.frame_rate.den),
         cfg.quality.to_string(),
         cfg.video_bitrate.unwrap_or(0).to_string(),
     ];

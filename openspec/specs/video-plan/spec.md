@@ -1729,6 +1729,11 @@ render.
 - **THEN** the candidates come in runs of consecutive moments (the loop region's first, then by distance to the head), each from its start, and the whole run lies in one segment that starts before its first moment; taken by distance to the head with the sides alternating, the part behind the head went into a segment per moment (found-defects 776)
 - **TEST** t3601 (`src/libs/kt-engine/tests/render_cache.rs`), t2983
 
+#### Scenario: A run known by one moment is one segment
+- **WHEN** one moment in the middle of a heavy run is measured (its costs arrive one at a time, as when the playhead steps) and the tier prerenders
+- **THEN** the candidates take the unmeasured moments up to `RUN_REACH` (8) on each side of a heavy moment, stopping at a measured, stored or pictureless moment, and the whole run lies in one segment that starts before its first moment (found-defects 826)
+- **TEST** t3600 (`src/libs/kt-engine/tests/render_cache.rs`), t2983
+
 #### Scenario: The prerender yields to the person
 - **WHEN** heavy moments are measured and the player stands paused while input keeps coming; then the input stops; then Play is pressed while it works; then an export vote is up
 - **THEN** nothing is composed while input came within 1.5 s; after the quiet it writes; Play abandons the moment in work and nothing is written while playing; nothing runs under the export vote

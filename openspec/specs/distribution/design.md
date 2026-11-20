@@ -342,3 +342,19 @@ and its cause is in `openspec/changes/archive/2026-11-06-test-stability/design.m
   window; one write to the server and a press read alone both lost clicks.
 - **The program's own defect this found:** a chord was read from the frame's final modifiers, so a
   stalled frame split the event on Ctrl+S (t1672).
+
+## A wall-clock relation a loaded machine can pass (found-defects 825, 827, 828)
+
+The reds that came once under a whole-workspace run share one mechanism: a test asserted a relation
+between two wall-clock intervals whose margin a loaded machine's descheduling passes. Three forms, each
+with its cure:
+- **two intervals timed at different moments** (t2337: a heavy frame timed solo, waits timed later
+  under another load): time both in the same window;
+- **a stimulus paced by the test's own sleeps against a program clock** (t2984: input every 100 ms
+  against the prerender's 1.5-s quiet): set the program's clock by a seam far past any stretch, and
+  stretch one sleep on purpose so the test proves it;
+- **an effect of the size of the noise** (t2920: a 720-ms simulated latency against a run's
+  scheduling noise): make the simulated effect dominate (200 ms a moment, 3.6 s).
+A counter that moves later than the event it counts (t2984: moments written count at the segment's
+commit) is the same class: assert the event (a job started, from the trace), not the counter. A
+retry is never the cure (t1671).

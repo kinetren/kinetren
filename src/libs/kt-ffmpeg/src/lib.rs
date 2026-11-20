@@ -201,7 +201,13 @@ pub struct MuxConfig {
     pub path: String,
     pub width: u32,
     pub height: u32,
-    pub fps: u32,
+    /// The video's frame rate, a rational (found-defects 823): 24000/1001 is written as itself, not as
+    /// 24 — an integer grid made a 23.976 delivery impossible and a proxy of such footage drift.
+    pub frame_rate: Rate,
+    /// The video's time base, when the frames carry their own times (`write_video_frame_at`: a proxy
+    /// keeps its source's pts, variable rate included); `None` — one tick a frame, `den/num` of the
+    /// rate.
+    pub time_base: Option<(i32, i32)>,
     /// CRF/CQ/QP — the meaning depends on the encoder (23 ≈ visually lossless).
     /// Ignored if video_bitrate is set.
     pub quality: u32,
@@ -215,6 +221,25 @@ pub struct MuxConfig {
     pub threads: u32,
     /// Container, codec, rate mode, GOP, depth, colour, audio codec, metadata (render-settings D1).
     pub format: format::OutputFormat,
+}
+
+/// A frame rate as `num/den` frames a second (found-defects 823).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rate {
+    pub num: u32,
+    pub den: u32,
+}
+
+impl Rate {
+    /// A whole number of frames a second.
+    pub const fn whole(fps: u32) -> Rate {
+        Rate { num: fps, den: 1 }
+    }
+
+    /// The nearest whole frames a second (a GOP in seconds counted in frames).
+    pub fn rounded(self) -> u32 {
+        ((self.num as u64 + self.den as u64 / 2) / self.den.max(1) as u64).max(1) as u32
+    }
 }
 
 /// Chosen encoder (for display in the UI).
@@ -806,6 +831,17 @@ impl Muxer {
     }
 
     /// The next frame, already converted, to the encoder.
+    /// `write_video_frame` at `pts` in the video's time base (found-defects 823).
+    pub fn write_video_frame_at(&mut self, f: &VideoFrame, pts: i64) -> Result<(), FfError> {
+        match (self, f) {
+            (Muxer::V6(m), VideoFrame::V6(f)) => m.write_video_frame_at(f, pts),
+            (Muxer::V7(m), VideoFrame::V7(f)) => m.write_video_frame_at(f, pts),
+            (Muxer::V8(m), VideoFrame::V8(f)) => m.write_video_frame_at(f, pts),
+            (Muxer::V9(m), VideoFrame::V9(f)) => m.write_video_frame_at(f, pts),
+            _ => Err(FfError::Av("a frame of another FFmpeg major".into())),
+        }
+    }
+
     /// The encoder's planes, packed (export-host-copy D4): the disk prerender's segments.
     pub fn write_video_planes(&mut self, planes: &[u8]) -> Result<(), FfError> {
         match self {

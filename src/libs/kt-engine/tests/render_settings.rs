@@ -356,7 +356,8 @@ fn t2806_the_colour_tags_are_the_conversion() {
             path: path.clone(),
             width: 64,
             height: 64,
-            fps: 30,
+            frame_rate: kt_media::muxer::Rate::whole(30),
+            time_base: None,
             quality: 0,
             video_bitrate: None,
             audio_bitrate: 128_000,
@@ -400,7 +401,8 @@ fn t3319_the_file_says_where_its_chroma_sits() {
         path: path.clone(),
         width: 64,
         height: 64,
-        fps: 30,
+        frame_rate: kt_media::muxer::Rate::whole(30),
+        time_base: None,
         quality: 0,
         video_bitrate: None,
         audio_bitrate: 128_000,
@@ -426,4 +428,67 @@ fn t3319_the_file_says_where_its_chroma_sits() {
     let back = [fr.rgba[c] as i32, fr.rgba[c + 1] as i32, fr.rgba[c + 2] as i32];
     let d = (0..3).map(|k| (back[k] - [230, 20, 20][k]).abs()).max().unwrap();
     assert!(d <= 6, "the red comes back as written: {back:?}");
+}
+
+/// t3601 (found-defects 823): a fractional frame rate is written as itself — 48 frames at 24000/1001
+/// last 2.002 s, not the 2.000 s of an integer grid of 24 — and frames that carry their own times in a
+/// time base of the caller's (a proxy keeps its source's pts, a variable rate included) are written at
+/// those times.
+#[test]
+fn t3601_a_fractional_rate_and_own_times_are_written() {
+    use kt_media::muxer::Rate;
+    if !has_encoder("libx264") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let grey: Vec<u8> = [90u8, 120, 150, 255].repeat(64 * 64);
+    let open = |path: &str, frame_rate: Rate, time_base: Option<(i32, i32)>| {
+        kt_media::muxer::Muxer::open(&kt_media::muxer::MuxConfig {
+            path: path.into(),
+            width: 64,
+            height: 64,
+            frame_rate,
+            time_base,
+            quality: 23,
+            video_bitrate: None,
+            audio_bitrate: 128_000,
+            force_encoder: Some("libx264".into()),
+            threads: 1,
+            format: OutputFormat { b_frames: 0, ..Default::default() },
+        })
+        .unwrap()
+    };
+    // 23.976 on its own grid
+    let a = dir.path().join("ntsc.mp4").to_string_lossy().into_owned();
+    let mut mux = open(&a, Rate { num: 24000, den: 1001 }, None);
+    for _ in 0..48 {
+        mux.write_video(&grey).unwrap();
+    }
+    mux.finish().unwrap();
+    let f = probe_output(&a).unwrap();
+    eprintln!("t3601: {:?} {:.4} s", f.fps, f.video_secs);
+    assert_eq!(f.fps, (24000, 1001), "the stream's rate is 24000/1001");
+    assert!((f.video_secs - 48.0 * 1001.0 / 24000.0).abs() < 1e-3, "48 frames last 2.002 s: {}", f.video_secs);
+    // own times in 1/90000: a variable rate
+    let b = dir.path().join("vfr.mp4").to_string_lossy().into_owned();
+    let mut mux = open(&b, Rate { num: 30, den: 1 }, Some((1, 90_000)));
+    let mut frame = mux.alloc_video_frame().unwrap();
+    let mut conv = kt_engine::export::mux_converter(&mux, 64, 64);
+    use kt_engine::export::ExportConverter;
+    conv.convert(&grey, &mut frame).unwrap();
+    let times = [0i64, 3_000, 9_000, 10_000, 19_000];
+    for t in times {
+        mux.write_video_frame_at(&frame, t).unwrap();
+    }
+    mux.finish().unwrap();
+    let f = probe_output(&b).unwrap();
+    let mut pts: Vec<i64> = f.packets.iter().map(|p| p.0).collect();
+    pts.sort_unstable();
+    assert_eq!(pts.len(), times.len());
+    // the stream's own time base may differ: the gaps keep their ratios
+    let gaps: Vec<i64> = pts.windows(2).map(|w| w[1] - w[0]).collect();
+    let unit = gaps[0] as f64 / 3_000.0;
+    let want: Vec<i64> = times.windows(2).map(|w| ((w[1] - w[0]) as f64 * unit).round() as i64).collect();
+    eprintln!("t3601: {pts:?}");
+    assert_eq!(gaps, want, "the frames are written at their own times: {pts:?}");
 }
