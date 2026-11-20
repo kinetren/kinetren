@@ -77,7 +77,7 @@ The YAML frontmatter is the only place in `docs/` with a machine-readable format
 | `resilience/` | RES | keeping work safe, recovery, behavior under load and on foreign hardware | 13 / 13 |
 | `collab/` | COL | not working alone: claim, merge, say something about a frame, hand off, distribute material, pass on the bill, depend on the other side | 46 / 46 |
 | `compositing/` | CMP | how a frame becomes a frame: transform concatenation, resampling quality, resolution of intermediate stages, transition vocabulary, blend modes | 3 / 3 |
-| `fx/` | FX | video effects of a clip: stylization, distortions, blurs, 3D transforms, simulations; the market catalogue against ours | 15 / 15 |
+| `fx/` | FX | video effects of a clip: stylization, distortions, blurs, 3D transforms, simulations; the market catalogue against ours | 16 / 16 |
 
 A subcategory is a stable taxonomy declared here; it is not created or deleted on a whim. The directories are not numbered (`01-timeline/`): adding a category would reshuffle all the paths.
 
