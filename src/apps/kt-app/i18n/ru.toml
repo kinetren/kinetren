@@ -1384,6 +1384,7 @@ align_r = "Справа"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+pattern = "Узор"
 bg_color = "Фон"
 color3 = "Цвет 3"
 color2 = "Цвет 2"

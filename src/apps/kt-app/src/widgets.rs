@@ -115,6 +115,7 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         // gen-backgrounds: the moving backgrounds
         "speed" => tr(k::genp::SPEED),
         "cells" => tr(k::genp::CELLS),
+        "pattern" => tr(k::genp::PATTERN),
         _ => return None,
     })
 }

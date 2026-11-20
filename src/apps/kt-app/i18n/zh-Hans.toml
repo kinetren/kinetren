@@ -1384,6 +1384,7 @@ align_r = "右对齐"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+pattern = "图案"
 bg_color = "背景"
 color3 = "颜色 3"
 color2 = "颜色 2"

@@ -1384,6 +1384,7 @@ align_r = "Derecha"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+pattern = "Patrón"
 bg_color = "Fondo"
 color3 = "Color 3"
 color2 = "Color 2"

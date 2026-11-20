@@ -1384,6 +1384,7 @@ align_r = "يمين"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+pattern = "النقش"
 bg_color = "الخلفية"
 color3 = "اللون 3"
 color2 = "اللون 2"
