@@ -137,10 +137,13 @@ fn t1164_edit_creates_a_sound_generator_at_the_cursor() {
     assert_eq!(h.state().model.project().clips.len(), before, "one history step");
 }
 
-/// Test 1165: a right click on a track's body creates AT THE CLICKED PLACE, and the track's list
-/// holds only what lands on it.
-/// PATH: right click on audio track 2 at 6 s → "Create a generator" → only Audio → "Beep train";
-/// right click on video track 2 at 2 s → picture groups, no Audio → Background → "Solid color".
+/// Test 1165: a right click on a track's body creates AT THE CLICKED PLACE — with ONE plain item since
+/// generator-from-track (`v26.10` G1, the owner: "Не вижу смысла делать выпадающие меню с перечислением
+/// всех видов … Достаточно в самом окне менять тип"): the track's first kind (a sound kind on an audio
+/// track, a solid colour on a video track), and its window opens for the kind to be changed there.
+/// - **PATH** right click on audio track 2 at 6 s → "Create a generator…" (no list of kinds) → a sound
+///   event at 6 s on track 2, its window open; right click on video track 2 at 2 s → the same item →
+///   a solid colour at 2 s on video track 2, its window open
 #[test]
 fn t1165_the_track_menu_creates_at_the_clicked_place() {
     let mut h = crate::layout_tests::harness();
@@ -149,10 +152,11 @@ fn t1165_the_track_menu_creates_at_the_clicked_place() {
     h.step();
     h.step();
     let gen_item = tr(k::bin::menu::NEW_GENERATOR);
-    for (lk, ck, sec, group, tag, other) in [
-        (LaneKind::Audio, ClipKind::Audio, 6, tr(k::genkind::GROUP_AUDIO), "beep", tr(k::genkind::GROUP_BG)),
-        (LaneKind::Video, ClipKind::Video, 2, tr(k::genkind::GROUP_BG), "solid", tr(k::genkind::GROUP_AUDIO)),
+    for (lk, ck, sec, group) in [
+        (LaneKind::Audio, ClipKind::Audio, 6, tr(k::genkind::GROUP_AUDIO)),
+        (LaneKind::Video, ClipKind::Video, 2, tr(k::genkind::GROUP_BG)),
     ] {
+        let want = GeneratorKind::all().into_iter().find(|kd| crate::gen_ui::lands_on(kd, ck)).expect("a kind for the track");
         let g = h.state().tl_geom.clone().expect("timeline geometry");
         let row = g.row_of((lk, 1)).expect("track 2");
         let at = Tick(sec * 90_000);
@@ -164,22 +168,20 @@ fn t1165_the_track_menu_creates_at_the_clicked_place() {
             matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Lane { kind, lane: 1 }) if kind == ck),
             "the click is on track 2's body"
         );
-        hover_item(&mut h, gen_item);
         let labels = crate::layout_tests::menu_labels(&mut h);
-        assert!(labels.iter().any(|l| l.starts_with(group)), "{ck:?}: no group {group}: {labels:?}");
-        assert!(!labels.iter().any(|l| l.starts_with(other)), "{ck:?}: {other} does not land on this track: {labels:?}");
-        hover_item(&mut h, group);
-        h.get_by_label(kind_label(tag)).click();
+        assert!(!labels.iter().any(|l| l.starts_with(group)), "{ck:?}: the track menu lists kinds again: {labels:?}");
+        h.get_by_label(gen_item).click();
         h.step();
         h.step();
         let made = new_clips(&h, before);
-        assert_eq!(made.len(), 1, "{tag}: one clip");
+        assert_eq!(made.len(), 1, "{ck:?}: one clip");
         let c = &made[0];
-        assert_eq!((c.kind, c.lane), (ck, 1), "{tag}: on the clicked track");
+        assert_eq!((c.kind, c.lane), (ck, 1), "{ck:?}: on the clicked track");
         // the click's time, snapped by the timeline as any click is: within one pixel
         let px = g.tick_to_x(c.start.0) - g.tick_to_x(at.0);
-        assert!(px.abs() <= 1.0, "{tag}: at the clicked time ({} vs {})", c.start.0, at.0);
-        assert_eq!(c.r#gen.as_ref().map(|g| g.tag()), Some(tag));
+        assert!(px.abs() <= 1.0, "{ck:?}: at the clicked time ({} vs {})", c.start.0, at.0);
+        assert_eq!(c.r#gen.as_ref().map(|g| g.tag()), Some(want.tag()));
+        assert!(h.state().fx_editors.iter().any(|e| e.clip == c.id), "{ck:?}: the window opens for the kind to change");
         h.state_mut().fx_editors.clear();
         h.step();
     }
@@ -205,4 +207,40 @@ fn t1166_a_sound_kinds_card_is_named_not_black() {
     }
     let name = kind_label("audio_noise");
     assert!(h.query_all_by_label_contains(name).count() > 0, "the bin card is not named “{name}”");
+}
+
+/// Test 3128 (generator-from-track): a generator window's Kind gallery holds the kinds of its event's
+/// stream — a sound event's gallery is the sound kinds, nothing of the picture ones above them (the
+/// live run found the sound kinds pushed under the popup's fold by twenty picture kinds).
+/// - **PATH** right click on the audio track → "Create a generator…" → its window → the Kind field →
+///   the gallery shows Tone, Audio noise, Sine sweep, Beep train, Silence — and no Solid colour
+#[test]
+fn t3128_a_sound_events_gallery_is_the_sound_kinds() {
+    let mut h = crate::layout_tests::harness();
+    h.step();
+    let g = h.state().tl_geom.clone().expect("timeline geometry");
+    let row = g.row_of((LaneKind::Audio, 0)).expect("audio track 1");
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(2 * 90_000), g.row_center_y(row)));
+    h.get_by_label(tr(k::bin::menu::NEW_GENERATOR)).click();
+    h.step();
+    h.step();
+    for _ in 0..3 {
+        h.step();
+    }
+    for tag in SOUND.iter().copied().chain(["solid"]) {
+        crate::widgets::field_probe::forget(&format!("genw.kind.{tag}"));
+    }
+    let pick = crate::widgets::field_probe::rect_of("genw.kind.pick").expect("the window's Kind field");
+    h.hover_at(pick.center());
+    h.step();
+    h.event(egui::Event::PointerButton { pos: pick.center(), button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.step();
+    h.event(egui::Event::PointerButton { pos: pick.center(), button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    for _ in 0..3 {
+        h.step();
+    }
+    for tag in SOUND {
+        assert!(crate::widgets::field_probe::rect_of(&format!("genw.kind.{tag}")).is_some(), "the sound kind {tag} is not in the gallery");
+    }
+    assert!(crate::widgets::field_probe::rect_of("genw.kind.solid").is_none(), "a picture kind is in a sound event's gallery");
 }

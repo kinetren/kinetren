@@ -21840,3 +21840,46 @@ fn t3119_the_drop_ghost_is_the_real_event() {
     }
     crate::i18n::set_lang(crate::i18n::Lang::En);
 }
+
+/// t3127 (generator-from-track, `v26.10` G1: "у переходов в ПКМ тоже такой же громоздкий бред. Достаточно
+/// в самом окне менять тип"): "Transition with next" is ONE plain item — no list of kinds — that makes
+/// a dissolve with the neighbour as one history step and opens its window, where the kind gallery is.
+/// - **PATH** right click on an event butted to the next one → "Transition with next" (no submenu) →
+///   a dissolve between them, its window open with the Kind field
+#[test]
+fn t3127_transition_with_next_is_one_item_and_opens_its_window() {
+    crate::plugins::install();
+    use kt_model::*;
+    let (mut h, _) = harness_three_clips_dt(Some(0.02));
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[1].start = kt_time::Tick(50_000);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let y = g.lane_y(ClipKind::Video, 0, 0.75);
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(25_000), y));
+    let labels = menu_labels(&mut h);
+    let item = tr(k::tl::menu::TRANSITION_NEXT);
+    assert!(labels.iter().any(|l| l == item), "no plain “{item}” item: {labels:?}");
+    assert!(
+        !labels.iter().any(|l| l == tr(k::trn::kind::CROSSFADE)),
+        "the menu lists transition kinds again: {labels:?}"
+    );
+    let depth = h.state().model.undo_depth();
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label(item).click();
+    }
+    h.step();
+    h.step();
+    let p = h.state().model.project();
+    let t = p.transitions.iter().find(|t| t.a == Some(ClipId(1)) && t.b == Some(ClipId(2))).expect("a transition with the next event");
+    assert_eq!(t.kind, TransitionKind::Crossfade, "the item makes a dissolve");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "one history step");
+    assert!(h.state().transition_editors.iter().any(|e| e.id == t.id && e.open), "its window did not open");
+}
