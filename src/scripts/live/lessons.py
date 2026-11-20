@@ -173,7 +173,13 @@ def main(out):
         app.expect(app.has_probe("win.transition"), "the double-click opened the transition window")
         app.expect(app.has_probe("lesson.mark.tr.kind"), "the kind field is outlined")
         app.click_probe("tr.kind", "the outlined kind field")
-        kinds = [f["param"] for f in app.geom().get("fields", []) if f["param"].startswith("trkind.") and f["param"] != "trkind.crossfade"]
+
+        def other_kinds():
+            return [f["param"] for f in app.geom().get("fields", []) if f["param"].startswith("trkind.") and f["param"] != "trkind.crossfade"]
+
+        # the popup publishes its tiles a frame after the click: read the list once it is there
+        app.until(lambda: bool(other_kinds()))
+        kinds = other_kinds()
         app.expect(bool(kinds), f"the kind list is open: {kinds[:5]}")
         if kinds:
             app.click_probe(kinds[0], "another kind")
