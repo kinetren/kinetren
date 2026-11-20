@@ -11,4 +11,4 @@ Why: UI rule 22 — a new window only from the registry, reached where the perso
 - **WHEN** View → "Scopes" is clicked, the vectorscope and parade toggles are pressed, the scale switch is set to %, the window is closed with Esc and opened again from the preview's right-click menu
 - **THEN** the window opens with the luma waveform by default, then shows parade and vectorscope side by side with % labels; after reopening the same choice is shown; the project saved and reopened keeps it; a project that never opened the window writes no field
 - **PATH** click "View" → "Scopes" → a window with the waveform of the current frame → press "Parade" and "Vectorscope" → three panes side by side → click "%" → labels 0–100 % → Esc → the window closes → right click on the preview → "Scopes" → the same three panes
-- **TEST** t3411 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/scopes.py` (t3412)
+- **TEST** t3411 (`src/apps/kt-app/src/reach_tests.rs`), planned live scenario `scopes` (t3412)

@@ -19,7 +19,7 @@
 - [ ] 2.1 `scopes.rs` on its own thread: waveform, parade, vectorscope, histogram, false colour zones; one reused image buffer, `wake::now()`; t3403, t3404, t3405
 - [ ] 2.2 the window (shell, `WINDOWS` row with reason), View and preview right-click entries, `UiState.scopes`; i18n ×5, font subsets; t3411
 - [ ] 2.3 `Work::ScopeTap`, `Work::ScopeCount`; the `idle` live scene step; t3410
-- [ ] 2.4 live scenario `src/scripts/live/scopes.py` with a screenshot per step; t3412
+- [ ] 2.4 planned live scenario `scopes` with a screenshot per step; t3412
 - [ ] 2.5 layout_tests: the head does not jump when instruments change (class t76/t86); reach_tests, font_tests, i18n_tests green
 
 ## 3. Close

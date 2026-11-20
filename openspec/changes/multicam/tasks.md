@@ -25,7 +25,7 @@
 ## 3. The interface (kt-app)
 
 - [ ] 3.1 create dialog, menus, digits in `controls.rs` ×layouts, the angle viewer; i18n ×5; t3513
-- [ ] 3.2 live scenario `src/scripts/live/multicam.py`; t3514; the `idle` scene with the viewer open on a pause
+- [ ] 3.2 planned live scenario `multicam`; t3514; the `idle` scene with the viewer open on a pause
 
 ## 4. Format and close
 

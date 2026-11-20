@@ -11,4 +11,4 @@ Why: UI rule 22 (the place order) and rule 17.
 - **WHEN** an audio event is right-clicked → "Transcribe", the Text panel's "Create captions" is clicked, a caption is double-clicked and retyped, the render window's sidecar box is ticked
 - **THEN** the panel fills with words; a subtitle track appears with captions under the preview; the retyped text shows in the frame; the render writes the `.srt`
 - **PATH** right click on the audio event → "Transcribe" → the card shows progress → the Text tab fills → click "Create captions" → a subtitle track row with boxes, captions on the preview → double-click a box → type → the frame shows the new text → File → Render → tick "Sidecar SRT" → Render → the .srt beside the file
-- **TEST** t3473 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/captions.py` (t3474)
+- **TEST** t3473 (`src/apps/kt-app/src/reach_tests.rs`), planned live scenario `captions` (t3474)

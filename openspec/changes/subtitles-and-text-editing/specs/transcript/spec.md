@@ -45,7 +45,7 @@ Why: B5 — "ходить по тексту, навигация, поиск"; on
 - **WHEN** the panel shows an interview of three events; a word is clicked; "budget" is searched and Enter pressed twice; three words are dragged over and Delete pressed; Undo
 - **THEN** the playhead jumps to the word; the counter shows hits, the second Enter moves to the second hit and the ruler shows all hits; the region equals the three words' span; Delete removes it and closes the gap, the panel no longer shows the words; Undo restores both
 - **PATH** click "Text" beside the bin → the interview text → click a word → playhead jumps → type "budget" in the search → "1 / 3", ticks on the ruler → Enter → "2 / 3" → drag over three words → a region on the timeline → Delete → the words and the gap are gone → Ctrl+Z → back
-- **TEST** t3463 (`src/apps/kt-app/src/reach_tests.rs`), live scenario `src/scripts/live/text_panel.py` (t3464)
+- **TEST** t3463 (`src/apps/kt-app/src/reach_tests.rs`), planned live scenario `text_panel` (t3464)
 
 #### Scenario: A long text at rest
 - **WHEN** the live `idle` scene opens the panel on a 6 000-word transcript, pauses and moves the mouse over the panel
