@@ -129,10 +129,8 @@ be made by the shared planner in kt-fx; the executor MUST execute the ready plan
 geometric effects SHALL be executed in one pass of inverse mappings
 without intermediate rasterizations; a series of length 1 without minification SHALL go through the earlier
 kernels byte-for-byte; at K = 1 and step 1 the whole plan is byte-for-byte as before.
-Non-local barriers (every barrier-class kind, capability `video-fx`) SHALL be executed at K× when "compression above +
-zoom below", K — the quantum of min(zoom of the tail, compression), the ceiling of the buffer side
-`MAX_INTER_DIM = 4096` is a project constant, not a device limit. The layer strength stops
-zero the accumulators: mixing is always at 1×. There MUST NOT be any merge switches — neither in the UI nor in env. A change of the program `geom.rs`/`plan.rs` build and of `geom_fused.wgsl`,
+Barriers SHALL run at K× as capability `video-fx` states it ("K× barriers carry detail", the rule's
+home); the layer strength stops zero the accumulators: mixing is always at 1×. There MUST NOT be any merge switches — neither in the UI nor in env. A change of the program `geom.rs`/`plan.rs` build and of `geom_fused.wgsl`,
 which reads it, SHALL be edited in one commit (the effect kernels — capability `video-fx`).
 Why: the chain traversal has one home because segmentation is what decides where a raster is
 materialized and loses detail.
@@ -620,7 +618,8 @@ other path, whose bytes do not move) the order of a stream layer SHALL be the ea
 history lacks that fit a quarter of the video cache, at least one, in the order the stage reads them. The
 prefetch thread SHALL advance the stream stages over what the decoder brought — at the frame on screen and,
 while playing, ahead of it (wrapping in the loop region) by the frames the display reaches before its next
-pass, twice over, bounded by a quarter of the stage's memo — and a pass that leaves a stage pending SHALL
+pass, twice over (the near part; the far part and its bound: "The prefetch advances a run of stream frames as one walk"
+below) — and a pass that leaves a stage pending SHALL
 run again even on a pause. A composite SHALL run a stage only when its frame lacks at most two positions;
 otherwise, playing or paused alike, it reports the frame incomplete and says how many positions the
 history still lacks (the most over the frame's stream stages, reels and track stages included). An
@@ -1111,8 +1110,8 @@ loop one frame too long for the memo kept nothing; with this rule it keeps what 
 
 ### Requirement: A frame decoded again finds its kept composite
 A moment whose decoded frames were evicted from the burst cache and decoded again with the same bytes
-SHALL be presented from its kept composite: the re-decoded entries take back their serials, so the
-plan key is the one the composite was kept under.
+SHALL be presented from its kept composite (the serial return is stated in "A kept moment is reached
+without the work that made it", its home; this requirement holds it end to end).
 Why: found-defects 119 — a frame evicted and decoded again missed its kept composite and was composed
 again; the serial return of structured-telemetry (t2152) fixed the cache, and this holds it end to end.
 
@@ -1478,8 +1477,9 @@ class.
 - **TEST** t2711 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 ### Requirement: The slow route's picture is shown from the display's memo
-A complete composite of the slow-chain device, once kept on the display's executor, SHALL be shown from
-there at once, not handed to the interface as bytes to upload again.
+A complete composite of the slow-chain device, once kept on the display's executor ("A kept moment is
+reached without the work that made it"), SHALL be shown from there at once, not handed to the interface as
+bytes to upload again.
 Why: found-defects 622 — the slow route's frame was written into the present memo and uploaded again into
 the interface's texture.
 

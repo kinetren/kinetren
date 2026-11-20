@@ -36,8 +36,8 @@ it as "the event is slowed down".
 
 #### Scenario: Underruns are measured in frames and labelled
 - **WHEN** an event with FX and the same without FX starve; the counters of the render and the callback are shown in the UI
-- **THEN** both paths count misses in frames (numbers of the same order, not 1024×); the counters are labelled "render/callback", not read as L/R, and the callback silence is shown in milliseconds
-- **TEST** t280 (`src/libs/kt-engine/tests/loop_fx.rs`), t289 (`src/apps/kt-app/src/layout_tests.rs`)
+- **THEN** the counters are labelled "render/callback", not read as L/R, and the callback silence is shown in milliseconds (the unit itself: capability `audio-render`, "Underruns are counted in 48 kHz FRAMES", t280)
+- **TEST** t289 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: Reverse transport — an exact frame-by-frame mirror of forward
 - **WHEN** the transport runs backward (dir < 0) and the ring is filled with blocks [head−N, head) with a frame-by-frame reversal, including across a wrap of the loop region
@@ -73,8 +73,7 @@ The wrap SHALL happen only when the end of the region is crossed FROM INSIDE (th
 the Playback prefetch, the advance of the playhead, the display) SHALL see one `effective_region`.
 The armed state SHALL be recomputed only on jumps (a change of generation, of the speed sign,
 of the region value) by the wrapped playhead; a Some↔None flip on the fly is a
-mini-seek without a generation bump. A wrap is a SEAM, not a seek: the FX state is not
-reset, the misses of pre-roll go to `warmup_misses`, not to underruns. An edit of the
+mini-seek without a generation bump. A wrap is a SEAM, not a seek (capability `audio-render`, "There are two breaks — seek and splice"). An edit of the
 region MUST NOT rebuild the engine. Why: inconsistent membership conditions gave "the cursor moves linearly while the sound loops the region", and a rebuild on every move of a boundary dropped the audio stream.
 
 #### Scenario: The wrap is sample-continuous, the head of the region is pinned
@@ -107,7 +106,7 @@ Pause SHALL park the render and prefetch threads with no clock: after the pause'
 two short passes that take the block the callback was handing out when the pause came) neither
 thread makes a pass until something it acts on changes — play, pause, a seek, a rate, the preview
 quality, a loop region, a published build, a retuned or replaced source, the player's drop — and
-each of those wakes it; a change between a thread's last look and its park is never lost.
+each of those wakes it; a change between a thread's last look and its park is never lost (the form of that hand-off: "A stop or a seek handed to a parked thread is never lost").
 Rebuilding the renderers without an edit of the model MUST NOT happen, pause→resume MUST NOT
 deadlock. The addition and the substitution of sources SHALL survive coverage, the playhead and the
 generation, and a substitution SHALL clear the cache of the old source and recompute the decode scale
@@ -462,9 +461,9 @@ window that re-sent what the model held each frame turned every mouse move into 
 
 ### Requirement: The UI's own audio renderer is built once per project version
 The renderer the UI thread uses (the levels under the cursor on a pause, the pinned head of the loop
-region) SHALL be the player's shared build of the version (see "One build per project version, shared
-by every consumer"); region changes and meter readings SHALL build nothing, and a new version SHALL be
-built once for every consumer.
+region) SHALL be the player's shared build of the version. The rule's home is "One build per project
+version, shared by every consumer" (and, for the region, "A loop region change is not an edit"); this
+requirement keeps the probe's scenario.
 Why: each change of the loop region built a whole audio renderer on the UI thread, 447 ms on the owner's
 1974 events, and the first meter reading after an edit built another.
 
@@ -558,10 +557,9 @@ decodes the event's history inside the plan, one compute job a frame, each waite
 - **TEST** t1842 (`src/apps/kt-app/src/ui_wait_tests.rs`)
 
 ### Requirement: The UI's own audio renderer of a new version is built off the UI thread
-After the first, the renderer the UI thread uses (the meters on a pause, the loop's pinned head) SHALL
-come from the player's builder thread, once per version, and its FX states SHALL be synced there (only
-the events whose fingerprint changed); the one before SHALL answer meanwhile, and the loop region's head
-SHALL be pinned again when the new one lands.
+After the first, the renderer the UI thread uses SHALL come from the player's builder thread
+("One build per project version, shared by every consumer"), its FX states synced there (only the
+events whose fingerprint changed); the one before SHALL answer meanwhile.
 Why: the build takes 385–447 ms on the owner's project (found-defects 111, 117), and these are asked
 on the UI thread by every meter reading and every change of the loop region after an edit.
 
@@ -740,6 +738,30 @@ Why: play-start-and-prefetch D2–D3. The consumer drains the flag when it next 
 - **WHEN** a paused player is sought and played with a consumer that drains flushes but has not yet
 - **THEN** nothing goes into the ring for 300 ms; once the consumer drains, the start's pass comes
 - **TEST** t2641 (`src/libs/kt-engine/tests/play_start.rs`)
+
+### Requirement: A start's first pass reaches the output whole
+After a start (opening, a seek, a change of direction, a loop flip) the render thread SHALL hand its
+first pass to the ring in one commit, so the callback, which primes on the first frames in the ring and
+runs the clock from then on, never begins on a pass that is still being rendered. Time stands before
+the first frame (invariant 6), so this costs no sync; the start waits for the pass as it waits for its
+sound (cold-start-audio).
+Why: t1935 went red four times under loaded full runs with two callback underruns (found-defects 158).
+Its structured trace at load 192 placed them in the first lap: the start's pass rendered 17 bursts live
+in 83 ms and pushed them one by one, the callback primed on the first, and a render thread put off
+between two bursts let it eat them. The bench's device thread was on time (≤ 29 ms late), so the cause
+was the start, not the bench; a person's machine under a build plays the same start.
+
+#### Scenario: A start's pass held back by a slow render thread
+- **WHEN** every burst of a start's pass holds the render thread 30 ms (a burst is 21 ms of sound)
+- **THEN** the device never finds the ring empty; with the pass pushed burst by burst it found it empty
+  for 5122 frames
+- **TEST** t2216 (`src/libs/kt-engine/tests/start_pass.rs`)
+
+#### Scenario: The covered loop under load
+- **WHEN** t1935 runs beside 128 busy loops on 32 cores
+- **THEN** no callback underrun; the bench prints how late its device thread woke, so a red names
+  whether the device or the render thread failed
+- **TEST** t1935 (`src/libs/kt-engine/tests/mix_player.rs`)
 
 ### Requirement: Play's first sound is measured
 The render thread SHALL record the time from Play to the first frames a callback handed out after it: `AudioShared::first_sound_us` and the trace's `play` aux `first_sound` (`b` µs). `preview_bench` SHALL model a device that opens `device_open` after Play and report the first sound; `kt-cli preview --device-open-ms N` and `kt-cli trace summary` SHALL print it.

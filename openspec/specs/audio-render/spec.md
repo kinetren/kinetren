@@ -156,7 +156,7 @@ Why: `GOLDEN_AUDIO` rests on these formulas, and the conversion of old overlaps 
 - **TEST** t732 (`src/libs/kt-engine/tests/track_mix.rs`)
 
 ### Requirement: Reverse — a mirror AFTER the warp; the axis is the consumed amount
-A reversed event without FX SHALL sound as an exact mirror slice of the source; trims and cuts MUST NOT shift the surviving content. With warp, the order is "warp, then mirror": the mirror axis SHALL equal the material actually consumed (`chain_source_used`), not the end of the source window with the resampler's margin; the same axis MUST stand in the mirror branch of the burst order. The chain sees an ordinary forward stream and knows nothing about direction.
+A reversed event without FX SHALL sound as an exact mirror slice of the source (signed speed, −1 against the flag and the hold at zero: capability `transport`, "Audio at signed speed"); trims and cuts MUST NOT shift the surviving content. With warp, the order is "warp, then mirror": the mirror axis SHALL equal the material actually consumed (`chain_source_used`), not the end of the source window with the resampler's margin; the same axis MUST stand in the mirror branch of the burst order. The chain sees an ordinary forward stream and knows nothing about direction.
 Why: an axis with a margin of 8192 frames shifted the material by 170.7 ms (63 % of the user's event length), while the video was anchored without a margin — A and V showed different things.
 
 #### Scenario: Reverse without FX — an exact mirror
@@ -174,18 +174,8 @@ Why: an axis with a margin of 8192 frames shifted the material by 170.7 ms (63 %
 - **THEN** the first frame of the output reads the last frame of the CONSUMED span, not one 8192 frames further
 - **TEST** t282 (`src/libs/kt-engine/tests/reverse.rs`)
 
-#### Scenario: Speed −1 — the same mirror with a shifted entry point
-- **WHEN** a constant speed of −1 and the "Reverse" flag at +1 with an entry point shifted by the event's length (capability `transport`)
-- **THEN** the outputs are equal byte for byte (a constant −1 stays on the flat path without the resampler); the reverb meanwhile sounds forward in its own time and does not equal the mirror of the finished render; around the reversal point the output is a palindrome with no skipped or doubled frame
-- **TEST** t616, t617, t618 (`src/libs/kt-engine/tests/reverse.rs`)
-
-#### Scenario: Zero speed — silence with a tail
-- **WHEN** |rate| is below 0.01 (the hold)
-- **THEN** the source cursor stands still, the output is zero, and the nodes keep working — the reverb rings on over zeros
-- **TEST** t619 (`src/libs/kt-engine/tests/reverse.rs`)
-
 ### Requirement: Warp and automation domain — event time
-The consumption of the source SHALL equal the integral of the speed curve over the event's OUTPUT time; the curves of all parameters live in the same time, and an early speed bump does not shift the firing moment of later keyframes, but it does shift the material under them. The warp map SHALL be a single one for audio, video, and preview (kt-model); the modulus of the speed goes into the resampler, the sign lives in the address map; the decision to hold is made per chunk.
+The consumption of the source SHALL equal the integral of the speed curve over the event's OUTPUT time; the curves of all parameters live in the same time, and an early speed bump does not shift the firing moment of later keyframes, but it does shift the material under them. The warp map SHALL be a single one for audio, video, and preview (kt-model); how the signed speed reaches the resampler and the address map is capability `transport`'s ("Audio at signed speed"), and the map's two axes are its "Event speed with sign".
 Why: indexing the curves by the consumed material desynchronized the parameters from the picture; three independent clamps of the speed silently turned 0.05 into 0.25.
 
 #### Scenario: Consumption — the integral
@@ -200,8 +190,8 @@ Why: indexing the curves by the consumed material desynchronized the parameters 
 
 #### Scenario: The warp map with a sign
 - **WHEN** the speed curve goes negative, stands at zero, or is reversed
-- **THEN** the position walks backward and returns, the consumption only grows, and the mirror axis is the span; positive curves are bit-identical to the frozen oracle of the old map; reverse does not drive the curve backwards; the profile starts at zero
-- **TEST** t603a, t603d, t603g, t269, t271 (`src/libs/kt-model/src/warp.rs`)
+- **THEN** reverse does not drive the curve backwards and the profile starts at zero (the map's sign, axes and oracle: capability `transport`, t603a–t603g)
+- **TEST** t269, t271 (`src/libs/kt-model/src/warp.rs`)
 
 ### Requirement: Burst order == read — one function of the source window
 The source window of an event SHALL be computed by ONE function for the render and for the prefetch (`chain_source_window_ext` and its relatives): an extension only for the render MUST NOT be permitted — beyond the window the source returns silence without an underrun, and the miss would be permanent and silent. The raw reverse-transport path plays all events linearly and without warp, and SHALL have ITS OWN burst order.
@@ -678,30 +668,6 @@ it took 50 ms per minute of audio, 25 after.
 - **WHEN** music-like material, a pause, a quiet stretch and an inter-sample-peak sine are measured whole and in slices of 1, 777 and 4 096 frames, and on the baseline path
 - **THEN** the bits of LUFS, LRA and dBTP equal the ones printed before the change
 - **TEST** t2174 (`src/libs/kt-fx/tests/kernel_specialization.rs`)
-
-### Requirement: A start's first pass reaches the output whole
-After a start (opening, a seek, a change of direction, a loop flip) the render thread SHALL hand its
-first pass to the ring in one commit, so the callback, which primes on the first frames in the ring and
-runs the clock from then on, never begins on a pass that is still being rendered. Time stands before
-the first frame (invariant 6), so this costs no sync; the start waits for the pass as it waits for its
-sound (cold-start-audio).
-Why: t1935 went red four times under loaded full runs with two callback underruns (found-defects 158).
-Its structured trace at load 192 placed them in the first lap: the start's pass rendered 17 bursts live
-in 83 ms and pushed them one by one, the callback primed on the first, and a render thread put off
-between two bursts let it eat them. The bench's device thread was on time (≤ 29 ms late), so the cause
-was the start, not the bench; a person's machine under a build plays the same start.
-
-#### Scenario: A start's pass held back by a slow render thread
-- **WHEN** every burst of a start's pass holds the render thread 30 ms (a burst is 21 ms of sound)
-- **THEN** the device never finds the ring empty; with the pass pushed burst by burst it found it empty
-  for 5122 frames
-- **TEST** t2216 (`src/libs/kt-engine/tests/start_pass.rs`)
-
-#### Scenario: The covered loop under load
-- **WHEN** t1935 runs beside 128 busy loops on 32 cores
-- **THEN** no callback underrun; the bench prints how late its device thread woke, so a red names
-  whether the device or the render thread failed
-- **TEST** t1935 (`src/libs/kt-engine/tests/mix_player.rs`)
 
 ### Requirement: A reset reaches every stream, and every stream it reaches warms
 A seek, a change of direction or a loop flip (`FxStateStore::reset_all`) SHALL reset every stream through an effect chain the render thread keeps: the events' processors, their ringing laps, the track stages, the nested reels' sub-mix streams AND the sidechain key branches. A nested reel's move SHALL pre-roll the tail and look-ahead of its own track stages as well as its events' chains.
