@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-AUT-002]
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-TL-002 — Slip and slide — trims that do not change length
@@ -206,6 +206,12 @@ About the fact that in AE slip is done with the "wrong" tool and the keys stay i
 > — Daniel Waldron, Creative COW, 13.01.2015, https://creativecow.net/forums/thread/slip-slide-or-slide-edit-tool-in-ae/
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+The owner's ★1 (2026-11-01) names roll, slip and slide with ripple; they are designed together in the
+OpenSpec change `ripple-and-trim-modes` (slip as `Command::Slip` on `src/libs/kt-model/src/model.rs`,
+the stop from `MediaRef.duration`). CAPABILITY: openspec/specs/ui-timeline/
 
 ### What already exists
 

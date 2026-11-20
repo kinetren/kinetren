@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: []
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-TL-001 — Ripple — an edit that shifts everything to the right
@@ -154,6 +154,16 @@ Ripple mode" — that is, the indicator exists not for looks but against a
 specific, known class of errors that the manufacturer is aware of.
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+- `C` (region-cut-key, F-TL-015) now cuts a region's interior through `ops::punch_out_region`
+  (`src/libs/kt-model/src/ops.rs`), which re-creates both remainders with new ids — a ripple built on it
+  would reset their effect state (invariant 3); the design keeps ids by `Split` + `TrimEnd`.
+- The material's length is known once opened (`MediaRef.duration`, R.63), so a trim stop is computable.
+- The owner took this as candidate ★1 (2026-11-01, "auto-ripple кнопкой … с красным индикатором,
+  ripple-delete, roll, slip, slide"); the design is the OpenSpec change `ripple-and-trim-modes`.
+- CAPABILITY: openspec/specs/ui-timeline/
 
 ### What already exists
 
