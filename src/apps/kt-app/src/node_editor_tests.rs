@@ -415,3 +415,103 @@ fn t3002_the_table_s_keys_act_on_the_graph_under_the_pointer() {
     press(&mut h, fit);
     assert!(nodes().iter().all(|r| r.height() < 30.0), "zoom to fit over the graph did not return the fit");
 }
+
+/// t3004 (fx-graph D10): an event and its linked audio are ONE graph — VHS Tape put on the picture
+/// stands as one device over both events, its sound half on the sound lane under its picture half;
+/// the sound half's switch turns the AUDIO event's slot off and leaves the picture's; the picture
+/// half's cross takes the device off both events.
+/// - **PATH** double click a video event linked to its audio, carrying VHS Tape → the effects window
+///   shows one graph: the picture lane with VHS Tape, the sound lane with its sound half under it →
+///   click the sound half's checkbox → it is struck through, the picture keeps the tape → click the
+///   picture half's cross → the tape goes from both events
+#[test]
+fn t3004_an_event_and_its_audio_are_one_graph() {
+    crate::plugins::install();
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.clips.push(clip(1, ClipKind::Video, vec![]));
+    p.clips.push(clip(2, ClipKind::Audio, vec![FxInstance::plugin("gain").unwrap()]));
+    p.validate().unwrap();
+    app.model = TimelineModel::new(p);
+    assert!(app.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::builtin("vhs_tape")] }));
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let tape = node_label(&h, "VHS Tape");
+    let tape_sound = node_label(&h, &sound("VHS Tape"));
+    assert!((tape.left() - tape_sound.left()).abs() < 1.0, "the halves are not one column: {tape:?} {tape_sound:?}");
+    assert!(tape_sound.top() > tape.bottom(), "the sound half is not under the picture half");
+    // the sound half's own switch: the audio event's slot
+    let boxes: Vec<egui::Rect> = h.query_all_by_role(egui::accesskit::Role::CheckBox).map(|n| n.rect()).collect();
+    let cb = boxes
+        .iter()
+        .filter(|r| (r.center().y - tape_sound.center().y).abs() < 8.0 && r.right() <= tape_sound.left() + 1.0)
+        .max_by(|a, b| a.right().total_cmp(&b.right()))
+        .copied()
+        .expect("the sound half's checkbox");
+    click_at(&mut h, cb.center());
+    let m = &h.state().model;
+    let a = m.clip(ClipId(2)).unwrap();
+    let ai = a.fx.iter().position(|f| f.tag() == "vhs_tape_sound").expect("the audio holds the sound half");
+    assert_eq!(a.fx_bypass.get(ai).copied(), Some(true), "the sound half's switch did not reach the audio event");
+    assert!(!m.clip(ClipId(1)).unwrap().fx_bypass.first().copied().unwrap_or(false), "the picture's tape was switched off with it");
+    // the picture half's cross takes the device off both events
+    let crosses: Vec<egui::Rect> = h.query_all_by_label(crate::icons::CLEAR).map(|n| n.rect()).collect();
+    let tape = node_label(&h, "VHS Tape");
+    let x = crosses
+        .iter()
+        .filter(|r| (r.center().y - tape.center().y).abs() < 8.0 && r.left() > tape.right() - 1.0)
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .copied()
+        .expect("the picture half's cross");
+    click_at(&mut h, x.center());
+    let m = &h.state().model;
+    assert!(m.clip(ClipId(1)).unwrap().fx.iter().all(|f| f.tag() != "vhs_tape"), "the tape stayed on the picture");
+    assert!(m.clip(ClipId(2)).unwrap().fx.iter().all(|f| f.tag() != "vhs_tape_sound"), "the device's sound outlived it");
+    assert!(m.clip(ClipId(2)).unwrap().fx.iter().any(|f| f.tag() == "gain"), "the audio's own effect went too");
+}
+
+fn click_at(h: &mut Harness<'_, KtApp>, at: egui::Pos2) {
+    h.hover_at(at);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    h.step();
+    h.step();
+}
+
+/// t2997 (fx-graph D11): the Viewer — Ctrl+Shift+click on a node gives the preview the project with
+/// that event's chain cut after the node (the one composition path draws it), the right-click menu
+/// does the same; Esc gives the whole project back and the window stays; the model never changes.
+/// - **PATH** in an event's effects window Ctrl+Shift+click the Blur node → the preview shows the
+///   picture after Blur with the badge "Viewer: Blur" → press Esc → the whole picture, the window open
+#[test]
+fn t2997_the_viewer_shows_the_picture_after_a_node() {
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3), FxInstance::builtin("vignette")]);
+    let model_before = h.state().model.project().clone();
+    let blur = node_label(&h, crate::fx_editor::fx_display_name(&FxInstance::blur(3)));
+    h.hover_at(blur.center());
+    h.step();
+    let mods = egui::Modifiers { ctrl: true, shift: true, command: true, ..Default::default() };
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: blur.center(), button: egui::PointerButton::Primary, pressed, modifiers: mods });
+    }
+    h.step();
+    h.step();
+    let v = h.state().viewer.clone().expect("Ctrl+Shift+click did not turn the Viewer on");
+    assert_eq!(v.clip, ClipId(1));
+    let tags_in = |p: &Project| p.clips.iter().find(|c| c.id == ClipId(1)).map(|c| c.fx.iter().map(|f| f.tag().to_string()).collect::<Vec<_>>());
+    assert_eq!(tags_in(&h.state().player.project()), Some(vec!["blur".to_string()]), "the preview's project is not cut after Blur");
+    assert_eq!(h.state().model.project(), &model_before, "the Viewer changed the model");
+    // Esc: the whole picture, the window stays
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().viewer.is_none(), "Esc did not end the Viewer");
+    assert_eq!(tags_in(&h.state().player.project()), Some(vec!["blur".to_string(), "vignette".to_string()]), "the whole chain did not come back");
+    assert!(h.state().fx_editors.iter().any(|e| e.open), "Esc closed the window instead of ending the Viewer");
+}

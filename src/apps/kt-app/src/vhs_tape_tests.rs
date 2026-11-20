@@ -152,8 +152,10 @@ fn t1468_the_deck_s_sound_is_on_the_linked_audio() {
     let normals: Vec<egui::Rect> = h.query_all_by_label(tr(k::deck::NORMAL)).map(|n| n.rect()).collect();
     assert_eq!(normals.len(), 2, "the Sound section is not on both halves");
     assert!(h.query_all_by_label(tr(k::deck::SOUND)).count() == 2);
-    // the first fold's face (the lower one is below the harness window's fold)
-    let upper = *normals.iter().min_by(|a, b| a.center().y.total_cmp(&b.center().y)).unwrap();
+    // the first fold's face, turned into view by the wheel (the pair's node editor above the
+    // members' forms, fx-graph D10, puts it at the harness window's fold)
+    let _ = normals;
+    let upper = crate::layout_tests::label_in_view(&mut h, tr(k::deck::NORMAL)).expect("the upper face's Normal");
     click(&mut h, upper.center());
     let m = &h.state().model;
     assert_eq!(m.clip(ClipId(1)).unwrap().fx[0].get_param("audio_out"), Some(1.0), "the deck did not take Normal");

@@ -13,6 +13,9 @@ use kt_model::*;
 /// the slot switches and the master switch.
 pub type ChainSnapshot = (ClipId, Vec<FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<bool>, bool);
 
+/// Each member's context boxes (fx-graph v1c).
+pub type MemberBoxes = Vec<(ClipId, Vec<crate::widgets::ContextBox>)>;
+
 pub struct FxEditor {
     /// Anchor of the window: the event by which it was opened (its id is the window id).
     pub clip: ClipId,
@@ -66,7 +69,9 @@ pub struct FxEditor {
     pub opened_at: std::time::Instant,
     /// What applies after each member's chain (fx-graph v1c): the morpher layers over it and its
     /// track's stage, kept per model revision — finding the layers walks the project.
-    pub context: Option<(u64, Vec<(ClipId, Vec<crate::widgets::ContextBox>)>)>,
+    pub context: Option<(u64, MemberBoxes)>,
+    /// Which event of an A/V pair holds the pair editor's selection (fx-graph D10).
+    pub pair_active: Option<ClipId>,
     pub open: bool,
 }
 
@@ -200,6 +205,7 @@ impl KtApp {
             preview_t: None,
             opened_at: std::time::Instant::now(),
             context: None,
+            pair_active: None,
             open: true,
         });
     }
@@ -383,6 +389,7 @@ impl KtApp {
         let ctx_boxes: Vec<(ClipId, Vec<crate::widgets::ContextBox>)> =
             ed.context.as_ref().map(|c| c.1.clone()).unwrap_or_default();
         let mut open_ctx: Option<crate::widgets::ContextTarget> = None;
+        let mut viewer_req: Option<Option<crate::node_editor::Viewer>> = None;
         // ---- context of picker thumbnails (R.54, item 432) -------------------
         // WYSIWYG: the cell shows exactly what will result after the click, at the cursor's
         // moment inside the event (frozen while playing).
@@ -431,6 +438,126 @@ impl KtApp {
             .probe("win.fx")
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
+                // ---- THE PAIR'S ONE EDITOR (fx-graph D10): an event and its linked audio as one
+                // graph, the picture's lane over the sound's, a device's halves one node; the
+                // members' sections below keep their forms
+                let mut pair_out: std::collections::HashMap<ClipId, PairOut> = std::collections::HashMap::new();
+                if let Some((vid, aid)) = pair_of(&self.model, &members, &pub_doc)
+                    && let (Some(v), Some(a)) = (self.model.clip(vid).cloned(), self.model.clip(aid).cloned())
+                {
+                    let (mut vf, mut vb, mut va, v_lp) = spliced(&v);
+                    let (af, ab, aa, _) = spliced(&a);
+                    // what each event held: a side whose vectors did not change sends nothing (the
+                    // other side's edit would come back through it — the model mirrors a device)
+                    let before = [(vf.clone(), vb.clone(), va.clone()), (af.clone(), ab.clone(), aa.clone())];
+                    let n_v = vf.len();
+                    let n_a = af.len();
+                    let v_sel = splice_sel(*ed.selected.get(&vid).unwrap_or(&crate::widgets::ChainSel::Fx(0)), v_lp);
+                    let a_sel = *ed.selected.get(&aid).unwrap_or(&crate::widgets::ChainSel::Fx(0));
+                    let mut sel = match (ed.pair_active == Some(aid), a_sel, v_sel) {
+                        (true, crate::widgets::ChainSel::Fx(i), _) => crate::widgets::ChainSel::Fx(n_v + i),
+                        (_, _, crate::widgets::ChainSel::Fx(i)) => crate::widgets::ChainSel::Fx(i),
+                        _ => crate::widgets::ChainSel::Fx(0),
+                    };
+                    vf.extend(af);
+                    vb.extend(ab);
+                    va.extend(aa);
+                    let mut lanes: Vec<u8> = std::iter::repeat_n(0, n_v).chain(std::iter::repeat_n(1, n_a)).collect();
+                    let (mut v_on, mut a_on) = (!v.fx_off, !a.fx_off);
+                    let boxes = |id: ClipId, lane: u8| -> Vec<crate::widgets::ContextBox> {
+                        ctx_boxes
+                            .iter()
+                            .find(|(c, _)| *c == id)
+                            .map(|(_, b)| b.iter().cloned().map(|mut b| { b.lane = lane; b }).collect())
+                            .unwrap_or_default()
+                    };
+                    let mut context = boxes(vid, 0);
+                    context.extend(boxes(aid, 1));
+                    let mut query = std::mem::take(&mut ed.picker_query);
+                    let ch = crate::node_editor::chain_graph(
+                        ui,
+                        ("fxpair", vid.0),
+                        crate::widgets::ChainEdit {
+                            fx: &mut vf,
+                            bypass: &mut vb,
+                            auto: &mut va,
+                            selected: &mut sel,
+                            master_on: &mut v_on,
+                            head: None,
+                            presets: crate::widgets::ChainPresets {
+                                rows: &preset_rows,
+                                save: &mut preset_save,
+                                action: &mut preset_action,
+                            },
+                            context,
+                            keys: Vec::new(),
+                            lane_of: Some(&mut lanes),
+                            master2: Some(&mut a_on),
+                            viewer: true,
+                        },
+                        crate::fx_registry::PickKinds::Both,
+                        &mut query,
+                        &mut fx_clip,
+                        v.source_in,
+                        &mut hover_out,
+                        &mut crate::widgets::ChainCtx { chain: vid, picked: &mut panel_pick },
+                        Some(&mut pv),
+                    );
+                    ed.picker_query = query;
+                    if let Some(t) = ch.open {
+                        open_ctx = Some(t);
+                    }
+                    match ch.viewer {
+                        // the pair's virtual index: the video's spliced part, then the audio's
+                        Some(Some(i)) if i < n_v => viewer_req = Some(Some(viewer_of(&v, i, v_lp))),
+                        Some(Some(i)) => viewer_req = Some(Some(viewer_of(&a, i - n_v, None))),
+                        Some(None) => viewer_req = Some(None),
+                        None => {}
+                    }
+                    // a right click on a sound node addresses the audio event's slot
+                    if let Some(crate::ctx_menu::PanelTarget::FxSlot { chain, slot }) = panel_pick
+                        && chain == vid
+                        && slot >= n_v
+                    {
+                        panel_pick = Some(crate::ctx_menu::PanelTarget::FxSlot { chain: aid, slot: slot - n_v });
+                    }
+                    // split back by lane; the selection to its event
+                    let mut out_v = PairOut::new(v_on);
+                    let mut out_a = PairOut::new(a_on);
+                    let mut active = vid;
+                    for (i, ((f, b), c)) in vf.into_iter().zip(vb).zip(va).enumerate() {
+                        let sound = lanes.get(i).copied().unwrap_or(0) == 1;
+                        if sel == crate::widgets::ChainSel::Fx(i) {
+                            active = if sound { aid } else { vid };
+                        }
+                        let out = if sound { &mut out_a } else { &mut out_v };
+                        if sel == crate::widgets::ChainSel::Fx(i) {
+                            out.sel = crate::widgets::ChainSel::Fx(out.fx.len());
+                        }
+                        out.fx.push(f);
+                        out.bypass.push(b);
+                        out.auto.push(c);
+                    }
+                    if active == aid {
+                        out_v.sel = v_sel;
+                    } else {
+                        out_a.sel = a_sel;
+                    }
+                    ed.pair_active = Some(active);
+                    // what changed, per event (an equal command is no edit: both may send)
+                    for (out, base, on0, n0, is_v) in [(&mut out_v, 0usize, !v.fx_off, n_v, true), (&mut out_a, n_v, !a.fx_off, n_a, false)] {
+                        let was = &before[usize::from(!is_v)];
+                        out.ch.fx = ch.fx && out.fx != was.0;
+                        out.ch.bypass = ch.bypass && out.bypass != was.1;
+                        out.ch.auto = ch.auto && out.auto != was.2;
+                        out.ch.master = out.master != on0;
+                        out.ch.moved = ch.moved.filter(|(f, _)| (*f >= base) && (*f < base + n0)).map(|(f, t)| (f - base, t - base));
+                        out.ch.removed = ch.removed.filter(|i| (*i >= base) && (*i < base + n0)).map(|i| i - base);
+                    }
+                    pair_out.insert(vid, out_v);
+                    pair_out.insert(aid, out_a);
+                    ui.separator();
+                }
                 for (n, id) in members.iter().enumerate() {
                     let Some(clip) = self.model.clip(*id).cloned() else { continue };
                     let mut fx = clip.fx.clone();
@@ -563,7 +690,16 @@ impl KtApp {
                                     other => other,
                                 };
                             }
-                            ch = crate::node_editor::chain_graph(
+                            ch = if let Some(o) = pair_out.remove(id) {
+                                // drawn above by the pair's editor (fx-graph D10)
+                                fx_s = o.fx;
+                                bypass_s = o.bypass;
+                                auto_s = o.auto;
+                                sel_s = o.sel;
+                                chain_on = o.master;
+                                o.ch
+                            } else {
+                                crate::node_editor::chain_graph(
                                 ui,
                                 ("fxchain", id.0),
                                 crate::widgets::ChainEdit {
@@ -584,6 +720,9 @@ impl KtApp {
                                         .map(|(_, b)| b.clone())
                                         .unwrap_or_default(),
                                     keys: Vec::new(),
+                        lane_of: None,
+                        master2: None,
+                        viewer: true,
                                 },
                                 clip.kind == ClipKind::Audio,
                                 &mut query,
@@ -597,10 +736,16 @@ impl KtApp {
                                 // an audio chain has no pictures: an audio thumbnail cannot be drawn
                                 // (the owner’s decision)
                                 if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
-                            );
+                            )
+                            };
                             ed.picker_query = query;
                             if let Some(t) = ch.open {
                                 open_ctx = Some(t);
+                            }
+                            match ch.viewer {
+                                Some(Some(i)) => viewer_req = Some(Some(viewer_of(&clip, i, lead_pos0))),
+                                Some(None) => viewer_req = Some(None),
+                                None => {}
                             }
                             // the SLOT MASKS follow their slots (shape-masks): the same move /
                             // removal in the strip's own indices (the lead spliced in, empty)
@@ -1144,6 +1289,14 @@ impl KtApp {
         }
         if !open {
             ed.open = false;
+        }
+        // the Viewer (fx-graph D11): the picture after a node, or the whole picture again; a window
+        // closed takes its Viewer with it
+        if let Some(v) = viewer_req {
+            self.set_viewer(v);
+        }
+        if !open && self.viewer.as_ref().is_some_and(|v| members.contains(&v.clip)) {
+            self.set_viewer(None);
         }
         // a context box asked its own window: the layer's or the track's (fx-graph v1c)
         match open_ctx {
@@ -1976,6 +2129,7 @@ fn context_of(p: &kt_model::Project, c: &kt_model::ClipEvent) -> Vec<crate::widg
             label: crate::tf!(k::fx::graph::LAYER, m.id.0),
             count: m.patch.chain_for(c.kind).len(),
             key: None,
+            lane: 0,
         })
         .collect();
     let lane = match c.kind {
@@ -1990,7 +2144,88 @@ fn context_of(p: &kt_model::Project, c: &kt_model::ClipEvent) -> Vec<crate::widg
             label: crate::track_window::track_name(p, t.id).unwrap_or_default(),
             count: t.fx.len(),
             key: kt_model::sidechain_keys(&t.fx).next().and_then(|k| crate::track_window::track_name(p, k)),
+            lane: 0,
         });
     }
     out
+}
+
+/// One event of the pair after the pair's editor (fx-graph D10): its spliced chain (the lead in it),
+/// selection, master switch and what changed in its own indices.
+struct PairOut {
+    fx: Vec<kt_model::FxInstance>,
+    bypass: Vec<bool>,
+    auto: Vec<Vec<kt_model::ParamCurve>>,
+    sel: crate::widgets::ChainSel,
+    master: bool,
+    ch: crate::widgets::ChainChanged,
+}
+
+impl PairOut {
+    fn new(master: bool) -> PairOut {
+        PairOut {
+            fx: Vec::new(),
+            bypass: Vec::new(),
+            auto: Vec::new(),
+            sel: crate::widgets::ChainSel::Fx(0),
+            master,
+            ch: crate::widgets::ChainChanged::default(),
+        }
+    }
+}
+
+/// The window's members as an A/V pair the pair editor shows (fx-graph D10): exactly one video and
+/// one audio event of one link group, neither a generator nor a reel instance (their head is a
+/// member's own and stays in the member's editor).
+fn pair_of(m: &kt_model::TimelineModel, members: &[ClipId], doc: &kt_model::Project) -> Option<(ClipId, ClipId)> {
+    let [x, y] = members else { return None };
+    let (cx, cy) = (m.clip(*x)?, m.clip(*y)?);
+    let plain = |c: &kt_model::ClipEvent| c.r#gen.is_none() && doc.sequence(c.media).is_none();
+    if cx.link_group.is_none() || cx.link_group != cy.link_group || !plain(cx) || !plain(cy) {
+        return None;
+    }
+    match (cx.kind, cy.kind) {
+        (ClipKind::Video, ClipKind::Audio) => Some((*x, *y)),
+        (ClipKind::Audio, ClipKind::Video) => Some((*y, *x)),
+        _ => None,
+    }
+}
+
+/// An event's chain as the editor shows it: bypass and curves to its length, a video event's
+/// leading Geometry node spliced in at its place (the same splice as the member's own editor).
+fn spliced(c: &kt_model::ClipEvent) -> (Vec<kt_model::FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, Option<usize>) {
+    let mut fx = c.fx.clone();
+    let mut bypass = c.fx_bypass.clone();
+    bypass.resize(fx.len(), false);
+    let mut auto = c.fx_auto.clone();
+    auto.resize(fx.len(), Vec::new());
+    let lp = (c.kind == ClipKind::Video).then(|| c.geometry_pos.min(fx.len()));
+    if let Some(lp) = lp {
+        fx.insert(lp, c.geometry.node());
+        bypass.insert(lp, false);
+        auto.insert(lp, c.geometry_auto.clone());
+    }
+    (fx, bypass, auto, lp)
+}
+
+/// A member's selection in the spliced chain's indices (the lead counted).
+fn splice_sel(sel: crate::widgets::ChainSel, lp: Option<usize>) -> crate::widgets::ChainSel {
+    use crate::widgets::ChainSel;
+    match (sel, lp) {
+        (ChainSel::Fx(i), Some(lp)) => ChainSel::Fx(if i >= lp { i + 1 } else { i }),
+        (ChainSel::Lead, Some(lp)) => ChainSel::Fx(lp),
+        (other, _) => other,
+    }
+}
+
+/// The Viewer of strip slot `i` of an event's chain (fx-graph D11): how many of the MODEL's slots
+/// stand up to and with it (the leading Geometry node is a field of the event, not a slot), and its
+/// name for the badge.
+fn viewer_of(c: &kt_model::ClipEvent, i: usize, lead: Option<usize>) -> crate::node_editor::Viewer {
+    let (keep, name) = match lead {
+        Some(lp) if i == lp => (lp, crate::fx_editor::fx_display_name(&c.geometry.node()).to_string()),
+        Some(lp) if i > lp => (i, c.fx.get(i - 1).map(|f| fx_display_name(f).to_string()).unwrap_or_default()),
+        _ => (i + 1, c.fx.get(i).map(|f| fx_display_name(f).to_string()).unwrap_or_default()),
+    };
+    crate::node_editor::Viewer { clip: c.id, keep, lead_on: lead.is_none_or(|lp| i >= lp), name }
 }
