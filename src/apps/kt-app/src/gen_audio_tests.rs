@@ -159,7 +159,7 @@ fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
 
 /// Test 1164: Edit → "Create a generator…" with an event of audio track 2 selected and the cursor at
 /// 3 s gives ONE sound clip at 3 s on audio track 2 — no video clip — in one history step, and opens
-/// its form. The kind goes by the selected track (kkt-26.11.20 A1: "Один пункт, по дорожке"); File
+/// its form. The kind goes by the selected track (kkt-26.11.20 A1: one item, by the track); File
 /// does not offer the item.
 /// - **PATH** click an event on audio track 2 → click "Edit" → click "Create a generator…" (no list of
 ///   kinds) → a tone at the cursor on audio track 2, its window open

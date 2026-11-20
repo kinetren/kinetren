@@ -24,9 +24,8 @@ use kt_model::{GeneratorKind, HasParams, TextAlign, TextAnchor};
 /// The localized name of the kind. Full paths — test 125 looks up the key by them.
 /// "Create a generator…" — ONE plain item, wherever it is drawn (rule 17): a track's right-click
 /// menu, the Edit menu and the bin's empty-space menu. The owner on the track menu
-/// (generator-from-track, `v26.10` G1): "Не вижу смысла делать выпадающие меню с перечислением всех
-/// видов … Достаточно в самом окне менять тип"; on Edit and the bin (kkt-26.11.20 A1): "Один пункт, по
-/// дорожке". The item gives the first kind that lands on the track; the window it opens picks the
+/// (generator-from-track, `v26.10` G1: no submenu listing every kind, the kind is changed in the
+/// window); on Edit and the bin (kkt-26.11.20 A1): one item, by the track. The item gives the first kind that lands on the track; the window it opens picks the
 /// kind in its gallery (G6). True when clicked.
 pub fn generator_item(ui: &mut egui::Ui) -> bool {
     let r = ui.button(tr(k::bin::menu::NEW_GENERATOR));

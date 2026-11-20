@@ -5186,7 +5186,7 @@ impl KtApp {
         cmds
     }
 
-    /// "Create a generator…" from Edit or the bin (kkt-26.11.20 A1: "Один пункт, по дорожке"): the
+    /// "Create a generator…" from Edit or the bin (kkt-26.11.20 A1: one item, by the track): the
     /// kind by the selected track — the track of the earliest selected event (a solid colour on
     /// video, a tone on audio), created there at the cursor; nothing selected → a solid colour on
     /// video track 1. The window it opens changes the kind.

@@ -1631,7 +1631,7 @@ fn t560_generator_is_reachable_from_the_main_menu() {
         !file.contains("gen_ui::generator_item"),
         "File offers “Create a generator” again — the owner moved it out (kkt-26.11.01 item 4)"
     );
-    // ONE plain item on Edit and the bin too since kkt-26.11.20 A1 ("Один пункт, по дорожке"): the
+    // ONE plain item on Edit and the bin too since kkt-26.11.20 A1 (one item, by the track): the
     // kind by the selected track, the window's gallery changes it
     assert!(edit.contains("gen_ui::generator_item(ui)"), "the Edit menu has no “Create a generator…” item");
     let timeline = read("apps/kt-app/src/timeline.rs");

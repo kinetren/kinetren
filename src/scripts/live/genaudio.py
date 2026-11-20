@@ -59,7 +59,7 @@ def main(out):
         app.step("track-beep", "a “Beep train” event exactly at the click on the audio track, picked in its window")
         app.key("Escape")
 
-        # 3) the beep selected, Edit → the ONE item (kkt-26.11.20 A1: "Один пункт, по дорожке"): the
+        # 3) the beep selected, Edit → the ONE item (kkt-26.11.20 A1: one item, by the track): the
         # selected track is a sound track, so a tone at the cursor there — no picture
         app.click(app.x_at(int(6.5 * SEC)), app.lane_y("audio", 0, 0.6))
         app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
