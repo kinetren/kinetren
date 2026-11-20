@@ -40,6 +40,7 @@ BENCH = os.environ.get("KT_LIVE_BENCH")
 # the program's dump and the bench's command file on tmpfs (test-hygiene)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _channel import channel_dir, keep_channel  # noqa: E402,F401
+import _why  # noqa: E402
 
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
 
@@ -237,12 +238,13 @@ def the_window(proc=None, what="the program's window"):
     This asks again until the window is there, up to the test's guard, failing at once if the
     program itself ended. The ONE door to the window: every caller goes through it."""
     deadline = time.time() + TEST_DEADLINE
+    seen = []
     while True:
         try:
             return probe.window()
         except SystemExit:
-            if proc is not None and proc.poll() is not None:
-                raise Failure(f"{what}: the program ended (code {proc.returncode})")
+            if proc is not None and _why.dead(proc, seen):
+                raise Failure(f"{what}: the program can bring no window (code {proc.poll()})")
             if time.time() >= deadline:
                 raise Failure(f"{what} did not appear within the test's guard ({TEST_DEADLINE:.0f} s)")
             _poll(0.1)
@@ -604,18 +606,35 @@ class Live:
         one must ask not for the picture but the program: it reports the NUMBER
         of the drawn frame itself (`bench.tick`, the geometry dump).
         """
+        # WHO AND WHERE (found-defects 824): a wait that finds no window names whether the program
+        # died, never reached its display or is still starting; a dead one ends the wait at once
+        log_path = os.path.join(self.out, "kt-app.log")
+        display = os.environ.get("DISPLAY", "")
+        seen = []
+        said = time.time()
+
+        def why():
+            return _why.state(display, self.proc, log_path, seen)
+
+        def waiting():
+            nonlocal said
+            if _why.dead(self.proc, seen):
+                raise Failure(f"kt-app crashed at startup: {why()}")
+            if time.time() - said >= 30.0:
+                said = time.time()
+                print(f"   still waiting for the window: {why()}", flush=True)
+
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self.proc.poll() is not None:
-                raise Failure(f"kt-app crashed at startup, see {self.out}/kt-app.log")
+            waiting()
             try:
                 probe.window()
             except SystemExit:
                 _poll(0.1)
                 continue
+            print(f"   {_why.start_line(display, self.proc.pid, log_path)}", flush=True)
             while time.time() < deadline:
-                if self.proc.poll() is not None:
-                    raise Failure(f"kt-app crashed at startup, see {self.out}/kt-app.log")
+                waiting()
                 if self._frame_now() >= 2:
                     # the program is still finishing the first frame (sources, thumbnails,
                     # layout): a gesture delivered at this moment goes off
@@ -626,8 +645,8 @@ class Live:
                         self.settle()
                     return
                 _poll(0.05)
-            raise Failure("the program drew not a single frame — the window stayed empty")
-        raise Failure("the kt-app window did not appear")
+            raise Failure(f"the program drew not a single frame — the window stayed empty: {why()}")
+        raise Failure(f"the kt-app window did not appear: {why()}")
 
     # ---- waiting for a FRAME, not for the clock (R.68) ---------------------------------
 

@@ -20096,6 +20096,25 @@ fn t1620_short_and_double_press_keep_their_meaning() {
 /// space stops playback. Now playback continues whatever I do, even if I pressed space on a
 /// pause." The picture plays only while held, the head stays where it got to, and Ctrl runs
 /// it backward. The following tap is a plain play, not the double-press stop.
+
+/// A held Space plays once the hold is PROVEN: a frame that began the threshold after the press, the
+/// threshold widened by how busy the frames are (`KeyClock::busy`). A fixed 330 ms and two frames was
+/// a clock claim: at load ~30–45 the widened threshold had not passed (found-defects 783). Steps
+/// until playing, never before the threshold, up to the test's guard.
+fn r72_until_playing(h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, pressed: std::time::Instant, what: &str) {
+    let deadline = kt_time::test_deadline();
+    while !h.state().player.transport.is_playing() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.step();
+    }
+    assert!(
+        pressed.elapsed() >= std::time::Duration::from_millis(crate::app::SPACE_HOLD_MS as u64),
+        "{what}: it played before the threshold ({:?})",
+        pressed.elapsed()
+    );
+}
+
 #[test]
 fn t1621_hold_from_pause_plays_only_while_held() {
     use kt_time::Tick;
@@ -20104,13 +20123,11 @@ fn t1621_hold_from_pause_plays_only_while_held() {
     h.state().player.seek(start);
     h.step();
 
+    let pressed = std::time::Instant::now();
     h.key_down(egui::Key::Space);
     h.step();
     assert!(!h.state().player.transport.is_playing(), "nothing may start before the threshold");
-    std::thread::sleep(std::time::Duration::from_millis(330));
-    h.step();
-    h.step();
-    assert!(h.state().player.transport.is_playing(), "past the threshold the hold must play");
+    r72_until_playing(&mut h, pressed, "past the threshold the hold must play");
     r72_feed_head(&mut h, 4_800);
     for _ in 0..8 {
         h.step();
@@ -20127,12 +20144,10 @@ fn t1621_hold_from_pause_plays_only_while_held() {
     assert!(stopped >= reached, "the release must not return to the start: {stopped:?}");
 
     // the same with Ctrl: backward, and stops likewise
+    let pressed = std::time::Instant::now();
     h.key_down_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(330));
-    h.step();
-    h.step();
-    assert!(h.state().player.transport.is_playing(), "past the threshold Ctrl+hold must play");
+    r72_until_playing(&mut h, pressed, "past the threshold Ctrl+hold must play");
     assert!(h.state().player.playback_rate() < 0.0, "Ctrl+hold must play in reverse");
     r72_feed_head(&mut h, 4_800);
     let back = h.state().player.transport.playhead();

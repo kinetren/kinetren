@@ -1108,15 +1108,17 @@ mod tests {
         let since = std::time::Instant::now();
         drop(svc);
         let waited = since.elapsed();
-        if Arc::strong_count(&shared) > 1 {
+        // which branch the DROP took is its own record, not the count of `shared`: the lane's
+        // thread lets its copy go after it says idle, so a drop that waited the cell out still saw
+        // the count above one for a moment under load (found-defects 781)
+        if kt_time::shutdown::left_behind().contains(&"effect-cells") {
             eprintln!("t1644: the cell outlived the drop's bound ({waited:?}), left behind by name");
             assert!(waited >= kt_time::shutdown::WAIT, "the drop returned before its bound ({waited:?}) with the worker running");
-            assert!(kt_time::shutdown::left_behind().contains(&"effect-cells"), "the cell left behind is not named");
-            let deadline = kt_time::test_deadline();
-            while Arc::strong_count(&shared) > 1 {
-                assert!(std::time::Instant::now() < deadline, "the worker never ended");
-                std::thread::yield_now();
-            }
+        }
+        let deadline = kt_time::test_deadline();
+        while Arc::strong_count(&shared) > 1 {
+            assert!(std::time::Instant::now() < deadline, "the worker never ended");
+            std::thread::yield_now();
         }
     }
 
