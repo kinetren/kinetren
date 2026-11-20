@@ -65,7 +65,9 @@
 - [ ] 4.1 `node_editor`: arms as rows under the trunk, wires in the gaps, Merge sockets
 - [ ] 4.2 gestures: a wire into empty canvas starts an arm; Merge first in the picker; connect and
       disconnect; a time kind in an arm marked as a second read; refusals with reasons; t3218,
-      t3219, t3220
+      t3219, t3220; remove `SetFxIn`/`SetTrackFxIn` from t252's `NOT_FROM_UI`
+      (v2a put them there); every chain edit of the editor keeps the wiring (`remove_slot`,
+      `insert_slot`) so a format-8 file's slot can be deleted (found-defects 903)
 - [ ] 4.3 i18n ×5 (Merge, its modes and sockets, the refusals); `subset-fonts.py` if needed
 - [ ] 4.4 idle with a branched graph on the heavy showcase; t3221
 - [ ] 4.5 live `node_graph_branch` (a screenshot per step); live `idle`, `node_graph`, `fxwin`
