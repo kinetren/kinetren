@@ -1,7 +1,7 @@
 ---
 id: F-MSK-005
 title: Tracking: point, planar and "AI object tracking"
-status: researched
+status: candidate
 priority: B
 cost: XL
 category: masks/tracking
@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-MSK-001]
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-MSK-005 — Tracking: point, planar and "AI object tracking"
@@ -204,6 +204,18 @@ queries from this environment with HTTP 403, and reddit is unavailable —
 details in "Sources". A paraphrase instead of a quote is not put into the base.
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+- The "property system to link one thing to another" the owner doubted exists: links (R.61, F-AUT-008,
+  `src/libs/kt-model/src/links.rs`) — any numeric property follows another by address, across events by
+  the timeline tick. A tracker only needs an owner kind in `ParamOwner`
+  (`src/libs/kt-model/src/published.rs`).
+- Masks are done (shape-masks, F-MSK-001), so "strictly after masks" holds.
+- The owner asked for an AE-style POINT tracker (kkt-26.11.01 T1); the design (OpenSpec change
+  `point-tracker`) does that first (1–4 points, corner pin from four), with the planar model as a later
+  kind behind the same address. The independent-entity verdict above stands.
+- CAPABILITY: openspec/specs/automation/
 
 ### What already exists
 
