@@ -439,7 +439,9 @@ fn t3003_an_open_node_editor_costs_nothing_at_rest() {
 
 /// t3236 (track-device-sound): a video track's window with VHS Tape and Camera ISP and its sound
 /// track — one graph of both chains and the Device sound row — costs nothing at rest: still, or with
-/// the pointer moving over the graph.
+/// the pointer moving over the graph. Its name field holds the focus, and a focused field's caret
+/// does not blink (found-defects 821: egui's blink asked a frame every half second for ever; the
+/// harness's text edit paints no caret, so the style itself is held here and live `idle` measures).
 /// - **PATH** a video track carrying VHS Tape and Camera ISP, linked to Audio 1 → Track properties →
 ///   the track window's graph shows both lanes; the mouse rests, then moves over the nodes: nothing
 ///   redraws by itself
@@ -448,6 +450,10 @@ fn t3236_an_open_track_pair_costs_nothing_at_rest() {
     use kt_model::*;
     crate::plugins::install();
     let mut h = rest_harness();
+    // the program's window has the keyboard focus, as on a person's desktop: egui blinks a focused
+    // text field's caret only then (the harness's window has none by default, and the live `idle`
+    // found what this hid: the track window's name field took the focus and blinked for ever)
+    h.input_mut().focused = true;
     let app = h.state_mut();
     let v1 = app.model.project().track_at(LaneKind::Video, 0).unwrap().id;
     let fx = ["vhs_tape", "camera_isp"].iter().map(|id| FxInstance::plugin(id).expect(id)).collect::<Vec<_>>();
@@ -461,6 +467,8 @@ fn t3236_an_open_track_pair_costs_nothing_at_rest() {
         h.step();
     }
     let graph = crate::widgets::field_probe::rect_of("fx.graph").expect("the node editor is open");
+    assert!(h.ctx.memory(|m| m.focused()).is_some(), "the window's name field holds the focus");
+    assert!(!h.ctx.global_style().visuals.text_cursor.blink, "a focused field's caret blinks: a repaint every half second at rest");
     assert!(crate::widgets::field_probe::rect_of("track.sound").is_some(), "the pair's row is not drawn");
     assert!(next_repaint(&h) > Duration::from_secs(3600), "the open track pair asks for a frame in {:?}", next_repaint(&h));
     for i in 0..30 {

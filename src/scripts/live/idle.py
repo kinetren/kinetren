@@ -368,10 +368,30 @@ def main(out):
                 app.expect(not bad, f"over the deck panel: a static hover caused {bad}")
                 app.expect(not meter.engine_busy(), f"over the deck panel: the engine threads worked {meter.engine_busy()} % of a core")
                 app.step("fx-deck-hover", "the pointer went over the deck panel, the engine stayed asleep")
-        # the one click that hands the proof over: the trace folder (load-report-into-trace), whose
-        # run already names the machine; no load-report.txt is written any more
         app.key("Escape")
         app.settle()
+        # the TRACK window of the first video track (track-device-sound: a video track and its sound
+        # track in one graph) stands open on the heavy project: at rest it runs nothing, a hover
+        # over its graph causes nothing a hover must not
+        if app.click_probe("track.v1.fx", "the FX badge of Video 1"):
+            app.expect(app.has_probe("track.name"), "the track window opened")
+            app.step("track-open", "the track window of Video 1 is open on the heavy project")
+            wait_quiet(meter, "with the track window open")
+            work, cpu = meter.over(5.0)
+            print(f"   track window, pause: {work}, {cpu:.0f} % of a core")
+            app.expect(not work, f"an open track window runs nothing, ran {work}")
+            g = app._probe_rect("fx.graph")
+            if g is not None:
+                x0, y0 = win["x"] + int(g["x"]) + 20, win["y"] + int(g["y"]) + 20
+                work, cpu = meter.over(3.0, sweep(app, (x0, y0), (x0 + 160, y0 + 40)))
+                print(f"   over the track window's graph: {work}, {cpu:.0f} % of a core")
+                bad = {k: v for k, v in work.items() if k in NOT_ON_HOVER}
+                app.expect(not bad, f"over the track window: a static hover caused {bad}")
+            app.step("track-hover", "the pointer went over the track graph, the program is at rest again")
+            app.click_probe("track.close", "close the track window")
+            app.settle()
+        # the one click that hands the proof over: the trace folder (load-report-into-trace), whose
+        # run already names the machine; no load-report.txt is written any more
         # a 1440-point window keeps the gauge under the toolbar's "more" button
         if not app.has_probe("tb.diag", tries=2):
             app.click_probe("tb.more", "the toolbar's more button")

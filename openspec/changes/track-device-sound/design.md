@@ -107,6 +107,17 @@ The mechanism: "a device's sound needs a partner; a carrier without one is silen
 | bake of a morpher | real slots on pieces → the event rule | done |
 | preset / paste into a track chain | `SetTrackFx` → this rule | covered |
 
+## Found while measuring the rest: a focused field's caret
+
+The idle check with the track window open on the heavy showcase never came to rest: 2806 UI frames
+over a 300 s pause, the first waker egui's caret (`text_selection/visuals.rs:313`). The window
+focuses its name field on opening; egui blinks a focused caret with a repaint every half second
+while the program's window has the focus, and on the software rasterizer each such frame drew the
+whole window. The mechanism is every focused text field (the timecode mask, the speed entry, a
+rename, the picker's search, a formula), so the fix is the one style: the caret stands still
+(`theme.rs`, `text_cursor.blink = false`). The harness's text edit paints no caret, so t3236 holds
+the style and live `idle` measures the clock (found-defects 821).
+
 ## Risks
 
 - The format number 6 is also named by fx-graph-dag's design (not built). Whoever merges second
