@@ -496,14 +496,16 @@ fn t3222_a_branching_layer_over_a_branching_event() {
         },
     ])
     .unwrap();
-    let mut patch = MorphPatch::default();
-    patch.video_fx = vec![p("edges"), p("noise"), merge_fx()];
-    patch.video_in = vec![Default::default(), arm(FxIn::Source), merge_of(FxIn::Prev, FxIn::Slot(0))];
+    let patch = MorphPatch {
+        video_fx: vec![p("edges"), p("noise"), merge_fx()],
+        video_in: vec![Default::default(), arm(FxIn::Source), merge_of(FxIn::Prev, FxIn::Slot(0))],
+        ..Default::default()
+    };
     m.apply(Command::AddMorpher(layer(patch))).unwrap();
     let eff = m.project().effective_clips();
     let v = eff.iter().find(|c| c.kind == ClipKind::Video).unwrap();
     assert_eq!(&chain_ids(&v.fx)[..6], ["blur", "glow", "merge", "edges", "noise", "merge"]);
-    let want = vec![
+    let want = [
         Default::default(),
         arm(FxIn::Source),
         merge_of(FxIn::Prev, FxIn::Slot(0)),
