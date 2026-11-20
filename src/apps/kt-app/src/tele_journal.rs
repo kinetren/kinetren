@@ -721,11 +721,13 @@ mod tests {
         assert!(read(&j).trim_end().ends_with(&format!("second {:04} kinetren 100, prefetch 90", n - 1)));
     }
 
-    /// Test t1964 (telemetry-journal): with nothing to write, the journal's thread does not wake.
-    #[cfg(target_os = "linux")]
     /// The writer's stay after it counted a record (t1964; one test process per test under nextest).
+    /// On every target: the writer reads it in any test build (the Windows build broke when the
+    /// test's `cfg` came to stand on this static, found-defects 901).
     pub(super) static AFTER_COUNT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+    /// Test t1964 (telemetry-journal): with nothing to write, the journal's thread does not wake.
+    #[cfg(target_os = "linux")]
     #[test]
     fn t1964_no_wakeups_at_rest() {
         // the writer stays awake 200 ms past its count of a record, as a preempted one does under load

@@ -127,6 +127,18 @@ fn t3129_segments_decode_on_the_device_the_processor_only_without_one() {
                 if cfg!(target_os = "linux") {
                     assert!(why.contains("VAAPI"), "the processor's reason names the device it looked for: {why}");
                 }
+                // the D3D11VA path (found-defects 775): under wine and on a Windows without the
+                // device the reason names it too
+                if cfg!(windows) {
+                    assert!(why.contains("D3D11VA"), "the processor's reason names the device it looked for: {why}");
+                }
+                // the proof on a Windows machine with a graphics card is opt-in and loud, as t963's
+                // VAAPI one: wine and the CI runner have no D3D11 video decode, so only this proves the
+                // device's path (found-defects 775)
+                assert!(
+                    std::env::var("KT_EXPECT_HW").as_deref() != Ok("d3d11va"),
+                    "KT_EXPECT_HW=d3d11va, and the segment decodes on the processor: {why}"
+                );
                 eprintln!("t3129: this machine decodes on the processor: {why}");
             }
         }

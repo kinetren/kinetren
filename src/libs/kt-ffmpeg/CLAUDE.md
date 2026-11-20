@@ -76,6 +76,9 @@ with libav*"), `export` (the encoder cascade).
   opens the video decoder with VAAPI / D3D11VA and a `get_format` that takes the device's format
   when offered; `download` carries each picture to NV12 before the usual conversion, and
   `video_decode` reports `Software(why)` when no device opened or the decoder did not take it.
+  The D3D11VA arm compiles for Windows and runs under wine, where the device is refused and named
+  (`windows-test.sh -E 'test(/t3129/)'`); the device's decode itself needs a Windows machine with a
+  card and `KT_EXPECT_HW=d3d11va` (found-defects 775).
   Decoding asks a node's trial once per process (`decode_device_verdict`), unlike the export's
   encoder. The fake VA driver decodes its own I_PCM files (t3129).
 - **The download is a ROOT** (`<local>/ffmpeg`), not one folder: the Windows plan tries every
