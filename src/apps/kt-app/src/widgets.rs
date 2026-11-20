@@ -104,6 +104,11 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "channels" => tr(k::genp::CHANNELS),
         "color" => tr(k::genp::COLOR),
         "curve" => tr(k::genp::CURVE),
+        // gen-technical (`v26.10` G5): the sync flash and the safe areas
+        "interval" => tr(k::genp::INTERVAL),
+        "flash" => tr(k::genp::FLASH),
+        "action_safe" => tr(k::genp::ACTION_SAFE),
+        "title_safe" => tr(k::genp::TITLE_SAFE),
         _ => return None,
     })
 }
@@ -317,6 +322,9 @@ pub fn flag_label(name: &str) -> String {
         "tone" => tr(k::genp::TONE),
         "beep" => tr(k::genp::BEEP),
         "stereo" => tr(k::genp::STEREO),
+        "center" => tr(k::genp::CENTER),
+        "thirds" => tr(k::genp::THIRDS),
+        "cut43" => tr(k::genp::CUT43),
         "bold" => tr(k::titlew::BOLD),
         "reverse" => tr(k::trn::REVERSE),
         "vertical" => tr(k::trn::VERTICAL),

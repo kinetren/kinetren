@@ -21,7 +21,7 @@ pub const BUILTIN_IDS: &[&str] =
     "whip", "blur_dissolve", "pixelate", "glitch", "shake", "film_burn", "light_leaks", "zoom_blur",
     "swap", "flip", "cube", "door", "page_peel", "page_roll",
     "solid", "gradient", "corners", "checker", "noise", "transparent", "rect", "ellipse", "line",
-    "smpte", "timecode", "leader", "table", "window",
+    "smpte", "timecode", "leader", "table", "window", "syncflash", "safearea",
     "tone", "audio_noise", "sweep", "beep", "silence",
 ];
 
