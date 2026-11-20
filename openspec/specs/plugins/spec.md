@@ -79,7 +79,7 @@ set.
 ### Requirement: Family crates are leaves; the core never depends on a plugin
 The built-in plugins SHALL live in family crates under `src/plugins/`, each depending only on
 the plugin API crate (and, where declared, on a low crate from a closed list, e.g. the text
-crate for the title). The plugin API crate SHALL depend only on the time crate and serde. The
+crate for the title). The plugin API crate SHALL depend only on the time crate, serde and libm (the frozen math, t1066). The
 core crates (model, fx, engine, gpu, media, cache, otio) MUST NOT depend on a family crate or on
 the built-in assembler; the assembler SHALL be depended on only by the two programs and by test
 targets, and the registry SHALL be handed to the core at run time. Editing the source of one
@@ -90,7 +90,7 @@ convenient `use`.
 
 #### Scenario: The crate graph keeps plugins at the leaves
 - **WHEN** the workspace manifests are read (normal, build and dev dependencies separately)
-- **THEN** the plugin API crate's normal dependencies are exactly the time crate and serde; no
+- **THEN** the plugin API crate's normal dependencies are exactly the time crate, libm and serde; no
   core crate has a normal or build dependency on a family crate or the assembler; every family
   crate depends on the API crate and only on crates from the declared closed list; the assembler
   appears as a normal dependency only of kt-app and kt-cli

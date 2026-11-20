@@ -347,6 +347,73 @@ The fit on a long chain (24 effects): zoomed out, every node is a header chip; H
   sockets fed by any node, the DAG in `video_plan` and the audio node chain, format by content.
 - **v3** horizon only: the timeline composite as a graph.
 
+## D10. The last v1c item: one editor for an event and its linked audio
+
+Today the effects window of a linked pair draws one node editor PER member, each with its form
+under it; a device's halves therefore stand in two graphs with the video member's form between
+them. The morpher already shows both halves as one device because its patch is ONE vector split
+into lanes by kind (`merge_chains`/`split_chains`). The pair editor takes the same road.
+
+- **When.** The window's members are exactly one video event and one audio event of one link group
+  (the common A/V pair). Any other set (several audio partners, a lone event, a reel instance with
+  its head) keeps today's editor per member — the graph code is the same.
+- **One virtual chain.** The video member's chain (with the leading Geometry node spliced in at
+  its place, as now) followed by the audio member's; bypass and curves the same. The graph lays it
+  out in two lanes by kind (the morpher's `both` path), so devices pair by the model's n-th rule
+  and stand in one column with each half's switch.
+- **What stays per member.** The master switch (`fx_off`): one per lane, drawn at the lane's In
+  node (its On/Off is the lane's, not a second meaning of one switch — kt-app rule 9). The picker
+  puts a picked effect on its kind's lane (the morpher's rule): "+ effect" on the toolbar, one picker
+  for the pair. Presets and copy/paste of a chain stay per member, in each member's section below
+  (they copy THAT event's chain). The context boxes of each member follow its lane.
+- **Split back.** After the graph, the virtual chain is cut at the lane boundary into the two
+  members' vectors; the lead is unspliced from the video part as now; the slot masks follow their
+  slots by the same moved/removed indices, offset by the video part's length for the audio one.
+  The model then mirrors the device halves as it does today (`sync_pairs_to_link_group`): a
+  removal of one half removes the other in the same step.
+- **Selection and forms.** One selected node for the pair; the form under the graph is the
+  selected slot's member's — the per-member sections keep their head forms (generator, reel
+  parameters) and their automation, collapsed when the other member's node is selected.
+- **Tests.** The window tests that address a member's strip by member (`t1468`, `t1486`, the
+  geometry-lead tests t716b and its neighbours, mask-slot moves t1270 ff.) are rewritten to the
+  pair editor where they meet a pair, with their claims; a new test holds a VHS Tape added to the
+  pair standing as one node, its sound half switched off alone, and a removal taking both.
+- **Cost.** Nothing new at rest: the virtual chain is built in the window's frame from vectors the
+  window already clones.
+
+**As built (2026-11-19):** presets and copy/paste stay on the pair's one toolbar (they act on the
+pair, a pasted or preset slot taking its kind's lane) — one bar instead of one per section; the
+detailed graph opens only within 40 % of the window's visible height, so a pair's two lanes of
+sliders open as chips and the form keeps its room (Ctrl+wheel opens the detail).
+
+## D11. v1d — the Viewer: the picture after a node
+
+The owner's Blender reference has Ctrl+Shift+click "show this node's output". A frame cut after a
+node must come from the one plan builder (invariant 7); the program already composes such frames:
+the picker's cells (`fx_thumbs`, chain-everywhere) compose "the project the player plays at this
+moment, the event's chain changed, its track soloed" on the offline device, keyed by the scene.
+
+- **The cut.** The Viewer asks the same service for a scene whose anchor event's chain is cut after
+  the chosen slot (`Place::Clip` with a new `Cut(slot)` variant of the candidate: the slots after it
+  are dropped, the lead kept), at the preview's size and the playhead's moment.
+- **Where it shows.** In the preview's own place, with a badge "Viewer: <node>" over it and the
+  playback stopped; a second Ctrl+Shift+click on empty canvas, Esc, or Play returns the full
+  picture. Not a window (R.63).
+- **The gesture.** Ctrl+Shift+click is not in the key table: it is a pointer gesture of the graph,
+  as a drag is; the hint names it. (If the owner's style takes Ctrl+Shift+click elsewhere, the
+  graph's right-click menu also carries "Show the picture after this effect".)
+- **Cost.** One composite per (node, moment); nothing at rest; the cell's cache serves a repeat.
+- **Tests.** t2997: the Viewer's frame equals the frame of the same event whose chain ends at that
+  node, composed by the plan; Esc returns the frame of the whole chain; a live step with a
+  screenshot.
+
+**As built (2026-11-19):** not through the picker cells (they compose at 320×180 for a 160×90
+cell) but through the player itself: while the Viewer is on, `push_project_to_player` hands the
+player the model's project with that one event's chain cut after the node. The preview then
+composes it by its own path at its own size and quality, and a sound node is heard up to it; the
+model never changes, and Esc, Play, an empty-canvas Ctrl+Shift+click or closing the window hand the
+whole project back.
+
 ## His answers (kkt-26.11.18b U8) and what they fix
 
 - **Q1 — layout:** automatic by processing order; nothing stored in v1 (D4).

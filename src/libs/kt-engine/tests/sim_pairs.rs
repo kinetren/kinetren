@@ -150,3 +150,38 @@ fn t2992_a_layer_s_sound_half_switches_without_touching_the_picture() {
     let picture = |p: &Project| p.effective_clips().into_iter().find(|c| c.kind == ClipKind::Video).map(|c| c.active_fx());
     assert_eq!(picture(&on), picture(&off), "switching the sound half moved the picture");
 }
+
+/// t3232 (track-device-sound; capability `audio-fx`): the sound half of a device on a whole video
+/// track runs in its sound track's stage over the track's sum, seated at timeline zero on the
+/// project's grid: it reads the deck at the timeline moment, as the half on an event at the same
+/// timeline place does (to float rounding); switched off, the track sounds dry.
+#[test]
+fn t3232_a_track_s_deck_is_heard_where_the_event_s_is() {
+    kt_plugins_builtin::install();
+    let mut tape = FxInstance::plugin("vhs_tape_sound").expect("vhs_tape_sound");
+    tape.set_param("rec_a_spacing", 3.0);
+    // 30 fps: the deck's grid is the tape standard's, not the project's, and must not move with it
+    let at30 = |mut p: Project| {
+        p.settings.fps = 30;
+        p
+    };
+    let on_event = render(&at30(project(vec![tape.clone()], vec![])));
+    let on_track = |bypass: Vec<bool>| {
+        let mut p = at30(project(vec![], vec![]));
+        let a = p.track_at(LaneKind::Audio, 0).unwrap().id;
+        let t = p.track_mut(a).unwrap();
+        t.fx = vec![tape.clone()];
+        t.fx_bypass = bypass;
+        p.validate().unwrap();
+        render(&p)
+    };
+    let wet = on_track(vec![]);
+    let dry = render(&at30(project(vec![], vec![])));
+    // past the first quarter (the stage starts from silence, the event pre-rolls): the stage sums
+    // and chunks the signal its own way, so the samples agree to float rounding, not to the bit
+    let late = (wet.len() / 4..wet.len()).map(|i| (wet[i] - on_event[i]).abs()).fold(0f32, f32::max);
+    let swing = (wet.len() / 4..wet.len()).map(|i| (on_event[i] - dry[i]).abs()).fold(0f32, f32::max);
+    assert!(swing > 0.05, "the scene is degenerate: the deck's effect is {swing}");
+    assert!(late < 1e-4, "the track's deck is not the event's deck at the same timeline place: {late}");
+    assert_eq!(on_track(vec![true]), dry, "a switched-off half is not dry");
+}

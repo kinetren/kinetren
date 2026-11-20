@@ -50,15 +50,17 @@ fn new_clips(h: &Harness<'_, KtApp>, before: usize) -> Vec<ClipEvent> {
     v.split_off(before.min(v.len()))
 }
 
-/// Test 1163: the menu rows — the 19 former ones in their order, then the five sound kinds, all in
+/// Test 1163: the menu rows — the 19 former ones, the six shapes of gen-shapes, the four moving
+/// backgrounds of gen-backgrounds and
+/// the two technical ones of gen-technical (`v26.10` G5) in their order, then the five sound kinds, all in
 /// the Audio group, each named in the catalog, every row and every choice variant captioned.
 #[test]
 fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     crate::plugins::install();
     let all = GeneratorKind::all();
-    assert_eq!(all.len(), 24, "19 picture rows + 5 sound rows");
-    let tags: Vec<&str> = all[19..].iter().map(|k| k.tag()).collect();
-    assert_eq!(tags, SOUND, "the sound rows follow the former 19 in BUILTIN_IDS order");
+    assert_eq!(all.len(), 36, "31 picture rows + 5 sound rows");
+    let tags: Vec<&str> = all[31..].iter().map(|k| k.tag()).collect();
+    assert_eq!(tags, SOUND, "the sound rows follow the 31 picture rows in BUILTIN_IDS order");
     for k in &all {
         let sound = SOUND.contains(&k.tag());
         assert_eq!(crate::gen_ui::is_sound(k), sound, "{}: a sound kind is exactly a synthesizing one", k.tag());
@@ -71,7 +73,7 @@ fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     }
     for lang in crate::i18n::Lang::ALL {
         crate::i18n::set_lang(lang);
-        for k in &all[19..] {
+        for k in &all[31..] {
             let name = crate::gen_ui::kind_name(k);
             assert_ne!(name, k.tag(), "{lang:?}: {} has no catalog name", k.tag());
             let GeneratorKind::Plugin(p) = k else { unreachable!() };
@@ -137,10 +139,13 @@ fn t1164_edit_creates_a_sound_generator_at_the_cursor() {
     assert_eq!(h.state().model.project().clips.len(), before, "one history step");
 }
 
-/// Test 1165: a right click on a track's body creates AT THE CLICKED PLACE, and the track's list
-/// holds only what lands on it.
-/// PATH: right click on audio track 2 at 6 s → "Create a generator" → only Audio → "Beep train";
-/// right click on video track 2 at 2 s → picture groups, no Audio → Background → "Solid color".
+/// Test 1165: a right click on a track's body creates AT THE CLICKED PLACE — with ONE plain item since
+/// generator-from-track (`v26.10` G1, the owner: "Не вижу смысла делать выпадающие меню с перечислением
+/// всех видов … Достаточно в самом окне менять тип"): the track's first kind (a sound kind on an audio
+/// track, a solid colour on a video track), and its window opens for the kind to be changed there.
+/// - **PATH** right click on audio track 2 at 6 s → "Create a generator…" (no list of kinds) → a sound
+///   event at 6 s on track 2, its window open; right click on video track 2 at 2 s → the same item →
+///   a solid colour at 2 s on video track 2, its window open
 #[test]
 fn t1165_the_track_menu_creates_at_the_clicked_place() {
     let mut h = crate::layout_tests::harness();
@@ -149,10 +154,11 @@ fn t1165_the_track_menu_creates_at_the_clicked_place() {
     h.step();
     h.step();
     let gen_item = tr(k::bin::menu::NEW_GENERATOR);
-    for (lk, ck, sec, group, tag, other) in [
-        (LaneKind::Audio, ClipKind::Audio, 6, tr(k::genkind::GROUP_AUDIO), "beep", tr(k::genkind::GROUP_BG)),
-        (LaneKind::Video, ClipKind::Video, 2, tr(k::genkind::GROUP_BG), "solid", tr(k::genkind::GROUP_AUDIO)),
+    for (lk, ck, sec, group) in [
+        (LaneKind::Audio, ClipKind::Audio, 6, tr(k::genkind::GROUP_AUDIO)),
+        (LaneKind::Video, ClipKind::Video, 2, tr(k::genkind::GROUP_BG)),
     ] {
+        let want = GeneratorKind::all().into_iter().find(|kd| crate::gen_ui::lands_on(kd, ck)).expect("a kind for the track");
         let g = h.state().tl_geom.clone().expect("timeline geometry");
         let row = g.row_of((lk, 1)).expect("track 2");
         let at = Tick(sec * 90_000);
@@ -164,22 +170,20 @@ fn t1165_the_track_menu_creates_at_the_clicked_place() {
             matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Lane { kind, lane: 1 }) if kind == ck),
             "the click is on track 2's body"
         );
-        hover_item(&mut h, gen_item);
         let labels = crate::layout_tests::menu_labels(&mut h);
-        assert!(labels.iter().any(|l| l.starts_with(group)), "{ck:?}: no group {group}: {labels:?}");
-        assert!(!labels.iter().any(|l| l.starts_with(other)), "{ck:?}: {other} does not land on this track: {labels:?}");
-        hover_item(&mut h, group);
-        h.get_by_label(kind_label(tag)).click();
+        assert!(!labels.iter().any(|l| l.starts_with(group)), "{ck:?}: the track menu lists kinds again: {labels:?}");
+        h.get_by_label(gen_item).click();
         h.step();
         h.step();
         let made = new_clips(&h, before);
-        assert_eq!(made.len(), 1, "{tag}: one clip");
+        assert_eq!(made.len(), 1, "{ck:?}: one clip");
         let c = &made[0];
-        assert_eq!((c.kind, c.lane), (ck, 1), "{tag}: on the clicked track");
+        assert_eq!((c.kind, c.lane), (ck, 1), "{ck:?}: on the clicked track");
         // the click's time, snapped by the timeline as any click is: within one pixel
         let px = g.tick_to_x(c.start.0) - g.tick_to_x(at.0);
-        assert!(px.abs() <= 1.0, "{tag}: at the clicked time ({} vs {})", c.start.0, at.0);
-        assert_eq!(c.r#gen.as_ref().map(|g| g.tag()), Some(tag));
+        assert!(px.abs() <= 1.0, "{ck:?}: at the clicked time ({} vs {})", c.start.0, at.0);
+        assert_eq!(c.r#gen.as_ref().map(|g| g.tag()), Some(want.tag()));
+        assert!(h.state().fx_editors.iter().any(|e| e.clip == c.id), "{ck:?}: the window opens for the kind to change");
         h.state_mut().fx_editors.clear();
         h.step();
     }
@@ -205,4 +209,228 @@ fn t1166_a_sound_kinds_card_is_named_not_black() {
     }
     let name = kind_label("audio_noise");
     assert!(h.query_all_by_label_contains(name).count() > 0, "the bin card is not named “{name}”");
+}
+
+/// Test 3128 (generator-from-track): a generator window's Kind gallery holds the kinds of its event's
+/// stream — a sound event's gallery is the sound kinds, nothing of the picture ones above them (the
+/// live run found the sound kinds pushed under the popup's fold by twenty picture kinds).
+/// - **PATH** right click on the audio track → "Create a generator…" → its window → the Kind field →
+///   the gallery shows Tone, Audio noise, Sine sweep, Beep train, Silence — and no Solid colour
+#[test]
+fn t3128_a_sound_events_gallery_is_the_sound_kinds() {
+    let mut h = crate::layout_tests::harness();
+    h.step();
+    let g = h.state().tl_geom.clone().expect("timeline geometry");
+    let row = g.row_of((LaneKind::Audio, 0)).expect("audio track 1");
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(2 * 90_000), g.row_center_y(row)));
+    h.get_by_label(tr(k::bin::menu::NEW_GENERATOR)).click();
+    h.step();
+    h.step();
+    for _ in 0..3 {
+        h.step();
+    }
+    for tag in SOUND.iter().copied().chain(["solid"]) {
+        crate::widgets::field_probe::forget(&format!("genw.kind.{tag}"));
+    }
+    let pick = crate::widgets::field_probe::rect_of("genw.kind.pick").expect("the window's Kind field");
+    h.hover_at(pick.center());
+    h.step();
+    h.event(egui::Event::PointerButton { pos: pick.center(), button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
+    h.step();
+    h.event(egui::Event::PointerButton { pos: pick.center(), button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
+    for _ in 0..3 {
+        h.step();
+    }
+    for tag in SOUND {
+        assert!(crate::widgets::field_probe::rect_of(&format!("genw.kind.{tag}")).is_some(), "the sound kind {tag} is not in the gallery");
+    }
+    assert!(crate::widgets::field_probe::rect_of("genw.kind.solid").is_none(), "a picture kind is in a sound event's gallery");
+}
+
+/// Test 3702 (gen-technical, `v26.10` G5): the sync flash and the safe areas are reached from Edit ›
+/// Create a generator › Signal check; the flash lands with its sound on audio track 1 beside its
+/// picture, the safe areas as a picture alone; their rows have captions in every language.
+/// - **PATH** Edit → Create a generator… → Signal check → Sync flash → a picture event and its beep on
+///   A1 at the cursor, its window open; again → Safe areas → one picture event (transparent over what
+///   is under it)
+#[test]
+fn t3702_the_technical_kinds_are_created_from_edit() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    for (tag, clips) in [("syncflash", 2usize), ("safearea", 1)] {
+        let before = h.state().model.project().clips.len();
+        h.get_by_label(tr(k::menu::edit::TITLE)).click();
+        h.step();
+        h.step();
+        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+        hover_item(&mut h, tr(k::genkind::GROUP_CHECK));
+        h.get_by_label(kind_label(tag)).click();
+        h.step();
+        h.step();
+        let made = new_clips(&h, before);
+        assert_eq!(made.len(), clips, "{tag}: {made:?}");
+        assert!(made.iter().all(|c| c.r#gen.as_ref().map(|g| g.tag()) == Some(tag)), "{tag}: the kind");
+        h.state_mut().fx_editors.clear();
+        h.step();
+    }
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for k in ["syncflash", "safearea"] {
+            let kind = GeneratorKind::default_for_tag(k).expect("the kind");
+            for s in kind.param_specs().iter().filter(|s| s.ty == ParamType::Num && s.unit != kt_model::ParamUnit::Rgb8) {
+                let l = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, &s.name);
+                assert_ne!(l, s.name.as_ref(), "{lang:?}: {k}.{} has no caption", s.name);
+            }
+            for f in kind.flag_specs() {
+                assert_ne!(crate::widgets::flag_label(f.name), f.name, "{lang:?}: {k} flag {} has no caption", f.name);
+            }
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test 3705 (text-counter-source): a title's window chooses where its text comes from; a countdown
+/// shows its format and its start, a typed title shows neither (no dead control).
+/// - **PATH** Edit → Create a generator… → Titles and countdown → Text → its window → Text: Countdown →
+///   the Format row and the Start field appear → Text: Typed → they go
+#[test]
+fn t3705_a_title_chooses_its_source_in_its_window() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    h.get_by_label(tr(k::menu::edit::TITLE)).click();
+    h.step();
+    h.step();
+    hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+    hover_item(&mut h, tr(k::genkind::GROUP_TITLES));
+    h.get_by_label(kind_label("text")).click();
+    for _ in 0..4 {
+        h.step();
+    }
+    let painted = |h: &Harness<'_, KtApp>, src: &str| crate::reach_tests::painted_texts(h).iter().any(|t| t.src == src);
+    let from = tr(k::genp::COUNT_FROM);
+    let at = crate::widgets::field_probe::rect_of("titlew.source.countdown").expect("the source row");
+    h.hover_at(at.center());
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at.center(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        h.step();
+    }
+    for _ in 0..3 {
+        h.step();
+    }
+    let made = h.state().model.project().clips.iter().find_map(|c| c.r#gen.clone()).expect("the title");
+    assert!(matches!(made, GeneratorKind::Text { source: kt_model::TextSource::Countdown, .. }), "the click did not set the source: {made:?}");
+    assert!(painted(&h, tr(k::titlew::COUNT_FORMAT)), "a countdown shows its format row");
+    crate::layout_tests::reveal_until(&mut h, from);
+    assert!(painted(&h, from), "a countdown shows its start");
+    // back to the typed text: with the grid still in view (its size row drawn), the start row is gone
+    let id = h.state().model.project().clips.iter().find(|c| c.r#gen.is_some()).map(|c| c.id).expect("the title");
+    let mut typed = made.clone();
+    assert!(typed.set_value("source", &kt_model::ParamValue::Choice("static".into())));
+    assert!(h.state_mut().apply(kt_model::Command::SetClipGen { id, kind: Some(typed) }));
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(painted(&h, tr(k::genp::SIZE)), "the grid left the view");
+    assert!(!painted(&h, from), "a typed title shows the counter's start");
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for key in [k::titlew::SOURCE, k::titlew::SOURCE_STATIC, k::titlew::SOURCE_TIMECODE, k::titlew::SOURCE_STOPWATCH, k::titlew::SOURCE_COUNTDOWN, k::titlew::COUNT_FORMAT, k::titlew::SOURCE_NOTE, k::genp::COUNT_FROM, k::genp::COUNT_FPS] {
+            assert!(!tr(key).is_empty(), "{lang:?}: an empty text");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test 3708 (gen-backgrounds, `v26.10` G5): the four moving backgrounds are reached from Edit › Create
+/// a generator › Background, each one picture event; every number, flag and choice row is captioned in
+/// every language (the pattern's four choices too).
+/// - **PATH** Edit → Create a generator… → Background → Moving gradient / Plasma / Particles / Pattern →
+///   a picture event at the cursor, its window open with the colours and the speed
+#[test]
+fn t3708_the_moving_backgrounds_are_created_from_edit() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    for tag in ["meshgrad", "plasma", "particles", "pattern"] {
+        let before = h.state().model.project().clips.len();
+        h.get_by_label(tr(k::menu::edit::TITLE)).click();
+        h.step();
+        h.step();
+        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+        hover_item(&mut h, tr(k::genkind::GROUP_BG));
+        h.get_by_label(kind_label(tag)).click();
+        h.step();
+        h.step();
+        let made = new_clips(&h, before);
+        assert_eq!(made.len(), 1, "{tag}: {made:?}");
+        assert_eq!(made[0].r#gen.as_ref().map(|g| g.tag()), Some(tag), "{tag}: the kind");
+        h.state_mut().fx_editors.clear();
+        h.step();
+    }
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for tag in ["meshgrad", "plasma", "particles", "pattern"] {
+            let kind = GeneratorKind::default_for_tag(tag).expect("the kind");
+            assert_ne!(crate::gen_ui::kind_name(&kind), tag, "{lang:?}: {tag} has no name");
+            let GeneratorKind::Plugin(p) = &kind else { unreachable!() };
+            for spec in p.specs().iter().filter(|s| s.unit != kt_model::ParamUnit::Rgb8) {
+                let label = if spec.ty == ParamType::Flag {
+                    crate::widgets::flag_label(&spec.name)
+                } else {
+                    crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, &spec.name)
+                };
+                assert_ne!(label, spec.name.as_ref(), "{lang:?}: {tag}.{} has no caption", spec.name);
+            }
+            for (key, _) in crate::gen_ui::color_groups(&kind) {
+                assert!(!tr(*key).is_empty(), "{lang:?}: {tag}: a colour caption is empty");
+            }
+        }
+        for key in ["stripes", "dots", "grid", "waves"] {
+            assert!(crate::gen_ui::choice_label("pattern", key).is_some(), "{lang:?}: pattern {key} has no caption");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+}
+
+/// Test 3710 (gen-shapes, `v26.10` G5): the six shapes and plates are reached from Edit › Create a
+/// generator › Shapes, each one picture event; every row and colour is captioned in every language.
+/// - **PATH** Edit → Create a generator… → Shapes → Polygon / Star / Arrow / Border frame / Lower-third
+///   plate / Progress bar → a picture event at the cursor over what is under it, its window open
+#[test]
+fn t3710_the_shapes_and_plates_are_created_from_edit() {
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    let tags = ["polygon", "star", "arrow", "frame", "plate", "progress"];
+    for tag in tags {
+        let before = h.state().model.project().clips.len();
+        h.get_by_label(tr(k::menu::edit::TITLE)).click();
+        h.step();
+        h.step();
+        hover_item(&mut h, tr(k::bin::menu::NEW_GENERATOR));
+        hover_item(&mut h, tr(k::genkind::GROUP_SHAPES));
+        h.get_by_label(kind_label(tag)).click();
+        h.step();
+        h.step();
+        let made = new_clips(&h, before);
+        assert_eq!(made.len(), 1, "{tag}: {made:?}");
+        assert_eq!(made[0].r#gen.as_ref().map(|g| g.tag()), Some(tag), "{tag}: the kind");
+        h.state_mut().fx_editors.clear();
+        h.step();
+    }
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        for tag in tags {
+            let kind = GeneratorKind::default_for_tag(tag).expect("the kind");
+            assert_ne!(crate::gen_ui::kind_name(&kind), tag, "{lang:?}: {tag} has no name");
+            let GeneratorKind::Plugin(p) = &kind else { unreachable!() };
+            for spec in p.specs().iter().filter(|s| s.unit != kt_model::ParamUnit::Rgb8) {
+                let label = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, &spec.name);
+                assert_ne!(label, spec.name.as_ref(), "{lang:?}: {tag}.{} has no caption", spec.name);
+            }
+            for (key, _) in crate::gen_ui::color_groups(&kind) {
+                assert!(!tr(*key).is_empty(), "{lang:?}: {tag}: a colour caption is empty");
+            }
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }

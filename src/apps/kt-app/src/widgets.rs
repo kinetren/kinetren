@@ -104,6 +104,28 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "channels" => tr(k::genp::CHANNELS),
         "color" => tr(k::genp::COLOR),
         "curve" => tr(k::genp::CURVE),
+        // gen-technical (`v26.10` G5): the sync flash and the safe areas
+        "interval" => tr(k::genp::INTERVAL),
+        "flash" => tr(k::genp::FLASH),
+        "action_safe" => tr(k::genp::ACTION_SAFE),
+        "title_safe" => tr(k::genp::TITLE_SAFE),
+        // text-counter-source: the running value's start and a timecode's frame rate
+        "count_from" => tr(k::genp::COUNT_FROM),
+        "count_fps" => tr(k::genp::COUNT_FPS),
+        // gen-backgrounds: the moving backgrounds
+        "speed" => tr(k::genp::SPEED),
+        "cells" => tr(k::genp::CELLS),
+        "pattern" => tr(k::genp::PATTERN),
+        // gen-shapes: shapes and plates
+        "sides" => tr(k::genp::SIDES),
+        "points" => tr(k::genp::POINTS),
+        "inner" => tr(k::genp::INNER),
+        "head" => tr(k::genp::HEAD),
+        "inset" => tr(k::genp::INSET),
+        "left" => tr(k::genp::LEFT),
+        "top" => tr(k::genp::TOP),
+        "accent" => tr(k::genp::ACCENT),
+        "fill_time" => tr(k::genp::FILL_TIME),
         _ => return None,
     })
 }
@@ -317,6 +339,9 @@ pub fn flag_label(name: &str) -> String {
         "tone" => tr(k::genp::TONE),
         "beep" => tr(k::genp::BEEP),
         "stereo" => tr(k::genp::STEREO),
+        "center" => tr(k::genp::CENTER),
+        "thirds" => tr(k::genp::THIRDS),
+        "cut43" => tr(k::genp::CUT43),
         "bold" => tr(k::titlew::BOLD),
         "reverse" => tr(k::trn::REVERSE),
         "vertical" => tr(k::trn::VERTICAL),
@@ -1654,7 +1679,7 @@ fn param_label_widget(
         }
         _ => hint(&r, tr(k::fx::HINT_RESET)),
     }
-    r.double_clicked()
+    crate::clicks::double(&r)
 }
 
 /// The same row, but aware of curves.
@@ -1890,6 +1915,16 @@ pub struct ChainEdit<'a> {
     /// Sidechain keys feeding slots of this chain: (slot, the key track's name) — a dashed wire
     /// into the compressor (the track window).
     pub keys: Vec<(usize, String)>,
+    /// The lane of each slot (0 picture, 1 sound) for a pair's virtual chain (fx-graph D10): the
+    /// lane is the slot's EVENT, not its kind — a video event's slowed is an audio kind on the
+    /// picture lane. `None` — lanes by kind (the morpher) or one lane.
+    pub lane_of: Option<&'a mut Vec<u8>>,
+    /// The second lane's master switch (the pair's audio event); `Some` puts a switch at each lane's
+    /// In node instead of the toolbar's one.
+    pub master2: Option<&'a mut bool>,
+    /// The chain belongs to an event: its nodes offer the Viewer (fx-graph D11). A layer's or a
+    /// track's chain has no one event to cut, so no dead item is offered there (rule 9).
+    pub viewer: bool,
 }
 
 /// One read-only box after a chain (fx-graph v1c).
@@ -1902,6 +1937,8 @@ pub struct ContextBox {
     pub count: usize,
     /// The sidechain key of a track stage, by the key track's name.
     pub key: Option<String>,
+    /// The lane it follows (0 picture, 1 sound; a pair's audio event's boxes are on 1).
+    pub lane: u8,
 }
 
 /// Whose window a context box opens.
@@ -1981,6 +2018,11 @@ pub struct ChainChanged {
     pub removed: Option<usize>,
     /// A context box asked for its own window (a double click on it).
     pub open: Option<ContextTarget>,
+    /// The second lane's master switch changed (a pair, fx-graph D10).
+    pub master2: bool,
+    /// The Viewer asked: `Some(Some(i))` — show the picture after strip slot `i`; `Some(None)` —
+    /// back to the whole picture (fx-graph D11).
+    pub viewer: Option<Option<usize>>,
 }
 
 impl ChainChanged {

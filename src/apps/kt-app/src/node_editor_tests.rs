@@ -415,3 +415,194 @@ fn t3002_the_table_s_keys_act_on_the_graph_under_the_pointer() {
     press(&mut h, fit);
     assert!(nodes().iter().all(|r| r.height() < 30.0), "zoom to fit over the graph did not return the fit");
 }
+
+/// t3004 (fx-graph D10): an event and its linked audio are ONE graph — VHS Tape put on the picture
+/// stands as one device over both events, its sound half on the sound lane under its picture half;
+/// the sound half's switch turns the AUDIO event's slot off and leaves the picture's; the picture
+/// half's cross takes the device off both events.
+/// - **PATH** double click a video event linked to its audio, carrying VHS Tape → the effects window
+///   shows one graph: the picture lane with VHS Tape, the sound lane with its sound half under it →
+///   click the sound half's checkbox → it is struck through, the picture keeps the tape → click the
+///   picture half's cross → the tape goes from both events
+#[test]
+fn t3004_an_event_and_its_audio_are_one_graph() {
+    crate::plugins::install();
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.clips.push(clip(1, ClipKind::Video, vec![]));
+    p.clips.push(clip(2, ClipKind::Audio, vec![FxInstance::plugin("gain").unwrap()]));
+    p.validate().unwrap();
+    app.model = TimelineModel::new(p);
+    assert!(app.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::builtin("vhs_tape")] }));
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let tape = node_label(&h, "VHS Tape");
+    let tape_sound = node_label(&h, &sound("VHS Tape"));
+    assert!((tape.left() - tape_sound.left()).abs() < 1.0, "the halves are not one column: {tape:?} {tape_sound:?}");
+    assert!(tape_sound.top() > tape.bottom(), "the sound half is not under the picture half");
+    // the sound half's own switch: the audio event's slot
+    let boxes: Vec<egui::Rect> = h.query_all_by_role(egui::accesskit::Role::CheckBox).map(|n| n.rect()).collect();
+    let cb = boxes
+        .iter()
+        .filter(|r| (r.center().y - tape_sound.center().y).abs() < 8.0 && r.right() <= tape_sound.left() + 1.0)
+        .max_by(|a, b| a.right().total_cmp(&b.right()))
+        .copied()
+        .expect("the sound half's checkbox");
+    click_at(&mut h, cb.center());
+    let m = &h.state().model;
+    let a = m.clip(ClipId(2)).unwrap();
+    let ai = a.fx.iter().position(|f| f.tag() == "vhs_tape_sound").expect("the audio holds the sound half");
+    assert_eq!(a.fx_bypass.get(ai).copied(), Some(true), "the sound half's switch did not reach the audio event");
+    assert!(!m.clip(ClipId(1)).unwrap().fx_bypass.first().copied().unwrap_or(false), "the picture's tape was switched off with it");
+    // the picture half's cross takes the device off both events
+    let crosses: Vec<egui::Rect> = h.query_all_by_label(crate::icons::CLEAR).map(|n| n.rect()).collect();
+    let tape = node_label(&h, "VHS Tape");
+    let x = crosses
+        .iter()
+        .filter(|r| (r.center().y - tape.center().y).abs() < 8.0 && r.left() > tape.right() - 1.0)
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .copied()
+        .expect("the picture half's cross");
+    click_at(&mut h, x.center());
+    let m = &h.state().model;
+    assert!(m.clip(ClipId(1)).unwrap().fx.iter().all(|f| f.tag() != "vhs_tape"), "the tape stayed on the picture");
+    assert!(m.clip(ClipId(2)).unwrap().fx.iter().all(|f| f.tag() != "vhs_tape_sound"), "the device's sound outlived it");
+    assert!(m.clip(ClipId(2)).unwrap().fx.iter().any(|f| f.tag() == "gain"), "the audio's own effect went too");
+}
+
+fn click_at(h: &mut Harness<'_, KtApp>, at: egui::Pos2) {
+    h.hover_at(at);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+    }
+    h.step();
+    h.step();
+}
+
+/// t2997 (fx-graph D11): the Viewer — Ctrl+Shift+click on a node gives the preview the project with
+/// that event's chain cut after the node (the one composition path draws it), the right-click menu
+/// does the same; Esc gives the whole project back and the window stays; the model never changes.
+/// - **PATH** in an event's effects window Ctrl+Shift+click the Blur node → the preview shows the
+///   picture after Blur with the badge "Viewer: Blur" → press Esc → the whole picture, the window open
+#[test]
+fn t2997_the_viewer_shows_the_picture_after_a_node() {
+    crate::plugins::install();
+    let mut h = fx_harness(vec![FxInstance::blur(3), FxInstance::builtin("vignette")]);
+    let model_before = h.state().model.project().clone();
+    let blur = node_label(&h, crate::fx_editor::fx_display_name(&FxInstance::blur(3)));
+    h.hover_at(blur.center());
+    h.step();
+    let mods = egui::Modifiers { ctrl: true, shift: true, command: true, ..Default::default() };
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: blur.center(), button: egui::PointerButton::Primary, pressed, modifiers: mods });
+    }
+    h.step();
+    h.step();
+    let v = h.state().viewer.clone().expect("Ctrl+Shift+click did not turn the Viewer on");
+    assert_eq!(v.clip, ClipId(1));
+    let tags_in = |p: &Project| p.clips.iter().find(|c| c.id == ClipId(1)).map(|c| c.fx.iter().map(|f| f.tag().to_string()).collect::<Vec<_>>());
+    assert_eq!(tags_in(&h.state().player.project()), Some(vec!["blur".to_string()]), "the preview's project is not cut after Blur");
+    assert_eq!(h.state().model.project(), &model_before, "the Viewer changed the model");
+    // Esc: the whole picture, the window stays
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().viewer.is_none(), "Esc did not end the Viewer");
+    assert_eq!(tags_in(&h.state().player.project()), Some(vec!["blur".to_string(), "vignette".to_string()]), "the whole chain did not come back");
+    assert!(h.state().fx_editors.iter().any(|e| e.open), "Esc closed the window instead of ending the Viewer");
+}
+
+/// t3235 (track-device-sound, kkt-26.11.18b line 29): VHS Tape on a whole video
+/// track — its window draws the track and its sound track as one graph, the tape's halves one
+/// column; the sound half's switch reaches the audio track only; "Device sound: None" takes the
+/// half off; Cancel restores both tracks.
+/// - **PATH** right click Video 1's header → Track properties → the track window opens → add VHS
+///   Tape → the graph shows the picture lane and the sound lane with the tape's two halves in one
+///   column, and the row "Device sound: Audio 1" appears → click the sound half's switch → it is
+///   off, the picture half stays on → pick "None" in the row → the sound lane goes, the row stays
+#[test]
+fn t3235_a_track_device_and_its_sound_track_are_one_graph() {
+    crate::plugins::install();
+    let mut h = harness();
+    let app = h.state_mut();
+    let v1 = app.model.project().track_at(LaneKind::Video, 0).unwrap().id;
+    let a1 = app.model.project().track_at(LaneKind::Audio, 0).unwrap().id;
+    let before = (app.model.project().track(v1).cloned(), app.model.project().track(a1).cloned());
+    app.open_track_window(v1);
+    h.step();
+    // the tape, as the picker's click sends it: the model links the sound track of the same number
+    {
+        let app = h.state_mut();
+        let g = app.track_win.as_ref().unwrap().gesture;
+        app.apply_coalesced(Command::SetTrackFx { id: v1, fx: vec![FxInstance::builtin("vhs_tape")], bypass: vec![] }, g);
+    }
+    h.step();
+    h.step();
+    assert_eq!(h.state().model.project().track(v1).unwrap().sound, Some(a1));
+    assert!(crate::widgets::field_probe::rect_of("track.sound").is_some(), "the Device sound row is not drawn");
+    let tape = node_label(&h, "VHS Tape");
+    let tape_sound = node_label(&h, &sound("VHS Tape"));
+    assert!((tape.left() - tape_sound.left()).abs() < 1.0, "the halves are not one column: {tape:?} {tape_sound:?}");
+    assert!(tape_sound.top() > tape.bottom(), "the sound half is not under the picture half");
+    let boxes: Vec<egui::Rect> = h.query_all_by_role(egui::accesskit::Role::CheckBox).map(|n| n.rect()).collect();
+    let cb = boxes
+        .iter()
+        .filter(|r| (r.center().y - tape_sound.center().y).abs() < 8.0 && r.right() <= tape_sound.left() + 1.0)
+        .max_by(|a, b| a.right().total_cmp(&b.right()))
+        .copied()
+        .expect("the sound half's checkbox");
+    click_at(&mut h, cb.center());
+    let p = h.state().model.project();
+    let a = p.track(a1).unwrap();
+    let ai = a.fx.iter().position(|f| f.tag() == "vhs_tape_sound").expect("the audio track holds the sound half");
+    assert_eq!(a.fx_bypass.get(ai).copied(), Some(true), "the sound half's switch did not reach the audio track");
+    assert!(!p.track(v1).unwrap().fx_bypass.first().copied().unwrap_or(false), "the picture half went off with it");
+    // "Device sound: None"
+    click_at(&mut h, crate::widgets::field_probe::rect_of("track.sound").unwrap().center());
+    let none = crate::widgets::field_probe::rect_of("track.sound.none").expect("the None item");
+    click_at(&mut h, none.center());
+    let p = h.state().model.project();
+    assert_eq!(p.track(v1).unwrap().sound, None);
+    assert!(p.track(a1).unwrap().fx.is_empty(), "clearing the link left the half");
+    assert!(h.query_by_label(&sound("VHS Tape")).is_none(), "the sound lane stayed");
+    assert!(crate::widgets::field_probe::rect_of("track.sound").is_some(), "the row went with the link");
+    // Cancel restores both tracks
+    click_at(&mut h, crate::widgets::field_probe::rect_of("track.cancel").unwrap().center());
+    let p = h.state().model.project();
+    assert_eq!((p.track(v1).cloned(), p.track(a1).cloned()), before, "Cancel left a track changed");
+}
+
+/// t3237 (found-defects 820): Datamosh picked in a video TRACK's window is refused aloud — a stream
+/// stage decodes an event's own stream and the engine skips the slot on a track — and the chain
+/// stays as it was; another effect from the same picker lands.
+/// - **PATH** right click Video 1's header → Track properties → open the graph's picker → type
+///   "mosh" → click Datamosh → the status line says Datamosh breaks an event's own stream and a
+///   track has none, the graph holds no Datamosh node → pick Blur → it stands on the track
+#[test]
+fn t3237_datamosh_on_a_track_is_refused_with_its_reason() {
+    crate::plugins::install();
+    let mut h = harness();
+    let v1 = h.state().model.project().track_at(LaneKind::Video, 0).unwrap().id;
+    h.state_mut().open_track_window(v1);
+    h.step();
+    h.step();
+    let pick = |h: &mut Harness<'_, KtApp>, query: &str, tag: &str| {
+        click_at(h, crate::widgets::field_probe::rect_of("fxreg.add").expect("the graph's picker").center());
+        h.event(egui::Event::Text(query.into()));
+        h.step();
+        h.step();
+        let cell = crate::widgets::field_probe::rect_of(&format!("fxreg.tpl.{tag}")).unwrap_or_else(|| panic!("no {tag} in the picker"));
+        click_at(h, cell.center());
+    };
+    pick(&mut h, "mosh", "datamosh");
+    let app = h.state();
+    assert!(app.model.project().track(v1).unwrap().fx.is_empty(), "Datamosh landed on the track");
+    let said = app.error_status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(said, tr(k::track::NO_STREAM), "the refusal did not name its reason");
+    pick(&mut h, "blur", "blur");
+    assert_eq!(h.state().model.project().track(v1).unwrap().fx.len(), 1, "an ordinary effect did not land");
+}

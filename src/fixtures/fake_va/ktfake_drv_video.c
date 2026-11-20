@@ -7,12 +7,18 @@
 // So a file it made decodes to exactly what was uploaded — the proof of the upload path, NOT of
 // any real driver, and never a measurement of speed or quality.
 //
+// It is also a DECODER of exactly those files (hw-segment-decode): the VLD entry point reads the
+// slice data FFmpeg hands it — I_PCM macroblocks after the slice header — back into the surface.
+// Any other macroblock is a refused picture. So a file this driver wrote decodes here to the same
+// NV12 the processor's decoder makes of it: the proof of our hardware decode path.
+//
 // No libva-dev here: the structures below mirror libva's stable ABI (major 1), and only the fields
 // used are named. Built by the test: `cc -shared -fPIC`.
 //
 //   KT_FAKE_VA          init-abort, init-refuse, surfaces-refuse, context-refuse, context-abort,
 //                       context-hang, frame-refuse, frame-abort, frame-refuse-after-N, frame-empty
-//   KT_FAKE_VA_LOG      a file: one line per process that finished, "frames N"
+//   KT_FAKE_VA_LOG      a file: one line per process that finished, "frames N" (encoded) and
+//                       "decoded N" (pictures decoded, when any)
 //
 // The same library is LD_PRELOADed for `drmGetNodeTypeFromFd`: libva refuses a file that is not a
 // DRM node, and a CI runner has none. The test's "render node" is a regular file.
@@ -35,6 +41,7 @@ enum {
 #define VA_ATTRIB_NOT_SUPPORTED 0x80000000u
 #define FOURCC_NV12 0x3231564eu
 #define PROFILE_H264_CB 13
+#define ENTRYPOINT_VLD 1
 #define ENTRYPOINT_ENC_SLICE 6
 
 typedef struct {
@@ -129,6 +136,14 @@ static uint32_t target;
 static uint32_t coded_buf;
 static int slice_type;
 static long frames;
+// the decoder (VLD): the context's config, the slice parameters of the picture, pictures decoded
+static int decoding;
+static struct {
+    uint32_t size, offset;
+    uint16_t bit_offset;
+    uint8_t type;
+} dec_slice;
+static long decoded;
 // the packed headers of the picture, in the order they came
 static struct {
     uint32_t type, bits;
@@ -229,10 +244,11 @@ static void write_macroblock(Bits *b, const Surface *s, unsigned mbx, unsigned m
 static int terminate(void *ctx) {
     const char *log = getenv("KT_FAKE_VA_LOG");
     (void)ctx;
-    if (log && frames > 0) {
+    if (log && (frames > 0 || decoded > 0)) {
         FILE *f = fopen(log, "a");
         if (f) {
-            fprintf(f, "frames %ld\n", frames);
+            if (frames > 0) fprintf(f, "frames %ld\n", frames);
+            if (decoded > 0) fprintf(f, "decoded %ld\n", decoded);
             fclose(f);
         }
     }
@@ -249,7 +265,8 @@ static int query_profiles(void *ctx, int *list, int *n) {
 static int query_entrypoints(void *ctx, int profile, int *list, int *n) {
     (void)ctx, (void)profile;
     list[0] = ENTRYPOINT_ENC_SLICE;
-    *n = 1;
+    list[1] = ENTRYPOINT_VLD;
+    *n = 2;
     return VA_OK;
 }
 
@@ -268,8 +285,8 @@ static int get_attributes(void *ctx, int profile, int ep, ConfigAttrib *a, int n
 }
 
 static int create_config(void *ctx, int p, int e, void *a, int n, uint32_t *id) {
-    (void)ctx, (void)p, (void)e, (void)a, (void)n;
-    *id = 1;
+    (void)ctx, (void)p, (void)a, (void)n;
+    *id = e == ENTRYPOINT_VLD ? 2 : 1;
     return VA_OK;
 }
 
@@ -319,6 +336,7 @@ static int create_context(void *ctx, uint32_t config, int w, int h, int flag, ui
     }
     coded_w = w;
     coded_h = h;
+    decoding = config == 2;
     *id = 1;
     return VA_OK;
 }
@@ -369,8 +387,97 @@ static int begin_picture(void *ctx, uint32_t context, uint32_t surface) {
     return VA_OK;
 }
 
+// ---- the decoder: I_PCM macroblocks back into the surface -----------------------------------
+
+typedef struct {
+    const uint8_t *d;
+    unsigned len, bit;
+} Reader;
+
+static int get_bit(Reader *r) {
+    if (r->bit >= r->len * 8) return -1;
+    int v = (r->d[r->bit / 8] >> (7 - r->bit % 8)) & 1;
+    r->bit++;
+    return v;
+}
+
+static long get_ue(Reader *r) {
+    int zeros = 0, b;
+    while ((b = get_bit(r)) == 0) zeros++;
+    if (b < 0 || zeros > 31) return -1;
+    long v = 1;
+    for (int i = 0; i < zeros; i++) {
+        b = get_bit(r);
+        if (b < 0) return -1;
+        v = (v << 1) | b;
+    }
+    return v - 1;
+}
+
+// the slice data FFmpeg hands the driver is the NAL as it stands in the stream; its bit offset is
+// counted on the payload without the emulation prevention bytes, so those go first
+static int decode_slice(const uint8_t *raw, unsigned size) {
+    uint8_t *rbsp = malloc(size + 1);
+    unsigned n = 0, zeros = 0;
+    for (unsigned i = 0; i < size; i++) {
+        if (zeros >= 2 && raw[i] == 3) {
+            zeros = 0;
+            continue;
+        }
+        rbsp[n++] = raw[i];
+        zeros = raw[i] == 0 ? zeros + 1 : 0;
+    }
+    Reader r = {.d = rbsp, .len = n, .bit = dec_slice.bit_offset};
+    Surface *s = &surfaces[target];
+    unsigned mbs_w = s->w / 16, mbs_h = s->h / 16;
+    int p_slice = dec_slice.type % 5 != 2;
+    for (unsigned mby = 0; mby < mbs_h; mby++) {
+        for (unsigned mbx = 0; mbx < mbs_w; mbx++) {
+            if (p_slice && get_ue(&r) != 0) goto refused; // mb_skip_run
+            if (get_ue(&r) != (p_slice ? 30 : 25)) goto refused; // mb_type: I_PCM
+            while (r.bit % 8) {
+                if (get_bit(&r) != 0) goto refused; // pcm_alignment_zero_bit
+            }
+            if (r.bit / 8 + 384 > n) goto refused;
+            const uint8_t *pcm = rbsp + r.bit / 8;
+            for (unsigned y = 0; y < 16; y++)
+                memcpy(s->mem + (mby * 16 + y) * s->w + mbx * 16, pcm + y * 16, 16);
+            for (int plane = 0; plane < 2; plane++) {
+                for (unsigned y = 0; y < 8; y++) {
+                    for (unsigned x = 0; x < 8; x++) {
+                        s->mem[s->w * s->h + (mby * 8 + y) * s->w + (mbx * 8 + x) * 2 + plane] =
+                            pcm[256 + plane * 64 + y * 8 + x];
+                    }
+                }
+            }
+            r.bit += 384 * 8;
+        }
+    }
+    free(rbsp);
+    return VA_OK;
+refused:
+    free(rbsp);
+    return VA_ERR_OPERATION_FAILED;
+}
+
 static int render_picture(void *ctx, uint32_t context, uint32_t *list, int n) {
     (void)ctx, (void)context;
+    if (decoding) {
+        for (int i = 0; i < n; i++) {
+            Buffer *b = &buffers[list[i]];
+            if (b->type == 4) { // VASliceParameterBufferH264
+                memcpy(&dec_slice.size, b->data, 4);
+                memcpy(&dec_slice.offset, b->data + 4, 4);
+                memcpy(&dec_slice.bit_offset, b->data + 12, 2);
+                dec_slice.type = b->data[16];
+            } else if (b->type == 5) { // VASliceDataBufferType
+                if (dec_slice.offset + dec_slice.size > b->size) return VA_ERR_INVALID_BUFFER;
+                int r = decode_slice(b->data + dec_slice.offset, dec_slice.size);
+                if (r != VA_OK) return r;
+            }
+        }
+        return VA_OK;
+    }
     for (int i = 0; i < n; i++) {
         Buffer *b = &buffers[list[i]];
         switch (b->type) {
@@ -403,6 +510,10 @@ static int render_picture(void *ctx, uint32_t context, uint32_t *list, int n) {
 
 static int end_picture(void *ctx, uint32_t context) {
     (void)ctx, (void)context;
+    if (decoding) {
+        decoded++;
+        return VA_OK;
+    }
     const char *m = mode();
     if (is_mode("frame-refuse")) return VA_ERR_OPERATION_FAILED;
     if (is_mode("frame-abort")) abort();
@@ -470,8 +581,64 @@ static int derive_image(void *ctx, uint32_t surface, Image *img) {
     return VA_OK;
 }
 
+// the images vaCreateImage made (a read of a decoded surface goes through one): id → its buffer
+#define MAX_IMAGES 64
+static struct {
+    uint32_t id, buf;
+} made[MAX_IMAGES];
+
+static int create_image(void *ctx, ImageFormat *format, int w, int h, Image *img) {
+    (void)ctx;
+    if (format->fourcc != FOURCC_NV12) return VA_ERR_UNIMPLEMENTED;
+    int slot = -1;
+    for (int i = 0; i < MAX_IMAGES; i++) {
+        if (!made[i].id) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) return VA_ERR_ALLOCATION_FAILED;
+    int r = new_buffer(9, w * h * 3 / 2, &img->buf);
+    if (r != VA_OK) return r;
+    buffers[img->buf].data = calloc(1, w * h * 3 / 2);
+    memset(&img->format, 0, sizeof img->format);
+    img->image_id = next_image++;
+    img->format.fourcc = FOURCC_NV12;
+    img->format.bits_per_pixel = 12;
+    img->width = w;
+    img->height = h;
+    img->data_size = w * h * 3 / 2;
+    img->num_planes = 2;
+    img->pitches[0] = img->pitches[1] = w;
+    img->offsets[0] = 0;
+    img->offsets[1] = w * h;
+    made[slot].id = img->image_id;
+    made[slot].buf = img->buf;
+    return VA_OK;
+}
+
+// a region of a surface into an image of the same width (what FFmpeg reads a decoded picture with)
+static int get_image(void *ctx, uint32_t surface, int x, int y, unsigned w, unsigned h, uint32_t image) {
+    (void)ctx;
+    Surface *s = &surfaces[surface];
+    uint8_t *dst = NULL;
+    for (int i = 0; i < MAX_IMAGES; i++) {
+        if (made[i].id == image) dst = buffers[made[i].buf].data;
+    }
+    if (!dst || !s->mem || x != 0 || y != 0 || w > s->w || h > s->h) return VA_ERR_OPERATION_FAILED;
+    for (unsigned r = 0; r < h; r++) memcpy(dst + r * w, s->mem + r * s->w, w);
+    for (unsigned r = 0; r < h / 2; r++) memcpy(dst + w * h + r * w, s->mem + s->w * s->h + r * s->w, w);
+    return VA_OK;
+}
+
 static int destroy_image(void *ctx, uint32_t id) {
-    (void)ctx, (void)id;
+    (void)ctx;
+    for (int i = 0; i < MAX_IMAGES; i++) {
+        if (made[i].id == id) {
+            destroy_buffer(ctx, made[i].buf);
+            made[i].id = 0;
+        }
+    }
     return VA_OK;
 }
 
@@ -495,7 +662,7 @@ int __vaDriverInit_1_0(Ctx *ctx) {
     ctx->version_major = 1;
     ctx->version_minor = 0;
     ctx->max_profiles = 1;
-    ctx->max_entrypoints = 1;
+    ctx->max_entrypoints = 2;
     ctx->max_attributes = 8;
     ctx->max_image_formats = 1;
     ctx->max_subpic_formats = 1;
@@ -522,6 +689,8 @@ int __vaDriverInit_1_0(Ctx *ctx) {
     ctx->vtable[V_SyncSurface] = ok;
     ctx->vtable[V_QueryImageFormats] = (Fn)query_image_formats;
     ctx->vtable[V_DeriveImage] = (Fn)derive_image;
+    ctx->vtable[V_CreateImage] = (Fn)create_image;
+    ctx->vtable[V_GetImage] = (Fn)get_image;
     ctx->vtable[V_DestroyImage] = (Fn)destroy_image;
     ctx->vtable[V_QuerySurfaceAttributes] = (Fn)query_surface_attributes;
     return VA_OK;

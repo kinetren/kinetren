@@ -2988,3 +2988,14 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    timeline lands whole with the scrubbed moment under the mouse; Alt puts the event's start under
    the cursor, another combination its end; the modifier may change mid-drag and the event's ghost
    shows where it lands before the drop.
+
+## 2026-11-20 — the list of what he is asked to check
+
+1. "свои просьбы запиши в отдельный список того что мне надо проверять и для себя там же пиши связи
+   чтобы помнить куда пойти и что чинить по моим замечаниям" — the orchestrator's requests to him live
+   in `docs/owner-checks.md`, each with the links to where his answer leads (`docs/orchestrator.md`,
+   "Reports to the owner").
+2. "у тебя там два чата свободных - ты не хочешь что-то еще делать параллельно? и еще пару чатов изучать
+   что-то, улучшать по спекам. подготавливать архитектурные вещи - спеки. но не выполнять их. выполняют
+   только трое." — free executors get work at once; two more sessions only study and prepare
+   architecture and specs (proposals, designs, feature notes), never code; three sessions execute.

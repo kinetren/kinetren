@@ -54,7 +54,7 @@ Reconnaissance of other editors (Vegas Adjustment Events, AE adjustment layer) r
   (`src/libs/kt-model/src/project.rs`): no counters, no hashes, no new field in `ClipEvent` (that would have been an edit of 83 literals across 33 files). Piece No. 0 = the original's id, so a clip covered entirely keeps its FX state (invariant 3). Anything that looks up a clip among the effective ones must call `same_clip`, not `==`.
 - **The only engine change for the sake of cutting — the ends of transitions**
   (`src/libs/kt-engine/src/video.rs` and `audio.rs`, renderer constructors):
-  `same_clip` + checking the boundary against the join; `t.joint(project)` is computed from the raw clips. `gpu_required_clips` collapses pieces back to the original via `slice_origin`, otherwise preflight would name synthetic ids.
+  `same_clip` + checking the boundary against the join; `t.joint(project)` is computed from the raw clips. the renderers collapse pieces back to the original via `slice_origin` (`video.rs`, `audio.rs`), otherwise preflight would name synthetic ids.
 - **One rule for a piece's entry point — `clip_slice`** (`src/libs/kt-model/src/project.rs`):
   the layer cut, `Command::Split` and trim all go through it; for a stretched clip the entry point is the integral of speed, and keys travel with the anchor. The guard "there are no assignments to `source_in` outside `project.rs`" — t273 (capability `ui-reach`).
 - **`chain_for(Video)` returns the warp from `audio_fx`** (`MorphPatch::chain_for`,
@@ -63,8 +63,8 @@ Reconnaissance of other editors (Vegas Adjustment Events, AE adjustment layer) r
   `src/libs/kt-model/src/project.rs`): when the switch is off, the event's chain goes away entirely (with curves and bypasses), and the layer's effects are appended to a clean one. Previously the layer appended into `c.fx`, and the event's switch turned off someone else's layer (t214).
 - **Source replacement shifts the event's `fx_auto` by the same delta as `source_in`** (`MorphPatch::apply_to`, `src/libs/kt-model/src/project.rs`): the layer's curves are not related to this — they are recomputed separately and appended AFTER. The combination "the event's own chain + substitution by a layer" was not checked by any test until t291.
 - **`from` of the strength slot — the slot from which THIS layer's contribution begins**
-  (`FxInstance::LayerMix { amount, from }`; CPU — `apply_chain_with_mixes` in
-  `src/libs/kt-engine/src/video.rs`, GPU — `layer_mix.wgsl` in `src/libs/kt-gpu`):
+  (`FxInstance::LayerMix { amount, from }`; planned as snapshot/mix ops by `kt_fx::plan::plan_chain`,
+  executed by kt-gpu `layer_mix.wgsl` — the CPU executor is gone since compute-kernels-render):
   the snapshot is taken exactly at the boundary of `from`, otherwise strength would roll back the event's own effects too. Layers stack, each with its own `from`. The blending kernel is the ready integer `dissolve_into`; mismatched sizes (Pan/CamMotion resample) are fitted with the same bilinear as all resamples. Audio: the reverb is one per engine chain, and a flag decides "whose it is" (the event's — on the dry side, the layer's — only on the wet side); the volume is split into "before the layer" and "the layer", otherwise strength 0 would eat the event's level.
 - **`MorpherEvent.enabled` ≠ `ClipEvent.fx_off`**: both mute without touching the state of the slots and the curves (`src/libs/kt-model/src/project.rs`), but the morpher's switch turns off the layer, while the event's switch turns off only its chain.
 - **`RemoveMedia` asks `MorpherEvent::media_refs`**
@@ -126,3 +126,9 @@ Reconnaissance of other editors (Vegas Adjustment Events, AE adjustment layer) r
 - **Decision**: `ZoneIndex`, laid out once per layer pass; zones come in the scan's order because `snap_out_of` takes the first zone holding the point (t2066).
 
 The whole walk, the axes and the numbers: `openspec/changes/archive/2026-11-08-builder-cost-guard/design.md`.
+
+## Spec health (2026-11-20)
+
+- The requirement "The event preview computes the same map as render" was a restatement of
+  `ui-timeline`'s "Thumbnails, sidecar and the event preview compute the same map as render" (both named
+  t249); it is removed here, the rule lives there.

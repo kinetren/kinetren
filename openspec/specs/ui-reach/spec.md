@@ -1596,3 +1596,95 @@ Why: `v26.10` line 17, the owner: "нет превью генераторов п
   family, each the cut at the middle of the window with that kind ("Loading" for the first second);
   click the Iris picture → the window shows Iris, the gallery is gone
 - **TEST** t3110 (`src/apps/kt-app/src/layout_tests.rs`)
+
+### Requirement: A track's and an event's right-click menus create, the window picks the kind
+A clip track's right-click "Create a generator…" SHALL be one item without a list of kinds: it SHALL
+create the track's first kind (a picture kind on a video track, a sound kind on an audio track) at the
+clicked track and time and open its window, whose gallery changes the kind. An event's "Transition with
+next/previous" SHALL each be one item: a dissolve with that neighbour as one history step, its window
+open. A generator window's kind gallery SHALL hold only the kinds of its event's stream. Lesson 3
+SHALL teach this path.
+Why: `v26.10` line 12 (G1): "Не вижу смысла делать выпадающие меню с перечислением всех видов
+генераторов … у переходов в ПКМ тоже такой же громоздкий бред. Достаточно в самом окне менять тип".
+
+#### Scenario: A generator from a track
+- **WHEN** audio track 2 is right-clicked at 6 s and "Create a generator…" pressed; then video track 2 at 2 s
+- **THEN** the menu lists no kinds; a sound event stands at 6 s on audio track 2, a solid colour at 2 s on video track 2; each opens its window
+- **PATH** right click on a track → "Create a generator…" → the event at the click, its window open → its Kind field → the gallery
+- **TEST** t1165 (`src/apps/kt-app/src/gen_audio_tests.rs`), live scenario `src/scripts/live/genaudio.py` (`./scripts/live-check.sh`)
+
+#### Scenario: A transition from an event
+- **WHEN** an event butted to the next is right-clicked and "Transition with next" pressed
+- **THEN** the menu lists no kinds; a dissolve joins them as one history step; its window is open
+- **PATH** right click on the event → "Transition with next" → the dissolve, its window with the Kind field open
+- **TEST** t3127 (`src/apps/kt-app/src/layout_tests.rs`), t1089 (`src/apps/kt-app/src/reach_tests.rs`), live scenarios `src/scripts/live/trans_next.py` and `src/scripts/live/lessons.py`
+
+#### Scenario: A sound event's gallery is the sound kinds
+- **WHEN** a generator is created from the audio track's menu and its Kind field opened
+- **THEN** the gallery shows the five sound kinds and no picture kind
+- **PATH** right click on the audio track → "Create a generator…" → its window → Kind → Tone, Audio noise, Sine sweep, Beep train, Silence
+- **TEST** t3128 (`src/apps/kt-app/src/gen_audio_tests.rs`)
+
+### Requirement: The track window edits a video track and its sound track in one graph
+A video track's window SHALL show, while the track has a sound track, ONE node editor: the video
+track's chain on the picture lane and the sound track's chain on the sound lane, a switch per lane at
+its In node, a device's halves in one column with each half's own switch. A "Device sound" row SHALL
+pick the sound track among the free audio tracks of the reel or none, shown only while the chain holds
+a simulated device or a link exists. The sound track's edits SHALL be part of the window's session
+and of its Cancel.
+Why: kkt-26.11.18b line 29 and fx-graph D10 — the pair is edited where the device is; rule 17, one
+widget; rule 9, no dead control.
+
+#### Scenario: The tape on a track and its sound half's switch
+- **PATH** right click Video 1's header → Track properties → the track window opens → add VHS Tape from the graph's picker → the graph shows the picture lane and the sound lane with the tape's two halves in one column, and the row "Device sound: Audio 1" appears → click the sound half's switch → the half is off, the picture half stays on → pick "None" in the row → the sound lane goes, the row stays
+- **WHEN** the person puts VHS Tape on a video track in its window, switches the sound half off, then clears the link
+- **THEN** the model's Audio 1 chain holds the half bypassed while Video 1's tape is on; clearing removes the half; Cancel restores both tracks
+- **TEST** t3235 (`src/apps/kt-app/src/node_editor_tests.rs`), live `track_sound` (`src/scripts/live/track_sound.py`)
+
+#### Scenario: The track window costs nothing at rest
+- **PATH** a video track carrying VHS Tape and Camera ISP, linked to Audio 1 → Track properties → the track window's graph shows both lanes → the mouse rests, then moves over the nodes → nothing redraws by itself
+- **WHEN** the track window of a video track with a device and its sound track is open on a pause, with the mouse moving over it
+- **THEN** no frame is asked at rest and a hover asks no layout
+- **TEST** t3236 (`src/apps/kt-app/src/idle_tests.rs`)
+
+### Requirement: Datamosh is refused on a track with its reason
+The track window SHALL refuse a stream device (Datamosh) put on a video track's chain — from the
+picker, a paste or a preset — leaving the chain as it was and saying in the status line, as an error,
+that Datamosh breaks an event's own stream and a track has none. A stream slot an older project holds
+on a track SHALL stay.
+Why: the engine skips a stream slot on a track stage (`video-fx`); offering it was a dead control
+(kt-app rule 9) and the device had no sound there (found-defects 820). Making it work on a track needs a
+track stream stage (design D1).
+
+#### Scenario: Datamosh picked in a track's window
+- **PATH** right click Video 1's header → Track properties → open the graph's picker → type "mosh" → click Datamosh → the status line says Datamosh breaks an event's own stream and a track has none, the graph holds no Datamosh node → pick Blur → it stands on the track
+- **WHEN** the person picks Datamosh, then Blur, in a video track's window
+- **THEN** the track's chain holds no Datamosh and the refusal names its reason; Blur lands
+- **TEST** t3237 (`src/apps/kt-app/src/node_editor_tests.rs`)
+
+### Requirement: The live rig waits for the program's window up to the test's guard
+Every lookup of the program's X window in the live rig SHALL wait for it as a consequence — asking
+again while the program lives, failing at once if it ended — up to the test's guard (`TEST_DEADLINE`,
+the ten minutes of `kt_time::test_deadline()`), never by a fixed number of seconds; the start of a
+scenario's own process and of a worker's stand SHALL wait by the same guard.
+Why: at a load average of 28 two scenarios went red with "the kt-app window did not appear" and passed
+alone (found-defects 822); a clock limit is a claim about the machine's load.
+
+#### Scenario: No bare window lookup
+- **WHEN** the live rig's scripts are read
+- **THEN** every `probe.window()` call is inside `kt_live.the_window` or a `try` that catches its exit, and the start waits of `kt_live` and the stand are bounded by `TEST_DEADLINE`
+- **TEST** t3238 (`src/apps/kt-cli/tests/dist_guard.rs`)
+
+### Requirement: A live wait for the window names why none came
+A stand and a scenario's own process SHALL print, once the window is found, the display, the program's
+pid and its first log line of this start; while no window is found they SHALL say every 30 s, and on
+giving up, whether the program ended (with its code), its editor child ended under a standing
+supervisor, it is not a client of its display, or it is connected and still starting. A program that
+ended, or whose editor child ended, SHALL end the wait at once.
+Why: a run waited the whole guard on four stands with an empty log and nothing said why
+(found-defects 824).
+
+#### Scenario: A dead program and a dead editor are named and end the wait
+- **WHEN** the diagnosis is run on a process that ended with code 3 and on a stand-in supervisor whose child is killed, with no askable display
+- **THEN** the first is dead and named "ended (code 3)" with its first log line; the live one is "still starting" while its child lives and dead, "the editor process ended", once the child ends; the stand and `kt_live` ask it in their window waits and print the start line
+- **TEST** t3239 (`src/apps/kt-cli/tests/dist_guard.rs`)

@@ -1277,3 +1277,93 @@ fn t1671_a_test_does_not_bound_its_wait_by_the_clock() {
         assert!(seen.contains(e), "the list names a limit that is gone: {e:?}");
     }
 }
+
+/// t3238 (found-defects 822): the live rig waits for the program's window as a consequence, up to
+/// the test's guard. `ui-probe.window()` answers at once and exits when no window is found, so a
+/// bare call is a clock limit of zero: every call in `scripts/live` goes through `kt_live.the_window`
+/// or stands in a `try` that catches the exit; the start waits (`_wait_window`, the stand's first
+/// frame and its settled geometry) are bounded by `TEST_DEADLINE`, not by a number of seconds.
+#[test]
+fn t3238_the_live_rig_waits_for_the_window() {
+    let dir = repo().join("src/scripts/live");
+    let mut bare = Vec::new();
+    for e in std::fs::read_dir(&dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.extension().and_then(|x| x.to_str()) != Some("py") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&p).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let mut in_door = false;
+        for (i, l) in lines.iter().enumerate() {
+            if l.starts_with("def ") {
+                in_door = l.starts_with("def the_window(");
+            }
+            let code = l.split('#').next().unwrap_or("");
+            // prose names the call in backticks (a docstring): not a call
+            if !code.contains("probe.window()") || code.contains("`probe.window()`") || in_door {
+                continue;
+            }
+            let before = lines[i.saturating_sub(3)..i].iter().any(|b| b.trim_start().starts_with("try:"));
+            let after = lines[i + 1..(i + 6).min(lines.len())].iter().any(|a| a.contains("SystemExit"));
+            if !(before && after) {
+                bare.push(format!("{}:{}", p.file_name().unwrap().to_string_lossy(), i + 1));
+            }
+        }
+    }
+    assert!(bare.is_empty(), "a bare window lookup in the live rig (use kt_live.the_window): {bare:?}");
+    let kt_live = std::fs::read_to_string(dir.join("kt_live.py")).unwrap();
+    assert!(kt_live.contains("def _wait_window(self, timeout=TEST_DEADLINE)"), "the start wait is not the test's guard");
+    let worker = std::fs::read_to_string(dir.join("worker.py")).unwrap();
+    assert_eq!(worker.matches("deadline = time.time() + TEST_DEADLINE").count(), 2, "the stand's start waits are not the test's guard");
+}
+
+/// t3239 (found-defects 824): a live wait that finds no window names why and ends at once when the
+/// program cannot bring one. `_why` is run on stand-ins with no display: a process that ended is
+/// dead with its code; a supervisor whose child ended is dead (the crash window is not the
+/// program's); a live one with no askable X server is "still starting". The stand and `kt_live`
+/// ask `_why.dead` in every wait for the window and print the start line (display, pid, log).
+#[test]
+fn t3239_a_window_wait_names_why_and_ends_on_a_dead_program() {
+    let dir = repo().join("src/scripts/live");
+    let script = r#"
+import subprocess, sys, time
+sys.path.insert(0, sys.argv[1])
+import _why
+log = sys.argv[2]
+open(log, "w").write("\nfirst line of the program\nsecond\n")
+p = subprocess.Popen(["sh", "-c", "exit 3"]); p.wait()
+seen = []
+assert _why.dead(p, seen), "an ended program is not dead"
+s = _why.state(":9999", p, log, seen)
+assert "ended (code 3)" in s and "first line of the program" in s, s
+sup = subprocess.Popen(["sh", "-c", "sleep 30 & wait; exec sleep 30"])
+deadline = time.time() + 600
+seen = []
+while not seen and time.time() < deadline:
+    _why.dead(sup, seen); time.sleep(0.05)
+assert seen, "the child was never seen"
+s = _why.state(":9999", sup, log, seen)
+assert "still starting" in s, s
+subprocess.run(["kill", str(seen[0])])
+while not _why.dead(sup, seen) and time.time() < deadline:
+    time.sleep(0.05)
+assert _why.dead(sup, seen), "a supervisor whose child ended is not dead"
+assert "editor process ended" in _why.state(":9999", sup, log, seen)
+sup.kill(); sup.wait()
+print("ok")
+"#;
+    let log = std::env::temp_dir().join(format!("t3239-{}.log", std::process::id()));
+    let out = std::process::Command::new("python3")
+        .args(["-c", script, dir.to_str().unwrap(), log.to_str().unwrap()])
+        .output()
+        .expect("python3");
+    let _ = std::fs::remove_file(&log);
+    assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let worker = std::fs::read_to_string(dir.join("worker.py")).unwrap();
+    let kt_live = std::fs::read_to_string(dir.join("kt_live.py")).unwrap();
+    for (name, text) in [("worker.py", &worker), ("kt_live.py", &kt_live)] {
+        assert!(text.contains("_why.dead("), "{name} does not end its window wait on a dead program");
+        assert!(text.contains("_why.start_line("), "{name} does not print its start line");
+    }
+}

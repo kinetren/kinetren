@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: []
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-CLR-005 — Scopes — waveform, parade, vectorscope, histogram, false color
@@ -120,6 +120,21 @@ And on what the scope is opened for before grading at all — in a reply to the 
   `show_viewport_immediate` (item 51, `src/apps/kt-app/CLAUDE.md`) — the path "like Resolve's" is not closed.
 - **There is something to test the layout with:** `egui_kittest::Harness` runs real
   frames without a window or GPU (`src/apps/kt-app/src/layout_tests.rs`).
+
+### Since 2026-11-20 (the code moved under this note)
+
+- **The preview no longer reads back.** preview-throughput D2 keeps the composite on the device
+  (`src/apps/kt-app/src/preview_display.rs` registers the engine's display target with egui), and a
+  covered range replays from `PresentMemo` (`src/libs/kt-gpu/src/engine.rs`). "The readback is already
+  paid for" above is history: a scope now needs its own small readback.
+- **A derived target per present already exists**: `PresentOptions { glow }`
+  (`src/libs/kt-engine/src/video_plan.rs`) refreshes a 32×18 ambient glow from the composite in the
+  same submit — the precedent for a reduced analysis frame.
+- **The GL display device still has no compute and no atomics** (`src/libs/kt-gpu/CLAUDE.md`), so the
+  counting stays on the CPU over a reduced frame (invariants 7, 11, 12 as above).
+- The owner took this candidate (★8, `docs/ktprompts/kkt-26.11.01-candidates.md`); the design is the
+  OpenSpec change `scopes`.
+- CAPABILITY: openspec/specs/video-plan/
 
 ### What is missing
 

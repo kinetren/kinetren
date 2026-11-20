@@ -1,5 +1,24 @@
 # Media index and decode — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **The burst cache holds pre-FX data only**: "post-FX video is a separate kind" is gone; the
+  executor's present memo and the stream memo keep results (video-plan).
+- **Caching post-FX audio** was reversed: the render thread keeps the final mix (kept-mix-settle).
+- **Decode threads**: `threads=auto` for every codec (`kt-ffmpeg/src/source_impl.rs`); "threads=1 for
+  VP9/AV1" is history.
+- **FFmpeg majors 6–9** are vendored, and the download is pinned to 9.0.2 (`kt-dirs`), not 8.1.2.
+- **The decoder lives in `src/libs/kt-ffmpeg/src/source_impl.rs`** (two demuxers, the audio seek,
+  `unsafe impl Send`), not `kt-media/src/ffmpeg.rs`, which is a bridge.
+- **Hardware decode is used** by the prerender's segment decoder (hw-segment-decode); "not taken up"
+  is history.
+- **Thumbnails open their own sources** on a scheduler lane (the offline-path rule), not requests at
+  `Thumbnail` priority.
+- **The order of value** in the memory ledger puts the kept mix first (spec).
+
 ## What hurt and for whom
 
 The old engine shared one decoder between prefetch and playback through a mutex and drove it with

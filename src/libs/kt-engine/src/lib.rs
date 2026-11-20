@@ -29,6 +29,7 @@ pub mod video;
 pub mod video_plan;
 
 pub mod worker;
+pub mod yuv;
 
 pub use audio::{AudioRenderer, RenderStats, db_to_linear, event_gain_linear};
 pub use export::{

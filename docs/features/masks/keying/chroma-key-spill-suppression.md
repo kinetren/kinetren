@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-MSK-001, F-MSK-003]
-checked: 2026-09-07
+checked: 2026-11-20
 ---
 
 # F-MSK-004 — Chroma key: matte display, despill and edge handling
@@ -90,6 +90,17 @@ A remark about the standard chroma key of Vegas in a thread that suggests keying
 What could NOT be found and why: reddit (r/editors, r/premiere, r/VideoEditing) and video.stackexchange.com do not open from this environment, the `WebSearch` budget in the session is exhausted, and the search engines through which the earlier agents went (DuckDuckGo, Brave, Mojeek, Ecosia, searx mirrors) answered with a captcha, 403 or 429; Bing returned results of another market. Therefore the targeted formulations of the customer — "Ultra Key vs Keylight", "green screen edges look terrible", "why does my key look better in Resolve" — are not confirmed by direct quotes: the four quotes above are taken from the platforms that did open (larryjordan.com and the Boris FX forum, where the VEGAS Pro community also lives).
 
 ## How it fits Kinotrain
+
+### Since 2026-11-20
+
+- The eyedropper is done (F-MSK-007); garbage/holdout mattes are expressible as slot masks (shape-masks,
+  F-MSK-001 done) — the "partial" above is closed for them.
+- The matte display lands through the node editor's Viewer (fx-graph v1, `src/apps/kt-app/src/node_editor.rs`):
+  a view mode on a key node, preview only.
+- The owner asked for better quality and an auto-analysis button (kkt-26.11.01b B3); the design is the
+  OpenSpec change `chroma-key-upgrade` (colour-difference model with a balance, choke/soften, despill with
+  luma restore, Analyze), the professional keyer is `pro-keyer`.
+- CAPABILITY: openspec/specs/video-fx/
 
 ### What is already there
 

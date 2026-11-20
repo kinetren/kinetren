@@ -449,8 +449,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 });
             // v14 (shape-masks): masks on an event, a slot or a track
             let has_v14 = p.has_masks();
+            // v17 (track-device-sound): a video track names its sound track
+            if p.has_track_sound() {
+                crate::meta::KT_META_V17
             // v16 (sim-audio-pairs): a simulated device's sound rows are set
-            if p.has_device_sound() {
+            } else if p.has_device_sound() {
                 crate::meta::KT_META_V16
             // v15 (pitch-tail-choice): a pitch whose echo of the effects before it rings on
             } else if p.has_ringing_echo() {
@@ -891,6 +894,7 @@ fn track_list(tracks: &[kt_model::Track]) -> Vec<crate::meta::KtTrack> {
                 blend: t.blend,
                 fx_off: t.fx_off,
                 masks: t.masks.clone(),
+                sound: t.sound.map_or(0, |s| s.0),
             }
         })
         .collect()
@@ -2593,6 +2597,7 @@ fn build_tracks(
                 x.blend = t.blend;
                 x.fx_off = t.fx_off;
                 x.masks = t.masks.clone();
+                x.sound = (t.sound != 0).then_some(kt_model::TrackId(t.sound));
                 x
             })
             .collect()

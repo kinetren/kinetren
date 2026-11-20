@@ -53,10 +53,9 @@ the lock moves to registration; the references stay a property of the product (F
 ### Requirement: The kernels are WGSL, held to stored frames within tolerances
 A video kernel SHALL be its WGSL: the point-wise and barrier kernels of each video plugin, and
 `geom_fused.wgsl`, which executes the program `geom.rs`/`plan.rs` build. There is no CPU or SIMD
-copy of a kernel. The frames SHALL be checked against the stored frames (capability `video-plan`)
-only through the shared tolerance helper with tolerance classes (EXACT / BILINEAR / THRESHOLD /
-GEOM / SIGNAL); an ad-hoc epsilon MUST NOT appear. An edit of the planner or of a geo primitive
-MUST be accompanied by an edit of `geom_fused.wgsl` in the same commit. A plugin's WGSL SHALL live in
+copy of a kernel. The frames SHALL be held to the stored frames as capability `video-plan` states it
+("The GPU is held to stored frames, only through tolerance classes"), and the planner changes with
+`geom_fused.wgsl` in one commit as its "The chain plan is built in one place" says. A plugin's WGSL SHALL live in
 its family crate. The fused geometry pass and the per-kind passes SHALL be assembled from the
 registry's WGSL pieces when the GPU executor is created, and the assembled text SHALL be a pure
 function of the registry.
@@ -79,13 +78,9 @@ loop over the registry are what keeps the picture from moving unnoticed.
 - **TEST** t974 (`src/libs/kt-gpu/tests/parity.rs`)
 
 ### Requirement: The chain plan is built by one code
-All decisions about the chain — segmentation into geo runs and barriers, routing of a
-single step to the old kernel or to the fused pass, absorption of point-wise ops into runs,
-the multiplicity K of barriers, the snapshot points of the layer's strength — SHALL be made by one
-planning function in kt-fx; the executor MUST execute the finished
-plan and decide nothing itself. The plan of a slice between the strength stops of a layer SHALL be a
-piece of the plan of the whole chain. Audio effects do not get into the plan and do not
-break a geo series.
+The chain SHALL be planned by the one planner of capability `video-plan` ("The chain plan is built in
+one place; geometry series in one pass"), the rule's home; this requirement keeps the effects' side of
+it: audio effects SHALL NOT get into the plan and SHALL NOT break a geo series.
 Why: before the single planner, the chain traversal lived in two copies and diverged; a
 divergence of segmentation must stay impossible by construction.
 
@@ -146,8 +141,7 @@ each step resampled again; the net unit must return the detail.
 
 ### Requirement: K× barriers carry detail; the kernels are resolution-invariant
 Barriers — every registered video kind of the barrier class, built-in or plugin, with no per-kind
-list (today blur, glow, edges, vhs, noise, greenscreen, sharpen, pixelate, chromatic_aberration,
-radial_blur, drop_shadow, halftone) — SHALL be executed at K× resolution under "compression
+list (the class is `VideoClass::Barrier` in each kind's declaration) — SHALL be executed at K× resolution under "compression
 above + zoom below": K = quantum of min(net zoom of the tail, net compression from the start),
 ceiling 4, ceiling of the buffer side `MAX_INTER_DIM = 4096` — a project constant,
 not a device limit. The kernel MUST be invariant to K (pixel geometry ×K,
@@ -191,10 +185,10 @@ a title or the output of a greenscreen landed in the composite as an opaque rect
 - **TEST** t519, t520, t522, t523 (`src/libs/kt-fx/tests/geo_fuse.rs`); the composite — t521 (`src/libs/kt-engine/tests/transitions_video.rs`, capability `video-plan`)
 
 ### Requirement: Memoization of the composite does not break "preview == export"
-A composed frame SHALL be memoized under the plan key (capability `video-plan`), which carries the
-hash of the chain, the geometry of the clip and the resolved camera; a stale value MUST NOT be read
-after a change of parameters, a shift of the clip, an edit or a move of the camera. Export MUST NOT
-use memoization. The cold and the warm compose SHALL be byte-for-byte equal to the export frame.
+A composed frame SHALL be memoized as capability `video-plan` states it ("Memoization of the
+composite and its key", the rule's home); this requirement keeps the effects' scenario: a stale value
+MUST NOT be read after a change of parameters, a shift of the clip, an edit or a move of the camera,
+and the cold and the warm compose equal the export frame.
 Why: a chain of four effects is tens of ms per frame, without memoization a warm loop does not play;
 but a cache that sees a static hash and is blind to the per-frame camera gave out stale results.
 
@@ -836,6 +830,7 @@ dewarp read past the sensor, and a barrel lens past the frame (camera-isp-edges)
   filmed with blooming 0 and 1
 - **THEN** raw NR at least halves the noise variance of the flat part and keeps the edge step within
   12 LSB; with blooming the raw of the spot's neighbour rises by more than 200 DN
+- **TEST** t1223 (`src/plugins/fx-video-camera/tests/consequences.rs`)
 
 #### Scenario: The frame's edges are picture, not smears
 - **WHEN** a frame whose brightness is a sawtooth along each axis (rising from every edge inward)
@@ -972,7 +967,7 @@ ran a thread per 8×8 block with three 64-float arrays, which a card spills to s
 
 #### Scenario: The Camera ISP keeps its picture
 - **WHEN** the ISP's GPU graph runs after the rewrite of its helpers, raw-front, raw NR and YUV
-- **THEN** it agrees with the CPU kernel within its tolerance and its consequences hold
+- **THEN** it agrees with its stored frame within its tolerance and its consequences hold
 - **TEST** t1217 (`src/libs/kt-gpu/tests/camera_isp.rs`)
 
 #### Scenario: Datamosh keeps its bytes

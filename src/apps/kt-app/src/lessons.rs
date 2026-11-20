@@ -202,7 +202,7 @@ pub const LESSONS: &[Lesson] = &[
             // the program makes a transition from the menu, never from an overlap: an overlap is
             // a cut (the owner's decision, t163/t464; kkt-26.11.01 item 6 and answer 1)
             Step {
-                args: &[Arg::Label(k::tl::menu::TRANSITION_PREV), Arg::Label(k::trn::kind::CROSSFADE)],
+                args: &[Arg::Label(k::tl::menu::TRANSITION_PREV)],
                 result: Some(k::lessons::L3_S1_DONE),
                 look: Some(Look::Transition),
                 ..step(

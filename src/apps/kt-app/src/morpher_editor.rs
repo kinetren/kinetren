@@ -481,6 +481,9 @@ impl KtApp {
                         // a layer is itself a context of the events under it: nothing comes after it here
                         context: Vec::new(),
                         keys: Vec::new(),
+                        lane_of: None,
+                        master2: None,
+                        viewer: false,
                     },
                     // BOTH kinds: a patch carries a video and an audio chain, and the one strip
                     // shows them together (`split_chains` sorts the pick into its chain)

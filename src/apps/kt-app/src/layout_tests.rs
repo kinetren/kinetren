@@ -19275,6 +19275,39 @@ fn clicks_no_hover(h: &mut Harness<'_, KtApp>, pos: egui::Pos2, n: usize) {
     h.step();
 }
 
+/// Test 3127: a click elsewhere just before a double click on an event leaves it a double click
+/// (found-defects 817). egui counted the double click's second click as a triple, because the click
+/// two before it (here on another event; in live `formula` the effects window's "Done", 2.5 s before
+/// under a widened window) fell in twice the double-click window: no FX window opened, a region was
+/// set over the event and the cursor jumped to its start. A triple is three clicks of one gesture.
+#[test]
+fn t3130_a_click_elsewhere_does_not_make_a_double_click_a_triple() {
+    use kt_model::*;
+    use crate::clicks::effective;
+    // egui's count, the count of the click before, whether it follows that one in the window
+    assert_eq!(effective(3, 2, true), 3, "the third click of one gesture is a triple");
+    assert_eq!(effective(3, 1, true), 2, "a triple whose first click was elsewhere is a double");
+    assert_eq!(effective(3, 1, false), 1, "nor a double when it does not follow the click before");
+    assert_eq!(effective(2, 1, true), 2);
+    assert_eq!(effective(1, 2, false), 1);
+    let (mut h, g) = copy_scene();
+    let elsewhere = egui::pos2(g.tick_to_x(25_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    let pos = egui::pos2(g.tick_to_x(125_000), g.lane_y(ClipKind::Video, 0, 0.6));
+    clicks(&mut h, elsewhere, 1);
+    let region = h.state().model.project().region;
+    // a double click on the second event 0.06 s later: inside egui's triple window (0.6 s)
+    clicks(&mut h, pos, 2);
+    assert!(
+        h.state().fx_editors.iter().any(|e| e.open && e.members.contains(&ClipId(2))),
+        "the double click opened the event's FX window"
+    );
+    assert_eq!(h.state().model.project().region, region, "no region was set over the event");
+    // and the third click of THIS gesture is still the triple of t927
+    clicks_no_hover(&mut h, pos, 1);
+    let r = h.state().model.project().region.expect("the gesture's triple click set no region");
+    assert_eq!((r.start.0, r.end.0), (100_000, 150_000));
+}
+
 /// Test 928: a triple click on a reel instance and on the level line.
 #[test]
 fn t928_triple_click_on_a_reel_and_on_the_level_line() {
@@ -20063,6 +20096,25 @@ fn t1620_short_and_double_press_keep_their_meaning() {
 /// space stops playback. Now playback continues whatever I do, even if I pressed space on a
 /// pause." The picture plays only while held, the head stays where it got to, and Ctrl runs
 /// it backward. The following tap is a plain play, not the double-press stop.
+
+/// A held Space plays once the hold is PROVEN: a frame that began the threshold after the press, the
+/// threshold widened by how busy the frames are (`KeyClock::busy`). A fixed 330 ms and two frames was
+/// a clock claim: at load ~30–45 the widened threshold had not passed (found-defects 783). Steps
+/// until playing, never before the threshold, up to the test's guard.
+fn r72_until_playing(h: &mut egui_kittest::Harness<'_, crate::app::KtApp>, pressed: std::time::Instant, what: &str) {
+    let deadline = kt_time::test_deadline();
+    while !h.state().player.transport.is_playing() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.step();
+    }
+    assert!(
+        pressed.elapsed() >= std::time::Duration::from_millis(crate::app::SPACE_HOLD_MS as u64),
+        "{what}: it played before the threshold ({:?})",
+        pressed.elapsed()
+    );
+}
+
 #[test]
 fn t1621_hold_from_pause_plays_only_while_held() {
     use kt_time::Tick;
@@ -20071,13 +20123,11 @@ fn t1621_hold_from_pause_plays_only_while_held() {
     h.state().player.seek(start);
     h.step();
 
+    let pressed = std::time::Instant::now();
     h.key_down(egui::Key::Space);
     h.step();
     assert!(!h.state().player.transport.is_playing(), "nothing may start before the threshold");
-    std::thread::sleep(std::time::Duration::from_millis(330));
-    h.step();
-    h.step();
-    assert!(h.state().player.transport.is_playing(), "past the threshold the hold must play");
+    r72_until_playing(&mut h, pressed, "past the threshold the hold must play");
     r72_feed_head(&mut h, 4_800);
     for _ in 0..8 {
         h.step();
@@ -20094,12 +20144,10 @@ fn t1621_hold_from_pause_plays_only_while_held() {
     assert!(stopped >= reached, "the release must not return to the start: {stopped:?}");
 
     // the same with Ctrl: backward, and stops likewise
+    let pressed = std::time::Instant::now();
     h.key_down_modifiers(egui::Modifiers::CTRL, egui::Key::Space);
     h.step();
-    std::thread::sleep(std::time::Duration::from_millis(330));
-    h.step();
-    h.step();
-    assert!(h.state().player.transport.is_playing(), "past the threshold Ctrl+hold must play");
+    r72_until_playing(&mut h, pressed, "past the threshold Ctrl+hold must play");
     assert!(h.state().player.playback_rate() < 0.0, "Ctrl+hold must play in reverse");
     r72_feed_head(&mut h, 4_800);
     let back = h.state().player.transport.playhead();
@@ -20259,6 +20307,38 @@ fn t2214_click_windows_widen_by_the_busy_frame() {
     let (double, click) = opts(&h);
     assert!((double - (DOUBLE_CLICK_S + 0.45)).abs() < 0.01, "the double click window: {double}");
     assert!((click - (CLICK_HOLD_S + 0.45)).abs() < 0.01, "the click window: {click}");
+}
+
+/// Test 3128 (found-defects 817): the windows widen BEFORE egui reads a frame's input, by the gap
+/// since the frame before began when that frame asked for this one at once. egui judges a click
+/// with the windows set a frame ago; a frame slower than the ones before it (the one that read a
+/// double click's first click, 155 ms under load, then its present) split the two clicks past a
+/// window that did not know that gap yet.
+#[test]
+fn t3131_click_windows_widen_by_the_gap_before_input() {
+    use crate::app::{CLICK_HOLD_S, DOUBLE_CLICK_S};
+    let mut h = harness();
+    h.step();
+    let opts = |h: &Harness<'static, KtApp>| {
+        h.ctx.options(|o| (o.input_options.max_double_click_delay, o.input_options.max_click_duration))
+    };
+    let ctx = h.ctx.clone();
+    let clock = &mut h.state_mut().key_clock;
+    clock.widen = true;
+    clock.busy = std::time::Duration::from_millis(20);
+    clock.animating = true;
+    clock.frame_at = std::time::Instant::now() - std::time::Duration::from_millis(450);
+    clock.widen_before_input(&ctx);
+    let (double, click) = opts(&h);
+    assert!(double >= DOUBLE_CLICK_S + 0.45 - 0.01 && double < DOUBLE_CLICK_S + 0.6, "the double click window: {double}");
+    assert!(click >= CLICK_HOLD_S + 0.45 - 0.01, "the click window: {click}");
+    // a frame that did not ask for the next at once: its gap is a rest, not work
+    let clock = &mut h.state_mut().key_clock;
+    clock.animating = false;
+    clock.frame_at = std::time::Instant::now() - std::time::Duration::from_secs(5);
+    clock.widen_before_input(&ctx);
+    let (double, _) = opts(&h);
+    assert!((double - (DOUBLE_CLICK_S + 0.02)).abs() < 0.01, "a rest does not widen: {double}");
 }
 
 /// USABILITY 2: "if I hold Ctrl+space we rewind in reverse". During playback the release
@@ -21839,4 +21919,47 @@ fn t3119_the_drop_ghost_is_the_real_event() {
         }
     }
     crate::i18n::set_lang(crate::i18n::Lang::En);
+}
+
+/// t3127 (generator-from-track, `v26.10` G1: "у переходов в ПКМ тоже такой же громоздкий бред. Достаточно
+/// в самом окне менять тип"): "Transition with next" is ONE plain item — no list of kinds — that makes
+/// a dissolve with the neighbour as one history step and opens its window, where the kind gallery is.
+/// - **PATH** right click on an event butted to the next one → "Transition with next" (no submenu) →
+///   a dissolve between them, its window open with the Kind field
+#[test]
+fn t3127_transition_with_next_is_one_item_and_opens_its_window() {
+    crate::plugins::install();
+    use kt_model::*;
+    let (mut h, _) = harness_three_clips_dt(Some(0.02));
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[1].start = kt_time::Tick(50_000);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let y = g.lane_y(ClipKind::Video, 0, 0.75);
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(25_000), y));
+    let labels = menu_labels(&mut h);
+    let item = tr(k::tl::menu::TRANSITION_NEXT);
+    assert!(labels.iter().any(|l| l == item), "no plain “{item}” item: {labels:?}");
+    assert!(
+        !labels.iter().any(|l| l == tr(k::trn::kind::CROSSFADE)),
+        "the menu lists transition kinds again: {labels:?}"
+    );
+    let depth = h.state().model.undo_depth();
+    {
+        use egui_kittest::kittest::Queryable;
+        h.get_by_label(item).click();
+    }
+    h.step();
+    h.step();
+    let p = h.state().model.project();
+    let t = p.transitions.iter().find(|t| t.a == Some(ClipId(1)) && t.b == Some(ClipId(2))).expect("a transition with the next event");
+    assert_eq!(t.kind, TransitionKind::Crossfade, "the item makes a dissolve");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "one history step");
+    assert!(h.state().transition_editors.iter().any(|e| e.id == t.id && e.open), "its window did not open");
 }

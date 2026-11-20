@@ -155,7 +155,7 @@ Each refusal was read in the code for the reason it states, and whether the reas
   the map reads. Sampling was already accepted: a formula layer on `rate` was legal because
   `resolve_one` samples it on the frame grid into Linear keys (t707 asserted the resolved speed passes
   `check_fx_auto`), so the spec's own scenario "at speed the formula is rejected" contradicted its test.
-- **D2. One sampling function (`rate_profile_points`) feeds the profile.** Linear segments pass bit for
+- **D2. One sampling function (`rate_profile_keys`) feeds the profile.** Linear segments pass bit for
   bit; every other shape and a segment formula is evaluated on a fixed grid, 240 audio frames = 450
   ticks (5 ms), fps-independent so the raw-clip readers (timeline, trim limit) need no project. The 10 ms
   trapezoid left 4.4 ticks of error over 10 s on `1 + 0.5·sin(6t)`, over the one-audio-frame bound of

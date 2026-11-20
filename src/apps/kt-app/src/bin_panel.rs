@@ -1021,7 +1021,7 @@ impl KtApp {
         // first click) and opens the parameters window — the same verb
         // “open” as the menu item and as the double-click on an event
         // (rule 17).
-        if resp.clicked() && !resp.double_clicked() {
+        if resp.clicked() && !crate::clicks::double(&resp) {
             let add = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
             if add {
                 if !self.bin_sel.remove(&id) {
@@ -1033,7 +1033,7 @@ impl KtApp {
                 *to_place = Some(id);
             }
         }
-        if resp.double_clicked() && gen_kind.is_some() {
+        if crate::clicks::double(&resp) && gen_kind.is_some() {
             *to_gen = Some(id);
         }
         let sel_n = self.bin_sel.len();

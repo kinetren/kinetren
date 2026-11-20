@@ -193,6 +193,22 @@ pub enum PutError {
     Io(String),
 }
 
+/// A segment writer's layout in the exact conversion's terms.
+fn yuv_of(p: kt_media::segment::SegmentPlanes) -> crate::yuv::YuvLayout {
+    use crate::yuv::{YuvLayout, YuvMatrix, YuvPix};
+    YuvLayout {
+        pix: match p.code {
+            0 => YuvPix::Yuv420p,
+            1 => YuvPix::Nv12,
+            2 => YuvPix::Yuv420p10,
+            3 => YuvPix::P010,
+            _ => YuvPix::Yuv422p10,
+        },
+        matrix: if p.bt709 { YuvMatrix::Bt709 } else { YuvMatrix::Bt601 },
+        full: p.full,
+    }
+}
+
 /// A segment being written by the prerender's thread: frames go to the encoder as they come, the
 /// manifest is written when it is committed.
 pub struct SegmentBuild {
@@ -204,6 +220,19 @@ pub struct SegmentBuild {
 impl SegmentBuild {
     pub fn push(&mut self, key: u64, rgba: &[u8]) -> Result<(), String> {
         self.writer.push(rgba)?;
+        self.manifest.keys.push(key);
+        Ok(())
+    }
+
+    /// The planes the segment's encoder takes, as the exact conversion names them (export-host-copy
+    /// D4); `None` — it takes RGBA.
+    pub fn planes(&self) -> Option<crate::yuv::YuvLayout> {
+        self.writer.planes().map(yuv_of)
+    }
+
+    /// The next frame as the `planes` layout's packed planes, made on the composing device.
+    pub fn push_planes(&mut self, key: u64, planes: &[u8]) -> Result<(), String> {
+        self.writer.push_planes(planes)?;
         self.manifest.keys.push(key);
         Ok(())
     }
@@ -470,6 +499,13 @@ fn read_loop(codec: Arc<dyn SegmentCodec>, rx: std::sync::mpsc::Receiver<ReadAsk
             Some(i) => i,
             None => match codec.reader(&path) {
                 Ok(r) => {
+                    // which decoder reads the tier (row 775: the device's, the processor only where
+                    // none opens) — once per reader, not per moment
+                    let (hw, what) = match r.decoder() {
+                        Ok(d) => (1, d),
+                        Err(why) => (0, why),
+                    };
+                    trace::ev(Ev::RenderCache).aux(rc::READER).b(hw).id(trace::name(&what) as u64).emit();
                     if open.len() >= READERS {
                         open.remove(0);
                     }
@@ -717,6 +753,10 @@ pub fn restored_key(present: u64, durable: u64) -> u64 {
 /// The moments the prerender should compose, in order (D4): the moments measured at least `heavy_ns`
 /// and not `done`, and the unmeasured neighbours of such moments that have a picture (`has_layer`) and
 /// are not `done`; those inside the loop `region` first, then by their distance to `head`.
+/// How far on each side of a heavy moment the prerender takes its unmeasured neighbours (found-defects
+/// 826): a light one is composed once and ends the run, a heavy one goes into the run's segment.
+pub const RUN_REACH: i64 = 8;
+
 pub fn candidates(
     costs: &BTreeMap<i64, u64>,
     step: i64,
@@ -735,16 +775,38 @@ pub fn candidates(
         if !done(t) {
             out.insert(t);
         }
-        for n in [t - step, t + step] {
-            if n >= 0 && !costs.contains_key(&n) && !done(n) && has_layer(n) {
+        // the unmeasured moments around it, up to `RUN_REACH` on each side (found-defects 826): with one
+        // neighbour, a run whose costs arrived one at a time (the playhead stepping, a scrub) grew a
+        // moment a pass, each a segment of its own — a segment goes on only forward. A measured moment
+        // (heavy: its own entry; light: the run's end), one on disk or one with no picture ends the reach
+        for dir in [-1i64, 1] {
+            for k in 1..=RUN_REACH {
+                let n = t + dir * k * step;
+                if n < 0 || costs.contains_key(&n) || done(n) || !has_layer(n) {
+                    break;
+                }
                 out.insert(n);
             }
         }
     }
-    let mut v: Vec<i64> = out.into_iter().collect();
-    let inside = |t: i64| region.is_some_and(|(s, e)| s <= t && t < e);
-    v.sort_by_key(|&t| (!inside(t), (t - head).abs(), t));
-    v
+    // a run of consecutive moments is taken from its START (found-defects 776): a segment goes on
+    // only forward, and taking each moment by its distance to the head, both sides alternating, cut
+    // the part of a run behind the head into a segment per moment — 54 moments in 14–16 files.
+    // Runs go by the loop region first, then by their distance to the head.
+    let mut runs: Vec<Vec<i64>> = Vec::new();
+    for t in out {
+        match runs.last_mut() {
+            Some(r) if r.last().is_some_and(|&l| l + step == t) => r.push(t),
+            _ => runs.push(vec![t]),
+        }
+    }
+    let inside = |r: &[i64]| region.is_some_and(|(s, e)| r.iter().any(|&t| s <= t && t < e));
+    let dist = |r: &[i64]| {
+        let (a, b) = (r[0], r[r.len() - 1]);
+        if (a..=b).contains(&head) { 0 } else { (a - head).abs().min((b - head).abs()) }
+    };
+    runs.sort_by_key(|r| (!inside(r), dist(r), r[0]));
+    runs.concat()
 }
 
 // ---- the player's tier ---------------------------------------------------------------------------
@@ -790,6 +852,9 @@ pub struct RenderCache {
     /// The prerender is working on a moment now (tests).
     pub(crate) busy: AtomicBool,
     /// A test's threshold of "heavy" in ns over the rule's half period (0 — the rule).
+    /// The quiet a test sets (ns, 0 — `QUIET`): a stimulus of input a test thread paces with its own
+    /// sleeps, which a loaded machine stretches past 1.5 s (found-defects 828).
+    quiet_for_tests: AtomicU64,
     heavy_for_tests: AtomicU64,
     /// The prerender parked with nothing left to do (or the cap full) since it last looked.
     settled: AtomicBool,
@@ -863,7 +928,10 @@ impl RenderCache {
             return None;
         }
         let since = trace::now_ns().saturating_sub(last);
-        let q = QUIET.as_nanos() as u64;
+        let q = match self.quiet_for_tests.load(Ordering::Acquire) {
+            0 => QUIET.as_nanos() as u64,
+            ns => ns,
+        };
         (since < q).then(|| Duration::from_nanos(q - since))
     }
 
@@ -926,6 +994,11 @@ impl RenderCache {
 
     /// Tests: "heavy" is `ns` and more instead of half a frame period (`None` — the rule). A software
     /// rasterizer composes a test's small picture far under any period.
+    /// Set the quiet (`None` — `QUIET`), for tests.
+    pub fn set_quiet_for_tests(&self, quiet: Option<Duration>) {
+        self.quiet_for_tests.store(quiet.map_or(0, |q| (q.as_nanos() as u64).max(1)), Ordering::Release);
+    }
+
     pub fn set_heavy_for_tests(&self, ns: Option<u64>) {
         self.heavy_for_tests.store(ns.unwrap_or(0), Ordering::Release);
     }
@@ -1011,6 +1084,9 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
     let mut full = false;
     // the size an encoder was seen to open at (found-defects 813): asked before any moment composes
     let mut opens: Option<(u32, u32)> = None;
+    // the planes the segments' encoder takes, learnt from the same probe: a moment is converted on the
+    // composing device and the encoder gets planes (export-host-copy D4)
+    let mut layout: Option<crate::yuv::YuvLayout> = None;
     let mut seg: Option<OpenSeg> = None;
     loop {
         let seen = rc.wake.seen();
@@ -1112,6 +1188,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
             let fps = (kt_time::TICK_HZ / step).max(1) as u32;
             match store.begin(q.width, q.height, fps) {
                 Ok(probe) => {
+                    layout = probe.planes();
                     // an empty segment leaves no file
                     let _ = store.commit(probe, false);
                     opens = Some((q.width, q.height));
@@ -1126,7 +1203,7 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
         }
         worked = true;
         rc.busy.store(true, Ordering::Release);
-        let out = one(&parts, &rc, &store, &display, &video, &built.project, built.seq, t, q, versions, &stop);
+        let out = one(&parts, &rc, &store, &display, &video, &built.project, built.seq, t, q, versions, layout, &stop);
         rc.busy.store(false, Ordering::Release);
         match out {
             Outcome::Heavy(dk, w, h, rgba) => {
@@ -1149,7 +1226,11 @@ pub(crate) fn run_prerender(parts: crate::player::PreviewParts, stop: Arc<std::s
                     }
                 }
                 let s = seg.as_mut().unwrap();
-                if s.build.push(dk, &rgba).is_ok() {
+                let pushed = match layout {
+                    Some(_) => s.build.push_planes(dk, &rgba),
+                    None => s.build.push(dk, &rgba),
+                };
+                if pushed.is_ok() {
                     s.moments.push((t, dk));
                     s.next = t + step;
                 } else {
@@ -1242,6 +1323,7 @@ fn one(
     t: i64,
     q: kt_media::Quality,
     versions: (u64, u64),
+    layout: Option<crate::yuv::YuvLayout>,
     stop: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Outcome {
     use kt_time::Tick;
@@ -1294,12 +1376,18 @@ fn one(
             if video.has_stream_stages() {
                 crate::video::stop_when(trace::stop::PRERENDER, check.clone(), || video.stream_advance(&parts.cache, Tick(t), q));
             }
+            // the segment's planes made on the composing device (export-host-copy D4), else RGBA
             let out = crate::video::stop_when(trace::stop::PRERENDER, check.clone(), || {
                 let plan = video.frame_plan(&parts.cache, Tick(t), q);
-                (exec.execute_into(&plan, &mut buf), plan.out_w, plan.out_h)
+                let r = match &layout {
+                    Some(l) => exec.execute_once_yuv(&plan, l, &mut buf),
+                    None => exec.execute_into(&plan, &mut buf),
+                };
+                (r, plan.out_w, plan.out_h)
             });
+            let want = |w: u32, h: u32| layout.map_or(w as usize * h as usize * 4, |l| l.frame_bytes(w, h));
             match out {
-                (Ok(true), w, h) if buf.len() == w as usize * h as usize * 4 => break (w, h),
+                (Ok(true), w, h) if buf.len() == want(w, h) => break (w, h),
                 (Ok(_), _, _) => {}
                 (Err(_), _, _) => {
                     span.c(2);
@@ -1411,22 +1499,30 @@ mod tests {
     }
 
     /// Test t2983 (render-cache-disk D4): the candidates are the heavy moments not done and their
-    /// unmeasured neighbours with a picture, the loop region's first, then by distance to the head; a
-    /// light moment and what lies past it are not candidates.
+    /// unmeasured neighbours with a picture, in runs of consecutive moments — the loop region's first,
+    /// then by distance to the head, each from its start (found-defects 776); a light moment and what
+    /// lies past it are not candidates.
     #[test]
     fn t2983_the_prerender_picks_what_was_measured_slow() {
         let step = 10;
         let heavy = 1000;
-        // heavy 100, 110; light 120; unmeasured 90, 130; heavy 300 (done); heavy 500
+        // heavy 100, 110; light 120; unmeasured before 100; heavy 300 (done); heavy 500
         let costs: BTreeMap<i64, u64> = [(100, 2000), (110, 1500), (120, 10), (300, 5000), (500, 1000)].into();
         let done = |t: i64| t == 300;
         let has = |t: i64| t != 510;
         let v = candidates(&costs, step, heavy, done, has, None, 480);
         // 300 is on disk, its unmeasured neighbours are still measured; 120 is light, 130 lies past it,
         // 510 has no picture
-        assert_eq!(v, vec![490, 500, 310, 290, 110, 100, 90], "nearest the head");
+        let range = |a: i64, b: i64| (a / step..=b / step).map(|i| i * step).collect::<Vec<_>>();
+        let want = [range(420, 500), range(310, 380), range(220, 290), range(20, 110)].concat();
+        assert_eq!(v, want, "runs nearest the head, each from its start, reaching RUN_REACH unmeasured moments");
         let v = candidates(&costs, step, heavy, done, has, Some((90, 115)), 480);
-        assert_eq!(&v[..3], &[110, 100, 90], "the loop region's first");
+        assert_eq!(&v[..3], &[20, 30, 40], "the loop region's run first, from its start");
+        // the head inside a run (found-defects 776): the whole run from its start, not outward from
+        // the head, so it goes into one segment
+        let run: BTreeMap<i64, u64> = (0..12).map(|i| (1000 + i * step, 5000)).collect();
+        let v = candidates(&run, step, heavy, |_| false, |_| true, None, 1060);
+        assert_eq!(v, (92..=119).map(|i| i * step).collect::<Vec<_>>(), "one run, its start first");
         assert!(candidates(&costs, step, 1_000_000, done, has, None, 0).is_empty(), "nothing heavy: nothing");
     }
 }

@@ -63,7 +63,8 @@ pub enum BitDepth {
 /// The RGB→YUV matrix: used by the conversion AND written as the tag (D6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Matrix {
-    /// What `sws` did by default and what the preview's decode does: the default.
+    /// swscale's own default, and the encoding default (the decode no longer assumes it: an untagged
+    /// HD source decodes as BT.709 since source-colour-matrix).
     #[default]
     Bt601,
     Bt709,
@@ -337,6 +338,8 @@ pub struct OutputProbe {
     pub fps: (i32, i32),
     /// `colorspace`, `color_range`, `color_primaries`, `color_trc` as libavutil numbers.
     pub color: (u32, u32, u32, u32),
+    /// The chroma's place (`AVChromaLocation`: 1 — left), the conversion's siting (export-host-copy D2).
+    pub chroma_location: u32,
     /// The codec tag (fourcc) of the video stream.
     pub video_tag: u32,
     pub audio_codec: Option<String>,

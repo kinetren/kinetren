@@ -1286,7 +1286,7 @@ impl KtApp {
             "{{\"frame\":{},\"meter_db\":[{:.1},{:.1}],\"input\":{},\"bench_done\":{},\"windows\":{},\"project\":\"{}\",\
              \"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\"markers\":[{}],\
              \"nest\":{},\"clipboard\":{},\"status\":\"{}\",\
-             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"posters_busy\":{},\"rest_clock_ms\":{},\"analysis\":{},\"morphers\":{},\
+             \"underruns\":{},\"callback_underruns\":{},\"dirty\":{},\"keys_gated\":{},\"double_click_s\":{:.3},\"rest_wakes\":\"{}\",\"sound_paused\":{},\"posters_busy\":{},\"rc_settled\":{},\"rest_clock_ms\":{},\"analysis\":{},\"morphers\":{},\
              \"compose\":{{\"ms\":{:.2},\"avg\":{:.2},\"gpu\":{},\"subsamples\":{},\
              \"on_display\":{},\"ui_only\":{},\"picture\":{},\"complete_taken\":{},\"shown\":{},\"skipped\":{},\"last_ms\":[{:.2},{:.2},{:.2},{:.2},{:.2}]}},\
              \"notices\":[{}],\
@@ -1333,6 +1333,9 @@ impl KtApp {
             self.audio.as_ref().is_some_and(|a| a.ctl().paused.load(ord)),
             // a poster queued by Ctrl+S or a close renders in the background (found-defects 767)
             crate::welcome::posters_busy(),
+            // the disk prerender has nothing left to do (found-defects 950): a live check waits for the
+            // program's own word, not for its processor share — starved, it read as quiet mid-work
+            self.player.render_cache().settled(),
             // the earliest state on a clock that will ask a frame with no input (a status line's
             // expiry, the misclick guard, the autosave): -1 — none. A rest check waits out the short
             // ones before it counts frames (found-defects 768)
@@ -1997,10 +2000,10 @@ impl KtApp {
                 ClipKind::Audio => format!("A{}", lane + 1),
             };
             ui.label(egui::RichText::new(crate::tf!(k::tl::lane::TITLE, name)).strong());
-            // generators-placement-and-audio D1: the kinds that land on THIS track, created at the
-            // clicked track and time (a header click has no time — the cursor); one body with Edit
-            // and the bin (rule 17)
-            if let Some(kd) = crate::gen_ui::generator_menu_for(ui, kind) {
+            // generators-placement-and-audio D1: created at the clicked track and time (a header
+            // click has no time — the cursor). ONE plain item since generator-from-track (`v26.10`
+            // G1): the kind is changed in the window it opens, not picked from a list here
+            if let Some(kd) = crate::gen_ui::generator_item_for(ui, kind) {
                 let at = self.ctx_at.unwrap_or_else(|| self.player.transport.playhead());
                 self.create_generator_at(kd, at, Some((kind, lane)));
                 ui.close();
@@ -2831,7 +2834,7 @@ impl KtApp {
                 self.drag = None;
             }
             // double-click on the track header — rename (item 2 round 10)
-            else if gutter_resp.double_clicked()
+            else if crate::clicks::double(&gutter_resp)
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
                 && let Some((kind, lane)) = geom.key_at_y(pos.y)
             {
@@ -3506,7 +3509,7 @@ impl KtApp {
                 // selecting a region (the owner’s decision, item 8).
                 // The hit zone follows the DRAWN triangle (the display clock)
                 let head_x = tick_to_x(self.player.video_playhead().0);
-                if response.double_clicked()
+                if crate::clicks::double(&response)
                     && let Some(start) = pick_range_marker(
                         &self.model.project().markers,
                         x_to_tick(pos.x),
@@ -3541,7 +3544,7 @@ impl KtApp {
                 // (the floor is 40 px before it), and the first events stay ordinary events.
                 self.jump_click(x_to_tick(pos.x), edge_heat(pos.x), rect.width() as f64 * tpp, tpp);
             } else if let Some((inst, left)) =
-                band_edge_at(self, pos).filter(|_| !response.double_clicked())
+                band_edge_at(self, pos).filter(|_| !crate::clicks::double(&response))
                 && response.drag_started()
             {
                 // The EDGE of the window of an expanded strip comes BEFORE all other targets in its rows:
@@ -3559,7 +3562,7 @@ impl KtApp {
                     self.drag = Some(Drag::NestWindow { inst, left, cur });
                 }
             } else if let Some((cid, left)) =
-                camera_edge_at(self, pos).filter(|_| !response.double_clicked())
+                camera_edge_at(self, pos).filter(|_| !crate::clicks::double(&response))
                 && response.drag_started()
             {
                 self.select_camera_only(cid);
@@ -3569,7 +3572,7 @@ impl KtApp {
                 }
             } else if let Some(cid) = camera_at(self, pos) {
                 self.select_camera_only(cid);
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     self.open_camera_editor(cid);
                 } else if response.drag_started()
                     && let Some(orig) = self.model.project().cameras.iter().find(|c| c.id == cid)
@@ -3584,7 +3587,7 @@ impl KtApp {
                 }
             } else if let Some((mid, left)) = morph_edge_at(self, pos).filter(|_| {
                 // double-click on the edge is still “open window”
-                !response.double_clicked()
+                !crate::clicks::double(&response)
             }) && response.drag_started()
             {
                 self.select_morph_only(mid);
@@ -3594,7 +3597,7 @@ impl KtApp {
                 }
             } else if let Some(mid) = morpher_at(self, pos) {
                 self.select_morph_only(mid);
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     self.open_morph_editor(mid);
                 } else if response.drag_started()
                     && let Some(orig) = self.model.project().morphers.iter().find(|m| m.id == mid)
@@ -3607,7 +3610,7 @@ impl KtApp {
                         moved: false,
                     });
                 }
-            } else if response.double_clicked()
+            } else if crate::clicks::double(&response)
                 && let Some(tid) = transition_body_at(self, pos)
             {
                 // double-click on the transition window = its properties (parity with
@@ -3616,7 +3619,7 @@ impl KtApp {
                 // (R.51) has no drag zones at all, but it does have a window.
                 self.open_transition_editor(tid);
             } else if let Some((tid, tz)) = transition_at(self, pos) {
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     // double-click on the handles/seam = the same properties window
                     self.open_transition_editor(tid);
                 } else if response.drag_started() {
@@ -3665,7 +3668,7 @@ impl KtApp {
                     // of the group moves the whole group (the selection is not broken)
                     self.select_only(id);
                 }
-                if response.double_clicked() {
+                if crate::clicks::double(&response) {
                     // double-click opens FX — exactly what the clip hint has promised since R.18
                     // (before R.33 it was misleading: a click set the region, and FX were hidden
                     // in the RMB menu). The region by event stayed on Shift+double-click
@@ -3719,7 +3722,7 @@ impl KtApp {
                 // delayed: every FX window would open 300 ms late to spare the rare triple click.
                 // The level line keeps its own double click (the reset) and ignores the third.
                 let after_level = self.pending_double == Some((id, DoubleEffect::LevelReset));
-                if response.triple_clicked() && !shift_held && zone != ClipZone::Level && !after_level {
+                if crate::clicks::triple(&response) && !shift_held && zone != ClipZone::Level && !after_level {
                     self.region_from_event(id);
                     match self.pending_double.take() {
                         Some((pid, DoubleEffect::OpenedFx)) if pid == id => {
@@ -3730,7 +3733,7 @@ impl KtApp {
                         Some((pid, DoubleEffect::ToggledNest)) if pid == id => self.expand_in_place(id),
                         _ => {}
                     }
-                } else if response.double_clicked() {
+                } else if crate::clicks::double(&response) {
                     // handled above
                 } else if response.drag_started() {
                     match zone {
@@ -6730,28 +6733,12 @@ impl KtApp {
                             } else {
                                 tr(k::tl::menu::TRANSITION_PREV)
                             };
-                            // the KIND is chosen at once, not “first fade,
-                            // then redo it” — the claim of item 1 R.33.
-                            // A submenu: dissolve comes first (the former
-                            // one-click path stays short).
-                            let mb = ui.menu_button(label, |ui| {
-                                let mut pick: Option<TransitionKind> = None;
-                                let mut cat: Option<crate::i18n::Key> = None;
-                                for kind in TransitionKind::all() {
-                                    let c = crate::transition_editor::kind_category(kind);
-                                    if cat != Some(c) {
-                                        if cat.is_some() {
-                                            ui.separator();
-                                        }
-                                        cat = Some(c);
-                                    }
-                                    let r = ui.button(crate::transition_editor::kind_name(kind));
-                                    crate::widgets::field_probe::note(&format!("tl.trans.{}", kind.tag()), r.rect);
-                                    if r.clicked() {
-                                        pick = Some(kind.clone());
-                                    }
-                                }
-                                let Some(kind) = pick else { return };
+                            // ONE plain item (generator-from-track, `v26.10` G1: "у переходов в ПКМ тоже
+                            // такой же громоздкий бред. Достаточно в самом окне менять тип"): a
+                            // crossfade, and its window opens with the kind gallery (G6)
+                            let mb = ui.button(label);
+                            crate::widgets::field_probe::note(if next { "tl.trans.next" } else { "tl.trans.prev" }, mb.rect);
+                            if mb.clicked() {
                                 let (a, b) = if next { (id, n) } else { (n, id) };
                                 let clip = |i: ClipId| {
                                     self.model.project().clips.iter().find(|c| c.id == i).cloned()
@@ -6770,24 +6757,27 @@ impl KtApp {
                                     } else {
                                         Tick::ZERO
                                     };
-                                    self.apply(Command::AddTransition(TransitionEvent {
-                                        id: TransitionId(self.next_transition_id()),
+                                    let tid = TransitionId(self.next_transition_id());
+                                    if self.apply(Command::AddTransition(TransitionEvent {
+                                        id: tid,
                                         a: Some(a),
                                         b: Some(b),
                                         in_offset: half,
                                         out_offset: half,
-                                        kind,
+                                        kind: TransitionKind::Crossfade,
                                         audio: Default::default(),
                                         auto: vec![],
                                         invert: false,
-                                    }));
+                                    })) {
+                                        self.open_transition_editor(tid);
+                                    }
                                 }
                                 ui.close();
-                            });
+                            }
                             // the tour's transitions lesson points at this item
                             // (tour-lessons-fixes D5)
                             let key = if next { k::tl::menu::TRANSITION_NEXT } else { k::tl::menu::TRANSITION_PREV };
-                            crate::widgets::lesson_mark::item(ui, key, mb.response.rect);
+                            crate::widgets::lesson_mark::item(ui, key, mb.rect);
                         }
                         for incoming in fades {
                             let label = if incoming {

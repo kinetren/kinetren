@@ -4,7 +4,7 @@
 The FX window (an event and its link partners), the track window, the morpher window and a
 composition instance's chain SHALL show and edit effects through ONE node editor in one style. It
 SHALL open framed (every node in view) and SHALL never scroll: the detailed nodes when they fit
-the width, else small chips wrapped into bands (the zoom is a LEVEL OF DETAIL — the text stays
+the width and at most 40 % of the window's visible height (the form keeps its room), else small chips wrapped into bands (the zoom is a LEVEL OF DETAIL — the text stays
 sharp and every widget keeps its real place); Ctrl+wheel over the graph switches detail and
 chips, a middle drag pans the detail, "Frame all" and a double click on empty space return the
 fit; the plain wheel stays the window's scroll. Picture and
@@ -58,10 +58,16 @@ rule 17 — one widget. U8 — "2-3 ползунка, но … как умест
 - **TEST** t2999 (`src/apps/kt-app/src/node_editor_tests.rs`)
 
 #### Scenario: The Viewer shows the picture after a node
-- **PATH** Ctrl+Shift+click the Geometry node of an event carrying Geometry, VHS Tape and Glow → the preview shows the picture after Geometry with the badge "Viewer: Geometry" → Esc → the full picture returns
+- **PATH** in an event's effects window Ctrl+Shift+click the Blur node (or right-click it → "Show the picture after this effect") → the preview shows the picture after Blur with the badge "Viewer: Blur" → press Esc → the whole picture again, the window stays open
 - **WHEN** the person views the output of a node in the middle of a chain
-- **THEN** the preview's frame equals the frame of the same event whose chain ends at that node, built by the one plan; Esc returns the frame of the whole chain
-- **TEST** t2997 (`src/apps/kt-app/src/node_editor_tests.rs`)
+- **THEN** the player holds the project with that one event's chain cut after the node (its curves and slot masks with it), so the one plan composes the preview and the sound is heard up to that node; the model does not change; Esc, Play, a Ctrl+Shift+click on empty canvas or closing the window give the whole project back
+- **TEST** t2997 (`src/apps/kt-app/src/node_editor_tests.rs`), live `node_graph`
+
+#### Scenario: An event and its linked audio are one graph
+- **PATH** double click a video event linked to its audio, carrying VHS Tape → the effects window shows one graph: the picture lane with VHS Tape, the sound lane with its sound half under it, a switch at each lane's In → click the sound half's checkbox → it is struck through, the picture keeps the tape → click the picture half's cross → the tape goes from both events
+- **WHEN** the effects window of an A/V pair (one video and one audio event of a link group, neither a generator nor a composition) shows a device
+- **THEN** one graph holds both events' chains, a device's halves in one column; the sound half's switch reaches the AUDIO event's slot only; the cross takes the device off both; an event whose chain did not change sends nothing; each event's form stays in its own section below
+- **TEST** t3004 (`src/apps/kt-app/src/node_editor_tests.rs`), live `node_graph`, `vhs_sound`
 
 #### Scenario: The table's keys act on the graph under the pointer
 - **PATH** in an event's effects window click the Blur node → with the pointer over the graph press the mute key → Blur is struck through → press Delete → Blur goes, the event stays on the timeline → press zoom in → the detailed nodes → press zoom to fit → the fit again

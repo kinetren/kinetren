@@ -202,15 +202,6 @@ Why: blocks hidden one under another, and "a new track every time" — both are 
 - **THEN** each block is caught by the mouse in its own row; the block follows the cursor in the preview too; the frame catches morph and camera blocks
 - **TEST** t275, t276, t277 (`src/apps/kt-app/src/layout_tests.rs`)
 
-### Requirement: The event preview computes the same map as render
-The waveform and the filmstrip SHALL translate pixels into material through the engine's map (taking the warp and reverse into account), without creating their own formula; stretching MUST NOT generate new decoding.
-Why: a linear map in the UI drew not what was playing (the container — the rule of the warp-map cache, capability `ui-timeline`).
-
-#### Scenario: The preview follows the stretch map
-- **WHEN** the event is slowed down
-- **THEN** the filmstrip and the waveform take the material by the integral of speed; the step is chosen by the span consumed
-- **TEST** t249 (`src/apps/kt-app/src/layout_tests.rs`)
-
 ### Requirement: An automated event grid in a morpher costs one cell per frame
 A morpher layer whose chain holds an event grid with automated column and row counts SHALL
 NOT rebuild the renderer, the effective events or the automation plan while the automation

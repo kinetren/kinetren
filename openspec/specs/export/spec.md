@@ -151,7 +151,7 @@ Export SHALL use the same frame plan and the same audio/video renderers as the p
 (capability `video-plan`, invariant 7): the only differences are the "clock by readiness" and
 Quality = project resolution. An export stream frame MUST be byte-for-byte equal to the
 preview composite of the same moment at the same Quality — with an empty chain, with an FX chain
-(cold and warm post-FX cache), with a generator, and with a title; on GPU, by the same
+(cold, and warm from the executor's memo), with a generator, and with a title; on GPU, by the same
 GPU executor. Source facts (native, procedural) export SHALL query open sources the same way as the
 player, and the list of generator sources SHALL be computed by ONE code path (`gen_sources`) for the player, export and kt-cli.
 Why: two composition codes ("PlaybackPipeline versus ProjectRenderer") were a defect n
@@ -178,10 +178,10 @@ of the old engine: the preview showed one thing, and the file contained another.
 - **TEST** t184 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
 ### Requirement: An export needs a device; a device's error stops it
-The GPU executor SHALL be passed explicitly by the product (kt-app/kt-cli). With no executor an
-export SHALL fail at its start with `ExportError::NoDevice` ("no video device"), and the render
-window SHALL say so (`BackendLine::None`). A GPU error in the middle of an export, `TooLarge`
-included, MUST be an export error.
+The GPU executor SHALL be passed explicitly by the product (kt-app/kt-cli), and the render window SHALL
+say when there is none (`BackendLine::None`). The refusal with `ExportError::NoDevice` and a GPU error as
+an export error are capability `video-plan`'s rule ("The GPU is the one executor"); this requirement keeps
+the export's scenarios.
 Why: the CPU composite is deleted (compute-kernels-render, owner, 2026-11-04), so no second way to
 compose a frame exists, and an export that writes no picture must not look like one that did.
 
@@ -190,14 +190,18 @@ compose a frame exists, and an export that writes no picture must not look like 
 - **THEN** the export passes and the frame differs from the frame without the effect; the second render fails with "no video device"
 - **TEST** t301 (`src/libs/kt-gpu/tests/gpu_render.rs`)
 
+#### Scenario: No device is a refusal before anything is written
+- **WHEN** a project is rendered with no executor among its backends
+- **THEN** the render fails before it writes anything, and the error reads "no video device"
+- **TEST** t1575 (`src/libs/kt-gpu/tests/gpu_render.rs`, `t301_export_renders_3d_and_t1575_no_device_is_a_refusal`)
+
 ### Requirement: Golden references for raw streams
 The raw stream functions (`render_raw_audio`/`render_raw_video`) SHALL deliver audio f32
 48 kHz/2ch and RGBA frames to the callbacks BEFORE the muxer; their hashes MUST be byte-for-byte equal between
 runs and to the committed `GOLDEN_AUDIO`/`GOLDEN_VIDEO` of EVERY
 shipped platform (a table by `(os, arch)`: linux/x86_64, windows/x86_64); the title
-scene — to its own `GOLDEN_TITLE_VIDEO` from the same table. Hash checks that today are not
-limited by platform and differ between OSes only through libm (video FX, FX thumbnails, merging of
-geometry series) SHALL use the same table. On a platform that is not in the table,
+scene — to its own `GOLDEN_TITLE_VIDEO` from the same table. Hash checks not tied to a platform (video FX, FX thumbnails, merging of geometry series) keep one
+constant for all platforms. On a platform that is not in the table,
 the comparison with the constant is skipped with a named reason, while the check between runs
 remains. A video hash SHALL be compared on a software adapter only (`hash_holds`): a card is held to
 the stored frames within tolerances (capability `video-plan`). The reference changes ONLY by a conscious decision with a record of the reason and the previous value
@@ -208,9 +212,10 @@ first green run on it, with a record of which machine and which run it was taken
 Why: the reference is the single guard of determinism (invariant 11) at once for the audio mix,
 warp, transitions and the composite; the bytes of the output .mp4 will never be
 identical for two users (the encoder is a property of the machine), so the stream is hashed BEFORE the
-encoder. Transcendental functions (`sin`, `exp`, `powf`) are taken from the platform's libm
-(glibc on Linux, the mingw CRT on Windows) and may diverge in the last bit: one constant
-for all OSes would keep Windows red forever, and its absence would be unguarded.
+encoder. The table by platform was made while transcendental functions came from the platform's
+libm (glibc, the mingw CRT) and could diverge in the last bit; since t1066 the frozen paths use
+`kt_plugin_api::math`, so both rows hold the same constants and the table stays as the place a new
+platform is admitted.
 
 #### Scenario: Determinism and the reference
 - **WHEN** the golden project is rendered twice
@@ -228,11 +233,12 @@ for all OSes would keep Windows red forever, and its absence would be unguarded.
 - **TEST** t859 (`src/libs/kt-engine/tests/golden_export.rs`)
 
 ### Requirement: Export chunk is computed from memory, layers and decode quality
-Export SHALL decode frames in batches via span reads (by the same path as the preview) and
+The SERIAL export (the reference export, `ExportOptions.serial` / `kt-cli export --serial`; a stream stage takes the pipeline, "A stream stage takes the pipelined export") SHALL decode frames in batches via span reads (by the same path as the preview) and
 composite from the cache; the batch size MUST be computed from the cache budget (no more than half),
 the frame size at the LARGEST decode quality (decode scale step S gives S² memory), and the number
 of simultaneous video layers (a blending layer counts as two frames; a pair inside a reel is counted).
-The export composite MUST NOT memoize post-FX frames. The finished export frame MUST NOT
+The pipelined export counts by what its frames ask and keeps them by holds (requirements on the
+pipeline below). The finished export frame MUST NOT
 depend on cache timing: the batch must survive until composition.
 Why: "black render" (120 frames of 1080p = 995 MB did not fit into the cache, and the LRU evicted them before
 composition) and "broken render" (a batch for one layer displaced the pre-frames of the neighbouring track;
@@ -273,9 +279,9 @@ our render was shorter than melt by 605 frames (found by cross-render).
 
 ### Requirement: Loudness is measured in the export pass, without master gain
 Export SHALL report the integrated loudness, the true peak and the LRA (BS.1770/EBU R128)
-of the finished mix, feeding the meter with the FINISHED chunk buffer — not a single extra decode or
-pass. The master gain MUST NOT take part in the measurement and MUST NOT exist in the project
-model: it is a monitoring loudness that lives only in the player. There is no "normalize" button —
+of the finished mix, measured as capability `audio-render` states it ("Loudness — BS.1770 / EBU R 128",
+the rule's home: the finished buffer, no extra pass, no master gain). The master gain MUST NOT exist in the
+project model: it is a monitoring loudness that lives only in the player. There is no "normalize" button —
 a reference line "to −23 LUFS: +N dB" is shown.
 Why: the number in the preview and the number in the file match BY CONSTRUCTION only if one
 code counts both over the same material; normalizing after the fact would mean re-encoding the file.
@@ -314,7 +320,7 @@ render"; but kt-cli has no dialog, and silence in a file is worse than a refusal
 - **TEST** t389 (`src/apps/kt-cli/tests/cli.rs`)
 
 ### Requirement: Render file name — by the project, region and length template
-The default name SHALL be `kt-<project>-<region>-<length>s.mp4`, where the region is the name of the
+The default name SHALL be `kt-<project>-<region>-<length>s.<ext>` (the extension follows the container), where the region is the name of the
 range marker MATCHING the region (no match or an empty name — the segment is omitted),
 the length is the whole seconds of the range; spaces → `-`, forbidden file-system characters → `_`.
 Why: the owner's requirement verbatim; the former `kp-render-<unix-time>` said nothing about
@@ -327,7 +333,7 @@ the project or the region.
 
 ### Requirement: kt-cli — the headless interface of the same engine
 `kt-cli` SHALL be able to `new`, `demo`, `roundtrip`, `convert`, `probe`, `render` (wav),
-`export` (mp4, the third argument is a forced encoder). Writing a project SHALL go through the same
+`export` (the container by the file's extension, the third argument is a forced encoder). Writing a project SHALL go through the same
 atomic writer as the GUI; an existing file MUST NOT be overwritten without `--force`.
 `demo` by default SHALL refer to synthetic sources (`synth:`), so that
 `demo && render` works without a single media file. Relative media paths SHALL be resolved
@@ -641,7 +647,7 @@ value: two runs of the same export on the same machine SHALL produce the same se
 (the time of each step, the elapsed time, the speed and the remaining time are computed by the
 caller). `kt-cli export` SHALL print the log lines to stderr.
 Why: the muxer chooses the encoder before the first frame (`Muxer::open` in
-`src/libs/kt-engine/src/export.rs`), but today only the final stats name it, so the progress
+`src/libs/kt-ffmpeg/src/muxer_impl.rs`), but before this rule only the final stats name it, so the progress
 window calls it "auto encoder" for the whole run, and a silent fall-back from hardware to
 software is learnt only at the end (F-EXP-004 Cons). Invariant 11 forbids the wall clock in the
 offline path: counts are deterministic, clocks are not.
@@ -774,7 +780,7 @@ the window and nothing on disk. kkt-26.11.18 T4: "объедини лог рен
 выделил отдельно то?!?" — every line already went into the journal and the trace, and `render.log` was a
 third copy the owner had to collect apart from the trace he sends.
 
-#### Scenario: The log is bounded, rotated and named
+#### Scenario: The log is bounded, journaled and named
 - **WHEN** the harness runs a scripted job that emits 1000 log lines and an error, with the data
   directory in a temp folder and the telemetry journal bound to a test journal; then presses Open log
 - **THEN** the window's log holds the last 800 lines, each starting with an elapsed stamp, and is
@@ -950,15 +956,6 @@ no fixed count is right for both.
 - **THEN** the frames are byte for byte equal, and the line names the counts used
 - **TEST** t2901 (`src/libs/kt-gpu/tests/export_ring.rs`)
 
-### Requirement: An export with no device refuses and says why
-An export with no video device SHALL stop before it writes anything, with `ExportError::NoDevice`.
-There SHALL be no other way to compose its frames.
-Why: the owner deleted the CPU composite ("удаляй", 2026-11-04).
-
-#### Scenario: No device is a refusal
-- **WHEN** a project is rendered with no executor among its backends
-- **THEN** the render fails, and the error reads "no video device"
-- **TEST** t1575 (`src/libs/kt-gpu/tests/gpu_render.rs`, `t301_export_renders_3d_and_t1575_no_device_is_a_refusal`)
 
 ### Requirement: A render goes on past the end of a cut file
 A render of an event longer than its file holds SHALL give every frame, the frames past the end with
@@ -1147,6 +1144,11 @@ than the preview (F-EXP-006 trick).
   decode that reads the tags (source-colour-matrix) — a file converted with one matrix and tagged
   with another would come back 12 or more codes off, so the conversion follows the label
 - **TEST** t2806 (`src/libs/kt-engine/tests/render_settings.rs`)
+
+#### Scenario: A fractional frame rate and a frame's own time are written as they are
+- **WHEN** 48 frames are written at the rate 24000/1001, and five frames at their own times 0, 3000, 9000, 10000, 19000 in a time base of 1/90000
+- **THEN** the first stream's rate is 24000/1001 and it lasts 2.002 s (an integer grid wrote 24 and 2.000 s); the second's packets stand at those times, their gaps in the same ratios (`MuxConfig.frame_rate` is a rational, `time_base` and `write_video_frame_at` serve a proxy that keeps its source's times; found-defects 823 — the project's own rate is F-SPD-005)
+- **TEST** t3601 (`src/libs/kt-engine/tests/render_settings.rs`)
 
 #### Scenario: The same settings write the same bytes
 - **WHEN** the same project is exported twice with libx265, libvpx-vp9 and prores_ks, each

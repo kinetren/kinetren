@@ -1,8 +1,9 @@
 //! Bridge to the in-process MP4 muxer (kt-ffmpeg).
 //! Codecs come from the system FFmpeg, so its hardware encoders are available.
 
+pub use kt_ffmpeg::encoders::PixFmt;
 pub use kt_ffmpeg::format::{self, OutputFormat, OutputProbe};
-pub use kt_ffmpeg::{AvailableEncoder, HwReport, MuxConfig, Muxer, OpenReport, VideoConverter, VideoFrame, hw_seam, hw_trial};
+pub use kt_ffmpeg::{AvailableEncoder, HwReport, MuxConfig, Muxer, OpenReport, Rate, VideoConverter, VideoFrame, hw_seam, hw_trial};
 
 /// The video encoders this OS tries, in order (the names of `kt_ffmpeg`'s cascade): the order
 /// the open report's failed candidates must follow (render-window-v1-parity, t954).

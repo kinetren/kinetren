@@ -785,7 +785,7 @@ impl KtApp {
             && response.interact_pointer_pos().is_some_and(|p| mute_rect.contains(p))
         {
             self.meter.muted = !self.meter.muted;
-        } else if fader.double_clicked() {
+        } else if crate::clicks::double(&fader) {
             self.meter.fader_target = 0.0;
         } else if let Some(pos) = fader.interact_pointer_pos() {
             if fader.drag_started() {

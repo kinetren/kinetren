@@ -67,6 +67,9 @@ pub(crate) fn emit(line: &str) {
 /// `role`, and never panic. A device given to `watch` again (a project reopened on the window's
 /// device) keeps one handler, the last.
 pub fn watch(device: &wgpu::Device, role: &'static str) {
+    // every device of the process passes here: the driver it loaded (llvmpipe's libLLVM, a card's
+    // C++ statics) is behind the process's end from now on (found-defects 784/785)
+    crate::exit::device_opened();
     device.on_uncaptured_error(std::sync::Arc::new(move |e: wgpu::Error| on_error(role, &e)));
     device.set_device_lost_callback(move |reason, message| {
         // a device dropped at exit says so too: not a fault

@@ -14,7 +14,7 @@ pub const KT_NS: &str = "kt";
 /// are byte-stable and open in old builds.
 /// One Pan3d does NOT bump the version: an unknown effect
 /// degrades into foreign-passthrough.
-pub const KT_META_VERSION: u32 = 16;
+pub const KT_META_VERSION: u32 = 17;
 pub const KT_META_V1: u32 = 1;
 /// Cameras and camera tracks (R.29).
 pub const KT_META_V2: u32 = 2;
@@ -92,6 +92,9 @@ pub const KT_META_V15: u32 = 15;
 /// audio bitrate, the camera's microphone) on its video slot. An old build ignores those rows and
 /// would drop the device's sound settings silently. Raised ONLY by content.
 pub const KT_META_V16: u32 = 16;
+/// track-device-sound: a video track names its sound track (`sound` in the track envelope). An old
+/// build would drop the link and leave the devices' sound halves unmirrored. Raised ONLY by content.
+pub const KT_META_V17: u32 = 17;
 
 // ---- typed metadata.kt envelopes (otio-types approach) -----------------
 // Structurally small things get OWN types (model evolution does not silently move the file schema);
@@ -219,6 +222,9 @@ pub struct KtTrack {
     /// The track's masks (shape-masks, v14).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub masks: Vec<kt_model::Mask>,
+    /// A video track's sound track id (track-device-sound, v17).
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub sound: u64,
 }
 
 fn is_zero_u64(v: &u64) -> bool {

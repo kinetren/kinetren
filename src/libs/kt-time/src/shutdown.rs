@@ -111,3 +111,73 @@ mod tests {
         assert!(left_behind().contains(&"t2950-stuck"));
     }
 }
+
+// ---- the end of the process: before the native libraries' destructors (found-defects 784/785) ----
+//
+// `exit` runs every hook registered before it, newest first: the destructors of the native libraries
+// the process loaded (libLLVM under llvmpipe, a libva driver, the C++ statics of a GPU driver), while
+// the threads a bounded close left behind may still draw, compile or decode in them. A kt-app test
+// process died so after its test passed ("double free or corruption", SIGSEGV), and row 172 before
+// it (LLVM under a warm-up compile). [`end_before_libraries`] is called right after such a library is
+// loaded: its hook is then registered AFTER that library's destructors, so it runs before them — it
+// runs the program's own last steps ([`before_exit`]), flushes C's stdio, and ends the process with
+// `_exit` and the status `exit` was given. Nothing a library frees at exit is the program's: the
+// memory goes with the process.
+
+type Last = std::sync::Mutex<Vec<fn()>>;
+static LAST: Last = std::sync::Mutex::new(Vec::new());
+static ARMED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// A last step of the process (the GPU's background work waited for, the trace flushed): run once
+/// by the hook of [`end_before_libraries`], in the order registered. Registering one twice runs it once.
+pub fn before_exit(step: fn()) {
+    let mut l = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if !l.iter().any(|f| std::ptr::fn_addr_eq(*f, step)) {
+        l.push(step);
+    }
+}
+
+/// How many times the end was registered (tests; 0 — the process ends by the C `exit` as before).
+pub fn end_registrations() -> u32 {
+    ARMED.load(std::sync::atomic::Ordering::Acquire)
+}
+
+#[cfg(target_os = "linux")]
+mod end {
+    use std::ffi::{c_int, c_void};
+    unsafe extern "C" {
+        fn on_exit(f: extern "C" fn(c_int, *mut c_void), arg: *mut c_void) -> c_int;
+        fn fflush(f: *mut c_void) -> c_int;
+        fn _exit(code: c_int) -> !;
+    }
+
+    extern "C" fn end(status: c_int, _: *mut c_void) {
+        let steps: Vec<fn()> = super::LAST.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        for s in steps {
+            s();
+        }
+        super::super::trace::flush();
+        // SAFETY: plain C calls at the end of the process; `fflush(NULL)` flushes every stream
+        unsafe {
+            fflush(core::ptr::null_mut());
+            _exit(status)
+        }
+    }
+
+    pub(super) fn register() -> bool {
+        // SAFETY: `end` is a plain C function of the process
+        unsafe { on_exit(end, core::ptr::null_mut()) == 0 }
+    }
+}
+
+/// Make the process end before the destructors of every native library loaded so far (see above).
+/// Called by the code that loads one — kt-gpu after it opens a device, kt-ffmpeg after it loads
+/// FFmpeg and after a hardware device opens. Each call registers the end again, so it stands before
+/// the libraries loaded since; registering is cheap, but a caller calls once per library it loads,
+/// never per frame. Linux (glibc's `on_exit`); elsewhere nothing changes.
+pub fn end_before_libraries() {
+    #[cfg(target_os = "linux")]
+    if end::register() {
+        ARMED.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}

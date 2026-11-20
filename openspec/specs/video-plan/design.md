@@ -1,5 +1,27 @@
 # Video composition — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code are what hold now.
+
+- **The CPU executor is gone** (compute-kernels-render, owner 2026-11-04): "one frame plan, two
+  executors", "CPU is the reference and the full fallback", an export's `TooLarge` re-run on the CPU,
+  costs counted through `FxScratch`, `compose_from_cache*`, the SIMD files `video_simd.rs` (engine and
+  kt-fx), the deferred AVX2 of the fused geometry pass, `kt-cli preview --cpu`, D4–D5 "the CPU path
+  composes ahead" (`compose_ahead.rs`, `compose_export_with`, `may_hold`) and "the export refuses a
+  software rasterizer in favour of CPU workers": none exists. The GPU is the one executor; `TooLarge`
+  gives no picture; an export with no device refuses; an export composes on software adapters too.
+- **Post-FX memoisation** (`postfx_key_hash`, a post-FX kind in the burst cache) is gone: the
+  executor's readback and present memos keyed by `plan_key` hold composites.
+- **"No compute on the GPU"** (samplers and a mask rasterizer rejected for lack of compute) holds for
+  GL only: on Vulkan a compute host runs the stream stages.
+- **gpu-arbiter / gpu-throughput**: "half a frame period", "at most three lower flights",
+  `loop_fill::width`, `AHEAD_PIECES`/`RING_LOWER_PIECES` are superseded by render-ahead D5: the bound is
+  one frame period, pieces are half of it, with no piece count.
+- **render-cache-disk D2** ("lossless files") is superseded by render-cache-codec: hardware H.264
+  segments.
+
 ## What hurt and for whom
 
 Each video effect was a separate rasterization into a buffer of output size, with 8-bit quantization between steps; the source was also shrunk in Quality by the decoder. On the owner's chain "2×2 grid → 3D pan → 2×2 grid → 3D pan → zoom back", after the second grid only a quarter of the detail remained, and the zoom showed mush made of enlarged pixels. The complaint, word for word, came down to "there is essentially no compositing"; the owner's proposal was tessellation and UV mapping "from scale"; the intuition is right per pixel, not per vertex. The second thing that hurt: 3D was computed only on the GPU — the CPU reference had holes, and export without a GPU refused. The third: three callers (preview, prefetch, export) each glued Quality onto the request themselves and matched only because they read one variable; on export with large frames this already produced "a black render with rare surviving frames" when a chunk did not survive until composition.
@@ -797,3 +819,37 @@ lossy accepted (the export never reads it). The key stays the plan's durable has
 container, written per frame in each segment's manifest so the cached final render (F-EXP-003) can match
 it later. Measured at 360p: ~95 KB a frame (~140 MB a minute at 25 fps), a few ms of a core to read a moment
 against ~215 ms of device to compose it. Full record: `openspec/changes/archive/2026-11-18-render-cache-codec/`.
+
+## The disk tier's segments decode on the device (hw-segment-decode, found-defects 775)
+
+The owner wants the processor out of the preview's path: the segments were written by a hardware
+encoder and read by the software H.264 decoder, 5–9 ms of a core a moment at 360p. `kt_ffmpeg::Source::open_hw`
+opens the video decoder with the platform's device — VAAPI on Linux (the render nodes of the export's
+plan), D3D11VA on Windows — and a `get_format` that takes the device's picture format when the decoder
+offers it; each picture is carried to the processor's memory as NV12 (`av_hwframe_transfer_data`, its time
+and colour tags kept) and converted as every picture is. No device opens — the processor, and the reader
+says why; a decoder that does not take the device for the stream says so too. Every decoder of the file
+opens the same way (`FfmpegSource::hw`): the second decoder a later read added was a software one, and
+the test first saw one picture of seven on the device.
+
+- D1. One thread for a device decoder: the device decodes the picture, frame threads would only hold
+  surfaces.
+- D2. A render node meets the throwaway process once per PROCESS for decoding
+  (`decode_device_verdict`), not per open as the export's encoder does: the tier opens a reader per
+  segment, and a process per open would cost more than the decode it spares. The trial opens the device;
+  a driver that opens and then faults inside a decode is not caught by it.
+- D3. The device's NV12 and the processor's yuv420p are converted by different swscale paths: the two
+  decodes of one segment differ by swscale's rounding (mean 1.46 on t3129's pattern), not byte for byte.
+  The tier is lossy already (the hardware encoder at quality 16) and the export never reads it, so
+  invariant 11 is untouched; on one machine a segment always decodes the same way.
+- Proof without a card: the fake VA driver decodes exactly what its encoder writes (I_PCM after the slice
+  header, the bit offset on the payload without emulation prevention bytes), vaCreateImage/vaGetImage
+  give FFmpeg the picture. It proves our path through the real libva and FFmpeg, never a real driver or
+  its speed; on a machine with VAAPI the reader names the device (t3129's first half), and the speed is
+  measured there.
+
+Class walk — every reader of video through our libav, and whether the device decodes it now: the disk
+tier's segments (yes, this change); the preview's sources and the export's decode (no: their decoder
+is chosen per key across several decoders of a file, the colour rule and the RGBA tail assume a software
+frame, and a device's surfaces are a bounded pool — a change of its own, row 775's follow-up); stills,
+thumbnails, reel strips (no: a picture each, the transfer would cost more than the decode).

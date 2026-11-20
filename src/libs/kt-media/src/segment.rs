@@ -14,12 +14,35 @@ pub trait SegmentWriter: Send {
     fn finish(self: Box<Self>) -> Result<u64, String>;
     /// The encoder that opened (the entry's header and the trace name it).
     fn encoder(&self) -> &str;
+    /// The planes the encoder takes (export-host-copy D4): the composing device converts a moment to
+    /// them and `push_planes` copies them in. `None` — this writer takes RGBA.
+    fn planes(&self) -> Option<SegmentPlanes> {
+        None
+    }
+    /// Encode the next frame from the `planes` layout's packed planes.
+    fn push_planes(&mut self, _planes: &[u8]) -> Result<(), String> {
+        Err("this segment writer takes RGBA".into())
+    }
+}
+
+/// An encoder's input layout as kt-engine's exact conversion names it (`kt_engine::yuv::YuvPix::code`:
+/// 0 yuv420p, 1 nv12, 2 yuv420p10le, 3 p010le, 4 yuv422p10le), its matrix and its range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SegmentPlanes {
+    pub code: u32,
+    pub bt709: bool,
+    pub full: bool,
 }
 
 /// Reads frames of one segment by index. Owned by one thread (invariant 5).
 pub trait SegmentReader: Send {
     /// Frame `index` as straight RGBA of `w`×`h` into `out`.
     fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String>;
+    /// What decodes the segment: `Ok(device)` — the platform's hardware decoder, `Err(why)` — the
+    /// processor and why (hw-segment-decode; the restore's trace names it).
+    fn decoder(&self) -> Result<String, String> {
+        Err("no decoder: raw frames".into())
+    }
 }
 
 /// What makes and reads segments on this machine.
@@ -133,6 +156,24 @@ pub mod ffmpeg {
         fn encoder(&self) -> &str {
             &self.encoder
         }
+        fn planes(&self) -> Option<SegmentPlanes> {
+            let (pix, matrix, range) = self.mux.as_ref()?.input_layout();
+            use kt_ffmpeg::encoders::PixFmt;
+            Some(SegmentPlanes {
+                code: match pix {
+                    PixFmt::Yuv420p => 0,
+                    PixFmt::Nv12 => 1,
+                    PixFmt::Yuv420p10 => 2,
+                    PixFmt::P010 => 3,
+                    PixFmt::Yuv422p10 => 4,
+                },
+                bt709: matrix == kt_ffmpeg::format::Matrix::Bt709,
+                full: range == kt_ffmpeg::format::Range::Full,
+            })
+        }
+        fn push_planes(&mut self, planes: &[u8]) -> Result<(), String> {
+            self.mux.as_mut().ok_or("closed")?.write_video_planes(planes).map_err(|e| e.to_string())
+        }
     }
 
     impl Drop for Writer {
@@ -151,6 +192,13 @@ pub mod ffmpeg {
     }
 
     impl SegmentReader for Reader {
+        fn decoder(&self) -> Result<String, String> {
+            match self.src.video_decode() {
+                kt_ffmpeg::VideoDecode::Hardware(d) => Ok(d),
+                kt_ffmpeg::VideoDecode::Software(why) => Err(why),
+            }
+        }
+
         fn frame(&mut self, index: u32, w: u32, h: u32, out: &mut Vec<u8>) -> Result<(), String> {
             let f = self
                 .src
@@ -185,7 +233,8 @@ pub mod ffmpeg {
                 path: path.to_string_lossy().into_owned(),
                 width: w,
                 height: h,
-                fps: fps.max(1),
+                frame_rate: kt_ffmpeg::Rate::whole(fps.max(1)),
+                time_base: None,
                 quality: QUALITY,
                 video_bitrate: None,
                 audio_bitrate: 0,
@@ -209,7 +258,9 @@ pub mod ffmpeg {
         }
 
         fn reader(&self, path: &Path) -> Result<Box<dyn SegmentReader>, String> {
-            let src = crate::ffmpeg::FfmpegSource::open(&path.to_string_lossy()).map_err(|e| format!("{e:?}"))?;
+            // the owner's rule (row 775): the segments decode on the machine's device, the processor
+            // only where none opens — the encoder that wrote them was a device's too
+            let src = crate::ffmpeg::FfmpegSource::open_hw(&path.to_string_lossy()).map_err(|e| format!("{e:?}"))?;
             let (num, den) = src.info().fps.unwrap_or((25, 1));
             let step = kt_time::TICK_HZ * den.max(1) as i64 / num.max(1) as i64;
             Ok(Box::new(Reader { src, step }))

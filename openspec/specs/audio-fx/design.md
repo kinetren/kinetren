@@ -184,12 +184,10 @@ The most frequent live complaint from reconnaissance was "the music drowns out t
 - A refusal of rubato when the ratio changes IS CHECKED (`Warp::rejected`, `src/libs/kt-fx/src/audio/warp.rs`):
   it used to be swallowed, and a curve wider than the window ±32 silently stuck at the previous ratio; a curve
   below 0.25 builds the resampler in extended mode.
-- Ducking (`kt_engine::ducking::duck_spans`, `src/libs/kt-engine/src/ducking.rs`): RMS with a window of
-  960 / step of 480, merging of pauses < 300 ms and dropping of spans < 150 ms (otherwise the curve "hiccups" between
-  words); the window is not broken at a chunk boundary. The analysis reads the sources with ITS OWN fetcher —
-  the cache is warm only around the cursor. The command `duck_curve_commands`
-  (`src/libs/kt-model/src/ops.rs`): keys via `clip_material_at`, the existing `db` curve
-  is REPLACED, one `apply_batch`.
+- Ducking by an offline snapshot (`kt_engine::ducking::duck_spans`, `duck_curve_commands`) is GONE (R.65,
+  the owner's decision): the live sidechain compressor with a key (capability `audio-fx`, "sidechain") replaced
+  it; t774 (`src/apps/kt-app/src/analysis.rs`) guards that no ducking task, function or job exists. The
+  snapshot's rules (RMS window 960/480, merging pauses < 300 ms) are history.
 - Checklist "add an audio effect" (`src/libs/kt-fx/CLAUDE.md`): `class() -> Audio` must not be forgotten — the kind would silently become Video2d; a branch in `chain_tail` for the tail, `chain_lookahead` for the look-ahead, the kt-app registry entry and the catalogs in ×5 languages (capability `ui-timeline`).
 - Chain presets and inserting a chain block with curves — capability `automation`
   (`src/apps/kt-app/src/user_store.rs`, `kt_model::append_chain_block`).
@@ -338,3 +336,16 @@ build of kt-app running beside them; the printed ratios at load 57–101 equal t
   literal `+0.0`, so the sums agree but for the sign of an exact zero, where the full sum answers.
 - Not done, they would move bytes: divisions by per-block constants as reciprocals (VHS Tape's sound,
   the vocoder's bins). Figures: archive `2026-11-15-per-sample-costs/design.md`. t2680 holds every path.
+
+## A device on a whole video track sounds on its sound track (track-device-sound, 2026-11-20)
+
+The owner's answer (kkt-26.11.18b line 29, Q5 a): a video track names ONE audio track as its sound
+(`Track.sound`, one-to-one — two video tracks mirroring into one chain would fight over its n-th
+slot); by default the audio track of the same number, where linked media lands the file's sound
+(Premiere's source patching, Resolve's auto track selector), made only when the track gets its first
+device. The halves are mirrored by the event rule (`mirror_halves`), each half's switch its own; the
+sound half runs in the audio track's stage, seated at timeline zero (`TrackProcessor` now seats its
+nodes on the project's grid; it seated none before, found-defects 819). Datamosh does not pair on a
+track: the engine skips a stream slot on a track stage, so its picture does nothing there
+(found-defects 820, not fixed). The track's deck equals the event's to float rounding, not to the
+bit: the stage sums and chunks its own way (t3232).

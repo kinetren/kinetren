@@ -178,7 +178,7 @@ two titles on one media could not carry different text. The single entry "Create
 - The timecode and the countdown show the time of the MATERIAL — the source cannot see the timeline's clock
   by construction (`src/libs/kt-media/src/generator.rs`); a hint in the form
   says this directly.
-- The 3×5 pixel font and `Canvas` — common `src/libs/kt-media/src/pixfont.rs`
+- The 3×5 pixel font and `Canvas` — common `src/libs/kt-plugin-api/src/pixfont.rs`
   (placeholder, timecode, countdown); this is NOT the rasterization of user text.
 - Everything that shows the frame of a generator event (filmstrip, bar, picker gallery)
   asks `clip_source_addr`/`gen_source_addr`
@@ -215,3 +215,138 @@ two titles on one media could not carry different text. The single entry "Create
 - The generator does not know the speed of the event — physics/expressions must reach
   it as numbers (capability `automation`).
 - Colorimetry in export (the tables make the gap visible).
+
+## gen-technical (2026-11-20, v26.10 G5, the technical group)
+
+### D1. One event, one tick for the picture and the beep
+
+The flash period is the kind's one float (`interval` in seconds → ticks, in the preamble); the flash
+length is `flash` frames of `fps`. The frame is white while `pts mod period < length`; the beep's
+gate asks the same question of the sample's material tick (48 kHz → 90 kHz, exact), through the host's
+`tone_1k` — no second sine, the phase is the global sample number. Between flashes a 1/60-height bar
+fills over the interval: the next flash is seen coming. Integer pixels.
+
+### D2. Guides as a transparent generator
+
+Every editor keeps safe areas as a viewer overlay. Here they are a transparent kind on a track: seen
+in the preview over the real picture, muted with their track, and burnt into an export only when a
+delivery asks for a check copy. The outlines are fractions of the frame, so the preview quality does
+not move them; the thickness is a fraction of the height, at least one pixel. The colour is a
+`color_r/g/b/a` group with the eyedropper (white at 2/3 opacity).
+
+### D3. The timer/counter goes to the Text generator
+
+His G3 decision (2026-10-30, question 5): the timecode becomes a MODE of the Text generator so that the
+whole text passport works on it. A counter is the same thing; a pixel-font counter kind would repeat the
+defect G3 names. It is the next change, `text-counter-source`.
+
+### Class walk
+
+The mechanism: a kind that is a picture and a sound at once must change both on one tick — checked:
+SMPTE's tone (continuous), the leader's beep (the same gate rule), the flash (new, same rule). A guide that
+must not depend on the preview size — checked: the shapes (fractions), the table (columns by count),
+the window (area fraction), the guides (fractions).
+
+## text-counter-source (2026-11-20, v26.10 G5/G3)
+
+### D1. A source of the text, not a kind
+
+His G3 answer: the timecode becomes a MODE of the Text generator so the full text passport works on
+it. The stopwatch and the countdown follow the same path: one kind, `source` chooses where the shown
+string comes from; `title_text_at(kind, pts)` is the one function that makes it (kt-model), and
+`kt-media::text_params` asks it with the source's `pts` — the MATERIAL tick, as the timecode kind did,
+so trimming the event's start moves the counter with the material. Integer ticks throughout: the frame
+is a function of `(kind, pts, quality)` (invariant 4/11).
+
+### D2. Up is floor, down is ceiling
+
+A stopwatch shows what has passed (floor to the shown unit); a countdown shows what is left (ceiling):
+at 0.2 s of a 5-second countdown it still says 5, and it says 0 only when the time is up, then holds.
+This is how a broadcast countdown reads; a floor would show 4 for nearly the whole first second.
+
+### D3. Bytes and format
+
+The four fields are `skip_serializing_if` at their defaults: a typed title writes the former JSON and
+gen path (t3704); `has_text_sources` makes the file format 7 only with a running title — an older
+build would read the title without its source and show and save the typed text. Two number rows
+(`count_from`, `count_fps`) join the title's passport AT ITS END, so the index addressing of R.59 is
+stable; t1048's "tuned" title row (every number at 70 %) carries them, its default row does not move.
+
+### D4. The window
+
+A row of buttons under the text, the alignment's look; the format row for a stopwatch or a countdown;
+the grid hides `count_from` for a typed title and `count_fps` for anything but a timecode (rule 9). A
+note under it says the value runs with the event's own time and how `{}` places it.
+
+### Class walk
+
+The mechanism: a value that is text drawn by a pixel font, outside the text passport. Checked: the
+timecode kind (G3 — its removal and the import conversion are G3's own change; it stays here), the
+countdown leader (a picture with a digit — a leader, not a title), the sync flash (no text), the bin
+scrub timecode (UI, not a picture).
+
+## gen-backgrounds (2026-11-20, v26.10 G5, the backgrounds group)
+
+### D1. A frame is a function of the material time
+
+Each kind is `live`: the frame is drawn from its rows and `phase = material seconds × speed` (the
+preamble's one float), so a backdrop under a cut repeats exactly and two moments draw the same bytes
+(t3707). The pictures are WGSL `pixel` texts on the compute device, as the shapes, gradients and noise
+are (gpu-render-hardening D7): f32 pixels, held to the software adapter's hashes by t1048.
+
+### D2. The four looks
+
+- **Moving gradient:** three Gaussian blobs on Lissajous orbits, colours blended by their weights — the
+  "mesh gradient" look; `softness` is the blobs' width.
+- **Plasma:** four travelling sines summed, walked round a palette of three colours with smoothstep, so
+  no colour band is hard.
+- **Particles:** a hashed field (`lowbias32` of seed and index) of discs drifting up at their own pace,
+  wrapped so the field never empties; additive glow over the backdrop, capped.
+- **Pattern:** a rotated cell lattice; stripes, dots, a grid or waves by a signed distance and a soft
+  edge in cells, so the picture does not depend on the preview's size.
+
+### D3. Styles are not here
+
+The owner asked for styles per kind. A creation-menu row is named by a row's value (`GenDecl.names`),
+and a "style" row only for a name would be a dead control (rule 9). Style presets need a generator
+preset store, as the title presets and the effect presets have — the next step, named in the report.
+
+### Class walk
+
+The mechanism: a backdrop that moves only when keyframed, and looks of the 90s. Checked: the linear and
+four-corner gradients (static; their motion is curves — kept), the noise field (moves, grain only), the
+checkerboard (static). The new four move by themselves; the old ones are unchanged (t1048).
+
+## gen-shapes (2026-11-20, v26.10 G5, the shapes and plates group)
+
+### D1. One distance library, one shape per kind
+
+The six texts share `sdf.wgsl` — a rounded box, a segment, a rotation, `cover` (a distance under a
+feather) and `over` (straight-alpha compositing) — prepended at build time (`concat!`). A one-colour
+shape ends in the prelude's `shape(d, feather)`; the plate and the bar composite their two colours with
+`over`. Distances in pixels, positions as fractions of the frame, sizes as fractions of the height, so
+the preview's quality does not move a shape (the rule of R.53 item 419).
+
+### D2. A star is its own kind
+
+The rule of a kind (R.53, item 419): a kind is its own passport when it has its own numbers. The star's
+inner radius is a number the polygon does not have, so the star is a kind of its own (AE's Polystar
+puts both in one tool and leaves the inner radius dead for a polygon — rule 9).
+
+### D3. A reveal and a fill time, not animations
+
+The plate's Reveal is a number 0..1 a curve animates, as the title's reveal is (R.59): the person keys
+its slide in and out where the event needs them. The progress bar fills with the MATERIAL time over its
+fill time (a live kind): "a bar that runs for N seconds" with no keyframes.
+
+### D4. Each colour's own alpha (found by t508)
+
+`gen_ui::color_alpha` returned the FIRST colour group's alpha, and the form passed it to every group:
+with two colours with alpha, the second eyedropper wrote the first one's alpha row and its own alpha
+stayed unreachable — t508 named `plate.color2_a`. `color_alpha_of(kind, names)` finds the group's own
+`<stem>_a`; the form and t508 ask it per group. The shapes with one colour are unchanged.
+
+### Class walk
+
+The mechanism: a shared per-kind value handed to every group. Checked: the colour groups' alpha (fixed),
+the colour groups' captions (per group already), the hex field's memory id (per `names[0]`, per group).

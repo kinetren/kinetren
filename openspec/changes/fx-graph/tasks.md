@@ -74,10 +74,22 @@
 - [x] 3.9 the key table's Delete, mute and zoom commands act on the graph under the pointer
       (`KtApp::graph_keys`, `node_editor::GraphKey`); no new key; t3002
 
-## 4. v1d — the Viewer
+- [x] 3.10 one editor for an event and its linked audio (design D10): the pair's virtual chain with
+      its slots' lanes given (`ChainEdit.lane_of`: a lane is the slot's EVENT, a video's slowed is an
+      audio kind on the picture lane), a master switch at each lane's In (`master2`), context boxes
+      per lane, a right click on a sound node addresses the audio event's slot; split back per event,
+      a side whose vectors did not change sends nothing (else the model re-pairs a removed device);
+      the toolbar's presets and copy/paste act on the pair (a slot appended goes to its kind's lane).
+      The detailed graph opens only within 40 % of the window's height. t3004; t1468 brings its face
+      into view; live `node_graph` addresses the pair's boxes
 
-- [ ] 4.1 the plan takes a cut point for one event (a shorter chain through the one plan builder);
-      Ctrl+Shift+click, badge, Esc; t2997; commit; prune
+## 4. v1d — the Viewer (design D11)
+
+- [x] 4.1 the Viewer: the PLAYER's project with one event's chain cut after the node
+      (`node_editor::Viewer::cut`, in `push_project_to_player`) — the preview's own path at its own
+      quality, the sound up to the node too (simpler and sharper than the picker cells' 320×180);
+      Ctrl+Shift+click on a node and the right-click item; the badge over the preview; Esc / Play /
+      Ctrl+Shift+click on empty canvas / closing the window return; t2997; live step
 
 ## 5. Follow-ups named by his answers (separate changes)
 

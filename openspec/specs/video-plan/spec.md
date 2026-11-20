@@ -129,10 +129,8 @@ be made by the shared planner in kt-fx; the executor MUST execute the ready plan
 geometric effects SHALL be executed in one pass of inverse mappings
 without intermediate rasterizations; a series of length 1 without minification SHALL go through the earlier
 kernels byte-for-byte; at K = 1 and step 1 the whole plan is byte-for-byte as before.
-Non-local barriers (Blur/Glow/Edges/VHS) SHALL be executed at K× when "compression above +
-zoom below", K — the quantum of min(zoom of the tail, compression), the ceiling of the buffer side
-`MAX_INTER_DIM = 4096` is a project constant, not a device limit. The layer strength stops
-zero the accumulators: mixing is always at 1×. There MUST NOT be any merge switches — neither in the UI nor in env. A change of the program `geom.rs`/`plan.rs` build and of `geom_fused.wgsl`,
+Barriers SHALL run at K× as capability `video-fx` states it ("K× barriers carry detail", the rule's
+home); the layer strength stops zero the accumulators: mixing is always at 1×. There MUST NOT be any merge switches — neither in the UI nor in env. A change of the program `geom.rs`/`plan.rs` build and of `geom_fused.wgsl`,
 which reads it, SHALL be edited in one commit (the effect kernels — capability `video-fx`).
 Why: the chain traversal has one home because segmentation is what decides where a raster is
 materialized and loses detail.
@@ -221,7 +219,7 @@ this immediately gives a permanent cache miss and a black frame; the conform rul
 
 ### Requirement: The cache is the only truth about coverage
 The coverage bars SHALL be `coverage()` of the cache by the DECODE quality of the clip (for a clip cut by a morpher layer — the union of the qualities of the pieces), and not a separate bookkeeping and not a poll by the preview's Quality. Memoized composites MUST NOT be visible to
-prefetch and pin. Over the decoded ranges the bars SHALL draw what plays without work: the moments whose presented composite the executor still holds and the current plan still asks (`Player::final_video_runs`), and the frames the audio render thread's final mix holds (`Player::final_audio_runs`).
+prefetch and pin. Over the decoded ranges the bars SHALL draw what plays without work: the moments whose presented composite the executor still holds and the current plan still asks (`Player::final_video_runs`), and the frames the audio render thread's final mix holds (`Player::final_audio_runs`); and the moments the disk tier holds (requirement "Slow moments are prerendered at rest as hardware-encoded video and played from it").
 Why: the cache is quality-exact; a clip with a step, warmed properly, would look entirely cold when polled by Quality — a lie in the user's eyes. A decoded range still needs its composite and its effects: the bars promised a free play that was not (kkt-26.11.07b, "не рабочий кэш").
 
 #### Scenario: The bars ask about the decode quality
@@ -437,7 +435,7 @@ Why: a chain appended to every event gives a different picture at transitions an
 #### Scenario: Blend modes against the formula
 - **WHEN** each mode is applied to a pair of tracks with known colors; the track level is 0.5; on the track with Multiply — a hole; the same plans on the GPU
 - **THEN** the result equals the analytical formula; Normal is byte-for-byte as before; 0.5 — half the way to the result of the mode, not the mode over a semi-transparent layer; in the hole the lower layers are visible without darkening; the frames are within the tolerance class of transitions of their stored frames
-- **TEST** t737 (`src/libs/kt-engine/tests/track_blend.rs`, `src/libs/kt-gpu/tests/parity.rs`)
+- **TEST** t737 (`src/libs/kt-engine/tests/track_video.rs`, `src/libs/kt-gpu/tests/parity.rs`)
 
 #### Scenario: Video mute and solo
 - **WHEN** a track is muted; then two of three are soloed; then mute is removed
@@ -620,7 +618,8 @@ other path, whose bytes do not move) the order of a stream layer SHALL be the ea
 history lacks that fit a quarter of the video cache, at least one, in the order the stage reads them. The
 prefetch thread SHALL advance the stream stages over what the decoder brought — at the frame on screen and,
 while playing, ahead of it (wrapping in the loop region) by the frames the display reaches before its next
-pass, twice over, bounded by a quarter of the stage's memo — and a pass that leaves a stage pending SHALL
+pass, twice over (the near part; the far part and its bound: "The prefetch advances a run of stream frames as one walk"
+below) — and a pass that leaves a stage pending SHALL
 run again even on a pause. A composite SHALL run a stage only when its frame lacks at most two positions;
 otherwise, playing or paused alike, it reports the frame incomplete and says how many positions the
 history still lacks (the most over the frame's stream stages, reels and track stages included). An
@@ -1111,8 +1110,8 @@ loop one frame too long for the memo kept nothing; with this rule it keeps what 
 
 ### Requirement: A frame decoded again finds its kept composite
 A moment whose decoded frames were evicted from the burst cache and decoded again with the same bytes
-SHALL be presented from its kept composite: the re-decoded entries take back their serials, so the
-plan key is the one the composite was kept under.
+SHALL be presented from its kept composite (the serial return is stated in "A kept moment is reached
+without the work that made it", its home; this requirement holds it end to end).
 Why: found-defects 119 — a frame evicted and decoded again missed its kept composite and was composed
 again; the serial return of structured-telemetry (t2152) fixed the cache, and this holds it end to end.
 
@@ -1391,8 +1390,9 @@ piece (267 in 267).
 Work a person waits for — the catch-up of a stream history, the Loading of a paused frame, a loop's first
 laps, a render or export, thumbnails and strips he scrolls to, an analysis he started — SHALL use the idle
 device and the idle cores within the limits the owner set: the display first (the ring's bound), and rest
-costs nothing (no work at rest, invariant 12). A path that can split its work without changing a byte SHALL
-split it across cores; a CPU executor SHALL take a device's work only where its bytes equal the device's,
+costs nothing (no work at rest, invariant 12, except the prerender of slow moments to disk after a quiet
+spell, render-cache-disk). A path that can split its work without changing a byte SHALL
+split it across cores; processor-side work (a span's conversion, a stream stage's host side) SHALL take a device's work only where its bytes equal the device's,
 or by a choice that does not follow the load (invariant 11). It is measured from pass timestamps and thread
 time, not wall-clock guesses.
 Why: found-defects 485 — the owner, kkt-26.11.10b K3: "не грузит проц - ленится как будто опять или
@@ -1477,8 +1477,9 @@ class.
 - **TEST** t2711 (`src/libs/kt-engine/tests/decode_storm.rs`)
 
 ### Requirement: The slow route's picture is shown from the display's memo
-A complete composite of the slow-chain device, once kept on the display's executor, SHALL be shown from
-there at once, not handed to the interface as bytes to upload again.
+A complete composite of the slow-chain device, once kept on the display's executor ("A kept moment is
+reached without the work that made it"), SHALL be shown from there at once, not handed to the interface as
+bytes to upload again.
 Why: found-defects 622 — the slow route's frame was written into the present memo and uploaded again into
 the interface's texture.
 
@@ -1703,6 +1704,11 @@ render.
 - **THEN** the default opens a hardware encoder or refuses naming why, leaving no file; the forced segment names its encoder and every frame reads back alone within the codec's tolerance
 - **TEST** t2986 (`src/libs/kt-media/tests/segment.rs`)
 
+#### Scenario: A segment is read by the hardware decoder, the processor only without one
+- **WHEN** a segment is read on this machine (no render node here), and in a child process on the fake VA driver of `fixtures/fake_va` (its encoder writes I_PCM macroblocks, its VLD entry point reads them back) a segment its encoder wrote is read out of order and twice
+- **THEN** on this machine the reader names the processor and why (no VAAPI device) and reads every frame as the processor's decoder does; on the fake device every decoder of the file decodes on it (`vaapi <node>`, also the ones a later read adds), each frame is within the RGB → 4:2:0 → RGB round trip of the frame written (mean ≤ 3) and within swscale's rounding of NV12 against yuv420p of the processor's decode (mean ≤ 2), and the driver counts at least the pictures read; the disk tier's reader records which decoder reads (`render_cache` aux `READER`). Windows asks D3D11VA the same way (found-defects 775)
+- **TEST** t3129 (`src/libs/kt-media/tests/segment.rs`)
+
 #### Scenario: The durable key survives a process and follows what the picture is made of
 - **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality and the build salt
 - **THEN** the first keys are equal; each change gives another key
@@ -1718,6 +1724,16 @@ render.
 - **WHEN** the cost map holds heavy moments (at least half a frame period), light ones and unmeasured ones next to the heavy, and a loop region
 - **THEN** the candidates are the heavy moments not on disk and their unmeasured neighbours, the loop region's first, then nearest the playhead; a light moment and the moments past it are not candidates
 - **TEST** t2983 (`src/libs/kt-engine/src/render_cache.rs`)
+
+#### Scenario: A heavy run is one segment from its start
+- **WHEN** a run of six moments is measured heavy, the playhead stands in its middle, and the tier prerenders it
+- **THEN** the candidates come in runs of consecutive moments (the loop region's first, then by distance to the head), each from its start, and the whole run lies in one segment that starts before its first moment; taken by distance to the head with the sides alternating, the part behind the head went into a segment per moment (found-defects 776)
+- **TEST** t3601 (`src/libs/kt-engine/tests/render_cache.rs`), t2983
+
+#### Scenario: A run known by one moment is one segment
+- **WHEN** one moment in the middle of a heavy run is measured (its costs arrive one at a time, as when the playhead steps) and the tier prerenders
+- **THEN** the candidates take the unmeasured moments up to `RUN_REACH` (8) on each side of a heavy moment, stopping at a measured, stored or pictureless moment, and the whole run lies in one segment that starts before its first moment (found-defects 826)
+- **TEST** t3600 (`src/libs/kt-engine/tests/render_cache.rs`), t2983
 
 #### Scenario: The prerender yields to the person
 - **WHEN** heavy moments are measured and the player stands paused while input keeps coming; then the input stops; then Play is pressed while it works; then an export vote is up

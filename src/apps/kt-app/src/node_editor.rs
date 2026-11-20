@@ -53,6 +53,8 @@ const CHIP_W: f32 = 124.0;
 const CHIP_H: f32 = 22.0;
 const CHIP_GAP: f32 = 12.0;
 const PAD: f32 = 3.0;
+/// The most of the window's visible height the detailed graph opens with; past it, chips.
+const DETAIL_SHARE: f32 = 0.4;
 /// A context box (a layer over the event, its track).
 const CTX_W: f32 = 150.0;
 /// A sidechain key's box under the lane.
@@ -210,7 +212,10 @@ pub fn chain_graph(
     preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> ChainChanged {
     let kinds = kinds.into();
-    let both = matches!(kinds, crate::fx_registry::PickKinds::Both);
+    // two lanes: a chain of both kinds (the morpher), or a pair's virtual chain with its slots'
+    // lanes given (fx-graph D10: the video event's slowed stays on the picture lane though it is
+    // an audio kind)
+    let both = matches!(kinds, crate::fx_registry::PickKinds::Both) || edit.lane_of.is_some();
     let mut ch = ChainChanged::default();
     edit.bypass.resize(edit.fx.len(), false);
     edit.auto.resize(edit.fx.len(), Vec::new());
@@ -246,8 +251,20 @@ pub fn chain_graph(
     // a single-kind chain is ONE lane, the layout's first (its kind is only its colour): a sound
     // chain put into the second slot was never laid out, and an audio event's nodes did not show
     // (found-defects 811)
+    if let Some(l) = edit.lane_of.as_deref_mut() {
+        // a slot the toolbar appended (picker, preset, paste) takes the lane of its kind
+        while l.len() < edit.fx.len() {
+            l.push(u8::from(lane_of(&edit.fx[l.len()]) == Lane::Sound));
+        }
+        l.truncate(edit.fx.len());
+    }
+    let given: Option<Vec<u8>> = edit.lane_of.as_deref().map(|l| l.to_vec());
+    let lane_at = |i: usize, f: &FxInstance| match given.as_deref() {
+        Some(l) => if l.get(i).copied().unwrap_or(0) == 1 { Lane::Sound } else { Lane::Picture },
+        None => lane_of(f),
+    };
     for (i, f) in edit.fx.iter().enumerate() {
-        match if both { lane_of(f) } else { Lane::Picture } {
+        match if both { lane_at(i, f) } else { Lane::Picture } {
             Lane::Picture => pic.push(i),
             Lane::Sound => snd.push(i),
         }
@@ -271,7 +288,10 @@ pub fn chain_graph(
         .collect();
     // the context boxes (the layers over the event, its track) are columns after the chain's own
     let n_fx = cols.len();
-    let n_ctx = edit.context.len();
+    // each lane's boxes after its own nodes (a pair: the video event's on the picture lane, the
+    // audio event's on the sound lane)
+    let ctx_in = |lane: u8| edit.context.iter().filter(move |b| b.lane == lane).count();
+    let n_ctx = ctx_in(0).max(ctx_in(1));
     let total = n_fx + n_ctx;
     col_w.extend(std::iter::repeat_n(CTX_W, n_ctx));
     let col_x: Vec<f32> = col_w.iter().scan(0.0, |acc, w| {
@@ -280,7 +300,16 @@ pub fn chain_graph(
         Some(x)
     }).collect();
     let detail_w = PAD * 2.0 + head_full + GAP + col_w.iter().map(|w| w + GAP).sum::<f32>() + END_W;
-    let detail = view.detail.unwrap_or(detail_w <= aw);
+    // the detailed nodes when they fit the width AND leave the form below its room: at most
+    // `DETAIL_SHARE` of the window's visible height (a pair's two lanes of sliders took half a
+    // window, and the form's fields went under the fold — live `formula`, `vhs_sound`)
+    let detail_h = {
+        let lanes_n = if both { 2.0 } else { 1.0 };
+        let tallest = edit.fx.iter().map(|f| main_specs(f).len()).max().unwrap_or(0) as f32;
+        PAD * 2.0 + lanes_n * (HEADER_H + tallest * ROW_H + NODE_PAD * 2.0) + (lanes_n - 1.0) * LANE_GAP
+    };
+    let room_h = ui.clip_rect().height().max(1.0);
+    let detail = view.detail.unwrap_or(detail_w <= aw && detail_h <= room_h * DETAIL_SHARE);
     let head_w = if detail { head_full } else { head_chip };
     let node_h = |i: usize| HEADER_H + main_specs(&edit.fx[i]).len() as f32 * ROW_H + NODE_PAD * 2.0;
     let lane_h: Vec<f32> = lanes
@@ -289,8 +318,9 @@ pub fn chain_graph(
         .map(|(n, &l)| {
             let li = lane_slots(l);
             let nodes = cols.iter().filter_map(|c| c[li]).map(node_h).fold(HEADER_H + NODE_PAD * 2.0, f32::max);
-            // the first lane carries the context boxes: one with a key has a second line
-            let keyed = n == 0 && edit.context.iter().any(|b| b.key.is_some());
+            // a lane's context box with a key has a second line
+            let keyed = edit.context.iter().any(|b| b.lane as usize == li.min(1) && b.key.is_some());
+            let _ = n;
             if keyed { nodes.max(HEADER_H + ROW_H) } else { nodes }
         })
         .collect();
@@ -325,8 +355,12 @@ pub fn chain_graph(
     if canvas_resp.dragged_by(egui::PointerButton::Middle) {
         view.pan = (view.pan - canvas_resp.drag_delta().x).clamp(0.0, (detail_w - aw).max(0.0));
     }
-    if canvas_resp.double_clicked() {
+    if crate::clicks::double(&canvas_resp) {
         view = View::default();
+    }
+    // Ctrl+Shift+click on empty space: the whole picture again
+    if edit.viewer && canvas_resp.clicked() && ctrl_shift(ui) {
+        ch.viewer = Some(None);
     }
     if !detail {
         view.pan = 0.0;
@@ -336,7 +370,7 @@ pub fn chain_graph(
 
     // geometry of every node
     let mut rects: Vec<Option<egui::Rect>> = vec![None; edit.fx.len()];
-    let mut ctx_rects: Vec<egui::Rect> = Vec::new();
+    let mut ctx_rects: Vec<Option<egui::Rect>> = vec![None; edit.context.len()];
     let mut ends: Vec<(Lane, egui::Rect, egui::Rect)> = Vec::new(); // (lane, in, out)
     let lane_y = |li: usize, band: usize| -> f32 {
         let base = canvas.top() + PAD + band as f32 * (band_h + LANE_GAP * 1.5);
@@ -362,9 +396,10 @@ pub fn chain_graph(
             let nh = if detail { node_h(i) } else { CHIP_H };
             rects[i] = Some(egui::Rect::from_min_size(egui::pos2(x, lane_y(li, band)), egui::vec2(w, nh.min(h))));
         }
-        if li == 0 {
-            for n in 0..n_ctx {
-                let c = n_fx + n;
+        let mine: Vec<usize> = edit.context.iter().enumerate().filter(|(_, b)| b.lane as usize == lslot).map(|(n, _)| n).collect();
+        {
+            for (m, &n) in mine.iter().enumerate() {
+                let c = n_fx + m;
                 let (band, k) = if detail { (0, c) } else { (c / per_band, c % per_band) };
                 let (w, x) = if detail {
                     (CTX_W, x0 + head_w + GAP + col_x[c])
@@ -378,10 +413,10 @@ pub fn chain_graph(
                 } else {
                     HEADER_H
                 };
-                ctx_rects.push(egui::Rect::from_min_size(egui::pos2(x, lane_y(li, band)), egui::vec2(w, hh)));
+                ctx_rects[n] = Some(egui::Rect::from_min_size(egui::pos2(x, lane_y(li, band)), egui::vec2(w, hh)));
             }
         }
-        let cols_here = if li == 0 { total } else { n_fx };
+        let cols_here = n_fx + mine.len();
         let (last_band, last_k) = if detail || cols_here == 0 {
             (0, cols_here)
         } else {
@@ -410,8 +445,8 @@ pub fn chain_graph(
             prev = egui::pos2(r.right(), r.top() + HEADER_H * 0.5);
             prev_off = edit.bypass[i];
         }
-        if lslot == 0 {
-            for r in &ctx_rects {
+        {
+            for r in edit.context.iter().zip(ctx_rects.iter()).filter(|(b, _)| b.lane as usize == lslot).filter_map(|(_, r)| r.as_ref()) {
                 let y = r.top() + r.height().min(HEADER_H) * 0.5;
                 wire(&painter, prev, egui::pos2(r.left(), y), color, prev_off);
                 prev = egui::pos2(r.right(), y);
@@ -437,6 +472,21 @@ pub fn chain_graph(
         // and its name is the hint
         if edit.head.is_none() {
             end_node(&painter, ui, input, lane_color(l), tr(k::fx::graph::INPUT));
+            // a pair's lanes each carry their event's master switch (fx-graph D10)
+            if let Some(m2) = edit.master2.as_deref_mut() {
+                let on = if lane_slots(l) == 0 { &mut *edit.master_on } else { m2 };
+                let cb_rect = egui::Rect::from_min_size(input.left_top() - egui::vec2(0.0, 0.0), egui::vec2(18.0, input.height()));
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(cb_rect.translate(egui::vec2(-20.0, 0.0)).intersect(canvas)));
+                if crate::app::hint_into(hover, child.checkbox(on, ""), tr(k::fx::CHAIN_ON_HINT)).changed() {
+                    ch.master = true;
+                    if lane_slots(l) == 1 {
+                        ch.master2 = true;
+                    }
+                }
+                if crate::widgets::field_probe::on() || cfg!(test) {
+                    crate::widgets::field_probe::note(&format!("fx.lane.{}.on", lane_slots(l)), cb_rect);
+                }
+            }
             let name = match l {
                 Lane::Picture => tr(k::fx::graph::PICTURE),
                 Lane::Sound => tr(k::fx::graph::SOUND),
@@ -499,6 +549,7 @@ pub fn chain_graph(
 
     // the context boxes: read-only, a double click opens their own window
     for (n, (b, r)) in edit.context.iter().zip(ctx_rects.iter()).enumerate() {
+        let Some(r) = r else { continue };
         let (glyph, color) = match b.target {
             crate::widgets::ContextTarget::Layer(_) => (crate::icons::CARET_RIGHT, crate::theme::MORPH_SLOT),
             crate::widgets::ContextTarget::Track(_) => (crate::icons::CAT_VIDEO, ui.visuals().weak_text_color()),
@@ -540,7 +591,7 @@ pub fn chain_graph(
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
         crate::widgets::field_probe::note(&format!("fx.ctx.{n}"), *r);
         let resp = crate::app::hint_into(hover, resp, tr(k::fx::graph::CONTEXT_HINT));
-        if resp.double_clicked() {
+        if crate::clicks::double(&resp) {
             ch.open = Some(b.target);
         }
     }
@@ -554,7 +605,7 @@ pub fn chain_graph(
         if !r.intersects(canvas) {
             continue;
         }
-        let lane = if both { lane_of(&edit.fx[i]) } else { single };
+        let lane = if both { lane_at(i, &edit.fx[i]) } else { single };
         let off = edit.bypass[i];
         let selected = *edit.selected == ChainSel::Fx(i);
         let stroke = if selected {
@@ -612,11 +663,16 @@ pub fn chain_graph(
                 if crate::widgets::field_probe::on() {
                     crate::widgets::field_probe::note(&format!("fx.slot.{i}"), resp.rect);
                 }
-                if resp.clicked() {
+                // Ctrl+Shift+click: the Viewer — the picture after this node (Blender's viewer node,
+                // fx-graph D11), a pointer gesture of the graph like a drag
+                let viewer_click = edit.viewer && resp.clicked() && ctrl_shift(ui);
+                if viewer_click {
+                    ch.viewer = Some(Some(i));
+                } else if resp.clicked() {
                     *edit.selected = ChainSel::Fx(i);
                     crate::tele_journal::record(crate::tele_journal::Kind::Act, &format!("effect selected: {name} (slot {i})"));
                 }
-                if resp.double_clicked() && !detail {
+                if crate::clicks::double(&resp) && !detail {
                     // a chip opens to the detailed nodes, scrolled to it
                     view.detail = Some(true);
                     view.pan = ((r.left() - canvas.left()) - aw * 0.5).max(0.0);
@@ -649,6 +705,10 @@ pub fn chain_graph(
                     }
                     if ui.button(tr(k::fx::REMOVE_SLOT)).clicked() {
                         remove = Some(i);
+                        ui.close();
+                    }
+                    if edit.viewer && ui.button(tr(k::fx::graph::VIEWER_MENU)).clicked() {
+                        ch.viewer = Some(Some(i));
                         ui.close();
                     }
                 });
@@ -698,6 +758,10 @@ pub fn chain_graph(
         edit.bypass.insert(to, b);
         let c = edit.auto.remove(from);
         edit.auto.insert(to, c);
+        if let Some(l) = edit.lane_of.as_deref_mut() {
+            let x = l.remove(from);
+            l.insert(to, x);
+        }
         *edit.selected = ChainSel::Fx(to);
         ch.fx = true;
         ch.bypass = true;
@@ -706,6 +770,11 @@ pub fn chain_graph(
     }
     if let Some(i) = remove {
         ch.removed = Some(i);
+        if let Some(l) = edit.lane_of.as_deref_mut()
+            && i < l.len()
+        {
+            l.remove(i);
+        }
         edit.fx.remove(i);
         edit.bypass.remove(i);
         if i < edit.auto.len() {
@@ -739,13 +808,13 @@ fn main_rows_of(
         // a row under a curve is named, not edited, here: the form below sets its key at the
         // cursor (the one rule of a curved row)
         if edit.auto.get(i).is_some_and(|c| c.iter().any(|c| c.param == spec.name)) {
-            let l = ui.weak(format!("{} {}", crate::icons::CAT_DISTORT, crate::widgets::param_label(&spec.name)));
+            let l = ui.weak(format!("{} {}", crate::icons::CAT_DISTORT, node_row_name(&spec.name)));
             crate::app::hint_into(hover, l, tr(k::fx::graph::CURVED));
             continue;
         }
         ui.horizontal(|ui| {
             if let kt_model::ParamType::Choice { variants } = &spec.ty {
-                row_label(ui, &crate::widgets::param_label(&spec.name));
+                row_label(ui, &node_row_name(&spec.name));
                 let cur = edit.fx[i].get_param(&spec.name).unwrap_or(0.0).round() as usize;
                 let shown = variants.get(cur).map(|v| choice_caption(&spec.name, v)).unwrap_or_default();
                 let mut pick = cur;
@@ -763,7 +832,7 @@ fn main_rows_of(
                 // already holds is no edit (input-without-work)
                 let Some(base) = edit.fx[i].get_param(&spec.name) else { return };
                 let mut v = base;
-                row_label(ui, &crate::widgets::param_label(&spec.name));
+                row_label(ui, &node_row_name(&spec.name));
                 let r = crate::widgets::param_value(ui, &spec, &mut v);
                 ui.spacing_mut().slider_width = (ui.available_width() - 4.0).max(24.0);
                 let sl = ui.add(egui::Slider::new(&mut v, spec.min..=spec.max).show_value(false).clamping(egui::SliderClamping::Edits));
@@ -777,6 +846,24 @@ fn main_rows_of(
             }
         });
     }
+}
+
+/// A main row's caption in a node: the device panels' own captions (the ISP's rows), the common
+/// passport captions, and for the rows only a device's face names by its switches (the tape speed,
+/// the sound out, the codec size, the audio bitrate) a caption of the graph's own — never the raw
+/// row name.
+fn node_row_name(name: &str) -> String {
+    let own = match name {
+        "speed" => Some(tr(k::fx::graph::ROW_SPEED)),
+        "audio_out" => Some(tr(k::fx::graph::ROW_SOUND)),
+        "lines" => Some(tr(k::fx::graph::ROW_LINES)),
+        "audio_kbps" => Some(tr(k::fx::graph::ROW_AUDIO_KBPS)),
+        _ => None,
+    };
+    if let Some(t) = own.or_else(|| crate::isp_panel::row_label(name)) {
+        return t.trim_end_matches(':').to_string();
+    }
+    crate::widgets::param_label(name).trim_end_matches(':').to_string()
 }
 
 /// A main row's name in a node: painted, elided to `LABEL_W`. Not a `Label` on purpose — the row's
@@ -851,10 +938,13 @@ fn toolbar(
     view: &mut View,
 ) {
     ui.horizontal_wrapped(|ui| {
-        if crate::app::hint_into(hover, ui.checkbox(edit.master_on, tr(k::fx::CHAIN_ON)), tr(k::fx::CHAIN_ON_HINT)).changed() {
-            ch.master = true;
+        // a pair's switches stand at its lanes' In nodes (fx-graph D10)
+        if edit.master2.is_none() {
+            if crate::app::hint_into(hover, ui.checkbox(edit.master_on, tr(k::fx::CHAIN_ON)), tr(k::fx::CHAIN_ON_HINT)).changed() {
+                ch.master = true;
+            }
+            ui.separator();
         }
-        ui.separator();
         let head_name = edit.head.as_ref().map(|h| h.label.clone());
         match crate::fx_registry::fx_picker_with_head(ui, (id, "add"), kinds, query, head_name.as_deref(), edit.presets.rows, hover, preview) {
             Some(crate::fx_registry::Picked::Preset(i)) => {
@@ -919,4 +1009,50 @@ fn toolbar(
             *view = View::default();
         }
     });
+}
+
+/// The Viewer (fx-graph D11): the preview shows the project with ONE event's chain cut after a
+/// node — the same composition path, the same sound path (a sound node is heard up to it).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Viewer {
+    pub clip: kt_model::ClipId,
+    /// The model's slots that stay (those up to and with the node).
+    pub keep: usize,
+    /// The leading Geometry node stays: the node is at or after it.
+    pub lead_on: bool,
+    /// The node's name, for the badge over the preview.
+    pub name: String,
+}
+
+impl Viewer {
+    /// The project the player holds while the Viewer is on: the event (at the root or in a reel)
+    /// with its chain cut, its curves and slot masks with it; nothing else moves.
+    pub fn cut(&self, p: &mut kt_model::Project) {
+        let cut = |c: &mut kt_model::ClipEvent| {
+            let keep = self.keep.min(c.fx.len());
+            c.fx.truncate(keep);
+            c.fx_bypass.truncate(keep);
+            c.fx_auto.truncate(keep);
+            c.masks.slots.truncate(keep);
+            c.geometry_pos = c.geometry_pos.min(keep);
+            if !self.lead_on {
+                c.geometry = Default::default();
+                c.geometry_auto.clear();
+            }
+        };
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == self.clip) {
+            cut(c);
+        } else if let Some(c) = p.sequences.iter_mut().flat_map(|s| s.clips.iter_mut()).find(|c| c.id == self.clip) {
+            cut(c);
+        }
+    }
+}
+
+/// Ctrl+Shift held for this frame's click: the modifiers the press itself carried (a press and its
+/// release can come in one frame, before the input's held modifiers say so), or the held ones.
+fn ctrl_shift(ui: &egui::Ui) -> bool {
+    ui.input(|i| {
+        (i.modifiers.ctrl && i.modifiers.shift)
+            || i.events.iter().any(|e| matches!(e, egui::Event::PointerButton { modifiers, .. } if modifiers.ctrl && modifiers.shift))
+    })
 }

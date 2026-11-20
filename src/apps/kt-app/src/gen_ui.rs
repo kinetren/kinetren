@@ -35,20 +35,28 @@ use kt_model::{GeneratorKind, HasParams, TextAlign, TextAnchor};
 /// it in the UI is unclear”. Now the same list hangs in the
 /// main menu too, and no second list of kinds was created for it.
 pub fn generator_menu(ui: &mut egui::Ui) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR), None)
+    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR))
 }
 
-/// The same "Create a generator…" for a clip track's right-click menu
-/// (generators-placement-and-audio D1): only the kinds that land on a track of `stream` — picture
-/// kinds on a video track, sound kinds on an audio track — so the clip lands where the click was.
-pub fn generator_menu_for(ui: &mut egui::Ui, stream: kt_model::ClipKind) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, tr(k::bin::menu::NEW_GENERATOR), Some(k::bin::menu::NEW_GENERATOR), Some(stream))
+/// "Create a generator…" on a clip track's right-click menu (generator-from-track, `v26.10` G1): ONE
+/// plain item — "Не вижу смысла делать выпадающие меню с перечислением всех видов … Достаточно в самом
+/// окне менять тип". It gives the first kind that lands on the track (a solid colour on a video track,
+/// a tone on an audio one); the window it opens picks the kind in its gallery (G6).
+pub fn generator_item_for(ui: &mut egui::Ui, stream: kt_model::ClipKind) -> Option<GeneratorKind> {
+    let r = ui.button(tr(k::bin::menu::NEW_GENERATOR));
+    crate::widgets::field_probe::note("gen.new", r.rect);
+    crate::widgets::lesson_mark::item(ui, k::bin::menu::NEW_GENERATOR, r.rect);
+    if !r.clicked() {
+        return None;
+    }
+    GeneratorKind::all().into_iter().find(|kd| lands_on(kd, stream))
 }
+
 
 /// The same menu under another caption: “create” and “change kind” — ONE list of kinds (rule 17),
 /// and a new kind reaches both entries by itself.
 pub fn generator_kind_menu(ui: &mut egui::Ui, label: &str) -> Option<GeneratorKind> {
-    generator_kind_menu_keyed(ui, label, None, None)
+    generator_kind_menu_keyed(ui, label, None)
 }
 
 /// Whether the kind is a SOUND kind: it synthesizes its burst and has no picture.
@@ -63,20 +71,18 @@ pub(crate) fn lands_on(kind: &GeneratorKind, stream: kt_model::ClipKind) -> bool
 }
 
 /// `key` — the catalog key of the caption: the item outlines itself when a tour step points at
-/// it (tour-lessons-fixes D3), wherever the menu is drawn. `stream` — the track's kind, when the
-/// menu hangs on a track.
+/// it (tour-lessons-fixes D3), wherever the menu is drawn.
 fn generator_kind_menu_keyed(
     ui: &mut egui::Ui,
     label: &str,
     key: Option<crate::i18n::Key>,
-    stream: Option<kt_model::ClipKind>,
 ) -> Option<GeneratorKind> {
     let mut picked = None;
     let mr = ui.menu_button(label, |ui| {
         for grp in GenGroup::ALL {
             let kinds: Vec<_> = GeneratorKind::all()
                 .into_iter()
-                .filter(|k| GenGroup::of(k) == grp && stream.is_none_or(|s| lands_on(k, s)))
+                .filter(|k| GenGroup::of(k) == grp)
                 .collect();
             if kinds.is_empty() {
                 continue;
@@ -230,6 +236,20 @@ pub(crate) fn color_alpha(kind: &GeneratorKind) -> Option<&'static str> {
     }
     // no enum kind has a four-component colour since the shapes became plugins
     None
+}
+
+/// The alpha row of ONE colour group (`<stem>_a` of its `<stem>_r` row), when the kind has it
+/// (gen-shapes): a kind with two colours that both have alpha (a plate and its accent, a progress
+/// bar's track and fill) gives each eyedropper its own alpha — one shared alpha wrote the first
+/// colour's from the second's eyedropper.
+pub(crate) fn color_alpha_of(kind: &GeneratorKind, names: [&str; 3]) -> Option<&'static str> {
+    let GeneratorKind::Plugin(p) = kind else { return color_alpha(kind) };
+    let stem = names[0].strip_suffix("_r")?;
+    p.manifest()
+        .passport
+        .iter()
+        .find(|s| s.name.strip_suffix("_a") == Some(stem))
+        .map(|s| static_name(&s.name))
 }
 
 /// A missing kind's name is its id: interned once per id (only a file from a build with more
@@ -646,7 +666,14 @@ pub fn draw_gen_section(
             .show_ui(ui, |ui| {
                 crate::fx_thumbs::gallery_width(ui, host_w);
                 for grp in GenGroup::ALL {
-                    let kinds: Vec<GeneratorKind> = GeneratorKind::all().into_iter().filter(|kd| GenGroup::of(kd) == grp).collect();
+                    // only the kinds that land on THIS event's stream (generator-from-track): a sound
+                    // event's gallery is the sound kinds, a picture event's the picture kinds — the
+                    // other stream's kinds cannot become this event, and on an audio event they
+                    // pushed the sound kinds under the popup's fold
+                    let kinds: Vec<GeneratorKind> = GeneratorKind::all()
+                        .into_iter()
+                        .filter(|kd| GenGroup::of(kd) == grp && lands_on(kd, clip.kind))
+                        .collect();
                     if kinds.is_empty() {
                         continue;
                     }
@@ -706,6 +733,11 @@ pub fn draw_gen_section(
                 out.changed.base = true;
             }
         }
+        // WHERE THE TEXT COMES FROM (text-counter-source, `v26.10` G5/G3): the typed text, or a value
+        // that runs with the material time; the typed text is then a template with `{}` for it
+        if draw_title_source(ui, kind) {
+            out.changed.base = true;
+        }
         warn.refresh(kind);
         for w in [&warn.missing, &warn.font].into_iter().flatten() {
             ui.colored_label(egui::Color32::from_rgb(255, 105, 97), w);
@@ -745,10 +777,18 @@ pub fn draw_gen_section(
 
     // ---- colours: Rgb8 triples — with eyedroppers (rule 13) -------------------
     let groups = color_groups(kind);
-    let alpha = color_alpha(kind);
     let mut skip: Vec<&str> = Vec::new();
     for (_, names) in groups {
         skip.extend_from_slice(names);
+        skip.extend(color_alpha_of(kind, *names));
+    }
+    // a title's running-value rows only where they count (rule 9: no dead control)
+    if let GeneratorKind::Text { source, .. } = kind {
+        if source.is_static() {
+            skip.extend_from_slice(&["count_from", "count_fps"]);
+        } else if *source != kt_model::TextSource::Timecode {
+            skip.push("count_fps");
+        }
     }
     for (i, (label, names)) in groups.iter().enumerate() {
         if widgets::color_row(
@@ -756,7 +796,7 @@ pub fn draw_gen_section(
             tr(*label),
             kind,
             *names,
-            alpha,
+            color_alpha_of(kind, *names),
             (i == 0).then_some("genw.color"),
             ctx.pubc,
         ) {
@@ -843,6 +883,10 @@ pub(crate) fn choice_label(row: &str, key: &str) -> Option<&'static str> {
         ("color", "brown") => tr(k::genc::BROWN),
         ("curve", "log") => tr(k::genc::LOG),
         ("curve", "linear") => tr(k::genc::LINEAR),
+        ("pattern", "stripes") => tr(k::genc::STRIPES),
+        ("pattern", "dots") => tr(k::genc::DOTS),
+        ("pattern", "grid") => tr(k::genc::GRID),
+        ("pattern", "waves") => tr(k::genc::WAVES),
         _ => return None,
     })
 }
@@ -879,6 +923,53 @@ fn choice_rows(ui: &mut egui::Ui, kind: &mut GeneratorKind) -> bool {
 
 /// The parts of the title form that are not expressed by
 /// a number (“the first legitimate exception” F-TXT-001):
+/// The title's source and, for a stopwatch or a countdown, its format (text-counter-source): two
+/// rows of buttons, the same look as the alignment. `true` — changed.
+fn draw_title_source(ui: &mut egui::Ui, g: &mut GeneratorKind) -> bool {
+    use kt_model::{CountFormat, TextSource};
+    let GeneratorKind::Text { source, count_format, .. } = g else { return false };
+    let mut changed = false;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(tr(k::titlew::SOURCE));
+        for (v, key, tag) in [
+            (TextSource::Static, k::titlew::SOURCE_STATIC, "static"),
+            (TextSource::Timecode, k::titlew::SOURCE_TIMECODE, "timecode"),
+            (TextSource::Stopwatch, k::titlew::SOURCE_STOPWATCH, "stopwatch"),
+            (TextSource::Countdown, k::titlew::SOURCE_COUNTDOWN, "countdown"),
+        ] {
+            let r = ui.add(egui::Button::selectable(*source == v, tr(key)).frame_when_inactive(true));
+            if cfg!(test) || crate::widgets::field_probe::on() {
+                crate::widgets::field_probe::note(&format!("titlew.source.{tag}"), r.rect);
+            }
+            if r.clicked() && *source != v {
+                *source = v;
+                changed = true;
+            }
+        }
+    });
+    if matches!(*source, TextSource::Stopwatch | TextSource::Countdown) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(tr(k::titlew::COUNT_FORMAT));
+            for (v, label) in [
+                (CountFormat::MSs, "1:05"),
+                (CountFormat::MSsT, "1:05.3"),
+                (CountFormat::HMmSs, "0:01:05"),
+                (CountFormat::STenths, "65.3"),
+            ] {
+                let r = ui.add(egui::Button::selectable(*count_format == v, label).frame_when_inactive(true));
+                if r.clicked() && *count_format != v {
+                    *count_format = v;
+                    changed = true;
+                }
+            }
+        });
+    }
+    if !source.is_static() {
+        ui.weak(tr(k::titlew::SOURCE_NOTE));
+    }
+    changed
+}
+
 /// family, style, alignment, anchor, layer colours and the drawing order.
 fn draw_title_extras(ui: &mut egui::Ui, id: kt_model::ClipId, g: &mut GeneratorKind) -> bool {
     let mut changed = false;

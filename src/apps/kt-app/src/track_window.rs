@@ -29,6 +29,10 @@ pub struct TrackWindow {
     pub key_backup: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)>,
     /// The track's masks at opening (shape-masks) — "Cancel" returns them too.
     pub mask_backup: Vec<kt_model::Mask>,
+    /// The audio tracks' chains at opening (track-device-sound): a video track's device halves land
+    /// on its sound track — the default one the model links, or any the row picks — so "Cancel"
+    /// restores every audio track this session changed.
+    pub audio_backup: Vec<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>, bool)>,
     pub selected: crate::widgets::ChainSel,
     pub focus: bool,
     pub open: bool,
@@ -82,6 +86,17 @@ impl KtApp {
         let Some(t) = self.model.project().track(id) else { return };
         self.track_win = Some(TrackWindow {
             key_backup: None,
+            audio_backup: if t.kind == LaneKind::Video {
+                self.model
+                    .project()
+                    .tracks
+                    .iter()
+                    .filter(|a| a.kind == LaneKind::Audio)
+                    .map(|a| (a.id, a.fx.clone(), a.fx_bypass.clone(), a.fx_off))
+                    .collect()
+            } else {
+                Vec::new()
+            },
             id,
             backup: t.props(),
             fx_backup: (t.fx.clone(), t.fx_bypass.clone(), t.fx_off),
@@ -124,12 +139,18 @@ impl KtApp {
         // pasting a chain may bring envelopes; a track has nowhere to put them —
         // we say so ALOUD (rule 16)
         let mut curves_dropped = false;
+        // a stream device put on a track — refused aloud (found-defects 820)
+        let mut stream_refused = false;
         let mut mask_out: Option<(crate::maskctl::MaskOwner, Option<Vec<kt_model::Mask>>, crate::masks::ListOut)> = None;
         let mut changed_fx = false;
         let mut hover: Option<String> = None;
         // edits of the KEY track’s compressor are collected here and sent
         // after drawing — in the same window session and the same history step
         let mut key_edit: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)> = None;
+        // the sound track's chain edited from the pair's graph (track-device-sound)
+        let mut sound_edit: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>, bool)> = None;
+        // a video track's sound track and its chain (the pair's second lane)
+        let sound_track = track.sound.and_then(|sid| self.model.project().track(sid).cloned());
         let title = crate::tf!(k::track::TITLE, track.label(lane));
         let win = crate::window_shell::Shell::new(
             egui::Id::new(("track_window", w.id.0)),
@@ -233,6 +254,49 @@ impl KtApp {
                     crate::widgets::field_probe::note("track.lock", r.rect);
                     changed_props |= r.changed();
                 });
+                // DEVICE SOUND (track-device-sound, kkt-26.11.18b line 29): which audio track plays a
+                // simulated device's sound — shown while the chain holds a device or a link exists
+                // (rule 9: no dead control)
+                if track.kind == LaneKind::Video && (props.sound.is_some() || has_device(&fx)) {
+                    let p = self.model.project();
+                    let offers: Vec<(TrackId, String)> = p
+                        .tracks
+                        .iter()
+                        .filter(|t| t.kind == LaneKind::Audio)
+                        .enumerate()
+                        .filter(|(_, t)| kt_model::sound_link_ok(&p.tracks, w.id, Some(t.id)))
+                        .map(|(i, t)| (t.id, t.label(i as u32)))
+                        .collect();
+                    let name_of = |id: Option<TrackId>| match id {
+                        Some(id) => offers
+                            .iter()
+                            .find(|(i, _)| *i == id)
+                            .map(|(_, n)| n.clone())
+                            .or_else(|| track_name(p, id))
+                            .unwrap_or_default(),
+                        None => tr(k::track::SOUND_NONE).to_string(),
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(tr(k::track::SOUND));
+                        let cb = egui::ComboBox::from_id_salt(("track_sound", w.id.0))
+                            .selected_text(name_of(props.sound))
+                            .show_ui(ui, |ui| {
+                                let mut pick = props.sound;
+                                let r = ui.selectable_value(&mut pick, None, tr(k::track::SOUND_NONE));
+                                crate::widgets::field_probe::note("track.sound.none", r.rect);
+                                for (id, name) in &offers {
+                                    let r = ui.selectable_value(&mut pick, Some(*id), name);
+                                    crate::widgets::field_probe::note(&format!("track.sound.{}", id.0), r.rect);
+                                }
+                                if pick != props.sound {
+                                    props.sound = pick;
+                                    changed_props = true;
+                                }
+                            });
+                        crate::widgets::field_probe::note("track.sound", cb.response.rect);
+                        crate::app::hint_into(&mut hover, cb.response, tr(k::track::SOUND_HINT));
+                    });
+                }
                 // THE CHAIN — the same strip as for an event (rule 17).
                 // Service rows are not given it: they have no effects.
                 if track.kind.has_switches() {
@@ -258,6 +322,21 @@ impl KtApp {
                             .filter_map(|(i, f)| f.sidechain_key().and_then(|id| track_name(p, id)).map(|n| (i, n)))
                             .collect()
                     };
+                    // A VIDEO TRACK AND ITS SOUND TRACK — one graph (track-device-sound, fx-graph
+                    // D10's pair editor): the sound track's chain on the sound lane, a switch per lane
+                    let n_v = fx.len();
+                    let mut lanes: Vec<u8> = Vec::new();
+                    let mut a_on = true;
+                    let pair = sound_track.as_ref().filter(|_| track.kind == LaneKind::Video);
+                    if let Some(st) = pair {
+                        let mut sb = st.fx_bypass.clone();
+                        sb.resize(st.fx.len(), false);
+                        bypass.resize(n_v, false);
+                        fx.extend(st.fx.iter().cloned());
+                        bypass.extend(sb);
+                        lanes = std::iter::repeat_n(0, n_v).chain(std::iter::repeat_n(1, st.fx.len())).collect();
+                        a_on = !st.fx_off;
+                    }
                     let ch = crate::node_editor::chain_graph(
                         ui,
                         ("track", w.id.0),
@@ -276,8 +355,11 @@ impl KtApp {
                             context: Vec::new(),
                             // the ducking key: a dashed wire from the key track into its compressor
                             keys: track_keys,
+                            lane_of: pair.map(|_| &mut lanes),
+                            master2: pair.map(|_| &mut a_on),
+                            viewer: false,
                         },
-                        audio,
+                        if pair.is_some() { crate::fx_registry::PickKinds::Both } else { audio.into() },
                         &mut w.picker_query,
                         &mut self.fx_clipboard,
                         kt_time::Tick::ZERO,
@@ -292,6 +374,52 @@ impl KtApp {
                     );
                     changed_fx |= ch.any();
                     fx_off = !chain_on;
+                    // split the pair back by lane; a side that did not change sends nothing (D10:
+                    // a stale side re-pairs a removed device)
+                    if let Some(st) = pair {
+                        let (mut vf, mut vb, mut af, mut ab) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+                        for (i, f) in fx.drain(..).enumerate() {
+                            let b = bypass.get(i).copied().unwrap_or(false);
+                            if lanes.get(i).copied().unwrap_or(0) == 1 {
+                                af.push(f);
+                                ab.push(b);
+                            } else {
+                                vf.push(f);
+                                vb.push(b);
+                            }
+                        }
+                        trim_bypass(&mut vb);
+                        trim_bypass(&mut ab);
+                        fx = vf;
+                        bypass = vb;
+                        if af != st.fx || !same_bypass(&ab, &st.fx_bypass) || a_on == st.fx_off {
+                            sound_edit = Some((st.id, af, ab, !a_on));
+                        }
+                    }
+                    // DATAMOSH ON A TRACK — A REFUSAL WITH A REASON (found-defects 820). A stream
+                    // stage decodes an EVENT's own stream (the event before it on the lane, its
+                    // history); a track has no stream of its own, the engine skips the slot there,
+                    // and a dead slot is rule 9. One door after the graph: the picker, a paste and a
+                    // preset all land here. Slots an older project already holds stay as they are.
+                    if track.kind == LaneKind::Video {
+                        let had = track.fx.iter().filter(|f| f.is_stream()).count();
+                        if fx.iter().filter(|f| f.is_stream()).count() > had {
+                            let mut kept = 0;
+                            let mut i = 0;
+                            while i < fx.len() {
+                                if fx[i].is_stream() && kept >= had {
+                                    fx.remove(i);
+                                    if i < bypass.len() {
+                                        bypass.remove(i);
+                                    }
+                                    continue;
+                                }
+                                kept += usize::from(fx[i].is_stream());
+                                i += 1;
+                            }
+                            stream_refused = true;
+                        }
+                    }
                     // A CURVE ON A TRACK — A REFUSAL WITH A REASON, not silence.
                     // The strip is shared with the event (rule 17), and the person can at any moment
                     // insert into it a chain with automation. If we dropped it silently, he would see
@@ -503,6 +631,9 @@ impl KtApp {
         if curves_dropped {
             self.refuse(tr(k::track::CURVES_DROPPED));
         }
+        if stream_refused {
+            self.refuse(tr(k::track::NO_STREAM));
+        }
         if let Some((owner, list, out)) = mask_out.take() {
             if let Some(list) = list
                 && !cancel
@@ -540,6 +671,15 @@ impl KtApp {
                     w.gesture,
                 );
             }
+            for (aid, afx, aby, aoff) in w.audio_backup.clone() {
+                let Some(now) = self.model.project().track(aid).cloned() else { continue };
+                if now.fx != afx || now.fx_bypass != aby {
+                    self.apply_coalesced(Command::SetTrackFx { id: aid, fx: afx, bypass: aby }, w.gesture);
+                }
+                if now.fx_off != aoff {
+                    self.apply_coalesced(Command::SetTrackFxOff { id: aid, off: aoff }, w.gesture);
+                }
+            }
             open = false;
         } else {
             // the WHOLE SESSION OF THE WINDOW — ONE history step (a shared gesture token)
@@ -547,7 +687,7 @@ impl KtApp {
                 self.apply_coalesced(Command::SetTrackProps { id: w.id, props }, w.gesture);
             }
             if changed_fx {
-                if fx != track.fx || bypass != track.fx_bypass {
+                if fx != track.fx || !same_bypass(&bypass, &track.fx_bypass) {
                     self.apply_coalesced(
                         Command::SetTrackFx { id: w.id, fx, bypass },
                         w.gesture,
@@ -573,12 +713,41 @@ impl KtApp {
                 w.gesture,
             );
         }
+        if let Some((sid, sfx, sby, soff)) = sound_edit.filter(|_| !cancel)
+            && let Some(st) = self.model.project().track(sid).cloned()
+        {
+            // the sound track's chain — the SAME window session and the SAME history step
+            if sfx != st.fx || !same_bypass(&sby, &st.fx_bypass) {
+                self.apply_coalesced(Command::SetTrackFx { id: sid, fx: sfx, bypass: sby }, w.gesture);
+            }
+            if soff != st.fx_off {
+                self.apply_coalesced(Command::SetTrackFxOff { id: sid, off: soff }, w.gesture);
+            }
+        }
         if open && w.open {
             self.track_win = Some(w);
         } else {
             // anything that takes focus must RELEASE it (rule 14)
             ctx.memory_mut(|m| m.surrender_focus(name_id));
         }
+    }
+}
+
+/// A chain holds a simulated device with a sound half (the "Device sound" row's gate).
+fn has_device(fx: &[kt_model::FxInstance]) -> bool {
+    let reg = kt_model::plugin_slot::registry();
+    fx.iter().any(|f| matches!(f, kt_model::FxInstance::Plugin(s) if reg.counterpart(&s.id).is_some() && !f.is_stream()))
+}
+
+/// Two bypass vectors say the same (a missing tail is "on").
+fn same_bypass(a: &[bool], b: &[bool]) -> bool {
+    (0..a.len().max(b.len())).all(|i| a.get(i).copied().unwrap_or(false) == b.get(i).copied().unwrap_or(false))
+}
+
+/// "Nothing switched off" is an empty vector: the trailing `false`s go (the model's one form).
+fn trim_bypass(b: &mut Vec<bool>) {
+    while b.last() == Some(&false) {
+        b.pop();
     }
 }
 

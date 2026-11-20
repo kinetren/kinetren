@@ -1,7 +1,7 @@
 //! t1217 (camera-isp-simulation; capability `video-fx`): camera_isp's six-pass GPU graph against its
-//! CPU kernel — the defaults and every preset, on opaque and alpha frames, within
-//! `FrameTol::THRESHOLD` (the noise and the demosaic are byte mirrors; f32 `pow`/`exp`/division of
-//! the device may move a rounding edge on a rare pixel), alpha frames included.
+//! stored frames (`references/`, the last output of the deleted CPU kernel; compute-kernels-render D5)
+//! — the defaults and every preset, on opaque and alpha frames, within `FrameTol::THRESHOLD` (f32
+//! `pow`/`exp`/division of the device may move a rounding edge on a rare pixel), alpha frames included.
 
 use std::sync::Arc;
 
@@ -89,7 +89,7 @@ fn run_frame(
 }
 
 #[test]
-fn t1217_the_gpu_graph_agrees_with_the_cpu_kernel() {
+fn t1217_the_gpu_graph_holds_its_stored_frames() {
     let _one = lock();
     kt_plugins_builtin::install();
     let Some(engine) = test_engine() else { return };

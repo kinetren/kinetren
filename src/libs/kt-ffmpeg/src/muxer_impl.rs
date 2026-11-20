@@ -17,6 +17,24 @@ fn video_encoders(codec: crate::format::VideoCodec) -> Vec<crate::encoders::Enco
     crate::encoders::codec_candidates(crate::search::Os::NATIVE, codec)
 }
 
+/// The video's time base (found-defects 823): the caller's, else `den/num` of the frame rate — one tick a
+/// frame, 1001/24000 for 23.976.
+fn video_time_base(cfg: &crate::MuxConfig) -> ffi::AVRational {
+    match cfg.time_base {
+        Some((n, d)) => tb(n, d),
+        None => tb(cfg.frame_rate.den.max(1) as c_int, cfg.frame_rate.num.max(1) as c_int),
+    }
+}
+
+/// One frame's length in the video's time base, at least one tick.
+fn frame_ticks(cfg: &crate::MuxConfig) -> i64 {
+    let b = video_time_base(cfg);
+    let (rn, rd) = (cfg.frame_rate.num.max(1) as i64, cfg.frame_rate.den.max(1) as i64);
+    // a second of the base is b.den/b.num ticks; a frame lasts rd/rn of a second
+    let (n, d) = (b.den as i64 * rd, b.num as i64 * rn);
+    ((n + d / 2) / d.max(1)).max(1)
+}
+
 fn av_pix(p: crate::encoders::PixFmt) -> ffi::AVPixelFormat {
     match p {
         crate::encoders::PixFmt::Yuv420p => ffi::AV_PIX_FMT_YUV420P,
@@ -133,6 +151,7 @@ pub fn probe_output(api: &'static Api, path: &str) -> Result<crate::format::Outp
                 let fr = if fr.num > 0 { fr } else { (*st).r_frame_rate };
                 out.fps = (fr.num, fr.den);
                 out.color = ((*par).color_space as u32, (*par).color_range as u32, (*par).color_primaries as u32, (*par).color_trc as u32);
+                out.chroma_location = (*par).chroma_location as u32;
                 out.video_tag = (*par).codec_tag;
             } else if (*par).codec_type == ffi::AVMEDIA_TYPE_AUDIO && out.audio_codec.is_none() {
                 out.audio_codec = Some(codec_name((*par).codec_id));
@@ -188,6 +207,7 @@ fn open_vaapi_device(hw: &HwApi) -> Result<(*mut ffi::AVBufferRef, String), Stri
             (hw.av_hwdevice_ctx_create)(&mut dev, ffi::AV_HWDEVICE_TYPE_VAAPI, c.as_ptr(), core::ptr::null_mut(), 0)
         };
         if r >= 0 && !dev.is_null() {
+            crate::hw_device_opened();
             return Ok((dev, path));
         }
         why.push(format!("{path}: code {r}"));
@@ -234,6 +254,7 @@ pub fn hw_open_device(api: &'static Api, node: &str) -> Result<String, String> {
     };
     unsafe { (api.av_log_set_level)(16) };
     if r >= 0 && !dev.is_null() {
+        crate::hw_device_opened();
         let vendor = vaapi_vendor(dev);
         unsafe { (hw.av_buffer_unref)(&mut dev) };
         Ok(vendor)
@@ -331,7 +352,10 @@ pub struct Muxer {
     pkt: *mut ffi::AVPacket,
     width: c_int,
     height: c_int,
-    fps: c_int,
+    /// The video encoder's time base and one frame's ticks in it (found-defects 823): `den/num` of the
+    /// rate and 1, or the caller's base and the frame's length in it.
+    vtb: ffi::AVRational,
+    frame_ticks: i64,
     video_pts: i64,
     audio_pts: i64,
     /// Audio accumulator up to the encoder frame size (aac = 1024).
@@ -340,11 +364,16 @@ pub struct Muxer {
     audio_fmt: ffi::AVSampleFormat,
     /// The conversion's matrix and range (D6), for every converter this muxer makes.
     colour: (crate::format::Matrix, crate::format::Range),
+    /// The encoder's input format as the closed set names it (export-host-copy D3).
+    input_pix: crate::encoders::PixFmt,
     frame_size: usize,
     encoder_name: String,
     report: crate::OpenReport,
     /// Encoded packet bytes written so far: [video, audio].
     bytes: [u64; 2],
+    /// A device encoder's surface get and upload so far, ns (export-host-copy D1): apart from the
+    /// encode, so a trace says which binds.
+    surface_upload_ns: u64,
     /// A device encoder (D3/D4): the table, the device and frames contexts, and the surface each
     /// NV12 frame is uploaded to. All null for a system-memory encoder.
     hw: Option<&'static HwApi>,
@@ -506,17 +535,19 @@ impl Muxer {
             unsafe {
                 (*ctx).width = width;
                 (*ctx).height = height;
-                (*ctx).time_base = tb(1, cfg.fps as c_int);
-                (*ctx).framerate = tb(cfg.fps as c_int, 1);
+                (*ctx).time_base = video_time_base(cfg);
+                (*ctx).framerate = tb(cfg.frame_rate.num as c_int, cfg.frame_rate.den.max(1) as c_int);
                 (*ctx).pix_fmt = av_pix(pix);
                 if let Some((hw, _, frames, _)) = &device {
                     (*ctx).pix_fmt = ffi::AV_PIX_FMT_VAAPI;
                     (*ctx).hw_frames_ctx = (hw.av_buffer_ref)(*frames);
                 }
                 // the keyframe interval and the B-frames asked (D1); intra-only: every frame a key
-                (*ctx).gop_size = if intra { 1 } else { form.gop_frames(cfg.fps) as c_int };
+                (*ctx).gop_size = if intra { 1 } else { form.gop_frames(cfg.frame_rate.rounded()) as c_int };
                 (*ctx).max_b_frames = if intra { 0 } else { form.b_frames as c_int };
-                // the tags state the conversion (D6)
+                // the tags state the conversion (D6), the chroma's place too (export-host-copy D2: the
+                // conversion sites it left, as a player assumes of an untagged stream)
+                (*ctx).chroma_sample_location = ffi::AVCHROMA_LOC_LEFT;
                 (*ctx).colorspace = match form.matrix {
                     crate::format::Matrix::Bt601 => ffi::AVCOL_SPC_SMPTE170M,
                     crate::format::Matrix::Bt709 => ffi::AVCOL_SPC_BT709,
@@ -575,6 +606,7 @@ impl Muxer {
             ))
         })?;
         let enc_name = enc_name.as_str();
+        let input_pix = vpix;
         let vpix = av_pix(vpix);
 
         // --- audio encoder of the asked codec, its own sample format (D7); none — no stream ---
@@ -627,7 +659,7 @@ impl Muxer {
             return Err(FfError::Av("failed to create streams".into()));
         }
         unsafe {
-            (*vst).time_base = tb(1, cfg.fps as c_int);
+            (*vst).time_base = video_time_base(cfg);
             (api.avcodec_parameters_from_context)((*vst).codecpar, venc);
             // H.265 in MP4/MOV as `hvc1`: Apple's players refuse the default `hev1` (D8)
             if form.video == crate::format::VideoCodec::H265
@@ -703,16 +735,19 @@ impl Muxer {
             pkt: unsafe { (api.av_packet_alloc)() },
             width,
             height,
-            fps: cfg.fps as c_int,
+            vtb: video_time_base(cfg),
+            frame_ticks: frame_ticks(cfg),
             video_pts: 0,
             audio_pts: 0,
             audio_fifo: Vec::new(),
             audio_fmt,
             colour,
+            input_pix,
             frame_size,
             encoder_name: enc_name.to_string(),
             report,
             bytes: [0, 0],
+            surface_upload_ns: 0,
             hw,
             hw_device,
             hw_frames,
@@ -732,6 +767,18 @@ impl Muxer {
         (self.bytes[0], self.bytes[1])
     }
 
+    pub fn surface_upload_ns(&self) -> u64 {
+        self.surface_upload_ns
+    }
+
+    /// The encoder's planes, packed (export-host-copy D4): copied into the frame and encoded, no
+    /// conversion here.
+    pub fn write_video_planes(&mut self, planes: &[u8]) -> Result<(), FfError> {
+        self.vframe.fill_packed(planes)?;
+        let f = self.vframe.frame;
+        self.encode_video_frame(f)
+    }
+
     pub fn write_video(&mut self, rgba: &[u8]) -> Result<(), FfError> {
         self.conv.convert(rgba, &mut self.vframe)?;
         let f = self.vframe.frame;
@@ -746,6 +793,16 @@ impl Muxer {
     }
 
     /// A frame a `VideoConverter` fills, of this muxer's size and pixel format.
+    /// What the encoder takes (export-host-copy D3): its input format, the matrix and the range — the
+    /// layout an exact conversion writes for it.
+    pub fn input_layout(&self) -> (crate::encoders::PixFmt, crate::format::Matrix, crate::format::Range) {
+        (self.input_pix, self.colour.0, self.colour.1)
+    }
+
+    pub fn video_size(&self) -> (u32, u32) {
+        (self.width as u32, self.height as u32)
+    }
+
     pub fn alloc_video_frame(&self) -> Result<VideoFrame, FfError> {
         VideoFrame::alloc(self.api, self.conv.pix, self.width, self.height)
     }
@@ -761,12 +818,21 @@ impl Muxer {
         self.encode_video_frame(f.frame)
     }
 
+    /// `write_video_frame` at `pts` in the video's time base (`MuxConfig.time_base`): a proxy keeps its
+    /// source's times, variable rate included (found-defects 823, change `proxies`). Later frames written
+    /// without a pts follow it a frame apart.
+    pub fn write_video_frame_at(&mut self, f: &VideoFrame, pts: i64) -> Result<(), FfError> {
+        self.video_pts = pts;
+        self.write_video_frame(f)
+    }
+
     fn encode_video_frame(&mut self, frame: *mut ffi::AVFrame) -> Result<(), FfError> {
         let api = self.api;
         unsafe {
             (*frame).pts = self.video_pts;
             // a device encoder: the NV12 frame goes to a surface of the frames context (D4)
             if let Some(hw) = self.hw {
+                let since = std::time::Instant::now();
                 let r = (hw.av_hwframe_get_buffer)(self.hw_frames, self.hwframe, 0);
                 if r < 0 {
                     return Err(averr(api, "getting a VAAPI surface", r));
@@ -777,9 +843,10 @@ impl Muxer {
                     return Err(averr(api, "uploading a frame to the surface", r));
                 }
                 (*self.hwframe).pts = self.video_pts;
+                self.surface_upload_ns += since.elapsed().as_nanos() as u64;
             }
         }
-        self.video_pts += 1;
+        self.video_pts += self.frame_ticks;
         let f = if self.hw.is_some() { self.hwframe } else { frame };
         self.encode(f, true)
     }
@@ -835,7 +902,7 @@ impl Muxer {
     fn encode(&mut self, frame: *mut ffi::AVFrame, video: bool) -> Result<(), FfError> {
         let api = self.api;
         let (enc, stream_idx, tb_src) = if video {
-            (self.venc, self.vstream_idx, tb(1, self.fps))
+            (self.venc, self.vstream_idx, self.vtb)
         } else {
             (self.aenc, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
         };
@@ -844,7 +911,7 @@ impl Muxer {
         // with zero duration on every major (the track ended at that frame's start); FFmpeg 6–8
         // kept the frame only because the edit list was rounded up to milliseconds, FFmpeg 9
         // writes an exact one and the frame was cut off (t33: 59 of 60).
-        unsafe { (*frame).duration = if video { 1 } else { self.frame_size as i64 } };
+        unsafe { (*frame).duration = if video { self.frame_ticks } else { self.frame_size as i64 } };
         // EAGAIN = “encoder is full, frame NOT accepted” — a retry is required
         // after draining the queue. Previously the frame was silently LOST while the PTS grid
         // continued: a video of the same length with “jumps” (item 9 — frame drops
@@ -895,7 +962,7 @@ impl Muxer {
                 // not) still writes a packet that lasts one frame — see `encode`
                 if (*self.pkt).duration == 0 {
                     let video = stream_idx == self.vstream_idx;
-                    (*self.pkt).duration = if video { 1 } else { self.frame_size as i64 };
+                    (*self.pkt).duration = if video { self.frame_ticks } else { self.frame_size as i64 };
                 }
                 let st = &**(*self.fmt).streams.add(stream_idx as usize);
                 (api.av_packet_rescale_ts)(self.pkt, tb_src, st.time_base);
@@ -934,7 +1001,7 @@ impl Muxer {
         }
         // flush the encoders
         unsafe { (api.avcodec_send_frame)(self.venc, core::ptr::null()) };
-        self.drain(self.venc, self.vstream_idx, tb(1, self.fps))?;
+        self.drain(self.venc, self.vstream_idx, self.vtb)?;
         if !self.aenc.is_null() {
             unsafe { (api.avcodec_send_frame)(self.aenc, core::ptr::null()) };
             self.drain(self.aenc, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))?;
@@ -1086,6 +1153,47 @@ impl VideoFrame {
             }
             Ok(VideoFrame { api, frame })
         }
+    }
+}
+
+impl VideoFrame {
+    /// Fill the frame from the encoder format's planes packed tightly one after another, rows of the
+    /// picture's width, in the order the frame takes them (export-host-copy D3): a copy row by row
+    /// into the frame's own line sizes. 16-bit samples little-endian.
+    pub fn fill_packed(&mut self, packed: &[u8]) -> Result<(), FfError> {
+        let api = self.api;
+        unsafe {
+            let r = (api.av_frame_make_writable)(self.frame);
+            if r < 0 {
+                return Err(averr(api, "making the frame writable", r));
+            }
+            let f = &mut *self.frame;
+            let (w, h) = (f.width as usize, f.height as usize);
+            let (cw, ch2) = (w.div_ceil(2), h.div_ceil(2));
+            // (row bytes, rows) per plane of the format
+            let planes: Vec<(usize, usize)> = match f.format {
+                x if x == ffi::AV_PIX_FMT_YUV420P => vec![(w, h), (cw, ch2), (cw, ch2)],
+                x if x == ffi::AV_PIX_FMT_NV12 => vec![(w, h), (cw * 2, ch2)],
+                x if x == ffi::AV_PIX_FMT_YUV420P10LE => vec![(w * 2, h), (cw * 2, ch2), (cw * 2, ch2)],
+                x if x == ffi::AV_PIX_FMT_P010LE => vec![(w * 2, h), (cw * 4, ch2)],
+                x if x == ffi::AV_PIX_FMT_YUV422P10LE => vec![(w * 2, h), (cw * 2, h), (cw * 2, h)],
+                other => return Err(FfError::Av(format!("no packed layout for the pixel format {other}"))),
+            };
+            let need: usize = planes.iter().map(|(b, r)| b * r).sum();
+            if packed.len() < need {
+                return Err(FfError::Av(format!("planes of {} bytes, the frame takes {need}", packed.len())));
+            }
+            let mut at = 0;
+            for (i, (row, rows)) in planes.into_iter().enumerate() {
+                let dst = f.data[i];
+                let ls = f.linesize[i] as usize;
+                for y in 0..rows {
+                    core::ptr::copy_nonoverlapping(packed.as_ptr().add(at + y * row), dst.add(y * ls), row);
+                }
+                at += row * rows;
+            }
+        }
+        Ok(())
     }
 }
 

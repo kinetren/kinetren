@@ -318,6 +318,12 @@ fn writer(path: &Path, rotate: u64, rx: mpsc::Receiver<Msg>, written: &AtomicU64
                 len += buf.len() as u64;
             }
             written.fetch_add(lines, Ordering::Release);
+            // a writer still running between the count and its park, as a preempted one is on a loaded
+            // machine (runnable, not sleeping): t1964 holds it here until it has seen it run
+            #[cfg(test)]
+            while tests::HOLD_AFTER_COUNT.load(Ordering::Acquire) {
+                std::hint::spin_loop();
+            }
         }
         for b in barriers {
             let _ = b.send(());
@@ -711,10 +717,19 @@ mod tests {
         assert!(read(&j).trim_end().ends_with(&format!("second {:04} kinetren 100, prefetch 90", n - 1)));
     }
 
+    /// The writer stays running after it counted a record while this is set (t1964; one test process
+    /// per test under nextest). A flag the test clears, not a span: the stay is a stimulus, not a wait.
+    /// On every target: the writer reads it in any test build (the Windows build broke when the
+    /// test's `cfg` came to stand on this static, found-defects 901).
+    pub(super) static HOLD_AFTER_COUNT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
     /// Test t1964 (telemetry-journal): with nothing to write, the journal's thread does not wake.
     #[cfg(target_os = "linux")]
     #[test]
     fn t1964_no_wakeups_at_rest() {
+        // the writer stays running past its count of a record, as a preempted one does under load
+        // (found-defects 141): the rest is read only once it has parked
+        HOLD_AFTER_COUNT.store(true, Ordering::Release);
         let j = fresh("t1964", FakeClock::new(T0, 0), ROTATE_BYTES);
         j.record(Kind::Run, "start");
         wait_written(&j, 1);
@@ -727,7 +742,27 @@ mod tests {
                 .filter_map(|l| l.split_whitespace().last()?.parse::<u64>().ok())
                 .sum::<u64>()
         };
-        let before = switches();
+        // at rest means PARKED (found-defects 141): `wait_written` returns at the writer's count of the
+        // record, a few instructions before it parks in `recv`; a writer preempted there under load parked
+        // after `before` was read, and its own way to the park read as a wakeup. So the count is taken once
+        // the writer sleeps and its switches stand between two looks.
+        let state = || {
+            let s = std::fs::read_to_string(format!("/proc/self/task/{tid}/stat")).unwrap();
+            // the state follows the command name's closing parenthesis
+            s.rsplit_once(')').and_then(|(_, r)| r.trim_start().chars().next()).unwrap_or('?')
+        };
+        // the stimulus took: the writer is past its count and running, not parked
+        assert_eq!(state(), 'R', "the held writer is not running");
+        HOLD_AFTER_COUNT.store(false, Ordering::Release);
+        let deadline = kt_time::test_deadline();
+        let before = loop {
+            let a = switches();
+            std::thread::sleep(Duration::from_millis(50));
+            if state() == 'S' && switches() == a {
+                break a;
+            }
+            assert!(std::time::Instant::now() < deadline, "the journal's writer never parked");
+        };
         std::thread::sleep(Duration::from_millis(1_500));
         assert_eq!(switches(), before, "the journal's writer woke with nothing to write");
         // and a record still wakes it at once

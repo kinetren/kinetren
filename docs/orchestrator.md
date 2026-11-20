@@ -179,6 +179,32 @@ for the owner and another 50 minutes unmerged, while the last word to him was "t
 - In Russian, short, what he can now do or no longer suffers from; the version after a stage's
   `finish.sh`; for UI work the live screenshots.
 - Name what is not done and why; never a session's note as proof — check the diff and the images.
+- **Every request to him goes into [`owner-checks.md`](owner-checks.md)** (owner, 2026-11-20): what
+  he is asked to check or decide, on which release, and beside it the orchestrator's links (claim,
+  found-defects row, change, executor) so his answer leads straight to the place to fix. A report
+  that asks him something adds the row in the same turn; an answer moves it to "Answered".
+
+## Three execute, two prepare (2026-11-20)
+
+Owner: "еще пару чатов изучать что-то, улучшать по спекам. подготавливать архитектурные вещи - спеки.
+но не выполнять их. выполняют только трое." At most three sessions write code (executors). Two more
+are spec sessions: they study the code and the specs, write `docs/features/` notes, OpenSpec
+proposals and designs, and revise specs, on their own branches, with no code and no `apply`. Their
+designs wait for the owner's questions to be answered (rows in `owner-checks.md`) and are then taken by
+an executor. A free executor gets its next work in the same turn.
+
+**Test numbers by block** (2026-11-20, after three collisions in one day): each session takes numbers only
+from its own block: fx-graph t3200–t3299, spec-engine t3300–t3399, spec-features t3400–t3599, mosh-sharp
+t3600–t3699, features-slow t3700–t3799, spec-engine's second block t3800–t3899 (2026-11-20, its first ran out), spec-features' second block t3900–t4099 (2026-11-20). The next free block starts at t4100. A collision found at a merge is renumbered on the later branch.
+
+**found-defects rows by block** (2026-11-20, after rows 819–823 were taken twice): fx-graph 900–949,
+mosh-sharp 950–999, features-slow 1000–1049, spec-engine 1050–1099, spec-features 1100–1149; the
+orchestrator takes the next free number below 900.
+
+**A design-only change names a planned live scenario without its path** ("planned live scenario `scopes`"):
+the guards t804 and t799 read active changes too, so a path to a scenario not yet written turns orch red.
+The executor that applies the change writes `src/scripts/live/<name>.py` and the path together. Every UI
+scenario in a design carries its PATH line.
 
 ## Standing go (2026-11-09)
 

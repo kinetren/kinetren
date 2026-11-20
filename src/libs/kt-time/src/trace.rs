@@ -218,10 +218,14 @@ pub enum Ev {
     /// `a` the moment's tick, `b` bytes (a restore, a store, an eviction) or device ns (a measured
     /// moment), `c` the durable key; a restore's span is the read and the inflate.
     RenderCache = 121,
+    /// A primary click as the UI read it (found-defects 817): `a` egui's count (1–3), `b` the count
+    /// the program kept (`clicks::effective`: a triple only after a double), `c` µs since the click
+    /// before, `aux` egui's double-click window then, ms. Only frames that read a click record it.
+    Click = 122,
 }
 
 impl Ev {
-    pub const ALL: [Ev; 56] = [
+    pub const ALL: [Ev; 57] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -278,6 +282,7 @@ impl Ev {
         Ev::GpuFrame,
         Ev::Shutdown,
         Ev::RenderCache,
+        Ev::Click,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -342,6 +347,7 @@ impl Ev {
             Ev::Shutdown => "shutdown",
             Ev::GpuFrame => "gpu_frame",
             Ev::RenderCache => "render_cache",
+            Ev::Click => "click",
         }
     }
 }
@@ -590,7 +596,10 @@ pub mod export_stage {
     /// A frame from its submission to its collection: `a` nanoseconds summed, `b` the longest, `c` the
     /// frames. Not a stage.
     pub const LATENCY: u32 = 19;
-    pub const NAMES: [&str; 19] = [
+    /// A device encoder's surface get and upload (export-host-copy D1), apart from `ENCODE`: `a` busy
+    /// nanoseconds, `b` the wall, `c` the frames. A stage, recorded after the sixteen.
+    pub const SURFACE_UPLOAD: u32 = 20;
+    pub const NAMES: [&str; 20] = [
         "decode",
         "compose",
         "readback",
@@ -610,6 +619,7 @@ pub mod export_stage {
         "wall",
         "ring",
         "latency",
+        "surface upload",
     ];
     /// The stage's name (`?` — a stage this build does not know).
     pub fn name(aux: u32) -> &'static str {
@@ -636,6 +646,9 @@ pub mod render_cache {
     pub const SCAN: u32 = 7;
     /// The prerender stopped: `b` why.
     pub const STOPPED: u32 = 8;
+    /// A segment reader opened (hw-segment-decode): `b` 1 — it decodes on the machine's device, 0 —
+    /// on the processor; `id` the device's name or why there is none (a [`name`]).
+    pub const READER: u32 = 9;
     /// Why the prerender stopped (`ABANDON`/`STOPPED` `b`).
     pub mod why {
         pub const INPUT: u64 = 1;

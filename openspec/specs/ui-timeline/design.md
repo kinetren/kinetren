@@ -527,3 +527,31 @@ The mechanism: a drop places by the start alone, whatever the person aimed at. C
   is carried but not used — a source-in from it is not asked for;
 - "Place at the cursor" in the card's menu: places at the playhead, no pointer and no moment; unchanged;
 - dragging an event on the timeline: the grab point already stays under the mouse (`DragState.grab`).
+
+## A triple click is one gesture (found-defects 817)
+
+egui counts a click as a triple when the click two before it fell inside twice the double-click
+window, and checks the distance only to the last click: the first of the three may be anywhere. The
+program widens egui's windows by its busy frame (`KeyClock::widen_clicks`: a double up to 1.3 s, a
+triple up to 2.6 s), so on a loaded machine a click on the effects window's "Done" 2.5 s before a
+double click on an event made that double click a triple (live `formula`, stage 21's finish run):
+egui's `double_clicked()` is false on a count of three, no FX window opened, a region was set over
+the event and the cursor jumped to its start. `clicks.rs` reads the frame's primary click once
+(`draw_all`) and keeps a count per gesture: a triple only when the click before was itself a double,
+otherwise a double when it follows the click before within the window, as egui judges a double.
+
+Class walk — every place that read egui's double or triple click (25): the timeline (event body,
+level line, transitions, the markers' ribbon, the morph and camera bands, the track header's
+rename), the node graph (canvas, node, chip), the automation graph's key, the fader's reset, the
+mask handles, the bin card (a generator's form, the click that is not a double), the toolbar's
+fields and background, the preview's click/double-click step, the effects window's row reset. All
+now read `clicks::double`/`clicks::triple`; the one triple (the event body's region) keeps t927/t928.
+
+The second way a double click was lost (the same `formula` step, red again on a loaded machine with
+the count fixed): egui judges a click with the windows set a frame ago, and the frame that read the
+first click was slower than the ones the window was measured on (155 ms of the UI thread, then its
+present); the second click read a frame later was past it, two single clicks. `raw_input_hook`
+widens the windows by the gap since the frame before began, when that frame asked for this one at
+once, BEFORE egui reads the input (t3131). A rest's gap never widens them. Each click the UI reads
+is a `click` trace record (egui's count, the kept one, the gap, the window): the next such red is
+read from the trace, not guessed.

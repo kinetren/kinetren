@@ -324,6 +324,8 @@ pub struct KtApp {
     /// Active inline input of a marker's NOTE (marker-notes, `v26.10` U8): multi-line, written as
     /// one undo step when it closes.
     pub marker_note: Option<MarkerNoteEdit>,
+    /// The Viewer (fx-graph D11): the preview shows the picture after a node of one event's chain.
+    pub viewer: Option<crate::node_editor::Viewer>,
     /// Active inline input for the track name (item 2 round 10).
     pub lane_edit: Option<LaneEdit>,
     pub area_edit: Option<AreaEdit>,
@@ -1033,6 +1035,7 @@ impl KtApp {
             marker_edit: None,
             marker_edit_focus: false,
             marker_note: None,
+            viewer: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -1370,6 +1373,7 @@ impl KtApp {
             marker_edit: None,
             marker_edit_focus: false,
             marker_note: None,
+            viewer: None,
             lane_edit: None,
             area_edit: None,
             area_edit_focus: false,
@@ -1801,6 +1805,8 @@ impl KtApp {
         // in the test there are not” — the counter guard would check the wrong thing.
         crate::bench::tick();
         self.key_clock.begin_frame();
+        // one gesture's click count before any widget reads it (found-defects 817)
+        crate::clicks::begin_frame(ui.ctx());
         if crate::bench::enabled() {
             let events = ui.ctx().input(|i| i.events.len());
             crate::bench::note_inputs(events as u64);
@@ -3219,8 +3225,27 @@ impl KtApp {
         }
     }
 
+    /// The Viewer on (the picture after a node) or off (fx-graph D11): the player gets the project
+    /// with the event's chain cut, or the whole one again.
+    pub(crate) fn set_viewer(&mut self, v: Option<crate::node_editor::Viewer>) {
+        if self.viewer == v {
+            return;
+        }
+        crate::tele_journal::record(
+            crate::tele_journal::Kind::Act,
+            &match &v {
+                Some(v) => format!("viewer on: after {} (event {})", v.name, v.clip.0),
+                None => "viewer off".to_string(),
+            },
+        );
+        self.viewer = v;
+        self.push_project_to_player();
+    }
+
     /// Start playback from the current position (resume semantics, item 15).
     pub fn on_play(&mut self) {
+        // playing is the edit's picture: the Viewer ends
+        self.set_viewer(None);
         self.follow_playhead = true;
         self.player.play();
     }
@@ -3309,6 +3334,11 @@ impl KtApp {
 
     /// Esc cascade (item 11): windows → active drag → region+selection.
     pub fn escape_action(&mut self) {
+        // 0) the Viewer: Esc gives the whole picture back first, the window stays
+        if self.viewer.is_some() {
+            self.set_viewer(None);
+            return;
+        }
         // 0) number input of speed (R.57) — it lives IN PLACE of the band, and
         // it must be closed before anything else; focus is handed over by
         // `draw_speed_control` on the next frame
@@ -4569,10 +4599,16 @@ impl KtApp {
         // the model's shared snapshot of this state at the root (edit-without-rebuild): the windows
         // that publish from it and the player hold one copy, not one each; the player builds it on
         // its own thread
-        let p = match self.model.editing() {
+        let mut p = match self.model.editing() {
             Some(_) => std::sync::Arc::new(self.model.reel_document()),
             None => self.model.doc_arc(),
         };
+        // the Viewer (fx-graph D11): the player holds the project with one event's chain cut
+        if let Some(v) = &self.viewer {
+            let mut q = (*p).clone();
+            v.cut(&mut q);
+            p = std::sync::Arc::new(q);
+        }
         self.player.set_project_at(p, self.model.revision());
     }
 
@@ -7488,7 +7524,7 @@ impl KtApp {
             let at = self.key_clock.frame_at;
             let delay = preview_click_delay_ms(&self.key_clock);
             let pending_ms = self.preview_click_at.map(|t| at.saturating_duration_since(t).as_millis());
-            let (action, op) = preview_click_step(pending_ms, resp.clicked(), resp.double_clicked(), delay);
+            let (action, op) = preview_click_step(pending_ms, resp.clicked(), crate::clicks::double(&resp), delay);
             match op {
                 PendingOp::Arm => self.preview_click_at = Some(at),
                 PendingOp::Clear => self.preview_click_at = None,
@@ -7648,6 +7684,15 @@ impl KtApp {
                 let at = self.preview_key.map_or(0, |k| k.0);
                 kt_time::trace::ev(kt_time::trace::Ev::Loading).aux(show_overlay as u32).a(at as u64).b(self.preview_catching_up).emit();
             }
+            // the Viewer's badge: the picture is the one after a node, not the edit's
+            if let Some(v) = &self.viewer {
+                let text = crate::tf!(k::fx::graph::VIEWER, v.name);
+                let at = img_rect.left_top() + egui::vec2(10.0, 14.0);
+                let galley = painter.layout_no_wrap(text, egui::FontId::proportional(14.0), egui::Color32::from_gray(240));
+                painter.rect_filled(egui::Rect::from_min_size(at, galley.size()).expand(4.0), 3.0, crate::theme::ACCENT);
+                painter.galley(at, galley, egui::Color32::from_gray(240));
+                crate::widgets::field_probe::note("preview.viewer", img_rect);
+            }
             if show_overlay {
                 // the README's hero waits for a frame without it (a picture mid-load is not one)
                 crate::widgets::field_probe::note("preview.loading", img_rect);
@@ -7766,7 +7811,7 @@ impl KtApp {
                 self.player.set_playback_rate(self.base_rate);
             }
         }
-        if resp.double_clicked() {
+        if crate::clicks::double(&resp) {
             self.base_rate = 1.0;
             self.shuttle_override = None;
             self.player.set_playback_rate(1.0);
@@ -8755,10 +8800,28 @@ impl KeyClock {
     /// (found-defects 166, `formula` and `lessons` under the full live run). Its windows widen
     /// by the busy frame, as the double Space does; on a card that is ~16 ms.
     pub fn widen_clicks(&mut self, ctx: &egui::Context) {
+        self.widen_by(ctx, self.busy);
+    }
+
+    /// Before egui reads a frame's input (`raw_input_hook`): the gap since the last frame began
+    /// widens the windows too when that frame asked for this one at once. egui judges the click
+    /// read NOW with the windows set a frame ago, so a frame slower than the ones before it (the
+    /// frame that read a double click's first click, 155 ms under load, then its present) split
+    /// the two clicks past a window that did not know it yet (found-defects 817).
+    pub fn widen_before_input(&mut self, ctx: &egui::Context) {
+        let gap = if self.animating {
+            std::time::Instant::now().duration_since(self.frame_at).min(Self::BUSY_MAX)
+        } else {
+            std::time::Duration::ZERO
+        };
+        self.widen_by(ctx, self.busy.max(gap));
+    }
+
+    fn widen_by(&mut self, ctx: &egui::Context, busy: std::time::Duration) {
         if !self.widen {
             return;
         }
-        let busy = self.busy.as_secs_f64();
+        let busy = busy.as_secs_f64();
         let (double, click) = (DOUBLE_CLICK_S + busy, CLICK_HOLD_S + busy);
         self.double_s = double;
         if ctx.options(|o| (o.input_options.max_double_click_delay - double).abs() > 0.002) {
@@ -11104,6 +11167,10 @@ impl Drop for UiFrameTrace {
 static LOADING_TRACED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 impl eframe::App for KtApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, _raw_input: &mut egui::RawInput) {
+        self.key_clock.widen_before_input(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         kt_time::work::bump(kt_time::work::Work::UiFrame);
         // a frame of a refused surface reconfigure's hold is spent (gpu-errors-survive)

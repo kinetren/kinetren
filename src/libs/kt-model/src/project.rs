@@ -3110,6 +3110,20 @@ pub struct Track {
     /// Masks of the track's composite, canvas space, static (shape-masks).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub masks: Vec<crate::mask::Mask>,
+    /// A VIDEO track's sound track (track-device-sound): the audio track of the same list whose
+    /// chain holds the sound halves of this track's simulated devices, mirrored by the event rule.
+    /// One-to-one: an audio track is the sound of at most one video track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound: Option<TrackId>,
+}
+
+/// Whether `video` may name `sound` as its sound track (track-device-sound): nothing, or an audio
+/// track of the same list that no other video track names; `video` itself a video track.
+pub fn sound_link_ok(tracks: &[Track], video: TrackId, sound: Option<TrackId>) -> bool {
+    let Some(sound) = sound else { return true };
+    tracks.iter().any(|t| t.id == video && t.kind == LaneKind::Video)
+        && tracks.iter().any(|t| t.id == sound && t.kind == LaneKind::Audio)
+        && !tracks.iter().any(|t| t.id != video && t.sound == Some(sound))
 }
 
 impl Default for Track {
@@ -3130,6 +3144,9 @@ pub struct TrackProps {
     pub gain_db: f64,
     pub opacity: f64,
     pub blend: BlendMode,
+    /// A video track's sound track (track-device-sound); `None` for an audio track.
+    #[serde(default)]
+    pub sound: Option<TrackId>,
 }
 
 impl Track {
@@ -3150,6 +3167,7 @@ impl Track {
             fx_off: false,
             fx_auto: Vec::new(),
             masks: Vec::new(),
+            sound: None,
         }
     }
 
@@ -3168,6 +3186,7 @@ impl Track {
             gain_db: self.gain_db,
             opacity: self.opacity,
             blend: self.blend,
+            sound: self.sound,
         }
     }
 
@@ -3180,6 +3199,7 @@ impl Track {
         self.gain_db = p.gain_db;
         self.opacity = p.opacity;
         self.blend = p.blend;
+        self.sound = p.sound;
     }
 
     /// Active chain slots (bypass filtered out), as for an event.
@@ -3229,6 +3249,7 @@ impl Track {
             || !self.fx.is_empty()
             || self.fx_off
             || !self.masks.is_empty()
+            || self.sound.is_some()
     }
 
     /// Nothing except kind and id is set — only the envelope is written to the file.
@@ -3245,6 +3266,7 @@ impl Track {
             && self.fx_auto.iter().all(|a| a.is_empty())
             && !self.fx_off
             && self.masks.is_empty()
+            && self.sound.is_none()
     }
 }
 
@@ -6145,6 +6167,8 @@ pub enum ProjectError {
     BadConform,
     #[error("clip {0:?}: geometry position beyond the chain")]
     BadGeometryPos(ClipId),
+    #[error("track {0:?}: its sound track is not a free audio track of its list")]
+    BadTrackSound(TrackId),
     #[error("reel {0:?}: raster must be even 16..8192, fps a divisor of 90000 in 1..120")]
     BadSequenceSettings(MediaId),
     #[error("region: end must be greater than start")]
@@ -6431,8 +6455,22 @@ impl Project {
     }
 
     /// Whether a marker carries a note (marker-notes): the file is then format 5.
+    /// A video track names its sound track (track-device-sound) — the file's format 6.
+    pub fn has_track_sound(&self) -> bool {
+        self.tracks.iter().chain(self.sequences.iter().flat_map(|s| s.tracks.iter())).any(|t| t.sound.is_some())
+    }
+
     pub fn has_marker_notes(&self) -> bool {
         self.markers.iter().any(|m| !m.note.is_empty())
+    }
+
+    /// Whether a title runs a value — a timecode, a stopwatch, a countdown (text-counter-source): the
+    /// file is then format 7. An older build would read such a title as its typed text and save it so.
+    pub fn has_text_sources(&self) -> bool {
+        let runs = |c: &ClipEvent| {
+            matches!(&c.r#gen, Some(crate::GeneratorKind::Text { source, .. }) if !source.is_static())
+        };
+        self.clips.iter().any(runs) || self.sequences.iter().any(|s| s.clips.iter().any(runs))
     }
 
     pub fn has_masks(&self) -> bool {
@@ -6600,7 +6638,13 @@ impl Project {
     /// higher numbers shift by −1.
     pub fn remove_track(&mut self, kind: LaneKind, at: u32) {
         let Some(pos) = track_index(&self.tracks, kind, at) else { return };
-        self.tracks.remove(pos);
+        let gone = self.tracks.remove(pos).id;
+        // a removed sound track is nobody's sound any more (track-device-sound)
+        for t in &mut self.tracks {
+            if t.sound == Some(gone) {
+                t.sound = None;
+            }
+        }
         match kind {
             LaneKind::Video | LaneKind::Audio => {
                 self.clips.retain(|c| !(lane_key(c).0 == kind && c.lane == at));
@@ -7376,6 +7420,13 @@ impl Project {
         for c in self.reels().flat_map(|(_, r)| r.clips().iter()) {
             if c.geometry_pos > c.fx.len() {
                 return Err(ProjectError::BadGeometryPos(c.id));
+            }
+        }
+        for (_, r) in self.reels() {
+            for t in r.tracks() {
+                if t.sound.is_some() && !sound_link_ok(r.tracks(), t.id, t.sound) {
+                    return Err(ProjectError::BadTrackSound(t.id));
+                }
             }
         }
         for s in &self.sequences {

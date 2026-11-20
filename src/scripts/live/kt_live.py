@@ -40,6 +40,7 @@ BENCH = os.environ.get("KT_LIVE_BENCH")
 # the program's dump and the bench's command file on tmpfs (test-hygiene)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _channel import channel_dir, keep_channel  # noqa: E402,F401
+import _why  # noqa: E402
 
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
 
@@ -220,6 +221,33 @@ def pause(seconds, reason):
 def _poll(seconds=0.02):
     """A waiting poll step: not a pause, but the frequency of the question “already?”."""
     time.sleep(seconds)
+
+
+# THE TEST'S GUARD (test-stability, t1671): `kt_time::test_deadline()` is ten minutes against a
+# hang, no claim about speed. A wait for something that MUST happen (the program's window, a frame,
+# a command of the stand) waits up to it while the program lives; a clock limit of its own is a
+# claim about the machine's load (found-defects 822: "the kt-app window did not appear" at a load
+# average of 28, green alone on the second try).
+TEST_DEADLINE = 600.0
+
+
+def the_window(proc=None, what="the program's window"):
+    """THE PROGRAM'S X WINDOW, waited for (found-defects 822). `ui-probe.window()` answers at once
+    and exits when no window is found: under load the window is not mapped yet, or the walk met a
+    window that closed under it (a splash, a menu), and the scenario died on its first gesture.
+    This asks again until the window is there, up to the test's guard, failing at once if the
+    program itself ended. The ONE door to the window: every caller goes through it."""
+    deadline = time.time() + TEST_DEADLINE
+    seen = []
+    while True:
+        try:
+            return probe.window()
+        except SystemExit:
+            if proc is not None and _why.dead(proc, seen):
+                raise Failure(f"{what}: the program can bring no window (code {proc.poll()})")
+            if time.time() >= deadline:
+                raise Failure(f"{what} did not appear within the test's guard ({TEST_DEADLINE:.0f} s)")
+            _poll(0.1)
 
 
 # THE PROGRAM'S FRAME TIME, as the last wait observed it. A frame of the software render takes
@@ -423,7 +451,7 @@ class Live:
         want = json.load(open(os.path.join(BENCH, "window.json")))
         now = geometry()
         if any(abs(now[k] - want[k]) > 4 for k in ("x", "y", "w", "h")):
-            win = probe.window()
+            win = the_window(what="the stand's window")
             win.configure(x=want["x"], y=want["y"], width=want["w"], height=want["h"])
             probe.d.sync()
             self._raised = False
@@ -492,7 +520,7 @@ class Live:
         fixed 30 s under the full live run, drawing all the while, and three scenarios went red
         on a program that was alive and working. A stand that draws is waited for up to the ten
         minutes of a test's guard."""
-        give_up = time.time() + 600.0
+        give_up = time.time() + TEST_DEADLINE
         frame, still_since = -1, time.time()
         while time.time() < give_up:
             try:
@@ -568,7 +596,7 @@ class Live:
             )
         return False
 
-    def _wait_window(self, timeout=180.0):
+    def _wait_window(self, timeout=TEST_DEADLINE):
         """Wait for the window and the DRAWN frames.
 
         Before R.68 “frame drawn” was checked by a screenshot: xwd plus
@@ -578,18 +606,35 @@ class Live:
         one must ask not for the picture but the program: it reports the NUMBER
         of the drawn frame itself (`bench.tick`, the geometry dump).
         """
+        # WHO AND WHERE (found-defects 824): a wait that finds no window names whether the program
+        # died, never reached its display or is still starting; a dead one ends the wait at once
+        log_path = os.path.join(self.out, "kt-app.log")
+        display = os.environ.get("DISPLAY", "")
+        seen = []
+        said = time.time()
+
+        def why():
+            return _why.state(display, self.proc, log_path, seen)
+
+        def waiting():
+            nonlocal said
+            if _why.dead(self.proc, seen):
+                raise Failure(f"kt-app crashed at startup: {why()}")
+            if time.time() - said >= 30.0:
+                said = time.time()
+                print(f"   still waiting for the window: {why()}", flush=True)
+
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if self.proc.poll() is not None:
-                raise Failure(f"kt-app crashed at startup, see {self.out}/kt-app.log")
+            waiting()
             try:
                 probe.window()
             except SystemExit:
                 _poll(0.1)
                 continue
+            print(f"   {_why.start_line(display, self.proc.pid, log_path)}", flush=True)
             while time.time() < deadline:
-                if self.proc.poll() is not None:
-                    raise Failure(f"kt-app crashed at startup, see {self.out}/kt-app.log")
+                waiting()
                 if self._frame_now() >= 2:
                     # the program is still finishing the first frame (sources, thumbnails,
                     # layout): a gesture delivered at this moment goes off
@@ -600,8 +645,46 @@ class Live:
                         self.settle()
                     return
                 _poll(0.05)
-            raise Failure("the program drew not a single frame — the window stayed empty")
-        raise Failure("the kt-app window did not appear")
+            raise Failure(f"the program drew not a single frame — the window stayed empty: {why()}")
+        self._window_evidence()
+        raise Failure(f"the kt-app window did not appear: {why()} (see window-tree.txt beside the screenshots)")
+
+    def _window_evidence(self):
+        """What the X server holds when the window was not found (found-defects 954, 824): the display,
+        the program's pid and whether it lives, the window manager, and every top-level window with its
+        class, map state and size — the next one names its cause instead of a bare timeout."""
+        lines = [f"DISPLAY={os.environ.get('DISPLAY')} pid={self.proc.pid if self.proc else None} "
+                 f"alive={self.proc is not None and self.proc.poll() is None}"]
+        try:
+            wm = subprocess.run(["pgrep", "-a", "openbox"], capture_output=True, text=True).stdout.strip()
+            lines.append(f"openbox: {wm or 'none'}")
+        except OSError as e:
+            lines.append(f"openbox: {e}")
+        try:
+            from Xlib import X as _X
+            states = {_X.IsUnmapped: "unmapped", _X.IsUnviewable: "unviewable", _X.IsViewable: "viewable"}
+
+            def walk(w, depth):
+                try:
+                    g = w.get_geometry()
+                    a = w.get_attributes()
+                    cls = w.get_wm_class()
+                    lines.append(f"{'  ' * depth}{w.id:#x} {cls} {states.get(a.map_state, a.map_state)} "
+                                 f"{g.width}x{g.height}+{g.x}+{g.y} override={a.override_redirect}")
+                    if depth < 3:
+                        for c in w.query_tree().children:
+                            walk(c, depth + 1)
+                except Exception as e:  # a window that went away during the walk
+                    lines.append(f"{'  ' * depth}{w.id:#x} gone: {e}")
+
+            walk(probe.root, 0)
+        except Exception as e:
+            lines.append(f"no tree: {e}")
+        try:
+            with open(os.path.join(self.out, "window-tree.txt"), "w") as f:
+                f.write("\n".join(lines) + "\n")
+        except OSError:
+            pass
 
     # ---- waiting for a FRAME, not for the clock (R.68) ---------------------------------
 
@@ -739,7 +822,7 @@ class Live:
     def resize(self, w, h):
         """Change the size of the program window (R.66): the form contract is checked
         in a LOW window — where the content outgrows the screen."""
-        win = probe.window()
+        win = the_window(self.proc if self.own else None)
         win.configure(width=int(w), height=int(h))
         probe.d.sync()
         self._raised = False
@@ -1082,7 +1165,7 @@ class Live:
         this Space/Ctrl+S goes nowhere (the mouse works without focus)."""
         from Xlib import X
 
-        w = probe.window()
+        w = the_window(self.proc if self.own else None)
         try:
             w.set_input_focus(X.RevertToParent, X.CurrentTime)
             w.configure(stack_mode=X.Above)
@@ -1912,7 +1995,7 @@ def pattern_media(out_dir, name, seconds, fps=30, size="640x360"):
 
 def geometry():
     """Bounds of the kt-app window in screen coordinates."""
-    x, y, w, h = probe.origin(probe.window())
+    x, y, w, h = probe.origin(the_window(_CURRENT[0].proc if _CURRENT[0] and _CURRENT[0].own else None))
     return {"x": x, "y": y, "w": w, "h": h}
 
 

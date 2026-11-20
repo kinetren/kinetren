@@ -1,5 +1,20 @@
 # Plugins — why it is this way
 
+## Read first: passages later changes superseded (spec-health audit, 2026-11-20)
+
+The sections below keep the reasons as they were written. These passages describe a state the code
+no longer has; the spec's requirements and the code hold now.
+
+- **No CPU or SIMD copy of a video kernel** (compute-kernels-render 5): "`BarrierKernel::frame` is the byte
+  reference", its AVX2 branch, `BarrierCtx`, `RasterHost`, `frame_values`, kt-fx `apply_barrier`, and the
+  transition kernel's "one CPU text" are history. `BarrierKernel` is `cook`, `shaders`, `pass_names`,
+  `word_passes`, `gpu`, `gpu_values`; `TransKernel` is `pack`, `ext`, `symmetric`; each family ships WGSL.
+- **The compute-backends prototype** (`kt_plugin_api::shade`, `shared_kernel!`, t1500/t1501) is gone with
+  the CPU kernels it shared a text with.
+- **The assembler is a dev-dependency** of six core crates (kt-engine, kt-fx, kt-gpu, kt-media, kt-model,
+  kt-otio) and of two families, not seven core crates.
+- **The API crate** depends on kt-time, serde and libm (the frozen math).
+
 ## What hurt and for whom
 
 Every effect, transition and generator was a variant of a closed enum in kt-model (46 FX, 33

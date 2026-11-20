@@ -14,7 +14,9 @@ PATH (ui-reach spec, "Every effect chain is edited in one node editor that fits 
    box with its key → double click the track's box → the track's window with the key box under its
    compressor → double click the layer's box → the layer's window;
 4. double click the Camera ISP event → its effects window: the ISP node with its main sliders, the
-   whole ISP panel below.
+   whole ISP panel below;
+5. Ctrl+Shift+click the Geometry node → the preview shows the picture before the ISP with the badge
+   "Viewer: Geometry" → Esc → the whole picture, the window stays.
 """
 import json
 import os
@@ -120,9 +122,11 @@ def main(out):
         # what applies after the event: the layer's box and the track's box with its key
         # above the volume rail (a double click on it resets the level)
         app.double_click(app.x_at(3 * SEC), app.lane_y("audio", 0, frac=0.15))
-        app.expect(app.until(lambda: field(app, "fx.ctx.1") is not None), "the audio event's graph shows the layer and the track as boxes")
-        app.step("context", "double click on the audio event → after its own nodes: the layer's box and the track's box with its key")
-        app.double_click_probe("fx.ctx.1", "the track's box")
+        # the pair is ONE graph (fx-graph D10): the picture lane's layer box (0), the sound lane's layer
+        # box (1) and its track's box with the key (2)
+        app.expect(app.until(lambda: field(app, "fx.ctx.2") is not None), "the pair's graph shows both lanes' layer boxes and the track's box")
+        app.step("context", "double click on the audio event → one graph of the pair: each lane's layer box, the sound lane's track box with its key")
+        app.double_click_probe("fx.ctx.2", "the track's box")
         app.expect(app.until(lambda: field(app, "fx.key.0") is not None), "the track's window draws the key under its compressor")
         app.hover_probe("fx.key.0", "the key box")
         app.step("track-window", "double click on the track's box → the track's window: the key box wired into the compressor")
@@ -142,6 +146,23 @@ def main(out):
         app.step("isp-selected", "a click on the ISP node selects it; its whole panel stays below")
         if node:
             app.expect(node["h"] <= 22 + 3 * 22 + 4 + 1, f"the ISP node stays small: {node['h']} px")
+
+        # the Viewer (fx-graph D11): the picture after the Geometry node, before the ISP. The step
+        # before opened the ISP's whole panel and the window lays the graph out again (detail or
+        # chips by the room left): the node is read once the program has settled, or the click lands
+        # where the node WAS — on empty canvas, where Ctrl+Shift+click turns the Viewer off (red on
+        # the first try of stage 22's finish run)
+        app.settle()
+        geo = field(app, "fx.slot.0")
+        if geo:
+            win = geometry()
+            app.click(win["x"] + int(geo["x"] + geo["w"] / 2), win["y"] + int(geo["y"] + geo["h"] / 2), mods=("ctrl", "shift"))
+        app.expect(app.until(lambda: field(app, "preview.viewer") is not None), "Ctrl+Shift+click on the Geometry node turned the Viewer on")
+        app.step("viewer", "Ctrl+Shift+click on Geometry → the preview shows the picture before the ISP, the badge “Viewer: Geometry”")
+        app.key("Escape")
+        app.expect(app.until(lambda: field(app, "preview.viewer") is None), "Esc gave the whole picture back")
+        app.expect(field(app, "fx.graph") is not None, "the effects window stayed open")
+        app.step("viewer-off", "Esc → the whole picture again, the effects window stays")
     return app.done()
 
 

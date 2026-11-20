@@ -1,6 +1,7 @@
 //! The signal-check and countdown generators (plugin-api-stage1, stage 6, D13): SMPTE bars with a
 //! tone, the running timecode, the countdown leader with its beep, the five engineering tables and
-//! the level window. Each kind is its former `GeneratorKind` variant: the passport rows in the
+//! the level window; since gen-technical (`v26.10` G5) the sync flash with its beep and the
+//! safe-area guides. Each kind is its former `GeneratorKind` variant: the passport rows in the
 //! variant's field order with its stores (the file text does not move — t973), the `gen:` path
 //! tokens of the former `format_gen_path` / `apply_token` arms, the frame of the former `render_at`
 //! arm and the sound of the former `read_audio_burst` arm, verbatim (t1048). The sine is the host's
@@ -8,7 +9,7 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::generator::{shader_frame, GenDecl, PathTok, PathVal, Row, Tick, count, kind, smooth};
+use kt_plugin_api::generator::{shader_frame, GenDecl, PathTok, PathVal, Row, Tick, count, kind, rgb, smooth};
 use kt_plugin_api::pixfont::{Canvas, text_width};
 use kt_plugin_api::{ParamUnit, Plugin};
 
@@ -237,6 +238,114 @@ fn window(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
     buf.into_boxed_slice()
 }
 
+// ---- the sync flash (gen-technical, `v26.10` G5) ---------------------------------------------------
+
+/// The flash period in ticks: the one float of the kind, in the preamble (kt-media CLAUDE.md).
+fn sync_period(p: &[f64]) -> i64 {
+    ((p[0].clamp(0.5, 10.0) * 90_000.0).round() as i64).max(1)
+}
+
+/// How long a flash lasts, in ticks: `flash` frames of `fps`.
+fn sync_flash_len(p: &[f64]) -> i64 {
+    (p[1] as i64).clamp(1, 30) * 90_000 / (p[2] as i64).max(1)
+}
+
+/// A sync flash (rows: interval, flash, fps, beep, beep_db): a white field for `flash` frames at the
+/// start of every `interval`, dark the rest of the time, with a thin bar along the bottom filling over
+/// the interval so the next flash is seen coming. Its beep is gated on the same ticks — a picture and a
+/// sound that line up on one frame, the way a clapper or a sync-test pattern is used. Integer pixels.
+fn syncflash(p: &[f64], pts: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (period, len) = (sync_period(p), sync_flash_len(p));
+    let within = pts.0.max(0) % period;
+    let (fw, fh) = (w.max(1) as usize, h.max(1) as usize);
+    let flash = within < len;
+    let bg: [u8; 4] = if flash { [235, 235, 235, 255] } else { [16, 16, 16, 255] };
+    let mut buf = vec![0u8; fw * fh * 4];
+    for px in buf.chunks_exact_mut(4) {
+        px.copy_from_slice(&bg);
+    }
+    if !flash {
+        // the bar: 1/60 of the height (at least 2 px), filling left to right over the interval
+        let bar_h = (fh / 60).max(2).min(fh);
+        let filled = ((within as i128 * fw as i128) / period as i128) as usize;
+        for y in fh - bar_h..fh {
+            for x in 0..filled.min(fw) {
+                let o = (y * fw + x) * 4;
+                buf[o..o + 4].copy_from_slice(&[90, 200, 255, 255]);
+            }
+        }
+    }
+    buf.into_boxed_slice()
+}
+
+/// The beep at `beep_db` while `beep` is on (rows: interval, flash, fps, beep, beep_db).
+fn syncflash_tone(p: &[f64]) -> Option<f64> {
+    (p[3] >= 0.5).then_some(p[4])
+}
+
+/// The beep sounds exactly while the frame flashes: sample → material tick (48 kHz → 90 kHz, exact).
+fn syncflash_gate(p: &[f64], n: i64) -> bool {
+    let t = n * 90_000 / 48_000;
+    t >= 0 && t % sync_period(p) < sync_flash_len(p)
+}
+
+// ---- the safe areas (gen-technical) ---------------------------------------------------------------
+
+/// Safe-area guides over the picture (rows: action_safe, title_safe, center, thirds, cut43, thickness,
+/// color_r/g/b/a): a TRANSPARENT frame with the action-safe and title-safe rectangles (93 % and 90 %
+/// of the frame by default, SMPTE ST 2046-1), a centre cross, the rule of thirds and the 4:3 centre cut
+/// on a wider frame. Sizes are fractions of the frame, so the guides do not depend on the preview's
+/// quality. Integer pixels; the thickness is a fraction of the height, at least one pixel.
+fn safearea(p: &[f64], _: Tick, w: u32, h: u32) -> Box<[u8]> {
+    let (fw, fh) = (w.max(1) as i64, h.max(1) as i64);
+    let th = ((p[5] * fh as f64).round() as i64).max(1);
+    let c = [p[6] as u8, p[7] as u8, p[8] as u8, p[9] as u8];
+    let mut buf = vec![0u8; (fw * fh * 4) as usize];
+    let mut fill = |x0: i64, y0: i64, x1: i64, y1: i64| {
+        for y in y0.max(0)..y1.min(fh) {
+            for x in x0.max(0)..x1.min(fw) {
+                let o = ((y * fw + x) * 4) as usize;
+                buf[o..o + 4].copy_from_slice(&c);
+            }
+        }
+    };
+    // a frame of `frac` of the picture, centred: its outline `th` thick
+    let mut outline = |frac: f64| {
+        let (hw, hh) = (((frac * fw as f64) / 2.0).round() as i64, ((frac * fh as f64) / 2.0).round() as i64);
+        let (x0, x1, y0, y1) = (fw / 2 - hw, fw / 2 + hw, fh / 2 - hh, fh / 2 + hh);
+        fill(x0, y0, x1, y0 + th);
+        fill(x0, y1 - th, x1, y1);
+        fill(x0, y0, x0 + th, y1);
+        fill(x1 - th, y0, x1, y1);
+    };
+    outline(p[0].clamp(0.5, 1.0));
+    outline(p[1].clamp(0.5, 1.0));
+    let (cx, cy) = (fw / 2, fh / 2);
+    if p[2] >= 0.5 {
+        let arm = fh / 20;
+        fill(cx - arm, cy - th / 2, cx + arm, cy - th / 2 + th);
+        fill(cx - th / 2, cy - arm, cx - th / 2 + th, cy + arm);
+    }
+    if p[3] >= 0.5 {
+        for i in [1, 2] {
+            let x = fw * i / 3;
+            let y = fh * i / 3;
+            fill(x - th / 2, 0, x - th / 2 + th, fh);
+            fill(0, y - th / 2, fw, y - th / 2 + th);
+        }
+    }
+    // the 4:3 centre cut of a wider frame: two verticals where a 4:3 picture would end
+    if p[4] >= 0.5 && fw * 3 > fh * 4 {
+        let half = fh * 4 / 3 / 2;
+        fill(cx - half, 0, cx - half + th, fh);
+        fill(cx + half - th, 0, cx + half, fh);
+    }
+    buf.into_boxed_slice()
+}
+
+/// The guides' colour, as the shapes': the eyedropper's group and its caption.
+const GUIDE_COLOR: &[(&str, &str)] = &[("color", "trn.color")];
+
 /// A level in dBFS (the tone, the beep).
 fn db(n: &'static str) -> Row {
     smooth(n, -60.0, 0.0, -20.0, 0.5, ParamUnit::Db)
@@ -334,6 +443,70 @@ pub fn plugins() -> Vec<Arc<dyn Plugin>> {
                 ],
             ),
             window,
+        )),
+        // the sync flash (gen-technical, `v26.10` G5): a frame and a beep that line up, every interval
+        Arc::new(
+            kind(
+                "syncflash",
+                "genkind.syncflash",
+                CHECK,
+                vec![
+                    smooth("interval", 0.5, 10.0, 1.0, 0.05, ParamUnit::Sec),
+                    count("flash", 1.0, 30.0, 1.0),
+                    count("fps", 1.0, 120.0, 30.0),
+                    Row::Flag("beep", true),
+                    db("beep_db"),
+                ],
+                decl(
+                    true,
+                    &[
+                        PathTok { key: "iv", val: PathVal::Num("interval") },
+                        PathTok { key: "fl", val: PathVal::Int("flash", 1, 30) },
+                        PathTok { key: "fps", val: PathVal::Int("fps", 1, 120) },
+                        PathTok { key: "beep", val: PathVal::Flag0("beep") },
+                        PathTok { key: "db", val: PathVal::Num("beep_db") },
+                    ],
+                ),
+                syncflash,
+            )
+            .with_tone(syncflash_tone, Some(syncflash_gate)),
+        ),
+        // the safe-area guides (gen-technical): a transparent overlay for the picture under it
+        Arc::new(kind(
+            "safearea",
+            "genkind.safearea",
+            CHECK,
+            vec![
+                smooth("action_safe", 0.5, 1.0, 0.93, 0.005, ParamUnit::Percent),
+                smooth("title_safe", 0.5, 1.0, 0.9, 0.005, ParamUnit::Percent),
+                Row::Flag("center", true),
+                Row::Flag("thirds", false),
+                Row::Flag("cut43", false),
+                smooth("thickness", 0.0005, 0.01, 0.002, 0.0005, ParamUnit::Percent),
+                rgb("color_r", 255.0),
+                rgb("color_g", 255.0),
+                rgb("color_b", 255.0),
+                rgb("color_a", 170.0),
+            ],
+            GenDecl {
+                alpha: true,
+                live: false,
+                blank: false,
+                path: &[
+                    PathTok { key: "as", val: PathVal::Unit("action_safe") },
+                    PathTok { key: "ts", val: PathVal::Unit("title_safe") },
+                    PathTok { key: "cn", val: PathVal::Flag0("center") },
+                    PathTok { key: "th", val: PathVal::Flag1("thirds") },
+                    PathTok { key: "cut", val: PathVal::Flag1("cut43") },
+                    PathTok { key: "w", val: PathVal::Unit("thickness") },
+                    PathTok { key: "c", val: PathVal::Hex4("color") },
+                ],
+                address: &[],
+                menu: &[],
+                names: None,
+                colors: GUIDE_COLOR,
+            },
+            safearea,
         )),
     ]
 }

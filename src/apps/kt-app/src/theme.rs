@@ -109,6 +109,12 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.active.bg_fill = Color32::from_rgb(34, 56, 96);
     v.widgets.active.bg_stroke = egui::Stroke::new(1.0, ACCENT);
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, SEAM);
+    // A focused field's caret stands still: egui blinks it with a repaint every half second for as
+    // long as the field holds the focus and the window has it, so the program at rest drew frames
+    // for ever — the track window focuses its name field on opening, and the live `idle` found it
+    // never resting (found-defects 821). The same in every text field: the timecode mask, the
+    // speed entry, a rename, the picker's search, a formula.
+    v.text_cursor.blink = false;
     // ONE look, whatever theme the system reports (wine-frame-and-dark-theme): `set_visuals`
     // styles only the CURRENT theme, and with the default "follow the system" a light system
     // theme (wine reports one, some Linux desktops too) switched egui to its default LIGHT

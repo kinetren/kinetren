@@ -1391,7 +1391,7 @@ fn graph(
         crate::app::hint_into(hover, resp.clone(), tr(k::fx::GRAPH_RULER_HINT));
         return;
     }
-    if resp.double_clicked() {
+    if crate::clicks::double(&resp) {
         if let Some((ci, ki)) = hit {
             curves[ci].keys.remove(ki);
             view.sel = None;

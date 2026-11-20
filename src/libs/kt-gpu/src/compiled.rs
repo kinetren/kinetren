@@ -479,7 +479,7 @@ impl Compiled {
     /// What the trace calls a pipeline (structured-telemetry).
     fn label(&self, i: usize) -> String {
         const FIXED: [&str; PIPE_COUNT] =
-            ["resample", "mirror", "composite", "layer_mix", "unpremul", "premul", "grid_tile", "mask"];
+            ["resample", "mirror", "composite", "layer_mix", "unpremul", "premul", "grid_tile", "mask", "yuv"];
         match self.slot(i) {
             Slot::Fixed(f) => FIXED[f].to_string(),
             Slot::Plugin(p) => format!("{}:pass{p}", self.plugin_owner[p]),

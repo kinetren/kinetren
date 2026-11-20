@@ -201,7 +201,13 @@ pub struct MuxConfig {
     pub path: String,
     pub width: u32,
     pub height: u32,
-    pub fps: u32,
+    /// The video's frame rate, a rational (found-defects 823): 24000/1001 is written as itself, not as
+    /// 24 — an integer grid made a 23.976 delivery impossible and a proxy of such footage drift.
+    pub frame_rate: Rate,
+    /// The video's time base, when the frames carry their own times (`write_video_frame_at`: a proxy
+    /// keeps its source's pts, variable rate included); `None` — one tick a frame, `den/num` of the
+    /// rate.
+    pub time_base: Option<(i32, i32)>,
     /// CRF/CQ/QP — the meaning depends on the encoder (23 ≈ visually lossless).
     /// Ignored if video_bitrate is set.
     pub quality: u32,
@@ -215,6 +221,25 @@ pub struct MuxConfig {
     pub threads: u32,
     /// Container, codec, rate mode, GOP, depth, colour, audio codec, metadata (render-settings D1).
     pub format: format::OutputFormat,
+}
+
+/// A frame rate as `num/den` frames a second (found-defects 823).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rate {
+    pub num: u32,
+    pub den: u32,
+}
+
+impl Rate {
+    /// A whole number of frames a second.
+    pub const fn whole(fps: u32) -> Rate {
+        Rate { num: fps, den: 1 }
+    }
+
+    /// The nearest whole frames a second (a GOP in seconds counted in frames).
+    pub fn rounded(self) -> u32 {
+        ((self.num as u64 + self.den as u64 / 2) / self.den.max(1) as u64).max(1) as u32
+    }
 }
 
 /// Chosen encoder (for display in the UI).
@@ -395,6 +420,8 @@ pub fn rescan_with(env: &dyn search::Env) -> Result<BackendInfo, String> {
             }
         };
         let _ = LOADED.set((backend, info.clone()));
+        // FFmpeg and what it loads are behind the process's end (found-defects 784/785)
+        kt_time::shutdown::end_before_libraries();
         Ok(info)
     });
     let mut st = state();
@@ -508,6 +535,41 @@ pub(crate) fn vaapi_device_dir_hint() -> String {
         .dri_dir
         .or_else(|| std::env::var("KT_DRI_DIR").ok().filter(|d| !d.is_empty()))
         .unwrap_or_else(|| "/dev/dri".into())
+}
+
+/// A hardware device opened: its driver (a libva driver, loaded by the first one) is behind the
+/// process's end, once (found-defects 784/785).
+pub(crate) fn hw_device_opened() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(kt_time::shutdown::end_before_libraries);
+}
+
+/// What decodes a source's pictures (hw-segment-decode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VideoDecode {
+    /// The platform's device: its name (`vaapi /dev/dri/renderD128`, `d3d11va`).
+    Hardware(String),
+    /// The processor, and why no device decodes (empty — none was asked for).
+    Software(String),
+}
+
+/// A render node's verdict for DECODING, asked once per process (hw-segment-decode D2): a segment
+/// reader opens per read, and a throwaway process per open would cost more than the decode it
+/// spares. The trial opens the device as the export's does; a driver that opens and then faults in
+/// the decode itself is not caught by it (its verdict is the device's).
+pub(crate) fn decode_device_verdict(node: &str) -> Result<(), String> {
+    type Seen = std::sync::Mutex<std::collections::HashMap<String, Result<(), String>>>;
+    static SEEN: std::sync::OnceLock<Seen> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    if let Some(v) = seen.lock().unwrap().get(node) {
+        return v.clone();
+    }
+    let v = match hw_trial::ask_device(node) {
+        hw_trial::Verdict::Passed(_) | hw_trial::Verdict::NotHosted => Ok(()),
+        hw_trial::Verdict::Refused(why) => Err(why),
+    };
+    seen.lock().unwrap().insert(node.to_string(), v.clone());
+    v
 }
 
 /// The VAAPI devices to try, in order (hw-encode-context D3): `KINETREN_VAAPI_DEVICE` alone when
@@ -697,6 +759,37 @@ impl Muxer {
         }
     }
 
+    /// The video's size.
+    pub fn video_size(&self) -> (u32, u32) {
+        match self {
+            Muxer::V6(m) => m.video_size(),
+            Muxer::V7(m) => m.video_size(),
+            Muxer::V8(m) => m.video_size(),
+            Muxer::V9(m) => m.video_size(),
+        }
+    }
+
+    /// What the encoder takes: its input format, the matrix and the range (export-host-copy D3).
+    pub fn input_layout(&self) -> (encoders::PixFmt, format::Matrix, format::Range) {
+        match self {
+            Muxer::V6(m) => m.input_layout(),
+            Muxer::V7(m) => m.input_layout(),
+            Muxer::V8(m) => m.input_layout(),
+            Muxer::V9(m) => m.input_layout(),
+        }
+    }
+
+    /// A device encoder's surface get and upload so far, ns (export-host-copy D1); 0 for a
+    /// processor encoder. Part of `write_video_frame`'s time: an export takes it out of the encode.
+    pub fn surface_upload_ns(&self) -> u64 {
+        match self {
+            Muxer::V6(m) => m.surface_upload_ns(),
+            Muxer::V7(m) => m.surface_upload_ns(),
+            Muxer::V8(m) => m.surface_upload_ns(),
+            Muxer::V9(m) => m.surface_upload_ns(),
+        }
+    }
+
     /// `finish`, and the encoded video bytes in the end (the trial asks whether any came out).
     pub(crate) fn finish_counted(self) -> Result<u64, FfError> {
         match self {
@@ -738,6 +831,27 @@ impl Muxer {
     }
 
     /// The next frame, already converted, to the encoder.
+    /// `write_video_frame` at `pts` in the video's time base (found-defects 823).
+    pub fn write_video_frame_at(&mut self, f: &VideoFrame, pts: i64) -> Result<(), FfError> {
+        match (self, f) {
+            (Muxer::V6(m), VideoFrame::V6(f)) => m.write_video_frame_at(f, pts),
+            (Muxer::V7(m), VideoFrame::V7(f)) => m.write_video_frame_at(f, pts),
+            (Muxer::V8(m), VideoFrame::V8(f)) => m.write_video_frame_at(f, pts),
+            (Muxer::V9(m), VideoFrame::V9(f)) => m.write_video_frame_at(f, pts),
+            _ => Err(FfError::Av("a frame of another FFmpeg major".into())),
+        }
+    }
+
+    /// The encoder's planes, packed (export-host-copy D4): the disk prerender's segments.
+    pub fn write_video_planes(&mut self, planes: &[u8]) -> Result<(), FfError> {
+        match self {
+            Muxer::V6(m) => m.write_video_planes(planes),
+            Muxer::V7(m) => m.write_video_planes(planes),
+            Muxer::V8(m) => m.write_video_planes(planes),
+            Muxer::V9(m) => m.write_video_planes(planes),
+        }
+    }
+
     pub fn write_video_frame(&mut self, f: &VideoFrame) -> Result<(), FfError> {
         match (self, f) {
             (Muxer::V6(m), VideoFrame::V6(f)) => m.write_video_frame(f),
@@ -794,6 +908,18 @@ pub enum VideoFrame {
     V7(v7::VideoFrame),
     V8(v8::VideoFrame),
     V9(v9::VideoFrame),
+}
+
+impl VideoFrame {
+    /// Fill from the encoder format's tightly packed planes (export-host-copy D3).
+    pub fn fill_packed(&mut self, packed: &[u8]) -> Result<(), FfError> {
+        match self {
+            VideoFrame::V6(f) => f.fill_packed(packed),
+            VideoFrame::V7(f) => f.fill_packed(packed),
+            VideoFrame::V8(f) => f.fill_packed(packed),
+            VideoFrame::V9(f) => f.fill_packed(packed),
+        }
+    }
 }
 
 /// Open source — dynamic dispatch by version.
@@ -943,6 +1069,28 @@ impl Source {
             Source::V7(s) => s.audio_debug_seeks(),
             Source::V8(s) => s.audio_debug_seeks(),
             Source::V9(s) => s.audio_debug_seeks(),
+        }
+    }
+
+    /// Open for decoding on the platform's device where it has one (hw-segment-decode): VAAPI on
+    /// Linux, D3D11VA on Windows; the processor only where none opens.
+    pub fn open_hw(path: &str, prebuilt: Option<PrebuiltIndex>) -> Result<Source, FfError> {
+        let (backend, _) = init().map_err(FfError::NotFound)?;
+        match backend {
+            Backend::V6(api) => v6::Source::open_hw(api, path, prebuilt).map(Source::V6),
+            Backend::V7(api) => v7::Source::open_hw(api, path, prebuilt).map(Source::V7),
+            Backend::V8(api) => v8::Source::open_hw(api, path, prebuilt).map(Source::V8),
+            Backend::V9(api) => v9::Source::open_hw(api, path, prebuilt).map(Source::V9),
+        }
+    }
+
+    /// What decodes this source's pictures (hw-segment-decode).
+    pub fn video_decode(&self) -> VideoDecode {
+        match self {
+            Source::V6(s) => s.video_decode(),
+            Source::V7(s) => s.video_decode(),
+            Source::V8(s) => s.video_decode(),
+            Source::V9(s) => s.video_decode(),
         }
     }
 

@@ -17,16 +17,19 @@ use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// How long the device stays open after the transport stopped (kept-mix-settle D5): the device's
-/// own buffer has played out long before, and a Space released and pressed again within it does not
-/// pay a reopen. Past it the stream is dropped and nothing of the sound wakes on a pause.
+/// How long the device keeps playing after the transport stopped (kept-mix-settle D5): the device's
+/// own buffer has played out long before, and a Space released and pressed again within it changes
+/// nothing. Past it the stream is PAUSED and kept for the next Play (play-start-and-prefetch D6: a resume
+/// returns in microseconds, an open took up to seconds); it is closed only when the pause fails or the
+/// paused stream keeps calling back. Nothing of the sound wakes on a pause.
 pub const CLOSE_AFTER_REST: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The sound output: a thread of its own (`audio-output`) owns the device's stream, opens it when
-/// the transport plays and drops it once the transport has stood for [`CLOSE_AFTER_REST`]
-/// (kept-mix-settle, found-defects 274: open, cpal's ALSA worker and PipeWire's data loop woke
-/// 24 and 48 times a second on a pause handing out silence). `cpal::Stream` is not `Send` and its
-/// open blocks: the UI thread never opens it.
+/// The sound output: a thread of its own (`audio-output`) owns the device's stream, opens it at the
+/// first Play, pauses it once the transport has stood for [`CLOSE_AFTER_REST`] and resumes it on the
+/// next Play; the stream is closed only when a pause fails or a paused stream keeps calling back
+/// (kept-mix-settle, found-defects 274: open, cpal's ALSA worker and PipeWire's data loop woke 24 and
+/// 48 times a second on a pause handing out silence; play-start-and-prefetch D6). `cpal::Stream` is
+/// not `Send` and its open blocks: the UI thread never opens it.
 pub struct AudioOutput {
     ctl: Arc<OutputCtl>,
     wake: Arc<kt_engine::Wake>,
@@ -416,6 +419,10 @@ fn output_loop<D: Device>(
                 };
                 match device.open(sink, &ctl) {
                     Ok(s) => {
+                        // the sound server's client libraries are behind the process's end, once
+                        // (found-defects 784/785)
+                        static END: std::sync::Once = std::sync::Once::new();
+                        END.call_once(kt_time::shutdown::end_before_libraries);
                         let open_us = opened.elapsed().as_micros() as u64;
                         let first_us = first_callback(&first);
                         ctl.open_us.store(open_us, Ordering::Relaxed);
@@ -972,6 +979,22 @@ mod tests {
         }
     }
 
+    /// Wait until the output thread has done its designed passes and stopped: no pass over 100 ms,
+    /// up to the test's guard. The pass after a close or a pause's check comes when the thread runs,
+    /// not at a time the test can name: under load it landed inside the quiet window that followed
+    /// the flag the test had read (found-defects 782). A thread that never stops fails at the guard.
+    fn settled(out: &AudioOutput) {
+        let deadline = kt_time::test_deadline();
+        loop {
+            let p0 = out.ctl().passes.load(Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(100));
+            if out.ctl().passes.load(Ordering::Relaxed) == p0 {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "the output thread never stood still");
+        }
+    }
+
     /// Does the output thread stand still over `d` (a pause parks it with no clock)?
     fn parked(out: &AudioOutput, d: Duration) -> bool {
         let p0 = out.ctl().passes.load(Ordering::Relaxed);
@@ -986,7 +1009,10 @@ mod tests {
         let rest = Duration::from_millis(150);
         let (player, out) = player_with(Double::default(), rest);
         let ctl = out.ctl();
-        std::thread::sleep(Duration::from_millis(50));
+        // the thread has STARTED (its first pass), not "50 ms have passed": under load it had not,
+        // and its first pass landed inside the quiet window (found-defects 782)
+        wait("the output thread started", || ctl.passes.load(Ordering::Relaxed) > 0);
+        settled(&out);
         assert!(!ctl.open.load(Ordering::Acquire), "a device open before Play");
         assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes on a pause");
         player.play();
@@ -998,6 +1024,10 @@ mod tests {
         let paused = std::time::Instant::now();
         wait("the device closed at rest", || !ctl.open.load(Ordering::Acquire));
         assert!(paused.elapsed() >= rest, "closed before its rest: {:?}", paused.elapsed());
+        // the close has its designed passes after the flag (a device that pauses checks, `PAUSE_CHECK`
+        // later, that no callback lands; one that cannot pause is closed and passes once more): the
+        // quiet is measured once they are done (found-defects 782)
+        settled(&out);
         assert!(parked(&out, Duration::from_millis(300)), "the output thread wakes on a pause after a play");
         assert_eq!(ctl.opens.load(Ordering::Relaxed), 1);
     }

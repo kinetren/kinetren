@@ -70,7 +70,9 @@ fn digest(kind: &GeneratorKind) -> u64 {
 #[rustfmt::skip]
 const GOLDEN: &[(&str, u64)] = &[
     ("solid", 0xd41eb0b2d6a14f6c),
-    ("text", 0x333866116f96e81b),
+    // text-counter-source added two number rows to the title (`count_from`, `count_fps`): the "tuned"
+    // case sets them, so its path and text carry them; the default case did not move (t3704)
+    ("text", 0x8a6a5e1ff842bd72),
     ("gradient", 0xd6878afb4fd5f672),
     ("corners", 0xf332abd0c1f54d31),
     ("checker", 0x4d275b93bac63f67),
@@ -81,6 +83,16 @@ const GOLDEN: &[(&str, u64)] = &[
     ("rect", 0xfd74fc653484b1e0),
     ("ellipse", 0xe82137c5490f4a6d),
     ("line", 0xcf3dcb899cf591e0),
+    ("polygon", 0x6f1e841e54d55797),
+    ("star", 0xd86fe751d4027f37),
+    ("arrow", 0x6df6f48811c35d52),
+    ("frame", 0x567e4ada61c8fe30),
+    ("plate", 0xa6c35c510135c5e3),
+    ("progress", 0x3c6d9c10c372d87b),
+    ("meshgrad", 0x47445d1e6ded92b5),
+    ("plasma", 0xd9a898546674c02f),
+    ("particles", 0x1089e02fab3d1e30),
+    ("pattern", 0xbbe93835c23388cc),
     ("leader", 0x1ab9c803b450bfd5),
     ("table", 0xeaef91eee8588557),
     ("table.ebu100", 0xf103eb155e037fa4),
@@ -88,6 +100,8 @@ const GOLDEN: &[(&str, u64)] = &[
     ("table.steps", 0xcc8933f8c1dc86b2),
     ("table.ycbcr", 0x2f7ce50c358f4d84),
     ("window", 0x9febc6db00122de9),
+    ("syncflash", 0xc255fb4087d71131),
+    ("safearea", 0x08e571d82376fc16),
     ("tone", 0xa231678fe739f1c9),
     ("audio_noise", 0xe8af9eea194539fe),
     ("sweep", 0x78346342d043aba9),
