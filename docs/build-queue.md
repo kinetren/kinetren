@@ -2,7 +2,8 @@
 
 The order in which the open OpenSpec changes (`openspec/changes/*`, 40 on 2026-11-20, orch `941b25cd`) go
 to executors, three at a time (`docs/orchestrator.md`: "три исполнителя"; the owner: every free slot used).
-Written by the spec session; the orchestrator owns it and moves rows as work lands.
+Written by the spec session; the orchestrator owns it and moves rows as work lands. Revised 2026-11-22 for
+the owner's second round (kkt-26.11.20b B1–B4) and the three changes added since (B10–B12).
 
 **How a wave is made.** Each change is given the AREAS it writes (below). Two changes in one wave share
 no area, so two executors never edit the same structures. A wave may start only when the changes it
@@ -68,17 +69,17 @@ for it.
 |---|---|---|---|---|---|
 | ★ `export-host-copy` (dma-buf) | M | — (stages 1–3 merged) | EXPORT (`muxer_impl.rs` VAAPI frames), GPU export pass | answered A13 | the change's remaining t3312–t3321 |
 | `fx-graph-dag` | XL | `fx-graph` merged; `shared-events` (MODEL) | MODEL (`FxInput`, Merge kind), `kt-fx` `plan_chain`, GPU (held set, Merge pass), FX-UI | answered A5, A6 | t3200–t3229 |
-| `project-cache-folder` | L | — | CACHE (`index.rs` → `cache_folder.rs`, `render_cache.rs` root), `kt-dirs`, the Settings page | **open: Q1–Q3** (sharing, limit, fallback) | t3824–t3843 |
+| `project-cache-folder` | L | — | CACHE (`index.rs` → `cache_folder.rs`, `render_cache.rs` root, the persistent cache's `results/` store and its key layout), `kt-dirs`, the Settings page | answered B2 (one folder per project folder; cyclic writing with a notice); it hosts the persistent cache (B1) | t3824–t3843 |
 
-If `project-cache-folder`'s questions are still open, its slot goes to `track-stage-preroll` (wave 3).
-`durable-history-and-mix` then moves to the first wave after the folder.
+`project-cache-folder` is now the gate of three owner priorities: the durable history (★), the persistent
+cache of heavy effects (B1) and the cached render. Start it in this wave.
 
 ### Wave 3
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| ★ `durable-history-and-mix` | L | `project-cache-folder` stage 1 (the folder, the entry header); `stream-picture-stays` (STREAM) | STREAM (`StreamMemo` backing, `EntryCodec`), CACHE (`history/`, `mix/` tenants), AUDIO (`mix.rs` restore handoff), PLAYER (writes at rest) | answered A14 (build now, LZ4) | t3336–t3355 |
-| `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `device-decode-sources` (DECODE) | DECODE (`colour.rs`, the HDR branch), EXPORT (`format.rs` default only; the mosh-sharp executor's row 1054 already changes it, so merge with it, not against it) | answered (Q50; A25 keeps the 8-bit path as the default) | t3800–t3811 |
+| ★ `durable-history-and-mix` | L | `project-cache-folder` stage 1 (the folder, the entry header); `stream-picture-stays` (STREAM) | STREAM (`StreamMemo` backing, `EntryCodec`), CACHE (the persistent cache's `results/…/history/`, the `mix/` tenant), AUDIO (`mix.rs` restore handoff), PLAYER (writes at rest) | answered A14 (build now, LZ4) | t3336–t3355 |
+| `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `device-decode-sources` (DECODE) | DECODE (`colour.rs`, the HDR branch); the export default is built already (row 1054, t3603) | answered (Q50; A25 keeps the 8-bit path as the default) | t3800–t3811 |
 | `track-stage-preroll` | S | — | AUDIO (`render_stages`, the seek path) | answered A15 (always the full tail) | t3361–t3366 |
 
 ### Wave 4
@@ -87,14 +88,14 @@ If `project-cache-folder`'s questions are still open, its slot goes to `track-st
 |---|---|---|---|---|---|
 | `track-stream-stage` | L | `durable-history-and-mix` (the durable salt in `video_stream.rs`); `stream-picture-stays` | STREAM (`TrackStream`), `kt-engine/src/video.rs` track layer, EXPORT (`stream_preroll`), AUDIO (the sound half's track layout) | answered A23 | t3379–t3398 |
 | `fx-preset-change` | M | `fx-graph-dag` (FX-UI selection in `node_editor.rs`) | FX-UI, `kt-model/src/ops.rs` (`insert_chain_block_at`) | answered A4 | t3595–t3596, t3932–t3934 |
-| `scopes` | M | `stream-picture-stays` (GPU) | GPU (a tap pass, new file), PLAYER (`measure_paused`), SHELL (a View window) | answered A8 | t3400–t3414 |
+| `disk-copies` → **the persistent cache** ("Постоянный кэш") | L | `project-cache-folder` (the `results/` store, its key); `durable-history-and-mix` (shares CACHE); `device-decode-sources` (DECODE, for source copies) | CACHE (`results/…/layers/`), the plan's kept layer input (`video_plan.rs`, `video.rs` layer path), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); spec-features revises the design, then it goes | t3440–t3459 |
 
 ### Wave 5
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
 | `cached-final-render` | L | `export-host-copy`; `project-cache-folder` (`renders.tsv`) | EXPORT (a copy path in the writer, SEI), CACHE (durable key layout), DIALOG | answered A16 | t3322–t3335, t3870–t3876 |
-| `download-library` | L | — | LIBRARY, `kt-text` (font packs) | **open: Q1–Q3** (the list's source, plugin rows, a title without its pack) | t3850–t3869 |
+| `download-library` | L | — | LIBRARY, `kt-text` (font packs), the release build (it packs the signed list) | answered B3 (the signed list for everything; plugins with the wasm host; a placeholder with Download) | t3850–t3869 |
 | `frame-format-variants` **v+** | L | `shared-events` | MODEL (`Project.formats`, `ClipEvent.formats`), `kt-engine` `RenderTarget`, CACHE key (raster), PREVIEW-UI (format switch, gizmos per format) | answered A17 | t3485–t3504 |
 
 ### Wave 6
@@ -126,11 +127,29 @@ If `project-cache-folder`'s questions are still open, its slot goes to `track-st
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
 | `point-tracker` **v+** | L | `magic-wand-mask` (MASKS) | MASKS (the perspective mask transform), MODEL (`ClipEvent.trackers`), automation links, PREVIEW-UI | answered A20 (point and planar) | t3520–t3534 |
-| `disk-copies` | L | `project-cache-folder`; `device-decode-sources` (DECODE) | DECODE (`CopySource`), CACHE (the binding table), EXPORT (`MuxConfig` times) | **open: Q1 (the name), Q2** | t3440–t3459 |
-| `hdr-sources-to-sdr`, 16-bit stage 5 **v+** | XL | waves 1–8's GPU, STREAM and COLOR-FX work merged (it rewrites the pool's format and the core shaders) | MODEL, DECODE, GPU, CACHE, EXPORT, FX manifests, SHELL (the display) — all core | **open: Q1–Q4** (what 1.0 is, islands, HDR on the monitor, HDR export) | t3877–t3899 |
+| `scopes` | M | `stream-picture-stays` (GPU) | GPU (a tap pass, new file), PLAYER (`measure_paused`), SHELL (a View window) | answered A8 (moved here from wave 4, whose slot the persistent cache took: the owner's "СУТЬ … В КЭШИРОВАНИИ") | t3400–t3414 |
+| `hdr-sources-to-sdr`, 16-bit stage 5 **v+** | XL | waves 1–8's GPU, STREAM and COLOR-FX work merged (it rewrites the pool's format and the core shaders) | MODEL, DECODE, GPU, CACHE, EXPORT, FX manifests, SHELL (the display) — all core | answered B4 (1.0 = SDR white 203 cd/m²; 8-bit effects run marked; HDR on an HDR monitor at once; SDR + HDR10 + HLG export) | t3877–t3899 |
 
 The 16-bit stage touches every core area. It runs with only non-core work beside it: the UI-only rows
 of the next section.
+
+## Added after 2026-11-20 (spec-features designs, owner answers B10–B12)
+
+| Change | Size | Needs first | Areas | Owner question | Tests |
+|---|---|---|---|---|---|
+| `memory-breakdown` | M | — | `kt-time/src/mem.rs` (report-only tenants), every holder reports (kt-model estimate, kt-engine, kt-media, kt-text, kt-gpu pools), SHELL (the status counter, Diagnostics) | answered B12 (resident memory + VRAM in GB, the hover expands; the project's disk only) | t3962–t3967 |
+| `real-3d-groups` **v+** | L | `shared-events` (MODEL); `stream-picture-stays` and `fx-graph-dag` (GPU) | MODEL (`Track.three_d`, `Mask.extrude`), the plan (`Layer::Group3d`), GPU (a mesh pipeline with depth) | answered B10 (intersecting planes and extruded shapes now; a track switch) | t3952–t3959 |
+| `wasm-plugin-host` | L | — (new crates `kt-plugin-wasm`, `kt-plugin-sdk`) | a new host crate; GPU (plugin WGSL through naga and the pipeline cache); the plugin registry door; `download-library`'s plugin rows follow it | answered B11 (wasmtime + WGSL; layered scenes later) | t3957–t3963 |
+
+These three take free slots by their areas: `wasm-plugin-host` touches no hot file and can fill any wave;
+`memory-breakdown` touches SHELL only at its end; `real-3d-groups` waits for the GPU work of waves 1–2.
+
+## Answered in the second round, revised by spec-features (kkt-26.11.20b B5–B9)
+
+`auto-ducking-by-role` (B5: several key tracks, hand edits), `loudness-norms` (B6: project-level
+normalization), `motion-driven-params` (B7: the edit's speed), `title-word-effects` (B8: many ranges
+from the start), `window-chrome` (B9: the preview drag dropped) are being revised by spec-features. Their
+rows below keep their areas; the "open questions" column no longer holds for them once the revision lands.
 
 ## Ready except for a question not yet put to the owner
 
@@ -158,6 +177,12 @@ These designs came from the `v26.10` registry rows (spec-features, 2026-11-20). 
 - **`.kt` version by content:** eleven changes raise it (**v+**). Every such design says "the next free
   number at merge" (`hdr-sources-to-sdr` corrected in this commit); a merge that finds the number taken
   renumbers.
-- **`durable-history-and-mix` is "build now" but waits on `project-cache-folder`'s questions.** Its stage 1
-  (the restart line in the trace) needs no folder and can run in any wave, if the orchestrator wants it
-  started before Q1–Q3 return.
+- **`project-cache-folder` is answered** (B2), so `durable-history-and-mix` (★) follows it in wave 3 as
+  planned.
+- **More test numbers reserved twice** by the changes added since: real-3d-groups t3952–t3959 overlaps
+  motion-driven-params (t3952) and wasm-plugin-host t3957–t3963 (t3957–t3959); wasm-plugin-host overlaps
+  memory-breakdown t3962–t3967 (t3962–t3963).
+- **The persistent cache (B1) and project-cache-folder share one store.** The layout and key are proposed to
+  spec-features (2026-11-22): `results/<build>/<device>/{frames, layers, history}`, `durable_hash` over the
+  plan or a layer's sub-plan, source copies under `media/<content id>/`. Its revision of `disk-copies`
+  confirms them.
