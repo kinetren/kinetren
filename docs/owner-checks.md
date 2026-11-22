@@ -36,7 +36,10 @@ a row; it does not close the row.
 
 | # | Since | Question (with context) | Where to go |
 |---|---|---|---|
-| Q55 | 2026-11-20 | **What should the audio-reactive generators hear — the file or the mix?** The new Waveform, Spectrum and Level rings generators listen to an audio track you pick. Right now they hear the FILES of the events on that track, as After Effects and Resolve do: a reverb, a fade or the event's level line on that track does not change the picture. The other way: they hear what the track really sounds like, after its effects and levels. That costs more — the picture then waits for the sound to be rendered, and a render renders the sound first. (a) the file, as now (Recommended); (b) the mix after effects. | v26.10 G5 → change `gen-audio-reactive`, note F-TXT-011; executor features-slow |
+| Q55 | 2026-11-22 | **Persistent cache: how exact is a stored effect result?** (a) recommended: lossy on the hardware encoder at high quality, like the prerender (a tenth of the disk; the preview may differ from the render by codec noise, never the export); (b) layer results lossless (LZ4, ~10× the disk), frames and copies lossy. | `persistent-cache` Q1 (kkt-26.11.20b B1) |
+| Q56 | 2026-11-22 | **Letter physics default and step.** (a) sway back to place by default, fall/hang/drag as choices; fixed step 1/240 s of material time; (b) fall by default / one step per project frame. | `text-letter-physics` Q1, Q2 (v26.10 lines 109–111) |
+| Q57 | 2026-11-22 | **OpenFX host.** (a) open sets first (openfx-misc, openfx-arena, G'MIC), in its own process (a plugin crash costs the node); (b) a named commercial plugin first / in our process. | `openfx-host` Q1, Q2 |
+| Q58 | 2026-11-22 | **Which ARM first.** (a) Linux aarch64 (tarball + Flatpak), Windows on ARM next, macOS later; (b) Windows on ARM; (c) macOS. | `arm-build` Q1 |
 
 ## Answered
 
