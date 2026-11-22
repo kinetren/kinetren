@@ -849,7 +849,7 @@ fn sources_with_picture(plan: &FramePlan<'_>) -> Vec<kt_cache::SourceId> {
     use kt_engine::video_plan::{LayerInput, LayerSrc, PlanLayer};
     fn walk(src: &LayerSrc<'_>, out: &mut Vec<kt_cache::SourceId>) {
         match &src.input {
-            LayerInput::Frame(Some(_)) => out.push(src.source),
+            LayerInput::Frame(Some(_)) | LayerInput::Held(_) => out.push(src.source),
             LayerInput::Frame(None) => {}
             LayerInput::Nest(n) => {
                 for l in &n.plan.layers {

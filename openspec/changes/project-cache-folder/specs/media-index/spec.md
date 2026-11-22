@@ -10,29 +10,51 @@ t401, t402, t401b, t639); an old sidecar is imported once and deleted.
 ## ADDED Requirements
 
 ### Requirement: The project's caches live in a folder beside it, one place per cache
-A named project's caches SHALL live in `kinetren-cache/` in the project's folder.
-- **What it holds:** the media index, the reel previews, the preview's disk prerender, the durable
-  stream history and heard mix, and the list of earlier renders. Each SHALL have a place of its own.
+A named project's caches SHALL live in `kinetren-cache/` in the project's folder, one folder shared by the
+projects in it.
+- **What it holds:** the media index, the reel previews, the persistent cache, the heard mix and the list
+  of earlier renders. Each SHALL have a place of its own.
+- **The persistent cache SHALL be one store** under `results/v<FORMAT>/<device class>/`: frames (the disk
+  prerender), layer results and the stream history, with heavy sources' copies under the media's content id.
+  - Frames and layer results SHALL be keyed by one layout: `durable_hash` over the plan or over the
+    sub-plan up to the kept stage, plus the decoder's major, the versions and WGSL hashes of the kernels
+    that ran and `COMPOSITE_PATH_VERSION`. The whole build SHALL NOT be in the key.
+  - `COMPOSITE_PATH_VERSION` SHALL change whenever the composite code outside the kernels changes, held by
+    a guard test.
+  - An entry whose key no longer matches SHALL be a miss and be removed when met. No store SHALL be swept
+    at open.
 - **What it never holds:** anything the project needs to open. Deleting the folder SHALL cost only
   recomputation.
 - **Marking:** the folder SHALL carry a `CACHEDIR.TAG` and a `README.txt` that says it may be deleted.
-- **Fallback:** where the project's folder cannot be written, the folder SHALL be made under the user's
-  data folder (`project-caches/`). The same holds for an untitled project. The project's facts and the
-  trace SHALL name the place and the reason.
+- **Fallback:** where the project's folder cannot be written at all, the folder SHALL be made under the
+  user's data folder (`project-caches/`), under the same cyclic rule, and a notice, the project's facts
+  and the trace SHALL name the place and the reason. The same place SHALL serve an untitled project.
 - **Untitled project:** its folder SHALL move to the new place on the first save.
 - **Old stores:** an old sidecar (`<name>.ktindex.db` with `-wal` and `-shm`) SHALL be imported in the
   background on the index lane and then deleted; an unreadable one SHALL be deleted after three tries.
   The former `<data>/render-cache` SHALL be deleted at the first start.
-- **The limit:** every cache folder SHALL be listed in a registry in the user's data folder, with its
-  size and its projects. A limit pass at rest SHALL keep the caches within the limit the person set,
-  trimming the prerender, history and mix before the reel previews and the media index, the least
-  recently used first.
+- **Cyclic writing:** a folder's room SHALL be the smaller of its cap and the disk's free space less a
+  reserve. A write that does not fit, or that the system refuses for lack of space, SHALL first drop the
+  least recently used entries:
+  - first the persistent cache, the heard mix and the source copies in one order, the lowest value per byte
+    first (the measured cost saved per read × the reads in this project ÷ the bytes; least recently used
+    breaks a tie);
+  - then the reel previews and the media index, least recently used first;
+  - never a frame this process used in the last minute.
+
+  If nothing can be dropped, the write SHALL be skipped and counted, never failing a gesture. The first
+  drop of a session in a folder SHALL post one notice naming the folder, with a way to Settings → "Caches
+  on disk". Nothing SHALL scan or trim at rest.
+- **The registry:** every cache folder SHALL be listed in a registry in the user's data folder, with its
+  size and its projects.
 - **Threads:** no cache SHALL be written by the UI thread.
 
 Why: kkt-26.11.20 line 19 ("у нас не будет все в одной базе sqlite хранится а будет подпапка в папке
 проекта с разными кешами, вот с тем же превью кэшем"). One unbounded SQLite file made a lock or a broken
 write cost every cache of a project (t872), and the prerender of every project shared one cap in the
-user's folder (project-cache-folder D1–D5).
+user's folder (project-cache-folder D1–D5). kkt-26.11.20b line 2 ("СУТЬ … В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ
+СЧИТАТЬ": the effects' results are the store's point, D1b); line 4: "непринимающая папка - это цикличесская
+запись с подчисткой старого говна и алерт в уведомлениях" (D3, D4).
 
 #### Scenario: The folder, its marks and its fallback
 - **WHEN** a project in a writable folder, one in a read-only folder and an untitled one each open and cache a clip's peaks
@@ -54,9 +76,9 @@ user's folder (project-cache-folder D1–D5).
 - **THEN** the peaks, packet index, thumbnails, loudness, sync offsets and reel previews are read from the new folder without decoding, and the three sidecar files are gone; the locked one is kept for the next open, the garbage one is deleted, and nothing waited for the import
 - **TEST** t3831, t3832 (`src/libs/kt-media/tests/cache_folder.rs`)
 
-#### Scenario: The limit pass trims in order
-- **WHEN** two folders exceed the limit together, one of the project opened now, the other opened a week ago
-- **THEN** at rest the older folder's prerender, history and mix go first, then its reels and media index, and the open project's folder is trimmed last, its prerender never losing what this process used
+#### Scenario: A full folder writes in a cycle and says so once
+- **WHEN** a folder with a small cap holds history, mix runs, picture results and media entries of several ages, new picture results keep arriving, a write meets `ENOSPC` from a test file system, and the loop being played was used a moment ago
+- **THEN** each write first drops the entries of the lowest value per byte among the results, the mix and the copies (a cheap old frame before a costly Datamosh checkpoint), then reels and media by last use, the loop's frames stay, the `ENOSPC` write recounts the room, drops and succeeds on its retry, one notice names the folder for the session, and at rest nothing is scanned or dropped
 - **TEST** t3835, t3836, t3837 (`src/libs/kt-media/tests/cache_folder.rs`)
 
 #### Scenario: A moved, saved or copied project keeps what it can

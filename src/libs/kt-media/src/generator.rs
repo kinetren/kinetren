@@ -11,8 +11,8 @@
 //! function of this triple, otherwise the cache key stops determining the frame.
 //!
 //! Contracts on which everything rests:
-//! - the frame is EXACTLY the requested Quality: the composite silently drops a layer
-//!   of a foreign size (kt-engine/video.rs, `fits`);
+//! - the frame is EXACTLY the requested Quality: the GPU executor drops a layer of a
+//!   foreign size and the composite comes out incomplete (kt-gpu `resolve_plan`, t633);
 //! - the frame is a deterministic function (parameters, pts, Quality): the engine’s
 //!   cache keys and the GPU upload will not survive anything else (invariant 11);
 //! - “no sound” = `has_audio: false` AND `Ok(AudioBurst::silence)`:

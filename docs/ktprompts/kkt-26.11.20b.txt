@@ -1,0 +1,26 @@
+Answers of the owner, 2026-11-20..22, to the orchestrator's second round of questions (the designs of spec-engine and
+spec-features after stage 22: disk-copies, project-cache-folder, download-library, hdr-sources-to-sdr, auto-ducking-by-role,
+loudness-norms, motion-driven-params, title-word-effects, window-chrome, real-3d-groups, wasm-plugin-host, memory-breakdown).
+Each line: the question, the option he chose, his own words verbatim.
+
+1. disk-copies Q1 name: "«Постоянный кэш»"
+2. disk-copies Q2 which files: "тяжелые. и мне не нравится почему ты думаешь только о проигрывании и декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!"
+3. project-cache-folder Q1: "Одна на папку (Recommended)"
+4. project-cache-folder Q2/Q3 limit and a folder that cannot take it: "непринимающая папка - это цикличесская запись с подчисткой старого говна и алерт в уведомлениях"
+5. download-library Q1 the list: "Всё с сервера"
+6. download-library Q2 plugins: "Библиотека сейчас, плагины с wasm (Recommended)"
+7. download-library Q3 missing font pack: "Заглушка + «Скачать» (Recommended)"
+8. hdr Q1 what is 1.0: "1.0 = белый SDR, 203 кд/м² (Recommended)"
+9. hdr Q2 an 8-bit effect in a 16-bit project: "Работает, помечен «8 бит» (Recommended)"
+10. hdr Q3/Q4 monitor and export: "HDR на HDR-монитор сразу"
+11. auto-ducking Q1/Q2: "наверное имеется ввиду несколько дорожек а не две. ну и да ручные правки тоже полезны. а вообще мне кажется там в моем тексте понятно было что написано а ты подрезал суть"
+12. loudness Q1/Q2: "п.1. мне кажется что это должно быть на уровне проекта нормализация а не в пресетах рендера. типо наверное же есть проффесиональный путь нормализации громкости дорожек? как-то это не тупо как в п.1. должно быть все таки"
+13. motion-driven-params Q1 (first ask): "я не понимаю контекста вопроса. твоя вырезка фразы моей выглядит очень бессмысленной."
+14. motion-driven-params, asked again with his whole item (v26.10 lines 160-164): "Скорость монтажа (Recommended)"
+15. title-word-effects Q1: "п.1. но это надо сразу учесть что будет если выделено по отдельности 20 слов например"
+16. window-chrome Q1 dragging a window by the preview: "пропускаем это требование."
+17. real-3d-groups Q1/Q2: "A+B; переключатель дорожки (Recommended)"
+18. wasm-plugin-host Q1/Q2: "wasmtime + WGSL (Recommended)"
+19. wasm-plugin-host Q3 layered scenes: "Отдельным проектом после (Recommended)"
+20. memory-breakdown Q1 the counter: "к текущему добавить vram, и убрать лишнее, ну и в gb показывать, а при наведении - раскрывать что-то еще показывать"
+21. memory-breakdown Q2 the project's disk: "Только проекта (Recommended)"

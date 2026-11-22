@@ -24,7 +24,8 @@
   - `durable-history-and-mix`: Datamosh history entries, LZ4 per the owner's Q24 b, and the kept mix
     runs;
   - `cached-final-render`: the list of earlier renders;
-  - `proxies`: the durable preview store the owner asked for in place of proxies.
+  - `disk-copies`, being revised by spec-features into the **persistent cache** ("Постоянный кэш",
+    kkt-26.11.20b B1): the results of heavy effects and copies of heavy sources, on disk.
 - **Not caches:**
   - the recovery file and autosave (durability);
   - posters and the recent list (the user store);
@@ -34,26 +35,30 @@
 
 ## D1. The folder and its layout
 
-`<project folder>/kinetren-cache/` (Q1 a; under Q1 b, `<stem>.kinetren-cache/`):
+`<project folder>/kinetren-cache/`, one per project folder (the owner's Q1 a, kkt-26.11.20b B2):
 
 ```
 kinetren-cache/
   CACHEDIR.TAG                    the Cache Directory Tagging signature: backup tools skip the folder
   README.txt                      "Kinetren keeps recomputable data here. Delete it any time."
-  lock                            flock for the limit pass and map compaction (never for an entry)
+  lock                            flock for the cycle's drops and map compaction (never for an entry)
   media/paths.tsv                 path · size · mtime ns · content id   (append-only, compacted)
   media/<content id>/             peaks · packets · thumbs · thumb-pixels · poster · facts · loudness
   pairs/<id a>-<id b>             sync offsets, the pair ordered
   reels/<content hash>/           strip · frames · peaks          (STRIP_ROW_VERSION in the header)
-  render/v<FORMAT>-<build>/<dev>/ segments + manifests            (moved from <data>/render-cache)
-  history/<build>/<dev>/          stream entries, LZ4             (durable-history-and-mix)
-  mix/<build>/                    kept mix runs, raw f32          (durable-history-and-mix)
+  media/<content id>/copy-<q>.mkv a heavy source's copy at quality step q (persistent cache, D1b)
+  results/v<FORMAT>/<device class>/   THE PERSISTENT CACHE OF RESULTS ("Постоянный кэш", D1b):
+    frames/                       composites of moments, segments + manifests (the disk prerender)
+    layers/                       a layer's picture after a heavy node, a track stage's or a reel's output
+                                  (persistent-cache D1–D4)
+    history/                      stream entries (Datamosh), LZ4      (durable-history-and-mix)
+  mix/v<FORMAT>/                  kept mix runs, raw f32          (durable-history-and-mix)
   renders.tsv                     earlier renders, verified       (cached-final-render)
-  usage.tsv                       per tenant: bytes, last used    (for the limit pass)
+  usage.tsv                       per tenant: bytes, last used    (for the cycle)
 ```
 
 - **`content id`** is the xxh3-128 of the whole file in hex, the identity the sidecar already computes.
-  A file copied under another name shares the entry. Two projects in the folder share it under Q1 a.
+  A file copied under another name shares the entry. Two projects in the folder share it.
 - **`paths.tsv`:**
   - a path inside the project folder is stored relative to it, so a moved folder hits and is not
     hashed again; any other path is stored absolute;
@@ -70,10 +75,71 @@ kinetren-cache/
   - the thumbs lane writes thumbnails and posters;
   - the media lane writes packets;
   - the reel-preview lane writes reels;
-  - the render-cache thread writes `render/`;
+  - the render-cache thread writes `results/…/frames/` and `results/…/layers/`;
+  - the persistent cache's copy job writes the source copies (a background job, change `persistent-cache`);
   - the history and mix writers of `durable-history-and-mix` write theirs.
   - The UI thread touches nothing. Two processes may write the same entry; the content is the same
     (keyed by content), and the last rename wins.
+
+## D1b. The persistent cache is one store (the owner's B1; agreed with spec-features)
+
+The owner: "мне не нравится почему ты думаешь только о проигрывании и декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ
+ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!" (kkt-26.11.20b line 2). So the program's
+kept results live in ONE store, the persistent cache, designed by spec-features in change `persistent-cache`
+(formerly `disk-copies`; branch `claude/spec-features-224d3d`, commit 1e31056c, design D1–D4, D8). This
+change hosts it. Its kinds lie side by side in the cache folder:
+- `results/v<FORMAT>/<device class>/frames/`: the composites of moments (the disk prerender of
+  `render-cache-disk`);
+- `results/…/layers/`: a layer's picture after a heavy node, a track stage's or a reel's output;
+- `results/…/history/`: stream entries (`durable-history-and-mix`);
+- `media/<content id>/copy-<quality>.mkv`: heavy sources' copies.
+
+**The keys.**
+- Frames and stage results are keyed by `render_cache::durable_hash`. It covers the plan's fields without
+  content serials, `Leaves::digest` of the files' identities and the generators' values. A frame's key
+  covers its whole plan. A stage result's key covers the sub-plan up to and including that stage, so an
+  edit after it, or on another layer, keeps the entry valid.
+- This is the layout `cached-final-render` names (the video-plan delta "The durable key's layout is a
+  shared contract").
+
+**What makes an entry stale, without the build** (agreed with spec-features). The owner updates often,
+and a build salt would empty the store on every update, against B1.
+- **The folder:** `results/v<FORMAT>/<device class>/`. The store's format and the device class (adapter and
+  driver) are folders, so another device's entries are never even read. This is the orchestrator's final
+  decision of 2026-11-22 (layout B), and `persistent-cache` cites this text instead of restating it. The
+  reasons:
+  - video is byte-equal only on one device (invariant 11), so a cache written on another device class
+    must never be served as this one's;
+  - a format bump must leave the old entries as plainly stale folders;
+  - in the path, both are visible to eviction and to the cyclic rule (B2).
+- **The entry key adds:**
+  - the decoder's major (`avcodec_version()`);
+  - the versions of the kernels that ran: each plugin's version and its WGSL text's hash;
+  - `COMPOSITE_PATH_VERSION`, a constant of kt-engine/kt-gpu that the composite code OUTSIDE the kernels
+    bumps (the fusion, `plan_chain`, the core passes, the conversions). A guard test fails when those files
+    change and the constant does not, so it is narrower than the build and cannot be forgotten.
+- A key that no longer matches is a miss, and the entry is removed when met. There is no sweep at open.
+
+**The manifest forms:**
+- frames and stage results: video segments of the machine's hardware encoder with a text manifest per
+  segment (codec, encoder, size, rate, salt, one key per frame);
+- history: LZ4 of exact entries (it must be lossless: `durable-history-and-mix` D9);
+- copies: MKV with a manifest of the original's identity and timestamps.
+
+**Eviction by value per byte** (agreed with spec-features). The history is not evicted first: Datamosh
+history is exactly the heavy work B1 is about.
+- Within `results/` and `mix/` there is one order: value per byte, the measured cost saved per read × the
+  reads in this project ÷ the bytes, lowest first, with least recently used as the tie-break.
+- The source copies go by the same value rule.
+- When the folder cannot take more (D3, the owner's cyclic rule), that order is applied. Frames this
+  process used in the last minute are never dropped.
+
+**Who decides what:**
+- this change: the folder, the places, the entry header, the salt's form, the folder's room, the cycle
+  and the notice;
+- `persistent-cache`: which stages and sources are heavy enough to keep, the value measure, how a kept
+  stage result enters the plan in place of its stages, the job and the switch "as in the preview";
+- `durable-history-and-mix`: the history entries and the mix runs.
 
 ## D2. Reading and invalidation (the sidecar's rules, kept)
 
@@ -88,30 +154,47 @@ kinetren-cache/
   on EITHER side misses (t401b's rule holds by construction).
 - Analysis numbers stay integers ×100 (t401). The packet index is read back byte for byte (t34).
 
-## D3. The limit (Q2) and the registry
+## D3. Cyclic writing and the registry (the owner's B2)
 
-- **The registry:** `<data>/cache-folders.tsv` lists every cache folder the program made or opened:
-  path, project paths seen in it, last use, and its size at the last pass. The Settings page reads it.
-- **The limit pass** runs at rest, under the prerender's quiet rule: no input for 1.5 s, not playing, no
-  export. It also runs once after a project opens. It takes `lock` per folder.
-- **Under Q2 a** it trims across folders: least recently used folder first, the open project's folder
-  last. Under Q2 b it trims each folder alone.
-- **Within a folder** the tenants go in this order: `history/`, `mix/`, `render/`, then `reels/`, then
-  `media/` (the composites outlive the history under them: `durable-history-and-mix` D2). Inside a tenant the least recently used entry goes first, by `usage.tsv`, never by the file
-  system's access time (often off).
-- The prerender's own rule stays: it never evicts what this process used.
-- `KT_RENDER_CACHE_MB` keeps working as a cap on `render/` for tests and the live check.
-- Other builds' `render/`, `history/` and `mix/` subfolders are removed at open, as today.
+- **The registry:** `<data>/cache-folders.tsv` lists every cache folder the program made or opened: path,
+  project paths seen in it, last use, and its size at the last count. The Settings page reads it.
+- **A folder's room** = min(its cap, the disk's free space − a reserve).
+  - The cap is per folder: "Persistent cache" in Settings, default 20 GB.
+  - The reserve is max(2 GB, 2 % of the disk), so a cache never fills the disk the person's work is on.
+  - `KT_RENDER_CACHE_MB` caps the picture results alone, for tests and the live check.
+- **The cycle.** A writer asks the folder for room before it writes an entry. When the entry does not fit,
+  the folder drops entries until it does:
+  - first `results/`, `mix/` and the source copies in one order, the lowest value per byte first (D1b, the
+    measured cost saved per read × reads in this project ÷ bytes; least recently used breaks a tie);
+  - then `reels/`, then `media/`, least recently used first, by `usage.tsv` (never the file system's access
+    time, often off);
+  - never a frame this process used in the last minute, so the cycle cannot eat the loop being played;
+  - if nothing droppable remains, the write is skipped and counted. A cache never fails a gesture.
 
-## D4. Where the folder cannot be (Q3) and the untitled project
+  The drop runs on the writer's own thread, under `lock`, and never on the UI thread.
+- **A write that fails for lack of space** (`ENOSPC`, `EDQUOT`) is the same event: the folder recounts
+  its room from the disk, drops, and retries once.
+- **The notice** ("алерт в уведомлениях"): the first drop of a session in a folder posts one notice:
+  - "The cache of «<folder>» is full (<size>): the oldest results are being replaced.";
+  - a button opens Settings → "Persistent cache";
+  - the same folder posts again only after a restart, or after the cap or the free space changed by more
+    than 10 %.
 
-- **The folder is tried in the project's folder first:** a test file is written and renamed there. If
-  that fails, or the folder is on a read-only mount, the cache goes under
-  `<data>/project-caches/<xxh3(project folder path)>/`. The project's facts and the trace name the place
-  and the reason.
+  The trace records every drop with its tenant, its bytes and why (the cap, the disk, a quota).
+- **At rest** nothing scans or trims: the cycle runs only when something writes, so the program at rest
+  costs nothing.
+- Nothing is swept at open: an entry whose salt no longer matches (D1b) is a miss and is removed when met.
+
+## D4. A folder that cannot be written, a synced folder, the untitled project
+
+- **The write test:** a test file is written and renamed in the project's folder at open. If that fails,
+  or the mount is read-only, there is nothing to cycle. The cache goes to
+  `<data>/project-caches/<xxh3(project folder path)>/`, under the same room rule (D3). The notice says
+  "The project's folder takes no files: its cache is in your user folder", and the project's facts name
+  the place.
 - **A folder inside a known sync root** is marked as not synced where the tool reads a mark:
   - Dropbox reads the extended attribute `com.dropbox.ignored`;
-  - the facts say "inside a synced folder (OneDrive): the cache is uploaded" when no mark exists.
+  - where no mark exists (OneDrive), the facts say "inside a synced folder: the cache is uploaded".
 - **An untitled project** caches under `<data>/project-caches/untitled-<session>/`. On the first save the
   folder is renamed into the new place on the same file system, merged entry by entry when the target
   exists. On another file system the media and reel tenants are copied in the background, and the rest
@@ -127,8 +210,9 @@ kinetren-cache/
   - An unreadable or locked sidecar is left for the next open; after three failed imports it is deleted
     (it is a cache).
   - Until the import ends, a miss in the new folder is computed as usual. Nothing waits for the import.
-- **`<data>/render-cache/`** is deleted at the first start of the build. Its folders are salted by the
-  build, so the new build could not read them anyway.
+- **The old `<data>/render-cache/`** is deleted at the first start of this change's build. It lies outside
+  any project, and its folders are salted by the whole build. From then on no store is swept: a stale salt
+  is dropped lazily on a miss (D1b).
 - **The plans of `durable-history-and-mix` and `cached-final-render`** take their roots from the cache
   folder; neither is built yet.
 
@@ -148,10 +232,11 @@ kinetren-cache/
 |---|---|---|---|
 | media index (peaks, packets, thumbs, posters, loudness, sync) | `<stem>.ktindex.db` | `kinetren-cache/media/`, `pairs/` | the owner's decision |
 | reel previews | `<stem>.ktindex.db` | `kinetren-cache/reels/` | same |
-| prerender segments | `<data>/render-cache/` | `kinetren-cache/render/` | "вот с тем же превью кэшем" |
-| Datamosh history, heard mix (planned) | `<data>` | `kinetren-cache/history/`, `mix/` | the same rule for a new kept result |
+| prerender segments | `<data>/render-cache/` | `kinetren-cache/results/…/frames/` | "вот с тем же превью кэшем" |
+| heavy layers' results (persistent cache, B1) | none | `kinetren-cache/results/…/layers/` | "СУТЬ … В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ" |
+| Datamosh history, heard mix (planned) | `<data>` | `kinetren-cache/results/…/history/`, `mix/` | the same rule for a new kept result |
 | earlier renders list (planned) | `<data>` | `kinetren-cache/renders.tsv` | per project |
-| the durable preview store (`proxies`, planned) | `<proxy folder>` | `kinetren-cache/` (its own tenant) | one place; the change `proxies` names it |
+| heavy sources' copies (persistent cache, B1; formerly `proxies`) | `<proxy folder>` | `kinetren-cache/media/<content id>/copy-*.mkv` | one place, keyed by the original's content |
 | compiled pipelines, pass times | `<data>/shader-cache/` | unchanged | per machine and device, shared by every project |
 | recovery, autosave | beside the project / `<data>` | unchanged | durability, not a cache |
 | posters, recent list, templates | `<data>` user store | unchanged | between projects |
@@ -163,9 +248,9 @@ kinetren-cache/
 ## D8. Telemetry
 
 - Every tenant reports to the trace:
-  - its bytes at open and after each limit pass;
+  - its bytes at open and after each drop;
   - its hits and misses;
-  - each eviction with the tenant and the reason (limit, foreign build, broken header).
+  - each drop with the tenant and the reason (the cap, the disk, a quota, a foreign build, a broken header).
 - `kt-cli trace cache` prints them per tenant, beside the prerender's records, which keep their kinds.
 - The project's facts name the folder, its place (project folder / user folder) and why.
 
@@ -175,10 +260,10 @@ kinetren-cache/
 2. The media and reel tenants; the sidecar's scenarios rewritten over files (t16, t34, t401, t401b, t639,
    t872 keep their numbers); the import of an old sidecar (t3829–t3832).
 3. The prerender's root and cap from the folder; deletion of `<data>/render-cache` (t3833, t3834).
-4. The limit pass and the order of the tenants (t3835–t3837).
+4. Cyclic writing, the order of the tenants and the notice (t3835–t3837).
 5. The untitled project's move on save, Save As, a moved folder (t3838–t3840).
-6. The trace and `kt-cli cache` (t3841); Settings → "Caches on disk" (t3842); the live scenario
-   (planned live scenario `cache_folder`) and the idle check: the program at rest after a limit pass
+6. The trace and `kt-cli cache` (t3841); Settings → "Persistent cache" (t3842); the live scenario
+   (planned live scenario `cache_folder`) and the idle check: the program at rest after cyclic writing
    costs nothing (t3843).
 
 ## Risks

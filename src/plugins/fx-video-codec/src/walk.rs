@@ -135,6 +135,8 @@ enum Put {
 /// What a batch brings back.
 enum Back {
     Pic { key: u64, d: Dev3, put: Put, size: (usize, usize) },
+    /// A shown picture kept on the device for the composite (stream-picture-stays D3).
+    Held { key: u64, d: Dev3, put: Put, size: (usize, usize) },
     Clean { key: u64, c: DevClean, bs: usize },
 }
 
@@ -193,6 +195,13 @@ struct Walk<'a> {
     /// The picture at `n`, once it is on the host.
     out: Option<Arc<Planes>>,
     out_dev: Option<Dev3>,
+    /// The picture at `n` stays on the device (stream-picture-stays D3): never read back, kept live.
+    hold: bool,
+    /// The picture at `n`, held.
+    out_held: Option<Arc<HeldPic>>,
+    /// The pictures the host shows stay on the device (`ComputeHost::holds_pictures`): the memo keeps
+    /// them held, nothing reads them back (stream-picture-stays D3).
+    hold_ahead: bool,
     region: bool,
     checkpoints: u32,
     /// The source frames of the current batch by side and position, as its buffers.
@@ -214,6 +223,29 @@ enum Short {
 
 /// The broken decoder's picture at `n` and its key, the walk in batches on the device.
 pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<Planes>, u64)> {
+    match walk_to(s, input, n, memo, false)? {
+        (Out::Host(p), key) => Some((p, key)),
+        (Out::Held(_), _) => None,
+    }
+}
+
+/// `broken` with the picture at `n` left on the device (stream-picture-stays D3): the walk reads it back
+/// neither into the memo nor out, and keeps it in the live tier under its key. `None` — not held: a
+/// device that keeps nothing, a picture the memo holds on the host, a missing frame.
+pub fn broken_held(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<HeldPic>, u64)> {
+    match walk_to(s, input, n, memo, true)? {
+        (Out::Held(h), key) => Some((h, key)),
+        (Out::Host(_), _) => None,
+    }
+}
+
+/// The picture a walk ends with.
+enum Out {
+    Host(Arc<Planes>),
+    Held(Arc<HeldPic>),
+}
+
+fn walk_to(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo, hold: bool) -> Option<(Out, u64)> {
     let lay: &dyn StreamLayout = input;
     let chain = s.chain(n);
     let (w, h) = mosh::padded(lay);
@@ -224,7 +256,8 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         let last = i + 1 == chain.len();
         // the state a walk left on the device (D1): a picture the walk goes on from is read where it
         // lies, never uploaded from the memo's copy
-        let held = |memo: &StreamMemo| memo.get_live::<HeldPic>(chain[i].2);
+        // the live tier, or a shown picture the memo keeps held (D3)
+        let held = |memo: &StreamMemo| memo.get_live::<HeldPic>(chain[i].2).or_else(|| memo.get::<HeldPic>(chain[i].2));
         if !last && let Some(h) = held(memo) {
             cur = Some(Val::Held(h));
             start = i + 1;
@@ -232,7 +265,7 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         }
         if let Some(p) = memo.get::<Planes>(chain[i].2) {
             if last {
-                return Some((p, chain[i].2));
+                return Some((Out::Host(p), chain[i].2));
             }
             cur = Some(Val::Host(p));
             start = i + 1;
@@ -269,6 +302,9 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         grey: Arc::new(Planes::grey(pic.0, pic.1)),
         out: None,
         out_dev: None,
+        hold,
+        out_held: None,
+        hold_ahead: false,
         // a carried region blends with the source on the host (`mosh::render`), no clean encode here
         region: lay.region_ident(n) != 0 && !s.r.sharp,
         checkpoints: 0,
@@ -276,15 +312,22 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         carried: HashMap::new(),
         src_back: None,
     };
+    // a host that keeps nothing reads every picture back: nothing is held
+    walk.hold = hold && walk.b.keeps_on_device();
+    walk.hold_ahead = walk.b.keeps_on_device() && kt_plugin_api::compute::host().is_some_and(|h| h.holds_pictures());
     let key = chain[chain.len() - 1].2;
     if start == chain.len() {
-        // the frame asked is only on the device: it comes back alone, and to the memo as shown
         let pic = walk.cur.clone().expect("found above");
+        // held where it lies, for an executor on this device (D3)
+        if let (true, Val::Held(h)) = (walk.hold, &pic) {
+            return Some((Out::Held(h.clone()), key));
+        }
+        // the frame asked is only on the device: it comes back alone, and to the memo as shown
         walk.keep(key, &pic, Put::Lru, walk.pic);
         let d = walk.dev(&pic);
         walk.out_dev = Some(d);
         walk.flush(false)?;
-        return walk.out.map(|p| (p, key));
+        return walk.out.map(|p| (Out::Host(p), key));
     }
     for &(k, node, dk) in &chain[start..] {
         // before each position: the host may have left the frame (gpu-arbiter, row 147); every
@@ -322,7 +365,11 @@ pub fn broken(s: &Plan, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> O
         }
     }
     walk.flush(true)?;
-    walk.out.map(|p| (p, key))
+    if let Some(h) = walk.out_held.take() {
+        memo.put_live(key, h.clone(), h.bytes());
+        return Some((Out::Held(h), key));
+    }
+    walk.out.map(|p| (Out::Host(p), key))
 }
 
 impl Walk<'_> {
@@ -624,7 +671,10 @@ impl Walk<'_> {
         } else {
             None
         };
-        if let Some(put) = put {
+        // the held frame asked is kept live at the walk's end, never read back into the memo (D3)
+        if let Some(put) = put
+            && !(self.hold && k == self.n && matches!(pic, Val::Dev(_) | Val::Held(_)))
+        {
             self.keep(dk, &pic, put, self.pic);
         }
         if checkpoint {
@@ -657,6 +707,12 @@ impl Walk<'_> {
             self.checkpoints += 1;
         }
         match v {
+            // a checkpoint too: it may be a shown picture, and a re-walk reads it where it lies
+            Val::Dev(_) | Val::Held(_) if self.hold_ahead => {
+                let d = self.dev(v);
+                self.b.keep3(d);
+                self.back.push(Back::Held { key, d, put, size });
+            }
             Val::Dev(_) | Val::Held(_) => {
                 let d = self.dev(v);
                 self.b.read3(d);
@@ -757,7 +813,11 @@ impl Walk<'_> {
             self.b.keep3(*d);
         }
         if let Some(d) = self.out_dev {
-            self.b.read3(d);
+            if self.hold {
+                self.b.keep3(d);
+            } else {
+                self.b.read3(d);
+            }
         }
         if !self.b.is_empty() || !self.back.is_empty() {
             self.run_batch()?;
@@ -793,8 +853,10 @@ impl Walk<'_> {
         let mut pic = |d: Dev3, size: (usize, usize)| -> Arc<Planes> { pics.entry(d[0]).or_insert_with(|| Arc::new(b.planes_sized(&got.reads, b.read_index3(d), size))).clone() };
         let mut reads = 0;
         let mut cleans: HashMap<usize, Arc<Clean>> = HashMap::new();
+        let mut helds: Vec<(u64, Dev3, Put, (usize, usize))> = Vec::new();
         for back in std::mem::take(&mut self.back) {
             match back {
+                Back::Held { key, d, put, size } => helds.push((key, d, put, size)),
                 Back::Pic { key, d, put, size } => {
                     reads += 1;
                     self.put(key, pic(d, size), put);
@@ -809,6 +871,21 @@ impl Walk<'_> {
         let mut kept: HashMap<usize, Val> = HashMap::new();
         let codec = (self.w, self.h);
         let mut back = |d: Dev3, size: (usize, usize)| -> Val { kept.entry(d[0]).or_insert_with(|| back_pic(&b, &got, d, size)).clone() };
+        // the shown pictures kept held: into the memo's pictures as they lie (D3)
+        for (key, d, put, size) in helds {
+            match back(d, size) {
+                Val::Held(h) => {
+                    let bytes = h.bytes();
+                    match put {
+                        Put::Lru => self.memo.put(key, h, bytes),
+                        Put::Transient => self.memo.put_transient(key, h, bytes),
+                        Put::Pinned(r) => self.memo.put_pinned(key, h, bytes, r),
+                    }
+                }
+                Val::Host(p) => self.put(key, p, put),
+                _ => {}
+            }
+        }
         if let Some(Val::Dev(d)) = self.cur {
             let v = back(d, self.pic);
             // a host that keeps nothing: the resume point goes into the memo, as before D1
@@ -818,7 +895,15 @@ impl Walk<'_> {
             self.cur = Some(v);
         }
         if let Some(d) = self.out_dev.take() {
-            self.out = Some(pic(d, self.pic));
+            if self.hold {
+                match back(d, self.pic) {
+                    Val::Held(h) => self.out_held = Some(h),
+                    Val::Host(p) => self.out = Some(p),
+                    _ => {}
+                }
+            } else {
+                self.out = Some(pic(d, self.pic));
+            }
         }
         if let Some((key, d)) = self.src_back.take() {
             match back(d, self.pic) {

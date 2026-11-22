@@ -2536,6 +2536,7 @@ fn layer_src<'a>(
             ctx.probe
                 .then(|| stream::key_only(clip, st, ctx.grid, quality, dq, t, src_pts))
                 .flatten()
+                .map(|(f, key)| (f, key, None))
                 .unwrap_or_else(|| {
                     stream::run(clip, st, ctx.grid, cache, ctx.stream_memo, ctx.stream_view, ctx.stream_pacing, quality, dq, t, src_pts)
                 }),
@@ -2549,7 +2550,7 @@ fn layer_src<'a>(
     }
     let (frame, content) = if clip.nest.is_some() {
         (None, 0) // the subtree's input is assembled below
-    } else if let Some((f, key)) = &streamed {
+    } else if let Some((f, key, _)) = &streamed {
         (f.clone(), *key)
     } else {
         match cache.get_video_stamped(source, Some(dq), cache_idx) {
@@ -2661,7 +2662,10 @@ fn layer_src<'a>(
                 plan,
             }))
         }
-        None => crate::video_plan::LayerInput::Frame(frame),
+        None => match streamed.as_ref().and_then(|s| s.2.clone()) {
+            Some(h) => crate::video_plan::LayerInput::Held(h),
+            None => crate::video_plan::LayerInput::Frame(frame),
+        },
     };
     LayerSrc {
         source,
@@ -2675,7 +2679,7 @@ fn layer_src<'a>(
         // the decoded stream's key joins the post-FX memo's: the same chain over another mosh is
         // another picture (the stream reads frames of OTHER events, which `fx_hash` does not see)
         fx_hash: match &streamed {
-            Some((_, key)) => kt_plugin_api::stream::mix(clip.fx_hash, *key),
+            Some((_, key, _)) => kt_plugin_api::stream::mix(clip.fx_hash, *key),
             None => clip.fx_hash,
         },
         u,

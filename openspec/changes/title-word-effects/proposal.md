@@ -1,7 +1,7 @@
 # Proposal: title-word-effects
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` TD1 (partial, later). Note F-TXT-010.
-> Tests reserved: t3942–t3947.
+> DESIGN ONLY (spec session), revision 2 (2026-11-22) after the owner's answer (`kkt-26.11.20b` B8). Registry
+> `v26.10-index.md` TD1. Note F-TXT-010. Tests reserved: t3942–t3947.
 
 ## Why
 
@@ -22,6 +22,11 @@ and a masked blur pulls the neighbours' pixels into the word.
 - **The range survives edits**: it is stored as character offsets plus the selected text; typing elsewhere moves the
   offsets with the edit (the field knows the edit); an edit inside the range grows or shrinks it; when the range's
   text is deleted entirely the mask is kept empty and named as such in the slot's mask list.
+- **Many words from the start** (the owner: "что будет если выделено по отдельности 20 слов"): one text-range mask holds
+  a LIST of ranges; Ctrl+selecting another word and "Add to this mask" adds a range to the mask the slot has. Twenty
+  words picked one by one are one mask, one coverage raster and one isolate pass per slot — the cost does not grow with
+  the number of words. Words that need DIFFERENT effects are different slots, each with its own mask; all of a title's
+  masks share one glyph rasterization per frame (one id map of up to 255 groups), so ten masks cost one layout.
 - One effect on a word is then an ordinary slot with its curves, presets and copy — nothing new to learn.
 
 ## Capabilities
@@ -46,9 +51,6 @@ and a masked blur pulls the neighbours' pixels into the word.
 
 ## Questions to the owner
 
-**Q1. How is the word chosen?** Your words: "на одно слово натравить эффекты". A title's text changes while it is
-edited; a range must not slide onto another word.
-- (a) **Select the word in the title's text field → right click → "Mask this text"; the range follows your edits;
-  "every occurrence" takes all matches** (*recommended*: you point at the word itself).
-- (b) Type a word in the mask's own field; every occurrence of it is masked (no selection, but a renamed word loses
-  its mask).
+Decided (2026-11-22, B8, `kkt-26.11.20b.txt` line 20): "п.1. но это надо сразу учесть что будет если выделено по
+отдельности 20 слов например" — the word is selected in the title's text field and the range follows edits; many words
+selected one by one are designed for from the start (above). No open question.

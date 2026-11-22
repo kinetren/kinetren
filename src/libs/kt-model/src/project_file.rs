@@ -227,9 +227,9 @@ pub fn from_text(text: &str) -> Result<ProjectFile, ProjectFileError> {
     if version > u64::from(PROJECT_FILE_READS) {
         return Err(ProjectFileError::TooNew { version: version as u32 });
     }
-    // versions BELOW the current one are read by migration on read, one-way; format 2 only
-    // ADDS the masks (format 1 has none), so there is nothing to migrate — the place for
-    // future repairs is here
+    // versions BELOW the current one are read by migration on read, one-way; formats 2-7 only
+    // ADD what an older one lacks (masks, the echo, device sound, marker notes, a track's sound
+    // track, a title's source), so there is nothing to migrate — the place for future repairs is here
     let env: Envelope =
         serde_json::from_value(peek).map_err(|e| ProjectFileError::Json(e.to_string()))?;
     let mut project = env.project;

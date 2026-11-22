@@ -1028,6 +1028,11 @@ of a file opened meanwhile took the render's settings, or reset ones.
 - **THEN** the first sees the render's counts inside, the other and the first after it see the defaults
 - **TEST** t2262 (`src/libs/kt-ffmpeg/src/lib.rs`)
 
+#### Scenario: kt-cli export opens its sources in the scope
+- **WHEN** `kt-cli export` opens its sources (found-defects 1059: it set the counts process-wide, and they outlived the export)
+- **THEN** the sources open with the render's counts and the process's counts stay the defaults after it; no process-wide set is left in kt-cli but the preview tools'
+- **TEST** t3602 (`src/apps/kt-cli/src/main.rs`)
+
 ### Requirement: An export composes an incomplete frame again before it writes it
 Every export (serial and pipelined) SHALL ask a frame its decode span did not give alone, up to two times,
 before anything composes it; a frame that still comes out incomplete SHALL have its missing frames decoded
@@ -1133,9 +1138,13 @@ dropped is a file the person did not ask for.
 ### Requirement: The colour tags are the conversion's
 The RGB→YUV conversion of an export SHALL use the chosen matrix (BT.601 or BT.709) and range
 (limited or full), and the stream SHALL be tagged with the same matrix and range, with BT.709
-primaries and transfer. The default SHALL be BT.601 limited — the conversion every export has used.
+primaries and transfer. The default SHALL be the matrix by the file's size, as the decode reads an
+untagged source (`colour::is_hd`): BT.709 at HD and above (1280 wide or taller than 576), BT.601 below,
+limited range; a chosen matrix stays at any size. The text form names the default `matrix=auto`.
 Why: the files carried no tags at all; a player guessed BT.709 for HD and showed different colours
-than the preview (F-EXP-006 trick).
+than the preview (F-EXP-006 trick). Found-defects 1054: the default was BT.601 at every size, and a
+player that ignores tags showed an HD file's colours shifted; most HD deliveries are BT.709 (the
+owner, kkt-26.11.20 Q50: "709 от HD, 601 ниже").
 
 #### Scenario: A saturated colour comes back by the tag
 - **WHEN** a flat saturated red frame is exported with BT.601 limited, BT.709 limited and BT.601 full
@@ -1144,6 +1153,11 @@ than the preview (F-EXP-006 trick).
   decode that reads the tags (source-colour-matrix) — a file converted with one matrix and tagged
   with another would come back 12 or more codes off, so the conversion follows the label
 - **TEST** t2806 (`src/libs/kt-engine/tests/render_settings.rs`)
+
+#### Scenario: The default matrix follows the size
+- **WHEN** the default settings export 1280×720 and 640×360, and the default and a chosen BT.601 are asked at 1920×1080, 720×1280 and 720×576
+- **THEN** the HD file is tagged BT.709 and the SD one SMPTE 170M; the default answers BT.709 for 1920×1080 and the portrait 720×1280, BT.601 for 720×576; the chosen BT.601 stays BT.601 at 1920×1080; the text form writes and reads `matrix=auto`
+- **TEST** t3603 (`src/libs/kt-engine/tests/render_settings.rs`)
 
 #### Scenario: A fractional frame rate and a frame's own time are written as they are
 - **WHEN** 48 frames are written at the rate 24000/1001, and five frames at their own times 0, 3000, 9000, 10000, 19000 in a time base of 1/90000

@@ -21406,7 +21406,7 @@ fn t2810_the_window_drives_the_export_options() {
     h.step();
     pick_combo(&mut h, tr(k::render::SPEED_FAST), tr(k::render::SPEED_SLOW));
     pick_combo(&mut h, tr(k::render::DEPTH_8), tr(k::render::DEPTH_10));
-    pick_combo(&mut h, "BT.601 limited", "BT.709 limited");
+    pick_combo(&mut h, "By size (BT.709 from HD) limited", "BT.709 limited");
     pick_combo(&mut h, &crate::tf!(k::render::FPS_PROJECT, 30), "25");
     pick_combo(&mut h, "AAC", "FLAC");
     let texts = shown_texts(&h);
@@ -21429,7 +21429,7 @@ fn t2810_the_window_drives_the_export_options() {
         RateMode::Vbr,
         Speed::Slow,
         BitDepth::Ten,
-        Matrix::Bt709,
+        Some(Matrix::Bt709),
         AudioCodec::Flac
     ));
     assert_eq!((job.opts.video_bitrate, f.max_bitrate, job.opts.fps), (Some(6_000_000), Some(9_000_000), Some(25)));

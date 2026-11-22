@@ -1,22 +1,21 @@
 # Tasks: window-chrome
 
-> DESIGN ONLY until the owner answers Q1 and the orchestrator's go. Tests: t3935–t3941.
+> DESIGN ONLY until the orchestrator's go; revision 2 (B9: the preview drag dropped). Tests: t3935–t3938, t3940–t3941.
 
 ## 0. Notes
 
 - [x] 0.1 proposal, design (D1–D8, class walk), deltas `ui-timeline`, `ui-reach`; `openspec validate window-chrome --strict`
-- [ ] 0.2 the owner's answer folded in
+- [x] 0.2 the owner's answer (B9) folded in
 
 ## 1. Layers (W1, T9)
 
 - [ ] 1.1 the under-windows layer; the glow as one mesh per glowing thing; the status hint and the title moved; t3936
 - [ ] 1.2 the guard of `Foreground`/`Tooltip` uses with reasons; t3935
 
-## 2. Window gestures (T5, U10, U11)
+## 2. Window gestures (T5, U10)
 
 - [ ] 2.1 the WM's maximized state at start; restore to a normal size before a drag; t3937, live `max_drag`
 - [ ] 2.2 the toolbar's wheel offset; t3938
-- [ ] 2.3 drag a window by the preview where no gesture claims it; t3939
 
 ## 3. Event windows (W3, T8, T7)
 

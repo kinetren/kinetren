@@ -8,6 +8,10 @@ Everything the program downloads SHALL be an item of one library. An item is:
 - installed under `<local>/library/<kind>/<id>/<version>/` with a record of the entry it came from and the
   verified hash.
 
+**The list.** Every entry SHALL come from our signed list. The release SHALL carry the list as of its build.
+A newer list SHALL be used only when its signature verifies and its sequence number is higher than the
+list held, and an installed item SHALL keep the entry it came from.
+
 **Downloading.** Downloads SHALL be made only by one engine:
 - the mirrors in order, with the declared length checked before the body;
 - a size cap, and the hash checked while receiving;
@@ -26,13 +30,13 @@ before the former download root, which it SHALL keep reading.
 the item's own check (a library's version symbol, a model's header, a face's checksum). A mismatch SHALL
 be named on the item's row, in a notice and in the trace, never a silent fallback.
 
-Why: kkt-26.11.20 line 16 ("все что у нас качается - надо переносить и делать архитектурно в виде некоторой
+Why: kkt-26.11.20b line 5 ("Всё с сервера"); kkt-26.11.20 line 16 ("все что у нас качается - надо переносить и делать архитектурно в виде некоторой
 библиотеки"). Two designed downloads were about to copy the FFmpeg window. Kdenlive's tracker shows the
 cost of separate paths: a model downloaded to one folder and searched for in another, and a runtime update
 that silently invalidated its models (F-EXT-006; download-library D1–D4).
 
 #### Scenario: The catalogue's pins and the one resolver
-- **WHEN** every built-in entry is read, and the source tree is searched for code that builds a path under the library root
+- **WHEN** every entry of the list the release packs is read, and the source tree is searched for code that builds a path under the library root
 - **THEN** every entry has a sha256, a size, at least one mirror per platform it lists and a licence, and only `library::resolve` and the installer build such a path
 - **TEST** t3850, t3851 (`src/apps/kt-app/src/library/tests.rs`)
 
@@ -57,6 +61,6 @@ that silently invalidated its models (F-EXT-006; download-library D1–D4).
 - **TEST** t3860, t3861 (`src/apps/kt-app/src/library/tests.rs`)
 
 #### Scenario: A server list that does not verify is not used
-- **WHEN** a signed catalogue list, the same list with one byte changed, and a list that changes a built-in entry's hash are read
-- **THEN** the first adds its entries, the second is discarded with a trace record, and the third's changed entry is ignored while the built-in hash stands
+- **WHEN** a signed list with a higher sequence number, the same list with one byte changed, an older signed list, and a newer list that drops an installed item are read
+- **THEN** the first replaces the packed list, the second and third are refused with a trace record naming why, and the fourth is used while the installed item keeps its entry and reads "no longer offered"
 - **TEST** t3866, t3867 (`src/apps/kt-app/src/library/tests.rs`)

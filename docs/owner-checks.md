@@ -30,6 +30,7 @@ a row; it does not close the row.
 | C8 | 2026-11-20, kt26.11.20-ea0aff6f | **Shapes generators.** Polygon, star, arrow, border frame, lower-third plate, progress bar: does each look right over footage (the frame around a shape is transparent)? | F-TXT-009 → gen-shapes (t3709–t3710, live `gen_shapes`); executor features-slow |
 | C9 | 2026-11-20 | **Ripple across an edit point** (his answer: "запиши на будущее чтобы я проверил"). When ripple editing ships: delete a piece on track 1 while a music bed on track 3 spans the cut — the program refuses, highlights the bed and says "split it or ripple affected tracks only". Does it read right? | kkt-26.11.20 A9 → change `ripple-and-trim-modes` Q1 a |
 | C10 | 2026-11-20 | **D3D11VA on a real Windows card.** Under wine the Windows path compiles and refuses with its reason; a real card is needed to prove the hardware decode. If he runs the Windows zip: does the log name D3D11VA? | found-defects 775 → branch `d3d11va-segment-decode` (merged); executor fx-graph |
+| C11 | 2026-11-22 | **Render through dma-buf on his card** (when A13 lands). Render a region with `KT_EXPECT_HW=vaapi` and send the trace: does the frame go into VAAPI without a copy through memory? There is no VAAPI device on the build machine, only a fake driver. | kkt-26.11.20 A13 → change `export-host-copy`; executor mosh-sharp |
 
 ## Questions waiting for his decision
 
@@ -42,3 +43,4 @@ None open (2026-11-20: Q1–Q54 answered in chat, see Answered).
 | — | 2026-11-18 | fx-graph questions (layout, sliders, boxes, sound) | kkt-26.11.18b lines 26–29, U8 |
 | — | 2026-11-19 | A1 (curve keys) and MW1 (bin drag) | kkt-26.11.18b lines 31–32, U9 |
 | Q1–Q54 | 2026-11-20 | answered in chat; verbatim `docs/ktprompts/kkt-26.11.20.txt`, rows A1–A26 | `docs/ktprompts/kkt-26.11.20-index.md`; the questions themselves in git history of this file (c5b9eb30) |
+| 2nd round | 2026-11-20..22 | answered in chat; verbatim `docs/ktprompts/kkt-26.11.20b.txt`, rows B1–B12 | `docs/ktprompts/kkt-26.11.20b-index.md` |

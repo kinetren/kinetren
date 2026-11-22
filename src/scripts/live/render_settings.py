@@ -120,7 +120,7 @@ def main(out):
 
             # 7) the render
             app.click_probe("render.start", "Render…")
-            app.expect(app.has_probe("render.close", tries=240), "the render finished")
+            app.expect(app.until(lambda: app.has_probe("render.close", tries=1), timeout=900), "the render finished")
             app.step("done", "“Render to MKV” finished: the summary, Open file, Close")
             app.click_probe("render.close", "Close")
             app.expect(app.wait_gone("render.close"), "the progress window closed")

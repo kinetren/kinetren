@@ -8,10 +8,11 @@ use serde_json::{Map, Value};
 use crate::{Error, Timeline};
 
 pub const KT_NS: &str = "kt";
-/// The maximum UNDERSTOOD envelope version. The writer sets the version BY CONTENT (R.29): v=2 ⇔ the file carries cameras/camera tracks
-/// (an old reader would silently lose them on rewrite → the regular refusal KtMetaTooNew,
-/// round 24 rule “ours so nobody breaks it”); otherwise v=1 — files without 3D
-/// are byte-stable and open in old builds.
+/// The maximum UNDERSTOOD envelope version. The writer sets the version BY CONTENT (R.29): the
+/// lowest version that holds what the file carries (`convert.rs`, from v17 — a track that names its
+/// sound track — down to v2 — cameras), so an old reader refuses with KtMetaTooNew instead of
+/// silently losing it on rewrite (round 24 rule “ours so nobody breaks it”); a file with none of
+/// it is v=1, byte-stable, and opens in old builds.
 /// One Pan3d does NOT bump the version: an unknown effect
 /// degrades into foreign-passthrough.
 pub const KT_META_VERSION: u32 = 18;

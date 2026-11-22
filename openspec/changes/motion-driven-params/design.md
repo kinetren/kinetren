@@ -1,71 +1,63 @@
 # Design: motion-driven-params
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `7c828c2b`. Q1 in `proposal.md`; the default is the recommended option.
+> DESIGN ONLY, revision 2 (2026-11-22), base `888e0793`: the owner's B7 — the edit's speed, read from the outer time map.
+> Revision 1 (the playhead as an input) is withdrawn.
 
 ## Context
 
-- Links (R.61, capability `automation`): `CurveSource::Link` reads a source property by address, with an expression;
-  between events by the timeline tick; resolved in `morph_pass` in topological order, once per build.
-- Speed: the warp slot's `rate` curve (signed, −32…32, R.57), sampled into a piecewise-linear profile
-  (`rate_profile_keys`, `warp.rs`), memoized by content (compiled-curves).
-- A composition instance has its own warp (R.56/R.57: speed on an instance); a morpher patch may carry a warp
-  (`MorphPatch::chain_for` yields it).
-- The transport: play rate, the space boost (R.57), scrubbing by dragging the playhead; the player's kept composites
-  are keyed by the scene (invariant 4).
+- Speed: a warp's signed `rate` curve (R.57) on an event; an instance of a reel has its own speed (the instance plays the
+  reel's time by its warp; R.56/R.57); a morpher patch may carry a warp (`MorphPatch::chain_for` yields it); profiles are
+  piecewise-linear (`rate_profile_keys`), memoized by content.
+- Links (R.61): a property follows another by address with an expression, resolved in `morph_pass` once per build; a
+  link does not cross a reel's boundary — the outer speed is not a link to an outside event but a CHANNEL of the time map
+  the content is played by (an input, like the material time).
+- A reel's sub-plan and sub-mix are keyed by instance (`NestKey`); overrides resolve per instance (`resolve_reel`).
 
-## D1. Speed sources
+## D1. The outer map
 
-A speed owner is one of: an event's warp slot, an instance's warp, a morpher layer's warp. The link address gains
-the channel: `<owner>/warp/rate`, `/accel`, `/change`. Reading at a timeline tick t: the owner's profile R(τ) at its
-own time τ(t) (the same conversion as every link).
+For content at a moment, the outer map is the chain of time maps that play it, inner to outer: the event's own warp
+(for the event's effects), the morpher layer's warp (for the events the layer covers), the instance's warp (for
+everything inside a reel), and the same again for each enclosing reel. Its rate at timeline tick t:
+`R_outer(t) = Π rᵢ(τᵢ(t))` (each map's rate at its own time), its acceleration the derivative by the product rule over
+the piecewise-linear profiles (a knot takes the right segment's slope).
 
-## D2. The channels in closed form
+## D2. The channels
 
-- `rate(t) = R(τ)`.
-- `accel(t) = dR/dτ` per second of the owner's time: on a piecewise-linear profile the segment's slope (a step at a
-  knot takes the slope of the segment on the right; equal-tick knots — the step is ignored, a speed jump is not an
-  acceleration).
-- `change(t) = min(1, max over s ∈ [t − release, t] of |accel(s)|/full · w(t − s))`, with `w(u) = 1 − u/release`
-  (linear release), and an attack: the raw value ramps over `attack` from the segment's start
-  (`min(1, (t − s₀)/attack)` per segment). Evaluated over the profile's segments that intersect the window — a few
-  segments, no state, so a seek, a scrub and an export give the same number at t. Defaults: full = 1 (rate units per
-  second), attack 0.1 s, release 0.5 s.
+`rate = R_outer`, `accel = dR_outer/dt` per second of the timeline, `change = min(1, max_{s∈[t−release, t]}
+|accel(s)|/full · (1 − (t−s)/release))` with an attack ramp per segment; defaults full = 1, attack 0.1 s, release 0.5 s.
+Closed form over the profiles' segments in the window: no state, so seek, scrub, loop and export give the same value.
 
-## D3. The transport channels (preview only, Q1 a)
+## D3. Per instance
 
-`transport.speed`: the player's effective playback speed (rate × boost; while the playhead is dragged, its velocity
-in timeline seconds per wall second, smoothed by a 100 ms exponential on the UI clock); `transport.rewinding` =
-`min(1, |speed − 1| / 3)`. They are frame inputs handed to the plan with the playhead; offline plans (export,
-kt-cli, reel strips, posters, the disk prerender) hand 1 and 0. A plan that reads them marks its frame
-`transport_bound`; such a frame is kept only under a key that includes the transport value quantized to 1/8, and the
-disk tier never stores it. Paused, the values are 1 and 0 (a paused frame is the edit's frame).
+The channels are resolved in `morph_pass` while the instance's reel is resolved (`resolve_reel`), where the instance's
+warp is known: two instances of one reel get different channels. The sub-plan key of an instance includes the content
+hash of its outer profile only when the reel's content holds an `outer/*` link (a flag computed per reel per revision),
+so reels without such links keep sharing their sub-plans.
 
 ## D4. The gesture
 
-A parameter's link menu: "Follow speed change of…" → pick an event / instance / morpher block on the timeline, or
-"the playhead (preview only)" → a link to `change` (or `transport.rewinding`) with the expression `base + v · (max −
-base)`, `base` the parameter's value now. Attack, release and full-at show in the link's row and are editable.
+A parameter's link menu: "Follow the outer speed change" → a link to `outer/change` with `base + v · (max − base)`;
+attack, release and full-at in the link's row. "Follow the outer speed" and "… acceleration" are the other two items.
 
 ## D5. Physics later
 
-F-FX-005 (letters as bodies with inertia) reads `accel` of the same owners as a force; no physics in this change.
+F-FX-005 reads `outer/accel` as a force on letters; no physics here.
 
-## D6. Class walk — "a value derived from motion"
+## D6. Class walk — "a value an effect needs from its container"
 
-| Input | Deterministic? | Kept frames? | Here |
-|---|---|---|---|
-| an event's speed | yes | yes | exists |
-| acceleration / speed change | yes (closed form) | yes | D2 |
-| composition / morpher speed | yes | yes | D1 |
-| the playhead's motion | no (the person's hand) | keyed by value, never on disk | D3 |
-| audio: the scrub's pitch | preview only already (the scrub sound) | — | the same rule, named |
+| Value | Visible inside today? | Here |
+|---|---|---|
+| the material time | yes (curves' domain) | — |
+| the instance's public parameters | yes (R.59 overrides) | — |
+| the outer speed | no | D1–D3 |
+| the instance's level and reversal | no (they act on the assembled picture) | not asked |
+| the morpher layer's strength | no (a mix slot) | not asked |
 
 ## D7. Idle
 
-Paused, the transport channels are constant; nothing is computed outside a frame that is drawn anyway.
+Nothing at rest: the channels are evaluated with the curves at the frames shown.
 
 ## Rejected
 
-- **A stateful envelope follower** (a one-pole filter run along time) — depends on where playback started; a seek
-  would give another value.
-- **Rendering the transport by default** — the render would depend on how the person last played the range.
+- **The playhead's motion as an input** (revision 1) — the owner chose the edit's speed; the render must agree.
+- **A link to the outer event's `rate` curve** — crosses the reel boundary (R.61 forbids) and ignores nesting.

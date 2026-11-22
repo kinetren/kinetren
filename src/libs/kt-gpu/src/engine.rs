@@ -841,6 +841,15 @@ enum ChainSrc {
     /// had to be split: the uniform arena is allocated BEFORE the encoder,
     /// and its size depends on the whole tree.
     Nest(Vec<Job>),
+    /// A stream stage's picture held on this device (stream-picture-stays D3): its planes are turned
+    /// into the layer's texture by one pass at encoding.
+    Held(HeldSrc),
+}
+
+/// The planes of a held stream picture on the engine's device: luma `pw` wide.
+struct HeldSrc {
+    bufs: [wgpu::Buffer; 3],
+    pw: u32,
 }
 
 struct ChainSpec {
@@ -865,6 +874,8 @@ impl ChainSpec {
             + self.reads.iter().map(ChainSpec::slot_units).sum::<u32>();
         match &self.src {
             ChainSrc::Tex(_) => own,
+            // + 1 for the planes' conversion
+            ChainSrc::Held(_) => own + 1,
             // + 1 per pass removing premultiplication at the boundary
             ChainSrc::Nest(jobs) => own + 1 + jobs.iter().map(|j| j.slot_units()).sum::<u32>(),
         }
@@ -896,7 +907,7 @@ enum Job {
 fn frame_meta(jobs: &[Job], out: (u32, u32)) -> FrameMeta {
     fn walk(jobs: &[Job], m: &mut FrameMeta) {
         let mut chain = |c: &ChainSpec| match &c.src {
-            ChainSrc::Tex(_) => {
+            ChainSrc::Tex(_) | ChainSrc::Held(_) => {
                 m.layers += 1;
                 if c.src_w * c.src_h > m.decode.0 * m.decode.1 {
                     m.decode = (c.src_w, c.src_h);
@@ -1004,6 +1015,8 @@ struct Inner {
     memo_guard: bool,
     /// Tests: the next growth of the present memo is refused as a device would.
     refuse_next_growth: bool,
+    /// The held planes' conversion (stream-picture-stays D3), made at its first use.
+    held_pipe: Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)>,
     /// What the last `execute` ran (morpher-event-grid-cost, D1).
     last_cost: kt_fx::video::FrameCost,
     /// Where the last `execute` spent its time (preview-throughput).
@@ -1652,6 +1665,7 @@ impl GpuFxEngine {
                 keeps_bytes: false,
                 memo_guard,
                 refuse_next_growth: false,
+                held_pipe: None,
                 last_cost: Default::default(),
                 last_stages: Default::default(),
                 last_runs: Default::default(),
@@ -3522,9 +3536,14 @@ impl Inner {
                 sub_ok,
             )));
         }
-        let Some(frame) = src.input.frame() else { return Ok(None) };
-        if frame.width > self.max_dim || frame.height > self.max_dim {
-            return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
+        // a held stream picture stands for a frame of its size, opaque (stream-picture-stays D3)
+        let (iw, ih, ialpha) = match (src.input.held(), src.input.frame()) {
+            (Some(h), _) => (h.out.w, h.out.h, false),
+            (None, Some(f)) => (f.width, f.height, f.has_alpha),
+            (None, None) => return Ok(None),
+        };
+        if iw > self.max_dim || ih > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: iw, h: ih });
         }
         // the layer's other reads first (fx-graph-dag D2): each its own chain on its own frame; a
         // read with no picture leaves the layer with none
@@ -3539,8 +3558,8 @@ impl Inner {
         }
         let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) = chain_ops(
             &src.fx,
-            frame.width,
-            frame.height,
+            iw,
+            ih,
             src.src_scale,
             ow,
             oh,
@@ -3548,7 +3567,7 @@ impl Inner {
             t,
             src.cam3d,
             src.lead,
-            frame.has_alpha,
+            ialpha,
             &src.masks,
             src.fx_in,
             &read_slots,
@@ -3560,7 +3579,7 @@ impl Inner {
         if mw > self.max_dim || mh > self.max_dim {
             return Err(GpuExecError::TooLarge { w: mw, h: mh });
         }
-        let has_alpha = if ha_known { ha } else { frame.has_alpha };
+        let has_alpha = if ha_known { ha } else { ialpha };
         // a blended frame is not its base frame: the serial alone would show the texture of
         // another weight (t250)
         let content = src.blend.as_ref().map_or(src.content, |b| {
@@ -3570,22 +3589,90 @@ impl Inner {
             h.update(&b.k.to_le_bytes());
             h.digest()
         });
-        let view = self.upload.get_or_upload(&self.device, &self.queue, content, frame);
+        let csrc = match (src.input.held(), src.input.frame()) {
+            (Some(h), _) => match self.held_src(h, content) {
+                Some(c) => c,
+                None => return Ok(None),
+            },
+            (None, Some(frame)) => ChainSrc::Tex(self.upload.get_or_upload(&self.device, &self.queue, content, frame)),
+            (None, None) => return Ok(None),
+        };
         let fits = (fw, fh) == (ow, oh);
         Ok(Some((
             ChainSpec {
                 ops,
-                src: ChainSrc::Tex(view),
-                src_w: frame.width,
-                src_h: frame.height,
+                src: csrc,
+                src_w: iw,
+                src_h: ih,
                 has_alpha,
-                src_has_alpha: frame.has_alpha,
+                src_has_alpha: ialpha,
                 reads,
                 out: (fw, fh),
             },
             fits,
             true,
         )))
+    }
+
+    /// The chain input of a held stream picture (stream-picture-stays D3): its planes where they lie when
+    /// they lie on this device; else read back through the compute host, converted as the processor
+    /// converts them, and uploaded as a frame. `None` — the planes did not come back.
+    fn held_src(&mut self, h: &kt_engine::video_plan::HeldLayer, content: u64) -> Option<ChainSrc> {
+        let o = &h.out;
+        let on: Vec<wgpu::Buffer> = o.planes.iter().filter_map(|p| crate::held::on(p, &self.device).cloned()).collect();
+        if let Ok(bufs) = <[wgpu::Buffer; 3]>::try_from(on) {
+            HELD_ON_DEVICE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Some(ChainSrc::Held(HeldSrc { bufs, pw: o.pw }));
+        }
+        let frame = std::sync::Arc::new(held_frame(h)?);
+        HELD_READ_BACK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(ChainSrc::Tex(self.upload.get_or_upload(&self.device, &self.queue, content, &frame)))
+    }
+
+    /// One pass: the held planes into `target` (`w`×`h`, the engine's texture format).
+    fn convert_held(&mut self, enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView, hs: &HeldSrc, w: u32, h: u32) {
+        let offset = self.slot as u64 * SLOT;
+        debug_assert!(self.slot < self.arena_slots, "uniform arena overflow");
+        self.slot += 1;
+        let mut u = UniformData::default();
+        u.u[..3].copy_from_slice(&[hs.pw, w, h]);
+        self.stage(offset, &u.bytes());
+        if self.held_pipe.is_none() {
+            self.held_pipe = Some(held_pipeline(&self.device));
+        }
+        let (pipe, layout) = self.held_pipe.as_ref().expect("made above");
+        fn buf(b: &wgpu::Buffer) -> wgpu::BindingResource<'_> {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: b, offset: 0, size: None })
+        }
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("kt-gpu held planes"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &self.arena, offset: 0, size: wgpu::BufferSize::new(128) }),
+                },
+                wgpu::BindGroupEntry { binding: 1, resource: buf(&hs.bufs[0]) },
+                wgpu::BindGroupEntry { binding: 2, resource: buf(&hs.bufs[1]) },
+                wgpu::BindGroupEntry { binding: 3, resource: buf(&hs.bufs[2]) },
+            ],
+        });
+        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("kt-gpu held planes"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        rp.set_pipeline(pipe);
+        rp.set_bind_group(0, &bg, &[offset as u32]);
+        rp.draw(0..3, 0..1);
     }
 
     /// Encodes the layer chain; returns the view of the result plus the transients,
@@ -3601,6 +3688,13 @@ impl Inner {
         // The chain INPUT: a frame from the cache or the sub-composite of an embedding (R.50).
         let mut view = match &chain.src {
             ChainSrc::Tex(v) => v.clone(),
+            ChainSrc::Held(hs) => {
+                let t = self.pool.acquire(&self.device, w, h);
+                self.convert_held(enc, &t.view, hs, w, h);
+                let v = t.view.clone();
+                retired.push(t);
+                v
+            }
             ChainSrc::Nest(jobs) => {
                 let sub = self.encode_jobs(enc, jobs, w, h);
                 // THE EMBEDDING BOUNDARY: the composite accumulator is premultiplied
@@ -4294,6 +4388,12 @@ fn plan_hash(plan: &FramePlan<'_>) -> u64 {
                 h.update(&f.width.to_le_bytes());
                 h.update(&f.height.to_le_bytes());
             }
+            // the frame it stands for (stream-picture-stays D3): the same key either way
+            kt_engine::video_plan::LayerInput::Held(hl) => {
+                h.update(&[1u8, 0u8]);
+                h.update(&hl.out.w.to_le_bytes());
+                h.update(&hl.out.h.to_le_bytes());
+            }
             // The subtree goes ENTIRELY INTO THE KEY (R.50): a reel has neither a frame nor a
             // `cache_idx` by which it could be told apart, while
             // ReadbackCache MUST distinguish different sub-composites.
@@ -4365,3 +4465,89 @@ fn plan_hash(plan: &FramePlan<'_>) -> u64 {
     put_plan(&mut h, plan);
     h.digest()
 }
+
+/// Held stream pictures an engine converted on its device, and read back from another (tests,
+/// stream-picture-stays D3).
+static HELD_ON_DEVICE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static HELD_READ_BACK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// (held pictures converted on the device, held pictures read back) since the process started.
+pub fn held_pictures() -> (u64, u64) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (HELD_ON_DEVICE.load(Relaxed), HELD_READ_BACK.load(Relaxed))
+}
+
+/// The held planes' conversion pipeline and its layout: the arena's uniform, three storage buffers.
+fn held_pipeline(device: &wgpu::Device) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let storage = |binding: u32| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+        count: None,
+    };
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("kt-gpu held planes"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: true, min_binding_size: wgpu::BufferSize::new(16) },
+                count: None,
+            },
+            storage(1),
+            storage(2),
+            storage(3),
+        ],
+    });
+    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("kt-gpu held planes"), bind_group_layouts: &[Some(&layout)], immediate_size: 0 });
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("held_planes.wgsl"), source: wgpu::ShaderSource::Wgsl(include_str!("shaders/held_planes.wgsl").into()) });
+    let pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("kt-gpu held planes"),
+        layout: Some(&pl),
+        vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), buffers: &[], compilation_options: Default::default() },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: Some("fs"),
+            targets: &[Some(wgpu::ColorTargetState { format: crate::pool::FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    (pipe, layout)
+}
+
+/// A held stream picture read back through the compute host and converted on the processor
+/// (`kt_plugin_api::stream::planes_to_rgba`): an executor on another device. `None` — no host, or the
+/// job failed.
+fn held_frame(h: &kt_engine::video_plan::HeldLayer) -> Option<kt_media::VideoFrame> {
+    use kt_plugin_api::compute::{Buf, Init, Job, Step};
+    let host = kt_plugin_api::compute::host()?;
+    let o = &h.out;
+    let lens: Vec<u64> = o.planes.iter().map(|p| p.len).collect();
+    let uniform: Vec<u8> = lens.iter().flat_map(|n| ((n / 4) as u32).to_le_bytes()).chain(0u32.to_le_bytes()).collect();
+    let max = *lens.iter().max()?;
+    let steps = [Step { name: "held:copy", shader: COPY3, uniform: &uniform, read: &[Buf(0), Buf(1), Buf(2)], write: &[Buf(3), Buf(4), Buf(5)], groups: [((max / 4) as u32).div_ceil(64), 1, 1] }];
+    let buffers = [Init::Held(&o.planes[0]), Init::Held(&o.planes[1]), Init::Held(&o.planes[2]), Init::Zero(lens[0]), Init::Zero(lens[1]), Init::Zero(lens[2])];
+    let mut got = host.run(&Job { buffers: &buffers, steps: &steps, reads: &[Buf(3), Buf(4), Buf(5)] }).ok()?.into_iter();
+    let (y, cb, cr) = (got.next()?, got.next()?, got.next()?);
+    let mut rgba = Vec::new();
+    kt_plugin_api::stream::planes_to_rgba(&y, &cb, &cr, o.pw as usize, o.w as usize, o.h as usize, &mut rgba);
+    Some(kt_media::VideoFrame { pts: h.pts, width: o.w, height: o.h, rgba: rgba.into_boxed_slice(), has_alpha: false })
+}
+
+/// Three buffers copied word by word (the held planes' read back).
+const COPY3: &str = "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n\
+    @group(0) @binding(1) var<storage, read> a: array<u32>;\n\
+    @group(0) @binding(2) var<storage, read> b: array<u32>;\n\
+    @group(0) @binding(3) var<storage, read> c: array<u32>;\n\
+    @group(0) @binding(4) var<storage, read_write> x: array<u32>;\n\
+    @group(0) @binding(5) var<storage, read_write> y: array<u32>;\n\
+    @group(0) @binding(6) var<storage, read_write> z: array<u32>;\n\
+    @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) id: vec3<u32>) {\n\
+    if id.x < u.x { x[id.x] = a[id.x]; }\n\
+    if id.x < u.y { y[id.x] = b[id.x]; }\n\
+    if id.x < u.z { z[id.x] = c[id.x]; }\n}\n";

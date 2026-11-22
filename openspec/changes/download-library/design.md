@@ -38,21 +38,24 @@ Item {
 }
 ```
 
-- **Built-in entries** are a Rust table in `kt-app/src/library/catalogue.rs`, reviewed like code. A new
-  version is a release. Under Q1 a, plugins come from a server list. Under Q1 b, every kind does.
-- **The server list** (Q1): a TOML of the same entries, signed with ed25519; our public key is compiled
-  in.
-  - It is fetched only under the update check's consent, at most daily, and kept in
-    `<local>/library/catalogue.toml`.
-  - An entry from the list never replaces a built-in entry's hash.
-  - A signature that does not verify discards the list, and the trace says so.
+- **Every entry comes from our signed list** (the owner's Q1 b, kkt-26.11.20b). It is a TOML of the entries
+  with a sequence number, signed with ed25519. Our public key is compiled in, and the release's build packs
+  the list as of that day (`assets/library-catalogue.toml` + `.sig`), so a machine that was never online
+  has a list.
+- **Fetching:** when the Library window opens, when Download is pressed on a row older than a day, and
+  daily under the update check's consent. The fetched list is kept in `<local>/library/catalogue.toml`.
+- **Which list is used:** the one with the highest sequence number whose signature verifies. A list with
+  a lower number than the one held is refused (no rollback to an older, vulnerable pin), and so is a list
+  whose signature does not verify. The trace says why.
+- **An installed item keeps the entry it came from** (`installed.toml`), so a later list that drops an item
+  does not break what is installed. The row then reads "no longer offered", and Remove still works.
 - `KT_LIBRARY_CATALOGUE=<file>` replaces the list for tests (as `KT_FFMPEG_DOWNLOAD_URL` does today).
 
 ## D2. The folder and the resolver
 
 ```text
 <local>/library/
-  catalogue.toml                   (the signed server list, Q1)
+  catalogue.toml                   (the newest verified signed list)
   <kind>/<id>/<version>/           the unpacked item
   <kind>/<id>/<version>/installed.toml   the entry it was installed from, the verified sha256, the date
   .partial-<pid>-<id>/             a download in progress (removed if stale)
@@ -109,9 +112,10 @@ View → Library… (the FFmpeg window's menu item opens it on the FFmpeg row).
   scrolls, the buttons stay outside it); every text is in every catalog; and it runs no job while
   open, apart from a download the person started.
 
-## D6. The plugin library (Q2)
+## D6. The plugin library (the owner's Q2 a: with the wasm host)
 
-- Rows of the kind `plugin` come from the server list (Q1 a). Each package is a `.ktplugin`, a zip
+- Rows of the kind `plugin` come from the same signed list, empty until the wasm host (`wasm-plugin-host`,
+  the owner's B11) exists. Each package is a `.ktplugin`, a zip
   holding the F-EXT-003 manifest (id, version, API version, families, the parameter passport, the
   declared capabilities with no I/O), the wasm module, and its licence.
 - It is installed like any item. It is registered through the registry door the wasm host adds. Until
@@ -120,7 +124,7 @@ View → Library… (the FFmpeg window's menu item opens it on the FFmpeg row).
   plugin" state, with a line to its row.
 - A plugin never reaches the goldens (`plugins/spec.md`: only built-in ids).
 
-## D7. Fonts and determinism (Q3)
+## D7. Fonts and determinism (the owner's Q3 a: a placeholder with Download)
 
 A title using a pack's face writes `font_pack = "<id>@<version>"` beside its face name in the `.kt`
 (absent = the vendored Noto). With the pack missing:
@@ -139,7 +143,7 @@ An old title with no pack field is unchanged.
 | whisper.cpp + model | designed as a copy | `speech-runtime` and `speech-model` rows, the model's `depends` on the runtime |
 | CJK / Arabic font packs | designed as a copy | `font-pack` rows; the project names the pack (D7) |
 | plugins | none | `plugin` rows with the wasm host (D6) |
-| update check | daily, consent | unchanged; it also fetches the signed list under the same consent (Q1) |
+| update check | daily, consent | unchanged; it also fetches the signed list under the same consent |
 | telemetry | consent | unchanged; it never sends what is installed beyond counts by kind |
 | LUTs, presets, title templates | the person's own files, `user_store` | unchanged: not downloads; a downloadable preset pack would be a future kind |
 | `shader-cache/`, pass times | written by us | unchanged: our own output, not a download |
@@ -154,7 +158,8 @@ An old title with no pack field is unchanged.
 3. The speech runtime and model rows with the mismatch check, for `subtitles-and-text-editing`
    (t3860–t3862).
 4. The font packs and the project's pack reference (t3863–t3865).
-5. The signed server list (Q1) and the plugin rows with the wasm host (t3866–t3868).
+5. The signed list's fetch, sequence and rollback refusal (t3866, t3867); the plugin rows with the wasm host
+   (t3868).
 6. The idle check with the Library window open (t3869).
 
 ## Risks
@@ -163,5 +168,5 @@ An old title with no pack field is unchanged.
   does not match its pin" with the mirror named.
 - **Disk:** a medium speech model is 1.5 GB. The row shows the size before the click, and the header
   shows the total.
-- **A signed list is a key to keep:** losing the key means a new release with a new public key; the
-  built-in entries keep working regardless.
+- **A signed list is a key to keep:** losing the key means a new release with a new public key; the lists
+  packed in older releases and the installed items keep working.

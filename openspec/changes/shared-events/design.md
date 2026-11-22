@@ -45,6 +45,32 @@ pointer copies, D4).
 Which fields: `Project.{clips, transitions, morphers, cameras, foreign}`, the same in `Sequence`, and
 `ResolvedReel.clips`. Media, tracks, markers and areas stay plain (small, rarely the bulk; listed in D6).
 
+## D1a. The container `Events<T>` (implementation-ready, 2026-11-20)
+
+A bare `Vec<Shared<T>>` would touch every reader: `clips.iter()` has 443 call sites, `clips[i]` 417,
+`clips.len()` 111 and `clips.push` 634 (most in tests). So the fields become
+`kt_model::shared::Events<T>`, a newtype over `Vec<Shared<T>>`, whose surface is a `Vec<T>`'s where that
+is cheap and honest:
+
+| `Vec<T>` use | `Events<T>` | Cost |
+|---|---|---|
+| `iter()`, `&events` in `for` | yields `&T` (through the cell) | none |
+| `events[i]` (read) | `Index<usize, Output = T>` | none |
+| `events[i].x = v` | `IndexMut` → `Shared::edit` (copy-on-write of that one cell) | one copy if shared |
+| `iter_mut()` | yields `&mut T` through `edit()` on EVERY cell | copies every shared cell: correct but costly; the guard t3375 counts the copies of every command family on a large project, so a command left on `iter_mut` is red |
+| `push(T)`, `insert(i, T)`, `extend(iter of T)` | take `T` and wrap it | none |
+| `len`, `is_empty`, `first`, `last`, `get`, `remove`, `retain`, `sort_by_key`, `truncate`, `drain(..)` | same names; `remove`/`drain` give `T` by `Arc::unwrap_or_clone` | none |
+| `vec![…]` literals | `vec![…].into()` (`From<Vec<T>>`), `collect()` (`FromIterator<T>`) | none |
+| `&events` passed as `&[T]` | not possible (cells, not values): the 19 signatures taking `&[ClipEvent]` take `&Events<ClipEvent>` or `impl IntoIterator<Item = &ClipEvent>` | none |
+| `Debug` | `debug_list` of the values: the same text as `Vec<T>`'s | none |
+| serde | a sequence of `T`: the same `.kt` text and clipboard | none |
+| `Clone` | pointer copies | O(n) refcount increments |
+| `PartialEq` | pointer-equal cells skipped, then values | O(edited) |
+
+Fine-grained writers use `events.edit(i)`, `events.edit_where(|c| c.id == id)`, or
+`events.edit_if(i, |v| changed)` (no copy when nothing changes). `ResolvedReel`'s `Cow<'a, [T]>` fields
+become `Cow<'a, Events<T>>`: the borrowed path stays free (t673/t676), and an owned one is pointer copies.
+
 ## D2. The model's copies become pointer copies
 
 | Copy | Today | After |
@@ -110,7 +136,11 @@ lookups (~5 ms); a drag's CPU falls in the same proportion. The guards do not ti
 
 ## D7. Stages
 
-1. Measure: `edit-cost` drag line at ~2000 events (owner Q1).
+The owner chose to build it now (kkt-26.11.20 A19, his Q31 b: "Строить сейчас"); the measurement is the
+before/after record, not a gate.
+
+1. Before: `kt-cli edit-cost` (release) on the generated 2000- and 13 000-event projects, the numbers into
+   D5.
 2. D1 + D2: `Shared`, the fields, the model's copies; t3367–t3370; the format and golden tests unchanged.
 3. D3 + D4: the fingerprints in the builders, the resolve's pass-through; t3371–t3374; the `edit-cost`
    numbers before/after in this design.

@@ -63,11 +63,18 @@ pub enum BitDepth {
 /// The RGB→YUV matrix: used by the conversion AND written as the tag (D6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Matrix {
-    /// swscale's own default, and the encoding default (the decode no longer assumes it: an untagged
-    /// HD source decodes as BT.709 since source-colour-matrix).
+    /// swscale's own default: a conversion with it leaves swscale untouched.
     #[default]
     Bt601,
     Bt709,
+}
+
+impl Matrix {
+    /// The matrix of a picture of `width`×`height` by the decode's size rule (`colour::is_hd`): BT.709
+    /// at HD and above, BT.601 below — the export default (found-defects 1054, owner kkt-26.11.20 Q50).
+    pub fn by_size(width: u32, height: u32) -> Matrix {
+        if crate::colour::is_hd(width, height) { Matrix::Bt709 } else { Matrix::Bt601 }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -102,7 +109,8 @@ pub struct OutputFormat {
     pub b_frames: u32,
     pub speed: Speed,
     pub depth: BitDepth,
-    pub matrix: Matrix,
+    /// `None` — by the picture's size ([`Matrix::by_size`]), the default.
+    pub matrix: Option<Matrix>,
     pub range: Range,
     pub audio: AudioCodec,
     /// File metadata; empty — not written.
@@ -121,7 +129,7 @@ impl Default for OutputFormat {
             b_frames: 0,
             speed: Speed::Fast,
             depth: BitDepth::Eight,
-            matrix: Matrix::Bt601,
+            matrix: None,
             range: Range::Limited,
             audio: AudioCodec::Aac,
             title: String::new(),
@@ -131,6 +139,11 @@ impl Default for OutputFormat {
 }
 
 impl OutputFormat {
+    /// The matrix a picture of `width`×`height` is converted and tagged with.
+    pub fn matrix_at(&self, width: u32, height: u32) -> Matrix {
+        self.matrix.unwrap_or_else(|| Matrix::by_size(width, height))
+    }
+
     /// The GOP in frames at `fps` (at least 1).
     pub fn gop_frames(&self, fps: u32) -> u32 {
         ((self.keyint_tenths as u64 * fps as u64 + 5) / 10).max(1) as u32

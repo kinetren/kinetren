@@ -3023,3 +3023,17 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    render" option may take the preview's prerender; the cached render's index lives inside the video (SEI).
 9. A case he does not follow yet is written down for him to check later (ripple across an edit point,
    owner-checks C9), not decided over his head.
+
+## 2026-11-20..22 — his answers to the second round (verbatim: `docs/ktprompts/kkt-26.11.20b.txt`, rows B1–B12)
+
+1. **The persistent cache is about EFFECTS first.** "мне не нравится почему ты думаешь только о проигрывании и
+   декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!" A
+   disk cache that only spares decoding misses the point: what it must keep is the result of heavy effects.
+   Its name is "Постоянный кэш".
+2. **Do not cut his words in a question.** Twice in one round a quote shortened his item until it meant something
+   else ("ты подрезал суть", "твоя вырезка фразы моей выглядит очень бессмысленной"). A question quotes the WHOLE
+   item, or the lines around the phrase, and says where it is. "Перемотка" in his fisheye item is the edit's own
+   speed (a speed curve on a composition), not the playhead.
+3. **Loudness is normalized in the project, by the professional path**, not as a render preset.
+4. **A full cache folder writes cyclically**, dropping the oldest, with an alert in the notices.
+5. Dragging a window by the preview: dropped by him.

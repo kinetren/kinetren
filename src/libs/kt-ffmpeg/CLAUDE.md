@@ -30,11 +30,11 @@ with libav*"), `export` (the encoder cascade).
   any OS (t858).
 - **The output format** (`format.rs`, render-settings): `MuxConfig.format` carries the container,
   the codec family, the rate mode, GOP, B-frames, speed, depth, colour and the audio codec; its
-  `Default` IS the former file. Each codec has its cascade (`encoders::codec_candidates`); a
+  `Default` IS the former file but for the matrix at HD (BT.709 now). Each codec has its cascade (`encoders::codec_candidates`); a
   candidate lacking the asked depth or CBR is SKIPPED with the reason, never opened (t2801, t2803).
   The colour tags are written from the SAME choice that drives `sws_setColorspaceDetails`; the
-  default BT.601 limited leaves swscale untouched, so the converted pictures stay the former ones
-  (the stream gains only its colour tags, t2806). Matroska/WebM
+  default matrix is by the picture's size (`OutputFormat::matrix_at`, the decode's `is_hd` rule:
+  BT.709 at HD, found-defects 1054, t3603), and BT.601 limited leaves swscale untouched (t2806). Matroska/WebM
   are written with `AVFMT_FLAG_BITEXACT` — without it a random SegmentUID made every file differ
   (t2805); never set it on MP4 (it drops the muxer tag and moves every former export's bytes).
   An audio sample is converted in Rust (`quantize`, no libm). `probe_output` is the tests' reader.
