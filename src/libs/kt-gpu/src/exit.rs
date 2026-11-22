@@ -56,6 +56,15 @@ fn wait_background() {
     crate::seeds::flush();
 }
 
+/// The program's close reached its bounded part (found-defects 962): background GPU work starts nothing
+/// more and stops between its steps — an engine's build between two pipelines, the warm worker between
+/// two jobs — so the exit hook's wait for it is one step, not a whole build under load (a stream front's
+/// engine compiled for seconds past the close's 8 s bound, and the exit's watcher forced the end). The
+/// hook still waits for what is in flight. Once; nothing undoes it.
+pub fn begin() {
+    EXITING.store(true, Ordering::Release);
+}
+
 /// The process is exiting: background GPU work starts nothing more.
 pub(crate) fn exiting() -> bool {
     EXITING.load(Ordering::Acquire)

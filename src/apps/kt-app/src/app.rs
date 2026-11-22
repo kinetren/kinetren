@@ -11440,6 +11440,11 @@ impl eframe::App for KtApp {
         if !ended {
             crate::welcome::stop_posters();
         }
+        // from here background GPU work stops between its steps (found-defects 962): a stream front's
+        // engine still compiling would hold the exit hook past the close's bound, and a poster waiting
+        // on it with it
+        #[cfg(not(test))]
+        kt_gpu::begin_exit();
         // a reel strip may be on the device: the process must not exit under it. A test's process
         // goes on after this close, and every later render would wait on the parked engine for good
         #[cfg(not(test))]
