@@ -71,6 +71,12 @@ F-TL-002 (slip and slide) and F-TL-008 (close gaps) did the reconnaissance and t
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A9, his Q8): Q1 (a), the ripple refuses and highlights the spanning event — "но
+я не очень понимаю о чем речь вообще - запиши на будущее чтобы я проверил": he checks it live when it is built
+(`docs/owner-checks.md` C9). Q2 and Q3 (his Q9, Q10) are still open.
+
+The questions as asked:
+
 **Q1. An event standing ACROSS the edit point on another track.** Your rule (R.24 item 6, UI rule 20):
 "NOTHING ANYWHERE SHOULD GROW BACK / BE CUT OFF." Your decision R.28: overlaps on one track are legal
 and crossfade by themselves. Today: no ripple. When the scope is "all tracks" and a music bed on track 3

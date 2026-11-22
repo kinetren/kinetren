@@ -1,4 +1,4 @@
-//! The audio-reactive generators (gen-audio-reactive, F-TXT-010, `v26.10` G5): a waveform, a
+//! The audio-reactive generators (gen-audio-reactive, F-TXT-011, `v26.10` G5): a waveform, a
 //! spectrum and level rings. Each hears an audio TRACK (its `track` row, 1-based): the host hands the
 //! frame the values of the track's files at its moment (`audio_series::frame_values`), and the kind
 //! draws them on the compute device from one storage buffer (`shader_frame_audio`). Heard nothing,

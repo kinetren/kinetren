@@ -35,7 +35,7 @@ a row; it does not close the row.
 
 | # | Since | Question (with context) | Where to go |
 |---|---|---|---|
-| Q55 | 2026-11-20 | **What should the audio-reactive generators hear — the file or the mix?** The new Waveform, Spectrum and Level rings generators listen to an audio track you pick. Right now they hear the FILES of the events on that track, as After Effects and Resolve do: a reverb, a fade or the event's level line on that track does not change the picture. The other way: they hear what the track really sounds like, after its effects and levels. That costs more — the picture then waits for the sound to be rendered, and a render renders the sound first. (a) the file, as now (Recommended); (b) the mix after effects. | v26.10 G5 → change `gen-audio-reactive`, note F-TXT-010; executor features-slow |
+| Q55 | 2026-11-20 | **What should the audio-reactive generators hear — the file or the mix?** The new Waveform, Spectrum and Level rings generators listen to an audio track you pick. Right now they hear the FILES of the events on that track, as After Effects and Resolve do: a reverb, a fade or the event's level line on that track does not change the picture. The other way: they hear what the track really sounds like, after its effects and levels. That costs more — the picture then waits for the sound to be rendered, and a render renders the sound first. (a) the file, as now (Recommended); (b) the mix after effects. | v26.10 G5 → change `gen-audio-reactive`, note F-TXT-011; executor features-slow |
 
 ## Answered
 
@@ -44,3 +44,4 @@ a row; it does not close the row.
 | — | 2026-11-18 | fx-graph questions (layout, sliders, boxes, sound) | kkt-26.11.18b lines 26–29, U8 |
 | — | 2026-11-19 | A1 (curve keys) and MW1 (bin drag) | kkt-26.11.18b lines 31–32, U9 |
 | Q1–Q54 | 2026-11-20 | answered in chat; verbatim `docs/ktprompts/kkt-26.11.20.txt`, rows A1–A26 | `docs/ktprompts/kkt-26.11.20-index.md`; the questions themselves in git history of this file (c5b9eb30) |
+| 2nd round | 2026-11-20..22 | answered in chat; verbatim `docs/ktprompts/kkt-26.11.20b.txt`, rows B1–B12 | `docs/ktprompts/kkt-26.11.20b-index.md` |

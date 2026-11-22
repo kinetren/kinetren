@@ -937,12 +937,16 @@ impl KtApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 crate::widgets::window_body(ui, |ui| {
-                self.render_preset_group(ui);
-                self.render_video_group(ui);
-                self.render_size_group(ui, &proj, max_src);
-                self.render_audio_group(ui);
+                // the groups are cards in columns (fx-form-width): a card is never narrower than
+                // the window's own minimum, the width its rows are made to fit
+                let mut flow = crate::widgets::CardFlow::new(ui, "render_groups", 440.0);
+                flow.card(|ui| self.render_preset_group(ui));
+                flow.card(|ui| self.render_video_group(ui));
+                flow.card(|ui| self.render_size_group(ui, &proj, max_src));
+                flow.card(|ui| self.render_audio_group(ui));
                 let cost = self.render_cost();
-                self.render_file_group(ui, region, full_len, &cost);
+                flow.card(|ui| self.render_file_group(ui, region, full_len, &cost));
+                flow.end(ui);
                 if !self.render_setup.missing.is_empty() {
                     ui.add_space(4.0);
                     ui.colored_label(
@@ -1257,17 +1261,25 @@ impl KtApp {
                 ui.end_row();
 
                 ui.label(tr(k::render::COLOUR));
-                let cl = |m: Matrix, r: Range| {
+                // `None` — the matrix by the file's size, as the decode reads it (found-defects 1054)
+                let cl = |m: Option<Matrix>, r: Range| {
                     let range = if r == Range::Full { tr(k::render::RANGE_FULL) } else { tr(k::render::RANGE_LIMITED) };
-                    format!("{} {range}", if m == Matrix::Bt709 { "BT.709" } else { "BT.601" })
+                    match m {
+                        None => crate::tf!(k::render::COLOUR_BY_SIZE, range),
+                        Some(m) => format!("{} {range}", if m == Matrix::Bt709 { "BT.709" } else { "BT.601" }),
+                    }
                 };
                 let mut cur = (s.format.matrix, s.format.range);
                 let combo = egui::ComboBox::from_id_salt("rcolour").selected_text(cl(cur.0, cur.1)).show_ui(ui, |ui| {
-                    for (i, c) in [(Matrix::Bt601, Range::Limited), (Matrix::Bt709, Range::Limited), (Matrix::Bt601, Range::Full), (Matrix::Bt709, Range::Full)]
-                        .into_iter()
-                        .enumerate()
-                    {
-                        choice(ui, &mut cur, c, &cl(c.0, c.1), None, &format!("render.colour.{i}"));
+                    for (tag, c) in [
+                        ("auto", (None, Range::Limited)),
+                        ("0", (Some(Matrix::Bt601), Range::Limited)),
+                        ("1", (Some(Matrix::Bt709), Range::Limited)),
+                        ("auto_full", (None, Range::Full)),
+                        ("2", (Some(Matrix::Bt601), Range::Full)),
+                        ("3", (Some(Matrix::Bt709), Range::Full)),
+                    ] {
+                        choice(ui, &mut cur, c, &cl(c.0, c.1), None, &format!("render.colour.{tag}"));
                     }
                 });
                 crate::widgets::field_probe::note("render.colour", combo.response.rect);

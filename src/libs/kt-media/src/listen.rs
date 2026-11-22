@@ -1,4 +1,4 @@
-//! The audio-reactive generators' series of a file (gen-audio-reactive, F-TXT-010): computed from a
+//! The audio-reactive generators' series of a file (gen-audio-reactive, F-TXT-011): computed from a
 //! short-lived source of the caller's own and kept behind [`SeriesStore`].
 //!
 //! The pass opens nothing itself: the caller hands it a source it does not share, the pass promises

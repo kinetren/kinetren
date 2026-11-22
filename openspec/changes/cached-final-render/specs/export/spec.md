@@ -1,18 +1,21 @@
 ## ADDED Requirements
 
 ### Requirement: An export can write the index of what it holds
-An export with the cached render on SHALL write, per its output file, an index: the fingerprint of
-everything that decides the bitstream (container, codec, encoder and library version, profile, level,
+An export with the cached render on SHALL write its index INSIDE the video: one user-data-unregistered SEI
+per GOP carrying our UUID, the GOP's first frame and frame count, the durable key of every frame at the
+export's size and quality, and a hash of the GOP's other NAL units; the first GOP's SEI SHALL also carry the
+fingerprint of everything that decides the bitstream (container, codec, encoder and library version, profile, level,
 pixel format, size, rate, rate control and its value, GOP rule, B-frames, colour tags, encoder threads,
-the device identity and the program build), one line per GOP (first frame, frames, byte offset, packets)
-and the durable key of every frame at the export's size and quality. An index that does not verify
-against its file (size, content hash) SHALL not be used.
+the device identity and the program build). The cached render SHALL be offered for H.264 and HEVC only. A
+GOP whose hash does not verify SHALL not be used. A finished cached render SHALL be listed in the project's
+cache folder (`renders.tsv`), and a candidate's GOP table SHALL be read by demuxing its SEIs, with no decode.
+The render window SHALL offer a copy without the index, re-muxed, with no re-encode.
 Why: `v26.10` X1, kkt-26.11.18b U5 — "среди уже отрендеренных файлов искать … по индексам каким-то что
-можем переиспользовать"; cached-final-render D3, D5.
+можем переиспользовать"; kkt-26.11.20 line 22, Q3 b ("индекс в видео (SEI)"); cached-final-render D3, D5.
 
 #### Scenario: The index lists what the file holds
-- **WHEN** a three-second project is exported with the cached render on, and the output is then touched by one byte
-- **THEN** the index names the fingerprint, a GOP line per GOP whose offsets and packet counts match the file, and one key per frame equal to `durable_hash` of that frame's plan at the export's quality; after the touch the index does not verify
+- **WHEN** a three-second H.264 project is exported with the cached render on, and one byte inside its second GOP is then changed
+- **THEN** the demuxed SEIs give the fingerprint, one entry per GOP with its frames, and one key per frame equal to `durable_hash` of that frame's plan at the export's quality, and nothing is written beside the file; after the change the second GOP does not verify and the others do
 - **TEST** t3322 (`src/libs/kt-engine/tests/cached_render.rs`)
 
 #### Scenario: The fingerprint follows the settings
@@ -48,7 +51,8 @@ A cached render SHALL copy, re-stamped in decode order, every GOP of a verified 
 fingerprint whose frames' keys equal, in order, the keys of the new timeline at that place, and SHALL
 compose and encode every other GOP; candidates SHALL be ordered by their index hash and the first match
 SHALL win. Its bytes SHALL be a function of the project, the settings and the set of verified files. The
-preview's disk prerender SHALL NOT be a source of frames for any export.
+preview's disk prerender SHALL NOT be a source of frames for any final render (the draft render is its
+own mode).
 Why: cached-final-render D1, D7, D8; found-defects 773 — the preview's tier is lossy, at the preview's size,
 possibly in a run form the export never uses.
 
@@ -72,7 +76,7 @@ possibly in a run form the export never uses.
 - **THEN** the two outputs are byte-equal
 - **TEST** t3330 (`src/libs/kt-engine/tests/cached_render.rs`)
 
-#### Scenario: The preview's tier never reaches an export
+#### Scenario: The preview's tier never reaches a final render
 - **WHEN** a range is fully prerendered by the preview's disk tier and then exported with the cached render on and off
 - **THEN** no frame of the export is read from the tier (the tier's read counter does not move during the export)
 - **TEST** t3331 (`src/libs/kt-engine/tests/cached_render.rs`)
@@ -95,3 +99,37 @@ Why: X1 — "FCR можно и отображать как отдельный ш
 - **WHEN** the cached render of t3327 finishes in the window and through `kt-cli export --cached`
 - **THEN** both say the seconds copied and the files used
 - **TEST** t3333 (`src/apps/kt-cli/tests/cli.rs`), t3334 (`src/apps/kt-app/src/render_dialog.rs`)
+
+#### Scenario: The index can be removed without a re-encode
+- **PATH** File → Render → step "Cached render" → "Remove the render index" on an earlier render: a copy is written beside it → the copy is no longer listed as a candidate
+- **WHEN** the index of a cached render is removed by the window's tool
+- **THEN** the copy holds none of our SEIs, its other packets equal the original's byte for byte, and it is not a candidate
+- **TEST** t3870 (`src/libs/kt-engine/tests/cached_render.rs`), t3871 (`src/apps/kt-app/src/render_dialog.rs`)
+
+### Requirement: A draft render takes the preview's prerender
+The render window SHALL offer a draft render: the moments the preview's prerender holds for the current
+state SHALL be decoded from their segments and scaled to the draft's size, every other moment SHALL be
+composed at the preview's quality, and the audio SHALL be rendered as for any export. The draft's size SHALL
+default to the preview's; the person MAY pick the project's size, and the window SHALL warn that the frames
+are upscaled. The file SHALL be tagged as a draft in its metadata, SHALL carry no render index and SHALL
+never be a candidate for a cached render; the summary SHALL say how many seconds came from the prerender.
+A draft's bytes need not be stable between runs. `kt-cli export --draft` SHALL do the same headless.
+Why: kkt-26.11.20 line 21, Q20 b ("Опция «черновой рендер»"): a heavy loop the preview already prerendered
+goes into a look-at file at the decoder's speed; the final render stays its own frames (found-defects 773,
+cached-final-render D7).
+
+#### Scenario: A draft takes the prerendered loop
+- **WHEN** a loop with VHS Tape is prerendered by the preview, and a draft render of the project is made, then a final render
+- **THEN** the draft's frames of the loop are the decoded segments (the tier's read counter grows by the loop's frames), the others are composed at the preview's quality, the file carries the draft tag and no index; the final render reads nothing from the tier
+- **TEST** t3872, t3873 (`src/libs/kt-engine/tests/draft_render.rs`)
+
+#### Scenario: A draft at the project's size and headless
+- **WHEN** the draft is made at the project's size and through `kt-cli export --draft`
+- **THEN** the window warned of the upscale, the frames are scaled to the project's size, and the CLI prints the seconds taken from the prerender
+- **TEST** t3874 (`src/libs/kt-engine/tests/draft_render.rs`), t3875 (`src/apps/kt-cli/tests/cli.rs`)
+
+#### Scenario: The render window offers the draft
+- **PATH** File → Render → the "Draft (from the preview's prerender)" option on: the summary line says how many seconds are prerendered → Render: the finished summary names them
+- **WHEN** the window opens on a project with a prerendered loop and the draft is chosen
+- **THEN** the option shows the prerendered seconds before the render and the summary after it, and the output is tagged as a draft
+- **TEST** t3876 (`src/apps/kt-app/src/render_dialog.rs`)

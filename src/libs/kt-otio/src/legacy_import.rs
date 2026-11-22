@@ -24,9 +24,8 @@ pub struct Fixup {
     pub apply: fn(&mut Value) -> usize,
 }
 
-/// The table of fixes. Order — by version, newest first: a v5 file gets the
-/// fixes of v5 and everything filed for newer forms, which it too
-/// could not have known.
+/// The table of fixes. Order — by version, oldest first, applied in that order: a v5 file gets
+/// the fixes of v5 and everything filed for newer forms, which it too could not have known.
 pub const FIXUPS: &[Fixup] = &[
     Fixup {
         version: crate::meta::KT_META_V5,

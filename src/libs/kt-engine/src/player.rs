@@ -30,10 +30,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// A ring of 4 bursts ≈ 85 ms at 1×. At high speeds the margin melts
-/// proportionally (at 8× this is ~10 ms — less than one sleep cycle of the
-/// render thread), so the capacity is taken with a margin for ENGINE_RATE_MAX
-/// (item 4 round 8).
+/// A ring of 16 bursts ≈ 341 ms at 1×. At high speeds the margin melts
+/// proportionally (at 8× it is ~43 ms), so the capacity is taken with a margin
+/// for ENGINE_RATE_MAX (item 4 round 8).
 const RING_CAPACITY_FRAMES: usize = AUDIO_BURST_FRAMES * 16;
 /// Maximum playback speed (item 4 round 8: the shuttle's “second wind”
 /// up to ±8×).
@@ -2958,8 +2957,8 @@ fn audio_render_loop(ctx: RenderCtx) {
         // ring keeps the already rendered tail, resume continues from it.
         loop_stats.render_passes.fetch_add(1, Ordering::Relaxed);
         if transport.is_playing() {
-            // 8 ms: the ring holds ~85 ms (4 bursts), the callback eats ~21 ms at a
-            // time — a four-fold margin; 2 ms were 500 wake-ups/s and
+            // 8 ms: the ring holds ~341 ms (16 bursts), the callback eats ~21 ms at a
+            // time — a wide margin; 2 ms were 500 wake-ups/s and
             // heated the CPU on weak machines (item 1 of round 5)
             std::thread::sleep(std::time::Duration::from_millis(8));
             tail_passes = 0;
@@ -3598,8 +3597,8 @@ fn prefetch_loop(
             });
         // the far part (gpu-throughput D3, found-defects 482, the owner's "compute ahead", kkt-26.11.11 L4): past the
         // display's reach — the loop to its end and round, or well ahead — at the lowest class, once
-        // the near part has nothing pending; a far part that computed nothing over `FAR_STALLS`
-        // passes waits for the state to move
+        // the near part has nothing pending; a far walk that walked nothing over a pass that decoded
+        // nothing waits for the state to move (`far_walk_again`, render-ahead D6)
         let far = if video.has_stream_stages() { stream_far_frames(video, t0, q, region_ticks, transport.is_playing()) } else { 0 };
         if !stream_pending && far > ahead && !far_stalled {
             let before = kt_plugin_api::stream::positions_walked();

@@ -1,7 +1,8 @@
 # Proposal: shared-events
 
-> DESIGN ONLY (spec session). Code starts after the owner answers the question at the end and the
-> orchestrator gives the go. Tests reserved: t3367–t3378. Base: `orch-26-11-01` at `502947e3`.
+> IMPLEMENTATION-READY (spec session, 2026-11-20). The owner chose to build it now (kkt-26.11.20 A19, his
+> Q31 b: "Строить сейчас"); the orchestrator gives the go. Design D1a names the container that keeps the
+> diff mechanical. Tests reserved: t3367–t3378. Base: `orch-26-11-01` at `502947e3`.
 
 ## Why
 
@@ -73,22 +74,7 @@ Row 641 measured only the last of these. This is the audit's step 4 (`docs/engin
 - **Dependencies:** none new. `Arc` is std, and serde's `rc` feature is not needed because `Shared`
   implements serde itself.
 
-## Questions for the owner
+## The owner's decision
 
-**Q1. Do this now, or when a project of 10 000+ events is reported?**
-
-What the row says today: "when a project of this size is reported". Your project has 1974 events. What
-`kt-cli edit-cost` measured (release):
-
-- **×1 showcase (1357 events):** UI-thread handover 0.3 ms, incremental build 6.6 ms, 11 ms of a core per
-  edit.
-- **×10 (13 357 events):** UI thread 4 ms per edit, build 49 ms, a 60 Hz slider drag at 128 % of a core.
-
-The drag line was not recorded at ×1. Your rule (2026-11-07) is that a drag must not heat the machine.
-
-- **a) Measure your size first.** An executor runs the existing `edit-cost` on a ~2000-event project; the
-  drag line decides. Building starts if a drag at your size costs more than half a core.
-  *(Recommended: no code before the number, as with rows 770/771.)*
-- **b) Build now.** It removes the linear cost at every size. The risk is a wide mechanical change in
-  kt-model (every `iter_mut` and `push` on the event vectors), with no format change.
-- **c) Later.** Wait until a ×10 project is reported.
+**Q1. Do this now, or when a project of 10 000+ events is reported?** — his answer (kkt-26.11.20, line 27,
+A19): "Строить сейчас" (b). The `edit-cost` numbers are taken before and after as a record, not as a gate.

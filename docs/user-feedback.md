@@ -2820,7 +2820,7 @@ Registry: `docs/ktprompts/kkt-26.11.09-index.md` (I1–I4). His files: `fails/26
 | Rules about UI convenience | 5+ (r.8–r.12) | a checklist of 15 items in apps/kt-app/CLAUDE.md |
 | **A window does not fill its area when enlarged ("a needle's eye")** | **"I am tired of reminding" (2026-11-01, and earlier rounds)** | `windows-fill-their-area`: one rule in the window shell (every window resizable, its body fills it, sizes remembered) and a guard over EVERY window that drags its corner (t1125); fixed sizes need a written reason (t1127) |
 | **"The agents did not work"** — a look shipped without anyone looking at it | 2026-11-01 (welcome window, lesson texts, VHS; the camera ISP: noise without its denoiser, defects without their compensation) | open: the 2026-11-01 round |
-| **A form leaves half of its width empty and runs long** | **"СТОЛЬКО РАЗ ПРОСИЛ НАВСЕГДА" (2026-11-07, Camera ISP)** | a guard over every effect form, change `fx-form-width` |
+| **A form leaves half of its width empty and runs long** | **"СТОЛЬКО РАЗ ПРОСИЛ НАВСЕГДА" (2026-11-07, Camera ISP)** | `fx-form-width`: the shared grid flows into columns by the width, groups are cards in columns (`widgets::CardFlow`); the guard lays every effect, transition and generator form out at 420/560/1600 pt and widens every registry window (t3591, t3593, t3593b, t3594, live `form_width`) |
 | **Dead ends: you can create it, you cannot control it** | **7 (r.33–r.40)** | the checklist did not work — the rules were written down and broken. The R.38 tests did not work either: they checked the REACHABILITY of what was made, not its consequence. R.40: a test asserts the observable consequence AND probes from the point where the person acts; for each item — a live scenario |
 | **"You did not check"** | **3 (r.12, r.13, r.40)** | the harness and the model prove nothing: `finish.sh`, a live scenario for each item, a check of the consequence |
 | **One claim sent twice (R.43)** | **2** | the first attempt fixed the symptoms: there was nothing to look at in the model. `kt-cli probe` appeared; for the complaint "sound from another event" it is run FIRST |
@@ -3023,3 +3023,17 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
    render" option may take the preview's prerender; the cached render's index lives inside the video (SEI).
 9. A case he does not follow yet is written down for him to check later (ripple across an edit point,
    owner-checks C9), not decided over his head.
+
+## 2026-11-20..22 — his answers to the second round (verbatim: `docs/ktprompts/kkt-26.11.20b.txt`, rows B1–B12)
+
+1. **The persistent cache is about EFFECTS first.** "мне не нравится почему ты думаешь только о проигрывании и
+   декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!" A
+   disk cache that only spares decoding misses the point: what it must keep is the result of heavy effects.
+   Its name is "Постоянный кэш".
+2. **Do not cut his words in a question.** Twice in one round a quote shortened his item until it meant something
+   else ("ты подрезал суть", "твоя вырезка фразы моей выглядит очень бессмысленной"). A question quotes the WHOLE
+   item, or the lines around the phrase, and says where it is. "Перемотка" in his fisheye item is the edit's own
+   speed (a speed curve on a composition), not the playhead.
+3. **Loudness is normalized in the project, by the professional path**, not as a render preset.
+4. **A full cache folder writes cyclically**, dropping the oldest, with an alert in the notices.
+5. Dragging a window by the preview: dropped by him.

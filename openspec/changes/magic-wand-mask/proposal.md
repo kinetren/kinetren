@@ -55,6 +55,13 @@ tracker (change `point-tracker`) provides.
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A20, his Q34–Q35): "первые два, по умолчанию - самые удобные и точные. позже
+сеть - нейросеть" — Q1 (a), the algorithmic wand now, a neural object mask later; Q2 (a), a wand on an effect reads
+the event's source picture. The defaults are the most convenient and exact ones (the tracker's rule, change `point-
+tracker` D10).
+
+The questions as asked:
+
 **Q1. An algorithm now, a neural object mask later?** Your words: "Крутой механизм magic-wand-масок".
 Your decision for the professional keyer (2026-11-01): "an algorithm, not a neural network, as the base …
 the same bytes on every machine and no ML runtime or model weights in the program. A neural matte may come

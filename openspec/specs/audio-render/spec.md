@@ -88,8 +88,8 @@ Why: a wrap-around taken for a seek warmed the processor ≈1.25 s on every lap 
 - **TEST** t167 (`src/libs/kt-engine/tests/loop_fx.rs`)
 
 #### Scenario: The wrap-around is sample-continuous and consistent with the transport
-- **WHEN** the transport plays the region in a loop (capability `transport`)
-- **THEN** the player's stream equals the looped offline reference, and the head of the region is pinned in the cache
+- **WHEN** the transport plays the region in a loop (the wrap's rules and this test's home: capability `transport`, "Loop region wraps by transport rules")
+- **THEN** the render side holds what that scenario checks: no warm-up and no seek at the wrap, so the stream equals the looped offline reference
 - **TEST** t14 (`src/libs/kt-engine/tests/audio_engine.rs`)
 
 #### Scenario: reset zeroes everything, including the predelay

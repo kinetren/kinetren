@@ -1,7 +1,7 @@
 # Design: point-tracker
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `b1b04b6b`. Q1–Q2 in `proposal.md`; the defaults follow the
-> recommended options.
+> DESIGN ONLY, revision 2 (2026-11-20), base `5e7a8ea9`: the owner's A20 — the planar kind (D9) and the defaults
+> (D10). Revision 1 was on `b1b04b6b`. The questions are decided (`proposal.md`).
 
 ## Context
 
@@ -21,10 +21,10 @@ Read on `b1b04b6b`:
 
 ## Goals / Non-Goals
 
-**Goals:** AE-class point tracking with sub-pixel accuracy and confidence; correctable sessions; one
+**Goals:** AE-class point tracking and Mocha-class planar tracking, both sub-pixel with a confidence; correctable sessions; one
 address for every consumer; deterministic samples.
 
-**Non-Goals:** planar tracking (Q1; a later kind), 3D camera solve, AI object tracking (a matte, not a
+**Non-Goals:** 3D camera solve, AI object tracking (a matte, not a
 transform — F-MSK-005), automatic reframe for formats (a consumer later: `frame-format-variants`).
 
 ## D1. The model
@@ -113,10 +113,54 @@ once per revision (compiled-curves), the per-frame cost is a binary search in th
 | loudness (LUFS) | sidecar, shown | not a property — could become a link source later (a level follows loudness) |
 | peak pyramid | sidecar | read by meters/waveforms; not linkable — out of scope |
 | tracker | new | yes, `ParamOwner::Tracker` |
-| a future planar tracker / stabilizer (F-MSK-006) | — | same owner kind, other params |
+| the planar tracker (D9) / a stabilizer (F-MSK-006) | this change / later | same owner kind, other params |
+
+## D9. The planar kind (revision 2, the owner's A20)
+
+```text
+Tracker { …, kind: TrackerKind }       // Points (D1) | Plane
+Plane { quad: [(f64, f64); 4] /* reference corners, source px */, ref_frame: i64,
+        ignore: Option<MaskId> /* a mask of the event: the area left out */,
+        samples: BTreeMap<i64, PlaneSample> }
+PlaneSample { h: [f64; 8] /* reference → frame, h33 = 1 */, conf: u8, manual: bool }
+```
+
+Matcher per frame, in the run's direction (all integer luma, the project math, byte-identical across machines):
+1. predict H from the last two samples (constant velocity in the homography's parameters);
+2. corners (Harris on the integer luma, the strongest 200 inside the warped quad minus the ignore mask, a fixed
+   tie-break by position) are matched by the point matcher's ZNCC (D3) between the previous and this frame;
+3. a robust fit: RANSAC with a fixed seed derived from the frame number (deterministic), 4-point DLT, then an
+   iteratively reweighted least squares (Huber) over the inliers;
+4. refinement on the whole region: an inverse-compositional Lucas–Kanade on the 3-level pyramid minimising the
+   luma difference between the reference template (the region at `ref_frame`, adapted at conf ≥ 90 as in D3) and
+   the warped frame, masked by the ignore mask; at most 20 iterations per level;
+5. confidence = the ZNCC of the warped region against the template × 100.
+A manual correction drags one corner at a frame; that sample's H is refitted from the four corners and the run
+continues from it.
+
+Channels (`ParamOwner::Tracker`): `c1..c4.x/.y` (the quad through H), `x`, `y` (its centre), `angle`, `scale`,
+`h0..h7`, `conf`. Apply gestures: Corner pin (c1..c4), Attach event… (a Corner Pin on the attached event's
+picture fitted to the quad — full perspective), Effect centre (centre), Mask follows (the mask's perspective
+transform linked to `h0..h7`, a new form of the mask transform rows), Stabilize (the inverse homography onto the
+tracked event, as a corner pin of its own picture).
+
+## D10. Defaults — the most convenient and exact (the owner's A20)
+
+| Setting | Default | Why |
+|---|---|---|
+| point feature box | 1/24 of the shorter side, 24–96 px, centred on the click | big enough to be unique, small enough to be one feature |
+| point search box | 3× the feature, moved by the predicted velocity | follows fast motion without a manual box |
+| plane | a rectangle drag or four clicks; the quad shown with its grid | Mocha's spline replaced by a quad: a plane is what is tracked |
+| "Track" (one button) | both directions from the frame under the playhead to the event's edges | one gesture for the usual case; the four direction buttons stay |
+| resolution | the native-size frame, never the preview's | exact |
+| sub-pixel | on (parabola for points, LK refinement for the plane) | exact |
+| stop threshold | 60 % points, 70 % plane | a plane's ZNCC over an area is higher for the same quality |
+| template adaptation | at conf ≥ 90, 1/8 per frame | holds through slow light changes, not through occlusions |
 
 ## Rejected
 
 - **A tracker inside a mask** (Premiere/FCP) — one consumer only (F-MSK-005).
 - **Timeline-time samples** — every trim would drift them.
-- **An ML tracker** — a matte, not a transform; weights and runtime are a separate decision.
+- **An ML tracker** — a matte, not a transform; weights and runtime are a separate decision (the owner: a neural
+  one later).
+- **Mocha's spline as the planar region** — a quad plus an ignore mask covers it; splines are the masks' job.

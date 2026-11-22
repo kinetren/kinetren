@@ -212,9 +212,10 @@ details in "Sources". A paraphrase instead of a quote is not put into the base.
   the timeline tick. A tracker only needs an owner kind in `ParamOwner`
   (`src/libs/kt-model/src/published.rs`).
 - Masks are done (shape-masks, F-MSK-001), so "strictly after masks" holds.
-- The owner asked for an AE-style POINT tracker (kkt-26.11.01 T1); the design (OpenSpec change
-  `point-tracker`) does that first (1–4 points, corner pin from four), with the planar model as a later
-  kind behind the same address. The independent-entity verdict above stands.
+- The owner asked for an AE-style POINT tracker (kkt-26.11.01 T1), and on 2026-11-20 (`kkt-26.11.20` A20) took
+  the planar one in the same change: "первые два, по умолчанию - самые удобные и точные". The design (OpenSpec
+  change `point-tracker`) has two tracker kinds behind one address: points (1–4) and a plane (a homography per
+  frame). The independent-entity verdict above stands.
 - CAPABILITY: openspec/specs/automation/
 
 ### What already exists

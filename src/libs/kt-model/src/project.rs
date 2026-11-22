@@ -6454,12 +6454,12 @@ impl Project {
         })
     }
 
-    /// Whether a marker carries a note (marker-notes): the file is then format 5.
     /// A video track names its sound track (track-device-sound) — the file's format 6.
     pub fn has_track_sound(&self) -> bool {
         self.tracks.iter().chain(self.sequences.iter().flat_map(|s| s.tracks.iter())).any(|t| t.sound.is_some())
     }
 
+    /// Whether a marker carries a note (marker-notes): the file is then format 5.
     pub fn has_marker_notes(&self) -> bool {
         self.markers.iter().any(|m| !m.note.is_empty())
     }

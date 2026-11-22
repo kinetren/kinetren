@@ -1,4 +1,4 @@
-//! The analysis series an audio-reactive generator listens through (gen-audio-reactive, F-TXT-010).
+//! The analysis series an audio-reactive generator listens through (gen-audio-reactive, F-TXT-011).
 //!
 //! One RECORD per audio burst (1024 frames, 1920 ticks) of a file: the RMS of each channel, the peak,
 //! [`BANDS`] log-spaced band levels and [`WAVE`] waveform points, one byte each. The series is a pure

@@ -65,6 +65,12 @@ ML runtime or model weights in the program. A neural matte may come later as an 
 
 ## Questions to the owner
 
+Decided (2026-11-20, `kkt-26.11.20` A22, his Q46–Q47): Q1 (a), a clean plate made from each frame, "Use this frame"
+holds one; Q2 (a), light wrap later, with inputs from other layers. The greenscreen under it is on the new model for
+every key (change `chroma-key-upgrade` D8).
+
+The questions as asked:
+
 **Q1. The clean plate's default?** Your words: "учитывающий неравномерность фона".
 - (a) **Generated from each frame (the subject erased, the screen filled from around it); "Use this frame"
   switches to a held frame of the clip when a moment without the subject exists** (*recommended*: works on

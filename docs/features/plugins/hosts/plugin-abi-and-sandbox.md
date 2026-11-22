@@ -16,7 +16,7 @@ tests: []
 depends_on: [F-EXT-001, F-EXT-002]
 trackers: []
 services: []
-checked: 2026-10-28
+checked: 2026-11-20
 ---
 
 # F-EXT-003 — Plugin contract: what foreign code must declare
@@ -108,6 +108,8 @@ an argument for "do not let in", here it is a description of the single case fro
 protect the user (a crash right after a routine update of the plugin set, without a single edit to the project).
 
 ## How it fits Kinotrain
+
+Since 2026-11-20: the wasm host (stage 2 of `plugin-api-stage1` D10) is designed in change `wasm-plugin-host`.
 CAPABILITY: openspec/specs/plugins/ — the contract is in `spec.md`, the "why" and the code paths are in `design.md` (the built-in stage, plugin-api-stage1, 2026-10-31; the parameter passport stays in openspec/specs/automation/).
 Accepted (interfaces): the parameter passport is built at runtime so that a plugin can declare its own; order — built-in → dylib → OpenFX later.
 

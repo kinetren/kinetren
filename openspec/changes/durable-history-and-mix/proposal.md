@@ -1,7 +1,8 @@
 # Proposal: durable-history-and-mix
 
-> DESIGN ONLY (spec session). Code starts after the owner answers the questions at the end and the
-> orchestrator gives the go. Tests reserved: t3336–t3355. Base: `orch-26-11-01` at `f1f063c4`.
+> DESIGN (spec session). The owner decided Q1 b and Q2 b (kkt-26.11.20 A14, line 19): build now, the history
+> with LZ4, both tiers in the project's cache folder (`project-cache-folder`). Tests reserved: t3336–t3355.
+> Revised on `orch-26-11-01` at `5e7a8ea9`.
 
 ## Why
 
@@ -22,24 +23,24 @@ tiers the same way the video tier works, and puts a measurement first.
 
 ## What Changes
 
-- **One durable blob store** for kept results (the video tier's folder rules: per program build and
-  device, other builds' folders removed at open, a byte cap, least recently used out, the prerender
-  never evicting what this process used), with two new tenants beside the composites: stream entries
-  and mix runs.
+- **Two tenants of the project's cache folder** (`project-cache-folder`): the stream entries as the
+  `history/` kind of the persistent cache (`results/v<FORMAT>/<device class>/history/`, beside its `frames/`
+  and `layers/`), and `mix/` for mix runs, written in the folder's cycle (a stale salt dropped on a miss, least recently used out, the prerender never
+  evicting what this process used).
 - **Stream history pages to disk.** The stream memo gets a backing store: an entry the memo lacks is
   looked up on disk before a kernel walks for it; checkpoints and broken pictures are written there at
   rest. A kernel opts in by giving an exact codec of its entry types (Datamosh: its `Planes`). Entries
-  are stored LOSSLESS: a history entry feeds every later frame, so one changed bit would change the
-  rest of the event (invariant 11).
+  are stored LOSSLESS and compressed with LZ4 (the owner's Q2 b): a history entry feeds every later
+  frame, so one changed bit would change the rest of the event (invariant 11).
 - **The kept mix pages to disk.** Kept bursts are written at rest as runs of raw f32 per context
   (linear play, each loop region's laps); after a restart the player's thread loads the runs ahead of the
   playhead and hands them to the render thread, which stays the store's only owner (invariant 2) and
   never touches the disk.
 - **Keys add what a process could assume**: the files' identities (path, size, mtime), the program
   build with the FFmpeg version, and the kernel's entry-codec version; the device is the folder.
-- **Measured first**: the trace already counts history positions walked; a run that restarts over a
-  project states what a restart cost (positions walked, audio renders of covered bursts) before and
-  after.
+- **Measured as it is built** (the owner chose to build now): the trace states what a restart cost
+  (positions walked, audio renders of covered bursts), what the tiers restored, and the history's
+  compression ratio.
 
 ## Capabilities
 
@@ -61,30 +62,35 @@ tiers the same way the video tier works, and puts a measurement first.
 - Invariants: 2 (the render thread still owns the mix alone; the disk is the player's thread's),
   4 (the bars: a burst/moment on disk counts as covered only when restorable), 11 (lossless, exact keys:
   the same bytes with and without the tier — so the export may read the stream tier, never the mix).
-- No project format change. Disk: a new cap (default 1 GiB for both tenants together, beside the
-  composites' 2 GiB; `KT_RENDER_CACHE_MB` covers all).
+- No project format change. Disk: the cache folder's cycle (`project-cache-folder` D3, the owner's B2) covers both tenants;
+  `KT_RENDER_CACHE=off` turns all three off. A new dependency: `lz4_flex` (pure Rust, its safe decoder) in
+  kt-engine.
 
-## Questions for the owner
+## The owner's decisions (kkt-26.11.20, line 19)
 
-**Q1. Build it now, or after your trace shows a restart costs something?**
-Rows 770/771 say "no measured need yet": the slow Datamosh moments are already on disk after the
-prerender, and the audio render keeps real time on release. What a restart costs today: every
-Datamosh moment NOT on disk walks its history again (for an event with no refresh, from its start), and
-every covered audio range is rendered live again (decode + every effect) until it is kept again.
-- **a) Measure first**: stage 1 adds a restart line to the trace ("history: N positions walked after the
-  start; audio: M covered bursts rendered again"); your next trace after a restart decides stages 2–3.
-  *(Recommended: your rule "caches where they pay".)*
-- **b) Build all three stages now.**
+- **Q1 b — build all stages now.** The restart line in the trace (D1) stays as telemetry, no longer a gate.
+- **Q2 b — the history is stored with LZ4.** His words: "я не очень понимаю почему история datamosh без
+  сжатия если сам по себе datamosh это и есть сжатие? нет? ну если нет давай хотя бы LZ4". Design D9
+  answers the question in plain words.
+- **Where:** "у нас не будет все в одной базе sqlite хранится а будет подпапка в папке проекта с разными
+  кешами". The two tiers are tenants of the project's cache folder (`history/`, `mix/`; change
+  `project-cache-folder`), in its cycle, not a store of their own in the user's data folder.
 
-**Q2. The history must be stored without loss. Raw, or a fast processor compressor?**
-Your words on the prerender: "слабо я верю что ffv1 аппаратно ускорен … а ты тут для превью это на
-постоянку предлагаешь", decision "сделай ты сжатие видео нормальное" — a hardware codec, lossy accepted.
-History cannot be lossy: a Datamosh checkpoint is the codec's reference picture; one changed value
-changes every later frame of the event, in the preview and in the export. Hardware codecs are lossy (or
-not lossless on most chips). Today: nothing is stored.
-- **a) Raw planes** — no processor work to read; ~9 MB per checkpoint at 1080 lines, ~2 MB at 540; the cap
-  holds fewer. *(Recommended for the history: a read must cost less than the walk it replaces, and raw
-  costs only the disk.)*
-- **b) LZ4** (a byte compressor, ~4 GB/s to unpack on one core) — 2–4× more history in the same cap, a few
-  ms of a core per checkpoint read.
-The mix is small (23 MB a minute raw); it is stored raw in both options.
+## His question, answered (to relay)
+
+"Why is the Datamosh history not compressed, if Datamosh itself is compression?"
+
+Datamosh IS a codec: it encodes the picture and decodes it with the keyframes broken. But what the history
+keeps is not the compressed stream, it is the codec's MEMORY at a frame — the last picture the decoder
+painted, which the next frame's motion is applied to. The compressed packets of a moshed event are small,
+but each one only says "move these blocks of the PREVIOUS picture and add this correction". With no
+keyframe, frame 500 exists only by applying all 499 packets before it — and replaying them is exactly the
+walk a checkpoint is there to skip. So a checkpoint has to be a whole picture.
+
+It has to be EXACT because every later frame of the event is painted on top of it. A lossy store (JPEG,
+H.264 — like the preview's prerender) would change a few values, the motion would carry that error into
+every later frame, and after a restart the event would look different from an uninterrupted play and from
+the export. So the store may only shrink the bytes in a way that gives back the very same bytes: a lossless
+compressor. LZ4 is one: it unpacks a 1080p checkpoint in a few milliseconds of one core, far less than the
+walk it replaces. It shrinks camera pictures about 1.3–2×, and the smeared, flat areas Datamosh makes more;
+the trace measures the real ratio on his projects (D9).

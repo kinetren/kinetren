@@ -1,7 +1,8 @@
 ## ADDED Requirements
 
 ### Requirement: The kept final mix survives a restart, loaded off the render thread
-The kept final mix SHALL have a durable tier: kept bursts SHALL be written at rest as runs of raw f32 per
+The kept final mix SHALL have a durable tier, the `mix/` tenant of the project's cache folder (capability
+`media-index`): kept bursts SHALL be written at rest as runs of raw f32 per
 context (linear play, a loop region's laps), keyed by `(context, burst, mix(scene_hash, salt))` with the salt
 naming the program build with the FFmpeg version and the identities of the audio files heard in the burst's
 widened range. After a restart the player's thread SHALL read the runs matching the current scenes ahead of

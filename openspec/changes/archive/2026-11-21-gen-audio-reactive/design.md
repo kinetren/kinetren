@@ -28,7 +28,7 @@ function of its time, so seek, preview and render agree.
 `kt_media::listen::SeriesStore` (`get`/`put` by file). The sidecar implements it with an additive table
 `audio_series(media_id, version, data)`, and the purge of a changed file clears it. The caches' move into
 a project subfolder (kkt-26.11.20 A14, spec-engine's `project-cache-folder`) moves it by implementing the
-trait; nothing else names the table.
+trait; nothing else names the table. The layout decided on 2026-11-22 is B — `results/v<FORMAT>/<device class>/…`, owned by `project-cache-folder`: the series is device-independent and moves there through this seam, by its file and `audio_series::VERSION`.
 
 ## D4. The feed is part of the state
 

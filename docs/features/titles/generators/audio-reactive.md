@@ -1,5 +1,5 @@
 ---
-id: F-TXT-010
+id: F-TXT-011
 title: Audio-reactive generators — waveform, spectrum, level rings
 status: in-progress
 priority: B
@@ -19,7 +19,7 @@ services: []
 checked: 2026-11-20
 ---
 
-# F-TXT-010 — Audio-reactive generators — waveform, spectrum, level rings
+# F-TXT-011 — Audio-reactive generators — waveform, spectrum, level rings
 
 ## Essence
 

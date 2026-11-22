@@ -1,4 +1,4 @@
-//! What an audio-reactive generator hears (gen-audio-reactive, F-TXT-010).
+//! What an audio-reactive generator hears (gen-audio-reactive, F-TXT-011).
 //!
 //! The series of files live in a process registry keyed by the media path as the project stores it.
 //! The host fills it (kt-app's background job, the render job and kt-cli before an export) and

@@ -112,22 +112,8 @@ impl Planes {
     /// checked, 6–15 ms a 1080-line stage on the composite's thread); the bytes of `to_rgba_reference`.
     pub fn to_rgba(&self, ow: u32, oh: u32, out: &mut Vec<u8>) {
         let (ow, oh) = ((ow as usize).min(self.w), (oh as usize).min(self.h));
-        out.clear();
-        out.resize(ow * oh * 4, 255);
-        let cw = self.w / 2;
-        for (yy, row) in out.chunks_exact_mut(ow * 4).enumerate() {
-            let ys = &self.y[yy * self.w..yy * self.w + ow];
-            let cbs = &self.cb[(yy / 2) * cw..(yy / 2) * cw + ow.div_ceil(2)];
-            let crs = &self.cr[(yy / 2) * cw..(yy / 2) * cw + ow.div_ceil(2)];
-            for (xx, (o, &l)) in row.chunks_exact_mut(4).zip(ys).enumerate() {
-                let l = l as i32;
-                let cb = cbs[xx / 2] as i32 - 128;
-                let cr = crs[xx / 2] as i32 - 128;
-                o[0] = (l + ((359 * cr + 128) >> 8)).clamp(0, 255) as u8;
-                o[1] = (l - ((88 * cb + 183 * cr + 128) >> 8)).clamp(0, 255) as u8;
-                o[2] = (l + ((454 * cb + 128) >> 8)).clamp(0, 255) as u8;
-            }
-        }
+        // the one conversion, shared with the device pass of a held picture (stream-picture-stays D3)
+        kt_plugin_api::stream::planes_to_rgba(&self.y, &self.cb, &self.cr, self.w, ow, oh, out);
     }
 
     /// `to_rgba` as it was written first, pixel by pixel: the reference t2701 holds it to.

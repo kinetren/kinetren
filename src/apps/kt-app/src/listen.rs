@@ -1,4 +1,4 @@
-//! The audio-reactive generators' series (gen-audio-reactive, F-TXT-010): one background service that
+//! The audio-reactive generators' series (gen-audio-reactive, F-TXT-011): one background service that
 //! computes the series of every file a listening generator hears and hands them to the engine's
 //! registry (`kt_engine::listen`).
 //!

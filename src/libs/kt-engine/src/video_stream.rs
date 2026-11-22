@@ -892,7 +892,7 @@ pub(super) fn run(
     dq: Quality,
     t: Tick,
     pts: Tick,
-) -> (Option<Arc<VideoFrame>>, u64) {
+) -> (Option<Arc<VideoFrame>>, u64, Option<Arc<crate::video_plan::HeldLayer>>) {
     use kt_time::trace::{self, stream as so, Ev};
     let cs = ClipStream::new(clip, st, grid, quality, Some(cache));
     let cs = if view { cs.with_view(memo) } else { cs };
@@ -911,14 +911,23 @@ pub(super) fn run(
         // track's and the reel's stages) run over it at this moment (kkt-26.11.10b K5, found-defects 403)
         crate::video::note_stream_short(needs as u64);
         span.aux(so::SHORT);
-        return (None, 0);
+        return (None, 0, None);
     }
     span.aux(so::RENDERED);
+    // left where the compute host made it, for an executor on that device (stream-picture-stays D3):
+    // at the layer's decode size only — a fit to another size is the processor's
+    if let Some(h) = k.render_held(&st.values, &cs, n, memo)
+        && (h.w, h.h) == (dq.width, dq.height)
+    {
+        drop(span);
+        let key = h.key;
+        return (None, key, Some(Arc::new(crate::video_plan::HeldLayer { out: h, pts })));
+    }
     let mut buf = Vec::new();
     let Some(out) = k.render(&st.values, &cs, n, memo, &mut buf) else {
         span.aux(if cs.stopped().is_some() { so::STOPPED } else { so::SOURCE_MISSING });
         cs.trace_stop(n);
-        return (None, 0);
+        return (None, 0, None);
     };
     drop(span);
     let n = (dq.width * dq.height * 4) as usize;
@@ -933,7 +942,7 @@ pub(super) fn run(
         rgba
     };
     let frame = VideoFrame { pts, width: dq.width, height: dq.height, rgba: rgba.into_boxed_slice(), has_alpha: false };
-    (Some(Arc::new(frame)), out.key)
+    (Some(Arc::new(frame)), out.key, None)
 }
 
 #[cfg(test)]

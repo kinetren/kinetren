@@ -130,8 +130,10 @@ pub(crate) fn draw(
     let names: Vec<String> = f.param_specs().iter().map(|s| s.name.to_string()).collect();
     // what the effect shows: the output, or the picture after any stage of the chain
     ch |= stage_rows(ui, f, &VIEW, &names, None, pubc);
+    // each pipeline block is a card, and a wide window lays them side by side (fx-form-width)
+    let mut flow = widgets::CardFlow::new(ui, "isp_blocks", block_min_w(ui, f));
     for (block, stages) in BLOCKS {
-        ui.group(|ui| {
+        flow.card(|ui| ui.group(|ui| {
             ui.set_width(ui.available_width());
             ui.strong(block_title(block));
             for st in *stages {
@@ -160,9 +162,26 @@ pub(crate) fn draw(
                     });
                 });
             }
-        });
+        }));
     }
+    flow.end(ui);
     ch
+}
+
+/// A block card's readable minimum: the widest row of any stage — a choice's caption and combo,
+/// or a number's label and field.
+fn block_min_w(ui: &egui::Ui, f: &FxInstance) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let widest = f
+        .param_specs()
+        .iter()
+        .map(|s| {
+            let text = row_label(&s.name).map(str::to_string).unwrap_or_else(|| widgets::param_label_scoped(kt_model::HasParams::params_scope(f), &s.name));
+            ui.painter().layout_no_wrap(text, font.clone(), egui::Color32::WHITE).size().x
+        })
+        .fold(0.0f32, f32::max);
+    // the label, a field or a combo, the stage's indent and the card's frame
+    widest + 8.0 + 140.0 + 2.0 * ui.spacing().indent
 }
 
 /// A stage's choices and flags (the kind's own controls), then its numbers (the shared grid).

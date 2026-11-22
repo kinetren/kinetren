@@ -16,9 +16,10 @@ pub mod hw_trial;
 pub mod loader;
 pub mod search;
 
-/// The threads of a video decoder opened from now on: 0 asks libavcodec's auto (gpu-render-hardening,
-/// D1). Auto is 16 on a big machine, and a VP9 file in 4K then holds gigabytes of frames: a render
-/// short of memory opens its sources with less.
+/// The process-wide threads of a video decoder opened from now on: 0 asks libavcodec's auto
+/// (gpu-render-hardening, D1). Auto is 16 on a big machine, and a VP9 file in 4K then holds gigabytes
+/// of frames: the preview sets a render's count here (memory-ledger D11); a render opens its own
+/// sources inside [`with_decode_settings`].
 pub fn set_decode_threads(n: u32) {
     DECODE_THREADS.store(n, std::sync::atomic::Ordering::Relaxed);
 }
@@ -30,9 +31,10 @@ pub fn decode_threads_set() -> u32 {
     DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The threads that convert the pictures of a multi-size span to RGBA (render-speed-no-card D2): 1
-/// converts on the decoder's own thread. A render sets it; the conversion took four times the
-/// decoding on the showcase, and it held the render back wherever the composite was cheap.
+/// The process-wide threads that convert the pictures of a multi-size span to RGBA
+/// (render-speed-no-card D2): 1 converts on the decoder's own thread. The preview sets it; a render
+/// takes its own in [`with_decode_settings`]. The conversion took four times the decoding on the
+/// showcase, and it held the render back wherever the composite was cheap.
 pub fn set_rgba_threads(n: u32) {
     RGBA_THREADS.store(n, std::sync::atomic::Ordering::Relaxed);
 }
@@ -72,22 +74,23 @@ pub fn with_decode_settings<R>(s: DecodeSettings, f: impl FnOnce() -> R) -> R {
     f()
 }
 
+/// The settings a source opened now on this thread takes: the scope's, else the process-wide ones.
+pub fn opening_settings() -> DecodeSettings {
+    SCOPED.with(|c| c.get()).unwrap_or_else(|| DecodeSettings {
+        decode_threads: DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed),
+        rgba_threads: RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed),
+    })
+}
+
 #[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn rgba_threads() -> usize {
-    match SCOPED.with(|c| c.get()) {
-        Some(s) => s.rgba_threads.max(1) as usize,
-        None => RGBA_THREADS.load(std::sync::atomic::Ordering::Relaxed).max(1) as usize,
-    }
+    opening_settings().rgba_threads.max(1) as usize
 }
 
 /// What the `threads` option of a video decoder says.
 #[cfg_attr(not(feature = "ffmpeg"), allow(dead_code))]
 pub(crate) fn decode_threads() -> String {
-    let n = match SCOPED.with(|c| c.get()) {
-        Some(s) => s.decode_threads,
-        None => DECODE_THREADS.load(std::sync::atomic::Ordering::Relaxed),
-    };
-    match n {
+    match opening_settings().decode_threads {
         0 => "auto".to_string(),
         n => n.to_string(),
     }

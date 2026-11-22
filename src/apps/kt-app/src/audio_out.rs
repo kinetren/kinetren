@@ -282,7 +282,7 @@ pub fn start(ring: rtrb::Consumer<f32>, player: &kt_engine::Player) -> AudioOutp
     start_with(CpalDevice, ring, player.shared.clone(), player.transport.clone(), player.wake(), CLOSE_AFTER_REST)
 }
 
-/// [`start`] on any device, with the rest it waits before closing.
+/// [`start`] on any device, with the rest it waits before pausing the stream.
 pub fn start_with<D: Device>(
     device: D,
     ring: rtrb::Consumer<f32>,
