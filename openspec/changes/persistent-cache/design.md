@@ -55,8 +55,8 @@ file identities' digest; for a layer, the layer's sub-plan up to the kept stage)
 kernel's plugin version and WGSL hash, and `COMPOSITE_PATH_VERSION` — a constant bumped when the composite code outside
 the kernels changes (fusion, `plan_chain`, core passes and shaders, conversions), guarded by t3808 in
 `project-cache-folder`'s video-plan delta (it records the hash of those files and fails on a change without a bump). The
-build is not in the key: an update that touches none of these keeps the entries. The store format and the device class
-are the folder (`results/v<FORMAT>/<device class>/`). A stale entry is a miss and is removed when met; there is no sweep.
+`durable_hash` is salted by the store format and the device class; the build is not in the key: an update that touches
+none of these keeps the entries. A stale entry is a miss and is removed when met; there is no sweep.
 
 ## D5. Alpha and quality
 
