@@ -1,88 +1,73 @@
 # Design: auto-ducking-by-role
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `ea0aff6f`. Q1–Q2 in `proposal.md`; defaults recommended.
+> DESIGN ONLY, revision 2 (2026-11-22), base `1e31056c`: rebuilt from the owner's whole item (v26.10 lines 84–88) and
+> B5. Revision 1 keyed one rule by roles and had no title sections. Q1 in `proposal.md`; the default is recommended.
 
 ## Context
 
-- R.65 (capability `audio-fx`, "Compressor with a KEY input"): one compressor kind with an optional key; the key is
-  a processing argument on the same window; the key is a TRACK (`RowRole::SidechainKey`, `sidechain_keys`,
-  `sidechain_cycle` in `kt-model/src/project.rs`); the track window draws two compressors and a dashed wire
-  (`track_window.rs`, `node_editor.rs`). The snapshot curve was removed by the owner (t774 guards it).
-- The owner, 2026-10-30, question 10: sections by clip TYPE; our ducking is "not intuitive".
-- Rule 21 (industry name), 23 (a tool remembers), 24 (one widget, not a copy).
+- R.65 (capability `audio-fx`, "Compressor with a KEY input"): one compressor kind; the key a processing argument; the
+  key is ONE track (`RowRole::SidechainKey`, `sidechain_keys`, `sidechain_cycle`); the track window draws two
+  compressors and a dashed wire.
+- Title generators (`GeneratorKind::Text`) are events on video tracks; the timeline index (`EventIndex`) answers spans.
+- The level of an audio event is `gain_db` with curves (automation); track stages run after the events' sum.
 
-## D1. Roles
+## D1. The two rules
 
-`AudioRole { Dialogue, Music, Effects, Ambience, Title }` (closed, append-only codes). `Track.role:
-Option<AudioRole>`, `ClipEvent.role: Option<AudioRole>`; the effective role of an audio event is its own, else
-its track's, else none. A video event's linked audio inherits through its audio track as today. A reel instance's
-inner events keep their roles; an instance event itself has the role of what it sounds like only if set on it
-(it then counts as one key event — its whole mix).
+On an audio track, `Ducking`:
+- `content`: `reduce_db` (0…−60, −∞; default −12), `fade_ms` (default 250), `key: Set { tracks, roles }`. Realised by
+  the R.65 compressor on the track's stage, its rows solved in closed form so a key at the sensitivity level gives
+  exactly `reduce_db` (attack = fade/4, release = fade); the compressor's rows dimmed under "Details".
+- `titles`: `Raise(db)` (0…+12, default +6) | `Mute` | `Leave`, with `title_fade_ms` (default 400). Realised as a gain
+  envelope G(t) from the title spans: 1 outside, the raise or 0 inside, linear fades of `title_fade_ms` centred on each
+  span edge; a pure function of the spans (no state), so seek, loop and export agree.
+- `Mute` also unmutes: a track tagged "Title sound" whose ducking rule is `titles: OnlyInTitles` plays only inside title
+  spans (the same envelope inverted) — the owner's "размут заголовочного звука".
 
-## D2. The role key
+## D2. The key of several tracks and roles
 
-`SidechainKey = Track(TrackId) | Roles(RoleSet)`. For a `Roles` key the audio render builds the key per window as
-the sum of the post-chain, pre-track-fader outputs of every event in the SAME reel whose effective role is in the
-set and which is not on the keyed track itself. The render already computes those outputs; the key mix is one
-accumulate per key event (no second decode, no second chain run). Order: the keyed track renders after every track
-holding a key event — the same scheduling rule as a track key; a cycle (a track whose own events carry a role in
-its key set, or two tracks keying on each other's roles) is refused by `validate` with a named error.
-Invariants 1–3: f32 48 kHz on the render thread; the compressor's state is untouched by an edit that changes only
-which events are key events.
+`Set { tracks, roles }`: the key per window is the sum of the post-chain, pre-fader outputs of every event on the
+listed tracks and of every event (same reel) whose effective role is in `roles`, the keyed track excluded. Cycles
+refused by name. Order: the keyed track renders after every key holder (the R.65 rule).
 
-## D3. The Auto-ducking form
+## D3. Title spans (Q1 a)
 
-In the track window of an audio track (and "Auto-ducking…" in its header menu, which opens the same window at the
-section), one section, the industry name first: "Auto-ducking (background under speech and titles)".
+`Project::title_spans(reel)`: the union of the spans of Text generator events and of events tagged `Title`, merged when
+closer than `2 × title_fade_ms`; indexed per revision. Moving or trimming a title moves its section.
 
-| Field | Unit | Maps onto the compressor |
+## D4. Hand edits
+
+The background events' own `gain_db` and its curve are summed in dB AFTER the automatic gain: the person's key at a
+spot raises or lowers it there whatever the automation does. The band (D5) shows the automatic part; the event's level
+line shows the person's part; "Convert to volume curve" writes the automatic part into the event's curve (summed
+with the person's) and turns both rules off — one undo step.
+
+## D5. The band
+
+The analysis lane computes the automatic gain over the project (the compressor's detector and gain code over the key's
+loudness, times G(t)), cached by the content hash of the key events, the title spans and the rules; drawn as a shaded
+band under each background event's level line; matches the rendered gain within 0.5 dB.
+
+## D6. Format and OTIO
+
+Roles, `Ducking` and `Set` keys by content (the next free `.kt` version when present); a project with R.65's single
+track key reads as `Set { tracks: [it], roles: {} }` with no text change. OTIO: in `metadata["kt"]`.
+
+## D7. Class walk — "a mix setting that must follow the edit"
+
+| Setting | Follows the edit today? | Here |
 |---|---|---|
-| Duck under | roles ✓ | key = `Roles(set)` |
-| Reduce by | dB, 0…−60, −∞ | ratio and threshold such that a key at the sensitivity level gives exactly this reduction (the gain computer solved in closed form) |
-| Sensitivity | %, 0…100 | threshold on the key, −60…−10 dBFS |
-| Fade | ms, 10…2000 | attack = fade/4, release = fade |
-| Between them: raise by | dB, 0…+12 | the track's level +N and the reduction deepened by N, so the level under the key is unchanged |
+| background under speech | yes if the speech is on the one key track | several tracks + roles |
+| background during titles | no (by hand) | title spans from the edit |
+| title sound only during titles | no (by hand) | `OnlyInTitles` |
+| loudness to a target | no | `loudness-norms` |
+| crossfades at cuts | yes (transitions) | — |
 
-The section writes the compressor rows (one command per change, rule 25); the compressor's own rows are shown
-under "Details", dimmed but editable — editing one there marks the section "custom" instead of fighting it. The
-values are remembered per user (`user_store`, rule 23) as the defaults of the next background.
+## D8. Idle
 
-## D4. The drawn reduction (Q1 a)
-
-A background job on the analysis lane computes, per background track with a role key, the gain the compressor
-applies over the project, from the key events' loudness envelope (the same detector code, block rate 1920 ticks),
-keyed by the content hash of the key events, the background's chain and the reel (the cache rule: keyed by what
-determines it). The timeline draws it as a shaded band under each background event's level line (one mesh per
-event, rule 12). It is a picture of what the live device does, not a second definition: a test compares it with
-the rendered gain within 0.5 dB. "Convert to volume curve" writes the band as gain keys onto the background
-events (thinned to ≤ 4 keys per duck) and switches the compressor off, one undo step.
-
-## D5. Format and OTIO
-
-`role` on tracks and events and `Roles` keys are written by content: the `.kt` version rises (the next free
-number at apply time; 8 today) only when one is set — an older build would drop them on save, so it refuses.
-OTIO: in `metadata["kt"]` of the clip and track envelopes; a foreign editor gets the background un-ducked. A
-planned row in "What OTIO export loses".
-
-## D6. Class walk — "a device whose knobs are not the person's question"
-
-| Place | Person's question | Today | Here |
-|---|---|---|---|
-| ducking | "how much quieter under speech" | threshold/ratio | D3 |
-| limiter | "the ceiling" | ceiling dB (already the question) | unchanged |
-| gate | "cut the noise between words" | threshold/hysteresis | listed for a later form, not here |
-| loudness | "how far from the norm" | a reference line | change `loudness-norms` |
-| sidechain by track elsewhere (video keyers) | — | no track key in video | none |
-
-## D7. Idle
-
-Roles and the form cost nothing at rest. The band is computed once per content hash on the analysis lane (class
-Background, paused by playback), never in a frame; a hover redraws the cached mesh.
+Nothing at rest; the band once per content hash on a background lane, paused by playback.
 
 ## Rejected
 
-- **A new "Ducker" effect kind** — rule 24 and the audio-fx requirement "A second kind of effect for ducking SHALL
-  NOT exist".
-- **Sections by regions (`MarkedArea` with a role)** — the owner chose the clip type.
-- **A key by track only, with a "pick all speech tracks" helper** — breaks when a line moves track; the role is the
-  address (F-AUD-007 trick 1).
+- **A loudness-only detector for titles** — a quiet title would not count; the edit knows where the titles are.
+- **A generated curve as the only result** (Premiere's keys) — stale after a re-edit; the owner keeps hand edits on top
+  instead.

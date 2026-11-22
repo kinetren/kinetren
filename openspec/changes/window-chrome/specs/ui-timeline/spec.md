@@ -24,20 +24,12 @@ Why: the owner, v26.10 T5 — "оно начнет перемещаться в �
 - **PATH** start the program maximized → drag the toolbar's empty space → the window becomes smaller and follows the pointer → double-click to maximize → drag again → the same normal size
 - **TEST** t3937 (`src/apps/kt-app/src/layout_tests.rs`), planned live scenario `max_drag`
 
-### Requirement: A narrow toolbar scrolls with the wheel; a window drags by its preview
-Over the toolbar row the wheel SHALL move the row sideways when it does not fit, with the "more" menu kept; a
-primary drag on the preview picture that no picture gesture claims SHALL move the window holding it, the detached
-preview's and the main one alike, while a click keeps its meaning.
-Why: the owner, v26.10 U10 and U11.
+### Requirement: A narrow toolbar scrolls with the wheel
+Over the toolbar row the wheel SHALL move the row sideways when it does not fit, with the "more" menu kept.
+Why: the owner, v26.10 U10.
 
 #### Scenario: Wheel over a narrow toolbar
 - **WHEN** the window is 900 points wide and the wheel turns over the toolbar
 - **THEN** the hidden groups slide into view; the "more" menu lists only what is still outside
 - **PATH** narrow the window → hover the toolbar → turn the wheel → the row slides left, Render and Search come into view
 - **TEST** t3938 (`src/apps/kt-app/src/layout_tests.rs`)
-
-#### Scenario: Drag the detached preview by its picture
-- **WHEN** with no event selected, the detached preview's picture is dragged; then an event is selected and its frame handle dragged
-- **THEN** the first drag sends the window drag; the second moves the event's geometry and not the window
-- **PATH** detach the preview → press on the picture and drag → the window follows → select an event → drag its corner handle → the picture scales, the window stays
-- **TEST** t3939 (`src/apps/kt-app/src/layout_tests.rs`)

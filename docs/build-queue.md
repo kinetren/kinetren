@@ -129,6 +129,8 @@ cache of heavy effects (B1) and the cached render. Start it in this wave.
 | `point-tracker` **v+** | L | `magic-wand-mask` (MASKS) | MASKS (the perspective mask transform), MODEL (`ClipEvent.trackers`), automation links, PREVIEW-UI | answered A20 (point and planar) | t3520–t3534 |
 | `scopes` | M | `stream-picture-stays` (GPU) | GPU (a tap pass, new file), PLAYER (`measure_paused`), SHELL (a View window) | answered A8 (moved here from wave 4, whose slot the persistent cache took: the owner's "СУТЬ … В КЭШИРОВАНИИ") | t3400–t3414 |
 | `hdr-sources-to-sdr`, 16-bit stage 5 **v+** | XL | waves 1–8's GPU, STREAM and COLOR-FX work merged (it rewrites the pool's format and the core shaders) | MODEL, DECODE, GPU, CACHE, EXPORT, FX manifests, SHELL (the display) — all core | answered B4 (1.0 = SDR white 203 cd/m²; 8-bit effects run marked; HDR on an HDR monitor at once; SDR + HDR10 + HLG export) | t3877–t3899 |
+| `persistent-cache` (was `disk-copies`) | L | `project-cache-folder`; `device-decode-sources` (DECODE) | DECODE (`CopySource`), CACHE (the binding table), EXPORT (`MuxConfig` times) | **open: Q1 (the name), Q2** | t3440–t3459 |
+| `hdr-sources-to-sdr`, 16-bit stage 5 **v+** | XL | waves 1–8's GPU, STREAM and COLOR-FX work merged (it rewrites the pool's format and the core shaders) | MODEL, DECODE, GPU, CACHE, EXPORT, FX manifests, SHELL (the display) — all core | **open: Q1–Q4** (what 1.0 is, islands, HDR on the monitor, HDR export) | t3877–t3899 |
 
 The 16-bit stage touches every core area. It runs with only non-core work beside it: the UI-only rows
 of the next section.

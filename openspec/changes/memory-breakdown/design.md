@@ -1,6 +1,7 @@
 # Design: memory-breakdown
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `df6d0858`. Q1–Q2 in `proposal.md`; defaults recommended.
+> DESIGN ONLY, revision 2 (2026-11-22): the owner's B12 — the counter shows resident memory plus VRAM in GB (D4).
+> Revision 1 on `df6d0858`.
 
 ## Context
 
@@ -37,10 +38,11 @@ background `media`-lane job when the section opens and every 5 s while it stays 
 folder's own size index when `project-cache-folder` keeps one). Each segment's hover says what clearing it costs
 ("peaks and thumbnails are rebuilt when needed").
 
-## D4. The status counter (Q1 a)
+## D4. The status counter (the owner's B12)
 
-Unchanged number; its hover (the one hint place) lists "3 200 MB: frames 1 100 · kept 700 · model 120 … video
-memory 1 100 MB".
+"3.2 GB · VRAM 1.1 GB": the resident memory and the video memory (kt-gpu's device bytes), each to one decimal in GB,
+nothing else on the bar (the former "memory: N MB" text goes). Its hover (the one hint place) expands: the largest
+sections of each with MB, then "project on disk: N GB". Read once a second as today.
 
 ## D5. Class walk — "a number that does not say what it counts"
 

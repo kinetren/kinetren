@@ -4,12 +4,13 @@
 The Diagnostics window's Memory section SHALL draw the resident memory as one bar of sections (sorted by size,
 "not counted" last), the video memory as a second bar and the project's disk stores (sidecar index, cache folder,
 recovery file) as a third, each segment named with its size on hover and listed under the bars; the status bar's
-memory counter SHALL keep one number whose hover lists the largest sections and the video memory; nothing SHALL be
+memory counter SHALL show the resident memory and the video memory in GB and nothing else, its hover expanding the
+sections and the project on disk; nothing SHALL be
 sampled while the section is closed.
-Why: the owner, v26.10 Q1–Q3.
+Why: the owner, v26.10 Q1–Q3 and kkt-26.11.20b B12 — "к текущему добавить vram, и убрать лишнее, ну и в gb показывать".
 
 #### Scenario: Read where the memory went
 - **WHEN** the person opens Diagnostics on a played project and hovers the largest segment, then hovers the status bar's counter
-- **THEN** three bars show; the hover names "decoded frames 1 100 MB" with what it is; the status hover lists the top three and the video memory; closing the section stops the disk walk
-- **PATH** click Diagnostics → the Memory section shows three bars: memory, video memory, project on disk → hover the widest segment → the status bar says "Decoded frames: 1 100 MB — frames kept to play without decoding" → hover the "memory: 3 200 MB" counter at the bottom → it lists the three largest sections and the video memory
+- **THEN** three bars show; the hover names "decoded frames 1 100 MB" with what it is; the status counter reads "3.2 GB · VRAM 1.1 GB" and its hover lists the sections and the project on disk; closing the section stops the disk walk
+- **PATH** click Diagnostics → the Memory section shows three bars: memory, video memory, project on disk → hover the widest segment → the status bar says "Decoded frames: 1 100 MB — frames kept to play without decoding" → hover the "3.2 GB · VRAM 1.1 GB" counter at the bottom → it expands the sections of both and the project on disk
 - **TEST** t3964 (`src/apps/kt-app/src/reach_tests.rs`), t3965 (`src/apps/kt-app/src/layout_tests.rs`)

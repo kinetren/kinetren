@@ -1,12 +1,12 @@
 # Tasks: real-3d-groups
 
-> DESIGN ONLY until the owner answers Q1–Q2 and the orchestrator's go. Tests: t3952–t3956 (t3957–t3959 spare).
+> DESIGN ONLY until the orchestrator's go (questions decided). Tests: t3952–t3956 (t3957–t3959 spare).
 
 ## 0. Notes
 
 - [x] 0.1 note F-CMP-005 (reconnaissance; the bug-tracker dump R2–R3 needs network access — a separate task)
 - [x] 0.2 proposal, design (D1–D6), deltas `video-plan`, `ui-reach`, `project-format`; planned OTIO row; `openspec validate real-3d-groups --strict`
-- [ ] 0.3 the owner's answers folded in
+- [x] 0.3 the owner's answers (kkt-26.11.20b) folded in
 
 ## 1. Model and format
 

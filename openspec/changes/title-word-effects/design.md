@@ -1,6 +1,6 @@
 # Design: title-word-effects
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `aa658e1f`. Q1 in `proposal.md`; the default is the recommended option.
+> DESIGN ONLY, revision 2 (2026-11-22), base `9f506fd5`: the owner's B8 — many ranges from the start (D1, D7).
 
 ## Context
 
@@ -13,7 +13,7 @@
 
 ## D1. The text-range shape
 
-`MaskShape::TextRange { from: u32, to: u32, text: String, every: bool }` — char offsets into the title's shown text
+`MaskShape::TextRange { ranges: Vec<TextSpan> }`, `TextSpan { from: u32, to: u32, text: String, every: bool }` — char offsets into the title's shown text
 (the source's value for a counter: offsets apply to the shown string), the selected text kept for `every` and for
 naming. Legal on the masks of a title event's picture and its slots; refused elsewhere, named.
 
@@ -43,6 +43,20 @@ The title form's text field: select characters → right click → "Mask this te
 picture mask on the event's selected slot (or the event's picture when no slot is selected) in Isolate mode, named
 "text: “SALE”", selected in the mask list. The mask list draws its row like any mask; the preview outlines the
 range's glyph boxes while the mask is selected.
+
+## D7. Many words (the owner's B8)
+
+- One mask, many spans: "Add to this mask" (Ctrl+select a word, right click) appends a span to the selected slot's
+  text-range mask; "Remove from mask" on a selection removes it. The mask list shows "text: 20 pieces" and expands to
+  the list of words.
+- One rasterization for all masks of a title per frame: kt-text lays the title out once and writes an R8 id map — each
+  glyph's value is the index of the mask group whose spans include it (up to 255 groups; overlapping spans of different
+  masks: the later mask wins, named in the mask list). Each slot's coverage is its group's indicator in that map
+  (feather and expansion applied per mask). Twenty words in one mask cost the same as one; ten masks cost one layout
+  plus ten cheap selects.
+- Cost bound: the frame cost of a title with one isolating slot over 20 spans stays within 1.2× of the same slot over
+  one span (a test).
+- Edits move every span (D3); spans that touch after an edit merge.
 
 ## D5. Class walk — "a part of an object that should be an object"
 

@@ -59,6 +59,12 @@ Stage 1 moved every picked effect, transition and generator into plugin crates a
 
 ## Questions to the owner
 
+Decided (2026-11-22, `kkt-26.11.20b` B11, lines 23–24): "wasmtime + WGSL (Recommended)" — Q1 (a) wasmtime, Q2 (a)
+video plugins give WGSL; "Отдельным проектом после (Recommended)" — Q3 (a), the layered-scene exchange is a design
+of its own after this one.
+
+The questions as asked:
+
 **Q1. The wasm runtime.** Your words: "rust+wasm … собирать и запускать(в тот же wasm)". An audio effect runs a block
 every 21 ms on the render thread, so the runtime's speed decides what a plugin can do.
 - (a) **wasmtime (compiles the module to machine code once; near native speed; +~10 MB to the program)**

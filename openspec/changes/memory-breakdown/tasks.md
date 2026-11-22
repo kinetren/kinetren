@@ -1,12 +1,12 @@
 # Tasks: memory-breakdown
 
-> DESIGN ONLY until the owner answers Q1–Q2 and the orchestrator's go. Tests: t3962–t3965 (t3966–t3967 spare).
+> DESIGN ONLY until the orchestrator's go (questions decided). Tests: t3962–t3965 (t3966–t3967 spare).
 
 ## 0. Notes
 
 - [x] 0.1 F-RES-011 refreshed (since 2026-11-20)
 - [x] 0.2 proposal, design (D1–D6), deltas `telemetry`, `ui-reach`; `openspec validate memory-breakdown --strict`
-- [ ] 0.3 the owner's answers folded in
+- [x] 0.3 the owner's answers (kkt-26.11.20b) folded in
 
 ## 1. Accounts
 

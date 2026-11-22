@@ -29,8 +29,8 @@ bar, and the project's memory on disk.
 - **The project on disk**: a third bar, the project's stores: the sidecar index (`<project>.ktindex.db`: peaks,
   thumbnails, packet index), the project's cache folder (prerender, stream history, disk copies — change
   `project-cache-folder`), the recovery file; sizes read when the section opens and every 5 s while it is open.
-- **The status bar keeps one compact number** (resident MB); its hover shows the top three sections and the video
-  memory (Q1).
+- **The status bar counter shows two numbers in GB, nothing else**: the resident memory and the video memory
+  ("3.2 GB · VRAM 1.1 GB", the owner's B12); its hover expands the sections of both and the project on disk.
 
 ## Capabilities
 
@@ -52,6 +52,13 @@ bar, and the project's memory on disk.
   section is open.
 
 ## Questions to the owner
+
+Decided (2026-11-22, `kkt-26.11.20b` B12, lines 25–26): Q1 revised by his words "к текущему добавить vram, и убрать
+лишнее, ну и в gb показывать, а при наведении - раскрывать что-то еще показывать" — the bottom counter shows the
+resident memory plus the video memory, nothing else, in GB, and its hover expands the rest; Q2 (a) "Только проекта
+(Recommended)" — the disk bar shows only the project's stores.
+
+The questions as asked:
 
 **Q1. The compact counter at the bottom.** Your words: "внизу окна хочется компактный счетчик видеть". Today it shows
 the process's resident memory ("memory: 3200 MB").
