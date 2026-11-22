@@ -46,12 +46,13 @@ kinetren-cache/
   media/<content id>/             peaks · packets · thumbs · thumb-pixels · poster · facts · loudness
   pairs/<id a>-<id b>             sync offsets, the pair ordered
   reels/<content hash>/           strip · frames · peaks          (STRIP_ROW_VERSION in the header)
-  media/<content id>/copy-<q>.mkv a heavy source's copy at quality step q   (persistent cache, D1b)
-  results/v<FORMAT>-<build>/<dev>/   THE PERSISTENT CACHE OF RESULTS (D1b), one store:
-    frames/                       composites of moments: segments + manifests (the former disk prerender)
-    layers/                       a layer's output after its heavy stage: segments + manifests (B1)
-    history/                      stream entries (Datamosh), LZ4      (durable-history-and-mix)
-  mix/<build>/                    kept mix runs, raw f32          (durable-history-and-mix)
+  THE PERSISTENT CACHE ("Постоянный кэш", D1b): one store, four kinds side by side, one index and one salt rule
+  render/                         frames: composites of moments, segments + manifests (the disk prerender)
+  stages/                         stage results: a layer's picture after a heavy node, a track stage's or a
+                                  reel's output, under a content key (persistent-cache D1–D4)
+  copies/                         heavy sources' copies, by the original's content id (persistent-cache)
+  history/                        stream entries (Datamosh), LZ4      (durable-history-and-mix)
+  mix/                            kept mix runs, raw f32          (durable-history-and-mix; outside the store)
   renders.tsv                     earlier renders, verified       (cached-final-render)
   usage.tsv                       per tenant: bytes, last used    (for the cycle)
 ```
@@ -74,43 +75,59 @@ kinetren-cache/
   - the thumbs lane writes thumbnails and posters;
   - the media lane writes packets;
   - the reel-preview lane writes reels;
-  - the render-cache thread writes `results/…/frames/` and `results/…/layers/`;
-  - the persistent cache's copy job writes the source copies (a background job, the change `disk-copies`);
+  - the render-cache thread writes `render/` and `stages/`;
+  - the persistent cache's copy job writes `copies/` (a background job, change `persistent-cache`);
   - the history and mix writers of `durable-history-and-mix` write theirs.
   - The UI thread touches nothing. Two processes may write the same entry; the content is the same
     (keyed by content), and the last rename wins.
 
-## D1b. The persistent cache is one store (the owner's B1)
+## D1b. The persistent cache is one store (the owner's B1; agreed with spec-features)
 
 The owner: "мне не нравится почему ты думаешь только о проигрывании и декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ
 ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!" (kkt-26.11.20b line 2). So the program's
-kept results live in one store, `results/`, with one key and one manifest form. The disk prerender
-(`render-cache-disk`), the heavy-effect results (the persistent cache, change `disk-copies` revised by
-spec-features) and the stream history (`durable-history-and-mix`) are its three kinds, not three stores.
+kept results live in ONE store, the persistent cache, designed by spec-features in change `persistent-cache`
+(formerly `disk-copies`; branch `claude/spec-features-224d3d`, commit 1e31056c, design D1–D4, D8). This
+change hosts it. Its kinds lie side by side in the cache folder:
+- `render/`: frames, the composites of moments (the disk prerender of `render-cache-disk`);
+- `stages/`: stage results, a layer's picture after a heavy node, a track stage's or a reel's output;
+- `copies/`: heavy sources' copies;
+- `history/`: stream entries (`durable-history-and-mix`).
 
-- **One key layout** for `frames/` and `layers/`: `render_cache::durable_hash`. It hashes the plan's
-  fields without content serials, `Leaves::digest` of the files' identities (path, size, modification time)
-  and the generators' values, and the build salt; the device is the folder.
-  - A frame's key covers its whole plan.
-  - A layer's key covers the layer's sub-plan up to and including the stage kept, so an edit after that
-    stage, or on another layer, keeps the entry valid. That is what makes a heavy effect's result outlive
-    a light edit beside it.
-  - The layout is the contract `cached-final-render` names (the video-plan delta "The durable key's layout
-    is a shared contract").
-- **One manifest form:** video segments of the machine's hardware encoder with a text manifest per segment
-  (codec, encoder, size, rate, one key per frame), as the disk prerender writes today. The history is LZ4
-  of exact entries (it must be lossless: `durable-history-and-mix` D9). The source copies are MKV files
-  with a manifest of the original's identity and timestamps.
-- **One cycle (D3) and one registry.** The Settings page shows the store under the owner's name,
-  "Persistent cache" ("Постоянный кэш"), per folder.
-- **Who decides what:**
-  - this change: the folder, the store's places, the entry header, the key's layout, the cycle and the
-    notice;
-  - spec-features in `disk-copies`: which layers and sources are heavy enough to keep, when the job runs,
-    how a kept layer result enters the plan in place of its stages, and the switch "as in the preview";
-  - `durable-history-and-mix`: the history entries and the mix runs.
+**The keys.**
+- Frames and stage results are keyed by `render_cache::durable_hash`. It covers the plan's fields without
+  content serials, `Leaves::digest` of the files' identities and the generators' values. A frame's key
+  covers its whole plan. A stage result's key covers the sub-plan up to and including that stage, so an
+  edit after it, or on another layer, keeps the entry valid.
+- This is the layout `cached-final-render` names (the video-plan delta "The durable key's layout is a
+  shared contract").
 
-  Proposed to spec-features on 2026-11-22. Its revision of `disk-copies` names this layout.
+**The salt** (spec-features' request 3). An entry is salted by:
+- the store's format;
+- the decoder's major (`avcodec_version()`);
+- the device class (adapter and driver);
+- the versions of the kernels that ran: each plugin's version and its WGSL text's hash.
+
+The whole program build is NOT in the salt, so a new release keeps every result its changes did not
+touch. A salt that no longer matches is a miss, and the entry is removed when it is met. There is no sweep
+at open and no folder per build or device.
+
+**The manifest forms:**
+- frames and stage results: video segments of the machine's hardware encoder with a text manifest per
+  segment (codec, encoder, size, rate, salt, one key per frame);
+- history: LZ4 of exact entries (it must be lossless: `durable-history-and-mix` D9);
+- copies: MKV with a manifest of the original's identity and timestamps.
+
+**Eviction inside the store** (spec-features' request 2). The store ranks its entries by value per byte:
+the measured cost saved per read × the reads ÷ the bytes. When the folder cannot take more (D3, the
+owner's cyclic rule on top), the store drops the lowest value per byte first. Frames this process used in
+the last minute are never dropped.
+
+**Who decides what:**
+- this change: the folder, the places, the entry header, the salt's form, the folder's room, the cycle
+  and the notice;
+- `persistent-cache`: which stages and sources are heavy enough to keep, the value measure, how a kept
+  stage result enters the plan in place of its stages, the job and the switch "as in the preview";
+- `durable-history-and-mix`: the history entries and the mix runs.
 
 ## D2. Reading and invalidation (the sidecar's rules, kept)
 
@@ -135,10 +152,12 @@ spec-features) and the stream history (`durable-history-and-mix`) are its three 
   - `KT_RENDER_CACHE_MB` caps the picture results alone, for tests and the live check.
 - **The cycle.** A writer asks the folder for room before it writes an entry. When the entry does not fit,
   the folder drops entries until it does:
-  - least recently used first, by `usage.tsv` (never the file system's access time, often off);
-  - in the tenants' order: the stream history, the heard mix, the picture results (`frames/` and
-    `layers/` together by last use), the heavy-source copies, then `reels/`, then `media/`;
-  - never what this process used in the last minute, so the cycle cannot eat the loop being played;
+  - first the persistent cache (`render/`, `stages/`, `copies/`, `history/`), by its own rank: the lowest
+    value per byte first (D1b, the measured cost saved per read × reads ÷ bytes);
+  - then the heard mix (`mix/`), least recently used first;
+  - then `reels/`, then `media/`, least recently used first, by `usage.tsv` (never the file system's access
+    time, often off);
+  - never a frame this process used in the last minute, so the cycle cannot eat the loop being played;
   - if nothing droppable remains, the write is skipped and counted. A cache never fails a gesture.
 
   The drop runs on the writer's own thread, under `lock`, and never on the UI thread.
@@ -153,7 +172,7 @@ spec-features) and the stream history (`durable-history-and-mix`) are its three 
   The trace records every drop with its tenant, its bytes and why (the cap, the disk, a quota).
 - **At rest** nothing scans or trims: the cycle runs only when something writes, so the program at rest
   costs nothing.
-- Other builds' and devices' picture results, history and mix are removed at open, as today.
+- Nothing is swept at open: an entry whose salt no longer matches (D1b) is a miss and is removed when met.
 
 ## D4. A folder that cannot be written, a synced folder, the untitled project
 
@@ -180,8 +199,9 @@ spec-features) and the stream history (`durable-history-and-mix`) are its three 
   - An unreadable or locked sidecar is left for the next open; after three failed imports it is deleted
     (it is a cache).
   - Until the import ends, a miss in the new folder is computed as usual. Nothing waits for the import.
-- **`<data>/render-cache/`** is deleted at the first start of the build. Its folders are salted by the
-  build, so the new build could not read them anyway.
+- **The old `<data>/render-cache/`** is deleted at the first start of this change's build. It lies outside
+  any project, and its folders are salted by the whole build. From then on no store is swept: a stale salt
+  is dropped lazily on a miss (D1b).
 - **The plans of `durable-history-and-mix` and `cached-final-render`** take their roots from the cache
   folder; neither is built yet.
 
@@ -201,11 +221,11 @@ spec-features) and the stream history (`durable-history-and-mix`) are its three 
 |---|---|---|---|
 | media index (peaks, packets, thumbs, posters, loudness, sync) | `<stem>.ktindex.db` | `kinetren-cache/media/`, `pairs/` | the owner's decision |
 | reel previews | `<stem>.ktindex.db` | `kinetren-cache/reels/` | same |
-| prerender segments | `<data>/render-cache/` | `kinetren-cache/results/…/frames/` | "вот с тем же превью кэшем" |
-| heavy effects' results (persistent cache, B1) | none | `kinetren-cache/results/…/layers/` | "СУТЬ … В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ" |
-| Datamosh history, heard mix (planned) | `<data>` | `kinetren-cache/results/…/history/`, `mix/` | the same rule for a new kept result |
+| prerender segments | `<data>/render-cache/` | `kinetren-cache/render/` | "вот с тем же превью кэшем" |
+| heavy stages' results (persistent cache, B1) | none | `kinetren-cache/stages/` | "СУТЬ … В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ" |
+| Datamosh history, heard mix (planned) | `<data>` | `kinetren-cache/history/`, `mix/` | the same rule for a new kept result |
 | earlier renders list (planned) | `<data>` | `kinetren-cache/renders.tsv` | per project |
-| heavy sources' copies (persistent cache, B1; formerly `proxies`) | `<proxy folder>` | `kinetren-cache/media/<content id>/copy-*.mkv` | one place, keyed by the original's content |
+| heavy sources' copies (persistent cache, B1; formerly `proxies`) | `<proxy folder>` | `kinetren-cache/copies/` | one place, keyed by the original's content |
 | compiled pipelines, pass times | `<data>/shader-cache/` | unchanged | per machine and device, shared by every project |
 | recovery, autosave | beside the project / `<data>` | unchanged | durability, not a cache |
 | posters, recent list, templates | `<data>` user store | unchanged | between projects |

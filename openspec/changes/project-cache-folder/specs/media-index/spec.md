@@ -14,11 +14,14 @@ A named project's caches SHALL live in `kinetren-cache/` in the project's folder
 projects in it.
 - **What it holds:** the media index, the reel previews, the persistent cache, the heard mix and the list
   of earlier renders. Each SHALL have a place of its own.
-- **The persistent cache SHALL be one store** (`results/`). It holds three kinds: the composites of moments
-  (the disk prerender), the results of heavy effects per layer, and the stream history. The two picture
-  kinds SHALL be keyed by one layout, `durable_hash` over the plan or over a layer's sub-plan up to the
-  kept stage, and stored in one manifest form; heavy sources' copies SHALL lie under the media's content
-  id.
+- **The persistent cache SHALL be one store** of four kinds side by side: frames (`render/`, the disk
+  prerender), stage results (`stages/`), source copies (`copies/`) and the stream history (`history/`).
+  - Frames and stage results SHALL be keyed by one layout, `durable_hash` over the plan or over the
+    sub-plan up to the kept stage.
+  - Every entry SHALL be salted by the store's format, the decoder's major, the device class and the
+    versions of the kernels that ran, not by the whole build.
+  - An entry whose salt no longer matches SHALL be a miss and be removed when met. No store SHALL be
+    swept at open.
 - **What it never holds:** anything the project needs to open. Deleting the folder SHALL cost only
   recomputation.
 - **Marking:** the folder SHALL carry a `CACHEDIR.TAG` and a `README.txt` that says it may be deleted.
@@ -32,9 +35,10 @@ projects in it.
 - **Cyclic writing:** a folder's room SHALL be the smaller of its cap and the disk's free space less a
   reserve. A write that does not fit, or that the system refuses for lack of space, SHALL first drop the
   least recently used entries:
-  - in this order: the stream history, the heard mix, the picture results, the source copies, the reel
-    previews, the media index;
-  - never what this process used in the last minute.
+  - first the persistent cache, the lowest value per byte first (the measured cost saved per read × the
+    reads ÷ the bytes);
+  - then the heard mix, the reel previews and the media index, least recently used first;
+  - never a frame this process used in the last minute.
 
   If nothing can be dropped, the write SHALL be skipped and counted, never failing a gesture. The first
   drop of a session in a folder SHALL post one notice naming the folder, with a way to Settings → "Caches
@@ -72,7 +76,7 @@ user's folder (project-cache-folder D1–D5). kkt-26.11.20b line 2 ("СУТЬ �
 
 #### Scenario: A full folder writes in a cycle and says so once
 - **WHEN** a folder with a small cap holds history, mix runs, picture results and media entries of several ages, new picture results keep arriving, a write meets `ENOSPC` from a test file system, and the loop being played was used a moment ago
-- **THEN** each write first drops the least recently used entries in the tenants' order, the loop's entries stay, the `ENOSPC` write recounts the room, drops and succeeds on its retry, one notice names the folder for the session, and at rest nothing is scanned or dropped
+- **THEN** each write first drops the persistent cache's entries of the lowest value per byte, then the mix, reels and media by last use, the loop's frames stay, the `ENOSPC` write recounts the room, drops and succeeds on its retry, one notice names the folder for the session, and at rest nothing is scanned or dropped
 - **TEST** t3835, t3836, t3837 (`src/libs/kt-media/tests/cache_folder.rs`)
 
 #### Scenario: A moved, saved or copied project keeps what it can

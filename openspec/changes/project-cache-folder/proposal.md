@@ -33,13 +33,13 @@ Four things follow from that layout:
   the projects in that folder, with one place per cache. It holds:
   - `media/` — per media file, by its content;
   - `reels/` — the reel previews;
-  - `results/` — THE PERSISTENT CACHE ("Постоянный кэш", the owner's B1) as one store: the composites of
-    the preview's prerender (moved from `<data>`), the results of heavy effects per layer, and the Datamosh
-    history, under one key layout (`durable_hash`) and one manifest form (design D1b);
+  - the persistent cache ("Постоянный кэш", the owner's B1, change `persistent-cache`) as one store of four
+    kinds side by side: `render/` (the preview's prerender, moved from `<data>`), `stages/` (heavy stages'
+    results), `copies/` (heavy sources' copies) and `history/` (the Datamosh history). One key layout
+    (`durable_hash`), one salt rule (the kernels' versions, the decoder major, the device class, not the
+    build) and one rank by value per byte (design D1b);
   - `mix/` — the heard mix of `durable-history-and-mix`;
   - `renders.tsv` — earlier renders found again by `cached-final-render`;
-  - `media/<content id>/copy-*` — heavy sources' copies (the persistent cache's source half, change
-    `disk-copies`).
 
   Each cache keeps its own files and versions. A broken or locked file in one costs only that entry.
 - **No SQLite.** Each entry is a file written to a temporary name and renamed, with a header that names
@@ -64,7 +64,7 @@ Four things follow from that layout:
 - **Migration:**
   - an existing `<name>.ktindex.db` is read once in the background into the new layout, then deleted;
   - `<data>/render-cache/` is deleted at the first start, since every build discarded it anyway (its
-    folders are salted by the build).
+    folders are salted by the whole build). No store is swept after that: a stale salt is dropped on a miss.
 - **Nothing a project needs lives there.** Deleting the folder costs time, never work. Recovery,
   autosave, posters, logs, the trace, crash reports, compiled pipelines and pass times stay where they
   are: they are durability or per-machine data, not the project's caches.
