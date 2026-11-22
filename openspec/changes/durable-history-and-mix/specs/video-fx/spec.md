@@ -51,3 +51,8 @@ owner chose LZ4 over raw (kkt-26.11.20 line 19; design D9 says why a checkpoint 
 - **WHEN** composites and stream entries fill the cache folder's room with measured values per byte, a new composite arrives, and an entry of another salt is asked
 - **THEN** the entries of the lowest value per byte are dropped first whatever their kind, no frame this process used in the last minute is dropped, and the stale entry is a miss removed when met
 - **TEST** t3344 (`src/libs/kt-engine/src/render_cache.rs`)
+
+#### Scenario: A checkpoint held on the device is written after its readback at rest
+- **WHEN** a Datamosh walk with `hold_ahead` keeps its pinned checkpoints as device buffers, then the quiet period passes, then a fresh memo over the same folder asks the next position
+- **THEN** the checkpoints are read back by a background job only during the quiet, written, and the fresh walk resumes from them with frames byte-equal to an uninterrupted walk's
+- **TEST** t4105 (`src/libs/kt-engine/tests/stream_durable.rs`)

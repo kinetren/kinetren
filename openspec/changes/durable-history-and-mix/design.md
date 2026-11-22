@@ -174,6 +174,46 @@ The owner asked: "почему история datamosh без сжатия ес�
   tenant's ratio. If the owner's projects show LZ4 below 1.2×, the trace says so, and a later change can
   weigh zstd's fast levels.
 
+## D10. What the tree has today, and the corrections it forces (checked at orch `873934f7`)
+
+- **The memo's API** (`kt-plugin-api/src/stream.rs`). `StreamMemo` (`:330`) has no `insert`. Writes go
+  through `put` (`:420`), `put_transient` (`:428`) and `put_pinned` (`:436`), all into `put_entry` (`:440`);
+  reads through `get<T>` (`:403`), `contains` (`:415`) and `holds` (`:596`, both tiers). The disk tier hooks
+  in at `put_entry` (marks a pinned or broken entry unwritten) and at `holds`/`get` (a memory miss asks the
+  disk index). `mosh::needs` (`mosh.rs:550`) already starts from `memo.holds(...)`, so no kernel change is
+  needed for a walk to resume from disk.
+- **The codec deals in bytes.** kt-plugin-api may depend only on kt-time, serde and libm, so `EntryCodec`
+  encodes to and decodes from `Vec<u8>`. LZ4 (`lz4_flex`, a new workspace and kt-engine dependency; none is
+  present today) lives in kt-engine's writer and reader.
+- **What a checkpoint is.**
+  - Host checkpoints are `Planes` (`fx-video-codec/src/codec.rs:18`).
+  - Transients are `Clean` (recon `Planes` + a `Packet`, `codec.rs:46`).
+  - With `hold_ahead` set (`walk.rs:317`), a pinned checkpoint can be a device buffer `HeldPic`
+    (`walk.rs:53`, written at `:882`). `compute::Held` is opaque, with no readback API. So writing a
+    device-held checkpoint at rest needs a host copy job on the compute host (a `run` that reads the
+    buffer back into `Planes`), at class `background`, only at rest. Transients (`Clean`) are not stored.
+- **The salt must reach the memo.** The preview's memo is one process-wide static (`stream_memo()`,
+  `video_stream.rs:58`), shared by every stage. Each export makes its own (`export.rs:287`,
+  `export_pipeline.rs:718`). `get(key)` knows neither the stage's salt nor its codec, so `run` (`:884`) and
+  `key_only` (`:863`) set a thread-local scope, as `with_leaves` does. The scope holds the stage's salt (D3:
+  the store's salt, the plugin's id, version and WGSL hash, the codec's version, and the files of
+  `FileIds.all` through `RenderCache::files`, `render_cache.rs:907`) and its `EntryCodec`. The backing reads
+  them from there.
+- **The mix's samples are a `Box`.** `Unit.data` (`mix.rs:56`) is `Box<[f32]>`. D5's no-copy snapshot needs it
+  to become `Arc<[f32]>` (one allocation per kept burst, as today).
+- **There is no channel into the render thread today.** `RenderCtx` (`player.rs:2081`) has atomics, mutexes
+  and the outgoing `rtrb::Producer`. The restore handoff is a second `rtrb` ring (bounded, lock-free; `rtrb`
+  is already a dependency), drained at the top of a pass in `audio_render_loop` (`player.rs:2442`). The
+  loader is `prefetch_loop` (`:3400`), beside its `mix.budget.ask` (`:3522`). `MixCoverage` (`mix.rs:499`)
+  carries the snapshot of unwritten units out.
+- **The scene hash** is `audio.rs:1012` (`scene_base` + `clips[i].fp` over the widened range's active clips).
+  That widened range is where the mix salt's audio file identities are collected.
+- **The trace kinds** for history and mix records go into `kt_time::trace::render_cache` (`trace.rs:631`).
+  The restart summary has no recorder yet; it is new (D1), as is `kt-cli trace summary`'s line
+  (`trace_query.rs:466`). `trace cache` (`:130`) is extended.
+- **The store** (folder, header, `ask_room`, the key without the build) is `project-cache-folder`'s sections
+  1 and 3. This change starts after them.
+
 ## Risks
 
 - Disk read latency on a spinning disk during a walk: the read replaces a walk of many device frames; a
