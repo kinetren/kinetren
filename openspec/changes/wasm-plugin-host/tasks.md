@@ -1,12 +1,12 @@
 # Tasks: wasm-plugin-host
 
-> DESIGN ONLY until the owner answers Q1–Q3 and the orchestrator's go. Tests: t3957–t3961.
+> DESIGN ONLY until the orchestrator's go (questions decided). Tests: t3957–t3961.
 
 ## 0. Notes
 
 - [x] 0.1 F-EXT-003 refreshed (since 2026-11-20)
 - [x] 0.2 proposal, design (D1–D8, class walk), deltas `plugins`, `ui-reach`, `project-format`; `openspec validate wasm-plugin-host --strict`
-- [ ] 0.3 the owner's answers folded in
+- [x] 0.3 the owner's answers (kkt-26.11.20b) folded in
 
 ## 1. Host
 

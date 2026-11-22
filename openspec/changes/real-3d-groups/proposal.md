@@ -56,6 +56,12 @@ no thickness.
 
 ## Questions to the owner
 
+Decided (2026-11-22, `kkt-26.11.20b` B10, line 22): "A+B; переключатель дорожки (Recommended)" — Q1 (a),
+intersecting planes and extruded shapes in this change, models and lights later; Q2 (a), a track switch makes the
+group.
+
+The questions as asked:
+
 **Q1. What comes first?** Your words: "настоящий 3d … не потеряв в производительности и не усложнив код". The steps:
 planes that intersect (A), extruded shapes for parallax (B), imported models (C), lights and shadows (D).
 - (a) **A and B in this change, C and D later** (*recommended*: they reuse the layers you already have — pictures and
