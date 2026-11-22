@@ -23,9 +23,10 @@ tiers the same way the video tier works, and puts a measurement first.
 
 ## What Changes
 
-- **Two tenants of the project's cache folder** (`project-cache-folder`): `history/<build>/<device>/` for
-  stream entries and `mix/<build>/` for mix runs, beside the prerender's `render/`, under the folder's
-  limit pass (other builds' folders removed at open, least recently used out, the prerender never
+- **Two tenants of the project's cache folder** (`project-cache-folder`): the stream entries as the
+  `history/` kind of the persistent cache (`results/<build>/<device>/history/`, beside its `frames/` and
+  `layers/`), and `mix/<build>/` for mix runs, written in the
+  folder's cycle (other builds' folders removed at open, least recently used out, the prerender never
   evicting what this process used).
 - **Stream history pages to disk.** The stream memo gets a backing store: an entry the memo lacks is
   looked up on disk before a kernel walks for it; checkpoints and broken pictures are written there at
@@ -62,7 +63,7 @@ tiers the same way the video tier works, and puts a measurement first.
 - Invariants: 2 (the render thread still owns the mix alone; the disk is the player's thread's),
   4 (the bars: a burst/moment on disk counts as covered only when restorable), 11 (lossless, exact keys:
   the same bytes with and without the tier — so the export may read the stream tier, never the mix).
-- No project format change. Disk: the cache folder's limit (`project-cache-folder` Q2) covers both tenants;
+- No project format change. Disk: the cache folder's cycle (`project-cache-folder` D3, the owner's B2) covers both tenants;
   `KT_RENDER_CACHE=off` turns all three off. A new dependency: `lz4_flex` (pure Rust, its safe decoder) in
   kt-engine.
 
@@ -73,8 +74,8 @@ tiers the same way the video tier works, and puts a measurement first.
   сжатия если сам по себе datamosh это и есть сжатие? нет? ну если нет давай хотя бы LZ4". Design D9
   answers the question in plain words.
 - **Where:** "у нас не будет все в одной базе sqlite хранится а будет подпапка в папке проекта с разными
-  кешами". The two tiers are tenants of the project's cache folder (`history/`, `mix/`; change
-  `project-cache-folder`), under its limit, not a store of their own in the user's data folder.
+  кешами". The two tiers are tenants of the project's cache folder (`results/…/history/`, `mix/`; change
+  `project-cache-folder`), in its cycle, not a store of their own in the user's data folder.
 
 ## His question, answered (to relay)
 

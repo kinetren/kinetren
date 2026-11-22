@@ -47,7 +47,7 @@
 ## 6. Telemetry, kt-cli, Settings
 
 - [ ] 6.1 tenant records; `kt-cli trace cache`; `kt-cli cache <project> size|prune|clear`, `--cache-dir`; t3841
-- [ ] 6.2 Settings → "Caches on disk" (the list, sizes, Delete, the cap); i18n in every catalog;
+- [ ] 6.2 Settings → "Persistent cache" (the list, sizes, Delete, the cap); i18n in every catalog;
       `reach_tests`, `layout_tests`, font tests; t3842; planned live scenario `cache_folder` with a
       screenshot per step
 - [ ] 6.3 media-index `design.md` (why no SQLite, the class walk), kt-media and kt-engine `CLAUDE.md`;

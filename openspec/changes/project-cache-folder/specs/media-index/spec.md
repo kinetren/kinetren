@@ -12,8 +12,13 @@ t401, t402, t401b, t639); an old sidecar is imported once and deleted.
 ### Requirement: The project's caches live in a folder beside it, one place per cache
 A named project's caches SHALL live in `kinetren-cache/` in the project's folder, one folder shared by the
 projects in it.
-- **What it holds:** the media index, the reel previews, the preview's disk prerender, the durable
-  stream history and heard mix, and the list of earlier renders. Each SHALL have a place of its own.
+- **What it holds:** the media index, the reel previews, the persistent cache, the heard mix and the list
+  of earlier renders. Each SHALL have a place of its own.
+- **The persistent cache SHALL be one store** (`results/`). It holds three kinds: the composites of moments
+  (the disk prerender), the results of heavy effects per layer, and the stream history. The two picture
+  kinds SHALL be keyed by one layout, `durable_hash` over the plan or over a layer's sub-plan up to the
+  kept stage, and stored in one manifest form; heavy sources' copies SHALL lie under the media's content
+  id.
 - **What it never holds:** anything the project needs to open. Deleting the folder SHALL cost only
   recomputation.
 - **Marking:** the folder SHALL carry a `CACHEDIR.TAG` and a `README.txt` that says it may be deleted.
@@ -41,7 +46,8 @@ projects in it.
 Why: kkt-26.11.20 line 19 ("у нас не будет все в одной базе sqlite хранится а будет подпапка в папке
 проекта с разными кешами, вот с тем же превью кэшем"). One unbounded SQLite file made a lock or a broken
 write cost every cache of a project (t872), and the prerender of every project shared one cap in the
-user's folder (project-cache-folder D1–D5). kkt-26.11.20b line 4: "непринимающая папка - это цикличесская
+user's folder (project-cache-folder D1–D5). kkt-26.11.20b line 2 ("СУТЬ … В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ
+СЧИТАТЬ": the effects' results are the store's point, D1b); line 4: "непринимающая папка - это цикличесская
 запись с подчисткой старого говна и алерт в уведомлениях" (D3, D4).
 
 #### Scenario: The folder, its marks and its fallback

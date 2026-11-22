@@ -19,7 +19,7 @@
 
 ## 2. The history tier
 
-- [ ] 2.1 the `history/` and `mix/` tenants of the cache folder (`project-cache-folder` D1, D3); t3344, t3345
+- [ ] 2.1 the persistent cache's `history/` kind and the `mix/` tenant of the cache folder (`project-cache-folder` D1, D3); t3344, t3345
 - [ ] 2.2 kt-plugin-api: `EntryCodec`, `StreamMemo` backing (holds/get consult the index; pinned kept)
 - [ ] 2.3 Datamosh's codec of `Planes` (exact raw planes); LZ4 in the host's writer (`lz4_flex`), the ratio
       recorded per write; t3339

@@ -43,12 +43,14 @@ telemetry, not a gate: it shows what the tiers saved on his next restart.
 ## D2. Two tenants of the project's cache folder
 
 The owner moved every cache of a project into a folder beside it (kkt-26.11.20 line 19, change
-`project-cache-folder`). The two tiers are its tenants `history/<build>/<device>/` and `mix/<build>/`, beside
-the prerender's `render/`. They share its rules:
+`project-cache-folder`). The history is the `history/` kind of its persistent cache
+(`results/<build>/<device>/history/`, beside `frames/` and `layers/`, kkt-26.11.20b B1), and the mix runs are
+`mix/<build>/`. They share its rules:
 - the entry header and the atomic write (`project-cache-folder` D1);
 - other builds' (and devices') folders removed at open;
-- the limit pass at rest, which takes the prerender, history and mix before the media index, least
-  recently used first, never what this process used.
+- the folder's cycle (`project-cache-folder` D3, the owner's B2): a write that does not fit drops the
+  history and the mix before the picture results and the media index, least recently used first, never
+  what this process used in the last minute; a notice once per session.
 
 `render_cache::DiskStore`'s folder rules become the cache folder's, and the three stores are its users.
 Stream entries are one file per stage run (D3); mix runs are one file per run (D5).

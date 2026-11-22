@@ -33,10 +33,13 @@ Four things follow from that layout:
   the projects in that folder, with one place per cache. It holds:
   - `media/` — per media file, by its content;
   - `reels/` — the reel previews;
-  - `render/` — the preview's prerender, moved from `<data>`;
-  - `history/` and `mix/` — the durable tiers of `durable-history-and-mix`;
+  - `results/` — THE PERSISTENT CACHE ("Постоянный кэш", the owner's B1) as one store: the composites of
+    the preview's prerender (moved from `<data>`), the results of heavy effects per layer, and the Datamosh
+    history, under one key layout (`durable_hash`) and one manifest form (design D1b);
+  - `mix/` — the heard mix of `durable-history-and-mix`;
   - `renders.tsv` — earlier renders found again by `cached-final-render`;
-  - room for the durable preview store that change `proxies` is becoming.
+  - `media/<content id>/copy-*` — heavy sources' copies (the persistent cache's source half, change
+    `disk-copies`).
 
   Each cache keeps its own files and versions. A broken or locked file in one costs only that entry.
 - **No SQLite.** Each entry is a file written to a temporary name and renamed, with a header that names
@@ -53,7 +56,7 @@ Four things follow from that layout:
     is smaller;
   - a write that does not fit first drops the oldest entries, least recently used, in the tenants' order;
   - a notice says once per session, per folder: "The cache of <folder> is full: the oldest results are
-    replaced", with a button to Settings → "Caches on disk".
+    replaced", with a button to Settings → "Persistent cache".
   - The page lists every cache folder with its size and projects, a Delete button and the cap.
 - **A folder that cannot be written at all** (read-only, a write test fails): the cache goes to
   `<data>/project-caches/`, under the same cyclic rule. The notice and the project's facts say why. An
@@ -76,7 +79,7 @@ Four things follow from that layout:
   and the fallback.
 - `video-plan`: the prerender's store moves into the cache folder under the folder's cycle.
 - `telemetry`: per-tenant sizes, hits, misses and evictions in the trace; `kt-cli trace cache`.
-- `ui-reach`: Settings → "Caches on disk".
+- `ui-reach`: Settings → "Persistent cache".
 
 ## Impact
 
