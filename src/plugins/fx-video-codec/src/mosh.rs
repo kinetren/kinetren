@@ -812,6 +812,18 @@ pub fn render(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Op
     render_with(r, input, n, memo, crate::walk::broken)
 }
 
+/// `render` left on the compute device (stream-picture-stays D3): the broken decoder's picture at `n`
+/// as the walk made it. `None` — a region of interest (its blend is the processor's), or nothing held.
+pub fn render_held(r: Rows, input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<(Arc<crate::walk::HeldPic>, u64, (usize, usize))> {
+    let lay: &dyn StreamLayout = input;
+    if lay.region_ident(n) != 0 {
+        return None;
+    }
+    let s = plan(r, lay, n);
+    let (h, key) = crate::walk::broken_held(&s, input, n, memo)?;
+    Some((h, key, pic_padded(&r, lay)))
+}
+
 /// `render` by the per-position walk (two jobs and a wait a position, every position kept): the
 /// reference the batched walk is held to (t2350).
 #[doc(hidden)]

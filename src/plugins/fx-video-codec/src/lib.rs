@@ -319,4 +319,13 @@ impl StreamKernel for Datamosh {
         pic.to_rgba(w, h, out);
         Some(StreamOut { w: w.min(pic.w as u32), h: h.min(pic.h as u32), key })
     }
+
+    fn render_held(&self, p: &[f64], input: &dyn StreamInput, n: i64, memo: &StreamMemo) -> Option<kt_plugin_api::stream::HeldStreamOut> {
+        if !kt_plugin_api::compute::host()?.holds_pictures() {
+            return None;
+        }
+        let (pic, key, (pw, ph)) = mosh::render_held(mosh::Rows::from(p), input, n, memo)?;
+        let (w, h) = mosh::out_size(&mosh::Rows::from(p), input);
+        Some(kt_plugin_api::stream::HeldStreamOut { planes: pic.0.clone(), pw: pw as u32, ph: ph as u32, w: w.min(pw as u32), h: h.min(ph as u32), key })
+    }
 }

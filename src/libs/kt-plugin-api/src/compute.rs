@@ -88,6 +88,13 @@ pub trait ComputeHost: Send + Sync {
     fn keeps(&self) -> bool {
         false
     }
+    /// Whether a stream walk's pictures stay on the device for the composite (stream-picture-stays D3):
+    /// the host's device is the one the window composes on, so a picture read back would only be
+    /// uploaded there again. A kernel then keeps the pictures it shows held (`run_keeping`), and its
+    /// `render_held` gives them. `false` — they come back to the processor, as before.
+    fn holds_pictures(&self) -> bool {
+        false
+    }
     /// `run`, and the buffers `keep` names stay on the device as [`Held`] buffers, in `keep`'s order:
     /// a later job reads them as `Init::Held`, copied on the device, no readback and no upload
     /// (stream-round-trips D1: a history walk's state between its batches and its walks). Only called

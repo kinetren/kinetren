@@ -690,7 +690,8 @@ fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
     put_debug(h, &s.lead);
     h.update(&[s.blend_mode as u8]);
     match &s.input {
-        LayerInput::Frame(_) => h.update(&[1u8]),
+        // a held picture is the frame it stands for (stream-picture-stays D3)
+        LayerInput::Frame(_) | LayerInput::Held(_) => h.update(&[1u8]),
         LayerInput::Nest(n) => {
             h.update(&[2u8]);
             h.update(&n.seq.0.to_le_bytes());

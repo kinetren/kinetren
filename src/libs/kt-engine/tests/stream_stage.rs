@@ -780,3 +780,81 @@ fn t2707_the_pipelined_export_walks_the_stream_in_order() {
         }
     }
 }
+
+/// t3814 (stream-picture-stays D3, found-defects 663): the mosh's picture stays on the compute host's
+/// device as the layer's input — an engine on that device composes it with no read back, and an engine
+/// on another device reads it back; both give the same bytes, and the frame is moshed.
+#[test]
+fn t3814_a_held_stream_picture_composes_where_it_lies() {
+    use kt_engine::VideoGpuExec;
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let Some(on_host) = kt_gpu::front_on_compute() else { return };
+    // the host's device composes here as the window's would (no window in a test)
+    kt_gpu::compute::hold_pictures_for_tests();
+    let n = Tick(38 * STEP);
+    let p = project(true);
+    let (vr, cache) = (renderer(&p), big_cache());
+    warm(&vr, &cache, n);
+    let plan = vr.frame_plan(&cache, n, Q);
+    let is_held = |plan: &kt_engine::FramePlan<'_>| plan.layers.iter().any(|l| matches!(l, kt_engine::video_plan::PlanLayer::One { src, .. } if src.input.held().is_some()));
+    assert!(is_held(&plan), "the mosh layer's input is held");
+    let (on, back) = kt_gpu::held_pictures();
+    let mut here = vec![];
+    assert!(on_host.execute_once(&plan, &mut here).unwrap(), "complete on the host's device");
+    assert_eq!(kt_gpu::held_pictures(), (on + 1, back), "converted where it lies");
+    drop(plan);
+    let (there, complete) = kt_gpu::testkit::compose(&vr, &cache, n, Q);
+    assert!(complete);
+    assert_eq!(kt_gpu::held_pictures().1, back + 1, "another device reads it back");
+    assert_eq!(here, there, "the same bytes either way");
+    let plain = project(false);
+    let (pv, pc) = (renderer(&plain), big_cache());
+    warm(&pv, &pc, n);
+    assert_ne!(kt_gpu::testkit::compose(&pv, &pc, n, Q).0, there, "the frame is moshed");
+}
+
+/// t3823 (stream-picture-stays D3, task 2.3): the frames a walk computes ahead stay on the compute
+/// device too — the prefetch's walk over a run reads no picture back, and composing every frame of it
+/// on the host's device reads none back either; a frame of the run is the bytes another device gets.
+#[test]
+fn t3823_the_frames_walked_ahead_stay_on_the_device() {
+    use kt_engine::VideoGpuExec;
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    let Some(on_host) = kt_gpu::front_on_compute() else { return };
+    kt_gpu::compute::hold_pictures_for_tests();
+    let p = project(true);
+    let (vr, cache) = (renderer(&p), big_cache());
+    for k in 0..=40 {
+        warm(&vr, &cache, Tick(k * STEP));
+    }
+    let read = kt_plugin_api::stream::pictures_read();
+    let walked = kt_plugin_api::stream::positions_walked();
+    assert!(!vr.stream_advance_run(&cache, Tick(31 * STEP), Tick(40 * STEP), Q), "the run walked whole");
+    assert!(kt_plugin_api::stream::positions_walked() > walked, "the run walked");
+    assert_eq!(kt_plugin_api::stream::pictures_read(), read, "the walk ahead read no picture back");
+    let (_, back) = kt_gpu::held_pictures();
+    let mut at38 = vec![];
+    for k in 31..=40 {
+        let plan = vr.frame_plan(&cache, Tick(k * STEP), Q);
+        let mut out = vec![];
+        assert!(on_host.execute_once(&plan, &mut out).unwrap(), "frame {k} complete");
+        if k == 38 {
+            at38 = out;
+        }
+    }
+    assert_eq!(kt_plugin_api::stream::pictures_read(), read, "composing the run read no picture back");
+    assert_eq!(kt_gpu::held_pictures().1, back, "nothing read back by the executor");
+    let (there, complete) = kt_gpu::testkit::compose(&vr, &cache, Tick(38 * STEP), Q);
+    assert!(complete);
+    assert_eq!(at38, there, "the frame walked ahead is the bytes another device reads back");
+}
