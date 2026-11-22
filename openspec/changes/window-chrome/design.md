@@ -1,6 +1,6 @@
 # Design: window-chrome
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `e56a543c`. Q1 in `proposal.md`; the default is the recommended option.
+> DESIGN ONLY, revision 2 (2026-11-22): D4 dropped by the owner's B9. Revision 1 on `e56a543c`.
 
 ## Context
 
@@ -47,13 +47,10 @@ Over the toolbar strip, a wheel delta (y, or x with Shift) moves a horizontal of
 clamped to [0, need − avail]; the groups are laid out from the offset, the clipped edges fade over 12 px; the "more"
 menu holds what is still outside. The offset resets when the window grows past `need`. No scroll bar (rule 13).
 
-## D4. Dragging a window by the preview (U11, Q1 a)
+## D4. (dropped)
 
-A primary drag that starts on the picture and that no picture gesture claims (no handle, frame, mask point or tracker
-box under the pointer; no mask/tracker tool; the canvas not zoomed in) sends `StartDrag` to the viewport that holds
-the picture (the detached preview's or the main window's), with `release_pointer_after_wm_grab`. A click without
-motion keeps its meaning (selecting the event under the pointer). The detached preview's title row is the shell's
-(change `detached-windows`, D: the same row, buttons and theme as the main window's title row).
+Dragging a window by the preview picture is dropped (the owner, B9: "пропускаем это требование."). The detached
+preview's title row is the shell's (change `detached-windows`).
 
 ## D5. Folds and buttons (T8, T7)
 

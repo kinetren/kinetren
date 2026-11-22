@@ -1,6 +1,6 @@
 # Proposal: window-chrome
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` U10, U11, T5, T7, T8, T9, W1, W3 (round R.76).
+> DESIGN ONLY (spec session, 2026-11-20), revision 2 (2026-11-22): the owner's B9 drops the drag by the preview. Registry `v26.10-index.md` U10, U11, T5, T7, T8, T9, W1, W3 (round R.76).
 > Tests reserved: t3935–t3942.
 
 ## Why
@@ -37,10 +37,8 @@ round.
   drag starts.
 - **The toolbar scrolls with the wheel when it does not fit** (U10): over the toolbar row the wheel (and Shift+wheel)
   moves the row sideways; the "more" menu of groups that do not fit stays.
-- **The preview window drags by its picture, and so does the main window** (U11): a left drag on the picture where
-  nothing editable is under the pointer (no handle of a selected event, no mask or tracker tool active) moves the
-  OS window that holds it (Q1). The detached preview's title row is the shell's (change `detached-windows`), the
-  same as the main window's.
+- **The detached preview's title row** is the shell's (change `detached-windows`), the same as the main window's (U11's
+  second half). Dragging a window by the preview picture is dropped (the owner, B9).
 - **The effects window's folds have no side strip** (T8): the per-chain fold is drawn unindented.
 - **Copy and paste buttons are icons** (T7): Copy the chain, Paste the chain, Copy the envelope, Paste the envelope
   become icon buttons with their hints (the head menu of change `presets-everywhere` replaces them where it lands).
@@ -53,7 +51,7 @@ round.
 ### Modified Capabilities
 
 - `ui-timeline`: the layer order of the main window's drawing; the glow as one object under the windows; the
-  maximized start; the toolbar's wheel; dragging a window by the preview.
+  maximized start; the toolbar's wheel.
 - `ui-reach`: the event windows' titles and the number in the body; icon copy/paste buttons; unindented folds.
 
 ## Impact
@@ -61,17 +59,11 @@ round.
 - kt-app: `app.rs` (the ambient overlay and the status hint layers, the title), `meters.rs`/`theme.rs` (one glow
   mesh), `toolbar.rs` (wheel offset; `window_drag_from` restoring a maximized start), `window_frame.rs` (the WM's
   maximized state at start), `fx_editor.rs` (titles, unindented folds, icon buttons), `node_editor.rs` (icon
-  buttons), the preview's drag (`preview.rs` / `app.rs`), i18n ×5 (titles).
+  buttons), i18n ×5 (titles).
 - No model, engine or format change.
 - Idle: no new work; the glow is the same meshes, drawn in another layer.
 
 ## Questions to the owner
 
-**Q1. Dragging a window by the preview.** Your words: "окно превью видео хотелось бы перетаскивать хватаясь прямо
-за него … и основное окно тоже хочется перетаскивать даже хватаясь за превью". The picture also takes drags: the
-geometry frame of a selected event (R.64), masks, the tracker, and (change `preview-canvas-and-gizmos`) panning when
-zoomed in.
-- (a) **A left drag on the picture moves the window when nothing editable is under the pointer: no event selected, or
-  outside its frame and handles, and no mask/tracker tool on; when zoomed in, the drag pans instead**
-  (*recommended*: the common case needs no key; editing keeps its gestures).
-- (b) Alt+drag anywhere on the picture moves the window (always the same, but a key to remember).
+Decided (2026-11-22, B9, `kkt-26.11.20b.txt` line 21): dragging a window by the preview — "пропускаем это требование."
+No open question.
