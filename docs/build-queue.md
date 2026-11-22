@@ -69,7 +69,7 @@ for it.
 |---|---|---|---|---|---|
 | ★ `export-host-copy` (dma-buf) | M | — (stages 1–3 merged) | EXPORT (`muxer_impl.rs` VAAPI frames), GPU export pass | answered A13 | the change's remaining t3312–t3321 |
 | `fx-graph-dag` | XL | `fx-graph` merged; `shared-events` (MODEL) | MODEL (`FxInput`, Merge kind), `kt-fx` `plan_chain`, GPU (held set, Merge pass), FX-UI | answered A5, A6 | t3200–t3229 |
-| `project-cache-folder` | L | — | CACHE (`index.rs` → `cache_folder.rs`, `render_cache.rs` root, the persistent cache's store (`render/`, `stages/`, `copies/`, `history/`) and its key layout), `kt-dirs`, the Settings page | answered B2 (one folder per project folder; cyclic writing with a notice); it hosts the persistent cache (B1) | t3824–t3843 |
+| `project-cache-folder` | L | — | CACHE (`index.rs` → `cache_folder.rs`, `render_cache.rs` root, the persistent cache's `results/` store and its key layout), `kt-dirs`, the Settings page | answered B2 (one folder per project folder; cyclic writing with a notice); it hosts the persistent cache (B1) | t3824–t3843 |
 
 `project-cache-folder` is now the gate of three owner priorities: the durable history (★), the persistent
 cache of heavy effects (B1) and the cached render. Start it in this wave.
@@ -78,7 +78,7 @@ cache of heavy effects (B1) and the cached render. Start it in this wave.
 
 | Change | Size | Needs first | Areas | Owner question | Tests |
 |---|---|---|---|---|---|
-| ★ `durable-history-and-mix` | L | `project-cache-folder` stage 1 (the folder, the entry header); `stream-picture-stays` (STREAM) | STREAM (`StreamMemo` backing, `EntryCodec`), CACHE (the persistent cache's `history/`, the `mix/` tenant), AUDIO (`mix.rs` restore handoff), PLAYER (writes at rest) | answered A14 (build now, LZ4) | t3336–t3355 |
+| ★ `durable-history-and-mix` | L | `project-cache-folder` stage 1 (the folder, the entry header); `stream-picture-stays` (STREAM) | STREAM (`StreamMemo` backing, `EntryCodec`), CACHE (the persistent cache's `results/…/history/`, the `mix/` tenant), AUDIO (`mix.rs` restore handoff), PLAYER (writes at rest) | answered A14 (build now, LZ4) | t3336–t3355 |
 | `hdr-sources-to-sdr`, 8-bit stages 1–4 | M | `device-decode-sources` (DECODE) | DECODE (`colour.rs`, the HDR branch); the export default is built already (row 1054, t3603) | answered (Q50; A25 keeps the 8-bit path as the default) | t3800–t3811 |
 | `track-stage-preroll` | S | — | AUDIO (`render_stages`, the seek path) | answered A15 (always the full tail) | t3361–t3366 |
 
@@ -88,7 +88,7 @@ cache of heavy effects (B1) and the cached render. Start it in this wave.
 |---|---|---|---|---|---|
 | `track-stream-stage` | L | `durable-history-and-mix` (the durable salt in `video_stream.rs`); `stream-picture-stays` | STREAM (`TrackStream`), `kt-engine/src/video.rs` track layer, EXPORT (`stream_preroll`), AUDIO (the sound half's track layout) | answered A23 | t3379–t3398 |
 | `fx-preset-change` | M | `fx-graph-dag` (FX-UI selection in `node_editor.rs`) | FX-UI, `kt-model/src/ops.rs` (`insert_chain_block_at`) | answered A4 | t3595–t3596, t3932–t3934 |
-| `persistent-cache` (was `disk-copies`; "Постоянный кэш") | L | `project-cache-folder` (the store's places, salt and cycle); `durable-history-and-mix` (shares CACHE); `device-decode-sources` (DECODE, for source copies) | CACHE (`stages/`, the source copies), the plan's kept layer input (`video_plan.rs`, `video.rs` layer path), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); designed by spec-features (branch claude/spec-features-224d3d, 1e31056c) | t3440–t3459 |
+| `persistent-cache` (was `disk-copies`; "Постоянный кэш") | L | `project-cache-folder` (the store's places, salt and cycle); `durable-history-and-mix` (shares CACHE); `device-decode-sources` (DECODE, for source copies) | CACHE (`results/…/layers/`, the source copies), the plan's kept layer input (`video_plan.rs`, `video.rs` layer path), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); designed by spec-features (branch claude/spec-features-224d3d, 1e31056c) | t3440–t3459 |
 
 ### Wave 5
 
@@ -183,9 +183,8 @@ These designs came from the `v26.10` registry rows (spec-features, 2026-11-20). 
   motion-driven-params (t3952) and wasm-plugin-host t3957–t3963 (t3957–t3959); wasm-plugin-host overlaps
   memory-breakdown t3962–t3967 (t3962–t3963).
 - **The persistent cache (B1) and project-cache-folder share one store, agreed with spec-features
-  (2026-11-22, persistent-cache D8):** `render/`, `stages/`, `copies/` and `history/` side by side in
-  `kinetren-cache/`, `mix/` outside the store. `durable_hash` keys, salted by the store format and the
-  device class, plus the decoder major, the kernels' versions and
+  (2026-11-22):** `results/v<FORMAT>/<device class>/{frames, layers, history}`, `mix/`, source copies under
+  `media/<content id>/`. `durable_hash` keys, plus the decoder major, the kernels' versions and
   `COMPOSITE_PATH_VERSION`, not the build: an update keeps what it did not change, and a stale entry is
-  dropped on a miss. One order by value per byte across the store and the mix (the history is not
+  dropped on a miss. One order by value per byte across results, mix and copies (the history is not
   evicted first), under the folder's cyclic rule.

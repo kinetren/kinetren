@@ -5,7 +5,7 @@ The preview SHALL keep complete composites of slow moments on disk under a DURAB
 inputs (every field the executor's plan key hashes) with each frame's per-process content serial replaced
 by what determines the frame across processes — a file's path, size and modification time, a generator's
 values (`src_rev`), a stream stage's own key plus the identities of the project's files — salted by the
-store's format and the device class, and keyed further by
+store's format and the device class (the folder `results/v<FORMAT>/<device class>/`), and keyed further by
 the decoder's major, the versions of the kernels that ran (each plugin's version and its WGSL text's hash)
 and `COMPOSITE_PATH_VERSION` (bumped by any change of the composite code outside the kernels), not by the
 whole build. So the same plan gives the same key in
@@ -18,7 +18,7 @@ with its real open check; H.264 at a high quality) and read back by our libav de
 manifest SHALL name the codec, the encoder, the frame size and rate and the durable key of every frame. No
 processor encoder SHALL be used unless the host forces one by name (`KT_RENDER_CACHE_ENCODER`: tests and the
 live check on a machine without a hardware encoder); where no hardware encoder opens the store writes
-nothing and the Diagnostics window and the trace say why. The store SHALL be the frames kind of the persistent cache in the project's cache folder (`render/`; capability `media-index`, "The project's
+nothing and the Diagnostics window and the trace say why. The store SHALL be the `frames/` kind of the persistent cache in the project's cache folder (`results/`; capability `media-index`, "The project's
 caches live in a folder beside it"), written in that folder's cycle (capability `media-index`: the least recently used dropped first when the
 folder cannot take more; `KT_RENDER_CACHE_MB` caps it alone for tests), a segment at a time, the lowest value per byte first; an entry
 whose salt no longer matches SHALL be a miss and be removed when met, with no sweep when the store opens. A restored picture is the composite within the codec's tolerance.
