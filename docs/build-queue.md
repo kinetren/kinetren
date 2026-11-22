@@ -188,3 +188,30 @@ These designs came from the `v26.10` registry rows (spec-features, 2026-11-20). 
   `COMPOSITE_PATH_VERSION`, not the build: an update keeps what it did not change, and a stale entry is
   dropped on a miss. One order by value per byte across results, mix and copies (the history is not
   evicted first), under the folder's cyclic rule.
+
+## Implementation-ready check (2026-11-22, spec-engine, against orch `873934f7`)
+
+Each of these changes' `tasks.md` now names its files, and those files were checked against the areas above:
+- `device-decode-sources`:
+  - DECODE, plus `kt-time` `mem.rs` (a new tenant) and `trace.rs`;
+  - SHELL through Preferences (`prefs_window.rs`, `user_store.rs`);
+  - `render_dialog.rs` and kt-cli's `main.rs` (the four source openers go through one factory call).
+  - Do not run it beside another change writing `source_impl.rs`, `mem.rs` or `trace.rs`.
+- `project-cache-folder`:
+  - CACHE (about 35 call sites of `MediaIndexDb` across six lanes);
+  - `app.rs`, which is hot (`index_db_path` and five inline copies, the render cache root, `Notice.action`);
+  - Preferences, kt-cli's `main.rs` and `render_cache.rs`.
+  - It goes alone among the changes touching `app.rs`.
+- `durable-history-and-mix`:
+  - STREAM (`stream.rs`, `video_stream.rs`, `fx-video-codec`);
+  - CACHE, AUDIO (`mix.rs`) and PLAYER (`player.rs`: the ring into the render thread).
+  - It starts after `project-cache-folder` sections 1 and 3, and after `stream-picture-stays`.
+- `track-stage-preroll`: AUDIO (`audio.rs`, `fxstore.rs`, `mix.rs`), plus the start hold in `player.rs`. It
+  shares `mix.rs` with `durable-history-and-mix`, so it does not run beside it.
+- `persistent-cache`:
+  - CACHE (`results/…/layers/`, the copies), `video.rs` `frame_plan`, PLAYER, DECODE (the copy source) and
+    EXPORT (`format.rs`).
+  - It starts after `project-cache-folder` section 3. Its layer codec waits for the owner's Q1.
+
+New tests t4100–t4105 are taken from spec-engine's third block (t4100–t4199): device-decode-sources
+t4100–t4102, track-stage-preroll t4103–t4104, durable-history-and-mix t4105.
