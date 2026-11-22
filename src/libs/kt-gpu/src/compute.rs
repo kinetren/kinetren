@@ -224,6 +224,15 @@ pub fn share_display(device: &wgpu::Device, queue: &wgpu::Queue, info: wgpu::Ada
     ctx
 }
 
+/// Tests: the host holds a stream's pictures on its device although no window shares it (an engine on
+/// the host's device, `crate::front_on_compute`, composes them).
+static HOLD_FOR_TESTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[doc(hidden)]
+pub fn hold_pictures_for_tests() {
+    HOLD_FOR_TESTS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Whether the compute host runs on the window's device (tests, the trace's facts).
 pub fn shares_display() -> bool {
     SHARED.get().is_some()
@@ -555,6 +564,10 @@ impl ComputeHost for ComputeDevice {
 
     fn keeps(&self) -> bool {
         true
+    }
+
+    fn holds_pictures(&self) -> bool {
+        HOLD_FOR_TESTS.load(std::sync::atomic::Ordering::Relaxed) || SHARED.get().is_some_and(|c| Arc::ptr_eq(&c.device, &self.device))
     }
 
     fn run_keeping(&self, job: &Job<'_>, keep: &[Buf]) -> Result<(Vec<Vec<u8>>, Vec<Held>), String> {

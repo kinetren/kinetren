@@ -68,6 +68,14 @@ planes to RGBA. Holding the picture means the shown positions stay in the memo's
 (device memory, `LIVE_BYTES`) where the host shares the window's device, and the bytes path reads one back
 only when an executor on another device asks.
 
+**As built (task 2.3):** `ComputeHost::holds_pictures` says whether the host's device is the window's
+(`compute::share_display` shared it; a test seam forces it). Only then does the walk keep what it would
+read back into the memo as `HeldPic` — shown positions (LRU) and checkpoints (pinned) alike, in the memo's
+picture tiers under the same bound, the bytes counted as before — and `render_held` give the picture at `n`.
+On two devices (GL, a hybrid laptop) nothing changes: the pictures come back as host planes, as before. The
+memo's bound is the ledger's RAM sizing; on a discrete card these bytes are device memory (risk below).
+`stream::pictures_read` counts what walks read back (t3823).
+
 - `LayerInput` gains `Held(HeldLayer { held: Held, w, h, form: Planes8 | Rgba8, content })`. `content` is
   the same content key the bytes path puts on the layer (the kernel's output key), so every memo key is
   unchanged.
@@ -120,6 +128,12 @@ a processor-memory device, and the crossing there is a memcpy (D1 measures it th
 Spare: t3823.
 
 ## Risks
+
+- **Device memory on a card:** with the host sharing the window's device, the stream memo's pictures
+  live in device memory under a bound the memory ledger sized from the processor's memory. On an
+  integrated chip or a software adapter they are the same memory; on a discrete card a large memo may
+  ask more than the card holds — a device refusal is a job failure (the kernel's no-device path), not a
+  crash. Not measured on a card yet.
 
 - **eframe's existing-device path is less travelled** than `CreateNew`. The surface's format and present
   modes are eframe's choice either way. t3818 runs the setup headless with a surface-less device.

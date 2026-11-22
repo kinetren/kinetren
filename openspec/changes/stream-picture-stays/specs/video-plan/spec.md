@@ -30,6 +30,11 @@ and uploaded again, between two devices of the same chip (stream-picture-stays D
 - **THEN** the composites are equal, converted on the device with nothing read back
 - **TEST** t3815 (`src/libs/kt-gpu/tests/stream_held.rs`)
 
+#### Scenario: The frames walked ahead stay on the device
+- **WHEN** the host holds pictures, the prefetch's walk advances a run of ten mosh frames, and every frame of the run is composed on the host's device
+- **THEN** neither the walk nor the composites read a picture back, and a frame of the run is the bytes an engine on another device reads back
+- **TEST** t3823 (`src/libs/kt-engine/tests/stream_stage.rs`)
+
 #### Scenario: Another device reads back
 - **WHEN** the composing executor is not on the compute host's device
 - **THEN** it reads the planes back through the compute host, and the composite is the bytes path's
