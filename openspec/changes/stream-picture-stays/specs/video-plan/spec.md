@@ -70,12 +70,12 @@ share (stream-picture-stays D2).
 - **TEST** t3819 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: One device crosses nothing over a loop
-- **WHEN** `kt-cli preview` plays a Datamosh loop with one device per adapter
-- **THEN** the trace's crossed bytes are 0 and the frames equal the two-device run's
+- **WHEN** `kt-cli preview --one-device` plays a Datamosh loop on two fixture videos, and the same loop runs on two devices
+- **THEN** both render mosh frames; the two-device trace has `stream_cross` records, the one-device trace none (byte equality of the two paths is t3814's and t3820's)
 - **TEST** t3821 (`src/apps/kt-cli/tests/cli.rs`)
 
 #### Scenario: A paused Datamosh loop costs nothing on one device
 - **PATH** the heavy showcase with a Datamosh loop → Space plays a lap → Space stops → the mouse rests, then moves over the preview → nothing redraws or walks by itself
-- **WHEN** the heavy showcase with a Datamosh loop stands paused with one device per adapter, the mouse moving over the preview
-- **THEN** once the history is walked no frame is asked at rest and no compute job runs
+- **WHEN** a paused Datamosh moment stands on one device (the host holding pictures, the preview composing on its device), its history walked and its frame complete, and the mouse moves over the preview, then stops
+- **THEN** no position is walked, nothing is composed or submitted, no prefetch pass runs, and at rest no frame is asked
 - **TEST** t3822 (`src/apps/kt-app/src/idle_tests.rs`)

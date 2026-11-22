@@ -21,8 +21,8 @@
 ## 3. One device per adapter (after Q1)
 
 - [x] 3.1 the window's device is the process's one context (`compute::share_display`), the compute host over it where `share_refusal` allows; t3817, t3818
-- [ ] 3.2 the device loss over both; t3819; UI frame time during a walk measured on the heavy showcase
-- [ ] 3.3 t3821, t3822 (rest measured with the track window and a Datamosh loop paused)
+- [x] 3.2 the device loss over both; t3819 (UI frame time during a walk on the heavy showcase: not measured on a card)
+- [x] 3.3 t3821 (`kt-cli preview --one-device`), t3822 (a paused mosh on one device at rest)
 
 ## 4. Export
 
