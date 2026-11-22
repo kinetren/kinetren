@@ -1098,6 +1098,7 @@ fn render_cache_build() -> String {
     format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn preview_run(
     project: &Project,
     path: &str,
