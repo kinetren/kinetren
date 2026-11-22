@@ -1,76 +1,71 @@
 # Design: loudness-norms
 
-> DESIGN ONLY, revision 1 (2026-11-20), base `ea0aff6f`. Q1–Q2 in `proposal.md`; defaults recommended.
+> DESIGN ONLY, revision 2 (2026-11-22), base `9c26a478`: the owner's B6 — the project level. Revision 1 put the norm in
+> the render settings. Q1 in `proposal.md`; the default is recommended.
 
 ## Context
 
-- The meter: `kt_fx::audio::loudness` (`Loudness { lufs, lra, dbtp }`, BS.1770 gates, ×4 true peak), fed by the
-  export pass (export spec "Loudness is measured in the export pass, without master gain"; t403–t407).
-- The render window's result (`render_dialog.rs`): one `ui.label` with the three numbers and a `ui.weak` "to −23".
-- The picture check (change `picture-check`, D3): the render window's report list with jumps and "Mark all".
-- Render settings: `RenderSetup` → `ExportOptions`, the text form `kt_engine::export_settings`, presets in
-  `render-presets.json` (render-settings).
+- The meter (`kt_fx::audio::loudness`, BS.1770-4 in f64, ×4 true peak) is fed by the export pass (spec export "Loudness
+  is measured in the export pass, without master gain"; audio-render "Loudness — BS.1770 / EBU R 128").
+- The player's master gain is monitoring only; the mix ends at the master sum; the R.48 limiter (look-ahead, PDC) exists
+  as an effect.
+- Background analyses run on the analysis lane (`analysis.rs`): loudness, sync.
 
-## D1. Norms
+The professional path, read 2026-11-22:
+- Resolve: the target loudness in Project Settings → Fairlight (default −23 LUFS, −2 dBTP), clips analysed by BS.1770-4
+  and normalized to a target with a true-peak target; the Deliver page's "normalize to standard" scales until the
+  loudness or the peak limit governs. (Blackmagic forum threads "Audio normalization ignores BS1770 target loudness",
+  "17.2.1 Audio normalization and fairlight meter disagree", "Loudness Normalisation not standard"; davinciresolveclub
+  "audio levels LUFS"; Hollyland "How to Normalize Audio in DaVinci Resolve".)
+- Premiere: Essential Sound Auto-Match sets each clip's gain so clips of a type reach a loudness (−23 LUFS reported);
+  short clips are miscounted (Adobe community "premiere pro does not automatch loudness correctly", "auto match volume
+  is simply lowering volume", "auto match loudness problem when cutting dialogue"; Adobe help "create audio mix").
+- [NOT VERIFIED against the manuals: the sources are forums and vendor blogs.]
 
-A closed table `LoudnessNorm { id, target_lufs, tolerance_lu, ceiling_dbtp, lra_max: Option }`: `ebu_r128`
-(−23, ±0.5, −1, LRA ≤ 20 guidance), `atsc_a85` (−24, ±2, −2), `streaming` (−14, ±1, −1), `podcast` (−16, ±1, −1).
-The id is a render setting (`loudness_norm=streaming` in the text form; an unknown id in a preset is listed and kept,
-the presets rule). The row hover cites the source: a standard for EBU/ATSC, "measured by third parties" for
-streaming and podcast.
+## D1. The project target
 
-## D2. Per channel, in the same pass
+`ProjectSettings.loudness`: `standard` (EBU R128, ATSC A/85, Streaming, Podcast, Custom), `target_lufs`, `ceiling_dbtp`
+(−1 by default; −2 for ATSC), `offsets` per role (Dialogue 0, Music −8, Ambience −8, Effects −4, Title sound −4 LU).
+Not written at its default (EBU R128, −23, −1, the default offsets).
 
-The accumulator keeps, besides the mixed block energies it has, the per-channel K-weighted energies per 400 ms block
-and the per-channel ×4 true peak (the FIR runs per channel already — it is kept per channel instead of maxed). From
-them: L/R peak, L/R integrated loudness (the same gates applied per channel), the balance = L − R in LU. The mixed
-integrated loudness is computed exactly as before (t403–t407 unchanged, bytes of `Loudness` equal).
+## D2. Match loudness of clips
 
-## D3. Findings
+For each chosen event: its integrated loudness through its own chain (an offline render of the event alone, the
+export's meter), then `gain_db += target + offset(role) − lufs`, clamped to the gain's passport. Events shorter than
+3 s on one track from one source are grouped into one material (their renders concatenated) and get one shared
+correction — the gated average needs ≥ 3 s. An event with no number (silence) is left and named. One batch; the gains
+are ordinary levels.
 
-A per-burst record (1920 ticks: per-channel peak and short RMS) feeds a reducer:
-- **over ceiling**: bursts whose true peak > the norm's ceiling, merged into spans;
-- **clipped**: samples at |x| ≥ 1.0 in the finished mix (counted, spans);
-- **silent channel**: one channel below −60 dBFS RMS for ≥ 0.5 s while the other is above −40;
-- **imbalance**: |L − R| short-term loudness beyond 6 LU for ≥ 1 s.
-The spans enter the shared report list of `picture-check` (kind, time, the event under the playhead's first
-audio track at that time, note). The same render gives the same findings (invariant 11).
+## D3. The program stage
 
-## D4. The Sound table
+`Project.program`: `gain_db` (−24…+24), a true-peak limiter at `ceiling_dbtp` (the R.48 limiter, look-ahead 1.5 ms,
+release 50 ms, ×4 detection) always on unless switched off, after the master sum and before the output — in the
+player's render and the export's alike (one mix). "Match the program": a background offline pass of the whole mix
+WITHOUT the stage measures the integrated loudness; `gain_db = target − lufs`; `measured = (lufs, revision)`; after an
+edit `revision` differs and the stage shows "changed since measured". The player's monitoring volume stays after it and
+out of every measurement.
 
-| Row | Value | Norm (streaming example) | State |
-|---|---|---|---|
-| Integrated | −17.2 LUFS | −14 ±1 | outside (red) |
-| True peak | −0.3 dBTP | ≤ −1 | outside |
-| Loudness range | 7.1 LU | guidance | within |
-| Left / right peak | −0.3 / −12.8 dBFS | — | (balance row decides) |
-| Balance | +9.4 LU | within ±2 | outside |
-| Silent channel | R 38 % of the time | 0 % | outside |
-| Clipped samples | 0 | 0 | within |
+## D4. The report
 
-States are three theme colours with a text mark (✓/!/✕ drawn as Phosphor glyphs, the font rule); the section
-header reads "Sound — 4 outside the norm". The offset line: "to the target: +3.2 dB" and, when the peak + offset
-crosses the ceiling, "— the peaks would reach +2.9 dBTP" in the error style (rule 16). The norm picker sits in the
-render settings and repeats in the result header (changing it re-judges the same numbers, no new render).
+Revision 1's table (each value with the project's norm and a state; per-channel peak, loudness, balance, silence; timed
+findings in the picture check's list), now judged against D1's target.
 
-## D5. Class walk — "a measured number nobody notices"
+## D5. Class walk — "a level decided per file instead of per project"
 
-| Place | Number | Emphasised? | Here |
-|---|---|---|---|
-| render result: loudness | LUFS/dBTP/LRA | no | D4 |
-| render result: picture | (picture-check) | yes, its list | shared list |
-| render result: frames/audio counts (T13) | 517/516 | no | out of scope (T13 row) |
-| meters panel | peak, LUFS-S | colour zones exist | unchanged |
-| Diagnostics: underruns | count | threshold warnings exist | unchanged |
+| Level | Today | Here |
+|---|---|---|
+| program loudness | a grey reference line at render | D3 |
+| clip loudness by type | by hand | D2 |
+| background under speech | Auto-ducking | `auto-ducking-by-role` |
+| true peak ceiling | the limiter as an effect | D3 on the master |
+| render presets | carried the norm (revision 1) | carry none |
 
 ## D6. Idle
 
-All measurement is inside the export pass; the table draws a finished report; the norm switch recomputes states
-only (a few comparisons).
+Analyses run only on request on the analysis lane, paused while playing; the program stage is one gain and the limiter
+in the mix.
 
 ## Rejected
 
-- **A second analysis pass after the render** — the numbers would not be the ones of the written file's pass and
-  would cost the render's time again.
-- **Per-channel LRA** — misleading on short material (F-AUD-005, cons); per-channel peak, loudness and silence
-  answer the owner's case.
+- **The norm in render presets** (revision 1) — the owner: "на уровне проекта … а не в пресетах рендера".
+- **Normalizing the rendered file afterwards** — another encode; the stage is in the mix.
