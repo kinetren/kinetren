@@ -3,8 +3,9 @@
 ### Requirement: A stream stage's history survives a restart without loss
 A stream kernel MAY give an exact codec of its memo entries (`EntryCodec`: a version, encode, decode).
 For such a kernel the host SHALL keep a durable tier behind its memo: an entry the memory lacks SHALL be
-looked up there by `mix(entry key, salt)` — the salt being the persistent cache's (the store's format, the decoder's major, the device class, the
-versions and WGSL hashes of the kernels that ran — not the whole build) with the kernel and its codec
+looked up there by `mix(entry key, salt)` — the salt being the persistent cache's (the store's format and the device class as its folder, the decoder's
+major, the versions and WGSL hashes of the kernels that ran and `COMPOSITE_PATH_VERSION` — not the whole
+build) with the kernel and its codec
 version, and the identity (path, size, modification time) of every file the
 stage reads — before the kernel walks for it, and the checkpoints and broken pictures the memo holds SHALL
 be written there only at rest (no input for the prerender's quiet period, not playing, no export's vote).

@@ -44,7 +44,8 @@ telemetry, not a gate: it shows what the tiers saved on his next restart.
 
 The owner moved every cache of a project into a folder beside it (kkt-26.11.20 line 19, change
 `project-cache-folder`). The history is the `history/` kind of its persistent cache
-(`history/`, beside `render/`, `stages/` and `copies/`, kkt-26.11.20b B1), and the mix runs are `mix/`. They share its rules:
+(`results/v<FORMAT>/<device class>/history/`, beside `frames/` and `layers/`, kkt-26.11.20b B1), and the mix
+runs are `mix/v<FORMAT>/`. They share its rules:
 - the entry header and the atomic write (`project-cache-folder` D1);
 - an entry of another salt is a miss, removed when met (no sweep at open);
 - the folder's cycle (`project-cache-folder` D3, the owner's B2): a write that does not fit drops the
@@ -65,8 +66,8 @@ Stream entries are one file per stage run (D3); mix runs are one file per run (D
   (the owner's Q2 b; D9), so the kernel stays one exact encoding and any later kernel's entries are
   compressed alike.
 - **The durable salt of a stage**: `xxh3` of the persistent cache's salt (`project-cache-folder` D1b: the
-  store's format, the decoder's major, the device class, the versions and WGSL hashes of the kernels that
-  ran, not the whole build), the kernel id and its codec version, and the identities of every file the stage reads (render-cache-disk's
+  store's format and the device class as the folder, the decoder's major, the versions and WGSL hashes of
+  the kernels that ran and `COMPOSITE_PATH_VERSION`, not the whole build), the kernel id and its codec version, and the identities of every file the stage reads (render-cache-disk's
   `Leaves` "every file for a stream stage", path + size + mtime ns). Disk key = `mix(entry key, salt)`. The
   entry key already carries positions, quality, parameters and the front slots (it is what the memo
   trusts in-process); the salt adds what a process could assume.

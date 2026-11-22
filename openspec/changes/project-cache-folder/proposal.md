@@ -2,7 +2,7 @@
 
 > DESIGN (spec session, 2026-11-20; revised 2026-11-22). The owner decided the direction (kkt-26.11.20 A14)
 > and answered its questions (kkt-26.11.20b B2): one folder per project folder, cyclic writing with a notice
-> when it cannot take more. Code starts on the orchestrator's go. Tests reserved: t3824–t3843.
+> when it cannot take more. Code starts on the orchestrator's go. Tests reserved: t3824–t3843, t3808.
 > Base: `orch-26-11-01` at `5e7a8ea9`.
 
 ## Why
@@ -34,11 +34,11 @@ Four things follow from that layout:
   - `media/` — per media file, by its content;
   - `reels/` — the reel previews;
   - the persistent cache ("Постоянный кэш", the owner's B1, change `persistent-cache`) as one store of four
-    kinds side by side: `render/` (the preview's prerender, moved from `<data>`), `stages/` (heavy stages'
-    results), `copies/` (heavy sources' copies) and `history/` (the Datamosh history). One key layout
-    (`durable_hash`), one salt rule (the kernels' versions, the decoder major, the device class, not the
-    build) and one rank by value per byte (design D1b);
-  - `mix/` — the heard mix of `durable-history-and-mix`;
+    kinds: `results/v<FORMAT>/<device class>/{frames, layers, history}` (the preview's prerender moved from
+    `<data>`, heavy layers' results, the Datamosh history) and `media/<content id>/copy-*.mkv` (heavy sources'
+    copies). One key layout (`durable_hash` plus the decoder major, the kernels' versions and
+    `COMPOSITE_PATH_VERSION`; not the build) and one order by value per byte (design D1b);
+  - `mix/` — the heard mix of `durable-history-and-mix`, in the same value order;
   - `renders.tsv` — earlier renders found again by `cached-final-render`;
 
   Each cache keeps its own files and versions. A broken or locked file in one costs only that entry.

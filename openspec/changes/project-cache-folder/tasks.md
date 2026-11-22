@@ -2,7 +2,7 @@
 
 > The owner answered (kkt-26.11.20b B2): one folder per project folder, cyclic writing with a notice. Code
 > starts on the orchestrator's go. Tests
-> reserved: t3824–t3843. Base: orch `5e7a8ea9`.
+> reserved: t3824–t3843, t3808 (freed by hdr-sources-to-sdr). Base: orch `5e7a8ea9`.
 
 ## 0. Notes first
 
@@ -30,7 +30,9 @@
 
 ## 3. The prerender in the folder
 
-- [ ] 3.1 `render_cache` root from the folder; `<data>/render-cache` deleted at the first start; t3833, t3834
+- [ ] 3.1 `render_cache` root from the folder (`results/v<FORMAT>/<device class>/frames/`); `<data>/render-cache`
+      deleted at the first start; the key without the build: decoder major, kernels' versions and WGSL
+      hashes, `COMPOSITE_PATH_VERSION` and its guard; stale entries dropped on a miss; t3833, t3834, t3808
 - [ ] 3.2 `cargo test -p kt-engine`; commit
 
 ## 4. Cyclic writing

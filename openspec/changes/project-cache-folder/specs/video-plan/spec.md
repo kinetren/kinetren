@@ -5,8 +5,10 @@ The preview SHALL keep complete composites of slow moments on disk under a DURAB
 inputs (every field the executor's plan key hashes) with each frame's per-process content serial replaced
 by what determines the frame across processes — a file's path, size and modification time, a generator's
 values (`src_rev`), a stream stage's own key plus the identities of the project's files — salted by the
-store's format, the decoder's major, the device class and the versions of the kernels that ran (each
-plugin's version and its WGSL text's hash), not by the whole build. So the same plan gives the same key in
+store's format and the device class (the folder `results/v<FORMAT>/<device class>/`), and keyed further by
+the decoder's major, the versions of the kernels that ran (each plugin's version and its WGSL text's hash)
+and `COMPOSITE_PATH_VERSION` (bumped by any change of the composite code outside the kernels), not by the
+whole build. So the same plan gives the same key in
 another process and in a release that did not change those kernels, while an edit, a replaced file, a
 changed kernel or another device class gives another. The key SHALL NOT depend on the
 codec, the encoder or the container: it names the picture, and a later reader (the cached final render,
@@ -59,7 +61,7 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **TEST** t3129 (`src/libs/kt-media/tests/segment.rs`)
 
 #### Scenario: The durable key survives a process and follows what the picture is made of
-- **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality, a kernel's version or WGSL text, the decoder's major and the device class; and after a change of the program build that touches none of them
+- **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality, a kernel's version or WGSL text, the decoder's major, `COMPOSITE_PATH_VERSION` and the device class; and after a change of the program build that touches none of them
 - **THEN** the first keys are equal; each named change gives another key, and the build change alone keeps it
 - **TEST** t2981 (`src/libs/kt-engine/tests/render_cache.rs`)
 
@@ -104,3 +106,8 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **WHEN** two projects in two folders prerender a loop each, the second folder's cap smaller than its loop, and the first start of the build finds a former `<data>/render-cache`
 - **THEN** each project's segments lie in its own `kinetren-cache/`, the second folder's oldest segments are replaced as its loop is written while the first folder is untouched, and the former folder is gone
 - **TEST** t3833, t3834 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+#### Scenario: The composite path's version follows its code
+- **WHEN** the guard reads `COMPOSITE_PATH_VERSION` and the hash of the composite code outside the kernels (the fusion, `plan_chain`, the core passes and shaders, the conversions) recorded beside it
+- **THEN** the recorded hash equals the files' hash; a change of those files without a new constant and a new recorded hash fails the guard, naming the files
+- **TEST** t3808 (`src/libs/kt-engine/tests/render_cache.rs`)
