@@ -11447,11 +11447,13 @@ impl eframe::App for KtApp {
         kt_gpu::begin_exit();
         // a reel strip may be on the device: the process must not exit under it. A test's process
         // goes on after this close, and every later render would wait on the parked engine for good
+        // bounded like every wait of the close (found-defects 964): a cancelled poster's or strip's frame
+        // still on the offline device took 4.3 s under load, and the watcher forced the exit. The process
+        // ends before the drivers' destructors (`kt_time::shutdown::end_before_libraries`), so a frame
+        // left on the device past this bound no longer takes it down
         #[cfg(not(test))]
-        {
-            let since = std::time::Instant::now();
-            kt_gpu::park_offline_engine();
-            record("offline-engine", since, true);
+        if let Ok(h) = std::thread::Builder::new().name("offline-park".into()).spawn(kt_gpu::park_offline_engine) {
+            kt_time::shutdown::join("offline-engine", h, kt_time::shutdown::deadline());
         }
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
