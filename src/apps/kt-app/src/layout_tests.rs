@@ -3256,6 +3256,68 @@ fn t185_gpu_loss_notice_once() {
     assert_eq!(hits, 1, "exactly one warning: {texts:?}");
 }
 
+/// Test t3819 (stream-picture-stays D2): the window's device shared with the compute host is lost —
+/// the preview's executor answers DeviceLost and the host's jobs fail. The preview says once that it
+/// has no picture, the host takes no new job (a Datamosh frame takes its no-device path), and Ctrl+S
+/// still writes the project: the save and the close's durability need no device.
+///
+/// - **PATH** a project with an unsaved edit plays → the device is lost: the preview has no picture and
+///   one notice says so → Ctrl+S: the title loses its asterisk, the file holds the edit
+#[test]
+fn t3819_a_lost_shared_device_poisons_both_and_the_work_is_saved() {
+    struct LostGpu(kt_engine::GpuBackendInfo);
+    impl kt_engine::VideoGpuExec for LostGpu {
+        fn execute_into(&self, _p: &kt_engine::FramePlan<'_>, _o: &mut Vec<u8>) -> Result<bool, kt_engine::GpuExecError> {
+            Err(kt_engine::GpuExecError::DeviceLost)
+        }
+        fn info(&self) -> &kt_engine::GpuBackendInfo {
+            &self.0
+        }
+    }
+    crate::plugins::install();
+    let dir = std::env::temp_dir().join(format!("kt-t3819-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("lost.kt");
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.project_path = Some(path.clone());
+        app.model.apply(kt_model::Command::AddMedia { id: kt_model::MediaId(1), path: "synth:ramp".into() }).unwrap();
+        app.model_rev += 1;
+        app.dirty_content = true;
+        app.player.set_video_gpu(Some(std::sync::Arc::new(LostGpu(kt_engine::GpuBackendInfo {
+            name: "shared".into(),
+            backend: "Test".into(),
+            software: true,
+        }))));
+        // the same loss on the compute side: a job failed, the host is marked unusable
+        kt_plugin_api::compute::fail("the device was lost".into());
+        app.preview_key = None;
+    }
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(kt_plugin_api::compute::host().is_none(), "the host takes no new job");
+    assert!(kt_plugin_api::compute::unavailable().is_some_and(|w| w.contains("lost")), "and says why");
+    {
+        let app = h.state();
+        assert!(matches!(app.player.video_backend(), kt_engine::VideoBackendStatus::Poisoned { .. }), "the preview is poisoned");
+        let lost = crate::tf!(k::msg::VIDEO_FX_GPU_LOST, "DeviceLost");
+        assert_eq!(app.notices.iter().filter(|n| n.text == lost).count(), 1, "one notice");
+    }
+    h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::S);
+    let deadline = kt_time::test_deadline();
+    while h.state().dirty_content || h.state().saving.is_some() {
+        assert!(std::time::Instant::now() < deadline, "the save never landed");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        h.step();
+    }
+    let back = KtApp::open(&path).expect("the file reads back");
+    assert_eq!(back.model.project().media.len(), 1, "the edit is in the file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Test 221 (R.33 item 5): a single automation widget.
 /// Four user requirements are checked at once — switching graph↔table,
 /// conversion “material ↔ timeline” ACCOUNTING for reverse and speed
