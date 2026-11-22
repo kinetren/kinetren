@@ -29,7 +29,7 @@ work away, though its own result did not change.
 
 - **One store, "Persistent cache" («Постоянный кэш»)**, inside the project's cache folder (`project-cache-folder`), with
   three kinds of entry under one budget and one eviction order:
-  - **stage results** — the picture of one layer after a heavy point of its own chain (an event's chain after its
+  - **layer results** — the picture of one layer after a heavy point of its own chain (an event's chain after its
     heavy node, a track stage, a reel instance's output), keyed by exactly what determines that picture (the source's
     identity and material position, the chain prefix's content and curve values at that moment, the decode size) —
     so an edit of another layer, of the effects AFTER the cut, or of the timeline position keeps it;
@@ -41,7 +41,7 @@ work away, though its own result did not change.
   while playing when the device has room (the render-ahead producer's spare time).
 - **Reading**: before a layer runs its chain, the plan asks the store for the latest cut point of that chain held for
   this moment; found, the layer starts from it and runs only the nodes after it. A whole frame found is shown as today.
-- **A key that survives updates**: an entry is salted by the versions of the kernels it ran (each plugin's version and
+- **A key that survives updates**: an entry is keyed by the versions of the kernels it ran (each plugin's version and
   shader text hash) and the decoder's major version, not by the whole program build — an update that does not touch a
   Datamosh keeps its cached Datamosh.
 - **The switch beside the quality** reads «Постоянный кэш: как в превью / 1/2 / 1/4 / выкл.» (the copy size; "выкл."
@@ -55,7 +55,7 @@ work away, though its own result did not change.
 
 ### Modified Capabilities
 
-- `video-plan`: stage results as cut points of a layer's chain; reading before a chain runs; the heavy rule; the key;
+- `video-plan`: layer results as cut points of a layer's chain; reading before a chain runs; the heavy rule; the key;
   frames and copies as kinds of the one store.
 - `media-index`: source copies (the file, the adaptive size, the camera's copy).
 - `export`: no export reads the store.
@@ -65,22 +65,22 @@ work away, though its own result did not change.
 
 - kt-engine: `render_cache.rs` becomes the store of three kinds (`Entry::{Stage, Frame, Copy}`), its root and limit from
   the cache folder; the plan's per-layer durable prefix key (`stage_key(layer, cut)`) beside the frame's durable key;
-  the producer writes stage results; `frame_plan` starts a layer from a found cut.
+  the producer writes layer results; `frame_plan` starts a layer from a found cut.
 - kt-gpu: a texture from a decoded stage segment enters the chain as the cut node's output (the same upload path).
 - kt-media: the copy transcode loop (revision 2), the copy source with the original's natives.
 - kt-ffmpeg: `MuxConfig` per-frame timestamps (found-defects 823); stage segments with alpha as a colour segment plus a
   luma segment of the alpha, both on the hardware encoder.
 - kt-app: the switch, badges, a Diagnostics row per kind (bytes, hits, writes); i18n ×5.
-- `project-cache-folder` (spec-engine): its layout gains `stages/` and `copies/` beside `render/`; its limit and cyclic
-  eviction cover them by this change's value order (coordinated).
+- `project-cache-folder` (spec-engine, agreed in its `301d5a49`): `results/v<FORMAT>/<device class>/{frames, layers,
+  history}`, `mix/`, `media/<content id>/copy-<quality>.mkv`; one value order; the key of D4.
 - No project format change. Idle: writing happens at rest only within the prerender's existing rule.
 
 ## Questions to the owner
 
 **Q1. How exact must a cached effect result be?** Your items above: the cache exists "чтобы эффекты тяжелые не считать";
 your earlier choice for the disk prerender (`kkt-26.11.18b` U4): "сделай ты сжатие видео нормальное" — a normal video
-codec on the hardware, lossy accepted, the export never reads it. A stage result is not shown as is: the effects after
+codec on the hardware, lossy accepted, the export never reads it. A layer result is not shown as is: the effects after
 the cut process it again (a sharpen after a cached blur amplifies the codec's noise).
 - (a) **Lossy on the hardware encoder at a high quality, like the prerender, for all three kinds** (*recommended*: a
   tenth of the disk of lossless; the preview may differ from the render by the codec's noise, never the export).
-- (b) Stage results lossless (LZ4-compressed, about 10× the disk), frames and copies lossy.
+- (b) Layer results lossless (LZ4-compressed, about 10× the disk), frames and copies lossy.

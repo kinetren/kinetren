@@ -7,14 +7,14 @@
 
 - [x] 0.1 F-MED-002 renamed "Persistent cache" and refreshed with A10 and B1
 - [x] 0.2 proposal, design (D1–D9, class walk), deltas `video-plan`, `media-index`, `export`, `ui-reach`; `openspec validate persistent-cache --strict`
-- [x] 0.3 coordination with `project-cache-folder` (spec-engine, agreed in its `5dc0bff0`): `stages/`, `copies/`, `history/`, the value order, the salt rule
+- [x] 0.3 coordination with `project-cache-folder` (spec-engine, agreed in its `301d5a49`): the results/ layout, the value order, the key without the build
 - [ ] 0.4 the owner's answer to Q1 folded in
 
 ## 1. The store (kt-engine)
 
 - [ ] 1.1 `render_cache.rs` → the store of three kinds in the cache folder, one budget, value order; t3453
-- [ ] 1.2 the stage key and the salt by kernel versions; t3452
-- [ ] 1.3 cut points from measured pass times; the producer writes stage results; `frame_plan` starts from a held cut; t3451
+- [ ] 1.2 the layer key (durable hash + decoder major + kernel versions + COMPOSITE_PATH_VERSION); t3452
+- [ ] 1.3 cut points from measured pass times; the producer writes layer results; `frame_plan` starts from a held cut; t3451
 - [ ] 1.4 export guard; t3445
 
 ## 2. Source copies (kt-ffmpeg, kt-media)

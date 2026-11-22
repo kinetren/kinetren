@@ -2,7 +2,7 @@
 
 ### Requirement: An export never reads the persistent cache
 Every export body, the render window and the command-line export SHALL open sources by the media's path and never
-by the persistent cache — no stage result, frame or source copy — whatever the preview's switch says.
+by the persistent cache — no layer result, frame or source copy — whatever the preview's switch says.
 Why: invariant 11 — the export's bytes depend on the project only; Premiere's "exported my proxies".
 
 #### Scenario: Export bytes are the same with the persistent cache full
