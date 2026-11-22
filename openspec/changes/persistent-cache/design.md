@@ -76,12 +76,16 @@ says so. A preview built from cached stages differs from a fresh compose by the 
 | whole slow frame | present memo | prerender | frame (unchanged) |
 | final mix | kept mix (memory) | `mix/` (designed) | unchanged |
 
-## D8. Coordination with `project-cache-folder`
+## D8. Coordination with `project-cache-folder` (agreed 2026-11-22)
 
-spec-engine's design owns the folder, its limit and its cyclic eviction with a notice. This change asks it for: the
-`stages/` and `copies/` subfolders beside `render/`; the eviction by this design's value order inside the store's
-share of the folder; the store's salt rule D4 instead of the build salt for `render/`. Message sent to spec-engine
-2026-11-22.
+spec-engine folded this design's three asks into `project-cache-folder` (branch `claude/spec-engine-be18cf`, commit
+`5dc0bff0`): `render/`, `stages/`, `copies/` and `history/` side by side in `kinetren-cache/` (`mix/` outside the
+store); inside the store the lowest value per byte goes first, and a frame this process used in the last minute is never
+dropped; when the folder cannot take more (B2), the store goes first, then mix, reels and the media index by last use;
+the salt is D4's (store format, decoder major, device class, each kernel's plugin version + WGSL hash; not the build), a
+stale salt is a miss removed when met, no sweep — the Datamosh history (`durable-history-and-mix`) uses the same salt.
+That change owns the folder, its tenants, the limit and the cycle; this one owns what is heavy and how a kept stage
+result enters the plan.
 
 ## D9. Idle
 
