@@ -58,7 +58,7 @@ listed.
   `stereo_width`, `tremolo`, `auto_pan`, `vibrato`, `chorus`, `flanger`, `phaser`, `delay`,
   `compressor`, `gate`, `limiter`, `pitch_shift`, `vhs_tape_sound`, `datamosh_sound`,
   `camera_isp_sound`.
-- **Layer marker (1):** `layer_mix`.
+- **Routing (2):** `layer_mix`, `merge`.
 - **Video effects (30):** `color_grade`, `duotone`, `posterize`, `vignette`, `corner_pin`, `sharpen`,
   `pixelate`, `chromatic_aberration`, `radial_blur`, `drop_shadow`, `halftone`, `camera_isp`, `lens_distort`,
   `twirl`, `ripple`, `kaleidoscope`, `cylinder3d`, `vhs_tape`, `geometry`, `cam_motion`, `mirror`, `blur`,
@@ -67,9 +67,9 @@ listed.
   `zoom`, `spin`, `whip`, `blur_dissolve`, `pixelate`, `glitch`, `flash`, `dip`, `blinds`,
   `checker`, `blocks`, `spiral`, `split`, `squeeze`, `stretch`, `swap`, `shake`, `film_burn`,
   `light_leaks`, `zoom_blur`, `flip`, `cube`, `door`, `page_peel`, `page_roll`.
-- **Generators (32):** `solid`, `text`, `gradient`, `corners`, `checker`, `noise`, `smpte`,
+- **Generators (35):** `solid`, `text`, `gradient`, `corners`, `checker`, `noise`, `smpte`,
   `timecode`, `transparent`, `rect`, `ellipse`, `line`, `polygon`, `star`, `arrow`, `frame`, `plate`, `progress`, `meshgrad`, `plasma`, `particles`, `pattern`, `leader`, `table`, `window`, `tone`,
-  `audio_noise`, `sweep`, `beep`, `silence`, `syncflash`, `safearea`.
+  `audio_noise`, `sweep`, `beep`, `silence`, `syncflash`, `safearea`, `waveform`, `spectrum`, `levelrings`.
 
 **What people use, against what we have.** Verdict vocabulary: `have` · `wave Wn` · `deferred
 (<dependency>)` · `rejected (<reason>)`. A market cell either cites a source of the list at the end

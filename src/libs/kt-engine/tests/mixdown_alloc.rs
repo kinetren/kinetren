@@ -107,6 +107,7 @@ fn event(id: u64, lane: u32, start: i64, len: i64, media: u64, fx: Vec<FxInstanc
         fx_auto: auto,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

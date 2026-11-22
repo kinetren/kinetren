@@ -54,6 +54,7 @@ fn project() -> Project {
         fx: vec![FxInstance::plugin_with("slowed_reverb", &[1.0, 0.5, 60.0, 0.4, 0.7, 1.0, 0.0, 0.0, 1.0]).unwrap()],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }];
     p.ensure_tracks(LaneKind::Audio, 1);
     p

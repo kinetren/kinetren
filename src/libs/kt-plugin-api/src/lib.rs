@@ -8,6 +8,7 @@
 //! kt-model re-exports everything here under its former names.
 
 pub mod audio_codec;
+pub mod audio_series;
 pub mod barrier;
 pub mod compute;
 pub mod cpu;

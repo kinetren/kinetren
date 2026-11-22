@@ -60,6 +60,8 @@ fn plan<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance]) -> FramePlan<'a> {
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
+        reads: Vec::new(),
     };
     FramePlan { t: Tick(3000), out_w: W, out_h: H, layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }] }
 }
@@ -250,6 +252,7 @@ fn project() -> Project {
         fx: vec![instance("color_grade", true), instance("posterize", true), instance("duotone", true), instance("vignette", true)],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }];
     p.normalize();
     p.validate().unwrap();

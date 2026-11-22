@@ -51,6 +51,7 @@ fn project(ring: bool) -> Project {
         geometry_pos: 0,
         geometry_auto: Vec::new(),
         masks: Default::default(),
+        fx_in: Vec::new(),
     });
     let at = p.tracks.iter().position(|t| t.kind == LaneKind::Audio).unwrap();
     p.tracks[at].fx = vec![pitch(ring)];

@@ -77,15 +77,23 @@ pub(crate) fn pick_kind(h: &mut Harness<'_, KtApp>, tag: &str) {
     let pick = crate::widgets::field_probe::rect_of("genw.kind.pick").expect("the Kind field");
     let over = pick.center() + egui::vec2(0.0, 160.0);
     // (the gallery may open scrolled: down first, then back up)
-    for i in 0..80 {
-        if crate::widgets::field_probe::rect_of(&cell).is_some() {
-            break;
-        }
-        let dy = if i < 40 { -60.0 } else { 60.0 };
+    let wheel = |h: &mut Harness<'_, KtApp>, dy: f32| {
         h.hover_at(over);
         h.event(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: egui::vec2(0.0, dy), modifiers: egui::Modifiers::NONE, phase: egui::TouchPhase::Move });
         h.step();
         h.step();
+    };
+    for i in 0..80 {
+        let dy = if i < 40 { -60.0 } else { 60.0 };
+        if crate::widgets::field_probe::rect_of(&cell).is_some() {
+            // the first frame that draws a cell draws it at the fold: two more notches bring it in whole
+            if i > 0 {
+                wheel(h, dy);
+                wheel(h, dy);
+            }
+            break;
+        }
+        wheel(h, dy);
     }
     // the wheel scrolls with an animation: the cell is pressed where it comes to rest
     for _ in 0..12 {
@@ -115,9 +123,11 @@ fn new_clips(h: &Harness<'_, KtApp>, before: usize) -> Vec<ClipEvent> {
 fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     crate::plugins::install();
     let all = GeneratorKind::all();
-    assert_eq!(all.len(), 36, "31 picture rows + 5 sound rows");
-    let tags: Vec<&str> = all[31..].iter().map(|k| k.tag()).collect();
+    assert_eq!(all.len(), 39, "31 picture rows + 5 sound rows + 3 audio-reactive picture rows");
+    let tags: Vec<&str> = all[31..36].iter().map(|k| k.tag()).collect();
     assert_eq!(tags, SOUND, "the sound rows follow the 31 picture rows in BUILTIN_IDS order");
+    let react: Vec<&str> = all[36..].iter().map(|k| k.tag()).collect();
+    assert_eq!(react, ["waveform", "spectrum", "levelrings"], "the audio-reactive rows close the list (gen-audio-reactive)");
     for k in &all {
         let sound = SOUND.contains(&k.tag());
         assert_eq!(crate::gen_ui::is_sound(k), sound, "{}: a sound kind is exactly a synthesizing one", k.tag());
@@ -130,7 +140,7 @@ fn t1163_the_sound_kinds_are_menu_rows_in_the_audio_group() {
     }
     for lang in crate::i18n::Lang::ALL {
         crate::i18n::set_lang(lang);
-        for k in &all[31..] {
+        for k in &all[31..36] {
             let name = crate::gen_ui::kind_name(k);
             assert_ne!(name, k.tag(), "{lang:?}: {} has no catalog name", k.tag());
             let GeneratorKind::Plugin(p) = k else { unreachable!() };
@@ -563,4 +573,56 @@ fn t3713_a_kind_switch_keeps_the_sound_pair_in_step() {
     h.step();
     let now = new_clips(&h, before);
     assert_eq!(now.len(), 1, "the card's kind change takes the beep too: {now:?}");
+}
+
+/// Test 3718 (gen-audio-reactive, `v26.10` G5): Waveform, Spectrum and Level rings are reached from
+/// Edit › Create a generator… and the window's Kind gallery, in their own group "Reacts to sound"; each
+/// is one picture event whose window shows the track it hears; every row, flag, choice and colour is
+/// captioned in every language.
+/// - **PATH** Edit → Create a generator… → its window → Kind → Reacts to sound → Waveform / Spectrum /
+///   Level rings → a picture event at the cursor, its window with "Hears track 1" first
+#[test]
+fn t3718_the_reactive_kinds_are_created_and_captioned() {
+    crate::plugins::install();
+    let tags = ["waveform", "spectrum", "levelrings"];
+    for tag in tags {
+        let kind = GeneratorKind::default_for_tag(tag).expect(tag);
+        assert!(crate::gen_ui::GenGroup::of(&kind) == crate::gen_ui::GenGroup::Reactive, "{tag}: not in its group");
+    }
+    let mut h = crate::layout_tests::harness();
+    for tag in tags {
+        let before = h.state().model.project().clips.len();
+        create_from_edit(&mut h, tag);
+        let made = new_clips(&h, before);
+        assert_eq!(made.len(), 1, "{tag}: one picture event: {made:?}");
+        assert_eq!((made[0].kind, made[0].r#gen.as_ref().map(|g| g.tag())), (ClipKind::Video, Some(tag)), "{tag}");
+        let painted = crate::reach_tests::painted_texts(&h);
+        assert!(painted.iter().any(|t| t.src == tr(k::genp::TRACK)), "{tag}: the window does not show the track it hears");
+        h.state_mut().fx_editors.clear();
+        h.step();
+    }
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        assert!(!tr(k::genkind::GROUP_REACTIVE).is_empty());
+        for tag in tags {
+            let kind = GeneratorKind::default_for_tag(tag).expect("the kind");
+            assert_ne!(crate::gen_ui::kind_name(&kind), tag, "{lang:?}: {tag} has no name");
+            let GeneratorKind::Plugin(p) = &kind else { unreachable!() };
+            for spec in p.specs().iter().filter(|s| s.unit != kt_model::ParamUnit::Rgb8) {
+                let label = if spec.ty == ParamType::Flag {
+                    crate::widgets::flag_label(&spec.name)
+                } else {
+                    crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, &spec.name)
+                };
+                assert_ne!(label, spec.name.as_ref(), "{lang:?}: {tag}.{} has no caption", spec.name);
+            }
+            for (key, _) in crate::gen_ui::color_groups(&kind) {
+                assert!(!tr(*key).is_empty(), "{lang:?}: {tag}: a colour caption is empty");
+            }
+        }
+        for (row, key) in [("style", "line"), ("style", "filled"), ("style", "mirror"), ("style", "bars")] {
+            assert!(crate::gen_ui::choice_label(row, key).is_some(), "{lang:?}: {row} {key} has no caption");
+        }
+    }
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
 }

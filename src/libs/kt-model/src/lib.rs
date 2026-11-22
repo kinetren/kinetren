@@ -10,6 +10,7 @@
 pub mod autoplan;
 pub mod demo;
 pub mod formula;
+pub mod fx_graph;
 pub mod genmedia;
 pub mod links;
 pub mod mask;
@@ -22,6 +23,7 @@ pub mod published;
 pub mod warp;
 
 pub use autoplan::*;
+pub use fx_graph::{FxIn, Matte, MatteFrom, MergeMode, SlotInputs};
 pub use formula::{Formula, FormulaError, FormulaErrorKind};
 pub use genmedia::*;
 pub use mask::*;

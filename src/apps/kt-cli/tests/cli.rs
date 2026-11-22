@@ -308,6 +308,7 @@ fn t307_relative_media_paths_resolve_once() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     std::fs::write(sub.join("p.kt"), kt_model::project_file::to_text(&p, None)).unwrap();
@@ -1019,6 +1020,7 @@ fn t940_probe_conform_line_is_the_render_s() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.ensure_tracks(LaneKind::Video, 2);
@@ -1108,6 +1110,7 @@ fn owner_grid_case() -> kt_model::Project {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(LaneKind::Morph, 1);
     p.morphers.push(MorpherEvent {

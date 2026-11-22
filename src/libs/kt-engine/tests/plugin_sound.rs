@@ -91,6 +91,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, engi
         fx_auto: auto,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p

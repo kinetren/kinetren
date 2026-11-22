@@ -157,11 +157,13 @@ pub(crate) enum GenGroup {
     Check,
     /// The sound kinds (generators-placement-and-audio).
     Audio,
+    /// The audio-reactive kinds (gen-audio-reactive): pictures that hear a track.
+    Reactive,
 }
 
 impl GenGroup {
-    pub(crate) const ALL: [GenGroup; 5] =
-        [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check, GenGroup::Audio];
+    pub(crate) const ALL: [GenGroup; 6] =
+        [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check, GenGroup::Reactive, GenGroup::Audio];
 
     pub(crate) fn name(self) -> &'static str {
         tr(self.key())
@@ -175,6 +177,7 @@ impl GenGroup {
             GenGroup::Titles => k::genkind::GROUP_TITLES,
             GenGroup::Check => k::genkind::GROUP_CHECK,
             GenGroup::Audio => k::genkind::GROUP_AUDIO,
+            GenGroup::Reactive => k::genkind::GROUP_REACTIVE,
         }
     }
 
@@ -187,6 +190,7 @@ impl GenGroup {
             GenGroup::Titles => "titles",
             GenGroup::Check => "check",
             GenGroup::Audio => "audio",
+            GenGroup::Reactive => "reactive",
         }
     }
 
@@ -879,6 +883,10 @@ pub(crate) fn choice_label(row: &str, key: &str) -> Option<&'static str> {
         ("pattern", "dots") => tr(k::genc::DOTS),
         ("pattern", "grid") => tr(k::genc::GRID),
         ("pattern", "waves") => tr(k::genc::WAVES),
+        ("style", "line") => tr(k::genc::STYLE_LINE),
+        ("style", "filled") => tr(k::genc::STYLE_FILLED),
+        ("style", "mirror") => tr(k::genc::STYLE_MIRROR),
+        ("style", "bars") => tr(k::genc::STYLE_BARS),
         _ => return None,
     })
 }

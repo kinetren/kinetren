@@ -224,6 +224,11 @@ impl MediaIndexDb {
                media_id INTEGER PRIMARY KEY,
                version  INTEGER NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS audio_series (
+               media_id INTEGER PRIMARY KEY,
+               version  INTEGER NOT NULL,
+               data     BLOB NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS loudness (
                media_id  INTEGER PRIMARY KEY,
                lufs_x100 INTEGER NOT NULL,
@@ -309,7 +314,7 @@ impl MediaIndexDb {
     /// keyed by content (reel, edit, media fingerprint), not by
     /// `media_id`, and a file swap is caught by the fingerprint itself — see `reel_preview`.
     fn purge_media(&self, media_id: i64) -> Result<(), IndexError> {
-        for table in ["packet_index", "audio_peaks", "thumbnails", "poster", "loudness"] {
+        for table in ["packet_index", "audio_peaks", "thumbnails", "poster", "loudness", "audio_series"] {
             self.conn
                 .execute(&format!("DELETE FROM {table} WHERE media_id=?1"), params![media_id])?;
         }
@@ -343,6 +348,27 @@ impl MediaIndexDb {
                 (dbtp * 100.0).round() as i64,
                 (lra * 100.0).round() as i64
             ],
+        )?;
+        Ok(())
+    }
+
+    /// The audio-reactive analysis series of a media (gen-audio-reactive), `None` when it is not
+    /// stored or was computed by another analysis version. Reached through `listen::SeriesStore`.
+    pub fn audio_series(&self, media_id: i64, version: u32) -> Result<Option<Vec<u8>>, IndexError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT data FROM audio_series WHERE media_id=?1 AND version=?2",
+                params![media_id, version as i64],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn put_audio_series(&self, media_id: i64, version: u32, data: &[u8]) -> Result<(), IndexError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO audio_series(media_id, version, data) VALUES(?1, ?2, ?3)",
+            params![media_id, version as i64, data],
         )?;
         Ok(())
     }

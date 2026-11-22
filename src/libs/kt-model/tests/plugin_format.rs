@@ -526,6 +526,7 @@ fn project_with(fx: Vec<FxInstance>) -> Project {
         fx_auto: vec![Vec::new(); n],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p
 }
@@ -850,6 +851,8 @@ fn core_kind(f: &FxInstance) -> Option<&'static str> {
         FxInstance::LayerMix { .. } => Some("layer_mix"),
         FxInstance::Geometry { .. } => Some("geometry"),
         FxInstance::CamMotion { .. } => Some("cam_motion"),
+        // routing, not an effect: two inputs, which the plugin contract does not have (fx-graph-dag D1)
+        FxInstance::Merge { .. } => Some("merge"),
         FxInstance::Plugin(_) | FxInstance::Missing(_) => None,
     }
 }
@@ -862,7 +865,7 @@ fn core_kind(f: &FxInstance) -> Option<&'static str> {
 fn t1056_the_core_keeps_no_barrier() {
     kt_plugins_builtin::install();
     let core: std::collections::BTreeSet<&str> = FxInstance::all().iter().filter_map(core_kind).collect();
-    assert_eq!(core, ["cam_motion", "geometry", "layer_mix"].into_iter().collect(), "a picked effect is still a core variant");
+    assert_eq!(core, ["cam_motion", "geometry", "layer_mix", "merge"].into_iter().collect(), "a picked effect is still a core variant");
     for id in [
         "blur", "glow", "edges", "vhs", "noise", "greenscreen", "sharpen", "pixelate", "halftone", "chromatic_aberration",
         "radial_blur", "drop_shadow",

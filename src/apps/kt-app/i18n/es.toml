@@ -1310,6 +1310,10 @@ corner_br = "Inferior derecha"
 tc_note = "Muestra el tiempo del MATERIAL: un clip desde cero con inicio 0 coincide con el reloj de la línea de tiempo"
 
 [genkind]
+levelrings = "Anillos de nivel"
+spectrum = "Espectro"
+waveform = "Forma de onda"
+group_reactive = "Reacciona al sonido"
 progress = "Barra de progreso"
 plate = "Placa de tercio inferior"
 frame = "Marco"
@@ -1391,6 +1395,18 @@ align_r = "Derecha"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+top_color = "Arriba"
+bottom_color = "Abajo"
+hold = "Mantener picos"
+spacing = "Espaciado"
+rings = "Anillos"
+react = "Reacción"
+gap = "Separación"
+bottom = "Línea base"
+style = "Estilo"
+gain = "Ganancia"
+height = "Altura"
+track = "Escucha la pista"
 fill_color = "Relleno"
 track_color = "Pista"
 accent_color = "Acento"
@@ -1470,6 +1486,10 @@ tone = "Tono de 1 kHz"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+style_bars = "Barras"
+style_mirror = "Espejo"
+style_filled = "Relleno"
+style_line = "Línea"
 waves = "Ondas"
 grid = "Rejilla"
 dots = "Puntos"

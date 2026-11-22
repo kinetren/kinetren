@@ -91,6 +91,7 @@ fn base(n: u64) -> Project {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
@@ -123,6 +124,7 @@ fn with_distant(mut p: Project, extra: u64) -> Project {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();

@@ -64,6 +64,8 @@ fn plan<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance], id: u64) -> FramePlan<'a>
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
+        reads: Vec::new(),
     };
     FramePlan { t: Tick(id as i64), out_w: W, out_h: H, layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }] }
 }

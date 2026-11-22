@@ -681,6 +681,14 @@ fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
         }
     }
     h.update(&s.fx_hash.to_le_bytes());
+    // the wiring, as `plan_hash` does (fx-graph-dag D3); a line adds nothing
+    if !s.fx_in.is_empty() {
+        put_debug(h, &s.fx_in);
+    }
+    for (slot, r) in &s.reads {
+        h.update(&(*slot as u64).to_le_bytes());
+        put_src(h, r);
+    }
     if !s.masks.is_empty() {
         put_debug(h, &s.masks);
     }

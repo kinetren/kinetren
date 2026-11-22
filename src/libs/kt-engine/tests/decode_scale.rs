@@ -54,6 +54,7 @@ fn project(w: u32, h: u32, fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> P
         fx_auto: auto,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p
@@ -436,6 +437,7 @@ fn t714_order_equals_read_on_every_conform_rule() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         };
         c.geometry.rule = *r;
         p.clips.push(c);

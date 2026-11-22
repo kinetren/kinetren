@@ -126,6 +126,15 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "top" => tr(k::genp::TOP),
         "accent" => tr(k::genp::ACCENT),
         "fill_time" => tr(k::genp::FILL_TIME),
+        "track" => tr(k::genp::TRACK),
+        "height" => tr(k::genp::HEIGHT),
+        "gain" => tr(k::genp::GAIN),
+        "style" => tr(k::genp::STYLE),
+        "bottom" => tr(k::genp::BOTTOM),
+        "gap" => tr(k::genp::GAP),
+        "react" => tr(k::genp::REACT),
+        "rings" => tr(k::genp::RINGS),
+        "spacing" => tr(k::genp::SPACING),
         _ => return None,
     })
 }
@@ -342,6 +351,7 @@ pub fn flag_label(name: &str) -> String {
         "center" => tr(k::genp::CENTER),
         "thirds" => tr(k::genp::THIRDS),
         "cut43" => tr(k::genp::CUT43),
+        "hold" => tr(k::genp::HOLD),
         "bold" => tr(k::titlew::BOLD),
         "reverse" => tr(k::trn::REVERSE),
         "vertical" => tr(k::trn::VERTICAL),

@@ -208,7 +208,13 @@ fn production_corpus() -> Vec<(String, String)> {
 /// nobody calls it, and this must be explained in a sentence, not with the
 /// word “TODO”. Once it is wired to the UI, it must be removed from here (otherwise the list will
 /// cover everything within a year and stop meaning anything).
-const NOT_FROM_UI: &[(&str, &str)] = &[];
+const NOT_FROM_UI: &[(&str, &str)] = &[
+    // fx-graph-dag v2a: the model, the file and the OTIO door carry a chain's wiring; the node
+    // editor's branch gestures that send these arrive with v2d (task 4.2 removes both rows), and v2a
+    // is merged only together with the stages that run and draw a graph
+    ("SetFxIn", "the node editor's wire gestures arrive with fx-graph-dag v2d"),
+    ("SetTrackFxIn", "the track window's wire gestures arrive with fx-graph-dag v2d"),
+];
 
 /// Test 252 (R.38): there are no orphaned commands.
 ///
@@ -346,6 +352,7 @@ fn scene(
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
         if e == E::Generator {
             // generator event: the media carries ONLY the KIND, and the VALUES live
@@ -664,6 +671,7 @@ fn t254_click_is_a_click() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -754,6 +762,7 @@ fn t547_gallery_click_reaches_the_model() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -1076,6 +1085,7 @@ fn picker_harness(
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -1331,6 +1341,7 @@ fn strip_metrics(file: &str) -> (f32, Vec<PaintedText>) {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -3079,6 +3090,7 @@ pub(crate) fn window_openers() -> Vec<(&'static str, OpenWin, Closes)> {
                     slots: vec![],
                     src_in: kt_time::Tick(0),
                     fx_off: false,
+                    fx_in: Vec::new(),
                 },
                 name: "preset".into(),
                 rename_of: None,
@@ -3352,6 +3364,7 @@ fn t783_older_project_goes_through_import_and_open_names_the_door() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     let text = kt_otio::save_project(&p, &Default::default(), path.parent());
@@ -4528,6 +4541,7 @@ fn r70_project() -> kt_model::Project {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let mut p = Project::new(ProjectSettings {
         fps: 30,
@@ -5648,6 +5662,7 @@ fn t917_slowed_event_copies_pastes_and_splits() {
                     fx_auto: curve(),
                     opacity: 1.0,
                     fx_off: false,
+                    fx_in: Vec::new(),
                 });
             }
         });
@@ -5823,6 +5838,7 @@ fn t912_morpher_picker_offers_audio_effects() {
                     fx_auto: vec![],
                     opacity: 1.0,
                     fx_off: false,
+                    fx_in: Vec::new(),
                 });
             }
             p.morphers.push(MorpherEvent {
@@ -6334,6 +6350,7 @@ fn t976_a_test_door_plugin_reaches_the_picker_and_no_reference_list() {
                 fx_auto: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             });
         });
         app.open_fx_editor(ClipId(1));

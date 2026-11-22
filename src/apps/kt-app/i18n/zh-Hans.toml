@@ -1310,6 +1310,10 @@ corner_br = "右下"
 tc_note = "显示素材时间：从零开始且素材起点为 0 的片段与时间线时钟一致"
 
 [genkind]
+levelrings = "电平环"
+spectrum = "频谱"
+waveform = "波形"
+group_reactive = "随声音变化"
 progress = "进度条"
 plate = "下三分之一底板"
 frame = "边框"
@@ -1391,6 +1395,18 @@ align_r = "右对齐"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+top_color = "顶部"
+bottom_color = "底部"
+hold = "保持峰值"
+spacing = "间距"
+rings = "环数"
+react = "响应"
+gap = "间隙"
+bottom = "基线"
+style = "样式"
+gain = "增益"
+height = "高度"
+track = "监听音轨"
 fill_color = "填充"
 track_color = "轨道"
 accent_color = "强调"
@@ -1470,6 +1486,10 @@ tone = "1 kHz 测试音"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+style_bars = "柱形"
+style_mirror = "镜像"
+style_filled = "填充"
+style_line = "线条"
 waves = "波浪"
 grid = "网格"
 dots = "圆点"

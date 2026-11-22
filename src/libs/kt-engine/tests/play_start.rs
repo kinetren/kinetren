@@ -45,6 +45,7 @@ fn player() -> (Player, rtrb::Consumer<f32>) {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.ensure_tracks(LaneKind::Audio, 1);
     p.validate().expect("scene guard: the project is legal");

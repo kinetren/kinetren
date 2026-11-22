@@ -53,6 +53,7 @@ fn event(id: u64, start: i64, len: i64, source_in: i64, fx: Vec<FxInstance>) -> 
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

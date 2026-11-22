@@ -981,6 +981,7 @@ fn toolbar(
                 .collect(),
             src_in,
             fx_off: !*edit.master_on,
+            fx_in: Vec::new(),
         };
         if !edit.fx.is_empty() && crate::app::hint_into(hover, ui.button(tr(k::fx::SAVE_PRESET)), tr(k::fx::SAVE_PRESET_HINT)).clicked() {
             *edit.presets.save = Some(block(edit));

@@ -68,6 +68,7 @@ fn project_with_clip(media: MediaId, source_in: Tick, fx: Vec<FxInstance>) -> Pr
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p

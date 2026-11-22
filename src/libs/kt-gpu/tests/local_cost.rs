@@ -40,6 +40,8 @@ fn layer<'a>(id: u64, fx: &'a [FxInstance], fr: &Arc<VideoFrame>) -> PlanLayer<'
         blend_mode: kt_model::BlendMode::Normal,
         lead: None,
         masks: Vec::new(),
+        fx_in: &[],
+        reads: Vec::new(),
     };
     PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }
 }

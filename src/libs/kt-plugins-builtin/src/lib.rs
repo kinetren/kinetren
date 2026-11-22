@@ -25,6 +25,7 @@ pub const BUILTIN_IDS: &[&str] =
     "meshgrad", "plasma", "particles", "pattern",
     "smpte", "timecode", "leader", "table", "window", "syncflash", "safearea",
     "tone", "audio_noise", "sweep", "beep", "silence",
+    "waveform", "spectrum", "levelrings",
 ];
 
 /// The registry of the built-in set; panics on a refusal or when the families do not give exactly
@@ -48,6 +49,7 @@ pub fn builtin() -> Registry {
         generators_basic::plugins(),
         generators_test::plugins(),
         generators_audio::plugins(),
+        generators_reactive::plugins(),
     ];
     for p in families.into_iter().flatten() {
         let id = p.manifest().id.to_string();

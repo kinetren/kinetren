@@ -1499,6 +1499,7 @@ mod signed_tests {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         };
         // positive 0.5: span (0, used) — the previous formula verbatim
         let w = crate::clip_warp(&mk(0.5, true)).unwrap();

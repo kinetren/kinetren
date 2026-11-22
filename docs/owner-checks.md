@@ -30,10 +30,13 @@ a row; it does not close the row.
 | C8 | 2026-11-20, kt26.11.20-ea0aff6f | **Shapes generators.** Polygon, star, arrow, border frame, lower-third plate, progress bar: does each look right over footage (the frame around a shape is transparent)? | F-TXT-009 → gen-shapes (t3709–t3710, live `gen_shapes`); executor features-slow |
 | C9 | 2026-11-20 | **Ripple across an edit point** (his answer: "запиши на будущее чтобы я проверил"). When ripple editing ships: delete a piece on track 1 while a music bed on track 3 spans the cut — the program refuses, highlights the bed and says "split it or ripple affected tracks only". Does it read right? | kkt-26.11.20 A9 → change `ripple-and-trim-modes` Q1 a |
 | C10 | 2026-11-20 | **D3D11VA on a real Windows card.** Under wine the Windows path compiles and refuses with its reason; a real card is needed to prove the hardware decode. If he runs the Windows zip: does the log name D3D11VA? | found-defects 775 → branch `d3d11va-segment-decode` (merged); executor fx-graph |
+| C11 | 2026-11-22 | **Render through dma-buf on his card** (when A13 lands). Render a region with `KT_EXPECT_HW=vaapi` and send the trace: does the frame go into VAAPI without a copy through memory? There is no VAAPI device on the build machine, only a fake driver. | kkt-26.11.20 A13 → change `export-host-copy`; executor mosh-sharp |
 
 ## Questions waiting for his decision
 
-None open (2026-11-20: Q1–Q54 answered in chat, see Answered).
+| # | Since | Question (with context) | Where to go |
+|---|---|---|---|
+| Q55 | 2026-11-20 | **What should the audio-reactive generators hear — the file or the mix?** The new Waveform, Spectrum and Level rings generators listen to an audio track you pick. Right now they hear the FILES of the events on that track, as After Effects and Resolve do: a reverb, a fade or the event's level line on that track does not change the picture. The other way: they hear what the track really sounds like, after its effects and levels. That costs more — the picture then waits for the sound to be rendered, and a render renders the sound first. (a) the file, as now (Recommended); (b) the mix after effects. | v26.10 G5 → change `gen-audio-reactive`, note F-TXT-011; executor features-slow |
 
 ## Answered
 

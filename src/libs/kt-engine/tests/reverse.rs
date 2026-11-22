@@ -50,6 +50,7 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p
@@ -385,6 +386,7 @@ fn signed_clip(rate: f64, source_in_frames: i64, reversed: bool) -> Project {
         fx: vec![FxInstance::slowed_reverb(rate, 0.0, 85.0)],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
     p

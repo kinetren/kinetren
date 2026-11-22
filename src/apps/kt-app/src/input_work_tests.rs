@@ -88,6 +88,7 @@ fn fx_scene(fx: FxInstance, audio: bool) -> Harness<'static, KtApp> {
             opacity: 1.0,
             fx_off: false,
             masks: Default::default(),
+            fx_in: Vec::new(),
         });
     });
     app.push_project_to_player();

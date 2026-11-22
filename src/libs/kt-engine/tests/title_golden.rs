@@ -72,6 +72,7 @@ fn title_project() -> (Project, Sources) {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let mut back = clip(1, 1, 1);
     back.r#gen = Some(solid);

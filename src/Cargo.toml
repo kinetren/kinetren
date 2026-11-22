@@ -33,6 +33,7 @@ members = [
     "plugins/transitions-volume",
     "plugins/generators-basic",
     "plugins/generators-test",
+    "plugins/generators-reactive",
     "plugins/generators-audio",
     "plugins/fx-video-tape",
 ]
@@ -73,6 +74,7 @@ transitions-styled = { path = "plugins/transitions-styled" }
 transitions-volume = { path = "plugins/transitions-volume" }
 generators-basic = { path = "plugins/generators-basic" }
 generators-test = { path = "plugins/generators-test" }
+generators-reactive = { path = "plugins/generators-reactive" }
 generators-audio = { path = "plugins/generators-audio" }
 fx-video-tape = { path = "plugins/fx-video-tape" }
 

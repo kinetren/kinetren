@@ -477,3 +477,16 @@ is no picture, and an export refuses.
   PIECE with that piece's submit; every piece writes `gpu_exec` (98) naming its executor (D6).
 - `KT_GPU_ARBITER=off` (or `arbiter::set_enabled(false)`) admits everything and cuts nothing: an A/B of
   a run; `kt-cli gpu-share` runs both on ONE device (t2254), `kt-cli trace gpu` reads the records.
+
+## Effect graphs on the device (fx-graph-dag D3)
+
+- `chain_ops` takes the layer's wiring (`LayerSrc.fx_in`) and runs `kt_fx::plan::lower`: `FxOp::Hold`
+  keeps a texture out of the pool to the end of the chain, `Load` makes it current, `Merge` is TWO
+  composite passes over a transparent accumulator (the Background Normal at full level, the
+  Foreground by its blend mode at `mix`) and `Unpremul` — the composite's own kernels, which is what
+  makes the Merge law hold byte for byte (t3204). A matte: `matte.wgsl` makes the coverage
+  (alpha/luma, inverted, × mix) and `layer_mix.wgsl`'s coverage branch mixes the merge with the
+  Background (t3202).
+- **Mask points split around a graph step**: the masks that complete the slot before the position
+  close first (a Hold keeps the masked frame), the next slot's snapshot opens after a Load.
+- `plan_hash` (and the engine's `durable_hash`) hash the wiring when present; a line adds nothing.

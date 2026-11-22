@@ -280,6 +280,7 @@ fn t9_prefetch_pass_is_idempotent() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     let renderer = AudioRenderer::new(&p);
     let mut workers = HashMap::new();
@@ -370,6 +371,7 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
