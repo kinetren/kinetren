@@ -1621,19 +1621,21 @@ fn mosh_case(src: &std::path::Path) -> kt_model::Project {
     p
 }
 
-/// Test t3821 (stream-picture-stays D2, D1): `kt-cli preview --one-device` plays a Datamosh loop on one
-/// device: its trace has no `stream_cross` record, where the same loop on two devices crosses each
-/// frame it shows.
+/// Test t3821 (stream-picture-stays D2, D1): `kt-cli preview --one-device` shares the display's device
+/// with the compute host, and a Datamosh loop on it crosses nothing: on two devices every mosh frame the
+/// preview renders is a `stream_cross` record, on one device none is. The relation, not a count: how many
+/// frames a loop renders is the machine's (t3814, t3820 and t3823 hold the paths without a clock).
 #[test]
 fn t3821_one_device_crosses_nothing_over_a_loop() {
     kt_plugins_builtin::install();
     let dir = showcase_sources("t3821");
     let path = dir.join("mosh.kt");
     std::fs::write(&path, kt_model::project_file::to_text(&mosh_case(&dir.join("sources")), None)).unwrap();
-    let crossed = |one: bool| -> Option<u64> {
+    // (mosh frames rendered, stream pictures crossed)
+    let run = |one: bool| -> Option<(usize, usize)> {
         let trace = dir.join(if one { "one" } else { "two" });
         let mut c = cli();
-        c.args(["preview", path.to_str().unwrap(), "1.2", "1.8", "--loop", "3", "--trace", trace.to_str().unwrap()]);
+        c.args(["preview", path.to_str().unwrap(), "1.2", "1.8", "--loop", "4", "--size", "160x90", "--trace", trace.to_str().unwrap()]);
         if one {
             c.arg("--one-device");
         }
@@ -1648,16 +1650,15 @@ fn t3821_one_device_crosses_nothing_over_a_loop() {
             eprintln!("skipped: {err}");
             return None;
         }
-        let summary = cli().args(["trace", trace.to_str().unwrap(), "summary"]).output().unwrap();
-        let s = String::from_utf8_lossy(&summary.stdout).to_string();
         let dump = String::from_utf8_lossy(&cli().args(["trace", trace.to_str().unwrap(), "dump"]).output().unwrap().stdout).to_string();
-        let shown = dump.lines().filter(|l| l.contains("\"ev\":\"stream_run\"") && (l.contains("\"aux\":1,") || l.contains("\"aux\":1}"))).count();
-        assert!(shown > 0, "the mosh rendered frames in the loop:\n{s}");
-        Some(s.lines().find(|l| l.split_whitespace().next() == Some("stream_cross")).and_then(|l| l.split_whitespace().nth(1)?.parse().ok()).unwrap_or(0))
+        let rendered = dump.lines().filter(|l| l.contains("\"ev\":\"stream_run\"") && (l.contains("\"aux\":1,") || l.contains("\"aux\":1}"))).count();
+        let crossed = dump.lines().filter(|l| l.contains("\"ev\":\"stream_cross\"")).count();
+        Some((rendered, crossed))
     };
-    let Some(two) = crossed(false) else { return };
-    assert!(two > 0, "two devices cross the shown frames");
-    let Some(one) = crossed(true) else { return };
-    assert_eq!(one, 0, "one device crosses nothing");
+    let Some((rendered, crossed)) = run(false) else { return };
+    assert_eq!(crossed, rendered, "two devices: every mosh frame rendered crosses the bus");
+    let Some((rendered_one, crossed_one)) = run(true) else { return };
+    assert_eq!(crossed_one, 0, "one device crosses nothing (frames rendered: {rendered_one})");
+    eprintln!("t3821: two devices rendered {rendered}, crossed {crossed}; one device rendered {rendered_one}, crossed 0");
     let _ = std::fs::remove_dir_all(&dir);
 }

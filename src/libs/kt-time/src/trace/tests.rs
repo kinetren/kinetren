@@ -101,11 +101,25 @@ fn t2142_at_rest_the_writer_sleeps() {
     let dir = tmp("t2142");
     install(Config::new(Some(dir.clone()), "t2142"));
     flush();
-    // let the batch sleep end and the writer park
-    std::thread::sleep(BATCH * 4);
     let tid = writer_tid();
     assert!(tid > 0);
-    let before = ctx_switches(tid);
+    // at rest means PARKED (found-defects 961, row 141's class): a fixed sleep let a writer preempted on
+    // its way to the park, under load, count that way as a wakeup. The count is taken once the writer
+    // sleeps and its switches stand between two looks.
+    let state = || {
+        // no /proc (Windows): no state to read, as `ctx_switches` reads none
+        let Ok(s) = std::fs::read_to_string(format!("/proc/self/task/{tid}/stat")) else { return 'S' };
+        s.rsplit_once(')').and_then(|(_, r)| r.trim_start().chars().next()).unwrap_or('?')
+    };
+    let deadline = crate::test_deadline();
+    let before = loop {
+        let a = ctx_switches(tid);
+        std::thread::sleep(BATCH * 4);
+        if state() == 'S' && ctx_switches(tid) == a {
+            break a;
+        }
+        assert!(std::time::Instant::now() < deadline, "the writer never parked");
+    };
     std::thread::sleep(Duration::from_millis(1500));
     let after = ctx_switches(tid);
     assert_eq!(before, after, "the writer woke at rest");

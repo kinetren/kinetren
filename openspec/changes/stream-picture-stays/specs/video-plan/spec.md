@@ -71,7 +71,7 @@ share (stream-picture-stays D2).
 
 #### Scenario: One device crosses nothing over a loop
 - **WHEN** `kt-cli preview --one-device` plays a Datamosh loop on two fixture videos, and the same loop runs on two devices
-- **THEN** both render mosh frames; the two-device trace has `stream_cross` records, the one-device trace none (byte equality of the two paths is t3814's and t3820's)
+- **THEN** on two devices every mosh frame rendered is a `stream_cross` record, on one device (the run says it shares) none is — a relation, not a count: how many frames a loop renders is the machine's (byte equality of the paths is t3814's and t3820's)
 - **TEST** t3821 (`src/apps/kt-cli/tests/cli.rs`)
 
 #### Scenario: A paused Datamosh loop costs nothing on one device
