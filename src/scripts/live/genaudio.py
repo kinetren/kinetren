@@ -11,13 +11,13 @@ synthetic clip):
    gallery turns it into a Beep train;
 3. the beep selected, Edit → Create a generator (one item, kkt-26.11.20 A1) → a tone at the cursor
    on the selected audio track, no video event;
-4. Home, Space → the tone plays and the meters move (their level is read from the program).
+4. Home, a loop region inside the tone, Space → the tone plays round and the meters move (their level is read from the program).
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from kt_live import Live, poll_step, project_with_clips, require_tools  # noqa: E402
+from kt_live import Live, project_with_clips, require_tools  # noqa: E402
 
 SEC = 90000
 
@@ -74,25 +74,31 @@ def main(out):
         app.step("edit-tone", "a “Tone” event on the selected audio track under the cursor, its form open")
         app.key("Escape")
 
-        # 4) play the tone: the meters move
+        # 4) play the tone in a loop: the meters move. A loop region inside the tone (0.5..4 s) keeps
+        # the playhead in the sound however late the meters are read: the earlier check read them in
+        # the first 4.5 s of play, and stage 23's loaded run read its first dump after that (a clock
+        # limit in disguise — the samples all fell past the tone)
         app.key("shift+Home")  # the project's start (Home is the previous edit point in the owner's keys, found-defects 951)
+        ry = app.ruler_y()
+        app.drag(app.x_at(SEC // 2), ry, app.x_at(4 * SEC), ry)
+        app.key("l")  # Loop the region
         app.key("space")
         # time stands until the device hands out its first frames (invariant 6), and on a loaded
-        # machine the sound server can take seconds to open it (found-defects 425: 13.3 s in stage
-        # 21's finish run, when 6 s of polling all fell before the first sound): the meters are read
-        # once the sound has left, while the cursor is still inside the 5-s tone
+        # machine the sound server can take seconds to open it (found-defects 425)
         app.expect(app.until(lambda: app.playhead() > 0, timeout=60), "the sound started after Space")
         lit = []
-        for _ in range(30):
+
+        def heard():
             g = app.geom()
-            if g.get("playing") and int(g.get("playhead", 0)) < 4.5 * SEC:
+            if g.get("playing"):
                 lit.append(max(g.get("meter_db", [-120, -120])))
-            if len([v for v in lit if v > -40]) >= 3:
-                break
-            poll_step(0.2)
-        app.step("playing", "the tone plays: the meters on the right are lit")
+            return len([v for v in lit if v > -40]) >= 3
+
+        app.until(heard, timeout=60)
+        app.step("playing", "the tone plays in its loop: the meters on the right are lit")
+        app.expect(app.playhead() < 4.5 * SEC, f"the playhead goes round inside the tone: {app.playhead() / SEC:.2f} s")
         app.key("space")
-        app.expect(len([v for v in lit if v > -40]) >= 3, f"the meters moved while the tone played: {lit}")
+        app.expect(len([v for v in lit if v > -40]) >= 3, f"the meters moved while the tone played: {lit[-12:]}")
     return app.done()
 
 
