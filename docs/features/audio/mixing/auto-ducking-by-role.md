@@ -69,10 +69,20 @@ rare hand fix.
 
 ## What users say
 
-The owner, `docs/ktprompts/v26.10.txt` lines 84–88 (the background muted or raised by sections — titles vs content —
-"можно это всё руками проставлять … а можно какую-то штуку придумать, чтобы оно автоматом могло туда-сюда
-переключаться"), and on 2026-10-30 about our R.65 ducking: "у нас дакинг сделан как-то вообще не интуитивно
-понятно... очень втупую сделан дакинг у нас" (`docs/user-feedback.md`, question 10).
+The owner, `docs/ktprompts/v26.10.txt` lines 84–88, whole:
+
+> Также хотелось бы в функции что-то типо: Авто-мут трека(-ов) аудио во время основного контента, т.е.
+> вступление-заголовок1-контент-заголовок2-контент2-заголовок3 и т.д.,
+> во время контента звук контента и задний звук, а во время заголовка может быть либо автоматом усиление заднего звука
+> или мут заднего звука и размут заголовочного звука. можно это всё руками проставлять (т.к. звуки разные и т.д.) а можно
+> какую-то штуку придумать, чтобы оно автоматом могло туда-сюда переключаться.
+> Эта функция может быть по другому в редакторах устроена и называется - лучше как у них сделать, я могу чего-то не
+> знать и сузить смысл.).
+> мне казалось у нас даже какой-то код дакинга есть
+
+On 2026-10-30 (question 10): "п.1. по типу клипа" and "очень втупую сделан дакинг у нас". On 2026-11-22
+(`kkt-26.11.20b.txt` line 16): "наверное имеется ввиду несколько дорожек а не две. ну и да ручные правки тоже полезны. а
+вообще мне кажется там в моем тексте понятно было что написано а ты подрезал суть".
 
 NO QUOTES: no web access in this spec session (2026-11-20). The search would be the Adobe community threads on
 Essential Sound "Generate Keyframes" (some are quoted in F-AUD-002), r/premiere and r/davinciresolve for "auto
@@ -119,10 +129,11 @@ ducking" and "ducker"; the editor rows are [NOT VERIFIED] for the same reason.
 
 ## Verdict
 
-Take it as a revision of R.65 rather than a new device: roles on tracks and events (Dialogue, Music, Effects,
-Ambience, Title), the compressor's key becomes "every event of these roles", and the background track gets an
-"Auto-ducking" form in the person's terms (reduce by dB, sensitivity, fade) that drives the same compressor; the
-reduction is drawn on the background events.
+Take it as the owner's sections, by the industry's word "Auto-ducking": during CONTENT the background ducks under the
+content's sound (keyed by several tracks or by roles); during a TITLE the background is either raised or muted while
+the title's own sound plays — the title sections are known from the edit (title events), not guessed from loudness.
+The automatic gain is drawn on the background, and the person's own level keys add on top of it (hand edits kept
+across re-edits).
 
 ## Sources
 

@@ -1,69 +1,83 @@
 # Proposal: auto-ducking-by-role
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` N3 (no), round R.75. Note F-AUD-007.
-> Tests reserved: t3911–t3918 (the block t3900–t4099).
+> DESIGN ONLY (spec session), revision 2 (2026-11-22) from the owner's whole item (`kkt-26.11.20b` B5). Registry
+> `v26.10-index.md` N3, round R.75. Note F-AUD-007. Tests reserved: t3911–t3918, t3966–t3969.
 
 ## Why
 
-The owner, `v26.10` lines 84–88: the background sound under "вступление-заголовок1-контент-заголовок2-контент2…"
-should, during the content, sit under the content's sound, and during a title either rise or give way to the
-title's sound — "можно это всё руками проставлять … а можно какую-то штуку придумать, чтобы оно автоматом могло
-туда-сюда переключаться". Asked how the sections are told apart (2026-10-30, question 10), he chose "по типу
-клипа" (like Premiere's clip types), and added about our R.65 ducking: "не интуитивно понятно... очень не
-очевидно что и куда крутить … очень втупую сделан дакинг у нас". Today the background's compressor is keyed by
-ONE audio track and is set with threshold, ratio, attack and release.
+The owner, `docs/ktprompts/v26.10.txt` lines 84–88, whole:
+
+> Также хотелось бы в функции что-то типо: Авто-мут трека(-ов) аудио во время основного контента, т.е.
+> вступление-заголовок1-контент-заголовок2-контент2-заголовок3 и т.д.,
+> во время контента звук контента и задний звук, а во время заголовка может быть либо автоматом усиление заднего звука
+> или мут заднего звука и размут заголовочного звука. можно это всё руками проставлять (т.к. звуки разные и т.д.) а можно
+> какую-то штуку придумать, чтобы оно автоматом могло туда-сюда переключаться.
+> Эта функция может быть по другому в редакторах устроена и называется - лучше как у них сделать, я могу чего-то не
+> знать и сузить смысл.).
+> мне казалось у нас даже какой-то код дакинга есть
+
+His answers: 2026-10-30, question 10 — "п.1. по типу клипа. еще должен сказать - что у нас дакинг сделан как-то вообще не
+интуитивно понятно... очень не очевидно что и куда крутить чтобы было более-менее нормально, и ощущение что у нас на
+грани возможностей он работает... очень втупую сделан дакинг у нас." 2026-11-22 (`kkt-26.11.20b.txt` line 16): "наверное
+имеется ввиду несколько дорожек а не две. ну и да ручные правки тоже полезны. а вообще мне кажется там в моем тексте
+понятно было что написано а ты подрезал суть".
+
+What the item asks, read whole: a video runs in SECTIONS (intro, title 1, content, title 2, content 2…). During a
+content section one hears the content's sound AND the background. During a title section either the background is
+raised automatically, or the background is muted and the title's own sound is unmuted. This can be set by hand,
+since the sounds differ, or switched automatically. Name and build it as the editors do.
+
+Today: R.65's compressor with a key input, keyed by ONE track, set by threshold, ratio, attack and release; nothing
+knows where the titles are.
 
 ## What Changes
 
-- **A role on every audio track and event**: Dialogue, Music, Effects, Ambience, Title sound, or none. An event
-  without its own role takes its track's. Set from the track header's menu, the event's menu and the track
-  window; the role's colour marks the waveform.
-- **A role key**: the compressor's key input may name a SET OF ROLES instead of one track — the key is then the
-  sum of every event of those roles in the same reel (after their own chains, before their tracks' faders), wherever
-  they lie. Moving a line to another track changes nothing.
-- **"Auto-ducking" form in the person's terms** in the track window of a background track (and as a menu item
-  "Auto-ducking…" on a Music/Ambience track): Duck under [roles ✓], Reduce by (dB), Sensitivity (how loud the
-  key must be, 0–100 %), Fade (ms), and "Between them: raise by (dB)" for the owner's "background up during
-  titles". The form drives the SAME compressor (rule 24): its fields map onto threshold, ratio, attack, release;
-  the compressor's own rows stay visible, dimmed, under "Details".
-- **The reduction is drawn on the background events**: a shaded band under the level line shows how far the
-  background goes down and where, computed once per revision on the analysis lane. "Convert to volume curve"
-  bakes it into an ordinary editable gain curve on the events and turns the ducking off (one undo step) — Q1.
+- **Auto-ducking** (the industry's name: Premiere's Essential Sound "Ducking", Resolve's "Ducker") on a background
+  track, as one section of its track window with two rules in the person's terms:
+  - **During content**: the background goes down by N dB under the content's sound (default −12 dB) and comes back in
+    the pauses (Fade, ms). The content's sound is the key: **several tracks** ticked in a list, and/or every event
+    of a role (Dialogue, Music, Effects, Ambience, Title sound) wherever it lies.
+  - **During titles**: one choice — **Raise the background** by N dB (default +6 dB), or **Mute the background** (the
+    title's own sound plays; a title sound muted outside titles is unmuted there), or **Leave it**. A title section is
+    where a title event is on screen (a Text generator event, or any event tagged "Title"), with fades of its own.
+- **Sections come from the edit, not from loudness**: titles are known from the timeline (title events), content is
+  heard from the keyed tracks; moving a title moves its section; nothing is "generated" and left stale.
+- **Hand edits stay useful**: the automatic gain is drawn as a band on the background events; the person's own level
+  keys on those events add to it (dB on top), so a hand fix at one spot survives every re-edit; "Convert to volume
+  curve" bakes the band when the person wants only hand keys.
+- **Roles** on tracks and events (an event without its own takes its track's) — the clip type the owner chose; they
+  also feed the key list.
+- **The R.65 compressor stays the device** (one widget, rule 24): the content rule writes its rows; its own rows are
+  visible, dimmed, under "Details".
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `audio-fx`: the compressor's key may be a set of roles; the ducking form's mapping onto the compressor.
-- `ui-reach`: roles on tracks and events, the Auto-ducking form, the drawn reduction, Convert to curve.
-- `project-format`: roles and role keys are written by content.
+- `audio-fx`: a key made of several tracks and/or roles; the title-section gain from title events; the hand level
+  adding to the automatic gain.
+- `ui-reach`: roles; the Auto-ducking section with its two rules; the band; Convert to volume curve.
+- `project-format`: roles, multi-track and role keys, the title rule by content.
 
 ## Impact
 
-- kt-model: `AudioRole` on `Track` and `ClipEvent` (`Option`, skip when none); `RowRole::SidechainKey` gains a
-  role-set form (`SidechainKey::Track | Roles(RoleSet)`); validation: a track cannot key on a role its own events
-  carry (cycle), refusals named.
-- kt-engine: the audio render builds, per window, the role mixes a version's keys ask for, from the events'
-  post-chain outputs it already computes; the background's chain receives it as the key argument (the R.65 path).
-- kt-app: role menus and colours, the Auto-ducking form (`track_window.rs`), the reduction band (analysis lane,
-  cached by the content hash of the key events and the background), Convert to curve; i18n ×5.
-- Format: `.kt` version by content (the next free number at apply time; 8 today) when a role or a role key
-  is set; OTIO: carried only in `metadata["kt"]` — a planned row in "What OTIO export loses".
-- Idle: nothing runs at rest; the band is computed once per revision on a background lane, paused by playback.
+- kt-model: `AudioRole` on tracks and events; `SidechainKey::Set { tracks: Vec<TrackId>, roles: RoleSet }`;
+  `Ducking { content: {reduce_db, fade_ms, key}, titles: TitleRule::{Raise(db), Mute, Leave}, title_fade_ms }` on an
+  audio track; title sections derived from title events (`Project::title_spans`, indexed).
+- kt-engine: the key mix of several tracks/roles per window; the title gain as a deterministic envelope from the
+  title spans (no state), multiplied into the background's track stage; the hand level of the events is summed in dB
+  after it.
+- kt-app: the track window section, role menus, the band (analysis lane, cached by content), i18n ×5.
+- Format: the next free `.kt` version by content; OTIO: a planned row (a foreign editor plays the background flat).
+- Idle: nothing runs at rest; the band is computed once per content hash on a background lane.
 
 ## Questions to the owner
 
-**Q1. Live ducking or a written curve?** Your words (2026-10-30): "по типу клипа … очень втупую сделан дакинг у нас".
-In R.65 you chose the live sidechain and had the curve snapshot removed ("the snapshot is not kept"). Premiere's
-Auto-Ducking writes volume keys onto the music, which go stale after a re-edit.
-- (a) **Live, by role; the program DRAWS the reduction on the background events; "Convert to volume curve"
-  bakes it when you want to hand-edit one spot** (*recommended*: always right after a re-edit, and still
-  visible and editable).
-- (b) A written curve like Premiere: "Generate" puts keys on the background, regenerated by hand after edits.
-- (c) Live only, nothing drawn (today's way, keyed by roles).
+Decided (2026-10-30, question 10): by the clip type. Decided (2026-11-22, B5): several tracks, hand edits useful.
 
-**Q2. The R.65 key by one track.** Today a background's compressor names one key track.
-- (a) **The Auto-ducking form uses roles; a compressor keyed by a track stays possible in the chain for special
-  cases** (*recommended*: nothing of yours breaks, a project with a track key opens the same).
-- (b) Replace the track key by roles everywhere; a project's track key is converted to the role of that
-  track's events on import.
+**Q1. What counts as a "title" section?** Your item: "вступление-заголовок1-контент-заголовок2-контент2-заголовок3 и т.д.,
+… во время заголовка может быть либо автоматом усиление заднего звука или мут заднего звука и размут заголовочного
+звука". Today the program knows Text generator events (titles) on video tracks, and nothing else marks a section.
+- (a) **A section is where a title event is on screen: every Text generator event, plus any event (picture or sound)
+  you tag "Title"** (*recommended*: your titles are found by themselves; a title made otherwise is tagged once).
+- (b) Sections are named areas on the timeline that you mark "Title" by hand.
