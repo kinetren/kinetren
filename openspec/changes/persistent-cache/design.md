@@ -18,10 +18,9 @@
 
 ## D1. One store, three kinds
 
-`Store { root: <cache folder>, kinds: Layer | Frame | History | Copy }` in the layout of `project-cache-folder`
-(`301d5a49`): `results/v<FORMAT>/<device class>/{frames, layers, history}`, `mix/v<FORMAT>/`, and source copies at
-`media/<content id>/copy-<quality>.mkv`; one byte budget from the cache folder, one eviction order across results/,
-mix/ and the copies: value per byte = measured cost saved per read ×
+`Store { root: <cache folder>, kinds: Layer | Frame | History | Copy }` in the layout that `project-cache-folder` defines (the orchestrator's final decision, 2026-11-22: layout B — the store
+format and the device class in the path; that change owns the text, this one does not restate it); one byte budget
+from the cache folder, one eviction order across the results, the mix and the copies: value per byte = measured cost saved per read ×
 reads in this project / bytes, lowest first; within equal value, least recently used. The prerender's rule "never evict
 what this process used" stays for frames.
 
@@ -43,8 +42,8 @@ what this process used" stays for frames.
 
 ## D3. Frames and copies
 
-- Frames: the disk prerender as built, moved under `results/v<FORMAT>/<device class>/frames/`.
-- Copies: revision 2's source copies at `media/<content id>/copy-<quality>.mkv` (MKV, H.264 all-intra, the original's timestamps, audio stream-copied, the
+- Frames: the disk prerender as built, moved into the cache folder's frames (`project-cache-folder`).
+- Copies: revision 2's source copies, kept per media in the cache folder (`project-cache-folder`) (MKV, H.264 all-intra, the original's timestamps, audio stream-copied, the
   original's natives reported) at the size the preview plays, for heavy sources only (long-GOP above 1920×1080, or
   measured slower than real time); a better copy when a higher quality is chosen; "Use a camera's copy…" kept.
 
@@ -56,7 +55,7 @@ kernel's plugin version and WGSL hash, and `COMPOSITE_PATH_VERSION` — a consta
 the kernels changes (fusion, `plan_chain`, core passes and shaders, conversions), guarded by t3808 in
 `project-cache-folder`'s video-plan delta (it records the hash of those files and fails on a change without a bump). The
 build is not in the key: an update that touches none of these keeps the entries. The store format and the device class
-are the folder (`results/v<FORMAT>/<device class>/`). A stale entry is a miss and is removed when met; there is no sweep.
+are in the path (`project-cache-folder`'s layout). A stale entry is a miss and is removed when met; there is no sweep.
 
 ## D5. Alpha and quality
 
@@ -81,14 +80,16 @@ says so. A preview built from cached stages differs from a fresh compose by the 
 | whole slow frame | present memo | prerender | frame (unchanged) |
 | final mix | kept mix (memory) | `mix/` (designed) | unchanged |
 
-## D8. Coordination with `project-cache-folder` (agreed 2026-11-22)
+## D8. Coordination with `project-cache-folder` (final, 2026-11-22)
 
-spec-engine's final form, `project-cache-folder` commit `301d5a49` (branch `claude/spec-engine-be18cf`; supersedes its
-`5dc0bff0`): the layout of D1, the key of D4, and one eviction order across results/, mix/ and the copies by value per
-byte (cost saved per read × reads in this project ÷ bytes), lowest first, LRU as the tie-break; frames this process used
-in the last minute are never dropped; then reels, then the media index; the owner's cyclic rule (B2) when the folder
-cannot take more. That change owns the folder, its tenants, the limit and the cycle; this one owns what is heavy and how
-a kept layer result enters the plan.
+The orchestrator decided the layout once for both changes (layout B: the store format and the device class in the path,
+so a cache written on another device class is never served here and a format bump leaves plain stale folders that the
+eviction and the cyclic rule see). `project-cache-folder` (spec-engine) owns the layout text, the folder, its tenants,
+the limit and the cycle; this change cites it. Agreed and unchanged: the key of D4 (`durable_hash` + decoder major +
+kernel versions and WGSL hashes + `COMPOSITE_PATH_VERSION` guarded by t3808, no build); one eviction order by value per
+byte (cost saved per read × reads in this project ÷ bytes), lowest first, LRU as the tie-break, frames used in the last
+minute kept; the owner's cyclic rule (B2) with a notice. This change owns what is heavy and how a kept layer result
+enters the plan.
 
 ## D9. Idle
 
