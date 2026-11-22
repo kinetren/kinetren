@@ -1423,7 +1423,7 @@ pub fn laps(run: &Run) -> String {
             let ms = crossed.iter().map(|r| r.dur).sum::<u64>() as f64 / 1e6;
             let _ = write!(walk, "  stream frames crossed: {}, {mb:.1} MB, {ms:.1} ms of a core;", crossed.len());
         }
-        if let Some(h) = run.recs.iter().filter(|r| is(r, Ev::StreamHeld) && r.t < b).last()
+        if let Some(h) = run.recs.iter().rev().find(|r| is(r, Ev::StreamHeld) && r.t < b)
             && h.a > 0
         {
             let _ = write!(walk, "  history on the device {:.0} MB;", h.a as f64 / (1u64 << 20) as f64);
