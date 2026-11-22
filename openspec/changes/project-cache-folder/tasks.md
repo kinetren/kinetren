@@ -30,7 +30,7 @@
 
 ## 3. The prerender in the folder
 
-- [ ] 3.1 `render_cache` root from the folder (`results/v<FORMAT>/<device class>/frames/`); `<data>/render-cache`
+- [ ] 3.1 `render_cache` root from the folder (`render/`); `<data>/render-cache`
       deleted at the first start; the key without the build: decoder major, kernels' versions and WGSL
       hashes, `COMPOSITE_PATH_VERSION` and its guard; stale entries dropped on a miss; t3833, t3834, t3808
 - [ ] 3.2 `cargo test -p kt-engine`; commit

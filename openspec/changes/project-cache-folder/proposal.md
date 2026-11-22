@@ -34,10 +34,10 @@ Four things follow from that layout:
   - `media/` — per media file, by its content;
   - `reels/` — the reel previews;
   - the persistent cache ("Постоянный кэш", the owner's B1, change `persistent-cache`) as one store of four
-    kinds: `results/v<FORMAT>/<device class>/{frames, layers, history}` (the preview's prerender moved from
-    `<data>`, heavy layers' results, the Datamosh history) and `media/<content id>/copy-*.mkv` (heavy sources'
-    copies). One key layout (`durable_hash` plus the decoder major, the kernels' versions and
-    `COMPOSITE_PATH_VERSION`; not the build) and one order by value per byte (design D1b);
+    kinds side by side: `render/` (the preview's prerender moved from `<data>`), `stages/` (heavy stages'
+    results), `copies/` (heavy sources' copies) and `history/` (the Datamosh history). One key layout
+    (`durable_hash` plus the decoder major, the kernels' versions and `COMPOSITE_PATH_VERSION`; salted by the
+    store's format and the device class; not the build) and one order by value per byte (design D1b);
   - `mix/` — the heard mix of `durable-history-and-mix`, in the same value order;
   - `renders.tsv` — earlier renders found again by `cached-final-render`;
 
