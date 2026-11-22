@@ -77,8 +77,8 @@ update check and telemetry already ask consent. A download is a separate, explic
 
 - A part that is not installed is a hole in a project moved to another machine: a title in a CJK font
   renders differently without its pack. The project has to name the parts it relies on (F-PRJ-003).
-- A catalogue compiled into the program ages with it. A plugin library has to change faster than
-  releases, and that needs a signed list from a server.
+- A list that changes between releases needs a signed list from a server and a key to keep. The owner
+  chose that for every kind (kkt-26.11.20b B3), with the release carrying the list as of its build.
 - Every downloaded item is foreign code or data on the machine. Pinning by hash proves only that it is
   the file we tested, not that it is safe.
 
