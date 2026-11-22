@@ -2027,6 +2027,9 @@ fn run(args: &[String]) -> i32 {
                     return 2;
                 }
             };
+            // on a card the stream's pictures stay on the compute device and the export composes there
+            // (stream-picture-stays D4); a software adapter keeps its several devices
+            kt_gpu::compute::hold_pictures_for_export();
             // R.29: headless devices, the same composition code as the preview
             let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines(project.settings.width, project.settings.height) {
                 Ok(e) => {

@@ -26,5 +26,5 @@
 
 ## 4. Export
 
-- [ ] 4.1 `export_engines` on a card on the compute host's device; t3820
+- [x] 4.1 `export_engines` on a card on the compute host's device while it holds pictures; kt-cli holds them on a card; t3820
 - [ ] 4.2 found-defects 663 closed; `cargo test` of the touched crates, clippy, target-prune; commit per stage

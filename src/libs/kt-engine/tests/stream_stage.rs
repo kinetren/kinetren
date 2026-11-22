@@ -901,3 +901,49 @@ fn t3812_a_crossing_is_in_the_trace() {
     }
     assert!(crossings(&project(false)).is_empty(), "no stream stage, no crossing");
 }
+
+/// t3820 (stream-picture-stays D4): an export composed on the compute host's device takes the mosh's
+/// pictures as they lie — no stream picture crosses the bus — and writes the frames an export on a
+/// device of its own writes (which reads each held picture back).
+#[test]
+fn t3820_an_export_on_the_hosts_device_crosses_nothing() {
+    use kt_time::trace::{self, cross, Ev};
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    if no_device() {
+        return;
+    }
+    kt_gpu::compute::hold_pictures_for_tests();
+    let host = kt_gpu::compute::host_device().expect("this crate's host");
+    let on_host = kt_gpu::GpuFxEngine::new_for_export(host.context()).unwrap();
+    let p = project(true);
+    let run = |backends: &kt_engine::export::ExportBackends| {
+        let mut out = vec![];
+        let items = trace::testing::capture(|| {
+            kt_engine::export::render_raw_video_range_with(
+                &p,
+                sources(),
+                Q,
+                Some((Tick(26 * STEP), Tick(40 * STEP))),
+                backends,
+                &Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                |_| {},
+                |f| {
+                    out.extend_from_slice(f);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        });
+        let crossed: Vec<_> = trace::testing::recs(&items).into_iter().filter(|r| r.kind() == Some(Ev::StreamCross)).collect();
+        (out, crossed)
+    };
+    let here = kt_engine::export::ExportBackends { video_gpu: Some(on_host as Arc<dyn kt_engine::VideoGpuExec>), ..Default::default() };
+    let (a, crossed_a) = run(&here);
+    assert!(crossed_a.is_empty(), "the host's device crosses nothing: {crossed_a:?}");
+    let (b, crossed_b) = run(&kt_gpu::testkit::backends());
+    assert!(!crossed_b.is_empty() && crossed_b.iter().all(|r| r.aux == cross::EXECUTOR), "a device of its own reads the pictures back");
+    assert_eq!(a.len(), b.len());
+    assert!(a == b, "the two exports write the same frames");
+}
