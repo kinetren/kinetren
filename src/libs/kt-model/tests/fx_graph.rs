@@ -185,7 +185,11 @@ fn t3209b_reads_and_the_one_removal_rule() {
     let trunk = vec![slowed.clone(), fx("blur"), fx("glow"), merge()];
     let w3 = vec![SlotInputs::default(), SlotInputs::default(), main(FxIn::Slot(0)), merged(FxIn::Prev, FxIn::Slot(1))];
     assert!(fx_graph::reads(&trunk, &w3).is_empty(), "Slowed on the trunk opened a read");
-    // a dangling Datamosh opens nothing
+    // a read is a LINE: Slowed after a Merge of two arms is refused with its slot
+    let after_merge = vec![fx("blur"), fx("glow"), merge(), slowed.clone()];
+    let w5 = vec![SlotInputs::default(), main(FxIn::Source), merged(FxIn::Slot(0), FxIn::Prev), SlotInputs::default()];
+    assert_eq!(fx_graph::check(&after_merge, &w5, 0).map_err(|e| (e.slot, e.why)), Err((3, GraphWhy::ReadBranches)));
+        // a dangling Datamosh opens nothing
     let dangling = vec![fx("blur"), fx("datamosh"), fx("glow")];
     let w4 = vec![SlotInputs::default(), main(FxIn::Source), main(FxIn::Slot(0))];
     assert!(!fx_graph::reaches_output(&w4, 3)[1]);

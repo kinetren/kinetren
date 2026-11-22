@@ -80,6 +80,9 @@ pub struct LayerSrc<'a> {
     /// The chain's wiring aligned with `fx` (fx-graph-dag D3): empty — a line. The executor lowers
     /// it with `kt_fx::plan::lower` into the one plan (invariant 7).
     pub fx_in: &'a [kt_model::SlotInputs],
+    /// The layer's other reads (fx-graph-dag D2): read `k` is `reads[k].1`, a layer of the same event
+    /// over its own line, whose finished frame stands at chain slot `reads[k].0`. Empty — one read.
+    pub reads: Vec<(usize, LayerSrc<'a>)>,
     /// Names the chain in the executor's keys.
     pub fx_hash: u64,
     /// Clip progress 0..1 (CamMotion).
@@ -250,10 +253,12 @@ impl FramePlan<'_> {
     /// that is there but of a foreign size is found only by resolving it.
     pub fn starved(&self) -> bool {
         fn src(s: &LayerSrc<'_>) -> bool {
-            match &s.input {
+            let own = match &s.input {
                 LayerInput::Frame(f) => f.is_none(),
                 LayerInput::Nest(n) => n.plan.starved(),
-            }
+            };
+            // a read without its frame starves the layer too (fx-graph-dag D2)
+            own || s.reads.iter().any(|(_, r)| src(r))
         }
         self.layers.iter().any(|l| match l {
             PlanLayer::One { src: s, .. } => src(s),
@@ -331,6 +336,7 @@ pub fn chain_plan_with<'a>(
         lead: None,
         masks,
         fx_in: &[],
+        reads: Vec::new(),
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
     FramePlan { t, out_w, out_h, layers }

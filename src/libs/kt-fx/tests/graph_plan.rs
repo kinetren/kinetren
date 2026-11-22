@@ -32,13 +32,14 @@ fn names(ops: &[PlanOp]) -> Vec<String> {
             PlanOp::Hold { reg, at } => format!("hold{reg}@{at}"),
             PlanOp::Load { reg, at } => format!("load{reg}@{at}"),
             PlanOp::Merge { idx, fg, .. } => format!("merge{idx}<{fg}"),
+            PlanOp::Input { k, at } => format!("read{k}@{at}"),
         })
         .collect()
 }
 
 fn graph_ops(fx: &[FxInstance], fx_in: &[SlotInputs]) -> Vec<String> {
     let g = lower(fx, fx_in);
-    names(&plan_graph_in(fx, g.as_ref(), W, H, 1, W, H, 0.5, None, 90_000, &[], None).ops)
+    names(&plan_graph_in(fx, g.as_ref(), &[], W, H, 1, W, H, 0.5, None, 90_000, &[], None).ops)
 }
 
 /// Test t3203 (fx-graph-dag D3): the lowering's program for a branch after a zoom, a blur on one

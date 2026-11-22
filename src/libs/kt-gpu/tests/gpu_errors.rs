@@ -85,6 +85,7 @@ fn plan(w: u32, h: u32, bytes: usize, id: u64) -> FramePlan<'static> {
         lead: None,
         masks: Vec::new(),
         fx_in: &[],
+        reads: Vec::new(),
     };
     FramePlan { t: Tick(90_000), out_w: w, out_h: h, layers: vec![kt_engine::PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }] }
 }

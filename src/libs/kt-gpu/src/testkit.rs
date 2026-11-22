@@ -157,6 +157,7 @@ pub fn mix(dst: &mut Vec<u8>, a: &VideoFrame, b: &VideoFrame, k: u32, m: TransMi
         lead: None,
         masks: Vec::new(),
         fx_in: &[],
+        reads: Vec::new(),
     };
     let layers = vec![PlanLayer::Dissolve { a: side(a, 1), b: side(b, 2), k, alpha_k: 4096, mix: m }];
     let plan = FramePlan { t: Tick(0), out_w: a.width, out_h: a.height, layers };
@@ -235,6 +236,7 @@ fn chain_plan<'a>(fx: &'a [FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame
         lead: ctx.lead,
         masks: Vec::new(),
         fx_in: &[],
+        reads: Vec::new(),
     };
     let layers = vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }];
     FramePlan { t: Tick(ctx.burst_index), out_w: ctx.out_w, out_h: ctx.out_h, layers }

@@ -32,6 +32,7 @@ fn ops(fx: &[FxInstance], stops: &[usize]) -> Vec<String> {
             PlanOp::Hold { reg, .. } => format!("hold{reg}"),
             PlanOp::Load { reg, .. } => format!("load{reg}"),
             PlanOp::Merge { idx, fg, .. } => format!("merge{idx}<{fg}"),
+            PlanOp::Input { k, at } => format!("read{k}@{at}"),
         })
         .collect()
 }

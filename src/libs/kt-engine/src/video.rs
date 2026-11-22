@@ -71,6 +71,10 @@ pub(crate) struct VideoClip {
     fx: Vec<kt_model::FxInstance>,
     /// The chain's wiring aligned with `fx`, the lead included (fx-graph-dag); empty — a line.
     fx_in: Vec<kt_model::SlotInputs>,
+    /// The layer's other reads (fx-graph-dag D2): a time kind in an arm at slot `.0` reads the
+    /// source again as `.1` — a clip of the same event whose chain is the LINE from the Source to
+    /// that slot, built as any event is (its warp, stream stage, decode step and key).
+    reads: Vec<(usize, Box<VideoClip>)>,
     /// Compiled automation of the chain (R.30; compilation — R.59,
     /// item 467). `None` — there are no live curves, and then the layer's chain
     /// is BORROWED: a clip without curves pays neither an allocation nor a single
@@ -1401,6 +1405,16 @@ impl VideoRenderer {
                 // the model's slot indices do not move, and the engine's chain is
                 // one sequence, as in Vegas.
                 let (fx, auto, fx_in) = materialize_lead(c, fx, auto);
+                // the reads' lines, taken before the chain moves into the layer
+                let read_lines: Vec<(usize, Vec<kt_model::FxInstance>, Vec<Vec<kt_model::ParamCurve>>)> =
+                    kt_model::fx_graph::reads(&fx, &fx_in)
+                        .into_iter()
+                        .map(|r| {
+                            let lf = r.keep.iter().map(|&i| fx[i].clone()).collect();
+                            let la = r.keep.iter().map(|&i| auto.get(i).cloned().unwrap_or_default()).collect();
+                            (r.slot, lf, la)
+                        })
+                        .collect();
                 // the layer READS by its trunk (fx-graph-dag D2): the warp and the stream stage are
                 // those before the first branch; a time kind in an arm is a read of its own
                 let trunk = kt_model::fx_graph::trunk_len(&fx_in, fx.len());
@@ -1458,7 +1472,7 @@ impl VideoRenderer {
                     (project.settings.width, project.settings.height),
                     lead,
                 );
-                VideoClip {
+                let base = VideoClip {
                     id: c.id,
                     start: c.start,
                     end: c.start + c.duration,
@@ -1500,7 +1514,44 @@ impl VideoRenderer {
 
                     masks,
                     chain_memo: ChainMemo::default(),
+                    reads: Vec::new(),
+                };
+                let mut base = base;
+                // each read: the same event over its own line (design D2)
+                let reads: Vec<(usize, Box<VideoClip>)> = read_lines
+                    .into_iter()
+                    .map(|(slot, lf, la)| {
+                        let mut r = base.clone();
+                        r.warp = kt_model::clip_warp_of(&lf, &la, c.source_in, c.duration, c.reversed);
+                        r.stream = if nest.is_none() { StreamStage::of(&lf, &la).map(Box::new) } else { None };
+                        r.fx_hash = fx_chain_hash(&lf, &la, c.start, c.start + c.duration, c.source_in, c.reversed, grid.frame_step(), content);
+                        r.auto_plan = kt_model::AutoPlan::compile(&lf, &la);
+                        r.head_zoom = clip_head_zoom(
+                            &lf,
+                            lf.len(),
+                            r.auto_plan.as_ref(),
+                            c.start,
+                            c.start + c.duration,
+                            c.source_in,
+                            c.reversed,
+                            &grid,
+                            cams,
+                            (project.settings.width, project.settings.height),
+                            lead,
+                        );
+                        r.fx = lf;
+                        r.fx_in = Vec::new();
+                        r.masks = None;
+                        r.reads = Vec::new();
+                        (slot, Box::new(r))
+                    })
+                    .collect();
+                // a reel's read would be a second sub-composite at another moment: not in v2, the arm's
+                // time kind on a reel instance stays transparent
+                if nest.is_none() {
+                    base.reads = reads;
                 }
+                base
                 })
             })
             .collect();
@@ -1707,6 +1758,10 @@ impl VideoRenderer {
     pub fn stream_advance(&self, cache: &BurstCache, t: Tick, quality: Quality) -> bool {
         let mut pending = false;
         for c in self.active(t) {
+            // a read's stream stage keeps its own history (fx-graph-dag D2)
+            for (_, r) in c.reads.iter().filter(|(_, r)| r.stream.is_some()) {
+                pending |= self.stream_advance_clip(cache, r, t, quality);
+            }
             match (&c.stream, c.nest.and_then(|k| self.nests.get(&k))) {
                 (Some(_), None) => {
                     pending |= self.stream_advance_clip(cache, c, t, quality);
@@ -1950,25 +2005,45 @@ impl VideoRenderer {
                     nest_blend(c, blend_footage),
                     out,
                 ),
-                // a STREAM stage replaces the source: the order is the stream frames its kernel
-                // still needs at the codec's size, and nothing at the ordinary quality (D5)
-                None if c.stream.is_some() => {
-                    let st = c.stream.as_deref().expect("checked");
-                    let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
-                    let needs = st.kernel().needs(&st.values, &cs, cs.pos(t), &self.stream_memo);
-                    match self.pacing() {
-                        Some(p) => cs.order(cs.window(&needs, p.order_bytes), out),
-                        None => cs.order(&needs, out),
-                    }
-                }
                 None => {
-                    let dq = clip_decode_quality(c, quality);
-                    out.push((c.media, a, dq));
-                    if let Some((p, _)) = b {
-                        out.push((c.media, p, dq));
+                    self.leaf_keys(c, t, quality, a, b.map(|(p, _)| p), out);
+                    // every read of the layer orders what it reads (fx-graph-dag D2): the order is
+                    // the read (invariant 4) for each of them
+                    for (_, r) in &c.reads {
+                        let (ra, rb) = clip_frame_keys(r, t, &self.grid, blend_footage);
+                        self.leaf_keys(r, t, quality, ra, rb.map(|(p, _)| p), out);
                     }
                 }
             }
+        }
+    }
+
+    /// The frames a LEAF layer reads at `t`: the stream frames its stage still needs at the codec's
+    /// size, or its frame (and the blend pair's) at its decode quality.
+    fn leaf_keys(
+        &self,
+        c: &VideoClip,
+        t: Tick,
+        quality: Quality,
+        a: Tick,
+        b: Option<Tick>,
+        out: &mut Vec<(MediaId, Tick, Quality)>,
+    ) {
+        // a STREAM stage replaces the source: the order is the stream frames its kernel
+        // still needs at the codec's size, and nothing at the ordinary quality (D5)
+        if let Some(st) = c.stream.as_deref() {
+            let cs = stream::ClipStream::new(c, st, &self.grid, quality, None);
+            let needs = st.kernel().needs(&st.values, &cs, cs.pos(t), &self.stream_memo);
+            match self.pacing() {
+                Some(p) => cs.order(cs.window(&needs, p.order_bytes), out),
+                None => cs.order(&needs, out),
+            }
+            return;
+        }
+        let dq = clip_decode_quality(c, quality);
+        out.push((c.media, a, dq));
+        if let Some(p) = b {
+            out.push((c.media, p, dq));
         }
     }
 
@@ -2006,6 +2081,10 @@ impl VideoRenderer {
             .iter()
             .map(|c| clip_decode_quality(c, quality))
             .chain(self.clips.iter().filter(|c| c.stream.is_some()).map(|c| clip_order_quality(c, quality)))
+            // a read decodes at its own step (fx-graph-dag D2)
+            .chain(self.clips.iter().flat_map(|c| c.reads.iter()).map(|(_, r)| {
+                if r.stream.is_some() { clip_order_quality(r, quality) } else { clip_decode_quality(r, quality) }
+            }))
             .chain(self.clips.iter().filter_map(|c| {
                 let sub = self.nests.get(&c.nest?)?;
                 Some(sub.max_decode_quality(clip_decode_quality(c, quality)))
@@ -2204,7 +2283,8 @@ impl VideoRenderer {
     /// export pre-roll decodes on the compose thread, so the pipelined export keeps the serial
     /// composite for such a project (export-throughput D2).
     pub fn has_stream_stages(&self) -> bool {
-        self.clips.iter().any(|c| c.stream.is_some()) || self.nests.values().any(|n| n.has_stream_stages())
+        self.clips.iter().any(|c| c.stream.is_some() || c.reads.iter().any(|(_, r)| r.stream.is_some()))
+            || self.nests.values().any(|n| n.has_stream_stages())
     }
 
     /// How many SUB-RENDERERS this reel holds (R.59, stage 3).
@@ -2239,6 +2319,10 @@ impl VideoRenderer {
             let blends =
                 c.nest.is_none() && (blend_footage || c.warp.as_ref().is_some_and(|w| w.blend()));
             let mut w = if blends { 2 } else { 1 };
+            // each read of the layer holds its own frame (fx-graph-dag D2), a blending one two
+            for (_, r) in &c.reads {
+                w += if blend_footage || r.warp.as_ref().is_some_and(|w| w.blend()) { 2 } else { 1 };
+            }
             // A nesting holds ITS OWN sub-composite buffer plus everything
             // that is alive inside it at the same time (R.50). Under-counting makes EXPORT
             // BYTES depend on the timing of the cache — literally the R.37 C5
@@ -2587,6 +2671,7 @@ fn layer_src<'a>(
         input,
         fx,
         fx_in: &clip.fx_in,
+        reads: clip.reads.iter().map(|(slot, r)| (*slot, layer_src(r, ctx, cache, quality, t))).collect(),
         // the decoded stream's key joins the post-FX memo's: the same chain over another mosh is
         // another picture (the stream reads frames of OTHER events, which `fx_hash` does not see)
         fx_hash: match &streamed {
@@ -2674,6 +2759,7 @@ fn track_stage_layer<'a>(
             }]
         },
         fx_in: &[],
+        reads: Vec::new(),
     };
     // track level — the composite alpha; mode — a separate axis
     let alpha_k = ((st.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32).min(4096);

@@ -111,6 +111,7 @@ pub fn run(args: &[String]) -> i32 {
             lead: None,
             masks: Vec::new(),
             fx_in: &[],
+            reads: Vec::new(),
         };
         let plan = FramePlan {
             t: Tick(tick),

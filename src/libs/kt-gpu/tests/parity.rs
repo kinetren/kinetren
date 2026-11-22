@@ -98,6 +98,7 @@ impl Src {
             lead: self.lead,
             masks: Vec::new(),
             fx_in: &[],
+            reads: Vec::new(),
         }
     }
 }

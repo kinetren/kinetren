@@ -35,6 +35,7 @@ fn plan<'a>(f: &Arc<VideoFrame>, fx: &'a [FxInstance], w: u32, h: u32) -> FrameP
         lead: None,
         masks: Vec::new(),
         fx_in: &[],
+        reads: Vec::new(),
     };
     FramePlan { t: Tick(3000), out_w: w, out_h: h, layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }] }
 }

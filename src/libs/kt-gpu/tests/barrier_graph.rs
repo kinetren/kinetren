@@ -123,6 +123,7 @@ fn run(engine: &dyn VideoGpuExec, id: u64, fx: Vec<FxInstance>, alpha: bool) -> 
         lead: None,
         masks: Vec::new(),
         fx_in: &[],
+        reads: Vec::new(),
     };
     let p = FramePlan {
         t: Tick(90_000),

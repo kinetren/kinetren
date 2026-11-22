@@ -61,6 +61,7 @@ impl Src {
             lead: None,
             masks: Vec::new(),
             fx_in: &[],
+            reads: Vec::new(),
         }
     }
 }

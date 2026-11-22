@@ -257,3 +257,83 @@ fn t3202_a_matte_made_from_the_picture() {
         assert_eq!(wrong, 0, "mix {mix}, {by:?}: {wrong} bytes are not the matte's mix");
     }
 }
+
+/// A frame that names its position: the time of a read shows in its pixels.
+fn frame_at(pts: Tick) -> Arc<kt_media::VideoFrame> {
+    let f = frame();
+    let mut rgba = f.rgba.to_vec();
+    let tint = (pts.0 / 3000 % 200) as u8;
+    for px in rgba.chunks_exact_mut(4) {
+        px[0] = px[0].wrapping_add(tint);
+        px[2] = px[2].wrapping_sub(tint);
+    }
+    Arc::new(kt_media::VideoFrame { pts: Tick(0), width: W, height: H, rgba: rgba.into_boxed_slice(), has_alpha: false })
+}
+
+fn compose_timed(p: &Project, t: Tick) -> (Vec<u8>, Vec<(MediaId, Tick, kt_media::Quality)>) {
+    let vr = VideoRenderer::new(p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: W, height: H };
+    let keys = vr.layers_at(t, q);
+    for (media, src_pts, dq) in &keys {
+        cache.insert_video(kt_engine::source_id(*media), Some(*dq), kt_engine::video::video_cache_idx(*src_pts), frame_at(*src_pts));
+    }
+    let (out, complete) = kt_gpu::testkit::compose(&vr, &cache, t, q);
+    assert!(complete, "the frame did not compose complete");
+    (out, keys)
+}
+
+fn slowed() -> FxInstance {
+    FxInstance::slowed_reverb(0.5, 0.35, 100.0)
+}
+
+/// The arm graph: blur from the Source, Slowed from the Source, Screen-merged.
+fn arm_graph() -> (Vec<FxInstance>, Vec<SlotInputs>) {
+    (
+        vec![FxInstance::blur(6), slowed(), merge(BlendMode::Screen, 1.0)],
+        vec![SlotInputs::default(), SlotInputs { main: FxIn::Source, ..Default::default() }, merged(FxIn::Slot(0), FxIn::Prev)],
+    )
+}
+
+/// Test t3226 (fx-graph-dag D2; capability `video-plan`): the read law — an event that merges an
+/// arm holding Slowed (0.5×) over an arm holding a blur renders the picture of two copies of the
+/// event stacked, the upper slowed by its line, the lower blurred, byte for byte; the slowed read
+/// shows another moment than the trunk.
+#[test]
+fn t3226_the_read_law() {
+    if kt_gpu::testkit::no_gpu(kt_plugins_builtin::install) {
+        return;
+    }
+    let (fx, fx_in) = arm_graph();
+    let graph = project(vec![clip(1, 0, fx, fx_in, BlendMode::Normal)]);
+    let stacked = project(vec![
+        clip(1, 0, vec![slowed()], vec![], BlendMode::Screen),
+        clip(2, 1, vec![FxInstance::blur(6)], vec![], BlendMode::Normal),
+    ]);
+    for t in [Tick(SPAN / 4), Tick(SPAN / 2), Tick(SPAN * 3 / 4)] {
+        let (a, keys) = compose_timed(&graph, t);
+        let (b, _) = compose_timed(&stacked, t);
+        let pts: std::collections::BTreeSet<i64> = keys.iter().map(|k| k.1.0).collect();
+        assert!(pts.len() >= 2, "at {t:?} the slowed read did not read another moment: {keys:?}");
+        let diff = a.iter().zip(&b).filter(|(x, y)| x != y).count();
+        assert_eq!(diff, 0, "at {t:?} the read differs from the stacked slowed layer in {diff} bytes");
+    }
+}
+
+/// Test t3227 (fx-graph-dag D2): the order sees both reads — `layers_at` lists the trunk's frame
+/// and the slowed arm's half-rate frame, the composite misses none (it is complete), and the line
+/// without the arm orders one frame.
+#[test]
+fn t3227_the_order_sees_both_reads() {
+    kt_plugins_builtin::install();
+    let q = kt_media::Quality { width: W, height: H };
+    let t = Tick(SPAN / 2);
+    let (fx, fx_in) = arm_graph();
+    let graph = VideoRenderer::new(&project(vec![clip(1, 0, fx, fx_in, BlendMode::Normal)]));
+    let line = VideoRenderer::new(&project(vec![clip(1, 0, vec![FxInstance::blur(6)], vec![], BlendMode::Normal)]));
+    let slow = VideoRenderer::new(&project(vec![clip(1, 0, vec![slowed()], vec![], BlendMode::Normal)]));
+    let mut want = line.layers_at(t, q);
+    want.extend(slow.layers_at(t, q));
+    assert_eq!(graph.layers_at(t, q), want, "the graph's order is not its two reads'");
+    assert_eq!(line.layers_at(t, q).len(), 1, "a line orders one frame");
+}

@@ -71,6 +71,7 @@ fn run_frame(
         lead: None,
         masks: Vec::new(),
         fx_in: &[],
+        reads: Vec::new(),
     };
     let p = FramePlan {
         t: Tick(90_000),
@@ -263,6 +264,7 @@ fn camera_isp_gpu_cost_per_1080p_frame() {
             lead: None,
             masks: Vec::new(),
             fx_in: &[],
+            reads: Vec::new(),
         };
         let p = FramePlan {
             t: Tick(90_000 + id as i64),
@@ -299,6 +301,7 @@ fn gpu_bytes(engine: &kt_gpu::GpuFxEngine, id: u64, fx: &[FxInstance], fr: &Arc<
         lead: None,
         masks: Vec::new(),
         fx_in: &[],
+        reads: Vec::new(),
     };
     let p = FramePlan { t: Tick(90_000), out_w: w, out_h: h, layers: vec![PlanLayer::One { src, alpha_k: 4096, scale_alpha: false, fade: None }] };
     let mut out = Vec::new();

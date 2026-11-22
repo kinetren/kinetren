@@ -361,6 +361,8 @@ enum FxOp {
     Hold { reg: usize },
     /// Make a register's frame current.
     Load { reg: usize },
+    /// Make read `k`'s finished frame current (fx-graph-dag D2): a time kind in an arm.
+    Input { k: usize },
     /// A Merge: the current frame is the Background, `fg` the Foreground's register. Two composite
     /// passes over a transparent accumulator — the Background at full level, the Foreground with
     /// the blend mode at `k` — then `Unpremul`: the layer composite's own kernels (the Merge law).
@@ -420,7 +422,7 @@ impl FxOp {
             }
             // a snapshot spawns no passes; when the sizes have diverged, mixing is completed
             // by resampling the dry side
-            FxOp::Snapshot { .. } | FxOp::MaskSnapshot | FxOp::Hold { .. } | FxOp::Load { .. } => 0,
+            FxOp::Snapshot { .. } | FxOp::MaskSnapshot | FxOp::Hold { .. } | FxOp::Load { .. } | FxOp::Input { .. } => 0,
             FxOp::Mix { .. } | FxOp::MaskMix { .. } => 2,
             // a Merge: the Foreground's fit, two composite passes, `Unpremul`; a matte adds its fit, its
             // coverage pass and the mix (an upper bound: the fits run only when the sizes differ)
@@ -508,6 +510,9 @@ fn chain_ops(
     masks: &[kt_fx::mask::MaskOp],
     // the chain's wiring aligned with `fx` (fx-graph-dag D3): empty — a line
     fx_in: &[kt_model::SlotInputs],
+    // the slots whose output is a read's frame, and each read's output (size, alpha) (D2)
+    read_slots: &[usize],
+    read_out: &[(u32, u32, bool)],
 ) -> ChainOps {
     let (mut w, mut h) = (src_w, src_h);
     // the maximum of INTERMEDIATE sizes (K×-segments, item 314): resolve_chain
@@ -536,9 +541,10 @@ fn chain_ops(
     stops.sort_unstable();
     stops.dedup();
     // a graph is lowered by the one planner into a straight program (fx-graph-dag D3)
-    let graph = kt_fx::plan::lower(fx, fx_in);
+    let graph = kt_fx::plan::lower_with(fx, fx_in, read_slots);
+    let input_wh: Vec<(u32, u32)> = read_out.iter().map(|r| (r.0, r.1)).collect();
     let plan = kt_fx::plan::plan_graph_in(
-        fx, graph.as_ref(), src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &stops, lead,
+        fx, graph.as_ref(), &input_wh, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &stops, lead,
     );
     // a register's frame: (size, the alpha fold there)
     let mut regs: Vec<(u32, u32, bool, bool)> = vec![(0, 0, false, false); graph.as_ref().map_or(0, |g| g.regs)];
@@ -591,6 +597,7 @@ fn chain_ops(
             kt_fx::plan::PlanOp::Barrier { idx, .. }
             | kt_fx::plan::PlanOp::Mix { idx }
             | kt_fx::plan::PlanOp::Merge { idx, .. } => Some((*idx, *idx + 1)),
+            kt_fx::plan::PlanOp::Input { at, .. } => Some((*at, *at + 1)),
             kt_fx::plan::PlanOp::Snapshot | kt_fx::plan::PlanOp::Hold { .. } | kt_fx::plan::PlanOp::Load { .. } => None,
         };
         let start = span.map(|(i, _)| i);
@@ -626,6 +633,11 @@ fn chain_ops(
             kt_fx::plan::PlanOp::Load { reg, .. } => {
                 (w, h, has_alpha_known, has_alpha) = regs[reg];
                 ops.push(FxOp::Load { reg });
+            }
+            kt_fx::plan::PlanOp::Input { k, .. } => {
+                let (rw, rh, ra) = read_out[k];
+                (w, h, has_alpha_known, has_alpha) = (rw, rh, true, ra);
+                ops.push(FxOp::Input { k });
             }
             kt_fx::plan::PlanOp::Merge { idx, fg, matte } => {
                 let FxInstance::Merge { mode, mix } = &fx[idx] else {
@@ -840,11 +852,17 @@ struct ChainSpec {
     /// The chain INPUT's alpha (the source frame's, or a nested reel's composite): a silent fold
     /// at a `Snapshot`/`Mix` means this.
     src_has_alpha: bool,
+    /// The layer's other reads (fx-graph-dag D2), encoded before this chain; `FxOp::Input { k }`
+    /// makes read `k`'s result current.
+    reads: Vec<ChainSpec>,
+    /// The chain's output size.
+    out: (u32, u32),
 }
 
 impl ChainSpec {
     fn slot_units(&self) -> u32 {
-        let own: u32 = self.ops.iter().map(|o| o.slot_units()).sum();
+        let own: u32 = self.ops.iter().map(|o| o.slot_units()).sum::<u32>()
+            + self.reads.iter().map(ChainSpec::slot_units).sum::<u32>();
         match &self.src {
             ChainSrc::Tex(_) => own,
             // + 1 per pass removing premultiplication at the boundary
@@ -3476,7 +3494,7 @@ impl Inner {
             let (cw, ch) = fit.unwrap_or((sw, sh));
             let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
                 // the sub-composite always has alpha (see below)
-                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true, &src.masks, src.fx_in);
+                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, src.lead, true, &src.masks, src.fx_in, &[], &[]);
             self.bind_runs(&mut ops);
             if fit.is_some() {
                 ops.insert(
@@ -3490,7 +3508,16 @@ impl Inner {
             // the sub-composite always has alpha: where there are no layers, it is transparent
             let has_alpha = if ha_known { ha } else { true };
             return Ok(Some((
-                ChainSpec { ops, src: ChainSrc::Nest(jobs), src_w: sw, src_h: sh, has_alpha, src_has_alpha: true },
+                ChainSpec {
+                    ops,
+                    src: ChainSrc::Nest(jobs),
+                    src_w: sw,
+                    src_h: sh,
+                    has_alpha,
+                    src_has_alpha: true,
+                    reads: Vec::new(),
+                    out: (fw, fh),
+                },
                 (fw, fh) == (ow, oh),
                 sub_ok,
             )));
@@ -3498,6 +3525,17 @@ impl Inner {
         let Some(frame) = src.input.frame() else { return Ok(None) };
         if frame.width > self.max_dim || frame.height > self.max_dim {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
+        }
+        // the layer's other reads first (fx-graph-dag D2): each its own chain on its own frame; a
+        // read with no picture leaves the layer with none
+        let mut reads = Vec::with_capacity(src.reads.len());
+        let mut read_slots = Vec::with_capacity(src.reads.len());
+        let mut read_out = Vec::with_capacity(src.reads.len());
+        for (slot, r) in &src.reads {
+            let Some((spec, _, _)) = self.resolve_chain(r, ow, oh, t)? else { return Ok(None) };
+            read_slots.push(*slot);
+            read_out.push((spec.out.0, spec.out.1, spec.has_alpha));
+            reads.push(spec);
         }
         let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) = chain_ops(
             &src.fx,
@@ -3513,6 +3551,8 @@ impl Inner {
             frame.has_alpha,
             &src.masks,
             src.fx_in,
+            &read_slots,
+            &read_out,
         );
         self.bind_runs(&mut ops);
         // The K×-gaps of the plan (item 314) MUST fit within the device texture limit;
@@ -3540,6 +3580,8 @@ impl Inner {
                 src_h: frame.height,
                 has_alpha,
                 src_has_alpha: frame.has_alpha,
+                reads,
+                out: (fw, fh),
             },
             fits,
             true,
@@ -3589,8 +3631,23 @@ impl Inner {
         let mut msnap: Option<(wgpu::TextureView, u32, u32)> = None;
         // the graph's held frames (fx-graph-dag D3): a held texture stays out of the pool to the end
         let mut held: Vec<Option<(wgpu::TextureView, u32, u32)>> = Vec::new();
+        // the reads' results (D2), encoded first and kept to the end of the chain
+        let mut read_views: Vec<(wgpu::TextureView, u32, u32)> = Vec::with_capacity(chain.reads.len());
+        for r in &chain.reads {
+            let (v, transients) = self.encode_chain(enc, r);
+            retired.extend(transients);
+            read_views.push((v, r.out.0, r.out.1));
+        }
         for op in &chain.ops {
             match op {
+                FxOp::Input { k } => {
+                    let Some((v, rw, rh)) = read_views.get(*k).cloned() else { continue };
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = v;
+                    (w, h) = (rw, rh);
+                }
                 FxOp::Hold { reg } => {
                     if held.len() <= *reg {
                         held.resize(*reg + 1, None);
@@ -4202,6 +4259,11 @@ fn plan_hash(plan: &FramePlan<'_>) -> u64 {
         // picture; a line adds nothing, so its keys stay
         if !s.fx_in.is_empty() {
             h.update(format!("{:?}", s.fx_in).as_bytes());
+        }
+        // each read is a layer of its own frame (fx-graph-dag D2): its key joins the layer's
+        for (slot, r) in &s.reads {
+            h.update(&(*slot as u64).to_le_bytes());
+            put_src(h, r);
         }
         // the masks evaluated at THIS frame (shape-masks): an animated mask on a still frame
         // must not return another frame's composite; maskless layers add nothing

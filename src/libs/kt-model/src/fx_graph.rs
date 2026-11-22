@@ -182,6 +182,9 @@ pub enum GraphWhy {
     TooManyHeld,
     /// More than `MAX_READS` reads of the source.
     TooManyReads,
+    /// A time kind in an arm whose own path from the Source branches: a read is a LINE (design D2),
+    /// so it reads exactly as an event with that line does.
+    ReadBranches,
     /// The wiring list is longer than the chain.
     TooLong,
 }
@@ -219,7 +222,11 @@ pub fn check(fx: &[FxInstance], fx_in: &[SlotInputs], lead: usize) -> Result<(),
     if held_peak(fx_in, fx.len()) > MAX_HELD {
         return Err(GraphError { slot: fx.len().saturating_sub(1), why: GraphWhy::TooManyHeld });
     }
-    if read_count(fx, fx_in) > MAX_READS {
+    let reads = reads(fx, fx_in);
+    if let Some(r) = reads.iter().find(|r| !r.fx_in.is_empty()) {
+        return Err(GraphError { slot: r.slot, why: GraphWhy::ReadBranches });
+    }
+    if 1 + reads.len() > MAX_READS {
         return Err(GraphError { slot: fx.len().saturating_sub(1), why: GraphWhy::TooManyReads });
     }
     Ok(())
