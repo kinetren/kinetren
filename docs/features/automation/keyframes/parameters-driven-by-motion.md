@@ -23,9 +23,10 @@ checked: 2026-11-20
 
 The owner's example: falling letters slow down and speed up; a fisheye should come on while the motion accelerates
 or brakes and fade out smoothly while everything moves evenly — without hand-copying the speed curve of another
-event. The acceleration may come from the event, from a composition or from a morpher layer. And a second, deeper
-case: the same stretch t0–t1 should look one way when played normally and another while it is scrubbed (rewound) —
-an effect driven by the PLAYHEAD's motion, not by the edit.
+event. The acceleration may come from the event, from a composition or from a morpher layer. And the deeper case: the
+same stretch t0–t1 of a composition looks one way in an instance played at normal speed and another in an instance
+whose speed curve accelerates — the owner confirmed (2026-11-22, B7, "Скорость монтажа") that "перемотка" means the
+edit's speed, not the playhead's motion.
 
 ## Who has it and how
 
@@ -74,7 +75,7 @@ NO QUOTES: no web access in this spec session (2026-11-20); the editor rows are 
 - Links (R.61, `src/libs/kt-model/src/links.rs`): a property follows another by address with an expression; a link
   can already read another event's `rate` curve (the speed of the warp).
 - The speed profile and its integrals (`src/libs/kt-model/src/warp.rs`, `ClipWarp`), compiled curves.
-- The transport's play rate, the space boost and the scrub in the player (`src/libs/kt-engine/src/player.rs`).
+- A reel's sub-plan keyed by instance (`src/libs/kt-engine/src/video_plan.rs`, `NestKey`).
 
 ### What is missing
 
