@@ -86,7 +86,7 @@ burst cache's keys do not change: a source's frames at a quality are what this b
 were before source-colour-matrix. The disk caches of decoded pixels move their versions, and the
 render-cache disk tier is salted by the build.
 
-## D4. The export default (the owner's Q50: "709 от HD, 601 ниже")
+## D4. The export default (the owner's Q50: "709 от HD, 601 ниже"; built, t3603)
 
 `ExportOptions::default` takes its matrix from the output size by `colour::is_hd`: BT.709 at HD and
 above, BT.601 below. The range stays limited. The tags are written as converted (t2806's law holds). The
@@ -140,7 +140,7 @@ so a preset made before this change, which stored `bt601`, keeps it.
 - **The OTIO door** writes it into `metadata["kt"]` and adds a row in "What OTIO export loses" (other
   editors read an 8-bit timeline).
 
-## D9. The working space of the 16-bit path (Q1)
+## D9. The working space of the 16-bit path (the owner's Q1 a)
 
 - Scene-linear light in BT.2020 primaries, `Rgba16Float`, premultiplied alpha, with 1.0 = 203 cd/m² (BT.2408
   HDR reference white).
@@ -173,7 +173,7 @@ every processor (invariant 11). `VideoFrame` gains `format: PixFormat { Rgba8, R
 - **`FrameTol`** gains float classes in units of 2⁻¹⁰ relative error, applied to f16 frames on two
   devices (the software adapter and a card).
 
-## D12. Effects: a declared precision and the 8-bit island (Q2)
+## D12. Effects: a declared precision and the 8-bit island (the owner's Q2 a)
 
 - `Manifest.precision: &[Precision]` lists the precisions an effect's kernel has. Built-in effects start
   with `[Rgba8]`.
@@ -192,16 +192,33 @@ every processor (invariant 11). `VideoFrame` gains `format: PixFormat { Rgba8, R
   devices. They are islands by nature and are marked the same. A 10-bit codec simulation is a later
   change.
 
-## D13. The display (Q3)
+## D13. The display: HDR on an HDR monitor at once, SDR elsewhere (the owner's Q3 b)
 
-- The display pass reads the f16 composite and tone-maps it by BT.2390 from the frame's peak to the
-  monitor's SDR white (the same anchors as D2 stage 5, in float). It writes `Rgba8Unorm` as today.
-- Where eframe/wgpu give an HDR surface (`Rgba16Float` with an extended or PQ colour space; Windows today,
-  Wayland's colour management when it lands), a later step presents linear scRGB without the tone map.
-  The display's facts say which.
+- **The surface is chosen at start, and again when the window moves to another monitor.** The display asks
+  wgpu for the surface's formats and colour spaces. An HDR surface is taken where one is offered:
+  - **Windows:** `Rgba16Float` with the extended linear sRGB colour space (scRGB) on DX12 or Vulkan, when
+    Windows HDR is on for that monitor;
+  - **macOS:** `Rgba16Float` with the extended linear colour space (EDR);
+  - **Linux:** a Vulkan surface with an HDR10 (ST 2084) or extended linear colour space where the
+    compositor exposes it (Wayland's colour-management protocol). X11 and compositors without it stay SDR.
+
+  eframe takes the chosen format through its existing-device setup, the same path as
+  `stream-picture-stays` D2.
+- **On an HDR surface** the display pass writes the linear composite without a tone map:
+  - for scRGB and EDR, scaled by 203/80, since in those spaces 1.0 is 80 cd/m²;
+  - for HDR10, through the PQ inverse EOTF;
+  - highlights above the monitor's reported peak roll off by BT.2390 to that peak (the monitor's
+    HDR metadata, when the system reports it; else 1000 cd/m²).
+
+  The interface itself (egui) is drawn at SDR white on that surface, so it does not glare.
+- **On an SDR surface** (every other case, and GL) the display pass tone-maps by BT.2390 from the frame's
+  peak to the monitor's SDR white (the same anchors as D2 stage 5, in float) and writes `Rgba8Unorm` as
+  today.
+- **What the person sees:** the display's facts (Diagnostics, the trace's machine facts) name the surface
+  and why: "HDR (scRGB, peak 600 cd/m²)" or "SDR (tone-mapped): the compositor gives no HDR surface".
 - The scopes (change `scopes`) read the f16 composite, so they show nits above 100.
 
-## D14. Export from a 16-bit project (Q4)
+## D14. Export from a 16-bit project (the owner's Q4 a)
 
 - **SDR:** the display's tone map, then today's RGB→YUV at 8 or 10 bits.
 - **HDR10:** linear → BT.2020 PQ (inverse EOTF table), then the 10-bit Q15 matrix to `yuv420p10` / P010 /
@@ -260,16 +277,16 @@ Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics w
    - the WIDE path for P3 (t3806).
 3. The device twin equals the processor byte for byte (t3807), when device-decode-sources lands.
 4. Export:
-   - the default by size, with tags (t3808);
-   - an old preset keeps BT.601 (t3809).
+   - the default by size: built by the mosh-sharp executor (found-defects 1054, t3603); t3808 and t3809
+     stay free.
 5. Facts and `kt-cli probe` print the path (t3810); the trace names it (t3811).
 
-6. The 16-bit path (after the owner's Q1–Q4):
+6. The 16-bit path (the owner answered Q1–Q4, kkt-26.11.20b B4):
    - the precision setting, the file's next free format, OTIO (t3877–t3880);
    - the decode to linear f16, exact on every processor (t3881–t3883);
    - the pool by format, the core float shaders, `FrameTol` float classes (t3884–t3887);
    - the effect's precision, the island and its mark, the colour family's float kernels (t3888–t3891);
-   - the display's tone map (t3892);
+   - the display: the HDR surface where offered, the tone map elsewhere (t3892);
    - the export SDR / HDR10 / HLG with their tags and mastering metadata (t3893–t3895);
    - the reels' boundaries and the prerender's Main10 segments (t3896, t3897);
    - the settings' control and the chain's mark (t3898); the idle check on a 16-bit heavy showcase (t3899).
@@ -279,4 +296,5 @@ Where no 10-bit hardware encoder opens, it writes nothing, and the Diagnostics w
 - **Memory doubles** for every picture of a 16-bit project. The ledger's budgets stay in bytes, so fewer
   frames fit; the trace shows it.
 - **Effects in islands** lose highlights. The marks show where, and the float kernels follow by family.
-- **HDR surfaces** are uneven across systems. The tone-mapped SDR display is the path that always works.
+- **HDR surfaces** are uneven across systems. The owner asked for HDR at once where the system can (Q3 b);
+  the tone-mapped SDR display is the path that always works, and the facts say which one runs.
