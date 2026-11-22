@@ -1890,6 +1890,12 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     let min_col = form_min_col(ui, f.params_scope(), &specs, &rows);
     let cols = form_cols(ui.available_width(), min_col).min(rows.len());
     if cols <= 1 {
+        // one column, but two fields fit side by side: consecutive fields share a row, as the form
+        // stood before columns (an X/Y pair stays its own row). One field a row only where two do
+        // not fit — the narrow window fx-form-width was about; a taller form there pushed the
+        // automation graph out of the window (found-defects 904)
+        let packed = pack_rows(&rows);
+        let rows = if form_min_col(ui, f.params_scope(), &specs, &packed) <= ui.available_width() { packed } else { rows };
         return grid_part(ui, egui::Id::new(&id), f, &specs, &rows, bind, pubc);
     }
     let mut changed = ParamsChanged::default();
@@ -1995,6 +2001,26 @@ fn form_min_col(ui: &egui::Ui, scope: kt_model::ParamScope, specs: &[ParamSpec],
     let gap = 8.0;
     let per_row = rows.iter().map(|r| r.len()).max().unwrap_or(1) as f32;
     per_row * (label + gap + FORM_FIELD_W) + (per_row - 1.0) * gap
+}
+
+/// Two consecutive single-field rows as one row (an X/Y pair keeps its own row).
+fn pack_rows(rows: &[std::ops::Range<usize>]) -> Vec<std::ops::Range<usize>> {
+    let mut out: Vec<std::ops::Range<usize>> = Vec::with_capacity(rows.len());
+    let mut i = 0;
+    while i < rows.len() {
+        let r = rows[i].clone();
+        match rows.get(i + 1) {
+            Some(n) if r.len() == 1 && n.len() == 1 => {
+                out.push(r.start..n.end);
+                i += 2;
+            }
+            _ => {
+                out.push(r);
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// The shared grid's rows: one field a row (the columns of the flow give the density), but an
