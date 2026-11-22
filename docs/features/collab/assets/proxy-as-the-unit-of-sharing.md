@@ -168,4 +168,4 @@ Boundaries: the proxy toggle and the export protection are F-MED-002; the repair
   `THUMB_STEP_LADDER`, t62, writing the JPEG to the sidecar DB),
   `src/libs/kt-cache/src/lib.rs` (`BurstKind`, `PostFxVideo`, coverage),
   `src/libs/kt-media/src/index.rs` (`ensure_media`, deleting the DB on an opening error),
-  `docs/features/media/disk-copies/disk-copies-of-media.md`.
+  `docs/features/media/persistent-cache/persistent-cache.md`.

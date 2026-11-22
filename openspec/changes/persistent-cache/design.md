@@ -1,0 +1,97 @@
+# Design: persistent-cache
+
+> DESIGN ONLY, revision 3 (2026-11-22), base `b0b6a733`: the owner's B1 — heavy effects' results first, one store.
+> Revision 2 (`disk-copies`) kept only source copies; revision 1 (`proxies`) the same with a manual switch.
+
+## Context
+
+- The disk prerender (`render-cache-disk`, spec video-plan "Slow moments are prerendered at rest…"): whole composites
+  under a durable key (the plan key with content serials replaced by file identities, salted by format, build and
+  device), segments of hardware-encoded H.264, 2 GiB, LRU, written at rest by the player.
+- The project's cache folder (`project-cache-folder`, spec-engine): `<project folder>/kinetren-cache/` with `media/`,
+  `reels/`, `render/`, `history/`, `mix/`; one folder per project folder (B2 a); a folder that cannot take more writes
+  cyclically, dropping the oldest, with a notice (B2).
+- The plan (`frame_plan`, `plan_chain`): per layer, the source frame → the chain's nodes (fused point-wise runs,
+  barriers, stream stages) → the layer's picture; track stages; reel instances as sub-plans.
+- Per-pass device times in the journal (gpu-pass-cost); the render-ahead producer (render-ahead) composes ahead while
+  playing.
+
+## D1. One store, three kinds
+
+`Store { root: <cache folder>, kinds: Stage | Frame | Copy }`, one index file per kind folder (`stages/`, `render/`,
+`copies/`), one byte budget from the cache folder, one eviction order: value per byte = measured cost saved per read ×
+reads in this project / bytes, lowest first; within equal value, least recently used. The prerender's rule "never evict
+what this process used" stays for frames.
+
+## D2. Stage results — the cut points
+
+- A cut point is a position in a layer's plan after which the plan can start from a texture: after a barrier node or a
+  stream stage of an event's chain, after a track stage, the output of a reel instance's sub-plan.
+- Heavy: the node (or stage, or sub-plan) whose measured device time at this size is ≥ half a frame period, over the
+  last three measurements. Light nodes are never cut points (their result is cheaper to compute than to decode).
+- The key `stage_key(layer, cut)` = the durable inputs of the layer UP TO the cut: the source's identity (path, size,
+  mtime, or a generator's values), the material position, the decode size, the content hash of the chain prefix and
+  every curve's value at this moment for the prefix's nodes, masks of those nodes, for a reel its instance content
+  hash; salted by D4. Nothing after the cut, nothing of other layers, not the timeline position enters it.
+- Writing: the producer (at rest, and while playing when the device has spare time) reads back the cut's texture once
+  and writes it; a stage segment is a run of consecutive moments of one cut.
+- Reading: `frame_plan` asks the store for each layer's deepest held cut at this moment; found, the layer's plan begins
+  with the decoded texture as the cut node's output and runs the rest. The coverage bars draw a moment bright only when
+  its whole frame or every heavy layer's cut is held (invariant 4: what is bright plays without the heavy work).
+
+## D3. Frames and copies
+
+- Frames: the disk prerender as built, moved under `render/` of the cache folder.
+- Copies: revision 2's source copies (MKV, H.264 all-intra, the original's timestamps, audio stream-copied, the
+  original's natives reported) at the size the preview plays, for heavy sources only (long-GOP above 1920×1080, or
+  measured slower than real time); a better copy when a higher quality is chosen; "Use a camera's copy…" kept.
+
+## D4. The salt — what survives an update
+
+An entry's salt = the format version of the store, the decoder's major version (for anything decoded), the device
+class (vendor + driver major), and for stage results and frames the versions of the kernels that ran (each plugin's
+`version` + the hash of its WGSL text). An update that changes none of those keeps the entries. Stores of another salt
+are dropped lazily on a miss, never by a sweep of the whole folder at start.
+
+## D5. Alpha and quality
+
+A stage result may carry alpha: it is written as two hardware segments — the colour (H.264 4:2:0) and the alpha as a
+luma-only segment — and recombined on upload. Quality by Q1 (a): the encoder's highest quality preset, the same as the
+prerender; the restored stage is within the codec's tolerance of the composite.
+
+## D6. Export and determinism
+
+No export reads any kind (invariant 11); the draft render (`cached-final-render`, A16) reads frames only and its window
+says so. A preview built from cached stages differs from a fresh compose by the codec's noise at most; a test bounds it.
+
+## D7. Class walk — "work that an unrelated edit throws away"
+
+| Work | Kept today across an edit of another layer? | Across a restart? | Here |
+|---|---|---|---|
+| heavy effect on one event | no (the whole composite misses) | no | stage result |
+| Datamosh history | the stream memo in memory | `durable-history-and-mix` (history/) | the same store's budget |
+| track stage (a heavy track effect) | no | no | stage result |
+| reel instance output | the reel preview cache (strips), not frames | no | stage result |
+| decoded heavy source | the burst cache (memory) | no | copy |
+| whole slow frame | present memo | prerender | frame (unchanged) |
+| final mix | kept mix (memory) | `mix/` (designed) | unchanged |
+
+## D8. Coordination with `project-cache-folder`
+
+spec-engine's design owns the folder, its limit and its cyclic eviction with a notice. This change asks it for: the
+`stages/` and `copies/` subfolders beside `render/`; the eviction by this design's value order inside the store's
+share of the folder; the store's salt rule D4 instead of the build salt for `render/`. Message sent to spec-engine
+2026-11-22.
+
+## D9. Idle
+
+Writing follows the prerender's rule (at rest, after 1.5 s without input, background class; while playing only in
+the producer's spare time); reading is a lookup per layer per moment; nothing runs at rest once the heavy moments are
+written.
+
+## Rejected
+
+- **Three stores** (prerender, copies, a new effect cache) — three budgets that do not see each other; the owner wants
+  the effects cached, and the frame store already keys by content.
+- **Caching every node's output** — a light node costs less to compute than to decode.
+- **Build-salted entries** — every update would empty a "persistent" cache.
