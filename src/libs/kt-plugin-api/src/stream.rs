@@ -130,6 +130,18 @@ pub fn walked(first: i64, positions: usize, reads: u64, checkpoints: u32) {
 static WALKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static PICTURES_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Where a picture crossed (`cross`'s `aux`): the kernel's bytes path, or an executor's read back.
+pub use kt_time::trace::cross as cross_where;
+
+/// A stream picture crossing the bus to be composed (stream-picture-stays D1): `read` bytes back from
+/// the device, `up` handed to the composite to upload; the span covers the processor's conversion.
+/// `aux` is `kt_time::trace::cross`'s where.
+pub fn cross(read: u64, up: u64, aux: u32) -> kt_time::trace::Span {
+    let mut s = kt_time::trace::span(kt_time::trace::Ev::StreamCross);
+    s.a(read).b(up).aux(aux);
+    s
+}
+
 /// Pictures every walk of the process read back from the device so far (stream-picture-stays D3: a
 /// host that holds pictures reads none back for what it shows).
 pub fn pictures_read() -> u64 {
@@ -310,6 +322,8 @@ struct Entry {
     /// Admitted while the memo was full of the loop's own laps (stream-memo-budget): it lives in the
     /// window past the part of the loop the memo keeps, and goes first.
     probation: bool,
+    /// It lies in the compute device's memory (`put_device`, stream-picture-stays D3).
+    device: bool,
 }
 
 /// The newest transient entries the eviction spares like any other: what the next step still reads
@@ -364,6 +378,9 @@ struct MemoInner {
     pinned: usize,
     /// Of `bytes`, the window's (`Entry::probation`).
     probation: usize,
+    /// Of `bytes`, the compute device's (`Entry::device`), and what the trace last said of it.
+    device: usize,
+    device_traced: usize,
     clock: u64,
     /// A loop is kept (`keep_loop`).
     looping: bool,
@@ -437,7 +454,43 @@ impl StreamMemo {
         self.put_entry(key, v, bytes, false, Some(rank));
     }
 
+    /// `put` of a value that lies in the compute device's memory (stream-picture-stays D3): bounded and
+    /// evicted as any picture, its bytes also named as the device's (`device_bytes`, the trace's
+    /// `stream_held`).
+    pub fn put_device<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        self.put_entry_on(key, v, bytes, false, None, true);
+    }
+
+    /// `put_transient` of a value in the compute device's memory.
+    pub fn put_transient_device<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize) {
+        self.put_entry_on(key, v, bytes, true, None, true);
+    }
+
+    /// `put_pinned` of a value in the compute device's memory.
+    pub fn put_pinned_device<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, rank: u32) {
+        self.put_entry_on(key, v, bytes, false, Some(rank), true);
+    }
+
+    /// Of the bytes held, those in the compute device's memory.
+    pub fn device_bytes(&self) -> usize {
+        self.lock().device
+    }
+
+    /// The account and, when the device's bytes moved by a megabyte since the trace last said, a
+    /// `stream_held` record (his trace answers how much of a card the history takes).
+    fn settle(&self, g: &mut MemoInner) {
+        self.account.set(g.bytes as u64);
+        if g.device.abs_diff(g.device_traced) >= 1 << 20 {
+            g.device_traced = g.device;
+            kt_time::trace::ev(kt_time::trace::Ev::StreamHeld).a(g.device as u64).b(g.bytes as u64).c(self.bytes_cap() as u64).emit();
+        }
+    }
+
     fn put_entry<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, transient: bool, pinned: Option<u32>) {
+        self.put_entry_on(key, v, bytes, transient, pinned, false);
+    }
+
+    fn put_entry_on<T: Any + Send + Sync>(&self, key: u64, v: Arc<T>, bytes: usize, transient: bool, pinned: Option<u32>, device: bool) {
         let cap = self.bytes_cap();
         if bytes > cap || pinned.is_some() && bytes > cap / 2 {
             return;
@@ -451,15 +504,18 @@ impl StreamMemo {
         }
         // the memo full of the loop's own laps: the new one goes to the window past the kept part
         let probation = g.looping && !transient && pinned.is_none() && g.bytes + bytes > cap && Self::stale_victim(&g).is_none();
-        let e = Entry { v, bytes, used: now, transient, pinned, lap, probation };
+        let e = Entry { v, bytes, used: now, transient, pinned, lap, probation, device };
         Self::count(&mut g, &e);
         g.map.insert(key, e);
         Self::evict_to(&mut g, cap, key);
-        self.account.set(g.bytes as u64);
+        self.settle(&mut g);
     }
 
     fn count(g: &mut MemoInner, e: &Entry) {
         g.bytes += e.bytes;
+        if e.device {
+            g.device += e.bytes;
+        }
         if e.pinned.is_some() {
             g.pinned += e.bytes;
         }
@@ -470,6 +526,9 @@ impl StreamMemo {
 
     fn uncount(g: &mut MemoInner, e: &Entry) {
         g.bytes -= e.bytes;
+        if e.device {
+            g.device -= e.bytes;
+        }
         if e.pinned.is_some() {
             g.pinned -= e.bytes;
         }
@@ -618,7 +677,7 @@ impl StreamMemo {
         for k in ks {
             Self::remove(&mut g, k, 0);
         }
-        self.account.set(g.bytes as u64);
+        self.settle(&mut g);
     }
 
     /// Bytes of the pinned tier (checkpoints).
@@ -636,7 +695,7 @@ impl StreamMemo {
         self.cap.store(cap_bytes, std::sync::atomic::Ordering::Relaxed);
         let mut g = self.lock();
         Self::evict_to(&mut g, cap_bytes, 0);
-        self.account.set(g.bytes as u64);
+        self.settle(&mut g);
     }
 
     /// Its account in the memory ledger: the base is its first bound.
@@ -657,7 +716,8 @@ impl StreamMemo {
         g.bytes = 0;
         g.pinned = 0;
         g.probation = 0;
-        self.account.set(0);
+        g.device = 0;
+        self.settle(&mut g);
     }
 }
 

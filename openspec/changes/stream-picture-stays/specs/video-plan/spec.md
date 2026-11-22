@@ -16,9 +16,9 @@ Why: found-defects 663 — every shown Datamosh frame was read back as planes, c
 and uploaded again, between two devices of the same chip (stream-picture-stays D1, D3).
 
 #### Scenario: The crossing is in the trace
-- **WHEN** a Datamosh loop plays three laps with two devices, and its trace is read
-- **THEN** each lap names the frames crossed, their megabytes and the conversion's processor time, and a project with no stream stage crosses nothing
-- **TEST** t3812 (`src/libs/kt-engine/tests/stream_cross.rs`), t3813 (`src/apps/kt-cli/src/trace_query/tests.rs`)
+- **WHEN** mosh frames are composed on two devices, a held picture is read back by an executor on another device, and the trace of a looped run with crossings and held history is read
+- **THEN** each frame composed leaves a `stream_cross` record (bytes back, RGBA handed up, the conversion's span; the kernel's or the executor's), a project with no stream stage none; `trace loop` names per lap the frames crossed, their megabytes and processor time, and the history's device megabytes (`stream_held`, a record at every megabyte moved)
+- **TEST** t3812 (`src/libs/kt-engine/tests/stream_stage.rs`), t3813 (`src/apps/kt-cli/src/trace_query/tests.rs`), t3816, t3823
 
 #### Scenario: A held layer composes as the bytes did
 - **WHEN** a Datamosh frame inside the mosh is planned, then composed by an engine on the compute host's device and by one on another device

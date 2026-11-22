@@ -4285,6 +4285,7 @@ fn held_frame(h: &kt_engine::video_plan::HeldLayer) -> Option<kt_media::VideoFra
     let mut got = host.run(&Job { buffers: &buffers, steps: &steps, reads: &[Buf(3), Buf(4), Buf(5)] }).ok()?.into_iter();
     let (y, cb, cr) = (got.next()?, got.next()?, got.next()?);
     let mut rgba = Vec::new();
+    let _cross = kt_plugin_api::stream::cross(lens.iter().sum(), o.w as u64 * o.h as u64 * 4, kt_time::trace::cross::EXECUTOR);
     kt_plugin_api::stream::planes_to_rgba(&y, &cb, &cr, o.pw as usize, o.w as usize, o.h as usize, &mut rgba);
     Some(kt_media::VideoFrame { pts: h.pts, width: o.w, height: o.h, rgba: rgba.into_boxed_slice(), has_alpha: false })
 }

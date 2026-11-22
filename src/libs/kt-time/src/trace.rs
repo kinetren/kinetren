@@ -222,10 +222,26 @@ pub enum Ev {
     /// the program kept (`clicks::effective`: a triple only after a double), `c` µs since the click
     /// before, `aux` egui's double-click window then, ms. Only frames that read a click record it.
     Click = 122,
+    /// A stream stage's picture crossed the bus to be composed (stream-picture-stays D1): a span
+    /// over the processor's conversion. `a` bytes read back from the device, `b` bytes handed to the
+    /// composite to upload, `aux` [`cross`] where.
+    StreamCross = 123,
+    /// The stream memo's pictures kept on the compute device moved by a megabyte or more
+    /// (stream-picture-stays D3, the device-memory risk on a card). `a` device bytes, `b` all the
+    /// memo's bytes, `c` its bound.
+    StreamHeld = 124,
+}
+
+/// Where a stream picture crossed ([`Ev::StreamCross`] `aux`).
+pub mod cross {
+    /// The kernel's bytes path: its picture read back (or taken from the memo's host copy) and converted.
+    pub const KERNEL: u32 = 0;
+    /// A held picture read back by an executor on another device.
+    pub const EXECUTOR: u32 = 1;
 }
 
 impl Ev {
-    pub const ALL: [Ev; 57] = [
+    pub const ALL: [Ev; 59] = [
         Ev::FrameAsk,
         Ev::FrameLayer,
         Ev::FrameDrop,
@@ -283,6 +299,8 @@ impl Ev {
         Ev::Shutdown,
         Ev::RenderCache,
         Ev::Click,
+        Ev::StreamCross,
+        Ev::StreamHeld,
     ];
 
     pub fn from_u16(v: u16) -> Option<Ev> {
@@ -348,6 +366,8 @@ impl Ev {
             Ev::GpuFrame => "gpu_frame",
             Ev::RenderCache => "render_cache",
             Ev::Click => "click",
+            Ev::StreamCross => "stream_cross",
+            Ev::StreamHeld => "stream_held",
         }
     }
 }

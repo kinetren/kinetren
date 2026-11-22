@@ -8,7 +8,7 @@
 
 ## 1. The crossing in the trace (evidence, not a gate)
 
-- [ ] 1.1 the `StreamCross` record and the lap sum in `kt-cli trace … loop`; t3812, t3813
+- [x] 1.1 the `StreamCross` record and the lap sum in `kt-cli trace … loop`, the memo's device bytes (`StreamHeld`, the card's memory risk); t3812, t3813
 - [x] 1.2 Q1 decided by the owner: b) share now
 
 ## 2. The held layer input

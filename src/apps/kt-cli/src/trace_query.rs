@@ -1415,6 +1415,19 @@ pub fn laps(run: &Run) -> String {
             }
             walk.push(';');
         }
+        // the stream pictures that crossed the bus to be composed (stream-picture-stays D1), and the
+        // history's device memory at the lap's end (D3: the risk on a card)
+        let crossed: Vec<&Rec> = run.recs.iter().filter(|r| is(r, Ev::StreamCross) && r.t >= a && r.t < b).collect();
+        if !crossed.is_empty() {
+            let mb = crossed.iter().map(|r| r.a + r.b).sum::<u64>() as f64 / (1u64 << 20) as f64;
+            let ms = crossed.iter().map(|r| r.dur).sum::<u64>() as f64 / 1e6;
+            let _ = write!(walk, "  stream frames crossed: {}, {mb:.1} MB, {ms:.1} ms of a core;", crossed.len());
+        }
+        if let Some(h) = run.recs.iter().filter(|r| is(r, Ev::StreamHeld) && r.t < b).last()
+            && h.a > 0
+        {
+            let _ = write!(walk, "  history on the device {:.0} MB;", h.a as f64 / (1u64 << 20) as f64);
+        }
         // how busy the device was (render-ahead D7): the device time of the frames harvested in the lap
         let device = device_ns(run, a, b);
         if device > 0 {
