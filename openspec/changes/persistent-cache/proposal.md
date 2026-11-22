@@ -71,8 +71,8 @@ work away, though its own result did not change.
 - kt-ffmpeg: `MuxConfig` per-frame timestamps (found-defects 823); stage segments with alpha as a colour segment plus a
   luma segment of the alpha, both on the hardware encoder.
 - kt-app: the switch, badges, a Diagnostics row per kind (bytes, hits, writes); i18n ×5.
-- `project-cache-folder` (spec-engine, agreed in its `4efae3ae`): `render/`, `stages/`, `copies/`, `history/` side by
-  side, `mix/` outside the store; one value order across the store and `mix/`; the key of D4.
+- `project-cache-folder` (spec-engine, agreed in its `301d5a49`): `results/v<FORMAT>/<device class>/{frames, layers,
+  history}`, `mix/`, `media/<content id>/copy-<quality>.mkv`; one value order; the key of D4.
 - No project format change. Idle: writing happens at rest only within the prerender's existing rule.
 
 ## Questions to the owner
