@@ -14,10 +14,9 @@ A named project's caches SHALL live in `kinetren-cache/` in the project's folder
 projects in it.
 - **What it holds:** the media index, the reel previews, the persistent cache, the heard mix and the list
   of earlier renders. Each SHALL have a place of its own.
-- **The persistent cache SHALL be one store** of four kinds side by side: frames (`render/`, the disk
-  prerender), stage results (`stages/`), source copies (`copies/`) and the stream history (`history/`).
-  - Every entry SHALL be salted by the store's format and the device class.
-  - Frames and stage results SHALL be keyed by one layout: `durable_hash` over the plan or over the
+- **The persistent cache SHALL be one store** under `results/v<FORMAT>/<device class>/`: frames (the disk
+  prerender), layer results and the stream history, with heavy sources' copies under the media's content id.
+  - Frames and layer results SHALL be keyed by one layout: `durable_hash` over the plan or over the
     sub-plan up to the kept stage, plus the decoder's major, the versions and WGSL hashes of the kernels
     that ran and `COMPOSITE_PATH_VERSION`. The whole build SHALL NOT be in the key.
   - `COMPOSITE_PATH_VERSION` SHALL change whenever the composite code outside the kernels changes, held by
