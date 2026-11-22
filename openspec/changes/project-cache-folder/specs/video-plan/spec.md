@@ -15,8 +15,8 @@ manifest SHALL name the codec, the encoder, the frame size and rate and the dura
 processor encoder SHALL be used unless the host forces one by name (`KT_RENDER_CACHE_ENCODER`: tests and the
 live check on a machine without a hardware encoder); where no hardware encoder opens the store writes
 nothing and the Diagnostics window and the trace say why. The store SHALL live in the project's cache folder (`render/`; capability `media-index`, "The project's
-caches live in a folder beside it"), bounded by that folder's limit pass (`KT_RENDER_CACHE_MB` caps it
-alone for tests), evicted a segment at a time, least recently used; the folders of other builds SHALL
+caches live in a folder beside it"), written in that folder's cycle (capability `media-index`: the least recently used dropped first when the
+folder cannot take more; `KT_RENDER_CACHE_MB` caps it alone for tests), a segment at a time; the folders of other builds SHALL
 be removed when the store opens. A restored picture is the composite within the codec's tolerance.
 
 Before composing a moment the display's executor does not hold — the render-ahead producer before it asks
@@ -97,6 +97,6 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **TEST** t2988 (`src/scripts/live/render_cache.py`)
 
 #### Scenario: The store lives in the project's folder
-- **WHEN** two projects in two folders prerender a loop each under a shared total smaller than both, and the first start of the build finds a former `<data>/render-cache`
-- **THEN** each project's segments lie in its own `kinetren-cache/render/`, the limit pass trims the project opened longest ago first, and the former folder is gone
+- **WHEN** two projects in two folders prerender a loop each, the second folder's cap smaller than its loop, and the first start of the build finds a former `<data>/render-cache`
+- **THEN** each project's segments lie in its own `kinetren-cache/`, the second folder's oldest segments are replaced as its loop is written while the first folder is untouched, and the former folder is gone
 - **TEST** t3833, t3834 (`src/libs/kt-engine/tests/render_cache.rs`)

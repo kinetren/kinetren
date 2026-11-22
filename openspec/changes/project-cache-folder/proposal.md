@@ -1,7 +1,8 @@
 # Proposal: project-cache-folder
 
-> DESIGN ONLY (spec session, 2026-11-20). The owner decided the direction (kkt-26.11.20 A14, line 19);
-> code starts when the orchestrator gives the go after his answers to Q1–Q3. Tests reserved: t3824–t3843.
+> DESIGN (spec session, 2026-11-20; revised 2026-11-22). The owner decided the direction (kkt-26.11.20 A14)
+> and answered its questions (kkt-26.11.20b B2): one folder per project folder, cyclic writing with a notice
+> when it cannot take more. Code starts on the orchestrator's go. Tests reserved: t3824–t3843.
 > Base: `orch-26-11-01` at `5e7a8ea9`.
 
 ## Why
@@ -28,8 +29,8 @@ Four things follow from that layout:
 
 ## What Changes
 
-- **One cache folder per project folder:** `<project folder>/kinetren-cache/`, with one place per cache
-  (Q1 for the sharing). It holds:
+- **One cache folder per project folder** (the owner's Q1 a): `<project folder>/kinetren-cache/`, shared by
+  the projects in that folder, with one place per cache. It holds:
   - `media/` — per media file, by its content;
   - `reels/` — the reel previews;
   - `render/` — the preview's prerender, moved from `<data>`;
@@ -47,13 +48,16 @@ Four things follow from that layout:
 - **The folder announces itself:** a `CACHEDIR.TAG`, so backup tools (tar, borg, restic) skip it, and a
   `README.txt` that says it can be deleted at any time. Where a cloud-sync tool allows it, the folder is
   marked as not synced.
-- **A disk limit with one list** (Q2): Settings → "Caches on disk" lists every cache folder the program
-  made, with its size, its project and whether that project still exists. Each folder has a Delete
-  button. The limit is enforced at rest, the prerender, history and mix first and the media index
-  last.
-- **Where the project folder cannot hold it** (Q3: read-only, a removable or network drive, or an
-  untitled project), the folder is made under `<data>/project-caches/`, and the project's facts and the
-  trace say so. An untitled project's cache moves to the new folder on its first save.
+- **Cyclic writing when the folder cannot take more** (the owner's B2):
+  - a folder's room is its cap (Settings, default 20 GB) or the disk's free space less a reserve, whichever
+    is smaller;
+  - a write that does not fit first drops the oldest entries, least recently used, in the tenants' order;
+  - a notice says once per session, per folder: "The cache of <folder> is full: the oldest results are
+    replaced", with a button to Settings → "Caches on disk".
+  - The page lists every cache folder with its size and projects, a Delete button and the cap.
+- **A folder that cannot be written at all** (read-only, a write test fails): the cache goes to
+  `<data>/project-caches/`, under the same cyclic rule. The notice and the project's facts say why. An
+  untitled project caches there too, and its cache moves to the new folder on the first save.
 - **Migration:**
   - an existing `<name>.ktindex.db` is read once in the background into the new layout, then deleted;
   - `<data>/render-cache/` is deleted at the first start, since every build discarded it anyway (its
@@ -68,9 +72,9 @@ Four things follow from that layout:
 - none
 
 ### Modified Capabilities
-- `media-index`: the cache folder, its tenants, the media index without SQLite, migration, the limit and
-  the fallback.
-- `video-plan`: the prerender's store moves into the cache folder under the folder's limit.
+- `media-index`: the cache folder, its tenants, the media index without SQLite, migration, cyclic writing
+  and the fallback.
+- `video-plan`: the prerender's store moves into the cache folder under the folder's cycle.
 - `telemetry`: per-tenant sizes, hits, misses and evictions in the trace; `kt-cli trace cache`.
 - `ui-reach`: Settings → "Caches on disk".
 
@@ -82,8 +86,8 @@ Four things follow from that layout:
   - `ReelStore` for the reel previews;
   - the entry header, the atomic write and the import of the old sidecar.
   - `rusqlite` leaves kt-media's dependencies.
-- **kt-engine:** `render_cache.rs` takes its root from the cache folder, and its cap from the folder's
-  limit.
+- **kt-engine:** `render_cache.rs` takes its root from the cache folder and writes in the folder's
+  cycle (the room asked before a write, the oldest dropped).
 - **kt-app:**
   - `index_db_path` becomes `cache_folder`;
   - the lanes keep their roles: index, thumbs, media and reel-preview;
@@ -100,33 +104,13 @@ Four things follow from that layout:
 - The durability capability's rule that the program writes no file into the person's project tree
   (posters, R.58) is amended by the owner's decision for this one folder.
 
-## Questions to the owner
+## The owner's answers (kkt-26.11.20b, lines 3–4, row B2)
 
-**Q1. One cache folder for each project, or one for the whole folder the projects lie in?**
-Your words: "подпапка в папке проекта с разными кешами". Today `film.kt` has `film.ktindex.db` beside it,
-and the prerender of every project is in one place in your user folder.
-- **a) One per project folder, shared by the projects in it** (`kinetren-cache/`). Two versions of a
-  film in one folder, `film.kt` and `film-v2.kt`, share every thumbnail, waveform and most of the
-  prerender, because the keys are the content, not the project. Deleting one project does not free its
-  part; Settings shows the folder as a whole. *(Recommended: your folders usually hold versions of one
-  edit, and the disk is short.)*
-- **b) One per project** (`film.kinetren-cache/`). A project and its cache go together, and deleting
-  them is obvious. Two versions of one film compute and store everything twice.
-
-**Q2. The disk limit: per folder, or one total for all projects?**
-Today the prerender has 2 GiB in total for all projects, and the media index has no limit.
-- **a) One total** (Settings: "Caches on disk may take up to N GB", default 10 GB). When it is
-  exceeded at rest, the folders of the projects opened longest ago are trimmed first and the open
-  project last. Within a folder the prerender, history and mix go first and the media index last.
-  *(Recommended: the number you set is the number the disk loses, however many projects you have.)*
-- **b) A limit per folder** (default 4 GB each). Simple, but ten projects take 40 GB, and the list in
-  Settings is the only way to see it.
-
-**Q3. Where does the cache go when the project's folder cannot take it?**
-A read-only folder, a USB stick or a network share. A cloud-sync folder can take it, but would upload
-gigabytes.
-- **a) Into your user folder** (`<data>/project-caches/<folder hash>/`), with the project's facts saying
-  so. A synced folder takes it with the "do not sync" mark where the sync tool has one (Dropbox does,
-  OneDrive does not). *(Recommended: the program works the same everywhere, and you see where the cache
-  went.)*
-- **b) No disk cache for such a project:** everything is computed again after a restart.
+- **Q1 a — "Одна на папку (Recommended)".** One `kinetren-cache/` per project folder, shared by the projects
+  in it.
+- **Q2 and Q3 are replaced by one rule:** "непринимающая папка - это цикличесская запись с подчисткой старого
+  говна и алерт в уведомлениях". A folder that cannot take more keeps writing in a cycle: the oldest
+  entries are dropped to make room, and a notice says so. Design D3 and D4 carry it:
+  - a full disk, a quota or the folder's cap all count as "cannot take more";
+  - a folder that cannot be written at all (read-only, a write test fails) has nothing to cycle. Its cache
+    goes to the user's data folder under the same cyclic rule, and the same notice names why.

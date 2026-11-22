@@ -34,13 +34,13 @@
 
 ## D1. The folder and its layout
 
-`<project folder>/kinetren-cache/` (Q1 a; under Q1 b, `<stem>.kinetren-cache/`):
+`<project folder>/kinetren-cache/`, one per project folder (the owner's Q1 a, kkt-26.11.20b B2):
 
 ```
 kinetren-cache/
   CACHEDIR.TAG                    the Cache Directory Tagging signature: backup tools skip the folder
   README.txt                      "Kinetren keeps recomputable data here. Delete it any time."
-  lock                            flock for the limit pass and map compaction (never for an entry)
+  lock                            flock for the cycle's drops and map compaction (never for an entry)
   media/paths.tsv                 path · size · mtime ns · content id   (append-only, compacted)
   media/<content id>/             peaks · packets · thumbs · thumb-pixels · poster · facts · loudness
   pairs/<id a>-<id b>             sync offsets, the pair ordered
@@ -49,11 +49,11 @@ kinetren-cache/
   history/<build>/<dev>/          stream entries, LZ4             (durable-history-and-mix)
   mix/<build>/                    kept mix runs, raw f32          (durable-history-and-mix)
   renders.tsv                     earlier renders, verified       (cached-final-render)
-  usage.tsv                       per tenant: bytes, last used    (for the limit pass)
+  usage.tsv                       per tenant: bytes, last used    (for the cycle)
 ```
 
 - **`content id`** is the xxh3-128 of the whole file in hex, the identity the sidecar already computes.
-  A file copied under another name shares the entry. Two projects in the folder share it under Q1 a.
+  A file copied under another name shares the entry. Two projects in the folder share it.
 - **`paths.tsv`:**
   - a path inside the project folder is stored relative to it, so a moved folder hits and is not
     hashed again; any other path is stored absolute;
@@ -88,30 +88,46 @@ kinetren-cache/
   on EITHER side misses (t401b's rule holds by construction).
 - Analysis numbers stay integers ×100 (t401). The packet index is read back byte for byte (t34).
 
-## D3. The limit (Q2) and the registry
+## D3. Cyclic writing and the registry (the owner's B2)
 
-- **The registry:** `<data>/cache-folders.tsv` lists every cache folder the program made or opened:
-  path, project paths seen in it, last use, and its size at the last pass. The Settings page reads it.
-- **The limit pass** runs at rest, under the prerender's quiet rule: no input for 1.5 s, not playing, no
-  export. It also runs once after a project opens. It takes `lock` per folder.
-- **Under Q2 a** it trims across folders: least recently used folder first, the open project's folder
-  last. Under Q2 b it trims each folder alone.
-- **Within a folder** the tenants go in this order: `history/`, `mix/`, `render/`, then `reels/`, then
-  `media/` (the composites outlive the history under them: `durable-history-and-mix` D2). Inside a tenant the least recently used entry goes first, by `usage.tsv`, never by the file
-  system's access time (often off).
-- The prerender's own rule stays: it never evicts what this process used.
-- `KT_RENDER_CACHE_MB` keeps working as a cap on `render/` for tests and the live check.
-- Other builds' `render/`, `history/` and `mix/` subfolders are removed at open, as today.
+- **The registry:** `<data>/cache-folders.tsv` lists every cache folder the program made or opened: path,
+  project paths seen in it, last use, and its size at the last count. The Settings page reads it.
+- **A folder's room** = min(its cap, the disk's free space − a reserve).
+  - The cap is per folder: "Caches on disk" in Settings, default 20 GB.
+  - The reserve is max(2 GB, 2 % of the disk), so a cache never fills the disk the person's work is on.
+  - `KT_RENDER_CACHE_MB` caps the picture results alone, for tests and the live check.
+- **The cycle.** A writer asks the folder for room before it writes an entry. When the entry does not fit,
+  the folder drops entries until it does:
+  - least recently used first, by `usage.tsv` (never the file system's access time, often off);
+  - in the tenants' order: the stream history, the heard mix, the picture results (`frames/` and
+    `layers/` together by last use), the heavy-source copies, then `reels/`, then `media/`;
+  - never what this process used in the last minute, so the cycle cannot eat the loop being played;
+  - if nothing droppable remains, the write is skipped and counted. A cache never fails a gesture.
 
-## D4. Where the folder cannot be (Q3) and the untitled project
+  The drop runs on the writer's own thread, under `lock`, and never on the UI thread.
+- **A write that fails for lack of space** (`ENOSPC`, `EDQUOT`) is the same event: the folder recounts
+  its room from the disk, drops, and retries once.
+- **The notice** ("алерт в уведомлениях"): the first drop of a session in a folder posts one notice:
+  - "The cache of «<folder>» is full (<size>): the oldest results are being replaced.";
+  - a button opens Settings → "Caches on disk";
+  - the same folder posts again only after a restart, or after the cap or the free space changed by more
+    than 10 %.
 
-- **The folder is tried in the project's folder first:** a test file is written and renamed there. If
-  that fails, or the folder is on a read-only mount, the cache goes under
-  `<data>/project-caches/<xxh3(project folder path)>/`. The project's facts and the trace name the place
-  and the reason.
+  The trace records every drop with its tenant, its bytes and why (the cap, the disk, a quota).
+- **At rest** nothing scans or trims: the cycle runs only when something writes, so the program at rest
+  costs nothing.
+- Other builds' and devices' picture results, history and mix are removed at open, as today.
+
+## D4. A folder that cannot be written, a synced folder, the untitled project
+
+- **The write test:** a test file is written and renamed in the project's folder at open. If that fails,
+  or the mount is read-only, there is nothing to cycle. The cache goes to
+  `<data>/project-caches/<xxh3(project folder path)>/`, under the same room rule (D3). The notice says
+  "The project's folder takes no files: its cache is in your user folder", and the project's facts name
+  the place.
 - **A folder inside a known sync root** is marked as not synced where the tool reads a mark:
   - Dropbox reads the extended attribute `com.dropbox.ignored`;
-  - the facts say "inside a synced folder (OneDrive): the cache is uploaded" when no mark exists.
+  - where no mark exists (OneDrive), the facts say "inside a synced folder: the cache is uploaded".
 - **An untitled project** caches under `<data>/project-caches/untitled-<session>/`. On the first save the
   folder is renamed into the new place on the same file system, merged entry by entry when the target
   exists. On another file system the media and reel tenants are copied in the background, and the rest
@@ -163,9 +179,9 @@ kinetren-cache/
 ## D8. Telemetry
 
 - Every tenant reports to the trace:
-  - its bytes at open and after each limit pass;
+  - its bytes at open and after each drop;
   - its hits and misses;
-  - each eviction with the tenant and the reason (limit, foreign build, broken header).
+  - each drop with the tenant and the reason (the cap, the disk, a quota, a foreign build, a broken header).
 - `kt-cli trace cache` prints them per tenant, beside the prerender's records, which keep their kinds.
 - The project's facts name the folder, its place (project folder / user folder) and why.
 
@@ -175,10 +191,10 @@ kinetren-cache/
 2. The media and reel tenants; the sidecar's scenarios rewritten over files (t16, t34, t401, t401b, t639,
    t872 keep their numbers); the import of an old sidecar (t3829–t3832).
 3. The prerender's root and cap from the folder; deletion of `<data>/render-cache` (t3833, t3834).
-4. The limit pass and the order of the tenants (t3835–t3837).
+4. Cyclic writing, the order of the tenants and the notice (t3835–t3837).
 5. The untitled project's move on save, Save As, a moved folder (t3838–t3840).
 6. The trace and `kt-cli cache` (t3841); Settings → "Caches on disk" (t3842); the live scenario
-   (planned live scenario `cache_folder`) and the idle check: the program at rest after a limit pass
+   (planned live scenario `cache_folder`) and the idle check: the program at rest after cyclic writing
    costs nothing (t3843).
 
 ## Risks

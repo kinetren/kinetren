@@ -1,13 +1,14 @@
 # Tasks: project-cache-folder
 
-> DESIGN ONLY until the owner answers Q1–Q3 (`proposal.md`) and the orchestrator gives the go. Tests
+> The owner answered (kkt-26.11.20b B2): one folder per project folder, cyclic writing with a notice. Code
+> starts on the orchestrator's go. Tests
 > reserved: t3824–t3843. Base: orch `5e7a8ea9`.
 
 ## 0. Notes first
 
 - [x] 0.1 proposal, design (D1–D9, class walk D7), deltas `media-index`, `video-plan`, `telemetry`,
       `ui-reach`; `openspec validate project-cache-folder --strict`
-- [ ] 0.2 his answers Q1–Q3 (orchestrator: `docs/user-feedback.md`, `docs/owner-checks.md`);
+- [x] 0.2 his answers (kkt-26.11.20b lines 3–4): Q1 a, the cyclic rule for Q2/Q3;
       `kkt-26.11.20-index.md` A14 points here
 
 ## 1. The folder
@@ -32,10 +33,11 @@
 - [ ] 3.1 `render_cache` root from the folder; `<data>/render-cache` deleted at the first start; t3833, t3834
 - [ ] 3.2 `cargo test -p kt-engine`; commit
 
-## 4. The limit
+## 4. Cyclic writing
 
-- [ ] 4.1 the limit pass at rest, Q2's scope, the tenants' order, `usage.tsv`; t3835–t3837
-- [ ] 4.2 the idle check on the heavy showcase: after the pass the program at rest costs nothing; t3843
+- [ ] 4.1 the room (cap, free space less the reserve), the cycle on the writer's thread, the tenants' order,
+      `usage.tsv`, `ENOSPC`/`EDQUOT` as the same event, the notice once per session; t3835–t3837
+- [ ] 4.2 the idle check on the heavy showcase: at rest nothing scans or trims; t3843
 
 ## 5. Moves
 
@@ -45,7 +47,7 @@
 ## 6. Telemetry, kt-cli, Settings
 
 - [ ] 6.1 tenant records; `kt-cli trace cache`; `kt-cli cache <project> size|prune|clear`, `--cache-dir`; t3841
-- [ ] 6.2 Settings → "Caches on disk" (the list, sizes, Delete, the limit); i18n in every catalog;
+- [ ] 6.2 Settings → "Caches on disk" (the list, sizes, Delete, the cap); i18n in every catalog;
       `reach_tests`, `layout_tests`, font tests; t3842; planned live scenario `cache_folder` with a
       screenshot per step
 - [ ] 6.3 media-index `design.md` (why no SQLite, the class walk), kt-media and kt-engine `CLAUDE.md`;
