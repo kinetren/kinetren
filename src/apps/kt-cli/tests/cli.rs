@@ -1568,3 +1568,96 @@ fn t2808_kt_cli_export_writes_what_its_flags_ask() {
     assert!(!out.exists(), "nothing was written");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A cut mosh on two fixture videos in `src` (stream-picture-stays): shot 1 for a second, then shot 2
+/// on the same track with Datamosh, the stream starting twelve frames into shot 1.
+fn mosh_case(src: &std::path::Path) -> kt_model::Project {
+    use kt_model::*;
+    use kt_time::Tick;
+    const SEC: i64 = 90_000;
+    let clip = |id: u64, media: u64, start: i64, fx: Vec<kt_model::FxInstance>| ClipEvent {
+        r#gen: None,
+        gen_auto: Vec::new(),
+        overrides: Vec::new(),
+        geometry: Default::default(),
+        geometry_pos: 0,
+        geometry_auto: Vec::new(),
+        masks: Default::default(),
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(start),
+        duration: Tick(SEC),
+        source_in: Tick(0),
+        media: MediaId(media),
+        gain_db: 0.0,
+        reversed: false,
+        fx,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+        default_shape: Default::default(),
+        conform: Default::default(),
+        settings_explicit: false,
+    });
+    p.media.push(MediaRef::new(MediaId(1), src.join("testsrc_12s.mp4").to_str().unwrap()));
+    p.media.push(MediaRef::new(MediaId(2), src.join("testsrc_h264.mp4").to_str().unwrap()));
+    let mut mosh = kt_model::FxInstance::plugin("datamosh").expect("built in");
+    for (name, v) in [("lines", 0.0), ("before", 12.0), ("mosh", 1.0), ("gop", 12.0), ("qp", 14.0)] {
+        assert!(mosh.set_param(name, v), "{name}");
+    }
+    p.clips.push(clip(1, 1, 0, vec![]));
+    p.clips.push(clip(2, 2, SEC, vec![mosh]));
+    p.validate().unwrap();
+    p
+}
+
+/// Test t3821 (stream-picture-stays D2, D1): `kt-cli preview --one-device` plays a Datamosh loop on one
+/// device: its trace has no `stream_cross` record, where the same loop on two devices crosses each
+/// frame it shows.
+#[test]
+fn t3821_one_device_crosses_nothing_over_a_loop() {
+    kt_plugins_builtin::install();
+    let dir = showcase_sources("t3821");
+    let path = dir.join("mosh.kt");
+    std::fs::write(&path, kt_model::project_file::to_text(&mosh_case(&dir.join("sources")), None)).unwrap();
+    let crossed = |one: bool| -> Option<u64> {
+        let trace = dir.join(if one { "one" } else { "two" });
+        let mut c = cli();
+        c.args(["preview", path.to_str().unwrap(), "1.2", "1.8", "--loop", "3", "--trace", trace.to_str().unwrap()]);
+        if one {
+            c.arg("--one-device");
+        }
+        let out = c.output().unwrap();
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        if err.contains("no video device") {
+            eprintln!("skipped: no video device");
+            return None;
+        }
+        assert!(out.status.success(), "{err}");
+        if one && !err.contains("compute on the display's device: yes") {
+            eprintln!("skipped: {err}");
+            return None;
+        }
+        let summary = cli().args(["trace", trace.to_str().unwrap(), "summary"]).output().unwrap();
+        let s = String::from_utf8_lossy(&summary.stdout).to_string();
+        let dump = String::from_utf8_lossy(&cli().args(["trace", trace.to_str().unwrap(), "dump"]).output().unwrap().stdout).to_string();
+        let shown = dump.lines().filter(|l| l.contains("\"ev\":\"stream_run\"") && (l.contains("\"aux\":1,") || l.contains("\"aux\":1}"))).count();
+        assert!(shown > 0, "the mosh rendered frames in the loop:\n{s}");
+        Some(s.lines().find(|l| l.split_whitespace().next() == Some("stream_cross")).and_then(|l| l.split_whitespace().nth(1)?.parse().ok()).unwrap_or(0))
+    };
+    let Some(two) = crossed(false) else { return };
+    assert!(two > 0, "two devices cross the shown frames");
+    let Some(one) = crossed(true) else { return };
+    assert_eq!(one, 0, "one device crosses nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+}
