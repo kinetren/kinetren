@@ -42,6 +42,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, media: u64, start: i64, dur: i64, so
         reversed: false,
         fx: vec![],
         fx_bypass: vec![],
+        fx_in: vec![],
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
