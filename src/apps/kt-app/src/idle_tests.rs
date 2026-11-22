@@ -544,7 +544,8 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
     app.player.seek(kt_time::Tick(120_000));
     app.preview_key = None;
 
-    // the history walks and the frame comes: then nothing moves for a while
+    // the history walks and the frame comes: the walk first — a run of still counters before it is
+    // a source still loading under load, not rest (found-defects 950's class)
     let snapshot = || {
         (
             kt_plugin_api::stream::positions_walked(),
@@ -554,6 +555,15 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
         )
     };
     let deadline = kt_time::test_deadline();
+    while kt_plugin_api::stream::positions_walked() == 0 || h.state().preview_catching_up > 0 {
+        // the harness hears no wake (`wake::news` is 0 under test): the frame the walk completes is
+        // asked again here, as the program's wake asks it
+        h.state_mut().preview_key = None;
+        h.step();
+        std::thread::sleep(Duration::from_millis(20));
+        assert!(std::time::Instant::now() < deadline, "the history was never walked to a complete frame");
+    }
+    // then nothing moves for a while
     let (mut last, mut still) = (snapshot(), 0);
     while still < 25 {
         h.step();
@@ -563,20 +573,6 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
         last = now;
         assert!(std::time::Instant::now() < deadline, "the paused mosh never came to rest");
     }
-    assert!(last.0 > 0, "the history was walked");
-    // the harness hears no wake (`wake::news` is 0 under test): the frame the walk completed is asked
-    // again here, as the program's wake asks it; it comes complete, nothing left to catch up
-    let deadline = kt_time::test_deadline();
-    while h.state().preview_catching_up > 0 {
-        h.state_mut().preview_key = None;
-        h.step();
-        std::thread::sleep(Duration::from_millis(20));
-        assert!(std::time::Instant::now() < deadline, "the walked frame never came complete");
-    }
-    for _ in 0..10 {
-        h.step();
-    }
-    let last = snapshot();
     // at rest, the pointer over the preview
     for i in 0..60 {
         h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(600.0 + (i % 30) as f32 * 4.0, 200.0)));
