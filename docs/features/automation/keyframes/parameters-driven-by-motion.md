@@ -1,6 +1,6 @@
 ---
 id: F-AUT-014
-title: Parameters driven by how time moves — an effect that wakes on acceleration and on scrubbing
+title: Parameters driven by the edit's speed — an effect that wakes when its container accelerates or brakes
 status: candidate
 priority: C
 cost: M
@@ -17,7 +17,7 @@ depends_on: [F-AUT-008]
 checked: 2026-11-20
 ---
 
-# F-AUT-014 — Parameters driven by how time moves — an effect that wakes on acceleration and on scrubbing
+# F-AUT-014 — Parameters driven by the edit's speed — an effect that wakes when its container accelerates or brakes
 
 ## Essence
 
@@ -43,9 +43,9 @@ an effect driven by the PLAYHEAD's motion, not by the edit.
 second is the acceleration, and a "wake on change" envelope is a peak-hold of |acceleration| with a release. Computed
 from the curve in closed form at any tick, it needs no state and is the same at a seek, in a scrub and in an export.
 
-**2. The playhead's motion is not part of the edit.** No editor renders "what the person did with the transport": an
-export plays once at 1×. An effect driven by scrubbing is therefore a preview-only input, and it must say so; its
-frames must not be kept as if they were the edit's.
+**2. The speed that matters is the container's.** An effect inside a composition is played by the instance's time
+map; two instances of one composition at different speeds must give the same content two looks. The value is the
+outer map's rate (the product of nested maps), known per instance and pure, so preview and render agree.
 
 ## Pros
 
@@ -54,7 +54,7 @@ frames must not be kept as if they were the edit's.
 
 ## Cons
 
-- A preview-only input makes the preview differ from the export by design — it must be named.
+- A reel whose content reads its outer speed can no longer share one sub-plan between instances of different speeds.
 
 ## What users say
 
@@ -78,17 +78,16 @@ NO QUOTES: no web access in this spec session (2026-11-20); the editor rows are 
 
 ### What is missing
 
-- Derived channels of a speed: acceleration and a "speed change" envelope; the speed of a composition instance and
-  of a morpher layer's warp as link sources; a preview-only transport channel and its keying.
+- The outer map's channels (speed, acceleration, speed change) resolved per instance and through nested maps.
 
 ### What hinders
 
-- A kept composite (invariant 4) must not be reused across different transport values.
+- A link may not cross a reel's boundary (R.61): the outer speed is a channel of the time map, not a link outside.
 
 ### Which invariants it touches
 
-- **4** — frames that read the transport are keyed by it or not kept.
-- **7, 11** — edit-derived channels are pure functions of the model; the export reads the transport channel at 1×.
+- **4** — an instance's plan is keyed by its outer profile when its content reads it.
+- **7, 11** — the channels are pure functions of the edit; preview and export agree.
 - **12** — nothing at rest.
 - CAPABILITY: openspec/specs/automation/
 
@@ -97,18 +96,17 @@ NO QUOTES: no web access in this spec session (2026-11-20); the editor rows are 
 | What | Answer |
 |---|---|
 | Scope | M |
-| Where | kt-model (derived channels, link sources), kt-engine (the transport channel, keys), kt-app (the link picker) |
+| Where | kt-model (the outer map, channels), kt-engine (per-instance keys), kt-app (the link menu) |
 | Project format | yes, by content (new link sources) |
-| Tests | acceleration channel equals the curve's slope; the envelope is seek-independent; the export ignores the transport |
+| Tests | the channels equal the closed form; seek equals continuous; two instances give two looks |
 | Depends on | F-AUT-008 (links) |
 | Breaks compatibility | no |
 
 ## Verdict
 
-Take it as link sources: from any speed (an event's, a composition instance's, a morpher layer's) the channels
-"speed", "acceleration" and "speed change" (a peak-hold with attack and release, closed form, stateless); and a
-preview-only "transport speed" channel (play rate and scrub) that an export reads as 1×, named as preview-only in the
-link picker.
+Take it as the outer map's channels: an effect inside a composition, under a morpher layer or on an event reads the
+speed at which its container plays it (composed through nesting), its acceleration and a smooth "speed change"
+envelope — per instance, pure, the same in preview and render.
 
 ## Sources
 

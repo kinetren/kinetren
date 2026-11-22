@@ -1,64 +1,69 @@
 # Proposal: motion-driven-params
 
-> DESIGN ONLY (spec session, 2026-11-20). Registry `v26.10-index.md` TD2 (partial, later). Note F-AUT-014.
-> Tests reserved: t3947–t3952.
+> DESIGN ONLY (spec session), revision 2 (2026-11-22) after the owner's answer (`kkt-26.11.20b` B7). Registry
+> `v26.10-index.md` TD2. Note F-AUT-014. Tests reserved: t3947–t3951.
 
 ## Why
 
-The owner, `v26.10` lines 160–164: a fisheye on falling letters that comes on while the motion accelerates or brakes
-and switches off smoothly while it moves evenly, without "руками вылавливать и подстраиваться под уже существующие
-кривые тормажения-скольжения которые находятся у другого события"; the acceleration may sit on a whole composition or
-a morpher; and "в момент обычного проигрывания некоторого участка t0-t1 - у нас fisheye не должен активироваться а вот
-в момент перемотки тот же участок … уже будет с fisheye … Нужно очень хорошо над этим подумать и как это связано
-например с физикой." Today a link (R.61) can read another event's speed curve, but not its acceleration, not a
-composition's or a morpher's speed, and nothing of the playhead's own motion.
+The owner, `docs/ktprompts/v26.10.txt` lines 160–164, whole:
+
+> TODO: туда же в капилку падающих букв при ускорении-замедлении, можно было бы прикрутить эффект fisheye и в момент
+> ускорения-замедления его начать активировать, а когда обычно все двигается - отключать его плавно. это тоже в копилку,
+> не хочется руками вылавливать и подстраиваться под уже существующие кривые тормажения-скольжения которые находятся у
+> другого события.
+> Ну и важны моменты:
+> 1. ускорение то можно наложить на всю композицию или весь морфер - и надо как-то удобно продумать это связывание с тем
+> же fisheye/
+> 2. в момент обычного проигрывания некоторого участка t0-t1 - у нас fisheye не должен активироваться а вот в момент
+> перемотки тот же участок события/композиции t0-t1 уже будет с fisheye, т.е. возникает двоякость-композиционность. Это
+> как с плавностью движения букв при замедлении.
+> Нужно очень хорого над этим подумать и как это связано например с физикой.
+
+Asked with this whole item (2026-11-22, `kkt-26.11.20b.txt` line 19), he chose "Скорость монтажа": "перемотка" is the
+EDIT's speed — a speed curve put on a composition, a morpher or an event — not the playhead's motion. Revision 1 read it
+as the playhead and is withdrawn.
+
+So: the same stretch t0–t1 of a composition plays at normal speed in one instance (no fisheye) and sped up or slowed in
+another instance (fisheye while it accelerates or brakes). An effect INSIDE must read the speed of the time map OUTSIDE
+it — the speed at which its container plays it — not a curve copied from another event.
 
 ## What Changes
 
-- **Speed channels as link sources**, from any speed in the project: an event's warp speed, a composition
-  instance's speed (its own warp), a morpher layer's warp. Each gives three channels:
-  - **Speed** — the signed rate (exists for events today);
-  - **Acceleration** — the rate's change per second, the slope of the speed curve;
-  - **Speed change** — 0 while the speed is steady, rising towards 1 while it accelerates or brakes and falling back
-    smoothly: a peak-hold of |acceleration| scaled by a "full at" value, with Attack and Release in seconds.
-  All three are pure functions of the curve at a tick (no state): the same value in play, scrub, seek and export.
-- **The playhead as a source — preview only**: "Transport: speed" (the speed the person plays at: the play rate,
-  the space boost, a scrub drag's velocity, smoothed) and "Transport: rewinding" (0…1, how far from normal 1×
-  playback the playhead moves). An export and every offline render read them as normal playback (1 and 0) — so
-  "fisheye only while rewinding" is seen while rewinding and never rendered (Q1). The link picker writes "preview
-  only" beside them; a frame that reads them is not kept as the edit's frame.
-- **One gesture for the owner's case**: on a parameter's link menu, "Follow speed change of…" picks the source
-  (an event, a composition, a morpher layer or the transport) and writes the link with a default mapping (0 → the
-  parameter's value now, 1 → its maximum), editable as any link.
-- The falling-letters physics (F-FX-005) reads the same channels later.
+- **The outer speed as an input of any parameter**: an effect inside a composition, under a morpher layer, or on an
+  event reads the rate of the time map that plays it — the instance's speed for everything inside a reel, the morpher
+  layer's warp for what the layer covers, the event's own warp for its own effects — composed when maps nest (a reel
+  inside a sped-up reel inside a slowed instance: the product).
+- **Three channels of it** for a link: **outer speed**, **outer acceleration** (its slope per second), **speed change**
+  (0 while steady, up to 1 while accelerating or braking, falling back smoothly: a peak-hold with attack and release).
+  Pure functions of the edit at the moment: preview, render, seek and loop agree.
+- **Per instance**: two instances of one reel compute the channels from their own speeds, so the same t0–t1 is plain in
+  the normal instance and fisheyed in the sped-up one — the owner's "двоякость-композиционность".
+- **One gesture**: a parameter's link menu → "Follow the outer speed change" writes the link with a default mapping
+  (0 → the value now, 1 → the parameter's maximum), editable as any link; no source to pick — the container is known.
+- The playhead's motion is not an input (revision 1 withdrawn).
+- Physics later (F-FX-005): falling letters read the outer acceleration as a force.
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `automation`: speed, acceleration and speed-change channels as link sources; the transport channels and their
-  preview-only rule.
-- `ui-reach`: the source picker entries, the one-gesture "Follow speed change of…", the preview-only mark.
-- `project-format`: the new link source kinds by content.
+- `automation`: the outer-speed channels as a link source, resolved per instance and composed through nested maps.
+- `compositions`: an instance's speed is visible to the reel's content as its outer speed; the reel's per-instance plan
+  is keyed by it.
+- `ui-reach`: "Follow the outer speed change".
+- `project-format`: the new link source by content.
 
 ## Impact
 
-- kt-model: link source addresses `…/warp/{rate,accel,change}` with `change`'s attack/release/full-at in the link;
-  `ParamOwner::Morpher { id }` and the instance's own warp as speed owners; the closed-form envelope (D2).
-- kt-engine: `Transport::preview_speed()` smoothed on the UI clock and handed to the plan as a frame input; offline
-  plans pass the normal values; the kept-composite key includes the quantized transport value for a frame whose
-  plan reads it (or such a frame is not kept).
-- kt-app: the link picker entries and the gesture; i18n ×5.
-- Format: the next free `.kt` version by content. OTIO: the link is carried in `metadata["kt"]` with the other links;
-  a foreign editor sees the parameter's static value.
-- Idle: no work at rest; the transport channel is constant (1×, 0) while paused, so a paused frame is the edit's.
+- kt-model: link source `outer/{rate,accel,change}` (attack, release, full-at on the link); resolution in `morph_pass`
+  per instance: the outer map = the instance's warp profile ∘ (a morpher layer's warp) ∘ (the event's warp), composed by
+  the integral rule of `warp.rs`; the closed-form envelope.
+- kt-engine: a reel's sub-plan and sub-mix already keyed by instance (`NestKey`); the key includes the outer channels'
+  content hash only when the reel's content reads them (so other reels share as before).
+- kt-app: the link menu item; i18n ×5.
+- Format: the next free `.kt` version by content; OTIO: a planned row (static values outside).
+- Idle: nothing at rest.
 
 ## Questions to the owner
 
-**Q1. Rewinding and the render.** Your words: "в момент обычного проигрывания … fisheye не должен активироваться а
-вот в момент перемотки тот же участок … уже будет с fisheye". A render plays the edit once, at normal speed; it does
-not know how you moved the playhead.
-- (a) **Transport-driven effects exist in the preview only; a render sees normal playback (no fisheye there)**
-  (*recommended*: the render is the edit; to render the fisheye, drive it from a speed curve of the edit instead).
-- (b) A render option "record the transport": the playhead's motion of a chosen take is recorded as a curve and
-  rendered (a performance recorded like automation).
+Decided (2026-11-22, B7, his line 19): "Скорость монтажа" — the edit's speed, preview and render agree. No open question.
