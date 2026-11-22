@@ -105,7 +105,13 @@ change hosts it. Its kinds lie side by side in the cache folder:
 **What makes an entry stale, without the build** (agreed with spec-features). The owner updates often,
 and a build salt would empty the store on every update, against B1.
 - **The folder:** `results/v<FORMAT>/<device class>/`. The store's format and the device class (adapter and
-  driver) are folders, so another device's entries are never even read.
+  driver) are folders, so another device's entries are never even read. This is the orchestrator's final
+  decision of 2026-11-22 (layout B), and `persistent-cache` cites this text instead of restating it. The
+  reasons:
+  - video is byte-equal only on one device (invariant 11), so a cache written on another device class
+    must never be served as this one's;
+  - a format bump must leave the old entries as plainly stale folders;
+  - in the path, both are visible to eviction and to the cyclic rule (B2).
 - **The entry key adds:**
   - the decoder's major (`avcodec_version()`);
   - the versions of the kernels that ran: each plugin's version and its WGSL text's hash;
