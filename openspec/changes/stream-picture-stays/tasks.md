@@ -16,7 +16,7 @@
 - [x] 2.1 `LayerInput::Held`, `StreamKernel::render_held` (Datamosh: the walk's picture at `n` kept live, never read back); no `accepts` — an executor on another device reads the planes back itself
 - [x] 2.2 the planes → RGBA pass, integer, equal to the processor's (`planes_to_rgba`, one formula); t3814–t3816
 - [x] 2.3 the pictures a walk ahead computes stay held in the memo where the host holds pictures (`ComputeHost::holds_pictures`); t3823
-- [ ] 2.4 the compute generator's twin
+- [ ] 2.4 the compute generator's twin — not this change's shape (design "The compute generator's hold"): a held `VideoFrame` in the burst cache with a fallback at every processor reader; open
 
 ## 3. One device per adapter (after Q1)
 
