@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-MED-003, F-AUD-002, F-CLR-004, F-CLR-006, F-EXT-003]
-checked: 2026-09-21
+checked: 2026-11-22
 ---
 
 # F-EXT-001 — Hosting third-party plugins — OFX for video and VST for audio
@@ -117,6 +117,8 @@ In the same thread he also notes that an effect DISABLED in the inspector return
 The vendor's answer to a host crash caused by foreign code is "disable them one at a time and look for it". This is the industry's maximum: a blacklist based on the fact of a crash during the scan, not a sandbox. Genuine isolation appears in the industry exactly twice — FxPlug 4 at Apple (mandatory XPC + IOSurface) and Baselight (a render instance per frame in a separate process). Both are a rewritten host architecture, not "plugin support".
 
 ## How it fits Kinotrain
+
+Since 2026-11-22: the OFX bridge (stage 3 of `plugin-api-stage1` D10, after `wasm-plugin-host`) is designed in change `openfx-host` — a separate host process, the conditions of F-EXT-003, the owner's four questions answered there.
 
 ### What already exists
 
