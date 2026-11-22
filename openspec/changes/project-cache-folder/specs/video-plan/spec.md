@@ -5,8 +5,12 @@ The preview SHALL keep complete composites of slow moments on disk under a DURAB
 inputs (every field the executor's plan key hashes) with each frame's per-process content serial replaced
 by what determines the frame across processes — a file's path, size and modification time, a generator's
 values (`src_rev`), a stream stage's own key plus the identities of the project's files — salted by the
-format, the program build and the device, so the same plan gives the same key in another process and an
-edit, a replaced file, another build or another device gives another. The key SHALL NOT depend on the
+store's format and the device class (the folder `results/v<FORMAT>/<device class>/`), and keyed further by
+the decoder's major, the versions of the kernels that ran (each plugin's version and its WGSL text's hash)
+and `COMPOSITE_PATH_VERSION` (bumped by any change of the composite code outside the kernels), not by the
+whole build. So the same plan gives the same key in
+another process and in a release that did not change those kernels, while an edit, a replaced file, a
+changed kernel or another device class gives another. The key SHALL NOT depend on the
 codec, the encoder or the container: it names the picture, and a later reader (the cached final render,
 F-EXP-003) can match it. The pictures SHALL be stored as video segments — runs of consecutive moments, every
 frame a keyframe — written in-process by the machine's HARDWARE video encoder (the export's encoder cascade
@@ -14,10 +18,10 @@ with its real open check; H.264 at a high quality) and read back by our libav de
 manifest SHALL name the codec, the encoder, the frame size and rate and the durable key of every frame. No
 processor encoder SHALL be used unless the host forces one by name (`KT_RENDER_CACHE_ENCODER`: tests and the
 live check on a machine without a hardware encoder); where no hardware encoder opens the store writes
-nothing and the Diagnostics window and the trace say why. The store SHALL live in the project's cache folder (`render/`; capability `media-index`, "The project's
-caches live in a folder beside it"), bounded by that folder's limit pass (`KT_RENDER_CACHE_MB` caps it
-alone for tests), evicted a segment at a time, least recently used; the folders of other builds SHALL
-be removed when the store opens. A restored picture is the composite within the codec's tolerance.
+nothing and the Diagnostics window and the trace say why. The store SHALL be the `frames/` kind of the persistent cache in the project's cache folder (`results/`; capability `media-index`, "The project's
+caches live in a folder beside it"), written in that folder's cycle (capability `media-index`: the least recently used dropped first when the
+folder cannot take more; `KT_RENDER_CACHE_MB` caps it alone for tests), a segment at a time, the lowest value per byte first; an entry
+whose salt no longer matches SHALL be a miss and be removed when met, with no sweep when the store opens. A restored picture is the composite within the codec's tolerance.
 
 Before composing a moment the display's executor does not hold — the render-ahead producer before it asks
 whether the moment is decoded, the compose thread before it composes — the preview SHALL look the moment up
@@ -36,12 +40,14 @@ exception to "the program at rest costs nothing"; a heavy loop was composed agai
 whenever the display's memo lost it. kkt-26.11.18b U4 — the storage: not raw, not a processor codec ("слабо
 я верю что ffv1 аппаратно ускорен"), a normal video codec on the hardware ("сделай ты сжатие видео
 нормальное"); lossy accepted, the export never reads it. U5 — the key is reused later by the cached final
-render. kkt-26.11.20 A14 — the store moves beside the project ("вот с тем же превью кэшем"),
+render. kkt-26.11.20b B1 — it is the frames kind of the persistent cache, salted by the kernels that ran
+rather than the build (agreed with change `persistent-cache`), so a release keeps what it did not change.
+kkt-26.11.20 A14 — the store moves beside the project ("вот с тем же превью кэшем"),
 so one heavy project no longer evicts another's loop (project-cache-folder D3).
 
 #### Scenario: The store keeps segments within its cap
-- **WHEN** segments of two frames are written to a store with a small cap, two of them read, another build's folder exists at open, a segment's video is truncated, and a codec opens no encoder
-- **THEN** each frame reads back as written, the manifest names the codec, the encoder, the size, the rate and the keys and is its own text, the least recently used segment goes first, the other build's folder is gone, the truncated segment is a miss and removed, the prerender evicts nothing this process used, and the codec with no encoder refuses the segment
+- **WHEN** segments of two frames are written to a store with a small cap, two of them read, an entry of another salt is asked, a segment's video is truncated, and a codec opens no encoder
+- **THEN** each frame reads back as written, the manifest names the codec, the encoder, the size, the rate and the keys and is its own text, the least recently used segment goes first, the entry of another salt is a miss and is removed while nothing else is touched, the truncated segment is a miss and removed, the prerender evicts nothing this process used, and the codec with no encoder refuses the segment
 - **TEST** t2980 (`src/libs/kt-engine/src/render_cache.rs`)
 
 #### Scenario: A segment is written by the hardware encoder or refused
@@ -55,8 +61,8 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **TEST** t3129 (`src/libs/kt-media/tests/segment.rs`)
 
 #### Scenario: The durable key survives a process and follows what the picture is made of
-- **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality and the build salt
-- **THEN** the first keys are equal; each change gives another key
+- **WHEN** a moment's durable key is computed by two renderers over two frames caches (different serials), with its frames decoded and not; then after an edit of an effect parameter, a file's modification time, a generator's value, the quality, a kernel's version or WGSL text, the decoder's major, `COMPOSITE_PATH_VERSION` and the device class; and after a change of the program build that touches none of them
+- **THEN** the first keys are equal; each named change gives another key, and the build change alone keeps it
 - **TEST** t2981 (`src/libs/kt-engine/tests/render_cache.rs`)
 
 #### Scenario: A prerendered moment plays from disk after a restart
@@ -97,6 +103,11 @@ so one heavy project no longer evicts another's loop (project-cache-folder D3).
 - **TEST** t2988 (`src/scripts/live/render_cache.py`)
 
 #### Scenario: The store lives in the project's folder
-- **WHEN** two projects in two folders prerender a loop each under a shared total smaller than both, and the first start of the build finds a former `<data>/render-cache`
-- **THEN** each project's segments lie in its own `kinetren-cache/render/`, the limit pass trims the project opened longest ago first, and the former folder is gone
+- **WHEN** two projects in two folders prerender a loop each, the second folder's cap smaller than its loop, and the first start of the build finds a former `<data>/render-cache`
+- **THEN** each project's segments lie in its own `kinetren-cache/`, the second folder's oldest segments are replaced as its loop is written while the first folder is untouched, and the former folder is gone
 - **TEST** t3833, t3834 (`src/libs/kt-engine/tests/render_cache.rs`)
+
+#### Scenario: The composite path's version follows its code
+- **WHEN** the guard reads `COMPOSITE_PATH_VERSION` and the hash of the composite code outside the kernels (the fusion, `plan_chain`, the core passes and shaders, the conversions) recorded beside it
+- **THEN** the recorded hash equals the files' hash; a change of those files without a new constant and a new recorded hash fails the guard, naming the files
+- **TEST** t3808 (`src/libs/kt-engine/tests/render_cache.rs`)

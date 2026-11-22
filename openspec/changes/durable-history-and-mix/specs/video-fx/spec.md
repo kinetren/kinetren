@@ -3,13 +3,15 @@
 ### Requirement: A stream stage's history survives a restart without loss
 A stream kernel MAY give an exact codec of its memo entries (`EntryCodec`: a version, encode, decode).
 For such a kernel the host SHALL keep a durable tier behind its memo: an entry the memory lacks SHALL be
-looked up there by `mix(entry key, salt)` — the salt naming the program build with the FFmpeg version,
-the kernel and its codec version, and the identity (path, size, modification time) of every file the
+looked up there by `mix(entry key, salt)` — the salt being the persistent cache's (the store's format and the device class as its folder, the decoder's
+major, the versions and WGSL hashes of the kernels that ran and `COMPOSITE_PATH_VERSION` — not the whole
+build) with the kernel and its codec
+version, and the identity (path, size, modification time) of every file the
 stage reads — before the kernel walks for it, and the checkpoints and broken pictures the memo holds SHALL
 be written there only at rest (no input for the prerender's quiet period, not playing, no export's vote).
 Entries SHALL be stored without loss, compressed by the host with LZ4; the tier SHALL be the `history/`
-tenant of the project's cache folder (capability `media-index`, "The project's caches live in a folder
-beside it"), under its limit, and SHALL change no byte of any frame, in the preview or the export.
+kind of the persistent cache in the project's cache folder (capability `media-index`, "The project's caches live in a folder
+beside it"), written in its cycle, and SHALL change no byte of any frame, in the preview or the export.
 Datamosh SHALL give its codec.
 Why: found-defects 770 — after a restart every Datamosh moment the composite tier lacks walked its history
 from the anchor again; durable-history-and-mix D3, D4. A lossy entry would change every later frame; the
@@ -26,7 +28,7 @@ owner chose LZ4 over raw (kkt-26.11.20 line 19; design D9 says why a checkpoint 
 - **TEST** t3339 (`src/plugins/fx-video-codec/src/walk.rs`)
 
 #### Scenario: What a process could assume re-keys the entries
-- **WHEN** stored entries are asked after a source file's modification time changes, after the build salt changes, and after the codec version moves
+- **WHEN** stored entries are asked after a source file's modification time changes, after the version of a kernel that ran (or its WGSL text) changes, and after the codec version moves
 - **THEN** each is a miss, and the walk recomputes from its anchor
 - **TEST** t3340 (`src/libs/kt-engine/tests/stream_durable.rs`)
 
@@ -45,7 +47,7 @@ owner chose LZ4 over raw (kkt-26.11.20 line 19; design D9 says why a checkpoint 
 - **THEN** the three video outputs are byte-equal, and the second run walks fewer positions
 - **TEST** t3343 (`src/libs/kt-engine/tests/stream_durable.rs`)
 
-#### Scenario: The tier shares the folder's limit and goes first
-- **WHEN** composites and stream entries of the same age fill the cache folder's limit and a new composite arrives
-- **THEN** stream entries are evicted before the composites, nothing this process used is evicted by the prerender, and another build's folder is removed at open
+#### Scenario: The tier shares the folder's cycle and goes first
+- **WHEN** composites and stream entries fill the cache folder's room with measured values per byte, a new composite arrives, and an entry of another salt is asked
+- **THEN** the entries of the lowest value per byte are dropped first whatever their kind, no frame this process used in the last minute is dropped, and the stale entry is a miss removed when met
 - **TEST** t3344 (`src/libs/kt-engine/src/render_cache.rs`)
