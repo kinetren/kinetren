@@ -1,8 +1,8 @@
 # Proposal: device-decode-sources
 
-> DESIGN ONLY (spec session, owner 2026-11-20: "подготавливать архитектурные вещи - спеки. но не
-> выполнять их"). Code starts after the owner answers the questions at the end and the orchestrator
-> gives the go. Tests reserved: t3300–t3311. Base: `orch-26-11-01` at `ec30cb02`.
+> IMPLEMENTATION-READY (spec session, 2026-11-22). The owner answered (kkt-26.11.20 A12, his Q17 a and
+> Q18 b): on by default, with a checkbox in Settings. Tests: t3300–t3311, t4100–t4102. Code references
+> checked against orch `873934f7`.
 
 ## Why
 
@@ -78,25 +78,9 @@ Why it was not simply switched on for sources:
   one device and, as a bonus, with and without the device).
 - `docs/features/media/sources/hardware-decoding.md` (F-MED-010).
 
-## Questions for the owner
+## The owner's answers (kkt-26.11.20 A12)
 
-**Q1. On by default, or measured on your machine first?**
-Your words (kkt-26.11.18b, U4): "сделай ты сжатие видео нормальное" — the prerender on the machine's
-hardware encoder AND decoder; the reason given was the processor ("у нас datamosh лагает как нехуй
-делать"). Today: only the prerender's segments decode on the card; every source file is decoded by
-the processor. Carrying a picture back from the card costs a copy, and on some integrated chips
-reading the card's memory is slow, so the gain is not certain on every machine; this VM has no
-VAAPI device, so we cannot measure it here.
-- **a) On by default** wherever the card and the file allow it; `KT_DECODE_DEVICE=off` for A/B; your
-  next trace shows per picture who decoded it and what the copy cost. Since the picture is
-  byte-equal, a wrong guess costs speed, never a frame. *(Recommended.)*
-- **b) Off by default** until your trace of one run with `KT_DECODE_DEVICE=on` shows it wins; then a
-  second small change flips it.
-
-**Q2. A visible switch, as Premiere/Resolve/Vegas have, or none?**
-Today: no setting exists; the disk tier decides by itself and Diagnostics says why when it cannot.
-- **a) No switch** (as Final Cut Pro): the program decides per file, Diagnostics gets one line
-  "Decoding on the card: N files; on the processor: M (why)". *(Recommended: the choice cannot change a
-  frame, so there is nothing for a person to decide.)*
-- **b) A checkbox in Settings** "Decode video on the card" (on/off), beside the Diagnostics line — for
-  a driver that decodes correctly but slowly.
+- **Q1 a — on by default** ("Вкл. + галочка"): every file that passes D2 decodes on the device; the
+  environment's `KT_DECODE_DEVICE=off|on` overrides for an A/B run.
+- **Q2 b — a checkbox in Settings**: Preferences → FFmpeg section, "Decode video on the card", on by default,
+  beside the Diagnostics line "Decoding on the card: N files; on the processor: M (why)" (design D11).

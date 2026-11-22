@@ -18,7 +18,7 @@ not name the decoder (invariant 4) must not hold two different frames.
 #### Scenario: The layout copy is exact
 - **WHEN** synthetic NV12 and P010 pictures with odd widths, a bottom crop and full-range tags are laid out as yuv420p, yuvj420p and yuv420p10le
 - **THEN** every sample equals the source sample (P010 shifted right by six), the tags and the time are kept, and the line padding is never read
-- **TEST** t3301 (`src/libs/kt-ffmpeg/src/source_impl.rs`)
+- **TEST** t3301 (`src/libs/kt-ffmpeg/tests/device_layout.rs`)
 
 ### Requirement: A file decodes on the device only when its decode is exact and proven
 A file's video SHALL decode on the device only when its codec defines exact decoding (H.264, HEVC, VP9,
@@ -34,7 +34,7 @@ hardware frame at its top or left, and a driver can deviate from the standard.
 #### Scenario: The eligibility table
 - **WHEN** streams of H.264 4:2:0 8-bit, HEVC Main 10, H.264 4:2:2, MPEG-2, MPEG-4 Part 2, ProRes and an H.264 with a top crop are asked whether they may decode on the device
 - **THEN** the first two may, each other one is refused with its reason (flavour, inexact codec, no device decode, crop)
-- **TEST** t3302 (`src/libs/kt-ffmpeg/src/source_impl.rs`)
+- **TEST** t3302 (`src/libs/kt-ffmpeg/tests/device_layout.rs`)
 
 #### Scenario: A device whose samples differ is not used
 - **WHEN** the fake VA driver is told to change one sample of each picture it decodes, and a file is opened for the preview
@@ -78,3 +78,16 @@ to take all video memory, Resolve uses the device only while memory is left (F-M
 - **WHEN** the ledger grants the pools of two device decoders of a file and refuses a third, a backward seek reopens each, the grant is taken back, and the source is dropped
 - **THEN** two decoders report the device and the third the processor; the kinds survive the reopen; after the take-back the next reopen is on the processor; every frame equals the processor's decode; after the drop the tenant holds zero bytes
 - **TEST** t3305 (`src/libs/kt-media/tests/segment.rs`)
+
+### Requirement: Every source of a preview or an export opens through one factory call
+The preview's, the render window's and kt-cli's sources SHALL open through `factory::open_source(path, index,
+purpose)`, which decides the device (eligibility, the setting, the ledger) in one place. Thumbnails, the
+filmstrip and stills SHALL keep their own software opens.
+Why: the sources opened at four places (`util.rs` through the factory, `render_dialog.rs` `open_all`,
+kt-cli's `open_render_sources` and `open_sources`); a rule decided at one of them would not reach the
+others (device-decode-sources D6).
+
+#### Scenario: The four openers ask the factory
+- **WHEN** the preview, the render window's source list, kt-cli `export` and kt-cli `probe` open the same fake-driver file
+- **THEN** each source names the same decoder kind and reason, and the render window's source reads the packet index instead of scanning the file
+- **TEST** t4102 (`src/libs/kt-media/tests/segment.rs`)

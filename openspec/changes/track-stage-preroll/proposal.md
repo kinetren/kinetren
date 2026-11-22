@@ -1,7 +1,7 @@
 # Proposal: track-stage-preroll
 
-> DESIGN (spec session). Code starts after the owner answers Q1 and the orchestrator gives the go. Tests
-> reserved: t3361–t3366. Base: `orch-26-11-01` at `f1f063c4`.
+> IMPLEMENTATION-READY (spec session, 2026-11-22). The owner answered Q1 a (kkt-26.11.20 A15: "Всегда полный
+> хвост"). Tests: t3361–t3366, t4103–t4104. Code references checked against orch `873934f7`.
 
 ## Why
 
@@ -41,16 +41,7 @@ and an export of a region differs from the same region inside the whole export. 
   does not touch it), 6 (the pre-roll runs on the render thread like event pre-rolls, never in the
   callback), 11 (deterministic: the pre-roll length is a function of the chain).
 
-## Questions for the owner
+## The owner's answer (kkt-26.11.20 A15)
 
-**Q1. How long may Play wait after a seek into a long track reverb?**
-Today: after a seek into a track's reverb tail (a reverb on the whole track, not on an event) the tail is
-silent until the next sound enters it; the render of that region alone also lacks it. A correct start must
-first compute the seconds before the seek point through the track's chain, as event reverbs already do
-(their tail, at least 0.1 s). A track reverb of 4 s on release costs about 0.1–0.4 s of computing before the
-first sound after such a seek (more in debug); a seek where nothing rings costs nothing.
-- **a) Always the full tail**, in the preview and in the render: every start sounds as continuous play.
-  *(Recommended: the same rule as event effects, and the render of a region then equals its part of the
-  whole render.)*
-- **b) Full tail in the render, at most 0.5 s in the preview**: the preview starts faster, a longer tail
-  starts partly cold there (the kept mix does not keep that start).
+**Q1 a — "Всегда полный хвост (Recommended)".** Every start computes the stage's full tail, in the preview and
+in the render. There is no preview cut, so the kept mix always keeps the start (design D4).
