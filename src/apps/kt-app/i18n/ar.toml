@@ -1310,6 +1310,10 @@ corner_br = "أسفل يمين"
 tc_note = "يعرض زمن المادة: مقطع من الصفر ببداية مادة 0 يطابق ساعة الخط الزمني"
 
 [genkind]
+levelrings = "حلقات المستوى"
+spectrum = "الطيف"
+waveform = "شكل الموجة"
+group_reactive = "يتفاعل مع الصوت"
 progress = "شريط التقدم"
 plate = "لوحة الثلث السفلي"
 frame = "إطار"
@@ -1391,6 +1395,18 @@ align_r = "يمين"
 # Generator parameter labels (R.53 item 414): own area — “size” in
 # a title is the FONT SIZE, not the grain of the Noise effect.
 [genp]
+top_color = "الأعلى"
+bottom_color = "الأسفل"
+hold = "تثبيت القمم"
+spacing = "التباعد"
+rings = "الحلقات"
+react = "الاستجابة"
+gap = "الفجوة"
+bottom = "خط الأساس"
+style = "النمط"
+gain = "الكسب"
+height = "الارتفاع"
+track = "يستمع إلى المسار"
 fill_color = "التعبئة"
 track_color = "المسار"
 accent_color = "التمييز"
@@ -1470,6 +1486,10 @@ tone = "نغمة 1 كيلوهرتز"
 
 # Choice-row variants of the generators (generators-placement-and-audio).
 [genc]
+style_bars = "أعمدة"
+style_mirror = "معكوس"
+style_filled = "مملوء"
+style_line = "خط"
 waves = "أمواج"
 grid = "شبكة"
 dots = "نقاط"

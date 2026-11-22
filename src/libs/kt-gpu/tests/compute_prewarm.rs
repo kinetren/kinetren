@@ -13,7 +13,11 @@ fn t2123_a_prepared_generator_compiles_nothing_in_its_first_frame() {
         eprintln!("skipped: no compute device");
         return;
     };
-    let kinds: Vec<_> = generators_basic::plugins().into_iter().chain(generators_test::plugins()).collect();
+    let kinds: Vec<_> = generators_basic::plugins()
+        .into_iter()
+        .chain(generators_test::plugins())
+        .chain(generators_reactive::plugins())
+        .collect();
     let mut named = 0;
     for p in &kinds {
         for s in p.compute_shaders() {
@@ -30,5 +34,11 @@ fn t2123_a_prepared_generator_compiles_nothing_in_its_first_frame() {
         let _ = g.frame(&v, kt_time::Tick(0), 64, 36);
         assert_eq!(kt_gpu::pipelines_in_frame() - made, 0, "{}: its frame compiled a shader it does not name", m.id);
         assert_eq!(kt_gpu::cold_draws() - cold, 0, "{}: its frame dispatched a pipeline cold", m.id);
+        // an audio-reactive kind's frame over heard values runs the same named shader (gen-audio-reactive)
+        if let Some(heard) = g.listen() {
+            let au = [0.5f32; kt_plugin_api::audio_series::at::LEN];
+            let _ = heard(&v, kt_time::Tick(0), 64, 36, &au);
+            assert_eq!(kt_gpu::pipelines_in_frame() - made, 0, "{}: its heard frame compiled a shader it does not name", m.id);
+        }
     }
 }

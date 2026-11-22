@@ -24,6 +24,9 @@ pub type Frame = fn(&[f64], Tick, u32, u32) -> Box<[u8]>;
 pub type Tone = fn(&[f64]) -> Option<f64>;
 /// Whether global sample `n` (48 kHz) sounds; the default is every sample.
 pub type Gate = fn(&[f64], i64) -> bool;
+/// An audio-reactive kind's frame (gen-audio-reactive): `Frame`'s arguments and the frame's audio
+/// values (`audio_series::frame_values`, silence when the kind hears nothing).
+pub type ListenFrame = fn(&[f64], Tick, u32, u32, &[f32; crate::audio_series::at::LEN]) -> Box<[u8]>;
 /// A sound kind's burst: the values, the GLOBAL sample number of the burst's first frame (48 kHz)
 /// and an interleaved stereo buffer of `AUDIO_BURST_FRAMES` frames, zeroed by the host. A pure
 /// function of its arguments: a burst never depends on the bursts read before it (seek, invariant 11).
@@ -55,6 +58,11 @@ pub trait GenKernel: Send + Sync {
     }
     /// A sound kind's synthesizer; such a kind has no picture.
     fn synth(&self) -> Option<Synth> {
+        None
+    }
+    /// An audio-reactive kind's frame; such a kind has a `track` row (the audio track it hears,
+    /// 1-based), and `frame` draws it hearing silence.
+    fn listen(&self) -> Option<ListenFrame> {
         None
     }
 }
@@ -121,6 +129,7 @@ pub struct Kind {
     tone: Option<Tone>,
     gate: Option<Gate>,
     synth: Option<Synth>,
+    listen: Option<ListenFrame>,
     /// The `pixel` text the kind's frame runs on the compute device (`shader_frame`).
     shader: Option<&'static str>,
 }
@@ -137,6 +146,14 @@ impl Kind {
     pub fn with_tone(mut self, tone: Tone, gate: Option<Gate>) -> Kind {
         self.tone = Some(tone);
         self.gate = gate;
+        self
+    }
+
+    /// The kind hears an audio track: `frame` is its frame over the audio values, and its shader
+    /// (drawn by `shader_frame_audio`) is named for the prewarm.
+    pub fn with_listen(mut self, frame: ListenFrame, pixel: &'static str) -> Kind {
+        self.listen = Some(frame);
+        self.shader = Some(pixel);
         self
     }
 
@@ -169,7 +186,11 @@ impl crate::Plugin for Kind {
         Some(self)
     }
     fn compute_shaders(&self) -> Vec<crate::compute::Shader> {
-        self.shader.map(|p| crate::compute::Shader { text: shader_text(p).into(), reads: 0, writes: 1 }).into_iter().collect()
+        match (self.shader, self.listen) {
+            (Some(p), Some(_)) => vec![crate::compute::Shader { text: shader_text_audio(p).into(), reads: 1, writes: 1 }],
+            (Some(p), None) => vec![crate::compute::Shader { text: shader_text(p).into(), reads: 0, writes: 1 }],
+            _ => Vec::new(),
+        }
     }
 }
 
@@ -191,6 +212,9 @@ impl GenKernel for Kind {
     }
     fn synth(&self) -> Option<Synth> {
         self.synth
+    }
+    fn listen(&self) -> Option<ListenFrame> {
+        self.listen
     }
 }
 
@@ -261,6 +285,7 @@ pub fn kind(
         tone: None,
         gate: None,
         synth: None,
+        listen: None,
         shader: None,
     }
 }
@@ -343,6 +368,61 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x < u.w && id.y < u.h { frame[id.y * u.w + id.x] = pixel(id.x, id.y); }
 }
 ";
+
+/// The prelude of an audio-reactive kind: the uniform, the frame's audio values (read, binding 1:
+/// `audio_series::at`'s layout) and the frame (binding 2), with the same `pack`.
+const SHADER_PRELUDE_AUDIO: &str = "struct U { w: u32, h: u32, a: u32, b: u32, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32> };
+@group(0) @binding(0) var<uniform> u: U;
+@group(0) @binding(1) var<storage, read> au: array<f32>;
+@group(0) @binding(2) var<storage, read_write> frame: array<u32>;
+fn pack(c: vec4<f32>) -> u32 {
+    let v = vec4<u32>(clamp(floor(c + 0.5), vec4<f32>(0.0), vec4<f32>(255.0)));
+    return v.x | (v.y << 8u) | (v.z << 16u) | (v.w << 24u);
+}
+@compute @workgroup_size(16, 16)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+    if id.x < u.w && id.y < u.h { frame[id.y * u.w + id.x] = pixel(id.x, id.y); }
+}
+";
+
+/// The whole compute shader of an audio-reactive kind's `pixel` text.
+pub fn shader_text_audio(pixel: &str) -> String {
+    format!("{SHADER_PRELUDE_AUDIO}{pixel}")
+}
+
+/// An audio-reactive kind's frame on the compute device: `shader_frame` with the frame's audio values
+/// as a storage buffer. No device: a transparent frame.
+pub fn shader_frame_audio(
+    name: &str,
+    pixel: &str,
+    w: u32,
+    h: u32,
+    ints: [u32; 2],
+    p: [[f32; 4]; 4],
+    audio: &[f32; crate::audio_series::at::LEN],
+) -> Box<[u8]> {
+    use crate::compute::{self, Buf, Init, Job, Step};
+    let bytes = w as u64 * h as u64 * 4;
+    let blank = || vec![0u8; bytes as usize].into_boxed_slice();
+    let Some(host) = compute::host() else { return blank() };
+    let mut uniform = Vec::with_capacity(80);
+    for v in [w, h, ints[0], ints[1]] {
+        uniform.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in p.iter().flatten() {
+        uniform.extend_from_slice(&v.to_le_bytes());
+    }
+    let au: Vec<u8> = audio.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let shader = shader_text_audio(pixel);
+    let step = Step { name, shader: &shader, uniform: &uniform, read: &[Buf(1)], write: &[Buf(0)], groups: [w.div_ceil(16), h.div_ceil(16), 1] };
+    match host.run(&Job { buffers: &[Init::Zero(bytes), Init::Bytes(&au)], steps: &[step], reads: &[Buf(0)] }) {
+        Ok(mut out) => out.remove(0).into_boxed_slice(),
+        Err(e) => {
+            compute::fail(e);
+            blank()
+        }
+    }
+}
 
 /// The whole compute shader of a kind's `pixel` text.
 pub fn shader_text(pixel: &str) -> String {

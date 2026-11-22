@@ -34,7 +34,9 @@ a row; it does not close the row.
 
 ## Questions waiting for his decision
 
-None open (2026-11-20: Q1–Q54 answered in chat, see Answered).
+| # | Since | Question (with context) | Where to go |
+|---|---|---|---|
+| Q55 | 2026-11-20 | **What should the audio-reactive generators hear — the file or the mix?** The new Waveform, Spectrum and Level rings generators listen to an audio track you pick. Right now they hear the FILES of the events on that track, as After Effects and Resolve do: a reverb, a fade or the event's level line on that track does not change the picture. The other way: they hear what the track really sounds like, after its effects and levels. That costs more — the picture then waits for the sound to be rendered, and a render renders the sound first. (a) the file, as now (Recommended); (b) the mix after effects. | v26.10 G5 → change `gen-audio-reactive`, note F-TXT-011; executor features-slow |
 
 ## Answered
 

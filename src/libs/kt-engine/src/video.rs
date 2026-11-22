@@ -1372,10 +1372,20 @@ impl VideoRenderer {
                 let material_end =
                     (nest.is_none() && !procedural).then(|| facts.lengths.get(&addr).copied()).flatten();
                 let silent = silent_lane(c.lane);
+                // what an audio-reactive generator hears (gen-audio-reactive): its feed's key, from the
+                // same `feed_for` as `gen_sources`, so a series that arrives or a moved piece moves the
+                // layer and its `src_rev`
+                let heard = match &c.r#gen {
+                    Some(k) if k.listen_lane().is_some() => {
+                        let path = |id: MediaId| project.media.iter().find(|m| m.id == id).map(|m| m.path.as_str());
+                        crate::listen::feed_for(effective, c, &path).key()
+                    }
+                    _ => 0,
+                };
                 // everything the layer is derived from: the same key → the last build's layer,
                 // copied (edit-without-rebuild)
                 let key = crate::incremental::hash_fmt(format_args!(
-                    "{} {} {procedural} {lead:?} {nest:?} {nest_fps:?} {nest_scale} {native:?} {material_end:?} {silent} {cams_key} {raster:?} {} {} {}",
+                    "{} {} {procedural} {lead:?} {nest:?} {nest_fps:?} {nest_scale} {native:?} {material_end:?} {silent} {cams_key} {raster:?} {heard} {} {} {}",
                     crate::incremental::hash_debug(c),
                     addr.0,
                     project.settings.width,
@@ -1465,7 +1475,10 @@ impl VideoRenderer {
                     material_end,
                     stream: if nest.is_none() { stream } else { None },
                     src_rev: if procedural {
-                        xxhash_rust::xxh3::xxh3_64(format!("{:?}|{:?}", c.r#gen, c.gen_auto).as_bytes())
+                        // a kind that hears nothing keeps its former revision, byte for byte
+                        let text = format!("{:?}|{:?}", c.r#gen, c.gen_auto);
+                        let text = if heard == 0 { text } else { format!("{text}|{heard}") };
+                        xxhash_rust::xxh3::xxh3_64(text.as_bytes())
                     } else {
                         0
                     },
@@ -2842,13 +2855,20 @@ fn gen_sources_in(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
     // 1) EVERY reel with its own template content — as it was before R.59.
     //    A reel that was placed nowhere is also visible: the bin shows it and
     //    the preview service counts it, and its sources must not be lost.
+    // what a listening kind hears is a fact of its reel's clips (gen-audio-reactive)
+    let path = |id: MediaId| project.media.iter().find(|m| m.id == id).map(|m| m.path.as_str());
+    let state = |c: &kt_model::ClipEvent, k: &kt_model::GeneratorKind, clips: &[kt_model::ClipEvent]| {
+        let mut st = kt_model::GenState::of(k.clone(), c.gen_auto.clone());
+        if k.listen_lane().is_some() {
+            st.feed = crate::listen::feed_for(clips, c, &path);
+        }
+        st
+    };
     for seq in std::iter::once(None).chain(project.sequences.iter().map(|s| Some(s.id))) {
-        for c in crate::incremental::resolve(project, seq, &[]).clips.iter() {
+        let reel = crate::incremental::resolve(project, seq, &[]);
+        for c in reel.clips.iter() {
             if let Some(k) = &c.r#gen {
-                push(
-                    gen_source_addr(c.id),
-                    kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
-                );
+                push(gen_source_addr(c.id), state(c, k, &reel.clips));
             }
         }
     }
@@ -2868,12 +2888,10 @@ fn gen_sources_in(project: &Project) -> Vec<(MediaId, kt_model::GenState)> {
             },
         };
         let salt = gen_salt(published, &ov);
-        for c in crate::incremental::resolve(project, seq, &ov).clips.iter() {
+        let reel = crate::incremental::resolve(project, seq, &ov);
+        for c in reel.clips.iter() {
             if let Some(k) = &c.r#gen {
-                push(
-                    gen_source_addr_in(c.id, salt),
-                    kt_model::GenState { kind: k.clone(), auto: c.gen_auto.clone() },
-                );
+                push(gen_source_addr_in(c.id, salt), state(c, k, &reel.clips));
             }
             if project.sequence(c.media).is_some()
                 && depth < kt_model::MAX_NEST_DEPTH

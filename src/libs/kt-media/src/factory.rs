@@ -170,10 +170,10 @@ mod tests {
         states.push(GenState::new(GeneratorKind::plugin_with("leader", &[("seconds", 3.0), ("fps", 30.0), ("beep", 1.0), ("beep_db", -20.0)]).unwrap()));
         // and the state WITH CURVES: they do not touch the passport, so
         // the reconfiguration MUST accept them
-        states.push(GenState {
-            kind: GeneratorKind::default_text(),
-            auto: text_anim_curves(TextAnim::Typewriter, 2.0, 2.0),
-        });
+        states.push(GenState::of(
+            GeneratorKind::default_text(),
+            text_anim_curves(TextAnim::Typewriter, 2.0, 2.0),
+        ));
 
         for a in &states {
             for b in &states {

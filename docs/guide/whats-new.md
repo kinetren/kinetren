@@ -5,6 +5,7 @@ month, newest first.
 
 ## kt26.11
 
+- **Generators that move with the music.** Edit › Create a generator… → Kind → Reacts to sound has Waveform, Spectrum (16 bars whose peaks fall slowly) and Level rings. Each listens to the audio track you pick in its window ("Hears track") and follows the files on it across cuts; move the music and the picture follows. The sound is analysed once per file in the background and kept, and a render waits for it, so what you render is what you saw. They hear the file itself, not the track after its effects.
 - **Edit and the media bin create a generator in one click.** Edit › Create a generator… (and the same item on the bin's empty space) no longer opens a list of every kind: it puts a solid colour at the cursor — or a tone, when the event you have selected is on an audio track — and opens its window, where you pick any other kind from the pictures. A Sync flash picked there now brings its beep along on the first audio track, and changing it to a kind without sound takes the beep away.
 - **In Chinese and Arabic the File menu no longer has two Export items.** The render item now says Render there, as in the other languages; Export is only the submenu of OpenTimelineIO.
 - **Effect forms use a wide window.** Make an effects window wider and its parameters flow into columns instead of one long list with empty space beside it: the Camera ISP's pipeline blocks stand side by side, and the render and project settings windows put their groups next to each other. A narrow window still shows every row in full.
