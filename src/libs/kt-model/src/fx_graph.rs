@@ -182,6 +182,9 @@ pub enum GraphWhy {
     TooManyHeld,
     /// More than `MAX_READS` reads of the source.
     TooManyReads,
+    /// Wiring on a SOUND chain: the sound graph comes with v2c (the owner's Q1 a, "Сначала
+    /// картинка"); until then the processor would run its arms one after another.
+    SoundLater,
     /// A time kind in an arm whose own path from the Source branches: a read is a LINE (design D2),
     /// so it reads exactly as an event with that line does.
     ReadBranches,
@@ -194,6 +197,15 @@ pub enum GraphWhy {
 pub struct GraphError {
     pub slot: usize,
     pub why: GraphWhy,
+}
+
+/// `check` for a chain on its lane: a sound chain takes no wiring yet (`SoundLater`).
+pub fn check_lane(fx: &[FxInstance], fx_in: &[SlotInputs], lead: usize, sound: bool) -> Result<(), GraphError> {
+    if sound && !is_line(fx_in) {
+        let slot = fx_in.iter().position(|s| !s.is_line()).unwrap_or(0);
+        return Err(GraphError { slot, why: GraphWhy::SoundLater });
+    }
+    check(fx, fx_in, lead)
 }
 
 /// Validate a chain's wiring (`Project::validate`, the reader, the editor before a command).

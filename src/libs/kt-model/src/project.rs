@@ -7635,7 +7635,7 @@ impl Project {
                     return Err(ProjectError::TrackCurvesUnsupported(t.id));
                 }
                 check_track_masks(t)?;
-                crate::fx_graph::check(&t.fx, &t.fx_in, 0)
+                crate::fx_graph::check_lane(&t.fx, &t.fx_in, 0, t.kind == LaneKind::Audio)
                     .map_err(|e| ProjectError::BadTrackGraph(t.id, e.slot, e.why))?;
             }
             for c in reel.clips() {
@@ -7643,8 +7643,8 @@ impl Project {
                 check_clip_graph(c)?;
             }
             for m in reel.morphers() {
-                for (fx, fx_in) in [(&m.patch.video_fx, &m.patch.video_in), (&m.patch.audio_fx, &m.patch.audio_in)] {
-                    crate::fx_graph::check(fx, fx_in, 0).map_err(|e| ProjectError::BadPatchGraph(m.id, e.slot, e.why))?;
+                for (fx, fx_in, sound) in [(&m.patch.video_fx, &m.patch.video_in, false), (&m.patch.audio_fx, &m.patch.audio_in, true)] {
+                    crate::fx_graph::check_lane(fx, fx_in, 0, sound).map_err(|e| ProjectError::BadPatchGraph(m.id, e.slot, e.why))?;
                 }
             }
             self.validate_reel(reel, seq, &sources, &media_ids, &mut clip_ids)?;
@@ -8203,7 +8203,8 @@ impl Project {
 
 /// The wiring of an event's chain (fx-graph-dag D1): ONE check for `validate` and for `SetFxIn`.
 pub fn check_clip_graph(c: &ClipEvent) -> Result<(), ProjectError> {
-    crate::fx_graph::check(&c.fx, &c.fx_in, c.geometry_pos).map_err(|e| ProjectError::BadGraph(c.id, e.slot, e.why))
+    crate::fx_graph::check_lane(&c.fx, &c.fx_in, c.geometry_pos, c.kind == ClipKind::Audio)
+        .map_err(|e| ProjectError::BadGraph(c.id, e.slot, e.why))
 }
 
 /// The masks of an event: video only, slot lists within the chain, each list valid

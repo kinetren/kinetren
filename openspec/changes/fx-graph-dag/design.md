@@ -155,6 +155,12 @@ graph has one read and asks exactly what its line asks (invariants 4, 5, 8; t320
 The leading Geometry node stays on the trunk: it places the frame on the canvas and sets the decode
 step for the layer; an arm that needs its own placement takes a Geometry/Transform slot of its own.
 
+**A read is a line** (applied in v2b). The path from the Source to an arm's time kind may not itself
+branch (`GraphWhy::ReadBranches`): then the read IS an event whose chain is that line, and its warp,
+stream stage, decode step and key come from today's code unchanged; no read opens another read. A
+read is made for a leaf event only: on a reel instance an arm's time kind stays transparent in v2 —
+its read would be a second sub-composite at another moment.
+
 **The pair's speed is the trunk's** (applied in v2a). A link pair consumes its source at one speed
 (R.37); with reads, that speed is the trunk's warp. An arm's warp is the arm's own reading, so the
 mirror treats it as no warp: moving Slowed into an arm of the picture takes it off the linked sound

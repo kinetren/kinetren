@@ -43,8 +43,12 @@
 - [x] 2.3a `clip_warp` and the stream stage read the TRUNK's time kinds only (the picture's
       `chain_context` is the sound's, v2c); a Merge is a slot of the active chain again; the lead
       enters the wiring by `fx_graph::insert_lead`
-- [ ] 2.3b kt-engine reads: `layers_at`/`wanted_frames` per read, stream history keyed (event, read),
-      `Input(k)` into the layer program, the read law; t3226, t3228
+- [x] 2.3b kt-engine reads: `VideoClip.reads` (a leaf's arm time kinds, each a line clip of the same
+      event), `layers_at` orders every read, `LayerSrc.reads` resolved and encoded first by kt-gpu,
+      `PlanOp::Input` at the slot, the export chunk counts them, both keys hash them; a read is a line
+      (`ReadBranches`); the stream history keys by content, so a read's own front has its own; the
+      read law t3226, the order t3227. Open: t3228 (Datamosh in an arm), the stream memo's want and
+      `stream_advance_run` for a read's stage
 - [ ] 2.3c kt-app: the coverage strip draws a row per read; the performance panel and `kt-cli probe`
       name the reads
 - [x] 2.4 keys: `fx_chain_hash`, `plan_hash`, `durable_hash`, post-FX key hash `fx_in` when present;

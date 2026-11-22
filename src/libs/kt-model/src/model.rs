@@ -1890,14 +1890,14 @@ impl TimelineModel {
             }
             Command::SetFxIn { id, fx_in } => {
                 let c = find(*id)?;
-                crate::fx_graph::check(&c.fx, fx_in, c.geometry_pos)
+                crate::fx_graph::check_lane(&c.fx, fx_in, c.geometry_pos, c.kind == crate::ClipKind::Audio)
                     .map_err(|e| CommandError::InvalidClip(ProjectError::BadGraph(*id, e.slot, e.why)))?;
             }
             Command::SetTrackFxIn { id, fx_in } => {
                 let Some(t) = p.track(*id) else {
                     return Err(CommandError::TrackNotFound(*id));
                 };
-                crate::fx_graph::check(&t.fx, fx_in, 0)
+                crate::fx_graph::check_lane(&t.fx, fx_in, 0, t.kind == crate::LaneKind::Audio)
                     .map_err(|e| CommandError::InvalidClip(ProjectError::BadTrackGraph(*id, e.slot, e.why)))?;
             }
             Command::SetTrackMasks { id, masks } => {

@@ -527,35 +527,38 @@ fn t3222_a_branching_layer_over_a_branching_event() {
 }
 
 /// t3223 (fx-graph-dag D6; capabilities `morpher`, `audio-fx`): a device's halves stay mirrored in
-/// presence and values while each lane keeps its own wiring; removing the picture half takes the
-/// sound half too, and the sound chain's Merge that read it reads the half's own input instead.
+/// presence and values while each lane keeps its own wiring; removing the SOUND half takes the
+/// picture half too, and the picture chain's Merge that read it reads the half's own input instead.
+/// (A sound chain takes no wiring until the sound graph, the owner's Q1 a: it is refused.)
 #[test]
 fn t3223_pairs_mirror_presence_not_wires() {
     use fx_graph::FxIn;
     kt_plugins_builtin::install();
     let mut m = TimelineModel::new(morph_project());
     m.apply(Command::AddMorpher(layer(MorphPatch::default()))).unwrap();
+    // the picture half in an arm of the picture chain, beside a blur, merged
     let mut ev = m.project().morphers[0].clone();
-    ev.patch.video_fx = vec![FxInstance::plugin("vhs_tape").unwrap()];
-    m.apply(Command::SetMorpher(ev)).unwrap();
-    // the sound half moved into an arm of the sound chain, beside a gain, and merged
-    let mut ev = m.project().morphers[0].clone();
-    ev.patch.audio_fx = vec![FxInstance::plugin("gain").unwrap(), ev.patch.audio_fx[0].clone(), merge_fx()];
-    ev.patch.audio_in = vec![Default::default(), arm(FxIn::Source), merge_of(FxIn::Prev, FxIn::Slot(0))];
+    ev.patch.video_fx = vec![FxInstance::plugin("blur").unwrap(), FxInstance::plugin("vhs_tape").unwrap(), merge_fx()];
+    ev.patch.video_in = vec![Default::default(), arm(FxIn::Source), merge_of(FxIn::Slot(0), FxIn::Prev)];
     m.apply(Command::SetMorpher(ev)).unwrap();
     let p = patch_of(&m);
-    assert_eq!(chain_ids(&p.audio_fx), ["gain", "vhs_tape_sound", "merge"], "the sound's wiring was mirrored away");
-    assert!(p.video_in.is_empty(), "the picture got the sound's wires");
-    // a value on the picture reaches the wired sound half
+    assert_eq!(chain_ids(&p.audio_fx), ["vhs_tape_sound"], "the sound half was not mirrored");
+    assert!(p.audio_in.is_empty(), "the sound got the picture's wires");
+    // a value on the sound reaches the wired picture half
     let mut ev = m.project().morphers[0].clone();
-    ev.patch.video_fx[0].set_param("tracking_um", 9.0);
+    ev.patch.audio_fx[0].set_param("tracking_um", 9.0);
     m.apply(Command::SetMorpher(ev)).unwrap();
-    assert_eq!(patch_of(&m).audio_fx[1].get_param("tracking_um"), Some(9.0));
-    // the picture half removed: the sound half goes, its reader reads the Source
+    assert_eq!(patch_of(&m).video_fx[1].get_param("tracking_um"), Some(9.0));
+    // the sound half removed: the picture half goes, its reader reads the Source
     let mut ev = m.project().morphers[0].clone();
-    ev.patch.video_fx.clear();
+    ev.patch.audio_fx.clear();
     m.apply(Command::SetMorpher(ev)).unwrap();
     let p = patch_of(&m);
-    assert_eq!(chain_ids(&p.audio_fx), ["gain", "merge"]);
-    assert_eq!(p.audio_in, vec![Default::default(), merge_of(FxIn::Source, FxIn::Prev)], "the Merge was not re-wired");
+    assert_eq!(chain_ids(&p.video_fx), ["blur", "merge"]);
+    assert_eq!(p.video_in, vec![Default::default(), merge_of(FxIn::Prev, FxIn::Source)], "the Merge was not re-wired");
+    // wiring on the sound chain is refused until the sound graph
+    let mut ev = m.project().morphers[0].clone();
+    ev.patch.audio_fx = vec![FxInstance::plugin("gain").unwrap(), FxInstance::plugin("gain").unwrap()];
+    ev.patch.audio_in = vec![Default::default(), arm(FxIn::Source)];
+    assert!(m.apply(Command::SetMorpher(ev)).is_err(), "a sound branch was accepted before the sound graph");
 }
