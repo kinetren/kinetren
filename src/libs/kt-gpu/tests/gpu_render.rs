@@ -60,6 +60,7 @@ fn project() -> Project {
         ],
         opacity,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips = vec![
         clip(1, 0, 0, 2 * sec, 1, 1.0),
@@ -251,6 +252,7 @@ fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
         fx: vec![],
         opacity,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let mut s = Sequence::new(MediaId(100), "Piece");
     s.clips = vec![ev(2, 1, 0, 2 * sec, 1, 1.0), ev(3, 0, sec / 2, sec, 2, 0.5)];
@@ -437,6 +439,7 @@ fn t496_gpu_frame_identity_follows_content() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.validate().unwrap();
 

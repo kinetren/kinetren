@@ -7181,6 +7181,7 @@ impl KtApp {
                 fx_auto: Vec::new(),
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             }));
         }
         if self.apply_batch(cmds)
@@ -7350,6 +7351,7 @@ impl KtApp {
                 fx: vec![],
                 opacity: 1.0,
                 fx_off: false,
+                fx_in: Vec::new(),
             }));
             next_id += 1;
         }
@@ -12495,6 +12497,7 @@ mod repaint_tests {
             fx: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         };
         // two OVERLAPPING clips: 1000..3000 and 2500..4000 → one
         // region 1000..4000; the joint inside is not counted as a boundary

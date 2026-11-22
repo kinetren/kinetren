@@ -96,6 +96,8 @@ fn t1274_masked_frames_agree_exactly_on_both_backends() {
             blend_mode: kt_model::BlendMode::Normal,
             lead,
             masks: ops,
+            fx_in: &[],
+            reads: Vec::new(),
         };
         let p = FramePlan {
             t: Tick(90_000),

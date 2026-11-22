@@ -92,6 +92,7 @@ fn ev(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick, media: u64) ->
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

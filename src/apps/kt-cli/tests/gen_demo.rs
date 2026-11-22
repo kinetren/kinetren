@@ -52,6 +52,7 @@ fn clip(id: u64, start_s: i64, dur_s: i64, media: u64, fx: Vec<FxInstance>) -> C
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

@@ -60,6 +60,8 @@ impl Src {
             blend_mode: kt_model::BlendMode::Normal,
             lead: None,
             masks: Vec::new(),
+            fx_in: &[],
+            reads: Vec::new(),
         }
     }
 }

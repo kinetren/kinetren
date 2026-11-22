@@ -58,7 +58,7 @@ listed.
   `stereo_width`, `tremolo`, `auto_pan`, `vibrato`, `chorus`, `flanger`, `phaser`, `delay`,
   `compressor`, `gate`, `limiter`, `pitch_shift`, `vhs_tape_sound`, `datamosh_sound`,
   `camera_isp_sound`.
-- **Layer marker (1):** `layer_mix`.
+- **Routing (2):** `layer_mix`, `merge`.
 - **Video effects (30):** `color_grade`, `duotone`, `posterize`, `vignette`, `corner_pin`, `sharpen`,
   `pixelate`, `chromatic_aberration`, `radial_blur`, `drop_shadow`, `halftone`, `camera_isp`, `lens_distort`,
   `twirl`, `ripple`, `kaleidoscope`, `cylinder3d`, `vhs_tape`, `geometry`, `cam_motion`, `mirror`, `blur`,

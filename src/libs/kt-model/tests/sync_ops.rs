@@ -42,6 +42,7 @@ fn scene_at(start_a: Tick, source_in_b: Tick, start_b: Tick, reversed_b: bool) -
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(clip(1, 1, 0, start_a, Tick(90_000), false));
     p.clips.push(clip(2, 2, 1, start_b, source_in_b, reversed_b));

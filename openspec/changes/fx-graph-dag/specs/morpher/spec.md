@@ -11,5 +11,5 @@ target, and the pair rule shares the device, not its place in a graph.
 
 #### Scenario: A branching layer over a branching event
 - **WHEN** a layer whose patch merges a blurred arm over its input lies over an event whose own chain branches; the patch's VHS Tape picture half is moved into an arm; then removed
-- **THEN** the effective chain is the event's graph followed by the patch's with offset inputs, and renders as the two applied in turn; the sound half stays on the trunk of the sound chain and mirrors values; the removal takes both halves and re-wires the reader
+- **THEN** the effective chain is the event's graph followed by the patch's with offset inputs, and renders as the two applied in turn; the sound half stays where it stands in the sound chain and mirrors values; the removal takes both halves and re-wires the reader
 - **TEST** t3222, t3223 (`src/libs/kt-model/tests/sim_pairs.rs`)

@@ -43,6 +43,7 @@ fn project(rules: &[Conform], project_rule: ConformRule) -> Project {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         };
         c.geometry.rule = *r;
         p.clips.push(c);
@@ -179,6 +180,7 @@ fn t936_a_still_has_a_view_generators_and_the_placeholder_do_not() {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         };
         c.media = m;
         if kt_engine::video::lead_view(&p, &facts, &c, m) != facts.view_of(m) {

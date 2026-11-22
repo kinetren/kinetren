@@ -48,6 +48,7 @@ fn clip(id: u64, start: i64, frames: i64, source_in: i64, gain_db: f32) -> ClipE
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

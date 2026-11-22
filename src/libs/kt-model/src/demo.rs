@@ -48,6 +48,7 @@ pub fn demo_project(sources: DemoSources) -> Project {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let pan = FxInstance::geometry_at(-0.002, 0.002, 1.18);
     // the same camera move that used to be CamMotion keyframes — now curves

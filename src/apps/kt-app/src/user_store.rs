@@ -248,7 +248,7 @@ fn decode(v: &serde_json::Value, factory: bool) -> Option<PresetRow> {
     }
     Some(PresetRow {
         name,
-        block: kt_model::ops::FxChainBlock { slots, src_in: kt_time::Tick(0), fx_off: false },
+        block: kt_model::ops::FxChainBlock { slots, src_in: kt_time::Tick(0), fx_off: false, fx_in: Vec::new() },
         audio_ok,
         video_ok,
         factory,
@@ -284,6 +284,7 @@ mod tests {
             }],
             src_in: kt_time::Tick(45_000),
             fx_off: false,
+            fx_in: Vec::new(),
         }
     }
 
@@ -376,6 +377,7 @@ mod tests {
                 .collect(),
             src_in: kt_time::Tick(0),
             fx_off: false,
+            fx_in: Vec::new(),
         };
         store.add("audio only", &block(vec![kt_model::FxInstance::gain(-3.0)])).unwrap();
         store.add("video only", &block(vec![kt_model::FxInstance::blur(8)])).unwrap();

@@ -1061,6 +1061,11 @@ pub struct FxChainBlock {
     pub src_in: Tick,
     #[serde(default)]
     pub fx_off: bool,
+    /// The block's wiring RELATIVE to the block (fx-graph-dag D6): its Source is whatever the block
+    /// is appended to; an input from outside the copied slots became the Source when it was copied
+    /// (`fx_graph::derive`). Empty — a line; absent in older clipboard text and presets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fx_in: Vec<crate::fx_graph::SlotInputs>,
 }
 
 /// The envelopes of one slot (the curves without the effect itself).
@@ -1128,6 +1133,13 @@ pub fn append_chain_block(
         bypass.push(slot.bypass);
         auto.push(rebase_curves(&slot.curves, block.src_in, dst_src_in));
     }
+}
+
+/// The wiring of the slots appended by `append_chain_block` (fx-graph-dag D6): the block's Source is
+/// the receiver's Output ("input to input"), its addresses move by the receiver's length `first`.
+/// Call it with the receiver's wiring as it stood BEFORE the append.
+pub fn append_chain_wiring(fx_in: &mut Vec<crate::fx_graph::SlotInputs>, first: usize, block: &FxChainBlock) {
+    crate::fx_graph::splice(fx_in, first, &block.fx_in, block.slots.len());
 }
 
 /// The masks of the slots appended by `append_chain_block` (shape-masks): slot `first + i`
@@ -1472,6 +1484,7 @@ pub fn collapse_into_sequence(
             fx_auto: Vec::new(),
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         }));
     }
 
@@ -1932,6 +1945,7 @@ pub fn import_as_sequences(
             fx_auto: Vec::new(),
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         }));
     }
     (cmds, rep)

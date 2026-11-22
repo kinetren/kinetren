@@ -34,6 +34,7 @@ fn clip(id: u64, start: i64, dur: i64) -> ClipEvent {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 

@@ -42,6 +42,7 @@ fn sample_project() -> Project {
         fx: vec![FxInstance::slowed_reverb(0.82, 0.3, 140.0)],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.clips.push(ClipEvent {
         r#gen: None,
@@ -66,6 +67,7 @@ fn sample_project() -> Project {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p
 }

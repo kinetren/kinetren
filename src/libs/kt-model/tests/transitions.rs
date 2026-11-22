@@ -46,6 +46,7 @@ fn base_project() -> Project {
             fx_auto: vec![],
             opacity: 1.0,
             fx_off: false,
+            fx_in: Vec::new(),
         });
     }
     p.validate().unwrap();
@@ -693,6 +694,7 @@ fn t462_overlap_transition_model() {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     });
     p.transitions.push(ov(1, 1, 2));
     match p.validate() {

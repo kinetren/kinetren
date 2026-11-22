@@ -57,6 +57,7 @@ fn project() -> Project {
         ],
         opacity,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips = vec![
         clip(1, 0, 0, 2 * sec, 1, 1.0),

@@ -121,7 +121,8 @@ fn registry() -> Vec<(&'static str, BTreeSet<String>)> {
         to.insert(id.to_string());
     }
     for f in FxInstance::all().iter().filter(|f| !matches!(f, FxInstance::Plugin(_))) {
-        let to = if f.is_layer_mix() {
+        // routing, not an effect a person picks: the layer strength and the graph's Merge
+        let to = if f.is_layer_mix() || f.is_merge() {
             &mut layer
         } else if f.is_audio() {
             &mut audio
@@ -132,7 +133,7 @@ fn registry() -> Vec<(&'static str, BTreeSet<String>)> {
     }
     vec![
         ("Audio effects", audio),
-        ("Layer marker", layer),
+        ("Routing", layer),
         ("Video effects", video),
         ("Transitions", transitions),
         ("Generators", generators),

@@ -49,6 +49,7 @@ fn t2216_a_starts_pass_reaches_the_device_whole() {
         fx: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     c.fx = vec![];
     p.clips.push(c);

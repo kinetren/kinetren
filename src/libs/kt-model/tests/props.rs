@@ -271,6 +271,7 @@ fn t649_formula_curves_are_refused_loudly() {
         fx_auto: vec![vec![curve("db", -6.0, 0.0, true)]],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(c.clone());
     p.ensure_tracks(LaneKind::Video, 1);

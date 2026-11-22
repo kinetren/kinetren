@@ -58,6 +58,7 @@ fn project_kind(rate: Option<f64>, kind: ClipKind) -> Project {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     if let Some(r) = rate {
         c.fx = vec![FxInstance::slowed_reverb(r, 0.0, 120.0)];

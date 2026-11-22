@@ -6,7 +6,7 @@
 //! this crate knows nothing about the exchange format and must not.
 
 use kt_model::project_file::{
-    EXTENSION, FileKind, MARKER, PROJECT_FILE_VERSION, ProjectFileError, from_text,
+    EXTENSION, FileKind, MARKER, PROJECT_FILE_READS, PROJECT_FILE_VERSION, ProjectFileError, from_text,
     is_project_file, to_text,
 };
 use kt_model::*;
@@ -49,6 +49,7 @@ fn clip(id: u64, media: u64, start: i64, dur: i64) -> ClipEvent {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     }
 }
 
@@ -206,18 +207,18 @@ fn t812_version_refuses_forward_and_names_the_import_door() {
     // a version GREATER than the current one — rejection with the number, no partial reading
     let newer = text.replacen(
         &format!("\"{MARKER}\": {PROJECT_FILE_VERSION}"),
-        &format!("\"{MARKER}\": {}", PROJECT_FILE_VERSION + 7),
+        &format!("\"{MARKER}\": {}", PROJECT_FILE_READS + 7),
         1,
     );
     assert_ne!(newer, text, "scene: version found in the file");
     match from_text(&newer) {
         Err(ProjectFileError::TooNew { version }) => {
-            assert_eq!(version, PROJECT_FILE_VERSION + 7)
+            assert_eq!(version, PROJECT_FILE_READS + 7)
         }
         other => panic!("a file of a future version must be rejected with its number, not {other:?}"),
     }
     let said = from_text(&newer).unwrap_err().to_string();
-    assert!(said.contains(&(PROJECT_FILE_VERSION + 7).to_string()), "the error did not name the version: {said}");
+    assert!(said.contains(&(PROJECT_FILE_READS + 7).to_string()), "the error did not name the version: {said}");
 
     // an exchange file is not a project — the error names the import door
     let otio = r#"{"OTIO_SCHEMA": "Timeline.1", "name": "x", "tracks": {}}"#;
