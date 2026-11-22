@@ -2,7 +2,7 @@
 
 ## Context
 
-- **The sidecar** (`src/libs/kt-media/src/index.rs`, `IndexDb`):
+- **The sidecar** (`src/libs/kt-media/src/index.rs`, `MediaIndexDb`):
   - one SQLite file in WAL mode, `<project>.with_extension("ktindex.db")`;
   - tables: `media` (path, size, mtime ns, xxh3-128 of the whole file, probe), `packet_index`,
     `audio_peaks`, `thumbnails`, `thumb_meta`, `thumb_pixels`, `poster`, `loudness`, `sync_offset`,
@@ -141,6 +141,39 @@ history is exactly the heavy work B1 is about.
   stage result enters the plan in place of its stages, the job and the switch "as in the preview";
 - `durable-history-and-mix`: the history entries and the mix runs.
 
+## D1c. What the tree has today (checked at orch `873934f7`)
+
+- The sidecar type is `MediaIndexDb` (`kt-media/src/index.rs`, 956 lines). About 35 call sites change, not
+  counting tests:
+  - 5 openers in kt-app: the index lane (`util.rs:135`, `:148`), the thumbs lane (`thumbs.rs:329`, `:488`),
+    the media lane through `util::open_source_indexed` (`util.rs:24–38`), the analysis lane (`app.rs:5761`),
+    fx-thumbs (`fx_thumbs.rs:773`) and the reel-preview lane (`reel_preview.rs:523`);
+  - 5 in kt-cli (`main.rs` `media_facts`, `pause_scan`, `preview_run`, `open_sources`, `run`);
+  - `FfmpegSource::open_indexed` (`kt-media/src/ffmpeg.rs:82–100`) and `factory::open_indexed`.
+- `index_db_path()` (`app.rs:3270`) has five inline duplicates that bypass it: `app.rs:1315`, `:5263`,
+  `:6318`, `:7019` and `thumbs.rs:329`. All become `cache_folder()`.
+- The render cache's root is set at `app.rs:913–924` (`journal::data_dir().join("render-cache")`). Its device
+  folder hashes "name|backend" (`render_cache.rs:886–889`), with no driver. The device class of D1b adds the
+  driver.
+- "Used by this process" is today a per-process mark (`Index.session`, `render_cache.rs:146`). The cycle's
+  "used in the last minute" is a new per-entry stamp: a long session must not protect everything it ever
+  read.
+- Preferences (`prefs_window.rs` `draw_prefs_window`) is one window of sections, not pages. The new section
+  "Persistent cache" goes beside the FFmpeg section and is added to the section list of
+  `welcome_prefs_tests.rs:290`.
+- `Notice` (`app.rs:77`) has no action. The cycle's notice needs one (a button opening that section), so a
+  field `action: Option<NoticeAction>` is added.
+- `kt-cli trace cache` already exists (`trace_query.rs:107`, `cache()` `:130`); it is extended, not added.
+- Tests that will see the folder and must be read before the change:
+  - `user_store.rs` t985 (`:1252–1284`) asserts that only `edit.kt` and `edit.ktindex.db*` exist in the
+    project folder;
+  - `reach_tests.rs` t819 mentions fixtures;
+  - `kt-cli/src/showcase.rs:40` filters `.ktindex.db`;
+  - `kt-cli/tests/dist_guard.rs:86` names `index.rs`.
+- The sidecar's other tests (t15 ×2, t70, t795b, t1171, t1741, t1742, t2894 in `index_db.rs`; t1460
+  `sidecar_stall.rs`; t1831, t2519, t476, t504, t640, t411, t1740 in kt-app) are rewritten over files where
+  they assert SQLite specifics, and kept as they are where they assert behaviour.
+
 ## D2. Reading and invalidation (the sidecar's rules, kept)
 
 - A media file is opened as follows:
@@ -151,15 +184,15 @@ history is exactly the heavy work B1 is about.
      - a different one points at another directory, while the old entry stays for another path that
        still has it.
 - Invalidation needs no `DELETE`: a changed file has another id. Pairs name both ids, so a replaced file
-  on EITHER side misses (t401b's rule holds by construction).
+  on EITHER side misses (t402's rule holds by construction).
 - Analysis numbers stay integers ×100 (t401). The packet index is read back byte for byte (t34).
 
 ## D3. Cyclic writing and the registry (the owner's B2)
 
 - **The registry:** `<data>/cache-folders.tsv` lists every cache folder the program made or opened: path,
-  project paths seen in it, last use, and its size at the last count. The Settings page reads it.
+  project paths seen in it, last use, and its size at the last count. The Preferences section "Persistent cache" reads it.
 - **A folder's room** = min(its cap, the disk's free space − a reserve).
-  - The cap is per folder: "Persistent cache" in Settings, default 20 GB.
+  - The cap is per folder: "Persistent cache" in Preferences, default 20 GB.
   - The reserve is max(2 GB, 2 % of the disk), so a cache never fills the disk the person's work is on.
   - `KT_RENDER_CACHE_MB` caps the picture results alone, for tests and the live check.
 - **The cycle.** A writer asks the folder for room before it writes an entry. When the entry does not fit,
@@ -176,7 +209,7 @@ history is exactly the heavy work B1 is about.
   its room from the disk, drops, and retries once.
 - **The notice** ("алерт в уведомлениях"): the first drop of a session in a folder posts one notice:
   - "The cache of «<folder>» is full (<size>): the oldest results are being replaced.";
-  - a button opens Settings → "Persistent cache";
+  - a button opens Preferences → "Persistent cache" (`Notice` gains an action field: it has none today);
   - the same folder posts again only after a restart, or after the cap or the free space changed by more
     than 10 %.
 
@@ -221,7 +254,7 @@ history is exactly the heavy work B1 is about.
 | What the person did | What happens |
 |---|---|
 | moved or renamed the whole project folder | the cache moves with it; relative map lines hit; nothing is recomputed |
-| moved only the `.kt` into another folder | that folder's cache starts empty and fills by content; the old folder shows in Settings as "no project here" |
+| moved only the `.kt` into another folder | that folder's cache starts empty and fills by content; the old folder shows in Preferences as "no project here" |
 | Save As into another folder | the media and reel tenants are copied there in the background (small, costly to recompute); render, history and mix are not |
 | copied the folder to another machine | the media and reel tenants hit; render, history and mix are other device or build, so they miss and are removed at open |
 | deleted `kinetren-cache/` | everything is recomputed when needed; nothing is lost |
@@ -262,7 +295,7 @@ history is exactly the heavy work B1 is about.
 3. The prerender's root and cap from the folder; deletion of `<data>/render-cache` (t3833, t3834).
 4. Cyclic writing, the order of the tenants and the notice (t3835–t3837).
 5. The untitled project's move on save, Save As, a moved folder (t3838–t3840).
-6. The trace and `kt-cli cache` (t3841); Settings → "Persistent cache" (t3842); the live scenario
+6. The trace and `kt-cli cache` (t3841); Preferences → "Persistent cache" (t3842); the live scenario
    (planned live scenario `cache_folder`) and the idle check: the program at rest after cyclic writing
    costs nothing (t3843).
 

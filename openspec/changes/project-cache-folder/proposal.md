@@ -52,12 +52,12 @@ Four things follow from that layout:
   `README.txt` that says it can be deleted at any time. Where a cloud-sync tool allows it, the folder is
   marked as not synced.
 - **Cyclic writing when the folder cannot take more** (the owner's B2):
-  - a folder's room is its cap (Settings, default 20 GB) or the disk's free space less a reserve, whichever
+  - a folder's room is its cap (Preferences, default 20 GB) or the disk's free space less a reserve, whichever
     is smaller;
   - a write that does not fit first drops the oldest entries, least recently used, in the tenants' order;
   - a notice says once per session, per folder: "The cache of <folder> is full: the oldest results are
-    replaced", with a button to Settings → "Persistent cache".
-  - The page lists every cache folder with its size and projects, a Delete button and the cap.
+    replaced", with a button to Preferences → "Persistent cache".
+  - The Preferences section lists every cache folder with its size and projects, a Delete button and the cap.
 - **A folder that cannot be written at all** (read-only, a write test fails): the cache goes to
   `<data>/project-caches/`, under the same cyclic rule. The notice and the project's facts say why. An
   untitled project caches there too, and its cache moves to the new folder on the first save.
@@ -79,11 +79,11 @@ Four things follow from that layout:
   and the fallback.
 - `video-plan`: the prerender's store moves into the cache folder under the folder's cycle.
 - `telemetry`: per-tenant sizes, hits, misses and evictions in the trace; `kt-cli trace cache`.
-- `ui-reach`: Settings → "Persistent cache".
+- `ui-reach`: Preferences → "Persistent cache".
 
 ## Impact
 
-- **kt-media:** `index.rs` (`IndexDb`) is replaced by `cache_folder.rs`, which provides:
+- **kt-media:** `index.rs` (`MediaIndexDb`) is replaced by `cache_folder.rs`, which provides:
   - the folder and its registry;
   - `MediaStore` for peaks, packets, thumbnails, posters, loudness and sync;
   - `ReelStore` for the reel previews;
@@ -94,7 +94,7 @@ Four things follow from that layout:
 - **kt-app:**
   - `index_db_path` becomes `cache_folder`;
   - the lanes keep their roles: index, thumbs, media and reel-preview;
-  - the Settings page; the untitled project's move on save.
+  - the Preferences section; the untitled project's move on save.
 - **kt-cli:** `--cache-dir DIR`, `kt-cli cache <project> [size|prune|clear]`.
 - **kt-dirs:** `project_caches_root()`, `cache_folders_registry()`.
 - **Invariants:**

@@ -43,8 +43,8 @@ projects in it.
   - never a frame this process used in the last minute.
 
   If nothing can be dropped, the write SHALL be skipped and counted, never failing a gesture. The first
-  drop of a session in a folder SHALL post one notice naming the folder, with a way to Settings → "Caches
-  on disk". Nothing SHALL scan or trim at rest.
+  drop of a session in a folder SHALL post one notice naming the folder, with a way to Preferences → "Persistent
+  cache". Nothing SHALL scan or trim at rest.
 - **The registry:** every cache folder SHALL be listed in a registry in the user's data folder, with its
   size and its projects.
 - **Threads:** no cache SHALL be written by the UI thread.
