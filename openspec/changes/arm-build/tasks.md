@@ -1,12 +1,12 @@
 # Tasks: arm-build
 
-> DESIGN ONLY until the owner answers Q1 and the orchestrator's go. Tests: t3980–t3982 (t3983–t3984 spare).
+> DESIGN ONLY until the orchestrator's go; Q1 decided (D5: Linux aarch64 first). Tests: t3980–t3982.
 
 ## 0. Notes
 
 - [x] 0.1 note F-EXT-007
 - [x] 0.2 proposal (the owner's two items and this design's reading), design (D1–D4), delta `distribution`; `openspec validate arm-build --strict`
-- [ ] 0.3 the owner's answer folded in
+- [x] 0.3 the owner's answer folded in (D5: Linux aarch64 first)
 
 ## 1. Build and CI
 

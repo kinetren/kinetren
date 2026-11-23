@@ -1,6 +1,6 @@
 # Design: arm-build
 
-> DESIGN ONLY, revision 1 (2026-11-22), base `3d66d630`. Q1 in `proposal.md`; the default is recommended.
+> DESIGN ONLY, revision 1 (2026-11-22), base `3d66d630`. Q1 decided 2026-11-23 (D5): Linux aarch64 first.
 
 ## Context
 
