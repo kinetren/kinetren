@@ -88,7 +88,7 @@ cache of heavy effects (B1) and the cached render. Start it in this wave.
 |---|---|---|---|---|---|
 | `track-stream-stage` | L | `durable-history-and-mix` (the durable salt in `video_stream.rs`); `stream-picture-stays` | STREAM (`TrackStream`), `kt-engine/src/video.rs` track layer, EXPORT (`stream_preroll`), AUDIO (the sound half's track layout) | answered A23 | t3379–t3398 |
 | `fx-preset-change` | M | `fx-graph-dag` (FX-UI selection in `node_editor.rs`) | FX-UI, `kt-model/src/ops.rs` (`insert_chain_block_at`) | answered A4 | t3595–t3596, t3932–t3934 |
-| `persistent-cache` (was `disk-copies`; "Постоянный кэш") | L | `project-cache-folder` (the store's places, salt and cycle); `durable-history-and-mix` (shares CACHE); `device-decode-sources` (DECODE, for source copies) | CACHE (`results/…/layers/`, the source copies), the plan's kept layer input (`video_plan.rs`, `video.rs` layer path), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); designed by spec-features (branch claude/spec-features-224d3d, 1e31056c) | t3440–t3459 |
+| `persistent-cache` (was `disk-copies`; "Постоянный кэш") | L | `project-cache-folder` (the store's places, salt and cycle); `durable-history-and-mix` (shares CACHE); `device-decode-sources` (DECODE, for source copies) | CACHE (the final frames' value order, the source copies; `layers/` withdrawn by the owner's D1, kkt-26.11.22), PLAYER (the job at rest), DECODE (`CopySource`), EXPORT (`MuxConfig` times) | answered B1 (the name; heavy files AND the results of heavy effects); designed by spec-features (branch claude/spec-features-224d3d, 1e31056c) | t3440–t3459 |
 
 ### Wave 5
 
@@ -183,7 +183,7 @@ These designs came from the `v26.10` registry rows (spec-features, 2026-11-20). 
   motion-driven-params (t3952) and wasm-plugin-host t3957–t3963 (t3957–t3959); wasm-plugin-host overlaps
   memory-breakdown t3962–t3967 (t3962–t3963).
 - **The persistent cache (B1) and project-cache-folder share one store, agreed with spec-features
-  (2026-11-22):** `results/v<FORMAT>/<device class>/{frames, layers, history}`, `mix/`, source copies under
+  (2026-11-22):** `results/v<FORMAT>/<device class>/{frames, history}` (`layers/` withdrawn by the owner's D1, kkt-26.11.22: the final preview frame only), `mix/`, source copies under
   `media/<content id>/`. `durable_hash` keys, plus the decoder major, the kernels' versions and
   `COMPOSITE_PATH_VERSION`, not the build: an update keeps what it did not change, and a stale entry is
   dropped on a miss. One order by value per byte across results, mix and copies (the history is not
@@ -209,9 +209,10 @@ Each of these changes' `tasks.md` now names its files, and those files were chec
 - `track-stage-preroll`: AUDIO (`audio.rs`, `fxstore.rs`, `mix.rs`), plus the start hold in `player.rs`. It
   shares `mix.rs` with `durable-history-and-mix`, so it does not run beside it.
 - `persistent-cache`:
-  - CACHE (`results/…/layers/`, the copies), `video.rs` `frame_plan`, PLAYER, DECODE (the copy source) and
-    EXPORT (`format.rs`).
-  - It starts after `project-cache-folder` section 3. Its layer codec waits for the owner's Q1.
+  - CACHE (the final frames, the copies), PLAYER, DECODE (the copy source) and EXPORT (`format.rs`); since the
+    owner's D1 (kkt-26.11.22) it keeps no stage result, so `frame_plan`'s layer input is no longer touched
+    (spec-features revises the change).
+  - It starts after `project-cache-folder` section 3. Its Q1 (Q55) is answered by D1: no layer results, so no layer codec.
 
 New tests t4100–t4105 are taken from spec-engine's third block (t4100–t4199): device-decode-sources
 t4100–t4102, track-stage-preroll t4103–t4104, durable-history-and-mix t4105.

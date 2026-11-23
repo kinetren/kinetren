@@ -24,8 +24,7 @@ tiers the same way the video tier works, and puts a measurement first.
 ## What Changes
 
 - **Two tenants of the project's cache folder** (`project-cache-folder`): the stream entries as the
-  `history/` kind of the persistent cache (`results/v<FORMAT>/<device class>/history/`, beside its `frames/`
-  and `layers/`), and `mix/` for mix runs, written in the folder's cycle (a stale salt dropped on a miss, least recently used out, the prerender never
+  `history/` kind of the persistent cache (`results/v<FORMAT>/<device class>/history/`, beside its `frames/`), and `mix/` for mix runs, written in the folder's cycle (a stale salt dropped on a miss, least recently used out, the prerender never
   evicting what this process used).
 - **Stream history pages to disk.** The stream memo gets a backing store: an entry the memo lacks is
   looked up on disk before a kernel walks for it; checkpoints and broken pictures are written there at

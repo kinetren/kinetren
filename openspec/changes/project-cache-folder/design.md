@@ -48,9 +48,7 @@ kinetren-cache/
   reels/<content hash>/           strip · frames · peaks          (STRIP_ROW_VERSION in the header)
   media/<content id>/copy-<q>.mkv a heavy source's copy at quality step q (persistent cache, D1b)
   results/v<FORMAT>/<device class>/   THE PERSISTENT CACHE OF RESULTS ("Постоянный кэш", D1b):
-    frames/                       composites of moments, segments + manifests (the disk prerender)
-    layers/                       a layer's picture after a heavy node, a track stage's or a reel's output
-                                  (persistent-cache D1–D4)
+    frames/                       FINAL composites of moments, segments + manifests (the disk prerender)
     history/                      stream entries (Datamosh), LZ4      (durable-history-and-mix)
   mix/v<FORMAT>/                  kept mix runs, raw f32          (durable-history-and-mix)
   renders.tsv                     earlier renders, verified       (cached-final-render)
@@ -75,7 +73,7 @@ kinetren-cache/
   - the thumbs lane writes thumbnails and posters;
   - the media lane writes packets;
   - the reel-preview lane writes reels;
-  - the render-cache thread writes `results/…/frames/` and `results/…/layers/`;
+  - the render-cache thread writes `results/…/frames/`;
   - the persistent cache's copy job writes the source copies (a background job, change `persistent-cache`);
   - the history and mix writers of `durable-history-and-mix` write theirs.
   - The UI thread touches nothing. Two processes may write the same entry; the content is the same
@@ -88,17 +86,19 @@ The owner: "мне не нравится почему ты думаешь тол
 kept results live in ONE store, the persistent cache, designed by spec-features in change `persistent-cache`
 (formerly `disk-copies`; branch `claude/spec-features-224d3d`, commit 1e31056c, design D1–D4, D8). This
 change hosts it. Its kinds lie side by side in the cache folder:
-- `results/v<FORMAT>/<device class>/frames/`: the composites of moments (the disk prerender of
-  `render-cache-disk`);
-- `results/…/layers/`: a layer's picture after a heavy node, a track stage's or a reel's output;
+- `results/v<FORMAT>/<device class>/frames/`: the FINAL composites of moments (the disk prerender of
+  `render-cache-disk`), the only picture the store keeps;
 - `results/…/history/`: stream entries (`durable-history-and-mix`);
 - `media/<content id>/copy-<quality>.mkv`: heavy sources' copies.
 
 **The keys.**
-- Frames and stage results are keyed by `render_cache::durable_hash`. It covers the plan's fields without
-  content serials, `Leaves::digest` of the files' identities and the generators' values. A frame's key
-  covers its whole plan. A stage result's key covers the sub-plan up to and including that stage, so an
-  edit after it, or on another layer, keeps the entry valid.
+- Frames are keyed by `render_cache::durable_hash`. It covers the plan's fields without content serials,
+  `Leaves::digest` of the files' identities and the generators' values. A frame's key covers its whole plan.
+- **No stage results** (the owner's D1, kkt-26.11.22 line 4: "делай кеш имменно финального превью а не на
+  каком-то конкретном этапе цепочки fx"). The 2026-11-22 layout had a `layers/` kind (a layer's picture after
+  a heavy node, a track stage's or a reel's output) keyed by the sub-plan; it is withdrawn. An edit anywhere
+  in a moment's plan makes that moment a miss, and the preview recomputes it; `docs/cache-audit.md` lists what
+  the program keeps per stage in memory today and what a final-frame store makes redundant.
 - This is the layout `cached-final-render` names (the video-plan delta "The durable key's layout is a
   shared contract").
 
@@ -121,7 +121,7 @@ and a build salt would empty the store on every update, against B1.
 - A key that no longer matches is a miss, and the entry is removed when met. There is no sweep at open.
 
 **The manifest forms:**
-- frames and stage results: video segments of the machine's hardware encoder with a text manifest per
+- frames: video segments of the machine's hardware encoder with a text manifest per
   segment (codec, encoder, size, rate, salt, one key per frame);
 - history: LZ4 of exact entries (it must be lossless: `durable-history-and-mix` D9);
 - copies: MKV with a manifest of the original's identity and timestamps.
@@ -137,8 +137,9 @@ history is exactly the heavy work B1 is about.
 **Who decides what:**
 - this change: the folder, the places, the entry header, the salt's form, the folder's room, the cycle
   and the notice;
-- `persistent-cache`: which stages and sources are heavy enough to keep, the value measure, how a kept
-  stage result enters the plan in place of its stages, the job and the switch "as in the preview";
+- `persistent-cache`: which sources are heavy enough to copy, the value measure, the frames' quality rule (a
+  frame is written at the preview's quality and read only at its own, its D2), the copy job and the switch "as
+  in the preview";
 - `durable-history-and-mix`: the history entries and the mix runs.
 
 ## D1c. What the tree has today (checked at orch `873934f7`)
@@ -266,7 +267,7 @@ history is exactly the heavy work B1 is about.
 | media index (peaks, packets, thumbs, posters, loudness, sync) | `<stem>.ktindex.db` | `kinetren-cache/media/`, `pairs/` | the owner's decision |
 | reel previews | `<stem>.ktindex.db` | `kinetren-cache/reels/` | same |
 | prerender segments | `<data>/render-cache/` | `kinetren-cache/results/…/frames/` | "вот с тем же превью кэшем" |
-| heavy layers' results (persistent cache, B1) | none | `kinetren-cache/results/…/layers/` | "СУТЬ … В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ" |
+| heavy effects' results (persistent cache, B1) | none | the final frames in `kinetren-cache/results/…/frames/`; no per-stage kind | B1 "ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ", narrowed by D1 to the final preview |
 | Datamosh history, heard mix (planned) | `<data>` | `kinetren-cache/results/…/history/`, `mix/` | the same rule for a new kept result |
 | earlier renders list (planned) | `<data>` | `kinetren-cache/renders.tsv` | per project |
 | heavy sources' copies (persistent cache, B1; formerly `proxies`) | `<proxy folder>` | `kinetren-cache/media/<content id>/copy-*.mkv` | one place, keyed by the original's content |
