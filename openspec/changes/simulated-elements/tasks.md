@@ -1,6 +1,7 @@
 # Tasks: simulated-elements
 
-> DESIGN ONLY until the owner answers Q1–Q2 and the orchestrator's go. Revision 2 (D3): the system, then three
+> DESIGN ONLY until the owner answers Q1–Q2 and the orchestrator's go. The engine contract (design D10) is anchored
+> to orch `d613b228` and reviewed with spec-engine. Revision 2 (D3): the system, then three
 > applications (Q1 a). Tests: t3968–t3973, t3983–t3989 (t3990 reserved). Depends on `motion-driven-params` (the outer
 > map's channels); the mask application on `point-tracker`.
 
@@ -16,11 +17,20 @@
 - [ ] 1.2 the integrator: the outer clock per instance path, fixed step, frozen math, interpolation, memory checkpoints; t3968, t3970
 - [ ] 1.3 drivers (outer channels, home acceleration, links, sound analysis, tracker, other sets) and the dependency order; t3985
 
-## 2. In the plan (kt-engine, kt-gpu)
+## 2. In the plan (kt-engine, kt-gpu) — design D10
 
-- [ ] 2.1 `frame_plan` asks the sets for poses, the plan and durable keys hash them; zero cost without sets; t3969, t3971, t3987
-- [ ] 2.2 the incomplete-frame report and the export's forward integration; the ceiling; t3986
-- [ ] 2.3 the instanced-sprite pass, warmed with the project
+- [ ] 2.1 plan-side sets: `layer_src` (`video.rs:2497`) asks `Sim::state_at` and writes simulated numbers into
+      `LayerSrc.masks` (`video_plan.rs:118`) and the sub-plan transforms; the `SimKey` joins the per-event memo key
+      (`incremental.rs`, t2004); zero cost without sets; t3969, t3971, t3987
+- [ ] 2.2 source-side sets: the `SimKey` salts the generator's address (`gen_salt` `video.rs:2913`,
+      `gen_source_addr_in` `:2935`) on both parties (`build_reel`, `gen_sources`); the drivers in `GenState` through
+      `Retune::Gen` (`worker.rs:105`); the source computes poses in `render_at` (`kt-media/src/generator.rs:169`)
+- [ ] 2.3 catch-up: the player's `sim` thread (class `near`, joined through `kt_time::shutdown`); `Behind` →
+      starvation for a source, `note_sim_short` beside `note_stream_short` (`video.rs:2399`) for a plan-side set;
+      `render_ahead::Waits` on `sim::walked`; `Sim::preroll` in both export bodies; t3986
+- [ ] 2.4 the probe plan keys without stepping (`Sim::key_only`), so `show_kept` finds kept moments; probe key == full key
+- [ ] 2.5 the instanced-sprite pass in kt-gpu, called by the Emitter's compute frame on the media worker; warmed by
+      `prewarm::effect_ids`
 
 ## 3. Model and format
 

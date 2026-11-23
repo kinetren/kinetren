@@ -125,16 +125,18 @@ A force term reads one of:
 
 ## D5. In the plan — numbers, keyed
 
-- `frame_plan` builds a layer's plan as today. For an owner with element sets it asks `kt-sim` for the placed poses at
-  this moment (memo by simulation key + t) and writes them into the layer's plan as numbers:
-  - glyph offsets for the title's rasterization;
-  - vertex positions for the mask raster;
-  - transforms for reel layers or 3D planes;
-  - an instance buffer for particles.
-- The plan key hashes those numbers. A memo hit or a disk frame (persistent cache) therefore stays exact without any
-  history in the key (invariant 4), and invariant 7 holds: the drawer is the producer's own.
-- The `durable_hash` of a frame with a simulated set includes the poses. The frames on disk are final pictures (the
-  owner's D1), and nothing else of the simulation is kept.
+Where the poses are computed depends on who draws the elements today; the function (`kt-sim`) is one either way.
+
+- **Plan-side sets** (mask vertices, reel layers, 3D planes, transition pieces). These elements are numbers the plan
+  already evaluates at the frame's material tick: `LayerSrc.masks`, a sub-plan's transforms, the trans panels.
+  `layer_src` asks `kt-sim` for the poses and writes the simulated numbers in place of the evaluated ones. They enter
+  `fx_hash` and kt-gpu's `plan_key` as the evaluated numbers do today, and so `durable_hash`.
+- **Source-side sets** (a title's glyphs, an emitter's particles). The picture is made by the generator source on the
+  media worker (`render_at`, law P), so the poses are computed there. The source's request stays (address, tick,
+  quality). The address carries the simulation per instance (D10.2), so the request equals the read and a kept frame
+  is never another instance's.
+- No history and no start moment ever enters a key (invariant 4). The frames on disk are final pictures (the owner's
+  D1), and nothing else of the simulation is kept.
 
 ## D6. Drawing
 
@@ -203,7 +205,47 @@ Paired sound (the owner's simulated-device rule) is checked: these are not devic
 recorded instead: a set's collision events as a driver of an audio event (an impact sound when a letter lands). The
 collisions would be a pure function too, so the sound would land on the frame.
 
-## D10. Idle
+## D10. The engine contract (implementation-ready, checked against orch `d613b228`)
+
+1. **`kt-sim` is pure** (kt-time, kt-plugin-api). `Sim::state_at(rule, drivers, t) -> Poses` reads a `SimMemo` of
+   checkpoints. The memo is shared by key: one per process, in the memory ledger as an account of its own, bounded, LRU.
+   It never blocks: `state_at` either reaches t from the nearest checkpoint within a step budget, or answers
+   `Behind { secs }`.
+2. **The per-instance key.** `SimKey = xxh3(set source content, operators' rows and curves, drivers' closed-form
+   profiles, instance path)`.
+   - The drivers' profiles come from `motion-driven-params` D3: resolved in `morph_pass` while the instance's reel is
+     resolved, so the outer map is known per instance.
+   - Source-side sets: the generator's address is salted by the `SimKey` through the existing
+     `gen_source_addr_in(id, salt)` (`video.rs:2935`), with the salt mixed into `gen_salt` (`video.rs:2913`).
+     `gen_sources` computes the same salt (the two-party rule of kt-engine's CLAUDE.md). The drivers travel to the
+     source in `Retune::Gen` (`worker.rs:105`) as part of `GenState`. A title WITHOUT a set keeps salt 0 and its
+     former address, byte for byte.
+   - Plan-side sets: the `SimKey` joins the per-event memo key (`incremental.rs`, the rule "keyed by everything an
+     event is derived from", t2004).
+3. **Catch-up off every hot thread.**
+   - A `sim` thread of the player advances the memos at class `near`, like `stream_advance_ahead`: the frame on
+     screen first, then ahead while playing.
+   - The media worker (a source-side set) and `layer_src` (a plan-side set) call `state_at` with a small budget. On
+     `Behind`, the source gives no frame (starvation: the layer has no picture, `FramePlan::starved`) or `layer_src`
+     notes `note_sim_short(secs)` beside `note_stream_short` (`video.rs:2399`).
+   - The frame is incomplete and the preview shows Loading. `render_ahead::Waits` waits on the sim thread's walk as on
+     a stream walk (`kt_plugin_api::stream::walked` gets a sibling `sim::walked`).
+   - An export calls `Sim::preroll` before its first frame and never sees `Behind` (no budget offline).
+   - The UI thread never steps.
+4. **Keys.** `plan_key` (kt-gpu `engine.rs:4330`) and `durable_hash` (`render_cache.rs:639`) hash nothing new for
+   source-side sets: the address carries it. For plan-side sets they hash the simulated numbers where they hash the
+   evaluated ones today: `MaskOp` in `LayerSrc.masks`, the transforms. The rule "a new field `plan_hash` hashes is
+   hashed by `durable_hash` too" holds by construction.
+5. **The probe plan** (`probe_plan`, `show_kept`) must not step. A plan-side set in a probe asks
+   `Sim::key_only(SimKey, t)` and hashes the key with t, like `StreamKernel::key`. The kept composite is therefore
+   found without the simulation, and a probe plan's key equals the full plan's.
+6. **Zero cost.** An owner without a set takes none of these branches; t3986 checks the plan keys and the bytes of the
+   golden projects unchanged.
+7. **The particles' drawer** is an instanced pass of kt-gpu, run by the generator's compute frame on the media worker
+   (generators already have a compute frame, kt-engine CLAUDE.md "a generator's compute frame"). The plan sees an
+   ordinary generator layer, and there is no new executor path.
+
+## D11. Idle
 
 - Nothing runs at rest.
 - A paused frame computes its numbers once; the plan memo reuses them.
