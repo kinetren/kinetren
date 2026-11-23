@@ -535,6 +535,7 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
         fx,
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     p.clips.push(clip(1, 0, vec![]));
     p.clips.push(clip(2, 90_000, vec![mosh]));

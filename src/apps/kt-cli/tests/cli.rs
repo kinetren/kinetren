@@ -1601,6 +1601,7 @@ fn mosh_case(src: &std::path::Path) -> kt_model::Project {
         fx_auto: vec![],
         opacity: 1.0,
         fx_off: false,
+        fx_in: Vec::new(),
     };
     let mut p = Project::new(ProjectSettings {
         fps: 30,
