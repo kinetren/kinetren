@@ -97,8 +97,9 @@ Slowed&Reverb, an instance's speed), not the playhead — the B7 lesson.
   - `SimRule` rows on an owner, with drivers as link sources.
 - kt-text: the cluster boxes as rest poses (exists: `LayoutInfo::clusters`), and the placed poses applied at
   rasterization.
-- kt-engine: building the plan evaluates the sets in dependency order; the per-instance time path; the incomplete-frame
-  report; the plan key hashes the poses.
+- kt-engine (design D10): plan-side sets in `layer_src`, source-side sets salted per instance through `gen_salt`; a
+  `sim` thread advances the memos; `Behind` makes the frame incomplete (Loading); the probe plan keys without stepping;
+  an export pre-rolls.
 - kt-gpu: an instanced-sprite pass for particles (a sprite atlas, poses from a buffer).
 - kt-app: the "Simulation" section in an owner's window (title form, mask panel, composition window, emitter); a faint
   overlay of the set's rest poses and links while editing.
