@@ -5148,13 +5148,20 @@ impl KtApp {
 
     /// A generator's kind changed — in its window's gallery or from its bin card — as ONE history
     /// step: the media path, and every picture event's sound pair kept in step with the new kind
-    /// (generator-menu-one-item D2). A kind that sounds beside its picture (Sync flash) gives each
-    /// picture event of the media its sound event on audio track 1, linked to it, as the menu used
-    /// to; a kind with no sound takes the generator's sound events away (they would hold silence).
-    /// The window's gallery is the one way to a kind since kkt-26.11.20 A1.
+    /// (generator-menu-one-item D2). The window's gallery is the one way to a kind since kkt-26.11.20 A1.
     pub(crate) fn gen_kind_switch_cmds(&self, media: MediaId, kind: &kt_model::GeneratorKind) -> Vec<Command> {
         let set = Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(kind) };
-        let sounds = kt_media::MediaSource::info(&kt_media::generator::GeneratorSource::new(kind.clone())).has_audio;
+        let (remove, add) = self.gen_pair_cmds(media, kt_media::generator::GeneratorSource::info_for(kind).has_audio);
+        // the sound halves go first: the media's new kind is no sound kind
+        remove.into_iter().chain(std::iter::once(set)).chain(add).collect()
+    }
+
+    /// The commands that keep a generator media's sound pairs in step with whether it `sounds`
+    /// (gen-sound-pair, found-defects 1000): (removals, additions). A sounding generator gives each
+    /// picture event of the media its sound event on audio track 1, linked to it, as the menu gives at
+    /// creation; a silent one loses the sound events, which would hold silence. Asked by a kind
+    /// change and by a value edit that switches the sound on or off (SMPTE's tone, Sync flash's beep).
+    pub(crate) fn gen_pair_cmds(&self, media: MediaId, sounds: bool) -> (Vec<Command>, Vec<Command>) {
         let clips = &self.model.project().clips;
         let pictures: Vec<&ClipEvent> = clips.iter().filter(|c| c.media == media && c.kind == ClipKind::Video).collect();
         let pair_of = |v: &ClipEvent| {
@@ -5165,13 +5172,10 @@ impl KtApp {
                 .collect::<Vec<_>>()
         };
         if !sounds {
-            // the sound halves go first: the media's new kind is no sound kind
-            let mut cmds: Vec<Command> =
-                pictures.iter().flat_map(|v| pair_of(v)).map(|id| Command::RemoveClip { id }).collect();
-            cmds.push(set);
-            return cmds;
+            let remove = pictures.iter().flat_map(|v| pair_of(v)).map(|id| Command::RemoveClip { id }).collect();
+            return (remove, Vec::new());
         }
-        let mut cmds = vec![set];
+        let mut add = Vec::new();
         let (mut next_id, mut next_group) = (self.next_clip_id(), self.next_group_id());
         for v in pictures.into_iter().filter(|v| pair_of(v).is_empty()) {
             let group = v.link_group.unwrap_or_else(|| {
@@ -5196,12 +5200,12 @@ impl KtApp {
                 masks: Default::default(),
                 ..v.clone()
             };
-            cmds.push(Command::AddClip(a));
+            add.push(Command::AddClip(a));
             if v.link_group.is_none() {
-                cmds.push(Command::LinkClips { ids: vec![v.id, id], group });
+                add.push(Command::LinkClips { ids: vec![v.id, id], group });
             }
         }
-        cmds
+        (Vec::new(), add)
     }
 
     /// "Create a generator…" from Edit or the bin (kkt-26.11.20 A1: one item, by the track): the

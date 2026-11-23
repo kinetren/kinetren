@@ -532,6 +532,7 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
         reversed: false,
         fx_bypass: vec![],
         fx_auto: vec![],
+        fx_in: vec![],
         fx,
         opacity: 1.0,
         fx_off: false,
