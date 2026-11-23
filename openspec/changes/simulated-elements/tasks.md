@@ -17,26 +17,25 @@
 - [ ] 1.2 the integrator: the outer clock per instance path, fixed step, frozen math, interpolation, memory checkpoints; t3968, t3970
 - [ ] 1.3 drivers (outer channels, home acceleration, links, sound analysis, tracker, other sets) and the dependency order; t3985
 
-## 2. In the plan (kt-engine, kt-gpu) — design D10
+## 2. In the plan (kt-engine, kt-gpu) — design D10, D11
 
-- [ ] 2.1 plan-side sets: `layer_src` (`video.rs:2497`) asks `Sim::state_at` and writes simulated numbers into
-      `LayerSrc.masks` (`video_plan.rs:118`) and the sub-plan transforms; the `SimKey` joins the per-event memo key
-      (`incremental.rs`, t2004); zero cost without sets; t3969, t3971, t3987
-- [ ] 2.2 source-side producers draw only what does not move (design D12.1): the title's glyph atlas (one sprite per
-      cluster, `GeneratorSource`, `kt-media/src/generator.rs:169` `render_at`), the emitter's sprite; the poses of
-      letters and particles are a plan-side set in `layer_src` like 2.1; no salt from the `SimKey`, no drivers in
-      `Retune::Gen` (a retune drops the source's whole cache, `worker.rs:363–380`); a title or emitter with no set
-      keeps salt 0 and its bytes; t4107
-- [ ] 2.3 catch-up: the player's `sim` thread (class `near`, joined through `kt_time::shutdown`); `layer_src` calls
-      `state_at` with a small budget and on `Behind` notes `note_sim_short` beside `note_stream_short`
-      (`video.rs:2399`); the worker never steps; `render_ahead::Waits` on `sim::walked`; `Sim::preroll` in both export
-      bodies; t3986
-- [ ] 2.4 the key `SimKey(t)` over the drivers' prefix [origin, t] (design D12.2); the plan and the probe hash
-      `(SimKey(t), t)`; `Sim::key_only` never steps, so `show_kept` finds kept moments; probe key == full key; the
-      per-event memo key takes the static part only (t2004); t3987
-- [ ] 2.5 the instanced-sprite op and pass in kt-gpu (design D12.3): a `Compiled` pipe with its `Slot`, timed, cut by
-      the arbiter, warmed by `prewarm::effect_ids`; `plan_key` (`engine.rs:4330`) and `put_plan`
-      (`render_cache.rs:715`) hash the op (t2981 green)
+- [ ] 2.1 `frame_plan` (`kt-engine/src/video.rs:2360`) asks the sets for poses; the outer clock and the instance
+      path go down the nested build beside `NestSrc.inner_t` (design D11); simulated mask vertices replace the
+      evaluated ones in `PlanLayer.masks` (`video_plan.rs:118`); `plan_key` (`kt-gpu/src/engine.rs:4330`) and
+      `put_plan` (`render_cache.rs:715`) hash the poses (t2981 kept green); zero cost without sets; t3969, t3971,
+      t3987
+- [ ] 2.2 the incomplete-frame report beside `note_stream_short` (`video.rs:2399`) and the catch-up line; the advance
+      off the compose thread beside `stream_advance_ahead` (`player.rs:3609`); the export's forward integration
+      beside `stream_preroll` (`export.rs:510`); checkpoints as a new ledger tenant (`kt-time/src/mem.rs`); the
+      ceiling; t3986
+- [ ] 2.3 the instanced-sprite pass in kt-gpu (a `Compiled` pipe with its `Slot`, timed, warmed with the project);
+      a simulated title's letters through it from the source's glyph atlas (design D11; `GeneratorSource`,
+      `kt-media/src/generator.rs:351`, rasterizes the atlas once); a title with no set keeps its path; t4107
+- [ ] 2.4 the probe plan keys a set without stepping (`Sim::key_only(SimKey(t), t)`, the drivers' prefix [origin, t],
+      design D10.5), so `show_kept` finds kept moments without the simulation; the probe key equals the full plan's;
+      t3987
+- [ ] 2.5 the Emitter: its source draws the sprite (atlas) once, the plan carries the particles' poses, the same
+      instanced pass draws them; warmed by `prewarm::effect_ids`
 
 ## 3. Model and format
 
