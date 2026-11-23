@@ -1457,6 +1457,11 @@ scan per frame.
 - **THEN** the complete ones stay and no incomplete one is kept
 - **TEST** t2513 (`src/libs/kt-gpu/src/pool.rs`)
 
+#### Scenario: The window's engine on a card fills no readback memo
+- **WHEN** the decision is asked for the window's engine on a card and on a CPU device, an offline engine on either, and an engine keeping its bytes-path composites on the device
+- **THEN** only the window's engine on a card and the engine keeping its composites fill none: the present memo holds the same moments there (cache-audit cut 4); the strips, posters, cells and the slow route keep theirs
+- **TEST** t3607 (`src/libs/kt-gpu/src/engine.rs`)
+
 ### Requirement: The look-ahead walks only what a stage on screen reaches
 The far look-ahead of a stream history SHALL walk nothing while no stream stage is on screen, and no
 look-ahead walk SHALL take more than `STREAM_WALK_SECS` of frames. The walk of the frame ON SCREEN SHALL

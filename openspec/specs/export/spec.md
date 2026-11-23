@@ -990,8 +990,13 @@ uploads once; at 1080p that is 31 frames per device, on three or four devices.
 
 #### Scenario: Uploads past the ring are dropped, the bytes stay
 - **WHEN** twenty-four consecutive frames are composed once each on an export device and on a preview device with its full upload cache, each frame twice in a row on the export device
-- **THEN** after every frame the export device holds at most the uploads of the frames in flight and the frame being built, the frame read again at once uploads nothing, the frames are byte for byte the preview device's, and the preview device holds more
+- **THEN** after every frame the export device holds at most the uploads of the frames in flight and the frame being built, the frame read again at once uploads nothing, the frames are byte for byte the preview device's, and a card's preview device holds more
 - **TEST** t2298 (`src/libs/kt-gpu/tests/export_ring.rs`)
+
+#### Scenario: A CPU device's preview keeps two frames of uploads
+- **WHEN** twenty-four consecutive frames are composed on a preview engine of a device of type CPU, each twice in a row
+- **THEN** it holds at most two frames' uploads after every frame (its textures are the process's memory, a second copy of the decoded frames: cache-audit cut 3), and the frame composed again at once uploads nothing; a card's preview keeps its cache
+- **TEST** t3606 (`src/libs/kt-gpu/tests/export_ring.rs`)
 
 ### Requirement: An export claims the preview's growth while it runs
 While an export runs in the process, the memory ledger SHALL grant no tenant anything above its base:

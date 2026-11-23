@@ -1099,6 +1099,21 @@ evicted on every lap (spikes of 537/s), and the preview quality changed nothing 
 - **THEN** the job's cache evicts against its base; the dropped cache's want leaves the ledger, but a newer want stands
 - **TEST** t2391, t2392 (`src/libs/kt-cache/src/lib.rs`)
 
+### Requirement: A moment held final costs no decoded frame
+The look-ahead SHALL skip every moment whose final frame the program holds for the current state — a
+kept composite of the display's executor or a moment of the disk prerender — asking none of its source
+frames and none of its stream history, and the decoded-frame cache's want SHALL be counted after that
+skip: the window and the loop without the held moments, counted again (the window's peak forgotten)
+when the number held moves. The cap still grows with what the window needs (kkt-26.11.10 J4).
+Why: the cache audit (kkt-26.11.22 D2, cut 1) — on the heavy showcase the decoded frames held 7.9 GB of
+10.7 GB resident: the window skipped the kept composites but not the disk prerender, and the want was a
+peak and a loop counted over moments already held.
+
+#### Scenario: Held moments neither decode nor count
+- **WHEN** a loop over three 640×360 layers is walked by the prefetch passes once with nothing held, then with half its moments held
+- **THEN** the loop's bytes without the held half are half the loop; with half held no source frame of a held moment is asked, and the cap comes down below the whole loop's while still holding the other half and its eighth
+- **TEST** t3605 (`src/libs/kt-engine/tests/frames_cache_growth.rs`)
+
 #### Scenario: The stream pacing orders by the bound it has now
 - **WHEN** a renderer build is paced by the player's cache and the cache's bound grows after the build
 - **THEN** the order takes a quarter of the grown bound
