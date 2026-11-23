@@ -210,6 +210,44 @@ collisions would be a pure function too, so the sound would land on the frame.
 - Hover and an open window cost nothing extra. The rest-pose overlay is drawn from numbers already in the plan.
 - The load check runs on the heavy showcase with a simulated title and an emitter added.
 
+## D11. What the tree has (engine side, spec-engine, checked at orch `d613b228`)
+
+- **A title is not drawn in the plan: it is a media source.** `kt-media/src/generator.rs` (`GeneratorSource`,
+  `read_video_frame` `:351`) rasterizes it through `kt-text` on the MediaWorker queue, and the plan reads it as
+  `LayerInput::Frame` from the burst cache (`video_plan.rs:130`) under `(source, quality, index)`. A procedural source
+  is asked at any tick (`video.rs:629`), but the source's time is the EVENT's material time, and one source serves every
+  instance of a reel. So D5/D6's "glyph poses for the title's rasterization" cannot reach the rasterizer through the
+  plan: poses on the outer clock of an instance path are not in the source's key, and two instances would read one
+  cached raster (against t3971).
+  - **Decision (engine side): a simulated title's letters are drawn in the plan by D6's instanced-sprite pass.** The
+    source rasterizes the text ONCE into a glyph atlas (one sprite per cluster, `LayoutInfo::clusters`,
+    `kt-text/src/lib.rs:160`), keyed by the text's values as today; the plan carries one pose per cluster, and the
+    pass places the sprites. A title with no element set keeps today's path, bytes and key (D7; the title goldens and
+    t535 stay as they are). At rest poses the sprite title equals the source's raster within one class
+    (`FrameTol::BILINEAR` at an integer offset, EXACT at the rest pose) — t4107.
+  - Particles and letters then share one pass and one atlas form: the "drawer is the producer's own" (D5) holds for
+    masks, reel layers and planes, and is replaced for letters by the producer's atlas plus the shared pass.
+- **Masks are evaluated at plan time** (kt-gpu never rasterizes a mask; `chain_ops` asks `kt-fx`'s rasterizer at the
+  plan's positions, `PlanLayer.masks: Vec<MaskOp>` `video_plan.rs:118`): simulated vertices replace the evaluated
+  ones in `MaskOp` before the plan is keyed. No new path.
+- **Reel layers:** a reel's sub-plan is `LayerInput::Nest(NestSrc { seq, content_hash, inner_t, … })`
+  (`video_plan.rs:172–182`); the outer clock of D4 is the ROOT plan's `t` carried down the recursion beside `inner_t`,
+  and the instance path is the chain of `NestSrc` the recursion went through. Both are new arguments of the nested
+  build, not fields of the source.
+- **The keys:** `plan_key` (`kt-gpu/src/engine.rs:4330`) and `durable_hash`'s `put_plan`
+  (`kt-engine/src/render_cache.rs:715`) hash the new pose data; t2981 ("a new field a plan key hashes is hashed here
+  too") guards the pair.
+- **The incomplete report** follows the stream stage's: a thread-local "short" counter (`STREAM_SHORT`,
+  `note_stream_short`, `video.rs:2399–2410`) read into the preview's catch-up line. A simulation behind its moment adds
+  a second counter (seconds behind), not a new mechanism; the advance off the compose thread follows
+  `stream_advance_ahead` on the prefetch thread (`player.rs:3609`).
+- **The export's forward integration** sits beside `stream_preroll` (`kt-engine/src/export.rs:510`).
+- **Checkpoints in the memory ledger:** a new tenant kind appended after the last (`kt-time/src/mem.rs`, `KINDS`
+  `:46`; `device-decode-sources` appends `Surfaces` first, so `Sim` takes the next number at merge).
+- **Crates:** `kt-sim` (new, depends on `kt-plugin-api` and `kt-time`), the `sim` family in `kt-plugin-api`
+  (beside `stream.rs`, `barrier.rs`), `plugins/sim-basic` and its id in `kt-plugins-builtin`; `kt-engine` depends on
+  `kt-sim`. No FFmpeg or GPU in `kt-sim` (it is core).
+
 ## Rejected
 
 - **A Physics animator on a title only (revision 1)** — rejected by the owner (D3): one control in one form, the system

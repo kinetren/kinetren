@@ -18,9 +18,18 @@
 
 ## 2. In the plan (kt-engine, kt-gpu)
 
-- [ ] 2.1 `frame_plan` asks the sets for poses, the plan and durable keys hash them; zero cost without sets; t3969, t3971, t3987
-- [ ] 2.2 the incomplete-frame report and the export's forward integration; the ceiling; t3986
-- [ ] 2.3 the instanced-sprite pass, warmed with the project
+- [ ] 2.1 `frame_plan` (`kt-engine/src/video.rs:2360`) asks the sets for poses; the outer clock and the instance
+      path go down the nested build beside `NestSrc.inner_t` (design D11); simulated mask vertices replace the
+      evaluated ones in `PlanLayer.masks` (`video_plan.rs:118`); `plan_key` (`kt-gpu/src/engine.rs:4330`) and
+      `put_plan` (`render_cache.rs:715`) hash the poses (t2981 kept green); zero cost without sets; t3969, t3971,
+      t3987
+- [ ] 2.2 the incomplete-frame report beside `note_stream_short` (`video.rs:2399`) and the catch-up line; the advance
+      off the compose thread beside `stream_advance_ahead` (`player.rs:3609`); the export's forward integration
+      beside `stream_preroll` (`export.rs:510`); checkpoints as a new ledger tenant (`kt-time/src/mem.rs`); the
+      ceiling; t3986
+- [ ] 2.3 the instanced-sprite pass in kt-gpu (a `Compiled` pipe with its `Slot`, timed, warmed with the project);
+      a simulated title's letters through it from the source's glyph atlas (design D11; `GeneratorSource`,
+      `kt-media/src/generator.rs:351`, rasterizes the atlas once); a title with no set keeps its path; t4107
 
 ## 3. Model and format
 
