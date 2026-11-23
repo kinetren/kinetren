@@ -137,8 +137,9 @@ history is exactly the heavy work B1 is about.
 **Who decides what:**
 - this change: the folder, the places, the entry header, the salt's form, the folder's room, the cycle
   and the notice;
-- `persistent-cache`: which moments and sources are heavy enough to keep, the value measure, the job and the
-  switch "as in the preview";
+- `persistent-cache`: which sources are heavy enough to copy, the value measure, the frames' quality rule (a
+  frame is written at the preview's quality and read only at its own, its D2), the copy job and the switch "as
+  in the preview";
 - `durable-history-and-mix`: the history entries and the mix runs.
 
 ## D1c. What the tree has today (checked at orch `873934f7`)
