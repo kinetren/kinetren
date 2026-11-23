@@ -1739,3 +1739,9 @@ Why: the owner, 2026-11-07: "половина ширины этой портян
 - **THEN** each kind passes the three checks, and each window's form is no taller when widened and, when it scrolls, gets shorter; a form or window that cannot is listed with a reason of at least 25 characters; the lists name only existing kinds and windows; on the code before this change the camera ISP and VHS tape forms fail, and the render window (groups stacked) fails
 - **PATH** there is no gesture: the guard lays out every kind's form and every registry window at three widths and names each form that leaves width unused or grows taller when widened
 - **TEST** t3593, t3593b, t3594 (`src/apps/kt-app/src/form_width_tests.rs`)
+
+#### Scenario: One column keeps two fields a row where two fit
+- **WHEN** the Geometry node's form is laid at the effects window's default width, and at a width where two fields do not fit side by side
+- **THEN** at the default width two fields share a row, as before columns, so the automation graph under the form stays in the window; where two do not fit, one field a row and nothing past the edge; on the code before (one field a row in every single column) the default width fails
+- **PATH** double-click an event → its effects window at its default size → the Geometry fields stand two a row → "+ curve" → a parameter → its graph stands inside the window → clicks on it place keys → a right click on a segment opens the shape menu
+- **TEST** t3290 (`src/apps/kt-app/src/form_width_tests.rs`), live scenarios `curves`, `formula`, `segfields`

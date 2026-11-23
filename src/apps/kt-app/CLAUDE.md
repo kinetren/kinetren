@@ -578,7 +578,9 @@ The rules above were written down — and did not work: the R.38 mechanism turne
   not from literals in the code.
 - **A form uses the width it is given** (fx-form-width, kkt-26.11.07 line 13). The shared grid
   lays ONE field a row (an `_x`/`_y` pair stays one row) into as many columns as `form_cols` fits
-  by the measured labels; a form of groups lays them as cards into the shortest column
+  by the measured labels; in ONE column two fields share a row wherever two fit (`pack_rows`) —
+  one a row there made a form taller than before at the default width and pushed what stands
+  under it (the automation graph) out of the window (found-defects 904, t3290); a form of groups lays them as cards into the shortest column
   (`widgets::CardFlow`, a card's minimum is the window's own minimum width). A new form of rows
   draws through these, never a `vertical` that takes the whole row (the ducking halves did). A
   harness test aims at a field by its published rectangle (`field_probe::rect_of(<param>)`), not

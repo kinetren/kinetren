@@ -226,3 +226,27 @@ fn t3594_the_exempt_forms_exist_and_say_why() {
     }
 }
 
+
+/// Test t3290 (fx-form-width, found-defects 904): a form in ONE column keeps two fields a row where
+/// two fit — the Geometry node at the effects window's default width stands as before columns, so the
+/// automation graph under it stays in the window (the live `curves`, `formula` and `segfields` aimed
+/// at a graph pushed out of it); where two do not fit one field a row, nothing past the edge.
+#[test]
+fn t3290_one_column_keeps_two_fields_a_row_where_they_fit() {
+    crate::plugins::install();
+    let geo = FxInstance::geometry_at(0.0, 0.0, 1.0);
+    let row = |w: f32| {
+        lay(w, geo.clone(), effect_form);
+        let at = |n: &str| crate::widgets::field_probe::rect_of(n).unwrap_or_else(|| panic!("{n} was not drawn at {w} pt"));
+        (at("crop_l"), at("crop_t"))
+    };
+    let (l, t) = row(DEFAULT);
+    assert!((l.center().y - t.center().y).abs() < 1.0, "at {DEFAULT} pt crop left and top stand on two rows: {l:?} {t:?}");
+    // where two do not fit side by side (a field is its label and its 72 pt number): one a row
+    const TIGHT: f32 = 220.0;
+    let (l, t) = row(TIGHT);
+    assert!(t.top() >= l.bottom() - 1.0, "at {TIGHT} pt crop left and top share a row that does not fit: {l:?} {t:?}");
+    let (l, t) = row(NARROW);
+    assert!((l.center().y - t.center().y).abs() < 1.0, "at {NARROW} pt two fields fit and stand on two rows");
+    assert!(crate::widgets::field_probe::seen_union().right() <= NARROW + 1.0, "at {NARROW} pt a row reaches past the edge");
+}
