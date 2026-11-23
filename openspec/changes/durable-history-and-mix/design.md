@@ -44,7 +44,7 @@ telemetry, not a gate: it shows what the tiers saved on his next restart.
 
 The owner moved every cache of a project into a folder beside it (kkt-26.11.20 line 19, change
 `project-cache-folder`). The history is the `history/` kind of its persistent cache
-(`results/v<FORMAT>/<device class>/history/`, beside `frames/` and `layers/`, kkt-26.11.20b B1), and the mix
+(`results/v<FORMAT>/<device class>/history/`, beside `frames/`, kkt-26.11.20b B1; `layers/` withdrawn by the owner's D1), and the mix
 runs are `mix/v<FORMAT>/`. They share its rules:
 - the entry header and the atomic write (`project-cache-folder` D1);
 - an entry of another salt is a miss, removed when met (no sweep at open);

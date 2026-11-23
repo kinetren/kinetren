@@ -1,6 +1,6 @@
 # Proposal: project-cache-folder
 
-> DESIGN (spec session, 2026-11-20; revised 2026-11-22). The owner decided the direction (kkt-26.11.20 A14)
+> DESIGN (spec session, 2026-11-20; revised 2026-11-22; 2026-11-23: final frames only, the owner's D1). The owner decided the direction (kkt-26.11.20 A14)
 > and answered its questions (kkt-26.11.20b B2): one folder per project folder, cyclic writing with a notice
 > when it cannot take more. Code starts on the orchestrator's go. Tests reserved: t3824–t3843, t3808.
 > Base: `orch-26-11-01` at `5e7a8ea9`.
@@ -33,10 +33,11 @@ Four things follow from that layout:
   the projects in that folder, with one place per cache. It holds:
   - `media/` — per media file, by its content;
   - `reels/` — the reel previews;
-  - the persistent cache ("Постоянный кэш", the owner's B1, change `persistent-cache`) as one store of four
-    kinds: `results/v<FORMAT>/<device class>/{frames, layers, history}` (the preview's prerender moved from
-    `<data>`, heavy layers' results, the Datamosh history) and `media/<content id>/copy-*.mkv` (heavy sources'
-    copies). One key layout (`durable_hash` plus the decoder major, the kernels' versions and
+  - the persistent cache ("Постоянный кэш", the owner's B1, change `persistent-cache`) as one store of three
+    kinds: `results/v<FORMAT>/<device class>/{frames, history}` (the FINAL preview frames, the prerender moved
+    from `<data>`; the Datamosh history) and `media/<content id>/copy-*.mkv` (heavy sources' copies). It keeps
+    no result of a stage inside a chain: the owner's D1 (kkt-26.11.22 line 4), "делай кеш имменно финального
+    превью а не на каком-то конкретном этапе цепочки fx". One key layout (`durable_hash` plus the decoder major, the kernels' versions and
     `COMPOSITE_PATH_VERSION`; not the build) and one order by value per byte (design D1b);
   - `mix/` — the heard mix of `durable-history-and-mix`, in the same value order;
   - `renders.tsv` — earlier renders found again by `cached-final-render`;
