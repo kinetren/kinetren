@@ -1,7 +1,9 @@
 # Proposal: persistent-cache
 
-> DESIGN ONLY (spec session), revision 3 (2026-11-22) after the owner's second answers (`kkt-26.11.20b` B1). Was
-> `proxies` (revision 1), then `disk-copies` (revision 2, A10). Tests reserved: t3440–t3459.
+> DESIGN ONLY (spec session), revision 4 (2026-11-23) after the owner's answer to Q55 (`kkt-26.11.22` D1): the
+> store keeps the FINAL preview frame only, never a result at a stage of a chain. Revision 3 (B1) kept layer results
+> at heavy points of a chain; revision 2 (`disk-copies`) kept source copies only; revision 1 (`proxies`) the same
+> with a manual switch. Tests reserved: t3440–t3459.
 
 ## Why
 
@@ -18,69 +20,62 @@ The owner's items, whole:
   декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!"
 - `kkt-26.11.20b.txt` lines 8–9 (B2, the folder): one cache folder per project folder; "непринимающая папка - это
   цикличесская запись с подчисткой старого говна и алерт в уведомлениях".
+- `kkt-26.11.22.txt` lines 4–5 (D1, D2), the answer to Q55: "я не понимаю зачем тебе такие сложности - делай кеш
+  имменно финального превью а не на каком-то конкретном этапе цепочки fx. у тебя что, после каждой цепочки есть
+  отдельный кэш?!?!? а не дохера ли мы данных сейчас в таком случае храним??"
 
-Today three disk stores are designed or built apart: the disk prerender of whole composites (`render-cache-disk`,
-built), the project's cache folder (`project-cache-folder`, spec-engine's design) and the light copies of heavy sources
-(revision 2 of this change). None keeps what the owner names as the point: the result of a HEAVY EFFECT. A whole
-composite is lost by any edit anywhere in the frame — moving a title over a heavy Datamosh event throws the Datamosh's
-work away, though its own result did not change.
+**Reading of D1, checked.** "Финальное превью" is the picture the preview shows: the whole composite of a moment,
+after every layer, track stage and reel. The heavy effects' work is kept INSIDE that picture — a heavy moment is
+not composed again while its frame is held. What goes is revision 3's second store of pictures at a cut inside a
+chain (`layers/`). His D2 question (does every chain keep a cache of its own today, do we store far too much) is an
+audit of all caches, owned by spec-engine (registry D2); this change answers its own part: revision 3 was a design,
+nothing of `layers/` was built, and after this revision the persistent cache holds two kinds only.
 
 ## What Changes
 
-- **One store, "Persistent cache" («Постоянный кэш»)**, inside the project's cache folder (`project-cache-folder`), with
-  three kinds of entry under one budget and one eviction order:
-  - **layer results** — the picture of one layer after a heavy point of its own chain (an event's chain after its
-    heavy node, a track stage, a reel instance's output), keyed by exactly what determines that picture (the source's
-    identity and material position, the chain prefix's content and curve values at that moment, the decode size) —
-    so an edit of another layer, of the effects AFTER the cut, or of the timeline position keeps it;
-  - **frames** — whole composites of slow moments (the disk prerender of `render-cache-disk`, moved in);
-  - **source copies** — intra-frame copies of heavy sources (long-GOP above 1080p, or measured slower than real time)
-    at the size the preview plays (revision 2's adaptive rule kept).
-- **Heavy is measured, not guessed**: a node, stage or reel output whose measured device time (the per-pass times the
-  journal already records) is at least half a frame period is a cut point; the store writes its result at rest and
-  while playing when the device has room (the render-ahead producer's spare time).
-- **Reading**: before a layer runs its chain, the plan asks the store for the latest cut point of that chain held for
-  this moment; found, the layer starts from it and runs only the nodes after it. A whole frame found is shown as today.
-- **A key that survives updates**: an entry is keyed by the versions of the kernels it ran (each plugin's version and
-  shader text hash) and the decoder's major version, not by the whole program build — an update that does not touch a
-  Datamosh keeps its cached Datamosh.
+- **One store, "Persistent cache" («Постоянный кэш»)**, inside the project's cache folder (`project-cache-folder`),
+  with TWO kinds of entry under one budget and one eviction order:
+  - **frames** — whole composites of moments, as the preview shows them (the disk prerender of `render-cache-disk`,
+    moved in), at the quality the preview plays;
+  - **source copies** — intra-frame copies of heavy sources (long-GOP above 1080p, or measured slower than real
+    time) at the size the preview plays (revision 2's adaptive rule kept).
+- **No result at a stage of a chain** is written anywhere on disk by this store: no layer, node, track-stage or
+  reel-output picture. A test scans the store for any other kind.
+- **Adaptive, "как играем в превью так и храним"**: frames are written at the preview's current quality; a higher
+  quality makes better frames at rest (the old ones are no longer read and go by the eviction order); a lower quality
+  writes its own.
+- **An edit costs only the moments it touches**: a frame's key covers its whole plan, so a moved title re-renders the
+  moments the title covered before and after the move; the heavy moments around it stay held.
+- **A key that survives updates**: the decoder's major, the kernels' versions and WGSL hashes, the composite path's
+  version, not the build (`project-cache-folder`'s text).
 - **The switch beside the quality** reads «Постоянный кэш: как в превью / 1/2 / 1/4 / выкл.» (the copy size; "выкл."
-  stops reading and writing the store); the cache folder's limit and its cyclic eviction with a notice are
-  `project-cache-folder`'s (B2).
-- **Never rendered**: no export reads the store (the "draft render" of `cached-final-render` reads frames only and says
-  so).
+  stops reading and writing the store).
+- **Never rendered**: no export reads the store (the "draft render" of `cached-final-render` reads frames only and
+  says so).
 - Nothing in the interface says "proxy".
 
 ## Capabilities
 
 ### Modified Capabilities
 
-- `video-plan`: layer results as cut points of a layer's chain; reading before a chain runs; the heavy rule; the key;
-  frames and copies as kinds of the one store.
+- `video-plan`: the persistent cache keeps final frames only, at the preview's quality; frames and copies under one
+  value order.
 - `media-index`: source copies (the file, the adaptive size, the camera's copy).
 - `export`: no export reads the store.
 - `ui-reach`: the switch, card badges, the store in the Diagnostics.
 
 ## Impact
 
-- kt-engine: `render_cache.rs` becomes the store of three kinds (`Entry::{Stage, Frame, Copy}`), its root and limit from
-  the cache folder; the plan's per-layer durable prefix key (`stage_key(layer, cut)`) beside the frame's durable key;
-  the producer writes layer results; `frame_plan` starts a layer from a found cut.
-- kt-gpu: a texture from a decoded stage segment enters the chain as the cut node's output (the same upload path).
+- kt-engine: `render_cache.rs` gains the copies as a second kind (`Entry::{Frame, Copy}`), its root and limit from the
+  cache folder; the frames keep their durable key (`project-cache-folder`).
 - kt-media: the copy transcode loop (revision 2), the copy source with the original's natives.
-- kt-ffmpeg: `MuxConfig` per-frame timestamps (found-defects 823); stage segments with alpha as a colour segment plus a
-  luma segment of the alpha, both on the hardware encoder.
+- kt-ffmpeg: `MuxConfig` per-frame timestamps (found-defects 823), MKV with audio stream copy, all-intra.
 - kt-app: the switch, badges, a Diagnostics row per kind (bytes, hits, writes); i18n ×5.
-- `project-cache-folder` (spec-engine) owns the layout (the orchestrator's final decision, layout B); this change cites
-  it; one value order; the key of D4.
+- `project-cache-folder` (spec-engine) owns the layout; its `results/…/layers/` goes (told to spec-engine
+  2026-11-23); `frames/`, `history/` (`durable-history-and-mix`), `mix/` and `media/<id>/copy-*.mkv` stay.
 - No project format change. Idle: writing happens at rest only within the prerender's existing rule.
 
 ## Questions to the owner
 
-**Q1. How exact must a cached effect result be?** Your items above: the cache exists "чтобы эффекты тяжелые не считать";
-your earlier choice for the disk prerender (`kkt-26.11.18b` U4): "сделай ты сжатие видео нормальное" — a normal video
-codec on the hardware, lossy accepted, the export never reads it. A layer result is not shown as is: the effects after
-the cut process it again (a sharpen after a cached blur amplifies the codec's noise).
-- (a) **Lossy on the hardware encoder at a high quality, like the prerender, for all three kinds** (*recommended*: a
-  tenth of the disk of lossless; the preview may differ from the render by the codec's noise, never the export).
-- (b) Layer results lossless (LZ4-compressed, about 10× the disk), frames and copies lossy.
+None open. Q55 (how exact a stage result is) fell with the stages: frames stay on the hardware codec at a high quality,
+your own earlier choice for the prerender (`kkt-26.11.18b` U4, "сделай ты сжатие видео нормальное").
