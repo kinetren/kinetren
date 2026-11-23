@@ -1,105 +1,86 @@
 # Design: persistent-cache
 
-> DESIGN ONLY, revision 3 (2026-11-22), base `b0b6a733`: the owner's B1 — heavy effects' results first, one store.
-> Revision 2 (`disk-copies`) kept only source copies; revision 1 (`proxies`) the same with a manual switch.
+> DESIGN ONLY, revision 4 (2026-11-23), base `e7b19346`: the owner's D1 — the final preview frame only, no result at a
+> stage of a chain. Revision 3 (B1) added layer results at heavy cut points; revision 2 (`disk-copies`) kept only source
+> copies; revision 1 (`proxies`) the same with a manual switch.
 
 ## Context
 
 - The disk prerender (`render-cache-disk`, spec video-plan "Slow moments are prerendered at rest…"): whole composites
-  under a durable key (the plan key with content serials replaced by file identities, salted by format, build and
-  device), segments of hardware-encoded H.264, 2 GiB, LRU, written at rest by the player.
+  under a durable key, segments of hardware-encoded H.264, written at rest by the player.
 - The project's cache folder (`project-cache-folder`, spec-engine): `<project folder>/kinetren-cache/` with `media/`,
-  `reels/`, the prerender, the history, `mix/`; one folder per project folder (B2 a); a folder that cannot take more writes
-  cyclically, dropping the oldest, with a notice (B2).
-- The plan (`frame_plan`, `plan_chain`): per layer, the source frame → the chain's nodes (fused point-wise runs,
-  barriers, stream stages) → the layer's picture; track stages; reel instances as sub-plans.
-- Per-pass device times in the journal (gpu-pass-cost); the render-ahead producer (render-ahead) composes ahead while
-  playing.
+  `reels/`, `results/v<FORMAT>/<device class>/{frames,history}`, `mix/`; the folder's cycle with a notice (B2).
+- The owner, D1 (`kkt-26.11.22` lines 4–5): "делай кеш имменно финального превью а не на каком-то конкретном этапе
+  цепочки fx".
 
-## D1. One store, three kinds
+## D1. One store, two kinds
 
-`Store { root: <cache folder>, kinds: Layer | Frame | History | Copy }` in the layout that `project-cache-folder` defines (the orchestrator's final decision, 2026-11-22: layout B — the store
-format and the device class in the path; that change owns the text, this one does not restate it); one byte budget
-from the cache folder, one eviction order across the results, the mix and the copies: value per byte = measured cost saved per read ×
-reads in this project / bytes, lowest first; within equal value, least recently used. The prerender's rule "never evict
-what this process used" stays for frames.
+`Store { root: <cache folder>, kinds: Frame | Copy }` in the layout `project-cache-folder` defines (layout B; that
+change owns the text). One byte budget from the cache folder, one eviction order across frames, copies and the other
+tenants of `results/` and `mix/`: value per byte = measured cost saved per read × reads in this project / bytes,
+lowest first; least recently used as the tie-break; frames this process used in the last minute are kept.
 
-## D2. Layer results — the cut points
+## D2. Frames — the final picture only
 
-- A cut point is a position in a layer's plan after which the plan can start from a texture: after a barrier node or a
-  stream stage of an event's chain, after a track stage, the output of a reel instance's sub-plan.
-- Heavy: the node (or stage, or sub-plan) whose measured device time at this size is ≥ half a frame period, over the
-  last three measurements. Light nodes are never cut points (their result is cheaper to compute than to decode).
-- The key `stage_key(layer, cut)` = the durable inputs of the layer UP TO the cut: the source's identity (path, size,
-  mtime, or a generator's values), the material position, the decode size, the content hash of the chain prefix and
-  every curve's value at this moment for the prefix's nodes, masks of those nodes, for a reel its instance content
-  hash; plus the rest of D4's key. Nothing after the cut, nothing of other layers, not the timeline position enters it.
-- Writing: the producer (at rest, and while playing when the device has spare time) reads back the cut's texture once
-  and writes it; a stage segment is a run of consecutive moments of one cut.
-- Reading: `frame_plan` asks the store for each layer's deepest held cut at this moment; found, the layer's plan begins
-  with the decoded texture as the cut node's output and runs the rest. The coverage bars draw a moment bright only when
-  its whole frame or every heavy layer's cut is held (invariant 4: what is bright plays without the heavy work).
+- A frame is the composite the preview shows for a moment: every layer, track stage, reel instance and the
+  composition, at the preview's current quality and decode step. Nothing between a source and that picture is
+  written by this store.
+- Its key is the whole plan's durable key (`render_cache::durable_hash`, `project-cache-folder`'s text): the plan's
+  fields without content serials, the files' identities, the generators' values, the quality and decode step, plus
+  the decoder's major, every kernel's version and WGSL hash and `COMPOSITE_PATH_VERSION`; not the build.
+- **What an edit costs.** The key covers the whole plan of ONE moment, so an edit invalidates exactly the moments
+  whose plan it changes: a title moved from 10–12 s to 11–13 s re-renders 10–13 s; a heavy Datamosh at 20–30 s
+  stays held. An edit of the heavy event itself re-renders its range — the price the owner chose over a second store.
+- **Adaptive.** Written at the quality the preview plays (A10, "как играем в превью так и храним"); choosing a higher
+  quality makes the prerender compose the heavy moments again at that quality at rest; frames of a quality no longer
+  played are not read and go by the value order. A frame is never shown at another quality than its own (invariant 4:
+  quality is part of the key and of the order).
 
-## D3. Frames and copies
+## D3. Source copies
 
-- Frames: the disk prerender as built, moved into the cache folder's frames (`project-cache-folder`).
-- Copies: revision 2's source copies, kept per media in the cache folder (`project-cache-folder`) (MKV, H.264 all-intra, the original's timestamps, audio stream-copied, the
-  original's natives reported) at the size the preview plays, for heavy sources only (long-GOP above 1920×1080, or
-  measured slower than real time); a better copy when a higher quality is chosen; "Use a camera's copy…" kept.
+Revision 2's copies, kept per media in the cache folder (`media/<content id>/copy-<q>.mkv`): MKV, H.264 all-intra, the
+original's timestamps, audio stream-copied, the original's natives reported; at the size the preview plays, for heavy
+sources only (long-GOP above 1920×1080, or measured slower than real time); a better copy when a higher quality is
+chosen; "Use a camera's copy…" kept. A copy is a decoded SOURCE, not a stage of a chain: it is what the chain reads, at
+the size the preview would decode anyway.
 
 ## D4. The key — what survives an update
 
-The key of a frame or a layer result is `render_cache::durable_hash` (the plan's fields without content serials, the
-file identities' digest; for a layer, the layer's sub-plan up to the kept stage) plus the decoder's major version, each
-kernel's plugin version and WGSL hash, and `COMPOSITE_PATH_VERSION` — a constant bumped when the composite code outside
-the kernels changes (fusion, `plan_chain`, core passes and shaders, conversions), guarded by t3808 in
-`project-cache-folder`'s video-plan delta (it records the hash of those files and fails on a change without a bump). The
-build is not in the key: an update that touches none of these keeps the entries. The store format and the device class
-are in the path (`project-cache-folder`'s layout). A stale entry is a miss and is removed when met; there is no sweep.
+As `project-cache-folder` states it (decoder major, kernel versions and WGSL hashes, `COMPOSITE_PATH_VERSION`
+guarded by t3808, the store format and device class in the path). An update that touches none of these keeps the
+frames. A stale entry is a miss and is removed when met; there is no sweep.
 
-## D5. Alpha and quality
+## D5. Export and determinism
 
-A layer result may carry alpha: it is written as two hardware segments — the colour (H.264 4:2:0) and the alpha as a
-luma-only segment — and recombined on upload. Quality by Q1 (a): the encoder's highest quality preset, the same as the
-prerender; the restored stage is within the codec's tolerance of the composite.
+No export reads any kind (invariant 11); the draft render (`cached-final-render`, A16) reads frames only and its
+window says so. A frame read back is the composite within the codec's tolerance.
 
-## D6. Export and determinism
+## D6. Class walk — "a cache at a stage of a chain" (D1) and "do we store far too much" (D2)
 
-No export reads any kind (invariant 11); the draft render (`cached-final-render`, A16) reads frames only and its window
-says so. A preview built from cached stages differs from a fresh compose by the codec's noise at most; a test bounds it.
+The mechanism the owner names: a store that keeps an intermediate picture per chain or per stage multiplies the bytes
+by the number of stages and serves no picture by itself. Walked across every store this change touches or neighbours
+(the full audit of all caches, memory and disk, with his project's bytes, is spec-engine's D2):
 
-## D7. Class walk — "work that an unrelated edit throws away"
+| Store | Keeps a stage of a chain? | Here |
+|---|---|---|
+| `results/…/layers/` (revision 3, designed, never built) | yes — the picture after a heavy node | removed |
+| `results/…/frames/` (the disk prerender, built) | no — the final composite | kept, the store's main kind |
+| `media/<id>/copy-*.mkv` (designed) | no — a decoded source at the preview's size | kept |
+| `results/…/history/` (`durable-history-and-mix`) | a stream effect's reference state per node (Datamosh), not a picture of a stage | named to spec-engine for the D2 audit |
+| `mix/` (`durable-history-and-mix`) | no — the final mix | not this change |
+| reel strips `reels/` | the reel's own final frames, small | not this change |
+| memory: burst cache, kept composites, present memo, stream memo, kept mix | burst cache = decoded sources; stream memo = per node | spec-engine's D2 audit |
 
-| Work | Kept today across an edit of another layer? | Across a restart? | Here |
-|---|---|---|---|
-| heavy effect on one event | no (the whole composite misses) | no | layer result |
-| Datamosh history | the stream memo in memory | `durable-history-and-mix` (history/) | the same store's budget |
-| track stage (a heavy track effect) | no | no | layer result |
-| reel instance output | the reel preview cache (strips), not frames | no | layer result |
-| decoded heavy source | the burst cache (memory) | no | copy |
-| whole slow frame | present memo | prerender | frame (unchanged) |
-| final mix | kept mix (memory) | `mix/` (designed) | unchanged |
+## D7. Idle
 
-## D8. Coordination with `project-cache-folder` (final, 2026-11-22)
-
-The orchestrator decided the layout once for both changes (layout B: the store format and the device class in the path,
-so a cache written on another device class is never served here and a format bump leaves plain stale folders that the
-eviction and the cyclic rule see). `project-cache-folder` (spec-engine) owns the layout text, the folder, its tenants,
-the limit and the cycle; this change cites it. Agreed and unchanged: the key of D4 (`durable_hash` + decoder major +
-kernel versions and WGSL hashes + `COMPOSITE_PATH_VERSION` guarded by t3808, no build); one eviction order by value per
-byte (cost saved per read × reads in this project ÷ bytes), lowest first, LRU as the tie-break, frames used in the last
-minute kept; the owner's cyclic rule (B2) with a notice. This change owns what is heavy and how a kept layer result
-enters the plan.
-
-## D9. Idle
-
-Writing follows the prerender's rule (at rest, after 1.5 s without input, background class; while playing only in
-the producer's spare time); reading is a lookup per layer per moment; nothing runs at rest once the heavy moments are
-written.
+Writing follows the prerender's rule (at rest, after 1.5 s without input, background class); reading is one lookup
+per moment; nothing runs at rest once the heavy moments are written. A quality change starts no work while playing.
 
 ## Rejected
 
-- **Three stores** (prerender, copies, a new effect cache) — three budgets that do not see each other; the owner wants
-  the effects cached, and the frame store already keys by content.
-- **Caching every node's output** — a light node costs less to compute than to decode.
+- **Layer results at heavy cut points (revision 3)** — rejected by the owner (D1): a second store of pictures that are
+  never shown, bytes per stage, a key per prefix and a second read path into the plan.
+- **Three stores** (prerender, copies, an effect cache) — three budgets that do not see each other.
 - **Build-salted entries** — every update would empty a "persistent" cache.
+- **Showing a frame of a higher quality at a lower one** — a different picture than composing at that quality; the
+  coverage bars would claim what the plan does not make.

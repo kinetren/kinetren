@@ -16,7 +16,7 @@ tests: []
 depends_on: [F-FX-005]
 trackers: []
 services: []
-checked: 2026-09-21
+checked: 2026-11-23
 ---
 
 # F-FX-006 — Particles and emitters
@@ -83,6 +83,8 @@ This is the boundary of the domain: everything that is not expressed by a formul
 `forum.blackmagicdesign.com` and `helpx.adobe.com` are unavailable from this environment (403), therefore the Fusion reference was read from a public mirror of the node documentation; the wording was checked against the description of the same mechanism on the `pEmitter` page of the same mirror.
 
 ## How it fits Kinotrain
+
+Since 2026-11-23: particles are one application of the element-set system in change `simulated-elements` (an Emitter generator, a particles solver of the `sim` family, an instanced-sprite pass).
 
 ### What already exists
 

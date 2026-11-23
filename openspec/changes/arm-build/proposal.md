@@ -1,7 +1,7 @@
 # Proposal: arm-build
 
-> DESIGN ONLY (spec session, 2026-11-22). Registry `v26.10-index.md` M4 (partial: AVX2 done). Note F-EXT-007. Tests
-> reserved: t3980–t3984.
+> DESIGN ONLY (spec session, 2026-11-22; owner's answer folded in 2026-11-23). Registry `v26.10-index.md` M4 (partial: AVX2 done). Note F-EXT-007. Tests
+> reserved: t3980–t3982.
 
 ## Why
 
@@ -41,8 +41,5 @@ missing is an ARM build at all. This design takes that: a Linux aarch64 release 
 
 ## Questions to the owner
 
-**Q1. Which ARM first?** His words: "п.5. да ARM нужен". Today: Linux x86-64 and Windows x86-64 only.
-- (a) **Linux aarch64 (tarball + Flatpak) now; Windows on ARM next; macOS a separate platform later** (*recommended*:
-  the same toolchain and container, an ARM runner exists in CI).
-- (b) Windows on ARM first (Snapdragon laptops).
-- (c) macOS on Apple silicon first (a new platform: windowing, signing, the FFmpeg search).
+None open. **Decided** (`kkt-26.11.22.txt` line 8, D5, the answer to Q58): "Linux aarch64 (Recommended)" — Linux
+aarch64 (tarball + Flatpak) now; Windows on ARM next; macOS a separate platform later.

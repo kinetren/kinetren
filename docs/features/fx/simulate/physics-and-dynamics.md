@@ -16,7 +16,7 @@ tests: []
 depends_on: [F-TXT-006]
 trackers: []
 services: []
-checked: 2026-11-22
+checked: 2026-11-23
 ---
 
 # F-FX-005 — Physics: motion that is not in the keys
@@ -81,7 +81,7 @@ It was not possible to add verbatim user complaints to this, and this should be 
 
 ## How it fits Kinotrain
 
-Since 2026-11-22: designed in change `text-letter-physics` (letters on springs driven by the edit's speed, a fixed absolute step from the event's start, checkpoints keyed by content).
+Since 2026-11-23: designed as a compositing system in change `simulated-elements` (the owner's D3: element sets of any producer — glyphs, mask vertices, tracker points, particles, reel layers — with stateful operators from a `sim` plugin family, driven by the edit, a function from the owner's start with a fixed step, poses as numbers in the plan key); letters on springs driven by the edit's speed are its first application.
 
 ### What already exists
 

@@ -1,20 +1,19 @@
 # Tasks: persistent-cache
 
-> Revision 3 (B1), anchored to the tree by spec-engine on 2026-11-22 (orch `873934f7`; spec-features' session
-> stopped). One owner question is open: Q1, how exact a layer result is (lossy hardware codec, or LZ4
-> lossless). Only task 2.3's codec waits for it; everything else can start once `project-cache-folder`
-> sections 1 and 3 are merged (the folder, the entry header, `ask_room`, the frames in `results/…/frames/`, the
-> key without the build and `COMPOSITE_PATH_VERSION`). The layout is `project-cache-folder`'s (layout B, design
-> D1, D1b): this change does not restate it. Tests reserved: t3440–t3459 (used t3440–t3453). Build-queue areas:
-> CACHE (`results/…/layers/`, the copies), the plan's layer input (`video_plan.rs`, `video.rs`), PLAYER,
-> DECODE (the copy source), EXPORT (`MuxConfig`). Commit per section; target-prune after each.
+> Revision 4 (D1, 2026-11-23, spec-features on orch `e7b19346`): the final preview frame only — revision 3's layer
+> results are gone (no `results/…/layers/`). No owner question is open. Everything can start once
+> `project-cache-folder` sections 1 and 3 are merged (the folder, the entry header, `ask_room`, the frames in
+> `results/…/frames/`, the key without the build and `COMPOSITE_PATH_VERSION`). The layout is
+> `project-cache-folder`'s (layout B, design D1, D1b): this change does not restate it. Tests reserved: t3440–t3459
+> (used t3440–t3453). Build-queue areas: CACHE (the frames' quality rule, the copies), PLAYER, DECODE (the copy
+> source), EXPORT (`MuxConfig`). Commit per section; target-prune after each.
 
 ## 0. Notes first
 
-- [x] 0.1 F-MED-002 renamed "Persistent cache" and refreshed with A10 and B1
-- [x] 0.2 proposal, design (D1–D9, class walk), deltas `video-plan`, `media-index`, `export`, `ui-reach`
+- [x] 0.1 F-MED-002 renamed "Persistent cache" and refreshed with A10, B1 and D1
+- [x] 0.2 proposal, design (D1–D7, class walk), deltas `video-plan`, `media-index`, `export`, `ui-reach`
 - [x] 0.3 coordination with `project-cache-folder` (layout B; the key without the build; one value order)
-- [ ] 0.4 the owner's answer to Q1 folded in (gates task 2.3's codec only)
+- [x] 0.4 the owner's answer to Q55 folded in (D1: frames only; the stage codec question fell with the stages)
 
 ## 1. The value measure and the frames (kt-engine)
 
@@ -24,23 +23,17 @@
       `project-cache-folder`'s `ask_room` ranks by it; t3453
 - [ ] 1.2 the export never reads `results/` (a counter that does not move during an export); t3445
 
-## 2. Layer results
+## 2. Frames only, at the preview's quality
 
-- [ ] 2.1 the cut points (D2): after a barrier node or a stream stage of an event's chain, after a track
-      stage, the output of a reel instance's sub-plan; heavy = measured device time at this size ≥ half a
-      frame period over the last three measurements
-- [ ] 2.2 the layer key: `durable_hash` over the layer's sub-plan up to the cut, plus the decoder major, the
-      prefix's kernels' versions and WGSL hashes, and `COMPOSITE_PATH_VERSION` (the guard is
-      `project-cache-folder`'s t3808); t3452
-- [ ] 2.3 writing: the producer reads back the cut's texture once and writes a stage segment (a run of
-      consecutive moments of one cut) through `ask_room`, at rest and while playing when the device has spare
-      time; the codec per Q1 (the prerender's hardware segment writer `kt-media/src/segment.rs`, or LZ4)
-- [ ] 2.4 reading: `frame_plan` (`video.rs:2360`) asks the store for each layer's deepest held cut; found, the
-      layer's plan begins at the cut with the decoded picture as `LayerInput::Frame` (or `LayerInput::Held`
-      on the composing device, `video_plan.rs:128–150`, stream-picture-stays' form); the coverage bars draw a
-      moment bright only when its frame or every heavy layer's cut is held; t3451
-- [ ] 2.5 `cargo test -p kt-engine` (`tests/persistent_cache.rs`); clippy; the idle check on the heavy
-      showcase with the store full; commit "persistent-cache 2: heavy layers' results survive on disk"
+- [ ] 2.1 the store writes and reads two kinds only (`Entry::{Frame, Copy}`); nothing in the plan or the producer
+      writes a picture at a point inside a plan (no read-back of a layer's or a stage's texture for the store);
+      t3451
+- [ ] 2.2 the frames' quality rule: the prerender writes at the quality the preview plays; a raised quality
+      composes the heavy moments again at rest; a frame is read only at its own quality (the quality and decode
+      step are in the durable key, `project-cache-folder`'s text); an edit misses exactly the moments whose plan
+      changed; t3452
+- [ ] 2.3 `cargo test -p kt-engine` (`tests/persistent_cache.rs`); clippy; the idle check on the heavy showcase with
+      the store full; commit "persistent-cache 2: final frames only, at the preview's quality"
 
 ## 3. Source copies (kt-ffmpeg, kt-media)
 

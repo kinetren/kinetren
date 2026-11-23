@@ -1,6 +1,6 @@
 ---
 id: F-MED-002
-title: Persistent cache — heavy effects' results and heavy sources kept on disk, rendering from originals
+title: Persistent cache — final preview frames and heavy sources' copies kept on disk, rendering from originals
 status: candidate
 priority: B
 cost: L
@@ -14,10 +14,10 @@ round: null
 point: null
 tests: []
 depends_on: []
-checked: 2026-11-20
+checked: 2026-11-23
 ---
 
-# F-MED-002 — Persistent cache — heavy effects' results and heavy sources kept on disk, rendering from originals
+# F-MED-002 — Persistent cache — final preview frames and heavy sources' copies kept on disk, rendering from originals
 
 > The industry calls these copies "proxies" (the word is kept below only where another editor uses it).
 > The owner, 2026-11-20 (`docs/ktprompts/kkt-26.11.20.txt` lines 14–15): "не называй это прокси никогда. неудачное название.
@@ -145,7 +145,10 @@ What could NOT be found: a live quote about a proxy that fell out of sync with t
   in the project's cache folder (A14, change `project-cache-folder`), never named "proxy".
 - The owner, 2026-11-22 (`kkt-26.11.20b.txt` line 7): "тяжелые. и мне не нравится почему ты думаешь только о проигрывании и
   декоде - А КАК ЖЕ ЭФФЕКТЫ??? У НАС СУТЬ ПО БОЛЬШЕЙ ЧАСТИ В КЭШИРОВАНИИ ЧТОБЫ ЭФФЕКТЫ ТЯЖЕЛЫЕ НЕ СЧИТАТЬ!" — the
-  persistent cache keeps the results of heavy effects per layer and stage, and is one store with the disk prerender.
+  persistent cache is one store with the disk prerender, so the heavy effects' work is kept in the frames.
+- The owner, 2026-11-23 (`kkt-26.11.22.txt` lines 4–5, D1): "делай кеш имменно финального превью а не на каком-то
+  конкретном этапе цепочки fx … а не дохера ли мы данных сейчас в таком случае храним??" — only the FINAL preview
+  frame is kept (at the quality the preview plays), plus the heavy sources' copies; no result at a stage of a chain.
 - CAPABILITY: openspec/specs/media-index/
 
 ### What already exists
