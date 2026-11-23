@@ -76,6 +76,27 @@ by the number of stages and serves no picture by itself. Walked across every sto
 Writing follows the prerender's rule (at rest, after 1.5 s without input, background class); reading is one lookup
 per moment; nothing runs at rest once the heavy moments are written. A quality change starts no work while playing.
 
+## D8. What the tree has (engine side, spec-engine, checked at orch `d613b228`)
+
+- **The frames' key already carries the quality.** `render_cache::put_plan` hashes `out_w`/`out_h`
+  (`kt-engine/src/render_cache.rs:717–718`) and every layer's decode step; the prerender's state is
+  `(built.seq, versions, q, region)` (`:1141`), so a quality change clears its `done` list and composes again at rest.
+  D2's "read only at its own quality" holds by the key; nothing new is needed for it.
+- **The gap: heaviness is judged by a time measured at another size.** The prerender picks moments from
+  `PreviewCosts::snapshot` (`preview_cost.rs:66`, read at `render_cache.rs:1163`), which drops the size each sample was
+  measured at (`Sample { ns, w, h }`, kept by `note`, `:50`). A moment measured at 640×360 is judged heavy or light
+  at 1920×1080 by its 360 time, so a raised quality writes too few moments (and a lowered one too many). The rule: a
+  sample counts only at its own size; a moment never measured at the current size is judged by its time at the nearest
+  size scaled by pixels, and measured again when composed. t4106.
+- **The value measure's inputs:** `Player::note_cost` (`player.rs:1457`) records a composed frame's cost;
+  `PreviewCosts::note` keeps it per moment; the pass timer's `predict` (`kt-gpu/src/pass_time.rs:175`) prices a pass
+  never measured in this process (from `pass-times-v1.tsv`). The cost saved per read is the moment's measured device
+  time at its size; the reads are counted by `RenderCache`'s `restores` (`:969`) per entry in `usage.tsv`.
+- **Where a frame enters the preview:** a restored moment goes into the display's memo (`RESTORE`,
+  render-cache-disk D3) before the producer's "decoded?" check. The prefetch window (`prefetch.rs:126`) skips only
+  moments the present memo holds (`kept_moments`, `player.rs:3569`), so a moment on disk but not yet restored is still
+  decoded ahead: the cache audit's cut 1 (`docs/cache-audit.md`), given to mosh-sharp; this change must not undo it.
+
 ## Rejected
 
 - **Layer results at heavy cut points (revision 3)** — rejected by the owner (D1): a second store of pictures that are

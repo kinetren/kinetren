@@ -20,6 +20,11 @@ A10 — "как играем в превью так и храним".
 - **THEN** after the move the frames of 10–13 s are misses and 0–10 s and 20–30 s are read from the store with no decode and no chain run; after the quality change no 1/2 frame is read at 1/1, the prerender writes 1/1 frames of the heavy moments at rest, and the 1/2 frames remain until the value order drops them
 - **TEST** t3452 (`src/libs/kt-engine/tests/persistent_cache.rs`)
 
+#### Scenario: A moment is judged heavy at the quality it is written at
+- **WHEN** a moment is measured at 640×360 below the heavy threshold, and the same moment at 1920×1080 above it, then the preview quality is raised to 1920×1080 and the player rests
+- **THEN** the prerender writes that moment at 1920×1080; a moment measured only at 640×360 is judged by that time scaled by pixels, and its own 1920×1080 time replaces the estimate once composed
+- **TEST** t4106 (`src/libs/kt-engine/tests/persistent_cache.rs`)
+
 ### Requirement: Frames and source copies share one budget and one value order
 Frames and source copies SHALL live in one store in the project's cache folder under one byte budget, evicted lowest
 value per byte first (measured cost saved per read, times reads, over bytes), least recently used as the tie-break; a
