@@ -25,6 +25,8 @@ struct TrackStage {
     id: kt_model::TrackId,
     lane: u32,
     fx: Vec<kt_model::FxInstance>,
+    /// The chain's wiring (fx-graph-dag D9: a track stage runs a graph as an event does).
+    graph: kt_fx::ChainGraph,
     /// Lookahead of the chain: the input leads the output by that many frames.
     ///
     /// There is NO tail as a separate field in the stage and there must not be one: the track
@@ -55,7 +57,16 @@ pub(crate) struct AudioClip {
     lane: u32,
     gain: f32,
     media: kt_model::MediaId,
+    /// The MAIN chain (fx-graph-dag D4, `kt_fx::sound_split`): a slot only a sound read runs, or
+    /// none, is a placeholder, so the tail, the warp and the windows are those of what this event's
+    /// processor runs; a line is the active chain.
     fx: Vec<kt_model::FxInstance>,
+    /// The main chain's wiring; empty for a line.
+    graph: kt_fx::ChainGraph,
+    /// The SOUND READS (fx-graph-dag D2, D4): a time kind in an arm reads the event's source on its
+    /// own, as an event whose chain is that arm's line would; read `k` feeds the slot
+    /// `graph.reads[k]`. Each has its own source window, warmed by the prefetch.
+    reads: Vec<SoundRead>,
     /// The automation curves of the clip in the SOURCE domain (R.33): the input for
     /// the processor and for the calculation of the source window.
     auto: kt_fx::AutoProfiles,
@@ -107,6 +118,37 @@ pub(crate) struct AudioClip {
     /// windows and handles, the reel instance's content, the run it continues. The final-mix
     /// store keys a burst by the fingerprints of the events that sound in it.
     fp: u64,
+}
+
+/// A sound read of an event (fx-graph-dag D4): a line chain over the event's own source.
+#[derive(Debug, Clone)]
+pub(crate) struct SoundRead {
+    fx: Vec<kt_model::FxInstance>,
+    auto: kt_fx::AutoProfiles,
+    /// The read's own address map (its warp's signed speed), as `AudioClip::addr`.
+    addr: Option<std::sync::Arc<Vec<kt_fx::AddrKnot>>>,
+    /// The read's window end and mirror axis, as `AudioClip::src_ends`.
+    src_ends: std::sync::OnceLock<(i64, i64)>,
+}
+
+impl AudioClip {
+    /// The longest tail of what sounds for the event: its own chain's and every read's.
+    fn tail_frames(&self) -> i64 {
+        let own = kt_fx::chain_tail(&self.fx, &self.auto).to_audio_frames();
+        self.reads.iter().map(|r| kt_fx::chain_tail(&r.fx, &r.auto).to_audio_frames()).fold(own, i64::max)
+    }
+
+    /// The longest look-ahead of the event's processors.
+    fn lookahead_frames(&self) -> i64 {
+        let own = kt_fx::chain_lookahead_in(&self.fx, &self.graph, &self.auto);
+        self.reads.iter().map(|r| kt_fx::chain_lookahead(&r.fx, &r.auto)).fold(own, i64::max)
+    }
+
+    /// The source windows the event reads: its own chain's and each read's (fx-graph-dag D4), as
+    /// (chain, curves, address map) — one list for the render and the prefetch.
+    fn chains(&self) -> impl Iterator<Item = (&[kt_model::FxInstance], &kt_fx::AutoProfiles)> {
+        std::iter::once((self.fx.as_slice(), &self.auto)).chain(self.reads.iter().map(|r| (r.fx.as_slice(), &r.auto)))
+    }
 }
 
 /// The run predecessor of every clip (pitch-event-edges D3): the clip on the same track that ends
@@ -161,7 +203,10 @@ fn split_predecessors(clips: &[AudioClip], overlaps: &[bool], ringing: bool) -> 
                 && b.head_ext == 0
                 && a.fade_out.is_none()
                 && b.fade_in.is_none()
-                && kt_fx::chain_fingerprint(&a.fx) == kt_fx::chain_fingerprint(&b.fx)
+                // a graph with sound reads is several streams: none is handed on (fx-graph-dag D4)
+                && a.reads.is_empty()
+                && b.reads.is_empty()
+                && kt_fx::chain_fingerprint_in(&a.fx, &a.graph) == kt_fx::chain_fingerprint_in(&b.fx, &b.graph)
                 && kt_fx::chain_lookahead(&a.fx, &a.auto) == kt_fx::chain_lookahead(&b.fx, &b.auto);
             continues.then_some(*ai)
         })
@@ -636,18 +681,44 @@ fn derive_audio_clip(
     let start = c.start.to_audio_frames();
     let end = (c.start + c.duration).to_audio_frames();
     let active = c.active_fx(); // bypass slots are filtered out (item 2)
+    // a graph (fx-graph-dag D4): the main chain this event's processor runs, and the sound reads
+    let mut split = kt_fx::sound_split(&active, &c.active_fx_in());
+    if nest.is_some() {
+        // a reel instance opens no read (fx-graph-dag D2, as in the picture): its sub-mix is one
+        // stream, and an arm's time kind stays transparent
+        split.graph.reads.clear();
+        split.reads.clear();
+    }
+    let curves = c.active_fx_auto();
     // the clip’s curves into the SOURCE domain: the audio stream further on sees
     // only numbers (R.33)
     // REVERSE enters the normalization (R.39): the UI writes the key
     // mirrored (`clip_material_at`), and without the mirror here the DSP
     // would run the curve backwards
-    let auto = kt_model::AutoProfiles::from_curves_rev(
-        &c.active_fx_auto(),
-        c.source_in.to_audio_frames(),
-        (end - start).max(1),
-        c.reversed,
-    );
-    let tail = kt_fx::chain_tail(&active, &auto).to_audio_frames();
+    let profiles = |curves: &[Vec<kt_model::ParamCurve>]| {
+        kt_model::AutoProfiles::from_curves_rev(curves, c.source_in.to_audio_frames(), (end - start).max(1), c.reversed)
+    };
+    let auto = profiles(&curves);
+    let reads: Vec<SoundRead> = split
+        .reads
+        .iter()
+        .map(|keep| {
+            let fx: Vec<kt_model::FxInstance> = keep.iter().map(|k| active[*k].clone()).collect();
+            let rc: Vec<Vec<kt_model::ParamCurve>> = keep.iter().map(|k| curves.get(*k).cloned().unwrap_or_default()).collect();
+            let auto = profiles(&rc);
+            SoundRead {
+                addr: kt_fx::chain_addr_knots(&fx, &auto, (end - start).max(1)).map(std::sync::Arc::new),
+                fx,
+                auto,
+                src_ends: std::sync::OnceLock::new(),
+            }
+        })
+        .collect();
+    let active = split.main;
+    let tail = reads
+        .iter()
+        .map(|r| kt_fx::chain_tail(&r.fx, &r.auto).to_audio_frames())
+        .fold(kt_fx::chain_tail(&active, &auto).to_audio_frames(), i64::max);
     AudioClip {
         id: c.id,
         start,
@@ -663,6 +734,8 @@ fn derive_audio_clip(
         addr: kt_fx::chain_addr_knots(&active, &auto, (end - start).max(1)).map(std::sync::Arc::new),
         ctx: kt_fx::chain_context(&active, &auto),
         fx: active,
+        graph: split.graph,
+        reads,
         auto,
         reversed: c.reversed,
         fade_in: None,
@@ -760,6 +833,7 @@ impl AudioRenderer {
             {
                 let lane = lane as u32;
                 let fx = t.active_fx();
+                let graph = kt_fx::ChainGraph { fx_in: t.active_fx_in(), reads: Vec::new() };
                 if !fx.is_empty() {
                     // keys are LIVE: the track exists and it is audio. The track number
                     // (lane) is computed by its rank among the audio tracks — in the same way
@@ -780,8 +854,9 @@ impl AudioRenderer {
                     stages.push(TrackStage {
                         id: t.id,
                         lane,
-                        la: kt_fx::chain_lookahead(&fx, &empty_auto),
+                        la: kt_fx::chain_lookahead_in(&fx, &graph, &empty_auto),
                         fx,
+                        graph,
                         keys,
                     });
                 }
@@ -1029,8 +1104,8 @@ impl AudioRenderer {
         for i in self.active_clips(&range) {
             let c = &self.clips[i];
             if !c.fx.is_empty() {
-                let tail = kt_fx::chain_tail(&c.fx, &c.auto).to_audio_frames().max(kt_fx::MIN_PREROLL_FRAMES);
-                w = w.max(tail + kt_fx::chain_lookahead(&c.fx, &c.auto));
+                let tail = c.tail_frames().max(kt_fx::MIN_PREROLL_FRAMES);
+                w = w.max(tail + c.lookahead_frames());
             }
             if self.stage_of(c.lane).is_some() {
                 w = w.max(self.stage_reach.0 + self.stage_reach.1);
@@ -1144,7 +1219,7 @@ impl AudioRenderer {
         let mut tail = 0i64;
         for c in &self.clips {
             if !c.fx.is_empty() {
-                tail = tail.max(kt_fx::chain_tail(&c.fx, &c.auto).to_audio_frames());
+                tail = tail.max(c.tail_frames());
             }
             if let Some(sub) = c.nest.and_then(|k| self.nests.get(&k)) {
                 tail = tail.max(sub.reel_preroll_bursts() as i64 * AUDIO_BURST_FRAMES as i64);
@@ -1219,14 +1294,16 @@ impl AudioRenderer {
             if same.get(&c.id) == Some(&c.fp) {
                 continue;
             }
-            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.start, c.end - c.start, self.opts);
+            store.sync_clip(c.id, &c.fx, &c.graph, &c.auto, c.source_in, c.start, c.end - c.start, self.opts);
+            let reads: Vec<(&[kt_model::FxInstance], &kt_fx::AutoProfiles)> = c.reads.iter().map(|r| (r.fx.as_slice(), &r.auto)).collect();
+            store.sync_reads(c.id, &reads, c.source_in, c.start, c.end - c.start, self.opts);
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));
         // TRACK CHAINS — by the same rule (R.62): the same structure → the
         // same state; a deleted track takes its own with it
         for st in &self.stages {
-            store.sync_track(st.id, &st.fx, self.opts);
+            store.sync_track(st.id, &st.fx, &st.graph, self.opts);
         }
         let live_tracks: std::collections::HashSet<_> = self.stages.iter().map(|s| s.id).collect();
         store.retain_tracks(&|id| live_tracks.contains(&id));
@@ -1243,10 +1320,12 @@ impl AudioRenderer {
             let sub = store.key_mut(*target);
             for (key_id, key_lane) in keys {
                 for c in self.clips.iter().filter(|c| c.lane == *key_lane) {
-                    sub.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.start, c.end - c.start, opts);
+                    sub.sync_clip(c.id, &c.fx, &c.graph, &c.auto, c.source_in, c.start, c.end - c.start, opts);
+                    let reads: Vec<(&[kt_model::FxInstance], &kt_fx::AutoProfiles)> = c.reads.iter().map(|r| (r.fx.as_slice(), &r.auto)).collect();
+                    sub.sync_reads(c.id, &reads, c.source_in, c.start, c.end - c.start, opts);
                 }
                 if let Some(ks) = self.stages.iter().find(|s| s.id == *key_id) {
-                    sub.sync_track(ks.id, &ks.fx, opts);
+                    sub.sync_track(ks.id, &ks.fx, &ks.graph, opts);
                 }
             }
             let alive: std::collections::HashSet<_> = keys
@@ -1827,20 +1906,21 @@ impl AudioRenderer {
         // The boundary is CONSUMPTION (R.57): the resampler cursor lives on it, and the
         // addresses under the signed curve go both left and right. For a
         // monotonic chain it is the same number as before.
-        let (src_window_end, src_mirror_end) = *clip.src_ends.get_or_init(|| {
-                (
-                    clip.source_in
-                        + kt_fx::chain_consumption_window_ext(
-                            &clip.fx,
-                            &clip.auto,
-                            clip_len,
-                            material.clone(),
-                            material,
-                        )
-                        .end,
-                    clip.source_in + kt_fx::chain_source_used(&clip.fx, &clip.auto, clip_len),
-                )
-        });
+        let ends = |fx: &[kt_model::FxInstance], auto: &kt_fx::AutoProfiles| {
+            (
+                clip.source_in
+                    + kt_fx::chain_consumption_window_ext(fx, auto, clip_len, material.clone(), material.clone()).end,
+                clip.source_in + kt_fx::chain_source_used(fx, auto, clip_len),
+            )
+        };
+        let (src_window_end, src_mirror_end) = *clip.src_ends.get_or_init(|| ends(&clip.fx, &clip.auto));
+        // each sound read's own window (fx-graph-dag D4), by the same functions as the prefetch's
+        let mut read_wins: [Option<SrcWindow>; kt_model::fx_graph::MAX_READS] = [None; kt_model::fx_graph::MAX_READS];
+        for (k, r) in clip.reads.iter().enumerate().take(kt_model::fx_graph::MAX_READS) {
+            let (end, mirror_end) = *r.src_ends.get_or_init(|| ends(&r.fx, &r.auto));
+            read_wins[k] =
+                Some(SrcWindow { start: clip.source_in, end, mirror_end, addr: r.addr.as_deref().map(|v| v.as_slice()) });
+        }
         // MIRROR AXIS ≠ window end (R.43, item 292). The window includes the resampler's margin
         // (`WARP_SOURCE_MARGIN_FRAMES`, 8192 frames = 170.7 ms) —
         // this is the correct boundary “silence beyond”, but an unfit axis: mirroring
@@ -1863,8 +1943,8 @@ impl AudioRenderer {
             let prev = &self.clips[pi];
             let prev_len = prev.end - prev.start;
             if store.hand_on(prev.id, prev_len, clip.id) {
-                store.sync_clip(prev.id, &prev.fx, &prev.auto, prev.source_in, prev.start, prev_len, self.opts);
-                store.sync_clip(clip.id, &clip.fx, &clip.auto, clip.source_in, clip.start, clip_len, self.opts);
+                store.sync_clip(prev.id, &prev.fx, &prev.graph, &prev.auto, prev.source_in, prev.start, prev_len, self.opts);
+                store.sync_clip(clip.id, &clip.fx, &clip.graph, &clip.auto, clip.source_in, clip.start, clip_len, self.opts);
             }
         }
         // the loop span in clip-local frames, for an event that covers the region end; an event
@@ -1888,7 +1968,7 @@ impl AudioRenderer {
         // out-point goes on in its own processor, summed below
         let ext_len = clip.ext_end - clip.start;
         if clip.ctx
-            && store.start_lap(clip.id, local, ext_len, &clip.fx, &clip.auto, clip.source_in, clip.start, clip_len, self.opts)
+            && store.start_lap(clip.id, local, ext_len, &clip.fx, &clip.graph, &clip.auto, clip.source_in, clip.start, clip_len, self.opts)
             && let Some(proc) = store.get_mut(clip.id)
         {
             configure(proc);
@@ -1898,14 +1978,14 @@ impl AudioRenderer {
         let mut buf = store.pool().samples(count * AUDIO_CHANNELS);
         let mut lap_bufs =
             store.has_laps(clip.id).then(|| (store.pool().samples(count * AUDIO_CHANNELS), store.pool().samples(count * AUDIO_CHANNELS)));
-        let Some(proc) = store.get_mut(clip.id) else {
+        if store.get_mut(clip.id).is_none() {
             store.pool().give_samples(buf);
             if let Some((a, b)) = lap_bufs {
                 store.pool().give_samples(a);
                 store.pool().give_samples(b);
             }
             return;
-        };
+        }
         let mut laps_out: Option<Vec<f32>> = None;
         {
             let reversed = clip.reversed;
@@ -1915,7 +1995,7 @@ impl AudioRenderer {
                 mirror_end: src_mirror_end,
                 addr: clip.addr.as_deref().map(|v| v.as_slice()),
             };
-            let mut pull = |kind: kt_fx::PullKind, src_frame: i64, dst: &mut [f32]| -> bool {
+            let mut pull_w = |kind: kt_fx::PullKind, src_frame: i64, win: SrcWindow, dst: &mut [f32]| -> bool {
                 // pre-roll misses are counted separately: they are not heard
                 let n = match kind {
                     kt_fx::PullKind::Output => &mut pull_underruns,
@@ -1923,7 +2003,20 @@ impl AudioRenderer {
                 };
                 fill_source(fetcher, media, src_frame, win, reversed, dst, n)
             };
-            proc.read(local, &mut buf, &mut pull);
+            if let Some((proc, reads)) = store.clip_with_reads(clip.id)
+                && !clip.reads.is_empty()
+            {
+                // the sound reads feed their slots (fx-graph-dag D4): each is read as an event is,
+                // through its own source window
+                let mut feed = EventFeed { pull: &mut pull_w, win, reads, wins: &read_wins };
+                proc.read_fed(local, &mut buf, &mut feed);
+            }
+            let mut pull = |kind: kt_fx::PullKind, src_frame: i64, dst: &mut [f32]| -> bool { pull_w(kind, src_frame, win, dst) };
+            if clip.reads.is_empty()
+                && let Some(proc) = store.get_mut(clip.id)
+            {
+                proc.read(local, &mut buf, &mut pull);
+            }
             // the earlier laps ring on, each continuing its own stream
             if let Some(laps) = store.laps_mut(clip.id)
                 && let Some((mut sum, mut ring)) = lap_bufs.take()
@@ -2077,7 +2170,7 @@ impl AudioRenderer {
             if from >= to {
                 continue;
             }
-            let (s0, s1) = if raw || c.fx.is_empty() {
+            let window = |fx: &[kt_model::FxInstance], auto: &kt_fx::AutoProfiles| if raw || fx.is_empty() {
                 if c.reversed {
                     // mirror: the end of the timeline range reads the START of the chunk
                     let len = c.end - c.start;
@@ -2093,10 +2186,10 @@ impl AudioRenderer {
                 // The absolute clamp below (`s0.max(0)`) cuts an overrun past the file's zero
                 // frame: let these two calculations diverge — an endless cache miss.
                 let len = c.end - c.start;
-                let used = kt_fx::chain_source_used(&c.fx, &c.auto, len);
+                let used = kt_fx::chain_source_used(fx, auto, len);
                 let w = kt_fx::chain_source_window(
-                    &c.fx,
-                    &c.auto,
+                    fx,
+                    auto,
                     len,
                     (from - c.start)..(to - c.start),
                 );
@@ -2109,14 +2202,28 @@ impl AudioRenderer {
                 let len = c.end - c.start;
                 let material = -c.head_ext..len + c.tail_ext;
                 let w = kt_fx::chain_source_window_ext(
-                    &c.fx,
-                    &c.auto,
+                    fx,
+                    auto,
                     len,
                     material,
                     (from - c.start)..(to - c.start),
                 );
                 (c.source_in + w.start, c.source_in + w.end.max(w.start + 1))
             };
+            // a graph's sound reads read the same source through windows of their own (fx-graph-dag
+            // D4): each is warmed as the render reads it
+            if !raw {
+                for (fx, auto) in c.chains().skip(1) {
+                    let (r0, r1) = window(fx, auto);
+                    let (r0, r1) = (r0.max(0), r1.max(r0.max(0) + 1));
+                    if c.nest.is_none() {
+                        let b0 = r0.div_euclid(AUDIO_BURST_FRAMES as i64);
+                        let b1 = (r1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1;
+                        out.push((c.media, b0..b1));
+                    }
+                }
+            }
+            let (s0, s1) = window(&c.fx, &c.auto);
             // a handle may extend past the source's zero frame — there is silence,
             // bursts are not requested
             let s0 = s0.max(0);
@@ -2255,6 +2362,34 @@ fn addr_run_at(knots: &[kt_fx::AddrKnot], a: i64) -> (i64, i64, i64) {
 /// fetcher; frames outside [0, window_end) — silence WITHOUT underrun (tail/pre-roll),
 /// a miss inside the window — silence with underrun. Returns true (the buffer is always
 /// valid).
+/// The source of an event's chains: (kind, source frame, the chain's window, destination).
+type SourcePull<'p, 'w> = dyn FnMut(kt_fx::PullKind, i64, SrcWindow<'w>, &mut [f32]) -> bool + 'p;
+
+/// The feed of an event's processor with sound reads (fx-graph-dag D4): the event's own source,
+/// and read `k` rendered by its line processor over its own window of the same source.
+struct EventFeed<'a, 'p, 'w> {
+    pull: &'a mut SourcePull<'p, 'w>,
+    win: SrcWindow<'w>,
+    reads: &'a mut [kt_fx::ClipProcessor],
+    wins: &'a [Option<SrcWindow<'w>>],
+}
+
+impl kt_fx::Feed for EventFeed<'_, '_, '_> {
+    fn pull(&mut self, kind: kt_fx::PullKind, src_frame: i64, dst: &mut [f32]) -> bool {
+        (self.pull)(kind, src_frame, self.win, dst)
+    }
+
+    fn input(&mut self, k: usize, local: i64, dst: &mut [f32]) {
+        let (Some(p), Some(Some(w))) = (self.reads.get_mut(k), self.wins.get(k)) else {
+            dst.fill(0.0);
+            return;
+        };
+        let w = *w;
+        let pull = &mut *self.pull;
+        p.read(local, dst, &mut |kind, f, b| pull(kind, f, w, b));
+    }
+}
+
 fn fill_source(
     fetcher: &mut dyn AudioFetcher,
     media: kt_model::MediaId,

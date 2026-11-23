@@ -3242,6 +3242,16 @@ impl Track {
             .collect()
     }
 
+    /// The wiring aligned with `active_fx()` (fx-graph-dag D1), as an event's.
+    pub fn active_fx_in(&self) -> Vec<crate::fx_graph::SlotInputs> {
+        if self.fx_off || self.fx_in.is_empty() {
+            return Vec::new();
+        }
+        crate::fx_graph::without(&self.fx_in, self.fx.len(), |i| {
+            self.fx_bypass.get(i).copied().unwrap_or(false) || self.fx[i].is_inert()
+        })
+    }
+
     /// Does the track need a STAGE in the audio mix (sum → chain → level →
     /// muting): without it events are summed into the output in the former order —
     /// byte-for-byte (GOLDEN_AUDIO). Solo is decided by the caller (a set by kind).
@@ -6005,6 +6015,19 @@ impl FxInstance {
         match self {
             FxInstance::Plugin(p) => p.refs(kt_plugin_api::RowRole::SidechainKey).next().map(|(_, id)| TrackId(id)),
             _ => None,
+        }
+    }
+
+    /// The effect has a key input (a `RowRole::SidechainKey` row): its second socket may take an arm
+    /// of its own chain (fx-graph-dag D4), as a Merge's Foreground.
+    pub fn has_key_socket(&self) -> bool {
+        match self {
+            FxInstance::Plugin(p) => {
+                let m = p.manifest();
+                (0..m.passport.len())
+                    .any(|i| matches!(m.row(i).store, kt_plugin_api::Store::Ref(kt_plugin_api::RowRole::SidechainKey)))
+            }
+            _ => false,
         }
     }
 

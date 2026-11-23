@@ -45,7 +45,8 @@ pub use audio::{
     chain_source_window_ext, chain_tail,
 };
 pub use audio::{
-    ChainOpts, ClipProcessor, Freeverb, SmoothedParam, TrackProcessor, Warp,
+    ChainGraph, ChainOpts, ClipProcessor, Feed, Freeverb, SmoothedParam, SoundSplit, TrackProcessor, Warp,
+    chain_fingerprint_in, chain_lookahead_in, sound_split,
 };
 
 /// The time-stretch map MOVED TO kt-model (R.39): it must be called by

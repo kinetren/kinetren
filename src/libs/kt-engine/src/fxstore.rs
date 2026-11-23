@@ -4,13 +4,17 @@
 //! destroy the state: the same chain structure → the same processor,
 //! parameters arrive smoothly (defects b, f of the old engine).
 
-use kt_fx::{ClipProcessor, TrackProcessor, chain_fingerprint};
+use kt_fx::{ChainGraph, ClipProcessor, TrackProcessor, chain_fingerprint_in};
 use kt_model::{ClipId, FxInstance, TrackId};
 use std::collections::HashMap;
 
 #[derive(Default)]
 pub struct FxStateStore {
     map: HashMap<ClipId, ClipProcessor>,
+    /// The SOUND READS of an event (fx-graph-dag D2, D4): a time kind in an arm reads the source on
+    /// its own, a line processor per read, read `k` at index `k`. Kept, synced and reset with the
+    /// event's own processor.
+    reads: HashMap<ClipId, Vec<ClipProcessor>>,
     /// TRACK chains (R.62, change B). The key is `TrackId`, not “(kind,
     /// number)”: the number is the row's rank, and inserting a track higher would
     /// renumber the neighbours, i.e. kill their state
@@ -249,6 +253,7 @@ impl FxStateStore {
         &mut self,
         id: ClipId,
         fx: &[FxInstance],
+        graph: &ChainGraph,
         auto: &kt_fx::AutoProfiles,
         src_in_frames: i64,
         start_frames: i64,
@@ -256,12 +261,69 @@ impl FxStateStore {
         opts: kt_fx::ChainOpts,
     ) {
         self.clip_syncs += 1;
-        if fx.is_empty() {
-            self.map.remove(&id);
+        Self::sync_one(&mut self.map, id, fx, graph, auto, src_in_frames, start_frames, clip_len_frames, opts);
+    }
+
+    /// Synchronize the event's SOUND READS (fx-graph-dag D4) by the same rule as its processor:
+    /// read `k`'s chain is a line (`fx`, `auto`); none — the reads go.
+    #[allow(clippy::too_many_arguments)]
+    pub fn sync_reads(
+        &mut self,
+        id: ClipId,
+        reads: &[(&[FxInstance], &kt_fx::AutoProfiles)],
+        src_in_frames: i64,
+        start_frames: i64,
+        clip_len_frames: i64,
+        opts: kt_fx::ChainOpts,
+    ) {
+        if reads.is_empty() {
+            self.reads.remove(&id);
             return;
         }
-        let fp = chain_fingerprint(fx);
-        match self.map.get_mut(&id) {
+        let mut have: HashMap<ClipId, ClipProcessor> = HashMap::new();
+        let mut kept = self.reads.remove(&id).unwrap_or_default();
+        kept.truncate(reads.len());
+        let mut out = Vec::with_capacity(reads.len());
+        let mut kept = kept.into_iter();
+        for (fx, auto) in reads {
+            have.clear();
+            if let Some(p) = kept.next() {
+                have.insert(id, p);
+            }
+            Self::sync_one(&mut have, id, fx, &ChainGraph::default(), auto, src_in_frames, start_frames, clip_len_frames, opts);
+            // an empty read chain cannot be (its Output is the time kind); keep the slot filled
+            out.push(have.remove(&id).unwrap_or_else(|| {
+                ClipProcessor::new_with_opts(fx, auto, src_in_frames, clip_len_frames, opts)
+            }));
+        }
+        self.reads.insert(id, out);
+    }
+
+    /// The event's processor with its sound reads, borrowed together (the reads feed it).
+    pub fn clip_with_reads(&mut self, id: ClipId) -> Option<(&mut ClipProcessor, &mut [ClipProcessor])> {
+        let p = self.map.get_mut(&id)?;
+        let r = self.reads.get_mut(&id).map(|v| v.as_mut_slice()).unwrap_or_default();
+        Some((p, r))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sync_one(
+        map: &mut HashMap<ClipId, ClipProcessor>,
+        id: ClipId,
+        fx: &[FxInstance],
+        graph: &ChainGraph,
+        auto: &kt_fx::AutoProfiles,
+        src_in_frames: i64,
+        start_frames: i64,
+        clip_len_frames: i64,
+        opts: kt_fx::ChainOpts,
+    ) {
+        if fx.is_empty() {
+            map.remove(&id);
+            return;
+        }
+        let fp = chain_fingerprint_in(fx, graph);
+        match map.get_mut(&id) {
             Some(p) if p.fingerprint() == fp => {
                 p.set_clip_len(clip_len_frames);
                 // GEOMETRY is carried too (R.43, item 293): `chain_fingerprint`
@@ -280,29 +342,20 @@ impl FxStateStore {
                 // (an edit of the limiter's window, pitch neutral ↔ active) —
                 // a processor rebuild: the next read will do hard_seek
                 // with warm-up, like a real seek.
-                if p.lookahead_frames() != kt_fx::chain_lookahead(fx, auto) || p.opts() != opts {
-                    self.map.insert(
+                if p.lookahead_frames() != kt_fx::chain_lookahead_in(fx, graph, auto) || p.opts() != opts {
+                    map.insert(
                         id,
-                        ClipProcessor::new_with_opts(
-                            fx,
-                            auto,
-                            src_in_frames,
-                            clip_len_frames,
-                            opts,
-                        ),
+                        ClipProcessor::new_graph(fx, graph, auto, src_in_frames, clip_len_frames, opts),
                     );
                 }
             }
             _ => {
-                self.map.insert(
-                    id,
-                    ClipProcessor::new_with_opts(fx, auto, src_in_frames, clip_len_frames, opts),
-                );
+                map.insert(id, ClipProcessor::new_graph(fx, graph, auto, src_in_frames, clip_len_frames, opts));
             }
         }
         // the clip's seat on the timeline (sim-audio-pairs): a simulated device's sound reads the
         // device state where its picture does
-        if let Some(p) = self.map.get_mut(&id) {
+        if let Some(p) = map.get_mut(&id) {
             p.set_origin(start_frames);
         }
     }
@@ -344,6 +397,7 @@ impl FxStateStore {
         local: i64,
         ext_len: i64,
         fx: &[FxInstance],
+        graph: &ChainGraph,
         auto: &kt_fx::AutoProfiles,
         src_in_frames: i64,
         start_frames: i64,
@@ -366,7 +420,7 @@ impl FxStateStore {
         }
         laps.ringing.push(old);
         // the spare carries the parameters of when it rang out; a new one is built by `sync_clip`
-        self.sync_clip(id, fx, auto, src_in_frames, start_frames, clip_len_frames, opts);
+        self.sync_clip(id, fx, graph, auto, src_in_frames, start_frames, clip_len_frames, opts);
         if let Some(p) = self.map.get_mut(&id) {
             p.reset();
         }
@@ -394,22 +448,22 @@ impl FxStateStore {
         }
     }
 
-    pub fn sync_track(&mut self, id: TrackId, fx: &[FxInstance], opts: kt_fx::ChainOpts) {
+    pub fn sync_track(&mut self, id: TrackId, fx: &[FxInstance], graph: &ChainGraph, opts: kt_fx::ChainOpts) {
         if fx.is_empty() {
             self.tracks.remove(&id);
             return;
         }
-        let fp = chain_fingerprint(fx);
+        let fp = chain_fingerprint_in(fx, graph);
         let empty = kt_fx::AutoProfiles::default();
         match self.tracks.get_mut(&id) {
             Some(p) if p.fingerprint() == fp => {
                 p.apply_params(fx, false);
-                if p.lookahead_frames() != kt_fx::chain_lookahead(fx, &empty) {
-                    self.tracks.insert(id, TrackProcessor::new(fx, opts));
+                if p.lookahead_frames() != kt_fx::chain_lookahead_in(fx, graph, &empty) {
+                    self.tracks.insert(id, TrackProcessor::new_graph(fx, graph, opts));
                 }
             }
             _ => {
-                self.tracks.insert(id, TrackProcessor::new(fx, opts));
+                self.tracks.insert(id, TrackProcessor::new_graph(fx, graph, opts));
             }
         }
     }
@@ -434,6 +488,7 @@ impl FxStateStore {
     /// Remove the state of clips that no longer exist in the model.
     pub fn retain_clips(&mut self, alive: &dyn Fn(ClipId) -> bool) {
         self.map.retain(|id, _| alive(*id));
+        self.reads.retain(|id, _| alive(*id));
         self.laps.retain(|id, _| alive(*id));
     }
 
@@ -521,6 +576,10 @@ impl FxStateStore {
             n.rewind();
         }
         for p in self.map.values_mut() {
+            p.reset();
+        }
+        // an event's sound reads are streams of the same event (fx-graph-dag D4)
+        for p in self.reads.values_mut().flatten() {
             p.reset();
         }
         // a seek: no earlier lap rings on into it

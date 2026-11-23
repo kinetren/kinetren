@@ -574,3 +574,12 @@ keeps the set asks nothing (t2127). The export prewarms its devices and waits (`
   (`clip_head_zoom`'s `trunk`) are those of the slots before the first branch. A time kind in an arm
   is a read of its own (design D2) — until that stage lands it is transparent in the arm.
 - Tests t3201, t3202, t3204, t3208 (`tests/fx_graph_render.rs`).
+- **The sound runs the graph too** (v2c): `AudioClip.fx` is the MAIN chain of `kt_fx::sound_split`
+  (placeholders where a read or nothing runs), `graph` its wiring, `reads` the sound reads — each a
+  line with its own curves, address map and source window. `FxStateStore` keeps a processor per
+  read (`sync_reads`, reset and retained with the event); `render_fx_clip` feeds them through
+  `EventFeed`, and `wanted_audio_bursts_for` asks every read's window by the SAME window function
+  (`AudioClip::chains`) — a read the prefetch does not ask is an endless miss (item 13). A reel
+  instance opens no read; an event with reads is never a run predecessor (several streams).
+  `tail_frames`/`lookahead_frames` of a clip cover its reads. A track stage carries its graph.
+  Tests t3212, t3216, t3217, t3229 (`tests/audio_graph.rs`).
