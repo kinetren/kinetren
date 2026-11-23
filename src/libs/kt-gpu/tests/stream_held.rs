@@ -100,7 +100,11 @@ fn t3816_another_device_reads_the_planes_back() {
     let (bytes, held) = planes(pw, ph, 5);
     let (on, before) = kt_gpu::held_pictures();
     let want = compose(&*e, &held, &bytes, pw, ph, w, h, false);
-    let got = compose(&*e, &held, &bytes, pw, ph, w, h, true);
+    let mut got = vec![];
+    let items = kt_time::trace::testing::capture(|| got = compose(&*e, &held, &bytes, pw, ph, w, h, true));
     assert_eq!(got, want, "the read-back composite is the bytes path's");
+    let cross: Vec<_> = kt_time::trace::testing::recs(&items).into_iter().filter(|r| r.kind() == Some(kt_time::trace::Ev::StreamCross)).collect();
+    assert_eq!(cross.len(), 1, "the read back is a crossing in the trace");
+    assert_eq!((cross[0].aux, cross[0].a, cross[0].b), (kt_time::trace::cross::EXECUTOR, (pw * ph * 3 / 2) as u64, (w * h * 4) as u64));
     assert_eq!(kt_gpu::held_pictures(), (on, before + 1), "read back, not converted on a foreign device");
 }

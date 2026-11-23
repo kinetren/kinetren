@@ -30,7 +30,7 @@ pub use context::{trace_device,
     instances_created, machine_facts, power_preference_for, trace_machine,
 };
 pub use compiled::{cold_draws, forms_revision, pipelines_in_frame};
-pub use exit::background_gpu_work;
+pub use exit::{background_gpu_work, begin as begin_exit};
 pub use pipeline_cache::set_cache_dir;
 pub use engine::{held_pictures, present_checks, present_waits, DisplayTarget, GpuFxEngine, assembled_composite, assembled_shaders, plugin_taps, plugin_transitions, plugin_warps};
 
@@ -265,6 +265,17 @@ static PREVIEW_NOW: std::sync::Mutex<Option<std::sync::Arc<GpuFxEngine>>> = std:
 /// software adapter runs one frame per queue, so it gets a device per worker, as many as the cores
 /// and the memory allow (`memory::engines_for`). `KT_VIDEO_ENGINES` overrides it.
 pub fn export_engines(w: u32, h: u32) -> Result<Vec<std::sync::Arc<GpuFxEngine>>, String> {
+    // on a card, on the compute host's device while it holds a stream's pictures (stream-picture-stays
+    // D4): they reach the composite where they lie, never read back
+    let forced = std::env::var("KT_VIDEO_ENGINES").is_ok();
+    if compute::pictures_held()
+        && let Some(dev) = compute::host_device()
+    {
+        use kt_plugin_api::compute::ComputeHost as _;
+        if compute::export_on_host(&dev.context().adapter_info, dev.holds_pictures(), forced) {
+            return Ok(vec![GpuFxEngine::new_for_export(dev.context()).map_err(|e| e.to_string())?]);
+        }
+    }
     let first = export_engine()?;
     use kt_engine::VideoGpuExec as _;
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());

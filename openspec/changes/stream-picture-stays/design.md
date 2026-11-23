@@ -127,6 +127,18 @@ a processor-memory device, and the crossing there is a memcpy (D1 measures it th
 
 Spare: t3823.
 
+## The compute generator's hold (task 2.4): not this change's shape
+
+A stream picture has ONE consumer, the layer's input, built in the plan's common code, so a held form
+there reached every executor with one fallback. A compute generator's frame does not: it is a
+`GenKernel::frame` → `GeneratorSource` → `VideoFrame` in the burst cache, read by the frame blending
+(`dissolve_into`, the processor's), the reel strips and posters, the thumbnails and the effect cells, the
+coverage bars, the export's chunks — each a processor reader of the bytes. Holding it means a held form
+of `VideoFrame` in the cache with a fallback at every one of those readers, a change of the cache's and
+the source's contract (kt-cache, kt-media), not of the plan. Left open with that scope; the crossing it
+would save is one read back and one upload of an RGBA frame per generator frame shown, which the trace's
+`stream_cross` does not count (only stream pictures are), so its cost is not measured yet either.
+
 ## Risks
 
 - **Device memory on a card:** with the host sharing the window's device, the stream memo's pictures

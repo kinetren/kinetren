@@ -53,6 +53,12 @@ fn t3818_one_device_where_the_window_computes() {
     assert!(kt_gpu::compute::share_refusal(&info(&card), None).is_some(), "no adapter for the host");
     let lone = [igpu.clone()];
     assert_eq!(kt_gpu::compute::share_refusal(&info(&igpu), kt_gpu::compute::compute_pick(&lone)), None, "a lone integrated chip");
+    // the export composes on the host's device on a card while the host holds pictures (D4, t3820)
+    let cpu = fact("llvmpipe", Cpu, Vulkan, 0);
+    assert!(kt_gpu::compute::export_on_host(&info(&card), true, false), "a card's export on the host's device");
+    assert!(!kt_gpu::compute::export_on_host(&info(&cpu), true, false), "a software adapter keeps its devices");
+    assert!(!kt_gpu::compute::export_on_host(&info(&card), false, false), "pictures not held: as before");
+    assert!(!kt_gpu::compute::export_on_host(&info(&card), true, true), "KT_VIDEO_ENGINES forces the count");
 }
 
 const COPY: &str = "@group(0) @binding(0) var<uniform> u: vec4<u32>;\n\

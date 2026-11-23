@@ -1098,6 +1098,7 @@ fn render_cache_build() -> String {
     format!("{} avcodec {:?}", kt_version::FULL, kt_media::ffmpeg::backend_info().map(|b| b.avcodec_version))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn preview_run(
     project: &Project,
     path: &str,
@@ -1111,10 +1112,17 @@ fn preview_run(
     wav: Option<String>,
     device_open_ms: f64,
     render_cache: Option<String>,
+    one_device: bool,
 ) -> Result<(), String> {
     use kt_ffmpeg::iostats as io;
     use std::sync::atomic::Ordering::Relaxed;
     preview_decode_threads(project);
+    // before anything opens the compute host: the display's device becomes its device too
+    let display = kt_gpu::GpuContext::new_headless().map_err(|e| format!("no video device: {e}"))?;
+    let display = if one_device { kt_gpu::compute::share_display(&display.device, &display.queue, display.adapter_info.clone()) } else { display };
+    if one_device {
+        eprintln!("one device: compute on the display's device: {}", if kt_gpu::compute::shares_display() { "yes" } else { "no" });
+    }
     let mut sources: Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)> = Vec::new();
     for m in &project.media {
         let mut db = kt_media::index::MediaIndexDb::open(
@@ -1132,7 +1140,7 @@ fn preview_run(
         height: project.settings.height,
     });
     player.set_preview_quality(q);
-    let gpu = kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new).map_err(|e| format!("no video device: {e}"))?;
+    let gpu = kt_gpu::GpuFxEngine::new(display).map_err(|e| format!("no video device: {e}"))?;
     let backend = {
         use kt_engine::VideoGpuExec as _;
         format!("GPU ({})", gpu.info().name)
@@ -1783,7 +1791,7 @@ fn run(args: &[String]) -> i32 {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
                 eprintln!(
-                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR]"
+                    "usage: kt-cli preview <in.kt> <from_s> <to_s> [--size WxH] [--ui-ms N] [--free-running] [--cold] [--loop S] [--wav out.wav] [--device-open-ms N] [--render-cache DIR] [--one-device]"
                 );
                 return 2;
             };
@@ -1806,7 +1814,10 @@ fn run(args: &[String]) -> i32 {
             let wav = opt("--wav").cloned();
             let device_open_ms = opt("--device-open-ms").and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
             let render_cache = opt("--render-cache").cloned();
-            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache) {
+            // the window's device shared with the compute host, as the editor does where it can
+            // (stream-picture-stays D2): its stream pictures reach the composite as they lie
+            let one_device = args.iter().any(|a| a == "--one-device");
+            match preview_run(&project, input, from, to, size, ui_ms, free, cold, looped, wav, device_open_ms, render_cache, one_device) {
                 Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
@@ -2037,6 +2048,9 @@ fn run(args: &[String]) -> i32 {
                     return 2;
                 }
             };
+            // on a card the stream's pictures stay on the compute device and the export composes there
+            // (stream-picture-stays D4); a software adapter keeps its several devices
+            kt_gpu::compute::hold_pictures_for_export();
             // R.29: headless devices, the same composition code as the preview
             let mut engines: Vec<std::sync::Arc<dyn kt_engine::VideoGpuExec>> = match kt_gpu::export_engines(project.settings.width, project.settings.height) {
                 Ok(e) => {

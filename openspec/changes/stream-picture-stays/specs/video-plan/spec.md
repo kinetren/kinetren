@@ -16,9 +16,9 @@ Why: found-defects 663 — every shown Datamosh frame was read back as planes, c
 and uploaded again, between two devices of the same chip (stream-picture-stays D1, D3).
 
 #### Scenario: The crossing is in the trace
-- **WHEN** a Datamosh loop plays three laps with two devices, and its trace is read
-- **THEN** each lap names the frames crossed, their megabytes and the conversion's processor time, and a project with no stream stage crosses nothing
-- **TEST** t3812 (`src/libs/kt-engine/tests/stream_cross.rs`), t3813 (`src/apps/kt-cli/src/trace_query/tests.rs`)
+- **WHEN** mosh frames are composed on two devices, a held picture is read back by an executor on another device, and the trace of a looped run with crossings and held history is read
+- **THEN** each frame composed leaves a `stream_cross` record (bytes back, RGBA handed up, the conversion's span; the kernel's or the executor's), a project with no stream stage none; `trace loop` names per lap the frames crossed, their megabytes and processor time, and the history's device megabytes (`stream_held`, a record at every megabyte moved)
+- **TEST** t3812 (`src/libs/kt-engine/tests/stream_stage.rs`), t3813 (`src/apps/kt-cli/src/trace_query/tests.rs`), t3816, t3823
 
 #### Scenario: A held layer composes as the bytes did
 - **WHEN** a Datamosh frame inside the mosh is planned, then composed by an engine on the compute host's device and by one on another device
@@ -70,12 +70,12 @@ share (stream-picture-stays D2).
 - **TEST** t3819 (`src/apps/kt-app/src/layout_tests.rs`)
 
 #### Scenario: One device crosses nothing over a loop
-- **WHEN** `kt-cli preview` plays a Datamosh loop with one device per adapter
-- **THEN** the trace's crossed bytes are 0 and the frames equal the two-device run's
+- **WHEN** `kt-cli preview --one-device` plays a Datamosh loop on two fixture videos, and the same loop runs on two devices
+- **THEN** on two devices every mosh frame rendered is a `stream_cross` record, on one device (the run says it shares) none is — a relation, not a count: how many frames a loop renders is the machine's (byte equality of the paths is t3814's and t3820's)
 - **TEST** t3821 (`src/apps/kt-cli/tests/cli.rs`)
 
 #### Scenario: A paused Datamosh loop costs nothing on one device
 - **PATH** the heavy showcase with a Datamosh loop → Space plays a lap → Space stops → the mouse rests, then moves over the preview → nothing redraws or walks by itself
-- **WHEN** the heavy showcase with a Datamosh loop stands paused with one device per adapter, the mouse moving over the preview
-- **THEN** once the history is walked no frame is asked at rest and no compute job runs
+- **WHEN** a paused Datamosh moment stands on one device (the host holding pictures, the preview composing on its device), its history walked and its frame complete, and the mouse moves over the preview, then stops
+- **THEN** no position is walked, nothing is composed or submitted, no prefetch pass runs, and at rest no frame is asked
 - **TEST** t3822 (`src/apps/kt-app/src/idle_tests.rs`)

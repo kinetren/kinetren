@@ -877,9 +877,9 @@ impl Walk<'_> {
                 Val::Held(h) => {
                     let bytes = h.bytes();
                     match put {
-                        Put::Lru => self.memo.put(key, h, bytes),
-                        Put::Transient => self.memo.put_transient(key, h, bytes),
-                        Put::Pinned(r) => self.memo.put_pinned(key, h, bytes, r),
+                        Put::Lru => self.memo.put_device(key, h, bytes),
+                        Put::Transient => self.memo.put_transient_device(key, h, bytes),
+                        Put::Pinned(r) => self.memo.put_pinned_device(key, h, bytes, r),
                     }
                 }
                 Val::Host(p) => self.put(key, p, put),

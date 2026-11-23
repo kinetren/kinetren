@@ -233,6 +233,29 @@ pub fn hold_pictures_for_tests() {
     HOLD_FOR_TESTS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// A headless export on a card (kt-cli, stream-picture-stays D4): the host holds a stream's pictures,
+/// and the export composes on the host's device (`crate::export_engines`), so they reach it as they
+/// lie. On a software adapter, or with no host, nothing changes: the export keeps its several devices.
+pub fn hold_pictures_for_export() {
+    if let Some(dev) = host_device()
+        && dev.info.device_type != wgpu::DeviceType::Cpu
+    {
+        HOLD_FOR_TESTS.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Whether an export composes on the compute host's device (stream-picture-stays D4): a card's export
+/// (one engine) while the host holds pictures; never a software adapter's several devices, never with
+/// `KT_VIDEO_ENGINES` set.
+pub fn export_on_host(host: &wgpu::AdapterInfo, holds: bool, engines_forced: bool) -> bool {
+    holds && !engines_forced && host.device_type != wgpu::DeviceType::Cpu
+}
+
+/// Whether the host holds pictures, asked without opening it.
+pub fn pictures_held() -> bool {
+    HOLD_FOR_TESTS.load(std::sync::atomic::Ordering::Relaxed) || SHARED.get().is_some()
+}
+
 /// Whether the compute host runs on the window's device (tests, the trace's facts).
 pub fn shares_display() -> bool {
     SHARED.get().is_some()
