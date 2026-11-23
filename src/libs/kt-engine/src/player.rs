@@ -3568,16 +3568,20 @@ fn prefetch_loop(
         last_pass = std::time::Instant::now();
         // the moments whose composite the display's executor keeps play without work: neither
         // their decodes nor their stream history are asked (structured-telemetry, I8)
-        // ...and the moments the disk prerender holds for this state (cache-audit cut 1): a held final
-        // frame needs none of its source frames, in memory or on disk
+        // ...and the moments the disk prerender holds for this state (cache-audit cut 1). A disk moment
+        // needs none of its source frames: its key is durable. A kept composite in memory is keyed by
+        // its frames' content serials, so its frames stay counted in the cache's want: evicted and
+        // decoded again they move its key, and the kept composite is lost (found-defects 965)
+        let versions = (project_version.load(Ordering::Acquire), content_version.load(Ordering::Acquire));
+        let on_disk: std::collections::HashSet<i64> = render_cache.disk_moments(versions).into_iter().collect();
         let kept_now: std::collections::HashSet<i64> = {
-            let versions = (project_version.load(Ordering::Acquire), content_version.load(Ordering::Acquire));
             let mut held: std::collections::HashSet<i64> =
                 kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect();
-            held.extend(render_cache.disk_moments(versions));
+            held.extend(on_disk.iter().copied());
             held
         };
         let kept = |t: Tick| kept_now.contains(&t.0);
+        let disk_held = |t: Tick| on_disk.contains(&t.0);
         size_stream_memo(video, built.seq, q, region_ticks, &mut memo_sized);
         if transport.is_playing() && region_ticks.is_some() {
             if lap_at.is_some_and(|at| t0.0 < at) {
@@ -3623,7 +3627,7 @@ fn prefetch_loop(
         }
         let (missing, window) = video_prefetch_pass_sized(video, &cache, t0, q, region_ticks, &kept);
         // the cache asks the memory ledger for what this window and the loop need at this quality
-        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, (&kept, kept_now.len()), &mut frames_sized);
+        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, (&disk_held, on_disk.len()), &mut frames_sized);
         pass_span.b(missing.len() as u64).c(stream_pending as u64);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue
