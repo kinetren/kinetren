@@ -14,7 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-MED-003, F-AUD-002, F-CLR-004, F-CLR-006, F-EXT-003]
-checked: 2026-11-22
+checked: 2026-11-23
 ---
 
 # F-EXT-001 — Hosting third-party plugins — OFX for video and VST for audio
@@ -118,7 +118,7 @@ The vendor's answer to a host crash caused by foreign code is "disable them one 
 
 ## How it fits Kinotrain
 
-Since 2026-11-22: the OFX bridge (stage 3 of `plugin-api-stage1` D10, after `wasm-plugin-host`) is designed in change `openfx-host` — a separate host process, the conditions of F-EXT-003, the owner's four questions answered there.
+Since 2026-11-22: the OFX bridge (stage 3 of `plugin-api-stage1` D10, after `wasm-plugin-host`) is designed in change `openfx-host` — a separate host process, the conditions of F-EXT-003, the owner's four questions answered there. Revision 2 (2026-11-23, the owner's D4: "а нахрена копировать кадр?"): frames cross to the host process with no copy — our Vulkan image exported into the plugin's OpenGL/CUDA/OpenCL for GPU plugins, RAM shared memory written directly by the device for processor plugins.
 
 ### What already exists
 
