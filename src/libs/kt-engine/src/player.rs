@@ -481,12 +481,13 @@ impl Player {
             let shown_p = shown.clone();
             let gpu_p = video_gpu.clone();
             let ahead_p = ahead.clone();
+            let disk_p = render_cache.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, builds, quality, stop, wake_p,
-                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p, gpu_p, ahead_p,
+                        stats_p, version_p, content_p, region_p, shared_p, mix_p, shown_p, gpu_p, ahead_p, disk_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -3418,6 +3419,7 @@ fn prefetch_loop(
     kept_moments: Shown,
     video_gpu: Arc<Mutex<VideoGpuState>>,
     ahead: Arc<crate::render_ahead::RenderAhead>,
+    render_cache: Arc<crate::render_cache::RenderCache>,
 ) {
     // its stream advances and decodes are the look-ahead (gpu-arbiter D5)
     let _class = kt_time::sched::with_class(kt_time::sched::Class::Near);
@@ -3566,9 +3568,14 @@ fn prefetch_loop(
         last_pass = std::time::Instant::now();
         // the moments whose composite the display's executor keeps play without work: neither
         // their decodes nor their stream history are asked (structured-telemetry, I8)
+        // ...and the moments the disk prerender holds for this state (cache-audit cut 1): a held final
+        // frame needs none of its source frames, in memory or on disk
         let kept_now: std::collections::HashSet<i64> = {
             let versions = (project_version.load(Ordering::Acquire), content_version.load(Ordering::Acquire));
-            kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect()
+            let mut held: std::collections::HashSet<i64> =
+                kept_moments.lock().unwrap().iter().filter(|(_, (_, p, c))| (*p, *c) == versions).map(|(t, _)| *t).collect();
+            held.extend(render_cache.disk_moments(versions));
+            held
         };
         let kept = |t: Tick| kept_now.contains(&t.0);
         size_stream_memo(video, built.seq, q, region_ticks, &mut memo_sized);
@@ -3616,7 +3623,7 @@ fn prefetch_loop(
         }
         let (missing, window) = video_prefetch_pass_sized(video, &cache, t0, q, region_ticks, &kept);
         // the cache asks the memory ledger for what this window and the loop need at this quality
-        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, &mut frames_sized);
+        size_frames_cache(video, &cache, q, region_ticks, built.seq, window, (&kept, kept_now.len()), &mut frames_sized);
         pass_span.b(missing.len() as u64).c(stream_pending as u64);
         let workers = workers.read().unwrap();
         // what the playhead has passed is no longer asked for: a request left in the queue
