@@ -34,12 +34,7 @@ a row; it does not close the row.
 
 ## Questions waiting for his decision
 
-| # | Since | Question (with context) | Where to go |
-|---|---|---|---|
-| Q55 | 2026-11-22 | **Persistent cache: how exact is a stored effect result?** (a) recommended: lossy on the hardware encoder at high quality, like the prerender (a tenth of the disk; the preview may differ from the render by codec noise, never the export); (b) layer results lossless (LZ4, ~10× the disk), frames and copies lossy. | `persistent-cache` Q1 (kkt-26.11.20b B1) |
-| Q56 | 2026-11-22 | **Letter physics default and step.** (a) sway back to place by default, fall/hang/drag as choices; fixed step 1/240 s of material time; (b) fall by default / one step per project frame. | `text-letter-physics` Q1, Q2 (v26.10 lines 109–111) |
-| Q57 | 2026-11-22 | **OpenFX host.** (a) open sets first (openfx-misc, openfx-arena, G'MIC), in its own process (a plugin crash costs the node); (b) a named commercial plugin first / in our process. | `openfx-host` Q1, Q2 |
-| Q58 | 2026-11-22 | **Which ARM first.** (a) Linux aarch64 (tarball + Flatpak), Windows on ARM next, macOS later; (b) Windows on ARM; (c) macOS. | `arm-build` Q1 |
+None open (Q55–Q58 answered 2026-11-22..23, see Answered).
 
 ## Answered
 
@@ -49,3 +44,4 @@ a row; it does not close the row.
 | — | 2026-11-19 | A1 (curve keys) and MW1 (bin drag) | kkt-26.11.18b lines 31–32, U9 |
 | Q1–Q54 | 2026-11-20 | answered in chat; verbatim `docs/ktprompts/kkt-26.11.20.txt`, rows A1–A26 | `docs/ktprompts/kkt-26.11.20-index.md`; the questions themselves in git history of this file (c5b9eb30) |
 | 2nd round | 2026-11-20..22 | answered in chat; verbatim `docs/ktprompts/kkt-26.11.20b.txt`, rows B1–B12 | `docs/ktprompts/kkt-26.11.20b-index.md` |
+| Q55–Q58 | 2026-11-22..23 | answered in chat; verbatim `docs/ktprompts/kkt-26.11.22.txt`, rows D1–D5 | `docs/ktprompts/kkt-26.11.22-index.md` |

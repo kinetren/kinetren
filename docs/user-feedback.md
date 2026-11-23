@@ -3037,3 +3037,14 @@ Rule kept from 2026-11-09: diagnose from his trace, no benches or bisects offere
 3. **Loudness is normalized in the project, by the professional path**, not as a render preset.
 4. **A full cache folder writes cyclically**, dropping the oldest, with an alert in the notices.
 5. Dragging a window by the preview: dropped by him.
+
+## 2026-11-22..23 — answers to Q55–Q58 (verbatim: `docs/ktprompts/kkt-26.11.22.txt`, rows D1–D5)
+
+1. **Cache the final preview frame, not stages of a chain.** "делай кеш имменно финального превью а не на каком-то
+   конкретном этапе цепочки fx. у тебя что, после каждой цепочки есть отдельный кэш?!?!? а не дохера ли мы данных
+   сейчас в таком случае храним??" A design that multiplies stores by stage is the wrong answer to "do not compute
+   heavy effects again".
+2. **An example is not the request.** "речь идет не про то как в очередной раз высрать в форму какой-то контролс и
+   соплями смазать код. а про то - как построить ТАКУЮ систему композитинга…" His letter physics is one application
+   of a compositing system; the design is the system and the list of every place in the program it serves.
+3. **No needless copies on a modern machine**: frames to a plugin process go through shared memory (RAM or GPU).
