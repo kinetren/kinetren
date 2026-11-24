@@ -10364,7 +10364,6 @@ fn t517_double_click_on_label_resets_param() {
 /// (rule 10: there is one place for display).
 #[test]
 fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
-    use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, _g) = harness_three_clips_dt(Some(0.02));
     h.state_mut().create_generator(GeneratorKind::default_text());
