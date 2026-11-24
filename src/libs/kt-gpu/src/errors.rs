@@ -165,7 +165,9 @@ pub fn yield_to_display() {
     if *h == 0 {
         return;
     }
+    let t0 = std::time::Instant::now();
     let _ = HOLD.1.wait_timeout_while(h, HOLD_MAX, |h| *h > 0);
+    crate::holds::note_wait("display hold", kt_time::trace::gpu_wait::LOCK, Some(role::DISPLAY), t0.elapsed());
 }
 
 /// Run `f` inside thread-local Validation and Internal error scopes of `device`: an error raised in

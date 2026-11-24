@@ -441,12 +441,16 @@ fn write_poster(out: &std::path::Path, rgba: Vec<u8>) {
 pub struct Posters {
     textures: std::collections::HashMap<std::path::PathBuf, egui::TextureHandle>,
     rx: Option<std::sync::mpsc::Receiver<(std::path::PathBuf, egui::ColorImage)>>,
+    /// Which recent files are there, asked once per opening of the window: the cards are drawn every
+    /// frame, and a frame that asks the disk stands with it (gpu-waits-named).
+    there: std::cell::RefCell<std::collections::HashMap<std::path::PathBuf, bool>>,
 }
 
 impl Posters {
     /// Read the posters of these rows (key → PNG) afresh.
     pub fn load(&mut self, ctx: &egui::Context, rows: Vec<(std::path::PathBuf, std::path::PathBuf)>) {
         self.textures.clear();
+        self.there.get_mut().clear();
         let (tx, rx) = std::sync::mpsc::channel();
         self.rx = Some(rx);
         let ctx = ctx.clone();
@@ -475,6 +479,11 @@ impl Posters {
 
     pub fn get(&self, key: &std::path::Path) -> Option<&egui::TextureHandle> {
         self.textures.get(key)
+    }
+
+    /// Whether the recent project's file is there, as of the window's opening.
+    pub fn there(&self, path: &std::path::Path) -> bool {
+        *self.there.borrow_mut().entry(path.to_path_buf()).or_insert_with(|| path.exists())
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -810,7 +819,7 @@ impl crate::app::KtApp {
                                     for (i, e) in chunk {
                                         let i = *i;
                                         let is = primary == Tile::Recent(i);
-                                        let exists = e.path.exists();
+                                        let exists = posters.there(&e.path);
                                         let folder = e.path.parent().map(|p| p.display().to_string()).unwrap_or_default();
                                         let card = ui.vertical(|ui| {
                                             ui.set_width(card_w);

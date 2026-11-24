@@ -951,6 +951,12 @@ fn exec_word(aux: u32) -> String {
 }
 
 /// The critical path of one frame, a line per stage.
+/// A device wait in words: "lock pass times", "call submit (preview)".
+fn wait_word(run: &Run, r: &Rec) -> String {
+    let what = format!("{} {}", trace::gpu_wait::name(r.a), run.name_of(r.aux));
+    if r.b == 0 { what } else { format!("{what} ({})", run.name_of(r.b as u32)) }
+}
+
 fn path(run: &Run, l: &Life, o: &mut String) {
     let t0 = l.start();
     let rel = |t: u64| ms(t.saturating_sub(t0));
@@ -967,6 +973,10 @@ fn path(run: &Run, l: &Life, o: &mut String) {
             }
             trace::wait::DEVICE if w.dur > 1_000_000 => {
                 let _ = writeln!(o, "      device finishing the frame before: {}", ms(w.dur));
+            }
+            trace::wait::DISK if w.dur > 1_000_000 || w.a == 0 => {
+                let how = if w.a == 1 { "it came" } else { "not in time, or not there" };
+                let _ = writeln!(o, "      waited for the disk tier: {} ({how})", ms(w.dur));
             }
             trace::wait::BUILD => {
                 let _ = writeln!(o, "      waited for the shared build of the project's state: {}", ms(w.dur));
@@ -1000,6 +1010,10 @@ fn path(run: &Run, l: &Life, o: &mut String) {
     if let Some(e) = l.exec {
         let cold = if e.b > 0 { format!(", {} pipelines compiled cold", e.b) } else { String::new() };
         let _ = writeln!(o, "      executor at {} took {}: {}{cold}", rel(e.t), ms(e.dur), exec_word(e.aux));
+        // what it waited for inside (gpu-waits-named), by the thread it ran on
+        for r in run.recs.iter().filter(|r| is(r, Ev::GpuWait) && r.th == e.th && r.t < e.end() && r.end() > e.t) {
+            let _ = writeln!(o, "        at {} {} for {}", rel(r.t), wait_word(run, r), ms(r.dur));
+        }
     }
     match (l.done, l.drop) {
         (Some(d), _) => {
@@ -1593,6 +1607,7 @@ pub fn during(run: &Run, from: u64, to: u64) -> String {
         let name = match k {
             Ev::Job => format!("job:{}", job_name(r.aux)),
             Ev::ComputeJob | Ev::Warm | Ev::ColdDraw => format!("{}:{}", k.name(), run.name_of(r.aux)),
+            Ev::GpuWait => format!("{}:{}", k.name(), wait_word(run, r)),
             Ev::Play => format!("play:{}", play_name(r.aux)),
             Ev::FrameDrop => format!("frame_drop:{}", r.aux),
             Ev::FrameDone => format!("frame_done:{}", if r.aux == 1 { "complete" } else { "incomplete" }),
@@ -1763,7 +1778,7 @@ pub fn chrome(run: &Run) -> String {
     for r in &run.recs {
         let Some(k) = kind(r) else { continue };
         let name = match k {
-            Ev::ComputeJob | Ev::Warm | Ev::ColdDraw => format!("{}:{}", k.name(), run.name_of(r.aux)),
+            Ev::ComputeJob | Ev::Warm | Ev::ColdDraw | Ev::GpuWait => format!("{}:{}", k.name(), run.name_of(r.aux)),
             Ev::Job => format!("job:{}", job_name(r.aux)),
             Ev::SchedQueue | Ev::SchedRun | Ev::SchedCancel => sched_word(run, k, r),
             _ => k.name().to_string(),

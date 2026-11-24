@@ -315,6 +315,53 @@ fn t2243_during_names_scheduled_jobs_pauses_and_blocking_calls() {
     }
 }
 
+/// Test t3253 (gpu-waits-named, found-defects 835): a frame whose executor stood says what it stood on —
+/// the lock and who else was inside the file — in `frame` and in `during`; another thread's wait and one
+/// outside the executor are not the frame's.
+#[test]
+fn t3253_a_standing_frame_names_what_it_waited_for() {
+    let mut run = run_of(vec![
+        rec(Ev::FrameAsk, 10 * MS, |r| r.id = 7),
+        rec(Ev::FramePlan, 10 * MS, |r| r.id = 7),
+        rec(Ev::FrameExec, 11 * MS, |r| {
+            r.id = 7;
+            r.dur = 4820 * MS;
+        }),
+        rec(Ev::FrameDone, 10 * MS, |r| {
+            r.id = 7;
+            r.aux = 1;
+            r.dur = 4822 * MS;
+        }),
+        rec(Ev::GpuWait, 12 * MS, |r| {
+            r.aux = 51;
+            r.a = kt_time::trace::gpu_wait::LOCK;
+            r.dur = 4818 * MS;
+        }),
+        rec(Ev::GpuWait, 12 * MS, |r| {
+            r.th = 9;
+            r.aux = 52;
+            r.a = kt_time::trace::gpu_wait::FILE;
+            r.dur = 4817 * MS;
+        }),
+        rec(Ev::GpuWait, 5000 * MS, |r| {
+            r.aux = 53;
+            r.a = kt_time::trace::gpu_wait::CALL;
+            r.b = 54;
+            r.dur = 2 * MS;
+        }),
+    ]);
+    for (n, s) in [(51, "pass times"), (52, "pass times write"), (53, "submit"), (54, "preview")] {
+        run.names.insert(n, s.into());
+    }
+    let f = frame(&run, 7);
+    assert!(f.contains("lock pass times for 4818"), "{f}");
+    assert!(!f.contains("file pass times write") && !f.contains("call submit"), "{f}");
+    let d = during(&run, 0, 6000 * MS);
+    for want in ["gpu_wait:lock pass times", "gpu_wait:file pass times write", "gpu_wait:call submit (preview)"] {
+        assert!(d.contains(want), "{want} missing in:\n{d}");
+    }
+}
+
 /// t2300 (memory-ledger): the ledger's sizings and the grants they changed are records, and
 /// `trace memory` prints both sizings and the stream tenant's last cap.
 #[test]

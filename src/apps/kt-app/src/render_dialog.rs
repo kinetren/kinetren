@@ -462,6 +462,8 @@ pub struct RenderSetup {
     /// Sources unavailable at the moment the settings are opened: shown as a
     /// warning BEFORE the launch, not a surprise in the finished file.
     pub missing: Vec<String>,
+    /// The size and date of the file the render would replace, read when the question was asked.
+    pub replaces: Option<(u64, String)>,
     /// A test's recorder of Open file / Open folder / Open log (D7): `Some` — the path is pushed
     /// here instead of starting the system's program.
     pub test_open: Option<Vec<std::path::PathBuf>>,
@@ -497,6 +499,7 @@ impl Default for RenderSetup {
             custom_on: false,
             open: false,
             missing: Vec::new(),
+            replaces: None,
             // a test's data directory is its own (render-finish-crash D3)
             test_open: None,
             test_pick: None,
@@ -804,7 +807,10 @@ impl KtApp {
         // AN EXISTING FILE IS ASKED ABOUT FIRST (D8): the muxer would truncate it at once, and a
         // cancelled or failed render would then delete it. Asked always — the native dialog's own
         // question is not guaranteed (the `KT_FILE_PICK` seam, portals that do not confirm).
-        if path.exists() {
+        if let Ok(m) = std::fs::metadata(&path) {
+            // read once: the question is drawn every frame (gpu-waits-named)
+            let date = m.modified().map(|t| crate::journal::stamp_of(t)[..16].to_string()).unwrap_or_default();
+            self.render_setup.replaces = Some((m.len(), date));
             self.render_setup.open = false;
             self.ask = Some(crate::app::Ask::OverwriteRender { path });
             return;

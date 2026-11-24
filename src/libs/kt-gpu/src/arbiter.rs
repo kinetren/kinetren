@@ -535,7 +535,9 @@ impl Submitted {
             return;
         }
         if !self.surface {
-            let _ = self.device.poll(wgpu::PollType::Wait { submission_index: Some(self.sub.clone()), timeout: None });
+            let t0 = Instant::now();
+            let _ = crate::wait_for(&self.device, self.sub.clone());
+            crate::holds::note_wait("piece wait", trace::gpu_wait::CALL, None, t0.elapsed());
             self.ring.finish(self.id);
             return;
         }

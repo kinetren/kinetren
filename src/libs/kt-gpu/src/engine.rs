@@ -1393,19 +1393,19 @@ impl GpuFxEngine {
 
     /// The present memo now: (composites, bytes, bound) — tests and `kt-cli`.
     pub fn present_memo_stats(&self) -> (usize, u64, u64) {
-        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.locked();
         (g.present_memo.len(), g.present_memo.bytes(), g.present_memo.cap())
     }
 
     /// The uploads held now (tests).
     pub fn uploads_held(&self) -> usize {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).upload.held()
+        self.locked().upload.held()
     }
 
     /// Tests: the present memo's base (the product's is 512 MB), set before it keeps anything.
     #[doc(hidden)]
     pub fn set_present_base_for_tests(&self, bytes: u64) {
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         let hook = g.present_memo.take_on_shrink();
         g.present_memo = PresentMemo::new(bytes);
         if let Some(h) = hook {
@@ -1417,13 +1417,13 @@ impl GpuFxEngine {
     /// would refuse it.
     #[doc(hidden)]
     pub fn refuse_next_growth_for_tests(&self) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).refuse_next_growth = true;
+        self.locked().refuse_next_growth = true;
     }
 
     /// This engine shows the preview on a device with no window (the bench, gpu-arbiter): its ring
     /// bounds what stands in front of its presents from now on.
     pub fn register_display(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         if g.shows.is_none() {
             g.shows = Some(g.arb.register_display());
         }
@@ -1431,13 +1431,13 @@ impl GpuFxEngine {
 
     /// The ring this engine's device runs on (gpu-arbiter).
     pub fn ring(&self) -> Arc<crate::arbiter::Ring> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).arb.clone()
+        self.locked().arb.clone()
     }
 
     /// Wait for the device and keep this engine's lock for good: whoever asks for a frame from now
     /// on waits until the process is gone.
     pub fn park(&self) {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = self.locked();
         let _ = crate::wait_all(&inner.device);
         std::mem::forget(inner);
     }
@@ -1520,7 +1520,7 @@ impl GpuFxEngine {
         // ours stalled under the context lock made this thread panic (t2746 beside t2745's hold)
         let _gate = self.compiled.gl_gate();
         let (device, queue, arb, memo_guard, seed, surface) = {
-            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let g = self.locked();
             (g.device.clone(), g.queue.clone(), g.arb.clone(), g.memo_guard, g.timer.seed_key(), g.surface)
         };
         let e = Self::assemble(device, queue, self.info.clone(), self.compiled.clone(), arb, memo_guard, false, false, seed);
@@ -1540,7 +1540,7 @@ impl GpuFxEngine {
     fn keep_tex(&self, key: u64, tex: Tex) -> bool {
         let _hold = crate::holds::within(self.role(), "keep");
         let _gate = self.compiled.gl_gate();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         if g.present_memo.holds(key) {
             g.pool.release(tex);
             return true;
@@ -1551,7 +1551,7 @@ impl GpuFxEngine {
     /// This engine's device is the compute host's (`compute::host_device`): `execute_held` leaves a
     /// frame there for a compute job to read (stream-front-on-device). Idempotent.
     pub fn hold_for_compute(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         if g.held.is_none() {
             g.held = Some(Arc::default());
         }
@@ -1561,7 +1561,7 @@ impl GpuFxEngine {
     /// scheduler-followups D6): its ring bounds what stands in front of that frame and cuts a
     /// lower-class frame while it waits, as a display's ring does. Idempotent.
     pub fn serve_preview(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         if g.serves.is_none() {
             g.serves = Some(g.arb.register_preview());
         }
@@ -1721,7 +1721,7 @@ impl GpuFxEngine {
     /// not wait for it (ui-never-waits).
     #[doc(hidden)]
     pub fn hold(&self) -> impl Sized + '_ {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+        self.locked()
     }
 
     /// The display target's bytes (premultiplied, as egui samples them): tests only.
@@ -1737,7 +1737,7 @@ impl GpuFxEngine {
     }
 
     fn read_target(&self, pick: impl Fn(&Inner) -> Option<&Tex>) -> Option<Vec<u8>> {
-        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.locked();
         let t = pick(&g)?;
         let bpr = (t.w * 4).next_multiple_of(256);
         let buf = g.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1783,7 +1783,7 @@ impl GpuFxEngine {
     /// The preview's engine off the window's device (gl-context-holder D5): its bytes-path frames
     /// keep their composites like `present` does, and a kept moment is read back, not composed.
     pub fn keep_composites_for_bytes(&self) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).keeps_bytes = true;
+        self.locked().keeps_bytes = true;
         self.bytes_preview.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -1802,8 +1802,13 @@ impl GpuFxEngine {
     pub fn hold_gl_context(&self, release: impl FnOnce()) -> bool {
         // through the gate, as a call of ours stalled under the lock would hold it
         let _gate = self.compiled.gl_gate();
-        let device = self.inner.lock().unwrap_or_else(|e| e.into_inner()).device.clone();
+        let device = self.locked().device.clone();
         crate::holds::hold_gl_context(&device, release)
+    }
+
+    /// The engine's own lock; a wait for it is named in the trace (gpu-waits-named).
+    fn locked(&self) -> std::sync::MutexGuard<'_, Inner> {
+        crate::holds::lock(&self.inner, "engine", Some(self.role()))
     }
 
     /// The display engine's frame waits out a refused reconfigure of the window's surface: wgpu
@@ -1827,37 +1832,37 @@ impl GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "execute_measured");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut inner = self.locked();
         let complete = inner.guarded(|g| g.execute(plan, out, false, true))?;
         Ok((complete, inner.last_cost))
     }
 
     /// t2313: a uniform write and a new bind group per pass (the form before local-cost-queue).
     pub fn per_pass_binds(&self, on: bool) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).per_pass = on;
+        self.locked().per_pass = on;
     }
 
     /// Bind groups made and reused, and held now (t2314).
     pub fn bind_stats(&self) -> (u64, u64, usize) {
-        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.locked();
         (g.binds.made, g.binds.reused, g.binds.len())
     }
 
     /// t1766: run every fused pass through the interpreter.
     pub fn interpret_geometry(&self, on: bool) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).geom_interpret = on;
+        self.locked().geom_interpret = on;
     }
 
     /// How point-wise runs run on this engine (fused-pointwise-runs): `Measured` in the product;
     /// `Always`/`Never` for the tests and `kt-cli fuse-cost`.
     pub fn fuse_runs(&self, mode: crate::runs::FuseRuns) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).fuse = mode;
+        self.locked().fuse = mode;
     }
 
     /// The last frame's run pieces by the form it showed: (own passes, fused, own with the trial's
     /// fused pass beside them).
     pub fn last_run_forms(&self) -> (u32, u32, u32) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).last_runs
+        self.locked().last_runs
     }
 
     /// Point-wise run shapes with a warm pass of their own, and how many the trial kept fused and split.
@@ -1881,7 +1886,7 @@ impl GpuFxEngine {
 
     /// t1766: how many program shapes have a pass of their own so far.
     pub fn geometry_shapes(&self) -> usize {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).c.shapes_ready()
+        self.locked().c.shapes_ready()
     }
 }
 
@@ -1907,7 +1912,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn poll_done(&self) {
-        let device = self.inner.lock().unwrap_or_else(|e| e.into_inner()).device.clone();
+        let device = self.locked().device.clone();
         let _ = device.poll(wgpu::PollType::Poll);
     }
 
@@ -1927,7 +1932,7 @@ impl VideoGpuExec for GpuFxEngine {
             let _gate = self.compiled.gl_gate();
             let _frame = self.compiled.frame();
             let cold = crate::compiled::cold_draws();
-            let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let mut g = self.locked();
             let (complete, kept, sub) = g.guarded(|g| g.ahead_tex(plan))?;
             g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
             (complete, kept, sub, g.queue.clone())
@@ -1948,7 +1953,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         let r = g.guarded(|g| g.execute(plan, out, true, false));
         g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         r
@@ -1959,7 +1964,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "execute_once");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         // an export's frame: its runs in the settled form (gpu-leftovers D3)
         g.settled = true;
         let r = g.guarded(|g| g.execute(plan, out, false, true));
@@ -1971,7 +1976,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "execute_held");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         if g.held.is_none() {
             return Ok(HeldOut::Unsupported);
         }
@@ -1987,15 +1992,15 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn last_cost(&self) -> kt_fx::video::FrameCost {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).last_cost
+        self.locked().last_cost
     }
 
     fn last_stages(&self) -> GpuStages {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).last_stages
+        self.locked().last_stages
     }
 
     fn last_device_ns(&self) -> u64 {
-        let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let g = self.locked();
         g.timer.last_frame(g.readback_role())
     }
 
@@ -2009,7 +2014,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
         let cold = crate::compiled::cold_draws();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         let r = g.guarded(|g| g.present(plan, o));
         g.last_stages.cold = (crate::compiled::cold_draws() - cold) as u32;
         let target = g.display.as_ref().map(|d| DisplayTarget {
@@ -2026,7 +2031,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "wait_presented");
         let _gate = self.compiled.gl_gate();
         let (device, queue, expect) = {
-            let g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            let g = self.locked();
             (g.device.clone(), g.queue.clone(), g.timer.last_frame(Role::Preview))
         };
         // gpu-arbiter D8: a blocking wait would hold the device's lock against the window's present
@@ -2064,7 +2069,7 @@ impl VideoGpuExec for GpuFxEngine {
     fn finish_present(&self) {
         let _hold = crate::holds::within(self.role(), "finish_present");
         let _gate = self.compiled.gl_gate();
-        let device = self.inner.lock().unwrap_or_else(|e| e.into_inner()).device.clone();
+        let device = self.locked().device.clone();
         let _ = crate::wait_all(&device);
     }
 
@@ -2073,7 +2078,7 @@ impl VideoGpuExec for GpuFxEngine {
     }
 
     fn holds(&self, key: u64) -> bool {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).present_memo.holds(key)
+        self.locked().present_memo.holds(key)
     }
 
     fn present_kept(&self, key: u64, o: PresentOptions) -> bool {
@@ -2081,7 +2086,7 @@ impl VideoGpuExec for GpuFxEngine {
         let _hold = crate::holds::within(self.role(), "present_kept");
         let _gate = self.compiled.gl_gate();
         let _frame = self.compiled.frame();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         // an error in the replay shows nothing, as a miss does; the next composed frame reports it
         if !g.guarded(|g| Ok(g.present_kept(key, o))).unwrap_or(false) {
             return false;
@@ -2100,7 +2105,7 @@ impl VideoGpuExec for GpuFxEngine {
         self.yield_to_display();
         let _hold = crate::holds::within(self.role(), "read_kept");
         let _gate = self.compiled.gl_gate();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         g.guarded(|g| {
             let Some((tex, w, h)) = g.present_memo.get_texture(key) else { return Ok(None) };
             g.read_kept(&tex, w, h, out)?;
@@ -2113,12 +2118,12 @@ impl VideoGpuExec for GpuFxEngine {
     fn keep(&self, key: u64, w: u32, h: u32, rgba: &[u8]) {
         let _hold = crate::holds::within(self.role(), "keep");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).keep(key, w, h, rgba);
+        self.locked().keep(key, w, h, rgba);
     }
 
     fn keep_loop(&self, moments: Option<usize>) {
         let _gate = self.compiled.gl_gate();
-        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.locked();
         let Inner { present_memo, pool, .. } = &mut *g;
         present_memo.keep_loop(moments);
         // a smaller want is its own: no hook tells it, it drops what it may no longer hold now
@@ -2131,14 +2136,14 @@ impl VideoGpuExec for GpuFxEngine {
 
     fn readback_depth_yuv(&self, w: u32, h: u32, layout: &kt_engine::yuv::YuvLayout) -> usize {
         let (_, _, th) = yuv_target(layout, w, h);
-        if th > self.inner.lock().unwrap_or_else(|e| e.into_inner()).max_dim { 0 } else { ring_depth_bytes(layout.frame_bytes(w, h) as u64) }
+        if th > self.locked().max_dim { 0 } else { ring_depth_bytes(layout.frame_bytes(w, h) as u64) }
     }
 
     fn submit_yuv(&self, plan: &FramePlan<'_>, layout: &kt_engine::yuv::YuvLayout) -> Result<u64, GpuExecError> {
         self.yield_to_display();
         let _hold = crate::holds::within(self.role(), "submit");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).guarded(|g| g.submit_as(plan, Some(layout)))
+        self.locked().guarded(|g| g.submit_as(plan, Some(layout)))
     }
 
     /// A frame worker's or the serial export's frame as planes made on this device (export-host-copy
@@ -2150,7 +2155,7 @@ impl VideoGpuExec for GpuFxEngine {
         layout: &kt_engine::yuv::YuvLayout,
         out: &mut Vec<u8>,
     ) -> Result<bool, GpuExecError> {
-        let (idle, max_dim) = { let g = self.inner.lock().unwrap_or_else(|e| e.into_inner()); (g.in_flight.is_empty(), g.max_dim) };
+        let (idle, max_dim) = { let g = self.locked(); (g.in_flight.is_empty(), g.max_dim) };
         let (_, _, th) = yuv_target(layout, plan.out_w, plan.out_h);
         if !idle || th > max_dim {
             let mut rgba = Vec::new();
@@ -2169,20 +2174,20 @@ impl VideoGpuExec for GpuFxEngine {
     fn done(&self, ticket: u64) -> bool {
         let _hold = crate::holds::within(self.role(), "done");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).done(ticket)
+        self.locked().done(ticket)
     }
 
     fn submit(&self, plan: &FramePlan<'_>) -> Result<u64, GpuExecError> {
         self.yield_to_display();
         let _hold = crate::holds::within(self.role(), "submit");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).guarded(|g| g.submit(plan))
+        self.locked().guarded(|g| g.submit(plan))
     }
 
     fn collect(&self, ticket: u64, out: &mut Vec<u8>) -> Result<bool, GpuExecError> {
         let _hold = crate::holds::within(self.role(), "collect");
         let _gate = self.compiled.gl_gate();
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).guarded(|g| g.collect(ticket, out))
+        self.locked().guarded(|g| g.collect(ticket, out))
     }
 }
 
@@ -2395,7 +2400,10 @@ impl Inner {
         if r.mapped.lock().unwrap().is_some() {
             return true;
         }
-        let _ = self.device.poll(wgpu::PollType::Poll);
+        {
+            let _h = crate::holds::hold(self.role(), "poll");
+            let _ = self.device.poll(wgpu::PollType::Poll);
+        }
         self.ring[slot].as_ref().is_none_or(|r| r.mapped.lock().unwrap().is_some())
     }
 
@@ -2964,12 +2972,10 @@ impl Inner {
         // effect cells share the device, and "everything submitted" waited for their frames too
         let waited = {
             let _h = crate::holds::hold(self.role(), "wait");
-            crate::wait_for(&self.device, sub)
+            crate::wait_for(&self.device, sub).is_ok() && matches!(rx.recv(), Ok(Ok(())))
         };
-        waited.map_err(|_| GpuExecError::DeviceLost)?;
-        match rx.recv() {
-            Ok(Ok(())) => {}
-            _ => return Err(GpuExecError::DeviceLost),
+        if !waited {
+            return Err(GpuExecError::DeviceLost);
         }
         self.last_stages.wait_ns = mark.elapsed().as_nanos() as u64;
         let mark = Instant::now();
@@ -3461,6 +3467,7 @@ impl Inner {
 
     /// The timestamps that came back, the run trials' samples handed to the device's shapes.
     fn harvest(&mut self) {
+        let _h = crate::holds::hold(self.role(), "harvest");
         for s in self.timer.harvest(&self.device) {
             self.c.note_run(s);
         }
