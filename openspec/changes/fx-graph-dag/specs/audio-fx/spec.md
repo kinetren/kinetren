@@ -5,7 +5,8 @@ A sound chain whose slots name their inputs SHALL be executed by the event's pro
 on buffers from the render thread's pool: a held output goes to every slot that names it, a Merge
 sums Background and mix × Foreground (Sum) or crossfades them (Crossfade) in that fixed order, and
 before a Merge the input with less look-ahead SHALL be delayed by the difference so both sides are
-aligned; the chain's look-ahead and its tail SHALL be those of the path to the Output. A
+aligned; the chain's look-ahead and its tail SHALL be those of the path to the Output. A Merge's mode SHALL be its
+lane's: a picture's blend mode on a sound chain, or a sum on a picture chain, is refused with the slot. A
 compressor's key socket MAY take an arm of its own chain. A warp, the stream's sound or an
 edge reading inside an arm SHALL read its own source window (a sound read, as the picture's read),
 consuming it as the chain's input consumes the source today; a branch on the sound lane is accepted
@@ -38,3 +39,8 @@ Why: invariants 1–3 and 11; the layer strength's dry ring is the same alignmen
 - **WHEN** a reverb stands in one arm and a dangling node in another; the arm is rewired; a value is edited
 - **THEN** the tail is the reverb's; the dangling node does not ring; the rewire rebuilds as a reorder does, the value edit keeps the state
 - **TEST** t3216, t3217 (`src/libs/kt-engine/tests/audio_graph.rs`)
+
+#### Scenario: A Merge's mode is its lane's
+- **WHEN** a Merge with a picture's blend mode stands on an audio event's chain, or one with Sum on a video event's
+- **THEN** the edit is refused with the slot, wired or not; each mode on its own lane is accepted and a Merge's class follows it
+- **TEST** t3298 (`src/libs/kt-model/tests/fx_graph.rs`)

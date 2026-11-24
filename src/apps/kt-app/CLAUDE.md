@@ -1179,3 +1179,12 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
   live scenarios press nodes by them). Ctrl+wheel switches detail ↔ chips, the plain wheel is the
   window's. A node's row label is painted: the row's doors live on the form's label. Graph keys wait
   for the key table (`controls.rs`). t2994, t2995, t2999, t3001, t3003, live `node_graph`.
+- **Branches (fx-graph-dag v2d).** Every gesture is an `Op` carried out by `node_editor::perform`: it
+  re-wires `ChainEdit::links` by slot address (`kt_model::fx_strip`), finds the processing order, asks
+  the model's `check_lane` and only then writes; a refusal sets `ChainChanged::refused` and changes
+  nothing. Never push into `edit.fx` yourself. An owner keeps its parallel lists by
+  `ChainChanged::from` (new slot → old slot) and sends slots, wires and slot masks as ONE
+  `apply_batch` when `ChainChanged::wires` is set (a `SetFx` alone is validated against the old
+  wires); a chain that does not branch stays the window session's coalesced step, its wiring the empty
+  list. The layout (`graph_layout`) is kept per wiring in egui's memory: a hover lays nothing out
+  (t3221). A picker cell stands where the click puts it (`Place::After`, `Place::Arm`).

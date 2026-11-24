@@ -8436,6 +8436,18 @@ impl KtApp {
                 cols[1].weak(b);
             }
         });
+        // a layer that reads its source more than once names its own cost (fx-graph-dag D2)
+        let reads: Vec<String> = self
+            .player
+            .video_read_rows()
+            .iter()
+            .map(|r| format!("#{} {}", kt_model::slice_origin(r.clip).unwrap_or(r.clip).0, crate::fx_editor::fx_display_name(&r.opens)))
+            .collect();
+        if !reads.is_empty() {
+            let r = ui.weak(crate::tf!(k::perf::READS, reads.len(), reads.join(", ")));
+            crate::widgets::field_probe::note("diag.reads", r.rect);
+            self.hint(r, tr(k::perf::READS_HINT));
+        }
         if let Some(r) = program {
             crate::widgets::field_probe::note("diag.memory", r.rect);
             self.hint(r, tr(k::perf::PROGRAM_HINT));
@@ -9083,6 +9095,9 @@ pub struct CoverageCache {
     stamp: Option<CoverageStamp>,
     /// Arc: a snapshot per frame — a clone of the pointer, not of the maps (item 1 of v1.4).
     pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
+    /// A row per read an event makes beyond its own (fx-graph-dag D2: a time kind in an arm), in
+    /// TIMELINE ticks: what is warm of the material that read walks over the event.
+    pub per_read: Arc<HashMap<ClipId, Vec<Vec<std::ops::Range<i64>>>>>,
     /// What plays without work (cached-range-plays), in timeline ticks: the moments whose final
     /// composite the executor keeps (`video`) and the frames whose final mix the audio render
     /// thread keeps (`audio`). The strips draw it bright over the decoded ranges.
@@ -9499,6 +9514,10 @@ impl KtApp {
                 per_clip.insert(c.id, runs);
             }
             self.coverage_cache.per_clip = Arc::new(per_clip);
+            let per_read = self.read_coverage(view);
+            if *self.coverage_cache.per_read != per_read {
+                self.coverage_cache.per_read = Arc::new(per_read);
+            }
             let (video, pending) = self.player.final_video_runs();
             let fin = FinalRuns { video, audio: self.player.final_audio_runs() };
             if *self.coverage_cache.final_runs != fin {
@@ -9511,6 +9530,43 @@ impl KtApp {
             }
         }
         self.coverage_cache.per_clip.clone()
+    }
+
+    /// The rows of the events' reads in view (fx-graph-dag D2): each read asks the cache for the
+    /// frames IT reads, at its own decode quality; a layer's pieces give their parts of one row.
+    fn read_coverage(&self, view: (i64, i64)) -> HashMap<ClipId, Vec<Vec<std::ops::Range<i64>>>> {
+        let mut out: HashMap<ClipId, Vec<Vec<std::ops::Range<i64>>>> = HashMap::new();
+        let clips = &self.model.project().clips;
+        let mut last = (ClipId(u64::MAX), 0usize);
+        for r in self.player.video_read_rows() {
+            let n = if last.0 == r.clip { last.1 + 1 } else { 0 };
+            last = (r.clip, n);
+            let id = kt_model::slice_origin(r.clip).unwrap_or(r.clip);
+            let (t0, t1) = (r.start.0, r.end.0);
+            if t1 <= view.0 || t0 >= view.1 {
+                continue;
+            }
+            let Some(c) = clips.iter().find(|c| c.id == id) else { continue };
+            let (m0, m1) = r.material;
+            let runs = self.player.cache.coverage(
+                kt_engine::source_id(kt_engine::clip_source_addr(c)),
+                kt_cache::BurstKind::video(Some(r.quality)),
+                m0..m1.max(m0 + 1),
+            );
+            // the material the read walks, laid over the event's window
+            let at = |m: i64| t0 + ((m - m0) as i128 * (t1 - t0) as i128 / (m1 - m0).max(1) as i128) as i64;
+            let rows = out.entry(id).or_default();
+            if rows.len() <= n {
+                rows.resize(n + 1, Vec::new());
+            }
+            rows[n].extend(runs.into_iter().map(|g| at(g.start)..at(g.end)));
+        }
+        for rows in out.values_mut() {
+            for r in rows.iter_mut() {
+                *r = merge_runs(std::mem::take(r));
+            }
+        }
+        out
     }
 
     /// Clip names and the “suppress name” set (the pair partner) by model_rev.

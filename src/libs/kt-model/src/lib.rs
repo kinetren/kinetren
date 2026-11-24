@@ -11,6 +11,7 @@ pub mod autoplan;
 pub mod demo;
 pub mod formula;
 pub mod fx_graph;
+pub mod fx_strip;
 pub mod genmedia;
 pub mod links;
 pub mod mask;

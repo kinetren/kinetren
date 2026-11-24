@@ -351,3 +351,22 @@ fn t3224_copy_and_paste_carry_the_wiring() {
     ops::append_chain_wiring(&mut patch.video_in, first, &block);
     assert_eq!(patch.video_in, block.fx_in, "a block pasted first keeps its wiring as is");
 }
+
+/// Test t3298 (fx-graph-dag D4): a Merge's mode is its lane's — a picture's blend mode on an audio
+/// event's chain (which summed silently) and a Sum on a video event's chain are refused with the
+/// slot, wired or not; each mode on its own lane is accepted, and the class of a Merge follows it.
+#[test]
+fn t3298_a_merge_s_mode_is_its_lane_s() {
+    kt_plugins_builtin::install();
+    let sum = FxInstance::Merge { mode: MergeMode::Sum, mix: 1.0 };
+    assert_eq!((sum.class(), merge().class()), (FxClass::Audio, FxClass::Video2d));
+    let mut m = TimelineModel::new(project());
+    let refused = |m: &mut TimelineModel, id: u64, f: &FxInstance| match m.apply(Command::SetFx { id: ClipId(id), fx: vec![f.clone()] }) {
+        Err(CommandError::InvalidLayout(ProjectError::BadGraph(c, slot, GraphWhy::ModeOnLane))) => (c, slot) == (ClipId(id), 0),
+        other => panic!("{other:?}"),
+    };
+    assert!(refused(&mut m, 11, &merge()), "a blend mode on the sound lane");
+    assert!(refused(&mut m, 10, &sum), "a sum on the picture lane");
+    m.apply(Command::SetFx { id: ClipId(11), fx: vec![sum] }).unwrap();
+    m.apply(Command::SetFx { id: ClipId(10), fx: vec![merge()] }).unwrap();
+}

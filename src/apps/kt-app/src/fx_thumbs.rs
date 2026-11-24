@@ -66,8 +66,15 @@ pub enum Place {
     /// The tail of the event's chain (where the picker's click puts it); its track is soloed, so a
     /// layer above does not hide every cell alike.
     Clip(kt_model::ClipId),
+    /// After a node of an event's chain that branches (fx-graph-dag D3), by its slot in the node
+    /// editor (the leading Geometry counted): where the picker's click puts it there.
+    After(kt_model::ClipId, usize),
+    /// A new branch from a node: what the arm yields, the event's chain cut to that node first.
+    Arm(kt_model::ClipId, kt_model::fx_graph::Node),
     /// The tail of the morpher's video patch; the whole frame, as the morpher acts on many layers.
     Morph(kt_model::MorphId),
+    /// After a slot of a patch's video chain that branches.
+    MorphAfter(kt_model::MorphId, usize),
 }
 
 impl Place {
@@ -75,6 +82,12 @@ impl Place {
         match self {
             Place::Clip(id) => id.0 << 1,
             Place::Morph(id) => (id.0 << 1) | 1,
+            other => {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                other.hash(&mut h);
+                h.finish()
+            }
         }
     }
 }
@@ -423,6 +436,34 @@ impl<'a> PickerCtx<'a> {
         pv
     }
 
+    fn set_place(&mut self, place: Place) {
+        if let (Some(s), FxThumbBase::Scene { place: tag, .. }) = (self.scene.as_mut(), &mut self.base) {
+            s.place = place;
+            *tag = place.tag();
+        }
+    }
+
+    /// The candidate goes after the node `i` of the chain `chain` (fx-graph-dag D3).
+    pub fn place_after(&mut self, chain: kt_model::ClipId, i: usize) {
+        match self.scene.as_ref().map(|s| s.place) {
+            Some(Place::Morph(id)) => self.set_place(Place::MorphAfter(id, i)),
+            Some(_) => self.set_place(Place::After(chain, i)),
+            None => {}
+        }
+    }
+
+    /// The candidate starts a branch from `from`; false where a cell cannot show one (a morpher's
+    /// patch has no chain of its own to cut).
+    pub fn place_arm(&mut self, chain: kt_model::ClipId, from: kt_model::fx_graph::Node) -> bool {
+        match self.scene.as_ref().map(|s| s.place) {
+            Some(Place::Morph(_) | Place::MorphAfter(..)) | None => false,
+            Some(_) => {
+                self.set_place(Place::Arm(chain, from));
+                true
+            }
+        }
+    }
+
     /// The cell texture for the chain “clip + candidate”, or `None` — then the request is queued and the cell
     /// is drawn as a placeholder until it is ready.
     pub fn texture(
@@ -639,15 +680,21 @@ pub(crate) fn with_candidate(
     if let Some(swap) = swap {
         return with_swap(p, swap);
     }
-    let append = |c: &mut kt_model::ClipEvent| {
-        c.fx_bypass.resize(c.fx.len(), false);
-        for f in extra {
-            c.fx.push(f.clone());
-            c.fx_bypass.push(false);
+    let append = |c: &mut kt_model::ClipEvent| match place {
+        Place::After(_, i) => crate::fx_editor::insert_after(c, i, extra),
+        _ => {
+            if let Place::Arm(_, from) = place {
+                crate::fx_editor::cut_to(c, from);
+            }
+            c.fx_bypass.resize(c.fx.len(), false);
+            for f in extra {
+                c.fx.push(f.clone());
+                c.fx_bypass.push(false);
+            }
         }
     };
     match place {
-        Place::Clip(id) => {
+        Place::Clip(id) | Place::After(id, _) | Place::Arm(id, _) => {
             if let Some(c) = p.clips.iter_mut().find(|c| c.id == id) {
                 append(c);
                 let lane = c.lane;
@@ -657,16 +704,33 @@ pub(crate) fn with_candidate(
                 append(p.sequences.iter_mut().flat_map(|s| s.clips.iter_mut()).find(|c| c.id == id)?);
             }
         }
-        Place::Morph(id) => {
+        Place::Morph(id) | Place::MorphAfter(id, _) => {
             let m = p
                 .morphers
                 .iter_mut()
                 .chain(p.sequences.iter_mut().flat_map(|s| s.morphers.iter_mut()))
                 .find(|m| m.id == id)?;
-            m.patch.video_bypass.resize(m.patch.video_fx.len(), false);
-            for f in extra {
-                m.patch.video_fx.push(f.clone());
-                m.patch.video_bypass.push(false);
+            let pt = &mut m.patch;
+            pt.video_bypass.resize(pt.video_fx.len(), false);
+            match place {
+                Place::MorphAfter(_, i) if i < pt.video_fx.len() => {
+                    let n = pt.video_fx.len();
+                    let mut st = kt_model::fx_strip::Strip::new(&kt_model::fx_strip::links_of(&pt.video_in, n, 0), &vec![0; n]);
+                    st.block(0, Some(i), &[], extra.len());
+                    if st.settle().is_ok() {
+                        let pick = |id: &usize| pt.video_fx.get(*id).or_else(|| extra.get(id.wrapping_sub(n))).cloned();
+                        let fx = st.from.iter().filter_map(pick).collect();
+                        let off = st.from.iter().map(|id| pt.video_bypass.get(*id).copied().unwrap_or(false)).collect();
+                        let auto = st.from.iter().map(|id| pt.video_auto.get(*id).cloned().unwrap_or_default()).collect();
+                        (pt.video_fx, pt.video_bypass, pt.video_auto, pt.video_in) = (fx, off, auto, st.wiring(0));
+                    }
+                }
+                _ => {
+                    for f in extra {
+                        pt.video_fx.push(f.clone());
+                        pt.video_bypass.push(false);
+                    }
+                }
             }
         }
     }
