@@ -36,13 +36,13 @@ merge. These changes are marked **v+**.
 | LIBRARY | `kt-app` `ffmpeg_setup.rs` → `library/`, `kt-ffmpeg/src/search.rs`, `kt-dirs` |
 | TESTS | `kt-time` test helpers, `.config/nextest.toml`, `scripts/live/kt_live.py`, `apps/kt-cli/tests/dist_guard.rs` |
 
-## Running now (2026-11-24)
+## Running now (2026-11-24, evening; orch `c298f81f`)
 
 | Change | Executor | Areas | What is left |
 |---|---|---|---|
-| `fx-graph-dag` v2d (and the rest of v2b: 2.3c, 2.5–2.7, t3228) | fx-graph | FX-UI; MODEL in small (`model.rs`/`ops.rs`: the editor's slot commands keep the wiring); `kt-cli` `probe` | `durable-moment-key` is in, so t3228, the stream memo's want for a read's stage (STREAM) and 2.6 (GPU) may go |
-| `persistent-cache` (branch `persistent-cache`, 14d30724) | mosh-sharp | CACHE, PLAYER (`copies.rs`, the swap), DECODE (`copy.rs`), kt-ffmpeg (4 lines of the muxer) | 3.3's last clause, 3.4, section 4 (SHELL) and 5; found-defects 1065 |
-| own-data-dir (row 829) | features-slow | `kt-dirs`, `kt-cli` `main.rs`, `trace_query.rs`, `tests/cli.rs`, the live stand | — |
+| `persistent-cache` (branch `persistent-cache`, e34a27ae) | mosh-sharp | CACHE, PLAYER, DECODE (`copy.rs`), SHELL (section 4) | the interface, the spec delta, the measurement; rows 972, 834 |
+| `loudness-norms` (base: branch `render-loudness-norms`) | features-slow | EXPORT, DIALOG | all; row 1002 after it |
+| `shared-events` | fx-graph | MODEL (all of it) | all; sections that write `worker.rs`, `player.rs` after `persistent-cache` |
 
 ## Built: to archive, not to build
 
