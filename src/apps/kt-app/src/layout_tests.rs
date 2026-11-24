@@ -12806,6 +12806,9 @@ pub(crate) fn harness_news_template() -> (Harness<'static, KtApp>, NewsScene) {
 #[test]
 fn t680_reel_preview_keys_are_per_instance() {
     use kt_model::*;
+    // the previews' lane is held: both requests are seen queued, however soon a worker would take one
+    let held = kt_time::sched::Vote::new(kt_time::sched::why::PLAYING);
+    held.set(true);
     let (mut h, s) = harness_news_template();
 
     // without overrides both editions share ONE key: projects that
@@ -21378,7 +21381,11 @@ fn t2903_the_window_states_the_size_and_the_prediction() {
     let mut h = harness_lang(Lang::En);
     // four seconds to render: an edit length with no event (as a foreign file's trailing gap)
     let mut p = h.state().model.project().clone();
-    p.timeline_end = Some(kt_time::Tick(4 * 90_000));
+    // the render's range starts after the moment the preview has shown: on a warm executor (another
+    // test of the process compiled its pipelines) that one is measured
+    let from = 2 * 90_000;
+    p.timeline_end = Some(kt_time::Tick(from + 4 * 90_000));
+    p.region = Some(kt_model::Region { start: kt_time::Tick(from), end: kt_time::Tick(from + 4 * 90_000) });
     h.state_mut().model = kt_model::TimelineModel::new(p);
     h.state().player.set_preview_quality(kt_media::Quality { width: 640, height: 360 });
     render_settings_scene(&mut h);
@@ -21397,7 +21404,7 @@ fn t2903_the_window_states_the_size_and_the_prediction() {
     // the range plays: every frame of it measured at 4 ms of device time at 640×360
     let step = 90_000 / 25;
     for i in 0..cost.frames as i64 {
-        h.state().player.note_preview_cost(kt_time::Tick(i * step), 4_000_000, (640, 360));
+        h.state().player.note_preview_cost(kt_time::Tick(from + i * step), 4_000_000, (640, 360));
     }
     h.step();
     let cost = h.state().render_cost();
@@ -22328,6 +22335,7 @@ fn t3830_an_untitled_project_caches_its_media() {
 ///   set to 2 GB: its size shows against it, marked full
 #[test]
 fn t3842_preferences_list_the_cache_folders() {
+    crate::alone::own_process!();
     use crate::i18n::{k, tr};
     use egui_kittest::kittest::Queryable;
     use kt_media::cache_folder::{Folder, registry};
@@ -22368,13 +22376,26 @@ fn t3842_preferences_list_the_cache_folders() {
             registry::remove(&r.folder);
         }
     }
-    let wait = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool| {
+    let wait_rolling = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool, roll: bool| {
         let deadline = kt_time::test_deadline();
         while !until(h) {
             assert!(std::time::Instant::now() < deadline, "{what}");
+            if roll {
+                let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).unwrap();
+                h.hover_at(win.center());
+                h.event(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -60.0),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                });
+            }
             std::thread::sleep(std::time::Duration::from_millis(10));
             h.step();
         }
+    };
+    let wait = |h: &mut Harness<'static, KtApp>, what: &str, until: &dyn Fn(&Harness<'static, KtApp>) -> bool| {
+        wait_rolling(h, what, until, false)
     };
     crate::reach_tests::open_preferences(&mut h);
     let texts = |h: &Harness<'static, KtApp>| crate::reach_tests::painted_texts(h).into_iter().map(|t| t.drawn).collect::<Vec<_>>();
@@ -22390,7 +22411,24 @@ fn t3842_preferences_list_the_cache_folders() {
 
     let rows = h.state().start.caches.rows_for_tests();
     let at = rows.iter().position(|r| r.folder == orphan).unwrap();
-    let r = crate::widgets::field_probe::rect_of(&format!("prefs.cache.{at}.delete")).unwrap();
+    // the list comes after the window opened and may stand under its fold: the wheel brings the row, as
+    // a person's does (a click below the fold hits nothing)
+    let probe = format!("prefs.cache.{at}.delete");
+    wait_rolling(&mut h, "the row's button never came in view", &|h| {
+        let win = h.ctx.memory(|m| m.area_rect(egui::Id::new("kt_prefs"))).unwrap();
+        crate::widgets::field_probe::rect_of(&probe).is_some_and(|r| win.shrink(30.0).contains_rect(r))
+    }, true);
+    // the scroll glides: a press on a moving row hits its neighbour
+    let place = || crate::widgets::field_probe::rect_of(&probe).unwrap();
+    loop {
+        let was = place();
+        h.step();
+        h.step();
+        if place() == was {
+            break;
+        }
+    }
+    let r = place();
     crate::reach_tests::click_at(&mut h, r.center());
     wait(&mut h, "the orphan's row stays", &|h| has(h, "gone") == 0);
     assert!(!orphan.exists(), "the folder stays on the disk");

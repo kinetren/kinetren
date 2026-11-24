@@ -1175,3 +1175,6 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
   live scenarios press nodes by them). Ctrl+wheel switches detail ↔ chips, the plain wheel is the
   window's. A node's row label is painted: the row's doors live on the form's label. Graph keys wait
   for the key table (`controls.rs`). t2994, t2995, t2999, t3001, t3003, live `node_graph`.
+- **A test that reads or drains what a process has one of starts with `crate::alone::own_process!();`**
+  (one-process-tests): the work counters, the compute host, the posters, the cache notices, frame processor time. `cargo test` runs the crate
+  in one process; the pause mask of the scheduler is every test's — read `Player::holds_background`.

@@ -41,7 +41,8 @@ The full text, alternatives and measurements are in the archived change
   is narrowed: audio has no post-FX cache, and every built-in reverb, delay and limiter keeps
   state the host owns (invariant 3). Still refused: any video state, tail or look-ahead; a kernel
   that is not callable from several threads; an audio look-ahead reaching `MIN_PREROLL_FRAMES`; a
-  built-in point-wise kernel without WGSL; a geometry kernel that offers WGSL (t972).
+  point-wise kernel without WGSL, whoever offers it (one-process-tests: the exception for a foreign one dated from the
+  CPU executor, and a chain holding such a slot ended the preview's thread); a geometry kernel that offers WGSL (t972).
 - **The GPU side is assembled from the registry; geometry stays the host's primitives (D5,
   D11.2).**
   - A point-wise plugin's one WGSL tap is pasted both into its own pass and into the fused pass.

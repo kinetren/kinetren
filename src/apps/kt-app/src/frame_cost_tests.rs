@@ -125,6 +125,7 @@ fn visits_per_frame(h: &mut Harness<'_, KtApp>) -> u64 {
 /// material built the speed map of every event of the project.
 #[test]
 fn t1912_what_is_outside_the_view_adds_no_work_to_a_frame() {
+    crate::alone::own_process!();
     let mut small = scene(0, 30);
     let mut big = scene(2000, 30);
     let mut files = scene(0, 300);
@@ -148,6 +149,7 @@ fn t1912_what_is_outside_the_view_adds_no_work_to_a_frame() {
 /// bin question, a speed map per event for the tails).
 #[test]
 fn t1913_a_frames_processor_time_does_not_follow_the_project() {
+    crate::alone::own_process!();
     let mut small = scene(0, 30);
     let mut big = scene(20_000, 30);
     let mut files = scene(0, 1000);

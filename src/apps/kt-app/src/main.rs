@@ -7,6 +7,8 @@
 // Debug builds keep the console for eprintln diagnostics.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+#[cfg(test)]
+mod alone;
 mod analysis;
 mod app;
 mod audio_out;

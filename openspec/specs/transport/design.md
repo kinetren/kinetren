@@ -306,3 +306,8 @@ unstamped) and its result is capped by the stream memo's room: noted, not change
   dirty flag); the render thread holds the start that has not been handed out (`starting`) when it
   sees it, playing or not by then. A version asked while playing never stops the sound. The deferred
   opening needs no flag of its own. Guards: t2331, t2339.
+
+## one-process-tests (2026-11-24)
+
+A panic inside a composite ended the `preview-compose` thread: no frame came for the rest of the run, with Loading standing.
+The thread answers such an ask as a frame without a picture; the panic hook has already reported it.

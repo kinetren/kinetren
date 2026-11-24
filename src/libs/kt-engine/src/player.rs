@@ -1301,6 +1301,11 @@ impl Player {
         self.preview_costs.lock().unwrap().over(a, b)
     }
 
+    /// This player's playing holds the background work (its own vote, not the process's mask).
+    pub fn holds_background(&self) -> bool {
+        self.bg_pause.is_up()
+    }
+
     /// Record a moment's cost as the preview would (a test of the render window).
     pub fn note_preview_cost(&self, t: Tick, ns: u64, size: (u32, u32)) {
         self.preview_costs.lock().unwrap().note(t, ns, size);

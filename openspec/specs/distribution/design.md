@@ -361,3 +361,24 @@ with its cure:
 A counter that moves later than the event it counts (t2984: moments written count at the segment's
 commit) is the same class: assert the event (a job started, from the trace), not the counter. A
 retry is never the cure (t1671).
+
+## one-process-tests (2026-11-24)
+
+- The root was a product defect: the registry let a point-wise plugin of another door through with no GPU side (a rule of
+  the CPU executor's days); the preview's thread panicked on its first frame. Under nextest one process saw it, in a test
+  (t976) that does not read the picture; in one process it poisoned the engine every harness shares, every later compose
+  thread died on `PoisonError`, and each frame of each test waited out `COMPOSE_GRACE` (ten minutes in a test).
+- Three layers: the registry refuses (plugins), a composite that panics is a frame without a picture (t3723), the
+  executor's lock is taken through a poison.
+- Class walk — what a process has one of: the scheduler's votes (t2453 read the mask; `Player::holds_background` is its own
+  vote; t680 counted a queue a warm worker had begun), the preview's measured costs on a warm executor (t2903), the poster
+  service (t985, t986: another program's close drops the queue), the cache notices (t3842: the first program to draw takes
+  them), the work counters (idle_tests), thread processor time (frame_cost_tests). The compute host is
+  installed once per process (t3822 asks for its own). The last five run in a process of their own, and so do the
+  tests that hold or fill the one lane every open runs in (t2330, t2332, t2333: a load held for one test stopped every
+  other test's).
+- Rejected: a reader/writer lock over the programs alive in the process (built first). It starved or deadlocked: a second
+  program of a test, a project opening on a worker, a writer waiting behind a ten-minute reader; and it cannot give a fresh
+  `OnceLock`. A child process is what nextest gives, the tests are few, and they run beside the others.
+- t3842 clicked below the fold when the folders' list came after the window opened: it rolls to the row and waits for the
+  glide to end. Ten runs in a row: 720 of 720 in 35–44 s, where the same command ended only by a kill.

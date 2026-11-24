@@ -6465,6 +6465,7 @@ fn welcome_project(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 ///   start again → the last project opens directly, no window
 #[test]
 fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
+    crate::alone::own_process!();
     // the lesson sandbox is built by kt_model::demo, which uses plugin effects (one test per process)
     crate::plugins::install();
     use crate::i18n::{k, tr};

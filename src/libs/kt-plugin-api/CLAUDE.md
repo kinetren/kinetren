@@ -12,7 +12,7 @@ keyed by `(Family, id)`. Depends on kt-time, serde and libm ONLY: a plugin crate
   the generator `checker` is not the transition `checker` (t1049). Changing an id changes files.
 - **Refusals happen in `Registry::register`, before any frame** (t972): video state, tail or
   look-ahead; a kernel not callable from several threads; an audio look-ahead reaching
-  `MIN_PREROLL_FRAMES`; a built-in point-wise kernel without WGSL; a geometry kernel offering WGSL;
+  `MIN_PREROLL_FRAMES`; a point-wise or barrier kernel with no GPU side, built-in or not; a geometry kernel offering WGSL;
   a generator decl naming a row its passport lacks. For a barrier (t1054): no kernel, no GPU
   side as a built-in, a tap's WGSL instead of a graph, a graph reading an unsaved slot, ending off the
   frame size or on a `Save`, a resample above `MAX_INTER_DIM`, a pass naming a missing shader, or an

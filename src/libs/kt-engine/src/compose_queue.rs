@@ -229,7 +229,9 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
         // playing with the render-ahead producer: the moment's kept composite or nothing (render-ahead D1)
         let ahead = display.and_then(|o| parts.present_ahead(ask.t, o));
         let presented_ahead = ahead.is_some();
-        let out = if presented_ahead { ahead } else { crate::video::stop_when(kt_time::trace::stop::COMPOSE, left, || match display.filter(|_| on_display) {
+        // a composite that panics is a frame without a picture, not the end of every later one: the
+        // panic hook has reported it, and the thread answers on (one-process-tests)
+        let compose = || crate::video::stop_when(kt_time::trace::stop::COMPOSE, left, || match display.filter(|_| on_display) {
             Some(o) => {
                 let r = parts.compose(ask.t, Target::Display(o));
                 let w = Instant::now();
@@ -243,7 +245,12 @@ fn run(c: Arc<Composer>, parts: PreviewParts) {
                 r
             }
             None => parts.compose_via(via.as_ref(), display, ask.t, Target::Bytes(&mut rgba)),
-        }) };
+        });
+        let out = if presented_ahead {
+            ahead
+        } else {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(compose)).unwrap_or(None)
+        };
         let spent = t0.elapsed();
         // the executor's own time: the plan (a stream stage's kernel included) holds no queue
         let plan = out.as_ref().map_or(0, |o| o.4);

@@ -545,6 +545,11 @@ decodes the event's history inside the plan, one compute job a frame, each waite
 - **THEN** the wake the UI set is called once and the frame is taken without waiting
 - **TEST** t1840b (`src/libs/kt-engine/tests/compose_queue.rs`)
 
+#### Scenario: A composite that panics
+- **WHEN** the executor panics inside one composite, then the next moment is asked
+- **THEN** the first ask is answered with no picture (incomplete) and the second is composed; the executor's lock does not stay dead
+- **TEST** t3723 (`src/libs/kt-engine/tests/compose_queue.rs`)
+
 #### Scenario: A slow chain stays off the display's device
 - **WHEN** a new project state is composed, then timed fast, then an edit is timed slow twice, then fast
 - **THEN** the new state goes to the offline device first, the fast chain to the display, the slow one stays off it until it is fast again

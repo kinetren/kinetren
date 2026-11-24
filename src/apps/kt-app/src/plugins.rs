@@ -65,7 +65,7 @@ pub mod test_tint {
     use std::sync::Arc;
 
     use kt_plugin_api::{
-        Decl, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, Registry, RowDecl,
+        Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, Registry, RowDecl,
         Store, UiDecl, VideoClass, VideoKernel,
     };
 
@@ -95,7 +95,12 @@ pub mod test_tint {
                         ParamKind::Smooth,
                     )],
                     rows: vec![RowDecl { store: Store::F64, omit_default: false }],
-                    decl: Decl { video_class: Some(VideoClass::PointWise), builtin: false, ..Decl::default() },
+                    decl: Decl {
+                        video_class: Some(VideoClass::PointWise),
+                        gpu: Gpu::Wgsl("fn tap_test_tint(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(mix(v.x, 255.0, a.y), v.yzw);\n}"),
+                        builtin: false,
+                        ..Decl::default()
+                    },
                     // the key by its constant, not a dotted literal: live-coverage.py (t804) reads
                     // every quoted dotted string in kt-app's sources as a published UI place
                     ui: UiDecl {

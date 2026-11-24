@@ -1252,6 +1252,7 @@ mod records_tests {
     /// or next to it (no sidecar written by the poster).
     #[test]
     fn t985_posters_render_into_the_store_never_into_the_project_folder() {
+        crate::alone::own_process!();
         crate::plugins::install();
         let store = tmp("t985p-store");
         let projects = tmp("t985p-projects");
