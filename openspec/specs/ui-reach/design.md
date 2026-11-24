@@ -790,3 +790,9 @@ values ("apply to all", a kind change) reach every reel, a command built from on
 expanded in place got its pair by the root's track number (the command runs in the working view, so it carries the strips'
 rows). The model takes whether the kind sounds as an argument: it does
 not know the generators' sources.
+
+## fold-margin (2026-11-24, found-defects 833)
+
+Unindented (window-chrome T8), a chain's body started 4 points inside the window, under its 8-point resize edge: a curve's
+first key stands at the graph's left edge, the edge took its click and the selection stayed (live `curve_keys`). The fold
+has a margin of 10 points with no line.

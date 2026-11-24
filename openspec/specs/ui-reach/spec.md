@@ -1767,7 +1767,7 @@ Why: the owner, 2026-11-07: "половина ширины этой портян
 ### Requirement: An event window says which event it edits
 The effects window SHALL be titled by the event's name (a title's first words, a generator's kind, a reel's name, a
 file's base name) and the window's kind, the transition window by the events it joins, the morpher window by its row and
-start, and each SHALL show its number in the body in weak text; the per-chain fold SHALL be drawn without an indent strip; copy and paste of a chain
+start, and each SHALL show its number in the body in weak text; the per-chain fold SHALL be drawn without an indent strip, its body past the window's resize edge; copy and paste of a chain
 and of an envelope SHALL be icon buttons with their hints.
 Why: the owner, v26.10 W3, T8, T7.
 

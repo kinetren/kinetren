@@ -380,5 +380,7 @@ retry is never the cure (t1671).
 - Rejected: a reader/writer lock over the programs alive in the process (built first). It starved or deadlocked: a second
   program of a test, a project opening on a worker, a writer waiting behind a ten-minute reader; and it cannot give a fresh
   `OnceLock`. A child process is what nextest gives, the tests are few, and they run beside the others.
+- t356 and another test saved to one path; a save of the same file replaces a queued one, and a waiter of the replaced one
+  stood its whole grace: `Answer::take_within` ends when the job's side is gone (t3725; the product waits 3 ms there).
 - t3842 clicked below the fold when the folders' list came after the window opened (the window's height is fixed by
   durable-moment-key). Ten runs in a row: 720 of 720 in 35–44 s, where the same command ended only by a kill.

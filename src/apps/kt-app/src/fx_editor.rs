@@ -75,6 +75,9 @@ pub struct FxEditor {
     pub open: bool,
 }
 
+/// The left margin of a chain's body in the effects window: past the window's resize edge (8 points).
+const BODY_MARGIN: f32 = 10.0;
+
 impl KtApp {
     /// Open the FX window. A window that already shows this chain (through its anchor
     /// or as a partner) is not opened a second time: an A/V pair
@@ -552,6 +555,11 @@ impl KtApp {
                     pair_out.insert(aid, out_a);
                     ui.separator();
                 }
+                // no strip beside a chain's body (`v26.10` T8), and a margin past the window's resize edge: a
+                // curve's first key stands at the graph's left edge, and the edge took its click
+                let (indent, vline) = (ui.spacing().indent, ui.visuals().indent_has_left_vline);
+                ui.spacing_mut().indent = BODY_MARGIN;
+                ui.visuals_mut().indent_has_left_vline = false;
                 for (n, id) in members.iter().enumerate() {
                     let Some(clip) = self.model.clip(*id).cloned() else { continue };
                     let mut fx = clip.fx.clone();
@@ -596,8 +604,9 @@ impl KtApp {
                     egui::CollapsingHeader::new(head)
                         .id_salt(("fxgrp", id.0))
                         .default_open(n == 0 || members.len() <= 2)
-                        // no indent and no strip beside the body (`v26.10` T8)
-                        .show_unindented(ui, |ui| {
+                        .show(ui, |ui| {
+                            ui.spacing_mut().indent = indent;
+                            ui.visuals_mut().indent_has_left_vline = vline;
                             // the selected slot and the search row are taken into
                             // local variables: otherwise two fields of the same
                             // `ed` would be borrowed at the same time

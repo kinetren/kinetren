@@ -360,3 +360,26 @@ fn t2953_a_job_sees_its_lane_close_through_its_check() {
     go_tx.send(()).unwrap();
     assert!(rx.recv().unwrap(), "the closed lane's job did not see it");
 }
+
+/// Test t3725 (one-process-tests): a waiter of an answer whose job is gone (superseded, cancelled) is told
+/// at once, not at the end of its grace: a Ctrl+S replaced by a newer one stood its whole wait.
+#[test]
+fn t3725_an_abandoned_answer_ends_its_wait() {
+    let (answer, reply) = Answer::<u32>::new();
+    let waiter = std::thread::spawn(move || {
+        let got = answer.take_within(crate::TEST_WAIT);
+        (got, answer.abandoned())
+    });
+    drop(reply);
+    let deadline = crate::test_deadline();
+    while !waiter.is_finished() {
+        // the wait itself is as long as the guard: an ended wait is one that ended early
+        assert!(deadline.saturating_duration_since(Instant::now()) > crate::TEST_WAIT / 100, "the waiter stood out its grace");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(waiter.join().unwrap(), (None, true));
+    let (answer, reply) = Answer::<u32>::new();
+    reply.send(5);
+    assert!(!answer.abandoned(), "a sent answer is not abandoned");
+    assert_eq!(answer.take_within(Duration::ZERO), Some(5));
+}

@@ -6430,7 +6430,7 @@ fn t356_repeated_notice_still_marks_unread() {
     // a project write error arrives as a warning, exactly
     let app = h.state_mut();
     app.notices.clear();
-    app.project_path = Some(unwritable_path("save"));
+    app.project_path = Some(unwritable_path("t356"));
     app.model_rev += 1;
     app.dirty_content = true;
     app.save();

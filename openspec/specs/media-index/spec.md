@@ -915,6 +915,11 @@ rest; a filmstrip wider than its cap ordered its own pictures round in a circle 
 - **THEN** the running job sees the close and the queued one never runs; only the newest save runs; the checkpoint releases; the next job of the panicked lane runs
 - **TEST** t2232 (`src/libs/kt-time/src/sched/tests.rs`)
 
+#### Scenario: An abandoned answer ends its wait
+- **WHEN** the job whose answer is waited for is superseded or cancelled before it answers
+- **THEN** the waiter is told at once, not at the end of its grace
+- **TEST** t3725 (`src/libs/kt-time/src/sched/tests.rs`)
+
 #### Scenario: The cap never evicts what is on screen
 - **WHEN** ten pictures stand under a cap of four and six of them were drawn this frame; then two frames pass
 - **THEN** only the four undrawn are evicted; after the frames move on the cap holds, oldest first
