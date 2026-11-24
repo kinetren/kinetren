@@ -166,7 +166,15 @@ pub fn match_program(
     };
     // two decimals: a number a person can read, finer than any meter
     let gain_db = (gain_db * 100.0).round() / 100.0;
-    let measured = ProgramMeasured { lufs, dbtp: mix.dbtp, reached, sound: sound(p) };
+    let measured = ProgramMeasured {
+        lufs,
+        dbtp: mix.dbtp,
+        reached,
+        target,
+        ceiling: p.loudness.ceiling_dbtp,
+        gain_db,
+        sound: sound(p),
+    };
     Ok(Some(ProgramStage { gain_db, measured: Some(measured) }))
 }
 

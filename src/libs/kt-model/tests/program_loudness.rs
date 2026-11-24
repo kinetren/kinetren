@@ -34,7 +34,7 @@ fn t3966_the_loudness_is_written_by_content() {
     q.loudness = LoudnessTarget::of(LoudnessStandard::Streaming);
     q.program = Some(ProgramStage {
         gain_db: 5.5,
-        measured: Some(ProgramMeasured { lufs: -19.5, dbtp: 1.0, reached: -14.0, sound: u64::MAX - 1 }),
+        measured: Some(ProgramMeasured { lufs: -19.5, dbtp: 1.0, reached: -14.0, target: -14.0, ceiling: -1.0, gain_db: 5.5, sound: u64::MAX - 1 }),
     });
     q.validate().unwrap();
     assert_eq!(project_file::version_for(&q), project_file::PROJECT_FILE_VERSION_LOUDNESS);

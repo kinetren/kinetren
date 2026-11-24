@@ -10,7 +10,7 @@
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
 use eframe::egui;
-use kt_model::{Command, ConformRule, PitchEngine, SegShape};
+use kt_model::{Command, ConformRule, LoudnessStandard, LoudnessTarget, PitchEngine, SegShape};
 
 /// Divisors of 90 000 within 1…120 — frame rates that the tick grid
 /// expresses exactly. 29.97 does not fall here by construction.
@@ -28,6 +28,7 @@ pub struct SettingsWindow {
     pub conform: ConformRule,
     pub pitch: PitchEngine,
     pub shape: SegShape,
+    pub loudness: LoudnessTarget,
     pub error: Option<String>,
     pub focus: bool,
     /// "Save as template…" pressed: the name is typed IN PLACE of the button row
@@ -66,6 +67,26 @@ fn shape_label(s: &SegShape) -> &'static str {
         SegShape::EaseIn { .. } => tr(k::fx::SHAPE_EASE_IN),
         SegShape::EaseOut { .. } => tr(k::fx::SHAPE_EASE_OUT),
         _ => tr(k::fx::SHAPE_ZIGZAG),
+    }
+}
+
+pub(crate) fn standard_label(s: LoudnessStandard) -> &'static str {
+    match s {
+        LoudnessStandard::EbuR128 => tr(k::loudness::STD_EBU),
+        LoudnessStandard::AtscA85 => tr(k::loudness::STD_ATSC),
+        LoudnessStandard::Streaming => tr(k::loudness::STD_STREAMING),
+        LoudnessStandard::Podcast => tr(k::loudness::STD_PODCAST),
+        LoudnessStandard::Custom => tr(k::loudness::STD_CUSTOM),
+    }
+}
+
+fn standard_probe(s: LoudnessStandard) -> &'static str {
+    match s {
+        LoudnessStandard::EbuR128 => "settings.loud.ebu",
+        LoudnessStandard::AtscA85 => "settings.loud.atsc",
+        LoudnessStandard::Streaming => "settings.loud.streaming",
+        LoudnessStandard::Podcast => "settings.loud.podcast",
+        LoudnessStandard::Custom => "settings.loud.custom",
     }
 }
 
@@ -116,6 +137,7 @@ impl KtApp {
             conform: s.conform,
             pitch: s.pitch_engine,
             shape: s.default_shape,
+            loudness: self.model.document().loudness,
             error: None,
             focus: true,
             template_name: None,
@@ -240,6 +262,52 @@ impl KtApp {
                             PitchEngine::Vocoder,
                             tr(k::fx::PITCH_VOCODER),
                         );
+                    });
+                    ui.end_row();
+                    // the document's loudness (loudness-norms, the owner's B6): a reel has none
+                    if is_reel {
+                        return;
+                    }
+                    ui.label(tr(k::loudness::STANDARD));
+                    let mut pick = d.loudness.standard;
+                    let cb = egui::ComboBox::from_id_salt("settings_loudness")
+                        .selected_text(standard_label(pick))
+                        .show_ui(ui, |ui| {
+                            for st in LoudnessStandard::ALL {
+                                let r = ui.selectable_value(&mut pick, st, standard_label(st));
+                                crate::widgets::field_probe::note(standard_probe(st), r.rect);
+                            }
+                        });
+                    crate::widgets::field_probe::note("settings.loud", cb.response.rect);
+                    if pick != d.loudness.standard {
+                        // Custom starts from the numbers that stand
+                        d.loudness = match pick {
+                            LoudnessStandard::Custom => LoudnessTarget { standard: pick, ..d.loudness },
+                            st => LoudnessTarget::of(st),
+                        };
+                    }
+                    ui.end_row();
+                    ui.label(tr(k::loudness::TARGET));
+                    ui.horizontal(|ui| {
+                        let row = |probe, r: &std::ops::RangeInclusive<f64>, unit| crate::widgets::NumRow {
+                            label: "",
+                            probe,
+                            unit,
+                            min: *r.start(),
+                            max: *r.end(),
+                            step: 0.1,
+                            slider: None,
+                        };
+                        let lufs = row("settings.loud.target", &kt_model::TARGET_LUFS, kt_model::ParamUnit::None);
+                        let a = crate::widgets::plain_row(ui, &lufs, &mut d.loudness.target_lufs).changed();
+                        ui.label("LUFS");
+                        ui.label(tr(k::loudness::CEILING));
+                        let peak = row("settings.loud.ceiling", &kt_model::CEILING_DBTP, kt_model::ParamUnit::None);
+                        let b = crate::widgets::plain_row(ui, &peak, &mut d.loudness.ceiling_dbtp).changed();
+                        ui.label("dBTP");
+                        if a || b {
+                            d.loudness.standard = LoudnessStandard::Custom;
+                        }
                     });
                     ui.end_row();
                     ui.end_row();
@@ -383,17 +451,26 @@ impl KtApp {
                     st.pitch_engine = d.pitch;
                     st.default_shape = d.shape;
                     st.settings_explicit = true;
+                    // one Apply is one undo step
+                    let mut cmds: Vec<Command> = Vec::new();
+                    if d.loudness != self.model.doc().loudness {
+                        cmds.push(Command::SetLoudness { target: d.loudness });
+                    }
                     if st != cur {
                         // the share of the preview is kept, not the pixels (item 20 round 7)
                         let pq = self.player.preview_quality();
                         let frac = pq.width as f32 / cur.width.max(1) as f32;
-                        self.apply(Command::SetSettings { settings: st });
+                        cmds.push(Command::SetSettings { settings: st });
+                        self.apply_batch(cmds);
                         self.player
                             .set_preview_quality(crate::app::preview_quality_for(w, h, frac));
                     } else if !cur.settings_explicit {
                         let mut st = cur.clone();
                         st.settings_explicit = true;
-                        self.apply(Command::SetSettings { settings: st });
+                        cmds.push(Command::SetSettings { settings: st });
+                        self.apply_batch(cmds);
+                    } else if !cmds.is_empty() {
+                        self.apply_batch(cmds);
                     }
                     open = false;
                 }

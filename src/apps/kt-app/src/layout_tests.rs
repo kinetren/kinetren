@@ -22473,26 +22473,35 @@ fn t3107_render_loudness_values_stand_against_their_norms() {
         dbtp,
         channels: [ch(l, dbtp), ch(r, dbtp)],
     };
-    let verdicts = |l: &Loudness| loudness_rows(l).iter().map(|r| r.verdict).collect::<Vec<_>>();
+    let ebu = kt_model::LoudnessTarget::default();
+    let stream = kt_model::LoudnessTarget::of(kt_model::LoudnessStandard::Streaming);
+    let judged = |l: &Loudness, t| loudness_rows(l, t, None).iter().map(|r| r.verdict).collect::<Vec<_>>();
+    let verdicts = |l: &Loudness| judged(l, &ebu);
     use Verdict::*;
     assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-26.0), Some(-26.0))), vec![Ok, Ok, Ok, Ok], "a good mix");
-    assert_eq!(verdicts(&mix(-14.2, -1.5, Some(-17.0), Some(-17.4))), vec![Ok, Ok, Ok, Ok], "a streaming mix");
+    let streaming = mix(-14.2, -1.5, Some(-17.0), Some(-17.4));
+    assert_eq!(judged(&streaming, &stream), vec![Ok, Ok, Ok, Ok], "a streaming mix against its project");
+    assert_eq!(judged(&streaming, &ebu)[0], Bad, "the same mix against −23: the norm is the project's");
     assert_eq!(verdicts(&mix(-23.0, -0.4, Some(-26.0), Some(-26.0)))[1], Bad, "a peak over −1 dBTP");
     assert_eq!(verdicts(&mix(-26.0, -3.0, Some(-26.0), None))[3], Bad, "a silent channel");
     assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-24.0), Some(-34.0)))[3], Bad, "10 LU apart");
     assert_eq!(verdicts(&mix(-23.0, -3.0, Some(-24.0), Some(-28.0)))[3], Off, "4 LU apart");
-    assert_eq!(verdicts(&mix(-19.0, -3.0, Some(-22.0), Some(-22.0)))[0], Off, "between the norms");
+    assert_eq!(verdicts(&mix(-21.0, -3.0, Some(-24.0), Some(-24.0)))[0], Off, "2 LU off");
+    assert_eq!(verdicts(&mix(-19.0, -3.0, Some(-22.0), Some(-22.0)))[0], Bad, "4 LU off");
+    let did = |took_lu| kt_engine::export::ProgramReport { gain_db: 5.5, took_lu, deepest_db: 4.0 };
+    let stage = |took| loudness_rows(&streaming, &stream, Some(&did(took)))[4].clone();
+    assert_eq!((stage(0.4).verdict, stage(1.6).verdict), (Ok, Off), "the limiter took over 1 LU");
     assert_eq!(verdicts(&mix(-6.0, -3.0, Some(-9.0), Some(-9.0)))[0], Bad, "too loud for any delivery");
 
     // the drawn table: the bad values carry the error probe, every row prints its norm
     crate::i18n::set_lang(crate::i18n::Lang::En);
     let bad = mix(-23.0, -0.4, Some(-24.0), None);
-    let mut h = egui_kittest::Harness::new_ui(move |ui| crate::render_dialog::loudness_table(ui, &bad));
+    let mut h = egui_kittest::Harness::new_ui(move |ui| crate::render_dialog::loudness_table(ui, &bad, &ebu, None));
     crate::icons::install_fonts(&h.ctx);
     h.run();
     use egui_kittest::kittest::Queryable;
-    for norm in [k::render::LOUD_NORM_INTEGRATED, k::render::LOUD_NORM_PEAK, k::render::LOUD_NORM_CHANNELS] {
-        assert!(h.query_by_label(tr(norm)).is_some(), "the norm “{}” is printed", tr(norm));
+    for norm in ["norm -23 LUFS ± 1", "norm ≤ -1 dBTP", tr(k::render::LOUD_NORM_CHANNELS), "Sound — 2 outside the norm"] {
+        assert!(h.query_by_label(norm).is_some(), "“{norm}” is printed");
     }
     assert!(h.query_by_label("L -24.0 · R silent LUFS").is_some(), "the channels row");
     assert!(crate::widgets::field_probe::rect_of("render.loud.bad").is_some(), "a bad value is marked as one");

@@ -94,6 +94,11 @@ pub struct ProgramMeasured {
     pub dbtp: f64,
     /// The loudness after the stage: short of the target when the limiter holds it back.
     pub reached: f64,
+    /// What it was matched to and the gain found: another target, ceiling or gain — changed since
+    /// measured.
+    pub target: f64,
+    pub ceiling: f64,
+    pub gain_db: f64,
     /// What was heard then (`kt_engine::program::sound`): another value — changed since measured.
     pub sound: u64,
 }
@@ -134,7 +139,8 @@ fn reel_sound(p: &Project, seq: Option<MediaId>, overrides: &[Override], depth: 
         ids.insert(c.id);
         put(out, c);
         if let Some(m) = p.media.iter().find(|m| m.id == c.media) {
-            put(out, &(&m.path, m.duration));
+            // the path alone: a file's length is read anew when it is opened, and no event depends on it
+            put(out, &m.path);
         }
         if depth < crate::MAX_NEST_DEPTH && p.sequence(c.media).is_some() {
             reel_sound(p, Some(c.media), &c.overrides, depth + 1, out);

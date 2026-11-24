@@ -2174,6 +2174,17 @@ fn run(args: &[String]) -> i32 {
                         stats.missing_video_layers,
                         stats.encoder
                     );
+                    if let Some(l) = &stats.loudness {
+                        eprintln!(
+                            "loudness: {} LUFS, true peak {:.1} dBTP, range {:.1} LU",
+                            l.lufs.map_or("silent".to_string(), |v| format!("{v:.1}")),
+                            l.dbtp,
+                            l.lra
+                        );
+                        for line in kt_engine::export::loudness_lines(l, &project.loudness, stats.program.as_ref()) {
+                            eprintln!("  {line}");
+                        }
+                    }
                     eprintln!("{}", stats.stages);
                     if let Some(p) = &profile {
                         eprint!("stages:\n{}", p.report());

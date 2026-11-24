@@ -257,6 +257,10 @@ pub struct RenderJob {
     pub opts: kt_engine::export::ExportOptions,
     pub out_res: (u32, u32),
     pub fps: u32,
+    /// The loudness the project was mixed for when the render started, and where its range starts
+    /// (loudness-norms D5): the report judges the file by them.
+    pub loudness: kt_model::LoudnessTarget,
+    pub from: kt_time::Tick,
     /// Sources rendered as a stub (R.33 item 10).
     pub missing: Vec<String>,
     /// THE UI OWNS EVERY CLOCK (D3): `clock` is the seam a test drives; `finished_at` stops
@@ -306,6 +310,8 @@ impl RenderJob {
             opts,
             out_res,
             fps: fps.max(1),
+            loudness: Default::default(),
+            from: kt_time::Tick(0),
             missing,
             clock,
             started: now,
@@ -402,6 +408,12 @@ impl RenderJob {
                 self.final_size = std::fs::metadata(&self.out_path).ok().map(|m| m.len());
                 // both pairs always: what was announced and what was written (render-result-check D2)
                 crate::tele_journal::record(crate::tele_journal::Kind::Note, &format!("render done: {}", stats.totals()));
+                // a value outside its norm is a line of the log too, not only a colour (loudness-norms D9)
+                if let Some(l) = &stats.loudness {
+                    for line in kt_engine::export::loudness_lines(l, &self.loudness, stats.program.as_ref()) {
+                        crate::tele_journal::record(crate::tele_journal::Kind::Export, &line);
+                    }
+                }
                 // where the render's time went, into the journal the load report carries (render-speed D2)
                 if !stats.stages.is_empty() {
                     crate::tele_journal::record(crate::tele_journal::Kind::Note, &stats.stages);
@@ -822,6 +834,7 @@ impl KtApp {
         let project = self.model.document();
         let proj_res = (project.settings.width, project.settings.height);
         let proj_fps = project.settings.fps;
+        let loudness = project.loudness;
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let range = project.region.filter(|_| !self.render_setup.whole).map(|r| (r.start, r.end));
         let opts = kt_engine::export::ExportOptions {
@@ -914,6 +927,8 @@ impl KtApp {
         ));
         if let Some(j) = &mut self.render_job {
             j.cost = Some(cost);
+            j.loudness = loudness;
+            j.from = range.map_or(kt_time::Tick(0), |r| r.0);
         }
         self.render_setup.open = false;
     }
@@ -1548,6 +1563,7 @@ impl KtApp {
             None if matches!(job.result, Some(Err(_))) => tr(k::render::NO_ENCODER).to_string(),
             None => tr(k::render::CHOOSING).to_string(),
         };
+        let mut seek = None;
         let out_rows: Vec<(&str, String)> = vec![
             (tr(k::render::ROW_RESOLUTION), format!("{}×{}", job.out_res.0, job.out_res.1)),
             (tr(k::render::ROW_FPS), crate::tf!(k::render::FPS_VALUE, job.fps)),
@@ -1689,7 +1705,8 @@ impl KtApp {
                             // T14: "на цифры вообще внимание не обратишь … не понятно что является
                             // нормой у каждого параметра")
                             if let Some(l) = stats.loudness {
-                                loudness_table(ui, &l);
+                                loudness_table(ui, &l, &job.loudness, stats.program.as_ref());
+                                seek = seek.or(sound_findings(ui, &stats.spans, job.from));
                             }
                             let (frames, sound) = stats.short();
                             if let Some((n, of)) = frames {
@@ -1799,6 +1816,10 @@ impl KtApp {
         if let Some(h) = hover {
             self.hover_hint = Some(h);
         }
+        // a finding's row moves the playhead to its place
+        if let Some(t) = seek {
+            self.player.seek(t);
+        }
         let Some(job) = &mut self.render_job else { return };
         match act {
             Some(Act::Pause) => {
@@ -1861,38 +1882,36 @@ pub(crate) enum Verdict {
 pub(crate) struct LoudRow {
     pub what: crate::i18n::Key,
     pub value: String,
-    pub norm: crate::i18n::Key,
+    pub norm: String,
     pub verdict: Verdict,
 }
 
-/// The norms (EBU R 128 / Tech 3342 and the streaming platforms' −14), one place:
-/// integrated within 1 LU of −23 or −14, louder than −9 bad anywhere; true peak at most −1 dBTP;
-/// range at most 20 LU; the channels within 3 LU of each other, 6 LU or a silent one bad.
-pub(crate) fn loudness_rows(l: &kt_fx::audio::loudness::Loudness) -> Vec<LoudRow> {
-    let mut rows = Vec::with_capacity(4);
-    if let Some(lufs) = l.lufs {
-        let near = |t: f64| (lufs - t).abs() <= 1.0;
-        let verdict = if lufs > -9.0 {
-            Verdict::Bad
-        } else if near(-23.0) || near(-14.0) {
-            Verdict::Ok
-        } else {
-            Verdict::Off
-        };
-        rows.push(LoudRow {
-            what: k::render::LOUD_INTEGRATED,
-            value: crate::tf!(k::render::LOUD_LUFS, format!("{lufs:.1}")),
-            norm: k::render::LOUD_NORM_INTEGRATED,
-            verdict,
-        });
-    } else {
-        rows.push(LoudRow {
-            what: k::render::LOUD_INTEGRATED,
-            value: tr(k::render::LOUD_SILENT).to_string(),
-            norm: k::render::LOUD_NORM_INTEGRATED,
-            verdict: Verdict::Bad,
-        });
-    }
+/// The norms: the PROJECT's loudness (loudness-norms, the owner's B6) — integrated within 1 LU of its
+/// target, within 3 amber, past that or louder than −9 red; the true peak at most its ceiling; EBU Tech
+/// 3342's range; the channels within 3 LU of each other, 6 LU or a silent one red; what the program
+/// stage did, amber when its limiter took over 1 LU.
+pub(crate) fn loudness_rows(
+    l: &kt_fx::audio::loudness::Loudness,
+    t: &kt_model::LoudnessTarget,
+    stage: Option<&kt_engine::export::ProgramReport>,
+) -> Vec<LoudRow> {
+    let mut rows = Vec::with_capacity(5);
+    let norm = crate::tf!(k::render::LOUD_NORM_INTEGRATED, format!("{:.0}", t.target_lufs));
+    let (value, verdict) = match l.lufs {
+        Some(lufs) => {
+            let off = (lufs - t.target_lufs).abs();
+            let verdict = if lufs > -9.0 || off > 3.0 {
+                Verdict::Bad
+            } else if off > 1.0 {
+                Verdict::Off
+            } else {
+                Verdict::Ok
+            };
+            (crate::tf!(k::render::LOUD_LUFS, format!("{lufs:.1}")), verdict)
+        }
+        None => (tr(k::render::LOUD_SILENT).to_string(), Verdict::Bad),
+    };
+    rows.push(LoudRow { what: k::render::LOUD_INTEGRATED, value, norm, verdict });
     let peak = l.dbtp;
     rows.push(LoudRow {
         what: k::render::LOUD_PEAK,
@@ -1901,13 +1920,13 @@ pub(crate) fn loudness_rows(l: &kt_fx::audio::loudness::Loudness) -> Vec<LoudRow
         } else {
             tr(k::render::LOUD_SILENT).to_string()
         },
-        norm: k::render::LOUD_NORM_PEAK,
-        verdict: if peak > -1.0 { Verdict::Bad } else { Verdict::Ok },
+        norm: crate::tf!(k::render::LOUD_NORM_PEAK, format!("{:.0}", t.ceiling_dbtp)),
+        verdict: if peak > t.ceiling_dbtp { Verdict::Bad } else { Verdict::Ok },
     });
     rows.push(LoudRow {
         what: k::render::LOUD_RANGE,
         value: crate::tf!(k::render::LOUD_LU, format!("{:.1}", l.lra)),
-        norm: k::render::LOUD_NORM_RANGE,
+        norm: tr(k::render::LOUD_NORM_RANGE).to_string(),
         verdict: if l.lra > 20.0 { Verdict::Off } else { Verdict::Ok },
     });
     let [a, b] = [l.channels[0].lufs, l.channels[1].lufs];
@@ -1921,18 +1940,39 @@ pub(crate) fn loudness_rows(l: &kt_fx::audio::loudness::Loudness) -> Vec<LoudRow
     rows.push(LoudRow {
         what: k::render::LOUD_CHANNELS,
         value: crate::tf!(k::render::LOUD_LR, side(a), side(b)),
-        norm: k::render::LOUD_NORM_CHANNELS,
+        norm: tr(k::render::LOUD_NORM_CHANNELS).to_string(),
         verdict,
     });
+    if let Some(g) = stage {
+        rows.push(LoudRow {
+            what: k::render::LOUD_STAGE,
+            value: crate::tf!(
+                k::render::LOUD_STAGE_DID,
+                format!("{:+.1}", g.gain_db),
+                format!("{:.1}", g.took_lu),
+                format!("{:.1}", g.deepest_db)
+            ),
+            norm: tr(k::render::LOUD_NORM_STAGE).to_string(),
+            verdict: if g.took_lu > 1.0 { Verdict::Off } else { Verdict::Ok },
+        });
+    }
     rows
 }
 
 /// The table in the result block: the value in the error colour when it is out (rule 16), the norm
-/// beside it, a weak line saying nothing was applied.
-pub(crate) fn loudness_table(ui: &mut egui::Ui, l: &kt_fx::audio::loudness::Loudness) {
-    ui.label(egui::RichText::new(tr(k::render::LOUD_TITLE)).strong());
+/// beside it, how many are out, and that it was measured before the codec.
+pub(crate) fn loudness_table(
+    ui: &mut egui::Ui,
+    l: &kt_fx::audio::loudness::Loudness,
+    t: &kt_model::LoudnessTarget,
+    stage: Option<&kt_engine::export::ProgramReport>,
+) {
+    let rows = loudness_rows(l, t, stage);
+    let out = rows.iter().filter(|r| r.verdict != Verdict::Ok).count();
+    let title = ui.label(egui::RichText::new(crate::tf!(k::render::LOUD_TITLE, out)).strong());
+    crate::widgets::field_probe::note(if out == 0 { "render.loud.good" } else { "render.loud.out" }, title.rect);
     egui::Grid::new("render-loudness").num_columns(3).spacing([12.0, 2.0]).show(ui, |ui| {
-        for r in loudness_rows(l) {
+        for r in &rows {
             ui.label(tr(r.what));
             let text = egui::RichText::new(&r.value);
             let shown = match r.verdict {
@@ -1943,9 +1983,49 @@ pub(crate) fn loudness_table(ui: &mut egui::Ui, l: &kt_fx::audio::loudness::Loud
             if r.verdict == Verdict::Bad {
                 crate::widgets::field_probe::note("render.loud.bad", shown.rect);
             }
-            ui.weak(tr(r.norm));
+            ui.weak(&r.norm);
             ui.end_row();
         }
     });
     ui.weak(tr(k::render::LOUD_NOTE));
+}
+
+/// What a finding of the sound says.
+pub(crate) fn finding_text(s: &kt_fx::audio::findings::SoundSpan) -> String {
+    use kt_fx::audio::findings::SoundFinding as F;
+    match s.what {
+        F::OverCeiling => crate::tf!(k::render::FOUND_OVER, format!("{:.1}", s.value)),
+        F::Silent(0) => tr(k::render::FOUND_SILENT_L).to_string(),
+        F::Silent(_) => tr(k::render::FOUND_SILENT_R).to_string(),
+        F::Louder(0) => crate::tf!(k::render::FOUND_LOUDER_L, format!("{:.0}", s.value)),
+        F::Louder(_) => crate::tf!(k::render::FOUND_LOUDER_R, format!("{:.0}", s.value)),
+    }
+}
+
+/// Findings shown; more are counted.
+const FOUND_SHOWN: usize = 12;
+
+/// The findings at their times, under the table: a click moves the playhead there.
+pub(crate) fn sound_findings(
+    ui: &mut egui::Ui,
+    spans: &[kt_fx::audio::findings::SoundSpan],
+    from: kt_time::Tick,
+) -> Option<kt_time::Tick> {
+    let mut seek = None;
+    for (i, s) in spans.iter().take(FOUND_SHOWN).enumerate() {
+        let at = from + kt_time::Tick::from_audio_frames(s.from as i64);
+        let to = from + kt_time::Tick::from_audio_frames(s.to as i64);
+        let text = format!("{}–{}  {}", tick_text(at), tick_text(to), finding_text(s));
+        let r = ui.link(egui::RichText::new(text).color(egui::Color32::from_rgb(255, 190, 120)));
+        if i == 0 {
+            crate::widgets::field_probe::note("render.found", r.rect);
+        }
+        if r.clicked() {
+            seek = Some(at);
+        }
+    }
+    if spans.len() > FOUND_SHOWN {
+        ui.weak(crate::tf!(k::render::FOUND_MORE, spans.len() - FOUND_SHOWN));
+    }
+    seek
 }

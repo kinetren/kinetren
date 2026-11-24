@@ -122,6 +122,42 @@ pub struct ProgramReport {
     pub deepest_db: f64,
 }
 
+/// The report's values that stand outside the project's norm, in English (the render log, kt-cli): one
+/// line each, and the program stage's own line.
+pub fn loudness_lines(
+    l: &kt_fx::audio::loudness::Loudness,
+    t: &kt_model::LoudnessTarget,
+    stage: Option<&ProgramReport>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    match l.lufs {
+        Some(v) if v > -9.0 || (v - t.target_lufs).abs() > 1.0 => {
+            out.push(format!("loudness: {v:.1} LUFS against the project's {:.1}", t.target_lufs))
+        }
+        None => out.push("loudness: silent".to_string()),
+        _ => {}
+    }
+    if l.dbtp > t.ceiling_dbtp {
+        out.push(format!("true peak: {:.1} dBTP over the project's {:.1}", l.dbtp, t.ceiling_dbtp));
+    }
+    if l.lra > 20.0 {
+        out.push(format!("loudness range: {:.1} LU", l.lra));
+    }
+    match [l.channels[0].lufs, l.channels[1].lufs] {
+        [Some(a), Some(b)] if (a - b).abs() > 3.0 => out.push(format!("channels: L {a:.1}, R {b:.1} LUFS")),
+        [Some(_), None] => out.push("channels: the right one is silent".to_string()),
+        [None, Some(_)] => out.push("channels: the left one is silent".to_string()),
+        _ => {}
+    }
+    if let Some(g) = stage {
+        out.push(format!(
+            "program stage: {:+.1} dB, the limiter took {:.1} LU, deepest {:.1} dB",
+            g.gain_db, g.took_lu, g.deepest_db
+        ));
+    }
+    out
+}
+
 impl ExportStats {
     /// The pairs that differ: (frames written, announced) and (samples written, announced)
     /// (render-result-check D2).

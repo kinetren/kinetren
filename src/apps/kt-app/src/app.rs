@@ -655,6 +655,11 @@ pub struct KtApp {
     pub preset_save: Option<PresetSaveDialog>,
     /// “Project settings” window (R.62).
     pub settings_win: Option<crate::settings_window::SettingsWindow>,
+    /// The program stage's window and its light (loudness-norms).
+    pub program_win: bool,
+    pub program_lit: Option<std::time::Instant>,
+    /// "Match loudness…".
+    pub match_win: Option<crate::program_ui::MatchWin>,
     /// TRACK window (R.62): properties and chain. One per program — like the
     /// settings window; a second window for the same track is not opened.
     pub track_win: Option<crate::track_window::TrackWindow>,
@@ -1178,6 +1183,9 @@ impl KtApp {
             tl_hover_row: None,
             preset_save: None,
             settings_win: None,
+            program_win: false,
+            program_lit: None,
+            match_win: None,
             track_win: None,
             seq_name: None,
             publish_dialog: None,
@@ -1524,6 +1532,9 @@ impl KtApp {
             tl_hover_row: None,
             preset_save: None,
             settings_win: None,
+            program_win: false,
+            program_lit: None,
+            match_win: None,
             track_win: None,
             seq_name: None,
             publish_dialog: None,
@@ -2089,6 +2100,8 @@ impl KtApp {
         self.draw_paste_names(&ctx);
         self.draw_preset_save(&ctx);
         self.draw_settings_window(&ctx);
+        self.draw_program_window(&ctx);
+        self.draw_match_window(&ctx);
         self.draw_prefs_window(&ctx);
         self.draw_controls_window(&ctx);
         self.draw_track_window(&ctx);
@@ -5914,6 +5927,8 @@ impl KtApp {
                     self.loudness.lock().unwrap().insert(media, (l, dbtp, lra));
                 }
             }
+            (_, O::Program(found)) => self.on_program_matched(found),
+            (_, O::Clips { matched, sound }) => self.on_clips_matched(matched, sound),
         }
     }
 
@@ -12041,7 +12056,15 @@ impl KtApp {
                 if window_buttons {
                     self.draw_window_buttons(ui);
                 }
-                self.draw_meters(ui);
+                // the program stage under the meters (loudness-norms)
+                let all = ui.available_rect_before_wrap();
+                let (meters, row) = all.split_top_bottom_at_y(all.bottom() - crate::program_ui::PROGRAM_H);
+                if self.model.editing().is_some() {
+                    self.draw_meters(ui);
+                    return;
+                }
+                ui.scope_builder(egui::UiBuilder::new().max_rect(meters), |ui| self.draw_meters(ui));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(row.shrink(1.0)), |ui| self.draw_program_row(ui));
             });
         // the drag strip — already OUTSIDE the panel: the panel itself took the space for it,
         // so the right edge of the remaining space is its left edge.
