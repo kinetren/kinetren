@@ -74,6 +74,7 @@ pub const CAT_STEREO: &str = "\u{E69A}"; // selection
 pub const CAT_MODULATION: &str = "\u{E6A2}"; // sparkle
 pub const CAT_DELAY: &str = "\u{E1EC}"; // diamond
 pub const CAT_DYNAMICS: &str = "\u{E000}"; // pulse
+pub const MERGE: &str = "\u{E280}"; // git-merge: the picker's Merge row (fx-graph-dag)
 pub const CAT_TIMESTRETCH: &str = "\u{E1A0}"; // clock-counter-clockwise
 
 /// Vendored fonts: the name in egui and the bytes. The order here is the fallback order,

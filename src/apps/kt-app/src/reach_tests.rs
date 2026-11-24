@@ -212,8 +212,6 @@ const NOT_FROM_UI: &[(&str, &str)] = &[
     // fx-graph-dag v2a: the model, the file and the OTIO door carry a chain's wiring; the node
     // editor's branch gestures that send these arrive with v2d (task 4.2 removes both rows), and v2a
     // is merged only together with the stages that run and draw a graph
-    ("SetFxIn", "the node editor's wire gestures arrive with fx-graph-dag v2d"),
-    ("SetTrackFxIn", "the track window's wire gestures arrive with fx-graph-dag v2d"),
 ];
 
 /// Test 252 (R.38): there are no orphaned commands.

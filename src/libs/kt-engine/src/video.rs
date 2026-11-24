@@ -993,6 +993,20 @@ fn clip_order_quality(clip: &VideoClip, quality: Quality) -> Quality {
     }
 }
 
+/// A read a layer makes beyond its own (`VideoRenderer::read_rows`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReadRow {
+    /// The event (a piece of it under a morpher layer), and its window.
+    pub clip: kt_model::ClipId,
+    pub start: Tick,
+    pub end: Tick,
+    /// The time kind that opens the read (its slot of the event's chain).
+    pub opens: kt_model::FxInstance,
+    pub quality: Quality,
+    /// The material the read walks over the window, ticks.
+    pub material: (i64, i64),
+}
+
 /// The leading “Geometry” node goes into the engine chain (R.62). The position —
 /// `geometry_pos` in the count of ACTIVE slots (bypass slots filtered out);
 /// curves (`auto`) get an empty slot at the same position, so that indices
@@ -2084,6 +2098,16 @@ impl VideoRenderer {
     /// chains, and hence different scale steps).
     pub fn video_decode_qualities(&self, quality: Quality) -> Vec<(kt_model::ClipId, Quality)> {
         self.clips.iter().map(|c| (c.id, clip_order_quality(c, quality))).collect()
+    }
+
+    /// The reads a layer makes beyond its own (fx-graph-dag D2), for the coverage strip's rows and the
+    /// performance panel: what each reads at and the material it walks.
+    pub fn read_rows(&self, quality: Quality) -> Vec<ReadRow> {
+        let row = |c: &VideoClip, slot: usize, r: &VideoClip| {
+            let span = r.warp.as_ref().map_or((0, (c.end - c.start).0), |w| w.span());
+            ReadRow { clip: c.id, start: c.start, end: c.end, opens: c.fx[slot].clone(), quality: clip_order_quality(r, quality), material: (c.source_in.0 + span.0, c.source_in.0 + span.1) }
+        };
+        self.clips.iter().flat_map(|c| c.reads.iter().map(move |(slot, r)| row(c, *slot, r))).collect()
     }
 
     /// Maximum decode quality among the clips (R.46, item 318): the cache and lookahead

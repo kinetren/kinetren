@@ -5246,6 +5246,8 @@ impl FxInstance {
             },
             // a missing plugin is passed through by the video path whatever it was
             FxInstance::Missing(_) => FxClass::Video2d,
+            // a Merge's lane is its mode's: a sum or a crossfade mixes sound (fx-graph-dag D4)
+            FxInstance::Merge { mode, .. } if mode.is_sound() => FxClass::Audio,
             _ => FxClass::Video2d,
         }
     }

@@ -33,6 +33,8 @@ pub struct TrackWindow {
     /// on its sound track — the default one the model links, or any the row picks — so "Cancel"
     /// restores every audio track this session changed.
     pub audio_backup: Vec<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>, bool)>,
+    /// The tracks' wiring at opening (fx-graph-dag).
+    pub wire_backup: Vec<(TrackId, Vec<kt_model::SlotInputs>)>,
     pub selected: crate::widgets::ChainSel,
     pub focus: bool,
     pub open: bool,
@@ -77,6 +79,21 @@ fn set_key(fx: &mut Vec<kt_model::FxInstance>, bypass: &mut Vec<bool>, key: Opti
 }
 
 impl KtApp {
+    /// A track's chain: its slots, and its wires with them as one step when the chain branches (or
+    /// did, fx-graph-dag D6); a chain that does not is the window session's step.
+    fn set_track_chain(&mut self, id: TrackId, fx: Vec<kt_model::FxInstance>, bypass: Vec<bool>, fx_in: Option<Vec<kt_model::SlotInputs>>, gesture: u64) {
+        let now = self.model.project().track(id).map(|t| t.fx_in.clone()).unwrap_or_default();
+        let set = Command::SetTrackFx { id, fx, bypass };
+        match fx_in.filter(|w| !w.is_empty() || !now.is_empty()) {
+            Some(fx_in) => {
+                self.apply_batch(vec![set, Command::SetTrackFxIn { id, fx_in }]);
+            }
+            None => {
+                self.apply_coalesced(set, gesture);
+            }
+        }
+    }
+
     /// Open the track window. We do not make a second window for the same track —
     /// as with the FX window (it drives the whole link group in one session).
     pub fn open_track_window(&mut self, id: TrackId) {
@@ -98,6 +115,7 @@ impl KtApp {
                 Vec::new()
             },
             id,
+            wire_backup: self.model.project().tracks.iter().map(|t| (t.id, t.fx_in.clone())).collect(),
             backup: t.props(),
             fx_backup: (t.fx.clone(), t.fx_bypass.clone(), t.fx_off),
             mask_backup: t.masks.clone(),
@@ -148,6 +166,11 @@ impl KtApp {
         // after drawing — in the same window session and the same history step
         let mut key_edit: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>)> = None;
         // the sound track's chain edited from the pair's graph (track-device-sound)
+        // a gesture the graph refused, in words; a chain that branches sends its wires with its slots
+        // (fx-graph-dag D8)
+        let mut graph_refused: Option<String> = None;
+        let mut wiring: Option<Vec<kt_model::SlotInputs>> = None;
+        let mut sound_wiring: Option<Vec<kt_model::SlotInputs>> = None;
         let mut sound_edit: Option<(TrackId, Vec<kt_model::FxInstance>, Vec<bool>, bool)> = None;
         // a video track's sound track and its chain (the pair's second lane)
         let sound_track = track.sound.and_then(|sid| self.model.project().track(sid).cloned());
@@ -326,6 +349,7 @@ impl KtApp {
                     // D10's pair editor): the sound track's chain on the sound lane, a switch per lane
                     let n_v = fx.len();
                     let mut lanes: Vec<u8> = Vec::new();
+                    let mut links = kt_model::fx_strip::links_of(&track.fx_in, n_v, 0);
                     let mut a_on = true;
                     let pair = sound_track.as_ref().filter(|_| track.kind == LaneKind::Video);
                     if let Some(st) = pair {
@@ -334,6 +358,7 @@ impl KtApp {
                         bypass.resize(n_v, false);
                         fx.extend(st.fx.iter().cloned());
                         bypass.extend(sb);
+                        links.extend(kt_model::fx_strip::links_of(&st.fx_in, st.fx.len(), n_v));
                         lanes = std::iter::repeat_n(0, n_v).chain(std::iter::repeat_n(1, st.fx.len())).collect();
                         a_on = !st.fx_off;
                     }
@@ -357,6 +382,7 @@ impl KtApp {
                             keys: track_keys,
                             lane_of: pair.map(|_| &mut lanes),
                             master2: pair.map(|_| &mut a_on),
+                            links: &mut links,
                             viewer: false,
                         },
                         if pair.is_some() { crate::fx_registry::PickKinds::Both } else { audio.into() },
@@ -374,6 +400,14 @@ impl KtApp {
                     );
                     changed_fx |= ch.any();
                     fx_off = !chain_on;
+                    if let Some(why) = ch.refused.clone() {
+                        graph_refused = Some(why);
+                    }
+                    if ch.wires {
+                        let of = if pair.is_some() { lanes.clone() } else { vec![0; links.len()] };
+                        wiring = Some(kt_model::fx_strip::wiring_of(&links, &of, 0));
+                        sound_wiring = pair.map(|_| kt_model::fx_strip::wiring_of(&links, &of, 1));
+                    }
                     // split the pair back by lane; a side that did not change sends nothing (D10:
                     // a stale side re-pairs a removed device)
                     if let Some(st) = pair {
@@ -392,7 +426,7 @@ impl KtApp {
                         trim_bypass(&mut ab);
                         fx = vf;
                         bypass = vb;
-                        if af != st.fx || !same_bypass(&ab, &st.fx_bypass) || a_on == st.fx_off {
+                        if af != st.fx || !same_bypass(&ab, &st.fx_bypass) || a_on == st.fx_off || sound_wiring.as_ref().is_some_and(|w| *w != st.fx_in) {
                             sound_edit = Some((st.id, af, ab, !a_on));
                         }
                     }
@@ -403,7 +437,11 @@ impl KtApp {
                     // preset all land here. Slots an older project already holds stay as they are.
                     if track.kind == LaneKind::Video {
                         let had = track.fx.iter().filter(|f| f.is_stream()).count();
-                        if fx.iter().filter(|f| f.is_stream()).count() > had {
+                        if fx.iter().filter(|f| f.is_stream()).count() > had && wiring.is_some() {
+                            // in a chain that branches the whole gesture is refused
+                            (fx, bypass, wiring) = (track.fx.clone(), track.fx_bypass.clone(), None);
+                            stream_refused = true;
+                        } else if fx.iter().filter(|f| f.is_stream()).count() > had {
                             let mut kept = 0;
                             let mut i = 0;
                             while i < fx.len() {
@@ -639,6 +677,9 @@ impl KtApp {
         if stream_refused {
             self.refuse(tr(k::track::NO_STREAM));
         }
+        if let Some(why) = graph_refused {
+            self.refuse(why);
+        }
         if let Some((owner, list, out)) = mask_out.take() {
             if let Some(list) = list
                 && !cancel
@@ -659,10 +700,8 @@ impl KtApp {
             let b = w.backup.clone();
             let (bfx, bby, boff) = w.fx_backup.clone();
             self.apply_coalesced(Command::SetTrackProps { id: w.id, props: b }, w.gesture);
-            self.apply_coalesced(
-                Command::SetTrackFx { id: w.id, fx: bfx, bypass: bby },
-                w.gesture,
-            );
+            let wire = |id: TrackId| w.wire_backup.iter().find(|(t, _)| *t == id).map(|(_, x)| x.clone());
+            self.set_track_chain(w.id, bfx, bby, wire(w.id), w.gesture);
             self.apply_coalesced(Command::SetTrackFxOff { id: w.id, off: boff }, w.gesture);
             if self.model.project().track(w.id).is_some_and(|t| t.masks != w.mask_backup) {
                 self.apply_coalesced(
@@ -678,8 +717,8 @@ impl KtApp {
             }
             for (aid, afx, aby, aoff) in w.audio_backup.clone() {
                 let Some(now) = self.model.project().track(aid).cloned() else { continue };
-                if now.fx != afx || now.fx_bypass != aby {
-                    self.apply_coalesced(Command::SetTrackFx { id: aid, fx: afx, bypass: aby }, w.gesture);
+                if now.fx != afx || now.fx_bypass != aby || wire(aid).is_some_and(|x| x != now.fx_in) {
+                    self.set_track_chain(aid, afx, aby, wire(aid), w.gesture);
                 }
                 if now.fx_off != aoff {
                     self.apply_coalesced(Command::SetTrackFxOff { id: aid, off: aoff }, w.gesture);
@@ -692,11 +731,8 @@ impl KtApp {
                 self.apply_coalesced(Command::SetTrackProps { id: w.id, props }, w.gesture);
             }
             if changed_fx {
-                if fx != track.fx || !same_bypass(&bypass, &track.fx_bypass) {
-                    self.apply_coalesced(
-                        Command::SetTrackFx { id: w.id, fx, bypass },
-                        w.gesture,
-                    );
+                if fx != track.fx || !same_bypass(&bypass, &track.fx_bypass) || wiring.as_ref().is_some_and(|x| *x != track.fx_in) {
+                    self.set_track_chain(w.id, fx, bypass, wiring, w.gesture);
                 }
                 if fx_off != track.fx_off {
                     self.apply_coalesced(
@@ -722,8 +758,8 @@ impl KtApp {
             && let Some(st) = self.model.project().track(sid).cloned()
         {
             // the sound track's chain — the SAME window session and the SAME history step
-            if sfx != st.fx || !same_bypass(&sby, &st.fx_bypass) {
-                self.apply_coalesced(Command::SetTrackFx { id: sid, fx: sfx, bypass: sby }, w.gesture);
+            if sfx != st.fx || !same_bypass(&sby, &st.fx_bypass) || sound_wiring.as_ref().is_some_and(|x| *x != st.fx_in) {
+                self.set_track_chain(sid, sfx, sby, sound_wiring, w.gesture);
             }
             if soff != st.fx_off {
                 self.apply_coalesced(Command::SetTrackFxOff { id: sid, off: soff }, w.gesture);
