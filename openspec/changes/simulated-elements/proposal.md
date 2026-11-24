@@ -1,10 +1,10 @@
 # Proposal: simulated-elements
 
-> DESIGN ONLY (spec session), revision 2 (2026-11-23) after the owner's answer to Q56 (`kkt-26.11.22` D3): not a
+> DESIGN ONLY (spec session), revision 3 (2026-11-24; revision 2 of 2026-11-23) after the owner's answer to Q56 (`kkt-26.11.22` D3): not a
 > letter-physics animator but a COMPOSITING SYSTEM in which the parts of a picture are objects with simulated state,
 > and a walk of the whole program for where it applies. Revision 1 was `text-letter-physics` (a title's Physics
 > animator). Registry `v26.10-index.md` F2; notes F-FX-005 (physics), F-FX-006 (particles). Tests reserved:
-> t3968–t3973, t3983–t3990.
+> t3968–t3973, t3983–t3992, t4107.
 
 ## Why
 
@@ -46,7 +46,8 @@ Slowed&Reverb, an instance's speed), not the playhead — the B7 lesson.
   - a 3D group's planes;
   - a transition's pieces;
   - an emitter's particles.
-  Elements are addressed like any property (R.61 addresses), so links and plugins can read and drive them.
+  The solvers' rows are addressed like any property (R.61), so links and plugins drive them; poses are read by other
+  sets.
 - **Operators on a set.** An ordered list of operators turns rest poses into placed poses:
   - stateless operators are closed form: today's per-letter animators, keys, links;
   - stateful operators are SIMULATIONS: springs, pendulum, rope, fall and collide, particles, flocking.
@@ -63,8 +64,8 @@ Slowed&Reverb, an instance's speed), not the playhead — the B7 lesson.
   Checkpoints are kept in memory only: they never change a byte and are never written to disk (the owner's D1/D2:
   nothing intermediate is stored).
 - **In the plan, as numbers.** Simulation runs while the frame plan is built (CPU, before the GPU), and the plan
-  carries each element's placed pose. The plan key hashes those NUMBERS, not the history, so the memo, the disk
-  frames and the coverage bars stay true (invariant 4). Masks, reel layers and planes are drawn by
+  carries each element's placed pose. The plan key hashes what the numbers are a function of (the edit up to that
+  moment), never a history of computation, so the memo, the disk frames and the coverage bars stay true (invariant 4). Masks, reel layers and planes are drawn by
   their own code (the mask raster, the Geometry node); letters and particles by one instanced-sprite pass from an
   atlas their source draws once (invariant 7: one composition path).
 - **Zero cost where unused.** An owner with no stateful operator runs no simulation code and keeps its plan key as
@@ -107,23 +108,19 @@ Slowed&Reverb, an instance's speed), not the playhead — the B7 lesson.
 - Format: by content. OTIO: the planned row (renamed from `text-letter-physics`).
 - Idle: nothing at rest. A paused frame computes its numbers once, and a plan memo hit reuses them.
 
+## Decided
+
+- **Q1, what comes first.** His D3 already answers it: "этот эффект это просто пример применения, а так нужно еще
+  посмотреть по всей программе где такую систему можно применять и добавить еще мест таких". Every place of `design.md`
+  D9 gets the system. The order is an engineering matter: stage A is the system with three applications that differ in
+  kind (letters, mask vertices, particles), so that the contract is not shaped around letters; stage B adds the other
+  places, one change each (D18).
+- **Q2, the step.** His R.59 decision: "a simulation from the start of the event with a fixed step". The value is a
+  consequence: 1/240 s of the outer time, a multiple of 24, 30, 48, 60 and 120, so that the letters move alike in a 25
+  and a 30 fps project.
+- **A cut does not restart the letters** (D14). It follows from the program's own rule that a cut does not change the
+  picture.
+
 ## Questions to the owner
 
-**Q1. Which applications come with the system first?** Your words (D3): "этот эффект это просто пример применения, а
-так нужно еще посмотреть по всей программе где такую систему можно применять и добавить еще мест таких". Today: no part
-of the program simulates; the walk in `design.md` D9 finds 14 places. The system is built once, and each application
-then costs a producer of elements (most already exist) plus a form section.
-- (a) **The system plus three applications that prove it on different kinds of element:** letters (title clusters)
-  driven by the edit's speed, mask vertices following a tracker with inertia, and particles from an emitter. The other
-  places follow one per change (*recommended*: three different producers and drawers prove the contract is general;
-  the system is not shaped around letters).
-- (b) The system plus letters only, the rest later (a faster first build; the contract is proven on one producer).
-- (c) The system plus every place of D9 at once (one large change; long before anything is usable).
-
-**Q2. The simulation's step.** Your decision of R.59: "a simulation from the start of the event with a fixed step". Its
-value was left open (F-FX-005): a step tied to the project's frame rate makes the motion depend on that setting
-(change 25 to 30 fps and the letters move differently).
-- (a) **A fixed step of 1/240 s of the owner's outer time, the same at any frame rate; a frame reads the state at its
-  moment, interpolated between two steps** (*recommended*: the same edit moves the same way in any project and any
-  export rate; 240 is a multiple of 24, 30, 48, 60 and 120).
-- (b) One step per project frame (simpler, but the motion changes with the frame rate).
+None. The start of the build is the orchestrator's go.
