@@ -1906,6 +1906,9 @@ impl KtApp {
             .fade_in(false)
             .sense(egui::Sense::hover())
             .show(&ctx, |_| {});
+        // an area registered before the panels' root (egui's areas forgotten inside a frame, as the live
+        // rig does) would stay under the panels for good: the order is said each frame
+        ctx.move_to_top(under_windows());
         // the windows of the previous frame, top last: Esc picks from them (shared-window-shell)
         self.shell_seen = crate::window_shell::begin_frame(&ctx);
         let ui_zoom = self.start.controls.ui_zoom_keys_free();

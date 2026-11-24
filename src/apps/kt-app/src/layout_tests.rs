@@ -22152,10 +22152,21 @@ fn t3936_a_window_over_the_glow_and_the_title_shows_neither() {
     let (at, rect) = halo.expect("the meters' halo is drawn");
     assert!(window(&h).intersects(rect), "the window stands over the halo: {:?} {rect:?}", window(&h));
     assert!(at < ground, "the halo is painted over the window ({at} after {ground})");
-    assert!(
-        h.ctx.memory(|m| m.layer_ids().any(|l| l == crate::app::under_windows())),
-        "the layer is an area: its order and its hits are egui's"
-    );
+    // registered before the panels (egui's areas forgotten inside a frame, as the live rig does when it
+    // opens a project), it comes back over them
+    let under = crate::app::under_windows();
+    let screen = egui::RawInput { screen_rect: Some(h.ctx.content_rect()), ..Default::default() };
+    h.ctx.begin_pass(screen);
+    h.ctx.memory_mut(|m| {
+        m.reset_areas();
+        m.areas_mut().move_to_top(under);
+    });
+    let _ = h.ctx.end_pass();
+    h.step();
+    h.step();
+    let at = |h: &Harness<'_, KtApp>, l: egui::LayerId| h.ctx.memory(|m| m.layer_ids().position(|x| x == l));
+    let (layer, panels) = (at(&h, under).expect("an area"), at(&h, egui::LayerId::background()).expect("the panels"));
+    assert!(layer > panels, "the panels are painted over the layer for good");
 }
 
 /// Test 3937 (window-chrome, `v26.10` T5): a window that started maximized goes back to a normal size

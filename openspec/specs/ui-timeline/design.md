@@ -562,7 +562,8 @@ read from the trace, not guessed.
 
 - One layer, `under_windows()`: an egui `Area` of `Order::Background`, shown empty at the start of each frame. The panels
   are the root area of the same order, registered first, so the layer is painted and hit over every panel and under every
-  window. Not `Order::Middle` (the plan): egui 0.36 paints a layer it does not know as an area LAST in its order — over
+  window. An area registered before the panels' root stays under them, so the layer is moved to the top each frame
+  (found by live `nestdead`: the rig forgets egui's areas inside a frame, and the title was gone and its crumb dead). Not `Order::Middle` (the plan): egui 0.36 paints a layer it does not know as an area LAST in its order — over
   every window — and has no `move_to_bottom`; an area there would also stand in every list of windows.
 - Painted in it: the glow of the preview and of the meters, the project's title with its clickable crumbs, the resting
   status line.
