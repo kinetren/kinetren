@@ -336,7 +336,7 @@ fn perform(op: Op, edit: &mut ChainEdit<'_>, lanes: &[u8], sound: impl Fn(u8) ->
                 s.block(lane, after, &w, mine.len());
                 added.extend(mine);
             }
-            select = Some(n + added.len().saturating_sub(1)).filter(|_| !added.is_empty()).or(select);
+            select = (!added.is_empty()).then_some(n + added.len().saturating_sub(1)).or(select);
         }
         Op::Branch { lane, from, items, fx_in } => {
             what = "a branch".into();
@@ -558,7 +558,7 @@ pub fn chain_graph(
         }
     };
     let before = lanes_now(&edit);
-    if let Some(op) = toolbar(ui, &mut edit, &before, kinds, query, clipboard, src_in, hover, preview.as_mut().map(|p| &mut **p), ctx, &mut ch, &mut view) {
+    if let Some(op) = toolbar(ui, &mut edit, &before, kinds, query, clipboard, src_in, hover, preview.as_deref_mut(), ctx, &mut ch, &mut view) {
         perform(op, &mut edit, &before, sound, kind_lane, &mut ch);
     }
 
@@ -1331,9 +1331,9 @@ pub fn chain_graph(
     {
         let snd = sound(pend.lane);
         let pk = if snd { crate::fx_registry::PickKinds::Audio } else { crate::fx_registry::PickKinds::from(false) };
-        let mut arm_pv = preview.as_mut().filter(|_| !snd).map(|p| &mut **p).and_then(|p| p.place_arm(ctx.chain, pend.from).then_some(p));
+        let arm_pv = preview.as_deref_mut().filter(|_| !snd).and_then(|p| p.place_arm(ctx.chain, pend.from).then_some(p));
         let rows = edit.presets.rows;
-        match crate::fx_registry::fx_picker_at(ui, pending_id, pend.at, pk, query, rows, hover, arm_pv.as_deref_mut()) {
+        match crate::fx_registry::fx_picker_at(ui, pending_id, pend.at, pk, query, rows, hover, arm_pv) {
             Some(crate::fx_registry::Picked::Fx(f)) => op = Some(Op::Branch { lane: pend.lane, from: pend.from, items: vec![(f, false, Vec::new())], fx_in: Vec::new() }),
             Some(crate::fx_registry::Picked::Merge) => op = Some(Op::Merge { lane: pend.lane, from: Some(pend.from) }),
             Some(crate::fx_registry::Picked::Preset(i)) => {

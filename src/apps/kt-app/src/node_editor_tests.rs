@@ -972,3 +972,102 @@ fn t3299_a_read_has_its_row_and_a_cell_its_place() {
     assert_eq!(chain(Place::Arm(ClipId(1), Node::Slot(2))), (vec!["blur".into(), "glow".into()], vec![]));
     assert_eq!(chain(Place::Clip(ClipId(1))).0, ["slowed_reverb", "blur", "merge", "glow"], "the tail is not the tail");
 }
+
+/// t3240 (fx-graph-dag D6, D8): branches where a chain is not one event's line — the sound lane of a
+/// pair's one editor (the video event's wiring untouched), a device's halves leaving a pair whose
+/// sound branches, a track's chain with the window's Cancel, and a copied graph pasted after itself.
+/// - **PATH** double click a linked event carrying Blur, VHS Tape and a Gain on its sound → drag a
+///   wire from Gain's output to empty space → pick Compressor → Merge it → only the sound lane has a
+///   second row → click the cross of VHS Tape → both halves go, the sound's branch stays → Copy the
+///   chain, Paste → the branches come twice → open the video track's window, branch from In → Cancel
+///   → the track is as it was
+#[test]
+fn t3240_branches_on_a_pair_a_device_a_track_and_a_paste() {
+    crate::plugins::install();
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef::new(MediaId(1), "synth:ramp"));
+    p.clips.push(clip(1, ClipKind::Video, vec![FxInstance::blur(3)]));
+    p.clips.push(clip(2, ClipKind::Audio, vec![FxInstance::plugin("gain").unwrap()]));
+    p.validate().unwrap();
+    app.model = TimelineModel::new(p);
+    assert!(app.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::blur(3), FxInstance::builtin("vhs_tape")] }));
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let of = |h: &Harness<'_, KtApp>, id: u64| h.state().model.clip(ClipId(id)).unwrap().clone();
+    assert_eq!(tags(&of(&h, 2).fx), ["gain", "vhs_tape_sound"], "scene");
+    let gain = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::plugin("gain").unwrap()));
+    branch(&mut h, &format!("fx.out.{gain}"), "compressor", "fxreg.tpl.compressor");
+    let comp = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::plugin("compressor").unwrap()));
+    branch(&mut h, &format!("fx.out.{comp}"), "merge", "fxreg.merge");
+    let a = of(&h, 2);
+    assert_eq!(tags(&a.fx), ["gain", "compressor", "vhs_tape_sound", "merge"], "{:?}", a.fx_in);
+    assert!(!a.fx_in.is_empty() && of(&h, 1).fx_in.is_empty(), "the wiring is not the sound lane's alone");
+    assert_eq!(kt_model::fx_graph::reaches_output(&a.fx_in, 4), [true; 4]);
+    // the device leaves both lanes by one cross: the sound's branch stays and the project is valid
+    let tape = node_label(&h, "VHS Tape");
+    let x = h
+        .query_all_by_label(crate::icons::CLEAR)
+        .map(|n| n.rect())
+        .filter(|r| (r.center().y - tape.center().y).abs() < 8.0 && r.left() > tape.right() - 1.0)
+        .min_by(|a, b| a.left().total_cmp(&b.left()))
+        .expect("VHS Tape's cross");
+    h.hover_at(x.center());
+    h.step();
+    click_at(&mut h, x.center());
+    h.step();
+    let a = of(&h, 2);
+    assert_eq!((tags(&of(&h, 1).fx), tags(&a.fx)), (vec!["blur"], vec!["gain", "compressor", "merge"]));
+    assert_eq!(kt_model::fx_graph::reaches_output(&a.fx_in, 3), [true; 3], "{:?}", a.fx_in);
+    assert!(said(&h).is_empty(), "an edit was refused: {}", said(&h));
+    h.state().model.project().validate().unwrap();
+
+    // a copied graph pasted after itself keeps its branches
+    let mut h = fx_harness(vec![FxInstance::blur(3)]);
+    let lead = node_of(&h, crate::fx_editor::fx_display_name(&FxInstance::geometry()));
+    branch(&mut h, &format!("fx.out.{lead}"), "vignette", "fxreg.tpl.vignette");
+    let v = node_of(&h, "Vignette");
+    branch(&mut h, &format!("fx.out.{v}"), "merge", "fxreg.merge");
+    assert_eq!(wired(&h), ["vignette<source", "blur<source", "merge<blur,fg:vignette"]);
+    let c = event(&h);
+    let block = kt_model::ops::FxChainBlock {
+        slots: c.fx.iter().map(|f| kt_model::ops::FxSlotBlock { fx: f.clone(), bypass: false, curves: vec![], masks: vec![] }).collect(),
+        src_in: kt_time::Tick(0),
+        fx_off: false,
+        fx_in: c.fx_in.clone(),
+    };
+    h.state_mut().fx_clipboard = Some(block);
+    // nothing selected in the lane's middle: the paste goes after the Output
+    let m = node_label(&h, "Merge").center();
+    h.hover_at(m);
+    h.step();
+    click_at(&mut h, m);
+    h.step();
+    let paste = h.get_by_label(tr(k::fx::PASTE_CHAIN)).rect().center();
+    h.hover_at(paste);
+    h.step();
+    click_at(&mut h, paste);
+    h.step();
+    assert_eq!(
+        wired(&h)[3..],
+        ["vignette<merge", "blur<merge", "merge<blur,fg:vignette"],
+        "the pasted graph is not its branches over the Output"
+    );
+
+    // a video track's chain: In has no Geometry after it, a branch starts right there
+    let mut h = harness();
+    let v1 = h.state().model.project().track_at(LaneKind::Video, 0).unwrap().id;
+    assert!(h.state_mut().apply(Command::SetTrackFx { id: v1, fx: vec![FxInstance::blur(3)], bypass: vec![] }));
+    let before = h.state().model.project().track(v1).cloned();
+    h.state_mut().open_track_window(v1);
+    h.step();
+    h.step();
+    branch(&mut h, "fx.src.0", "vignette", "fxreg.tpl.vignette");
+    let t = h.state().model.project().track(v1).unwrap().clone();
+    assert_eq!((tags(&t.fx), t.fx_in.len()), (vec!["vignette", "blur"], 2), "the track has no branch");
+    click_at(&mut h, crate::widgets::field_probe::rect_of("track.cancel").unwrap().center());
+    h.step();
+    assert_eq!(h.state().model.project().track(v1).cloned(), before, "Cancel left the track's branch");
+}
