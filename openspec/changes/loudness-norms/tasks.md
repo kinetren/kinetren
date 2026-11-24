@@ -10,7 +10,7 @@
 
 ## 1. The unmerged half
 
-- [ ] 1.1 Merge the branch `render-loudness-norms` (conflicts at `286c406c`: features README, What's new, the v26.10 registry, the Chinese subset and its manifest (rebuild), `layout_tests.rs`); its note renumbered F-EXP-009 → F-EXP-010; t3106, t3107, live `render_loudness` green
+- [ ] 1.1 Merge the branch `render-loudness-norms` (conflicts at `286c406c`: features README, What's new, the v26.10 registry, the Chinese subset and its manifest (rebuild), `layout_tests.rs`); its note renumbered F-EXP-009 → the next free; t3106, t3107, live `render_loudness` green
 
 ## 2. Model and format
 
@@ -25,7 +25,7 @@
 
 ## 4. Interface
 
-- [ ] 4.1 Project settings → Sound, "Match loudness…", the stage in the meters column, the report; kt-cli render's lines; i18n ×5; t3922, t3923; live `render_norms`
+- [ ] 4.1 Project settings → Sound, "Match loudness…", the stage in the meters column, the report; kt-cli export's lines; i18n ×5; t3922, t3923; live `render_norms`
 - [ ] 4.2 the limiter effect's hint (sample peaks)
 - [ ] 4.3 the load check: playing the heavy showcase with the stage on, paused with it on (nothing)
 

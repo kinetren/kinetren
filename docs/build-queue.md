@@ -166,7 +166,9 @@ These designs came from the `v26.10` registry rows (spec-features, 2026-11-20). 
 | `auto-ducking-by-role` **v+** | M | `shared-events` | MODEL (`AudioRole`), AUDIO (role mixes as keys), `track_window.rs` | Q1 live or written curve, Q2 the R.65 key | t3911–t3918 |
 | `motion-driven-params` **v+** | M | `shared-events` | MODEL (link addresses), PLAYER (`preview_speed`), automation | Q1 rewinding and the render | t3947–t3952 (t3947 shared with title-word-effects: renumber at apply) |
 | `presets-everywhere` | M | `fx-preset-change` (the head menu) | MODEL `ops.rs` (clipboard blocks), FX-UI head menu, user store | Q1 copy or live link, Q2 built-in presets | t3904–t3907 |
-| `loudness-norms` | S | — | EXPORT (`ExportReport.sound`), `kt-fx` loudness, DIALOG | Q1 default norm, Q2 a normalize button | t3919–t3923 |
+| `loudness-norms` | M | the branch `render-loudness-norms` merged (its stage 1) | AUDIO output (`player.rs`, `render_raw_audio_range`), `kt-fx` (`audio::program`, loudness), MODEL (settings), DIALOG | none (revision 3) | t3919–t3923, t3966, t4200–t4203 |
+| `pause-detection` | M | — (Delete waits for `ripple-and-trim-modes`) | kt-media (`pauses.rs`, the pyramid's tail), a window | none | t3466, t4204–t4209 |
+| `edit-analysis` **v+** | L | A3 `ripple-and-trim-modes`; `speech` `pause-detection`; stage B `download-library` | kt-plugin-api (`measure.rs`), kt-media, TIMELINE overlay and snap, links, a bin tab | none | t4211–t4228 |
 | `picture-check` | M | `loudness-norms` (the shared findings list in DIALOG) | EXPORT (per-frame statistics), MODEL `lint`, DIALOG | Q1 findings as markers, Q2 the flashing check | t3908–t3910 |
 | `project-scale` **v+** | M | `shared-events` (it measures before and after) | MODEL (`project_file.rs` single-pass read, chain table) | Q1 "does not hang" at a million, Q2 chains or events | t3924–t3931 |
 | `detached-windows` | M | — | SHELL (`window_shell.rs`, viewports) | Q1 which windows, Q2 Wayland placement | t3901–t3903 |
