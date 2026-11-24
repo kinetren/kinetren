@@ -1116,7 +1116,8 @@ pub fn chain_graph(
                 if crate::widgets::field_probe::on() {
                     crate::widgets::field_probe::note(&format!("fx.slot.{i}.on"), cb.rect);
                 }
-                let room = inner.width() - 46.0;
+                // the switch, the cross and their gaps: the cross stays off the output socket
+                let room = inner.width() - 58.0;
                 let color = if live[i] { ui.visuals().text_color() } else { ui.visuals().weak_text_color() };
                 let text = node_name(ui, name, color, off, room);
                 let drawn = ui.selectable_label(selected, text);
