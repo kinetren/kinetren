@@ -1,6 +1,6 @@
 # Tasks: pause-detection
 
-> DESIGN ONLY until the orchestrator's go; no open question. Tests: t3466, t4204–t4209. Needs nothing first; Delete waits
+> Implementation-ready at `fc60a5d9` (2026-11-25); code on the orchestrator's go. Tests: t3466, t4204–t4209. Needs nothing first; Delete waits
 > for `ripple-and-trim-modes`.
 
 ## 0. Notes

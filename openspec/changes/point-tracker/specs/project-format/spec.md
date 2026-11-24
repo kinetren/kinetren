@@ -1,8 +1,8 @@
 ## ADDED Requirements
 
 ### Requirement: Trackers raise the file by content
-A project with trackers SHALL be written with the next free project file version, samples one line per
-second of material frames; a project without trackers SHALL be written byte for byte as before; the OTIO
+A project with trackers SHALL be written with the next free project file version, a second of samples a line per
+point; a project without trackers SHALL be written byte for byte as before; the OTIO
 export SHALL carry trackers only in the clip's `kt` metadata.
 Why: the R.70 rules (line by line, git-friendly).
 

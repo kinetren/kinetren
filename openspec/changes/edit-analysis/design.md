@@ -1,6 +1,21 @@
 # Design: edit-analysis
 
-> DESIGN ONLY, revision 1 (2026-11-24), base `286c406c`.
+> DESIGN ONLY, revision 2 (2026-11-25), checked at `fc60a5d9`: implementation-ready by stages; what may start before its dependencies is in D10.
+
+## D0. Checked against the merged tree
+
+1. **D7's links resolve in kt-model** (`links::resolve_derived` inside `resolve_reel`), which has no media data. A measure reaches it by a provider for the length of a build: `kt_model::with_material(&dyn Material, f)`,
+   a thread-local beside `with_sequence_index`, entered by the engine's builders, `gen_sources` and the UI's readouts; `Material::channel(media path, channel) -> Option<Arc<Channel>>` with a content hash. No provider → 0,
+   and the same for a channel not computed yet. The per-event memo (`incremental.rs`) is keyed by the event's text: the hash of every channel its curves read joins the key, or a build after the arrival reuses the zero.
+2. **A link has no Geometry node at either end** (found-defects 838, `point-tracker` D0.1): "a zoom on the beat" (t4226) is a zoom of the Geometry node. The owner `geo` comes with row 838's fix or `point-tracker` 1.2a/b;
+   A4 stands after whichever lands.
+3. `kt_engine::listen::ensure` is called by kt-app's export, kt-cli and the offline jobs; `ensure_measures` joins it there, one list of heard and linked files.
+4. `snap_targets` (`timeline.rs:1879`) still builds its vector per call: D4's index stands.
+5. The disk has `persistent-cache`'s copies now: a copy is the preview's picture, never a source of a measure (a measure is a function of the FILE).
+6. The frozen FFT is `audio_series.rs`'s (1024): `onset` takes it at a hop of 512.
+
+**Words read again** (line 90, whole in `proposal.md`): "даже тот же md sad уже полезен для построения более сложного анализа" — D3 keeps the raw SAD as a channel of its own beside `motion`, so it can be read by itself; kept.
+No other difference.
 
 ## Context
 
@@ -138,6 +153,10 @@ and kept in the cache folder. The overlays are meshes; the panel is static text;
 only when a row moves (bytes in memory, no decode).
 
 ## D10. Stages
+
+**Before any dependency**: A1 without 1.3 and A2 (kt-plugin-api `measure.rs`, kt-media, the overlay, marks) need nothing unmerged. 1.3 (`BeatFix`) and A4 write the model: after `shared-events`. "Split at cuts" is
+ordinary splits. Of A3 only "Cut on the beat" needs `ripple-and-trim-modes`' roll batch; Find moments needs nothing, its `speech` row is absent until `pause-detection`. Stage B waits for `download-library` 2 and
+`kt-speech`'s loader (`subtitles-and-text-editing` 2.2).
 
 A1 the measures, store, `audio` moved, `onset`, `beats`, the overlay, snapping, corrections, Mark beats.
 A2 `luma`, `motion`, `cuts`, their overlay, Mark/Split at cuts, Still stretches.

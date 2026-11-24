@@ -1,6 +1,6 @@
 # Tasks: title-word-effects
 
-> DESIGN ONLY until the orchestrator's go; revision 2 (B8 decided). Tests: t3942–t3946, t4246.
+> Decided (B8); revision 3 implementation-ready at `fc60a5d9` (2026-11-25). Parts that may start first: design D8. Tests: t3942–t3946, t4246.
 
 ## 0. Notes
 
@@ -10,7 +10,7 @@
 
 ## 1. Build
 
-- [ ] 1.1 kt-text `range_coverage` from the title's layout; the id map of mask groups; t3942, t4246
+- [ ] 1.1 kt-text `id_map`, kt-media `title_groups`; t3942, t4246
 - [ ] 1.2 kt-model `MaskShape::TextRange`, `MaskMix::Isolate`, offsets moved by text edits; format by content; t3943, t3946
 - [ ] 1.3 the isolate op in the plan and the GPU passes; t3944
 - [ ] 1.4 "Mask this text" in the field, the mask list row, the glyph outline; i18n ×5; t3945, live `word_blur`

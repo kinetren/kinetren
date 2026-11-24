@@ -1,7 +1,7 @@
 # Proposal: title-word-effects
 
-> DESIGN ONLY (spec session), revision 2 (2026-11-22) after the owner's answer (`kkt-26.11.20b` B8). Registry
-> `v26.10-index.md` TD1. Note F-TXT-010. Tests reserved: t3942–t3946, t4246.
+> DESIGN, revision 3 (2026-11-25), base `fc60a5d9`: implementation-ready; needs nothing of `magic-wand-mask` (design D8). Decided by B8. Note F-TXT-010.
+> Tests: t3942–t3946, t4246.
 
 ## Why
 

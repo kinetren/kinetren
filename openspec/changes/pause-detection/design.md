@@ -1,6 +1,15 @@
 # Design: pause-detection
 
-> DESIGN ONLY, revision 1 (2026-11-24), base `286c406c`.
+> DESIGN ONLY, revision 2 (2026-11-25), checked at `fc60a5d9`: implementation-ready, nothing unmerged needed but Delete's ripple.
+
+## D0. Checked against the merged tree
+
+- `PeakPyramid::build_until` still cuts the tail (`index.rs:866`, `div_euclid`); the series reads the last partial burst (`listen.rs:43`). `PEAKS` is `(b"PEAK", 1)`: the version goes to 2 (D6).
+- `AnalysisKind` is `Loudness | Program | Clips` since `loudness-norms`; `Series(MediaId)` joins, with `media()`.
+- Markers have notes (`Marker.note`): a pause's mark carries its length there, its name by `unique_name`.
+- **Order of work without `ripple-and-trim-modes`**: everything but Delete. Delete with a gap is NOT offered meanwhile (a pause cut out with its hole left is worse than a mark), the button is disabled with its reason.
+- **Words read again** (line 89, whole in `proposal.md`): "обрезка/отметка пауз" are two acts, trim and mark: Mark, Split and Delete cover both; "по звуку … отдельно", "про шумное аудио": the detector. The same line's whisper is
+  `subtitles-and-text-editing`.
 
 ## Context
 

@@ -1,6 +1,6 @@
 # Tasks: edit-analysis
 
-> DESIGN ONLY until the orchestrator's go; no open question. Tests: t4211–t4228. Stage A3 needs `ripple-and-trim-modes`,
+> Implementation-ready by stages at `fc60a5d9` (2026-11-25): design D10 says what starts before its dependency; code on the orchestrator's go. Tests: t4211–t4228. Stage A3 needs `ripple-and-trim-modes`,
 > `speech` needs `pause-detection`, stage B `download-library` and the recognizer's loader.
 
 ## 0. Notes
@@ -26,7 +26,7 @@
 
 ## 4. Stage A4 — links
 
-- [ ] 4.1 `ParamOwner::Material`, the compiled curve's key, `ensure`; t4226, t4227
+- [ ] 4.1 `with_material`, `ParamOwner::Material`, the per-event memo's key, `ensure_measures`; after the link owner `geo`; t4226, t4227
 - [ ] 4.2 idle on the heavy showcase, switches on, panel open; t4228
 
 ## 5. Close
