@@ -119,6 +119,12 @@ pub fn bind_camera(folder: &Folder, id: ContentId, file: &Path) -> std::io::Resu
     folder.write(&format!("media/{id}/camera"), CAMERA.0, CAMERA.1, file.to_string_lossy().as_bytes())
 }
 
+pub fn unbind_camera(folder: &Folder, id: ContentId) {
+    let rel = format!("media/{id}/camera");
+    let _ = std::fs::remove_file(folder.root().join(&rel));
+    folder.gone(&rel);
+}
+
 /// Why a camera's copy does not fit.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Mismatch {

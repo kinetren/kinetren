@@ -75,8 +75,9 @@ pub struct Copies {
     mode: Mutex<CopyMode>,
     states: Mutex<HashMap<MediaId, State>>,
     pub(crate) wake: Wake,
-    /// Moves when a card may read otherwise.
+    /// Moves when a card may read otherwise, and who is told so.
     stamp: AtomicU64,
+    notify: Mutex<Option<fn()>>,
     /// Copies written in this process.
     made: AtomicU64,
     /// Asks to look again at what lies on the disk.
@@ -99,6 +100,11 @@ impl Copies {
         if was != m {
             self.kick();
         }
+    }
+
+    /// Told (with no lock held) when a card may read otherwise.
+    pub fn set_notify(&self, f: fn()) {
+        *self.notify.lock().unwrap() = Some(f);
     }
 
     pub fn mode(&self) -> CopyMode {
@@ -154,6 +160,10 @@ impl Copies {
             f(s);
         }
         self.stamp.fetch_add(1, Ordering::Relaxed);
+        let notify = *self.notify.lock().unwrap();
+        if let Some(f) = notify {
+            f();
+        }
     }
 }
 
