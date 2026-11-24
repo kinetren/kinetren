@@ -8,9 +8,9 @@ Everything the program downloads SHALL be an item of one library. An item is:
 - installed under `<local>/library/<kind>/<id>/<version>/` with a record of the entry it came from and the
   verified hash.
 
-**The list.** Every entry SHALL come from our signed list. The release SHALL carry the list as of its build.
-A newer list SHALL be used only when its signature verifies and its sequence number is higher than the
-list held, and an installed item SHALL keep the entry it came from.
+**The list.** The release SHALL carry the list as of its build inside the binary. A fetched list SHALL be used only
+when its signature verifies and its sequence number is higher than the list held, and an installed item
+SHALL keep the entry it came from.
 
 **Downloading.** Downloads SHALL be made only by one engine:
 - the mirrors in order, with the declared length checked before the body;
@@ -38,12 +38,12 @@ that silently invalidated its models (F-EXT-006; download-library D1–D4).
 #### Scenario: The catalogue's pins and the one resolver
 - **WHEN** every entry of the list the release packs is read, and the source tree is searched for code that builds a path under the library root
 - **THEN** every entry has a sha256, a size, at least one mirror per platform it lists and a licence, and only `library::resolve` and the installer build such a path
-- **TEST** t3850, t3851 (`src/apps/kt-app/src/library/tests.rs`)
+- **TEST** t3850, t3851 (`src/libs/kt-library/tests/library.rs`)
 
 #### Scenario: A download is verified and atomic
 - **WHEN** a test item is downloaded from a loopback server that serves it whole, then a server that announces another length, one that serves other bytes under the same name, and one cut off midway, and a download is cancelled
 - **THEN** only the first is installed, by a rename with its record; each other leaves no folder and names its reason; the cancelled one leaves no partial folder after the stale cleanup
-- **TEST** t3852, t3853 (`src/apps/kt-app/src/library/tests.rs`)
+- **TEST** t3852, t3853 (`src/libs/kt-library/tests/library.rs`)
 
 #### Scenario: FFmpeg is found in the library and in its old place
 - **WHEN** the search plan runs with FFmpeg in the library, then with it only in the former download root, then with a folder the person chose
@@ -58,9 +58,9 @@ that silently invalidated its models (F-EXT-006; download-library D1–D4).
 #### Scenario: A model that does not fit its runtime is named
 - **WHEN** a speech model whose entry depends on runtime ≥ 1.8 is loaded with runtime 1.7 installed, and a model file with a broken header is loaded
 - **THEN** neither loads; the rows read "needs whisper-runtime ≥ 1.8" and "broken: header", a notice names each once, and the trace records both
-- **TEST** t3860, t3861 (`src/apps/kt-app/src/library/tests.rs`)
+- **TEST** t3860, t3861 (`src/libs/kt-library/tests/library.rs`)
 
 #### Scenario: A server list that does not verify is not used
 - **WHEN** a signed list with a higher sequence number, the same list with one byte changed, an older signed list, and a newer list that drops an installed item are read
 - **THEN** the first replaces the packed list, the second and third are refused with a trace record naming why, and the fourth is used while the installed item keeps its entry and reads "no longer offered"
-- **TEST** t3866, t3867 (`src/apps/kt-app/src/library/tests.rs`)
+- **TEST** t3866, t3867 (`src/libs/kt-library/tests/library.rs`)
