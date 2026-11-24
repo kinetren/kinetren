@@ -1420,7 +1420,12 @@ pub(crate) fn merge_mode_combo(ui: &mut egui::Ui, salt: impl std::hash::Hash + s
     let r = egui::ComboBox::from_id_salt(salt).width(w).selected_text(name(was)).show_ui(ui, |ui| {
         for m in all {
             let r = ui.selectable_value(mode, m, name(m));
-            crate::widgets::field_probe::note(&format!("fx.mode.{}", name(m)), r.rect);
+            let tag = match m {
+                MergeMode::Blend(b) => b.tag(),
+                MergeMode::Sum => "sum",
+                MergeMode::Crossfade => "crossfade",
+            };
+            crate::widgets::field_probe::note(&format!("fx.mode.{tag}"), r.rect);
         }
     });
     crate::widgets::field_probe::note("fx.mode", r.response.rect);
