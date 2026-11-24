@@ -986,14 +986,16 @@ fn toolbar(
         if !edit.fx.is_empty() && crate::app::hint_into(hover, ui.button(tr(k::fx::SAVE_PRESET)), tr(k::fx::SAVE_PRESET_HINT)).clicked() {
             *edit.presets.save = Some(block(edit));
         }
-        if !edit.fx.is_empty() && crate::app::hint_into(hover, ui.button(tr(k::fx::COPY_CHAIN)), tr(k::fx::COPY_CHAIN_HINT)).clicked() {
+        let hint = Some(tr(k::fx::COPY_CHAIN_HINT));
+        if !edit.fx.is_empty() && crate::widgets::icon_action(ui, hover, crate::icons::COPY, tr(k::fx::COPY_CHAIN), hint, true).clicked() {
             let b = block(edit);
             if let Ok(json) = serde_json::to_string_pretty(&b) {
                 ui.ctx().copy_text(json);
             }
             *clipboard = Some(b);
         }
-        if crate::app::hint_into(hover, ui.add_enabled(clipboard.is_some(), egui::Button::new(tr(k::fx::PASTE_CHAIN))), tr(k::fx::PASTE_CHAIN_HINT)).clicked()
+        let hint = Some(tr(k::fx::PASTE_CHAIN_HINT));
+        if crate::widgets::icon_action(ui, hover, crate::icons::CLIPBOARD, tr(k::fx::PASTE_CHAIN), hint, clipboard.is_some()).clicked()
             && let Some(b) = clipboard.clone()
         {
             kt_model::ops::append_chain_block(edit.fx, edit.bypass, edit.auto, &b, src_in);

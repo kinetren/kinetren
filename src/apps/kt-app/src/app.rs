@@ -312,6 +312,10 @@ pub struct KtApp {
     /// Window drag started from the expanded state: first restore the
     /// window, StartDrag — on the NEXT frame (item 10 round 8, X11).
     pub pending_unmax_drag: bool,
+    /// The window has stood at a normal size in this run: the window manager knows one to restore.
+    pub(crate) window_was_normal: bool,
+    /// Frames since the start, up to [`crate::window_frame::STARTED`].
+    pub(crate) start_frames: u8,
     /// Where to scroll the timeline window on the next frame (item 11 round 9:
     /// jump to the stop point must show the cursor).
     pub pending_reveal: Option<i64>,
@@ -337,6 +341,8 @@ pub struct KtApp {
     pub tc_edit: Option<String>,
     /// The bottom row's group widths as last drawn in the row (`toolbar::draw_toolbar_strip`).
     pub(crate) tb_group_w: [f32; crate::toolbar::TB_GROUPS],
+    /// How far the wheel has slid a bottom row that does not fit (`v26.10` U10).
+    pub(crate) tb_scroll: f32,
     pub tc_edit_focus: bool,
     /// Project search palette (item 3 round 10).
     pub search_open: bool,
@@ -1029,6 +1035,8 @@ impl KtApp {
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
+            window_was_normal: false,
+            start_frames: 0,
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
@@ -1040,6 +1048,7 @@ impl KtApp {
             lane_edit_focus: false,
             tc_edit: None,
             tb_group_w: [0.0; crate::toolbar::TB_GROUPS],
+            tb_scroll: 0.0,
             tc_edit_focus: false,
             search_open: false,
             search_focus: false,
@@ -1367,6 +1376,8 @@ impl KtApp {
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
+            window_was_normal: false,
+            start_frames: 0,
             pending_reveal: None,
             marker_edit: None,
             marker_edit_focus: false,
@@ -1377,6 +1388,7 @@ impl KtApp {
             area_edit_focus: false,
             lane_edit_focus: false,
             tb_group_w: [0.0; crate::toolbar::TB_GROUPS],
+            tb_scroll: 0.0,
             tc_edit: None,
             tc_edit_focus: false,
             search_open: false,
@@ -1886,6 +1898,18 @@ impl KtApp {
         // in each window separately the next agent would forget it
         // (rule 17).
         self.surrender_focus_on_outside_click(&ctx);
+        // the main window's own layer over its panels, under every window (window-chrome D1): a
+        // layer egui does not know as an area is painted in no promised order and hit under the panels
+        egui::Area::new(under_windows().id)
+            .order(under_windows().order)
+            .fixed_pos(egui::Pos2::ZERO)
+            .constrain(false)
+            .fade_in(false)
+            .sense(egui::Sense::hover())
+            .show(&ctx, |_| {});
+        // an area registered before the panels' root (egui's areas forgotten inside a frame, as the live
+        // rig does) would stay under the panels for good: the order is said each frame
+        ctx.move_to_top(under_windows());
         // the windows of the previous frame, top last: Esc picks from them (shared-window-shell)
         self.shell_seen = crate::window_shell::begin_frame(&ctx);
         let ui_zoom = self.start.controls.ui_zoom_keys_free();
@@ -1908,6 +1932,14 @@ impl KtApp {
             self.play_dir_back = rate < 0.0;
         }
 
+        if self.start_frames < crate::window_frame::STARTED {
+            self.start_frames += 1;
+            if self.start_frames == crate::window_frame::STARTED {
+                crate::window_frame::adopt_start(&ctx);
+            }
+            ctx.request_repaint();
+        }
+        self.window_was_normal |= crate::window_frame::note_normal(&ctx);
         // Item 10 round 8: the window was restored from maximized last frame —
         // now dragging may begin
         if self.pending_unmax_drag {
@@ -2502,13 +2534,10 @@ impl KtApp {
         // hint — last, over the status bar (item 1 round 9)
         self.draw_status_hint(&ctx);
 
-        // Glow overlay above the interface (item 8): the preview and the meters softly
-        // “glow” beyond the borders of their panels, without hindering reading of the UI.
+        // Glow over the panels, under the windows (item 8; `v26.10` W1): the preview and the meters
+        // softly “glow” beyond the borders of their panels, without hindering reading of the UI.
         if self.sw_render == Some(false) {
-            let fg = ui.ctx().layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
-                egui::Id::new("ambient-overlay"),
-            ));
+            let fg = ui.ctx().layer_painter(under_windows());
             // preview: a blurred texture slightly wider than the panel, very low alpha
             if let (Some(glow), true, false) =
                 (self.preview_glow_id(), self.preview_rect.is_finite(), self.preview_detached)
@@ -2671,7 +2700,7 @@ impl KtApp {
     /// The hint line — drawn LAST in the frame, over the status bar
     /// (item 1 round 9). The status bar, drawn as a panel second, long before the buttons,
     /// so reading `hover_hint` inside it is pointless — there it is always
-    /// None. Layer Foreground + interactable(false): a window drag from the status bar
+    /// None. A painter's layer (`under_windows` at rest, Foreground for a live line): a window drag from the status bar
     /// is not intercepted.
     fn draw_status_hint(&mut self, ctx: &egui::Context) {
         let strip = self.statusbar_rect;
@@ -2730,10 +2759,14 @@ impl KtApp {
             HintKind::Hover => egui::Color32::from_gray(205),
             HintKind::Idle => egui::Color32::from_gray(120),
         };
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new("status-hint"),
-        ));
+        // the resting line belongs to the main window, under every window; a live one answers the
+        // pointer or an action, which may be inside the window that covers the strip (window-chrome D1)
+        let layer = if kind == HintKind::Idle {
+            under_windows()
+        } else {
+            egui::LayerId::new(egui::Order::Foreground, egui::Id::new("status-hint"))
+        };
+        let painter = ctx.layer_painter(layer);
         let galley = painter.layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), col);
         let x1 = strip.right() - 6.0;
         // a long hint quietly overwrites the metrics on the left — it is more important
@@ -5152,19 +5185,50 @@ impl KtApp {
     /// (generator-menu-one-item D2). The window's gallery is the one way to a kind since kkt-26.11.20 A1.
     pub(crate) fn gen_kind_switch_cmds(&self, media: MediaId, kind: &kt_model::GeneratorKind) -> Vec<Command> {
         let set = Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(kind) };
-        let (remove, add) = self.gen_pair_cmds(media, kt_media::generator::GeneratorSource::info_for(kind).has_audio);
+        let (remove, add) = self.gen_pair_cmds(media, None, kind);
         // the sound halves go first: the media's new kind is no sound kind
         remove.into_iter().chain(std::iter::once(set)).chain(add).collect()
     }
 
-    /// The commands that keep a generator media's sound pairs in step with whether it `sounds`
-    /// (gen-sound-pair, found-defects 1000): (removals, additions). A sounding generator gives each
-    /// picture event of the media its sound event on audio track 1, linked to it, as the menu gives at
-    /// creation; a silent one loses the sound events, which would hold silence. Asked by a kind
-    /// change and by a value edit that switches the sound on or off (SMPTE's tone, Sync flash's beep).
-    pub(crate) fn gen_pair_cmds(&self, media: MediaId, sounds: bool) -> (Vec<Command>, Vec<Command>) {
+    /// A value edit of one generator event, as commands: the values, and its sound event brought or
+    /// taken when the edit switches its sound on or off (SMPTE's tone, Sync flash's beep — found-defects
+    /// 1000). `None` — the sound stays as it was: a plain `SetClipGen`.
+    pub(crate) fn gen_value_cmds(&self, id: ClipId, kind: &kt_model::GeneratorKind) -> Option<Vec<Command>> {
+        let sounds = |k: &kt_model::GeneratorKind| kt_media::generator::GeneratorSource::info_for(k).has_audio;
+        let c = self.model.clip(id)?;
+        if c.r#gen.as_ref().is_some_and(sounds) == sounds(kind) {
+            return None;
+        }
+        // edited through its sound half, which may be the one that goes: the picture takes the values
+        let picture = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .find(|p| p.kind == ClipKind::Video && p.media == c.media && (p.id == id || (p.link_group.is_some() && p.link_group == c.link_group)))?
+            .id;
+        let set = Command::SetClipGen { id: picture, kind: Some(kind.clone()) };
+        let (remove, add) = self.gen_pair_cmds(c.media, Some(picture), kind);
+        Some(remove.into_iter().chain(std::iter::once(set)).chain(add).collect())
+    }
+
+    /// The commands that keep a generator's sound pairs in step with `kind` — of one picture event
+    /// (`only`: values live on the event) or of every one of the media (a kind change, "apply to all"):
+    /// (removals, additions). A sounding generator gives a picture event its sound event on audio
+    /// track 1, linked to it, with the new values, as the menu gives at creation; a silent one loses the
+    /// sound events, which would hold silence.
+    pub(crate) fn gen_pair_cmds(
+        &self,
+        media: MediaId,
+        only: Option<ClipId>,
+        kind: &kt_model::GeneratorKind,
+    ) -> (Vec<Command>, Vec<Command>) {
+        let sounds = kt_media::generator::GeneratorSource::info_for(kind).has_audio;
         let clips = &self.model.project().clips;
-        let pictures: Vec<&ClipEvent> = clips.iter().filter(|c| c.media == media && c.kind == ClipKind::Video).collect();
+        let pictures: Vec<&ClipEvent> = clips
+            .iter()
+            .filter(|c| c.media == media && c.kind == ClipKind::Video && only.is_none_or(|id| c.id == id))
+            .collect();
         let pair_of = |v: &ClipEvent| {
             clips
                 .iter()
@@ -5199,6 +5263,8 @@ impl KtApp {
                 geometry_pos: 0,
                 geometry_auto: Vec::new(),
                 masks: Default::default(),
+                // the values the batch sets on the picture: a copy of its former ones would sound silence
+                r#gen: v.r#gen.as_ref().map(|_| kind.clone()),
                 ..v.clone()
             };
             add.push(Command::AddClip(a));
@@ -9102,6 +9168,34 @@ pub fn media_display_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+impl KtApp {
+    /// What an event's window calls it (`v26.10` W3): a title's first words, a generator's kind, a
+    /// reel's name, a file's name — cut to fit a window's title.
+    pub(crate) fn event_name(&self, id: ClipId) -> String {
+        let p = self.model.project();
+        let Some(c) = self.model.clip(id) else { return String::new() };
+        let text = match &c.r#gen {
+            // a counter draws its time, not the typed text
+            Some(kt_model::GeneratorKind::Text { text, source: kt_model::TextSource::Static, .. }) => {
+                text.split_whitespace().collect::<Vec<_>>().join(" ")
+            }
+            _ => String::new(),
+        };
+        let name = if !text.is_empty() {
+            return crate::toolbar::cut_name(&text, 24);
+        } else if let Some(k) = &c.r#gen {
+            crate::gen_ui::kind_name(k).to_string()
+        } else {
+            match p.source(c.media) {
+                Some(kt_model::Source::Seq(s)) => crate::i18n::reel_display_name(&s.name).into_owned(),
+                Some(kt_model::Source::File(m)) => media_display_name(&m.path),
+                None => String::new(),
+            }
+        };
+        crate::toolbar::cut_name(&name, 40)
+    }
+}
+
 #[derive(Default)]
 pub struct NamesCache {
     rev: Option<u64>,
@@ -9572,6 +9666,13 @@ fn dnd_pointer_pos(_ctx: &egui::Context) -> Option<egui::Pos2> {
 /// only when there is neither.
 pub fn dnd_keep_hover(hovering: bool, dropping: bool) -> bool {
     hovering || dropping
+}
+
+/// The layer of what the main window draws over its panels — the preview's and the meters' glow, the
+/// project's title and its crumbs, the resting status line: over every panel, under every tool window
+/// (`v26.10` W1, T9; window-chrome D1). Registered as an area each frame.
+pub(crate) fn under_windows() -> egui::LayerId {
+    egui::LayerId::new(egui::Order::Background, egui::Id::new("under-windows"))
 }
 
 /// The resize zone of a borderless window by position at the edge (item 22 of round 6, test 64):

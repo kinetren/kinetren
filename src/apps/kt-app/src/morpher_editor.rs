@@ -251,10 +251,13 @@ impl KtApp {
         // media names for the morph-slot label
         let media_names: Vec<(MediaId, String)> =
             self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
+        // the layer and where it starts; the number is in the body (`v26.10` W3)
+        let row = self.row_label(kt_model::LaneKind::Morph, orig.lane);
+        let at = crate::util::format_timecode(orig.start, self.model.project().settings.fps);
         let title = if is_batch {
-            crate::tf!(k::mrph::TITLE_BATCH, ed.id.0)
+            crate::tf!(k::mrph::TITLE_BATCH, row, at)
         } else {
-            crate::tf!(k::mrph::TITLE, ed.id.0)
+            crate::tf!(k::mrph::TITLE, row, at)
         };
         let mut ev = orig.clone();
         let mut changed = false;
@@ -678,6 +681,7 @@ impl KtApp {
                     {
                         revert = true;
                     }
+                    crate::widgets::entity_number(ui, ed.id.0);
                 });
                 });
             });

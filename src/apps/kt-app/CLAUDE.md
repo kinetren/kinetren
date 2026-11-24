@@ -485,7 +485,8 @@ The rules above were written down — and did not work: the R.38 mechanism turne
 
 ## Panel order decides (item 1 of R.9 — cost three rounds)
 
-- Anything that is FILLED in during the frame (`hover_hint`) cannot be read in a panel that was drawn before its sources. The status bar is the second panel of the frame, and the buttons are drawn later: the hints were not visible at all, except for the bell (which sits inside the status bar itself). Such lines are drawn at the END of the frame in a separate layer (`Area(Foreground).interactable(false)` — otherwise the layer steals the window drag).
+- Anything that is FILLED in during the frame (`hover_hint`) cannot be read in a panel that was drawn before its sources. The status bar is the second panel of the frame, and the buttons are drawn later: the hints were not visible at all, except for the bell (which sits inside the status bar itself). Such lines are drawn at the END of the frame in a separate layer (a painter layer, not an area — otherwise the layer steals the window drag; the RESTING line is in `under_windows()`, a live one in Foreground).
+- **What the main window draws over its panels goes into `app::under_windows()`** (window-chrome D1): an area of `Order::Background`, over every panel and under every window. A `layer_painter` on `Foreground` shows through the windows (W1, T9), and one on an unregistered `Middle` layer is painted over them too. A maximized window goes back through `restore_window` and every strip drags by `window_drag_from` (T5).
 - The test MUST check what was DRAWN (`status_line_shown`), not an internal field: `hover_hint` is already filled after the frame, and the test turns green with a dead feature.
 - The root `Ui` from eframe is framed by a default 8 px — because of it the whole interface did not reach the edges of the window ("the gap to the right of the meters"). We draw on the full `ctx.content_rect()`.
 

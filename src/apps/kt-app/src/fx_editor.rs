@@ -306,18 +306,12 @@ impl KtApp {
                 (c.id.0, if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() })
             })
             .collect();
-        let title = if ed.members.len() > 1 {
-            crate::tf!(k::fx::TITLE_GROUP, ed.clip.0)
-        } else {
-            crate::tf!(
-                k::fx::TITLE,
-                if anchor.kind == ClipKind::Audio {
-                    tr(k::fx::KIND_AUDIO)
-                } else {
-                    tr(k::fx::KIND_VIDEO)
-                },
-                ed.clip.0
-            )
+        // the event by name; its number is in the body (`v26.10` W3)
+        let name = self.event_name(ed.clip);
+        let title = match ed.members.len() {
+            0 | 1 => crate::tf!(k::fx::TITLE, name),
+            2 => crate::tf!(k::fx::TITLE_PAIR, name),
+            _ => crate::tf!(k::fx::TITLE_GROUP, name),
         };
         let playhead = self.player.transport.playhead();
         // the buffers live in the application; we hand them to the window for the duration of the frame,
@@ -590,21 +584,20 @@ impl KtApp {
                     let mut gen_edit = crate::gen_ui::GenEdit::default();
                     let mut ch = crate::widgets::ChainChanged::default();
                     let mut params_changed = crate::widgets::ParamsChanged::default();
-                    let head = crate::tf!(
-                        k::fx::CHAIN_OF,
-                        if clip.kind == ClipKind::Audio {
-                            tr(k::fx::KIND_AUDIO)
-                        } else {
-                            tr(k::fx::KIND_VIDEO)
-                        },
-                        id.0
-                    );
+                    // the event's number, unobtrusive, after the kind (`v26.10` W3)
+                    let mut head = egui::text::LayoutJob::default();
+                    let font = egui::TextStyle::Button.resolve(ui.style());
+                    let kind = if clip.kind == ClipKind::Audio { tr(k::fx::KIND_AUDIO) } else { tr(k::fx::KIND_VIDEO) };
+                    head.append(kind, 0.0, egui::TextFormat::simple(font, ui.visuals().text_color()));
+                    let small = egui::TextStyle::Small.resolve(ui.style());
+                    head.append(&format!("#{}", id.0), 8.0, egui::TextFormat::simple(small, ui.visuals().weak_text_color()));
                     // collapsing per chain: a pair shows both, and the extra one can be
                     // collapsed (“one can give the option of hide/toggle”)
                     egui::CollapsingHeader::new(head)
                         .id_salt(("fxgrp", id.0))
                         .default_open(n == 0 || members.len() <= 2)
-                        .show(ui, |ui| {
+                        // no indent and no strip beside the body (`v26.10` T8)
+                        .show_unindented(ui, |ui| {
                             // the selected slot and the search row are taken into
                             // local variables: otherwise two fields of the same
                             // `ed` would be borrowed at the same time
@@ -1315,6 +1308,10 @@ impl KtApp {
         if revert {
             // “Cancel” rolls back the WHOLE window: for a pair, both chains
             for (id, fx, auto, bypass, off) in ed.backup.clone() {
+                // a sound event the window's own edit took (a tone unticked) has nothing to roll back
+                if self.model.clip(id).is_none() {
+                    continue;
+                }
                 self.set_fx_coalesced(id, fx, ed.gesture);
                 self.set_fx_auto_coalesced(id, auto, ed.gesture);
                 self.apply_coalesced(Command::SetFxBypass { id, bypass }, ed.gesture);
@@ -1326,7 +1323,14 @@ impl KtApp {
                 if self.model.clip(id).is_none_or(|c| c.r#gen == kind && c.gen_auto == auto) {
                     continue;
                 }
-                self.apply_coalesced(Command::SetClipGen { id, kind: kind.clone() }, ed.gesture);
+                match kind.as_ref().and_then(|k| self.gen_value_cmds(id, k)) {
+                    Some(cmds) => {
+                        self.apply_batch(cmds);
+                    }
+                    None => {
+                        self.apply_coalesced(Command::SetClipGen { id, kind: kind.clone() }, ed.gesture);
+                    }
+                }
                 self.apply_coalesced(Command::SetClipGenAuto { id, auto }, ed.gesture);
             }
             // ...and the leading “Geometry” node (R.62) — the same strip
@@ -1420,19 +1424,17 @@ impl KtApp {
             // Generator values: the command ONLY on a really changed value (item 200) — otherwise the
             // revision would grow on every frame of the gesture.
             if let Some(kind) = e.r#gen
-                && let Some(c) = self.model.clip(e.clip).filter(|c| c.r#gen.as_ref() != Some(&kind))
+                && self.model.clip(e.clip).is_some_and(|c| c.r#gen.as_ref() != Some(&kind))
             {
                 // a value that switches the generator's sound on or off (SMPTE's tone, Sync flash's
                 // beep) brings or takes its sound event in the same step (found-defects 1000)
-                let sounds = |k: &kt_model::GeneratorKind| kt_media::generator::GeneratorSource::info_for(k).has_audio;
-                let (media, was) = (c.media, c.r#gen.as_ref().is_some_and(sounds));
-                if sounds(&kind) != was {
-                    let set = Command::SetClipGen { id: e.clip, kind: Some(kind.clone()) };
-                    let (remove, add) = self.gen_pair_cmds(media, sounds(&kind));
-                    let cmds: Vec<Command> = remove.into_iter().chain(std::iter::once(set)).chain(add).collect();
-                    self.apply_batch(cmds);
-                } else {
-                    self.apply_coalesced(Command::SetClipGen { id: e.clip, kind: Some(kind) }, gesture);
+                match self.gen_value_cmds(e.clip, &kind) {
+                    Some(cmds) => {
+                        self.apply_batch(cmds);
+                    }
+                    None => {
+                        self.apply_coalesced(Command::SetClipGen { id: e.clip, kind: Some(kind) }, gesture);
+                    }
                 }
             }
             if let Some(mut auto) = e.gen_auto {
@@ -1450,12 +1452,10 @@ impl KtApp {
                 && let Some(c) = self.model.clip(e.clip).cloned()
                 && let Some(kind) = c.r#gen.clone()
             {
-                self.gesture_counter += 1;
-                let g = self.gesture_counter;
-                self.apply_coalesced(
-                    Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() },
-                    g,
-                );
+                // every event of the generator takes the values, and the sound that goes with them
+                let (remove, add) = self.gen_pair_cmds(c.media, None, &kind);
+                let set = Command::ApplyGenToAll { media: c.media, kind, auto: c.gen_auto.clone() };
+                self.apply_batch(remove.into_iter().chain(std::iter::once(set)).chain(add).collect());
             }
         }
         // the slot masks moved with their slots (after `SetFx`, which trimmed them)
@@ -1566,7 +1566,7 @@ pub(crate) fn draw_auto_for(
     });
     ui.horizontal(|ui| {
         // copy-paste of envelopes (model — kt_model::ops, R.33)
-        let cp = ui.add_enabled(!curves.is_empty(), egui::Button::new(tr(k::fx::COPY_ENV)));
+        let cp = crate::widgets::icon_action(ui, hover_out, crate::icons::COPY, tr(k::fx::COPY_ENV), None, !curves.is_empty());
         crate::widgets::field_probe::note("env.copy", cp.rect);
         if cp.clicked() {
             let block = kt_model::ops::EnvelopeBlock {
@@ -1583,9 +1583,10 @@ pub(crate) fn draw_auto_for(
         // background task: on X11 the window owns the
         // buffer, and a synchronous request to ITSELF would hang
         // in the event loop, which is drawing at that moment.
-        let pb = ui.button(tr(k::fx::PASTE_ENV));
+        let hint = Some(tr(k::fx::PASTE_ENV_HINT));
+        let pb = crate::widgets::icon_action(ui, hover_out, crate::icons::CLIPBOARD, tr(k::fx::PASTE_ENV), hint, true);
         crate::widgets::field_probe::note("env.paste", pb.rect);
-        if crate::app::hint_into(hover_out, pb, tr(k::fx::PASTE_ENV_HINT)).clicked() {
+        if pb.clicked() {
             *paste_req = true;
         }
         // The “+ keyframe at playhead” button has been REMOVED here (R.40 item 18, verbatim:

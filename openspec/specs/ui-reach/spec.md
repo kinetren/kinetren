@@ -1709,7 +1709,7 @@ selected event (a solid colour on a video track, a tone on an audio track), at t
 With nothing selected it SHALL create a solid colour on video track 1. Its window SHALL open, and the
 kind SHALL be changed in the window's gallery. A kind change, from the gallery or from the bin card,
 SHALL keep the generator's sound pair in step in the same history step: a kind that sounds beside its
-picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step (found-defects 1000).
+picture SHALL have its linked sound event on audio track 1, and a kind with no sound SHALL have none. A value edit that switches the generator's sound on or off (SMPTE's tone, Sync flash's beep) SHALL do the same in its own history step for the edited event alone, whose new sound event SHALL carry the edited values (found-defects 1000); "apply to all" SHALL do it for every event of the generator, and the window's Cancel SHALL take it back.
 Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорожке (Recommended)".
 
 #### Scenario: Edit and the bin by the selected track
@@ -1726,9 +1726,9 @@ Why: the owner, kkt-26.11.20 line 4 (A1): "Один пункт, по дорож�
 
 #### Scenario: Ticking a generator's tone brings its sound event
 - **WHEN** SMPTE bars are made without their tone, then "Tone" is ticked in their window, then unticked, then Ctrl+Z
-- **THEN** the bars stand alone; the tick brings a sound event on A1 under them, linked; the untick takes it; one Ctrl+Z gives it back
+- **THEN** the bars stand alone; the tick brings a sound event on A1 under them, linked, with the ticked values (the meters move when it plays), and leaves another event of the same bars silent; the untick, through either half, takes it; one Ctrl+Z gives it back
 - **PATH** Edit → "Create a generator…" → Kind → SMPTE bars → tick "Tone" → a sound event appears on A1 under the bars → untick → it goes → Ctrl+Z → it is back
-- **TEST** t3720 (`src/apps/kt-app/src/gen_audio_tests.rs`)
+- **TEST** t3720 (`src/apps/kt-app/src/gen_audio_tests.rs`), live `gen_technical`
 
 ### Requirement: A form uses the width it is given
 Every form of parameter rows — effect, morpher, transition, camera, track, generator and title forms,
@@ -1757,3 +1757,16 @@ Why: the owner, 2026-11-07: "половина ширины этой портян
 - **THEN** at the default width two fields share a row, as before columns, so the automation graph under the form stays in the window; where two do not fit, one field a row and nothing past the edge; on the code before (one field a row in every single column) the default width fails
 - **PATH** double-click an event → its effects window at its default size → the Geometry fields stand two a row → "+ curve" → a parameter → its graph stands inside the window → clicks on it place keys → a right click on a segment opens the shape menu
 - **TEST** t3290 (`src/apps/kt-app/src/form_width_tests.rs`), live scenarios `curves`, `formula`, `segfields`
+
+### Requirement: An event window says which event it edits
+The effects window SHALL be titled by the event's name (a title's first words, a generator's kind, a reel's name, a
+file's base name) and the window's kind, the transition window by the events it joins, the morpher window by its row and
+start, and each SHALL show its number in the body in weak text; the per-chain fold SHALL be drawn without an indent strip; copy and paste of a chain
+and of an envelope SHALL be icon buttons with their hints.
+Why: the owner, v26.10 W3, T8, T7.
+
+#### Scenario: A title by name, the number in the row
+- **WHEN** the effects of an event of `interview.mp4` (number 2149) are opened, and those of a linked pair
+- **THEN** the titles read "interview.mp4 — Effects" and "interview.mp4 + sound — Effects"; "#2149" is drawn after "Video" at the chain's head; the folds have no left strip; the copy/paste controls are icons with hints
+- **PATH** double-click the interview event → the window's title reads "interview.mp4 — Effects" → "#2149" in grey beside "Video" at the head of its chain → hover the copy icon → the status bar says "Copy the chain"
+- **TEST** t3940 (`src/apps/kt-app/src/reach_tests.rs`), t3941 (`src/apps/kt-app/src/reach_tests.rs`), live `window_chrome`
