@@ -40,6 +40,13 @@ def lines(out_dir):
     return paths
 
 
+def type_number(app, text):
+    """The number of the field that was clicked."""
+    app.key("ctrl+a")
+    app.type_text(text)
+    app.key("Return")
+
+
 def main(out):
     require_tools()
     os.makedirs(out, exist_ok=True)
@@ -67,6 +74,19 @@ def main(out):
             app.click_probe("menu.file", "the File menu")
             app.click_probe("file.project_settings", "File → Project settings")
             app.click_probe("settings.loud", "the Loudness list")
+            app.click_probe("settings.loud.ebu", "EBU R128")
+            app.click_probe("settings.loud", "the Loudness list")
+            app.click_probe("settings.loud.atsc", "ATSC A/85")
+            app.click_probe("settings.loud", "the Loudness list")
+            app.click_probe("settings.loud.podcast", "Podcast")
+            app.click_probe("settings.loud", "the Loudness list")
+            app.click_probe("settings.loud.custom", "Custom")
+            app.click_probe("settings.loud.target", "the target")
+            type_number(app, "-18")
+            app.click_probe("settings.loud.ceiling", "the ceiling")
+            type_number(app, "-2")
+            app.step("custom", "Custom: numbers of one's own")
+            app.click_probe("settings.loud", "the Loudness list")
             app.click_probe("settings.loud.streaming", "Streaming (−14 LUFS)")
             app.step("settings", "Project settings: Streaming, −14 LUFS and −1 dBTP")
             app.click_probe("settings.apply", "Apply")
@@ -76,14 +96,30 @@ def main(out):
             app.right_click(app.x_at(90000), app.lane_y("audio", 0, frac=0.6))
             app.click_probe("clip.menu.match", "Match loudness… in the event's menu")
             app.expect(app.has_probe("match.go"), "the window asks what the events are")
-            app.step("match", "Match loudness: Dialogue (−14 LUFS)")
+            app.click_probe("match.music", "Music")
+            app.click_probe("match.effects", "Effects")
+            app.click_probe("match.number", "a number")
+            app.click_probe("match.number_value", "its value")
+            type_number(app, "-18")
+            app.step("match", "Match loudness: what the events are")
             app.click_probe("match.dialogue", "Dialogue")
             app.click_probe("match.go", "Match")
             app.expect(app.until(lambda: not app.has_probe("match.go", tries=1), timeout=60), "the window closed")
             app.step("matched", "the event's level moved")
+            # the same from the track's own menu; Esc leaves the levels
+            app.right_click(app.x_at(10 * 90000), app.lane_y("audio", 0, frac=0.6))
+            app.click_probe("track.menu.match", "Match loudness… in the track's menu")
+            app.expect(app.has_probe("match.go"), "the window asks about the track's events")
+            app.key("Escape")
+            app.expect(app.wait_gone("match.go"), "Esc closes it")
 
             # 3) the program
             app.click_probe("program.row", "the program row under the meters")
+            app.click_probe("program.on", "the stage on")
+            app.click_probe("program.on", "and off")
+            app.click_probe("program.settings", "Project settings… from the stage's window")
+            app.click_probe("settings.apply", "Apply")
+            app.expect(app.wait_gone("settings.apply"), "the settings window closed")
             app.click_probe("program.match", "Match the program")
             app.expect(app.until(lambda: app.has_probe("program.gain", tries=1), timeout=120), "the stage has a gain")
             app.step("program", "the stage: its gain and what was measured")

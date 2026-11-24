@@ -138,7 +138,7 @@ fn reel_sound(p: &Project, seq: Option<MediaId>, overrides: &[Override], depth: 
     for c in &heard {
         ids.insert(c.id);
         put(out, c);
-        if let Some(m) = p.media.iter().find(|m| m.id == c.media) {
+        if let Some(crate::project::Source::File(m)) = p.source(c.media) {
             // the path alone: a file's length is read anew when it is opened, and no event depends on it
             put(out, &m.path);
         }

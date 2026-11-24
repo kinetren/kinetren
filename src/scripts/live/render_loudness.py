@@ -64,6 +64,8 @@ def main(out):
             bad = app.has_probe("render.loud.bad")
             app.step("done", "the Loudness table: each value with its norm, the silent right channel in red")
             app.expect(bad, "the silent right channel is marked as a bad value")
+            app.expect(app.has_probe("render.loud.out"), "the title counts what is out")
+            app.click_probe("render.found", "the stretch where the right channel is silent: the cursor goes there")
             app.click_probe("render.close", "Close")
             app.expect(app.wait_gone("render.close"), "the window closed")
             return app.done()
