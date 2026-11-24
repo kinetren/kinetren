@@ -65,6 +65,7 @@ mod load_watch;
 mod mask_tests;
 mod maskctl;
 mod masks;
+mod map_watch;
 mod meters;
 mod morpher_editor;
 mod node_editor;

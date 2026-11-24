@@ -1950,6 +1950,7 @@ impl KtApp {
             self.start_frames += 1;
             if self.start_frames == crate::window_frame::STARTED {
                 crate::window_frame::adopt_start(&ctx);
+                crate::map_watch::start();
             }
             ctx.request_repaint();
         }

@@ -1526,6 +1526,23 @@ class Live:
         self.click_probe(cell, what or f"the {tag} cell")
         self.expect(self.wait_gone(cell), f"the gallery closed after picking {tag}")
 
+    def wait_probe_still(self, name, looks=3):
+        """A probe's rectangle the same in `looks` dumps in a row. A scroll GLIDES: a wheel sent while it
+        does turns over whatever has slid under the pointer by then, and an automation graph takes it and
+        zooms the timeline's view (found-defects 833: the view at 6.8 s and the event's first key out of
+        it); a click aimed at a gliding rectangle hits its neighbour."""
+        last, same = None, 0
+
+        def still():
+            nonlocal last, same
+            r = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
+            at = r and (r["x"], r["y"], r["w"], r["h"])
+            same = same + 1 if at is not None and at == last else 0
+            last = at
+            return same >= looks
+
+        return self.until(still)
+
     def scroll_probe_into_view(self, name, anchor, what=None, tries=12, below=None):
         """Scroll the wheel over the widget `anchor` until the rectangle `name` is in the visible part
         (bottom below the edge — scroll down; top above it — scroll up). The edge is `below`:
@@ -1550,6 +1567,7 @@ class Live:
             # the anchor could have slid past the edge — the wheel turns at a VISIBLE point
             ay = min(max(a["y"] + a["h"] / 2, 4), h - 4)
             self.wheel(win["x"] + int(a["x"] + a["w"] / 2), win["y"] + int(ay), ticks)
+            self.wait_probe_still(name)
         self.expect(False, what or f"“{name}” could not scroll into the window")
         return False
 
