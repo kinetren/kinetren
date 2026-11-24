@@ -689,3 +689,104 @@ fn t3720_ticking_a_generators_tone_brings_its_sound_event() {
     h.step();
     assert_eq!(new_clips(&h, before).len(), 2, "one Ctrl+Z gives it back");
 }
+
+/// Test 3724 (found-defects 1001): "apply to all" that switches the sound on brings the sound event to
+/// the events of the generator in EVERY reel — on audio track 1 of its reel, linked, with the values —
+/// in one history step; a kind without sound takes them from every reel; Ctrl+Z gives them back.
+/// - **PATH** SMPTE bars in the edit and the same bars inside a reel → in the edit's event window tick
+///   "Tone" → "Apply to all" → enter the reel: a sound event stands under its bars → Ctrl+Z: it is gone
+#[test]
+fn t3724_apply_to_all_brings_the_sound_to_every_reel() {
+    use kt_model::{ClipEvent, GroupId, MediaId, Sequence};
+    crate::plugins::install();
+    let mut h = crate::layout_tests::harness();
+    create_from_edit(&mut h, "smpte");
+    let id = {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        let v = p.clips.iter().find(|c| c.kind == ClipKind::Video).unwrap().clone();
+        let mut reel = Sequence::new(MediaId(900), "Reel");
+        reel.clips = vec![
+            ClipEvent { id: ClipId(901), link_group: None, ..v.clone() },
+            // one already in a group of its own (a title beside it)
+            ClipEvent { id: ClipId(902), link_group: Some(GroupId(77)), start: v.start + v.duration, ..v.clone() },
+        ];
+        p.sequences.push(reel);
+        p.normalize();
+        p.validate().unwrap();
+        app.fx_editors.clear();
+        app.model = kt_model::TimelineModel::new(p);
+        app.model_rev += 1;
+        app.sync_media_sources();
+        app.open_fx_editor_head(v.id);
+        v.id
+    };
+    for _ in 0..3 {
+        h.step();
+    }
+    h.get_by_label(tr(k::genp::TONE)).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    let reel = |h: &Harness<'_, KtApp>| h.state().model.document().sequences.iter().find(|s| s.id == MediaId(900)).unwrap().clone();
+    assert_eq!(reel(&h).clips.len(), 2, "the tick is the edited event's own");
+    let depth = h.state().model.undo_depth();
+    h.get_by_label_contains(crate::tf!(k::genw::APPLY_ALL, 4usize).as_str()).click();
+    for _ in 0..3 {
+        h.step();
+    }
+    let r = reel(&h);
+    assert_eq!(r.clips.len(), 4, "each picture event of the reel has its sound: {:?}", r.clips);
+    for pic in [ClipId(901), ClipId(902)] {
+        let v = r.clips.iter().find(|c| c.id == pic).unwrap();
+        let a = r.clips.iter().find(|c| c.kind == ClipKind::Audio && c.link_group == v.link_group && v.link_group.is_some()).expect("linked");
+        assert_eq!((a.lane, a.start, a.duration, a.media, &a.r#gen), (0, v.start, v.duration, v.media, &v.r#gen));
+        assert!(a.r#gen.as_ref().is_some_and(|g| kt_media::generator::GeneratorSource::info_for(g).has_audio), "with the tone on");
+    }
+    assert_ne!(r.clips[0].link_group, r.clips[1].link_group, "each pair is its own");
+    h.state().model.document().validate().expect("a valid document");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "one history step");
+    // a kind with no sound takes them from every reel; one step back brings them
+    let media = h.state().model.clip(id).unwrap().media;
+    let cmds = h.state().gen_kind_switch_cmds(media, &kt_model::GeneratorKind::solid(1, 2, 3));
+    assert!(h.state_mut().apply_batch(cmds));
+    assert_eq!(reel(&h).clips.len(), 2, "silence holds no sound event");
+    h.state_mut().undo();
+    assert_eq!(reel(&h).clips.len(), 4);
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(reel(&h).clips.len(), 2, "one Ctrl+Z takes the whole “apply to all”");
+    // the reel expanded in place: the sound stands on ITS track 1, a row of the working view
+    {
+        let app = h.state_mut();
+        let mut p = app.model.document();
+        p.clips.push(ClipEvent {
+            id: ClipId(950),
+            media: MediaId(900),
+            r#gen: None,
+            link_group: None,
+            start: kt_time::Tick(90_000 * 20),
+            duration: kt_time::Tick(90_000 * 5),
+            ..p.clips[0].clone()
+        });
+        p.validate().unwrap();
+        app.fx_editors.clear();
+        app.model = kt_model::TimelineModel::new(p);
+        app.model_rev += 1;
+        app.expand_in_place(ClipId(950));
+    }
+    h.step();
+    assert_eq!(h.state().model.bands().len(), 1, "the reel is expanded");
+    let on = h.state().model.clip(ClipId(901)).unwrap().r#gen.clone().map(|mut g| {
+        kt_model::HasParams::set_flag(&mut g, "tone", true);
+        g
+    });
+    let cmds = h.state().gen_value_cmds(ClipId(901), &on.unwrap()).expect("the sound flips");
+    let root = h.state().model.document().clips.len();
+    assert!(h.state_mut().apply_batch(cmds), "the batch is accepted");
+    let r = reel(&h);
+    assert_eq!((r.clips.len(), h.state().model.document().clips.len()), (3, root), "the sound is the reel's");
+    let a = r.clips.iter().find(|c| c.kind == ClipKind::Audio).unwrap();
+    let v = r.clips.iter().find(|c| c.id == ClipId(901)).unwrap();
+    assert_eq!((a.lane, a.start, a.link_group), (0, v.start, v.link_group));
+}

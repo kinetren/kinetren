@@ -97,12 +97,13 @@ def main(out):
         app.click_probe("track.v2.lock", "lock badge of the lower track")
         y = app.lane_y("video", 1, frac=0.6)
         app.drag(app.x_at(2 * SEC), y, app.x_at(4 * SEC), y)
-        app.shot("locked")
         after = app.live_clips()
         app.expect(before == after, f"the locked track did not hand the event over to the drag: {before} → {after}")
         # the refusal read as a consequence (test-hygiene); it stands 6 s in the status line
+        # and is read BEFORE the screenshot, which a busy machine makes longer than that
         app.until(lambda: "v2" in app.geom().get("status", "").lower(), timeout=10.0)
         status = app.geom().get("status", "")
+        app.shot("locked")
         app.expect(
             "V2" in status or "v2" in status,
             f"the refusal names the track and the place where to remove the lock: “{status}”",

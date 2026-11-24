@@ -65,10 +65,10 @@ def main(out):
         # the graph whole inside the window (the wheel over "+ curve": the graph takes the wheel)
         app.scroll_probe_into_view("auto.graph", "auto.add", below="fx.cancel",
                                    what="the graph scrolled into the window")
-        g = probes(app)["auto.graph"]
-        for fx, fy in ((0.25, 0.4), (0.5, 0.7), (0.75, 0.4)):
-            app.click(*at(g, fx, fy))
-            poll_step(0.3)
+        app.wait_probe_still("auto.graph")
+        for n, (fx, fy) in enumerate(((0.25, 0.4), (0.5, 0.7), (0.75, 0.4))):
+            app.click(*at(probes(app)["auto.graph"], fx, fy))
+            app.expect(app.until(lambda: f"auto.key.{n + 2}" in probes(app)), f"click {n + 1} on the graph made key {n + 2}")
         app.expect(app.has_probe("auto.key.4"), "five keys on the curve")
         app.step("keys", "five keys, four segments")
 
@@ -82,6 +82,7 @@ def main(out):
         app.step("shift-key", "the fourth key white too")
         app.scroll_probe_into_view("auto.graph", "auto.add", below="fx.cancel",
                                    what="the graph still inside the window")
+        app.wait_probe_still("auto.graph")
         before = key_xs(app)
         app.expect(None not in before, f"every key is published: {before}")
 

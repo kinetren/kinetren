@@ -6500,6 +6500,7 @@ fn welcome_project(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
 ///   start again → the last project opens directly, no window
 #[test]
 fn t986_welcome_window_templates_recent_whats_new_and_the_switch() {
+    crate::alone::own_process!();
     // the lesson sandbox is built by kt_model::demo, which uses plugin effects (one test per process)
     crate::plugins::install();
     use crate::i18n::{k, tr};
@@ -8426,7 +8427,11 @@ fn t3941_copy_and_paste_are_icons_that_say_their_name() {
     h.state_mut().status = None;
     let on = h.get_by_label(tr(k::fx::CHAIN_ON)).rect().left();
     let done = h.get_by_label(tr(k::fx::DONE)).rect().left();
-    assert!((on - done).abs() < 4.0, "the chain starts at the body's left edge, with no strip: {on} against {done}");
+    assert!((on - done).abs() < 12.0, "the chain starts at the body's left edge, with no strip: {on} against {done}");
+    // and past the window's resize edge, or the edge takes the click on what stands at its left
+    let win = h.ctx.memory(|m| m.area_rect(egui::Id::new(("fx", h.state().fx_editors[0].clip)))).unwrap();
+    let grab = h.ctx.global_style().interaction.resize_grab_radius_side;
+    assert!(on > win.left() + grab + 2.0, "the chain starts inside the window's resize edge: {on} in {win:?}");
     for (name, icon) in [(k::fx::COPY_CHAIN, crate::icons::COPY), (k::fx::PASTE_CHAIN, crate::icons::CLIPBOARD)] {
         let name = tr(name);
         let at = h.get_by_label(name).rect();

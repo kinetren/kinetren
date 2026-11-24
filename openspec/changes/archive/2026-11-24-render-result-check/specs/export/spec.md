@@ -13,4 +13,4 @@ Why: the owner, v26.10 line 55 — "в окне рендера может быт
 - **WHEN** ranges on the frame grid, off it, shorter than a burst and ending inside a burst are exported at 24 and 30 fps
 - **THEN** the written frames and samples equal the announced ones each time; a result whose written numbers are lowered by hand reads both numbers of the pair in the final block
 - **PATH** draw a region by hand → File → Render… → Render… → wait for "Done" → the final block reads one number of frames and no line about a difference
-- **TEST** t3998 (`src/libs/kt-engine/tests/export_totals.rs`), live scenario `renderregion` (`src/scripts/live/renderregion.py`: the journal's two pairs are equal; the file's packets and sound length are the journal's)
+- **TEST** t3998 (`src/libs/kt-engine/tests/export_totals.rs`), t3998b (`src/apps/kt-app/src/layout_tests.rs`: the final block), live scenario `renderregion` (`src/scripts/live/renderregion.py`: the journal's two pairs are equal; the file's packets and sound length are the journal's)

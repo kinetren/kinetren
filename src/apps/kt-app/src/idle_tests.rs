@@ -33,6 +33,7 @@ fn complete() -> ReelPreview {
 /// pause (the scenario `idle` counts 2 to 4 jobs a second on the old code).
 #[test]
 fn t1830_more_live_releases_than_the_cap_do_not_go_round() {
+    crate::alone::own_process!();
     let mut svc = ReelPreviews::default();
     let keys: Vec<ReelKey> =
         (0..MAX_REELS_READY as u64 + 3).map(|i| ReelKey { seq: MediaId(1000), hash: i }).collect();
@@ -55,6 +56,7 @@ fn t1830_more_live_releases_than_the_cap_do_not_go_round() {
 /// overwrote the other, and all but the last rendered again on every opening.
 #[test]
 fn t1831_each_release_has_its_own_row() {
+    crate::alone::own_process!();
     let seq = MediaId(1000);
     let set = |t: &str| vec![Override::value(PubId(1), ParamValue::Text(t.into()))];
     assert_eq!(reel_row(seq, &[]), 1000, "an instance with no overrides keeps the row it always had");
@@ -83,6 +85,7 @@ fn t1831_each_release_has_its_own_row() {
 /// whole chain.
 #[test]
 fn t1832_a_moving_pointer_does_not_recompose_an_incomplete_frame() {
+    crate::alone::own_process!();
     let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     h.state_mut().push_project_to_player();
     h.state_mut().player.seek(kt_time::Tick(10_000));
@@ -105,6 +108,7 @@ fn t1832_a_moving_pointer_does_not_recompose_an_incomplete_frame() {
 /// exactly the frame it needs. The tick of 4 Hz drew the whole window for nobody.
 #[test]
 fn t1833_at_rest_nothing_asks_for_a_frame() {
+    crate::alone::own_process!();
     let mut h = rest_harness();
     h.step();
     assert!(next_repaint(&h) > Duration::from_secs(3600), "a program at rest asks for a frame in {:?}", next_repaint(&h));
@@ -136,6 +140,7 @@ fn t1833_at_rest_nothing_asks_for_a_frame() {
 /// frame.
 #[test]
 fn t1938_a_hover_over_kept_ranges_does_not_lay_out_the_events() {
+    crate::alone::own_process!();
     let (mut h, g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     let span = h.state().model.project().clips.iter().map(|c| (c.start + c.duration).0).max().unwrap_or(0);
     let kept: Vec<std::ops::Range<i64>> = std::iter::once(0..span).collect();
@@ -164,6 +169,7 @@ fn t1938_a_hover_over_kept_ranges_does_not_lay_out_the_events() {
 /// with what the view held, so with the scroll (kkt-26.11.07 item E2).
 #[test]
 fn t1834_a_hover_frame_does_not_lay_out_the_events() {
+    crate::alone::own_process!();
     let (mut h, g) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     let hover = |h: &mut Harness<'_, KtApp>, p: egui::Pos2| {
         h.input_mut().events.push(egui::Event::PointerMoved(p));
@@ -213,6 +219,7 @@ fn cpu_time() -> Option<Duration> {
 ///   moving the mouse over the gallery changes nothing and the processor stays idle
 #[test]
 fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     crate::plugins::install();
@@ -304,6 +311,7 @@ fn t2559_an_open_gallery_of_a_heavy_event_costs_nothing_at_rest() {
 ///   itself and the processor stays idle
 #[test]
 fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use kt_model::*;
     crate::plugins::install();
     crate::i18n::set_lang(crate::i18n::Lang::En);
@@ -385,6 +393,7 @@ fn t2813_an_open_render_settings_window_costs_nothing_at_rest() {
 ///   nothing redraws by itself
 #[test]
 fn t3003_an_open_node_editor_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use kt_model::*;
     crate::plugins::install();
     let mut h = rest_harness();
@@ -522,6 +531,7 @@ fn t3221_an_open_branched_graph_costs_nothing_at_rest() {
 ///   redraws by itself
 #[test]
 fn t3236_an_open_track_pair_costs_nothing_at_rest() {
+    crate::alone::own_process!();
     use kt_model::*;
     crate::plugins::install();
     let mut h = rest_harness();
@@ -564,6 +574,7 @@ fn t3236_an_open_track_pair_costs_nothing_at_rest() {
 ///   rests, then moves over the preview → nothing redraws or walks by itself
 #[test]
 fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
+    crate::alone::own_process!();
     use kt_model::*;
     use kt_time::work::{count, Work};
     crate::plugins::install();
@@ -670,6 +681,7 @@ fn t3822_a_paused_mosh_on_one_device_costs_nothing() {
 ///   the preview → nothing redraws or works by itself once the writes are done
 #[test]
 fn t3843_the_program_at_rest_after_cyclic_writing_costs_nothing() {
+    crate::alone::own_process!();
     use kt_media::cache_folder::{Folder, Tenant};
     use kt_time::work::{count, Work};
     crate::plugins::install();

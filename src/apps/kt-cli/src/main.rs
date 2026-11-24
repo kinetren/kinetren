@@ -70,7 +70,7 @@ fn main() {
         let _ = CACHE_DIR.set(dir.into());
         args.drain(i..i + 2);
     }
-    kt_media::cache_folder::set_data_root(&kt_dirs::data_dir());
+    kt_media::cache_folder::set_data_root(&kt_dirs::tool_dir());
     let code = run(&args);
     kt_time::trace::flush();
     std::process::exit(code);
@@ -1616,8 +1616,8 @@ fn run(args: &[String]) -> i32 {
     // (stream-front-on-device)
     kt_engine::video::install_stream_front(kt_gpu::stream_front_engine);
     kt_time::mem::set_resident_probe(kt_gpu::memory::resident);
-    // the disk tier of compiled pipelines, in the data folder (pipeline-prewarm D7)
-    kt_gpu::set_cache_dir(kt_dirs::data_dir().join("shader-cache"));
+    // the disk tier of compiled pipelines, in the tool's data folder (pipeline-prewarm D7, own-data-dir)
+    kt_gpu::set_cache_dir(kt_dirs::tool_dir().join("shader-cache"));
     match args.first().map(String::as_str) {
         Some("ffmpeg") => {
             // the search report (media-index): what was loaded, what was rejected and why
@@ -2166,9 +2166,10 @@ fn run(args: &[String]) -> i32 {
             ) {
                 Ok(stats) => {
                     eprintln!(
-                        "ok: {} video frames, {} audio frames, underruns {}, missing layers {}, encoder {}",
+                        "ok: {} video frames, {} audio frames, {}, underruns {}, missing layers {}, encoder {}",
                         stats.video_frames,
                         stats.audio_frames,
+                        stats.totals(),
                         stats.underruns,
                         stats.missing_video_layers,
                         stats.encoder
@@ -2270,7 +2271,8 @@ fn warn_if_locked(path: &str) {
     }
 }
 
-/// The per-user data directory of the app — the same resolver as kt-app (`kt-dirs`).
+/// The per-user data directory of the app — the same resolver as kt-app (`kt-dirs`). READ only: what
+/// kt-cli writes goes into `kt_dirs::tool_dir()` (own-data-dir).
 fn app_data_dir() -> Option<std::path::PathBuf> {
     Some(kt_dirs::data_dir())
 }

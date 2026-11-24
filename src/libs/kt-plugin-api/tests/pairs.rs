@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use kt_plugin_api::{Decl, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, Registry, UiDecl, VideoClass};
+use kt_plugin_api::{Decl, Gpu, Manifest, Media, ParamKind, ParamSpec, ParamUnit, Plugin, Registry, UiDecl, VideoClass};
 
 struct P(Manifest);
 
@@ -26,7 +26,13 @@ fn video(id: &'static str, pair: Option<&'static str>, default: f64) -> Arc<dyn 
         media: Media::VideoFx,
         passport: rows(default),
         rows: Vec::new(),
-        decl: Decl { video_class: Some(VideoClass::PointWise), builtin: false, pair, ..Decl::default() },
+        decl: Decl {
+            video_class: Some(VideoClass::PointWise),
+            gpu: Gpu::Wgsl(Box::leak(format!("fn tap_{id}(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> {{ return v; }}").into_boxed_str())),
+            builtin: false,
+            pair,
+            ..Decl::default()
+        },
         // a simulated device names its node's main rows (fx-graph D4a)
         ui: UiDecl { main: &["spacing_um"], ..Default::default() },
     }))

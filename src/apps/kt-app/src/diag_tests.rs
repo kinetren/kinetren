@@ -225,6 +225,8 @@ fn drag_corner(h: &mut Harness<'static, KtApp>, by: egui::Vec2) {
 /// size it was given.
 #[test]
 fn t1147_graphs_grow_with_the_window() {
+    // the window's height starts from its rows, and some are the process's (threads, memory)
+    crate::alone::own_process!();
     let mut h = crate::layout_tests::harness();
     h.state_mut().perf.diag_open = true;
     // samples, so the graphs draw lines and not the empty state

@@ -1955,6 +1955,7 @@ impl KtApp {
             self.start_frames += 1;
             if self.start_frames == crate::window_frame::STARTED {
                 crate::window_frame::adopt_start(&ctx);
+                crate::map_watch::start();
             }
             ctx.request_repaint();
         }
@@ -5225,9 +5226,7 @@ impl KtApp {
     /// (generator-menu-one-item D2). The window's gallery is the one way to a kind since kkt-26.11.20 A1.
     pub(crate) fn gen_kind_switch_cmds(&self, media: MediaId, kind: &kt_model::GeneratorKind) -> Vec<Command> {
         let set = Command::SetMediaPath { id: media, path: kt_model::gen_kind_path(kind) };
-        let (remove, add) = self.gen_pair_cmds(media, None, kind);
-        // the sound halves go first: the media's new kind is no sound kind
-        remove.into_iter().chain(std::iter::once(set)).chain(add).collect()
+        self.with_gen_sound(media, None, kind, set)
     }
 
     /// A value edit of one generator event, as commands: the values, and its sound event brought or
@@ -5248,71 +5247,35 @@ impl KtApp {
             .find(|p| p.kind == ClipKind::Video && p.media == c.media && (p.id == id || (p.link_group.is_some() && p.link_group == c.link_group)))?
             .id;
         let set = Command::SetClipGen { id: picture, kind: Some(kind.clone()) };
-        let (remove, add) = self.gen_pair_cmds(c.media, Some(picture), kind);
-        Some(remove.into_iter().chain(std::iter::once(set)).chain(add).collect())
+        Some(self.with_gen_sound(c.media, Some(picture), kind, set))
     }
 
-    /// The commands that keep a generator's sound pairs in step with `kind` — of one picture event
-    /// (`only`: values live on the event) or of every one of the media (a kind change, "apply to all"):
-    /// (removals, additions). A sounding generator gives a picture event its sound event on audio
-    /// track 1, linked to it, with the new values, as the menu gives at creation; a silent one loses the
-    /// sound events, which would hold silence.
-    pub(crate) fn gen_pair_cmds(
+    /// `set`, which gives `kind` to a generator's events — of one picture event (`only`: values live on
+    /// the event) or of every one of the media, in every reel (a kind change, "apply to all") — with
+    /// their sound events kept in step in the same step of history.
+    pub(crate) fn with_gen_sound(
         &self,
         media: MediaId,
         only: Option<ClipId>,
         kind: &kt_model::GeneratorKind,
-    ) -> (Vec<Command>, Vec<Command>) {
+        set: Command,
+    ) -> Vec<Command> {
         let sounds = kt_media::generator::GeneratorSource::info_for(kind).has_audio;
-        let clips = &self.model.project().clips;
-        let pictures: Vec<&ClipEvent> = clips
-            .iter()
-            .filter(|c| c.media == media && c.kind == ClipKind::Video && only.is_none_or(|id| c.id == id))
-            .collect();
-        let pair_of = |v: &ClipEvent| {
-            clips
+        let sound = Command::SetGenSound {
+            media,
+            only,
+            sounds,
+            first_id: self.next_clip_id(),
+            first_group: self.next_group_id(),
+            strips: self
+                .model
+                .bands()
                 .iter()
-                .filter(|p| p.kind == ClipKind::Audio && p.media == media && p.link_group.is_some() && p.link_group == v.link_group)
-                .map(|p| p.id)
-                .collect::<Vec<_>>()
+                .map(|b| (b.base.get(LaneKind::Video), b.len.get(LaneKind::Video), b.base.get(LaneKind::Audio)))
+                .collect(),
         };
-        if !sounds {
-            let remove = pictures.iter().flat_map(|v| pair_of(v)).map(|id| Command::RemoveClip { id }).collect();
-            return (remove, Vec::new());
-        }
-        let mut add = Vec::new();
-        let (mut next_id, mut next_group) = (self.next_clip_id(), self.next_group_id());
-        for v in pictures.into_iter().filter(|v| pair_of(v).is_empty()) {
-            let group = v.link_group.unwrap_or_else(|| {
-                next_group += 1;
-                GroupId(next_group - 1)
-            });
-            let id = ClipId(next_id);
-            next_id += 1;
-            let a = ClipEvent {
-                id,
-                kind: ClipKind::Audio,
-                lane: 0,
-                link_group: Some(group),
-                fx: Vec::new(),
-                fx_auto: Vec::new(),
-                fx_bypass: Vec::new(),
-                fx_off: false,
-                opacity: 1.0,
-                geometry: Default::default(),
-                geometry_pos: 0,
-                geometry_auto: Vec::new(),
-                masks: Default::default(),
-                // the values the batch sets on the picture: a copy of its former ones would sound silence
-                r#gen: v.r#gen.as_ref().map(|_| kind.clone()),
-                ..v.clone()
-            };
-            add.push(Command::AddClip(a));
-            if v.link_group.is_none() {
-                add.push(Command::LinkClips { ids: vec![v.id, id], group });
-            }
-        }
-        (Vec::new(), add)
+        // a sound half goes before the values that silence it, and comes after the ones it copies
+        if sounds { vec![set, sound] } else { vec![sound, set] }
     }
 
     /// "Create a generator…" from Edit or the bin (kkt-26.11.20 A1: one item, by the track): the
@@ -11694,7 +11657,11 @@ impl eframe::App for KtApp {
         // a convenience, and the exit is bounded by now: it goes beside the poster's wait
         let until = std::time::Instant::now() + CLOSE_WAIT;
         let workspace = self.workspace_now().and_then(|(path, w)| {
-            let write = move || crate::user_store::save_workspace_at(&path, &w);
+            let write = move || {
+                crate::user_store::save_workspace_at(&path, &w);
+                // its write goes through the small files' thread: the join below waits for the file
+                crate::later::flush(CLOSE_WAIT);
+            };
             std::thread::Builder::new().name("close-workspace".into()).spawn(write).ok()
         });
         // closing a named project renders its poster (D5): one frame, within a budget
@@ -11728,6 +11695,9 @@ impl eframe::App for KtApp {
         // after the recovery write (durability first): the clean-close event, within a
         // fixed budget; a dead network looks exactly like no telemetry
         crate::telemetry::signal(crate::telemetry::Signal::Exit);
+        // the workspace, the records and the journal's last lines (found-defects 833)
+        crate::later::flush(std::time::Duration::from_secs(1));
+        crate::journal::flush(std::time::Duration::from_secs(1));
         // what the close did is in the file before the drops join threads (a clean exit flushed
         // nothing, and the owner's trace ended a second before his close)
         kt_time::trace::flush();
@@ -11949,6 +11919,8 @@ pub fn run() -> eframe::Result {
     // before the C exit hooks run (close-while-busy)
     kt_time::shutdown::mark(kt_time::trace::shutdown::RETURNED, "eframe");
     kt_time::trace::flush();
+    // a window that never opened says why in the journal, and nothing else flushes it
+    crate::journal::flush(std::time::Duration::from_secs(1));
     ran
 }
 

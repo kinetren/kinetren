@@ -472,9 +472,10 @@ fn t2453_closing_while_playing_lets_the_close_jobs_run() {
     app.last_autosave = std::time::Instant::now() - Duration::from_secs(10 * app.autosave_secs.max(1));
     h.step();
     assert!(h.state().autosave_rx.is_some(), "scene guard: the insurance autosave was posted while playing");
-    assert_ne!(kt_time::sched::paused() & kt_time::sched::why::PLAYING, 0, "scene guard: the player's vote is up");
+    // this player's own vote: the process's mask carries every test's (one-process-tests)
+    assert!(h.state().player.holds_background(), "scene guard: the player's vote is up");
     eframe::App::on_exit(h.state_mut());
-    assert_eq!(kt_time::sched::paused() & kt_time::sched::why::PLAYING, 0, "the close left the jobs it waits for held");
+    assert!(!h.state().player.holds_background(), "the close left the jobs it waits for held");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -510,7 +511,7 @@ fn t2495_the_insurance_autosave_writes_while_playing() {
     h.step();
     assert!(h.state().autosave_rx.is_some(), "scene guard: the insurance autosave was posted while playing");
     assert_eq!(until_autosaved(&mut h), 1, "the recovery file lacks the edit");
-    assert_ne!(kt_time::sched::paused() & kt_time::sched::why::PLAYING, 0, "scene guard: written while the vote was up");
+    assert!(h.state().player.holds_background(), "scene guard: written while the vote was up");
     h.state_mut().player.pause();
     h.step();
 
@@ -593,6 +594,8 @@ fn blocked_since(before: [u64; kt_time::block::kind::COUNT]) -> Vec<String> {
 /// (its threads and decoders) is released off it too. Everything lands.
 #[test]
 fn t2330_opening_a_project_blocks_nothing_on_the_ui_thread() {
+    // it holds or fills the one lane every test's opens run in
+    crate::alone::own_process!();
     use kt_time::Tick;
     let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     let dir = std::env::temp_dir().join(format!("kt-t2330-{}", std::process::id()));
@@ -638,6 +641,8 @@ fn t2330_opening_a_project_blocks_nothing_on_the_ui_thread() {
 /// lane is in order), the player's version is the model's, and the file holds the move.
 #[test]
 fn t2332_edits_during_the_load_land_on_the_loaded_project() {
+    // it holds or fills the one lane every test's opens run in
+    crate::alone::own_process!();
     use kt_time::Tick;
     let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     let dir = std::env::temp_dir().join(format!("kt-t2332-{}", std::process::id()));
@@ -706,6 +711,8 @@ fn t2332_edits_during_the_load_land_on_the_loaded_project() {
 /// asked with no grace, the UI thread counts no blocking call, and a later frame takes the write.
 #[test]
 fn t2333_a_save_on_a_busy_disk_blocks_nothing() {
+    // it holds or fills the one lane every test's opens run in
+    crate::alone::own_process!();
     use kt_time::Tick;
     let (mut h, _) = crate::layout_tests::harness_three_clips_dt(Some(0.02));
     let dir = std::env::temp_dir().join(format!("kt-t2333-{}", std::process::id()));

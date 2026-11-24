@@ -128,3 +128,42 @@ fn t1062_the_verbatim_prefix_is_dropped_where_it_means_nothing() {
     assert_eq!(std::fs::canonicalize(&c).unwrap(), std::fs::canonicalize(&dir).unwrap());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Test 3721 (own-data-dir, found-defects 829): a tool run out of a cargo target directory writes into
+/// that directory, an explicit choice wins, an installed one shares the program's; a program a rig
+/// started without a directory of its own names the variable.
+#[test]
+fn t3721_a_run_of_ours_has_a_data_directory_of_its_own() {
+    use kt_dirs::{cargo_target_of, rig_without_data_dir, tool_dir_of};
+    use std::path::Path;
+    let tagged = |p: &Path| p == Path::new("/w/src/target/CACHEDIR.TAG");
+    for exe in [
+        "/w/src/target/debug/kt-cli",
+        "/w/src/target/release/kt-cli",
+        "/w/src/target/debug/deps/cli-0123",
+        "/w/src/target/x86_64-pc-windows-gnu/debug/kt-cli.exe",
+        "/w/src/target/debug/examples/x",
+    ] {
+        assert_eq!(cargo_target_of(Path::new(exe), &tagged), Some("/w/src/target".into()), "{exe}");
+    }
+    // a nextest archive: no mark, the profile folder holds `deps`
+    let archive = |p: &Path| p == Path::new("/a/target/debug/deps");
+    assert_eq!(cargo_target_of(Path::new("/a/target/debug/kt-cli"), &archive), Some("/a/target".into()));
+    // installed
+    for exe in ["/usr/bin/kt-cli", "/home/u/kinetren/kt-cli", "/app/bin/kt-cli"] {
+        assert_eq!(cargo_target_of(Path::new(exe), &tagged), None, "{exe}");
+    }
+    let home = linux(&[("HOME", "/home/u")]);
+    assert_eq!(tool_dir_of(&home, Some("/w/src/target".into())), PathBuf::from("/w/src/target/run-data"));
+    assert_eq!(tool_dir_of(&home, None), PathBuf::from("/home/u/.local/share/kinetren"));
+    // a session's XDG_DATA_HOME is the person's directory too
+    let xdg = linux(&[("XDG_DATA_HOME", "/home/u/data"), ("HOME", "/home/u")]);
+    assert_eq!(tool_dir_of(&xdg, Some("/w/t".into())), PathBuf::from("/w/t/run-data"));
+    let chosen = linux(&[("KINETREN_DATA_DIR", "/x"), ("HOME", "/home/u")]);
+    assert_eq!(tool_dir_of(&chosen, Some("/w/t".into())), PathBuf::from("/x"));
+    // the rig
+    assert_eq!(rig_without_data_dir(&home), None, "a person's start");
+    assert_eq!(rig_without_data_dir(&linux(&[("KT_GEOM_DUMP", "/g"), ("HOME", "/home/u")])), Some("KT_GEOM_DUMP"));
+    assert_eq!(rig_without_data_dir(&linux(&[("KT_LIVE_CTL", "/c"), ("XDG_DATA_HOME", "/o/xdg")])), None);
+    assert_eq!(rig_without_data_dir(&linux(&[("KT_LIVE_CTL", "/c"), ("KINETREN_DATA_DIR", "/o")])), None);
+}

@@ -400,6 +400,8 @@ impl RenderJob {
                     crate::tele_journal::record(crate::tele_journal::Kind::Note, &c.journal_line(self.elapsed()));
                 }
                 self.final_size = std::fs::metadata(&self.out_path).ok().map(|m| m.len());
+                // both pairs always: what was announced and what was written (render-result-check D2)
+                crate::tele_journal::record(crate::tele_journal::Kind::Note, &format!("render done: {}", stats.totals()));
                 // where the render's time went, into the journal the load report carries (render-speed D2)
                 if !stats.stages.is_empty() {
                     crate::tele_journal::record(crate::tele_journal::Kind::Note, &stats.stages);
@@ -1691,6 +1693,19 @@ impl KtApp {
                                     format!("{:.1}", l.lra)
                                 ));
                                 ui.weak(crate::tf!(k::render::LOUDNESS_TO_TARGET, format!("{:+.1}", -23.0 - lufs)));
+                            }
+                            let (frames, sound) = stats.short();
+                            if let Some((n, of)) = frames {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 190, 120),
+                                    crate::tf!(k::render::SHORT_FRAMES, n, of),
+                                );
+                            }
+                            if let Some((n, of)) = sound {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 190, 120),
+                                    crate::tf!(k::render::SHORT_SOUND, n, of),
+                                );
                             }
                             if stats.missing_video_layers > 0 {
                                 ui.colored_label(

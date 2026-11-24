@@ -59,7 +59,7 @@ fn sorted(set: &BTreeSet<String>) -> String {
 /// A video plugin registered through the test door (plugin-api-stage1, D8): the installed registry
 /// holds it, the reference lists never do, so the note must not be asked to list it.
 mod test_door {
-    use kt_plugin_api::{Decl, Manifest, Media, Plugin, UiDecl, VideoClass, VideoKernel};
+    use kt_plugin_api::{Decl, Gpu, Manifest, Media, Plugin, UiDecl, VideoClass, VideoKernel};
 
     pub const ID: &str = "catalogue_test_tint";
 
@@ -72,7 +72,12 @@ mod test_door {
                 media: Media::VideoFx,
                 passport: vec![],
                 rows: vec![],
-                decl: Decl { video_class: Some(VideoClass::PointWise), builtin: false, ..Decl::default() },
+                decl: Decl {
+                    video_class: Some(VideoClass::PointWise),
+                    gpu: Gpu::Wgsl("fn tap_catalogue_test_tint(v: vec4<f32>, a: vec4<f32>, b: vec4<f32>, c: vec2<f32>) -> vec4<f32> { return v; }"),
+                    builtin: false,
+                    ..Decl::default()
+                },
                 ui: UiDecl { name: "Catalogue Test Tint", category_key: "", keywords_key: "", ..UiDecl::default() },
             })
         }

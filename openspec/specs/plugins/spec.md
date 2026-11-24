@@ -23,8 +23,8 @@ outside the host-provided position.
 The registry SHALL refuse, at registration and before any frame or sample is produced: a
 duplicate id; an id that is not lower `snake_case`; a video kernel that declares state between
 frames, a tail or a look-ahead; any kernel that declares it must not be called concurrently; an
-audio look-ahead that can reach `MIN_PREROLL_FRAMES` (4800); a built-in point-wise or barrier video plugin without a
-GPU kernel; a geometry-class plugin that does not express its map in the host's closed
+audio look-ahead that can reach `MIN_PREROLL_FRAMES` (4800); a point-wise or barrier video plugin, built-in or not, without a
+GPU kernel (the device is the one executor of a frame); a geometry-class plugin that does not express its map in the host's closed
 primitive set. A refusal SHALL name the plugin id and the declaration that failed.
 Why: F-EXT-003 — the real content of a plugin API is what the host must promise and what the
 plugin must confess; checking the confession at load makes refusal cheap and early. Video

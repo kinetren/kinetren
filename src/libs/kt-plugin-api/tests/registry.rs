@@ -85,6 +85,12 @@ fn t972_incompatible_declarations_are_refused_by_name() {
             "reaches the pre-roll (4800)",
         ),
         (plugin("no_gpu", Media::VideoFx, video(VideoClass::Barrier, Gpu::None)), "no_gpu", "without a GPU kernel"),
+        // a foreign one too: the device is the one executor (one-process-tests)
+        (
+            plugin("no_gpu_foreign", Media::VideoFx, Decl { builtin: false, ..video(VideoClass::PointWise, Gpu::None) }),
+            "no_gpu_foreign",
+            "without a GPU kernel",
+        ),
         (
             plugin("geo_wgsl", Media::VideoFx, video(VideoClass::Geometry, Gpu::Wgsl(TAP))),
             "geo_wgsl",

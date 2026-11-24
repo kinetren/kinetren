@@ -1188,3 +1188,6 @@ Where to look in the code: `track_window.rs` (the ducking section), `pubparam.rs
   wires); a chain that does not branch stays the window session's coalesced step, its wiring the empty
   list. The layout (`graph_layout`) is kept per wiring in egui's memory: a hover lays nothing out
   (t3221). A picker cell stands where the click puts it (`Place::After`, `Place::Arm`).
+- **A test that reads or drains what a process has one of starts with `crate::alone::own_process!();`**
+  (one-process-tests): the work counters, the compute host, the posters, the cache notices, frame processor time. `cargo test` runs the crate
+  in one process; the pause mask of the scheduler is every test's — read `Player::holds_background`.
