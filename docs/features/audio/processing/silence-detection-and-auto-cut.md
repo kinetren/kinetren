@@ -11,10 +11,10 @@ crates: [kt-media, kt-model, kt-app]
 invariants: [1, 4, 8, 12]
 ui_rules: [4, 12, 16, 20]
 round: null
-point: null
+point: change pause-detection
 tests: []
 depends_on: [F-TL-001, F-TXT-004]
-checked: 2026-09-08
+checked: 2026-11-24
 trackers: [kde-invent, kde-bugzilla, losslesscut, olive, pitivi, shotcut]
 ---
 
@@ -158,6 +158,10 @@ The main point: **we do not need a new pass over the material.** The peak pyrami
 | Breaks compatibility | no |
 
 ## Verdict
+
+2026-11-24: designed as the change `pause-detection`. The owner's own line asks for NOISY sound (`v26.10` line 89), so the
+threshold below gives way to a floor learned from the recording; the two margins and the merging stay as found here, and
+the pyramid's tail is closed in the same change.
 
 **Take it, and take it as markup.** The first stage — a pass over the peak pyramid and the result as range markers: it has no new subsystem, no new pass over the material, and not a single line in the project format — the data already lies in memory for the sake of waveforms, both model commands already exist, the atomic batch already gives "two hundred markers — one Undo", and the preview, which Resolve draws with special code, for us is a standard marker band that, in addition, can be moved with the mouse. This is the cheapest feature of the "offline analysis of material" class out of six, and the only one that does not need a new pass — and a good pilot for the class instead of the noise profile.
 

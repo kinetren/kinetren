@@ -64,7 +64,7 @@ Row 641 measured only the last of these. This is the audit's step 4 (`docs/engin
   - `project.rs`: a new `shared.rs`; the `Vec<Shared<…>>` fields of `Project` and `Sequence`; the
     `ResolvedReel` clips.
   - `model.rs`: `simulate`, `push_undo`, `rebuild_bench`, `doc_arc`, the equality checks.
-- **kt-engine:** `incremental.rs` and the builders' keys (`audio.rs:849`, `video.rs`).
+- **kt-engine:** `incremental.rs` and the builders' keys (`audio.rs:924`, `video.rs:1404`, `hash_reel`).
 - **kt-app:** the Viewer's cut, which edits one event; call sites that build events take
   `Shared::new`.
 - **Invariants:** 11 is untouched, because every key keeps its value. 12 is helped: the UI thread no
