@@ -72,6 +72,10 @@ Media sources: the trait `MediaSource`, `SyntheticSource` (tests), `FfmpegSource
     copies, then the reels, then the media; nothing this process used in the last minute.
   - **Nothing scans at rest**: the tree is walked at the first ask for room, and again only when the
     cycle drops on a count older than a minute, or the system contradicted it.
+- **A source copy is the picture only** (`copy.rs`, persistent-cache D3, t3440–t3442): `media/<id>/copy-<w>x<h>.mov`,
+  all-intra, every frame at the original's own time in the original's time base (Matroska keeps milliseconds);
+  `CopySource` answers the original's facts and reads the sound there. A copy is never opened by an export. No
+  hardware encoder — no copy; a forced encoder is a test's.
 - **A media is its content** (`ContentId`, the xxh3-128 of the file); `media/paths.tsv` (path, size, mtime
   → id) spares the hash. A path inside the project's folder is kept relative, so a renamed folder hashes
   nothing (t3829). Invalidation needs no delete: a changed file is another id.

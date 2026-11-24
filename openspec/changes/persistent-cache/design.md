@@ -38,8 +38,8 @@ lowest first; least recently used as the tie-break; frames this process used in 
 
 ## D3. Source copies
 
-Revision 2's copies, kept per media in the cache folder (`media/<content id>/copy-<q>.mkv`): MKV, H.264 all-intra, the
-original's timestamps, audio stream-copied, the original's natives reported; at the size the preview plays, for heavy
+Revision 2's copies, kept per media in the cache folder (`media/<content id>/copy-<w>x<h>.mov`): QuickTime, H.264
+all-intra, the original's timestamps, the picture only, the original's natives reported; at the size the preview plays, for heavy
 sources only (long-GOP above 1920×1080, or measured slower than real time); a better copy when a higher quality is
 chosen; "Use a camera's copy…" kept. A copy is a decoded SOURCE, not a stage of a chain: it is what the chain reads, at
 the size the preview would decode anyway.
@@ -96,6 +96,19 @@ per moment; nothing runs at rest once the heavy moments are written. A quality c
   render-cache-disk D3) before the producer's "decoded?" check. The prefetch window (`prefetch.rs:126`) skips only
   moments the present memo holds (`kept_moments`, `player.rs:3569`), so a moment on disk but not yet restored is still
   decoded ahead: the cache audit's cut 1 (`docs/cache-audit.md`), given to mosh-sharp; this change must not undo it.
+
+## Found while building (section 3)
+
+- **QuickTime, not Matroska.** Matroska keeps milliseconds: at 23.976 fps every third picture lies a third of a
+  millisecond from its own time, and where a project's grid meets that time the picture before it is chosen. A MOV track
+  takes the original's time base.
+- **No sound in a copy.** Copying packets needs a container that takes every codec the original may hold, and gives a
+  second sound whose priming and length must be proved equal. The sound decodes fast everywhere; `CopySource` reads it
+  from the original's own decoder, so "byte-equal" holds by construction.
+- **The swap keeps the sound.** `replace_media` drops everything of a source; a swap of the picture must not reset a
+  kept mix (a slowed reverb's is expensive). `BurstCache::adopt_picture` drops the pictures only.
+- **A host with no hardware encoder makes no copy** (the owner's rule, row 775); the reason is shown.
+- **The copies' decoder** is opened by `FfmpegCopies::copy` alone, so `device-decode-sources` takes over one call.
 
 ## Rejected
 

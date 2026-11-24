@@ -17,14 +17,16 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+/// A media's path as the project names it → the file; `None` — not a file.
+pub type Resolve = Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>;
+
 /// What the host sets.
 #[derive(Clone)]
 pub struct Config {
     pub maker: Arc<dyn CopyMaker>,
     /// The project's cache folder.
     pub root: PathBuf,
-    /// A media's path as the project names it → the file; `None` — not a file.
-    pub resolve: Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>,
+    pub resolve: Resolve,
 }
 
 /// What a media plays from.

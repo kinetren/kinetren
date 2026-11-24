@@ -38,15 +38,15 @@
 
 ## 3. Source copies (kt-ffmpeg, kt-media)
 
-- [ ] 3.1 the muxer already keeps a source's times (`MuxConfig.time_base` `kt-ffmpeg/src/lib.rs:213`,
-      `write_video_frame_at` `:838`, t3601); add MKV with audio stream copy and an all-intra key interval
+- [x] 3.1 the muxer already keeps a source's times (`MuxConfig.time_base` `kt-ffmpeg/src/lib.rs:213`,
+      `write_video_frame_at` `:838`, t3601); add an all-intra key interval (QuickTime and no sound: the design's "Found while building")
       (`format.rs` `keyint_tenths` `:108` gives frames from tenths: an all-intra mode is a keyint of 1 frame);
       t3440
 - [ ] 3.2 the copy job for heavy sources (long-GOP above 1920×1080, or decoded slower than real time) at the
       preview's size, a better copy when a higher quality is chosen, "Use a camera's copy…"; copies written to
-      `media/<content id>/copy-<quality>.mkv` through `ask_room`; a background lane job paused by playback and
+      `media/<content id>/copy-<w>x<h>.mov` through `ask_room`; a background lane job paused by playback and
       export; t3441, t3442, t3449
-- [ ] 3.3 the copy source reporting the original's natives (`kt-media`), swapped in through
+- [x] 3.3 the copy source reporting the original's natives (`kt-media`), swapped in through
       `Player::replace_media` (`player.rs:885`) and opened through `device-decode-sources`'
       `factory::open_source` when that change has landed; t3443, t3444, t3446
 - [ ] 3.4 `cargo test -p kt-ffmpeg -p kt-media -p kt-engine`; clippy; commit "persistent-cache 3: heavy sources'
