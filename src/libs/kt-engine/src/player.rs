@@ -244,6 +244,9 @@ pub struct Player {
     /// The disk tier of preview composites and its prerender at rest (render-cache-disk).
     render_cache: Arc<crate::render_cache::RenderCache>,
     render_cache_thread: Option<std::thread::JoinHandle<()>>,
+    /// The copies of heavy sources (persistent-cache).
+    copies: Arc<crate::copies::Copies>,
+    copies_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 /// State of the preview GPU executor (R.29).
@@ -343,6 +346,7 @@ impl Player {
         let project_version = Arc::new(AtomicU64::new(0));
         let content_version = Arc::new(AtomicU64::new(0));
         let worker_spawns = Arc::new(AtomicU64::new(0));
+        let copies = Arc::new(crate::copies::Copies::default());
         let media = Arc::new(MediaParts {
             workers: workers.clone(),
             natives: natives.clone(),
@@ -353,6 +357,8 @@ impl Player {
             wake: wake.clone(),
             gen_states: Mutex::new(HashMap::new()),
             gen_lock: Mutex::new(()),
+            raised: Mutex::default(),
+            copies: copies.clone(),
         });
         // The opening builds once, here; every later version is built on `engine-build`. The
         // generator sources are raised by the player ITSELF, inside the build: their addresses are
@@ -464,6 +470,13 @@ impl Player {
                 .spawn(move || crate::render_cache::run_prerender(parts, stop))
                 .expect("spawn render-cache")
         };
+        let copies_thread = {
+            let (c, parts, media, stop) = (copies.clone(), parts.clone(), media.clone(), stop.clone());
+            std::thread::Builder::new()
+                .name("source-copies".into())
+                .spawn(move || crate::copies::run(c, parts, media, stop))
+                .expect("spawn source-copies")
+        };
         let composer = crate::compose_queue::Composer::new();
         let prefetch_thread = {
             let wake_p = wake.clone();
@@ -552,6 +565,8 @@ impl Player {
             ahead,
             render_cache,
             render_cache_thread: Some(render_cache_thread),
+            copies,
+            copies_thread: Some(copies_thread),
         };
         if deferred {
             player.set_project(project);
@@ -683,6 +698,7 @@ impl Player {
         *self.preview_quality.lock().unwrap() = q;
         // a parked prefetch warms the new size
         self.wake.notify();
+        self.copies.kick();
     }
 
     pub fn preview_quality(&self) -> Quality {
@@ -723,6 +739,11 @@ impl Player {
         self.render_cache.note_input();
     }
 
+    /// The copies of heavy sources.
+    pub fn copies(&self) -> Arc<crate::copies::Copies> {
+        self.copies.clone()
+    }
+
     /// The disk tier (its counts, tests, the bench).
     pub fn render_cache(&self) -> Arc<crate::render_cache::RenderCache> {
         self.render_cache.clone()
@@ -759,6 +780,7 @@ impl Player {
         self.bg_pause.set(true);
         self.wake.notify();
         self.render_cache.wake.notify();
+        self.copies.wake.notify();
         // the frame on screen is the producer's first moment (render-ahead D2)
         self.ahead.kick();
     }
@@ -769,6 +791,7 @@ impl Player {
         self.bg_pause.set(false);
         self.wake.notify();
         self.render_cache.wake.notify();
+        self.copies.kick();
     }
 
     /// Preview master volume (linear; mute = 0).
@@ -2055,6 +2078,7 @@ impl Drop for Player {
         self.builds.shutdown();
         self.wake.notify();
         self.render_cache.wake.notify();
+        self.copies.wake.notify();
         // Every join is BOUNDED (close-while-busy, kkt-26.11.18 T1): a prefetch pass walking a
         // Datamosh history ran 37 s on the owner's iGPU, and the close waited for it until he
         // killed the process. Each thread sees the stop at its next check (the history walk at its
@@ -2077,6 +2101,10 @@ impl Drop for Player {
         // a prerender moment stops at its next step (its stop check reads `stop`)
         if let Some(t) = self.render_cache_thread.take() {
             kt_time::shutdown::join("render-cache", t, until);
+        }
+        // a copy job stops before its next frame
+        if let Some(t) = self.copies_thread.take() {
+            kt_time::shutdown::join("source-copies", t, until);
         }
         // The render/prefetch threads are finished (or left behind); the preview's thread may still
         // hold the map
@@ -2230,12 +2258,62 @@ pub(crate) struct MediaParts {
     /// value edit): the builder reads the newest project under it, so it never retunes a source
     /// back to values a value edit has just replaced.
     gen_lock: Mutex<()>,
+    /// How many times each media's source was raised by the host: what the copies know of one belongs
+    /// to a raise.
+    raised: Mutex<HashMap<MediaId, u64>>,
+    copies: Arc<crate::copies::Copies>,
 }
 
 impl MediaParts {
+    pub(crate) fn raised(&self, media: MediaId) -> u64 {
+        self.raised.lock().unwrap().get(&media).copied().unwrap_or(0)
+    }
+
+    fn note_raised(&self, media: MediaId) {
+        *self.raised.lock().unwrap().entry(media).or_default() += 1;
+        self.copies.kick();
+    }
+
+    /// What a picture of the media took to decode, ns.
+    pub(crate) fn picture_ns(&self, media: MediaId) -> Option<u64> {
+        self.workers.read().unwrap().get(&media)?.picture_ns()
+    }
+
+    /// Read the media's PICTURE from another file of the same material (persistent-cache D3): its facts
+    /// are the same, so no renderer moves, and its sound is the same, so the decoded bursts and the kept
+    /// mix stay. `false` — the host raised the source meanwhile.
+    pub(crate) fn swap_picture(&self, media: MediaId, raised: u64, source: Box<dyn kt_media::MediaSource>) -> bool {
+        let old = {
+            let mut w = self.workers.write().unwrap();
+            if self.raised(media) != raised {
+                return false;
+            }
+            w.remove(&media)
+        };
+        if let Some(old) = old {
+            old.shutdown();
+        }
+        let ident = source.identity().unwrap_or_else(kt_cache::SourceIdent::once);
+        self.cache.adopt_picture(kt_cache::SourceId(media.0), ident);
+        self.worker_spawns.fetch_add(1, Ordering::AcqRel);
+        let new = MediaWorker::spawn_with_ident(media, source, ident, self.cache.clone(), self.decode_stats.clone());
+        let mut w = self.workers.write().unwrap();
+        if self.raised(media) != raised {
+            drop(w);
+            new.shutdown();
+            return false;
+        }
+        w.insert(media, new);
+        drop(w);
+        self.content_version.fetch_add(1, Ordering::AcqRel);
+        self.wake.notify();
+        true
+    }
+
     fn add_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
         self.worker_spawns.fetch_add(1, Ordering::AcqRel);
         self.natives.write().unwrap().observe(media, source.info());
+        self.note_raised(media);
         let w = MediaWorker::spawn_with_stats(media, source, self.cache.clone(), self.decode_stats.clone());
         // the guard ends with the statement: a join under it held the render, prefetch and
         // preview threads for the old decoder's last span (ui-never-waits)
@@ -2251,6 +2329,7 @@ impl MediaParts {
     /// sources are not touched.
     fn replace_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
         self.worker_spawns.fetch_add(1, Ordering::AcqRel);
+        self.note_raised(media);
         let old = self.workers.write().unwrap().remove(&media);
         if let Some(old) = old {
             old.shutdown();
@@ -2456,6 +2535,8 @@ fn build_loop(ctx: BuildCtx) {
         done = seq;
         // a parked render thread (a pause) takes it now, not at its next timeout
         wake.notify();
+        // the media the build reaches, and the sizes it decodes them at
+        media.copies.kick();
         composer.wake_ui();
     }
 }

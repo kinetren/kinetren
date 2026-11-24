@@ -3,9 +3,9 @@
 //! wgpu adapter.
 
 use kt_engine::render_cache::{Config, Made, Manifest, RawSegments};
-use kt_engine::{Player, PresentOptions, VideoGpuExec};
+use kt_engine::{Player, PresentOptions, VideoGpuExec, copies};
 use kt_media::cache_folder::{Folder, Tenant};
-use kt_media::{MediaSource, Quality};
+use kt_media::{MediaSource, Quality, copy};
 use kt_model::*;
 use kt_time::Tick;
 use kt_time::trace::Ev;
@@ -335,4 +335,293 @@ fn t3445_an_export_never_reads_the_store() {
     let again = export();
     assert_eq!(reads(), at_start, "an export asked the store");
     assert!(fresh == again, "the export moved with the store");
+}
+
+// ---- source copies -------------------------------------------------------------------------------
+
+/// A heavy "file" of the test: 384×216 of one colour, its sound a sine; a copy is its size's picture.
+struct Fake {
+    info: kt_media::MediaInfo,
+    shade: u8,
+    name: String,
+    sound: kt_media::synthetic::SyntheticSource,
+    reads: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl MediaSource for Fake {
+    fn info(&self) -> &kt_media::MediaInfo {
+        &self.info
+    }
+    fn identity(&self) -> Option<kt_media::SourceIdent> {
+        Some(kt_media::SourceIdent::of(&self.name))
+    }
+    fn read_audio_burst(&mut self, idx: i64) -> Result<kt_media::AudioBurst, kt_media::MediaError> {
+        self.sound.read_audio_burst(idx)
+    }
+    fn read_video_frame(&mut self, pts: Tick, q: Option<Quality>) -> Result<kt_media::VideoFrame, kt_media::MediaError> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let q = q.unwrap_or(Quality { width: self.info.width, height: self.info.height });
+        Ok(kt_media::VideoFrame {
+            pts,
+            width: q.width,
+            height: q.height,
+            rgba: [self.shade, self.shade, self.shade, 255].repeat((q.width * q.height) as usize).into_boxed_slice(),
+            has_alpha: false,
+        })
+    }
+    fn keyframe_before(&self, p: Tick) -> Option<Tick> {
+        Some(p)
+    }
+}
+
+/// What the tests' copies are made by: `long_gop` is what the file says of itself.
+struct FakeCopies {
+    long_gop: bool,
+    reads: Arc<std::sync::atomic::AtomicU64>,
+    copied: Arc<std::sync::atomic::AtomicU64>,
+    /// Frames a job is allowed to write before it waits for more.
+    gate: Arc<std::sync::atomic::AtomicU64>,
+    asked: Arc<std::sync::Mutex<Vec<(u32, u32)>>>,
+}
+
+const NATIVE: (u32, u32) = (3840, 2160);
+
+impl FakeCopies {
+    fn new(long_gop: bool) -> Arc<FakeCopies> {
+        Arc::new(FakeCopies {
+            long_gop,
+            reads: Arc::default(),
+            copied: Arc::default(),
+            gate: Arc::new(std::sync::atomic::AtomicU64::new(u64::MAX)),
+            asked: Arc::default(),
+        })
+    }
+
+    fn open(&self, shade: u8, name: &str) -> Fake {
+        Fake {
+            info: kt_media::MediaInfo {
+                duration: Tick(90_000),
+                has_video: true,
+                has_audio: true,
+                fps: Some((30, 1)),
+                width: NATIVE.0,
+                height: NATIVE.1,
+                sar: (1, 1),
+                still: false,
+            },
+            shade,
+            name: name.into(),
+            sound: kt_media::synthetic::SyntheticSource::new(Tick(90_000), kt_media::synthetic::AudioPattern::Sine { hz: 440.0 }),
+            reads: if shade == 200 { self.reads.clone() } else { self.copied.clone() },
+        }
+    }
+}
+
+impl copy::CopyMaker for FakeCopies {
+    fn facts(&self, _: &Arc<Folder>, path: &Path) -> Option<copy::CopyFacts> {
+        let id = kt_media::index::ContentId(xxhash_rust::xxh3::xxh3_128(path.to_string_lossy().as_bytes()).to_le_bytes());
+        Some(copy::CopyFacts { id, size: NATIVE, long_gop: self.long_gop, frames: 30, copyable: true })
+    }
+    fn make(&self, _: &Path, dest: &Path, size: (u32, u32), go: &mut dyn FnMut(u64) -> copy::Go) -> Result<copy::Copied, copy::CopyError> {
+        self.asked.lock().unwrap().push(size);
+        let mut n = 0;
+        while n < 30 {
+            match go(n) {
+                copy::Go::Stop => return Err(copy::CopyError::Stopped),
+                copy::Go::On if n < self.gate.load(std::sync::atomic::Ordering::Acquire) => n += 1,
+                _ => std::thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        std::fs::write(dest, b"copy").map_err(|e| copy::CopyError::Failed(e.to_string()))?;
+        Ok(copy::Copied { frames: n, encoder: "fake".into(), decode_us: 20_000 })
+    }
+    fn original(&self, _: &Arc<Folder>, _: &Path) -> Result<Box<dyn MediaSource>, String> {
+        Ok(Box::new(self.open(200, "original")))
+    }
+    fn copy(&self, path: &Path) -> Result<Box<dyn MediaSource>, String> {
+        match path.is_file() {
+            true => Ok(Box::new(self.open(190, &path.to_string_lossy()))),
+            false => Err("none".into()),
+        }
+    }
+    fn check_camera(&self, _: &Path, _: &Path) -> Result<(), copy::Mismatch> {
+        Ok(())
+    }
+}
+
+/// A 4K project of one 4K file, its sound under a slowed reverb, at `q`.
+fn copied(root: &Path, maker: &Arc<FakeCopies>, q: Quality) -> Option<Player> {
+    let exec = gpu()?;
+    let mut p = project();
+    (p.settings.width, p.settings.height) = NATIVE;
+    p.media.push(MediaRef::new(MediaId(1), "/footage/a.mp4"));
+    let mut sound = clip(2, 0, 1, 0..30);
+    sound.kind = ClipKind::Audio;
+    sound.fx = vec![FxInstance::slowed_reverb(0.8, 0.5, 60.0)];
+    let mut picture = clip(1, 0, 1, 0..30);
+    picture.opacity = 1.0;
+    p.clips = vec![picture, sound];
+    p.normalize();
+    p.validate().unwrap();
+    let (player, _ring) = Player::new(p, vec![(MediaId(1), Box::new(maker.open(200, "original")) as Box<dyn MediaSource>)]);
+    player.set_preview_quality(q);
+    player.set_video_gpu(Some(exec));
+    player.copies().set_config(Some(copies::Config {
+        maker: maker.clone(),
+        root: root.to_path_buf(),
+        resolve: Arc::new(|p| Some(p.into())),
+    }));
+    Some(player)
+}
+
+fn at_part(n: u32) -> Quality {
+    Quality { width: NATIVE.0 / n, height: NATIVE.1 / n }
+}
+
+fn card(p: &Player) -> Option<copies::Card> {
+    p.copies().card(MediaId(1))
+}
+
+fn copy_at(n: u32) -> Option<copies::Card> {
+    Some(copies::Card::Copy(NATIVE.0 / n, NATIVE.1 / n))
+}
+
+/// Test t3449 (persistent-cache D3): a costly 4K file at preview 1/4 gets a 1/4 copy and plays it; at 1/2
+/// the 1/4 one plays until the 1/2 is ready, then its file is gone; at 1/8 no job starts and the 1/2 is read;
+/// at 1/1 the original; Off reads none; a cheap file never gets one.
+#[test]
+fn t3449_raising_the_quality_makes_a_better_copy_lowering_costs_nothing() {
+    let root = tempfile::tempdir().unwrap();
+    let maker = FakeCopies::new(true);
+    let Some(player) = copied(root.path(), &maker, at_part(4)) else { return };
+    let settled = || wait("the copies never settled", || player.copies().settled());
+    let files = || files(root.path()).into_iter().filter(|f| f.contains("/copy-")).collect::<Vec<_>>();
+    wait("the 1/4 copy was never made", || card(&player) == copy_at(4));
+    settled();
+    // the 1/2 job is held at its first frame
+    maker.gate.store(0, std::sync::atomic::Ordering::Release);
+    player.set_preview_quality(at_part(2));
+    wait("the 1/2 job never started", || maker.asked.lock().unwrap().last() == Some(&(1920, 1080)));
+    assert!(matches!(card(&player), Some(copies::Card::Making(..))));
+    let q = at_part(2);
+    let seen = maker.copied.load(std::sync::atomic::Ordering::Relaxed);
+    player.request_video(MediaId(1), at(7), q);
+    wait("the 1/4 copy does not play meanwhile", || maker.copied.load(std::sync::atomic::Ordering::Relaxed) > seen);
+    maker.gate.store(u64::MAX, std::sync::atomic::Ordering::Release);
+    wait("the 1/2 copy never came", || card(&player) == copy_at(2));
+    settled();
+    assert_eq!(files().len(), 1, "the smaller copy stayed: {:?}", files());
+    let jobs = maker.asked.lock().unwrap().len();
+    player.set_preview_quality(at_part(8));
+    settled();
+    assert_eq!((card(&player), maker.asked.lock().unwrap().len()), (copy_at(2), jobs), "a lower quality started a job");
+    player.set_preview_quality(at_part(1));
+    wait("the original does not play at 1/1", || card(&player).is_none());
+    player.set_preview_quality(at_part(2));
+    wait("the copy came back", || card(&player) == copy_at(2));
+    player.copies().set_mode(copy::CopyMode::Off);
+    wait("Off reads a copy", || card(&player).is_none());
+    drop(player);
+
+    let cheap = FakeCopies::new(false);
+    let root = tempfile::tempdir().unwrap();
+    let Some(player) = copied(root.path(), &cheap, at_part(4)) else { return };
+    wait("the copies never settled", || player.copies().settled());
+    assert!(cheap.asked.lock().unwrap().is_empty() && card(&player).is_none(), "a cheap file got a copy");
+}
+
+/// Test t3444 (persistent-cache D3): copies switched off and on during playback and on a pause: the
+/// playhead goes on, nothing of the sound is decoded again, the pictures of the swapped source go and the
+/// next are the copy's.
+#[test]
+fn t3444_a_switch_moves_the_picture_only() {
+    let root = tempfile::tempdir().unwrap();
+    let maker = FakeCopies::new(true);
+    let Some(player) = copied(root.path(), &maker, at_part(4)) else { return };
+    wait("the copy was never made", || card(&player) == copy_at(4));
+    let sound = || player.cache.audio_bytes();
+    let pictures = || player.cache.contains_video(kt_engine::source_id(MediaId(1)), Some(at_part(4)), kt_engine::video_cache_idx(at(5)));
+    let fetch = || {
+        wait("the picture never came", || {
+            player.request_video(MediaId(1), at(5), at_part(4));
+            pictures()
+        })
+    };
+    fetch();
+    wait("the sound was never read", || sound() > 0);
+    for playing in [true, false] {
+        player.seek(at(0));
+        if playing {
+            player.play();
+        }
+        for mode in [copy::CopyMode::Off, copy::CopyMode::AsPreview] {
+            fetch();
+            let (heard, head, generation) = (sound(), player.transport.playhead_frames(), player.transport.generation());
+            player.copies().set_mode(mode);
+            let want = if mode == copy::CopyMode::Off { None } else { copy_at(4) };
+            wait("the switch never came", || card(&player) == want);
+            assert!(sound() >= heard, "the decoded sound went with the picture");
+            assert_eq!(player.transport.generation(), generation, "the switch sought");
+            assert!(player.transport.playhead_frames() >= head);
+            fetch();
+            let f = player.cache.get_video(kt_engine::source_id(MediaId(1)), Some(at_part(4)), kt_engine::video_cache_idx(at(5)));
+            assert_eq!(f.map(|f| f.rgba[0]), Some(if want.is_some() { 190 } else { 200 }), "the picture of the file it plays from");
+        }
+        player.pause();
+    }
+}
+
+/// Test t3443 (persistent-cache D3): the plan over a copy is the plan over the original — the same layers'
+/// geometry, masks and chain, the same decode sizes, the same renderer; only what the frame is named by
+/// differs.
+#[test]
+fn t3443_the_same_plan_a_softer_picture() {
+    let root = tempfile::tempdir().unwrap();
+    let maker = FakeCopies::new(true);
+    let Some(player) = copied(root.path(), &maker, at_part(4)) else { return };
+    player.copies().set_mode(copy::CopyMode::Off);
+    wait("the copies never settled", || player.copies().settled() && card(&player).is_none());
+    let orders = |p: &Player| p.video_decode_qualities();
+    let (a, built) = (orders(&player), player.built_seq());
+    let ident = || player.cache.ident(kt_engine::source_id(MediaId(1)));
+    let was = ident();
+    player.copies().set_mode(copy::CopyMode::AsPreview);
+    wait("the copy was never made", || card(&player) == copy_at(4));
+    assert_eq!((orders(&player), player.built_seq()), (a, built), "the plan moved with the copy");
+    assert_ne!(ident(), was, "a composite of the copy must not be found under the original's key");
+}
+
+/// Test t3446 (persistent-cache D3): a moment prerendered from a copy is not shown once copies are off, nor
+/// after a restart; it composes from the original and keeps its own entry.
+#[test]
+fn t3446_the_disk_tier_keeps_copy_and_original_apart() {
+    let root = tempfile::tempdir().unwrap();
+    let maker = FakeCopies::new(true);
+    let tier = |player: &Player| {
+        player.render_cache().set_heavy_for_tests(Some(1));
+        player.set_render_cache(Some(Config {
+            codec: Arc::new(RawSegments),
+            root: root.path().to_path_buf(),
+            made: Made::of(60),
+            cap: None,
+        }));
+    };
+    let q = at_part(8);
+    let Some(player) = copied(root.path(), &maker, q) else { return };
+    wait("the copy was never made", || card(&player) == copy_at(8));
+    tier(&player);
+    prerender(&player, 4, q);
+    let shade = |p: &Player| p.disk_picture(at(2)).map(|p| p.rgba[0]);
+    assert_eq!(shade(&player), Some(190), "the copy's picture");
+    drop(player);
+    let Some(player) = copied(root.path(), &maker, q) else { return };
+    player.copies().set_mode(copy::CopyMode::Off);
+    tier(&player);
+    wait("the copies never settled", || player.copies().settled());
+    assert_eq!(shade(&player), None, "the copy's entry was found for the original");
+    prerender(&player, 4, q);
+    assert_eq!(shade(&player), Some(200), "the original's own entry");
+    player.copies().set_mode(copy::CopyMode::AsPreview);
+    wait("the copy came back", || card(&player) == copy_at(8));
+    assert_eq!(shade(&player), Some(190), "and the copy's is there still");
 }

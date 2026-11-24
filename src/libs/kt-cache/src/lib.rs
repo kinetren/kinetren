@@ -1003,6 +1003,15 @@ impl BurstCache {
         }
     }
 
+    /// The source's PICTURES are decoded from another file from now on, its sound from the same one (a
+    /// copy of a heavy source, persistent-cache D3): the pictures go, the bursts stay.
+    pub fn adopt_picture(&self, source: SourceId, ident: SourceIdent) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.idents.insert(source, ident) != Some(ident) {
+            self.drop_of(&mut inner, source, |k| !matches!(k.kind, BurstKind::Audio));
+        }
+    }
+
     /// The source is no more: its bytes and its identity go.
     pub fn forget(&self, source: SourceId) {
         let mut inner = self.inner.lock().unwrap();
@@ -1011,12 +1020,19 @@ impl BurstCache {
     }
 
     fn drop_source(&self, inner: &mut Inner, source: SourceId) {
-        let keys: Vec<BurstKey> =
-            inner.by_source.remove(&source).map(|k| k.into_iter().collect()).unwrap_or_default();
+        self.drop_of(inner, source, |_| true);
+    }
+
+    fn drop_of(&self, inner: &mut Inner, source: SourceId, gone: impl Fn(&BurstKey) -> bool) {
+        let all = inner.by_source.remove(&source).unwrap_or_default();
+        let (keys, left): (Vec<BurstKey>, Vec<BurstKey>) = all.into_iter().partition(&gone);
+        if !left.is_empty() {
+            inner.by_source.insert(source, left.into_iter().collect());
+        }
         self.stats.invalidate_scan_steps.fetch_add(keys.len() as u64, Ordering::Relaxed);
         kt_time::trace::ev(kt_time::trace::Ev::CacheInvalidate).a(source.0).b(keys.len() as u64).emit();
-        inner.past.retain(|k, _| k.source != source);
-        inner.past_order.retain(|k| k.source != source);
+        inner.past.retain(|k, _| k.source != source || !gone(k));
+        inner.past_order.retain(|k| k.source != source || !gone(k));
         for key in keys {
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&entry.recency);
@@ -1025,7 +1041,7 @@ impl BurstCache {
             }
             uncount(inner, &entry);
         }
-        inner.coverage.retain(|(s, _), _| *s != source);
+        inner.coverage.retain(|(s, kind), _| *s != source || !gone(&BurstKey { source, kind: *kind, idx: 0 }));
         self.report(inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
     }
