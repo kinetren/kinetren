@@ -52,13 +52,12 @@ Why: B5 — "ходить по тексту, навигация, поиск"; on
 - **THEN** no work counter moves but the hover frames; the panel's layout is not rebuilt per frame
 - **TEST** t3465 (`src/scripts/live/idle.py`)
 
-### Requirement: Pauses and fillers are marked, never cut by themselves
-Marking pauses SHALL read the peak pyramid only and put range markers on silences of at least the given
-length; marking fillers SHALL put range markers on words of the language's filler list; neither SHALL
-change an event.
-Why: rule 20; invariant 8 — no decode for an analysis the pyramid answers.
+### Requirement: Fillers are marked, never cut by themselves
+Marking fillers SHALL put range markers on words of the language's filler list and SHALL NOT change an event. Pauses are
+capability `material-analysis` (change `pause-detection`); the Text panel SHALL open its window.
+Why: rule 20.
 
-#### Scenario: Pause markers from the pyramid
-- **WHEN** pauses ≥ 400 ms are marked on a fixture with two pauses of 600 ms and one of 200 ms
-- **THEN** exactly two range markers cover the long pauses within one pyramid block; no decode request was made; the events are unchanged
-- **TEST** t3466 (`src/libs/kt-engine/tests/pause_marks.rs`)
+#### Scenario: Filler markers
+- **WHEN** fillers are marked over a transcript where two of twenty words are on the language's list
+- **THEN** exactly two range markers cover those words, the events are unchanged, one Undo removes both
+- **TEST** t4210 (`src/libs/kt-model/tests/transcript.rs`)

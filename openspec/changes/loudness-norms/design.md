@@ -60,7 +60,7 @@ gain. Taken: the output. Callers, all of them:
 | the same ← `render_raw_audio` (tests, golden) | none: the golden stream is the mix |
 | the same ← `reel_preview::reel_envelope`, D2's and D4's jobs | none: a reel, an event, an unmatched mix |
 | a reel opened for editing in the player | none: a reel is not the program |
-| `kt-cli render` | the document's stage; `probe` prints its gain beside the mix |
+| `kt-cli export` | the document's stage; `probe` prints its gain beside the mix |
 | `kt-cli main.rs:612, 620` (`--time`) | none: it times the mix |
 
 **The look-ahead.** `LA` = 72 frames + half the interpolator. The stage is fed the mix `LA` ahead of what it emits: at a
@@ -107,7 +107,7 @@ stand above it, `picture-check` adds its kinds to the same list.
 | render presets | no norm | stays so |
 | the bin card's loudness of a source | a number without a norm | left: a raw file has no delivery norm |
 | the meters' scale | dBFS zones | left; the stage shows LUFS beside |
-| kt-cli render | prints nothing of loudness | prints the report's lines |
+| kt-cli export | prints nothing of loudness | prints the report's lines |
 
 ## D7. Idle
 
@@ -117,7 +117,7 @@ Jobs run only on request on the analysis lane, paused while playing; the stage r
 ## D8. What revision 3 corrected
 
 - The base: the unmerged branch, its tests and its note id (F-EXP-009 now belongs to `picture-check`; the report's note
-  becomes F-EXP-010).
+  becomes the next free one at the merge: the channel branch adds export notes too).
 - The limiter: the R.48 effect has no ×4 detection and cannot promise dBTP; the stage has a kernel of its own.
 - The stage was "always on unless switched off": every existing project's bytes would change. It is absent by default.
 - The place relative to the kept mix, which had none; the callers of `render_raw_audio_range`, one of which renders reels.
@@ -126,6 +126,19 @@ Jobs run only on request on the analysis lane, paused while playing; the stage r
 - `measured.revision` did not survive a reopen.
 - Roles do not exist yet: the window's rows replace them.
 - `ExportReport` does not exist: the type is `ExportStats`.
+
+## D9. Against `loudness-target` (the branch `claude/youtube-channel-specs`, 2026-11-20, unmerged)
+
+Another session designed the same claim two days before B6, with the target in the render settings ("NOT in the
+project"), normalization in a measuring pass of each export, and a "Listen as delivered" switch. B6 answers against its
+first half in the owner's words ("на уровне проекта нормализация а не в пресетах рендера"), and with the stage in the
+project the preview always plays what is delivered, so the switch has no work. Its Q60 (a limiter or no limiter) and Q61
+(the fader) fall: the professional path has the limiter, and the fader stays a monitor. Taken from it:
+- the meter's interpolator gets one home that the stage's detector reads too (`loudness::TruePeakInterp`);
+- the report's fifth row, what the stage did: the gain, what the limiter took in LU and its deepest reduction, amber past
+  1 LU; the line "measured before the codec"; a red row is a line of the render log too;
+- `kt-cli export` prints the same rows.
+Not taken: a memo of the measurement (the stage stores it), a −14 factory render preset, the target as render keys.
 
 ## Rejected
 

@@ -1,7 +1,7 @@
 # Proposal: subtitles-and-text-editing
 
 > DESIGN ONLY (spec session, 2026-11-20). Code starts on the owner's word after his answers to the
-> questions at the end. Tests reserved: t3460–t3484.
+> questions at the end. Tests reserved: t3460–t3465, t3467–t3484, t4210.
 
 ## Why
 
@@ -34,9 +34,8 @@ SRT/VTT, no recognition, no transcript. Note F-TXT-004 rejected bundled model we
   playing; a click on a word moves the playhead; typing in the search box steps through hits (Enter /
   Shift+Enter) and marks them on the ruler; dragging over words makes the region; Delete with a region
   of words cuts it with ripple (change `ripple-and-trim-modes`: one rule); a word can be retyped.
-- **Pauses and fillers**: "Mark pauses" (silence ≥ N ms from the peak pyramid, no decode) and "Mark
-  fillers" (words in a per-language list: "эээ", "uh", "um", …) put range markers; nothing is cut by
-  itself (rule 20).
+- **Fillers**: "Mark fillers" (words in a per-language list: "эээ", "uh", "um", …) puts range markers; nothing is cut by
+  itself (rule 20). Pauses are the change `pause-detection` (by sound, noisy sound included); the Text panel opens it.
 - **A subtitle track**: a fifth track kind holding caption items (start, duration, text with line
   breaks) in timeline time; "Create captions from text" splits the transcript into items by a maximum
   line length and duration; import and export SRT and WebVTT; a track style (font of the vendored set,
@@ -53,7 +52,7 @@ SRT/VTT, no recognition, no transcript. Note F-TXT-004 rejected bundled model we
 
 - `subtitles`: the subtitle track and caption items, SRT/VTT, style, burn-in, sidecar export.
 - `transcript`: words in material time, local recognition as a downloadable component, the Text panel,
-  search, word selection as region, text deletion through ripple, pause and filler marking.
+  search, word selection as region, text deletion through ripple, filler marking.
 
 ### Modified Capabilities
 

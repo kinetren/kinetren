@@ -132,6 +132,8 @@ A row here needs nothing unmerged except what the last column names. ★ = the o
 |---|---|---|---|---|---|
 | `render-result-check` | S | — | EXPORT (`ExportStats`), DIALOG, live `renderregion` | none | t3998 |
 | `loudness-norms` | M | `render-result-check` (DIALOG); takes the unmerged `render-loudness-norms` in | EXPORT, AUDIO (the program stage), DIALOG | answered B6 | t3919–t3923, t3966, t4200–t4203 |
+| `pause-detection` | M | — (Delete waits for `ripple-and-trim-modes`) | kt-media (`pauses.rs`, the pyramid's tail), a window | none | t3466, t4204–t4209 |
+| `edit-analysis` **v+** | L | A3 `ripple-and-trim-modes`; `speech` `pause-detection`; stage B `download-library` | kt-plugin-api (`measure.rs`), kt-media, TIMELINE overlay and snap, links, a bin tab | none | t4211–t4228 |
 | `picture-check` | M | `loudness-norms` (the findings list) | EXPORT, MODEL `lint`, DIALOG | **open: Q1, Q2** | t3908–t3910 |
 | `chroma-key-upgrade` **v+** | M | — | COLOR-FX, SHELL (the Viewer's menu) | answered A22 | t3558–t3564 |
 | `pro-keyer` | L | `chroma-key-upgrade` | COLOR-FX, GPU, `BarrierKernel::held` | answered A22 | t3585–t3590 |
