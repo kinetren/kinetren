@@ -13,7 +13,7 @@ total size and "Install from file…". The start without FFmpeg SHALL open the l
 A feature that lacks an item SHALL show one line naming the item and its size, with a button that opens
 the library on that row. Such features are subtitles from speech, a title in a pack's font and a project's
 plugin. The window SHALL run no job while open, apart from a download the person started.
-Why: kkt-26.11.20 line 16; one place to see, get and reclaim what is downloaded (F-EXT-006; download-library D5).
+Why: kkt-26.11.20 line 19; one place to see, get and reclaim what is downloaded (F-EXT-006; download-library D5).
 
 #### Scenario: The rows and a download from the window
 - **PATH** Preferences → Library…: the FFmpeg row, two speech rows and two font rows with sizes → Download on the small speech model: the row shows a bar and a percentage, Cancel beside it → it ends: the row reads "installed" and the header's total grows → Remove: the row reads "not installed"

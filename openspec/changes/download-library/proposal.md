@@ -6,7 +6,7 @@
 
 ## Why
 
-The owner, answering Q14–Q16 (kkt-26.11.20, line 16): "на будущее - все что у нас качается - надо
+The owner, answering Q14–Q16 (kkt-26.11.20, line 19): "на будущее - все что у нас качается - надо
 переносить и делать архитектурно в виде некоторой библиотеки, типо как плагины чтоли их же тоже можно
 будет качать. вот и сделат библиотеку плагинов."
 
@@ -84,7 +84,7 @@ update that silently made the models unusable (F-EXT-006).
 - kt-model `GeneratorKind::Text.font_pack` (**v+** by content; no file moves without one).
 - **Invariants:** 9 and 10 (FFmpeg by the search plan), 11 (a face is part of a frame's identity, named in the project).
 
-## The owner's answers (kkt-26.11.20b, lines 5–7, row B3)
+## The owner's answers (kkt-26.11.20b, lines 10–12, row B3)
 
 - **Q1 b — "Всё с сервера".** Every kind's entries come from our signed list (design D1). The release
   carries the list as of its build as the offline floor, so "Install from file…" and an offline first start
@@ -100,7 +100,7 @@ update that silently made the models unusable (F-EXT-006).
 
 **Q4. Where does the signed list live, and who keeps its key?** Your item whole (`kkt-26.11.20.txt` line 19): "Q14–Q16 subtitles:
 "п.1. и на будущее - все что у нас качается - надо переносить и делать архитектурно в виде некоторой библиотеки, типо как
-плагины чтоли их же тоже можно будет качать. вот и сделат библиотеку плагинов."" and your answer (`kkt-26.11.20b.txt` line 5):
+плагины чтоли их же тоже можно будет качать. вот и сделат библиотеку плагинов."" and your answer (`kkt-26.11.20b.txt` line 10):
 "download-library Q1 the list: "Всё с сервера"". We have no server of ours: the program talks to GitHub's releases and the
 telemetry address. Whoever holds the key decides what every installed copy may download and load as code (FFmpeg, whisper,
 plugins).

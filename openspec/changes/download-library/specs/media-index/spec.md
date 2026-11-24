@@ -30,7 +30,7 @@ before the former download root, which it SHALL keep reading.
 the item's own check (a library's version symbol, a model's header, a face's checksum). A mismatch SHALL
 be named on the item's row, in a notice and in the trace, never a silent fallback.
 
-Why: kkt-26.11.20b line 5 ("Всё с сервера"); kkt-26.11.20 line 16 ("все что у нас качается - надо переносить и делать архитектурно в виде некоторой
+Why: kkt-26.11.20b line 10 ("Всё с сервера"); kkt-26.11.20 line 19 ("все что у нас качается - надо переносить и делать архитектурно в виде некоторой
 библиотеки"). Two designed downloads were about to copy the FFmpeg window. Kdenlive's tracker shows the
 cost of separate paths: a model downloaded to one folder and searched for in another, and a runtime update
 that silently invalidated its models (F-EXT-006; download-library D1–D4).

@@ -7,7 +7,7 @@
 
 - [x] 0.1 F-EXT-006; proposal, design (D0–D9), deltas `media-index`, `plugins`, `ui-reach`, `durability`;
       `openspec validate download-library --strict`
-- [x] 0.2 his answers (kkt-26.11.20b lines 5–7); `kkt-26.11.20-index.md` A11 and `subtitles-and-text-editing` 2.2, 2.6 point here
+- [x] 0.2 his answers (kkt-26.11.20b lines 10–12); `kkt-26.11.20-index.md` A11 and `subtitles-and-text-editing` 2.2, 2.6 point here
 - [x] 0.3 planned OTIO row (the font pack's reference travels in `metadata["kt"]` with the title's values)
 
 ## 1. The core (new `libs/kt-library`; kt-dirs; kt-ffmpeg `search.rs`; kt-cli `main.rs`)
